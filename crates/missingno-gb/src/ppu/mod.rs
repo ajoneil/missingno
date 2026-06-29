@@ -350,6 +350,18 @@ impl<P: PpuModel> Ppu<P> {
     }
 }
 
+/// One master half-edge of an onset contention hold: a `false`→`true` of `cur`
+/// (re)arms `counter` to `reload`, otherwise it drains toward zero. `prev`
+/// tracks `cur` across edges to detect the onset.
+fn tick_settle(counter: &mut u8, prev: &mut bool, cur: bool, reload: u8) {
+    if cur && !*prev {
+        *counter = reload;
+    } else if *counter > 0 {
+        *counter -= 1;
+    }
+    *prev = cur;
+}
+
 impl<P: PpuModel> Ppu<P> {
     pub fn model(&self) -> &P {
         &self.model
@@ -410,32 +422,30 @@ impl<P: PpuModel> Ppu<P> {
     }
 
     /// Advance the onset contention holds one master half-edge. Each onset 0→1
-    /// starts its hold (mode-2 not_if1, mode-3 XYMU, OAM read-lock); it drains one
-    /// edge at a time.
+    /// (re)arms its hold (mode-2 not_if1, mode-3 XYMU, OAM read-lock); it drains
+    /// one edge at a time.
     pub fn tick_onset_settles(&mut self) {
-        let cur = self.live_mode2_bit();
-        if cur && !self.prev_mode2 {
-            self.mode2_settle = Self::MODE2_NOT_IF1_SETTLE;
-        } else if self.mode2_settle > 0 {
-            self.mode2_settle -= 1;
-        }
-        self.prev_mode2 = cur;
-
-        let cur3 = self.is_rendering();
-        if cur3 && !self.prev_mode3 {
-            self.mode3_settle = Self::MODE3_ONSET_SETTLE;
-        } else if self.mode3_settle > 0 {
-            self.mode3_settle -= 1;
-        }
-        self.prev_mode3 = cur3;
-
+        let mode2 = self.live_mode2_bit();
+        tick_settle(
+            &mut self.mode2_settle,
+            &mut self.prev_mode2,
+            mode2,
+            Self::MODE2_NOT_IF1_SETTLE,
+        );
+        let mode3 = self.is_rendering();
+        tick_settle(
+            &mut self.mode3_settle,
+            &mut self.prev_mode3,
+            mode3,
+            Self::MODE3_ONSET_SETTLE,
+        );
         let oam = self.oam_locked();
-        if oam && !self.prev_oam_locked {
-            self.oam_onset_settle = Self::OAM_ONSET_SETTLE;
-        } else if self.oam_onset_settle > 0 {
-            self.oam_onset_settle -= 1;
-        }
-        self.prev_oam_locked = oam;
+        tick_settle(
+            &mut self.oam_onset_settle,
+            &mut self.prev_oam_locked,
+            oam,
+            Self::OAM_ONSET_SETTLE,
+        );
     }
 
     /// The mode-3 (XYMU) bit holds its pre-onset 0 (PRE) while the AVAP↑ contention

@@ -380,10 +380,8 @@ impl<P: PpuModel> Rendering<P> {
     }
 
     pub(super) fn oam_locked(&self) -> bool {
-        // OAM blocked by ACYL (BESU) or XYMU; also by scan_capture_pending (RUTU set, BESU not yet asserted).
-        self.scan.mode2_active()
-            || self.hblank.rendering_active()
-            || self.scan.scan_capture_pending()
+        // ACYL (BESU) or XYMU, plus the scan_capture_pending (RUTU set, BESU not yet asserted) pre-onset.
+        self.oam_mode_locked() || self.scan.scan_capture_pending()
     }
 
     /// OAM locked by an active blocking mode (BESU/ACYL or XYMU), without the

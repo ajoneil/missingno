@@ -994,7 +994,7 @@ impl<M: Model> Console<M> {
             // the genuine mode lock, not the RUTU pre-onset that the single-speed
             // window's later samples already exclude.
             let locked =
-                if self.model.cpu_steps_per_dot() == 2 && matches!(address, 0xFE00..=0xFE9F) {
+                if self.model.cpu_steps_per_dot() == 2 && matches!(address, 0xFE00..=0xFEFF) {
                     Some(self.ppu.oam_mode_locked())
                 } else {
                     self.ppu.write_lock(address)
