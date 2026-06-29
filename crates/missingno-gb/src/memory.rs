@@ -618,11 +618,18 @@ impl<M: Model> Console<M> {
         // PPU mode gating: block if locked at all three CUPA samples
         // (snapshot at rise of T-cycle 2, mid at fall of T-cycle 2
         // after AVAP, live at fall of T-cycle 3). Models the AJUJ-
-        // glitch window for OAM at Mode 2→3 straddles.
+        // glitch window for OAM at Mode 2→3 straddles. At double speed
+        // the M-cycle halves to two dots, so the snapshot lands before
+        // the lock engages and the live after it releases — only the
+        // mid (AVAP) sample sits inside the write-lock window.
         if let Some(locked_now) = self.ppu.write_lock(address) {
-            let blocked = match (locked_at_snapshot, locked_at_mid) {
-                (Some(snap), Some(mid)) => snap && mid && locked_now,
-                _ => locked_now,
+            let blocked = if self.model.cpu_steps_per_dot() == 2 {
+                locked_at_mid.unwrap_or(locked_now)
+            } else {
+                match (locked_at_snapshot, locked_at_mid) {
+                    (Some(snap), Some(mid)) => snap && mid && locked_now,
+                    _ => locked_now,
+                }
             };
             if blocked {
                 return;

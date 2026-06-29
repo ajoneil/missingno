@@ -547,6 +547,12 @@ impl<P: PpuModel> Ppu<P> {
         self.pixel_pipeline.as_ref().is_some_and(|r| r.oam_locked())
     }
 
+    pub fn oam_mode_locked(&self) -> bool {
+        self.pixel_pipeline
+            .as_ref()
+            .is_some_and(|r| r.oam_mode_locked())
+    }
+
     pub fn vram_locked(&self) -> bool {
         let live = self
             .pixel_pipeline

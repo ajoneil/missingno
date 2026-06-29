@@ -386,6 +386,12 @@ impl<P: PpuModel> Rendering<P> {
             || self.scan.scan_capture_pending()
     }
 
+    /// OAM locked by an active blocking mode (BESU/ACYL or XYMU), without the
+    /// RUTU pre-onset window — a write landing before BESU is not blocked.
+    pub(super) fn oam_mode_locked(&self) -> bool {
+        self.scan.mode2_active() || self.hblank.rendering_active()
+    }
+
     pub(super) fn vram_locked(&self) -> bool {
         self.hblank.rendering_active()
     }

@@ -990,7 +990,16 @@ impl<M: Model> Console<M> {
     /// `mode2=0 ∧ mode3=0` observable here.
     fn sample_mid_cupa_lock(&mut self) {
         if let Some(address) = self.cpu_bus.mid_sample_pending() {
-            self.cpu_bus.record_mid_lock(self.ppu.write_lock(address));
+            // The double-speed write-lock follows this mid sample; it counts only
+            // the genuine mode lock, not the RUTU pre-onset that the single-speed
+            // window's later samples already exclude.
+            let locked =
+                if self.model.cpu_steps_per_dot() == 2 && matches!(address, 0xFE00..=0xFE9F) {
+                    Some(self.ppu.oam_mode_locked())
+                } else {
+                    self.ppu.write_lock(address)
+                };
+            self.cpu_bus.record_mid_lock(locked);
         }
     }
 
