@@ -75,9 +75,11 @@ impl<P: PpuModel> Ppu<P> {
                 };
                 self.registers
                     .write_tile_map_select(value, crossing_falls(P::TILE_MAP_CROSSING));
-                // ff40_d4 q-rise (SET) settles ~1.4 ge — commits within the write dot, so the
-                // counter-2 low read sees NEW (both-NEW); q-fall (CLEAR) settles ~32 ge (split). A
-                // sprite on the line holds the SET on the slow split path on CGB.
+                // A SET reaches the counter-2 low read (both-NEW, as DMG renders; ff40_d4 q-rise
+                // settles ~1.4 ge). On CGB a sprite shifts the fetch phase so the LCDC.4 toggle
+                // collides with a bitplane read — the data-substitution glitch — splitting the
+                // fetch; keep the slow crossing there. A whole-byte proxy: the per-pixel mix the
+                // glitch produces is below the half-dot/whole-byte resolution of this model.
                 let tile_data_set_fast = !old_block0_tiles
                     && value & ControlFlags::TILE_ADDRESS_MODE.bits() != 0
                     && !self.sprite_on_line();
