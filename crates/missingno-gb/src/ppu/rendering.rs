@@ -860,7 +860,7 @@ impl<P: PpuModel> Rendering<P> {
     }
 
     fn fepo(&self, sprites_enabled: bool) -> bool {
-        if !sprites_enabled {
+        if !sprites_enabled && P::FETCH_TRIGGER_GATED_BY_OBJ_ENABLE {
             return false;
         }
 

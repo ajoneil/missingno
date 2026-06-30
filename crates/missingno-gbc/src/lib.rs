@@ -365,6 +365,11 @@ impl PpuModel for CgbPpu {
     // The CGB fixed the DMG STAT-write glitch — a STAT write re-evaluates with the
     // written enables only, never all-enables-high.
     const STAT_WRITE_ALL_ENABLES_GLITCH: bool = false;
+
+    // The CGB drops OBJ-enable (XYLO/AROR) from the FEPO sprite-fetch trigger: on-line
+    // sprites are fetched and pay their mode-3 penalty even with LCDC.1 off, with the enable
+    // bit consumed only at the pixel pop (resolve).
+    const FETCH_TRIGGER_GATED_BY_OBJ_ENABLE: bool = false;
     const HAS_CLOCK_DOMAIN_SYNC: bool = true;
     const ENABLE_QUALIFIED_WINDOW_HIT: bool = true;
     const WINDOW_RESTART_MASKS_MODE3_END: bool = true;

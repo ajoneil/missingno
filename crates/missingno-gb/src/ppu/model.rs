@@ -69,6 +69,13 @@ pub trait PpuModel: Default {
     /// still raise it).
     const STAT_WRITE_ALL_ENABLES_GLITCH: bool = true;
 
+    /// DMG gate AROR ANDs OBJ-enable (XYLO) into the FEPO sprite-fetch trigger, so LCDC.1=0
+    /// suppresses the fetch and its mode-3 penalty entirely. The CGB drops OBJ-enable from the
+    /// trigger — the fetch (and its penalty dots) run regardless; the enable bit is consumed only
+    /// at the pixel pop (BG-vs-OBJ resolve), so OBJ-off lines still pay the sprite penalty without
+    /// drawing the sprite.
+    const FETCH_TRIGGER_GATED_BY_OBJ_ENABLE: bool = true;
+
     /// This console's video RAM: DMG one bank, CGB two (VBK-banked).
     type Vram: Vram;
 
