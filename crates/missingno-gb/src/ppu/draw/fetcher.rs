@@ -109,10 +109,16 @@ impl<P: PpuModel> TileFetcher<P> {
         } else {
             pixel_counter
         };
-        (
-            ((effective_pix.wrapping_add(scx)) >> 3) & 31,
-            Self::bg_map_row(regs, video),
-        )
+        // CGB crosses the BG tile-column boundary one pixel later than the (PX+SCX) adder,
+        // so a boundary-aligned fetch reads the lower column — except the start-of-line
+        // tile, which reads SCX>>3.
+        let dividend = effective_pix.wrapping_add(scx);
+        let dividend = if P::SCX_CROSSING.is_synced() && pixel_counter != 0 {
+            dividend.wrapping_sub(1)
+        } else {
+            dividend
+        };
+        ((dividend >> 3) & 31, Self::bg_map_row(regs, video))
     }
 
     /// The BG map row (vertical tile index). Reads SCY live; on CGB the SCY cell
