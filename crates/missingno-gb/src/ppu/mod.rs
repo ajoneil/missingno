@@ -402,6 +402,14 @@ impl<P: PpuModel> Ppu<P> {
             .is_some_and(|r| r.lcd_pushing_active())
     }
 
+    /// A sprite is on this line — its CGB fetch holds an in-flight LCDC.4 SET on the slow split path.
+    pub(super) fn sprite_on_line(&self) -> bool {
+        let sprites_enabled = self.registers.control.sprites_enabled();
+        self.pixel_pipeline
+            .as_ref()
+            .is_some_and(|r| r.sprite_on_line(sprites_enabled))
+    }
+
     /// Master half-edges the mode-2 `not_if1` bus holds PRE after a BESU 0→1 — the
     /// slow companion-driver contention resolves within ~1 dot.
     const MODE2_NOT_IF1_SETTLE: u8 = 2;

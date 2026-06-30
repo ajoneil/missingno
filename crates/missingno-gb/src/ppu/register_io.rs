@@ -75,8 +75,19 @@ impl<P: PpuModel> Ppu<P> {
                 };
                 self.registers
                     .write_tile_map_select(value, crossing_falls(P::TILE_MAP_CROSSING));
+                // ff40_d4 q-rise (SET) settles ~1.4 ge — commits within the write dot, so the
+                // counter-2 low read sees NEW (both-NEW); q-fall (CLEAR) settles ~32 ge (split). A
+                // sprite on the line holds the SET on the slow split path on CGB.
+                let tile_data_set_fast = !old_block0_tiles
+                    && value & ControlFlags::TILE_ADDRESS_MODE.bits() != 0
+                    && !self.sprite_on_line();
+                let tile_data_falls = if tile_data_set_fast {
+                    crossing_falls(P::TILE_DATA_CROSSING).min(1)
+                } else {
+                    crossing_falls(P::TILE_DATA_CROSSING)
+                };
                 self.registers
-                    .write_tile_data_select(value, crossing_falls(P::TILE_DATA_CROSSING));
+                    .write_tile_data_select(value, tile_data_falls);
                 self.registers
                     .write_obj_size_select(value, crossing_falls(P::OBJ_SIZE_CROSSING));
 

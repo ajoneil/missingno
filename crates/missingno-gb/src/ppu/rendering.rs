@@ -853,6 +853,12 @@ impl<P: PpuModel> Rendering<P> {
 
     /// FEPO: any unfetched sprite's X matches the pixel counter. Feeds VYBO/XENA/TEKY.
     /// Collapses XYLO/AROR/per-sprite-decoders/FOVE/FEFY into one loop; off-screen X≥168 excluded.
+    /// A sprite is scanned for this line and will be fetched into the BG pipeline — on CGB its
+    /// fetch couples to the BG tile-data read, holding an in-flight LCDC.4 SET on the slow path.
+    pub(in crate::ppu) fn sprite_on_line(&self, sprites_enabled: bool) -> bool {
+        sprites_enabled && self.scan.sprites_ref().count > 0
+    }
+
     fn fepo(&self, sprites_enabled: bool) -> bool {
         if !sprites_enabled {
             return false;
