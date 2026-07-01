@@ -249,12 +249,16 @@ impl Audio {
             self.fs_edge_pending = true;
         }
 
-        // DIV-APU bit-10 fall arms the ripple advance for next tcycle — via the
-        // extra predelay stage while the →double tap-retune slip holds.
+        // DIV-APU bit-10 fall arms the ripple advance — via the extra predelay
+        // stage while the →double tap-retune slip holds. The kene↓ strobe lands
+        // one CPU T-cycle after the fall's M-boundary; a tick already at T1+
+        // (the double-speed off-boundary tick) fires it directly.
         let div_apu_high = div_counter & div_apu_bit != 0;
         if self.prev_div_apu_bit && !div_apu_high {
             if self.div_apu_switch_lag && double_speed {
                 self.fs_edge_predelay = true;
+            } else if t_index >= 1 {
+                self.tick_frame_sequencer();
             } else {
                 self.fs_edge_pending = true;
             }

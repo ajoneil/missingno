@@ -424,7 +424,11 @@ impl<M: Model> Console<M> {
                 const X_WINDOW: u8 = 0b0000_0111;
                 if self.cpu_steps_per_dot() == 2 {
                     const FAST_BITS: u8 = 0b0000_0101;
-                    let mode2 = if self.ppu.stat_mode2_bus() { 0b0000_0010 } else { 0 };
+                    let mode2 = if self.ppu.stat_mode2_bus() {
+                        0b0000_0010
+                    } else {
+                        0
+                    };
                     (snapshot & !X_WINDOW) | (snapshot & live & FAST_BITS) | mode2
                 } else {
                     (snapshot & !X_WINDOW) | (snapshot & live & X_WINDOW)
@@ -695,10 +699,12 @@ impl<M: Model> Console<M> {
                     self.timers.write_register(register, value);
                 }
             }
-            MappedAddress::AudioRegister(register) => {
-                self.audio
-                    .write_register(register, value, self.timers.internal_counter())
-            }
+            MappedAddress::AudioRegister(register) => self.audio.write_register(
+                register,
+                value,
+                self.timers.internal_counter(),
+                self.cpu_steps_per_dot() == 2,
+            ),
             MappedAddress::AudioWaveRam(offset) => {
                 self.audio
                     .write_wave_ram(offset, value, M::WAVE_RAM_COUPLING)

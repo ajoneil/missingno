@@ -214,7 +214,9 @@ impl NoiseChannel {
     pub fn tcycle(&mut self, apu_reset_n: bool, t_index: u8, double_speed: bool) {
         // ch4_1mhz↑ flips the hama half-phase (jeso); both free-run off the APU
         // clock and are cleared only by apu-off, never by a trigger.
-        let mhz_rise = self.mhz_prescaler.tcycle(apu_reset_n, t_index, double_speed);
+        let mhz_rise = self
+            .mhz_prescaler
+            .tcycle(apu_reset_n, t_index, double_speed);
         if !apu_reset_n {
             self.jeso = false;
             return;

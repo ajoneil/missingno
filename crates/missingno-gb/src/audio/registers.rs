@@ -114,7 +114,13 @@ impl Audio {
         }
     }
 
-    pub fn write_register(&mut self, register: Register, value: u8, internal_counter: u16) {
+    pub fn write_register(
+        &mut self,
+        register: Register,
+        value: u8,
+        internal_counter: u16,
+        double_speed: bool,
+    ) {
         if !self.enabled {
             match register {
                 Register::Control => {} // always writable
@@ -147,9 +153,15 @@ impl Audio {
                 if ControlFlags::from_bits_retain(value).contains(ControlFlags::AUDIO_ENABLE) {
                     if !self.enabled {
                         // caru/bylu/JYNA ripple re-locks from the power-on bure↑:
-                        // it catches the sub-step-1023 edge (counter→1) only when
-                        // powered on below it; at/above, the edge is missed (stays 0).
-                        self.frame_sequencer_step = if (internal_counter & 0x7FF) < 1023 {
+                        // it catches the sub-step edge (counter→1) only when
+                        // powered on below the tap's half-period; at/above, the
+                        // edge is missed (stays 0). The tap follows KEY1.
+                        let (tap_mask, half_period) = if double_speed {
+                            (0xFFF, 2047)
+                        } else {
+                            (0x7FF, 1023)
+                        };
+                        self.frame_sequencer_step = if (internal_counter & tap_mask) < half_period {
                             1
                         } else {
                             0
