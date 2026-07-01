@@ -259,6 +259,7 @@ impl StatInterrupt {
             enables_after,
             register_edges,
             synced,
+            talu_rising,
         )
     }
 
@@ -276,6 +277,7 @@ impl StatInterrupt {
         enables_after: InterruptFlags,
         register_edges: InterruptFlags,
         synced: bool,
+        talu_rising: bool,
     ) -> bool {
         const STEADY_PS: i32 = i32::MAX / 2;
         self.legs_was_high = conditions_after & enables_after;
@@ -299,7 +301,7 @@ impl StatInterrupt {
             if lyc_lingers && leg == InterruptFlags::CURRENT_LINE_COMPARE {
                 continue;
             }
-            let arrival = arrival(leg);
+            let arrival = arrival(leg, talu_rising);
             times[time_count] = if conditions_after.contains(leg) {
                 arrival.rising_ps as i32
             } else {
@@ -321,9 +323,9 @@ impl StatInterrupt {
                 }
                 let cond_changed = (conditions_before ^ conditions_after).contains(leg);
                 let cond_arrival = if conditions_after.contains(leg) {
-                    arrival(leg).rising_ps as i32
+                    arrival(leg, talu_rising).rising_ps as i32
                 } else {
-                    arrival(leg).falling_ps as i32
+                    arrival(leg, talu_rising).falling_ps as i32
                 };
                 let cond = if lyc_lingers && leg == InterruptFlags::CURRENT_LINE_COMPARE {
                     true
@@ -357,13 +359,13 @@ impl StatInterrupt {
             let level = level_at(t);
             match (low_since, level) {
                 (Some(since), true) => {
-                    if t - since >= SUKO_CAPTURE_THRESHOLD_PS {
+                    if t - since >= SUKO_LOW_CAPTURE_PS {
                         let high_until = times[i + 1..]
                             .iter()
                             .copied()
                             .find(|&u| !level_at(u))
                             .unwrap_or(STEADY_PS);
-                        if high_until - t >= SUKO_CAPTURE_THRESHOLD_PS {
+                        if high_until - t >= SUKO_HIGH_CAPTURE_PS {
                             return true;
                         }
                     }
@@ -417,11 +419,16 @@ const MODE_1_ARRIVAL: LegArrival = LegArrival {
     rising_ps: 2_822,
     falling_ps: 2_300,
 };
-/// Mode 0 arm via NYPE + POPU + PARU + TOLU.not_x1 + TARU.AND2.
+/// Mode 0 arm via NYPE + POPU + PARU + TOLU.not_x1 + TARU.AND2 (TALU↑-anchored:
+/// VBlank entry).
 const MODE_0_ARRIVAL: LegArrival = LegArrival {
     rising_ps: 4_038,
     falling_ps: 4_038,
 };
+/// Mode 0 falling at line start: the WODU pipeline-end drop reaches TARU.AND2 at
+/// ≈4,653 ps on the (TALU-edge-free) drop fall — a deeper source than the POPU
+/// chain above.
+const MODE_0_WODU_FALLING_PS: u16 = 4_653;
 /// Mode 2 arm via NYPE + POPU + PARU + TOLU.not_x1 + TAPA.AND2.
 const MODE_2_ARRIVAL: LegArrival = LegArrival {
     rising_ps: 3_970,
@@ -430,14 +437,17 @@ const MODE_2_ARRIVAL: LegArrival = LegArrival {
 
 /// LALU dffsr minimum captured SUKO low-pulse width. Cases 1 (1,802 ps) and 4
 /// (1,524 ps) bracket the empirical threshold.
-const SUKO_CAPTURE_THRESHOLD_PS: i32 = 1_700;
+const SUKO_LOW_CAPTURE_PS: i32 = 1_700;
+/// Minimum high interval LALU captures after a SUKO rise — the dffsr set path,
+/// faster than its low-recovery. The CGB corpus brackets it in (478, 1,353].
+const SUKO_HIGH_CAPTURE_PS: i32 = 1_000;
 
 /// CGB register-path propagation from the FF41 synchroniser DFF output to a
-/// leg's enable AND-term. The default holds the LYC (`E−874 ≥ threshold`) and
-/// mode-1-fall (`E−2_300 < threshold`) corpus bounds. The deep mode-0 (WODU)
-/// arm is slow enough that a same-fall enable-clear can't suppress a mode-0
-/// condition rising on the same fall before its SUKO pulse is captured
-/// (`E ≥ MODE_0_ARRIVAL.rising + SUKO_CAPTURE_THRESHOLD_PS`); it applies only to
+/// leg's enable AND-term. The default holds the LYC (`E−874 ≥ SUKO_LOW_CAPTURE_PS`)
+/// and mode-1-fall (`E−2_300 < SUKO_LOW_CAPTURE_PS`) corpus bounds. The deep
+/// mode-0 (WODU) arm is slow enough that a same-fall enable-clear can't suppress
+/// a mode-0 condition rising on the same fall before its SUKO pulse is captured
+/// (`E ≥ MODE_0_ARRIVAL.rising + SUKO_HIGH_CAPTURE_PS`); it applies only to
 /// that coincident-rising race, not to a steady mode-0 leg. No CGB netlist;
 /// gambatte cgb04c pins these.
 const REGISTER_ARRIVAL_DEFAULT: u16 = 3_300;
@@ -451,13 +461,20 @@ fn register_arrival(leg: InterruptFlags, rising_conditions: InterruptFlags) -> u
     }
 }
 
-fn arrival(leg: InterruptFlags) -> LegArrival {
+fn arrival(leg: InterruptFlags, talu_rising: bool) -> LegArrival {
     if leg == InterruptFlags::CURRENT_LINE_COMPARE {
         LYC_ARRIVAL
     } else if leg == InterruptFlags::VERTICAL_BLANK {
         MODE_1_ARRIVAL
     } else if leg == InterruptFlags::HORIZONTAL_BLANK {
-        MODE_0_ARRIVAL
+        if talu_rising {
+            MODE_0_ARRIVAL
+        } else {
+            LegArrival {
+                rising_ps: MODE_0_ARRIVAL.rising_ps,
+                falling_ps: MODE_0_WODU_FALLING_PS,
+            }
+        }
     } else if leg == InterruptFlags::OAM_SCAN {
         MODE_2_ARRIVAL
     } else {
