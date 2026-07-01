@@ -517,9 +517,7 @@ impl PpuModel for CgbPpu {
 
     fn tick_clock_domain(&mut self, samples: DomainSamples) {
         self.drawing_synced = samples.drawing;
-        if samples.palette_capture {
-            self.palette_drawing_synced = samples.drawing;
-        }
+        self.palette_drawing_synced = samples.palette_drawing;
     }
 
     fn vram_cpu_lock(&self, live: bool) -> bool {
@@ -1172,8 +1170,8 @@ impl Model for Cgb {
             // in bits 6-0. Idle/done/stopped reads bit 7 = 1 (done = $FF). A GDMA
             // is never observable here — it holds the CPU for its whole duration.
             0xFF55 => {
-                let visible =
-                    (self.vram_dma.remaining / 16).saturating_sub(self.vram_dma.granted_ahead as u16);
+                let visible = (self.vram_dma.remaining / 16)
+                    .saturating_sub(self.vram_dma.granted_ahead as u16);
                 let active = self.vram_dma.mode == TransferMode::HBlank && visible > 0;
                 Some(((!active as u8) << 7) | (visible.wrapping_sub(1) & 0x7F) as u8)
             }

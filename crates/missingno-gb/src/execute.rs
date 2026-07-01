@@ -564,7 +564,7 @@ impl<M: Model> Console<M> {
         // freeze during the clock-mux relock tail (the CPU clock is settling),
         // so the re-phase tail advances the PPU without disturbing DIV.
         if mcycle_boundary && self.model.speed_switch_divider_active() {
-            self.ppu.tick_clock_domain_capture(double_speed);
+            self.ppu.tick_clock_domain_capture();
             self.tick_cpu_clock_mcycle();
         }
 
@@ -595,8 +595,7 @@ impl<M: Model> Console<M> {
         // The mid-HALT timer wake spends the HALT-wake's WakeIntake M-cycle (the
         // divider ticking through it) before re-engaging; the pending-at-STOP
         // preempt path drains the bare relock tail with no such wake.
-        let woken_ready =
-            woken_by_interrupt && self.model.speed_switch_wake_ready(mcycle_boundary);
+        let woken_ready = woken_by_interrupt && self.model.speed_switch_wake_ready(mcycle_boundary);
         let drain = if woken_ready { u32::MAX } else { 1 };
         if self.model.drain_speed_switch_blackout(drain) {
             // An enabled interrupt is serviced at re-engage, dispatching from the
@@ -806,8 +805,7 @@ impl<M: Model> Console<M> {
 
         self.cpu_bus.clear_activity();
 
-        self.ppu
-            .tick_clock_domain_capture(self.model.cpu_steps_per_dot() == 2);
+        self.ppu.tick_clock_domain_capture();
 
         self.tick_cpu_clock_mcycle();
 

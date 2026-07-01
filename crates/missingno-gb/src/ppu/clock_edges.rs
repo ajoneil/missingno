@@ -47,6 +47,10 @@ impl<P: PpuModel> Ppu<P> {
     ) -> PpuTickResult<P::Pixel> {
         let mut result = PpuTickResult::default();
 
+        // XYMU's dot-fall crossing stage captures the pre-edge value: the
+        // AVAP-fall set races it and reaches the CRAM lock a dot late.
+        self.drawing_fall_stage = self.mode() == super::rendering::Mode::Drawing;
+
         // XODO↓ collapses to this fall; subsequent tick_dot is WUVU's first toggle.
         if self.lcd_on_init_pending {
             self.initialize_lcd_on();

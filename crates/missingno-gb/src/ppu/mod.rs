@@ -138,6 +138,9 @@ pub struct Ppu<P: PpuModel> {
     /// detect that 0→1. The OAM gate has no companion-driver settle of its own.
     oam_onset_settle: u8,
     prev_oam_locked: bool,
+    /// XYMU as of the last dot fall — the CRAM lock's view of mode 3. The
+    /// AVAP-fall set races the same-fall capture, so it lands a dot late.
+    drawing_fall_stage: bool,
     /// The console's colour hardware (CRAM, OPRI, …); the DMG impl is a unit.
     pub(super) model: P,
 }
@@ -201,6 +204,7 @@ impl<P: PpuModel> Ppu<P> {
             prev_mode3: false,
             oam_onset_settle: 0,
             prev_oam_locked: false,
+            drawing_fall_stage: false,
             model: P::default(),
         }
     }
@@ -338,6 +342,7 @@ impl<P: PpuModel> Ppu<P> {
             prev_mode3: false,
             oam_onset_settle: 0,
             prev_oam_locked: false,
+            drawing_fall_stage: false,
             model: P::default(),
         };
         let shadow = ppu.model.stat_shadow_mut();
@@ -510,19 +515,17 @@ impl<P: PpuModel> Ppu<P> {
     }
 
     /// M-cycle-boundary rise: the CGB clock-domain samples. The VRAM CPU
-    /// arbiter reads the M-boundary (CPU-clock) sample; the palette block's
-    /// CRAM lock runs on the PPU's 4-dot (VENA) clock, unchanged by double
-    /// speed — so at 2× (CPU M-boundary = 2 dots) it captures only on the
-    /// VENA-aligned boundary, keeping its slow-set at the base rate. The STAT
-    /// register-file synchroniser captures on the M-boundary fall instead —
-    /// see `eval_synced` in the fall path.
-    pub fn tick_clock_domain_capture(&mut self, double_speed: bool) {
+    /// arbiter reads the live M-boundary XYMU sample; the CRAM lock reads
+    /// XYMU through the dot-fall stage, so a transition landing on this
+    /// boundary is first visible one capture later. The STAT register-file
+    /// synchroniser captures on the M-boundary fall instead — see
+    /// `eval_synced` in the fall path.
+    pub fn tick_clock_domain_capture(&mut self) {
         if P::HAS_CLOCK_DOMAIN_SYNC {
             let drawing = self.mode() == Mode::Drawing;
-            let palette_capture = !double_speed || self.video.dividers.mcycle();
             self.model.tick_clock_domain(model::DomainSamples {
                 drawing,
-                palette_capture,
+                palette_drawing: self.drawing_fall_stage,
             });
         }
     }
