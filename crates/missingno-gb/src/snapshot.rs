@@ -355,6 +355,7 @@ impl GameBoy {
             audio: Audio::from_snapshot(&snap.apu, wave_ram),
             timers: crate::timers::Timers::from_snapshot(&snap.timer),
             dma: crate::dma::Dma::from_snapshot(&snap.dma),
+            dma_oam_was_transferring: false,
             serial: crate::serial_transfer::Serial::from_snapshot(&snap.serial),
             joypad: crate::joypad::Joypad::new(),
             interrupts: crate::interrupts::Registers {

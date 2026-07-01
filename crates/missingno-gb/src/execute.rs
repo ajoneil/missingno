@@ -1083,11 +1083,19 @@ impl<M: Model> Console<M> {
         let double_speed = self.clock.divider() == CpuDivider::Two;
         let oam = self.dma.peek_transfer();
         let hdma_active = self.model.console_state().dma_cpu_hold() || self.cpu.bus_suspended;
+        // The OAM-DMA's final byte still shares the bus on the M-cycle it
+        // completes; edge-detect its active→done boundary so that M-cycle
+        // still contends with a concurrent VRAM-DMA.
+        let oam_transferring = oam.is_some();
+        let oam_just_completed = self.dma_oam_was_transferring && !oam_transferring;
+        self.dma_oam_was_transferring = oam_transferring;
         // The two engines share one bus: when an OAM-DMA and a VRAM-DMA block
         // both move a byte this M-cycle, the OAM-DMA latches the VRAM-DMA byte
         // that coincides with its write rather than its own source.
-        let contended =
-            !double_speed && oam.is_some() && hdma_active && self.model.vram_dma_will_move();
+        let contended = !double_speed
+            && (oam_transferring || oam_just_completed)
+            && hdma_active
+            && self.model.vram_dma_will_move();
 
         if !contended {
             if let Some((src_addr, dst_offset)) = oam {
@@ -1128,12 +1136,16 @@ impl<M: Model> Console<M> {
         // The OAM-DMA's deposit this M-cycle is the coinciding VRAM-DMA byte,
         // landing at OAM[source_low]. Which of the M-cycle's two VRAM-DMA bytes
         // coincides is the phase between the two byte clocks (the OAM-DMA's start
-        // edge vs the block's), 2nd byte at residue {0,3}.
+        // edge vs the block's), 2nd byte at residue {0,3}. The coinciding OAM byte
+        // commits one T-cycle after start_edge marks dma_run engaging, so align
+        // the phase to that commit before taking the residue.
         if contended {
+            const OAM_BYTE_COMMIT_LAG_EDGES: u64 = 2;
             let phase = self
                 .model
                 .vram_dma_block_start_edge()
                 .wrapping_sub(self.dma.start_edge())
+                .wrapping_sub(OAM_BYTE_COMMIT_LAG_EDGES)
                 / 2
                 % 4;
             let coinciding = if matches!(phase, 0 | 3) {

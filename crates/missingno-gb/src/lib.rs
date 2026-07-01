@@ -515,6 +515,10 @@ pub struct Console<M: Model> {
     serial: serial_transfer::Serial,
     timers: timers::Timers,
     dma: Dma,
+    /// Whether the OAM-DMA drove a byte last M-cycle — edge-detects its
+    /// active→done boundary so the completion M-cycle still shares the bus
+    /// with a concurrent VRAM-DMA (the OAM-DMA↔HDMA byte-clock conflict).
+    dma_oam_was_transferring: bool,
 
     /// The master-clock phase layer: the CPU CLK9 edge, the free-running PPU dot
     /// edge, and the `÷1`/`÷2` divider between them. Owns the per-edge dispatch
@@ -616,6 +620,7 @@ impl<M: Model> Console<M> {
             serial: serial_transfer::Serial::new(),
             timers: timers::Timers::new(),
             dma: Dma::new(),
+            dma_oam_was_transferring: false,
             clock: MasterClock::new(CpuDivider::One),
             cpu_bus: CpuBus::new(),
             bus_trace: cpu_bus::BusTrace::new(),
