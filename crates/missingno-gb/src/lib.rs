@@ -500,13 +500,17 @@ pub trait Model: Default {
         false
     }
 
-    /// The committed block landed on a running CPU: its bus grant waits for
-    /// the in-flight instruction to retire. A block committing onto a halted
-    /// CPU (including the same-fall wake flip) grants at the next M-boundary.
-    /// DMG: never.
+    /// The committed block landed on a running CPU and the instruction it
+    /// interrupted has not yet retired: the bus grant waits for it. A block
+    /// committing onto a halted CPU (including the same-fall wake flip)
+    /// grants at the next M-boundary. DMG: never.
     fn vram_dma_park_waits_for_fetch(&self) -> bool {
         false
     }
+
+    /// An instruction retired at this M-boundary: the retirement any pending
+    /// running-CPU block grant was waiting on. DMG: no-op.
+    fn vram_dma_instruction_retired(&mut self) {}
 
     /// A VRAM-DMA transfer request is standing — a block committed or one
     /// fall from commit. Sampled through a one-boundary synchronizer by the

@@ -437,14 +437,16 @@ impl<M: Model> Console<M> {
             // commit grants at the next M-boundary (the claim-standing
             // synchronizer still governs the halt-exit refetch); a running-CPU
             // commit waits for the in-flight instruction to retire.
-            let arbiter_at_boundary = self.cpu.dma_arbiter_at_boundary;
-            self.cpu.dma_arbiter_at_boundary = false;
+            if self.cpu.dma_arbiter_at_boundary {
+                self.cpu.dma_arbiter_at_boundary = false;
+                self.model.vram_dma_instruction_retired();
+            }
             self.cpu.bus_suspended = self.model.vram_dma_seizes_bus()
                 && (self.cpu.bus_suspended
                     || if self.cpu.in_dispatch() {
                         self.cpu.dispatch_parks_behind_dma
                     } else {
-                        !self.model.vram_dma_park_waits_for_fetch() || arbiter_at_boundary
+                        !self.model.vram_dma_park_waits_for_fetch()
                     });
             self.cpu.dma_request_stood_prev2_boundary = self.cpu.dma_request_stood_prev_boundary;
             self.cpu.dma_request_stood_prev_boundary = self.model.vram_dma_request_standing();

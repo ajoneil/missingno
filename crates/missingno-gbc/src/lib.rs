@@ -1624,6 +1624,10 @@ impl Model for Cgb {
         self.vram_dma.park_waits_for_fetch
     }
 
+    fn vram_dma_instruction_retired(&mut self) {
+        self.vram_dma.park_waits_for_fetch = false;
+    }
+
     fn vram_dma_request_standing(&self) -> bool {
         self.vram_dma.pend || (self.vram_dma.block_remaining > 0 && self.vram_dma.remaining > 0)
     }
