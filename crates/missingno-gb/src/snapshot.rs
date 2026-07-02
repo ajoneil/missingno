@@ -358,9 +358,11 @@ impl GameBoy {
             dma_oam_was_transferring: false,
             serial: crate::serial_transfer::Serial::from_snapshot(&snap.serial),
             joypad: crate::joypad::Joypad::new(),
-            interrupts: crate::interrupts::Registers {
-                enabled: InterruptFlags::from_bits_retain(snap.cpu.ie),
-                requested: InterruptFlags::from_bits_retain(snap.cpu.if_),
+            interrupts: {
+                let mut regs = crate::interrupts::Registers::new();
+                regs.enabled = InterruptFlags::from_bits_retain(snap.cpu.ie);
+                regs.requested = InterruptFlags::from_bits_retain(snap.cpu.if_);
+                regs
             },
             vram_bus: VramBus {
                 vram: find_region(0x8000)

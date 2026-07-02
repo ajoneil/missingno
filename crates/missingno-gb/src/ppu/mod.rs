@@ -133,6 +133,11 @@ pub struct Ppu<P: PpuModel> {
     prev_mode2: bool,
     mode3_settle: u8,
     prev_mode3: bool,
+    /// Mode-1 (POPU) onset hold: the mode bit reaches the STAT read view slower
+    /// than ROPO's coincidence clear, so a double-speed FF41 read landing in
+    /// the onset window sees the pre-onset mode with the live coincidence.
+    mode1_settle: u8,
+    prev_mode1: bool,
     /// OAM read-lock onset hold: master half-edges left of the PRE (accessible)
     /// hold after the RUTU onset, plus oam_locked() at the prior half-edge to
     /// detect that 0→1. The OAM gate has no companion-driver settle of its own.
@@ -202,6 +207,8 @@ impl<P: PpuModel> Ppu<P> {
             prev_mode2: false,
             mode3_settle: 0,
             prev_mode3: false,
+            mode1_settle: 0,
+            prev_mode1: false,
             oam_onset_settle: 0,
             prev_oam_locked: false,
             drawing_fall_stage: false,
@@ -340,6 +347,8 @@ impl<P: PpuModel> Ppu<P> {
             prev_mode2: false,
             mode3_settle: 0,
             prev_mode3: false,
+            mode1_settle: 0,
+            prev_mode1: false,
             oam_onset_settle: 0,
             prev_oam_locked: false,
             drawing_fall_stage: false,
@@ -422,6 +431,7 @@ impl<P: PpuModel> Ppu<P> {
     /// The mode-3 (XYMU) bus holds PRE after a rendering 0→1 (AVAP↑/XYMU↓) onset —
     /// the symmetric counterpart to `not_if1`, for the mode-2→3 onset contention.
     const MODE3_ONSET_SETTLE: u8 = 2;
+    const MODE1_ONSET_SETTLE: u8 = 2;
 
     /// The OAM read-lock holds PRE (accessible) after the RUTU onset before ACYL
     /// settles the gate closed — the OAM analogue of the not_if1 hold.
@@ -459,6 +469,13 @@ impl<P: PpuModel> Ppu<P> {
             oam,
             Self::OAM_ONSET_SETTLE,
         );
+        let mode1 = self.video.vblank();
+        tick_settle(
+            &mut self.mode1_settle,
+            &mut self.prev_mode1,
+            mode1,
+            Self::MODE1_ONSET_SETTLE,
+        );
     }
 
     /// The mode-3 (XYMU) bit holds its pre-onset 0 (PRE) while the AVAP↑ contention
@@ -466,6 +483,12 @@ impl<P: PpuModel> Ppu<P> {
     /// mode 2, not the post-onset mode 3.
     pub fn in_mode3_onset_settle(&self) -> bool {
         self.mode3_settle > 0
+    }
+
+    /// The mode-1 (POPU) bit holds its pre-onset 0 while the VBlank-entry
+    /// contention settles; the coincidence bit (ROPO, shallower) resolves live.
+    pub fn in_mode1_onset_settle(&self) -> bool {
+        self.mode1_settle > 0
     }
 
     /// The OAM read-lock holds its pre-onset accessible value while the RUTU onset

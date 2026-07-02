@@ -237,6 +237,7 @@ impl<M: Model> Console<M> {
         if tick.dot.is_some() {
             self.ppu.tick_onset_settles();
         }
+        self.interrupts.tick_set_settles();
         PhaseResult { new_screen, pixel }
     }
 
@@ -492,15 +493,18 @@ impl<M: Model> Console<M> {
         &mut self,
         video_result: &ppu::PpuTickResult<<M::Ppu as ppu::PpuModel>::Pixel>,
     ) -> (bool, Option<ppu::PixelOutput>) {
+        let double_speed = self.model.cpu_steps_per_dot() == 2;
         // VBlank IF: POPU transitions happen on the fall since the divider
         // chain runs there.
         if video_result.request_vblank {
-            self.interrupts.request(Interrupt::VideoBetweenFrames);
+            self.interrupts
+                .request_ppu_fall(Interrupt::VideoBetweenFrames, double_speed);
         }
         // STAT IF: the SUKO check folds into request_stat; cpu_irq_ack1_pulse
         // (LALU.r_n=0) absorbs same-M-cycle SUKO rises.
         if video_result.request_stat && !self.cpu.irq.cpu_irq_ack1_pulse {
-            self.interrupts.request(Interrupt::VideoStatus);
+            self.interrupts
+                .request_ppu_fall(Interrupt::VideoStatus, double_speed);
         }
         self.apply_ppu_result(video_result)
     }
@@ -1050,7 +1054,7 @@ impl<M: Model> Console<M> {
             // contention window holds the XYMU bit at its pre-onset 0 (PRE mode 2).
             let value = if address == 0xFF41
                 && self.model.cpu_steps_per_dot() == 2
-                && self.ppu.in_mode3_onset_settle()
+                && (self.ppu.in_mode3_onset_settle() || self.ppu.in_mode1_onset_settle())
             {
                 value & !0b01
             } else {

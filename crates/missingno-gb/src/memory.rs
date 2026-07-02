@@ -513,9 +513,7 @@ impl<M: Model> Console<M> {
             MappedAddress::TimerRegister(register) => self.timers.read_register(register),
             MappedAddress::InterruptRegister(register) => match register {
                 interrupts::Register::EnabledInterrupts => self.interrupts.enabled.bits(),
-                interrupts::Register::RequestedInterrupts => {
-                    self.interrupts.requested.bits() | 0xE0
-                }
+                interrupts::Register::RequestedInterrupts => self.interrupts.read_requested(),
             },
             MappedAddress::AudioRegister(register) => self.audio.read_register(register),
             MappedAddress::AudioWaveRam(offset) => {

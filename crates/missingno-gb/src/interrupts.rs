@@ -66,13 +66,22 @@ impl Interrupt {
 pub struct Registers {
     pub enabled: InterruptFlags,
     pub requested: InterruptFlags,
+    /// A PPU-fall IF set needs a half-edge to reach the CPU-visible FF0F byte;
+    /// a double-speed read driving inside that window still sees the pre-set
+    /// bit. The cell/dispatch/wake paths read `requested` directly.
+    vblank_set_settle: u8,
+    stat_set_settle: u8,
 }
 
 impl Registers {
+    const IF_SET_SETTLE: u8 = 2;
+
     pub fn new() -> Self {
         Self {
             enabled: InterruptFlags::empty(),
             requested: InterruptFlags::VIDEO_BETWEEN_FRAMES,
+            vblank_set_settle: 0,
+            stat_set_settle: 0,
         }
     }
 
@@ -96,6 +105,36 @@ impl Registers {
 
     pub fn request(&mut self, interrupt: Interrupt) {
         self.requested.insert(interrupt.into());
+    }
+
+    /// A video IF set from the PPU fall path: arms the FF0F read-view settle
+    /// on a 0→1 at double speed, then requests as normal.
+    pub fn request_ppu_fall(&mut self, interrupt: Interrupt, double_speed: bool) {
+        if double_speed && !self.requested(interrupt) {
+            match interrupt {
+                Interrupt::VideoBetweenFrames => self.vblank_set_settle = Self::IF_SET_SETTLE,
+                Interrupt::VideoStatus => self.stat_set_settle = Self::IF_SET_SETTLE,
+                _ => {}
+            }
+        }
+        self.request(interrupt);
+    }
+
+    pub fn tick_set_settles(&mut self) {
+        self.vblank_set_settle = self.vblank_set_settle.saturating_sub(1);
+        self.stat_set_settle = self.stat_set_settle.saturating_sub(1);
+    }
+
+    /// The FF0F byte a CPU read sees: settling set bits held at pre-set.
+    pub fn read_requested(&self) -> u8 {
+        let mut bits = self.requested.bits();
+        if self.vblank_set_settle > 0 {
+            bits &= !InterruptFlags::VIDEO_BETWEEN_FRAMES.bits();
+        }
+        if self.stat_set_settle > 0 {
+            bits &= !InterruptFlags::VIDEO_STATUS.bits();
+        }
+        bits | 0xE0
     }
 
     pub fn clear(&mut self, interrupt: Interrupt) {
