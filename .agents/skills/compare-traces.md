@@ -4,7 +4,7 @@ Compare and inspect execution traces between missingno and reference emulators (
 
 ## Adapter preference
 
-The reference emulators (SameBoy, DocBoy, gambatte) are all **behavioural** — none is die-derived, so none is ground truth. They show *where* execution diverges; *why* comes from the hardware (PPU timing spec, gb-ctr, race pairs), never from matching another emulator. **Prefer SameBoy**, then DocBoy, then gambatte — the same order for DMG and CGB (see *AGENTS.md → CGB Core — Methodology Deltas*). Fall back down the order when the preferred emulator has no passing trace for the test, and state the reason in the receipt (e.g. "no SameBoy pass trace for blargg/halt_bug; using DocBoy"). Don't silently treat any single emulator's behaviour as the hardware's.
+The reference emulators (SameBoy, DocBoy, gambatte) are all **behavioural** — none is die-derived, so none is ground truth. They show *where* execution diverges; *why* comes from the hardware (the DMG Timing Specification, gb-ctr, race pairs), never from matching another emulator. **Prefer SameBoy**, then DocBoy, then gambatte — the same order for DMG and CGB (see *AGENTS.md → CGB Core — Methodology Deltas*). Fall back down the order when the preferred emulator has no passing trace for the test, and state the reason in the receipt (e.g. "no SameBoy pass trace for blargg/halt_bug; using DocBoy"). Don't silently treat any single emulator's behaviour as the hardware's.
 
 ## When to use
 
@@ -121,7 +121,7 @@ Common noise fields: `div` (phase-dependent), `tac` (init differs), `if_` (upper
 
 **Persistent PC offset (e.g. missingno=0x0150 vs reference=0x0151):** This is a 4-dot (1 M-cycle) timing offset, usually from initial state divergence. Not a bug in the code under test — it's the starting position within the frame being different.
 
-**STAT divergence throughout:** Adapters reconstruct STAT differently and may sample its mode/enable bits at slightly different points. Small persistent STAT differences between a reference and missingno may be adapter sampling artifacts, not real bugs — verify against the PPU timing spec before treating one as a divergence.
+**STAT divergence throughout:** Adapters reconstruct STAT differently and may sample its mode/enable bits at slightly different points. Small persistent STAT differences between a reference and missingno may be adapter sampling artifacts, not real bugs — verify against the DMG Timing Specification before treating one as a divergence.
 
 ## Visual comparison with `render`
 
