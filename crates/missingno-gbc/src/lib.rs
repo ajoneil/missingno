@@ -1693,6 +1693,15 @@ impl Model for Cgb {
         self.vram_dma.escape_byte && self.vram_dma_will_move()
     }
 
+    fn vram_dma_drain_escape(&mut self) -> Option<(u16, u16)> {
+        if self.vram_dma.escape_byte && self.vram_dma.moving() {
+            self.vram_dma.quota = 1;
+            self.vram_dma_next_byte()
+        } else {
+            None
+        }
+    }
+
     fn vram_dma_thaw_drain(&self) -> bool {
         self.vram_dma.thaw_drain
     }

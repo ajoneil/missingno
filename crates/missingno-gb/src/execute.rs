@@ -301,6 +301,12 @@ impl<M: Model> Console<M> {
                 // blackout's elapsed count is `master_edge - blackout_anchor`.
                 let anchor = self.clock.master_edge();
                 self.model.console_state_mut().set_blackout_anchor(anchor);
+                // The upward grading's escape byte completes inside the
+                // blackout — the CPU is held and the bus free, so its tenure
+                // never parks the resumed stream.
+                while let Some((src, dst)) = self.model.vram_dma_drain_escape() {
+                    self.dma_move(src, dst);
+                }
             }
             StopAction::Remain => {}
         }

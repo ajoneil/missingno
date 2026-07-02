@@ -494,6 +494,13 @@ pub trait Model: Default {
         false
     }
 
+    /// Take the graded escape byte for an in-blackout drain — the CPU is held
+    /// and the bus free, so the escape's tenure completes inside the blackout
+    /// instead of parking the resumed stream. DMG: never.
+    fn vram_dma_drain_escape(&mut self) -> Option<(u16, u16)> {
+        None
+    }
+
     /// A dispatch-wake thaw commit's drain is in flight — the halt-exit
     /// seizure deferral applies to it alone. DMG: never.
     fn vram_dma_thaw_drain(&self) -> bool {
