@@ -263,7 +263,7 @@ impl<M: Model> Console<M> {
             return;
         }
 
-        match self.model.resolve_stop() {
+        match self.model.resolve_stop(self.ppu.dot_in_mcycle_phase()) {
             StopAction::SpeedSwitch => {
                 // Hardware resets DIV across the switch (the model has already
                 // toggled its speed bit and armed the blackout count). The CPU

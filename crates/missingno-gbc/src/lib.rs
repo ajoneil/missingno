@@ -748,6 +748,9 @@ pub struct Cgb {
     /// single-speed decisive grant sample, taken before that fall's lock
     /// onset (`resolve_read_latch` consumes it).
     read_drive_oam_lock: Option<bool>,
+    /// The 2×→1× relock from a p2 dot-in-M entry completes a dot early and
+    /// leaves the clock mux displaced; the next 1×→2× spends the dot back.
+    switch_relock_debit: bool,
     /// Undocumented CGB scratch registers: $FF72/$FF73 full bytes, $FF74
     /// (CGB mode only; open bus in compat), $FF75 bits 6-4 (the rest read 1).
     ff72: u8,
@@ -782,6 +785,7 @@ impl Default for Cgb {
             pre_alet_rendering: false,
             pre_alet_lock: None,
             read_drive_oam_lock: None,
+            switch_relock_debit: false,
             ff72: 0,
             ff73: 0,
             ff74: 0,
@@ -989,7 +993,7 @@ impl Model for Cgb {
         Dma::with_source_register(0x00)
     }
 
-    fn resolve_stop(&mut self) -> StopAction {
+    fn resolve_stop(&mut self, entry_dot_phase: Option<u8>) -> StopAction {
         if self.key1_armed {
             // The clock-mux settle is bus-coupled, and only the upward swap
             // disturbs the mux and resets the trigger's request/commit
@@ -1022,6 +1026,17 @@ impl Model for Cgb {
             self.double_speed = !self.double_speed;
             self.key1_armed = false;
             self.speed_switch_blackout = self.speed_switch_blackout_master_edges();
+            // The 2×→1× relock from a p2 entry completes a dot early and
+            // displaces the mux; the next 1×→2× spends the dot back re-syncing.
+            if self.double_speed {
+                if self.switch_relock_debit {
+                    self.speed_switch_blackout += 2;
+                    self.switch_relock_debit = false;
+                }
+            } else if entry_dot_phase == Some(2) {
+                self.speed_switch_blackout -= 2;
+                self.switch_relock_debit = true;
+            }
             StopAction::SpeedSwitch
         } else {
             StopAction::Remain

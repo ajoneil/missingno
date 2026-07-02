@@ -514,6 +514,20 @@ impl<P: PpuModel> Ppu<P> {
         self.model.set_object_priority_register(value);
     }
 
+    /// Dot position within the WUVU/VENA 4-dot unit (0..4), or `None` while
+    /// the LCD is off (VID_RST parks the dividers at a phase that carries no
+    /// alignment information).
+    pub fn dot_in_mcycle_phase(&self) -> Option<u8> {
+        self.pixel_pipeline.as_ref()?;
+        let d = &self.video.dividers;
+        Some(match (d.mcycle, d.half_mcycle) {
+            (true, false) => 0,
+            (true, true) => 1,
+            (false, false) => 2,
+            (false, true) => 3,
+        })
+    }
+
     /// M-cycle-boundary rise: the CGB clock-domain samples. The VRAM CPU
     /// arbiter reads the live M-boundary XYMU sample; the CRAM lock reads
     /// XYMU through the dot-fall stage, so a transition landing on this

@@ -263,7 +263,9 @@ pub trait Model: Default {
     /// Resolve a STOP the CPU has settled into. DMG always stays stopped;
     /// CGB performs a double-speed switch when KEY1 is armed (toggling its
     /// own speed bit, arming its blackout) and otherwise stays stopped.
-    fn resolve_stop(&mut self) -> StopAction {
+    /// `entry_dot_phase` is the dot-in-M position at the arm (`None` with the
+    /// LCD off) — the mux-relock alignment input; DMG ignores it.
+    fn resolve_stop(&mut self, _entry_dot_phase: Option<u8>) -> StopAction {
         StopAction::Remain
     }
 
