@@ -683,6 +683,12 @@ struct VramDma {
     /// destination sees the written byte only once the seize has settled one
     /// fall (the double-speed half-dot from bus seizure to byte-readable).
     seize_falls: u8,
+    /// The in-halt grant latched this pend: it survives the engine thaw and
+    /// commits there (the wake drains it), regardless of the live mode.
+    pend_granted: bool,
+    /// Running ticks left of the wake drain's bus tenure — an HBlank entry
+    /// inside it passes unserviced.
+    wake_tenure: u8,
     /// The commit already counted this pending block's grant (the in-halt
     /// grant path ran); the commit-time count skips it.
     grant_counted: bool,
@@ -699,6 +705,9 @@ struct VramDma {
 
 impl VramDma {
     const WAKE_PEND_BLIND_TICKS: u8 = 6;
+    /// The wake drain's bus tenure in running ticks (per-fall): 72 master
+    /// edges — the A-pair variants' entries at thaw+66/+74 bracket it.
+    const WAKE_TENURE_TICKS: u8 = 36;
 
     /// Whether a byte may move this M-cycle: a GDMA runs while bytes remain; a
     /// latched HBlank block runs to completion regardless of the live `mode`
@@ -1283,6 +1292,7 @@ impl Model for Cgb {
                 let length = ((value & 0x7F) as u16 + 1) * 16;
                 self.vram_dma.granted_ahead = 0;
                 self.vram_dma.grant_counted = false;
+                self.vram_dma.pend_granted = false;
                 if value & 0x80 != 0 {
                     // Arm HDMA: one 16-byte block per HBlank. A block already
                     // latched by the trigger is immune and keeps flowing; an
@@ -1408,6 +1418,7 @@ impl Model for Cgb {
             {
                 self.vram_dma.granted_ahead += 1;
                 self.vram_dma.grant_counted = true;
+                self.vram_dma.pend_granted = true;
             }
             self.vram_dma.quota = if self.vram_dma.moving() {
                 if self.double_speed { 1 } else { 2 }
@@ -1437,26 +1448,54 @@ impl Model for Cgb {
         let committing = self.vram_dma.pend
             && armed
             // An arm-strobe pend latched while in HBlank commits even if HBlank
-            // ended in the one-fall pend->commit gap.
-            && (in_hblank || self.vram_dma.pend_from_arm)
+            // ended in the one-fall pend->commit gap; an in-halt-granted pend
+            // commits at the thaw whatever the live mode.
+            && (in_hblank || self.vram_dma.pend_from_arm || self.vram_dma.pend_granted)
             && (!cpu_halted || self.vram_dma.pend_age <= 2);
         if committing {
             self.vram_dma.block_remaining = 16;
             self.vram_dma.block_start_edge = master_edge;
             self.vram_dma.hblank_block_taken = true;
-            self.vram_dma.ready_in = 2;
-            self.vram_dma.setup_cells = if self.vram_dma.pend_from_arm { 0 } else { 1 };
+            // A granted-DRIVEN commit (only reachable through the grant: the
+            // thaw lies outside HBlank) pre-charged its setup during the halt;
+            // a granted pend that commits inside a live HBlank is an ordinary
+            // commit and charges setup normally.
+            let granted = self.vram_dma.pend_granted && !in_hblank;
+            self.vram_dma.ready_in = if granted { 0 } else { 2 };
+            self.vram_dma.setup_cells = if self.vram_dma.pend_from_arm || granted {
+                0
+            } else {
+                1
+            };
             // FF55 counts the block out at commit, not at drain end.
             if !self.vram_dma.grant_counted {
                 self.vram_dma.granted_ahead += 1;
             }
             self.vram_dma.grant_counted = false;
+            if granted {
+                self.vram_dma.wake_tenure = VramDma::WAKE_TENURE_TICKS;
+            }
+            self.vram_dma.pend_granted = false;
+        }
+        // A granted pend whose thaw tick passes without committing reverts to
+        // an ordinary pend (its next-HBlank commit charges setup normally).
+        if !committing && !cpu_halted {
+            self.vram_dma.pend_granted = false;
+        }
+        // The wake drain's bus tenure consumes an HBlank entry landing inside
+        // it — the entry neither pends nor retries.
+        if self.vram_dma.wake_tenure > 0 {
+            self.vram_dma.wake_tenure -= 1;
+            if entry_edge {
+                self.vram_dma.hblank_block_taken = true;
+            }
         }
         self.vram_dma.pend = !committing
             && armed
             && in_hblank
             && !self.vram_dma.hblank_block_taken
-            && self.vram_dma.remaining > 0;
+            && self.vram_dma.remaining > 0
+            && self.vram_dma.block_remaining == 0;
         if self.vram_dma.pend {
             self.vram_dma.pend_from_arm = self.vram_dma.armed_this_fall;
             self.vram_dma.pend_age = 0;
