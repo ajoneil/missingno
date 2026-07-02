@@ -701,6 +701,13 @@ struct VramDma {
     /// VRAM select without moving bytes until the owed block really services.
     /// CPU VRAM reads during the hold capture the undriven bus (0x00).
     idle_claim: bool,
+    /// The active block launched from an FF55 arm strobe. Its readiness must
+    /// complete inside mode 0 — a launch whose ready pipe crosses the mode-0
+    /// exit reverts and waits for the next entry.
+    block_from_arm: bool,
+    /// The arm-strobe readiness latch awaits its mode-0 confirmation sample:
+    /// the fall after expiry must still be mode 0, else the launch reverts.
+    arm_ready_probation: bool,
     /// Running ticks left of the halt-wake entry blind: a mode-0 entry edge
     /// on the wake fall or just after it passes unserviced (no retry). Unlike
     /// the STOP-armed blind there is no first-tick exemption.
@@ -1433,6 +1440,37 @@ impl Model for Cgb {
         if self.vram_dma.prev_cpu_halted && !cpu_halted {
             self.vram_dma.halt_wake_blind = VramDma::HALT_WAKE_BLIND_TICKS;
         }
+        // An arm-strobe launch must ready with a fall of mode-0 margin: the
+        // readiness latch's confirmation sample on the following fall reads
+        // the mode-0 level, and a launch confirmed outside mode 0 reverts
+        // (FF55 count restored) to wait for the next entry.
+        if self.vram_dma.arm_ready_probation {
+            self.vram_dma.arm_ready_probation = false;
+            if !in_hblank && self.vram_dma.block_from_arm && self.vram_dma.block_remaining == 16 {
+                self.vram_dma.block_remaining = 0;
+                self.vram_dma.block_from_arm = false;
+                if self.vram_dma.granted_ahead > 0 {
+                    self.vram_dma.granted_ahead -= 1;
+                }
+            }
+        }
+        // A block whose readiness the HALT latch lands inside joins the halt:
+        // its bytes defer to the wake as a standing granted claim (FF55
+        // already counted it), where the halt-release handover applies. A
+        // latch after readiness leaves the block to drain in-halt.
+        if cpu_halted
+            && !self.vram_dma.prev_cpu_halted
+            && self.vram_dma.block_remaining == 16
+            && self.vram_dma.ready_in > 0
+        {
+            self.vram_dma.block_remaining = 0;
+            self.vram_dma.ready_in = 0;
+            self.vram_dma.setup_cells = 0;
+            self.vram_dma.pend = true;
+            self.vram_dma.pend_granted = true;
+            self.vram_dma.grant_counted = true;
+            self.vram_dma.pend_age = 0;
+        }
         // The halted view entering this fall — a wake flipping on the commit
         // fall itself still counts as a halted-CPU commit for the grant mode.
         let halted_entering = cpu_halted || self.vram_dma.prev_cpu_halted;
@@ -1514,6 +1552,7 @@ impl Model for Cgb {
             self.vram_dma.block_start_edge = master_edge;
             self.vram_dma.hblank_block_taken = true;
             self.vram_dma.idle_claim = false;
+            self.vram_dma.block_from_arm = self.vram_dma.pend_from_arm;
             // A granted-DRIVEN commit (only reachable through the grant: the
             // thaw lies outside HBlank) pre-charged its setup during the halt;
             // a granted pend that commits inside a live HBlank is an ordinary
@@ -1573,6 +1612,18 @@ impl Model for Cgb {
         self.vram_dma.armed_this_fall = false;
         if self.vram_dma.ready_in > 0 {
             self.vram_dma.ready_in -= 1;
+            // An arm-strobe launch must ready inside mode 0: readiness
+            // completing after the mode-0 exit reverts the block (FF55 count
+            // restored) to wait for the next entry.
+            // Single speed only: the double-speed readiness-vs-exit margin is
+            // unmeasured, and the DS late_enable rows expect the arm serviced.
+            if self.vram_dma.ready_in == 0
+                && self.vram_dma.block_from_arm
+                && self.vram_dma.block_remaining == 16
+                && !self.double_speed
+            {
+                self.vram_dma.arm_ready_probation = true;
+            }
         }
 
         // Refill this M-cycle's byte budget while the transfer is moving bytes:
@@ -1623,6 +1674,7 @@ impl Model for Cgb {
                 }
                 self.vram_dma.thaw_drain = false;
                 self.vram_dma.park_waits_for_fetch = false;
+                self.vram_dma.block_from_arm = false;
             }
         }
         if carried {
