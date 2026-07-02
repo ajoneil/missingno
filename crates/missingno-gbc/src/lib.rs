@@ -693,6 +693,12 @@ struct VramDma {
     /// seizure deferral applies to it alone (ordinary blocks' park placement
     /// encodes IRQ precedence and stays put).
     thaw_drain: bool,
+    /// Running ticks left of the halt-wake entry blind: a mode-0 entry edge
+    /// on the wake fall or just after it passes unserviced (no retry). Unlike
+    /// the STOP-armed blind there is no first-tick exemption.
+    halt_wake_blind: u8,
+    /// `cpu_halted` at the previous running tick — the wake-flip detector.
+    prev_cpu_halted: bool,
     /// The commit already counted this pending block's grant (the in-halt
     /// grant path ran); the commit-time count skips it.
     grant_counted: bool,
@@ -709,6 +715,9 @@ struct VramDma {
 
 impl VramDma {
     const WAKE_PEND_BLIND_TICKS: u8 = 6;
+    /// Halt-wake blind width — bracketed by the m0halt pair (`_2`'s entry on
+    /// the flip fall blinded; `_1`'s at ≈flip+4 must run).
+    const HALT_WAKE_BLIND_TICKS: u8 = 3;
     /// The wake drain's bus tenure in running ticks (per-fall): 72 master
     /// edges — the A-pair variants' entries at thaw+66/+74 bracket it.
     const WAKE_TENURE_TICKS: u8 = 36;
@@ -1430,6 +1439,20 @@ impl Model for Cgb {
                 0
             };
             return VramDmaClaim::default();
+        }
+
+        // A halt wake blinds entry edges on the wake fall and just after it
+        // (the halt analogue of the STOP re-engage window, without the
+        // first-tick exemption — the wake fall's own entry is blinded too).
+        if self.vram_dma.prev_cpu_halted && !cpu_halted {
+            self.vram_dma.halt_wake_blind = VramDma::HALT_WAKE_BLIND_TICKS;
+        }
+        self.vram_dma.prev_cpu_halted = cpu_halted;
+        if self.vram_dma.halt_wake_blind > 0 {
+            self.vram_dma.halt_wake_blind -= 1;
+            if entry_edge {
+                self.vram_dma.hblank_block_taken = true;
+            }
         }
 
         // The post-switch re-engage window: a fresh mode-0 entry edge inside
