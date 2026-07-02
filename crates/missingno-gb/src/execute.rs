@@ -427,7 +427,7 @@ impl<M: Model> Console<M> {
                 if !self.cpu.dispatch_entry_sampled {
                     self.cpu.dispatch_entry_sampled = true;
                     self.cpu.dispatch_parks_behind_dma =
-                        self.cpu.dma_request_stood_prev_boundary;
+                        self.cpu.dma_request_stood_prev2_boundary;
                 }
             } else {
                 self.cpu.dispatch_entry_sampled = false;
@@ -446,6 +446,7 @@ impl<M: Model> Console<M> {
                     } else {
                         !self.model.vram_dma_park_waits_for_fetch() || arbiter_at_boundary
                     });
+            self.cpu.dma_request_stood_prev2_boundary = self.cpu.dma_request_stood_prev_boundary;
             self.cpu.dma_request_stood_prev_boundary = self.model.vram_dma_request_standing();
             let tcycle = self.rise_cpu_advance(dot_work);
             self.stage_mcycle_bus_activity();

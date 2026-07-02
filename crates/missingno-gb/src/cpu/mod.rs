@@ -204,11 +204,15 @@ pub struct Cpu {
     pub(crate) dispatch_parks_behind_dma: bool,
     /// The pick arbitration above has been taken for the dispatch in flight.
     pub(crate) dispatch_entry_sampled: bool,
-    /// The VRAM-DMA request line as of the previous M-boundary — the
-    /// synchronizer stage the dispatch pick arbitrates against (the pick
-    /// itself flips the phase after the grant point, so entry detection runs
-    /// one boundary later and reads this memory).
+    /// The VRAM-DMA request line captured at each M-boundary — first stage
+    /// of the two-boundary synchronizer the dispatch pick arbitrates against.
     pub(crate) dma_request_stood_prev_boundary: bool,
+    /// Second synchronizer stage: the request line as of the boundary before
+    /// the dispatch M1 pick. A commit landing within the pick's own M-cycle
+    /// hasn't crossed (the dispatch wins); one standing a full boundary
+    /// earlier has (the block wins). Entry detection runs one boundary after
+    /// the pick, so it reads this stage.
+    pub(crate) dma_request_stood_prev2_boundary: bool,
     /// The M-cycle picked at the next boundary starts a fresh instruction —
     /// the retirement point a running-CPU block grant engages at. Handed over
     /// by `take_instruction_boundary` (the step driver's consume), read and
@@ -399,6 +403,7 @@ impl Cpu {
             dispatch_parks_behind_dma: false,
             dispatch_entry_sampled: false,
             dma_request_stood_prev_boundary: false,
+            dma_request_stood_prev2_boundary: false,
             dma_arbiter_at_boundary: false,
             parked_action: None,
             vram_dma_claim: crate::VramDmaClaim::default(),
