@@ -1216,6 +1216,16 @@ impl Model for Cgb {
             // owed but unserviced) holds the VRAM select without driving
             // data: an unlocked CPU VRAM read captures the undriven bus.
             0x8000..=0x9FFF if latch_lock != Some(true) && self.vram_dma.idle_claim => 0x00,
+            // A seized block tenure owns the VRAM select against the PPU: a
+            // CPU VRAM read during a wake drain (the only tenure outside
+            // mode 0) sees the actual byte, not the mode-3 float.
+            0x8000..=0x9FFF
+                if latch_lock == Some(true)
+                    && self.vram_dma.block_remaining > 0
+                    && self.vram_dma.remaining > 0 =>
+            {
+                value
+            }
             _ if latch_lock == Some(true) => 0xFF,
             _ => value,
         }
