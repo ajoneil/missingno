@@ -689,6 +689,10 @@ struct VramDma {
     /// Running ticks left of the wake drain's bus tenure — an HBlank entry
     /// inside it passes unserviced.
     wake_tenure: u8,
+    /// A dispatch-wake thaw commit's drain is in flight: the halt-exit
+    /// seizure deferral applies to it alone (ordinary blocks' park placement
+    /// encodes IRQ precedence and stays put).
+    thaw_drain: bool,
     /// The commit already counted this pending block's grant (the in-halt
     /// grant path ran); the commit-time count skips it.
     grant_counted: bool,
@@ -1451,7 +1455,9 @@ impl Model for Cgb {
             // ended in the one-fall pend->commit gap; an in-halt-granted pend
             // commits at the thaw whatever the live mode.
             && (in_hblank || self.vram_dma.pend_from_arm || self.vram_dma.pend_granted)
-            && (!cpu_halted || self.vram_dma.pend_age <= 2);
+            // A granted pend commits at the engine thaw even while the CPU is
+            // still halted (an interrupt-dispatch wake) — the grant is the halt's.
+            && (!cpu_halted || self.vram_dma.pend_age <= 2 || self.vram_dma.pend_granted);
         if committing {
             self.vram_dma.block_remaining = 16;
             self.vram_dma.block_start_edge = master_edge;
@@ -1461,8 +1467,13 @@ impl Model for Cgb {
             // a granted pend that commits inside a live HBlank is an ordinary
             // commit and charges setup normally.
             let granted = self.vram_dma.pend_granted && !in_hblank;
-            self.vram_dma.ready_in = if granted { 0 } else { 2 };
-            self.vram_dma.setup_cells = if self.vram_dma.pend_from_arm || granted {
+            // A dispatch wake (the CPU still halted at the thaw) spends the
+            // halt-exit window dispatching, so its setup runs after instead of
+            // arriving pre-charged.
+            let precharged = granted && !cpu_halted;
+            self.vram_dma.thaw_drain = granted && cpu_halted;
+            self.vram_dma.ready_in = if precharged { 0 } else { 2 };
+            self.vram_dma.setup_cells = if self.vram_dma.pend_from_arm || precharged {
                 0
             } else {
                 1
@@ -1547,8 +1558,11 @@ impl Model for Cgb {
             self.vram_dma.block_remaining -= 1;
             // A block granted ahead in-halt rejoins the FF55 count as its bytes
             // finally drain on the post-resume path.
-            if self.vram_dma.block_remaining == 0 && self.vram_dma.granted_ahead > 0 {
-                self.vram_dma.granted_ahead -= 1;
+            if self.vram_dma.block_remaining == 0 {
+                if self.vram_dma.granted_ahead > 0 {
+                    self.vram_dma.granted_ahead -= 1;
+                }
+                self.vram_dma.thaw_drain = false;
             }
         }
         if carried {
@@ -1564,6 +1578,10 @@ impl Model for Cgb {
 
     fn vram_dma_escape_pending(&self) -> bool {
         self.vram_dma.escape_byte && self.vram_dma_will_move()
+    }
+
+    fn vram_dma_thaw_drain(&self) -> bool {
+        self.vram_dma.thaw_drain
     }
 
     fn vram_dma_holds_cpu(&self) -> bool {

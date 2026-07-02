@@ -417,8 +417,14 @@ impl<M: Model> Console<M> {
             // flight when the transfer became ready holds the bus through its
             // M-cycles (the grant defers); a dispatch starting with the transfer
             // ready parks behind the block. Granted ownership is never revoked.
+            // The grant defers for a dispatch in flight AND — for a
+            // dispatch-wake thaw drain only — for the halted CPU whose wake
+            // dispatch is imminent; ordinary blocks' park placement encodes
+            // IRQ precedence and asserts as before.
             self.cpu.bus_suspended = self.model.vram_dma_seizes_bus()
-                && (self.cpu.bus_suspended || !self.cpu.in_dispatch());
+                && (self.cpu.bus_suspended
+                    || !(self.cpu.in_dispatch()
+                        || (self.cpu.is_halted() && self.model.vram_dma_thaw_drain())));
             let tcycle = self.rise_cpu_advance(dot_work);
             self.stage_mcycle_bus_activity();
             tcycle

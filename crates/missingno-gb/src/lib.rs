@@ -494,6 +494,12 @@ pub trait Model: Default {
         false
     }
 
+    /// A dispatch-wake thaw commit's drain is in flight — the halt-exit
+    /// seizure deferral applies to it alone. DMG: never.
+    fn vram_dma_thaw_drain(&self) -> bool {
+        false
+    }
+
     /// The next byte the VRAM DMA moves this M-cycle — `(source, destination)`
     /// resolved addresses — advancing its cursor. `None` once this M-cycle's
     /// quota is spent. DMG: never.
