@@ -146,6 +146,13 @@ impl Prescaler {
     }
 }
 
+/// `chN_restart`↑ (the synced re-trigger reload) fires on the next `chN_1mhz`↑
+/// after the `apu_wr` strobe, which lags the NR14 write-commit (`ff14`/T3-fall)
+/// by ~0.75 `chN_1mhz` cycle — landing the strobe in the M-cycle AFTER the
+/// write. So the synced reload is one `calo_rose` later than the first after the
+/// modelled write. A re-trigger arms this countdown; the reload fires at 0.
+pub const RETRIGGER_APUWR_LAG: u8 = 2;
+
 /// CH1/CH2 period divider: 11-bit upcounter (GAXE..COPU on CH1,
 /// DONE..HERO on CH2). Counts from the loaded `period` value up to
 /// 0x7FF; the next 1 MHz tick after 0x7FF overflows and reloads from

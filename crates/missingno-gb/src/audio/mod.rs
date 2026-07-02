@@ -434,6 +434,7 @@ impl Audio {
                 wave_duty_position: 0,
                 pwm_latch: false,
                 pending_trigger_sync: 0,
+                retrigger_sync: 0,
                 divider_load_settle: false,
                 sweep_load_hold: 0,
                 current_volume: 0,
