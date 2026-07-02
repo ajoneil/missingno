@@ -488,6 +488,12 @@ pub trait Model: Default {
         false
     }
 
+    /// The byte the VRAM DMA is about to move is a switch-cancel escape byte.
+    /// Its bus tenure stalls a concurrent OAM-DMA byte at double speed. DMG: no.
+    fn vram_dma_escape_pending(&self) -> bool {
+        false
+    }
+
     /// The next byte the VRAM DMA moves this M-cycle — `(source, destination)`
     /// resolved addresses — advancing its cursor. `None` once this M-cycle's
     /// quota is spent. DMG: never.

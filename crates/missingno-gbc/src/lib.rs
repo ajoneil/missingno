@@ -683,6 +683,13 @@ struct VramDma {
     /// destination sees the written byte only once the seize has settled one
     /// fall (the double-speed half-dot from bus seizure to byte-readable).
     seize_falls: u8,
+    /// The commit already counted this pending block's grant (the in-halt
+    /// grant path ran); the commit-time count skips it.
+    grant_counted: bool,
+    /// Post-switch re-engage window (running vram_dma ticks): a fresh mode-0
+    /// entry edge inside it does not pend — the HBlank passes unserviced. The
+    /// first tick is exempt (a blackout-carried mode-0 level, not an entry).
+    wake_pend_blind: u8,
     /// HBlank blocks granted in-halt but not yet drained. A halted CPU does not
     /// contend the bus, so an in-halt mode-0 grants a block (status complete)
     /// while its bus-seizure transfer stays on the post-resume path; this offsets
@@ -691,6 +698,8 @@ struct VramDma {
 }
 
 impl VramDma {
+    const WAKE_PEND_BLIND_TICKS: u8 = 6;
+
     /// Whether a byte may move this M-cycle: a GDMA runs while bytes remain; a
     /// latched HBlank block runs to completion regardless of the live `mode`
     /// (the block sequencer, once started, does not consult the arming flag).
@@ -1015,6 +1024,10 @@ impl Model for Cgb {
                 // grant latches the stop condition — the in-flight byte
                 // completes outside the latched length.
                 if self.vram_dma.block_remaining > 0 {
+                    // Either grading leg revokes the committed block's FF55
+                    // count (the dropped grant re-arms the status).
+                    self.vram_dma.granted_ahead = self.vram_dma.granted_ahead.saturating_sub(1);
+                    self.vram_dma.grant_counted = false;
                     if self.vram_dma.ready_in == 0 {
                         self.vram_dma.mode = TransferMode::Idle;
                         self.vram_dma.block_remaining = 1;
@@ -1030,6 +1043,9 @@ impl Model for Cgb {
             self.double_speed = !self.double_speed;
             self.key1_armed = false;
             self.speed_switch_blackout = self.speed_switch_blackout_master_edges();
+            if self.double_speed {
+                self.vram_dma.wake_pend_blind = VramDma::WAKE_PEND_BLIND_TICKS;
+            }
             // A 1×→2× relock entered at dot-in-M phase p3 lands the mux
             // displaced (cost-free); a displaced 2×→1× completes a dot early
             // and stays displaced; the following 1×→2× spends the dot back
@@ -1266,6 +1282,7 @@ impl Model for Cgb {
             0xFF55 => {
                 let length = ((value & 0x7F) as u16 + 1) * 16;
                 self.vram_dma.granted_ahead = 0;
+                self.vram_dma.grant_counted = false;
                 if value & 0x80 != 0 {
                     // Arm HDMA: one 16-byte block per HBlank. A block already
                     // latched by the trigger is immune and keeps flowing; an
@@ -1390,6 +1407,7 @@ impl Model for Cgb {
                 && self.vram_dma.remaining / 16 > self.vram_dma.granted_ahead as u16
             {
                 self.vram_dma.granted_ahead += 1;
+                self.vram_dma.grant_counted = true;
             }
             self.vram_dma.quota = if self.vram_dma.moving() {
                 if self.double_speed { 1 } else { 2 }
@@ -1397,6 +1415,18 @@ impl Model for Cgb {
                 0
             };
             return VramDmaClaim::default();
+        }
+
+        // The post-switch re-engage window: a fresh mode-0 entry edge inside
+        // it passes unserviced (no pend, no retry). The first running tick
+        // after the blackout carries the frozen pre-switch view — a mode-0
+        // level there is blackout-carried, not an entry, and stays eligible.
+        if self.vram_dma.wake_pend_blind > 0 {
+            let first_tick = self.vram_dma.wake_pend_blind == VramDma::WAKE_PEND_BLIND_TICKS;
+            self.vram_dma.wake_pend_blind -= 1;
+            if entry_edge && !first_tick {
+                self.vram_dma.hblank_block_taken = true;
+            }
         }
 
         // Two-stage trigger, evaluated each fall on the post-rise mode view
@@ -1416,6 +1446,11 @@ impl Model for Cgb {
             self.vram_dma.hblank_block_taken = true;
             self.vram_dma.ready_in = 2;
             self.vram_dma.setup_cells = if self.vram_dma.pend_from_arm { 0 } else { 1 };
+            // FF55 counts the block out at commit, not at drain end.
+            if !self.vram_dma.grant_counted {
+                self.vram_dma.granted_ahead += 1;
+            }
+            self.vram_dma.grant_counted = false;
         }
         self.vram_dma.pend = !committing
             && armed
@@ -1486,6 +1521,10 @@ impl Model for Cgb {
             self.vram_dma.mode = TransferMode::Idle;
         }
         Some(pair)
+    }
+
+    fn vram_dma_escape_pending(&self) -> bool {
+        self.vram_dma.escape_byte && self.vram_dma_will_move()
     }
 
     fn vram_dma_holds_cpu(&self) -> bool {

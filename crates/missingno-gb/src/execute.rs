@@ -1121,8 +1121,12 @@ impl<M: Model> Console<M> {
             && (oam_transferring || oam_just_completed)
             && hdma_active
             && self.model.vram_dma_will_move();
+        // Double speed: a switch-cancel escape byte's bus tenure stalls the
+        // concurrent OAM-DMA byte one M-cycle (the engine resumes it next M).
+        let escape_stall =
+            double_speed && oam_transferring && hdma_active && self.model.vram_dma_escape_pending();
 
-        if !contended {
+        if !contended && !escape_stall {
             if let Some((src_addr, dst_offset)) = oam {
                 self.dma_move(src_addr, 0xfe00 + dst_offset as u16);
             }
