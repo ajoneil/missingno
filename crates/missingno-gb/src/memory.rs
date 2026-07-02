@@ -395,6 +395,7 @@ impl<M: Model> Console<M> {
             // high (0xFF).
             _ if self.ppu.read_locked(address) => 0xFF,
 
+
             // LY: the byte fluxes via NOT_IF0 drivers fed by the
             // RUTU-clocked ripple counter. A latch coincident with the
             // counter edge catches the ripple mid-settle: falling bits

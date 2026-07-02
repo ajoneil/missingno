@@ -697,6 +697,10 @@ struct VramDma {
     /// in-flight instruction to retire. A halted-CPU commit (including the
     /// same-fall wake flip) grants at the next M-boundary.
     park_waits_for_fetch: bool,
+    /// A wake-tenure-consumed entry's standing claim: the engine holds the
+    /// VRAM select without moving bytes until the owed block really services.
+    /// CPU VRAM reads during the hold capture the undriven bus (0x00).
+    idle_claim: bool,
     /// Running ticks left of the halt-wake entry blind: a mode-0 entry edge
     /// on the wake fall or just after it passes unserviced (no retry). Unlike
     /// the STOP-armed blind there is no first-tick exemption.
@@ -1208,6 +1212,10 @@ impl Model for Cgb {
                     value
                 }
             }
+            // An HDMA idle claim (a wake-tenure-consumed entry whose block is
+            // owed but unserviced) holds the VRAM select without driving
+            // data: an unlocked CPU VRAM read captures the undriven bus.
+            0x8000..=0x9FFF if latch_lock != Some(true) && self.vram_dma.idle_claim => 0x00,
             _ if latch_lock == Some(true) => 0xFF,
             _ => value,
         }
@@ -1495,6 +1503,7 @@ impl Model for Cgb {
             self.vram_dma.block_remaining = 16;
             self.vram_dma.block_start_edge = master_edge;
             self.vram_dma.hblank_block_taken = true;
+            self.vram_dma.idle_claim = false;
             // A granted-DRIVEN commit (only reachable through the grant: the
             // thaw lies outside HBlank) pre-charged its setup during the halt;
             // a granted pend that commits inside a live HBlank is an ordinary
@@ -1529,11 +1538,16 @@ impl Model for Cgb {
             self.vram_dma.pend_granted = false;
         }
         // The wake drain's bus tenure consumes an HBlank entry landing inside
-        // it — the entry neither pends nor retries.
+        // it — the entry neither pends nor retries, but its claim stands: the
+        // engine holds the VRAM select, undriven, until the owed block is
+        // really serviced.
         if self.vram_dma.wake_tenure > 0 {
             self.vram_dma.wake_tenure -= 1;
             if entry_edge {
                 self.vram_dma.hblank_block_taken = true;
+                if self.vram_dma.remaining > 0 {
+                    self.vram_dma.idle_claim = true;
+                }
             }
         }
         self.vram_dma.pend = !committing
@@ -1608,6 +1622,7 @@ impl Model for Cgb {
         }
         if self.vram_dma.remaining == 0 {
             self.vram_dma.mode = TransferMode::Idle;
+            self.vram_dma.idle_claim = false;
         }
         Some(pair)
     }
@@ -1643,6 +1658,7 @@ impl Model for Cgb {
     fn vram_dma_lcd_disabled(&mut self) {
         // VID_RST re-anchors the dot unit: the mux displacement is void.
         self.switch_relock_debit = false;
+        self.vram_dma.idle_claim = false;
         if self.vram_dma.mode == TransferMode::HBlank
             && self.vram_dma.remaining > 0
             && !self.vram_dma.hblank_block_taken
