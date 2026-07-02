@@ -1,8 +1,8 @@
 use super::{
     Enabled,
     registers::{
-        EnvelopeDirection, PeriodDivider, PeriodHighAndControl, Prescaler, RETRIGGER_APUWR_LAG,
-        Signed11, VolumeAndEnvelope, WaveformAndInitialLength,
+        EnvelopeDirection, PeriodDivider, PeriodHighAndControl, Prescaler, Signed11,
+        VolumeAndEnvelope, WaveformAndInitialLength,
     },
 };
 
@@ -38,12 +38,9 @@ pub struct PulseSweepChannel {
     /// natural-overflow `ch1_frst ↑`; holds the emitted output
     /// between overflows.
     pub pwm_latch: bool,
-    /// Enabling-trigger (`ch1_fdis` 1→0) sync stage; non-zero between the NR14
-    /// trigger write and the next ch1_1mhz↑ that applies the reload.
+    /// `ch1_restart` sync stage; non-zero between NR14 trigger write
+    /// and the next ch1_1mhz↑ that applies the reload.
     pub pending_trigger_sync: u8,
-    /// Re-trigger `ch1_restart` countdown; reloads when it reaches 0 — one
-    /// ch1_1mhz↑ later than the first after the write (the `apu_wr` strobe lag).
-    pub retrigger_sync: u8,
     /// Set on the reload edge; the first count is suppressed so the
     /// divider DFFs settle out of load mode before counting resumes.
     pub divider_load_settle: bool,
@@ -113,7 +110,6 @@ impl Default for PulseSweepChannel {
             wave_duty_position: 2,
             pwm_latch: false,
             pending_trigger_sync: 0,
-            retrigger_sync: 0,
             divider_load_settle: false,
             sweep_load_hold: 0,
             current_volume: 0,
@@ -150,7 +146,6 @@ impl PulseSweepChannel {
             wave_duty_position: 0,
             pwm_latch: false,
             pending_trigger_sync: 0,
-            retrigger_sync: 0,
             divider_load_settle: false,
             sweep_load_hold: 0,
             current_volume: 0,
@@ -274,16 +269,11 @@ impl PulseSweepChannel {
         if self.length_counter == 0 {
             self.length_counter = 64;
         }
-        // ch1_restart applies the reload at ch1_restart↑ = the next ch1_1mhz↑
-        // after the apu_wr strobe (which lags this write-commit ~0.75 cyc into
-        // the next M-cycle), one calo_rose later than the first after the write.
-        // A re-trigger counts that lag; the enabling trigger (fdis 1→0) reloads
-        // at the next ch1_1mhz↑ with the +1 settle.
-        if was_running {
-            self.retrigger_sync = RETRIGGER_APUWR_LAG;
-        } else {
-            self.pending_trigger_sync = 2;
-        }
+        // Arm the ch1_restart sync: the reload applies at the next
+        // ch1_1mhz↑, not on this write edge. A coincident natural
+        // overflow on that wrap is suppressed (dyru async-resets
+        // comy before cala can clock).
+        self.pending_trigger_sync = if was_running { 1 } else { 2 };
         self.current_volume = self.volume_and_envelope.initial_volume();
         self.envelope_timer = self.volume_and_envelope.sweep_pace();
         self.envelope_stopped = false;
@@ -340,30 +330,18 @@ impl PulseSweepChannel {
         if !calo_rose || !self.enabled.enabled {
             return;
         }
-        // ch1_restart↑ rises one ch1_1mhz↑ later for a re-trigger (the apu_wr
-        // strobe lag); the divider free-runs the gap until then. At the
-        // restart edge dyru's async reset of comy wins the race against a
-        // coincident would-be overflow — that pulse never forms. A ch1_frst
-        // already high from the prior edge falls naturally (the restart forces
-        // the same fall the self-clear would), so its duty advance stands.
-        let ch1_restart = if self.retrigger_sync > 0 {
-            self.retrigger_sync -= 1;
-            self.retrigger_sync == 0
-        } else {
-            false
-        };
         // ch1_restart latches the adder's ~shift step counter at this synced
-        // ch1_1mhz↑ — the trigger's calc starts here, not on the NRx4 write. For
-        // a re-trigger that is the lagged ch1_restart↑, not the write's first ↑.
-        if self.sweep_calc_restart && self.retrigger_sync == 0 {
+        // ch1_1mhz↑ — the trigger's calc starts here, not on the NRx4 write.
+        // ch1_ld_sum holds high one extra M-cycle while the counter loads
+        // (the +1 the fire's continuing ld_sum cycle doesn't pay).
+        if self.sweep_calc_restart {
             let shift = self.sweep.step();
             self.sweep_calc_steps = if shift != 0 { shift + 1 } else { 0 };
             self.sweep_calc_restart = false;
         }
         // ch1_frst↓ (one ch1_1mhz↑ after an overflow): the duty counter
         // (dajo) clocks on the fall, so the advance trails duwo's capture by
-        // one cycle — including at a restart edge (the already-active window
-        // falls naturally; only the never-formed coincident pulse is absent).
+        // one cycle.
         if self.ch1_frst {
             self.wave_duty_position = (self.wave_duty_position + 1) % 8;
             self.ch1_frst = false;
@@ -372,12 +350,9 @@ impl PulseSweepChannel {
         // Prescaler wrapped (ch1_1mhz↑). Trigger reload and natural
         // overflow are mutually exclusive on the same edge — trigger
         // wins via dyru's async-reset of comy.
-        if ch1_restart {
-            // Re-trigger reload at the lagged ch1_restart↑ (no +1 settle). A
-            // coincident natural overflow is suppressed — trigger wins.
-            self.divider.counter = (self.period.0) & 0x7FF;
-        } else if self.pending_trigger_sync != 0 {
-            // Enabling trigger (2) freezes the load tick → +1 first overflow.
+        if self.pending_trigger_sync != 0 {
+            // Enabling trigger (2) freezes the load tick → +1 first overflow;
+            // re-trigger (1) reloads with no +1.
             self.divider_load_settle = self.pending_trigger_sync == 2;
             // CGB holds the sweep counter one ch1_1mhz↑ longer than the
             // divider settle, so a cate_128hz↓ just past the reload is dropped.
