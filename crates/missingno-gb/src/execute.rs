@@ -1159,6 +1159,9 @@ impl<M: Model> Console<M> {
         // concurrent OAM-DMA byte one M-cycle (the engine resumes it next M).
         let escape_stall =
             double_speed && oam_transferring && hdma_active && self.model.vram_dma_escape_pending();
+        if escape_stall {
+            self.dma.stall_advance();
+        }
 
         if !contended && !escape_stall {
             if let Some((src_addr, dst_offset)) = oam {

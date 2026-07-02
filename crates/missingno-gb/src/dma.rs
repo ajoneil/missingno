@@ -55,6 +55,10 @@ pub struct Dma {
 
     /// Previous `data_phase` for `dma_phi`/`dma_phi_n` edge detection.
     prev_data_phase: bool,
+
+    /// A switch-cancel escape byte's bus tenure gates one counter advance:
+    /// the stalled slot re-drives on the next M-cycle instead of skipping.
+    advance_stalled: bool,
 }
 
 impl Dma {
@@ -72,6 +76,7 @@ impl Dma {
             dma_a: 0,
             start_edge: 0,
             prev_data_phase: false,
+            advance_stalled: false,
         }
     }
 
@@ -130,6 +135,12 @@ impl Dma {
         self.start_edge
     }
 
+    /// An escape byte's bus tenure stalls this slot: gate the counter's next
+    /// advance so the slot re-drives instead of skipping.
+    pub fn stall_advance(&mut self) {
+        self.advance_stalled = true;
+    }
+
     /// Advance the control gates one master-clock edge. `data_phase` is
     /// the CPU data-phase net; `dma_phi = !data_phase` clocks the
     /// run/counter DFFs (MATU/LUVY/counter) on its rising edge,
@@ -150,11 +161,17 @@ impl Dma {
         }
 
         if dma_phi_rising {
-            // META = AND2(dma_phi, loky): reset dominates, else advance.
+            // META = AND2(dma_phi, loky): reset dominates, else advance —
+            // unless an escape byte's bus tenure gated this advance (the
+            // stalled slot re-drives next M-cycle).
             if self.counter_held_reset() {
                 self.dma_a = 0;
             } else if self.loky {
-                self.dma_a = self.dma_a.wrapping_add(1);
+                if self.advance_stalled {
+                    self.advance_stalled = false;
+                } else {
+                    self.dma_a = self.dma_a.wrapping_add(1);
+                }
             }
             self.luvy = self.lyxe;
             // `dma_run` engaging marks the byte clock's phase origin.
