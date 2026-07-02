@@ -36,10 +36,13 @@ impl Cpu {
         self.last_tcycle.as_u8() == 3
     }
 
-    /// Check and consume the instruction boundary flag.
+    /// Check and consume the instruction boundary flag. Consuming hands the
+    /// event to the DMA bus arbiter: the next M-boundary pick starts a fresh
+    /// instruction, the point a retirement-deferred block grant engages at.
     pub fn take_instruction_boundary(&mut self) -> bool {
         if self.boundary_flag {
             self.boundary_flag = false;
+            self.dma_arbiter_at_boundary = true;
             true
         } else {
             false

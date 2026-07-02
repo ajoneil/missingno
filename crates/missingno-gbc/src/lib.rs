@@ -693,6 +693,10 @@ struct VramDma {
     /// seizure deferral applies to it alone (ordinary blocks' park placement
     /// encodes IRQ precedence and stays put).
     thaw_drain: bool,
+    /// This block committed onto a running CPU: its bus grant waits for the
+    /// in-flight instruction to retire. A halted-CPU commit (including the
+    /// same-fall wake flip) grants at the next M-boundary.
+    park_waits_for_fetch: bool,
     /// Running ticks left of the halt-wake entry blind: a mode-0 entry edge
     /// on the wake fall or just after it passes unserviced (no retry). Unlike
     /// the STOP-armed blind there is no first-tick exemption.
@@ -1411,6 +1415,9 @@ impl Model for Cgb {
         if self.vram_dma.prev_cpu_halted && !cpu_halted {
             self.vram_dma.halt_wake_blind = VramDma::HALT_WAKE_BLIND_TICKS;
         }
+        // The halted view entering this fall — a wake flipping on the commit
+        // fall itself still counts as a halted-CPU commit for the grant mode.
+        let halted_entering = cpu_halted || self.vram_dma.prev_cpu_halted;
         self.vram_dma.prev_cpu_halted = cpu_halted;
         // The engine gate freezes commit/grant; the mode-0 entry detector
         // keeps running — an entry registers a pend-request (consulting the
@@ -1498,6 +1505,8 @@ impl Model for Cgb {
             // arriving pre-charged.
             let precharged = granted && !cpu_halted;
             self.vram_dma.thaw_drain = granted && cpu_halted;
+            self.vram_dma.park_waits_for_fetch =
+                !(self.vram_dma.pend_from_arm || halted_entering);
             self.vram_dma.ready_in = if precharged { 0 } else { 2 };
             self.vram_dma.setup_cells = if self.vram_dma.pend_from_arm || precharged {
                 0
@@ -1589,6 +1598,7 @@ impl Model for Cgb {
                     self.vram_dma.granted_ahead -= 1;
                 }
                 self.vram_dma.thaw_drain = false;
+                self.vram_dma.park_waits_for_fetch = false;
             }
         }
         if carried {
@@ -1608,6 +1618,14 @@ impl Model for Cgb {
 
     fn vram_dma_thaw_drain(&self) -> bool {
         self.vram_dma.thaw_drain
+    }
+
+    fn vram_dma_park_waits_for_fetch(&self) -> bool {
+        self.vram_dma.park_waits_for_fetch
+    }
+
+    fn vram_dma_request_standing(&self) -> bool {
+        self.vram_dma.pend || (self.vram_dma.block_remaining > 0 && self.vram_dma.remaining > 0)
     }
 
     fn vram_dma_holds_cpu(&self) -> bool {

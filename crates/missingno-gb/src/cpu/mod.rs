@@ -197,6 +197,23 @@ pub struct Cpu {
     /// passive spin M-cycles, deferring instruction progress without touching
     /// its state. The ring keeps counting (timers/serial are free-running).
     pub(crate) bus_suspended: bool,
+    /// One-shot arbitration at the dispatch's M1 pick: a VRAM-DMA request
+    /// standing at the pick makes this dispatch yield its entire tenure to
+    /// the block (and any chained block); otherwise the dispatch holds the
+    /// bus through its M-cycles against all later seizures.
+    pub(crate) dispatch_parks_behind_dma: bool,
+    /// The pick arbitration above has been taken for the dispatch in flight.
+    pub(crate) dispatch_entry_sampled: bool,
+    /// The VRAM-DMA request line as of the previous M-boundary — the
+    /// synchronizer stage the dispatch pick arbitrates against (the pick
+    /// itself flips the phase after the grant point, so entry detection runs
+    /// one boundary later and reads this memory).
+    pub(crate) dma_request_stood_prev_boundary: bool,
+    /// The M-cycle picked at the next boundary starts a fresh instruction —
+    /// the retirement point a running-CPU block grant engages at. Handed over
+    /// by `take_instruction_boundary` (the step driver's consume), read and
+    /// cleared by the arbiter each M-boundary.
+    pub(crate) dma_arbiter_at_boundary: bool,
     /// Bus access selected while a DMA owns its bus: it waits at the pick —
     /// no edge has run — and starts as the next M-cycle when the bus releases.
     pub(crate) parked_action: Option<super::cpu::mcycle::MCycleAction>,
@@ -379,6 +396,10 @@ impl Cpu {
             tcycle: TCycle::ZERO,
             mcycle_active: false,
             bus_suspended: false,
+            dispatch_parks_behind_dma: false,
+            dispatch_entry_sampled: false,
+            dma_request_stood_prev_boundary: false,
+            dma_arbiter_at_boundary: false,
             parked_action: None,
             vram_dma_claim: crate::VramDmaClaim::default(),
             stop_retained: None,

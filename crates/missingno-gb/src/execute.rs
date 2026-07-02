@@ -417,14 +417,36 @@ impl<M: Model> Console<M> {
             // flight when the transfer became ready holds the bus through its
             // M-cycles (the grant defers); a dispatch starting with the transfer
             // ready parks behind the block. Granted ownership is never revoked.
-            // The grant defers for a dispatch in flight AND — for a
-            // dispatch-wake thaw drain only — for the halted CPU whose wake
-            // dispatch is imminent; ordinary blocks' park placement encodes
-            // IRQ precedence and asserts as before.
+            // One-shot arbitration at the dispatch's M1 pick: a request
+            // standing at the pick makes the dispatch yield its entire tenure
+            // (chained blocks included); otherwise it holds the bus through
+            // its M-cycles. The pick flips the phase after this point, so
+            // entry is detected one boundary later against the request line's
+            // one-boundary synchronizer stage.
+            if self.cpu.in_dispatch() {
+                if !self.cpu.dispatch_entry_sampled {
+                    self.cpu.dispatch_entry_sampled = true;
+                    self.cpu.dispatch_parks_behind_dma =
+                        self.cpu.dma_request_stood_prev_boundary;
+                }
+            } else {
+                self.cpu.dispatch_entry_sampled = false;
+                self.cpu.dispatch_parks_behind_dma = false;
+            }
+            // Grant mode by the CPU's state at the commit: a halted-CPU
+            // commit grants at the next M-boundary (the claim-standing
+            // synchronizer still governs the halt-exit refetch); a running-CPU
+            // commit waits for the in-flight instruction to retire.
+            let arbiter_at_boundary = self.cpu.dma_arbiter_at_boundary;
+            self.cpu.dma_arbiter_at_boundary = false;
             self.cpu.bus_suspended = self.model.vram_dma_seizes_bus()
                 && (self.cpu.bus_suspended
-                    || !(self.cpu.in_dispatch()
-                        || (self.cpu.is_halted() && self.model.vram_dma_thaw_drain())));
+                    || if self.cpu.in_dispatch() {
+                        self.cpu.dispatch_parks_behind_dma
+                    } else {
+                        !self.model.vram_dma_park_waits_for_fetch() || arbiter_at_boundary
+                    });
+            self.cpu.dma_request_stood_prev_boundary = self.model.vram_dma_request_standing();
             let tcycle = self.rise_cpu_advance(dot_work);
             self.stage_mcycle_bus_activity();
             tcycle
