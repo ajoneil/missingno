@@ -1402,6 +1402,16 @@ impl Model for Cgb {
         if !in_hblank && (!cpu_halted || self.vram_dma.halted_falls <= taken_clear_window) {
             self.vram_dma.hblank_block_taken = false;
         }
+        // A halt wake blinds entry edges on the wake fall and just after it
+        // (the halt analogue of the STOP re-engage window, without the
+        // first-tick exemption — the wake fall's own entry is blinded too).
+        // The halt line is sampled every tick, gated or not — a gated halt
+        // (no latched IRQ) still arms the blind at its wake; the countdown
+        // runs on engine ticks only.
+        if self.vram_dma.prev_cpu_halted && !cpu_halted {
+            self.vram_dma.halt_wake_blind = VramDma::HALT_WAKE_BLIND_TICKS;
+        }
+        self.vram_dma.prev_cpu_halted = cpu_halted;
         // The engine gate freezes commit/grant; the mode-0 entry detector
         // keeps running — an entry registers a pend-request (consulting the
         // taken flag) that persists through the freeze and commits at the
@@ -1441,13 +1451,6 @@ impl Model for Cgb {
             return VramDmaClaim::default();
         }
 
-        // A halt wake blinds entry edges on the wake fall and just after it
-        // (the halt analogue of the STOP re-engage window, without the
-        // first-tick exemption — the wake fall's own entry is blinded too).
-        if self.vram_dma.prev_cpu_halted && !cpu_halted {
-            self.vram_dma.halt_wake_blind = VramDma::HALT_WAKE_BLIND_TICKS;
-        }
-        self.vram_dma.prev_cpu_halted = cpu_halted;
         if self.vram_dma.halt_wake_blind > 0 {
             self.vram_dma.halt_wake_blind -= 1;
             if entry_edge {
