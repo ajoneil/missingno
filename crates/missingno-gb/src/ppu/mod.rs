@@ -133,6 +133,10 @@ pub struct Ppu<P: PpuModel> {
     prev_mode2: bool,
     mode3_settle: u8,
     prev_mode3: bool,
+    /// The STAT mode bits just before the mode-3 onset — XYMU's rise drives
+    /// both OR-tree bits through the contended driver, so an onset-window read
+    /// sees this snapshot (mode 2 on a scanned line, mode 0 on the enable line).
+    mode3_onset_pre_stat: u8,
     /// Mode-1 (POPU) onset hold: the mode bit reaches the STAT read view slower
     /// than ROPO's coincidence clear, so a double-speed FF41 read landing in
     /// the onset window sees the pre-onset mode with the live coincidence.
@@ -207,6 +211,7 @@ impl<P: PpuModel> Ppu<P> {
             prev_mode2: false,
             mode3_settle: 0,
             prev_mode3: false,
+            mode3_onset_pre_stat: 0,
             mode1_settle: 0,
             prev_mode1: false,
             oam_onset_settle: 0,
@@ -347,6 +352,7 @@ impl<P: PpuModel> Ppu<P> {
             prev_mode2: false,
             mode3_settle: 0,
             prev_mode3: false,
+            mode3_onset_pre_stat: 0,
             mode1_settle: 0,
             prev_mode1: false,
             oam_onset_settle: 0,
@@ -448,6 +454,9 @@ impl<P: PpuModel> Ppu<P> {
     /// (re)arms its hold (mode-2 not_if1, mode-3 XYMU, OAM read-lock); it drains
     /// one edge at a time.
     pub fn tick_onset_settles(&mut self) {
+        if self.is_rendering() && !self.prev_mode3 {
+            self.mode3_onset_pre_stat = ((self.prev_mode2 as u8) << 1) | (self.prev_mode1 as u8);
+        }
         let mode2 = self.live_mode2_bit();
         tick_settle(
             &mut self.mode2_settle,
@@ -483,6 +492,12 @@ impl<P: PpuModel> Ppu<P> {
     /// mode 2, not the post-onset mode 3.
     pub fn in_mode3_onset_settle(&self) -> bool {
         self.mode3_settle > 0
+    }
+
+    /// The STAT bits an onset-window read resolves to (both XYMU-driven bits
+    /// held at their pre-onset values).
+    pub fn mode3_onset_pre_stat(&self) -> u8 {
+        self.mode3_onset_pre_stat
     }
 
     /// The mode-1 (POPU) bit holds its pre-onset 0 while the VBlank-entry
