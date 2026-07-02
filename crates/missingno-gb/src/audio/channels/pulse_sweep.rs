@@ -72,6 +72,9 @@ pub struct PulseSweepChannel {
     /// An NR10 pace=0 write in the intervening T-cycles clears it via
     /// the hafe async-reset path.
     pub coze: bool,
+    /// This rise's cate↓ already ticked inside `tcycle` (the early wrap-
+    /// coincident path); the frame sequencer's late pass must not repeat it.
+    pub sweep_cate_taken: bool,
     /// `byra/caja/copa` — the sweep adder's shift-step counter, counting the
     /// steps left in the running calculation. The adder reads a *registered*
     /// snapshot of `shadow` and `shadow >> shift`, reloaded only when
@@ -123,6 +126,7 @@ impl Default for PulseSweepChannel {
             sweep_enabled: false,
             sweep_negate_used: false,
             coze: false,
+            sweep_cate_taken: false,
             sweep_calc_steps: 0,
             sweep_calc_restart: false,
             ch1_frst: false,
@@ -159,6 +163,7 @@ impl PulseSweepChannel {
             sweep_enabled: false,
             sweep_negate_used: false,
             coze: false,
+            sweep_cate_taken: false,
             sweep_calc_steps: 0,
             sweep_calc_restart: false,
             ch1_frst: false,
@@ -317,8 +322,24 @@ impl PulseSweepChannel {
         t_index: u8,
         double_speed: bool,
         wide_sweep_hold: bool,
+        sweep_cate_due: bool,
     ) {
         let calo_rose = self.prescaler.tcycle(apu_reset_n, t_index, double_speed);
+        // cate↓ settles before the slot's wrap (measured sub-slot order:
+        // cate +0.005, fire +0.25, wrap +0.52): tick it here so a wrap-
+        // coincident arm's fire commits the period the wrap loads. A rise
+        // with a trigger consume pending keeps the late (post-consume) cate
+        // so the load-window hold still sees the settle; mid-count arms keep
+        // the ajer↑ drain either way.
+        if sweep_cate_due
+            && self.pending_trigger_sync == 0
+            && calo_rose
+            && self.divider.counter >= 0x7FF
+        {
+            self.sweep_cate_taken = true;
+            self.tick_sweep_counter();
+            self.sample_sweep_bexa();
+        }
         // BEXA samples coze at the first ajer↑ of each M-cycle —
         // prescaler counter == 1 after the advance. Sample even when
         // the channel is disabled so a same-cycle re-trigger window
@@ -481,6 +502,12 @@ impl PulseSweepChannel {
     /// the M-cycle). Drains `coze`: runs the overflow check and the
     /// shadow / period update; if the overflow result would set the
     /// channel-disable, do so. Cleared without firing when pace=0.
+    pub fn take_sweep_cate(&mut self) -> bool {
+        let taken = self.sweep_cate_taken;
+        self.sweep_cate_taken = false;
+        taken
+    }
+
     pub fn sample_sweep_bexa(&mut self) {
         if !self.coze {
             return;

@@ -206,11 +206,40 @@ impl Audio {
             DIV_APU_BIT
         };
         let apu_reset_n = self.enabled;
+        // Detect the ripple edge before the channels tick: the strobes are
+        // upstream on silicon, and the sweep cate↓ specifically must settle
+        // before ch1's coincident divider wrap. Only the cate is delivered
+        // early; the JOPA/step/length/envelope effects keep their late order.
+        let mut fs_fire = false;
+        if self.enabled {
+            if self.fs_edge_pending {
+                self.fs_edge_pending = false;
+                fs_fire = true;
+            }
+            if self.fs_edge_predelay {
+                self.fs_edge_predelay = false;
+                self.fs_edge_pending = true;
+            }
+            let div_apu_high = div_counter & div_apu_bit != 0;
+            if self.prev_div_apu_bit && !div_apu_high {
+                if self.div_apu_switch_lag && double_speed {
+                    self.fs_edge_predelay = true;
+                } else if t_index >= 1 {
+                    fs_fire = true;
+                } else {
+                    self.fs_edge_pending = true;
+                }
+            }
+            self.prev_div_apu_bit = div_apu_high;
+        }
+        let c_next = (self.frame_sequencer_step + 1) % 8;
+        let sweep_cate_due = fs_fire && (c_next == 0 || c_next == 4);
         self.channels.ch1.tcycle(
             apu_reset_n,
             t_index,
             double_speed,
             self.wide_sweep_load_hold,
+            sweep_cate_due,
         );
         self.channels.ch2.tcycle(apu_reset_n, t_index, double_speed);
         self.channels.ch3.tcycle(apu_reset_n, wave_ram_coupling);
@@ -235,35 +264,11 @@ impl Audio {
         self.pending_right += r;
         self.pending_count += 1;
 
-        // Fire the ripple edge armed last tcycle (the strobes land one tcycle
-        // after the bit-10 fall). It runs after the prescaler consume above set
-        // divider_load_settle, so a kene↓ inside the open load window is held.
-        if self.fs_edge_pending {
-            self.fs_edge_pending = false;
+        // The ripple's remaining strobes land here, after the channels'
+        // prescaler consume (a kene↓ inside an open load window is held).
+        if fs_fire {
             self.tick_frame_sequencer();
         }
-        // A →double-slipped edge waits one extra tcycle: last tcycle's predelay
-        // becomes this tcycle's pending, so the strobe lands a cycle later.
-        if self.fs_edge_predelay {
-            self.fs_edge_predelay = false;
-            self.fs_edge_pending = true;
-        }
-
-        // DIV-APU bit-10 fall arms the ripple advance — via the extra predelay
-        // stage while the →double tap-retune slip holds. The kene↓ strobe lands
-        // one CPU T-cycle after the fall's M-boundary; a tick already at T1+
-        // (the double-speed off-boundary tick) fires it directly.
-        let div_apu_high = div_counter & div_apu_bit != 0;
-        if self.prev_div_apu_bit && !div_apu_high {
-            if self.div_apu_switch_lag && double_speed {
-                self.fs_edge_predelay = true;
-            } else if t_index >= 1 {
-                self.tick_frame_sequencer();
-            } else {
-                self.fs_edge_pending = true;
-            }
-        }
-        self.prev_div_apu_bit = div_apu_high;
 
         // Push the box-filtered average when the host sample window closes.
         self.sample_counter += 1.0;
@@ -344,9 +349,10 @@ impl Audio {
                 self.channels.ch2.tick_envelope_counter();
             }
         }
-        // bylu↓ (cate_128hz↓): arm coze; BEXA samples at next ajer↑
-        // inside pulse_sweep::tcycle.
-        if c == 0 || c == 4 {
+        // bylu↓ (cate_128hz↓): arm coze; BEXA samples at next ajer↑ inside
+        // pulse_sweep::tcycle — unless the early wrap-coincident path already
+        // delivered this rise's cate.
+        if (c == 0 || c == 4) && !self.channels.ch1.take_sweep_cate() {
             self.channels.ch1.tick_sweep_counter();
         }
         // JYNA↓ (kene↓, the 7→0 wrap): CH4 stays atomic; CH1/CH2 split
@@ -447,6 +453,7 @@ impl Audio {
                 envelope_stopped: false,
                 envelope_enable_tick_pending: false,
                 coze: false,
+                sweep_cate_taken: false,
                 sweep_calc_steps: 0,
                 sweep_calc_restart: false,
                 ch1_frst: false,
