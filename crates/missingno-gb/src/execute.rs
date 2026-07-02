@@ -628,7 +628,22 @@ impl<M: Model> Console<M> {
             PpuEdge::None => (false, None),
             PpuEdge::Rise => self.ppu_rise_edge(),
             PpuEdge::Fall => {
+                // A dot fall on a CPU rise (double speed only): an LY tick on
+                // the read's own T2 rise sits 3 half-edges before the latch,
+                // inside the mux ripple — stash LY_old for the latch's AND. A
+                // tick earlier in the M (T0) has settled by the latch.
+                let ripple_old = match self.cpu.last_bus_action {
+                    BusAction::Read { address: 0xFF44 } if tcycle.as_u8() == 2 => {
+                        Some(self.read(0xFF44))
+                    }
+                    _ => None,
+                };
                 let video_result = self.ppu_fall_edge(is_mcycle_boundary, tcycle);
+                if let Some(old) = ripple_old
+                    && self.read(0xFF44) != old
+                {
+                    self.model.note_ff44_ripple_old(Some(old));
+                }
                 self.apply_ppu_fall(&video_result)
             }
         }
@@ -1005,6 +1020,10 @@ impl<M: Model> Console<M> {
     /// Resolves the drive-enable snapshot against mid-M-cycle flux
     /// before the SM83 captures cpu_port_d.
     fn commit_read_latch(&mut self, ly_at_latch: Option<u8>) {
+        // Double speed: the LY tick can land mid-M on the read's own dot fall
+        // (no CPU fall carries it), so the ripple LY_old arrives from the tick
+        // edge instead of the pre-fall sample.
+        let ly_at_latch = self.model.take_ff44_ripple_old().or(ly_at_latch);
         if let BusAction::Read { address } = &self.cpu.last_bus_action {
             let address = *address;
             // A lockable read is offered the unfloated accessible byte; the

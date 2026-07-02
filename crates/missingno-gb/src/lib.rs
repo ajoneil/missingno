@@ -338,6 +338,14 @@ pub trait Model: Default {
     /// onset. DMG ignores it.
     fn note_read_drive_phase(&mut self, _oam_lock: Option<bool>) {}
 
+    /// LY_old stashed at a double-speed mid-M LY tick with an FF44 read in
+    /// flight — the read's latch samples the mux mid-ripple and ANDs this in.
+    /// DMG never sees a mid-M tick (dot falls ride CPU falls).
+    fn note_ff44_ripple_old(&mut self, _ly: Option<u8>) {}
+    fn take_ff44_ripple_old(&mut self) -> Option<u8> {
+        None
+    }
+
     /// Resolve the value a CPU read latches. A lockable (OAM/VRAM) read
     /// arrives unfloated with its live lock in `latch_lock`; the model owns
     /// the float. DMG floats on the latch-edge lock alone; CGB also applies its

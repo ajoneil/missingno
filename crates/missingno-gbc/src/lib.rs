@@ -748,9 +748,12 @@ pub struct Cgb {
     /// single-speed decisive grant sample, taken before that fall's lock
     /// onset (`resolve_read_latch` consumes it).
     read_drive_oam_lock: Option<bool>,
-    /// The 2×→1× relock from a p2 dot-in-M entry completes a dot early and
-    /// leaves the clock mux displaced; the next 1×→2× spends the dot back.
+    /// The clock mux lands displaced after a p3-entered 1×→2× relock; a
+    /// displaced 2×→1× completes a dot early, and the next 1×→2× re-syncs.
     switch_relock_debit: bool,
+    /// LY_old stashed at a double-speed mid-M LY tick with an FF44 read in
+    /// flight; the read's latch ANDs it with the settled LY (mux ripple).
+    ff44_ripple_old: Option<u8>,
     /// Undocumented CGB scratch registers: $FF72/$FF73 full bytes, $FF74
     /// (CGB mode only; open bus in compat), $FF75 bits 6-4 (the rest read 1).
     ff72: u8,
@@ -786,6 +789,7 @@ impl Default for Cgb {
             pre_alet_lock: None,
             read_drive_oam_lock: None,
             switch_relock_debit: false,
+            ff44_ripple_old: None,
             ff72: 0,
             ff73: 0,
             ff74: 0,
@@ -1026,16 +1030,19 @@ impl Model for Cgb {
             self.double_speed = !self.double_speed;
             self.key1_armed = false;
             self.speed_switch_blackout = self.speed_switch_blackout_master_edges();
-            // The 2×→1× relock from a p2 entry completes a dot early and
-            // displaces the mux; the next 1×→2× spends the dot back re-syncing.
+            // A 1×→2× relock entered at dot-in-M phase p3 lands the mux
+            // displaced (cost-free); a displaced 2×→1× completes a dot early
+            // and stays displaced; the following 1×→2× spends the dot back
+            // re-syncing — and a re-sync suppresses a fresh displacement.
             if self.double_speed {
                 if self.switch_relock_debit {
                     self.speed_switch_blackout += 2;
                     self.switch_relock_debit = false;
+                } else if entry_dot_phase == Some(3) {
+                    self.switch_relock_debit = true;
                 }
-            } else if entry_dot_phase == Some(2) {
+            } else if self.switch_relock_debit {
                 self.speed_switch_blackout -= 2;
-                self.switch_relock_debit = true;
             }
             StopAction::SpeedSwitch
         } else {
@@ -1112,6 +1119,14 @@ impl Model for Cgb {
 
     fn note_read_drive_phase(&mut self, oam_lock: Option<bool>) {
         self.read_drive_oam_lock = oam_lock;
+    }
+
+    fn note_ff44_ripple_old(&mut self, ly: Option<u8>) {
+        self.ff44_ripple_old = ly;
+    }
+
+    fn take_ff44_ripple_old(&mut self) -> Option<u8> {
+        self.ff44_ripple_old.take()
     }
 
     fn resolve_read_latch(&self, address: u16, value: u8, latch_lock: Option<bool>) -> u8 {
@@ -1482,6 +1497,8 @@ impl Model for Cgb {
     }
 
     fn vram_dma_lcd_disabled(&mut self) {
+        // VID_RST re-anchors the dot unit: the mux displacement is void.
+        self.switch_relock_debit = false;
         if self.vram_dma.mode == TransferMode::HBlank
             && self.vram_dma.remaining > 0
             && !self.vram_dma.hblank_block_taken
