@@ -113,11 +113,10 @@ impl<P: PpuModel> TileFetcher<P> {
         self.fetching_window = false;
         self.vram_address = 0;
         self.set_glitch_armed = false;
-        self.bus_low = 0;
-        self.bus_high = 0;
-        self.glitch_src_low = 0;
-        self.glitch_src_high = 0;
         self.glitch_capture_armed = false;
+        // bus_low/high and glitch_src persist across scanlines like the tile_temp
+        // latches: a set glitch on a line's first fetch reads the byte left on the
+        // tile-data bus by the previous row's interrupted fetch.
     }
 
     /// A mid-fetch LCDC.4 SET arms the set glitch when observed at an odd counter
@@ -129,10 +128,17 @@ impl<P: PpuModel> TileFetcher<P> {
         }
     }
 
-    /// A mid-fetch LCDC.4 CLEAR (TILE_SEL reset) arms the next completed BG fetch
-    /// to snapshot the tile-data bus into the glitch source.
+    /// A mid-fetch LCDC.4 CLEAR (TILE_SEL reset) snapshots the tile-data bus of
+    /// the fetch in progress into the glitch source. If that fetch has already
+    /// driven its high plane (past counter 4), the bus already holds it — capture
+    /// now; otherwise arm the upcoming counter-4 to capture it.
     pub(in crate::ppu) fn arm_glitch_capture(&mut self) {
-        self.glitch_capture_armed = true;
+        if self.fetch_counter >= 4 {
+            self.glitch_src_low = self.bus_low;
+            self.glitch_src_high = self.bus_high;
+        } else {
+            self.glitch_capture_armed = true;
+        }
     }
 
     /// An OBJ high fetch drives the sprite's high byte onto the tile-data bus and,
