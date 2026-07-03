@@ -104,9 +104,14 @@ impl<P: PpuModel> Ppu<P> {
                 self.registers
                     .write_obj_size_select(value, crossing_falls(P::OBJ_SIZE_CROSSING));
 
+                // The reset-substitution is a same-edge bus race: the tile index
+                // reaches the bitplane read only when the reset write's crossing
+                // edge is the read's dot-rise sample. At double speed the crossing
+                // lands on the dot-fall (mux settled before the next read) — no glitch.
                 if P::TILE_SEL_RESET_GLITCH
                     && old_block0_tiles
                     && value & ControlFlags::TILE_ADDRESS_MODE.bits() == 0
+                    && !edge_carries_dot_fall
                 {
                     self.registers.tile_sel_reset_glitch.arm();
                 }
