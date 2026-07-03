@@ -467,7 +467,7 @@ impl<M: Model> Console<M> {
             self.arm_oam_bugs();
         }
         if !is_mcycle_boundary {
-            self.tick_non_boundary_rise(tcycle);
+            self.tick_non_boundary_rise(tcycle, ppu == PpuEdge::Fall);
         }
         (is_mcycle_boundary, tcycle)
     }
@@ -901,7 +901,7 @@ impl<M: Model> Console<M> {
     /// Non-boundary T-cycle rise CPU work: pre-CUPA LCDC snapshot and the
     /// staged write apply at T-cycle 2. The PPU rise + STAT edge follow in
     /// the caller via `ppu_rise_edge`.
-    fn tick_non_boundary_rise(&mut self, tcycle: TCycle) {
+    fn tick_non_boundary_rise(&mut self, tcycle: TCycle, edge_carries_dot_fall: bool) {
         // Snapshot LCDC.1 BEFORE the staged write applies — the
         // alet-rising DFF capture (SOBU on TEKY → FEPO → XYLO) beats
         // CUPA-rising's transparent-latch propagation by ~14 ns. Other
@@ -920,7 +920,7 @@ impl<M: Model> Console<M> {
                 .map(|(_, v)| v)
                 .expect("cpu_bus pending write requires cpu.pending_bus_write to be Some");
             self.cpu_bus.drive(value);
-            if self.drive_ppu_bus(address, value) {
+            if self.drive_ppu_bus(address, value, edge_carries_dot_fall) {
                 self.interrupts.request(Interrupt::VideoStatus);
             }
             // Snapshot OAM/VRAM lock at CUPA-rising. AND'd with the

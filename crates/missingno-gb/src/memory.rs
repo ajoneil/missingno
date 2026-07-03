@@ -552,7 +552,7 @@ impl<M: Model> Console<M> {
     /// register DFF cells latch combinationally during this window.
     /// Returns true if the write triggered a STAT interrupt (FF41
     /// write quirk).
-    pub fn drive_ppu_bus(&mut self, address: u16, value: u8) -> bool {
+    pub fn drive_ppu_bus(&mut self, address: u16, value: u8, edge_carries_dot_fall: bool) -> bool {
         if let MappedAddress::PpuRegister(register) = MappedAddress::map(address) {
             // Disabling the LCD services an armed-but-unserviced HBlank DMA block
             // at once — no H-Blank will come.
@@ -563,7 +563,8 @@ impl<M: Model> Console<M> {
                 self.model.vram_dma_lcd_disabled();
             }
             let halt_wake_active = self.cpu.is_halt_wake_active();
-            self.ppu.write_register(register, value, halt_wake_active)
+            self.ppu
+                .write_register(register, value, halt_wake_active, edge_carries_dot_fall)
         } else {
             false
         }
@@ -710,7 +711,7 @@ impl<M: Model> Console<M> {
             }
             MappedAddress::PpuRegister(register) => {
                 let halt_wake_active = self.cpu.is_halt_wake_active();
-                if self.ppu.write_register(register, value, halt_wake_active) {
+                if self.ppu.write_register(register, value, halt_wake_active, false) {
                     self.interrupts
                         .requested
                         .insert(InterruptFlags::VIDEO_STATUS);

@@ -40,6 +40,7 @@ impl<P: PpuModel> Ppu<P> {
         register: Register,
         value: u8,
         halt_wake_active: bool,
+        edge_carries_dot_fall: bool,
     ) -> bool {
         let is_drawing = self.is_rendering();
 
@@ -66,11 +67,21 @@ impl<P: PpuModel> Ppu<P> {
                 // Each LCDC-fetch view samples live on DMG; the CGB latches a
                 // mid-Mode-3 write onto its own clock, read the crossing's falls
                 // late (LCDC.3/.6 tile-map, LCDC.4 tile-data, LCDC.2 obj-size).
+                // At double speed the write's CUPA-rising shares its master edge with
+                // a PPU dot-fall (the crossing cell's capture edge), so the cell
+                // captures the write on that coincident fall — one fall sooner than at
+                // single speed, where the write lands on a dot-rise and the first
+                // capture is the following dot's fall.
                 let crossing_falls = |spec: CaptureSpec| {
-                    if is_drawing {
+                    let falls = if is_drawing {
                         spec.write_delayed_falls()
                     } else {
                         0
+                    };
+                    if falls > 0 && edge_carries_dot_fall {
+                        falls - 1
+                    } else {
+                        falls
                     }
                 };
                 self.registers
