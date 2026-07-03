@@ -86,11 +86,11 @@ impl<P: PpuModel> Ppu<P> {
                 };
                 self.registers
                     .write_tile_map_select(value, crossing_falls(P::TILE_MAP_CROSSING));
-                // A SET reaches the counter-2 low read (both-NEW, as DMG renders; ff40_d4 q-rise
-                // settles ~1.4 ge). On CGB a sprite shifts the fetch phase so the LCDC.4 toggle
-                // collides with a bitplane read — the data-substitution glitch — splitting the
-                // fetch; keep the slow crossing there. A whole-byte proxy: the per-pixel mix the
-                // glitch produces is below the half-dot/whole-byte resolution of this model.
+                // ff40_d4 settles fast on a 0->1 SET (~1.4 ge), so it reaches the
+                // counter-2 low read within the write dot — both planes take the new
+                // block, as the DMG renders the whole band. On a sprite line the fetch
+                // phase collides with the read (the set glitch below); keep the slow
+                // crossing so the low read stays OLD for the glitch to substitute.
                 let tile_data_set_fast = !old_block0_tiles
                     && value & ControlFlags::TILE_ADDRESS_MODE.bits() != 0
                     && !self.sprite_on_line();
@@ -108,12 +108,29 @@ impl<P: PpuModel> Ppu<P> {
                 // reaches the bitplane read only when the reset write's crossing
                 // edge is the read's dot-rise sample. At double speed the crossing
                 // lands on the dot-fall (mux settled before the next read) — no glitch.
-                if P::TILE_SEL_RESET_GLITCH
-                    && old_block0_tiles
+                let tile_sel_reset = old_block0_tiles
                     && value & ControlFlags::TILE_ADDRESS_MODE.bits() == 0
-                    && !edge_carries_dot_fall
-                {
+                    && !edge_carries_dot_fall;
+                if P::TILE_SEL_RESET_GLITCH && tile_sel_reset {
                     self.registers.tile_sel_reset_glitch.arm();
+                }
+
+                // The SET-direction sibling substitutes the tile-data bus's frozen
+                // glitch source into the bitplane read the SET lands on. The source
+                // is refreshed by two events: a TILE_SEL reset (CLEAR) snapshots the
+                // BG tile fetched next; a 0->1 SET at an odd BG fetch counter then
+                // corrupts the following read (counter 1 → low, counter 3 → high).
+                if P::TILE_SEL_SET_GLITCH && is_drawing {
+                    if let Some(rendering) = self.pixel_pipeline.as_mut() {
+                        if tile_sel_reset {
+                            rendering.arm_bg_glitch_capture();
+                        } else if !old_block0_tiles
+                            && value & ControlFlags::TILE_ADDRESS_MODE.bits() != 0
+                            && !edge_carries_dot_fall
+                        {
+                            rendering.arm_bg_set_glitch();
+                        }
+                    }
                 }
 
                 // Arm the VYXE/sprites-enabled OLD-overlays so the next resolve uses pre-transition.

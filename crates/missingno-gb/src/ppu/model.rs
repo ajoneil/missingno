@@ -190,6 +190,12 @@ pub trait PpuModel: Default {
     /// modes). Absent on DMG and CGB revision D.
     const TILE_SEL_RESET_GLITCH: bool = false;
 
+    /// The CGB TILE_SEL set glitch: an LCDC.4 set landing on the counter-2 low
+    /// bitplane read substitutes the last bitplane-1 (high) byte driven onto the
+    /// tile-data bus (the most recent sprite fetch, else the last BG tile) as the
+    /// low plane's data. Absent on DMG.
+    const TILE_SEL_SET_GLITCH: bool = false;
+
     /// The DMG BGP cell is a dlatch (NURA combiner): a capture-coincident
     /// cp_pad sample sees the post-write value, and a second same-scanline
     /// write presents OR(prior, new) for one emit. CGB rebuilt the block as a

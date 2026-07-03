@@ -422,7 +422,6 @@ impl<P: PpuModel> Ppu<P> {
             .is_some_and(|r| r.lcd_pushing_active())
     }
 
-    /// A sprite is on this line — its CGB fetch holds an in-flight LCDC.4 SET on the slow split path.
     pub(super) fn sprite_on_line(&self) -> bool {
         let sprites_enabled = self.registers.control.sprites_enabled();
         self.pixel_pipeline

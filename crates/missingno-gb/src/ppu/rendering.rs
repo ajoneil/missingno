@@ -664,7 +664,14 @@ impl<P: PpuModel> Rendering<P> {
             match self.sprite_state {
                 SpriteState::Fetching(ref mut sf) => {
                     let slot_index = sf.slot_index;
+                    let sprite_fetch_counter = sf.fetch_counter();
                     let done = sf.advance(model, effective_sprite_size, oam, oam_bus, vram);
+                    // The OBJ high fetch (counter 4) drives the sprite onto the
+                    // tile-data bus and becomes the glitch source for both planes.
+                    if sprite_fetch_counter == 4 {
+                        let (low, high) = sf.tile_data();
+                        self.fetcher.drive_bus_from_sprite(low, high);
+                    }
                     if done {
                         let (s1y, s1x) = sf.stage1_capture();
                         sf.merge_into(model, &mut self.obj_fifo);
@@ -851,14 +858,28 @@ impl<P: PpuModel> Rendering<P> {
         pixel_out
     }
 
-    /// FEPO: any unfetched sprite's X matches the pixel counter. Feeds VYBO/XENA/TEKY.
-    /// Collapses XYLO/AROR/per-sprite-decoders/FOVE/FEFY into one loop; off-screen X≥168 excluded.
-    /// A sprite is scanned for this line and will be fetched into the BG pipeline — on CGB its
-    /// fetch couples to the BG tile-data read, holding an in-flight LCDC.4 SET on the slow path.
+    /// Arm the BG set glitch (mid-fetch LCDC.4 SET, from the register write path).
+    /// The substituted byte is a sprite high-plane fetch on the tile-data bus, so
+    /// the glitch only manifests when a sprite is scanned onto this line; the
+    /// fetcher then latches it only when the SET is observed at counter 1.
+    pub(in crate::ppu) fn arm_bg_set_glitch(&mut self) {
+        if self.scan.sprites_ref().count > 0 {
+            self.fetcher.arm_set_glitch();
+        }
+    }
+
+    /// A mid-fetch LCDC.4 CLEAR snapshots the bus into the glitch source at the
+    /// next completed BG fetch (the BG tile as of the TILE_SEL reset).
+    pub(in crate::ppu) fn arm_bg_glitch_capture(&mut self) {
+        self.fetcher.arm_glitch_capture();
+    }
+
     pub(in crate::ppu) fn sprite_on_line(&self, sprites_enabled: bool) -> bool {
         sprites_enabled && self.scan.sprites_ref().count > 0
     }
 
+    /// FEPO: any unfetched sprite's X matches the pixel counter. Feeds VYBO/XENA/TEKY.
+    /// Collapses XYLO/AROR/per-sprite-decoders/FOVE/FEFY into one loop; off-screen X≥168 excluded.
     fn fepo(&self, sprites_enabled: bool) -> bool {
         if !sprites_enabled && P::FETCH_TRIGGER_GATED_BY_OBJ_ENABLE {
             return false;

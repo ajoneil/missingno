@@ -22,6 +22,21 @@ pub(in crate::ppu) struct TileFetcher<P: PpuModel> {
     pub(in crate::ppu) fetching_window: bool,
     /// Retained for debugger visibility.
     vram_address: u16,
+    /// Armed by a mid-fetch LCDC.4 SET observed at an odd counter; the next
+    /// bitplane read returns the frozen glitch source (the set glitch).
+    set_glitch_armed: bool,
+    /// The real VRAM byte each BG/OBJ fetch drives onto the tile-data bus (the
+    /// physical byte, not the reset-glitch substitute).
+    bus_low: u8,
+    bus_high: u8,
+    /// The set glitch's source: the bus value as of the last TILE_SEL reset,
+    /// per plane (the most-recent sprite high, else the BG tile fetched right
+    /// after the last LCDC.4 clear). Consumed by an armed set glitch.
+    glitch_src_low: u8,
+    glitch_src_high: u8,
+    /// A TILE_SEL clear arms the next completed BG fetch to snapshot the bus
+    /// into the glitch source.
+    glitch_capture_armed: bool,
 }
 
 fn tile_map_offset(map_id_index: u8, map_x: u8, map_y: u8) -> u16 {
@@ -60,6 +75,12 @@ impl<P: PpuModel> TileFetcher<P> {
             tile_data_high: 0,
             fetching_window: false,
             vram_address: 0,
+            set_glitch_armed: false,
+            bus_low: 0,
+            bus_high: 0,
+            glitch_src_low: 0,
+            glitch_src_high: 0,
+            glitch_capture_armed: false,
         }
     }
 
@@ -74,6 +95,12 @@ impl<P: PpuModel> TileFetcher<P> {
             tile_data_high: 0,
             fetching_window: false,
             vram_address: 0,
+            set_glitch_armed: false,
+            bus_low: 0,
+            bus_high: 0,
+            glitch_src_low: 0,
+            glitch_src_high: 0,
+            glitch_capture_armed: false,
         }
     }
 
@@ -85,6 +112,37 @@ impl<P: PpuModel> TileFetcher<P> {
         self.bg_cell = P::BgCell::default();
         self.fetching_window = false;
         self.vram_address = 0;
+        self.set_glitch_armed = false;
+        self.bus_low = 0;
+        self.bus_high = 0;
+        self.glitch_src_low = 0;
+        self.glitch_src_high = 0;
+        self.glitch_capture_armed = false;
+    }
+
+    /// A mid-fetch LCDC.4 SET arms the set glitch when observed at an odd counter
+    /// (1 or 3), just before the bitplane read it corrupts: counter 1 → the
+    /// counter-2 low read, counter 3 → the counter-4 high read.
+    pub(in crate::ppu) fn arm_set_glitch(&mut self) {
+        if self.fetch_counter == 1 || self.fetch_counter == 3 {
+            self.set_glitch_armed = true;
+        }
+    }
+
+    /// A mid-fetch LCDC.4 CLEAR (TILE_SEL reset) arms the next completed BG fetch
+    /// to snapshot the tile-data bus into the glitch source.
+    pub(in crate::ppu) fn arm_glitch_capture(&mut self) {
+        self.glitch_capture_armed = true;
+    }
+
+    /// An OBJ high fetch drives the sprite's high byte onto the tile-data bus and,
+    /// as the most-recent draw, becomes the glitch source for both planes (the
+    /// glitch reads bitplane-1 from a sprite).
+    pub(in crate::ppu) fn drive_bus_from_sprite(&mut self, low: u8, high: u8) {
+        self.bus_low = low;
+        self.bus_high = high;
+        self.glitch_src_low = high;
+        self.glitch_src_high = high;
     }
 
     /// +1 on PX models the within-counter=0 SACU advance (suppressed while ROXY gates SACU).
@@ -223,17 +281,36 @@ impl<P: PpuModel> TileFetcher<P> {
                 let (bank, address) =
                     self.tile_data_address(window_line_counter, regs, video, false);
                 self.vram_address = address;
-                self.tile_data_low = self
-                    .tile_sel_glitched_bitplane(regs)
-                    .unwrap_or_else(|| vram.bank(bank).read_byte(address));
+                // The real VRAM byte drives the tile-data bus even when the fetcher
+                // latches a glitch substitute.
+                self.bus_low = vram.bank(bank).read_byte(address);
+                self.tile_data_low = if P::TILE_SEL_SET_GLITCH && self.set_glitch_armed {
+                    self.set_glitch_armed = false;
+                    self.glitch_src_low
+                } else {
+                    self.tile_sel_glitched_bitplane(regs)
+                        .unwrap_or(self.bus_low)
+                };
             }
             4 => {
                 let (bank, address) =
                     self.tile_data_address(window_line_counter, regs, video, true);
                 self.vram_address = address;
-                self.tile_data_high = self
-                    .tile_sel_glitched_bitplane(regs)
-                    .unwrap_or_else(|| vram.bank(bank).read_byte(address));
+                self.bus_high = vram.bank(bank).read_byte(address);
+                self.tile_data_high = if P::TILE_SEL_SET_GLITCH && self.set_glitch_armed {
+                    self.set_glitch_armed = false;
+                    self.glitch_src_high
+                } else {
+                    self.tile_sel_glitched_bitplane(regs)
+                        .unwrap_or(self.bus_high)
+                };
+                // A TILE_SEL clear armed this fetch to snapshot the bus as the
+                // glitch source (the BG tile as of the reset).
+                if self.glitch_capture_armed {
+                    self.glitch_src_low = self.bus_low;
+                    self.glitch_src_high = self.bus_high;
+                    self.glitch_capture_armed = false;
+                }
             }
             _ => {}
         }
