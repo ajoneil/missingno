@@ -331,6 +331,9 @@ impl PulseSweepChannel {
         // with a trigger consume pending keeps the late (post-consume) cate
         // so the load-window hold still sees the settle; mid-count arms keep
         // the ajer↑ drain either way.
+        if calo_rose {
+            self.sweep_load_hold = self.sweep_load_hold.saturating_sub(1);
+        }
         if sweep_cate_due
             && self.pending_trigger_sync == 0
             && calo_rose
@@ -338,7 +341,7 @@ impl PulseSweepChannel {
         {
             self.sweep_cate_taken = true;
             self.tick_sweep_counter();
-            self.sample_sweep_bexa();
+            self.sample_sweep_bexa(true);
         }
         // BEXA samples coze at the first ajer↑ of each M-cycle —
         // prescaler counter == 1 after the advance. Sample even when
@@ -346,7 +349,7 @@ impl PulseSweepChannel {
         // sees the cleared coze.
         if apu_reset_n && self.prescaler.counter == 1 {
             self.tick_sweep_calc();
-            self.sample_sweep_bexa();
+            self.sample_sweep_bexa(false);
         }
         if !calo_rose || !self.enabled.enabled {
             return;
@@ -367,7 +370,6 @@ impl PulseSweepChannel {
             self.wave_duty_position = (self.wave_duty_position + 1) % 8;
             self.ch1_frst = false;
         }
-        self.sweep_load_hold = self.sweep_load_hold.saturating_sub(1);
         // Prescaler wrapped (ch1_1mhz↑). Trigger reload and natural
         // overflow are mutually exclusive on the same edge — trigger
         // wins via dyru's async-reset of comy.
@@ -377,11 +379,10 @@ impl PulseSweepChannel {
             self.divider_load_settle = self.pending_trigger_sync == 2;
             // CGB holds the sweep counter one ch1_1mhz↑ longer than the
             // divider settle, so a cate_128hz↓ just past the reload is dropped.
-            self.sweep_load_hold = if wide_sweep_hold && self.pending_trigger_sync == 2 {
-                2
-            } else {
-                0
-            };
+            // CYMU = OR(BEXA, ch1_restart) drives the sweep counter's load
+            // pins with no fdis input: every trigger reload — enabling or
+            // re-trigger — opens the same 2-cycle CGB hold.
+            self.sweep_load_hold = if wide_sweep_hold { 2 } else { 0 };
             self.divider.counter = (self.period.0) & 0x7FF;
             self.pending_trigger_sync = 0;
         } else if self.divider_load_settle {
@@ -508,25 +509,35 @@ impl PulseSweepChannel {
         taken
     }
 
-    pub fn sample_sweep_bexa(&mut self) {
+    pub fn sample_sweep_bexa(&mut self, early: bool) {
         if !self.coze {
             return;
         }
-        self.coze = false;
         if self.sweep.pace() == 0 {
+            self.coze = false;
             return;
         }
         let new_frequency = self.calculate_sweep_frequency();
         if new_frequency > 2047 {
-            // calc1 overflow: with shift = 0 the new period is 2 × shadow, so
-            // the disable lands at the fire — no step counter, no delay.
+            // A calc1 overflow disables at the ajer↑ (presc==1) drain — the
+            // ch1_ld_sum resolution edge — not at an early wrap-coincident
+            // cate. The early path exists only to commit a period for the
+            // coincident wrap, so on an overflow it leaves coze for the drain.
+            if early {
+                return;
+            }
+            self.coze = false;
             self.enabled.enabled = false;
-        } else if self.sweep.step() != 0 {
-            // Commit calc1, then restart the adder calculation: the recheck on
-            // the committed period overflows `shift` M-cycles on (ch1_ld_sum).
-            self.shadow_frequency = new_frequency;
-            self.period.0 = new_frequency;
-            self.sweep_calc_steps = self.sweep.step();
+        } else {
+            self.coze = false;
+            if self.sweep.step() != 0 {
+                // Commit calc1, then restart the adder calculation: the recheck
+                // on the committed period overflows `shift` M-cycles on
+                // (ch1_ld_sum).
+                self.shadow_frequency = new_frequency;
+                self.period.0 = new_frequency;
+                self.sweep_calc_steps = self.sweep.step();
+            }
         }
     }
 
