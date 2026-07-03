@@ -519,6 +519,7 @@ impl Audio {
                 prev_tap: false,
                 mhz_prescaler: Prescaler::default(),
                 jeso: false,
+                double_speed: false,
                 skip_first_clock: false,
                 lfsr: 0x7FFF,
                 current_volume: 0,

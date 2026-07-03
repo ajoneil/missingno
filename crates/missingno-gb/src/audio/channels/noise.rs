@@ -35,6 +35,9 @@ pub struct NoiseChannel {
     /// Hama half-phase (`jeso`, ÷2 of `ch4_1mhz`). The code ≥ 1 cold-load snaps
     /// to the hama grid by this; flips each `ch4_1mhz↑`, reset only on apu-off.
     pub jeso: bool,
+    /// KEY1 double-speed, latched each tcycle. At double speed the cold-load
+    /// gains the prescaler-terminal-relative hold read by `trigger()`.
+    pub double_speed: bool,
     /// Set by a re-trigger of a running channel: its first divider expiry is
     /// swallowed so the first LFSR shift lands one sample later than a cold trigger.
     pub skip_first_clock: bool,
@@ -69,6 +72,7 @@ impl Default for NoiseChannel {
             prev_tap: false,
             mhz_prescaler: Prescaler::default(),
             jeso: false,
+            double_speed: false,
             skip_first_clock: false,
             lfsr: 0x7fff,
             current_volume: 0,
@@ -192,6 +196,14 @@ impl NoiseChannel {
         } else {
             0
         };
+        // At double speed the cold-load also depends on the free-running
+        // prescaler phase at the trigger — the hold runs to a fixed offset past
+        // the next hama terminal (counter 2). Single speed is prescaler-phase-
+        // locked (always counter 0), so this term is absent there and on DMG.
+        if self.double_speed {
+            let dots_to_terminal = (2i16 - self.mhz_prescaler.counter as i16).rem_euclid(4) as u16;
+            self.sync_delay += 5 - dots_to_terminal;
+        }
         self.divider = 0;
         self.prev_tap = false;
         self.divider_subcounter = self.frequency_and_randomness.divisor_half();
@@ -212,6 +224,7 @@ impl NoiseChannel {
     }
 
     pub fn tcycle(&mut self, apu_reset_n: bool, t_index: u8, double_speed: bool) {
+        self.double_speed = double_speed;
         // ch4_1mhz↑ flips the hama half-phase (jeso); both free-run off the APU
         // clock and are cleared only by apu-off, never by a trigger.
         let mhz_rise = self
