@@ -74,6 +74,11 @@ impl Audio {
         self.wide_sweep_load_hold = wide;
     }
 
+    /// CGB grid-anchors the CH4 mid-run divisor-code reload cadence.
+    pub fn set_noise_cgb(&mut self, cgb: bool) {
+        self.channels.ch4.cgb = cgb;
+    }
+
     /// Post-boot state at PC=0x0100. `prev_div_apu_bit` derives from the
     /// M-cycle `reg_div16` (the ripple advance stays divider-locked). The
     /// (caru, bylu, JYNA) frame-sequencer ripple is apu_reset-reset, so its
@@ -522,6 +527,7 @@ impl Audio {
                 mhz_prescaler: Prescaler::default(),
                 jeso: false,
                 double_speed: false,
+                cgb: false,
                 skip_first_clock: false,
                 lfsr: 0x7FFF,
                 current_volume: 0,

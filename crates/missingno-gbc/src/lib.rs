@@ -1013,6 +1013,7 @@ impl Model for Cgb {
         };
         // CGB silicon widens the CH1 sweep-counter load-hold (DMG-compat too).
         audio.set_wide_sweep_load_hold(true);
+        audio.set_noise_cgb(true);
         audio
     }
 

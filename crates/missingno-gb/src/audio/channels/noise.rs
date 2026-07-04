@@ -49,6 +49,10 @@ pub struct NoiseChannel {
     /// KEY1 double-speed, latched each tcycle. At double speed the cold-load
     /// gains the prescaler-terminal-relative hold read by `trigger()`.
     pub double_speed: bool,
+    /// CGB console: a mid-run divisor-code change grid-anchors the new cadence
+    /// K new-code periods past the last kanu terminal (K = 2 from code 0). Set
+    /// once at console init; persists across apu power-off.
+    pub cgb: bool,
     /// Set by a re-trigger of a running channel: its first divider expiry is
     /// swallowed so the first LFSR shift lands one sample later than a cold trigger.
     pub skip_first_clock: bool,
@@ -86,6 +90,7 @@ impl Default for NoiseChannel {
             mhz_prescaler: Prescaler::default(),
             jeso: false,
             double_speed: false,
+            cgb: false,
             skip_first_clock: false,
             lfsr: 0x7fff,
             current_volume: 0,
@@ -154,8 +159,10 @@ impl NoiseChannel {
             }
             Register::FrequencyAndRandomness => {
                 let old_shift = self.frequency_and_randomness.clock_shift();
+                let old_code = self.frequency_and_randomness.divisor_code();
                 self.frequency_and_randomness = FrequencyAndRandomness(value);
                 let new_shift = self.frequency_and_randomness.clock_shift();
+                let new_code = self.frequency_and_randomness.divisor_code();
                 // Combinational tap re-select: a shift change clocks the LFSR if the
                 // newly tapped bit sits on its own rising edge; the divider keeps phase.
                 if new_shift != old_shift {
@@ -165,6 +172,24 @@ impl NoiseChannel {
                         self.clock_lfsr();
                     }
                     self.prev_tap = tap;
+                }
+                // CGB grid-anchors the new cadence: the new code's first terminal
+                // lands K new-code periods past the last kanu terminal (K = 2 from
+                // code 0, else 1), so preload the prescaler to reach terminal in
+                // K·new_code kanu steps. Code 0 is terminal-pinned (immediate).
+                if self.cgb && new_code != old_code && self.enabled.enabled {
+                    let k = if old_code == 0 { 2 } else { 1 };
+                    if new_code == 0 {
+                        // Code 0 is terminal-pinned: off the kanu terminal (jeso
+                        // high) the shift divider resumes 4 T ticking on the next
+                        // ch4_1mhz rather than waiting for the next kanu terminal.
+                        if self.jeso {
+                            self.prescaler = 0b111;
+                            self.divider_subcounter = 0;
+                        }
+                    } else {
+                        self.prescaler = 0b111u8.saturating_sub(k * new_code) & 0b111;
+                    }
                 }
             }
             Register::Control => {
