@@ -47,16 +47,16 @@ impl Joypad {
 
         if self.read_buttons {
             if self.pressed_buttons.contains(&Button::Start) {
-                value ^= Self::START_DOWN;
+                value &= !Self::START_DOWN;
             }
             if self.pressed_buttons.contains(&Button::Select) {
-                value ^= Self::SELECT_UP;
+                value &= !Self::SELECT_UP;
             }
             if self.pressed_buttons.contains(&Button::B) {
-                value ^= Self::B_LEFT;
+                value &= !Self::B_LEFT;
             }
             if self.pressed_buttons.contains(&Button::A) {
-                value ^= Self::A_RIGHT;
+                value &= !Self::A_RIGHT;
             }
         } else {
             value |= Self::READ_BUTTONS;
@@ -67,25 +67,25 @@ impl Joypad {
                 .pressed_buttons
                 .contains(&Button::DirectionalPad(DirectionalPad::Down))
             {
-                value ^= Self::START_DOWN;
+                value &= !Self::START_DOWN;
             }
             if self
                 .pressed_buttons
                 .contains(&Button::DirectionalPad(DirectionalPad::Up))
             {
-                value ^= Self::SELECT_UP;
+                value &= !Self::SELECT_UP;
             }
             if self
                 .pressed_buttons
                 .contains(&Button::DirectionalPad(DirectionalPad::Left))
             {
-                value ^= Self::B_LEFT;
+                value &= !Self::B_LEFT;
             }
             if self
                 .pressed_buttons
                 .contains(&Button::DirectionalPad(DirectionalPad::Right))
             {
-                value ^= Self::A_RIGHT;
+                value &= !Self::A_RIGHT;
             }
         } else {
             value |= Self::READ_DPAD;
