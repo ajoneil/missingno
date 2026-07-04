@@ -16,7 +16,8 @@ const FAST_CLOCK_BIT: u16 = 1 << 0;
 /// clock edge, one bit shifts out of SB (MSB first) while one bit shifts in.
 /// The clock can be driven internally (Game Boy is master) or externally
 /// (connected device is master).
-pub trait SerialLink {
+// Send so a console owning a link can run on a dedicated emulation thread.
+pub trait SerialLink: Send {
     /// Exchange one bit during a serial transfer.
     ///
     /// Called on each serial clock edge. `out_bit` is the bit the Game Boy
