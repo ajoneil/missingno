@@ -515,6 +515,8 @@ impl Audio {
                 frequency_and_randomness: FrequencyAndRandomness(snap.ch4_freq),
                 divider: 0,
                 divider_subcounter: 0,
+                prescaler: 0,
+                gary: false,
                 sync_delay: 0,
                 prev_tap: false,
                 mhz_prescaler: Prescaler::default(),

@@ -22,8 +22,19 @@ pub struct NoiseChannel {
     /// taps bit `shift`; the LFSR shifts on its rising edge. Free-running once
     /// started — a mid-run NR43 write re-taps it without disturbing its phase.
     pub divider: u16,
-    /// T-cycles to the next divider tick (= `divisor_half()`, i.e. divisor/2).
+    /// T-cycles to the next `ch4_1mhz` tick opportunity (period 4 T); the divider
+    /// advances on it only when `gary` gates it through.
     pub divider_subcounter: u16,
+    /// Divisor prescaler (JYCO/JYRE/JYFU): a 3-bit up-counter that `huce` loads
+    /// with `~NR43[2:0]` and that otherwise counts to terminal 7 (HYNO) on the
+    /// 8 T `kanu` grid. Code 0 loads 7 = terminal, so it is pinned and `gary`
+    /// stays high (divider at the full 4 T rate).
+    pub prescaler: u8,
+    /// Divider-clock enable (GARY): the latched prescaler terminal. Gates
+    /// `noise_counter_clk = ch4_1mhz AND gary`, and drives `huce = ch4_restart OR
+    /// gary` — so a mid-run code change is taken at the next terminal, immediately
+    /// while on code 0 (huce continuous).
+    pub gary: bool,
     /// Cold synchroniser hold: the divider is frozen for this many T after a
     /// trigger so the first tap lands at `sync_delay + period/2` = the cold-load.
     pub sync_delay: u16,
@@ -68,6 +79,8 @@ impl Default for NoiseChannel {
 
             divider: 0,
             divider_subcounter: 0,
+            prescaler: 0,
+            gary: false,
             sync_delay: 0,
             prev_tap: false,
             mhz_prescaler: Prescaler::default(),
@@ -94,6 +107,8 @@ impl NoiseChannel {
 
         self.divider = 0;
         self.divider_subcounter = 0;
+        self.prescaler = 0;
+        self.gary = false;
         self.sync_delay = 0;
         self.prev_tap = false;
         self.mhz_prescaler = Prescaler::default();
@@ -206,7 +221,11 @@ impl NoiseChannel {
         }
         self.divider = 0;
         self.prev_tap = false;
-        self.divider_subcounter = self.frequency_and_randomness.divisor_half();
+        // ch4_restart reloads the prescaler (huce) and clears gary (guny); the
+        // divider stays untouched. The subcounter tracks the 4 T ch4_1mhz grid.
+        self.divider_subcounter = 4;
+        self.prescaler = !self.frequency_and_randomness.divisor_code() & 0b111;
+        self.gary = false;
         // Re-triggering a running channel clocks the first LFSR shift one sample
         // later than a cold trigger: swallow the first tap.
         self.skip_first_clock = was_running;
@@ -237,10 +256,10 @@ impl NoiseChannel {
         if mhz_rise {
             self.jeso = !self.jeso;
         }
-        // Cold synchroniser holds the divider, then it free-runs at the divisor
-        // rate (divisor/2 T per tick). The NR43 shift code combinationally taps
-        // bit `shift`; the divisor reloads with the live value each tick (a
-        // mid-run NR43 write re-taps and re-divides without resetting the count).
+        // Cold synchroniser (ch4_restart) holds the frequency timer, then it
+        // free-runs. The shift divider is clocked by `noise_counter_clk =
+        // ch4_1mhz AND gary`: once per 4 T ch4_1mhz tick the divisor prescaler
+        // advances on the 8 T kanu grid (jeso), and gary gates the divider.
         if self.sync_delay > 0 {
             self.sync_delay -= 1;
             return;
@@ -249,18 +268,28 @@ impl NoiseChannel {
             self.divider_subcounter -= 1;
         }
         if self.divider_subcounter == 0 {
-            let shift = self.frequency_and_randomness.clock_shift();
-            self.divider_subcounter = self.frequency_and_randomness.divisor_half();
-            self.divider = self.divider.wrapping_add(1) & 0x3fff;
-            let tap = (self.divider >> shift) & 1 != 0;
-            let rose = !self.prev_tap && tap;
-            self.prev_tap = tap;
-            if rose {
-                if self.skip_first_clock {
-                    // A re-trigger swallows its first tap (one sample late).
-                    self.skip_first_clock = false;
-                } else {
-                    self.clock_lfsr();
+            self.divider_subcounter = 4;
+            // huce (= gary here) reloads ~code; else a kanu step (jeso==0) counts
+            // the prescaler up toward terminal 7. gary captures the new terminal.
+            if self.prescaler == 0b111 {
+                self.prescaler = !self.frequency_and_randomness.divisor_code() & 0b111;
+            } else if !self.jeso {
+                self.prescaler = (self.prescaler + 1) & 0b111;
+            }
+            self.gary = self.prescaler == 0b111;
+            if self.gary {
+                let shift = self.frequency_and_randomness.clock_shift();
+                self.divider = self.divider.wrapping_add(1) & 0x3fff;
+                let tap = (self.divider >> shift) & 1 != 0;
+                let rose = !self.prev_tap && tap;
+                self.prev_tap = tap;
+                if rose {
+                    if self.skip_first_clock {
+                        // A re-trigger swallows its first tap (one sample late).
+                        self.skip_first_clock = false;
+                    } else {
+                        self.clock_lfsr();
+                    }
                 }
             }
         }
@@ -383,16 +412,5 @@ impl FrequencyAndRandomness {
 
     pub fn divisor_code(&self) -> u8 {
         self.0 & 0b111
-    }
-
-    /// The CEXO prescaler's ÷2 output: the divider's tick period in T-cycles.
-    /// Independent of the shift code (which only selects the tap bit), so this
-    /// never overflows the way `divisor << shift` would for shift 14/15.
-    fn divisor_half(&self) -> u16 {
-        let divisor = match self.divisor_code() {
-            0 => 8,
-            n => (n as u16) * 16,
-        };
-        divisor >> 1
     }
 }
