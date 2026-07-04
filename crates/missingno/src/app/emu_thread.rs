@@ -33,25 +33,6 @@ const SRAM_DEBOUNCE_FRAMES: u32 = 30;
 /// handoff, not a queue: the UI reads whatever is current on redraw.
 pub type FrameSlot = Arc<Mutex<Option<ScreenDisplay>>>;
 
-/// Ferries a payload whose type is `!Send` only because
-/// [`missingno_gb::serial_transfer::SerialLink`] lacks a `Send` bound, across the
-/// UI/emu thread boundary. SAFETY: the payload has exactly one owner at any time —
-/// it is handed off, never shared — and every concrete `SerialLink` impl is `Send`.
-pub struct SendCell<T>(Option<T>);
-
-// SAFETY: single-owner handoff of an otherwise-`Send` value; see the type docs.
-unsafe impl<T> Send for SendCell<T> {}
-
-impl<T> SendCell<T> {
-    pub fn new(value: T) -> Self {
-        Self(Some(value))
-    }
-
-    pub fn take(mut self) -> T {
-        self.0.take().expect("SendCell taken twice")
-    }
-}
-
 /// The emulatable payload the emu thread owns while running. Only the plain
 /// console runs off-thread today; the debugger still steps on the UI thread.
 pub enum Payload {
@@ -62,7 +43,7 @@ pub enum Payload {
 /// command channel is dropped (the UI holds the only sender).
 pub enum EmuCommand {
     /// Take ownership of a payload and start running it.
-    Run(SendCell<Payload>),
+    Run(Payload),
     /// Stop running and return the payload on the sync return channel. The UI
     /// persists any final SRAM from the recovered payload synchronously.
     Pause,
@@ -91,7 +72,7 @@ pub enum EmuEvent {
 pub struct EmuHandle {
     commands: Sender<EmuCommand>,
     frames: FrameSlot,
-    returns: Arc<Mutex<Receiver<SendCell<Payload>>>>,
+    returns: Arc<Mutex<Receiver<Payload>>>,
 }
 
 impl EmuHandle {
@@ -105,7 +86,7 @@ impl EmuHandle {
 
     /// Send a payload to the thread and start running it.
     pub fn run(&self, payload: Payload) {
-        self.send(EmuCommand::Run(SendCell::new(payload)));
+        self.send(EmuCommand::Run(payload));
     }
 
     /// Pause and recover the payload synchronously (bounded wait). Returns
@@ -123,7 +104,6 @@ impl EmuHandle {
             .ok()?
             .recv_timeout(Duration::from_millis(500))
             .ok()
-            .map(SendCell::take)
     }
 }
 
@@ -135,7 +115,7 @@ pub fn subscription_worker() -> impl iced::futures::Stream<Item = EmuEvent> {
 
     let (event_tx, event_rx) = unbounded::<EmuEvent>();
     let (command_tx, command_rx) = channel::<EmuCommand>();
-    let (return_tx, return_rx) = channel::<SendCell<Payload>>();
+    let (return_tx, return_rx) = channel::<Payload>();
     let frames: FrameSlot = Arc::new(Mutex::new(None));
 
     let handle = EmuHandle {
@@ -158,7 +138,7 @@ type EventSink = iced::futures::channel::mpsc::UnboundedSender<EmuEvent>;
 
 fn run_emu_thread(
     commands: Receiver<EmuCommand>,
-    returns: Sender<SendCell<Payload>>,
+    returns: Sender<Payload>,
     frames: FrameSlot,
     events: EventSink,
 ) {
@@ -196,13 +176,13 @@ struct EmuLoop {
     payload: Option<Payload>,
     frames: FrameSlot,
     events: EventSink,
-    returns: Sender<SendCell<Payload>>,
+    returns: Sender<Payload>,
     sram_countdown: Option<u32>,
     next_deadline: Instant,
 }
 
 impl EmuLoop {
-    fn new(frames: FrameSlot, events: EventSink, returns: Sender<SendCell<Payload>>) -> Self {
+    fn new(frames: FrameSlot, events: EventSink, returns: Sender<Payload>) -> Self {
         Self {
             payload: None,
             frames,
@@ -219,8 +199,8 @@ impl EmuLoop {
 
     fn handle(&mut self, command: EmuCommand) {
         match command {
-            EmuCommand::Run(cell) => {
-                self.payload = Some(cell.take());
+            EmuCommand::Run(payload) => {
+                self.payload = Some(payload);
                 self.sram_countdown = None;
                 self.next_deadline = Instant::now();
             }
@@ -256,7 +236,7 @@ impl EmuLoop {
 
     fn return_payload(&mut self) {
         if let Some(payload) = self.payload.take() {
-            let _ = self.returns.send(SendCell::new(payload));
+            let _ = self.returns.send(payload);
         }
     }
 
