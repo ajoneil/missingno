@@ -11,6 +11,7 @@ mod audio_output;
 mod console;
 mod controls;
 mod debugger;
+mod emu_thread;
 mod emulation;
 mod emulator;
 pub mod library;
@@ -73,7 +74,11 @@ struct App {
     debugger_enabled: bool,
     fullscreen: Fullscreen,
     action_bar: ActionBar,
+    /// Audio device for the on-UI-thread debugger. The plain emulator's audio is
+    /// produced on the emu thread instead.
     audio_output: Option<AudioOutput>,
+    /// Handle to the emulation thread; `None` until it reports `Started`.
+    emu: Option<emu_thread::EmuHandle>,
     recent_games: recent::RecentGames,
     settings: settings::Settings,
     /// The running emulation session. Only set when a game is actually loaded.
@@ -244,6 +249,9 @@ struct CurrentGame {
     started_from: Option<String>,
     /// SRAM snapshot at session start, for detecting meaningful changes.
     initial_sram: Option<Vec<u8>>,
+    /// Cartridge header title, cached so SRAM saves from the emu thread (which
+    /// owns the console) can run the game-specific scratch-region comparison.
+    cartridge_title: String,
 }
 
 #[derive(Debug, Clone)]
@@ -272,7 +280,6 @@ enum Message {
     Pause,
     TogglePause,
     Reset,
-    SaveBattery,
     TakeScreenshot,
 
     PressButton(joypad::Button),
@@ -311,6 +318,8 @@ enum Message {
 
     Debugger(debugger::Message),
     Emulator(emulator::Message),
+    /// An event pushed from the emulation thread.
+    Emu(emu_thread::EmuEvent),
 
     None,
 }
@@ -333,6 +342,7 @@ impl App {
             fullscreen: Fullscreen::Windowed,
             action_bar: ActionBar::new(),
             audio_output: AudioOutput::new(),
+            emu: None,
             recent_games,
             settings,
             current_game: None,
@@ -401,12 +411,13 @@ impl App {
             | Message::Pause
             | Message::TogglePause
             | Message::Reset
-            | Message::SaveBattery
             | Message::TakeScreenshot
             | Message::DismissScreenshotToast
             | Message::PressButton(_)
             | Message::ReleaseButton(_)
             | Message::ToggleDebugger(_) => return self.handle_emulation_message(message),
+
+            Message::Emu(event) => return self.handle_emu_event(event),
 
             // Settings messages
             Message::CompleteSetup { internet_enabled } => {
@@ -438,7 +449,6 @@ impl App {
             // Navigation
             Message::BackToLibrary => {
                 self.menu_open = false;
-                self.flush_pending_save();
                 self.pause();
                 self.screen = Screen::Library { hovered_game: None };
             }
@@ -450,6 +460,8 @@ impl App {
                         self.reset();
                     }
                     Some(PendingAction::SwitchGame(sha1)) => {
+                        // Recover the console and flush SRAM before unloading.
+                        self.pause();
                         // Close current game
                         if let Some(current) = &mut self.current_game {
                             if let Some(session) = &mut current.session {
@@ -467,6 +479,8 @@ impl App {
                         }
                     }
                     Some(PendingAction::StopGame) => {
+                        // Recover the console and flush SRAM before unloading.
+                        self.pause();
                         let sha1 = if let Some(current) = &mut self.current_game {
                             if let Some(session) = &mut current.session {
                                 session.end = Some(jiff::Timestamp::now());
@@ -493,6 +507,8 @@ impl App {
                         self.screen = Screen::Library { hovered_game: None };
                     }
                     Some(PendingAction::CloseApp) => {
+                        // Recover the console and flush SRAM before exiting.
+                        self.pause();
                         if let Some(current) = &mut self.current_game {
                             if let Some(session) = &mut current.session {
                                 session.end = Some(jiff::Timestamp::now());
@@ -534,7 +550,6 @@ impl App {
                 self.pending_action = Some(PendingAction::StopGame);
             }
             Message::BackToDetail => {
-                self.flush_pending_save();
                 self.pause();
                 if let Some(current) = &self.current_game {
                     let sha1 = current.entry.sha1.clone();
@@ -668,9 +683,7 @@ impl App {
             // Delegated subsystems
             Message::Emulator(message) => {
                 if let Game::Loaded(LoadedGame::Emulator(emulator)) = &mut self.game {
-                    let task = emulator.update(message);
-                    self.drain_audio();
-                    return task;
+                    return emulator.update(message);
                 }
             }
 
