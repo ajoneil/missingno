@@ -52,8 +52,11 @@ impl Cpu {
         }
 
         // Step 1: opcode just arrived. PC advances (unless HALT-bug
-        // suppresses) and we route to the decoded phase.
-        let opcode = self.data_latch;
+        // suppresses) and we route to the decoded phase. A prefetch that
+        // latched before a GDMA hold seized the bus supplies the byte here —
+        // the re-fetch M-cycle still runs (cycle count unchanged) but decodes
+        // the prefetched byte, not the transfer-clobbered re-read.
+        let opcode = self.held_overlap_opcode.take().unwrap_or(self.data_latch);
         let fetch_addr = match &self.current_action {
             Some(MCycleAction::Read { address }) => *address,
             _ => self.pc,

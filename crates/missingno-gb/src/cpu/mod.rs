@@ -174,6 +174,16 @@ pub struct Cpu {
     /// next read latches. Read by the state machine each T-cycle.
     pub data_latch: u8,
 
+    /// A next-opcode overlap prefetch that latched while a GDMA held the bus:
+    /// it read the pre-transfer byte before the hold suppressed the fetch, so
+    /// the post-hold re-fetch decodes this retained byte rather than re-reading
+    /// the (now transfer-clobbered / open-bus) address. `Some` only across such
+    /// a hold; the fetch consumes it.
+    pub held_overlap_opcode: Option<u8>,
+    /// Set when a bus hold engages mid-overlap-prefetch; the prefetch's read
+    /// latch then captures its byte into `held_overlap_opcode`.
+    pub bus_hold_over_prefetch: bool,
+
     /// The `BusAction` produced by the most recent `next_tcycle`. The
     /// executor reads this between rise/fall edges of the same T-cycle
     /// to route memory reads/writes.
@@ -392,6 +402,8 @@ impl Cpu {
             pc: 0,
             ir_address: 0,
             data_latch: 0,
+            held_overlap_opcode: None,
+            bus_hold_over_prefetch: false,
             flags: Flags::empty(),
             irq: IrqContext::new(),
             halt: HaltContext::new(),
@@ -631,6 +643,16 @@ impl Cpu {
     /// is the scheduler's.
     pub fn begin_bus_hold(&mut self) {
         self.bus_held = true;
+        // The next-opcode overlap prefetch is in flight; its read latches this
+        // M-cycle (with the pre-transfer byte). Arm the latch to retain it so
+        // the post-hold fetch decodes it rather than re-reading.
+        self.bus_hold_over_prefetch = matches!(
+            self.phase,
+            CpuPhase::Execute {
+                phase: Phase::FetchOverlap { .. },
+                ..
+            }
+        );
     }
 
     /// Release the hold. The prefetch in flight when the hold engaged was

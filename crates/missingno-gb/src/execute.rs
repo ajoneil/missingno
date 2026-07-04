@@ -1112,6 +1112,14 @@ impl<M: Model> Console<M> {
                 value
             };
             self.cpu.data_latch = value;
+            // A next-opcode overlap prefetch that latched after a GDMA seized the
+            // bus keeps its byte: it read the pre-transfer value (the transfer
+            // suppresses the fetch, it does not re-drive the read). Retain it so
+            // the post-hold re-fetch decodes it instead of the open-bus re-read.
+            if self.cpu.bus_held && self.cpu.bus_hold_over_prefetch {
+                self.cpu.held_overlap_opcode = Some(value);
+                self.cpu.bus_hold_over_prefetch = false;
+            }
             self.commit_bus_read(address, value);
         }
     }
