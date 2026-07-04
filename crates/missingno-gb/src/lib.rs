@@ -174,6 +174,10 @@ pub trait Model: Default {
     /// DMG arms/fires the OAM-corruption bug (BOWA/CUFE); CGB silicon has none.
     const HAS_OAM_BUG: bool = false;
 
+    /// Console has the KEY1 ÷2 cell. When false every double-speed branch in
+    /// the shared step loop is dead code.
+    const DOUBLE_SPEED: bool = false;
+
     /// How the CPU couples to CH3's wave SRAM while the channel is active:
     /// DMG only during the fetch strobe, CGB always at the channel's byte.
     const WAVE_RAM_COUPLING: WaveRamCoupling = WaveRamCoupling::FetchStrobe;
@@ -183,18 +187,14 @@ pub trait Model: Default {
 
     /// CGB's halt-release comparator samples IF&IE two T-cycles before
     /// the M-cycle boundary; DMG samples at the boundary.
-    fn halt_wake_samples_early(&self) -> bool {
-        false
-    }
+    const HALT_WAKE_SAMPLES_EARLY: bool = false;
 
     /// cpu_irq_ack1 (LALU.r_n) holds the dispatched IF bit in reset across
     /// the ack window. On CGB the release trails by one step, so a timer or
     /// serial IF assertion landing on the dispatch's M-cycle boundary is still
     /// caught by the reset — the serviced bit reads back clear where DMG, which
     /// releases just ahead of that boundary set, reads it set.
-    fn irq_ack_holds_through_boundary_set(&self) -> bool {
-        false
-    }
+    const IRQ_ACK_HOLDS_THROUGH_BOUNDARY_SET: bool = false;
 
     /// Hardware revision name recorded in gbtrace captures.
     const TRACE_MODEL_NAME: &'static str = "DMG-B";
@@ -762,7 +762,7 @@ impl<M: Model> Console<M> {
         // The model resets to single speed; realign the clock's ÷1/÷2 cell so it
         // stays the sole ratio owner across a reset.
         self.clock
-            .set_divider(if self.model.cpu_steps_per_dot() == 2 {
+            .set_divider(if self.double_speed_active() {
                 CpuDivider::Two
             } else {
                 CpuDivider::One
@@ -817,6 +817,12 @@ impl<M: Model> Console<M> {
     /// CPU T-cycles advanced per PPU dot (1 single speed, 2 CGB double speed).
     pub fn cpu_steps_per_dot(&self) -> u8 {
         self.model.cpu_steps_per_dot()
+    }
+
+    /// KEY1 double speed currently engaged. Folds to `false` on consoles
+    /// without the ÷2 cell.
+    fn double_speed_active(&self) -> bool {
+        M::DOUBLE_SPEED && self.model.cpu_steps_per_dot() == 2
     }
 
     pub fn screen(&self) -> &M::Screen {

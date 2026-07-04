@@ -237,7 +237,9 @@ impl<M: Model> Console<M> {
         if tick.dot.is_some() {
             self.ppu.tick_onset_settles();
         }
-        self.interrupts.tick_set_settles();
+        if M::DOUBLE_SPEED {
+            self.interrupts.tick_set_settles();
+        }
         PhaseResult { new_screen, pixel }
     }
 
@@ -272,7 +274,7 @@ impl<M: Model> Console<M> {
                 // `step_blackout_chunk` advances the master clock every edge and
                 // re-engages at the phase the count expires on.
                 let old_counter = self.timers.internal_counter();
-                let to_double = self.model.cpu_steps_per_dot() == 2;
+                let to_double = self.double_speed_active();
                 self.timers.reset_for_speed_switch();
                 self.audio
                     .on_div_write(old_counter.wrapping_sub(1), !to_double);
@@ -286,7 +288,7 @@ impl<M: Model> Console<M> {
                 // KEY1 has flipped the model's speed bit; align the clock's ÷1/÷2
                 // cell to the new ratio so the clock stays the sole ratio owner.
                 self.clock
-                    .set_divider(if self.model.cpu_steps_per_dot() == 2 {
+                    .set_divider(if self.double_speed_active() {
                         CpuDivider::Two
                     } else {
                         CpuDivider::One
@@ -385,7 +387,7 @@ impl<M: Model> Console<M> {
 
         // APU prescaler tick (apuv ↑) on every master-clock rise.
         if dot_work {
-            let double_speed = self.model.cpu_steps_per_dot() == 2;
+            let double_speed = self.double_speed_active();
             self.audio.tcycle(
                 self.timers.internal_counter(),
                 tcycle.as_u8(),
@@ -408,7 +410,7 @@ impl<M: Model> Console<M> {
         // this dot's `ppu_rise_edge`. A double-speed FF41 read latching on the
         // same phase resolves its mode to this pre-transition view (the CGB
         // CPU↔ALET read placement). Only double speed consumes it.
-        if ppu == PpuEdge::Rise && self.model.cpu_steps_per_dot() == 2 {
+        if ppu == PpuEdge::Rise && self.double_speed_active() {
             self.model.note_pre_alet_rendering(self.ppu.is_rendering());
             if let Some(address) = self.cpu_bus.read_address() {
                 self.model.note_pre_alet_lock(self.ppu.read_lock(address));
@@ -432,8 +434,7 @@ impl<M: Model> Console<M> {
             if self.cpu.in_dispatch() {
                 if !self.cpu.dispatch_entry_sampled {
                     self.cpu.dispatch_entry_sampled = true;
-                    self.cpu.dispatch_parks_behind_dma =
-                        self.cpu.dma_request_stood_prev2_boundary;
+                    self.cpu.dispatch_parks_behind_dma = self.cpu.dma_request_stood_prev2_boundary;
                 }
             } else {
                 self.cpu.dispatch_entry_sampled = false;
@@ -530,7 +531,7 @@ impl<M: Model> Console<M> {
         &mut self,
         video_result: &ppu::PpuTickResult<<M::Ppu as ppu::PpuModel>::Pixel>,
     ) -> (bool, Option<ppu::PixelOutput>) {
-        let double_speed = self.model.cpu_steps_per_dot() == 2;
+        let double_speed = self.double_speed_active();
         // VBlank IF: POPU transitions happen on the fall since the divider
         // chain runs there.
         if video_result.request_vblank {
@@ -593,7 +594,7 @@ impl<M: Model> Console<M> {
     /// this held advance fired; `elapsed` is the master edges already drained
     /// (an anchor difference).
     fn held_dot_advance(&mut self, dot: Edge, elapsed: u64) -> PhaseResult {
-        let double_speed = self.model.cpu_steps_per_dot() == 2;
+        let double_speed = self.double_speed_active();
         let steps_per_dot = self.model.cpu_steps_per_dot() as u64;
         let mcycle_edges = (8 / steps_per_dot).max(1);
 
@@ -833,7 +834,7 @@ impl<M: Model> Console<M> {
         // On CGB the IF-bit reset trails the boundary's own timer/serial
         // set (tick_cpu_clock_mcycle below), so hold it past that set and
         // release after; DMG releases here, ahead of the set.
-        if !self.model.irq_ack_holds_through_boundary_set() {
+        if !M::IRQ_ACK_HOLDS_THROUGH_BOUNDARY_SET {
             self.cpu.irq.irq_ack_held = None;
         }
 
@@ -841,7 +842,7 @@ impl<M: Model> Console<M> {
         // the per-bit irq_latch — preserves pre-release values held
         // through the prior M-cycle's data phase.
         self.cpu
-            .tick_irq_latched(self.model.halt_wake_samples_early());
+            .tick_irq_latched(M::HALT_WAKE_SAMPLES_EARLY);
 
         // data_phase_n↑ reopens the per-bit irq_latch_inst<i> to
         // re-snapshot IF for this M-cycle's dispatch.
@@ -868,7 +869,7 @@ impl<M: Model> Console<M> {
         // CGB: the ack reset-hold extends past the boundary set above, so a
         // timer/serial IF assertion coincident with the dispatch boundary is
         // re-cleared before the hold releases.
-        if self.model.irq_ack_holds_through_boundary_set() {
+        if M::IRQ_ACK_HOLDS_THROUGH_BOUNDARY_SET {
             if let Some(interrupt) = self.cpu.irq.irq_ack_held {
                 self.interrupts.clear(interrupt);
             }
@@ -962,7 +963,7 @@ impl<M: Model> Console<M> {
         }
 
         // T2 rise: the CGB halt-release chain's sample point.
-        if tcycle.as_u8() == 2 && self.model.halt_wake_samples_early() {
+        if tcycle.as_u8() == 2 && M::HALT_WAKE_SAMPLES_EARLY {
             self.cpu.presample_halt_wake();
         }
 
@@ -1048,7 +1049,7 @@ impl<M: Model> Console<M> {
             // the genuine mode lock, not the RUTU pre-onset that the single-speed
             // window's later samples already exclude.
             let locked =
-                if self.model.cpu_steps_per_dot() == 2 && matches!(address, 0xFE00..=0xFEFF) {
+                if self.double_speed_active() && matches!(address, 0xFE00..=0xFEFF) {
                     Some(self.ppu.oam_mode_locked())
                 } else {
                     self.ppu.write_lock(address)
@@ -1089,7 +1090,7 @@ impl<M: Model> Console<M> {
             // Mode-3 onset (XYMU↓ at AVAP↑) bus-settle, the symmetric counterpart to
             // the mode-2 not_if1 hold: a double-speed STAT read landing in the onset
             // contention window holds the XYMU bit at its pre-onset 0 (PRE mode 2).
-            let value = if address == 0xFF41 && self.model.cpu_steps_per_dot() == 2 {
+            let value = if address == 0xFF41 && self.double_speed_active() {
                 if self.ppu.in_mode3_onset_settle() {
                     (value & !0b11) | self.ppu.mode3_onset_pre_stat()
                 } else if self.ppu.in_mode1_onset_settle() {
@@ -1104,7 +1105,7 @@ impl<M: Model> Console<M> {
             // double-speed OAM read landing in the onset window reads accessible — the
             // OAM analogue of the not_if1 hold the bare OAM gate lacks.
             let value = if matches!(address, 0xFE00..=0xFEFF)
-                && self.model.cpu_steps_per_dot() == 2
+                && self.double_speed_active()
                 && self.ppu.in_oam_onset_settle()
             {
                 accessible

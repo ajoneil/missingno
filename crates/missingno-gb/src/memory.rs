@@ -395,7 +395,6 @@ impl<M: Model> Console<M> {
             // high (0xFF).
             _ if self.ppu.read_locked(address) => 0xFF,
 
-
             // LY: the byte fluxes via NOT_IF0 drivers fed by the
             // RUTU-clocked ripple counter. A latch coincident with the
             // counter edge catches the ripple mid-settle: falling bits
@@ -423,7 +422,7 @@ impl<M: Model> Console<M> {
             0xFF41 => {
                 let live = self.read(address);
                 const X_WINDOW: u8 = 0b0000_0111;
-                if self.cpu_steps_per_dot() == 2 {
+                if self.double_speed_active() {
                     const FAST_BITS: u8 = 0b0000_0101;
                     let mode2 = if self.ppu.stat_mode2_bus() {
                         0b0000_0010
@@ -627,7 +626,7 @@ impl<M: Model> Console<M> {
         // the lock engages and the live after it releases — only the
         // mid (AVAP) sample sits inside the write-lock window.
         if let Some(locked_now) = self.ppu.write_lock(address) {
-            let blocked = if self.model.cpu_steps_per_dot() == 2 {
+            let blocked = if self.double_speed_active() {
                 locked_at_mid.unwrap_or(locked_now)
             } else {
                 match (locked_at_snapshot, locked_at_mid) {
@@ -688,7 +687,7 @@ impl<M: Model> Console<M> {
                     let old_counter = self.timers.internal_counter();
                     self.timers.write_register(register, value);
                     self.audio
-                        .on_div_write(old_counter, self.model.cpu_steps_per_dot() == 2);
+                        .on_div_write(old_counter, self.double_speed_active());
                     if let Some(interrupt) = self
                         .serial
                         .on_div_write(old_counter, self.model.has_serial_fast_clock())
@@ -703,7 +702,7 @@ impl<M: Model> Console<M> {
                 register,
                 value,
                 self.timers.internal_counter(),
-                self.cpu_steps_per_dot() == 2,
+                self.double_speed_active(),
             ),
             MappedAddress::AudioWaveRam(offset) => {
                 self.audio
@@ -711,7 +710,10 @@ impl<M: Model> Console<M> {
             }
             MappedAddress::PpuRegister(register) => {
                 let halt_wake_active = self.cpu.is_halt_wake_active();
-                if self.ppu.write_register(register, value, halt_wake_active, false) {
+                if self
+                    .ppu
+                    .write_register(register, value, halt_wake_active, false)
+                {
                     self.interrupts
                         .requested
                         .insert(InterruptFlags::VIDEO_STATUS);

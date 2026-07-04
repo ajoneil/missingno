@@ -981,16 +981,14 @@ impl Model for Cgb {
         !self.dmg_compat
     }
 
-    fn halt_wake_samples_early(&self) -> bool {
-        // The T2-rise presample holds at both speeds — double speed shifts the
-        // dot↔T-cycle ratio, not where in the M-cycle the comparator samples.
-        true
-    }
+    const DOUBLE_SPEED: bool = true;
 
-    fn irq_ack_holds_through_boundary_set(&self) -> bool {
-        // Silicon property of the ack reset-hold, independent of DMG-compat.
-        true
-    }
+    // The T2-rise presample holds at both speeds — double speed shifts the
+    // dot↔T-cycle ratio, not where in the M-cycle the comparator samples.
+    const HALT_WAKE_SAMPLES_EARLY: bool = true;
+
+    // Silicon property of the ack reset-hold, independent of DMG-compat.
+    const IRQ_ACK_HOLDS_THROUGH_BOUNDARY_SET: bool = true;
 
     /// CGB boot-ROM handoff divider phase. The boot ROM runs longer for a
     /// DMG cartridge (compat-palette setup): FF04 reads $1E / $26.
@@ -1565,8 +1563,7 @@ impl Model for Cgb {
             // arriving pre-charged.
             let precharged = granted && !cpu_halted;
             self.vram_dma.thaw_drain = granted && cpu_halted;
-            self.vram_dma.park_waits_for_fetch =
-                !(self.vram_dma.pend_from_arm || halted_entering);
+            self.vram_dma.park_waits_for_fetch = !(self.vram_dma.pend_from_arm || halted_entering);
             self.vram_dma.ready_in = if precharged { 0 } else { 2 };
             self.vram_dma.setup_cells = if self.vram_dma.pend_from_arm || precharged {
                 0
