@@ -678,7 +678,7 @@ impl<P: PpuModel> Rendering<P> {
                         self.sprite_state = SpriteState::Idle;
                         self.sprite_trigger.clear_fetch_running();
                         // Per-slot fetched-flag captures at WUTY↑ (fetch completion); FEPO drops for this slot.
-                        self.scan.sprites_mut().fetched |= 1 << slot_index;
+                        self.scan.sprites_mut().mark_fetched(slot_index);
                         // The fetch latched (tile-index, attribute) into the shared Stage-1 dlatches.
                         self.scan.set_stage1_held(s1y, s1x);
                         fepo_pre_cupa = self.fepo(regs.control.sprites_enabled());
@@ -879,12 +879,24 @@ impl<P: PpuModel> Rendering<P> {
     }
 
     /// FEPO: any unfetched sprite's X matches the pixel counter. Feeds VYBO/XENA/TEKY.
-    /// Collapses XYLO/AROR/per-sprite-decoders/FOVE/FEFY into one loop; off-screen X≥168 excluded.
+    /// Collapses XYLO/AROR/per-sprite-decoders/FOVE/FEFY into the store's
+    /// precomputed comparator bank; off-screen X≥168 excluded.
     fn fepo(&self, sprites_enabled: bool) -> bool {
         if !sprites_enabled && P::FETCH_TRIGGER_GATED_BY_OBJ_ENABLE {
             return false;
         }
 
+        let matched = self
+            .scan
+            .sprites_ref()
+            .matches_at(self.pixel_counter.value());
+        debug_assert_eq!(matched, self.fepo_by_slot_scan());
+        matched
+    }
+
+    /// The comparator as a direct slot scan — the mask's definition, kept as
+    /// the debug-build oracle for `fepo`.
+    fn fepo_by_slot_scan(&self) -> bool {
         let match_x = self.pixel_counter.value();
         let sprites = self.scan.sprites_ref();
         for i in 0..sprites.count as usize {

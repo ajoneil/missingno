@@ -24,6 +24,10 @@ pub(in crate::ppu) struct SpriteStore {
     pub(in crate::ppu) count: u8,
     /// Bit N = slot N fetched (EBOJ-FONO per-slot reset flag); reset at line start.
     pub(in crate::ppu) fetched: u16,
+    /// Bit X set = an unfetched slot's X equals X (the FEPO comparator bank,
+    /// precomputed). Mirrors `entries`/`count`/`fetched` — update on store
+    /// push and on every `fetched` change.
+    match_mask: [u64; 4],
 }
 
 impl SpriteStore {
@@ -36,7 +40,35 @@ impl SpriteStore {
             }; MAX_SPRITES_PER_LINE],
             count: 0,
             fetched: 0,
+            match_mask: [0; 4],
         }
+    }
+
+    /// Register a freshly scanned slot in the comparator bank. Off-screen
+    /// X ≥ 168 never matches (per-sprite decoder range).
+    pub(in crate::ppu) fn note_slot_added(&mut self, x: u8) {
+        if x < 168 {
+            self.match_mask[(x >> 6) as usize] |= 1 << (x & 63);
+        }
+    }
+
+    /// Recompute the comparator bank from the unfetched slots. Slots can
+    /// share an X, so clearing a fetched slot's bit requires a full rebuild.
+    pub(in crate::ppu) fn mark_fetched(&mut self, slot_index: u8) {
+        self.fetched |= 1 << slot_index;
+        self.match_mask = [0; 4];
+        for i in 0..self.count as usize {
+            if self.fetched & (1 << i) == 0 {
+                let x = self.entries[i].x;
+                if x < 168 {
+                    self.match_mask[(x >> 6) as usize] |= 1 << (x & 63);
+                }
+            }
+        }
+    }
+
+    pub(in crate::ppu) fn matches_at(&self, x: u8) -> bool {
+        self.match_mask[(x >> 6) as usize] & (1 << (x & 63)) != 0
     }
 }
 
@@ -117,6 +149,7 @@ impl ScanCounter {
                     x: self.stage1_x,
                 };
                 sprites.count += 1;
+                sprites.note_slot_added(self.stage1_x);
             }
         }
     }
