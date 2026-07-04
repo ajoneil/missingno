@@ -1,61 +1,52 @@
-use std::time::Duration;
-
 use iced::{
     Element,
     Length::{self, Fill},
-    Subscription, Task, time,
+    Task,
     widget::{button, container, mouse_area, responsive, shader, stack, svg},
 };
 
 use crate::app::{
     self,
     console::AnyConsole,
-    screen::ScreenView,
+    screen::{ScreenDisplay, ScreenView},
     ui::{
         icons::{self, Icon},
         sizes::border_s,
     },
 };
-use missingno_gb::{joypad::Button, ppu::types::palette::PaletteChoice};
+use missingno_gb::ppu::types::palette::PaletteChoice;
 
-/// Frames of silence before we flush an SRAM save.
-/// Games often write SRAM across several consecutive frames during a save
-/// operation. We wait for writes to stop before persisting.
-const SRAM_DEBOUNCE_FRAMES: u32 = 30; // ~0.5 seconds at 60fps
-
+/// The UI-side shell for a plain (non-debugger) game. While the game runs the
+/// console lives on the emu thread (`console` is `None`); it is recovered here
+/// synchronously on pause so all inspection paths keep working.
 pub struct Emulator {
-    console: AnyConsole,
+    console: Option<AnyConsole>,
     screen_view: ScreenView,
     running: bool,
     screen_hovered: bool,
     use_sgb_colors: bool,
-    /// Countdown: frames since last SRAM write. When this reaches
-    /// SRAM_DEBOUNCE_FRAMES, we fire SaveBattery. None = no pending save.
-    sram_save_countdown: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    EmulateFrame,
     ScreenHovered,
     ScreenUnhovered,
 }
 
-impl Into<app::Message> for Message {
-    fn into(self) -> app::Message {
-        app::Message::Emulator(self)
+impl From<Message> for app::Message {
+    fn from(value: Message) -> Self {
+        app::Message::Emulator(value)
     }
 }
 
 impl Emulator {
     pub fn new(console: AnyConsole, use_sgb_colors: bool) -> Self {
         Self {
-            console,
+            console: Some(console),
             screen_view: ScreenView::new(),
             running: false,
             screen_hovered: false,
             use_sgb_colors,
-            sram_save_countdown: None,
         }
     }
 
@@ -65,12 +56,11 @@ impl Emulator {
         use_sgb_colors: bool,
     ) -> Self {
         Self {
-            console,
+            console: Some(console),
             screen_view,
             running: false,
             screen_hovered: false,
             use_sgb_colors,
-            sram_save_countdown: None,
         }
     }
 
@@ -78,61 +68,40 @@ impl Emulator {
         self.use_sgb_colors = use_sgb;
     }
 
-    pub fn console(&self) -> &AnyConsole {
-        &self.console
+    /// The console, present only while paused/idle (not while running).
+    pub fn console(&self) -> Option<&AnyConsole> {
+        self.console.as_ref()
     }
 
-    pub fn console_mut(&mut self) -> &mut AnyConsole {
-        &mut self.console
+    /// Take the console to hand it to the emu thread for running.
+    pub fn take_console(&mut self) -> Option<AnyConsole> {
+        self.console.take()
+    }
+
+    /// Put the console back when the emu thread returns it on pause.
+    pub fn restore_console(&mut self, console: AnyConsole) {
+        self.console = Some(console);
+    }
+
+    /// Update the displayed frame from the emu thread's latest-frame slot.
+    pub fn apply_frame(&mut self, display: ScreenDisplay) {
+        self.screen_view.use_sgb_colors = self.use_sgb_colors;
+        self.screen_view.apply(display);
     }
 
     pub fn enable_debugger(self) -> app::debugger::AnyDebugger {
-        app::debugger::AnyDebugger::from_emulator(self.console, self.screen_view)
+        let console = self
+            .console
+            .expect("console present when enabling the debugger");
+        app::debugger::AnyDebugger::from_emulator(console, self.screen_view)
     }
 
     pub fn update(&mut self, message: Message) -> Task<app::Message> {
         match message {
-            Message::EmulateFrame => {
-                // A frame is ~70224 dots; the CPU runs 1 or 2 T-cycles per dot
-                // (CGB double speed). Allow 2x a frame to avoid hanging the UI
-                // if the PPU never produces a frame (e.g. LCD off).
-                let max_tcycles_per_frame = 70224 * 2 * self.console.cpu_tcycles_per_dot() as u32;
-                let mut tcycles = 0;
-                let mut sram_dirty = false;
-                loop {
-                    let result = self.console.step();
-                    tcycles += result.tcycles;
-                    sram_dirty |= result.sram_dirty;
-                    if result.new_screen || tcycles >= max_tcycles_per_frame {
-                        break;
-                    }
-                }
-                self.screen_view.use_sgb_colors = self.use_sgb_colors;
-                self.screen_view.apply(self.console.screen_display());
-
-                // Debounce SRAM saves: reset countdown on each dirty frame,
-                // fire SaveBattery after SRAM_DEBOUNCE_FRAMES of quiet.
-                if sram_dirty {
-                    self.sram_save_countdown = Some(0);
-                } else if let Some(count) = &mut self.sram_save_countdown {
-                    *count += 1;
-                    if *count >= SRAM_DEBOUNCE_FRAMES {
-                        self.sram_save_countdown = None;
-                        return Task::done(app::Message::SaveBattery);
-                    }
-                }
-            }
             Message::ScreenHovered => self.screen_hovered = true,
             Message::ScreenUnhovered => self.screen_hovered = false,
         }
-
         Task::none()
-    }
-
-    /// Force-flush any pending SRAM save. Call when pausing or closing.
-    /// Returns true if there was a pending save.
-    pub fn flush_pending_save(&mut self) -> bool {
-        self.sram_save_countdown.take().is_some()
     }
 
     pub fn set_palette(&mut self, palette: PaletteChoice) {
@@ -204,33 +173,25 @@ impl Emulator {
         self.running
     }
 
-    pub fn run(&mut self) {
-        self.running = true;
-    }
-
-    pub fn pause(&mut self) {
-        self.running = false;
+    pub fn set_running(&mut self, running: bool) {
+        self.running = running;
     }
 
     pub fn reset(&mut self) {
-        self.console.reset();
+        if let Some(console) = &mut self.console {
+            console.reset();
+        }
     }
 
-    pub fn press_button(&mut self, button: Button) {
-        self.console.press_button(button);
+    pub fn press_button(&mut self, button: missingno_gb::joypad::Button) {
+        if let Some(console) = &mut self.console {
+            console.press_button(button);
+        }
     }
 
-    pub fn release_button(&mut self, button: Button) {
-        self.console.release_button(button);
-    }
-
-    pub fn subscription(&self) -> Subscription<app::Message> {
-        if self.running {
-            Subscription::batch([
-                time::every(Duration::from_micros(16740)).map(|_| Message::EmulateFrame.into())
-            ])
-        } else {
-            Subscription::none()
+    pub fn release_button(&mut self, button: missingno_gb::joypad::Button) {
+        if let Some(console) = &mut self.console {
+            console.release_button(button);
         }
     }
 }

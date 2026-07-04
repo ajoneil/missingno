@@ -5,7 +5,9 @@ use replace_with::replace_with_or_abort;
 
 use missingno_gb::joypad::Button;
 
+use super::emu_thread::{EmuCommand, EmuEvent, Payload};
 use super::{App, Game, LoadedGame, Message, PendingAction, library};
+use crate::app::library::activity::FrameCapture;
 
 impl App {
     pub(super) fn handle_emulation_message(&mut self, message: Message) -> Task<Message> {
@@ -22,34 +24,31 @@ impl App {
             Message::Reset => {
                 self.pending_action = Some(PendingAction::ResetEmulator);
             }
-            Message::SaveBattery => {
-                self.save();
-            }
             Message::TakeScreenshot => {
-                // Grab the current framebuffer from whichever game mode is active
+                let palette = self.settings.palette.to_string();
+                let use_sgb_colors = self.settings.use_sgb_colors;
+                // While the emulator runs, the console is on the emu thread; ask
+                // it to capture and record on the resulting `Screenshot` event.
                 let capture = match &self.game {
-                    Game::Loaded(LoadedGame::Emulator(emu)) => Some(emu.console().capture_frame(
-                        self.settings.use_sgb_colors,
-                        &self.settings.palette.to_string(),
-                    )),
-                    Game::Loaded(LoadedGame::Debugger(dbg)) => Some(dbg.capture_screenshot(
-                        self.settings.use_sgb_colors,
-                        &self.settings.palette.to_string(),
-                    )),
+                    Game::Loaded(LoadedGame::Emulator(emu)) if emu.running() => {
+                        if let Some(handle) = &self.emu {
+                            handle.send(EmuCommand::RequestScreenshot {
+                                use_sgb_colors,
+                                palette,
+                            });
+                        }
+                        None
+                    }
+                    Game::Loaded(LoadedGame::Emulator(emu)) => emu
+                        .console()
+                        .map(|console| console.capture_frame(use_sgb_colors, &palette)),
+                    Game::Loaded(LoadedGame::Debugger(dbg)) => {
+                        Some(dbg.capture_screenshot(use_sgb_colors, &palette))
+                    }
                     _ => None,
                 };
                 if let Some(capture) = capture {
-                    if let Some(current) = &mut self.current_game {
-                        if let Some(session) = &mut current.session {
-                            session.events.push(library::activity::SessionEvent {
-                                at: jiff::Timestamp::now(),
-                                kind: library::activity::EventKind::Screenshot { frame: capture },
-                            });
-                            library::activity::write_session(&current.game_dir, session);
-                            self.store.update_live_screenshots(session);
-                        }
-                    }
-                    self.screenshot_toast = Some(Instant::now());
+                    self.record_screenshot(capture);
                 }
             }
             Message::DismissScreenshotToast => {
@@ -59,6 +58,8 @@ impl App {
             Message::ReleaseButton(button) => self.release_button(button),
             Message::ToggleDebugger(debugger_enabled) => {
                 self.debugger_enabled = debugger_enabled;
+                // Conversion needs the console on the UI thread.
+                self.pause();
 
                 if let Game::Loaded(game) = &mut self.game {
                     let palette = self.settings.palette;
@@ -91,6 +92,36 @@ impl App {
         Task::none()
     }
 
+    /// Handle an event from the emulation thread.
+    pub(super) fn handle_emu_event(&mut self, event: EmuEvent) -> Task<Message> {
+        match event {
+            EmuEvent::Started(handle) => {
+                self.emu = Some(handle);
+                // A game loaded before the thread was ready (e.g. a CLI ROM)
+                // starts running now.
+                self.start_running();
+            }
+            EmuEvent::FrameReady => {
+                let display = self
+                    .emu
+                    .as_ref()
+                    .and_then(|handle| handle.frames().lock().ok()?.clone());
+                if let Some(display) = display
+                    && let Game::Loaded(LoadedGame::Emulator(emulator)) = &mut self.game
+                {
+                    emulator.apply_frame(display);
+                }
+            }
+            EmuEvent::SramDirty(ram) => {
+                if let Some(title) = self.current_game.as_ref().map(|c| c.cartridge_title.clone()) {
+                    self.persist_sram(&ram, &title);
+                }
+            }
+            EmuEvent::Screenshot(capture) => self.record_screenshot(*capture),
+        }
+        Task::none()
+    }
+
     pub(super) fn running(&self) -> bool {
         match &self.game {
             Game::Loaded(game) => match game {
@@ -103,63 +134,111 @@ impl App {
 
     pub(super) fn run(&mut self) {
         match &mut self.game {
-            Game::Loaded(game) => match game {
-                LoadedGame::Debugger(debugger) => debugger.run(),
-                LoadedGame::Emulator(emulator) => emulator.run(),
-            },
+            Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.run(),
+            Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.set_running(true),
             _ => {}
+        }
+        self.start_running();
+    }
+
+    /// Hand the emulator console to the emu thread if it should run. Idempotent.
+    pub(super) fn start_running(&mut self) {
+        let Some(handle) = self.emu.clone() else {
+            return;
+        };
+        if let Game::Loaded(LoadedGame::Emulator(emulator)) = &mut self.game
+            && emulator.running()
+            && let Some(console) = emulator.take_console()
+        {
+            handle.run(Payload::Console(Box::new(console)));
         }
     }
 
     pub(super) fn pause(&mut self) {
+        // Recover the console from the emu thread so all inspection and saving
+        // paths work synchronously while paused.
+        if let Some(handle) = self.emu.clone() {
+            let running_emulator =
+                matches!(&self.game, Game::Loaded(LoadedGame::Emulator(emu)) if emu.running());
+            if running_emulator
+                && let Some(Payload::Console(console)) = handle.pause_and_recover()
+                && let Game::Loaded(LoadedGame::Emulator(emulator)) = &mut self.game
+            {
+                emulator.restore_console(*console);
+            }
+        }
         match &mut self.game {
-            Game::Loaded(game) => match game {
-                LoadedGame::Debugger(debugger) => debugger.pause(),
-                LoadedGame::Emulator(emulator) => emulator.pause(),
-            },
+            Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.pause(),
+            Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.set_running(false),
             _ => {}
         }
+        // Persist any pending SRAM from the recovered console.
+        self.save();
     }
 
     pub(super) fn reset(&mut self) {
+        let handle = self.emu.clone();
         match &mut self.game {
-            Game::Loaded(game) => match game {
-                LoadedGame::Debugger(debugger) => debugger.reset(),
-                LoadedGame::Emulator(emulator) => emulator.reset(),
-            },
+            Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.reset(),
+            Game::Loaded(LoadedGame::Emulator(emulator)) => {
+                if emulator.running()
+                    && let Some(handle) = &handle
+                {
+                    handle.send(EmuCommand::Reset);
+                } else {
+                    emulator.reset();
+                }
+            }
             _ => {}
         }
     }
 
     pub(super) fn press_button(&mut self, button: Button) {
+        let handle = self.emu.clone();
         match &mut self.game {
-            Game::Loaded(game) => match game {
-                LoadedGame::Debugger(debugger) => debugger.press_button(button),
-                LoadedGame::Emulator(emulator) => emulator.press_button(button),
-            },
+            Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.press_button(button),
+            Game::Loaded(LoadedGame::Emulator(emulator)) => {
+                if emulator.running()
+                    && let Some(handle) = &handle
+                {
+                    handle.send(EmuCommand::Press(button));
+                } else {
+                    emulator.press_button(button);
+                }
+            }
             _ => {}
         }
     }
 
     pub(super) fn release_button(&mut self, button: Button) {
+        let handle = self.emu.clone();
         match &mut self.game {
-            Game::Loaded(game) => match game {
-                LoadedGame::Debugger(debugger) => debugger.release_button(button),
-                LoadedGame::Emulator(emulator) => emulator.release_button(button),
-            },
+            Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.release_button(button),
+            Game::Loaded(LoadedGame::Emulator(emulator)) => {
+                if emulator.running()
+                    && let Some(handle) = &handle
+                {
+                    handle.send(EmuCommand::Release(button));
+                } else {
+                    emulator.release_button(button);
+                }
+            }
             _ => {}
         }
     }
 
-    /// Flush any debounced SRAM save from the emulator.
-    pub(super) fn flush_pending_save(&mut self) {
-        let flushed = match &mut self.game {
-            Game::Loaded(LoadedGame::Emulator(emu)) => emu.flush_pending_save(),
-            _ => false,
-        };
-        if flushed {
-            self.save();
+    fn record_screenshot(&mut self, capture: FrameCapture) {
+        if let Some(current) = &mut self.current_game
+            && let Some(session) = &mut current.session
+        {
+            session.events.push(library::activity::SessionEvent {
+                at: jiff::Timestamp::now(),
+                kind: library::activity::EventKind::Screenshot { frame: capture },
+            });
+            library::activity::write_session(&current.game_dir, session);
+            self.store.update_live_screenshots(session);
         }
+        self.screenshot_toast = Some(Instant::now());
     }
 
     pub(super) fn save(&mut self) {
@@ -169,55 +248,61 @@ impl App {
                     return;
                 }
                 (
-                    debugger.cartridge().ram(),
+                    debugger.cartridge().ram().map(|ram| ram.to_vec()),
                     debugger.cartridge().title().to_string(),
                 )
             }
             Game::Loaded(LoadedGame::Emulator(emulator)) => {
-                if !emulator.console().cartridge().has_battery() {
+                let Some(console) = emulator.console() else {
+                    return;
+                };
+                if !console.cartridge().has_battery() {
                     return;
                 }
                 (
-                    emulator.console().cartridge().ram(),
-                    emulator.console().cartridge().title().to_string(),
+                    console.cartridge().ram().map(|ram| ram.to_vec()),
+                    console.cartridge().title().to_string(),
                 )
             }
             _ => return,
         };
         let Some(ram) = ram else { return };
-        let Some(current) = &mut self.current_game else {
-            return;
-        };
-
-        if let Some(session) = &mut current.session {
-            // Check if SRAM has meaningfully changed, ignoring scratch regions
-            let previous = session.last_sram().or(current.initial_sram.as_deref());
-            let changed = match previous {
-                Some(prev) => library::game_db::sram_changed(&cartridge_title, &ram, prev),
-                None => true, // No previous data at all — always record
-            };
-
-            if changed {
-                session.events.push(library::activity::SessionEvent {
-                    at: jiff::Timestamp::now(),
-                    kind: library::activity::EventKind::Save { sram: ram.to_vec() },
-                });
-                // Write incrementally for crash safety
-                library::activity::write_session(&current.game_dir, session);
-            }
-        }
+        self.persist_sram(&ram, &cartridge_title);
     }
 
+    /// Drain audio from the on-thread debugger to the UI-side output device.
+    /// The plain emulator pushes audio directly from the emu thread instead.
     pub(super) fn drain_audio(&mut self) {
         let samples = match &mut self.game {
-            Game::Loaded(LoadedGame::Emulator(emulator)) => {
-                emulator.console_mut().drain_audio_samples()
-            }
             Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.drain_audio_samples(),
             _ => return,
         };
         if let Some(audio) = &mut self.audio_output {
             audio.push_samples(&samples);
+        }
+    }
+
+    /// Write an SRAM snapshot to the session if it meaningfully changed.
+    fn persist_sram(&mut self, ram: &[u8], cartridge_title: &str) {
+        let Some(current) = &mut self.current_game else {
+            return;
+        };
+        let Some(session) = &mut current.session else {
+            return;
+        };
+
+        let previous = session.last_sram().or(current.initial_sram.as_deref());
+        let changed = match previous {
+            Some(prev) => library::game_db::sram_changed(cartridge_title, ram, prev),
+            None => true,
+        };
+
+        if changed {
+            session.events.push(library::activity::SessionEvent {
+                at: jiff::Timestamp::now(),
+                kind: library::activity::EventKind::Save { sram: ram.to_vec() },
+            });
+            library::activity::write_session(&current.game_dir, session);
         }
     }
 }

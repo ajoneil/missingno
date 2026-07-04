@@ -63,8 +63,9 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
 }
 
 /// Build the console for a ROM and wrap it for the active mode (debugger or
-/// emulator), storing it in `app.game`.
-fn start_console(app: &mut App, cartridge: Cartridge) {
+/// emulator), storing it in `app.game`. Returns the cartridge header title.
+fn start_console(app: &mut App, cartridge: Cartridge) -> String {
+    let cartridge_title = cartridge.title().to_string();
     let mut console = AnyConsole::new(cartridge, None);
     if let Some(link) = app.serial_link.take() {
         console.set_link(link);
@@ -78,9 +79,11 @@ fn start_console(app: &mut App, cartridge: Cartridge) {
     } else {
         let mut emu = app::emulator::Emulator::new(console, app.settings.use_sgb_colors);
         emu.set_palette(palette);
-        emu.run();
+        emu.set_running(true);
         app.game = Game::Loaded(LoadedGame::Emulator(emu));
+        app.start_running();
     }
+    cartridge_title
 }
 
 /// Select a game from the library by SHA1 and populate CurrentGame.
@@ -100,6 +103,7 @@ pub fn select_game(app: &mut App, sha1: &str) -> bool {
         session: None,
         started_from: None,
         initial_sram: None,
+        cartridge_title: String::new(),
     });
     true
 }
@@ -123,7 +127,7 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
 
     let save_data = library::activity::load_current_sram(&game_dir);
     let initial_sram = save_data.clone();
-    start_console(app, Cartridge::new(rom, save_data));
+    let cartridge_title = start_console(app, Cartridge::new(rom, save_data));
 
     // Start play session
     if let Some(current) = &mut app.current_game {
@@ -133,6 +137,7 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
         current.session = Some(session);
         current.started_from = None;
         current.initial_sram = initial_sram;
+        current.cartridge_title = cartridge_title;
         app.store.reset_live_screenshots();
 
         app.recent_games.add(
@@ -169,7 +174,7 @@ pub fn play_with_save(app: &mut App, activity_filename: &str) -> Task<app::Messa
 
     let save_data = library::activity::load_sram_from(&game_dir, activity_filename);
     let initial_sram = save_data.clone();
-    start_console(app, Cartridge::new(rom, save_data));
+    let cartridge_title = start_console(app, Cartridge::new(rom, save_data));
 
     if let Some(current) = &mut app.current_game {
         let session = library::activity::SessionFile::new(
@@ -180,6 +185,7 @@ pub fn play_with_save(app: &mut App, activity_filename: &str) -> Task<app::Messa
         current.session = Some(session);
         current.started_from = None;
         current.initial_sram = initial_sram;
+        current.cartridge_title = cartridge_title;
 
         app.recent_games.add(
             &current.entry.sha1,
@@ -242,7 +248,7 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
         library::load_cover(&game_dir).map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
 
     // Create cartridge and start emulation
-    start_console(app, Cartridge::new(rom, save_data));
+    let cartridge_title = start_console(app, Cartridge::new(rom, save_data));
 
     let session = library::activity::SessionFile::new(Timestamp::now(), None);
     library::activity::write_session(&game_dir, &session);
@@ -255,6 +261,7 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
         session: Some(session),
         started_from: None,
         initial_sram,
+        cartridge_title,
     });
     app.screen = Screen::Emulator;
 

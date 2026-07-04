@@ -884,9 +884,11 @@ impl App {
                 }) => Some(Message::ExitFullscreen),
                 _ => None,
             }),
+            // The emulation thread runs for the whole app lifetime; its events
+            // wake the UI. Always included so the thread persists.
+            Subscription::run(super::emu_thread::subscription_worker).map(Message::Emu),
             match &self.game {
                 Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.subscription(),
-                Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.subscription(),
                 _ => Subscription::none(),
             },
             if self.screenshot_toast.is_some() {
