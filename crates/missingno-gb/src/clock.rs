@@ -184,8 +184,9 @@ impl MasterClock {
                 let dot = self.dot_edge();
                 self.cpu_phase = self.cpu_phase.flip();
                 // The dot advances every CPU edge at ÷1, every other at ÷2.
+                // Edges-per-dot is 1 or 2, so mask instead of a runtime modulo.
                 self.cpu_phase_in_dot =
-                    (self.cpu_phase_in_dot + 1) % self.divider.cpu_edges_per_dot();
+                    (self.cpu_phase_in_dot + 1) & (self.divider.cpu_edges_per_dot() - 1);
                 if self.cpu_phase_in_dot == 0 {
                     self.dot_phase = self.dot_phase.flip();
                 }
