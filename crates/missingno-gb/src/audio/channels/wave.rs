@@ -101,6 +101,8 @@ pub struct WaveChannel {
     /// DAC byte latched on the `wave_data_latch` (AZUS) strobe; held until
     /// the next strobe. Reset to 0, so the post-trigger phantom window is silent.
     pub sample_byte: u8,
+    /// An input to `digital_sample()` / the mix may have changed.
+    pub output_dirty: bool,
 }
 
 impl Default for WaveChannel {
@@ -128,6 +130,7 @@ impl Default for WaveChannel {
             trigger_sync: TriggerSync::default(),
             wave_data_latch: WaveDataLatch::default(),
             sample_byte: 0,
+            output_dirty: true,
         }
     }
 }
@@ -155,6 +158,7 @@ impl WaveChannel {
             trigger_sync: TriggerSync::default(),
             wave_data_latch: WaveDataLatch::default(),
             sample_byte: 0,
+            output_dirty: true,
         };
     }
 
@@ -175,6 +179,7 @@ impl WaveChannel {
     }
 
     pub fn write_register(&mut self, register: Register, value: u8, caru_low: bool) {
+        self.output_dirty = true;
         match register {
             Register::Volume => self.volume = Volume(value),
             Register::Length => {
@@ -287,6 +292,7 @@ impl WaveChannel {
         if ch3_2mhz_rising && self.ch3_frst {
             self.ch3_frst = false;
             self.wave_position = (self.wave_position + 1) % 32;
+            self.output_dirty = true;
         }
 
         // Divider clocks on ch3_2mhz↑ when hera is high (= restart
@@ -341,6 +347,7 @@ impl WaveChannel {
         // etan ↓ async-resets the wave-position counter; hera ↓ opens
         // the divider load window.
         self.wave_position = 0;
+        self.output_dirty = true;
         self.frequency_timer = 2048 - self.period.0 as u16;
         self.ch3_frst = false;
         self.pending_overflow = false;
@@ -359,7 +366,11 @@ impl WaveChannel {
         let strobe_rising = !self.wave_data_latch.latched && self.wave_data_latch.sync_2;
         self.wave_data_latch.latched = self.wave_data_latch.sync_2;
         if strobe_rising {
-            self.sample_byte = self.ram[self.wave_position as usize / 2];
+            let byte = self.ram[self.wave_position as usize / 2];
+            if byte != self.sample_byte {
+                self.sample_byte = byte;
+                self.output_dirty = true;
+            }
         }
         self.wave_data_latch.sync_1 = self.ch3_frst;
     }
@@ -369,6 +380,7 @@ impl WaveChannel {
             self.length_counter -= 1;
             if self.length_counter == 0 {
                 self.enabled.enabled = false;
+                self.output_dirty = true;
             }
         }
     }

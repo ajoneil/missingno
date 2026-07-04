@@ -60,6 +60,8 @@ pub struct PulseChannel {
     /// envelope counter, even on a step it would not otherwise tick.
     pub envelope_enable_tick_pending: bool,
     pub length_counter: u16,
+    /// An input to `digital_sample()` / the mix may have changed.
+    pub output_dirty: bool,
 }
 
 impl Default for PulseChannel {
@@ -90,6 +92,7 @@ impl Default for PulseChannel {
             envelope_stopped: false,
             envelope_enable_tick_pending: false,
             length_counter: 0,
+            output_dirty: true,
         }
     }
 }
@@ -117,6 +120,7 @@ impl PulseChannel {
             envelope_stopped: false,
             envelope_enable_tick_pending: false,
             length_counter,
+            output_dirty: true,
         };
     }
 
@@ -130,6 +134,7 @@ impl PulseChannel {
     }
 
     pub fn write_register(&mut self, register: Register, value: u8, caru_low: bool) {
+        self.output_dirty = true;
         match register {
             Register::WaveformAndInitialLength => {
                 self.waveform_and_initial_length = WaveformAndInitialLength(value);
@@ -242,7 +247,11 @@ impl PulseChannel {
             // ch2_frst↑ (the overflow): dome captures the pre-advance duty step
             // and the divider reloads; the counter advances next cycle.
             let duty = self.waveform_and_initial_length.waveform() as usize;
-            self.pwm_latch = DUTY_TABLE[duty][self.wave_duty_position as usize] != 0;
+            let latch = DUTY_TABLE[duty][self.wave_duty_position as usize] != 0;
+            if latch != self.pwm_latch {
+                self.pwm_latch = latch;
+                self.output_dirty = true;
+            }
             self.ch2_frst = true;
             self.divider.counter = (self.period.0) & 0x7FF;
         } else {
@@ -255,6 +264,7 @@ impl PulseChannel {
             self.length_counter -= 1;
             if self.length_counter == 0 {
                 self.enabled.enabled = false;
+                self.output_dirty = true;
             }
         }
     }
@@ -311,6 +321,7 @@ impl PulseChannel {
                     self.envelope_stopped = true;
                 } else {
                     self.current_volume += 1;
+                    self.output_dirty = true;
                 }
             }
             EnvelopeDirection::Decrease => {
@@ -318,6 +329,7 @@ impl PulseChannel {
                     self.envelope_stopped = true;
                 } else {
                     self.current_volume -= 1;
+                    self.output_dirty = true;
                 }
             }
         }

@@ -67,6 +67,8 @@ pub struct NoiseChannel {
     /// horu_512hz↑ sample.
     pub kyvo: bool,
     pub length_counter: u16,
+    /// An input to `digital_sample()` / the mix may have changed.
+    pub output_dirty: bool,
 }
 
 impl Default for NoiseChannel {
@@ -98,6 +100,7 @@ impl Default for NoiseChannel {
             envelope_stopped: false,
             kyvo: false,
             length_counter: 0,
+            output_dirty: true,
         }
     }
 }
@@ -125,6 +128,7 @@ impl NoiseChannel {
         self.envelope_stopped = false;
         self.kyvo = false;
         self.length_counter = length_counter;
+        self.output_dirty = true;
     }
 
     pub fn read_register(&self, register: Register) -> u8 {
@@ -137,6 +141,7 @@ impl NoiseChannel {
     }
 
     pub fn write_register(&mut self, register: Register, value: u8, caru_low: bool) {
+        self.output_dirty = true;
         match register {
             Register::LengthTimer => {
                 self.length_counter = 64 - (value & 0x3f) as u16;
@@ -321,13 +326,17 @@ impl NoiseChannel {
     }
 
     fn clock_lfsr(&mut self) {
-        let xor_result = (self.lfsr & 1) ^ ((self.lfsr >> 1) & 1);
+        let old_bit0 = self.lfsr & 1;
+        let xor_result = old_bit0 ^ ((self.lfsr >> 1) & 1);
         self.lfsr >>= 1;
         self.lfsr |= xor_result << 14;
         // 7-bit width mode
         if self.frequency_and_randomness.short_mode() {
             self.lfsr &= !(1 << 6);
             self.lfsr |= xor_result << 6;
+        }
+        if self.lfsr & 1 != old_bit0 {
+            self.output_dirty = true;
         }
     }
 
@@ -336,6 +345,7 @@ impl NoiseChannel {
             self.length_counter -= 1;
             if self.length_counter == 0 {
                 self.enabled.enabled = false;
+                self.output_dirty = true;
             }
         }
     }
@@ -376,6 +386,7 @@ impl NoiseChannel {
                     self.envelope_stopped = true;
                 } else {
                     self.current_volume += 1;
+                    self.output_dirty = true;
                 }
             }
             EnvelopeDirection::Decrease => {
@@ -383,6 +394,7 @@ impl NoiseChannel {
                     self.envelope_stopped = true;
                 } else {
                     self.current_volume -= 1;
+                    self.output_dirty = true;
                 }
             }
         }

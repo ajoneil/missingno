@@ -53,6 +53,11 @@ pub struct Audio {
     pending_left: u32,
     pending_right: u32,
     pending_count: u32,
+    // The mix only changes when a channel flags output_dirty, so the
+    // per-tcycle accumulation is run-length compressed: `last_mix`
+    // held for `mix_run` T-cycles, flushed into pending_* on change.
+    last_mix: (u32, u32),
+    mix_run: u32,
     sample_accum_left: f32,
     sample_accum_right: f32,
     sample_accum_count: u32,
@@ -104,6 +109,8 @@ impl Audio {
             pending_left: 0,
             pending_right: 0,
             pending_count: 0,
+            last_mix: (0, 0),
+            mix_run: 0,
             sample_accum_left: 0.0,
             sample_accum_right: 0.0,
             sample_accum_count: 0,
@@ -141,6 +148,8 @@ impl Audio {
             pending_left: 0,
             pending_right: 0,
             pending_count: 0,
+            last_mix: (0, 0),
+            mix_run: 0,
             sample_accum_left: 0.0,
             sample_accum_right: 0.0,
             sample_accum_count: 0,
@@ -264,10 +273,12 @@ impl Audio {
             return;
         }
 
-        let (l, r) = self.channels.mix_digital();
-        self.pending_left += l;
-        self.pending_right += r;
-        self.pending_count += 1;
+        if self.channels.take_output_dirty() {
+            self.flush_mix_run();
+            self.last_mix = self.channels.mix_digital();
+        }
+        self.mix_run += 1;
+        debug_assert_eq!(self.last_mix, self.channels.mix_digital());
 
         // The ripple's remaining strobes land here, after the channels'
         // prescaler consume (a kene↓ inside an open load window is held).
@@ -299,10 +310,22 @@ impl Audio {
         }
     }
 
+    /// Flush the run-length-compressed mix into the pending digital sums.
+    fn flush_mix_run(&mut self) {
+        if self.mix_run == 0 {
+            return;
+        }
+        self.pending_left += self.last_mix.0 * self.mix_run;
+        self.pending_right += self.last_mix.1 * self.mix_run;
+        self.pending_count += self.mix_run;
+        self.mix_run = 0;
+    }
+
     /// Fold the pending digital sums into the f32 accumulators at the
     /// current NR50 volume. Channels span 0–15 across four channels per
     /// side, so full scale is 60.
     pub(crate) fn fold_pending(&mut self) {
+        self.flush_mix_run();
         if self.pending_count == 0 {
             return;
         }
@@ -462,6 +485,7 @@ impl Audio {
                 sweep_calc_steps: 0,
                 sweep_calc_restart: false,
                 ch1_frst: false,
+                output_dirty: true,
             },
             ch2: PulseChannel {
                 enabled: Enabled {
@@ -486,6 +510,7 @@ impl Audio {
                 kyvo: false,
                 envelope_stopped: false,
                 envelope_enable_tick_pending: false,
+                output_dirty: true,
             },
             ch3: WaveChannel {
                 enabled: Enabled {
@@ -508,6 +533,7 @@ impl Audio {
                 trigger_sync: channels::wave::TriggerSync::default(),
                 wave_data_latch: channels::wave::WaveDataLatch::default(),
                 sample_byte: 0,
+                output_dirty: true,
             },
             ch4: NoiseChannel {
                 enabled: Enabled {
@@ -535,6 +561,7 @@ impl Audio {
                 envelope_stopped: false,
                 kyvo: false,
                 length_counter: 0,
+                output_dirty: true,
             },
         };
 
@@ -554,6 +581,8 @@ impl Audio {
             pending_left: 0,
             pending_right: 0,
             pending_count: 0,
+            last_mix: (0, 0),
+            mix_run: 0,
             sample_accum_left: 0.0,
             sample_accum_right: 0.0,
             sample_accum_count: 0,

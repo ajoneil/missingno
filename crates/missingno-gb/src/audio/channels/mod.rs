@@ -38,6 +38,20 @@ impl Channels {
         self.ch4.reset();
     }
 
+    /// Drain the four channels' `output_dirty` flags; true when any
+    /// `mix_digital()` input may have changed since the last drain.
+    pub fn take_output_dirty(&mut self) -> bool {
+        let dirty = self.ch1.output_dirty
+            | self.ch2.output_dirty
+            | self.ch3.output_dirty
+            | self.ch4.output_dirty;
+        self.ch1.output_dirty = false;
+        self.ch2.output_dirty = false;
+        self.ch3.output_dirty = false;
+        self.ch4.output_dirty = false;
+        dirty
+    }
+
     /// Sum the four channels' digital outputs (0–15 each) into a
     /// `(left, right)` pair, gated by each channel's panning bits.
     pub fn mix_digital(&self) -> (u32, u32) {

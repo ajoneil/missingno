@@ -187,6 +187,10 @@ impl Audio {
                 self.channels.ch3.enabled.output_right = value.contains(PanFlags::CHANNEL_3_RIGHT);
                 self.channels.ch4.enabled.output_left = value.contains(PanFlags::CHANNEL_4_LEFT);
                 self.channels.ch4.enabled.output_right = value.contains(PanFlags::CHANNEL_4_RIGHT);
+                self.channels.ch1.output_dirty = true;
+                self.channels.ch2.output_dirty = true;
+                self.channels.ch3.output_dirty = true;
+                self.channels.ch4.output_dirty = true;
             }
             Register::Volume => {
                 self.fold_pending();

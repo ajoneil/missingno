@@ -91,6 +91,8 @@ pub struct PulseSweepChannel {
     /// overflow edge); the duty counter (`dajo`) clocks on its fall, one
     /// cycle later. So capture precedes advance.
     pub ch1_frst: bool,
+    /// An input to `digital_sample()` / the mix may have changed.
+    pub output_dirty: bool,
 }
 
 impl Default for PulseSweepChannel {
@@ -130,6 +132,7 @@ impl Default for PulseSweepChannel {
             sweep_calc_steps: 0,
             sweep_calc_restart: false,
             ch1_frst: false,
+            output_dirty: true,
         }
     }
 }
@@ -167,6 +170,7 @@ impl PulseSweepChannel {
             sweep_calc_steps: 0,
             sweep_calc_restart: false,
             ch1_frst: false,
+            output_dirty: true,
         }
     }
 
@@ -181,6 +185,7 @@ impl PulseSweepChannel {
     }
 
     pub fn write_register(&mut self, register: Register, value: u8, caru_low: bool) {
+        self.output_dirty = true;
         match register {
             Register::WaveformAndInitialLength => {
                 self.waveform_and_initial_length = WaveformAndInitialLength(value);
@@ -391,7 +396,11 @@ impl PulseSweepChannel {
             // ch1_frst↑ (the overflow): duwo captures the pre-advance duty
             // step and the divider reloads; the counter advances next cycle.
             let duty = self.waveform_and_initial_length.waveform() as usize;
-            self.pwm_latch = DUTY_TABLE[duty][self.wave_duty_position as usize] != 0;
+            let latch = DUTY_TABLE[duty][self.wave_duty_position as usize] != 0;
+            if latch != self.pwm_latch {
+                self.pwm_latch = latch;
+                self.output_dirty = true;
+            }
             self.ch1_frst = true;
             self.divider.counter = (self.period.0) & 0x7FF;
         } else {
@@ -404,6 +413,7 @@ impl PulseSweepChannel {
             self.length_counter -= 1;
             if self.length_counter == 0 {
                 self.enabled.enabled = false;
+                self.output_dirty = true;
             }
         }
     }
@@ -459,6 +469,7 @@ impl PulseSweepChannel {
                     self.envelope_stopped = true;
                 } else {
                     self.current_volume += 1;
+                    self.output_dirty = true;
                 }
             }
             EnvelopeDirection::Decrease => {
@@ -466,6 +477,7 @@ impl PulseSweepChannel {
                     self.envelope_stopped = true;
                 } else {
                     self.current_volume -= 1;
+                    self.output_dirty = true;
                 }
             }
         }
@@ -528,6 +540,7 @@ impl PulseSweepChannel {
             }
             self.coze = false;
             self.enabled.enabled = false;
+            self.output_dirty = true;
         } else {
             self.coze = false;
             if self.sweep.step() != 0 {
@@ -553,6 +566,7 @@ impl PulseSweepChannel {
         self.sweep_calc_steps -= 1;
         if self.sweep_calc_steps == 0 && self.calculate_sweep_frequency() > 2047 {
             self.enabled.enabled = false;
+            self.output_dirty = true;
         }
     }
 
