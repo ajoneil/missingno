@@ -13,15 +13,14 @@ use types::sprites::{Sprite, SpriteId};
 pub use crossing::{CaptureEdge, CaptureSpec};
 pub use dff::{DffLatch, NorLatch};
 pub use model::{
-    CartridgeBootHeader, ColorRegister, DmgPixel, DomainSamples, PixelMux, PpuModel,
-    resolve_dmg_pixel, resolve_shade,
+    CartridgeBootHeader, DmgPixel, PixelMux, PpuModel, resolve_dmg_pixel, resolve_shade,
 };
 pub use registers::PipelineRegisters;
 pub use rendering::{
     Mode, PipelineSnapshot, PpuTraceSnapshot, SpriteFetchPhase, SpriteStoreEntrySnapshot,
     SpriteStoreSnapshot,
 };
-pub use stat_interrupt::{InterruptFlags, StatInterrupt, StatShadow, SyncedStatCells};
+pub use stat_interrupt::{InterruptFlags, StatInterrupt, StatShadow};
 pub use video_control::VideoControl;
 
 mod clock_edges;
@@ -387,6 +386,10 @@ impl<P: PpuModel> Ppu<P> {
         &self.model
     }
 
+    pub fn model_mut(&mut self) -> &mut P {
+        &mut self.model
+    }
+
     pub fn lx(&self) -> u8 {
         self.video.dot_position()
     }
@@ -574,10 +577,8 @@ impl<P: PpuModel> Ppu<P> {
     pub fn tick_clock_domain_capture(&mut self) {
         if P::HAS_CLOCK_DOMAIN_SYNC {
             let drawing = self.mode() == Mode::Drawing;
-            self.model.tick_clock_domain(model::DomainSamples {
-                drawing,
-                palette_drawing: self.drawing_fall_stage,
-            });
+            self.model
+                .tick_clock_domain(drawing, self.drawing_fall_stage);
         }
     }
 
@@ -602,17 +603,6 @@ impl<P: PpuModel> Ppu<P> {
         self.video
             .stat
             .eval_synced(conditions, false, true, self.model.stat_shadow_mut())
-    }
-
-    /// CPU read of a CGB colour-palette register; the model's clock-domain
-    /// sample supplies the data-port lock.
-    pub fn read_color_register(&self, register: ColorRegister) -> u8 {
-        self.model.read_color_register(register)
-    }
-
-    /// CPU write of a CGB colour-palette register.
-    pub fn write_color_register(&mut self, register: ColorRegister, value: u8) {
-        self.model.write_color_register(register, value);
     }
 
     pub fn oam_locked(&self) -> bool {

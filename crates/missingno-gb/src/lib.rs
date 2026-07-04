@@ -72,38 +72,6 @@ pub trait ConsoleShadow {
     fn take_dma_conflict_oam_zero(&mut self) -> Option<u8>;
 }
 
-/// The CGB console-level arbitration state.
-#[derive(Default)]
-pub struct CgbConsoleState {
-    blackout_anchor: u64,
-    dma_cpu_hold: bool,
-    dma_conflict_oam_zero: Option<u8>,
-}
-
-impl ConsoleShadow for CgbConsoleState {
-    fn blackout_anchor(&self) -> u64 {
-        self.blackout_anchor
-    }
-    fn set_blackout_anchor(&mut self, edge: u64) {
-        self.blackout_anchor = edge;
-    }
-    fn dma_cpu_hold(&self) -> bool {
-        self.dma_cpu_hold
-    }
-    fn set_dma_cpu_hold(&mut self, held: bool) {
-        self.dma_cpu_hold = held;
-    }
-    fn dma_conflict_oam_zero(&self) -> Option<u8> {
-        self.dma_conflict_oam_zero
-    }
-    fn set_dma_conflict_oam_zero(&mut self, offset: Option<u8>) {
-        self.dma_conflict_oam_zero = offset;
-    }
-    fn take_dma_conflict_oam_zero(&mut self) -> Option<u8> {
-        self.dma_conflict_oam_zero.take()
-    }
-}
-
 impl ConsoleShadow for () {
     fn blackout_anchor(&self) -> u64 {
         0
@@ -165,7 +133,7 @@ pub trait Model: Default {
 
     /// CGB-only console-level arbitration state (speed-switch blackout anchor,
     /// HDMA bus-park, VRAM-source OAM-zero conflict). The CGB holds the real
-    /// [`CgbConsoleState`]; the DMG carries a ZST `()`.
+    /// `CgbConsoleState`; the DMG carries a ZST `()`.
     type ConsoleState: ConsoleShadow + Default;
 
     fn console_state(&self) -> &Self::ConsoleState;

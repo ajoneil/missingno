@@ -304,15 +304,6 @@ pub fn try_load_boot_rom() -> Option<BootRom> {
     Some(BootRom::Dmg(boxed))
 }
 
-/// Try to load the CGB boot ROM (2304 bytes) from the path in `CGB_BOOT_ROM`.
-/// Returns None if unset or unreadable. Proprietary — not distributed.
-pub fn try_load_cgb_boot_rom() -> Option<BootRom> {
-    let path = std::env::var("CGB_BOOT_ROM").ok()?;
-    let data = std::fs::read(&path).ok()?;
-    let boxed: Box<[u8; 0x900]> = data.into_boxed_slice().try_into().ok()?;
-    Some(BootRom::Cgb(boxed))
-}
-
 /// Drive a mapped boot ROM to the cartridge handoff at PC=0x0100. A no-op
 /// when no boot ROM is mapped (the CPU is already post-boot at 0x0100).
 pub fn run_boot_rom<M: Model>(gb: &mut Console<M>) {

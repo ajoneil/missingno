@@ -31,13 +31,13 @@ use missingno_gb::ppu::memory::{Vram, VramAddress, VramBank};
 use missingno_gb::ppu::rendering::Mode;
 use missingno_gb::ppu::types::sprites::{Attributes, ObjAttr};
 use missingno_gb::ppu::{
-    CaptureSpec, CartridgeBootHeader, ColorRegister, DmgPixel, DomainSamples, PipelineRegisters,
-    PixelMux, Ppu, PpuModel, SyncedStatCells, resolve_dmg_pixel,
+    CaptureSpec, CartridgeBootHeader, DmgPixel, InterruptFlags, PipelineRegisters, PixelMux, Ppu,
+    PpuModel, StatShadow, resolve_dmg_pixel,
 };
 use missingno_gb::{
-    CgbConsoleState, Console, Model, StopAction, VramDmaClaim, WaveRamCoupling, audio::Audio,
-    cartridge::Cartridge, cpu::Cpu, dma::Dma, joypad::Joypad, shared_oam_dma_write_conflict_byte,
-    timers::Timers,
+    Console, ConsoleShadow, Model, StopAction, VramDmaClaim, WaveRamCoupling, audio::Audio,
+    cartridge::Cartridge, cpu::Cpu, cpu::flags::Flags, dma::Dma, joypad::Joypad,
+    shared_oam_dma_write_conflict_byte, timers::Timers,
 };
 
 use crate::screen::{Color555, GREYSCALE, Screen};
@@ -332,6 +332,39 @@ impl CgbObjShifter {
     }
 }
 
+/// A CGB colour-palette RAM port. BCPS/BCPD ($FF68/9) address BG palettes;
+/// OCPS/OCPD ($FF6A/B) address OBJ palettes. Index ports are always accessible;
+/// data ports are blocked while the PPU renders (mode 3).
+#[derive(Clone, Copy, Debug)]
+pub enum ColorRegister {
+    BackgroundIndex,
+    BackgroundData,
+    ObjectIndex,
+    ObjectData,
+}
+
+/// The CGB FF41/FF45 synchroniser DFFs feeding the STAT-IRQ block.
+#[derive(Default)]
+pub struct SyncedStatCells {
+    enables: InterruptFlags,
+    lyc: u8,
+}
+
+impl StatShadow for SyncedStatCells {
+    fn synced_enables(&self) -> InterruptFlags {
+        self.enables
+    }
+    fn set_synced_enables(&mut self, value: InterruptFlags) {
+        self.enables = value;
+    }
+    fn synced_lyc(&self, _cell: u8) -> u8 {
+        self.lyc
+    }
+    fn set_synced_lyc(&mut self, value: u8) {
+        self.lyc = value;
+    }
+}
+
 /// The CGB colour PPU. Holds the BG/OBJ colour-palette RAM and the object FIFO;
 /// the BG layer resolves through the BG attribute + BG palette RAM to RGB555 and
 /// objects through OBJ palette RAM.
@@ -516,41 +549,15 @@ impl PpuModel for CgbPpu {
         self.bg_cram.color(mux.bg_cell.palette(), bg_index)
     }
 
-    fn tick_clock_domain(&mut self, samples: DomainSamples) {
-        self.drawing_synced = samples.drawing;
-        self.palette_drawing_synced = samples.palette_drawing;
+    fn tick_clock_domain(&mut self, drawing: bool, palette_drawing: bool) {
+        self.drawing_synced = drawing;
+        self.palette_drawing_synced = palette_drawing;
     }
 
     fn vram_cpu_lock(&self, live: bool) -> bool {
         // Slow set, fast clear: the lock asserts once the synced sample
         // confirms XYMU, and drops combinationally with it.
         live && self.drawing_synced
-    }
-
-    fn read_color_register(&self, register: ColorRegister) -> u8 {
-        // DMG-compat locks only the CRAM data port; the index registers
-        // stay live (boot leftovers read back).
-        if self.dmg_compat
-            && matches!(
-                register,
-                ColorRegister::BackgroundData | ColorRegister::ObjectData
-            )
-        {
-            return 0xFF;
-        }
-        self.read_cram_register(register, self.palette_drawing_synced)
-    }
-
-    fn write_color_register(&mut self, register: ColorRegister, value: u8) {
-        if self.dmg_compat
-            && matches!(
-                register,
-                ColorRegister::BackgroundData | ColorRegister::ObjectData
-            )
-        {
-            return;
-        }
-        self.write_cram_register(register, value, self.palette_drawing_synced);
     }
 
     fn trace_shade(pixel: Color555) -> u8 {
@@ -590,6 +597,35 @@ impl CgbPpu {
             DmgPixel::Object { palette, shade } => self.obj_cram.color(palette, shade),
             DmgPixel::Background { shade } => self.bg_cram.color(0, shade),
         }
+    }
+
+    /// CPU read of a CGB colour-palette register; the palette block's own
+    /// clock-domain sample supplies the data-port mode-3 lock.
+    fn read_color_register(&self, register: ColorRegister) -> u8 {
+        // DMG-compat locks only the CRAM data port; the index registers
+        // stay live (boot leftovers read back).
+        if self.dmg_compat
+            && matches!(
+                register,
+                ColorRegister::BackgroundData | ColorRegister::ObjectData
+            )
+        {
+            return 0xFF;
+        }
+        self.read_cram_register(register, self.palette_drawing_synced)
+    }
+
+    /// CPU write of a CGB colour-palette register.
+    fn write_color_register(&mut self, register: ColorRegister, value: u8) {
+        if self.dmg_compat
+            && matches!(
+                register,
+                ColorRegister::BackgroundData | ColorRegister::ObjectData
+            )
+        {
+            return;
+        }
+        self.write_cram_register(register, value, self.palette_drawing_synced);
     }
 
     fn read_cram_register(&self, register: ColorRegister, rendering: bool) -> u8 {
@@ -750,6 +786,41 @@ impl VramDma {
     /// decodes only the low 13 bits.
     fn write_address(&self) -> u16 {
         0x8000 | (self.dest & 0x1FFF)
+    }
+}
+
+/// The CGB console-level arbitration state, relocated off the shared
+/// [`Console`] so a DMG build carries none of it (its `ConsoleState` is a ZST
+/// `()`). Holds the speed-switch blackout anchor, the HDMA bus-park, and the
+/// VRAM-source OAM-zero conflict store.
+#[derive(Default)]
+pub struct CgbConsoleState {
+    blackout_anchor: u64,
+    dma_cpu_hold: bool,
+    dma_conflict_oam_zero: Option<u8>,
+}
+
+impl ConsoleShadow for CgbConsoleState {
+    fn blackout_anchor(&self) -> u64 {
+        self.blackout_anchor
+    }
+    fn set_blackout_anchor(&mut self, edge: u64) {
+        self.blackout_anchor = edge;
+    }
+    fn dma_cpu_hold(&self) -> bool {
+        self.dma_cpu_hold
+    }
+    fn set_dma_cpu_hold(&mut self, held: bool) {
+        self.dma_cpu_hold = held;
+    }
+    fn dma_conflict_oam_zero(&self) -> Option<u8> {
+        self.dma_conflict_oam_zero
+    }
+    fn set_dma_conflict_oam_zero(&mut self, offset: Option<u8>) {
+        self.dma_conflict_oam_zero = offset;
+    }
+    fn take_dma_conflict_oam_zero(&mut self) -> Option<u8> {
+        self.dma_conflict_oam_zero.take()
     }
 }
 
@@ -974,7 +1045,9 @@ impl Model for Cgb {
     }
 
     fn cpu_post_boot(_checksum: u8) -> Cpu {
-        Cpu::post_boot_cgb()
+        // CPU-CGB-C post-boot register file. A=$11 signals CGB hardware to the
+        // cartridge; unlike DMG, the flags don't depend on the header checksum.
+        Cpu::post_boot_with(0x11, 0x00, 0x00, 0x00, 0x08, 0x00, 0x7c, Flags::ZERO)
     }
 
     fn has_serial_fast_clock(&self) -> bool {
@@ -1272,10 +1345,10 @@ impl Model for Cgb {
                 let active = self.vram_dma.mode == TransferMode::HBlank && visible > 0;
                 Some(((!active as u8) << 7) | (visible.wrapping_sub(1) & 0x7F) as u8)
             }
-            0xFF68 => Some(ppu.read_color_register(ColorRegister::BackgroundIndex)), // BCPS
-            0xFF69 => Some(ppu.read_color_register(ColorRegister::BackgroundData)),  // BCPD
-            0xFF6A => Some(ppu.read_color_register(ColorRegister::ObjectIndex)),     // OCPS
-            0xFF6B => Some(ppu.read_color_register(ColorRegister::ObjectData)),      // OCPD
+            0xFF68 => Some(ppu.model().read_color_register(ColorRegister::BackgroundIndex)), // BCPS
+            0xFF69 => Some(ppu.model().read_color_register(ColorRegister::BackgroundData)),  // BCPD
+            0xFF6A => Some(ppu.model().read_color_register(ColorRegister::ObjectIndex)),     // OCPS
+            0xFF6B => Some(ppu.model().read_color_register(ColorRegister::ObjectData)),      // OCPD
             0xFF6C => Some(ppu.read_object_priority()),                              // OPRI
             0xFF70 => Some(self.svbk | 0xF8), // SVBK: bits 0-2
             0xFF72 => Some(self.ff72),
@@ -1365,19 +1438,19 @@ impl Model for Cgb {
                 true
             }
             0xFF68 => {
-                ppu.write_color_register(ColorRegister::BackgroundIndex, value); // BCPS
+                ppu.model_mut().write_color_register(ColorRegister::BackgroundIndex, value); // BCPS
                 true
             }
             0xFF69 => {
-                ppu.write_color_register(ColorRegister::BackgroundData, value); // BCPD
+                ppu.model_mut().write_color_register(ColorRegister::BackgroundData, value); // BCPD
                 true
             }
             0xFF6A => {
-                ppu.write_color_register(ColorRegister::ObjectIndex, value); // OCPS
+                ppu.model_mut().write_color_register(ColorRegister::ObjectIndex, value); // OCPS
                 true
             }
             0xFF6B => {
-                ppu.write_color_register(ColorRegister::ObjectData, value); // OCPD
+                ppu.model_mut().write_color_register(ColorRegister::ObjectData, value); // OCPD
                 true
             }
             0xFF6C => {

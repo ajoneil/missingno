@@ -18,7 +18,7 @@ bitflags! {
 /// block: DFF copies of the enables and LYC cells, captured on the CPU-clock
 /// M-cycle boundary. The cells stay CPU-visible at write time; only the IRQ
 /// block reads these copies. Lives on the model — the CGB owns the real cells
-/// ([`SyncedStatCells`]), the DMG a ZST `()`, since the DMG feeds the legs and
+/// (its `SyncedStatCells`), the DMG a ZST `()`, since the DMG feeds the legs and
 /// comparator combinationally off the cells and never crosses the domain.
 pub trait StatShadow {
     fn synced_enables(&self) -> InterruptFlags;
@@ -27,28 +27,6 @@ pub trait StatShadow {
     /// ZST forwards the `cell` argument; the CGB returns its captured copy.
     fn synced_lyc(&self, cell: u8) -> u8;
     fn set_synced_lyc(&mut self, value: u8);
-}
-
-/// The CGB FF41/FF45 synchroniser DFFs.
-#[derive(Default)]
-pub struct SyncedStatCells {
-    enables: InterruptFlags,
-    lyc: u8,
-}
-
-impl StatShadow for SyncedStatCells {
-    fn synced_enables(&self) -> InterruptFlags {
-        self.enables
-    }
-    fn set_synced_enables(&mut self, value: InterruptFlags) {
-        self.enables = value;
-    }
-    fn synced_lyc(&self, _cell: u8) -> u8 {
-        self.lyc
-    }
-    fn set_synced_lyc(&mut self, value: u8) {
-        self.lyc = value;
-    }
 }
 
 impl StatShadow for () {

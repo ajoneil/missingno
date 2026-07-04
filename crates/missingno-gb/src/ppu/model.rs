@@ -15,17 +15,6 @@ use super::stat_interrupt::StatShadow;
 use super::types::palette::{PaletteIndex, PaletteMap};
 use super::types::sprites::{self, ObjAttr};
 
-/// A CGB colour-palette RAM port. BCPS/BCPD ($FF68/9) address BG palettes;
-/// OCPS/OCPD ($FF6A/B) address OBJ palettes. Index ports are always accessible;
-/// data ports are blocked while the PPU renders (mode 3).
-#[derive(Clone, Copy, Debug)]
-pub enum ColorRegister {
-    BackgroundIndex,
-    BackgroundData,
-    ObjectIndex,
-    ObjectData,
-}
-
 /// The BG/OBJ shifter outputs feeding the pixel mux on a given dot. `bg_cell`
 /// is the per-tile BG data riding the shifter beyond the two bitplanes — `()`
 /// on the DMG, the BG map attribute on the CGB (palette / priority / bank).
@@ -111,10 +100,8 @@ pub trait PpuModel: Default {
     fn obj_attr(&self, attrs: sprites::Attributes) -> ObjAttr;
 
     /// The FF41/FF45 → STAT-IRQ-block synchroniser: CGB holds DFF copies of the
-    /// enables and LYC cells ([`SyncedStatCells`]), DMG feeds the block
+    /// enables and LYC cells (the CGB's `SyncedStatCells`), DMG feeds the block
     /// combinationally and carries a ZST `()`.
-    ///
-    /// [`SyncedStatCells`]: super::stat_interrupt::SyncedStatCells
     type StatShadow: StatShadow + Default;
 
     fn stat_shadow(&self) -> &Self::StatShadow;
@@ -287,31 +274,14 @@ pub trait PpuModel: Default {
         live
     }
 
-    /// M-cycle-boundary capture: the model's clock-domain synchronisers
-    /// sample their inputs. The CGB palette block samples the mode-3 latch
-    /// here. The one CGB synchroniser on a different edge is the halt-wake
-    /// comparator presample (T2 rise, `Model::halt_wake_samples_early`).
-    fn tick_clock_domain(&mut self, _samples: DomainSamples) {}
-
-    /// Read a CGB colour-palette register. The data-port mode-3 lock is the
-    /// model's own clock-domain sample (`tick_clock_domain`), not the live
-    /// mode. DMG has no colour RAM — reads 0xFF.
-    fn read_color_register(&self, _reg: ColorRegister) -> u8 {
-        0xFF
-    }
-
-    /// Write a CGB colour-palette register. DMG has no colour RAM — ignored.
-    fn write_color_register(&mut self, _reg: ColorRegister, _value: u8) {}
-}
-
-/// One boundary capture's worth of clock-domain samples — extend with a
-/// field per synchroniser as more CGB domain crossings are modelled.
-pub struct DomainSamples {
-    /// The live mode-3 latch (XYMU view) the CGB VRAM arbiter samples.
-    pub drawing: bool,
-    /// XYMU through the dot-fall stage — what the CGB palette block locks
-    /// CRAM on. A boundary-coincident stage capture is not yet visible here.
-    pub palette_drawing: bool,
+    /// M-cycle-boundary capture: the model's clock-domain synchronisers sample
+    /// their inputs. `drawing` is the live mode-3 latch (XYMU view) the CGB VRAM
+    /// arbiter samples; `palette_drawing` is XYMU through the dot-fall stage,
+    /// what the CGB palette block locks CRAM on (a boundary-coincident stage
+    /// capture is not yet visible there). The one CGB synchroniser on a
+    /// different edge is the halt-wake comparator presample (T2 rise,
+    /// `Model::halt_wake_samples_early`).
+    fn tick_clock_domain(&mut self, _drawing: bool, _palette_drawing: bool) {}
 }
 
 /// Which layer wins the shared DMG BG-vs-OBJ resolve, carrying its BGP/OBP-mapped

@@ -300,15 +300,11 @@ impl Cpu {
         Self::post_boot_with(0x01, 0x00, 0x13, 0x00, 0xd8, 0x01, 0x4d, flags)
     }
 
-    /// CGB (CPU-CGB-C) post-boot register file. A=$11 signals CGB hardware
-    /// to the cartridge; unlike DMG, the flags don't depend on the header
-    /// checksum.
-    pub fn post_boot_cgb() -> Cpu {
-        Self::post_boot_with(0x11, 0x00, 0x00, 0x00, 0x08, 0x00, 0x7c, Flags::ZERO)
-    }
-
+    /// Post-boot register file with an explicit register set — the handoff
+    /// state a boot ROM leaves, parameterised so each console supplies its own
+    /// values (the CGB installs its fixed CPU-CGB-C file this way).
     #[allow(clippy::too_many_arguments)]
-    fn post_boot_with(a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, flags: Flags) -> Cpu {
+    pub fn post_boot_with(a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, flags: Flags) -> Cpu {
         Cpu {
             a,
             b,

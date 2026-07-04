@@ -12,6 +12,7 @@
 use std::path::{Path, PathBuf};
 
 use missingno_gb::cartridge::Cartridge;
+use missingno_gb::memory::BootRom;
 use missingno_gbc::GameBoyColor;
 
 #[allow(unused_imports)]
@@ -19,8 +20,17 @@ pub use missingno_gb::test_support::{
     System, check_mooneye_pass, format_registers, format_wram_dump, is_infinite_loop,
     load_reference_png, rom_path, run_boot_rom, run_for_tcycles, run_frames, run_until_breakpoint,
     run_until_infinite_loop, run_until_infinite_loop_no_lcd, run_until_serial_match,
-    run_until_undefined_opcode, screen_to_greyscale, try_load_cgb_boot_rom,
+    run_until_undefined_opcode, screen_to_greyscale,
 };
+
+/// Try to load the CGB boot ROM (2304 bytes) from the path in `CGB_BOOT_ROM`.
+/// Returns None if unset or unreadable. Proprietary — not distributed.
+pub fn try_load_cgb_boot_rom() -> Option<BootRom> {
+    let path = std::env::var("CGB_BOOT_ROM").ok()?;
+    let data = std::fs::read(&path).ok()?;
+    let boxed: Box<[u8; 0x900]> = data.into_boxed_slice().try_into().ok()?;
+    Some(BootRom::Cgb(boxed))
+}
 
 /// Build a `GameBoyColor`, loading the CGB boot ROM from `CGB_BOOT_ROM` if
 /// set (and driving it to the 0x0100 cartridge handoff). With the env unset
