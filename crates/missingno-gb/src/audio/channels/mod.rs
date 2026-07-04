@@ -43,19 +43,18 @@ impl Channels {
     pub fn mix_digital(&self) -> (u32, u32) {
         let mut left = 0u32;
         let mut right = 0u32;
-        for (enabled, sample) in [
-            (self.ch1.enabled, self.ch1.digital_sample()),
-            (self.ch2.enabled, self.ch2.digital_sample()),
-            (self.ch3.enabled, self.ch3.digital_sample()),
-            (self.ch4.enabled, self.ch4.digital_sample()),
-        ] {
+        let mut mix = |enabled: Enabled, sample: u8| {
             if enabled.output_left {
                 left += sample as u32;
             }
             if enabled.output_right {
                 right += sample as u32;
             }
-        }
+        };
+        mix(self.ch1.enabled, self.ch1.digital_sample());
+        mix(self.ch2.enabled, self.ch2.digital_sample());
+        mix(self.ch3.enabled, self.ch3.digital_sample());
+        mix(self.ch4.enabled, self.ch4.digital_sample());
         (left, right)
     }
 }
