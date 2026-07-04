@@ -75,6 +75,8 @@ pub struct Registers {
 
 impl Registers {
     const IF_SET_SETTLE: u8 = 2;
+    /// The five real IRQ bits (VBLANK, STAT, TIMER, SERIAL, JOYPAD).
+    const IRQ_BITS: u8 = 0b0001_1111;
 
     pub fn new() -> Self {
         Self {
@@ -94,13 +96,17 @@ impl Registers {
     }
 
     pub fn triggered(&self) -> Option<Interrupt> {
-        for interrupt in Interrupt::priority_order() {
-            if self.enabled(*interrupt) && self.requested(*interrupt) {
-                return Some(*interrupt);
-            }
+        // Priority order is exactly ascending bit order (VBLANK=bit0 … JOYPAD=bit4),
+        // so the highest-priority pending IRQ is the lowest set bit of IE & IF.
+        let pending = self.enabled.bits() & self.requested.bits() & Self::IRQ_BITS;
+        match pending.trailing_zeros() {
+            0 => Some(Interrupt::VideoBetweenFrames),
+            1 => Some(Interrupt::VideoStatus),
+            2 => Some(Interrupt::Timer),
+            3 => Some(Interrupt::Serial),
+            4 => Some(Interrupt::Joypad),
+            _ => None,
         }
-
-        None
     }
 
     pub fn request(&mut self, interrupt: Interrupt) {
