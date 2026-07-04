@@ -1,3 +1,4 @@
+pub mod dbz_trans;
 pub mod huc1;
 pub mod huc3;
 pub mod mbc1;
@@ -18,6 +19,7 @@ pub enum Mbc {
     Mbc7(mbc7::Mbc7),
     Huc1(huc1::Huc1),
     Huc3(huc3::Huc3),
+    DbzTrans(dbz_trans::DbzTrans),
 }
 
 impl Mbc {
@@ -32,6 +34,7 @@ impl Mbc {
             Mbc::Mbc7(m) => m.ram(),
             Mbc::Huc1(m) => m.ram(),
             Mbc::Huc3(m) => m.ram(),
+            Mbc::DbzTrans(m) => m.ram(),
         }
     }
 
@@ -46,6 +49,7 @@ impl Mbc {
             Mbc::Mbc7(m) => m.read(rom, address),
             Mbc::Huc1(m) => m.read(rom, address),
             Mbc::Huc3(m) => m.read(rom, address),
+            Mbc::DbzTrans(m) => m.read(rom, address),
         }
     }
 
@@ -61,6 +65,7 @@ impl Mbc {
             Mbc::Mbc7(m) => m.write(address, value),
             Mbc::Huc1(m) => m.write(address, value),
             Mbc::Huc3(m) => m.write(address, value),
+            Mbc::DbzTrans(m) => m.write(address, value),
         }
     }
 

@@ -1,8 +1,8 @@
 pub mod mbc;
 
 use mbc::{
-    Mbc, huc1::Huc1, huc3::Huc3, mbc1::Mbc1, mbc2::Mbc2, mbc3::Mbc3, mbc5::Mbc5, mbc6::Mbc6,
-    mbc7::Mbc7, no_mbc::NoMbc,
+    Mbc, dbz_trans::DbzTrans, huc1::Huc1, huc3::Huc3, mbc1::Mbc1, mbc2::Mbc2, mbc3::Mbc3,
+    mbc5::Mbc5, mbc6::Mbc6, mbc7::Mbc7, no_mbc::NoMbc,
 };
 
 pub struct Cartridge {
@@ -46,19 +46,25 @@ impl Cartridge {
         let cartridge_type = rom[0x147];
         let save = if has_battery { save_data } else { None };
 
-        let mbc = match cartridge_type {
-            0x00 | 0x08 | 0x09 => Mbc::NoMbc(NoMbc::new(&rom, save)),
-            0x01..=0x03 => Mbc::Mbc1(Mbc1::new(&rom, save)),
-            0x05 | 0x06 => Mbc::Mbc2(Mbc2::new(&rom, save)),
-            0x0f..=0x13 => Mbc::Mbc3(Mbc3::new(&rom, save)),
-            0x19..=0x1b => Mbc::Mbc5(Mbc5::new(&rom, save)),
-            0x1c..=0x1e => Mbc::Mbc5(Mbc5::new_rumble(&rom, save)),
-            0x20 => Mbc::Mbc6(Mbc6::new(&rom, save)),
-            0x22 => Mbc::Mbc7(Mbc7::new(&rom, save)),
-            0xfe => Mbc::Huc3(Huc3::new(&rom, save)),
-            0xff => Mbc::Huc1(Huc1::new(&rom, save)),
+        // The unlicensed "GB DBZ GOKOU 2" cart declares MBC5 but uses the
+        // DbzTrans half-bank-switch mapper.
+        let mbc = if title == "GB DBZ GOKOU 2" && rom[0x148] == 0x05 {
+            Mbc::DbzTrans(DbzTrans::new(&rom, save))
+        } else {
+            match cartridge_type {
+                0x00 | 0x08 | 0x09 => Mbc::NoMbc(NoMbc::new(&rom, save)),
+                0x01..=0x03 => Mbc::Mbc1(Mbc1::new(&rom, save)),
+                0x05 | 0x06 => Mbc::Mbc2(Mbc2::new(&rom, save)),
+                0x0f..=0x13 => Mbc::Mbc3(Mbc3::new(&rom, save)),
+                0x19..=0x1b => Mbc::Mbc5(Mbc5::new(&rom, save)),
+                0x1c..=0x1e => Mbc::Mbc5(Mbc5::new_rumble(&rom, save)),
+                0x20 => Mbc::Mbc6(Mbc6::new(&rom, save)),
+                0x22 => Mbc::Mbc7(Mbc7::new(&rom, save)),
+                0xfe => Mbc::Huc3(Huc3::new(&rom, save)),
+                0xff => Mbc::Huc1(Huc1::new(&rom, save)),
 
-            _ => panic!("nyi: mbc {:2x}", cartridge_type),
+                _ => panic!("nyi: mbc {:2x}", cartridge_type),
+            }
         };
 
         Cartridge {

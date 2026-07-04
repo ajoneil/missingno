@@ -280,6 +280,13 @@ pub fn capture_mbc(gb: &GameBoy) -> MbcSnapshot {
             ram_enabled: true, // HuC3 RAM access is controlled by mode, not a separate flag
             mode: 0,
         },
+        Mbc::DbzTrans(m) => MbcSnapshot {
+            mbc_type: "dbz_trans".into(),
+            rom_bank: m.rom_bank,
+            ram_bank: m.ram_bank,
+            ram_enabled: m.ram_enabled,
+            mode: 0,
+        },
     }
 }
 
@@ -429,6 +436,7 @@ fn restore_mbc(snap: &MbcSnapshot, mbc: &mut Mbc) {
             m.rom_bank = snap.rom_bank as u8;
             m.ram_bank = snap.ram_bank;
         }
+        Mbc::DbzTrans(m) => m.restore(snap.rom_bank, snap.ram_bank, snap.ram_enabled),
     }
 }
 
