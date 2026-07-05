@@ -1,8 +1,8 @@
 use std::io::{Read, Write};
 use std::time::Duration;
 
-use super::detect::{DEFAULT_BAUD, cleanup, enter_dmg_mode, query_firmware_info};
 use super::detect::CartridgeHeader;
+use super::detect::{DEFAULT_BAUD, cleanup, enter_dmg_mode, query_firmware_info};
 use super::protocol::{
     DMG_CART_READ, DMG_CART_WRITE_SRAM, OFW_PCB_VER, cart_write, read_byte, set_variable, write_cmd,
 };

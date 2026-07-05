@@ -3,8 +3,7 @@ use super::{
     envelope::Envelope,
     length::LengthCounter,
     registers::{
-        PeriodDivider, PeriodHighAndControl, Signed11, VolumeAndEnvelope,
-        WaveformAndInitialLength,
+        PeriodDivider, PeriodHighAndControl, Signed11, VolumeAndEnvelope, WaveformAndInitialLength,
     },
 };
 

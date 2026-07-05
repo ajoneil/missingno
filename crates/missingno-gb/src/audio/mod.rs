@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
-use channels::wave::WaveRamCoupling;
 use channels::registers::Prescaler;
+use channels::wave::WaveRamCoupling;
 use channels::{Channels, noise, pulse, pulse_sweep, wave};
 use volume::Volume;
 

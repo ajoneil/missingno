@@ -192,7 +192,11 @@ impl MasterClock {
                 // (rise-alignment holds because every freeze exits via
                 // `engage_on_rise`).
                 let dot_fires = self.divider == CpuDivider::One || cpu == Edge::Rise;
-                let dot = if dot_fires { Some(self.dot_phase) } else { None };
+                let dot = if dot_fires {
+                    Some(self.dot_phase)
+                } else {
+                    None
+                };
                 self.cpu_phase = self.cpu_phase.flip();
                 // The fired dot edge is spent once the dot's CPU edges are: on
                 // every ÷1 edge, and after the ÷2 bare fall.

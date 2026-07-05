@@ -131,7 +131,9 @@ impl PipelineRegisters {
     /// Arm the settle window for a register write whose staged value crosses or
     /// holds for at most [`REGISTER_CROSSING_SETTLE_FALLS`] falls.
     pub(in crate::ppu) fn arm_register_write_settle(&mut self) {
-        self.register_write_settle = self.register_write_settle.max(REGISTER_CROSSING_SETTLE_FALLS);
+        self.register_write_settle = self
+            .register_write_settle
+            .max(REGISTER_CROSSING_SETTLE_FALLS);
     }
 
     /// Arm the settle window for a BGP write parked in a HALT-wake handler, which

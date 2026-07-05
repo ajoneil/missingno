@@ -6,6 +6,7 @@ use iced::{
     widget::{Stack, center, column, container, mouse_area, opaque, row, svg, text as iced_text},
 };
 
+use super::friendly_ago;
 use crate::app::ui::{
     buttons, containers, fonts,
     icons::{self, Icon},
@@ -16,7 +17,6 @@ use crate::app::ui::{
 use crate::app::{
     App, DetailMessage, DetailSubScreen, Message, PendingAction, Screen, debugger, load,
 };
-use super::friendly_ago;
 
 impl App {
     pub(super) fn apply_toast<'a>(&self, content: Element<'a, Message>) -> Element<'a, Message> {
@@ -136,7 +136,10 @@ impl App {
             .into()
     }
 
-    pub(super) fn apply_confirmation_dialog<'a>(&self, content: Element<'a, Message>) -> Element<'a, Message> {
+    pub(super) fn apply_confirmation_dialog<'a>(
+        &self,
+        content: Element<'a, Message>,
+    ) -> Element<'a, Message> {
         let Some(action) = &self.pending_action else {
             return content;
         };

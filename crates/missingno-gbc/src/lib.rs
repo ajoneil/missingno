@@ -356,7 +356,10 @@ impl Model for Cgb {
         self.key1_armed = false;
         self.speed_switch_blackout = self.speed_switch_blackout_master_edges();
         if self.double_speed {
-            self.vram_dma.arb.wake_pend_blind.arm(VramDma::WAKE_PEND_BLIND_TICKS);
+            self.vram_dma
+                .arb
+                .wake_pend_blind
+                .arm(VramDma::WAKE_PEND_BLIND_TICKS);
         }
         // A 1×→2× relock entered at dot-in-M phase p3 lands the mux
         // displaced (cost-free); a displaced 2×→1× completes a dot early
@@ -610,19 +613,23 @@ impl Model for Cgb {
                 true
             }
             0xFF51 => {
-                self.vram_dma.cursor.source = (self.vram_dma.cursor.source & 0x00FF) | ((value as u16) << 8);
+                self.vram_dma.cursor.source =
+                    (self.vram_dma.cursor.source & 0x00FF) | ((value as u16) << 8);
                 true
             }
             0xFF52 => {
-                self.vram_dma.cursor.source = (self.vram_dma.cursor.source & 0xFF00) | (value & 0xF0) as u16;
+                self.vram_dma.cursor.source =
+                    (self.vram_dma.cursor.source & 0xFF00) | (value & 0xF0) as u16;
                 true
             }
             0xFF53 => {
-                self.vram_dma.cursor.dest = ((value as u16) << 8) | (self.vram_dma.cursor.dest & 0x00FF);
+                self.vram_dma.cursor.dest =
+                    ((value as u16) << 8) | (self.vram_dma.cursor.dest & 0x00FF);
                 true
             }
             0xFF54 => {
-                self.vram_dma.cursor.dest = (self.vram_dma.cursor.dest & 0xFF00) | (value & 0xF0) as u16;
+                self.vram_dma.cursor.dest =
+                    (self.vram_dma.cursor.dest & 0xFF00) | (value & 0xF0) as u16;
                 true
             }
             0xFF55 => {
@@ -737,7 +744,10 @@ impl Model for Cgb {
         // (no latched IRQ) still arms the blind at its wake; the countdown
         // runs on engine ticks only.
         if self.vram_dma.arb.prev_cpu_halted && !cpu_halted {
-            self.vram_dma.arb.halt_wake_blind.arm(VramDma::HALT_WAKE_BLIND_TICKS);
+            self.vram_dma
+                .arb
+                .halt_wake_blind
+                .arm(VramDma::HALT_WAKE_BLIND_TICKS);
         }
         // An arm-strobe launch must ready with a fall of mode-0 margin: the
         // readiness latch's confirmation sample on the following fall reads
@@ -856,8 +866,12 @@ impl Model for Cgb {
             // halt-exit window dispatching, so its setup runs after instead of
             // arriving pre-charged.
             let precharged = granted && !cpu_halted;
-            self.vram_dma.arb.park_waits_for_fetch = !(self.vram_dma.arb.pend_from_arm || halted_entering);
-            self.vram_dma.block.ready_in.arm(if precharged { 0 } else { 2 });
+            self.vram_dma.arb.park_waits_for_fetch =
+                !(self.vram_dma.arb.pend_from_arm || halted_entering);
+            self.vram_dma
+                .block
+                .ready_in
+                .arm(if precharged { 0 } else { 2 });
             self.vram_dma
                 .block
                 .setup_cells
@@ -872,7 +886,10 @@ impl Model for Cgb {
             }
             self.vram_dma.arb.grant_counted = false;
             if granted {
-                self.vram_dma.arb.wake_tenure.arm(VramDma::WAKE_TENURE_TICKS);
+                self.vram_dma
+                    .arb
+                    .wake_tenure
+                    .arm(VramDma::WAKE_TENURE_TICKS);
             }
             self.vram_dma.arb.pend_granted = false;
         }
@@ -964,7 +981,8 @@ impl Model for Cgb {
     }
 
     fn vram_dma_request_standing(&self) -> bool {
-        self.vram_dma.arb.pend || (self.vram_dma.block.remaining > 0 && self.vram_dma.cursor.remaining > 0)
+        self.vram_dma.arb.pend
+            || (self.vram_dma.block.remaining > 0 && self.vram_dma.cursor.remaining > 0)
     }
 
     fn vram_dma_holds_cpu(&self) -> bool {
@@ -1090,7 +1108,9 @@ impl Cgb {
     /// active, quota available, no setup cell pending) — for the OAM-DMA
     /// bus-contention check.
     fn vram_dma_will_move(&self) -> bool {
-        !self.vram_dma.block.setup_cells.active() && self.vram_dma.cursor.quota > 0 && self.vram_dma.moving()
+        !self.vram_dma.block.setup_cells.active()
+            && self.vram_dma.cursor.quota > 0
+            && self.vram_dma.moving()
     }
 
     /// The byte the VRAM DMA is about to move is a switch-cancel escape byte;

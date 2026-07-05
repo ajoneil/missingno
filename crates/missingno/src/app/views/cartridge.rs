@@ -5,6 +5,7 @@ use iced::{
     widget::{column, container, row, scrollable, svg, text as iced_text},
 };
 
+use super::friendly_ago;
 use crate::app::ui::{
     buttons, horizontal_rule,
     icons::{self, Icon},
@@ -14,7 +15,6 @@ use crate::app::ui::{
 };
 use crate::app::{App, CartridgeMessage, DetailSubScreen, FlashState, Message, Screen, library};
 use crate::cartridge_rw;
-use super::friendly_ago;
 
 impl App {
     /// Get the cartridge header from the first connected device with a cartridge inserted.

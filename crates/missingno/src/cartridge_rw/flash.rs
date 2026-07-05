@@ -18,7 +18,10 @@ use super::protocol::{
 ///
 /// Safe on commercial cartridges: writes use the flash write pin (WR) which
 /// has no effect on standard ROM chips.
-pub(super) fn detect_flash(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) -> Option<FlashInfo> {
+pub(super) fn detect_flash(
+    port: &mut Box<dyn serialport::SerialPort>,
+    fw_ver: u16,
+) -> Option<FlashInfo> {
     // Set the flash write-enable pin to WR (pin mode 1)
     set_variable(port, fw_ver, 1, 0x04, 1)?;
 

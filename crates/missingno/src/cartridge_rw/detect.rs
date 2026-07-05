@@ -175,7 +175,9 @@ pub(super) fn cleanup(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) {
 // ── Firmware info ────────────────────────────────────────────────────
 
 /// Query the custom firmware info struct (QUERY_FW_INFO, 0xA1).
-pub(super) fn query_firmware_info(port: &mut Box<dyn serialport::SerialPort>) -> Option<(u16, String)> {
+pub(super) fn query_firmware_info(
+    port: &mut Box<dyn serialport::SerialPort>,
+) -> Option<(u16, String)> {
     write_cmd(port, &[QUERY_FW_INFO])?;
 
     let size = read_byte(port)?;
@@ -211,7 +213,10 @@ pub(super) fn query_firmware_info(port: &mut Box<dyn serialport::SerialPort>) ->
 // ── Cartridge header reading ─────────────────────────────────────────
 
 /// Set up the device for DMG cartridge access: enter mode, power on, disable pullups, reset MBC.
-pub(super) fn enter_dmg_mode(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) -> Option<()> {
+pub(super) fn enter_dmg_mode(
+    port: &mut Box<dyn serialport::SerialPort>,
+    fw_ver: u16,
+) -> Option<()> {
     port.clear(serialport::ClearBuffer::Input).ok();
 
     // SetMode("DMG")
