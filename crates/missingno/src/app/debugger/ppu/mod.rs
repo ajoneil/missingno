@@ -7,21 +7,17 @@ use iced::{
 use crate::app::{
     Message,
     console::ConsoleColors,
-    debugger::interrupts::pip,
+    debugger::{inspect::PpuSource, interrupts::pip},
     screen::iced_color,
     ui::{
         fonts, palette,
         sizes::{s, xs},
     },
 };
-use missingno_gb::ppu::{
-    Ppu,
-    model::PpuModel,
-    types::{
-        control::Control,
-        palette::{Palette, PaletteMap},
-        tiles::TileAddressMode,
-    },
+use missingno_gb::ppu::types::{
+    control::Control,
+    palette::{Palette, PaletteMap},
+    tiles::TileAddressMode,
 };
 
 pub mod sprites;
@@ -37,26 +33,22 @@ const LABEL: f32 = 11.0;
 
 /// PPU section body for the left sidebar — returns the PPU state display as an Element.
 /// The section header is handled by the sidebar's collapsible section wrapper.
-pub fn ppu_sidebar<'a, P: PpuModel>(
-    ppu: &'a Ppu<P>,
-    colors: &ConsoleColors,
-) -> Element<'a, Message> {
+pub fn ppu_sidebar<'a, Pv: PpuSource>(ppu: &'a Pv, colors: &ConsoleColors) -> Element<'a, Message> {
     let control = ppu.control();
-    let palettes = ppu.palettes();
 
     column![
         row![
-            label_value("ly", &ppu.video.ly().to_string()),
+            label_value("ly", &ppu.ly().to_string()),
             label_value("lx", &ppu.lx().to_string()),
         ]
         .spacing(s())
         .align_y(Vertical::Center),
         rule::horizontal(1),
-        background_section(control, palettes.background.output(), ppu, colors),
+        background_section(control, ppu.bgp(), ppu, colors),
         rule::horizontal(1),
         window_section(control, ppu),
         rule::horizontal(1),
-        sprites_section(control, palettes, colors),
+        sprites_section(control, ppu.obp0(), ppu.obp1(), colors),
     ]
     .padding(s())
     .spacing(s())
@@ -65,14 +57,14 @@ pub fn ppu_sidebar<'a, P: PpuModel>(
 
 // --- Subsystem sections ---
 
-fn background_section<P: PpuModel>(
+fn background_section<Pv: PpuSource>(
     control: Control,
     bgp: u8,
-    ppu: &Ppu<P>,
+    ppu: &Pv,
     colors: &ConsoleColors,
 ) -> Element<'static, Message> {
-    let scx = ppu.read_register(missingno_gb::ppu::Register::BackgroundViewportX);
-    let scy = ppu.read_register(missingno_gb::ppu::Register::BackgroundViewportY);
+    let scx = ppu.scx();
+    let scy = ppu.scy();
 
     let mut section = column![
         row![
@@ -98,9 +90,9 @@ fn background_section<P: PpuModel>(
     section.into()
 }
 
-fn window_section<P: PpuModel>(control: Control, ppu: &Ppu<P>) -> Element<'static, Message> {
-    let wx = ppu.read_register(missingno_gb::ppu::Register::WindowX);
-    let wy = ppu.read_register(missingno_gb::ppu::Register::WindowY);
+fn window_section<Pv: PpuSource>(control: Control, ppu: &Pv) -> Element<'static, Message> {
+    let wx = ppu.wx();
+    let wy = ppu.wy();
 
     column![
         row![
@@ -121,7 +113,8 @@ fn window_section<P: PpuModel>(control: Control, ppu: &Ppu<P>) -> Element<'stati
 
 fn sprites_section(
     control: Control,
-    palettes: &missingno_gb::ppu::types::palette::Palettes,
+    obp0: u8,
+    obp1: u8,
     colors: &ConsoleColors,
 ) -> Element<'static, Message> {
     use missingno_gb::ppu::types::sprites::SpriteSize;
@@ -145,8 +138,8 @@ fn sprites_section(
     // OBP0/OBP1 are DMG registers; CGB object colours live in CRAM.
     if let ConsoleColors::Dmg { palette } = colors {
         section = section
-            .push(palette_row("obp0", palettes.sprite0.output(), palette))
-            .push(palette_row("obp1", palettes.sprite1.output(), palette));
+            .push(palette_row("obp0", obp0, palette))
+            .push(palette_row("obp1", obp1, palette));
     }
 
     section.into()

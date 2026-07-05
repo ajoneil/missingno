@@ -174,7 +174,7 @@ impl BgAttribute {
 
 /// CGB video RAM: two 8 KiB banks selected by VBK ($FF4F). Bank 1 additionally
 /// carries the BG map attributes (read by the colour fetch as it lands).
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct CgbVram {
     banks: [VramBank; 2],
     /// VBK bit 0 — the bank the CPU sees at $8000-$9FFF.

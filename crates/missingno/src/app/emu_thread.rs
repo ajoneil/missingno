@@ -17,6 +17,7 @@ use missingno_gb::ppu::rendering::Mode;
 use super::audio_output::AudioOutput;
 use super::console::AnyConsole;
 use super::debugger::DebuggerPayload;
+use super::debugger::inspect::DebugView;
 use super::library::activity::FrameCapture;
 use super::screen::ScreenDisplay;
 
@@ -56,6 +57,10 @@ pub struct RunningStatus {
 
 /// Latest-value handoff for [`RunningStatus`], written alongside the frame slot.
 pub type StatusSlot = Arc<Mutex<Option<RunningStatus>>>;
+
+/// Latest-value handoff for the debugger's per-vblank inspection snapshot. Only
+/// written while a debugger payload runs; `None` for plain-console payloads.
+pub type SnapshotSlot = Arc<Mutex<Option<DebugView>>>;
 
 /// One frame's worth of stepping, as seen by the emu-thread loop.
 struct FrameOutcome {
@@ -101,12 +106,21 @@ pub enum EmuEvent {
 
 /// The UI-side handle to the emu thread. Cloneable so it can ride in a Message;
 /// the return receiver is shared behind a mutex (single consumer in practice).
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct EmuHandle {
     commands: Sender<EmuCommand>,
     frames: FrameSlot,
     status: StatusSlot,
+    snapshot: SnapshotSlot,
     returns: Arc<Mutex<Receiver<Payload>>>,
+}
+
+// The snapshot slot holds a `DebugView`, which isn't `Debug`; a hand-rolled
+// impl keeps `EmuHandle` (and the `EmuEvent` that carries it) printable.
+impl std::fmt::Debug for EmuHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EmuHandle").finish_non_exhaustive()
+    }
 }
 
 impl EmuHandle {
@@ -116,6 +130,10 @@ impl EmuHandle {
 
     pub fn status(&self) -> &StatusSlot {
         &self.status
+    }
+
+    pub fn snapshot(&self) -> &SnapshotSlot {
+        &self.snapshot
     }
 
     pub fn send(&self, command: EmuCommand) {
@@ -156,11 +174,13 @@ pub fn subscription_worker() -> impl iced::futures::Stream<Item = EmuEvent> {
     let (return_tx, return_rx) = channel::<Payload>();
     let frames: FrameSlot = Arc::new(Mutex::new(None));
     let status: StatusSlot = Arc::new(Mutex::new(None));
+    let snapshot: SnapshotSlot = Arc::new(Mutex::new(None));
 
     let handle = EmuHandle {
         commands: command_tx,
         frames: frames.clone(),
         status: status.clone(),
+        snapshot: snapshot.clone(),
         returns: Arc::new(Mutex::new(return_rx)),
     };
     let _ = event_tx.unbounded_send(EmuEvent::Started(handle));
@@ -168,7 +188,16 @@ pub fn subscription_worker() -> impl iced::futures::Stream<Item = EmuEvent> {
     let worker_events = event_tx;
     std::thread::Builder::new()
         .name("emu".into())
-        .spawn(move || run_emu_thread(command_rx, return_tx, frames, status, worker_events))
+        .spawn(move || {
+            run_emu_thread(
+                command_rx,
+                return_tx,
+                frames,
+                status,
+                snapshot,
+                worker_events,
+            )
+        })
         .expect("spawn emu thread");
 
     event_rx
@@ -181,11 +210,12 @@ fn run_emu_thread(
     returns: Sender<Payload>,
     frames: FrameSlot,
     status: StatusSlot,
+    snapshot: SnapshotSlot,
     events: EventSink,
 ) {
     // Audio device lives on this thread (cpal's Stream is `!Send`).
     let mut audio = AudioOutput::new();
-    let mut state = EmuLoop::new(frames, status, events, returns);
+    let mut state = EmuLoop::new(frames, status, snapshot, events, returns);
 
     loop {
         if state.running() {
@@ -217,6 +247,7 @@ struct EmuLoop {
     payload: Option<Payload>,
     frames: FrameSlot,
     status: StatusSlot,
+    snapshot: SnapshotSlot,
     events: EventSink,
     returns: Sender<Payload>,
     sram_countdown: Option<u32>,
@@ -227,6 +258,7 @@ impl EmuLoop {
     fn new(
         frames: FrameSlot,
         status: StatusSlot,
+        snapshot: SnapshotSlot,
         events: EventSink,
         returns: Sender<Payload>,
     ) -> Self {
@@ -234,6 +266,7 @@ impl EmuLoop {
             payload: None,
             frames,
             status,
+            snapshot,
             events,
             returns,
             sram_countdown: None,
@@ -311,6 +344,14 @@ impl EmuLoop {
         }
         if let Ok(mut slot) = self.status.lock() {
             *slot = payload.running_status();
+        }
+        // Publish the inspection snapshot for the running debugger panes. Only
+        // debugger payloads produce one; the copy is skipped for the console.
+        if new_frame
+            && let Some(view) = payload.debug_view()
+            && let Ok(mut slot) = self.snapshot.lock()
+        {
+            *slot = Some(view);
         }
         if new_frame {
             let _ = self.events.unbounded_send(EmuEvent::FrameReady);
@@ -422,6 +463,13 @@ impl Payload {
         match self {
             Self::Console(_) => None,
             Self::Debugger(debugger) => Some(debugger.running_status()),
+        }
+    }
+
+    fn debug_view(&self) -> Option<DebugView> {
+        match self {
+            Self::Console(_) => None,
+            Self::Debugger(debugger) => Some(debugger.debug_view()),
         }
     }
 
