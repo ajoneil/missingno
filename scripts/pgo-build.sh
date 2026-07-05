@@ -28,6 +28,12 @@ GBC_ROMS=crates/missingno-gbc/tests/accuracy/roms
 
 # Training set: spread across both cores — PPU-heavy (acid), CPU-heavy
 # (cpu_instrs), APU-heavy (dmg_sound), and KEY1 double-speed (-ds) workloads.
+# Committed game-shaped training ROMs (roms/pgo-training/, see its
+# ATTRIBUTION.md): test ROMs alone leave a ~3-5% gap to a real-game-trained
+# ceiling; a demoscene workload closes it. EXTRA_TRAIN_DMG/EXTRA_TRAIN_CGB
+# env vars add local, uncommitted extras.
+TRAIN_ROMS_DIR=roms/pgo-training
+
 TRAIN_DMG=(
     "$GB_ROMS/dmg-acid2/dmg-acid2.gb"
     "$GB_ROMS/blargg/cpu_instrs/cpu_instrs.gb"
@@ -49,6 +55,13 @@ rm -rf "$PGO_DIR"
 mkdir -p "$PGO_DIR"
 RUSTFLAGS="-Cprofile-generate=$PGO_DIR" \
     cargo build --profile "$PROFILE" -p missingno-gb -p missingno-gbc --examples
+
+for rom in "$TRAIN_ROMS_DIR"/dmg/*.gb ${EXTRA_TRAIN_DMG:-}; do
+    [ -f "$rom" ] && TRAIN_DMG+=("$rom")
+done
+for rom in "$TRAIN_ROMS_DIR"/cgb/*.gb "$TRAIN_ROMS_DIR"/cgb/*.gbc ${EXTRA_TRAIN_CGB:-}; do
+    [ -f "$rom" ] && TRAIN_CGB+=("$rom")
+done
 
 echo "== Stage 2/3: training ($TRAIN_FRAMES frames per ROM) =="
 for rom in "${TRAIN_DMG[@]}"; do
