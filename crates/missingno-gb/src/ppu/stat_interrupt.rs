@@ -1,6 +1,7 @@
 //! STAT register state and LALU edge-detection.
 //! LYC pipeline: PALY (LY==LYC) → ROPO (TALU-rising DFF) → RUPO (transparent NOR latch).
 
+use crate::ppu::DffBit;
 use bitflags::bitflags;
 
 bitflags! {
@@ -49,10 +50,10 @@ impl Default for InterruptFlags {
 pub struct StatInterrupt {
     /// LYC register ($FF45).
     pub(in crate::ppu) lyc: u8,
-    /// PALY combinational comparator; recomputed at TALU fall and on LYC writes.
-    pub(in crate::ppu) comparison_pending: bool,
-    /// ROPO DFF — latched LY==LYC. Reset only by SYS_RST (not VID_RST). Drives STAT bit 2 via transparent RUPO.
-    pub(in crate::ppu) comparison_latched: bool,
+    /// ROPO DFF. D = PALY (LY==LYC), recomputed at TALU fall and on LYC writes;
+    /// Q latched on TALU rising, drives STAT bit 2 via transparent RUPO. Reset
+    /// only by SYS_RST (not VID_RST).
+    pub(in crate::ppu) comparison: DffBit,
     /// FF41 bits 3-6 enables + DUMMY pull-up on bit 7.
     pub(in crate::ppu) enables: InterruptFlags,
     /// LALU per-leg previous values — one bit per SUKO source AND-term.
@@ -67,8 +68,7 @@ impl StatInterrupt {
     pub(in crate::ppu) fn power_on() -> Self {
         Self {
             lyc: 0,
-            comparison_pending: false,
-            comparison_latched: true,
+            comparison: DffBit::new(false, true),
             enables: InterruptFlags::empty(),
             legs_was_high: InterruptFlags::empty(),
             conditions_was: InterruptFlags::empty(),
@@ -78,8 +78,7 @@ impl StatInterrupt {
     pub(in crate::ppu) fn post_boot() -> Self {
         Self {
             lyc: 0,
-            comparison_pending: true,
-            comparison_latched: true,
+            comparison: DffBit::new(true, true),
             enables: InterruptFlags::DUMMY,
             legs_was_high: InterruptFlags::empty(),
             conditions_was: InterruptFlags::empty(),
@@ -90,8 +89,7 @@ impl StatInterrupt {
     pub(in crate::ppu) fn post_boot_at_line(ly: u8) -> Self {
         let matches = ly == 0;
         Self {
-            comparison_pending: matches,
-            comparison_latched: matches,
+            comparison: DffBit::new(matches, matches),
             ..Self::post_boot()
         }
     }
@@ -99,18 +97,18 @@ impl StatInterrupt {
     /// PALY recompute: `pending = (ly == lyc)`. PALY's LYC input is the IRQ
     /// domain's view — the cell on DMG, the synchroniser copy on CGB.
     pub(in crate::ppu) fn update_comparison(&mut self, ly: u8, shadow: &impl StatShadow) {
-        self.comparison_pending = ly == shadow.synced_lyc(self.lyc);
+        self.comparison.write(ly == shadow.synced_lyc(self.lyc));
     }
 
-    /// ROPO captures comparison_pending on TALU rising.
+    /// ROPO captures PALY on TALU rising.
     pub(in crate::ppu) fn latch_comparison(&mut self) {
-        self.comparison_latched = self.comparison_pending;
+        self.comparison.tick();
     }
 
     /// ROPO.Q — drives STAT bit 2 via the transparent RUPO latch, and also feeds the
     /// LYC-match arm of the STAT-interrupt edge detector.
     pub(in crate::ppu) fn ly_eq_lyc(&self) -> bool {
-        self.comparison_latched
+        self.comparison.output()
     }
 
     pub(in crate::ppu) fn lyc(&self) -> u8 {

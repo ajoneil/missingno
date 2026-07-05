@@ -1,6 +1,7 @@
 //! Mode 2 OAM scan state machine.
 
 use crate::dma::OamBusOwner;
+use crate::ppu::DffBit;
 use crate::ppu::memory::Oam;
 
 use super::oam_scan::{ScanCounter, SpriteStore};
@@ -20,10 +21,9 @@ pub(in crate::ppu) struct SpriteScanner {
     catu: bool,
     /// RUTU nor_latch: set at scanline boundary by reset(), cleared by tick_scan_capture on capture.
     rutu: bool,
-    /// BYBA (dffr, XUPY-clocked).
-    scan_done_flag: bool,
-    /// DOBA (dffr, ALET-clocked); pairs with BYBA for AVAP = BYBA && !DOBA.
-    scan_done_prev: bool,
+    /// DOBA DFF (dffr, ALET-clocked). D = BYBA (dffr, XUPY-clocked) scan-done;
+    /// Q = the delayed copy. AVAP = BYBA && !DOBA, read via `pending`/`output`.
+    scan_done: DffBit,
     sprites: SpriteStore,
 }
 
@@ -41,8 +41,7 @@ impl SpriteScanner {
             scan_capture_armed: false,
             catu: false,
             rutu: false,
-            scan_done_flag: false,
-            scan_done_prev: false,
+            scan_done: DffBit::new(false, false),
             sprites: SpriteStore::new(),
         }
     }
@@ -55,8 +54,7 @@ impl SpriteScanner {
             scan_capture_armed: true,
             catu: false,
             rutu: false,
-            scan_done_flag: true,
-            scan_done_prev: true,
+            scan_done: DffBit::new(true, true),
             sprites: SpriteStore::new(),
         }
     }
@@ -94,11 +92,11 @@ impl SpriteScanner {
     }
 
     pub(in crate::ppu) fn scan_done_flag(&self) -> bool {
-        self.scan_done_flag
+        self.scan_done.pending()
     }
 
     pub(in crate::ppu) fn scan_done_prev(&self) -> bool {
-        self.scan_done_prev
+        self.scan_done.output()
     }
 
     pub(in crate::ppu) fn oam_address(&self) -> Option<u8> {
@@ -174,15 +172,15 @@ impl SpriteScanner {
         }
 
         // DOBA captures OLD BYBA before BYBA captures FETO below.
-        self.scan_done_prev = self.scan_done_flag;
+        self.scan_done.tick();
 
         // BYBA captures FETO from the pre-tick counter (FETO's NAND4 depth exceeds BYBA's clock-to-Q).
-        self.scan_done_flag = self.counter.scan_done();
+        self.scan_done.write(self.counter.scan_done());
 
         self.counter.tick_clock();
 
         // AVAP detection + reaction co-locate (AVAP↑ and Mode 3 init on the same alet-falling edge).
-        let avap = self.scan_done_flag && !self.scan_done_prev && self.scanning;
+        let avap = self.scan_done.pending() && !self.scan_done.output() && self.scanning;
         if avap {
             self.scanning = false;
             self.mode2_active = false;
@@ -196,8 +194,7 @@ impl SpriteScanner {
         self.scanning = false;
         self.mode2_active = false;
         self.sprites = SpriteStore::new();
-        self.scan_done_flag = false;
-        self.scan_done_prev = false;
+        self.scan_done = DffBit::new(false, false);
         self.catu = false;
         self.rutu = true;
     }

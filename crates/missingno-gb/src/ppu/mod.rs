@@ -11,7 +11,7 @@ use types::palette::Palettes;
 use types::sprites::{Sprite, SpriteId};
 
 pub use crossing::{CaptureEdge, CaptureSpec};
-pub use dff::{DffLatch, NorLatch};
+pub use dff::{DffBit, DffLatch, NorLatch};
 pub use model::{
     CartridgeBootHeader, DmgPixel, PixelMux, PpuModel, resolve_dmg_pixel, resolve_shade,
 };
@@ -184,8 +184,7 @@ impl<P: PpuModel> Ppu<P> {
                 lines: LineCounter {
                     x: LineCounterX {
                         value: 0,
-                        line_end_detected: false,
-                        line_end_active: false,
+                        line_end: DffBit::new(false, false),
                     },
                     y: LineCounterY {
                         value: 0,
@@ -195,8 +194,7 @@ impl<P: PpuModel> Ppu<P> {
                 },
                 stat: StatInterrupt::power_on(),
                 line_end: LineEndPipeline {
-                    delayed_line_end: false,
-                    line_end_pending: false,
+                    line_end_pending: DffBit::new(false, false),
                     vsync_active: false,
                     vsync_committed: false,
                 },
@@ -235,15 +233,13 @@ impl<P: PpuModel> Ppu<P> {
             lines: LineCounter {
                 x: LineCounterX {
                     value: 99,
-                    line_end_detected: false,
-                    line_end_active: false,
+                    line_end: DffBit::new(false, false),
                 },
                 y: LineCounterY::post_boot(),
             },
             stat: StatInterrupt::post_boot(),
             line_end: LineEndPipeline {
-                delayed_line_end: false,
-                line_end_pending: false,
+                line_end_pending: DffBit::new(false, false),
                 vsync_active: false,
                 vsync_committed: true,
             },
@@ -284,8 +280,7 @@ impl<P: PpuModel> Ppu<P> {
             lines: LineCounter {
                 x: LineCounterX {
                     value: snap.dot_position,
-                    line_end_detected: false,
-                    line_end_active: false,
+                    line_end: DffBit::new(false, false),
                 },
                 y: LineCounterY {
                     value: snap.ly,
@@ -295,15 +290,13 @@ impl<P: PpuModel> Ppu<P> {
             },
             stat: StatInterrupt {
                 lyc: snap.lyc,
-                comparison_pending: snap.ly == snap.lyc,
-                comparison_latched: snap.ly == snap.lyc,
+                comparison: DffBit::new(snap.ly == snap.lyc, snap.ly == snap.lyc),
                 enables,
                 legs_was_high: InterruptFlags::empty(),
                 conditions_was: InterruptFlags::empty(),
             },
             line_end: LineEndPipeline {
-                delayed_line_end: false,
-                line_end_pending: false,
+                line_end_pending: DffBit::new(false, false),
                 vsync_active: false,
                 vsync_committed: lcd_on,
             },

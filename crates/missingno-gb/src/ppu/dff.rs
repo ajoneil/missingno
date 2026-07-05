@@ -76,6 +76,40 @@ impl DffLatch {
     }
 }
 
+/// Single-bit DFF: bool analogue of `DffLatch`. `write` drives the D input,
+/// `tick` captures D→Q on the clock edge, `output` reads Q. Edge detection
+/// derives from `output()` around `tick()`.
+pub struct DffBit {
+    pending: bool,
+    output: bool,
+}
+
+impl DffBit {
+    pub(super) fn new(pending: bool, output: bool) -> Self {
+        Self { pending, output }
+    }
+
+    pub fn output(&self) -> bool {
+        self.output
+    }
+
+    /// The transparent D input a combinational reader sees before the next tick().
+    pub(super) fn pending(&self) -> bool {
+        self.pending
+    }
+
+    /// Drive the D input.
+    pub(super) fn write(&mut self, d: bool) {
+        self.pending = d;
+    }
+
+    /// Capture D→Q; returns the newly latched output.
+    pub(super) fn tick(&mut self) -> bool {
+        self.output = self.pending;
+        self.output
+    }
+}
+
 /// Combinational NOR-latch (cross-coupled NOR pair; no clock).
 /// Use for RYDY, PYNU, REJO, XYMU, WUSA. Use `DffLatch` for clocked DFFs.
 pub struct NorLatch {

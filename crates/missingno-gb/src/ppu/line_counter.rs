@@ -2,6 +2,7 @@
 //!
 //! `y.value` is the internal counter (0-153); `y.value_register()` is CPU-visible $FF44 (MYTA-smoothed).
 
+use crate::ppu::DffBit;
 use crate::ppu::line_end_pipeline::LineEndEdge;
 
 /// LX value SANU decodes as scanline-end (113 = last dot before the RUTU pulse).
@@ -14,8 +15,9 @@ pub struct LineCounter {
 
 pub struct LineCounterX {
     pub(in crate::ppu) value: u8,
-    pub(in crate::ppu) line_end_detected: bool,
-    pub(in crate::ppu) line_end_active: bool,
+    /// RUTU DFF. D = SANU (LX==113 decode); Q captured each TALU-fall, holds LX
+    /// at 0 via MUDE while high.
+    pub(in crate::ppu) line_end: DffBit,
 }
 
 pub struct LineCounterY {
@@ -39,17 +41,16 @@ impl LineCounter {
     /// MUDE = NOR2(RUTU, reset) holds LX at 0 while RUTU=1.
     /// Returns true on the RUTU rising edge — i.e. when the scanline boundary is just reached.
     pub(in crate::ppu) fn on_lx_counter_clock_fall(&mut self) -> bool {
-        let prior_rutu = self.x.line_end_active;
-        let new_rutu = self.x.line_end_detected;
-        self.x.line_end_active = new_rutu;
+        let prior_line_end = self.x.line_end.output();
+        let now_line_end = self.x.line_end.tick();
 
-        if new_rutu {
+        if now_line_end {
             // MUDE async reset: LX held at 0 while RUTU=1; clear SANU for next decode.
             self.x.value = 0;
-            self.x.line_end_detected = false;
+            self.x.line_end.write(false);
         }
 
-        if new_rutu && !prior_rutu {
+        if now_line_end && !prior_line_end {
             self.y.advance_or_wrap();
             true
         } else {
@@ -67,7 +68,7 @@ impl LineCounter {
         self.y.vblank
     }
     pub(in crate::ppu) fn line_end_active(&self) -> bool {
-        self.x.line_end_active
+        self.x.line_end.output()
     }
     pub(in crate::ppu) fn dot_position(&self) -> u8 {
         self.x.value
@@ -82,20 +83,19 @@ impl LineCounter {
 impl LineCounterX {
     /// MUDE = NOR2(RUTU, reset) holds LX at 0 for the full RUTU pulse.
     pub(in crate::ppu) fn advance(&mut self) {
-        if !self.line_end_active {
+        if !self.line_end.output() {
             self.value += 1;
         }
     }
 
     /// SANU = LX==113 decode; cached for RUTU on next falling edge.
     pub(in crate::ppu) fn detect_line_end(&mut self) {
-        self.line_end_detected = self.value == SANU_DECODE_LX;
+        self.line_end.write(self.value == SANU_DECODE_LX);
     }
 
     pub(in crate::ppu) fn vid_rst(&mut self) {
         self.value = 0;
-        self.line_end_detected = false;
-        self.line_end_active = false;
+        self.line_end = DffBit::new(false, false);
     }
 }
 
