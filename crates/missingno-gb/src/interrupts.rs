@@ -51,14 +51,19 @@ impl Interrupt {
         }
     }
 
-    pub fn priority_order() -> &'static [Self] {
-        &[
-            Interrupt::VideoBetweenFrames,
-            Interrupt::VideoStatus,
-            Interrupt::Timer,
-            Interrupt::Serial,
-            Interrupt::Joypad,
-        ]
+    /// Highest-priority pending interrupt from an (IE ∧ IF) bit mask —
+    /// the lowest set bit of bits 0-4, modelling the distributed-NOR
+    /// priority chain. Bits 5-7 have no `irq_prio_bit` cell, so they
+    /// never resolve to an interrupt.
+    pub fn from_pending_bits(pending: u8) -> Option<Interrupt> {
+        match pending.trailing_zeros() {
+            0 => Some(Interrupt::VideoBetweenFrames),
+            1 => Some(Interrupt::VideoStatus),
+            2 => Some(Interrupt::Timer),
+            3 => Some(Interrupt::Serial),
+            4 => Some(Interrupt::Joypad),
+            _ => None,
+        }
     }
 }
 
@@ -96,17 +101,8 @@ impl Registers {
     }
 
     pub fn triggered(&self) -> Option<Interrupt> {
-        // Priority order is exactly ascending bit order (VBLANK=bit0 … JOYPAD=bit4),
-        // so the highest-priority pending IRQ is the lowest set bit of IE & IF.
         let pending = self.enabled.bits() & self.requested.bits() & Self::IRQ_BITS;
-        match pending.trailing_zeros() {
-            0 => Some(Interrupt::VideoBetweenFrames),
-            1 => Some(Interrupt::VideoStatus),
-            2 => Some(Interrupt::Timer),
-            3 => Some(Interrupt::Serial),
-            4 => Some(Interrupt::Joypad),
-            _ => None,
-        }
+        Interrupt::from_pending_bits(pending)
     }
 
     pub fn request(&mut self, interrupt: Interrupt) {

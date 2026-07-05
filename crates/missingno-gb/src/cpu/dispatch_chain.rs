@@ -138,12 +138,7 @@ impl DispatchChain {
     /// Reads post-latch state — what zacw captured. Used at the ISR's
     /// vector-resolve point (M3→M4 boundary, IE push bug window).
     pub fn vector(&self) -> Option<Interrupt> {
-        for interrupt in Interrupt::priority_order() {
-            if self.irq_latch.contains((*interrupt).into()) {
-                return Some(*interrupt);
-            }
-        }
-        None
+        Interrupt::from_pending_bits(self.irq_latch.bits())
     }
 
     /// Reset zkog at ctl_int_entry_m6 — fires when the ISR commits to
