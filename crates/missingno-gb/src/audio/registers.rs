@@ -1,7 +1,7 @@
 use bitflags::bitflags;
 
 use super::{
-    Audio, Register,
+    ApuSpec, Audio, Register,
     channels::{noise, pulse, pulse_sweep, wave},
     volume::Volume,
 };
@@ -39,7 +39,7 @@ impl Register {
     }
 }
 
-impl Audio {
+impl<A: ApuSpec> Audio<A> {
     pub fn read_register(&self, register: Register) -> u8 {
         match register {
             Register::Control => {
@@ -121,6 +121,7 @@ impl Audio {
         internal_counter: u16,
         double_speed: bool,
     ) {
+        let double_speed = A::DOUBLE_SPEED && double_speed;
         if !self.enabled {
             match register {
                 Register::Control => {} // always writable
@@ -212,7 +213,9 @@ impl Audio {
             }
             Register::Channel4(register) => {
                 let caru_low = self.caru_low();
-                self.channels.ch4.write_register(register, value, caru_low)
+                self.channels
+                    .ch4
+                    .write_register(register, value, caru_low, A::NOISE_GRID_ANCHOR)
             }
         }
     }

@@ -9,7 +9,7 @@ use gbtrace::profile::{FieldType, field_nullable, field_type};
 pub use gbtrace::{BootRom, Profile, Trigger};
 use sha2::{Digest, Sha256};
 
-use crate::audio::Audio;
+use crate::audio::{ApuSpec, Audio};
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
 use crate::ppu::{Ppu, PpuModel, PpuTraceSnapshot};
@@ -22,22 +22,24 @@ use crate::{Console, Model};
 /// type, so the capture logic is identical regardless of console.
 pub trait Traceable {
     type Ppu: PpuModel;
+    type Apu: ApuSpec;
     fn cpu(&self) -> &Cpu;
     fn ppu(&self) -> &Ppu<Self::Ppu>;
-    fn audio(&self) -> &Audio;
+    fn audio(&self) -> &Audio<Self::Apu>;
     fn peek(&self, address: u16) -> u8;
     fn cartridge(&self) -> &Cartridge;
 }
 
 impl<M: Model> Traceable for Console<M> {
     type Ppu = M::Ppu;
+    type Apu = M::Apu;
     fn cpu(&self) -> &Cpu {
         Console::<M>::cpu(self)
     }
     fn ppu(&self) -> &Ppu<M::Ppu> {
         Console::<M>::ppu(self)
     }
-    fn audio(&self) -> &Audio {
+    fn audio(&self) -> &Audio<M::Apu> {
         Console::<M>::audio(self)
     }
     fn peek(&self, address: u16) -> u8 {

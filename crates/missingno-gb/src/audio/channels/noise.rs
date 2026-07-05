@@ -49,10 +49,6 @@ pub struct NoiseChannel {
     /// KEY1 double-speed, latched each tcycle. At double speed the cold-load
     /// gains the prescaler-terminal-relative hold read by `trigger()`.
     pub double_speed: bool,
-    /// CGB console: a mid-run divisor-code change grid-anchors the new cadence
-    /// K new-code periods past the last kanu terminal (K = 2 from code 0). Set
-    /// once at console init; persists across apu power-off.
-    pub cgb: bool,
     /// Set by a re-trigger of a running channel: its first divider expiry is
     /// swallowed so the first LFSR shift lands one sample later than a cold trigger.
     pub skip_first_clock: bool,
@@ -92,7 +88,6 @@ impl Default for NoiseChannel {
             mhz_prescaler: Prescaler::default(),
             jeso: false,
             double_speed: false,
-            cgb: false,
             skip_first_clock: false,
             lfsr: 0x7fff,
             current_volume: 0,
@@ -140,7 +135,13 @@ impl NoiseChannel {
         }
     }
 
-    pub fn write_register(&mut self, register: Register, value: u8, caru_low: bool) {
+    pub fn write_register(
+        &mut self,
+        register: Register,
+        value: u8,
+        caru_low: bool,
+        grid_anchor: bool,
+    ) {
         self.output_dirty = true;
         match register {
             Register::LengthTimer => {
@@ -182,7 +183,7 @@ impl NoiseChannel {
                 // lands K new-code periods past the last kanu terminal (K = 2 from
                 // code 0, else 1), so preload the prescaler to reach terminal in
                 // K·new_code kanu steps. Code 0 is terminal-pinned (immediate).
-                if self.cgb && new_code != old_code && self.enabled.enabled {
+                if grid_anchor && new_code != old_code && self.enabled.enabled {
                     let k = if old_code == 0 { 2 } else { 1 };
                     if new_code == 0 {
                         // Code 0 is terminal-pinned: off the kanu terminal (jeso

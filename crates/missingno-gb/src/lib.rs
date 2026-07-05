@@ -35,6 +35,7 @@ use ppu::memory::Vram;
 use ppu::model::PpuModel;
 
 pub use audio::channels::wave::WaveRamCoupling;
+pub use audio::{ApuSpec, DmgApu};
 pub use clock::{CpuDivider, CpuGate, Edge, MasterClock, Tick};
 pub use master_clock::ClockPhase;
 pub use memory::BootRom;
@@ -157,6 +158,10 @@ pub trait Model: Default {
     /// `CgbConsoleState`; the DMG carries a ZST `()`.
     type ConsoleState: ConsoleShadow + Default;
 
+    /// Static, per-console APU properties (double-speed, the CGB sweep/noise
+    /// grid quirks, wave-RAM coupling). The DMG uses `DmgApu` (all defaults).
+    type Apu: ApuSpec;
+
     fn console_state(&self) -> &Self::ConsoleState;
     fn console_state_mut(&mut self) -> &mut Self::ConsoleState;
 
@@ -166,10 +171,6 @@ pub trait Model: Default {
     /// Console has the KEY1 ÷2 cell. When false every double-speed branch in
     /// the shared step loop is dead code.
     const DOUBLE_SPEED: bool = false;
-
-    /// How the CPU couples to CH3's wave SRAM while the channel is active:
-    /// DMG only during the fetch strobe, CGB always at the channel's byte.
-    const WAVE_RAM_COUPLING: WaveRamCoupling = WaveRamCoupling::FetchStrobe;
 
     /// CGB silicon exposes the APU channel DAC outputs at FF76/FF77.
     const HAS_PCM_REGISTERS: bool = false;
@@ -234,7 +235,7 @@ pub trait Model: Default {
 
     /// Post-boot APU state when no boot ROM is present — the CGB boot ROM
     /// hands off at a different frame-sequencer step and CH1 duty phase.
-    fn audio_post_boot(internal_counter: u16, _cgb_cart: bool) -> Audio {
+    fn audio_post_boot(internal_counter: u16, _cgb_cart: bool) -> Audio<Self::Apu> {
         Audio::post_boot(internal_counter)
     }
 
@@ -546,7 +547,7 @@ pub struct Console<M: Model> {
 
     ppu: Ppu<M::Ppu>,
     screen: M::Screen,
-    audio: Audio,
+    audio: Audio<M::Apu>,
     joypad: Joypad,
     interrupts: interrupts::Registers,
     serial: serial_transfer::Serial,
@@ -601,6 +602,7 @@ impl Model for Dmg {
     const HAS_OAM_BUG: bool = true;
 
     type ConsoleState = ();
+    type Apu = DmgApu;
 
     fn console_state(&self) -> &() {
         &self.console_state
@@ -795,7 +797,7 @@ impl<M: Model> Console<M> {
         (0..len).map(|i| self.peek(start.wrapping_add(i))).collect()
     }
 
-    pub fn audio(&self) -> &Audio {
+    pub fn audio(&self) -> &Audio<M::Apu> {
         &self.audio
     }
 

@@ -516,9 +516,7 @@ impl<M: Model> Console<M> {
                 interrupts::Register::RequestedInterrupts => self.interrupts.read_requested(),
             },
             MappedAddress::AudioRegister(register) => self.audio.read_register(register),
-            MappedAddress::AudioWaveRam(offset) => {
-                self.audio.read_wave_ram(offset, M::WAVE_RAM_COUPLING)
-            }
+            MappedAddress::AudioWaveRam(offset) => self.audio.read_wave_ram(offset),
             MappedAddress::PpuRegister(register) => self.ppu.read_register(register),
             MappedAddress::BeginDmaTransfer => self.dma.source_register(),
             MappedAddress::BootRomUnmap => {
@@ -704,10 +702,7 @@ impl<M: Model> Console<M> {
                 self.timers.internal_counter(),
                 self.double_speed_active(),
             ),
-            MappedAddress::AudioWaveRam(offset) => {
-                self.audio
-                    .write_wave_ram(offset, value, M::WAVE_RAM_COUPLING)
-            }
+            MappedAddress::AudioWaveRam(offset) => self.audio.write_wave_ram(offset, value),
             MappedAddress::PpuRegister(register) => {
                 let halt_wake_active = self.cpu.is_halt_wake_active();
                 if self

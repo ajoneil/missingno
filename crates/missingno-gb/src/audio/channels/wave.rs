@@ -1,4 +1,4 @@
-use super::super::Audio;
+use super::super::{ApuSpec, Audio};
 use super::{
     Enabled,
     registers::{PeriodHighAndControl, Signed11},
@@ -420,17 +420,17 @@ impl Volume {
     }
 }
 
-impl Audio {
+impl<A: ApuSpec> Audio<A> {
     /// Active-channel reads return the byte at the current wave
     /// position — under `FetchStrobe` coupling only while
     /// `wave_data_latch` is high (outside that ~1-T-cycle pulse the
     /// bus floats to 0xFF); under `ChannelPosition` coupling always.
-    pub fn read_wave_ram(&self, offset: u8, coupling: WaveRamCoupling) -> u8 {
+    pub fn read_wave_ram(&self, offset: u8) -> u8 {
         let ch3 = &self.channels.ch3;
         if !ch3.enabled.enabled {
             return ch3.ram[offset as usize];
         }
-        if coupling == WaveRamCoupling::ChannelPosition || ch3.wave_data_latch.latched {
+        if A::WAVE_RAM_COUPLING == WaveRamCoupling::ChannelPosition || ch3.wave_data_latch.latched {
             ch3.ram[ch3.wave_position as usize / 2]
         } else {
             0xFF
@@ -443,13 +443,13 @@ impl Audio {
     /// `(latched | extended)` check at the T=3 fall commit edge covers
     /// both half-T edges of T=3 of the `wave_ram_wr` pulse. Under
     /// `ChannelPosition` coupling they always commit.
-    pub fn write_wave_ram(&mut self, offset: u8, value: u8, coupling: WaveRamCoupling) {
+    pub fn write_wave_ram(&mut self, offset: u8, value: u8) {
         let ch3 = &mut self.channels.ch3;
         if !ch3.enabled.enabled {
             ch3.ram[offset as usize] = value;
             return;
         }
-        if coupling == WaveRamCoupling::ChannelPosition
+        if A::WAVE_RAM_COUPLING == WaveRamCoupling::ChannelPosition
             || ch3.wave_data_latch.latched
             || ch3.wave_data_latch.extended
         {

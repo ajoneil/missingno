@@ -5,7 +5,7 @@ use crate::app::{
     debugger::panes::{checkbox_title_bar, pane},
     ui::sizes::{l, s},
 };
-use missingno_gb::audio::Audio;
+use missingno_gb::audio::{ApuSpec, Audio};
 
 mod channels;
 
@@ -16,7 +16,7 @@ impl AudioPane {
         Self
     }
 
-    pub fn content(&self, audio: &Audio) -> pane_grid::Content<'_, Message> {
+    pub fn content<A: ApuSpec>(&self, audio: &Audio<A>) -> pane_grid::Content<'_, Message> {
         pane(
             checkbox_title_bar("Audio", audio.enabled()),
             column![

@@ -1,9 +1,35 @@
+use std::marker::PhantomData;
+
+use channels::wave::WaveRamCoupling;
 use channels::{Channels, noise, pulse, pulse_sweep, wave};
 use volume::Volume;
 
 pub mod channels;
 pub mod registers;
 pub mod volume;
+
+/// Static, per-console APU properties. Each is a compile-time fact the DMG and
+/// CGB silicon fix differently, so the console-specific runtime setters and
+/// flag fields collapse into consts the monomorphization folds away.
+pub trait ApuSpec {
+    /// Console has the KEY1 ÷2 cell. When false the frame-sequencer double-rate
+    /// tap, the CH1/CH2 prescaler free-run, and the CH4 cold-load DS term all
+    /// dead-code (their runtime `double_speed` argument folds to false).
+    const DOUBLE_SPEED: bool = false;
+    /// CGB widens the CH1 sweep-counter load-hold by one ch1_1mhz↑ (`ch1_ld_sum`
+    /// spans a second cycle); DMG keeps the single-cycle divider settle.
+    const WIDE_SWEEP_LOAD_HOLD: bool = false;
+    /// CGB grid-anchors the CH4 mid-run divisor-code reload cadence (the
+    /// divisor prescaler reaches terminal K·new_code kanu steps past the last).
+    const NOISE_GRID_ANCHOR: bool = false;
+    /// How the CPU couples to CH3's wave SRAM while the channel is active.
+    const WAVE_RAM_COUPLING: WaveRamCoupling = WaveRamCoupling::FetchStrobe;
+}
+
+/// DMG APU spec — every property at its default.
+#[derive(Clone, Copy, Default)]
+pub struct DmgApu;
+impl ApuSpec for DmgApu {}
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum Register {
@@ -25,15 +51,12 @@ const DIV_APU_BIT: u16 = 1 << 10; // Bit 10 of M-cycle counter drives frame sequ
 const DIV_APU_BIT_DOUBLE: u16 = 1 << 11;
 
 #[derive(Clone)]
-pub struct Audio {
+pub struct Audio<A: ApuSpec> {
     pub(crate) enabled: bool,
     pub(crate) channels: Channels,
     pub(crate) volume_left: Volume,
     pub(crate) volume_right: Volume,
     pub(crate) nr50: u8,
-    /// CGB widens the CH1 sweep-counter load-hold by one ch1_1mhz↑; DMG keeps
-    /// the single-cycle divider settle. Set once at console init.
-    wide_sweep_load_hold: bool,
 
     pub(crate) prev_div_apu_bit: bool,
     pub(crate) frame_sequencer_step: u8,
@@ -62,9 +85,10 @@ pub struct Audio {
     sample_accum_right: f32,
     sample_accum_count: u32,
     sample_buffer: Vec<(f32, f32)>,
+    _spec: PhantomData<A>,
 }
 
-impl Audio {
+impl<A: ApuSpec> Audio<A> {
     /// Override CH1's post-boot duty/divider phase. The boot chime leaves CH1
     /// free-running with the duty position un-reset across triggers; the CGB
     /// boot ROM's chime ends at a different phase than the DMG one, which the
@@ -72,16 +96,6 @@ impl Audio {
     pub fn set_ch1_post_boot_phase(&mut self, wave_duty_position: u8, divider: u16) {
         self.channels.ch1.wave_duty_position = wave_duty_position;
         self.channels.ch1.divider.counter = divider;
-    }
-
-    /// CGB widens the CH1 sweep-counter load-hold by one ch1_1mhz↑.
-    pub fn set_wide_sweep_load_hold(&mut self, wide: bool) {
-        self.wide_sweep_load_hold = wide;
-    }
-
-    /// CGB grid-anchors the CH4 mid-run divisor-code reload cadence.
-    pub fn set_noise_cgb(&mut self, cgb: bool) {
-        self.channels.ch4.cgb = cgb;
     }
 
     /// Post-boot state at PC=0x0100. `prev_div_apu_bit` derives from the
@@ -114,8 +128,8 @@ impl Audio {
             sample_accum_left: 0.0,
             sample_accum_right: 0.0,
             sample_accum_count: 0,
-            wide_sweep_load_hold: false,
             sample_buffer: Vec::new(),
+            _spec: PhantomData,
         }
     }
 
@@ -153,8 +167,8 @@ impl Audio {
             sample_accum_left: 0.0,
             sample_accum_right: 0.0,
             sample_accum_count: 0,
-            wide_sweep_load_hold: false,
             sample_buffer: Vec::new(),
+            _spec: PhantomData,
         }
     }
 
@@ -207,13 +221,11 @@ impl Audio {
     /// `apu_reset_n` is NR52 bit 7 — the channels' prescaler DFFs
     /// honour it as an async-reset, so we still call each tcycle
     /// unconditionally to keep the reset edge observable.
-    pub fn tcycle(
-        &mut self,
-        div_counter: u16,
-        t_index: u8,
-        double_speed: bool,
-        wave_ram_coupling: wave::WaveRamCoupling,
-    ) {
+    pub fn tcycle(&mut self, div_counter: u16, t_index: u8, double_speed: bool) {
+        // KEY1 is a runtime bit, but only a `DOUBLE_SPEED` console can raise it;
+        // the DMG monomorphization folds this to false and dead-codes every
+        // double-speed branch below (and inside the channels).
+        let double_speed = A::DOUBLE_SPEED && double_speed;
         let div_apu_bit = if double_speed {
             DIV_APU_BIT_DOUBLE
         } else {
@@ -252,11 +264,11 @@ impl Audio {
             apu_reset_n,
             t_index,
             double_speed,
-            self.wide_sweep_load_hold,
+            A::WIDE_SWEEP_LOAD_HOLD,
             sweep_cate_due,
         );
         self.channels.ch2.tcycle(apu_reset_n, t_index, double_speed);
-        self.channels.ch3.tcycle(apu_reset_n, wave_ram_coupling);
+        self.channels.ch3.tcycle(apu_reset_n, A::WAVE_RAM_COUPLING);
         self.channels.ch4.tcycle(apu_reset_n, t_index, double_speed);
 
         if !self.enabled {
@@ -397,6 +409,7 @@ impl Audio {
     /// ticks the frame sequencer. `double_speed` is the speed in effect for
     /// `old_counter` — the PRE-switch speed on the speed-switch path.
     pub fn on_div_write(&mut self, old_counter: u16, double_speed: bool) {
+        let double_speed = A::DOUBLE_SPEED && double_speed;
         let div_apu_bit = if double_speed {
             DIV_APU_BIT_DOUBLE
         } else {
@@ -553,7 +566,6 @@ impl Audio {
                 mhz_prescaler: Prescaler::default(),
                 jeso: false,
                 double_speed: false,
-                cgb: false,
                 skip_first_clock: false,
                 lfsr: 0x7FFF,
                 current_volume: 0,
@@ -586,8 +598,8 @@ impl Audio {
             sample_accum_left: 0.0,
             sample_accum_right: 0.0,
             sample_accum_count: 0,
-            wide_sweep_load_hold: false,
             sample_buffer: Vec::new(),
+            _spec: PhantomData,
         }
     }
 }

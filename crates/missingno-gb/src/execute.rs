@@ -398,7 +398,6 @@ impl<M: Model> Console<M> {
                 self.timers.internal_counter(),
                 tcycle.as_u8(),
                 double_speed,
-                M::WAVE_RAM_COUPLING,
             );
         }
         tcycle
@@ -628,7 +627,6 @@ impl<M: Model> Console<M> {
                     self.timers.internal_counter(),
                     0,
                     double_speed,
-                    M::WAVE_RAM_COUPLING,
                 );
                 r
             }

@@ -35,7 +35,8 @@ use missingno_gb::ppu::{
     PpuModel, StatShadow, TileSelGlitch, resolve_dmg_pixel,
 };
 use missingno_gb::{
-    Console, ConsoleShadow, Model, StopAction, VramDmaClaim, WaveRamCoupling, audio::Audio,
+    Console, ConsoleShadow, Model, StopAction, VramDmaClaim, WaveRamCoupling,
+    audio::{ApuSpec, Audio},
     cartridge::Cartridge, cpu::Cpu, cpu::flags::Flags, dma::Dma, joypad::Joypad,
     shared_oam_dma_write_conflict_byte, timers::Timers,
 };
@@ -1036,14 +1037,25 @@ fn cgb_dma_source_bus(address: u16) -> CgbBus {
     }
 }
 
+/// CGB APU spec: KEY1 double-speed, the widened CH1 sweep load-hold, the CH4
+/// divisor-code grid anchor, and channel-position wave-RAM coupling.
+#[derive(Clone, Copy, Default)]
+pub struct CgbApu;
+impl ApuSpec for CgbApu {
+    const DOUBLE_SPEED: bool = true;
+    const WIDE_SWEEP_LOAD_HOLD: bool = true;
+    const NOISE_GRID_ANCHOR: bool = true;
+    const WAVE_RAM_COUPLING: WaveRamCoupling = WaveRamCoupling::ChannelPosition;
+}
+
 impl Model for Cgb {
     type Ppu = CgbPpu;
     type Screen = Screen;
     const TRACE_MODEL_NAME: &'static str = "CGB-C";
-    const WAVE_RAM_COUPLING: WaveRamCoupling = WaveRamCoupling::ChannelPosition;
     const HAS_PCM_REGISTERS: bool = true;
 
     type ConsoleState = CgbConsoleState;
+    type Apu = CgbApu;
 
     fn console_state(&self) -> &CgbConsoleState {
         &self.console_state
@@ -1126,8 +1138,8 @@ impl Model for Cgb {
     /// The CGB boot ROM hands the APU off one frame-sequencer step earlier than
     /// the DMG boot ROM (measured at PC=$0100). DMG-compat carts run a different
     /// boot sequence whose phase is unmeasured, so they keep the DMG handoff.
-    fn audio_post_boot(internal_counter: u16, cgb_cart: bool) -> Audio {
-        let mut audio = if cgb_cart {
+    fn audio_post_boot(internal_counter: u16, cgb_cart: bool) -> Audio<CgbApu> {
+        if cgb_cart {
             let mut audio = Audio::post_boot_with_fs_step(internal_counter, 1);
             // The CGB boot chime leaves CH1 at this duty/divider phase, distinct
             // from the DMG handoff the `Default` channel state encodes.
@@ -1135,11 +1147,7 @@ impl Model for Cgb {
             audio
         } else {
             Audio::post_boot(internal_counter)
-        };
-        // CGB silicon widens the CH1 sweep-counter load-hold (DMG-compat too).
-        audio.set_wide_sweep_load_hold(true);
-        audio.set_noise_cgb(true);
-        audio
+        }
     }
 
     /// CGB boot-ROM handoff is mid-VBlank; the line depends on the boot
