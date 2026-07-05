@@ -1,5 +1,5 @@
 use super::{
-    Console, ConsoleShadow, Model, ScreenBuffer, StopAction,
+    Console, ConsoleShadow, Model, ScreenBuffer,
     clock::{CpuDivider, CpuGate, Edge},
     cpu::mcycle::{BusAction, TCycle},
     cpu_bus::{BusAccess, BusAccessKind},
@@ -254,71 +254,16 @@ impl<M: Model> Console<M> {
         if !self.chassis.cpu.is_stopped() {
             return;
         }
-
-        // The settle is bus-coupled: a bus master holding the CPU defers it.
-        if self.model.console_state().dma_cpu_hold() {
-            return;
-        }
-
-        // Mid-blackout: `step_blackout_chunk` owns the countdown and the
-        // re-engage. Nothing to arm again until it expires.
-        if self.model.speed_switch_in_progress() {
-            return;
-        }
-
-        match self
-            .model
-            .resolve_stop(self.chassis.ppu.dot_in_mcycle_phase())
-        {
-            StopAction::SpeedSwitch => {
-                // Hardware resets DIV across the switch (the model has already
-                // toggled its speed bit and armed the blackout count). The CPU
-                // clock is then held while the dot clock runs the blackout out;
-                // `step_blackout_chunk` advances the master clock every edge and
-                // re-engages at the phase the count expires on.
-                let old_counter = self.chassis.timers.internal_counter();
-                let to_double = self.double_speed_active();
-                self.chassis.timers.reset_for_speed_switch();
-                self.chassis
-                    .audio
-                    .on_div_write(old_counter.wrapping_sub(1), !to_double);
-                self.chassis.audio.on_speed_switch(to_double);
-                if let Some(interrupt) = self
-                    .chassis
-                    .serial
-                    .on_div_write(old_counter, self.model.has_serial_fast_clock())
-                {
-                    self.chassis.interrupts.request(interrupt);
-                }
-                // KEY1 has flipped the model's speed bit; align the clock's ÷1/÷2
-                // cell to the new ratio so the clock stays the sole ratio owner.
-                self.chassis
-                    .clock
-                    .set_divider(if self.double_speed_active() {
-                        CpuDivider::Two
-                    } else {
-                        CpuDivider::One
-                    });
-                // An interrupt pending with IME set at the STOP preempts the
-                // post-STOP HALT: the switch happens but the CPU services the
-                // interrupt at once (DIV ≈ 0), not after the long wait.
-                if self.chassis.cpu.interrupts_enabled()
-                    && self.chassis.interrupts.triggered().is_some()
-                {
-                    self.model.preempt_speed_switch_halt();
-                }
-                // Anchor the held-edge count at the current master edge; the
-                // blackout's elapsed count is `master_edge - blackout_anchor`.
-                let anchor = self.chassis.clock.master_edge();
-                self.model.console_state_mut().set_blackout_anchor(anchor);
-                // The upward grading's escape byte completes inside the
-                // blackout — the CPU is held and the bus free, so its tenure
-                // never parks the resumed stream.
-                while let Some((src, dst)) = self.model.vram_dma_drain_escape() {
-                    self.dma_move(src, dst);
-                }
+        // The model owns the STOP outcome: a CGB armed KEY1 switch resets the
+        // divider, retaps the APU/serial, aligns the clock ÷1/÷2 cell, and arms
+        // the blackout (returning true); otherwise the CPU stays stopped. When
+        // a switch happened the upward-grading escape byte completes here inside
+        // the hold — the CPU is held and the bus free, so its tenure never parks
+        // the resumed stream.
+        if self.model.resolve_stop(&mut self.chassis) {
+            while let Some((src, dst)) = self.model.vram_dma_drain_escape() {
+                self.dma_move(src, dst);
             }
-            StopAction::Remain => {}
         }
     }
 

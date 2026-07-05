@@ -112,15 +112,6 @@ impl ConsoleShadow for () {
     }
 }
 
-/// What a STOP the CPU has settled into resolves to (decided by the model).
-pub enum StopAction {
-    /// Stay stopped — DMG stop-mode, or CGB STOP with no armed speed switch.
-    Remain,
-    /// CGB double-speed switch: the model has toggled its speed; the system
-    /// resets the divider and re-engages the CPU.
-    SpeedSwitch,
-}
-
 /// The HDMA trigger's bus claim committed on a fall: `standing` marks a
 /// claim that aged through its synchronizer stage before committing (it
 /// wins the bus race against the halt-release fetch).
@@ -250,13 +241,14 @@ pub trait Model: Default {
         Dma::new()
     }
 
-    /// Resolve a STOP the CPU has settled into. DMG always stays stopped;
-    /// CGB performs a double-speed switch when KEY1 is armed (toggling its
-    /// own speed bit, arming its blackout) and otherwise stays stopped.
-    /// `entry_dot_phase` is the dot-in-M position at the arm (`None` with the
-    /// LCD off) — the mux-relock alignment input; DMG ignores it.
-    fn resolve_stop(&mut self, _entry_dot_phase: Option<u8>) -> StopAction {
-        StopAction::Remain
+    /// Resolve a STOP the CPU has settled into, given the shared [`Chassis`].
+    /// DMG always stays stopped (returns false). CGB performs a double-speed
+    /// switch when KEY1 is armed — resetting the divider, retapping the
+    /// APU/serial, arming its blackout — and returns true so the caller drains
+    /// the upward-grading escape byte. The model reads its own STOP entry phase
+    /// (dot-in-M, the mux-relock alignment input) off the chassis PPU.
+    fn resolve_stop(&mut self, _chassis: &mut Chassis<Self>) -> bool {
+        false
     }
 
     /// Whether a double-speed switch blackout is draining (the CPU is held
@@ -284,24 +276,6 @@ pub trait Model: Default {
     fn cpu_steps_per_dot(&self) -> u8 {
         1
     }
-
-    /// Master edges (dot-clock half-cycles) the CPU stays held across a
-    /// double-speed switch — a fixed real-time blackout the dot clock runs
-    /// through while the SM83 is frozen. The count's residue past a whole CPU
-    /// M-cycle re-phases the SM83 against the dot clock when it re-engages, so
-    /// the post-switch CPU↔dot alignment emerges from this number alone. DMG
-    /// never switches speed.
-    fn speed_switch_blackout_master_edges(&self) -> u32 {
-        0
-    }
-
-    /// An interrupt pending with IME set at the speed-switch STOP makes it a
-    /// 1-byte opcode that doesn't enter the post-STOP oscillation-stabilization
-    /// HALT (Pan Docs STOP decision table): the switch still resets DIV and
-    /// changes speed, but the long wait is preempted and the interrupt is
-    /// serviced at once. Collapse the blackout to the bare clock-mux settle so
-    /// the divider doesn't ramp before dispatch. DMG never switches speed.
-    fn preempt_speed_switch_halt(&mut self) {}
 
     /// A timer overflowing during the post-STOP HALT wakes it like any HALT:
     /// the IF-set edge spends one WakeIntake M-cycle (the divider ticking)
@@ -540,25 +514,25 @@ pub trait Model: Default {
 /// common to all consoles in the family; the DMG/CGB divergences live in the
 /// [`Model`] on [`Console`], which reaches this silicon through `M`'s
 /// associated types only — never `M` itself.
-struct Chassis<M: Model> {
-    cpu: Cpu,
+pub struct Chassis<M: Model> {
+    pub cpu: Cpu,
 
-    external: ExternalBus,
-    high_ram: HighRam,
-    vram_bus: VramBus<<M::Ppu as PpuModel>::Vram>,
+    pub external: ExternalBus,
+    pub high_ram: HighRam,
+    pub vram_bus: VramBus<<M::Ppu as PpuModel>::Vram>,
 
-    ppu: Ppu<M::Ppu>,
-    screen: M::Screen,
-    audio: Audio<M::Apu>,
-    joypad: Joypad,
-    interrupts: interrupts::Registers,
-    serial: serial_transfer::Serial,
-    timers: timers::Timers,
-    dma: Dma,
+    pub ppu: Ppu<M::Ppu>,
+    pub screen: M::Screen,
+    pub audio: Audio<M::Apu>,
+    pub joypad: Joypad,
+    pub interrupts: interrupts::Registers,
+    pub serial: serial_transfer::Serial,
+    pub timers: timers::Timers,
+    pub dma: Dma,
     /// Whether the OAM-DMA drove a byte last M-cycle — edge-detects its
     /// active→done boundary so the completion M-cycle still shares the bus
     /// with a concurrent VRAM-DMA (the OAM-DMA↔HDMA byte-clock conflict).
-    dma_oam_was_transferring: bool,
+    pub dma_oam_was_transferring: bool,
 
     /// The master-clock phase layer: the CPU CLK9 edge, the free-running PPU dot
     /// edge, and the `÷1`/`÷2` divider between them. Owns the per-edge dispatch
@@ -568,23 +542,23 @@ struct Chassis<M: Model> {
     /// alternate CPU edges. The dot phase free-runs through the speed-switch
     /// blackout while the CPU is frozen, so the post-switch alignment is
     /// emergent.
-    clock: MasterClock,
+    pub clock: MasterClock,
     /// Shared CPU data bus: current `cpu_port_d[7:0]` value plus the
     /// staged read/write activity for the in-flight M-cycle.
-    cpu_bus: CpuBus,
-    bus_trace: cpu_bus::BusTrace,
+    pub cpu_bus: CpuBus,
+    pub bus_trace: cpu_bus::BusTrace,
     /// Conflict write deferred from `commit_write` to after DMA's
     /// `mcycle()` commit. Tuple is `(oam_offset, src_byte, cpu_value)`:
     /// `src_byte` is the byte DMA fetched this M-cycle, used to
     /// AND-mix on WRAM-source DMA where both drivers stay live through
     /// the OAM write phase. Set in `write_byte_with_cupa_lock`, drained
     /// in `tick_mcycle_boundary_fall`.
-    dma_conflict_write_pending: Option<(u8, u8, u8)>,
+    pub dma_conflict_write_pending: Option<(u8, u8, u8)>,
     /// Source-bank register write (VBK/SVBK) deferred from `commit_write` to the
     /// M-cycle boundary, so the coincident OAM-DMA byte reads the pre-write bank.
     /// Tuple is `(register address, value)`; drained in `tick_mcycle_boundary_fall`
     /// after the byte commit.
-    dma_pending_bank_write: Option<(u16, u8)>,
+    pub dma_pending_bank_write: Option<(u16, u8)>,
 }
 
 /// A Game Boy–family console: the shared [`Chassis`] silicon plus the [`Model`]

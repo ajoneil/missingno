@@ -35,9 +35,10 @@ use missingno_gb::ppu::{
     PpuModel, StatShadow, TileSelGlitch, resolve_dmg_pixel,
 };
 use missingno_gb::{
-    Console, ConsoleShadow, Model, StopAction, VramDmaClaim, WaveRamCoupling,
+    Chassis, Console, ConsoleShadow, Model, VramDmaClaim, WaveRamCoupling,
     audio::{ApuSpec, Audio},
     cartridge::Cartridge,
+    clock::CpuDivider,
     cpu::Cpu,
     cpu::flags::Flags,
     dma::Dma,
@@ -994,6 +995,26 @@ impl Cgb {
         }
     }
 
+    /// Master edges (dot-clock half-cycles) the CPU stays held across a
+    /// double-speed switch — a fixed real-time hold the dot clock runs through
+    /// while the SM83 is frozen. The count's residue past a whole CPU M-cycle
+    /// re-phases the SM83 against the dot clock at re-engage. `double_speed`
+    /// already holds the new speed, so convert the T-cycle figure by the
+    /// post-switch ratio (2 master edges per CPU T-cycle at single speed, 1 at
+    /// double). The relock tail rides on the end (PPU only, divider quiet).
+    fn speed_switch_blackout_master_edges(&self) -> u32 {
+        let hold = SPEED_SWITCH_BLACKOUT_TCYCLES * 2 / self.cpu_steps_per_dot() as u32;
+        hold + self.relock_edges()
+    }
+
+    /// An interrupt pending with IME set at the speed-switch STOP skips the
+    /// post-STOP oscillation-stabilization HALT (Pan Docs STOP decision table):
+    /// only the clock-mux relock tail remains, during which the divider is
+    /// frozen — so DIV stays 0 until the CPU re-engages and services it.
+    fn preempt_speed_switch_halt(&mut self) {
+        self.speed_switch_blackout = self.relock_edges();
+    }
+
     /// Index into `extra_oam` for a $FEA0-$FEFF address: row from address
     /// bits 6-5, offset from bits 2-0 (bits 3-4 ignored by the decoder).
     fn extra_oam_index(address: u16) -> usize {
@@ -1187,71 +1208,108 @@ impl Model for Cgb {
         Dma::with_source_register(0x00)
     }
 
-    fn resolve_stop(&mut self, entry_dot_phase: Option<u8>) -> StopAction {
-        if self.key1_armed {
-            // The clock-mux settle is bus-coupled, and only the upward swap
-            // disturbs the mux and resets the trigger's request/commit
-            // chain (the CPU-written arming/length registers persist).
-            if self.double_speed {
-                // Downward: the chain survives, so a granted burst keeps
-                // the bus and the settle waits for its release.
-                if self.vram_dma.block_remaining > 0 && self.vram_dma.ready_in == 0 {
-                    return StopAction::Remain;
-                }
-            } else {
-                // Upward: the reset grades the committed block, which is
-                // cancel-immune and ignores the arming flag. Not yet
-                // bus-eligible: discarded whole. Bus-eligible: the dropped
-                // grant latches the stop condition — the in-flight byte
-                // completes outside the latched length.
-                if self.vram_dma.block_remaining > 0 {
-                    // Either grading leg revokes the committed block's FF55
-                    // count (the dropped grant re-arms the status).
-                    self.vram_dma.granted_ahead = self.vram_dma.granted_ahead.saturating_sub(1);
-                    self.vram_dma.grant_counted = false;
-                    if self.vram_dma.ready_in == 0 {
-                        self.vram_dma.mode = TransferMode::Idle;
-                        self.vram_dma.block_remaining = 1;
-                        self.vram_dma.escape_byte = true;
-                    } else {
-                        self.vram_dma.block_remaining = 0;
-                        self.vram_dma.ready_in = 0;
-                        self.vram_dma.setup_cells = 0;
-                    }
-                }
-                self.vram_dma.pend = false;
-            }
-            self.double_speed = !self.double_speed;
-            self.key1_armed = false;
-            self.speed_switch_blackout = self.speed_switch_blackout_master_edges();
-            if self.double_speed {
-                self.vram_dma.wake_pend_blind = VramDma::WAKE_PEND_BLIND_TICKS;
-            }
-            // A 1×→2× relock entered at dot-in-M phase p3 lands the mux
-            // displaced (cost-free); a displaced 2×→1× completes a dot early
-            // and stays displaced; the following 1×→2× spends the dot back
-            // re-syncing — and a re-sync suppresses a fresh displacement.
-            if self.double_speed {
-                if self.switch_relock_debit {
-                    self.speed_switch_blackout += 2;
-                    self.switch_relock_debit = false;
-                } else if entry_dot_phase == Some(3) {
-                    self.switch_relock_debit = true;
-                }
-            } else if self.switch_relock_debit {
-                self.speed_switch_blackout -= 2;
-            }
-            StopAction::SpeedSwitch
-        } else {
-            StopAction::Remain
+    fn resolve_stop(&mut self, chassis: &mut Chassis<Self>) -> bool {
+        // The settle is bus-coupled: a bus master holding the CPU defers it.
+        if self.console_state().dma_cpu_hold() {
+            return false;
         }
-    }
+        // Mid-blackout: the held-edge stepping owns the countdown and re-engage.
+        if self.speed_switch_in_progress() {
+            return false;
+        }
+        if !self.key1_armed {
+            return false;
+        }
+        let entry_dot_phase = chassis.ppu.dot_in_mcycle_phase();
 
-    fn preempt_speed_switch_halt(&mut self) {
-        // No oscillation-stabilization HALT: only the clock-mux relock tail
-        // remains, during which the divider is frozen — so DIV stays 0 until
-        // the CPU re-engages and services the pending interrupt.
-        self.speed_switch_blackout = self.relock_edges();
+        // The clock-mux settle is bus-coupled, and only the upward swap
+        // disturbs the mux and resets the trigger's request/commit
+        // chain (the CPU-written arming/length registers persist).
+        if self.double_speed {
+            // Downward: the chain survives, so a granted burst keeps
+            // the bus and the settle waits for its release.
+            if self.vram_dma.block_remaining > 0 && self.vram_dma.ready_in == 0 {
+                return false;
+            }
+        } else {
+            // Upward: the reset grades the committed block, which is
+            // cancel-immune and ignores the arming flag. Not yet
+            // bus-eligible: discarded whole. Bus-eligible: the dropped
+            // grant latches the stop condition — the in-flight byte
+            // completes outside the latched length.
+            if self.vram_dma.block_remaining > 0 {
+                // Either grading leg revokes the committed block's FF55
+                // count (the dropped grant re-arms the status).
+                self.vram_dma.granted_ahead = self.vram_dma.granted_ahead.saturating_sub(1);
+                self.vram_dma.grant_counted = false;
+                if self.vram_dma.ready_in == 0 {
+                    self.vram_dma.mode = TransferMode::Idle;
+                    self.vram_dma.block_remaining = 1;
+                    self.vram_dma.escape_byte = true;
+                } else {
+                    self.vram_dma.block_remaining = 0;
+                    self.vram_dma.ready_in = 0;
+                    self.vram_dma.setup_cells = 0;
+                }
+            }
+            self.vram_dma.pend = false;
+        }
+        self.double_speed = !self.double_speed;
+        self.key1_armed = false;
+        self.speed_switch_blackout = self.speed_switch_blackout_master_edges();
+        if self.double_speed {
+            self.vram_dma.wake_pend_blind = VramDma::WAKE_PEND_BLIND_TICKS;
+        }
+        // A 1×→2× relock entered at dot-in-M phase p3 lands the mux
+        // displaced (cost-free); a displaced 2×→1× completes a dot early
+        // and stays displaced; the following 1×→2× spends the dot back
+        // re-syncing — and a re-sync suppresses a fresh displacement.
+        if self.double_speed {
+            if self.switch_relock_debit {
+                self.speed_switch_blackout += 2;
+                self.switch_relock_debit = false;
+            } else if entry_dot_phase == Some(3) {
+                self.switch_relock_debit = true;
+            }
+        } else if self.switch_relock_debit {
+            self.speed_switch_blackout -= 2;
+        }
+
+        // Hardware resets DIV across the switch (the speed bit is now toggled).
+        // The CPU clock is held while the dot clock runs the blackout out; the
+        // held-edge stepping advances the master clock every edge and re-engages
+        // at the phase the count expires on.
+        let old_counter = chassis.timers.internal_counter();
+        let to_double = self.double_speed;
+        chassis.timers.reset_for_speed_switch();
+        chassis
+            .audio
+            .on_div_write(old_counter.wrapping_sub(1), !to_double);
+        chassis.audio.on_speed_switch(to_double);
+        if let Some(interrupt) = chassis
+            .serial
+            .on_div_write(old_counter, self.has_serial_fast_clock())
+        {
+            chassis.interrupts.request(interrupt);
+        }
+        // KEY1 has flipped the speed bit; align the clock's ÷1/÷2 cell to the
+        // new ratio so the clock stays the sole ratio owner.
+        chassis.clock.set_divider(if to_double {
+            CpuDivider::Two
+        } else {
+            CpuDivider::One
+        });
+        // An interrupt pending with IME set at the STOP preempts the post-STOP
+        // HALT: the switch happens but the CPU services the interrupt at once
+        // (DIV ≈ 0), not after the long wait.
+        if chassis.cpu.interrupts_enabled() && chassis.interrupts.triggered().is_some() {
+            self.preempt_speed_switch_halt();
+        }
+        // Anchor the held-edge count at the current master edge; the blackout's
+        // elapsed count is `master_edge - blackout_anchor`.
+        let anchor = chassis.clock.master_edge();
+        self.console_state_mut().set_blackout_anchor(anchor);
+        true
     }
 
     fn speed_switch_wake_ready(&mut self, mcycle_boundary: bool) -> bool {
@@ -1289,17 +1347,6 @@ impl Model for Cgb {
 
     fn cpu_steps_per_dot(&self) -> u8 {
         if self.double_speed { 2 } else { 1 }
-    }
-
-    fn speed_switch_blackout_master_edges(&self) -> u32 {
-        // The blackout is a fixed real-time hold; in master edges (dot-clock
-        // half-cycles) it is the same duration at either speed — the dot clock
-        // runs at a constant rate. `double_speed` already holds the new speed,
-        // so convert the T-cycle figure by the post-switch ratio (2 master
-        // edges per CPU T-cycle at single speed, 1 at double). The relock tail
-        // rides on the end (PPU only, divider quiet).
-        let hold = SPEED_SWITCH_BLACKOUT_TCYCLES * 2 / self.cpu_steps_per_dot() as u32;
-        hold + self.relock_edges()
     }
 
     fn note_pre_alet_rendering(&mut self, rendering: bool) {
