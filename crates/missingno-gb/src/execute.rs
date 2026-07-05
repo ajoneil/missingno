@@ -384,35 +384,29 @@ impl<M: Model> Console<M> {
             // entry is detected one boundary later against the request line's
             // one-boundary synchronizer stage.
             if self.chassis.cpu.in_dispatch() {
-                if !self.chassis.cpu.dispatch_entry_sampled {
-                    self.chassis.cpu.dispatch_entry_sampled = true;
-                    self.chassis.cpu.dispatch_parks_behind_dma =
-                        self.chassis.cpu.dma_request_stood_prev2_boundary;
-                }
+                self.chassis.cpu.bus_arbitration.sample_pick_if_entering();
             } else {
-                self.chassis.cpu.dispatch_entry_sampled = false;
-                self.chassis.cpu.dispatch_parks_behind_dma = false;
+                self.chassis.cpu.bus_arbitration.clear_pick();
             }
             // Grant mode by the CPU's state at the commit: a halted-CPU
             // commit grants at the next M-boundary (the claim-standing
             // synchronizer still governs the halt-exit refetch); a running-CPU
             // commit waits for the in-flight instruction to retire.
-            if self.chassis.cpu.dma_arbiter_at_boundary {
-                self.chassis.cpu.dma_arbiter_at_boundary = false;
+            if self.chassis.cpu.bus_arbitration.take_at_boundary() {
                 self.model.vram_dma_instruction_retired();
             }
             let suspended = self.model.vram_dma_seizes_bus()
                 && (self.model.console_state().bus_suspended()
                     || if self.chassis.cpu.in_dispatch() {
-                        self.chassis.cpu.dispatch_parks_behind_dma
+                        self.chassis.cpu.bus_arbitration.parks_behind_dma()
                     } else {
                         !self.model.vram_dma_park_waits_for_fetch()
                     });
             self.model.console_state_mut().set_bus_suspended(suspended);
-            self.chassis.cpu.dma_request_stood_prev2_boundary =
-                self.chassis.cpu.dma_request_stood_prev_boundary;
-            self.chassis.cpu.dma_request_stood_prev_boundary =
-                self.model.vram_dma_request_standing();
+            self.chassis
+                .cpu
+                .bus_arbitration
+                .shift_request(self.model.vram_dma_request_standing());
             let tcycle = self.rise_cpu_advance(dot_work);
             // The M-cycle pick inside `rise_cpu_advance` consumed the claim; clear
             // the stored claim so a fresh one can commit in the new M-cycle (the

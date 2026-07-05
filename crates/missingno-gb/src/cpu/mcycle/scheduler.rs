@@ -25,17 +25,20 @@ impl Cpu {
                 self.boundary_flag = true;
                 MCycleAction::Internal { address: self.pc }
             } else {
-                let mut action = if self.parked_action.is_some() {
+                let mut action = if self.bus_arbitration.parked_action.is_some() {
                     if grants.suspended {
                         MCycleAction::Internal { address: self.pc }
                     } else {
-                        self.parked_action.take().expect("checked is_some")
+                        self.bus_arbitration
+                            .parked_action
+                            .take()
+                            .expect("checked is_some")
                     }
                 } else {
                     self.next_mcycle(grants.claim)
                         .expect("next_mcycle must always return Some (CPU chains at boundaries)")
                 };
-                if grants.suspended && self.parked_action.is_none() {
+                if grants.suspended && self.bus_arbitration.parked_action.is_none() {
                     let targets_bus = match &action {
                         MCycleAction::Read { address } | MCycleAction::Write { address, .. } => {
                             crate::memory::Bus::of(*address).is_some()
@@ -47,7 +50,7 @@ impl Cpu {
                     // the mirror of the grant deferring to an in-flight
                     // dispatch.
                     if targets_bus || self.in_dispatch() {
-                        self.parked_action = Some(action);
+                        self.bus_arbitration.parked_action = Some(action);
                         action = MCycleAction::Internal { address: self.pc };
                     }
                 }

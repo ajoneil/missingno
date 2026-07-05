@@ -42,7 +42,7 @@ impl Cpu {
     pub fn take_instruction_boundary(&mut self) -> bool {
         if self.boundary_flag {
             self.boundary_flag = false;
-            self.dma_arbiter_at_boundary = true;
+            self.bus_arbitration.mark_at_boundary();
             true
         } else {
             false

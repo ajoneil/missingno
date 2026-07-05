@@ -145,6 +145,97 @@ impl Default for IrqContext {
     }
 }
 
+/// The dispatch's one-shot M1 arbitration against a standing VRAM-DMA request.
+/// A request standing at the pick makes this dispatch yield its entire tenure
+/// to the block (chained blocks included); otherwise the dispatch holds the bus
+/// through its M-cycles against all later seizures. The pick's result is
+/// meaningless until it is taken, so it exists only inside `Sampled` — a
+/// "parks, but no pick was taken" state is unrepresentable.
+pub(crate) enum DispatchPick {
+    /// No pick has been taken for the dispatch in flight.
+    Unsampled,
+    /// The pick has been taken; `parks_behind_dma` is its result.
+    Sampled { parks_behind_dma: bool },
+}
+
+/// The DMA↔dispatch bus-pick synchronizer: the CPU-side latches that decide,
+/// each M-boundary, whether the in-flight instruction holds the shared bus or
+/// yields it to a VRAM-DMA block. Read and advanced as a unit by the step
+/// loop's boundary work; the ALU/sequencer never touch it.
+pub(crate) struct BusArbitration {
+    /// The dispatch's one-shot M1 pick.
+    pick: DispatchPick,
+    /// Two-boundary synchronizer on the VRAM-DMA request line: `[0]` is the
+    /// request captured at the previous M-boundary, `[1]` the boundary before
+    /// that. A commit landing within the pick's own M-cycle hasn't reached
+    /// `[1]` (the dispatch wins); one standing a full boundary earlier has (the
+    /// block wins). Entry detection runs one boundary after the pick, so the
+    /// pick reads `[1]`.
+    request_sync: [bool; 2],
+    /// The M-cycle picked at the next boundary starts a fresh instruction — the
+    /// retirement point a running-CPU block grant engages at. Handed over by
+    /// `take_instruction_boundary`, read and cleared by the arbiter each
+    /// M-boundary.
+    at_boundary: bool,
+    /// Bus access selected while a DMA owns its bus: it waits at the pick — no
+    /// edge has run — and starts as the next M-cycle when the bus releases.
+    pub(crate) parked_action: Option<MCycleAction>,
+}
+
+impl BusArbitration {
+    fn new() -> Self {
+        Self {
+            pick: DispatchPick::Unsampled,
+            request_sync: [false; 2],
+            at_boundary: false,
+            parked_action: None,
+        }
+    }
+
+    /// Latch the dispatch's M1 pick on the first M-boundary of a dispatch (a
+    /// request standing a full boundary before M1 makes it park); idempotent
+    /// across the dispatch's later boundaries.
+    pub(crate) fn sample_pick_if_entering(&mut self) {
+        if matches!(self.pick, DispatchPick::Unsampled) {
+            self.pick = DispatchPick::Sampled {
+                parks_behind_dma: self.request_sync[1],
+            };
+        }
+    }
+
+    /// Drop the pick when no dispatch is in flight.
+    pub(crate) fn clear_pick(&mut self) {
+        self.pick = DispatchPick::Unsampled;
+    }
+
+    /// Whether the dispatch in flight yielded the bus to a standing block.
+    pub(crate) fn parks_behind_dma(&self) -> bool {
+        matches!(
+            self.pick,
+            DispatchPick::Sampled {
+                parks_behind_dma: true
+            }
+        )
+    }
+
+    /// Shift the request-line synchronizer one boundary and load the current
+    /// standing state into the first stage.
+    pub(crate) fn shift_request(&mut self, standing: bool) {
+        self.request_sync[1] = self.request_sync[0];
+        self.request_sync[0] = standing;
+    }
+
+    /// Flag that the next M-boundary pick starts a fresh instruction.
+    pub(crate) fn mark_at_boundary(&mut self) {
+        self.at_boundary = true;
+    }
+
+    /// Consume the fresh-instruction flag.
+    pub(crate) fn take_at_boundary(&mut self) -> bool {
+        std::mem::take(&mut self.at_boundary)
+    }
+}
+
 /// The SM83 CPU. Owns register file, IME, halt state, and the
 /// state-machine fields that sequence each instruction's M-cycles.
 pub struct Cpu {
@@ -203,30 +294,9 @@ pub struct Cpu {
     pub(super) tcycle: TCycle,
     /// Whether an M-cycle is in flight.
     pub(super) mcycle_active: bool,
-    /// One-shot arbitration at the dispatch's M1 pick: a VRAM-DMA request
-    /// standing at the pick makes this dispatch yield its entire tenure to
-    /// the block (and any chained block); otherwise the dispatch holds the
-    /// bus through its M-cycles against all later seizures.
-    pub(crate) dispatch_parks_behind_dma: bool,
-    /// The pick arbitration above has been taken for the dispatch in flight.
-    pub(crate) dispatch_entry_sampled: bool,
-    /// The VRAM-DMA request line captured at each M-boundary — first stage
-    /// of the two-boundary synchronizer the dispatch pick arbitrates against.
-    pub(crate) dma_request_stood_prev_boundary: bool,
-    /// Second synchronizer stage: the request line as of the boundary before
-    /// the dispatch M1 pick. A commit landing within the pick's own M-cycle
-    /// hasn't crossed (the dispatch wins); one standing a full boundary
-    /// earlier has (the block wins). Entry detection runs one boundary after
-    /// the pick, so it reads this stage.
-    pub(crate) dma_request_stood_prev2_boundary: bool,
-    /// The M-cycle picked at the next boundary starts a fresh instruction —
-    /// the retirement point a running-CPU block grant engages at. Handed over
-    /// by `take_instruction_boundary` (the step driver's consume), read and
-    /// cleared by the arbiter each M-boundary.
-    pub(crate) dma_arbiter_at_boundary: bool,
-    /// Bus access selected while a DMA owns its bus: it waits at the pick —
-    /// no edge has run — and starts as the next M-cycle when the bus releases.
-    pub(crate) parked_action: Option<super::cpu::mcycle::MCycleAction>,
+    /// The DMA↔dispatch bus-pick synchronizer that arbitrates the shared bus
+    /// between an in-flight instruction and a pending VRAM-DMA block.
+    pub(crate) bus_arbitration: BusArbitration,
     /// The operand byte a yielded STOP discard-fetch latched: IR retains it
     /// through the stop spin; resume routes it as a just-fetched opcode.
     pub(super) stop_retained: Option<u8>,
@@ -316,7 +386,6 @@ impl Cpu {
             },
             tcycle: TCycle::ONE,
             mcycle_active: true,
-            parked_action: None,
             stop_retained: None,
             post_halt_fetch: false,
             boundary_pending: false,
@@ -391,12 +460,7 @@ impl Cpu {
             instruction: instructions::Instruction::NoOperation,
             tcycle: TCycle::ZERO,
             mcycle_active: false,
-            dispatch_parks_behind_dma: false,
-            dispatch_entry_sampled: false,
-            dma_request_stood_prev_boundary: false,
-            dma_request_stood_prev2_boundary: false,
-            dma_arbiter_at_boundary: false,
-            parked_action: None,
+            bus_arbitration: BusArbitration::new(),
             stop_retained: None,
             post_halt_fetch: false,
             boundary_pending: true,
