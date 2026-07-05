@@ -206,20 +206,20 @@ pub trait PpuModel: Default {
     /// The FF45 (LYC) → STAT-IRQ-block crossing. The DMG feeds the comparator
     /// combinationally (the cell drives PALY directly); the CGB crosses the cell
     /// into the IRQ block on the resolved capture edge — pure (ii) clock phase,
-    /// no (iv) register-path lag (`cgb_extra_falls: 0`). DMG names only the
+    /// no (iv) register-path lag (`delayed_falls: 0`). DMG names only the
     /// combinational collapse.
     const LYC_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
 
     /// The FF43 (SCX) → fine-scroll-match (POHU) crossing. The DMG reads the
     /// cell live; the CGB crosses it into the pixel pipeline on the resolved
     /// capture edge — pure (ii) clock phase, no (iv) register-path lag
-    /// (`cgb_extra_falls: 0`). DMG names only the combinational collapse.
+    /// (`delayed_falls: 0`). DMG names only the combinational collapse.
     const SCX_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
 
     /// The window register file (WY/WX/LCDC.5/LCDC.2) → window-decode + scan
     /// Y-comparator crossing. The DMG reads the cells live; the CGB crosses them
     /// into the pixel pipeline on the resolved capture edge — pure (ii) clock
-    /// phase, no (iv) register-path lag (`cgb_extra_falls: 0`). DMG names only
+    /// phase, no (iv) register-path lag (`delayed_falls: 0`). DMG names only
     /// the combinational collapse.
     const WINDOW_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
 
@@ -229,7 +229,7 @@ pub trait PpuModel: Default {
     /// resolved capture edge — the M-boundary fall — where the resulting
     /// register-path edges race that fall's condition edges in the SUKO
     /// waveform. Pure (ii) clock phase, no (iv) register-path lag
-    /// (`cgb_extra_falls: 0`); the intra-evaluation arrival is the separate
+    /// (`delayed_falls: 0`); the intra-evaluation arrival is the separate
     /// `REGISTER_PATH_ARRIVAL_PS` waveform constant. DMG names only the
     /// combinational collapse.
     const STAT_ENABLES_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;

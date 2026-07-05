@@ -507,7 +507,7 @@ impl PpuModel for CgbPpu {
     }
 
     fn obj_data_bank(&self, attrs: Attributes) -> u8 {
-        if self.dmg_compat { 0 } else { attrs.cgb_bank() }
+        if self.dmg_compat { 0 } else { attrs.vram_bank() }
     }
 
     fn obj_attr(&self, attrs: Attributes) -> ObjAttr {
@@ -516,7 +516,7 @@ impl PpuModel for CgbPpu {
             palette: if self.dmg_compat {
                 attrs.dmg_palette()
             } else {
-                attrs.cgb_palette()
+                attrs.color_palette()
             },
             priority: attrs.behind_background(),
         }

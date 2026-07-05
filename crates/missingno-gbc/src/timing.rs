@@ -1,4 +1,4 @@
-//! CGB register-path timing data: the speed-independent `cgb_extra_falls` each
+//! CGB register-path timing data: the speed-independent `delayed_falls` each
 //! [`CaptureSpec`] carries — a real CGB-vs-DMG silicon delta present at every CGB
 //! speed, authored behind the wall and never derived from the CPU:dot ratio.
 //!
@@ -9,80 +9,80 @@ use missingno_gb::ppu::{CaptureEdge, CaptureSpec};
 /// The mid-Mode-3 SCY ($FF42) write → BG-fetch crossing on the CGB: the write
 /// crosses on the M-cycle-last-fall edge and the BG fetch samples it two falls
 /// late — the documented CGB 2-T-cycle register-write lag (mealybug
-/// `m3_scy_change`). `cgb_extra_falls` is the *total* carried fall count, matching
+/// `m3_scy_change`). `delayed_falls` is the *total* carried fall count, matching
 /// the historical `SCY_WRITE_LAG_FALLS = 2`.
 pub const SCY_CROSSING: CaptureSpec = CaptureSpec {
     capture: CaptureEdge::MCycleLastFall,
-    cgb_extra_falls: 2,
+    delayed_falls: 2,
 };
 
 /// The FF45 (LYC) → STAT-IRQ-block crossing on the CGB: the cell crosses into
 /// the IRQ block on the resolved capture edge with no register-path lag on top
-/// — pure (ii) clock phase. The phase arrives from the resolver; `cgb_extra_falls`
+/// — pure (ii) clock phase. The phase arrives from the resolver; `delayed_falls`
 /// stays 0.
 pub const LYC_CROSSING: CaptureSpec = CaptureSpec {
     capture: CaptureEdge::MCycleLastFall,
-    cgb_extra_falls: 0,
+    delayed_falls: 0,
 };
 
 /// The mid-Mode-3 LCDC tile-map-select (LCDC.3/.6) write → BG-fetch crossing on
 /// the CGB: the write crosses on the M-cycle-last-fall edge and the BG fetch
 /// samples the select bit two falls late — the documented CGB resync lag
 /// (mealybug `m3_lcdc_bg_map_change`). Like SCY, the fetch ticks the cell on the
-/// dot-fall grid, so this is the (iv) register-path offset alone; `cgb_extra_falls`
+/// dot-fall grid, so this is the (iv) register-path offset alone; `delayed_falls`
 /// is the *total* carried fall count.
 pub const TILE_MAP_CROSSING: CaptureSpec = CaptureSpec {
     capture: CaptureEdge::MCycleLastFall,
-    cgb_extra_falls: 2,
+    delayed_falls: 2,
 };
 
 /// The mid-Mode-3 LCDC.4 (TILE_SEL) tile-data-select write → BG-fetch crossing on
 /// the CGB: the write crosses on the M-cycle-last-fall edge and the BG tile-data
 /// fetch samples the select bit two falls late — the same resync as the LCDC.3/.6
-/// tile-map siblings. `cgb_extra_falls` is the *total* carried fall count.
+/// tile-map siblings. `delayed_falls` is the *total* carried fall count.
 pub const TILE_DATA_CROSSING: CaptureSpec = CaptureSpec {
     capture: CaptureEdge::MCycleLastFall,
-    cgb_extra_falls: 2,
+    delayed_falls: 2,
 };
 
 /// The FF43 (SCX) → fine-scroll-match crossing on the CGB: the cell crosses
 /// into the pixel pipeline on the resolved capture edge with no register-path
 /// lag on top — pure (ii) clock phase, like LYC. The phase arrives from the
-/// resolver; `cgb_extra_falls` stays 0.
+/// resolver; `delayed_falls` stays 0.
 pub const SCX_CROSSING: CaptureSpec = CaptureSpec {
     capture: CaptureEdge::MCycleLastFall,
-    cgb_extra_falls: 0,
+    delayed_falls: 0,
 };
 
 /// The FF41 (STAT enables) → STAT-IRQ-block crossing on the CGB: the enables
 /// cell crosses into the IRQ block on the resolved capture edge (the M-boundary
 /// fall) with no register-path lag on top — pure (ii) clock phase, like LYC.
 /// The intra-evaluation register arrival that races the SUKO waveform is the
-/// separate `REGISTER_PATH_ARRIVAL_PS` constant, not this offset; `cgb_extra_falls`
+/// separate `REGISTER_PATH_ARRIVAL_PS` constant, not this offset; `delayed_falls`
 /// stays 0.
 pub const STAT_ENABLES_CROSSING: CaptureSpec = CaptureSpec {
     capture: CaptureEdge::MCycleLastFall,
-    cgb_extra_falls: 0,
+    delayed_falls: 0,
 };
 
 /// The window register file (WY/WX/LCDC.5/LCDC.2) crossing on the CGB: the
 /// cells cross into the window decode and scan Y-comparator on the resolved
 /// capture edge with no register-path lag on top — pure (ii) clock phase, like
-/// LYC and SCX. The phase arrives from the resolver; `cgb_extra_falls` stays 0.
+/// LYC and SCX. The phase arrives from the resolver; `delayed_falls` stays 0.
 pub const WINDOW_CROSSING: CaptureSpec = CaptureSpec {
     capture: CaptureEdge::MCycleLastFall,
-    cgb_extra_falls: 0,
+    delayed_falls: 0,
 };
 
 /// The mid-Mode-3 LCDC.0 (VYXE) write → BG-plane-blank crossing on the CGB: the
 /// write crosses on the M-cycle-last-fall edge and the OLD-overlay holds the
 /// pre-write value one extra fall — RAJY lands one dot later than the DMG's
 /// combinational path. The OLD-overlay carries its own same-fall base hold, so
-/// `cgb_extra_falls` is the extra-falls offset on top, matching the historical
+/// `delayed_falls` is the extra-falls offset on top, matching the historical
 /// `BG_ENABLE_WRITE_LAG`'s `extra_hold = 1`.
 pub const BG_ENABLE_CROSSING: CaptureSpec = CaptureSpec {
     capture: CaptureEdge::MCycleLastFall,
-    cgb_extra_falls: 1,
+    delayed_falls: 1,
 };
 
 /// The mid-Mode-3 LCDC.1 (XYLO) write → OBJ-mux crossing on the CGB: the write
@@ -90,10 +90,10 @@ pub const BG_ENABLE_CROSSING: CaptureSpec = CaptureSpec {
 /// OBJ-enable one extra fall — the OBJ-mux pops the held value one dot later than
 /// the DMG's combinational path, the LCDC.1 analogue of the LCDC.0 BG-enable
 /// crossing. The OLD-overlay carries its own same-fall base hold, so
-/// `cgb_extra_falls` is the extra-falls offset on top.
+/// `delayed_falls` is the extra-falls offset on top.
 pub const OBJ_ENABLE_CROSSING: CaptureSpec = CaptureSpec {
     capture: CaptureEdge::MCycleLastFall,
-    cgb_extra_falls: 1,
+    delayed_falls: 1,
 };
 
 /// The mid-Mode-3 LCDC.2 (OBJ size) write → sprite-fetch crossing on the CGB:
@@ -103,10 +103,10 @@ pub const OBJ_ENABLE_CROSSING: CaptureSpec = CaptureSpec {
 /// pipe than the BG fetch's). An 8x8↔8x16 change between the reads splits the low
 /// (counter-2) and high (counter-4) bitplanes across two tile rows: a grow gives
 /// {low 8, high 16}, a shrink {low 16, high 8} (mealybug `m3_lcdc_obj_size_change`
-/// and `_scx`). `cgb_extra_falls` is the *total* carried fall count.
+/// and `_scx`). `delayed_falls` is the *total* carried fall count.
 pub const OBJ_SIZE_CROSSING: CaptureSpec = CaptureSpec {
     capture: CaptureEdge::MCycleLastFall,
-    cgb_extra_falls: 3,
+    delayed_falls: 3,
 };
 
 #[cfg(test)]

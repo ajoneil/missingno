@@ -30,7 +30,7 @@ pub struct CaptureSpec {
     pub capture: CaptureEdge,
     /// Extra falls the CGB register path holds the value beyond the capture edge
     /// (CGB data; 0 on DMG). **Not** a function of `cpu_steps_per_dot()`.
-    pub cgb_extra_falls: u8,
+    pub delayed_falls: u8,
 }
 
 impl CaptureSpec {
@@ -38,7 +38,7 @@ impl CaptureSpec {
     /// the default every crossing collapses to at ratio=1.
     pub const COMBINATIONAL: Self = Self {
         capture: CaptureEdge::Combinational,
-        cgb_extra_falls: 0,
+        delayed_falls: 0,
     };
 
     /// The total fall count to hand [`DffLatch::write_delayed`] for this
@@ -59,10 +59,10 @@ impl CaptureSpec {
     }
 
     pub const fn write_delayed_falls(&self) -> u8 {
-        // `cgb_extra_falls` is the TOTAL hold, not a base + offset: the CGB
+        // `delayed_falls` is the TOTAL hold, not a base + offset: the CGB
         // register-path offset already carries the base "next fall" hold (a
         // `base + offset` reading would over-delay by one fall).
-        self.cgb_extra_falls
+        self.delayed_falls
     }
 }
 
@@ -98,12 +98,12 @@ mod tests {
     /// pre-migration `SCY_WRITE_LAG_FALLS = 2`. A `base + offset = 1 + 2 = 3`
     /// reading would be a fidelity regression.
     #[test]
-    fn cgb_scy_crossing_emits_commit_in_two() {
-        let cgb_scy = CaptureSpec {
+    fn delayed_scy_crossing_emits_commit_in_two() {
+        let delayed_scy = CaptureSpec {
             capture: CaptureEdge::MCycleLastFall,
-            cgb_extra_falls: 2,
+            delayed_falls: 2,
         };
-        assert_eq!(cgb_scy.write_delayed_falls(), 2);
-        assert_eq!(observed_commit_in(cgb_scy), 2);
+        assert_eq!(delayed_scy.write_delayed_falls(), 2);
+        assert_eq!(observed_commit_in(delayed_scy), 2);
     }
 }

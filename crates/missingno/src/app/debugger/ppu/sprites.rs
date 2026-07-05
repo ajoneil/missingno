@@ -165,8 +165,8 @@ impl SpritesPane {
         let (bank, palette): (&VramBank, &Palette) = match colors {
             ConsoleColors::Dmg { palette } => (vram.bank(0), palette),
             ConsoleColors::Cgb { objects, .. } => (
-                vram.bank(sprite.attributes.cgb_bank()),
-                &objects[sprite.attributes.cgb_palette() as usize],
+                vram.bank(sprite.attributes.vram_bank()),
+                &objects[sprite.attributes.color_palette() as usize],
             ),
         };
 

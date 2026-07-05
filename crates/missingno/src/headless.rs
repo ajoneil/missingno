@@ -880,8 +880,8 @@ fn sprites_state<M: Model>(gb: &Console<M>) -> Vec<SpriteState> {
                 } else {
                     "obp0"
                 },
-                cgb_palette: sprite.attributes.cgb_palette(),
-                cgb_bank: sprite.attributes.cgb_bank(),
+                cgb_palette: sprite.attributes.color_palette(),
+                cgb_bank: sprite.attributes.vram_bank(),
                 visible: sprite.position.on_screen_x() && sprite.position.on_screen_y(sprite_size),
             }
         })

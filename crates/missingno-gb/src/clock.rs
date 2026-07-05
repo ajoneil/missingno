@@ -45,7 +45,7 @@ impl CpuDivider {
     /// boundary fall. At `÷2` PPU falls land on alternate T-cycles, so when the
     /// T3 boundary edge carries no PPU fall the M's last fall is T2's. The
     /// (ii) clock-domain phase the CGB crossing rides arrives entirely from
-    /// *which* edge this resolves to — never folded into a `cgb_extra_falls`
+    /// *which* edge this resolves to — never folded into a `delayed_falls`
     /// count.
     ///
     /// [`CaptureEdge::MCycleLastFall`]: crate::ppu::CaptureEdge::MCycleLastFall

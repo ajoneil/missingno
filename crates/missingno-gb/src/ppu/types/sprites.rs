@@ -98,12 +98,12 @@ impl Attributes {
     }
 
     /// CGB OBJ palette (OAM attr bits 0-2): one of OBP0-7.
-    pub fn cgb_palette(&self) -> u8 {
+    pub fn color_palette(&self) -> u8 {
         self.0 & 0x07
     }
 
     /// CGB OBJ tile VRAM bank (OAM attr bit 3).
-    pub fn cgb_bank(&self) -> u8 {
+    pub fn vram_bank(&self) -> u8 {
         (self.0 >> 3) & 0x01
     }
 
