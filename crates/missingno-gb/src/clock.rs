@@ -84,6 +84,22 @@ pub struct Tick {
     pub dot: Option<Edge>,
 }
 
+/// The dot edges one CPU T-cycle carries. At `÷1` a T-cycle spans exactly one
+/// dot (rise on the CPU rise, fall on the CPU fall). At `÷2` the CPU runs two
+/// T-cycles per dot, so each T-cycle carries exactly one dot edge, on its
+/// rise — the dot's rise and fall alternate across consecutive T-cycles.
+/// No other combination is producible by the divider, so no other is
+/// representable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TcycleSchedule {
+    /// `÷1`: dot rise on the CPU rise, dot fall on the CPU fall.
+    FullDot,
+    /// `÷2`, first T-cycle of the dot: dot rise on the CPU rise, bare fall.
+    DotRiseOnRise,
+    /// `÷2`, second T-cycle: dot fall on the CPU rise, bare fall.
+    DotFallOnRise,
+}
+
 /// The master-clock phase layer: the free-running master-edge count, the divider
 /// cell, and the CPU/dot phases it produces. Replaces the loose `clock_phase`
 /// (CPU edge) and `ppu_phase` (dot edge) fields with one object that owns the
@@ -170,6 +186,21 @@ impl MasterClock {
         self.cpu_phase_in_dot = 0;
     }
 
+    /// The dot edges the NEXT full CPU T-cycle (rise + fall) will carry, and
+    /// where. At `÷1` every T-cycle is [`TcycleSchedule::FullDot`]; at `÷2`
+    /// the dot's rise and fall land on alternate T-cycles' rises. Reading it
+    /// does not advance the clock — pair with two [`MasterClock::advance`]
+    /// calls (or the fused stepping that replaces them).
+    pub fn tcycle_schedule(&self) -> TcycleSchedule {
+        match self.divider {
+            CpuDivider::One => TcycleSchedule::FullDot,
+            CpuDivider::Two => match self.dot_phase {
+                Edge::Rise => TcycleSchedule::DotRiseOnRise,
+                Edge::Fall => TcycleSchedule::DotFallOnRise,
+            },
+        }
+    }
+
     /// Advance one master edge. THE single place the `÷2` ratio is read, the
     /// dispatch schedule is produced, and the CPU clock can be frozen. The
     /// running machine passes `Running`; the speed-switch blackout passes `Held`,
@@ -212,6 +243,55 @@ impl MasterClock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `tcycle_schedule()` predicts exactly the dot edges the next two
+    /// `advance(Running)` calls dispatch, from every reachable phase state at
+    /// both ratios — the fused T-cycle stepping and the per-edge stepping are
+    /// the same schedule.
+    #[test]
+    fn tcycle_schedule_matches_two_running_advances() {
+        for divider in [CpuDivider::One, CpuDivider::Two] {
+            let mut clock = MasterClock::new(divider);
+            for _ in 0..64 {
+                assert_eq!(clock.cpu_edge(), Edge::Rise, "T-cycles start on a rise");
+                let schedule = clock.tcycle_schedule();
+                let rise = clock.advance(CpuGate::Running);
+                let fall = clock.advance(CpuGate::Running);
+                assert_eq!(rise.cpu, Some(Edge::Rise));
+                assert_eq!(fall.cpu, Some(Edge::Fall));
+                let (expect_rise_dot, expect_fall_dot) = match schedule {
+                    TcycleSchedule::FullDot => (Some(Edge::Rise), Some(Edge::Fall)),
+                    TcycleSchedule::DotRiseOnRise => (Some(Edge::Rise), None),
+                    TcycleSchedule::DotFallOnRise => (Some(Edge::Fall), None),
+                };
+                assert_eq!(rise.dot, expect_rise_dot, "{divider:?} {schedule:?}");
+                assert_eq!(fall.dot, expect_fall_dot, "{divider:?} {schedule:?}");
+            }
+        }
+    }
+
+    /// At `÷2` the schedule alternates rise-carrying and fall-carrying
+    /// T-cycles; `÷1` never leaves `FullDot`.
+    #[test]
+    fn tcycle_schedule_alternation() {
+        let mut clock = MasterClock::new(CpuDivider::Two);
+        for i in 0..64 {
+            let expect = if i % 2 == 0 {
+                TcycleSchedule::DotRiseOnRise
+            } else {
+                TcycleSchedule::DotFallOnRise
+            };
+            assert_eq!(clock.tcycle_schedule(), expect, "tcycle {i}");
+            clock.advance(CpuGate::Running);
+            clock.advance(CpuGate::Running);
+        }
+        let mut clock = MasterClock::new(CpuDivider::One);
+        for _ in 0..64 {
+            assert_eq!(clock.tcycle_schedule(), TcycleSchedule::FullDot);
+            clock.advance(CpuGate::Running);
+            clock.advance(CpuGate::Running);
+        }
+    }
 
     /// The resolver reproduces the inline `execute_phase` rule
     /// `is_mcycle_boundary || (cpu_steps_per_dot()==2 && tcycle==2)` across the
