@@ -25,6 +25,7 @@ pub struct Emulator {
     running: bool,
     screen_hovered: bool,
     use_sgb_colors: bool,
+    frame_blending: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -40,13 +41,14 @@ impl From<Message> for app::Message {
 }
 
 impl Emulator {
-    pub fn new(console: AnyConsole, use_sgb_colors: bool) -> Self {
+    pub fn new(console: AnyConsole, use_sgb_colors: bool, frame_blending: bool) -> Self {
         Self {
             console: Some(console),
             screen_view: ScreenView::new(),
             running: false,
             screen_hovered: false,
             use_sgb_colors,
+            frame_blending,
         }
     }
 
@@ -54,6 +56,7 @@ impl Emulator {
         console: AnyConsole,
         screen_view: ScreenView,
         use_sgb_colors: bool,
+        frame_blending: bool,
     ) -> Self {
         Self {
             console: Some(console),
@@ -61,11 +64,16 @@ impl Emulator {
             running: false,
             screen_hovered: false,
             use_sgb_colors,
+            frame_blending,
         }
     }
 
     pub fn set_use_sgb_colors(&mut self, use_sgb: bool) {
         self.use_sgb_colors = use_sgb;
+    }
+
+    pub fn set_frame_blending(&mut self, blend: bool) {
+        self.frame_blending = blend;
     }
 
     /// The console, present only while paused/idle (not while running).
@@ -86,6 +94,7 @@ impl Emulator {
     /// Update the displayed frame from the emu thread's latest-frame slot.
     pub fn apply_frame(&mut self, display: ScreenDisplay) {
         self.screen_view.use_sgb_colors = self.use_sgb_colors;
+        self.screen_view.blend = self.frame_blending;
         self.screen_view.apply(display);
     }
 

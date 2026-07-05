@@ -104,10 +104,10 @@ impl AnyDebugger {
         }
     }
 
-    pub fn disable_debugger(self, use_sgb_colors: bool) -> Emulator {
+    pub fn disable_debugger(self, use_sgb_colors: bool, frame_blending: bool) -> Emulator {
         match self {
-            Self::Dmg(debugger) => debugger.into_emulator(use_sgb_colors),
-            Self::Cgb(debugger) => debugger.into_emulator(use_sgb_colors),
+            Self::Dmg(debugger) => debugger.into_emulator(use_sgb_colors, frame_blending),
+            Self::Cgb(debugger) => debugger.into_emulator(use_sgb_colors, frame_blending),
         }
     }
 
@@ -129,6 +129,13 @@ impl AnyDebugger {
         match self {
             Self::Dmg(debugger) => debugger.set_palette(palette),
             Self::Cgb(debugger) => debugger.set_palette(palette),
+        }
+    }
+
+    pub fn set_frame_blending(&mut self, blend: bool) {
+        match self {
+            Self::Dmg(debugger) => debugger.set_frame_blending(blend),
+            Self::Cgb(debugger) => debugger.set_frame_blending(blend),
         }
     }
 
@@ -499,7 +506,7 @@ impl<M: ConsoleUi> Debugger<M> {
         }
     }
 
-    fn into_emulator(self, use_sgb_colors: bool) -> Emulator
+    fn into_emulator(self, use_sgb_colors: bool, frame_blending: bool) -> Emulator
     where
         AnyConsole: From<missingno_gb::Console<M>>,
     {
@@ -507,7 +514,12 @@ impl<M: ConsoleUi> Debugger<M> {
             .debugger
             .expect("core present when disabling the debugger");
         let screen_view = self.panes.take_screen_view();
-        Emulator::from_debugger(core.game_boy_take().into(), screen_view, use_sgb_colors)
+        Emulator::from_debugger(
+            core.game_boy_take().into(),
+            screen_view,
+            use_sgb_colors,
+            frame_blending,
+        )
     }
 
     fn set_breakpoint(&mut self, address: u16, emu: Option<&EmuHandle>) {
@@ -697,6 +709,10 @@ impl<M: ConsoleUi> Debugger<M> {
 
     pub fn set_palette(&mut self, palette: PaletteChoice) {
         self.panes.set_palette(palette);
+    }
+
+    pub fn set_frame_blending(&mut self, blend: bool) {
+        self.panes.set_frame_blending(blend);
     }
 
     pub fn view(&self) -> Element<'_, app::Message> {

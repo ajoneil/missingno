@@ -88,6 +88,17 @@ pub(in crate::app) fn handle(
                 emu.set_use_sgb_colors(enabled);
             }
         }
+        super::view::Message::SetFrameBlending(enabled) => {
+            app.settings.frame_blending = enabled;
+            app.settings.save();
+            match &mut app.game {
+                Game::Loaded(LoadedGame::Emulator(emu)) => emu.set_frame_blending(enabled),
+                Game::Loaded(LoadedGame::Debugger(debugger)) => {
+                    debugger.set_frame_blending(enabled)
+                }
+                _ => {}
+            }
+        }
         super::view::Message::SetCartridgeRwEnabled(enabled) => {
             app.settings.cartridge_rw_enabled = enabled;
             app.settings.save();

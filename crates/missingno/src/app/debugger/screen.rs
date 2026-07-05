@@ -57,6 +57,10 @@ impl ScreenPane {
         self.screen_view.palette = palette;
     }
 
+    pub fn set_frame_blending(&mut self, blend: bool) {
+        self.screen_view.blend = blend;
+    }
+
     pub fn content(&self) -> pane_grid::Content<'_, app::Message> {
         pane(
             title_bar("Screen"),

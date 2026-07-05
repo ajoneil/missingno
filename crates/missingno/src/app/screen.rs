@@ -56,6 +56,9 @@ pub struct ScreenView {
     pub use_sgb_colors: bool,
     /// Pre-corrected CGB RGBA frame; bypasses the palette paths when set.
     pub cgb_rgba: Option<std::sync::Arc<[u8]>>,
+    /// Average each frame with the previous one, like the LCD's slow response.
+    pub blend: bool,
+    pub prev_rgba: Option<std::sync::Arc<[u8]>>,
 }
 
 impl ScreenView {
@@ -66,10 +69,26 @@ impl ScreenView {
             sgb_render_data: None,
             use_sgb_colors: true,
             cgb_rgba: None,
+            blend: true,
+            prev_rgba: None,
+        }
+    }
+
+    fn resolve_rgba(&self) -> std::sync::Arc<[u8]> {
+        match &self.cgb_rgba {
+            Some(rgba) => rgba.clone(),
+            None => screen_to_pixels(
+                &self.screen,
+                self.palette.palette(),
+                self.sgb_render_data.as_ref(),
+                self.use_sgb_colors,
+            )
+            .into(),
         }
     }
 
     pub fn apply(&mut self, display: ScreenDisplay) {
+        self.prev_rgba = Some(self.resolve_rgba());
         match display {
             ScreenDisplay::GameBoy(GameBoyScreen::Display(screen)) => {
                 self.screen = screen;
@@ -119,15 +138,15 @@ impl<Message> shader::Program<Message> for ScreenView {
         cursor: iced::mouse::Cursor,
         bounds: iced::Rectangle,
     ) -> Self::Primitive {
-        let pixels: std::sync::Arc<[u8]> = match &self.cgb_rgba {
-            Some(rgba) => rgba.clone(),
-            None => screen_to_pixels(
-                &self.screen,
-                self.palette.palette(),
-                self.sgb_render_data.as_ref(),
-                self.use_sgb_colors,
-            )
-            .into(),
+        let current = self.resolve_rgba();
+        let pixels: std::sync::Arc<[u8]> = match &self.prev_rgba {
+            Some(prev) if self.blend && prev.len() == current.len() => current
+                .iter()
+                .zip(prev.iter())
+                .map(|(&a, &b)| ((a as u16 + b as u16) / 2) as u8)
+                .collect::<Vec<u8>>()
+                .into(),
+            _ => current,
         };
         let renderer = TextureRenderer::with_pixels(
             screen::PIXELS_PER_LINE as u32,

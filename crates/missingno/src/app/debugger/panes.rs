@@ -108,6 +108,8 @@ impl DebuggerPanes {
                         sgb_render_data: view.sgb_render_data,
                         use_sgb_colors: view.use_sgb_colors,
                         cgb_rgba: view.cgb_rgba.clone(),
+                        blend: view.blend,
+                        prev_rgba: view.prev_rgba.clone(),
                     };
                 }
             }
@@ -225,6 +227,16 @@ impl DebuggerPanes {
 
     pub fn palette(&self) -> &Palette {
         self.palette.palette()
+    }
+
+    pub fn set_frame_blending(&mut self, blend: bool) {
+        if let Some(panes) = &mut self.panes {
+            panes.iter_mut().for_each(|(_, pane)| {
+                if let PaneInstance::Screen(screen_pane) = pane {
+                    screen_pane.set_frame_blending(blend);
+                }
+            });
+        }
     }
 
     pub fn set_palette(&mut self, palette: PaletteChoice) {

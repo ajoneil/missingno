@@ -75,9 +75,14 @@ fn start_console(app: &mut App, cartridge: Cartridge) -> String {
     if app.debugger_enabled {
         let mut debugger = app::debugger::AnyDebugger::new(console);
         debugger.set_palette(palette);
+        debugger.set_frame_blending(app.settings.frame_blending);
         app.game = Game::Loaded(LoadedGame::Debugger(debugger));
     } else {
-        let mut emu = app::emulator::Emulator::new(console, app.settings.use_sgb_colors);
+        let mut emu = app::emulator::Emulator::new(
+            console,
+            app.settings.use_sgb_colors,
+            app.settings.frame_blending,
+        );
         emu.set_palette(palette);
         emu.set_running(true);
         app.game = Game::Loaded(LoadedGame::Emulator(emu));
