@@ -40,6 +40,11 @@ impl OldOverlay {
         }
     }
 
+    /// No OLD value is being held — the overlay has fully cleared.
+    fn settled(&self) -> bool {
+        self.value.is_none() && self.hold == 0
+    }
+
     fn resolve(&self, live: bool) -> bool {
         self.value.unwrap_or(live)
     }
@@ -105,34 +110,90 @@ pub struct PipelineRegisters {
     pub(in crate::ppu) sprites_enabled_overlay: OldOverlay,
     /// LCDC.1 snapshot taken at start of rise() before staged write applies; consumed by FEPO-for-TEKY (SOBU/CUPA race).
     pub(in crate::ppu) sprites_enabled_pre_cupa: bool,
+    /// Falls remaining in which a CPU register write's staged value may still be
+    /// resolving through a DFF crossing or OLD-overlay hold. Armed at each write,
+    /// decremented per fall; the per-fall latch ticks run only while it is > 0,
+    /// since every gated cell is fed solely by CPU writes and is otherwise idle.
+    pub(in crate::ppu) register_write_settle: u8,
 }
 
+/// Falls to hold the settle window open for any staged register write short of
+/// the HALT-wake park: the deepest crossing commits in 3 falls (OBJ-size on the
+/// CGB), plus one fall for the BGP NURA overlay / OLD-overlay to clear after.
+const REGISTER_CROSSING_SETTLE_FALLS: u8 = 4;
+
+/// Falls to hold the window open for a BGP write parked in a HALT-wake handler:
+/// up to 6 park falls, then one fall to commit the un-parked DFF write and one
+/// more to clear the NURA overlay.
+const HALT_WAKE_BGP_SETTLE_FALLS: u8 = 8;
+
 impl PipelineRegisters {
+    /// Arm the settle window for a register write whose staged value crosses or
+    /// holds for at most [`REGISTER_CROSSING_SETTLE_FALLS`] falls.
+    pub(in crate::ppu) fn arm_register_write_settle(&mut self) {
+        self.register_write_settle = self.register_write_settle.max(REGISTER_CROSSING_SETTLE_FALLS);
+    }
+
+    /// Arm the settle window for a BGP write parked in a HALT-wake handler, which
+    /// resolves over the longer [`HALT_WAKE_BGP_SETTLE_FALLS`] window.
+    pub(in crate::ppu) fn arm_halt_wake_bgp_settle(&mut self) {
+        self.register_write_settle = self.register_write_settle.max(HALT_WAKE_BGP_SETTLE_FALLS);
+    }
+
     /// Per-fall work: tick palette/DFF9 latches, run the BESU↑ edge detector, then advance
     /// OLD-overlay shadows. Order matters — pipeline consumers read `reg_old` before any tick fires.
+    ///
+    /// The register latches are fed only by CPU writes, so their ticks run only
+    /// while the settle window is open; the BESU↑ recovery edge detector is
+    /// PPU-internal and runs every fall.
     pub fn tick_on_master_clock_fall(
         &mut self,
         mode2_active: bool,
         bgp_write_race: bool,
         obp_write_race: bool,
     ) {
-        self.palettes.tick_background(bgp_write_race);
-        self.palettes.tick_sprites(obp_write_race);
+        if self.register_write_settle > 0 {
+            self.register_write_settle -= 1;
 
-        self.background_viewport.x.tick();
-        self.background_viewport.y.tick();
-        self.window.x.tick();
-        if self.control_latch.tick() {
-            self.control = Control::new(ControlFlags::from_bits_retain(self.control_latch.output));
+            self.palettes.tick_background(bgp_write_race);
+            self.palettes.tick_sprites(obp_write_race);
+
+            self.background_viewport.x.tick();
+            self.background_viewport.y.tick();
+            self.window.x.tick();
+            if self.control_latch.tick() {
+                self.control =
+                    Control::new(ControlFlags::from_bits_retain(self.control_latch.output));
+            }
+            self.tile_map_select.tick();
+            self.tile_data_select.tick();
+            self.obj_size_select.tick();
+
+            self.bg_window_enabled_overlay.tick();
+            self.sprites_enabled_overlay.tick();
+        } else {
+            debug_assert!(
+                self.no_gated_pending(),
+                "settle window closed with a register latch still holding a staged write"
+            );
         }
-        self.tile_map_select.tick();
-        self.tile_data_select.tick();
-        self.obj_size_select.tick();
 
         self.palettes.tick_mode2_active(mode2_active);
+    }
 
-        self.bg_window_enabled_overlay.tick();
-        self.sprites_enabled_overlay.tick();
+    /// Every CPU-write-fed latch has committed and cleared — nothing a skipped
+    /// tick would have advanced. Backs the settle-window skip-path assertion.
+    fn no_gated_pending(&self) -> bool {
+        self.background_viewport.x.pending().is_none()
+            && self.background_viewport.y.pending().is_none()
+            && self.window.x.pending().is_none()
+            && self.control_latch.pending().is_none()
+            && self.tile_map_select.pending().is_none()
+            && self.tile_data_select.pending().is_none()
+            && self.obj_size_select.pending().is_none()
+            && self.palettes.no_pending_writes()
+            && self.bg_window_enabled_overlay.settled()
+            && self.sprites_enabled_overlay.settled()
     }
 
     /// Freeze latches at their current output (LCD off).
@@ -150,6 +211,7 @@ impl PipelineRegisters {
         self.obj_size_select.clear();
         self.bg_window_enabled_overlay.clear();
         self.sprites_enabled_overlay.clear();
+        self.register_write_settle = 0;
     }
 
     /// The LCDC byte the tile-map-select fetch samples — the live byte on DMG,

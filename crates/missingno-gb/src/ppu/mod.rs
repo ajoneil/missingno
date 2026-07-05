@@ -174,6 +174,7 @@ impl<P: PpuModel> Ppu<P> {
                 bg_window_enabled_overlay: registers::OldOverlay::default(),
                 sprites_enabled_overlay: registers::OldOverlay::default(),
                 sprites_enabled_pre_cupa: false,
+                register_write_settle: 0,
             },
             video: VideoControl {
                 dividers: Dividers {
@@ -335,6 +336,7 @@ impl<P: PpuModel> Ppu<P> {
             bg_window_enabled_overlay: registers::OldOverlay::default(),
             sprites_enabled_overlay: registers::OldOverlay::default(),
             sprites_enabled_pre_cupa: lcd_on,
+            register_write_settle: 0,
         };
 
         let mut ppu = Ppu {

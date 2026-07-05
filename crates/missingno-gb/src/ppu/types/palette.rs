@@ -293,6 +293,16 @@ impl Palettes {
         self.recovery.tick_mode2_active(mode2_active);
     }
 
+    /// No BGP/OBP DFF write is staged, no HALT-wake write is parked, and the NURA
+    /// overlay has cleared — the palette cells hold nothing a tick would advance.
+    pub(in crate::ppu) fn no_pending_writes(&self) -> bool {
+        self.background.pending().is_none()
+            && self.sprite0.pending().is_none()
+            && self.sprite1.pending().is_none()
+            && self.bgp_halt_wake_deferred.is_none()
+            && self.recovery.overlay().is_none()
+    }
+
     pub fn clear_background_overlay(&mut self) {
         self.recovery.reset();
         self.capture_coincident_old = None;

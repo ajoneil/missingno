@@ -51,9 +51,11 @@ impl<P: PpuModel> Ppu<P> {
                 self.registers
                     .palettes
                     .write_background_halt_wake_deferred(value);
+                self.registers.arm_halt_wake_bgp_settle();
                 false
             }
             Register::BackgroundPalette | Register::Sprite0Palette | Register::Sprite1Palette => {
+                self.registers.arm_register_write_settle();
                 self.apply_register_write(&register, value)
             }
             Register::Control => {
@@ -164,10 +166,12 @@ impl<P: PpuModel> Ppu<P> {
                 if !was_enabled && self.registers.control.video_enabled() {
                     self.lcd_on_init_pending = true;
                 }
+                self.registers.arm_register_write_settle();
                 false
             }
             Register::WindowX if is_drawing => {
                 self.registers.window.x.write(value);
+                self.registers.arm_register_write_settle();
                 false
             }
             Register::BackgroundViewportY
@@ -181,10 +185,12 @@ impl<P: PpuModel> Ppu<P> {
                     .background_viewport
                     .y
                     .write_delayed(value, P::SCY_CROSSING.write_delayed_falls());
+                self.registers.arm_register_write_settle();
                 false
             }
             Register::BackgroundViewportX if is_drawing => {
                 self.registers.background_viewport.x.write(value);
+                self.registers.arm_register_write_settle();
                 false
             }
             _ => self.apply_register_write(&register, value),
