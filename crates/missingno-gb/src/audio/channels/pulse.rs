@@ -1,5 +1,5 @@
 use super::{
-    Enabled,
+    Enabled, TriggerReload,
     envelope::Envelope,
     length::LengthCounter,
     registers::{
@@ -40,9 +40,9 @@ pub struct PulseChannel {
     /// counter (`cule`) clocks on its fall, one cycle later (CH2 mirror of
     /// CH1's `ch1_frst`).
     pub ch2_frst: bool,
-    /// `ch2_restart` sync stage; non-zero between NR24 trigger write
+    /// `ch2_restart` sync stage; pending between NR24 trigger write
     /// and the next ch2_1mhz↑ that applies the reload.
-    pub pending_trigger_sync: u8,
+    pub pending_reload: TriggerReload,
     /// Set on the reload edge; the first count is suppressed so the
     /// divider DFFs settle out of load mode (CH1/CH2 mirror).
     pub divider_load_settle: bool,
@@ -70,7 +70,7 @@ impl Default for PulseChannel {
             wave_duty_position: 0,
             pwm_latch: false,
             ch2_frst: false,
-            pending_trigger_sync: 0,
+            pending_reload: TriggerReload::Idle,
             divider_load_settle: false,
             envelope: Envelope::default(),
             output_dirty: true,
@@ -95,7 +95,7 @@ impl PulseChannel {
             wave_duty_position: 0,
             pwm_latch: false,
             ch2_frst: false,
-            pending_trigger_sync: 0,
+            pending_reload: TriggerReload::Idle,
             divider_load_settle: false,
             envelope: Envelope::default(),
             output_dirty: true,
@@ -174,13 +174,17 @@ impl PulseChannel {
     pub fn trigger(&mut self) {
         // Only the channel-enabling trigger (ch2_fdis 1→0) freezes the load tick
         // (the +1 first overflow); a re-trigger of a running channel reloads with
-        // no +1. `2` flags the enabling case.
+        // no +1.
         let was_running = self.enabled.enabled;
         self.enabled.enabled = true;
         self.length.trigger_reload();
         // Arm the ch2_restart sync: the reload applies at the next
         // ch2_1mhz↑, not on this write edge.
-        self.pending_trigger_sync = if was_running { 1 } else { 2 };
+        self.pending_reload = if was_running {
+            TriggerReload::Retrigger
+        } else {
+            TriggerReload::Enabling
+        };
         // ch2_restart pulls hafe low → JOPA reset → any prior kyvo
         // arm from the previous trigger window is dropped.
         self.envelope.trigger(
@@ -206,12 +210,12 @@ impl PulseChannel {
             self.wave_duty_position = (self.wave_duty_position + 1) % 8;
             self.ch2_frst = false;
         }
-        if self.pending_trigger_sync != 0 {
-            // Enabling trigger (2) freezes the load tick → +1 first overflow;
-            // re-trigger (1) reloads with no +1.
-            self.divider_load_settle = self.pending_trigger_sync == 2;
+        if self.pending_reload != TriggerReload::Idle {
+            // Enabling trigger freezes the load tick → +1 first overflow;
+            // re-trigger reloads with no +1.
+            self.divider_load_settle = self.pending_reload == TriggerReload::Enabling;
             self.divider.counter = (self.period.0) & 0x7FF;
-            self.pending_trigger_sync = 0;
+            self.pending_reload = TriggerReload::Idle;
         } else if self.divider_load_settle {
             self.divider_load_settle = false;
         } else if self.divider.counter >= 0x7FF {

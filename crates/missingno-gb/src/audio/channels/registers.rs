@@ -140,10 +140,6 @@ impl Prescaler {
         };
         self.counter == 2
     }
-
-    pub fn power_off(&mut self) {
-        self.counter = 0;
-    }
 }
 
 /// CH1/CH2 period divider: 11-bit upcounter (GAXE..COPU on CH1,
@@ -151,33 +147,9 @@ impl Prescaler {
 /// 0x7FF; the next 1 MHz tick after 0x7FF overflows and reloads from
 /// `period`, advancing the duty step. Natural-overflow and trigger
 /// reload share the same load enable (`epyk` / `duju`) — there is no
-/// subset-of-stages distinction.
+/// subset-of-stages distinction. The pulse channels drive `counter`
+/// directly from their `tcycle` bodies.
 #[derive(Clone, Default)]
 pub struct PeriodDivider {
     pub counter: u16,
-}
-
-impl PeriodDivider {
-    /// Advance by one 1 MHz tick (called when the prescaler wraps).
-    /// Returns true on overflow — duty step advances, counter reloads
-    /// to `period`.
-    pub fn tick(&mut self, period: u16) -> bool {
-        if self.counter >= 0x7FF {
-            self.counter = period & 0x7FF;
-            true
-        } else {
-            self.counter += 1;
-            false
-        }
-    }
-
-    /// NR14/NR24 trigger reload. Only the divider is touched; the
-    /// prescaler upstream keeps running.
-    pub fn trigger_reload(&mut self, period: u16) {
-        self.counter = period & 0x7FF;
-    }
-
-    pub fn power_off(&mut self) {
-        self.counter = 0;
-    }
 }

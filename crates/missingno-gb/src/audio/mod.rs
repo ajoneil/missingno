@@ -473,7 +473,7 @@ impl<A: ApuSpec> Audio<A> {
         };
         use channels::wave::Volume as WaveVolume;
         use channels::{
-            Enabled,
+            Enabled, TriggerReload,
             envelope::Envelope,
             length::LengthCounter,
             noise::NoiseChannel,
@@ -500,7 +500,7 @@ impl<A: ApuSpec> Audio<A> {
                 divider: PeriodDivider::default(),
                 wave_duty_position: 0,
                 pwm_latch: false,
-                pending_trigger_sync: 0,
+                pending_reload: TriggerReload::Idle,
                 divider_load_settle: false,
                 sweep_load_hold: 0,
                 envelope: Envelope {
@@ -535,7 +535,7 @@ impl<A: ApuSpec> Audio<A> {
                 wave_duty_position: 0,
                 pwm_latch: false,
                 ch2_frst: false,
-                pending_trigger_sync: 0,
+                pending_reload: TriggerReload::Idle,
                 divider_load_settle: false,
                 envelope: Envelope {
                     timer: snap.ch2_envelope_timer,

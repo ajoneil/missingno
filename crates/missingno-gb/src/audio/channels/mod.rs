@@ -11,6 +11,18 @@ pub mod pulse_sweep;
 pub mod registers;
 pub mod wave;
 
+/// A trigger-armed divider reload pending on CH1/CH2, latched at the NRx4
+/// write and consumed at the next chN_1mhz↑ (the chN_restart sync). The
+/// enabling case (fdis 1→0) freezes the load tick for the +1 first overflow;
+/// a re-trigger of a running channel reloads with no +1.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum TriggerReload {
+    #[default]
+    Idle,
+    Retrigger,
+    Enabling,
+}
+
 #[derive(Clone, Default)]
 pub struct Channels {
     pub ch1: PulseSweepChannel,
@@ -25,12 +37,6 @@ impl Channels {
         self.ch2.tick_length();
         self.ch3.tick_length();
         self.ch4.tick_length();
-    }
-
-    pub fn tick_envelope_all(&mut self) {
-        self.ch1.tick_envelope_counter();
-        self.ch2.tick_envelope_counter();
-        self.ch4.tick_envelope_counter();
     }
 
     pub fn reset_all(&mut self) {

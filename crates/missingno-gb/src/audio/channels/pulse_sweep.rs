@@ -1,5 +1,5 @@
 use super::{
-    Enabled,
+    Enabled, TriggerReload,
     envelope::Envelope,
     length::LengthCounter,
     registers::{
@@ -39,9 +39,9 @@ pub struct PulseSweepChannel {
     /// natural-overflow `ch1_frst ↑`; holds the emitted output
     /// between overflows.
     pub pwm_latch: bool,
-    /// `ch1_restart` sync stage; non-zero between NR14 trigger write
+    /// `ch1_restart` sync stage; pending between NR14 trigger write
     /// and the next ch1_1mhz↑ that applies the reload.
-    pub pending_trigger_sync: u8,
+    pub pending_reload: TriggerReload,
     /// Set on the reload edge; the first count is suppressed so the
     /// divider DFFs settle out of load mode before counting resumes.
     pub divider_load_settle: bool,
@@ -101,7 +101,7 @@ impl Default for PulseSweepChannel {
             divider: PeriodDivider { counter: 0x7F9 },
             wave_duty_position: 2,
             pwm_latch: false,
-            pending_trigger_sync: 0,
+            pending_reload: TriggerReload::Idle,
             divider_load_settle: false,
             sweep_load_hold: 0,
             // chime decay ran to saturation; JEME latched
@@ -140,7 +140,7 @@ impl PulseSweepChannel {
             divider: PeriodDivider::default(),
             wave_duty_position: 0,
             pwm_latch: false,
-            pending_trigger_sync: 0,
+            pending_reload: TriggerReload::Idle,
             divider_load_settle: false,
             sweep_load_hold: 0,
             envelope: Envelope::default(),
@@ -248,8 +248,8 @@ impl PulseSweepChannel {
         // ch1_fdis (set by DAC-off / apu_reset, cleared by a trigger) gates the
         // divider toggle clock. Only the channel-enabling trigger — the one that
         // clears fdis 1→0 — freezes a load tick (the +1 first overflow); a
-        // re-trigger of a running channel reloads with no +1. `2` flags the
-        // enabling case to the reload arm.
+        // re-trigger of a running channel reloads with no +1 (the reload arm
+        // distinguishes the enabling case).
         let was_running = self.enabled.enabled;
         self.enabled.enabled = true;
         self.length.trigger_reload();
@@ -257,7 +257,11 @@ impl PulseSweepChannel {
         // ch1_1mhz↑, not on this write edge. A coincident natural
         // overflow on that wrap is suppressed (dyru async-resets
         // comy before cala can clock).
-        self.pending_trigger_sync = if was_running { 1 } else { 2 };
+        self.pending_reload = if was_running {
+            TriggerReload::Retrigger
+        } else {
+            TriggerReload::Enabling
+        };
         // ch1_restart pulls hafe low → KOZY reset → any prior kyvo
         // arm from the previous trigger window is dropped.
         self.envelope.trigger(
@@ -315,7 +319,7 @@ impl PulseSweepChannel {
             self.sweep_load_hold = self.sweep_load_hold.saturating_sub(1);
         }
         if sweep_cate_due
-            && self.pending_trigger_sync == 0
+            && self.pending_reload == TriggerReload::Idle
             && calo_rose
             && self.divider.counter >= 0x7FF
         {
@@ -353,10 +357,10 @@ impl PulseSweepChannel {
         // Prescaler wrapped (ch1_1mhz↑). Trigger reload and natural
         // overflow are mutually exclusive on the same edge — trigger
         // wins via dyru's async-reset of comy.
-        if self.pending_trigger_sync != 0 {
-            // Enabling trigger (2) freezes the load tick → +1 first overflow;
-            // re-trigger (1) reloads with no +1.
-            self.divider_load_settle = self.pending_trigger_sync == 2;
+        if self.pending_reload != TriggerReload::Idle {
+            // Enabling trigger freezes the load tick → +1 first overflow;
+            // re-trigger reloads with no +1.
+            self.divider_load_settle = self.pending_reload == TriggerReload::Enabling;
             // CGB holds the sweep counter one ch1_1mhz↑ longer than the
             // divider settle, so a cate_128hz↓ just past the reload is dropped.
             // CYMU = OR(BEXA, ch1_restart) drives the sweep counter's load
@@ -364,7 +368,7 @@ impl PulseSweepChannel {
             // re-trigger — opens the same 2-cycle CGB hold.
             self.sweep_load_hold = if wide_sweep_hold { 2 } else { 0 };
             self.divider.counter = (self.period.0) & 0x7FF;
-            self.pending_trigger_sync = 0;
+            self.pending_reload = TriggerReload::Idle;
         } else if self.divider_load_settle {
             self.divider_load_settle = false;
         } else if self.divider.counter >= 0x7FF {
