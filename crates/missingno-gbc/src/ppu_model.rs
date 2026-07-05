@@ -195,6 +195,8 @@ impl PpuModel for CgbPpu {
     fn init_post_boot(&mut self, header: &CartridgeBootHeader) {
         // The CGB boot ROM fades all BG palettes to white before handoff.
         self.bg_cram.fill(Color555::grey(31));
+        // The index registers hold whatever the boot ROM's last palette
+        // stream left: cart-type-dependent, auto-increment on in both cases.
         if !header.is_cgb {
             self.dmg_compat = true;
             // The boot ROM selects DMG object priority (OPRI=1) for a DMG cart.
@@ -204,11 +206,14 @@ impl PpuModel for CgbPpu {
             self.bg_cram.install(0, bg);
             self.obj_cram.install(0, obj0);
             self.obj_cram.install(1, obj1);
+            self.bg_cram.write_index(0x88);
+            self.obj_cram.write_index(0x90);
+        } else {
+            // For a CGB cart the final fade commit streams all 64 BG bytes
+            // (index wraps to 0) and a single OBJ byte (index rests at 1).
+            self.bg_cram.write_index(0x80);
+            self.obj_cram.write_index(0x81);
         }
-        // The boot ROM's palette writes leave the CRAM index registers at
-        // $C8/$D0 (auto-increment on).
-        self.bg_cram.write_index(0xC8);
-        self.obj_cram.write_index(0xD0);
     }
 
     fn obj_data_bank(&self, attrs: Attributes) -> u8 {
