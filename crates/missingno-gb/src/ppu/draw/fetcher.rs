@@ -1,6 +1,6 @@
 use crate::ppu::{PipelineRegisters, PpuModel, VideoControl, memory::Vram};
 
-use super::super::types::tiles::{TileBlockId, TileIndex};
+use super::super::types::tiles::{TileBlockId, TileIndex, TileMapId};
 use super::shifters::BgShifter;
 
 pub(in crate::ppu) struct TileFetcher<P: PpuModel> {
@@ -9,7 +9,7 @@ pub(in crate::ppu) struct TileFetcher<P: PpuModel> {
     pub(in crate::ppu) fetch_counter: u8,
     /// win_x.map: increments per window tile fetched.
     pub(in crate::ppu) window_tile_x: u8,
-    tile_index: u8,
+    tile_index: TileIndex,
     /// The BG map attribute fetched alongside the tile index at counter 0; held
     /// through the cycle so the data reads and the shifter load see one cell.
     bg_cell: P::BgCell,
@@ -39,8 +39,8 @@ pub(in crate::ppu) struct TileFetcher<P: PpuModel> {
     glitch_capture_armed: bool,
 }
 
-fn tile_map_offset(map_id_index: u8, map_x: u8, map_y: u8) -> u16 {
-    let base: u16 = if map_id_index == 0 { 0x1800 } else { 0x1C00 };
+fn tile_map_offset(map_id: TileMapId, map_x: u8, map_y: u8) -> u16 {
+    let base: u16 = if map_id.0 == 0 { 0x1800 } else { 0x1C00 };
     base + map_y as u16 * 32 + map_x as u16
 }
 
@@ -68,7 +68,7 @@ impl<P: PpuModel> TileFetcher<P> {
         Self {
             fetch_counter: 0,
             window_tile_x: 0,
-            tile_index: 0,
+            tile_index: TileIndex(0),
             bg_cell: P::BgCell::default(),
             tile_map_byte: 0,
             tile_data_low: 0,
@@ -88,7 +88,7 @@ impl<P: PpuModel> TileFetcher<P> {
         Self {
             fetch_counter: 5,
             window_tile_x: 0,
-            tile_index: 0,
+            tile_index: TileIndex(0),
             bg_cell: P::BgCell::default(),
             tile_map_byte: 0,
             tile_data_low: 0,
@@ -108,7 +108,7 @@ impl<P: PpuModel> TileFetcher<P> {
     pub(in crate::ppu) fn reset_scanline(&mut self) {
         self.fetch_counter = 0;
         self.window_tile_x = 0;
-        self.tile_index = 0;
+        self.tile_index = TileIndex(0);
         self.bg_cell = P::BgCell::default();
         self.fetching_window = false;
         self.vram_address = 0;
@@ -214,8 +214,8 @@ impl<P: PpuModel> TileFetcher<P> {
             self.bg_tilemap_coords(pixel_counter, sacu_active, synced_scx, regs, video)
         };
         let map_select_bit = if self.fetching_window { 6 } else { 3 };
-        let map_id_index = (self.tile_map_byte >> map_select_bit) & 1;
-        tile_map_offset(map_id_index, map_x, map_y)
+        let map_id = TileMapId((self.tile_map_byte >> map_select_bit) & 1);
+        tile_map_offset(map_id, map_x, map_y)
     }
 
     fn bg_fine_y(regs: &PipelineRegisters, video: &VideoControl) -> u8 {
@@ -236,8 +236,7 @@ impl<P: PpuModel> TileFetcher<P> {
         video: &VideoControl,
         high: bool,
     ) -> (u8, u16) {
-        let tile_index = TileIndex(self.tile_index);
-        let (block_id, mapped_idx) = regs.tile_data_address_mode().tile(tile_index);
+        let (block_id, mapped_idx) = regs.tile_data_address_mode().tile(self.tile_index);
         let raw_fine_y = if self.fetching_window {
             Self::window_fine_y(window_line_counter)
         } else {
@@ -250,7 +249,7 @@ impl<P: PpuModel> TileFetcher<P> {
     /// CGB TILE_SEL reset glitch: a bitplane read on the crossing-capture dot
     /// of an LCDC.4-clearing write returns the tile index byte instead.
     fn tile_sel_glitched_bitplane(&self, glitch_active: bool) -> Option<u8> {
-        (glitch_active && self.tile_index < 0x80).then_some(self.tile_index)
+        (glitch_active && self.tile_index.0 < 0x80).then_some(self.tile_index.0)
     }
 
     /// PPU fall: VRAM reads at counter 0/2/4 (no counter increment — LEBO only fires on rise).
@@ -281,7 +280,7 @@ impl<P: PpuModel> TileFetcher<P> {
                 );
                 // CGB reads the tile index (bank 0) and the map attribute (bank 1)
                 // at the same offset on the same dot.
-                self.tile_index = vram.bank(0).read_byte(self.vram_address);
+                self.tile_index = TileIndex(vram.bank(0).read_byte(self.vram_address));
                 self.bg_cell = P::bg_attribute(vram, self.vram_address);
             }
             2 => {
