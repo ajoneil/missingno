@@ -689,7 +689,7 @@ impl App {
 
             Message::Debugger(message) => {
                 if let Game::Loaded(LoadedGame::Debugger(debugger)) = &mut self.game {
-                    let task = debugger.update(message);
+                    let task = debugger.update(message, self.emu.as_ref());
                     self.drain_audio();
                     return task;
                 }

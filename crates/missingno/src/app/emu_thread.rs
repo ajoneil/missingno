@@ -12,9 +12,11 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 use missingno_gb::joypad::Button;
+use missingno_gb::ppu::rendering::Mode;
 
 use super::audio_output::AudioOutput;
 use super::console::AnyConsole;
+use super::debugger::DebuggerPayload;
 use super::library::activity::FrameCapture;
 use super::screen::ScreenDisplay;
 
@@ -33,10 +35,33 @@ const SRAM_DEBOUNCE_FRAMES: u32 = 30;
 /// handoff, not a queue: the UI reads whatever is current on redraw.
 pub type FrameSlot = Arc<Mutex<Option<ScreenDisplay>>>;
 
-/// The emulatable payload the emu thread owns while running. Only the plain
-/// console runs off-thread today; the debugger still steps on the UI thread.
+/// The emulatable payload the emu thread owns while running: the plain
+/// console, or the debugger's core (console + breakpoints) in debugger mode.
+/// The debugger's pane/layout state stays on the UI thread.
 pub enum Payload {
     Console(Box<AnyConsole>),
+    Debugger(Box<DebuggerPayload>),
+}
+
+/// Live console state published each frame while the debugger runs, so the UI
+/// can render its running view without owning the console.
+#[derive(Clone, Copy, Debug)]
+pub struct RunningStatus {
+    pub pc: u16,
+    pub sp: u16,
+    pub ly: u8,
+    pub mode: Mode,
+    pub frame: u64,
+}
+
+/// Latest-value handoff for [`RunningStatus`], written alongside the frame slot.
+pub type StatusSlot = Arc<Mutex<Option<RunningStatus>>>;
+
+/// One frame's worth of stepping, as seen by the emu-thread loop.
+struct FrameOutcome {
+    display: Option<ScreenDisplay>,
+    sram_dirty: bool,
+    breakpoint_hit: bool,
 }
 
 /// Commands the UI sends to the emu thread. The thread terminates when the
@@ -50,6 +75,8 @@ pub enum EmuCommand {
     Reset,
     Press(Button),
     Release(Button),
+    SetBreakpoint(u16),
+    ClearBreakpoint(u16),
     RequestScreenshot {
         use_sgb_colors: bool,
         palette: String,
@@ -67,6 +94,9 @@ pub enum EmuEvent {
     SramDirty(Vec<u8>),
     /// A requested screenshot capture (boxed — `FrameCapture` is large).
     Screenshot(Box<FrameCapture>),
+    /// The running debugger hit a breakpoint; its payload is on the return
+    /// channel and the UI should switch to the paused view.
+    BreakpointHit,
 }
 
 /// The UI-side handle to the emu thread. Cloneable so it can ride in a Message;
@@ -75,12 +105,17 @@ pub enum EmuEvent {
 pub struct EmuHandle {
     commands: Sender<EmuCommand>,
     frames: FrameSlot,
+    status: StatusSlot,
     returns: Arc<Mutex<Receiver<Payload>>>,
 }
 
 impl EmuHandle {
     pub fn frames(&self) -> &FrameSlot {
         &self.frames
+    }
+
+    pub fn status(&self) -> &StatusSlot {
+        &self.status
     }
 
     pub fn send(&self, command: EmuCommand) {
@@ -120,10 +155,12 @@ pub fn subscription_worker() -> impl iced::futures::Stream<Item = EmuEvent> {
     let (command_tx, command_rx) = channel::<EmuCommand>();
     let (return_tx, return_rx) = channel::<Payload>();
     let frames: FrameSlot = Arc::new(Mutex::new(None));
+    let status: StatusSlot = Arc::new(Mutex::new(None));
 
     let handle = EmuHandle {
         commands: command_tx,
         frames: frames.clone(),
+        status: status.clone(),
         returns: Arc::new(Mutex::new(return_rx)),
     };
     let _ = event_tx.unbounded_send(EmuEvent::Started(handle));
@@ -131,7 +168,7 @@ pub fn subscription_worker() -> impl iced::futures::Stream<Item = EmuEvent> {
     let worker_events = event_tx;
     std::thread::Builder::new()
         .name("emu".into())
-        .spawn(move || run_emu_thread(command_rx, return_tx, frames, worker_events))
+        .spawn(move || run_emu_thread(command_rx, return_tx, frames, status, worker_events))
         .expect("spawn emu thread");
 
     event_rx
@@ -143,11 +180,12 @@ fn run_emu_thread(
     commands: Receiver<EmuCommand>,
     returns: Sender<Payload>,
     frames: FrameSlot,
+    status: StatusSlot,
     events: EventSink,
 ) {
     // Audio device lives on this thread (cpal's Stream is `!Send`).
     let mut audio = AudioOutput::new();
-    let mut state = EmuLoop::new(frames, events, returns);
+    let mut state = EmuLoop::new(frames, status, events, returns);
 
     loop {
         if state.running() {
@@ -178,6 +216,7 @@ fn run_emu_thread(
 struct EmuLoop {
     payload: Option<Payload>,
     frames: FrameSlot,
+    status: StatusSlot,
     events: EventSink,
     returns: Sender<Payload>,
     sram_countdown: Option<u32>,
@@ -185,10 +224,16 @@ struct EmuLoop {
 }
 
 impl EmuLoop {
-    fn new(frames: FrameSlot, events: EventSink, returns: Sender<Payload>) -> Self {
+    fn new(
+        frames: FrameSlot,
+        status: StatusSlot,
+        events: EventSink,
+        returns: Sender<Payload>,
+    ) -> Self {
         Self {
             payload: None,
             frames,
+            status,
             events,
             returns,
             sram_countdown: None,
@@ -223,6 +268,16 @@ impl EmuLoop {
                     payload.release_button(button);
                 }
             }
+            EmuCommand::SetBreakpoint(address) => {
+                if let Some(payload) = &mut self.payload {
+                    payload.set_breakpoint(address);
+                }
+            }
+            EmuCommand::ClearBreakpoint(address) => {
+                if let Some(payload) = &mut self.payload {
+                    payload.clear_breakpoint(address);
+                }
+            }
             EmuCommand::RequestScreenshot {
                 use_sgb_colors,
                 palette,
@@ -247,11 +302,17 @@ impl EmuLoop {
         let Some(payload) = &mut self.payload else {
             return;
         };
-        let mut sram_dirty = false;
-        if let Some(display) = payload.step_frame(&mut sram_dirty) {
-            if let Ok(mut slot) = self.frames.lock() {
-                *slot = Some(display);
-            }
+        let outcome = payload.step_frame();
+        let new_frame = outcome.display.is_some();
+        if let Some(display) = outcome.display
+            && let Ok(mut slot) = self.frames.lock()
+        {
+            *slot = Some(display);
+        }
+        if let Ok(mut slot) = self.status.lock() {
+            *slot = payload.running_status();
+        }
+        if new_frame {
             let _ = self.events.unbounded_send(EmuEvent::FrameReady);
         }
         if let Some(audio) = audio {
@@ -259,13 +320,18 @@ impl EmuLoop {
         }
 
         // Debounce SRAM: reset countdown on a dirty frame, flush after quiet.
-        if sram_dirty {
+        if outcome.sram_dirty {
             self.sram_countdown = Some(0);
         } else if let Some(count) = &mut self.sram_countdown {
             *count += 1;
             if *count >= SRAM_DEBOUNCE_FRAMES {
                 self.flush_sram();
             }
+        }
+
+        if outcome.breakpoint_hit {
+            self.return_payload();
+            let _ = self.events.unbounded_send(EmuEvent::BreakpointHit);
         }
     }
 
@@ -295,36 +361,56 @@ impl Payload {
     fn reset(&mut self) {
         match self {
             Self::Console(console) => console.reset(),
+            Self::Debugger(debugger) => debugger.reset(),
         }
     }
 
     fn press_button(&mut self, button: Button) {
         match self {
             Self::Console(console) => console.press_button(button),
+            Self::Debugger(debugger) => debugger.press_button(button),
         }
     }
 
     fn release_button(&mut self, button: Button) {
         match self {
             Self::Console(console) => console.release_button(button),
+            Self::Debugger(debugger) => debugger.release_button(button),
+        }
+    }
+
+    fn set_breakpoint(&mut self, address: u16) {
+        match self {
+            Self::Console(_) => {}
+            Self::Debugger(debugger) => debugger.set_breakpoint(address),
+        }
+    }
+
+    fn clear_breakpoint(&mut self, address: u16) {
+        match self {
+            Self::Console(_) => {}
+            Self::Debugger(debugger) => debugger.clear_breakpoint(address),
         }
     }
 
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
         match self {
             Self::Console(console) => console.drain_audio_samples(),
+            Self::Debugger(debugger) => debugger.drain_audio_samples(),
         }
     }
 
     fn capture_frame(&self, use_sgb_colors: bool, palette: &str) -> FrameCapture {
         match self {
             Self::Console(console) => console.capture_frame(use_sgb_colors, palette),
+            Self::Debugger(debugger) => debugger.capture_frame(use_sgb_colors, palette),
         }
     }
 
     fn sram(&self) -> Option<Vec<u8>> {
         let cartridge = match self {
             Self::Console(console) => console.cartridge(),
+            Self::Debugger(debugger) => debugger.cartridge(),
         };
         if !cartridge.has_battery() {
             return None;
@@ -332,22 +418,43 @@ impl Payload {
         cartridge.ram().map(|ram| ram.to_vec())
     }
 
+    fn running_status(&self) -> Option<RunningStatus> {
+        match self {
+            Self::Console(_) => None,
+            Self::Debugger(debugger) => Some(debugger.running_status()),
+        }
+    }
+
     /// Emulate up to one frame, returning the completed display if any. The
-    /// LCD-off guard caps the step budget so an idle PPU can't stall.
-    fn step_frame(&mut self, sram_dirty: &mut bool) -> Option<ScreenDisplay> {
+    /// LCD-off guard caps the console's step budget so an idle PPU can't
+    /// stall; the debugger's frame step honours breakpoints instead.
+    fn step_frame(&mut self) -> FrameOutcome {
         match self {
             Self::Console(console) => {
                 let max = 70224 * 2 * console.cpu_tcycles_per_dot() as u32;
                 let mut tcycles = 0;
+                let mut sram_dirty = false;
                 loop {
                     let result = console.step();
                     tcycles += result.tcycles;
-                    *sram_dirty |= result.sram_dirty;
+                    sram_dirty |= result.sram_dirty;
                     if result.new_screen || tcycles >= max {
                         break;
                     }
                 }
-                Some(console.screen_display())
+                FrameOutcome {
+                    display: Some(console.screen_display()),
+                    sram_dirty,
+                    breakpoint_hit: false,
+                }
+            }
+            Self::Debugger(debugger) => {
+                let (display, breakpoint_hit) = debugger.step_frame();
+                FrameOutcome {
+                    display,
+                    sram_dirty: false,
+                    breakpoint_hit,
+                }
             }
         }
     }

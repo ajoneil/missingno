@@ -28,6 +28,10 @@ impl TileMapPane {
         }
     }
 
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
     pub fn content<P: PpuModel>(
         &self,
         ppu: &Ppu<P>,

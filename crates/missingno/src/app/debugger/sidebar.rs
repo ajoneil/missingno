@@ -9,6 +9,7 @@ use crate::app::{
     self,
     console::{ConsoleColors, ConsoleUi},
     debugger,
+    emu_thread::RunningStatus,
     ui::{
         fonts, palette,
         sizes::{s, xs},
@@ -93,6 +94,43 @@ impl Sidebar {
         column![
             self.cpu_section(game_boy.cpu(), game_boy),
             self.ppu_section(game_boy.ppu(), colors),
+        ]
+        .width(Length::Fixed(SIDEBAR_WIDTH))
+        .height(Fill)
+        .spacing(s())
+        .into()
+    }
+
+    /// The sidebar while the console runs on the emu thread: collapsed CPU/PPU
+    /// summaries fed by the published [`RunningStatus`].
+    pub fn running_view(&self, status: Option<&RunningStatus>) -> Element<'_, app::Message> {
+        let (cpu_summary, ppu_summary) = match status {
+            Some(status) => (
+                format!("pc {:04X} · sp {:04X}", status.pc, status.sp),
+                format!("{} · ly {}", mode_display(status.mode).0, status.ly),
+            ),
+            None => (String::from("running"), String::from("running")),
+        };
+
+        column![
+            section(
+                "CPU",
+                &cpu_summary,
+                true,
+                Section::Cpu,
+                Some((true, palette::GREEN)),
+                None,
+                Space::new().into(),
+            ),
+            section(
+                "PPU",
+                &ppu_summary,
+                true,
+                Section::Ppu,
+                Some((true, palette::GREEN)),
+                None,
+                Space::new().into(),
+            ),
         ]
         .width(Length::Fixed(SIDEBAR_WIDTH))
         .height(Fill)
