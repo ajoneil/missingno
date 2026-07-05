@@ -27,7 +27,7 @@ impl App {
             Message::TakeScreenshot => {
                 let palette = self.settings.palette.to_string();
                 let use_sgb_colors = self.settings.use_sgb_colors;
-                // While the emulator runs, the console is on the emu thread; ask
+                // While the game runs, the console is on the emu thread; ask
                 // it to capture and record on the resulting `Screenshot` event.
                 let capture = match &self.game {
                     Game::Loaded(LoadedGame::Emulator(emu)) if emu.running() => {
@@ -42,8 +42,17 @@ impl App {
                     Game::Loaded(LoadedGame::Emulator(emu)) => emu
                         .console()
                         .map(|console| console.capture_frame(use_sgb_colors, &palette)),
+                    Game::Loaded(LoadedGame::Debugger(dbg)) if dbg.is_detached() => {
+                        if let Some(handle) = &self.emu {
+                            handle.send(EmuCommand::RequestScreenshot {
+                                use_sgb_colors,
+                                palette,
+                            });
+                        }
+                        None
+                    }
                     Game::Loaded(LoadedGame::Debugger(dbg)) => {
-                        Some(dbg.capture_screenshot(use_sgb_colors, &palette))
+                        dbg.capture_screenshot(use_sgb_colors, &palette)
                     }
                     _ => None,
                 };
@@ -106,11 +115,38 @@ impl App {
                     .emu
                     .as_ref()
                     .and_then(|handle| handle.frames().lock().ok()?.clone());
-                if let Some(display) = display
-                    && let Game::Loaded(LoadedGame::Emulator(emulator)) = &mut self.game
-                {
-                    emulator.apply_frame(display);
+                let status = self
+                    .emu
+                    .as_ref()
+                    .and_then(|handle| *handle.status().lock().ok()?);
+                match &mut self.game {
+                    Game::Loaded(LoadedGame::Emulator(emulator)) => {
+                        if let Some(display) = display {
+                            emulator.apply_frame(display);
+                        }
+                    }
+                    Game::Loaded(LoadedGame::Debugger(debugger)) => {
+                        if let Some(display) = display {
+                            debugger.apply_frame(display);
+                        }
+                        if let Some(status) = status {
+                            debugger.apply_status(status);
+                        }
+                    }
+                    _ => {}
                 }
+            }
+            EmuEvent::BreakpointHit => {
+                if let Game::Loaded(LoadedGame::Debugger(debugger)) = &mut self.game {
+                    if debugger.is_detached()
+                        && let Some(handle) = &self.emu
+                        && let Some(Payload::Debugger(payload)) = handle.recover()
+                    {
+                        debugger.restore_payload(*payload);
+                    }
+                    debugger.pause();
+                }
+                self.save();
             }
             EmuEvent::SramDirty(ram) => {
                 if let Some(title) = self
@@ -145,30 +181,48 @@ impl App {
         self.start_running();
     }
 
-    /// Hand the emulator console to the emu thread if it should run. Idempotent.
+    /// Hand the running payload (console or debugger core) to the emu thread
+    /// if it should run. Idempotent.
     pub(super) fn start_running(&mut self) {
         let Some(handle) = self.emu.clone() else {
             return;
         };
-        if let Game::Loaded(LoadedGame::Emulator(emulator)) = &mut self.game
-            && emulator.running()
-            && let Some(console) = emulator.take_console()
-        {
-            handle.run(Payload::Console(Box::new(console)));
+        match &mut self.game {
+            Game::Loaded(LoadedGame::Emulator(emulator)) if emulator.running() => {
+                if let Some(console) = emulator.take_console() {
+                    handle.run(Payload::Console(Box::new(console)));
+                }
+            }
+            Game::Loaded(LoadedGame::Debugger(debugger)) if debugger.running() => {
+                if let Some(payload) = debugger.take_payload() {
+                    handle.run(Payload::Debugger(Box::new(payload)));
+                }
+            }
+            _ => {}
         }
     }
 
     pub(super) fn pause(&mut self) {
-        // Recover the console from the emu thread so all inspection and saving
+        // Recover the payload from the emu thread so all inspection and saving
         // paths work synchronously while paused.
         if let Some(handle) = self.emu.clone() {
-            let running_emulator =
-                matches!(&self.game, Game::Loaded(LoadedGame::Emulator(emu)) if emu.running());
-            if running_emulator
-                && let Some(Payload::Console(console)) = handle.pause_and_recover()
-                && let Game::Loaded(LoadedGame::Emulator(emulator)) = &mut self.game
-            {
-                emulator.restore_console(*console);
+            let on_emu_thread = match &self.game {
+                Game::Loaded(LoadedGame::Emulator(emu)) => emu.running() && emu.console().is_none(),
+                Game::Loaded(LoadedGame::Debugger(dbg)) => dbg.running() && dbg.is_detached(),
+                _ => false,
+            };
+            if on_emu_thread {
+                match (handle.pause_and_recover(), &mut self.game) {
+                    (
+                        Some(Payload::Console(console)),
+                        Game::Loaded(LoadedGame::Emulator(emulator)),
+                    ) => emulator.restore_console(*console),
+                    (
+                        Some(Payload::Debugger(payload)),
+                        Game::Loaded(LoadedGame::Debugger(debugger)),
+                    ) => debugger.restore_payload(*payload),
+                    _ => {}
+                }
             }
         }
         match &mut self.game {
@@ -176,14 +230,22 @@ impl App {
             Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.set_running(false),
             _ => {}
         }
-        // Persist any pending SRAM from the recovered console.
+        // Persist any pending SRAM from the recovered payload.
         self.save();
     }
 
     pub(super) fn reset(&mut self) {
         let handle = self.emu.clone();
         match &mut self.game {
-            Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.reset(),
+            Game::Loaded(LoadedGame::Debugger(debugger)) => {
+                if debugger.is_detached()
+                    && let Some(handle) = &handle
+                {
+                    handle.send(EmuCommand::Reset);
+                } else {
+                    debugger.reset();
+                }
+            }
             Game::Loaded(LoadedGame::Emulator(emulator)) => {
                 if emulator.running()
                     && let Some(handle) = &handle
@@ -200,7 +262,15 @@ impl App {
     pub(super) fn press_button(&mut self, button: Button) {
         let handle = self.emu.clone();
         match &mut self.game {
-            Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.press_button(button),
+            Game::Loaded(LoadedGame::Debugger(debugger)) => {
+                if debugger.is_detached()
+                    && let Some(handle) = &handle
+                {
+                    handle.send(EmuCommand::Press(button));
+                } else {
+                    debugger.press_button(button);
+                }
+            }
             Game::Loaded(LoadedGame::Emulator(emulator)) => {
                 if emulator.running()
                     && let Some(handle) = &handle
@@ -217,7 +287,15 @@ impl App {
     pub(super) fn release_button(&mut self, button: Button) {
         let handle = self.emu.clone();
         match &mut self.game {
-            Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.release_button(button),
+            Game::Loaded(LoadedGame::Debugger(debugger)) => {
+                if debugger.is_detached()
+                    && let Some(handle) = &handle
+                {
+                    handle.send(EmuCommand::Release(button));
+                } else {
+                    debugger.release_button(button);
+                }
+            }
             Game::Loaded(LoadedGame::Emulator(emulator)) => {
                 if emulator.running()
                     && let Some(handle) = &handle
@@ -248,12 +326,15 @@ impl App {
     pub(super) fn save(&mut self) {
         let (ram, cartridge_title) = match &self.game {
             Game::Loaded(LoadedGame::Debugger(debugger)) => {
-                if !debugger.cartridge().has_battery() {
+                let Some(cartridge) = debugger.cartridge() else {
+                    return;
+                };
+                if !cartridge.has_battery() {
                     return;
                 }
                 (
-                    debugger.cartridge().ram().map(|ram| ram.to_vec()),
-                    debugger.cartridge().title().to_string(),
+                    cartridge.ram().map(|ram| ram.to_vec()),
+                    cartridge.title().to_string(),
                 )
             }
             Game::Loaded(LoadedGame::Emulator(emulator)) => {

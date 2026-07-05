@@ -275,6 +275,30 @@ impl DebuggerPanes {
         }
     }
 
+    /// The pane grid while the console runs on the emu thread: the screen pane
+    /// stays live; console-inspecting panes show placeholders.
+    pub fn running_view(&self) -> Element<'_, app::Message> {
+        if let Some(panes) = &self.panes {
+            pane_grid(panes, |_handle, instance, _is_maximized| match instance {
+                PaneInstance::Screen(screen) => screen.content(),
+                PaneInstance::Instructions(_) => running_placeholder("Instructions"),
+                PaneInstance::Tiles(_) => running_placeholder("Tiles"),
+                PaneInstance::TileMap(tile_map) => running_placeholder(tile_map.title()),
+                PaneInstance::Sprites(_) => running_placeholder("Sprites"),
+                PaneInstance::Audio(_) => running_placeholder("Audio"),
+            })
+            .on_resize(10.0, |resize| Message::ResizePane(resize).into())
+            .on_drag(|drag| Message::DragPane(drag).into())
+            .spacing(s())
+            .into()
+        } else {
+            iced::widget::Space::new()
+                .width(iced::Length::Fill)
+                .height(iced::Length::Fill)
+                .into()
+        }
+    }
+
     pub fn plane_shown(&self, plane: DebuggerPane) -> bool {
         self.handles.contains_key(&plane)
     }
@@ -326,6 +350,15 @@ impl fmt::Display for DebuggerPane {
             DebuggerPane::Audio => write!(f, "Audio"),
         }
     }
+}
+
+fn running_placeholder(label: &str) -> pane_grid::Content<'_, app::Message> {
+    pane(
+        title_bar(label),
+        container(iced::widget::text("Running…").color(palette::MUTED))
+            .center(iced::Length::Fill)
+            .into(),
+    )
 }
 
 pub fn pane<'a>(

@@ -887,10 +887,6 @@ impl App {
             // The emulation thread runs for the whole app lifetime; its events
             // wake the UI. Always included so the thread persists.
             Subscription::run(super::emu_thread::subscription_worker).map(Message::Emu),
-            match &self.game {
-                Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.subscription(),
-                _ => Subscription::none(),
-            },
             if self.screenshot_toast.is_some() {
                 time::every(std::time::Duration::from_millis(1500))
                     .map(|_| Message::DismissScreenshotToast)
