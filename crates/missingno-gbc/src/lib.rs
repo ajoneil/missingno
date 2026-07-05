@@ -709,6 +709,43 @@ enum TransferMode {
     HBlank,
 }
 
+/// A one-shot down-counter: armed to a tick count, stepped toward zero, then
+/// inert. Models the VRAM-DMA's scattered `if n > 0 { n -= 1 }` timers as one
+/// shape. Counters that step *up* (`halted_falls`, `seize_falls`, `pend_age`)
+/// or act as a running semaphore (`granted_ahead`) keep their own arithmetic —
+/// they are not this idiom.
+#[derive(Default, Clone, Copy, PartialEq)]
+struct Countdown(u8);
+
+impl Countdown {
+    fn arm(&mut self, ticks: u8) {
+        self.0 = ticks;
+    }
+    fn clear(&mut self) {
+        self.0 = 0;
+    }
+    fn active(&self) -> bool {
+        self.0 > 0
+    }
+    fn remaining(&self) -> u8 {
+        self.0
+    }
+    /// Step one tick while active; returns whether a tick was consumed (it was
+    /// active before this step).
+    fn tick(&mut self) -> bool {
+        let active = self.0 > 0;
+        self.0 = self.0.saturating_sub(1);
+        active
+    }
+    /// Step one tick; returns whether this step drained it to zero.
+    fn expired(&mut self) -> bool {
+        self.0 > 0 && {
+            self.0 -= 1;
+            self.0 == 0
+        }
+    }
+}
+
 /// CGB VRAM DMA ($FF51-55) controller. The source and destination pointers run
 /// as bytes are copied and persist after a transfer, so a follow-on transfer
 /// continues where the last left off. The step loop ticks it each M-cycle: a
@@ -744,10 +781,10 @@ struct VramDma {
     armed_this_fall: bool,
     /// Leading no-data cells of the block: the engine loads its working
     /// pointers from the HDMA1-4 holding registers on a PPU-triggered block.
-    setup_cells: u8,
+    setup_cells: Countdown,
     /// Dots until a committed block claims the bus (the transfer readies two
     /// dots after the commit).
-    ready_in: u8,
+    ready_in: Countdown,
     /// Falls since the halt gate rose: the taken-clear path runs one
     /// boundary-clocked synchronizer stage behind the gate, so a clear in
     /// flight at the halt latch (within its M-cycle, 4 falls) still lands;
@@ -773,7 +810,7 @@ struct VramDma {
     pend_granted: bool,
     /// Running ticks left of the wake drain's bus tenure — an HBlank entry
     /// inside it passes unserviced.
-    wake_tenure: u8,
+    wake_tenure: Countdown,
     /// This block committed onto a running CPU: its bus grant waits for the
     /// in-flight instruction to retire. A halted-CPU commit (including the
     /// same-fall wake flip) grants at the next M-boundary.
@@ -792,7 +829,7 @@ struct VramDma {
     /// Running ticks left of the halt-wake entry blind: a mode-0 entry edge
     /// on the wake fall or just after it passes unserviced (no retry). Unlike
     /// the STOP-armed blind there is no first-tick exemption.
-    halt_wake_blind: u8,
+    halt_wake_blind: Countdown,
     /// `cpu_halted` at the previous running tick — the wake-flip detector.
     prev_cpu_halted: bool,
     /// The commit already counted this pending block's grant (the in-halt
@@ -801,7 +838,7 @@ struct VramDma {
     /// Post-switch re-engage window (running vram_dma ticks): a fresh mode-0
     /// entry edge inside it does not pend — the HBlank passes unserviced. The
     /// first tick is exempt (a blackout-carried mode-0 level, not an entry).
-    wake_pend_blind: u8,
+    wake_pend_blind: Countdown,
     /// HBlank blocks granted in-halt but not yet drained. A halted CPU does not
     /// contend the bus, so an in-halt mode-0 grants a block (status complete)
     /// while its bus-seizure transfer stays on the post-resume path; this offsets
@@ -830,7 +867,7 @@ impl VramDma {
     /// latched HBlank block runs to completion regardless of the live `mode`
     /// (the block sequencer, once started, does not consult the arming flag).
     fn moving(&self) -> bool {
-        (self.block_remaining > 0 && self.remaining > 0 && self.ready_in == 0)
+        (self.block_remaining > 0 && self.remaining > 0 && !self.ready_in.active())
             || (self.mode == TransferMode::General && self.remaining > 0)
     }
 
@@ -1228,7 +1265,7 @@ impl Model for Cgb {
         if self.double_speed {
             // Downward: the chain survives, so a granted burst keeps
             // the bus and the settle waits for its release.
-            if self.vram_dma.block_remaining > 0 && self.vram_dma.ready_in == 0 {
+            if self.vram_dma.block_remaining > 0 && !self.vram_dma.ready_in.active() {
                 return false;
             }
         } else {
@@ -1242,14 +1279,14 @@ impl Model for Cgb {
                 // count (the dropped grant re-arms the status).
                 self.vram_dma.granted_ahead = self.vram_dma.granted_ahead.saturating_sub(1);
                 self.vram_dma.grant_counted = false;
-                if self.vram_dma.ready_in == 0 {
+                if !self.vram_dma.ready_in.active() {
                     self.vram_dma.mode = TransferMode::Idle;
                     self.vram_dma.block_remaining = 1;
                     self.vram_dma.escape_byte = true;
                 } else {
                     self.vram_dma.block_remaining = 0;
-                    self.vram_dma.ready_in = 0;
-                    self.vram_dma.setup_cells = 0;
+                    self.vram_dma.ready_in.clear();
+                    self.vram_dma.setup_cells.clear();
                 }
             }
             self.vram_dma.pend = false;
@@ -1258,7 +1295,7 @@ impl Model for Cgb {
         self.key1_armed = false;
         self.speed_switch_blackout = self.speed_switch_blackout_master_edges();
         if self.double_speed {
-            self.vram_dma.wake_pend_blind = VramDma::WAKE_PEND_BLIND_TICKS;
+            self.vram_dma.wake_pend_blind.arm(VramDma::WAKE_PEND_BLIND_TICKS);
         }
         // A 1×→2× relock entered at dot-in-M phase p3 lands the mux
         // displaced (cost-free); a displaced 2×→1× completes a dot early
@@ -1544,8 +1581,8 @@ impl Model for Cgb {
                     if !ppu.control().video_enabled() {
                         self.vram_dma.block_remaining = 16;
                         self.vram_dma.pend_from_arm = true;
-                        self.vram_dma.setup_cells = 0;
-                        self.vram_dma.ready_in = 2;
+                        self.vram_dma.setup_cells.clear();
+                        self.vram_dma.ready_in.arm(2);
                     }
                 } else if self.vram_dma.mode == TransferMode::HBlank {
                     // bit 7 = 0 while an HDMA runs clears the arming only (no
@@ -1639,7 +1676,7 @@ impl Model for Cgb {
         // (no latched IRQ) still arms the blind at its wake; the countdown
         // runs on engine ticks only.
         if self.vram_dma.prev_cpu_halted && !cpu_halted {
-            self.vram_dma.halt_wake_blind = VramDma::HALT_WAKE_BLIND_TICKS;
+            self.vram_dma.halt_wake_blind.arm(VramDma::HALT_WAKE_BLIND_TICKS);
         }
         // An arm-strobe launch must ready with a fall of mode-0 margin: the
         // readiness latch's confirmation sample on the following fall reads
@@ -1662,11 +1699,11 @@ impl Model for Cgb {
         if cpu_halted
             && !self.vram_dma.prev_cpu_halted
             && self.vram_dma.block_remaining == 16
-            && self.vram_dma.ready_in > 0
+            && self.vram_dma.ready_in.active()
         {
             self.vram_dma.block_remaining = 0;
-            self.vram_dma.ready_in = 0;
-            self.vram_dma.setup_cells = 0;
+            self.vram_dma.ready_in.clear();
+            self.vram_dma.setup_cells.clear();
             self.vram_dma.pend = true;
             self.vram_dma.pend_granted = true;
             self.vram_dma.grant_counted = true;
@@ -1715,23 +1752,18 @@ impl Model for Cgb {
             return;
         }
 
-        if self.vram_dma.halt_wake_blind > 0 {
-            self.vram_dma.halt_wake_blind -= 1;
-            if entry_edge {
-                self.vram_dma.hblank_block_taken = true;
-            }
+        if self.vram_dma.halt_wake_blind.tick() && entry_edge {
+            self.vram_dma.hblank_block_taken = true;
         }
 
         // The post-switch re-engage window: a fresh mode-0 entry edge inside
         // it passes unserviced (no pend, no retry). The first running tick
         // after the blackout carries the frozen pre-switch view — a mode-0
         // level there is blackout-carried, not an entry, and stays eligible.
-        if self.vram_dma.wake_pend_blind > 0 {
-            let first_tick = self.vram_dma.wake_pend_blind == VramDma::WAKE_PEND_BLIND_TICKS;
-            self.vram_dma.wake_pend_blind -= 1;
-            if entry_edge && !first_tick {
-                self.vram_dma.hblank_block_taken = true;
-            }
+        let wake_pend_first_tick =
+            self.vram_dma.wake_pend_blind.remaining() == VramDma::WAKE_PEND_BLIND_TICKS;
+        if self.vram_dma.wake_pend_blind.tick() && entry_edge && !wake_pend_first_tick {
+            self.vram_dma.hblank_block_taken = true;
         }
 
         // Two-stage trigger, evaluated each fall on the post-rise mode view
@@ -1764,19 +1796,21 @@ impl Model for Cgb {
             // arriving pre-charged.
             let precharged = granted && !cpu_halted;
             self.vram_dma.park_waits_for_fetch = !(self.vram_dma.pend_from_arm || halted_entering);
-            self.vram_dma.ready_in = if precharged { 0 } else { 2 };
-            self.vram_dma.setup_cells = if self.vram_dma.pend_from_arm || precharged {
-                0
-            } else {
-                1
-            };
+            self.vram_dma.ready_in.arm(if precharged { 0 } else { 2 });
+            self.vram_dma
+                .setup_cells
+                .arm(if self.vram_dma.pend_from_arm || precharged {
+                    0
+                } else {
+                    1
+                });
             // FF55 counts the block out at commit, not at drain end.
             if !self.vram_dma.grant_counted {
                 self.vram_dma.granted_ahead += 1;
             }
             self.vram_dma.grant_counted = false;
             if granted {
-                self.vram_dma.wake_tenure = VramDma::WAKE_TENURE_TICKS;
+                self.vram_dma.wake_tenure.arm(VramDma::WAKE_TENURE_TICKS);
             }
             self.vram_dma.pend_granted = false;
         }
@@ -1789,13 +1823,10 @@ impl Model for Cgb {
         // it — the entry neither pends nor retries, but its claim stands: the
         // engine holds the VRAM select, undriven, until the owed block is
         // really serviced.
-        if self.vram_dma.wake_tenure > 0 {
-            self.vram_dma.wake_tenure -= 1;
-            if entry_edge {
-                self.vram_dma.hblank_block_taken = true;
-                if self.vram_dma.remaining > 0 {
-                    self.vram_dma.idle_claim = true;
-                }
+        if self.vram_dma.wake_tenure.tick() && entry_edge {
+            self.vram_dma.hblank_block_taken = true;
+            if self.vram_dma.remaining > 0 {
+                self.vram_dma.idle_claim = true;
             }
         }
         self.vram_dma.pend = !committing
@@ -1809,20 +1840,17 @@ impl Model for Cgb {
             self.vram_dma.pend_age = 0;
         }
         self.vram_dma.armed_this_fall = false;
-        if self.vram_dma.ready_in > 0 {
-            self.vram_dma.ready_in -= 1;
-            // An arm-strobe launch must ready inside mode 0: readiness
-            // completing after the mode-0 exit reverts the block (FF55 count
-            // restored) to wait for the next entry.
-            // Single speed only: the double-speed readiness-vs-exit margin is
-            // unmeasured, and the DS late_enable rows expect the arm serviced.
-            if self.vram_dma.ready_in == 0
-                && self.vram_dma.block_from_arm
-                && self.vram_dma.block_remaining == 16
-                && !self.double_speed
-            {
-                self.vram_dma.arm_ready_probation = true;
-            }
+        // An arm-strobe launch must ready inside mode 0: readiness completing
+        // after the mode-0 exit reverts the block (FF55 count restored) to wait
+        // for the next entry. Single speed only: the double-speed
+        // readiness-vs-exit margin is unmeasured, and the DS late_enable rows
+        // expect the arm serviced.
+        if self.vram_dma.ready_in.expired()
+            && self.vram_dma.block_from_arm
+            && self.vram_dma.block_remaining == 16
+            && !self.double_speed
+        {
+            self.vram_dma.arm_ready_probation = true;
         }
 
         // Refill this M-cycle's byte budget while the transfer is moving bytes:
@@ -1892,14 +1920,14 @@ impl Model for Cgb {
         {
             self.vram_dma.block_remaining = 16;
             self.vram_dma.pend_from_arm = true;
-            self.vram_dma.setup_cells = 0;
-            self.vram_dma.ready_in = 2;
+            self.vram_dma.setup_cells.clear();
+            self.vram_dma.ready_in.arm(2);
         }
     }
 
     fn vram_dma_seizes_bus(&self) -> bool {
-        self.vram_dma.ready_in == 0
-            && (self.vram_dma.setup_cells > 0
+        !self.vram_dma.ready_in.active()
+            && (self.vram_dma.setup_cells.active()
                 || (self.vram_dma.block_remaining > 0 && self.vram_dma.remaining > 0))
     }
 
@@ -1999,7 +2027,7 @@ impl Cgb {
     /// active, quota available, no setup cell pending) — for the OAM-DMA
     /// bus-contention check.
     fn vram_dma_will_move(&self) -> bool {
-        self.vram_dma.setup_cells == 0 && self.vram_dma.quota > 0 && self.vram_dma.moving()
+        !self.vram_dma.setup_cells.active() && self.vram_dma.quota > 0 && self.vram_dma.moving()
     }
 
     /// The byte the VRAM DMA is about to move is a switch-cancel escape byte;
@@ -2012,12 +2040,7 @@ impl Cgb {
     /// loading its working pointers from the HDMA1-4 holding registers (the FF55
     /// arm strobe performs that load itself). Consumed once per block.
     fn vram_dma_take_setup_cell(&mut self) -> bool {
-        if self.vram_dma.setup_cells > 0 {
-            self.vram_dma.setup_cells -= 1;
-            true
-        } else {
-            false
-        }
+        self.vram_dma.setup_cells.tick()
     }
 
     /// The next byte the VRAM DMA moves this M-cycle — `(source, destination)`
