@@ -3,6 +3,7 @@ use pulse::PulseChannel;
 use pulse_sweep::PulseSweepChannel;
 use wave::WaveChannel;
 
+pub mod envelope;
 pub mod noise;
 pub mod pulse;
 pub mod pulse_sweep;

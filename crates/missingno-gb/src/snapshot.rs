@@ -154,20 +154,20 @@ pub fn capture_apu(gb: &GameBoy) -> ApuSnapshot {
         prev_div_apu_bit: audio.prev_div_apu_bit,
 
         ch1_period: ch.ch1.period.0,
-        ch1_envelope_timer: ch.ch1.envelope_timer,
+        ch1_envelope_timer: ch.ch1.envelope.timer,
         ch1_sweep_timer: ch.ch1.sweep_timer,
         ch1_sweep_enabled: ch.ch1.sweep_enabled,
         ch1_sweep_negate_used: ch.ch1.sweep_negate_used,
         ch1_length_enabled: ch.ch1.length_enabled,
 
         ch2_period: ch.ch2.period.0,
-        ch2_envelope_timer: ch.ch2.envelope_timer,
+        ch2_envelope_timer: ch.ch2.envelope.timer,
         ch2_length_enabled: ch.ch2.length_enabled,
 
         ch3_period: ch.ch3.period.0,
         ch3_length_enabled: ch.ch3.length_enabled,
 
-        ch4_envelope_timer: ch.ch4.envelope_timer,
+        ch4_envelope_timer: ch.ch4.envelope.timer,
         ch4_length_enabled: ch.ch4.length_enabled,
     }
 }

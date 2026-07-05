@@ -1083,9 +1083,9 @@ fn audio_state<M: Model>(gb: &Console<M>) -> serde_json::Value {
             "pwm_latch": ch1.pwm_latch,
             "pending_trigger_sync": ch1.pending_trigger_sync,
             "divider_load_settle": ch1.divider_load_settle,
-            "current_volume": ch1.current_volume,
-            "envelope_timer": ch1.envelope_timer,
-            "envelope_stopped": ch1.envelope_stopped,
+            "current_volume": ch1.envelope.volume,
+            "envelope_timer": ch1.envelope.timer,
+            "envelope_stopped": ch1.envelope.stopped,
             "shadow_frequency": ch1.shadow_frequency,
             "sweep_timer": ch1.sweep_timer,
             "sweep_enabled": ch1.sweep_enabled,
@@ -1105,9 +1105,9 @@ fn audio_state<M: Model>(gb: &Console<M>) -> serde_json::Value {
             "pwm_latch": ch2.pwm_latch,
             "pending_trigger_sync": ch2.pending_trigger_sync,
             "divider_load_settle": ch2.divider_load_settle,
-            "current_volume": ch2.current_volume,
-            "envelope_timer": ch2.envelope_timer,
-            "envelope_stopped": ch2.envelope_stopped,
+            "current_volume": ch2.envelope.volume,
+            "envelope_timer": ch2.envelope.timer,
+            "envelope_stopped": ch2.envelope.stopped,
         },
 
         "ch3": {
@@ -1141,9 +1141,9 @@ fn audio_state<M: Model>(gb: &Console<M>) -> serde_json::Value {
             "frequency_and_randomness": ch4.frequency_and_randomness.0,
             "divider": ch4.divider,
             "lfsr": format!("{:04x}", ch4.lfsr),
-            "current_volume": ch4.current_volume,
-            "envelope_timer": ch4.envelope_timer,
-            "envelope_stopped": ch4.envelope_stopped,
+            "current_volume": ch4.envelope.volume,
+            "envelope_timer": ch4.envelope.timer,
+            "envelope_stopped": ch4.envelope.stopped,
         },
     })
 }

@@ -608,14 +608,14 @@ impl Tracer {
                 // APU internal — channel 1
                 Emitter::Ch1Active => w.set_bool(col, channels.ch1.enabled.enabled),
                 Emitter::Ch1FreqCnt => w.set_u16(col, channels.ch1.divider.counter),
-                Emitter::Ch1EnvVol => w.set_u8(col, channels.ch1.current_volume),
+                Emitter::Ch1EnvVol => w.set_u8(col, channels.ch1.envelope.volume),
                 Emitter::Ch1Phase => w.set_u8(col, channels.ch1.wave_duty_position),
                 Emitter::Ch1SweepShadow => w.set_u16(col, channels.ch1.shadow_frequency),
                 Emitter::Ch1LenCnt => w.set_u8(col, channels.ch1.length_counter as u8),
                 // APU internal — channel 2
                 Emitter::Ch2Active => w.set_bool(col, channels.ch2.enabled.enabled),
                 Emitter::Ch2FreqCnt => w.set_u16(col, channels.ch2.divider.counter),
-                Emitter::Ch2EnvVol => w.set_u8(col, channels.ch2.current_volume),
+                Emitter::Ch2EnvVol => w.set_u8(col, channels.ch2.envelope.volume),
                 Emitter::Ch2Phase => w.set_u8(col, channels.ch2.wave_duty_position),
                 Emitter::Ch2LenCnt => w.set_u8(col, channels.ch2.length_counter as u8),
                 // APU internal — channel 3
@@ -635,7 +635,7 @@ impl Tracer {
                 // APU internal — channel 4
                 Emitter::Ch4Active => w.set_bool(col, channels.ch4.enabled.enabled),
                 Emitter::Ch4FreqCnt => w.set_u16(col, channels.ch4.divider),
-                Emitter::Ch4EnvVol => w.set_u8(col, channels.ch4.current_volume),
+                Emitter::Ch4EnvVol => w.set_u8(col, channels.ch4.envelope.volume),
                 Emitter::Ch4Lfsr => w.set_u16(col, channels.ch4.lfsr),
                 Emitter::Ch4LenCnt => w.set_u8(col, channels.ch4.length_counter as u8),
                 // Pixel output

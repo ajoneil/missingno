@@ -1,6 +1,7 @@
 use super::{
     Enabled,
-    registers::{EnvelopeDirection, Prescaler, VolumeAndEnvelope},
+    envelope::Envelope,
+    registers::{Prescaler, VolumeAndEnvelope},
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -53,15 +54,7 @@ pub struct NoiseChannel {
     /// swallowed so the first LFSR shift lands one sample later than a cold trigger.
     pub skip_first_clock: bool,
     pub lfsr: u16,
-    pub current_volume: u8,
-    pub envelope_timer: u8,
-    /// Stop latch (CH4 mirror of CH1/CH2's JEME): a fire that samples a
-    /// saturated volume counter latches it until the next trigger.
-    pub envelope_stopped: bool,
-    /// Envelope-fire arm (CH4 mirror of CH1/CH2's `kyvo`/JOPA): set at kene↓
-    /// on counter saturation; the volume commit is deferred to the next
-    /// horu_512hz↑ sample.
-    pub kyvo: bool,
+    pub envelope: Envelope,
     pub length_counter: u16,
     /// An input to `digital_sample()` / the mix may have changed.
     pub output_dirty: bool,
@@ -90,10 +83,7 @@ impl Default for NoiseChannel {
             double_speed: false,
             skip_first_clock: false,
             lfsr: 0x7fff,
-            current_volume: 0,
-            envelope_timer: 0,
-            envelope_stopped: false,
-            kyvo: false,
+            envelope: Envelope::default(),
             length_counter: 0,
             output_dirty: true,
         }
@@ -118,10 +108,7 @@ impl NoiseChannel {
         self.jeso = false;
         self.skip_first_clock = false;
         self.lfsr = 0x7fff;
-        self.current_volume = 0;
-        self.envelope_timer = 0;
-        self.envelope_stopped = false;
-        self.kyvo = false;
+        self.envelope = Envelope::default();
         self.length_counter = length_counter;
         self.output_dirty = true;
     }
@@ -150,13 +137,11 @@ impl NoiseChannel {
             Register::VolumeAndEnvelope => {
                 // Write-strobe transient (CH4 mirror of CH1/CH2): one +1
                 // volume clock iff the old pace was 0, free 4-bit wrap.
-                if self.volume_and_envelope.sweep_pace() == 0 && !self.envelope_stopped {
-                    self.current_volume = (self.current_volume + 1) & 0xf;
-                }
+                self.envelope.zombie_bump(self.volume_and_envelope.sweep_pace());
                 self.volume_and_envelope = VolumeAndEnvelope(value);
                 // pace=0 → JOPA async-reset; any armed kyvo is dropped before horu↑.
                 if self.volume_and_envelope.sweep_pace() == 0 {
-                    self.kyvo = false;
+                    self.envelope.kyvo = false;
                 }
                 // Disabling the DAC immediately disables the channel
                 if value & 0xf8 == 0 {
@@ -261,11 +246,11 @@ impl NoiseChannel {
         // later than a cold trigger: swallow the first tap.
         self.skip_first_clock = was_running;
         self.lfsr = 0x7fff;
-        self.current_volume = self.volume_and_envelope.initial_volume();
-        self.envelope_timer = self.volume_and_envelope.sweep_pace();
-        self.envelope_stopped = false;
         // ch4_restart resets JOPA: any prior armed kyvo is dropped.
-        self.kyvo = false;
+        self.envelope.trigger(
+            self.volume_and_envelope.initial_volume(),
+            self.volume_and_envelope.sweep_pace(),
+        );
 
         // DAC check
         if self.volume_and_envelope.0 & 0xf8 == 0 {
@@ -353,51 +338,21 @@ impl NoiseChannel {
 
     /// kene↓ edge (fs step 7→0). Advances the envelope counter and arms
     /// `kyvo` on saturation; the volume update is deferred to the next
-    /// horu_512hz↑ sample.
+    /// horu_512hz↑ sample. CH4 has no divider load-settle window (`held`).
     pub fn tick_envelope_counter(&mut self) {
-        let pace = self.volume_and_envelope.sweep_pace();
-        if pace == 0 {
-            return;
-        }
-        if self.envelope_timer > 0 {
-            self.envelope_timer -= 1;
-        }
-        if self.envelope_timer == 0 {
-            self.envelope_timer = pace;
-            self.kyvo = true;
-        }
+        self.envelope
+            .tick_counter(self.volume_and_envelope.sweep_pace(), false);
     }
 
     /// horu_512hz↑ edge (every fs step transition). Commits an armed `kyvo`
     /// into the volume counter — one 512 Hz tick after the kene↓ that armed it.
     pub fn sample_envelope_jopa(&mut self) {
-        if !self.kyvo {
-            return;
-        }
-        self.kyvo = false;
-        let pace = self.volume_and_envelope.sweep_pace();
-        if pace == 0 || !self.enabled.enabled || self.envelope_stopped {
-            return;
-        }
-        // A fire that samples a saturated counter latches the stop
-        // instead of stepping — no arithmetic clamp.
-        match self.volume_and_envelope.direction() {
-            EnvelopeDirection::Increase => {
-                if self.current_volume == 15 {
-                    self.envelope_stopped = true;
-                } else {
-                    self.current_volume += 1;
-                    self.output_dirty = true;
-                }
-            }
-            EnvelopeDirection::Decrease => {
-                if self.current_volume == 0 {
-                    self.envelope_stopped = true;
-                } else {
-                    self.current_volume -= 1;
-                    self.output_dirty = true;
-                }
-            }
+        if self.envelope.sample_fire(
+            self.volume_and_envelope.sweep_pace(),
+            self.enabled.enabled,
+            self.volume_and_envelope.direction(),
+        ) {
+            self.output_dirty = true;
         }
     }
 
@@ -407,7 +362,7 @@ impl NoiseChannel {
         }
         // Output is inverted bit 0 of LFSR
         if self.lfsr & 1 == 0 {
-            self.current_volume
+            self.envelope.volume
         } else {
             0
         }

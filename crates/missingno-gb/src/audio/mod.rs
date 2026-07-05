@@ -458,6 +458,7 @@ impl<A: ApuSpec> Audio<A> {
         use channels::wave::Volume as WaveVolume;
         use channels::{
             Enabled,
+            envelope::Envelope,
             noise::NoiseChannel,
             pulse::PulseChannel,
             pulse_sweep::{PulseSweepChannel, Sweep},
@@ -483,16 +484,15 @@ impl<A: ApuSpec> Audio<A> {
                 pending_trigger_sync: 0,
                 divider_load_settle: false,
                 sweep_load_hold: 0,
-                current_volume: 0,
-                envelope_timer: snap.ch1_envelope_timer,
+                envelope: Envelope {
+                    timer: snap.ch1_envelope_timer,
+                    ..Envelope::default()
+                },
                 length_counter: 0,
                 shadow_frequency: snap.ch1_period,
                 sweep_timer: snap.ch1_sweep_timer,
                 sweep_enabled: snap.ch1_sweep_enabled,
                 sweep_negate_used: snap.ch1_sweep_negate_used,
-                kyvo: false,
-                envelope_stopped: false,
-                envelope_enable_tick_pending: false,
                 coze: false,
                 sweep_cate_taken: false,
                 sweep_calc_steps: 0,
@@ -517,12 +517,11 @@ impl<A: ApuSpec> Audio<A> {
                 ch2_frst: false,
                 pending_trigger_sync: 0,
                 divider_load_settle: false,
-                current_volume: 0,
-                envelope_timer: snap.ch2_envelope_timer,
+                envelope: Envelope {
+                    timer: snap.ch2_envelope_timer,
+                    ..Envelope::default()
+                },
                 length_counter: 0,
-                kyvo: false,
-                envelope_stopped: false,
-                envelope_enable_tick_pending: false,
                 output_dirty: true,
             },
             ch3: WaveChannel {
@@ -568,10 +567,10 @@ impl<A: ApuSpec> Audio<A> {
                 double_speed: false,
                 skip_first_clock: false,
                 lfsr: 0x7FFF,
-                current_volume: 0,
-                envelope_timer: snap.ch4_envelope_timer,
-                envelope_stopped: false,
-                kyvo: false,
+                envelope: Envelope {
+                    timer: snap.ch4_envelope_timer,
+                    ..Envelope::default()
+                },
                 length_counter: 0,
                 output_dirty: true,
             },
