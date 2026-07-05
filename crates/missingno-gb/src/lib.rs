@@ -535,10 +535,12 @@ pub trait Model: Default {
     fn vram_dma_lcd_disabled(&mut self) {}
 }
 
-/// A Game Boy–family console: the SM83 CPU, the shared PPU/APU/timer/DMA
-/// silicon, and the step loop + memory map that drive them. The handful of
-/// DMG/CGB divergences are supplied by the [`Model`] parameter `M`.
-pub struct Console<M: Model> {
+/// The shared hardware of a Game Boy–family console: the SM83 CPU, the
+/// PPU/APU/timer/DMA silicon, the buses, and the master clock. Every field is
+/// common to all consoles in the family; the DMG/CGB divergences live in the
+/// [`Model`] on [`Console`], which reaches this silicon through `M`'s
+/// associated types only — never `M` itself.
+struct Chassis<M: Model> {
     cpu: Cpu,
 
     external: ExternalBus,
@@ -583,7 +585,12 @@ pub struct Console<M: Model> {
     /// Tuple is `(register address, value)`; drained in `tick_mcycle_boundary_fall`
     /// after the byte commit.
     dma_pending_bank_write: Option<(u16, u8)>,
+}
 
+/// A Game Boy–family console: the shared [`Chassis`] silicon plus the [`Model`]
+/// `M` supplying the handful of DMG/CGB divergences that drive it.
+pub struct Console<M: Model> {
+    chassis: Chassis<M>,
     model: M,
 }
 
@@ -647,24 +654,26 @@ pub type GameBoy = Console<Dmg>;
 impl<M: Model> Console<M> {
     pub fn new(cartridge: Cartridge, boot_rom: Option<BootRom>) -> Self {
         let mut console = Console {
-            cpu: Cpu::new(),
-            external: ExternalBus::new(cartridge, boot_rom),
-            high_ram: HighRam::new(),
-            vram_bus: VramBus::new(),
-            ppu: Ppu::new(),
-            screen: M::Screen::default(),
-            audio: Audio::new(),
-            joypad: Joypad::new(),
-            interrupts: interrupts::Registers::new(),
-            serial: serial_transfer::Serial::new(),
-            timers: timers::Timers::new(),
-            dma: Dma::new(),
-            dma_oam_was_transferring: false,
-            clock: MasterClock::new(CpuDivider::One),
-            cpu_bus: CpuBus::new(),
-            bus_trace: cpu_bus::BusTrace::new(),
-            dma_conflict_write_pending: None,
-            dma_pending_bank_write: None,
+            chassis: Chassis {
+                cpu: Cpu::new(),
+                external: ExternalBus::new(cartridge, boot_rom),
+                high_ram: HighRam::new(),
+                vram_bus: VramBus::new(),
+                ppu: Ppu::new(),
+                screen: M::Screen::default(),
+                audio: Audio::new(),
+                joypad: Joypad::new(),
+                interrupts: interrupts::Registers::new(),
+                serial: serial_transfer::Serial::new(),
+                timers: timers::Timers::new(),
+                dma: Dma::new(),
+                dma_oam_was_transferring: false,
+                clock: MasterClock::new(CpuDivider::One),
+                cpu_bus: CpuBus::new(),
+                bus_trace: cpu_bus::BusTrace::new(),
+                dma_conflict_write_pending: None,
+                dma_pending_bank_write: None,
+            },
             model: M::default(),
         };
         console.rebuild_state();
@@ -675,7 +684,7 @@ impl<M: Model> Console<M> {
     /// preserving the inserted cartridge (and its battery-backed SRAM),
     /// the boot ROM contents, and the user-attached serial link.
     pub fn reset(&mut self) {
-        self.external.reset();
+        self.chassis.external.reset();
         self.rebuild_state();
     }
 
@@ -692,103 +701,106 @@ impl<M: Model> Console<M> {
     /// so the staging block in `rise()` doesn't fire for that first
     /// M-cycle.
     fn rebuild_state(&mut self) {
-        let has_boot_rom = self.external.has_boot_rom();
-        let header_checksum = self.external.cartridge.header_checksum();
+        let has_boot_rom = self.chassis.external.has_boot_rom();
+        let header_checksum = self.chassis.external.cartridge.header_checksum();
 
-        self.cpu = if has_boot_rom {
+        self.chassis.cpu = if has_boot_rom {
             Cpu::new()
         } else {
             M::cpu_post_boot(header_checksum)
         };
-        self.screen = M::Screen::default();
-        self.high_ram = HighRam::new();
-        let cgb_cart = self.external.cartridge.is_cgb();
-        self.ppu = if has_boot_rom {
+        self.chassis.screen = M::Screen::default();
+        self.chassis.high_ram = HighRam::new();
+        let cgb_cart = self.chassis.external.cartridge.is_cgb();
+        self.chassis.ppu = if has_boot_rom {
             Ppu::new()
         } else {
             M::ppu_post_boot(cgb_cart)
         };
-        self.joypad = if has_boot_rom {
+        self.chassis.joypad = if has_boot_rom {
             Joypad::new()
         } else {
             M::joypad_post_boot()
         };
-        self.interrupts = interrupts::Registers::new();
-        self.serial = serial_transfer::Serial::new();
-        self.timers = if has_boot_rom {
+        self.chassis.interrupts = interrupts::Registers::new();
+        self.chassis.serial = serial_transfer::Serial::new();
+        self.chassis.timers = if has_boot_rom {
             timers::Timers::new()
         } else {
             M::timers_post_boot(cgb_cart)
         };
-        self.audio = if has_boot_rom {
+        self.chassis.audio = if has_boot_rom {
             Audio::new()
         } else {
-            M::audio_post_boot(self.timers.internal_counter, cgb_cart)
+            M::audio_post_boot(self.chassis.timers.internal_counter, cgb_cart)
         };
-        self.dma = if has_boot_rom {
+        self.chassis.dma = if has_boot_rom {
             Dma::new()
         } else {
             M::dma_post_boot()
         };
-        self.vram_bus = VramBus::new();
-        self.model.on_reset(&self.external.cartridge, has_boot_rom);
+        self.chassis.vram_bus = VramBus::new();
+        self.model
+            .on_reset(&self.chassis.external.cartridge, has_boot_rom);
 
         if !has_boot_rom {
-            let read = |a: u16| self.external.cartridge.read(a);
+            let read = |a: u16| self.chassis.external.cartridge.read(a);
             let logo: [u8; 0x30] = std::array::from_fn(|i| read(0x0104 + i as u16));
-            self.vram_bus.vram.init_post_boot(&logo);
+            self.chassis.vram_bus.vram.init_post_boot(&logo);
             let header = ppu::CartridgeBootHeader {
-                is_cgb: self.external.cartridge.is_cgb(),
+                is_cgb: self.chassis.external.cartridge.is_cgb(),
                 title: std::array::from_fn(|i| read(0x0134 + i as u16)),
                 old_licensee: read(0x014B),
                 new_licensee: [read(0x0144), read(0x0145)],
             };
-            self.ppu.init_model_post_boot(&header);
+            self.chassis.ppu.init_model_post_boot(&header);
         }
 
-        self.bus_trace = cpu_bus::BusTrace::new();
+        self.chassis.bus_trace = cpu_bus::BusTrace::new();
         // Re-anchor the CPU clock to a rise; the free-running dot phase is left
         // as-is (the old reset touched only `clock_phase`).
-        self.clock.engage_on_rise();
+        self.chassis.clock.engage_on_rise();
         // The model resets to single speed; realign the clock's ÷1/÷2 cell so it
         // stays the sole ratio owner across a reset.
-        self.clock.set_divider(if self.double_speed_active() {
-            CpuDivider::Two
-        } else {
-            CpuDivider::One
-        });
-        self.cpu_bus = CpuBus::new();
-        self.dma_conflict_write_pending = None;
-        self.dma_pending_bank_write = None;
+        self.chassis
+            .clock
+            .set_divider(if self.double_speed_active() {
+                CpuDivider::Two
+            } else {
+                CpuDivider::One
+            });
+        self.chassis.cpu_bus = CpuBus::new();
+        self.chassis.dma_conflict_write_pending = None;
+        self.chassis.dma_pending_bank_write = None;
         self.model
             .console_state_mut()
             .set_dma_conflict_oam_zero(None);
         self.model.console_state_mut().set_dma_cpu_hold(false);
-        if let Some((address, _value)) = self.cpu.pending_bus_write() {
-            self.cpu_bus.stage_write(address);
-        } else if let Some(address) = self.cpu.pending_bus_read() {
-            self.cpu_bus.stage_read(address);
+        if let Some((address, _value)) = self.chassis.cpu.pending_bus_write() {
+            self.chassis.cpu_bus.stage_write(address);
+        } else if let Some(address) = self.chassis.cpu.pending_bus_read() {
+            self.chassis.cpu_bus.stage_read(address);
         }
     }
 
     pub fn cartridge(&self) -> &Cartridge {
-        &self.external.cartridge
+        &self.chassis.external.cartridge
     }
 
     pub fn cpu(&self) -> &Cpu {
-        &self.cpu
+        &self.chassis.cpu
     }
 
     pub fn cpu_mut(&mut self) -> &mut Cpu {
-        &mut self.cpu
+        &mut self.chassis.cpu
     }
 
     pub fn ppu(&self) -> &Ppu<M::Ppu> {
-        &self.ppu
+        &self.chassis.ppu
     }
 
     pub fn vram(&self) -> &<M::Ppu as PpuModel>::Vram {
-        &self.vram_bus.vram
+        &self.chassis.vram_bus.vram
     }
 
     /// Read a contiguous range of memory via peek (bypasses bus conflicts).
@@ -797,11 +809,11 @@ impl<M: Model> Console<M> {
     }
 
     pub fn audio(&self) -> &Audio<M::Apu> {
-        &self.audio
+        &self.chassis.audio
     }
 
     pub fn clock_phase(&self) -> ClockPhase {
-        self.clock.cpu_edge().into()
+        self.chassis.clock.cpu_edge().into()
     }
 
     /// CPU T-cycles advanced per PPU dot (1 single speed, 2 CGB double speed).
@@ -816,31 +828,33 @@ impl<M: Model> Console<M> {
     }
 
     pub fn screen(&self) -> &M::Screen {
-        &self.screen
+        &self.chassis.screen
     }
 
     pub fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
-        self.audio.drain_samples()
+        self.chassis.audio.drain_samples()
     }
 
     pub fn press_button(&mut self, button: Button) {
-        let before = self.joypad.input_lines();
-        self.joypad.press_button(button);
-        if before & !self.joypad.input_lines() != 0 {
-            self.interrupts.request(interrupts::Interrupt::Joypad);
+        let before = self.chassis.joypad.input_lines();
+        self.chassis.joypad.press_button(button);
+        if before & !self.chassis.joypad.input_lines() != 0 {
+            self.chassis
+                .interrupts
+                .request(interrupts::Interrupt::Joypad);
         }
     }
 
     pub fn release_button(&mut self, button: Button) {
-        self.joypad.release_button(button);
+        self.chassis.joypad.release_button(button);
     }
 
     pub fn timers(&self) -> &timers::Timers {
-        &self.timers
+        &self.chassis.timers
     }
 
     pub fn interrupts(&self) -> &interrupts::Registers {
-        &self.interrupts
+        &self.chassis.interrupts
     }
 
     /// True while a CGB double-speed switch holds the CPU `Stopped` in the
@@ -857,27 +871,27 @@ impl<M: Model> Console<M> {
     }
 
     pub fn dma(&self) -> &Dma {
-        &self.dma
+        &self.chassis.dma
     }
 
     pub fn serial(&self) -> &serial_transfer::Serial {
-        &self.serial
+        &self.chassis.serial
     }
 
     pub fn external_bus(&self) -> &ExternalBus {
-        &self.external
+        &self.chassis.external
     }
 
     pub fn high_ram(&self) -> &HighRam {
-        &self.high_ram
+        &self.chassis.high_ram
     }
 
     pub fn drain_serial_output(&mut self) -> Vec<u8> {
-        self.serial.drain_output()
+        self.chassis.serial.drain_output()
     }
 
     pub fn set_link(&mut self, link: Box<dyn serial_transfer::SerialLink>) {
-        self.serial.set_link(link);
+        self.chassis.serial.set_link(link);
     }
 }
 

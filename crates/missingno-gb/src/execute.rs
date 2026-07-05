@@ -47,14 +47,14 @@ impl<M: Model> Console<M> {
     /// Returns (result, trace). Trace is empty when `trace` is false.
     pub fn step_traced(&mut self, trace: bool) -> (StepResult, Vec<BusAccess>) {
         if trace {
-            self.bus_trace.enable();
+            self.chassis.bus_trace.enable();
         }
 
         // If step_tcycle() left us mid-instruction, drain to the next
         // boundary first, then run one full instruction.
         let mut new_screen = false;
         let mut tcycles = 0u32;
-        if !self.cpu.at_instruction_boundary() {
+        if !self.chassis.cpu.at_instruction_boundary() {
             let r = self.step_instruction();
             new_screen |= r.new_screen;
             tcycles += r.tcycles;
@@ -66,14 +66,14 @@ impl<M: Model> Console<M> {
         self.resolve_stop(tcycles);
         self.manage_dma_hold();
 
-        let sram_dirty = self.external.cartridge.take_sram_dirty();
+        let sram_dirty = self.chassis.external.cartridge.take_sram_dirty();
         (
             StepResult {
                 new_screen,
                 sram_dirty,
                 tcycles,
             },
-            self.bus_trace.take(),
+            self.chassis.bus_trace.take(),
         )
     }
 
@@ -84,17 +84,17 @@ impl<M: Model> Console<M> {
     /// is advanced and control returns to the caller.
     fn step_instruction(&mut self) -> StepResult {
         let mut new_screen = false;
-        self.cpu.data_latch = 0;
+        self.chassis.cpu.data_latch = 0;
 
         // Consume the current instruction boundary (we're starting
         // from a boundary — we want to run until the NEXT one).
-        self.cpu.take_instruction_boundary();
+        self.chassis.cpu.take_instruction_boundary();
 
         // Speed-switch blackout: the CPU clock is held while the dot clock
         // keeps running. Drive one CPU M-cycle of held master edges through the
         // same `execute_phase` loop (the gate is `Held`, the CPU frozen) and
         // return, draining the blackout across step()s until the count empties.
-        if self.cpu.is_stopped() && self.model.speed_switch_in_progress() {
+        if self.chassis.cpu.is_stopped() && self.model.speed_switch_in_progress() {
             return self.step_blackout_chunk();
         }
 
@@ -113,16 +113,16 @@ impl<M: Model> Console<M> {
             new_screen |= result.new_screen;
 
             // A T-cycle completes every two CPU edges, at the return to a rise.
-            if self.clock.cpu_edge() == Edge::Rise {
+            if self.chassis.clock.cpu_edge() == Edge::Rise {
                 tcycles += 1;
-                if self.cpu.at_instruction_boundary() {
+                if self.chassis.cpu.at_instruction_boundary() {
                     break;
                 }
             }
         }
         // Don't drain sram_dirty here — let the caller (step_traced) do it
         // so the flag accumulates across multiple step_instruction calls.
-        let sram_dirty = self.external.cartridge.sram_dirty;
+        let sram_dirty = self.chassis.external.cartridge.sram_dirty;
         StepResult {
             new_screen,
             sram_dirty,
@@ -146,14 +146,14 @@ impl<M: Model> Console<M> {
         loop {
             let result = self.execute_phase(CpuGate::Running);
             new_screen |= result.new_screen;
-            if self.clock.cpu_edge() == Edge::Rise {
+            if self.chassis.clock.cpu_edge() == Edge::Rise {
                 break;
             }
         }
 
         // Consume the boundary flag so step_traced sees mid-instruction
         // state after this returns.
-        self.cpu.take_instruction_boundary();
+        self.chassis.cpu.take_instruction_boundary();
 
         new_screen
     }
@@ -167,12 +167,12 @@ impl<M: Model> Console<M> {
     /// count rather than a fixed map.
     fn execute_phase(&mut self, gate: CpuGate) -> PhaseResult {
         // The clock owns the ÷1/÷2 ratio; KEY1 mutates it at the speed switch.
-        let double_speed = self.clock.divider() == CpuDivider::Two;
+        let double_speed = self.chassis.clock.divider() == CpuDivider::Two;
         // The pre-advance dot phase — the fall arm's standalone dot_work read of
         // the dot domain's current edge.
-        let dot_phase_before = self.clock.dot_phase();
-        let master_edge_before = self.clock.master_edge();
-        let tick = self.clock.advance(gate);
+        let dot_phase_before = self.chassis.clock.dot_phase();
+        let master_edge_before = self.chassis.clock.master_edge();
+        let tick = self.chassis.clock.advance(gate);
         // A held edge: the CPU is frozen and the dot domain alone advanced.
         if tick.cpu.is_none() {
             let dot = tick.dot.expect("a held edge always carries a dot edge");
@@ -235,10 +235,10 @@ impl<M: Model> Console<M> {
         // `cpu_phase_in_dot==0`. `advance` already toggled
         // both phases; only the mode-2 settle ride stays here.
         if tick.dot.is_some() {
-            self.ppu.tick_onset_settles();
+            self.chassis.ppu.tick_onset_settles();
         }
         if M::DOUBLE_SPEED {
-            self.interrupts.tick_set_settles();
+            self.chassis.interrupts.tick_set_settles();
         }
         PhaseResult { new_screen, pixel }
     }
@@ -251,7 +251,7 @@ impl<M: Model> Console<M> {
     /// Public for external phase-stepping drivers (tracing), which must call
     /// this at each instruction boundary like `step` does.
     pub fn resolve_stop(&mut self, _elapsed_tcycles: u32) {
-        if !self.cpu.is_stopped() {
+        if !self.chassis.cpu.is_stopped() {
             return;
         }
 
@@ -266,41 +266,50 @@ impl<M: Model> Console<M> {
             return;
         }
 
-        match self.model.resolve_stop(self.ppu.dot_in_mcycle_phase()) {
+        match self
+            .model
+            .resolve_stop(self.chassis.ppu.dot_in_mcycle_phase())
+        {
             StopAction::SpeedSwitch => {
                 // Hardware resets DIV across the switch (the model has already
                 // toggled its speed bit and armed the blackout count). The CPU
                 // clock is then held while the dot clock runs the blackout out;
                 // `step_blackout_chunk` advances the master clock every edge and
                 // re-engages at the phase the count expires on.
-                let old_counter = self.timers.internal_counter();
+                let old_counter = self.chassis.timers.internal_counter();
                 let to_double = self.double_speed_active();
-                self.timers.reset_for_speed_switch();
-                self.audio
+                self.chassis.timers.reset_for_speed_switch();
+                self.chassis
+                    .audio
                     .on_div_write(old_counter.wrapping_sub(1), !to_double);
-                self.audio.on_speed_switch(to_double);
+                self.chassis.audio.on_speed_switch(to_double);
                 if let Some(interrupt) = self
+                    .chassis
                     .serial
                     .on_div_write(old_counter, self.model.has_serial_fast_clock())
                 {
-                    self.interrupts.request(interrupt);
+                    self.chassis.interrupts.request(interrupt);
                 }
                 // KEY1 has flipped the model's speed bit; align the clock's ÷1/÷2
                 // cell to the new ratio so the clock stays the sole ratio owner.
-                self.clock.set_divider(if self.double_speed_active() {
-                    CpuDivider::Two
-                } else {
-                    CpuDivider::One
-                });
+                self.chassis
+                    .clock
+                    .set_divider(if self.double_speed_active() {
+                        CpuDivider::Two
+                    } else {
+                        CpuDivider::One
+                    });
                 // An interrupt pending with IME set at the STOP preempts the
                 // post-STOP HALT: the switch happens but the CPU services the
                 // interrupt at once (DIV ≈ 0), not after the long wait.
-                if self.cpu.interrupts_enabled() && self.interrupts.triggered().is_some() {
+                if self.chassis.cpu.interrupts_enabled()
+                    && self.chassis.interrupts.triggered().is_some()
+                {
                     self.model.preempt_speed_switch_halt();
                 }
                 // Anchor the held-edge count at the current master edge; the
                 // blackout's elapsed count is `master_edge - blackout_anchor`.
-                let anchor = self.clock.master_edge();
+                let anchor = self.chassis.clock.master_edge();
                 self.model.console_state_mut().set_blackout_anchor(anchor);
                 // The upward grading's escape byte completes inside the
                 // blackout — the CPU is held and the bus free, so its tenure
@@ -321,17 +330,17 @@ impl<M: Model> Console<M> {
         // An HBlank block owning the bus finishes before a GDMA hold engages
         // (the two cannot share the buses), and the dispatch tenure is
         // indivisible — the hold waits for it like the HDMA grant does.
-        if self.model.console_state().bus_suspended() || self.cpu.in_dispatch() {
+        if self.model.console_state().bus_suspended() || self.chassis.cpu.in_dispatch() {
             return;
         }
         let holds = self.model.vram_dma_holds_cpu();
         let held = self.model.console_state().dma_cpu_hold();
         if holds && !held {
             self.model.console_state_mut().set_dma_cpu_hold(true);
-            self.cpu.begin_bus_hold();
+            self.chassis.cpu.begin_bus_hold();
         } else if !holds && held {
             self.model.console_state_mut().set_dma_cpu_hold(false);
-            self.cpu.end_bus_hold();
+            self.chassis.cpu.end_bus_hold();
         }
     }
 
@@ -345,24 +354,24 @@ impl<M: Model> Console<M> {
 
     fn dma_commit(&mut self, source: u16, dest: u16, byte: u8) {
         match ppu::memory::MappedAddress::map(dest) {
-            ppu::memory::MappedAddress::Oam(address) => self.ppu.write_oam(address, byte),
+            ppu::memory::MappedAddress::Oam(address) => self.chassis.ppu.write_oam(address, byte),
             ppu::memory::MappedAddress::Vram(address) => {
-                self.vram_bus.vram.cpu_write(address, byte)
+                self.chassis.vram_bus.vram.cpu_write(address, byte)
             }
         }
-        self.bus_trace.record(BusAccess {
+        self.chassis.bus_trace.record(BusAccess {
             address: source,
             value: byte,
             kind: BusAccessKind::DmaRead,
         });
-        self.bus_trace.record(BusAccess {
+        self.chassis.bus_trace.record(BusAccess {
             address: dest,
             value: byte,
             kind: BusAccessKind::DmaWrite,
         });
         match Bus::of(source) {
-            Some(Bus::External) => self.external.drive(byte),
-            Some(Bus::Vram) => self.vram_bus.drive(byte),
+            Some(Bus::External) => self.chassis.external.drive(byte),
+            Some(Bus::Vram) => self.chassis.vram_bus.drive(byte),
             None => {}
         }
     }
@@ -378,23 +387,26 @@ impl<M: Model> Console<M> {
             held: state.dma_cpu_hold(),
             claim: state.vram_dma_claim(),
         };
-        self.cpu.next_tcycle(grants);
+        self.chassis.cpu.next_tcycle(grants);
         // cpu_irq_ack1↑ at +2.993 dots into the dispatching M-cycle —
         // tcycle 3 rise in our half-phase resolution. Deferring to
         // tcycle 3 also lets M4's bus write commit (tcycle 2 fall)
         // before vector resolution reads IE (IE-push-bug semantics).
-        if self.cpu.last_tcycle().as_u8() == 3 {
+        if self.chassis.cpu.last_tcycle().as_u8() == 3 {
             self.apply_vector_resolve();
         }
 
-        let tcycle = self.cpu.last_tcycle();
+        let tcycle = self.chassis.cpu.last_tcycle();
         self.step_dispatch_logic(tcycle);
 
         // APU prescaler tick (apuv ↑) on every master-clock rise.
         if dot_work {
             let double_speed = self.double_speed_active();
-            self.audio
-                .tcycle(self.timers.internal_counter(), tcycle.as_u8(), double_speed);
+            self.chassis.audio.tcycle(
+                self.chassis.timers.internal_counter(),
+                tcycle.as_u8(),
+                double_speed,
+            );
         }
         tcycle
     }
@@ -405,22 +417,24 @@ impl<M: Model> Console<M> {
     /// lattice; there is no per-dot CPU edge for it to vary against). The
     /// M-boundary additionally runs its boundary CPU work and the HDMA grant.
     fn rise_cpu_pre(&mut self, ppu: PpuEdge, dot_work: bool) -> (bool, TCycle) {
-        let is_mcycle_boundary = self.cpu.consume_boundary_pending();
+        let is_mcycle_boundary = self.chassis.cpu.consume_boundary_pending();
 
         // Pre-ALET-rise XYMU (mode-3) view: the mode 3→0 XYMU.q↑ fires inside
         // this dot's `ppu_rise_edge`. A double-speed FF41 read latching on the
         // same phase resolves its mode to this pre-transition view (the CGB
         // CPU↔ALET read placement). Only double speed consumes it.
         if ppu == PpuEdge::Rise && self.double_speed_active() {
-            self.model.note_pre_alet_rendering(self.ppu.is_rendering());
-            if let Some(address) = self.cpu_bus.read_address() {
-                self.model.note_pre_alet_lock(self.ppu.read_lock(address));
+            self.model
+                .note_pre_alet_rendering(self.chassis.ppu.is_rendering());
+            if let Some(address) = self.chassis.cpu_bus.read_address() {
+                self.model
+                    .note_pre_alet_lock(self.chassis.ppu.read_lock(address));
             }
         }
 
         let tcycle = if is_mcycle_boundary {
             self.tick_mcycle_boundary_rise();
-            self.audio.mcycle_boundary();
+            self.chassis.audio.mcycle_boundary();
             // The HDMA grant is M-boundary-quantized: bus ownership asserts and
             // releases between M-cycles only. A dispatch sequence already in
             // flight when the transfer became ready holds the bus through its
@@ -432,33 +446,36 @@ impl<M: Model> Console<M> {
             // its M-cycles. The pick flips the phase after this point, so
             // entry is detected one boundary later against the request line's
             // one-boundary synchronizer stage.
-            if self.cpu.in_dispatch() {
-                if !self.cpu.dispatch_entry_sampled {
-                    self.cpu.dispatch_entry_sampled = true;
-                    self.cpu.dispatch_parks_behind_dma = self.cpu.dma_request_stood_prev2_boundary;
+            if self.chassis.cpu.in_dispatch() {
+                if !self.chassis.cpu.dispatch_entry_sampled {
+                    self.chassis.cpu.dispatch_entry_sampled = true;
+                    self.chassis.cpu.dispatch_parks_behind_dma =
+                        self.chassis.cpu.dma_request_stood_prev2_boundary;
                 }
             } else {
-                self.cpu.dispatch_entry_sampled = false;
-                self.cpu.dispatch_parks_behind_dma = false;
+                self.chassis.cpu.dispatch_entry_sampled = false;
+                self.chassis.cpu.dispatch_parks_behind_dma = false;
             }
             // Grant mode by the CPU's state at the commit: a halted-CPU
             // commit grants at the next M-boundary (the claim-standing
             // synchronizer still governs the halt-exit refetch); a running-CPU
             // commit waits for the in-flight instruction to retire.
-            if self.cpu.dma_arbiter_at_boundary {
-                self.cpu.dma_arbiter_at_boundary = false;
+            if self.chassis.cpu.dma_arbiter_at_boundary {
+                self.chassis.cpu.dma_arbiter_at_boundary = false;
                 self.model.vram_dma_instruction_retired();
             }
             let suspended = self.model.vram_dma_seizes_bus()
                 && (self.model.console_state().bus_suspended()
-                    || if self.cpu.in_dispatch() {
-                        self.cpu.dispatch_parks_behind_dma
+                    || if self.chassis.cpu.in_dispatch() {
+                        self.chassis.cpu.dispatch_parks_behind_dma
                     } else {
                         !self.model.vram_dma_park_waits_for_fetch()
                     });
             self.model.console_state_mut().set_bus_suspended(suspended);
-            self.cpu.dma_request_stood_prev2_boundary = self.cpu.dma_request_stood_prev_boundary;
-            self.cpu.dma_request_stood_prev_boundary = self.model.vram_dma_request_standing();
+            self.chassis.cpu.dma_request_stood_prev2_boundary =
+                self.chassis.cpu.dma_request_stood_prev_boundary;
+            self.chassis.cpu.dma_request_stood_prev_boundary =
+                self.model.vram_dma_request_standing();
             let tcycle = self.rise_cpu_advance(dot_work);
             // The M-cycle pick inside `rise_cpu_advance` consumed the claim; clear
             // the stored claim so a fresh one can commit in the new M-cycle (the
@@ -483,31 +500,37 @@ impl<M: Model> Console<M> {
     /// latch update; an armed OAM bug fires last on both paths.
     fn rise_cpu_post(&mut self, is_mcycle_boundary: bool, ppu_tcycle: TCycle) {
         if !is_mcycle_boundary {
-            self.cpu
-                .dispatch
-                .update_latch(self.interrupts.enabled, self.interrupts.requested);
+            self.chassis.cpu.dispatch.update_latch(
+                self.chassis.interrupts.enabled,
+                self.chassis.interrupts.requested,
+            );
         }
 
         // MOPA-rising fires any armed OAM bug.
         if M::HAS_OAM_BUG && ppu_tcycle.as_u8() == 2 {
-            self.ppu.apply_pending_oam_bug();
+            self.chassis.ppu.apply_pending_oam_bug();
         }
     }
 
     /// PPU rising-edge advance and its interrupt readback: pixel output,
     /// VBlank IF, the STAT edge, and the CPU's interrupt-state refresh.
     fn ppu_rise_edge(&mut self) -> (bool, Option<ppu::PixelOutput>) {
-        let oam_bus = self.dma.oam_bus_owner();
-        let ppu_result = self.ppu.on_master_clock_rise(&self.vram_bus.vram, oam_bus);
+        let oam_bus = self.chassis.dma.oam_bus_owner();
+        let ppu_result = self
+            .chassis
+            .ppu
+            .on_master_clock_rise(&self.chassis.vram_bus.vram, oam_bus);
         if ppu_result.request_vblank {
-            self.interrupts.request(Interrupt::VideoBetweenFrames);
+            self.chassis
+                .interrupts
+                .request(Interrupt::VideoBetweenFrames);
         }
         let (new_screen, pixel) = self.apply_ppu_result(&ppu_result);
-        if self.ppu.check_stat_edge() {
-            self.interrupts.request(Interrupt::VideoStatus);
+        if self.chassis.ppu.check_stat_edge() {
+            self.chassis.interrupts.request(Interrupt::VideoStatus);
         }
-        let triggered = self.interrupts.triggered();
-        self.cpu.update_interrupt_state(triggered);
+        let triggered = self.chassis.interrupts.triggered();
+        self.chassis.cpu.update_interrupt_state(triggered);
         (new_screen, pixel)
     }
 
@@ -519,14 +542,16 @@ impl<M: Model> Console<M> {
         is_mcycle_boundary: bool,
         tcycle: TCycle,
     ) -> ppu::PpuTickResult<<M::Ppu as ppu::PpuModel>::Pixel> {
-        let oam_bus = self.dma.oam_bus_owner();
+        let oam_bus = self.chassis.dma.oam_bus_owner();
         // The M-cycle's last PPU fall, where the WY/WX/LCDC.5/LCDC.2 crossing
         // captures — resolved by the divider cell from the ratio.
         let mcycle_last_fall = self
+            .chassis
             .clock
             .divider()
             .mcycle_last_fall(is_mcycle_boundary, tcycle.as_u8());
-        self.ppu
+        self.chassis
+            .ppu
             .on_master_clock_fall(is_mcycle_boundary, mcycle_last_fall, oam_bus)
     }
 
@@ -541,13 +566,15 @@ impl<M: Model> Console<M> {
         // VBlank IF: POPU transitions happen on the fall since the divider
         // chain runs there.
         if video_result.request_vblank {
-            self.interrupts
+            self.chassis
+                .interrupts
                 .request_ppu_fall(Interrupt::VideoBetweenFrames, double_speed);
         }
         // STAT IF: the SUKO check folds into request_stat; cpu_irq_ack1_pulse
         // (LALU.r_n=0) absorbs same-M-cycle SUKO rises.
-        if video_result.request_stat && !self.cpu.irq.cpu_irq_ack1_pulse {
-            self.interrupts
+        if video_result.request_stat && !self.chassis.cpu.irq.cpu_irq_ack1_pulse {
+            self.chassis
+                .interrupts
                 .request_ppu_fall(Interrupt::VideoStatus, double_speed);
         }
         self.apply_ppu_result(video_result)
@@ -572,20 +599,20 @@ impl<M: Model> Console<M> {
             // The gate records the dot phase the freeze lands on (the phase
             // signal a DS-HDMA straddle is distinguished by); the spike does not
             // yet consume it.
-            let froze_on = self.clock.dot_phase();
+            let froze_on = self.chassis.clock.dot_phase();
             new_screen |= self.execute_phase(CpuGate::Held { froze_on }).new_screen;
             edges += 1;
-            if !self.cpu.is_stopped() {
+            if !self.chassis.cpu.is_stopped() {
                 // The count emptied this edge and the CPU re-engaged; its first
                 // fetch runs on the next step()'s normal loop.
                 break;
             }
         }
 
-        self.cpu.mark_instruction_boundary();
+        self.chassis.cpu.mark_instruction_boundary();
         StepResult {
             new_screen,
-            sram_dirty: self.external.cartridge.sram_dirty,
+            sram_dirty: self.chassis.external.cartridge.sram_dirty,
             tcycles: edges / edges_per_tcycle,
         }
     }
@@ -612,20 +639,21 @@ impl<M: Model> Console<M> {
         // freeze during the clock-mux relock tail (the CPU clock is settling),
         // so the re-phase tail advances the PPU without disturbing DIV.
         if mcycle_boundary && self.model.speed_switch_divider_active() {
-            self.ppu.tick_clock_domain_capture();
+            self.chassis.ppu.tick_clock_domain_capture();
             self.tick_cpu_clock_mcycle();
         }
 
         let (new_screen, pixel) = match dot {
             Edge::Rise => {
                 let r = self.ppu_rise_edge();
-                self.audio
-                    .tcycle(self.timers.internal_counter(), 0, double_speed);
+                self.chassis
+                    .audio
+                    .tcycle(self.chassis.timers.internal_counter(), 0, double_speed);
                 r
             }
             Edge::Fall => {
                 let video_result = self.ppu_fall_edge(mcycle_boundary, TCycle::ZERO);
-                self.audio.fall_sync();
+                self.chassis.audio.fall_sync();
                 self.apply_ppu_fall(&video_result)
             }
         };
@@ -634,8 +662,8 @@ impl<M: Model> Console<M> {
         // or early, the moment an enabled interrupt is pending. The post-STOP HALT
         // wakes on IE&IF like an ordinary HALT (a timer overflowing mid-wait, or an
         // interrupt already pending at the STOP). Only past the relock tail.
-        let woken_by_interrupt =
-            self.model.speed_switch_divider_active() && self.interrupts.triggered().is_some();
+        let woken_by_interrupt = self.model.speed_switch_divider_active()
+            && self.chassis.interrupts.triggered().is_some();
         // The mid-HALT timer wake spends the HALT-wake's WakeIntake M-cycle (the
         // divider ticking through it) before re-engaging; the pending-at-STOP
         // preempt path drains the bare relock tail with no such wake.
@@ -646,14 +674,14 @@ impl<M: Model> Console<M> {
             // post-STOP boundary. The mid-HALT timer wake is a HALT wake (M1, the
             // byte after STOP its return target); the pending-at-STOP 1-byte STOP
             // resumes mid-dispatch at M2 (its M1 was the pre-reset operand fetch).
-            let dispatch_step = (self.cpu.interrupts_enabled()
-                && self.interrupts.triggered().is_some())
+            let dispatch_step = (self.chassis.cpu.interrupts_enabled()
+                && self.chassis.interrupts.triggered().is_some())
             .then_some(if woken_by_interrupt { 0 } else { 1 });
-            self.cpu.resume_from_stop(dispatch_step);
+            self.chassis.cpu.resume_from_stop(dispatch_step);
             // The fetch begins on a CPU rising edge.
-            self.clock.engage_on_rise();
+            self.chassis.clock.engage_on_rise();
             // Reinstate the DIV-APU tap-retune slip now the divider is live again.
-            self.audio.on_speed_resume();
+            self.chassis.audio.on_speed_resume();
         }
 
         PhaseResult { new_screen, pixel }
@@ -677,7 +705,7 @@ impl<M: Model> Console<M> {
                 // inside the mux ripple — stash LY_old for the latch's AND. A
                 // tick earlier in the M (T0) has settled by the latch.
                 let ripple_old =
-                    if self.cpu_bus.read_address() == Some(0xFF44) && tcycle.as_u8() == 2 {
+                    if self.chassis.cpu_bus.read_address() == Some(0xFF44) && tcycle.as_u8() == 2 {
                         Some(self.read(0xFF44))
                     } else {
                         None
@@ -697,14 +725,14 @@ impl<M: Model> Console<M> {
     /// T2 read drive-enable, the pre-edge LY sample, and the pre-fall mode the
     /// HDMA trigger reads. The PPU fall is the caller's, sequenced after this.
     fn fall_cpu_pre(&mut self, dot_work: bool) -> (TCycle, bool, Option<u8>, ppu::Mode) {
-        let tcycle = self.cpu.last_tcycle();
-        let is_mcycle_boundary = self.cpu.at_mcycle_boundary();
+        let tcycle = self.chassis.cpu.last_tcycle();
+        let is_mcycle_boundary = self.chassis.cpu.at_mcycle_boundary();
 
         // CH3's BUSA / AZUS DFFs latch on apu_4mhz ↑ (= our fall);
         // settle before the T=2 drive-enable so wave-RAM reads see
         // the current wave_data_latch.
         if dot_work {
-            self.audio.fall_sync();
+            self.chassis.audio.fall_sync();
         }
 
         if tcycle.as_u8() == 2 {
@@ -714,12 +742,12 @@ impl<M: Model> Console<M> {
         // data_phase_n↑ precedes this fall's edge: sample LY pre-edge so an
         // FF44 latch coincident with the RUTU-clocked capture resolves the
         // mid-ripple flux.
-        let ly_at_latch = match self.cpu.last_bus_action {
+        let ly_at_latch = match self.chassis.cpu.last_bus_action {
             BusAction::Read { address: 0xFF44 } => Some(self.read(0xFF44)),
             _ => None,
         };
 
-        let pre_fall_mode = self.ppu.mode();
+        let pre_fall_mode = self.chassis.ppu.mode();
 
         (tcycle, is_mcycle_boundary, ly_at_latch, pre_fall_mode)
     }
@@ -744,7 +772,7 @@ impl<M: Model> Console<M> {
         // joins the fall path's gating below.
         let standalone_stat = video_result.is_none()
             && is_mcycle_boundary
-            && self.ppu.capture_register_sync_standalone();
+            && self.chassis.ppu.capture_register_sync_standalone();
 
         if tcycle.as_u8() == 2 {
             self.sample_mid_cupa_lock();
@@ -762,16 +790,17 @@ impl<M: Model> Console<M> {
             // latency (a wake-coincident block is decided before the first
             // fetch and the dispatch pick); level re-evaluation and the
             // taken-clear wait for the CPU's own resume.
-            let cpu_halted = self.cpu.is_halted();
-            let engine_gated = (cpu_halted && !self.cpu.irq_latched()) || self.cpu.is_stopped();
-            let master_edge = self.clock.master_edge();
+            let cpu_halted = self.chassis.cpu.is_halted();
+            let engine_gated =
+                (cpu_halted && !self.chassis.cpu.irq_latched()) || self.chassis.cpu.is_stopped();
+            let master_edge = self.chassis.clock.master_edge();
             let claim =
                 self.model
                     .vram_dma_tick(pre_fall_mode, engine_gated, cpu_halted, master_edge);
             if claim.committed {
                 // An active OAM DMA already owns a bus, blocking the
                 // handover that would take the halt-release fetch's tail.
-                let bus_free = self.dma.is_active_on_bus().is_none();
+                let bus_free = self.chassis.dma.is_active_on_bus().is_none();
                 self.model
                     .console_state_mut()
                     .set_vram_dma_claim(crate::VramDmaClaim {
@@ -785,25 +814,27 @@ impl<M: Model> Console<M> {
             // VBlank IF: POPU transitions happen here since the divider
             // chain runs in fall().
             if video_result.request_vblank {
-                self.interrupts.request(Interrupt::VideoBetweenFrames);
+                self.chassis
+                    .interrupts
+                    .request(Interrupt::VideoBetweenFrames);
             }
             // STAT IF: PPU's two-phase SUKO check (post-advance + post-tick_scan_capture, with
             // TOLU lag modelled via the post-fast snapshot) folds into request_stat.
             // Gated by cpu_irq_ack1_pulse: LALU.r_n=0 absorbs same-M-cycle SUKO rises.
-            if video_result.request_stat && !self.cpu.irq.cpu_irq_ack1_pulse {
-                self.interrupts.request(Interrupt::VideoStatus);
+            if video_result.request_stat && !self.chassis.cpu.irq.cpu_irq_ack1_pulse {
+                self.chassis.interrupts.request(Interrupt::VideoStatus);
             }
         }
-        if standalone_stat && !self.cpu.irq.cpu_irq_ack1_pulse {
-            self.interrupts.request(Interrupt::VideoStatus);
+        if standalone_stat && !self.chassis.cpu.irq.cpu_irq_ack1_pulse {
+            self.chassis.interrupts.request(Interrupt::VideoStatus);
         }
 
         // cpu_irq_ack1 holds the serviced IF bit's r_n LOW across the whole
         // dispatch-ack window — re-assert it after every same-M-cycle setter
         // (the FF0F PC-push commit above and the source requests) so a source
         // rise inside the window is captured-but-suppressed.
-        if let Some(interrupt) = self.cpu.irq.irq_ack_held {
-            self.interrupts.clear(interrupt);
+        if let Some(interrupt) = self.chassis.cpu.irq.irq_ack_held {
+            self.chassis.interrupts.clear(interrupt);
         }
 
         if let Some(video_result) = &video_result {
@@ -816,7 +847,7 @@ impl<M: Model> Console<M> {
         // every master-clock edge so the engage (dma_phi rising) and arm
         // (dma_phi_n rising) edges are both seen. data_phase is held LOW
         // during halt-spin, freezing the engine (matu/counter get no edge).
-        let data_phase = !self.cpu.halt_rs_latched() && matches!(tcycle.as_u8(), 2 | 3);
+        let data_phase = !self.chassis.cpu.halt_rs_latched() && matches!(tcycle.as_u8(), 2 | 3);
         self.drive_dma(data_phase);
 
         if is_mcycle_boundary {
@@ -834,38 +865,45 @@ impl<M: Model> Console<M> {
         // cpu_irq_ack1↓ at +3.992 dots — hardware releases LALU.r_n
         // ~8 ps before this CLK9↑. Clear at boundary entry so
         // check_stat_edge below sees r_n released.
-        self.cpu.irq.cpu_irq_ack1_pulse = false;
+        self.chassis.cpu.irq.cpu_irq_ack1_pulse = false;
         // On CGB the IF-bit reset trails the boundary's own timer/serial
         // set (tick_cpu_clock_mcycle below), so hold it past that set and
         // release after; DMG releases here, ahead of the set.
         if !M::IRQ_ACK_HOLDS_THROUGH_BOUNDARY_SET {
-            self.cpu.irq.irq_ack_held = None;
+            self.chassis.cpu.irq.irq_ack_held = None;
         }
 
         // yoii captures dispatch.latched() before data_phase_n↑ refreshes
         // the per-bit irq_latch — preserves pre-release values held
         // through the prior M-cycle's data phase.
-        self.cpu.tick_irq_latched(M::HALT_WAKE_SAMPLES_EARLY);
+        self.chassis
+            .cpu
+            .tick_irq_latched(M::HALT_WAKE_SAMPLES_EARLY);
 
         // data_phase_n↑ reopens the per-bit irq_latch_inst<i> to
         // re-snapshot IF for this M-cycle's dispatch.
-        self.cpu.dispatch.set_data_phase_n(true);
-        self.cpu
-            .dispatch
-            .update_latch(self.interrupts.enabled, self.interrupts.requested);
-        self.cpu.dispatch.tick_zacw();
+        self.chassis.cpu.dispatch.set_data_phase_n(true);
+        self.chassis.cpu.dispatch.update_latch(
+            self.chassis.interrupts.enabled,
+            self.chassis.interrupts.requested,
+        );
+        self.chassis.cpu.dispatch.tick_zacw();
 
         // Promote ime_delay (EI's shadow) to ime — produces EI's
         // one-instruction delay.
-        self.cpu.irq.ime.write_immediate(if self.cpu.irq.ime_delay {
-            crate::cpu::InterruptMasterEnable::Enabled
-        } else {
-            crate::cpu::InterruptMasterEnable::Disabled
-        });
+        self.chassis
+            .cpu
+            .irq
+            .ime
+            .write_immediate(if self.chassis.cpu.irq.ime_delay {
+                crate::cpu::InterruptMasterEnable::Enabled
+            } else {
+                crate::cpu::InterruptMasterEnable::Disabled
+            });
 
-        self.cpu_bus.clear_activity();
+        self.chassis.cpu_bus.clear_activity();
 
-        self.ppu.tick_clock_domain_capture();
+        self.chassis.ppu.tick_clock_domain_capture();
 
         self.tick_cpu_clock_mcycle();
 
@@ -873,10 +911,10 @@ impl<M: Model> Console<M> {
         // timer/serial IF assertion coincident with the dispatch boundary is
         // re-cleared before the hold releases.
         if M::IRQ_ACK_HOLDS_THROUGH_BOUNDARY_SET {
-            if let Some(interrupt) = self.cpu.irq.irq_ack_held {
-                self.interrupts.clear(interrupt);
+            if let Some(interrupt) = self.chassis.cpu.irq.irq_ack_held {
+                self.chassis.interrupts.clear(interrupt);
             }
-            self.cpu.irq.irq_ack_held = None;
+            self.chassis.cpu.irq.irq_ack_held = None;
         }
     }
 
@@ -886,19 +924,20 @@ impl<M: Model> Console<M> {
     /// rides its M-cycle boundary; through the speed-switch blackout it keeps
     /// pulsing off the master clock while the SM83 is frozen.
     fn tick_cpu_clock_mcycle(&mut self) {
-        self.timers.mcycle();
-        if let Some(interrupt) = self.timers.take_pending_interrupt() {
-            self.interrupts.request(interrupt);
+        self.chassis.timers.mcycle();
+        if let Some(interrupt) = self.chassis.timers.take_pending_interrupt() {
+            self.chassis.interrupts.request(interrupt);
         }
 
         // Serial bit-5 fall lands IF.serial in this M-cycle's
         // data-phase window for same-M-cycle dispatch.
-        let counter = self.timers.internal_counter();
+        let counter = self.chassis.timers.internal_counter();
         if let Some(interrupt) = self
+            .chassis
             .serial
             .mcycle(counter, self.model.has_serial_fast_clock())
         {
-            self.interrupts.request(interrupt);
+            self.chassis.interrupts.request(interrupt);
         }
     }
 
@@ -910,28 +949,30 @@ impl<M: Model> Console<M> {
         // alet-rising DFF capture (SOBU on TEKY → FEPO → XYLO) beats
         // CUPA-rising's transparent-latch propagation by ~14 ns. Other
         // consumers read post-CUPA `regs` directly.
-        self.ppu.snapshot_pre_cupa_lcdc();
+        self.chassis.ppu.snapshot_pre_cupa_lcdc();
 
         // Apply staged write at CUPA-rising (T-cycle 2). PPU registers
         // latch combinationally during CUPA-high; memory commits at
         // CUPA-falling in fall().
         if tcycle.as_u8() == 2
-            && let Some(address) = self.cpu_bus.pending_write()
+            && let Some(address) = self.chassis.cpu_bus.pending_write()
         {
             let value = self
+                .chassis
                 .cpu
                 .pending_bus_write()
                 .map(|(_, v)| v)
                 .expect("cpu_bus pending write requires cpu.pending_bus_write to be Some");
-            self.cpu_bus.drive(value);
+            self.chassis.cpu_bus.drive(value);
             if self.drive_ppu_bus(address, value, edge_carries_dot_fall) {
-                self.interrupts.request(Interrupt::VideoStatus);
+                self.chassis.interrupts.request(Interrupt::VideoStatus);
             }
             // Snapshot OAM/VRAM lock at CUPA-rising. AND'd with the
             // mid and commit samples — the write blocks only if locked
             // throughout the entire CUPA window.
-            self.cpu_bus
-                .record_snapshot_lock(self.ppu.write_lock(address));
+            self.chassis
+                .cpu_bus
+                .record_snapshot_lock(self.chassis.ppu.write_lock(address));
         }
     }
 
@@ -939,18 +980,18 @@ impl<M: Model> Console<M> {
     /// bit, latch the vector into pc. Reads the priority chain
     /// output (post-latch), matching the IE-push-bug timing.
     fn apply_vector_resolve(&mut self) {
-        if self.cpu.take_pending_vector_resolve() {
-            if let Some(interrupt) = self.cpu.dispatch.vector() {
-                self.interrupts.clear(interrupt);
-                self.cpu.irq.irq_ack_held = Some(interrupt);
-                self.cpu.pc = interrupt.vector();
+        if self.chassis.cpu.take_pending_vector_resolve() {
+            if let Some(interrupt) = self.chassis.cpu.dispatch.vector() {
+                self.chassis.interrupts.clear(interrupt);
+                self.chassis.cpu.irq.irq_ack_held = Some(interrupt);
+                self.chassis.cpu.pc = interrupt.vector();
             } else {
-                self.cpu.pc = 0x0000;
+                self.chassis.cpu.pc = 0x0000;
             }
-            self.cpu.dispatch.clear_dispatch();
+            self.chassis.cpu.dispatch.clear_dispatch();
             // cpu_irq_ack1↑: LALU.r_n driven LOW via lety/movu until next
             // M-cycle boundary. Absorbs same-M-cycle SUKO rises.
-            self.cpu.irq.cpu_irq_ack1_pulse = true;
+            self.chassis.cpu.irq.cpu_irq_ack1_pulse = true;
         }
     }
 
@@ -961,29 +1002,32 @@ impl<M: Model> Console<M> {
         // boundary, freezing IF visibility for this M-cycle's dispatch.
         // The halt-state spin keeps data_phase LOW so the latch stays
         // transparent throughout.
-        if tcycle.as_u8() == 2 && !self.cpu.halt_rs_latched() {
-            self.cpu.dispatch.set_data_phase_n(false);
+        if tcycle.as_u8() == 2 && !self.chassis.cpu.halt_rs_latched() {
+            self.chassis.cpu.dispatch.set_data_phase_n(false);
         }
 
         // T2 rise: the CGB halt-release chain's sample point.
         if tcycle.as_u8() == 2 && M::HALT_WAKE_SAMPLES_EARLY {
-            self.cpu.presample_halt_wake();
+            self.chassis.cpu.presample_halt_wake();
         }
 
         // step_zkog: zaij = ime ∧ data_phase ∧ int_take ∧ xogs. HALT
         // body and halt-spin both feed into xogs so dispatch can fire
         // mid-HALT for the immediate-dispatch path.
-        let halt_body = self.cpu.is_halted() && !self.cpu.halt_rs_latched();
-        let halt_spin = self.cpu.halt_rs_latched();
+        let halt_body = self.chassis.cpu.is_halted() && !self.chassis.cpu.halt_rs_latched();
+        let halt_spin = self.chassis.cpu.halt_rs_latched();
         let data_phase = !halt_spin && (tcycle.as_u8() == 2 || tcycle.as_u8() == 3);
         let write_phase = !halt_spin && tcycle.as_u8() == 3;
-        let ctl_fetch = self.cpu.is_fetch_phase() || halt_body;
+        let ctl_fetch = self.chassis.cpu.is_fetch_phase() || halt_body;
         let xogs = (data_phase && ctl_fetch) || halt_spin;
-        let ime_enabled = self.cpu.irq.ime.output() == crate::cpu::InterruptMasterEnable::Enabled;
-        self.cpu
-            .dispatch
-            .update_latch(self.interrupts.enabled, self.interrupts.requested);
-        self.cpu
+        let ime_enabled =
+            self.chassis.cpu.irq.ime.output() == crate::cpu::InterruptMasterEnable::Enabled;
+        self.chassis.cpu.dispatch.update_latch(
+            self.chassis.interrupts.enabled,
+            self.chassis.interrupts.requested,
+        );
+        self.chassis
+            .cpu
             .dispatch
             .step_zkog(ime_enabled, data_phase, write_phase, xogs);
     }
@@ -991,10 +1035,10 @@ impl<M: Model> Console<M> {
     /// Stage this M-cycle's bus activity. The CPU asserts at most one
     /// of cpu_rd / cpu_wr per M-cycle.
     fn stage_mcycle_bus_activity(&mut self) {
-        if let Some((address, _value)) = self.cpu.pending_bus_write() {
-            self.cpu_bus.stage_write(address);
-        } else if let Some(address) = self.cpu.pending_bus_read() {
-            self.cpu_bus.stage_read(address);
+        if let Some((address, _value)) = self.chassis.cpu.pending_bus_write() {
+            self.chassis.cpu_bus.stage_write(address);
+        } else if let Some(address) = self.chassis.cpu.pending_bus_read() {
+            self.chassis.cpu_bus.stage_read(address);
         }
     }
 
@@ -1003,14 +1047,14 @@ impl<M: Model> Console<M> {
     /// must be visible at T-cycle 0 so the same M-cycle's MOPA edge
     /// picks it up.
     fn arm_oam_bugs(&mut self) {
-        if let BusAction::InternalOamBug { address } = self.cpu.last_bus_action {
-            self.ppu.arm_oam_bug_for_write(address);
+        if let BusAction::InternalOamBug { address } = self.chassis.cpu.last_bus_action {
+            self.chassis.ppu.arm_oam_bug_for_write(address);
         }
-        if let Some(address) = self.cpu.pending_bus_read() {
-            self.ppu.arm_oam_bug_for_read(address);
+        if let Some(address) = self.chassis.cpu.pending_bus_read() {
+            self.chassis.ppu.arm_oam_bug_for_read(address);
         }
-        if let Some((address, _)) = self.cpu.pending_bus_write() {
-            self.ppu.arm_oam_bug_for_write(address);
+        if let Some((address, _)) = self.chassis.cpu.pending_bus_write() {
+            self.chassis.ppu.arm_oam_bug_for_write(address);
         }
     }
 
@@ -1018,23 +1062,23 @@ impl<M: Model> Console<M> {
     /// peripheral opens its tri-state driver. Mid-M-cycle flux
     /// propagates combinationally to the latch edge in `commit_read_latch`.
     fn apply_read_drive_enable(&mut self) {
-        if let Some(address) = self.cpu_bus.pending_read() {
+        if let Some(address) = self.chassis.cpu_bus.pending_read() {
             let value = self.bus_value_at_drive_enable(address);
             // OAM read lock at the drive enable: the grant view tobe↑ samples
             // before this fall's PPU advance applies any lock onset.
             if let 0xFE00..=0xFEFF = address {
                 self.model
-                    .note_read_drive_phase(self.ppu.read_lock(address));
+                    .note_read_drive_phase(self.chassis.ppu.read_lock(address));
             }
-            self.cpu_bus.drive(value);
+            self.chassis.cpu_bus.drive(value);
 
             // A VRAM-source bus conflict on a read forces the DMA's OAM deposit
             // to $00, same as on a write.
-            if self.dma.is_active_on_bus().is_some()
+            if self.chassis.dma.is_active_on_bus().is_some()
                 && self
                     .model
-                    .oam_dma_conflict_zeroes_oam(address, self.dma.source())
-                && let Some((_, dst_offset)) = self.dma.peek_transfer()
+                    .oam_dma_conflict_zeroes_oam(address, self.chassis.dma.source())
+                && let Some((_, dst_offset)) = self.chassis.dma.peek_transfer()
             {
                 self.model
                     .console_state_mut()
@@ -1047,16 +1091,16 @@ impl<M: Model> Console<M> {
     /// ends mode-2 mid-strobe and the rendering deferral leaves
     /// `mode2=0 ∧ mode3=0` observable here.
     fn sample_mid_cupa_lock(&mut self) {
-        if let Some(address) = self.cpu_bus.mid_sample_pending() {
+        if let Some(address) = self.chassis.cpu_bus.mid_sample_pending() {
             // The double-speed write-lock follows this mid sample; it counts only
             // the genuine mode lock, not the RUTU pre-onset that the single-speed
             // window's later samples already exclude.
             let locked = if self.double_speed_active() && matches!(address, 0xFE00..=0xFEFF) {
-                Some(self.ppu.oam_mode_locked())
+                Some(self.chassis.ppu.oam_mode_locked())
             } else {
-                self.ppu.write_lock(address)
+                self.chassis.ppu.write_lock(address)
             };
-            self.cpu_bus.record_mid_lock(locked);
+            self.chassis.cpu_bus.record_mid_lock(locked);
         }
     }
 
@@ -1064,7 +1108,7 @@ impl<M: Model> Console<M> {
     /// Resolves the drive-enable snapshot against mid-M-cycle flux
     /// before the SM83 captures cpu_port_d.
     fn commit_read_latch(&mut self, ly_at_latch: Option<u8>) {
-        if let BusAction::Read { address } = &self.cpu.last_bus_action {
+        if let BusAction::Read { address } = &self.chassis.cpu.last_bus_action {
             let address = *address;
             // Double speed: the LY tick can land mid-M on the read's own dot
             // fall (no CPU fall carries it), so the ripple LY_old arrives from
@@ -1077,11 +1121,11 @@ impl<M: Model> Console<M> {
             // A lockable read is offered the unfloated accessible byte; the
             // model owns the float decision from its latch lock view. Other
             // addresses resolve through `bus_value_at_latch`.
-            let latch_lock = self.ppu.read_lock(address);
+            let latch_lock = self.chassis.ppu.read_lock(address);
             let accessible = if latch_lock.is_some() {
-                self.cpu_bus.data
+                self.chassis.cpu_bus.data
             } else {
-                self.bus_value_at_latch(address, self.cpu_bus.data, ly_at_latch)
+                self.bus_value_at_latch(address, self.chassis.cpu_bus.data, ly_at_latch)
             };
             let value = if let Some(source) = self.model.vram_dma_conflict_source(address) {
                 self.read_dma_source(source)
@@ -1093,9 +1137,9 @@ impl<M: Model> Console<M> {
             // the mode-2 not_if1 hold: a double-speed STAT read landing in the onset
             // contention window holds the XYMU bit at its pre-onset 0 (PRE mode 2).
             let value = if address == 0xFF41 && self.double_speed_active() {
-                if self.ppu.in_mode3_onset_settle() {
-                    (value & !0b11) | self.ppu.mode3_onset_pre_stat()
-                } else if self.ppu.in_mode1_onset_settle() {
+                if self.chassis.ppu.in_mode3_onset_settle() {
+                    (value & !0b11) | self.chassis.ppu.mode3_onset_pre_stat()
+                } else if self.chassis.ppu.in_mode1_onset_settle() {
                     value & !0b01
                 } else {
                     value
@@ -1108,20 +1152,21 @@ impl<M: Model> Console<M> {
             // OAM analogue of the not_if1 hold the bare OAM gate lacks.
             let value = if matches!(address, 0xFE00..=0xFEFF)
                 && self.double_speed_active()
-                && self.ppu.in_oam_onset_settle()
+                && self.chassis.ppu.in_oam_onset_settle()
             {
                 accessible
             } else {
                 value
             };
-            self.cpu.data_latch = value;
+            self.chassis.cpu.data_latch = value;
             // A next-opcode overlap prefetch that latched after a GDMA seized the
             // bus keeps its byte: it read the pre-transfer value (the transfer
             // suppresses the fetch, it does not re-drive the read). Retain it so
             // the post-hold re-fetch decodes it instead of the open-bus re-read.
-            if self.model.console_state().dma_cpu_hold() && self.cpu.bus_hold_over_prefetch {
-                self.cpu.held_overlap_opcode = Some(value);
-                self.cpu.bus_hold_over_prefetch = false;
+            if self.model.console_state().dma_cpu_hold() && self.chassis.cpu.bus_hold_over_prefetch
+            {
+                self.chassis.cpu.held_overlap_opcode = Some(value);
+                self.chassis.cpu.bus_hold_over_prefetch = false;
             }
             self.commit_bus_read(address, value);
         }
@@ -1131,20 +1176,20 @@ impl<M: Model> Console<M> {
     /// registers were already written at CUPA-rising via
     /// `drive_ppu_bus` in rise(); this commits memory.
     fn commit_write(&mut self) {
-        if let BusAction::Write { address, value: _ } = &self.cpu.last_bus_action {
+        if let BusAction::Write { address, value: _ } = &self.chassis.cpu.last_bus_action {
             let address = *address;
-            if self.dma.is_active_on_bus().is_some()
+            if self.chassis.dma.is_active_on_bus().is_some()
                 && self
                     .model
-                    .oam_dma_source_bank_write(address, self.dma.source())
+                    .oam_dma_source_bank_write(address, self.chassis.dma.source())
             {
-                self.dma_pending_bank_write = Some((address, self.cpu_bus.data));
+                self.chassis.dma_pending_bank_write = Some((address, self.chassis.cpu_bus.data));
                 return;
             }
-            let (locked_at_snapshot, locked_at_mid) = self.cpu_bus.write_lock_samples();
+            let (locked_at_snapshot, locked_at_mid) = self.chassis.cpu_bus.write_lock_samples();
             self.write_byte_with_cupa_lock(
                 address,
-                self.cpu_bus.data,
+                self.chassis.cpu_bus.data,
                 locked_at_snapshot,
                 locked_at_mid,
             );
@@ -1156,16 +1201,16 @@ impl<M: Model> Console<M> {
     /// that collided with DMA on the source bus open-drains at the OAM
     /// slot DMA deposits. (Audio mcycle is at boundary rise.)
     fn tick_mcycle_boundary_fall(&mut self) {
-        let double_speed = self.clock.divider() == CpuDivider::Two;
-        let oam = self.dma.peek_transfer();
+        let double_speed = self.chassis.clock.divider() == CpuDivider::Two;
+        let oam = self.chassis.dma.peek_transfer();
         let hdma_active =
             self.model.console_state().dma_cpu_hold() || self.model.console_state().bus_suspended();
         // The OAM-DMA's final byte still shares the bus on the M-cycle it
         // completes; edge-detect its active→done boundary so that M-cycle
         // still contends with a concurrent VRAM-DMA.
         let oam_transferring = oam.is_some();
-        let oam_just_completed = self.dma_oam_was_transferring && !oam_transferring;
-        self.dma_oam_was_transferring = oam_transferring;
+        let oam_just_completed = self.chassis.dma_oam_was_transferring && !oam_transferring;
+        self.chassis.dma_oam_was_transferring = oam_transferring;
         // The two engines share one bus: when an OAM-DMA and a VRAM-DMA block
         // both move a byte this M-cycle, the OAM-DMA latches the VRAM-DMA byte
         // that coincides with its write rather than its own source.
@@ -1178,7 +1223,7 @@ impl<M: Model> Console<M> {
         let escape_stall =
             double_speed && oam_transferring && hdma_active && self.model.vram_dma_escape_pending();
         if escape_stall {
-            self.dma.stall_advance();
+            self.chassis.dma.stall_advance();
         }
 
         if !contended && !escape_stall {
@@ -1189,7 +1234,7 @@ impl<M: Model> Console<M> {
 
         // A source-bank register write (VBK/SVBK) latches here at the boundary,
         // after the coincident byte's source read above reads the pre-write bank.
-        if let Some((address, value)) = self.dma_pending_bank_write.take() {
+        if let Some((address, value)) = self.chassis.dma_pending_bank_write.take() {
             self.write_byte_with_cupa_lock(address, value, None, None);
         }
 
@@ -1228,7 +1273,7 @@ impl<M: Model> Console<M> {
             let phase = self
                 .model
                 .vram_dma_block_start_edge()
-                .wrapping_sub(self.dma.start_edge())
+                .wrapping_sub(self.chassis.dma.start_edge())
                 .wrapping_sub(OAM_BYTE_COMMIT_LAG_EDGES)
                 / 2
                 % 4;
@@ -1242,17 +1287,21 @@ impl<M: Model> Console<M> {
             }
         }
 
-        if let Some((dst_offset, src_byte, cpu_value)) = self.dma_conflict_write_pending.take() {
+        if let Some((dst_offset, src_byte, cpu_value)) =
+            self.chassis.dma_conflict_write_pending.take()
+        {
             let dst_addr = 0xfe00 + dst_offset as u16;
             let oam_addr = match ppu::memory::MappedAddress::map(dst_addr) {
                 ppu::memory::MappedAddress::Oam(addr) => addr,
                 _ => unreachable!(),
             };
-            let value =
-                self.model
-                    .oam_dma_write_conflict_byte(src_byte, cpu_value, self.dma.source());
-            self.ppu.write_oam(oam_addr, value);
-            self.bus_trace.record(BusAccess {
+            let value = self.model.oam_dma_write_conflict_byte(
+                src_byte,
+                cpu_value,
+                self.chassis.dma.source(),
+            );
+            self.chassis.ppu.write_oam(oam_addr, value);
+            self.chassis.bus_trace.record(BusAccess {
                 address: dst_addr,
                 value,
                 kind: BusAccessKind::Write,
@@ -1264,8 +1313,8 @@ impl<M: Model> Console<M> {
             if let ppu::memory::MappedAddress::Oam(oam_addr) =
                 ppu::memory::MappedAddress::map(dst_addr)
             {
-                self.ppu.write_oam(oam_addr, 0);
-                self.bus_trace.record(BusAccess {
+                self.chassis.ppu.write_oam(oam_addr, 0);
+                self.chassis.bus_trace.record(BusAccess {
                     address: dst_addr,
                     value: 0,
                     kind: BusAccessKind::Write,
@@ -1273,10 +1322,11 @@ impl<M: Model> Console<M> {
             }
         }
 
-        self.external.tick_decay();
+        self.chassis.external.tick_decay();
         // The RTC crystal is speed-independent: 4 base dots per M-cycle at
         // single speed, 2 at double speed.
-        self.external
+        self.chassis
+            .external
             .tick_rtc(4 / self.model.cpu_steps_per_dot() as u32);
     }
 
@@ -1284,8 +1334,8 @@ impl<M: Model> Console<M> {
     /// release/counter). The byte transfer itself commits at the M-cycle
     /// data phase in `tick_mcycle_boundary_fall`.
     fn drive_dma(&mut self, data_phase: bool) {
-        let master_edge = self.clock.master_edge();
-        self.dma.tick(data_phase, master_edge);
+        let master_edge = self.chassis.clock.master_edge();
+        self.chassis.dma.tick(data_phase, master_edge);
     }
 
     /// Re-capture interrupt state after bus writes and M-cycle
@@ -1293,11 +1343,12 @@ impl<M: Model> Console<M> {
     /// edges from PPU register writes, and serial completion are all
     /// visible by the time the next rise() ticks irq_latched.
     fn recapture_interrupts(&mut self) {
-        let triggered = self.interrupts.triggered();
-        self.cpu.update_interrupt_state(triggered);
-        self.cpu
-            .dispatch
-            .update_latch(self.interrupts.enabled, self.interrupts.requested);
+        let triggered = self.chassis.interrupts.triggered();
+        self.chassis.cpu.update_interrupt_state(triggered);
+        self.chassis.cpu.dispatch.update_latch(
+            self.chassis.interrupts.enabled,
+            self.chassis.interrupts.requested,
+        );
     }
 
     /// Process a PPU tick: draw the pixel, present on VSYNC (only if
@@ -1310,7 +1361,9 @@ impl<M: Model> Console<M> {
     ) -> (bool, Option<ppu::PixelOutput>) {
         let trace_pixel = result.pixel.map(|pixel| {
             if pixel.x < ppu::screen::PIXELS_PER_LINE && pixel.y < ppu::screen::NUM_SCANLINES {
-                self.screen.draw_pixel(pixel.x, pixel.y, pixel.color);
+                self.chassis
+                    .screen
+                    .draw_pixel(pixel.x, pixel.y, pixel.color);
             }
             ppu::PixelOutput {
                 x: pixel.x,
@@ -1319,15 +1372,15 @@ impl<M: Model> Console<M> {
             }
         });
         if result.new_frame {
-            if self.ppu.control().video_enabled() && self.ppu.vsync_committed() {
-                self.screen.present();
-                self.model.on_present(&self.screen);
+            if self.chassis.ppu.control().video_enabled() && self.chassis.ppu.vsync_committed() {
+                self.chassis.screen.present();
+                self.model.on_present(&self.chassis.screen);
             }
             return (true, trace_pixel);
         }
         if result.lcd_disabled {
-            self.screen.blank();
-            self.model.on_present(&self.screen);
+            self.chassis.screen.blank();
+            self.model.on_present(&self.chassis.screen);
         }
         (false, trace_pixel)
     }

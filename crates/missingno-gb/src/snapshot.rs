@@ -15,7 +15,7 @@ use crate::cartridge::Cartridge;
 use crate::cartridge::mbc::Mbc;
 use crate::cpu::HaltState;
 use crate::interrupts::InterruptFlags;
-use crate::{Console, GameBoy};
+use crate::{Chassis, Console, GameBoy};
 
 /// A typed snapshot payload ready to be written.
 pub struct SnapshotRecord {
@@ -353,43 +353,45 @@ impl GameBoy {
         };
 
         Console {
-            cpu: crate::cpu::Cpu::from_snapshot(&snap.cpu),
-            screen: Screen::default(),
-            ppu: crate::ppu::Ppu::from_snapshot(
-                &snap.ppu,
-                find_region(0xFE00).map(Oam::from_bytes).unwrap_or_default(),
-            ),
-            audio: Audio::from_snapshot(&snap.apu, wave_ram),
-            timers: crate::timers::Timers::from_snapshot(&snap.timer),
-            dma: crate::dma::Dma::from_snapshot(&snap.dma),
-            dma_oam_was_transferring: false,
-            serial: crate::serial_transfer::Serial::from_snapshot(&snap.serial),
-            joypad: crate::joypad::Joypad::new(),
-            interrupts: {
-                let mut regs = crate::interrupts::Registers::new();
-                regs.enabled = InterruptFlags::from_bits_retain(snap.cpu.ie);
-                regs.requested = InterruptFlags::from_bits_retain(snap.cpu.if_);
-                regs
+            chassis: Chassis {
+                cpu: crate::cpu::Cpu::from_snapshot(&snap.cpu),
+                screen: Screen::default(),
+                ppu: crate::ppu::Ppu::from_snapshot(
+                    &snap.ppu,
+                    find_region(0xFE00).map(Oam::from_bytes).unwrap_or_default(),
+                ),
+                audio: Audio::from_snapshot(&snap.apu, wave_ram),
+                timers: crate::timers::Timers::from_snapshot(&snap.timer),
+                dma: crate::dma::Dma::from_snapshot(&snap.dma),
+                dma_oam_was_transferring: false,
+                serial: crate::serial_transfer::Serial::from_snapshot(&snap.serial),
+                joypad: crate::joypad::Joypad::new(),
+                interrupts: {
+                    let mut regs = crate::interrupts::Registers::new();
+                    regs.enabled = InterruptFlags::from_bits_retain(snap.cpu.ie);
+                    regs.requested = InterruptFlags::from_bits_retain(snap.cpu.if_);
+                    regs
+                },
+                vram_bus: VramBus {
+                    vram: find_region(0x8000)
+                        .map(VramBank::from_bytes)
+                        .unwrap_or_default(),
+                    latch: 0xFF,
+                },
+                high_ram: find_region(0xFF80)
+                    .map(crate::memory::HighRam::from_bytes)
+                    .unwrap_or_else(crate::memory::HighRam::new),
+                external,
+                bus_trace: crate::cpu_bus::BusTrace::new(),
+                clock: crate::MasterClock::new(crate::CpuDivider::One),
+                cpu_bus: crate::cpu_bus::CpuBus::new(),
+                dma_conflict_write_pending: None,
+                dma_pending_bank_write: None,
             },
-            vram_bus: VramBus {
-                vram: find_region(0x8000)
-                    .map(VramBank::from_bytes)
-                    .unwrap_or_default(),
-                latch: 0xFF,
-            },
-            high_ram: find_region(0xFF80)
-                .map(crate::memory::HighRam::from_bytes)
-                .unwrap_or_else(crate::memory::HighRam::new),
-            external,
             model: crate::Dmg {
                 sgb,
                 ..Default::default()
             },
-            bus_trace: crate::cpu_bus::BusTrace::new(),
-            clock: crate::MasterClock::new(crate::CpuDivider::One),
-            cpu_bus: crate::cpu_bus::CpuBus::new(),
-            dma_conflict_write_pending: None,
-            dma_pending_bank_write: None,
         }
     }
 }

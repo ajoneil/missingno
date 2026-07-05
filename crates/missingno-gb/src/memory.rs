@@ -320,7 +320,7 @@ impl<M: Model> Console<M> {
     /// the appropriate physical bus latch and record the read in the
     /// trace. Called at the CPU's data-latch edge.
     pub fn commit_bus_read(&mut self, address: u16, value: u8) {
-        self.bus_trace.record(BusAccess {
+        self.chassis.bus_trace.record(BusAccess {
             address,
             value,
             kind: BusAccessKind::Read,
@@ -335,7 +335,7 @@ impl<M: Model> Console<M> {
         if let Some(value) = self.dma_read_conflict(address) {
             return value;
         }
-        if self.ppu.read_locked(address) {
+        if self.chassis.ppu.read_locked(address) {
             return 0xFF;
         }
         self.read_addr(address)
@@ -345,7 +345,10 @@ impl<M: Model> Console<M> {
     /// model's CGB registers) first, then the shared `MappedAddress` map.
     /// The single chokepoint for the model-before-shared-map contract.
     fn read_addr(&self, address: u16) -> u8 {
-        if let Some(value) = self.model.map_read(address, &self.ppu, &self.vram_bus.vram) {
+        if let Some(value) =
+            self.model
+                .map_read(address, &self.chassis.ppu, &self.chassis.vram_bus.vram)
+        {
             return value;
         }
         self.read_mapped(MappedAddress::map(address))
@@ -374,8 +377,10 @@ impl<M: Model> Console<M> {
     /// bus is address-remapped by the DMA driving the bus (CGB only). Shared by
     /// the read (drive-enable) and write (commit) paths.
     fn dma_wram_remapped(&self, address: u16) -> u16 {
-        if self.dma.is_active_on_bus().is_some()
-            && let Some(remapped) = self.model.oam_dma_wram_remap(address, self.dma.source())
+        if self.chassis.dma.is_active_on_bus().is_some()
+            && let Some(remapped) = self
+                .model
+                .oam_dma_wram_remap(address, self.chassis.dma.source())
         {
             return remapped;
         }
@@ -393,7 +398,7 @@ impl<M: Model> Console<M> {
             // OAM/VRAM read locks: the on-chip OAM / off-chip VRAM
             // drivers tri-state at the latch edge, so the bus floats
             // high (0xFF).
-            _ if self.ppu.read_locked(address) => 0xFF,
+            _ if self.chassis.ppu.read_locked(address) => 0xFF,
 
             // LY: the byte fluxes via NOT_IF0 drivers fed by the
             // RUTU-clocked ripple counter. A latch coincident with the
@@ -424,7 +429,7 @@ impl<M: Model> Console<M> {
                 const X_WINDOW: u8 = 0b0000_0111;
                 if self.double_speed_active() {
                     const FAST_BITS: u8 = 0b0000_0101;
-                    let mode2 = if self.ppu.stat_mode2_bus() {
+                    let mode2 = if self.chassis.ppu.stat_mode2_bus() {
                         0b0000_0010
                     } else {
                         0
@@ -453,7 +458,10 @@ impl<M: Model> Console<M> {
         if let Some(value) = self.model.dma_source_open_bus(address) {
             return value;
         }
-        if let Some(value) = self.model.map_read(address, &self.ppu, &self.vram_bus.vram) {
+        if let Some(value) =
+            self.model
+                .map_read(address, &self.chassis.ppu, &self.chassis.vram_bus.vram)
+        {
             return value;
         }
         let mapped = match Bus::of(address) {
@@ -470,18 +478,21 @@ impl<M: Model> Console<M> {
     /// back to the bus latch during DMA's restart-delay window when
     /// no byte will commit this M-cycle.
     fn dma_read_conflict(&self, address: u16) -> Option<u8> {
-        let bus = self.dma.is_active_on_bus()?;
+        let bus = self.chassis.dma.is_active_on_bus()?;
         if (0xFE00..=0xFEFF).contains(&address) {
             return Some(0xFF);
         }
-        if !self.model.oam_dma_bus_conflict(address, self.dma.source()) {
+        if !self
+            .model
+            .oam_dma_bus_conflict(address, self.chassis.dma.source())
+        {
             return None;
         }
-        Some(match self.dma.peek_transfer() {
+        Some(match self.chassis.dma.peek_transfer() {
             Some((src, _)) => self.read_dma_source(src),
             None => match bus {
-                Bus::External => self.external.latch(),
-                Bus::Vram => self.vram_bus.latch,
+                Bus::External => self.chassis.external.latch(),
+                Bus::Vram => self.chassis.vram_bus.latch,
             },
         })
     }
@@ -490,37 +501,42 @@ impl<M: Model> Console<M> {
     /// CPU-internal addresses (OAM, IO, HRAM) don't update a latch.
     fn drive_bus(&mut self, address: u16, value: u8) {
         match Bus::of(address) {
-            Some(Bus::External) => self.external.drive(value),
-            Some(Bus::Vram) => self.vram_bus.drive(value),
+            Some(Bus::External) => self.chassis.external.drive(value),
+            Some(Bus::Vram) => self.chassis.vram_bus.drive(value),
             None => {}
         }
     }
 
     fn read_mapped(&self, address: MappedAddress) -> u8 {
         match address {
-            MappedAddress::External(addr) => self.external.read(addr),
-            MappedAddress::HighRam(offset) => self.high_ram.read(offset),
-            MappedAddress::Vram(address) => self.vram_bus.vram.cpu_read(address),
-            MappedAddress::Oam(address) => self.ppu.read_oam(address),
-            MappedAddress::JoypadRegister => self.model.read_joypad(self.joypad.read_register()),
+            MappedAddress::External(addr) => self.chassis.external.read(addr),
+            MappedAddress::HighRam(offset) => self.chassis.high_ram.read(offset),
+            MappedAddress::Vram(address) => self.chassis.vram_bus.vram.cpu_read(address),
+            MappedAddress::Oam(address) => self.chassis.ppu.read_oam(address),
+            MappedAddress::JoypadRegister => {
+                self.model.read_joypad(self.chassis.joypad.read_register())
+            }
             MappedAddress::SerialTransferRegister(register) => match register {
-                serial_transfer::Register::Data => self.serial.registers.data,
+                serial_transfer::Register::Data => self.chassis.serial.registers.data,
                 serial_transfer::Register::Control => self
+                    .chassis
                     .serial
                     .registers
                     .read_control(self.model.has_serial_fast_clock()),
             },
-            MappedAddress::TimerRegister(register) => self.timers.read_register(register),
+            MappedAddress::TimerRegister(register) => self.chassis.timers.read_register(register),
             MappedAddress::InterruptRegister(register) => match register {
-                interrupts::Register::EnabledInterrupts => self.interrupts.enabled.bits(),
-                interrupts::Register::RequestedInterrupts => self.interrupts.read_requested(),
+                interrupts::Register::EnabledInterrupts => self.chassis.interrupts.enabled.bits(),
+                interrupts::Register::RequestedInterrupts => {
+                    self.chassis.interrupts.read_requested()
+                }
             },
-            MappedAddress::AudioRegister(register) => self.audio.read_register(register),
-            MappedAddress::AudioWaveRam(offset) => self.audio.read_wave_ram(offset),
-            MappedAddress::PpuRegister(register) => self.ppu.read_register(register),
-            MappedAddress::BeginDmaTransfer => self.dma.source_register(),
+            MappedAddress::AudioRegister(register) => self.chassis.audio.read_register(register),
+            MappedAddress::AudioWaveRam(offset) => self.chassis.audio.read_wave_ram(offset),
+            MappedAddress::PpuRegister(register) => self.chassis.ppu.read_register(register),
+            MappedAddress::BeginDmaTransfer => self.chassis.dma.source_register(),
             MappedAddress::BootRomUnmap => {
-                if self.external.boot_rom_mapped() {
+                if self.chassis.external.boot_rom_mapped() {
                     0xFE
                 } else {
                     0xFF
@@ -529,14 +545,14 @@ impl<M: Model> Console<M> {
             MappedAddress::OamExtra => 0x00,
             MappedAddress::AudioPcm12 => {
                 if M::HAS_PCM_REGISTERS {
-                    self.audio.pcm12()
+                    self.chassis.audio.pcm12()
                 } else {
                     0xFF
                 }
             }
             MappedAddress::AudioPcm34 => {
                 if M::HAS_PCM_REGISTERS {
-                    self.audio.pcm34()
+                    self.chassis.audio.pcm34()
                 } else {
                     0xFF
                 }
@@ -555,13 +571,17 @@ impl<M: Model> Console<M> {
             // at once — no H-Blank will come.
             if register == ppu::Register::Control
                 && value & 0x80 == 0
-                && self.ppu.control().video_enabled()
+                && self.chassis.ppu.control().video_enabled()
             {
                 self.model.vram_dma_lcd_disabled();
             }
-            let halt_wake_active = self.cpu.is_halt_wake_active();
-            self.ppu
-                .write_register(register, value, halt_wake_active, edge_carries_dot_fall)
+            let halt_wake_active = self.chassis.cpu.is_halt_wake_active();
+            self.chassis.ppu.write_register(
+                register,
+                value,
+                halt_wake_active,
+                edge_carries_dot_fall,
+            )
         } else {
             false
         }
@@ -581,12 +601,12 @@ impl<M: Model> Console<M> {
         locked_at_snapshot: Option<bool>,
         locked_at_mid: Option<bool>,
     ) {
-        self.bus_trace.record(BusAccess {
+        self.chassis.bus_trace.record(BusAccess {
             address,
             value,
             kind: BusAccessKind::Write,
         });
-        if self.dma.is_active_on_bus().is_some() {
+        if self.chassis.dma.is_active_on_bus().is_some() {
             // The OAM block (extra rows included) is being written by DMA;
             // CPU writes are ignored.
             if (0xFE00..=0xFEFF).contains(&address) {
@@ -597,18 +617,22 @@ impl<M: Model> Console<M> {
             // byte DMA fetched this M-cycle so the M-cycle-boundary commit
             // can land the model's resolved byte at the OAM slot DMA is
             // depositing. The CPU also drives the bus latch.
-            if self.model.oam_dma_bus_conflict(address, self.dma.source()) {
-                if let Some((src_addr, dst_offset)) = self.dma.peek_transfer() {
+            if self
+                .model
+                .oam_dma_bus_conflict(address, self.chassis.dma.source())
+            {
+                if let Some((src_addr, dst_offset)) = self.chassis.dma.peek_transfer() {
                     if self
                         .model
-                        .oam_dma_conflict_zeroes_oam(address, self.dma.source())
+                        .oam_dma_conflict_zeroes_oam(address, self.chassis.dma.source())
                     {
                         self.model
                             .console_state_mut()
                             .set_dma_conflict_oam_zero(Some(dst_offset));
                     } else {
                         let src_byte = self.read_dma_source(src_addr);
-                        self.dma_conflict_write_pending = Some((dst_offset, src_byte, value));
+                        self.chassis.dma_conflict_write_pending =
+                            Some((dst_offset, src_byte, value));
                     }
                 }
                 self.drive_bus(address, value);
@@ -623,7 +647,7 @@ impl<M: Model> Console<M> {
         // the M-cycle halves to two dots, so the snapshot lands before
         // the lock engages and the live after it releases — only the
         // mid (AVAP) sample sits inside the write-lock window.
-        if let Some(locked_now) = self.ppu.write_lock(address) {
+        if let Some(locked_now) = self.chassis.ppu.write_lock(address) {
             let blocked = if self.double_speed_active() {
                 locked_at_mid.unwrap_or(locked_now)
             } else {
@@ -645,10 +669,12 @@ impl<M: Model> Console<M> {
         // the WRAM bus during a cart-source DMA; the bus drive above keeps the
         // CPU's original address.
         let store = self.dma_wram_remapped(address);
-        if self
-            .model
-            .map_write(store, value, &mut self.ppu, &mut self.vram_bus.vram)
-        {
+        if self.model.map_write(
+            store,
+            value,
+            &mut self.chassis.ppu,
+            &mut self.chassis.vram_bus.vram,
+        ) {
             return;
         }
 
@@ -660,72 +686,78 @@ impl<M: Model> Console<M> {
 
     fn write_mapped(&mut self, address: MappedAddress, value: u8) {
         match address {
-            MappedAddress::External(addr) => self.external.write(addr, value),
-            MappedAddress::HighRam(offset) => self.high_ram.write(offset, value),
-            MappedAddress::Vram(address) => self.vram_bus.vram.cpu_write(address, value),
-            MappedAddress::Oam(address) => self.ppu.write_oam(address, value),
+            MappedAddress::External(addr) => self.chassis.external.write(addr, value),
+            MappedAddress::HighRam(offset) => self.chassis.high_ram.write(offset, value),
+            MappedAddress::Vram(address) => self.chassis.vram_bus.vram.cpu_write(address, value),
+            MappedAddress::Oam(address) => self.chassis.ppu.write_oam(address, value),
             MappedAddress::JoypadRegister => {
                 self.model.on_joypad_write(value);
-                let before = self.joypad.input_lines();
-                self.joypad.write_register(value);
-                if before & !self.joypad.input_lines() != 0 {
-                    self.interrupts.request(interrupts::Interrupt::Joypad);
+                let before = self.chassis.joypad.input_lines();
+                self.chassis.joypad.write_register(value);
+                if before & !self.chassis.joypad.input_lines() != 0 {
+                    self.chassis
+                        .interrupts
+                        .request(interrupts::Interrupt::Joypad);
                 }
             }
             MappedAddress::SerialTransferRegister(register) => match register {
-                serial_transfer::Register::Data => self.serial.registers.data = value,
+                serial_transfer::Register::Data => self.chassis.serial.registers.data = value,
                 serial_transfer::Register::Control => {
-                    self.serial.registers.control =
+                    self.chassis.serial.registers.control =
                         serial_transfer::Control::from_bits_retain(value);
-                    self.serial.start_transfer();
+                    self.chassis.serial.start_transfer();
                 }
             },
             MappedAddress::TimerRegister(register) => {
                 if matches!(register, timers::Register::Divider) {
-                    let old_counter = self.timers.internal_counter();
-                    self.timers.write_register(register, value);
-                    self.audio
+                    let old_counter = self.chassis.timers.internal_counter();
+                    self.chassis.timers.write_register(register, value);
+                    self.chassis
+                        .audio
                         .on_div_write(old_counter, self.double_speed_active());
                     if let Some(interrupt) = self
+                        .chassis
                         .serial
                         .on_div_write(old_counter, self.model.has_serial_fast_clock())
                     {
-                        self.interrupts.request(interrupt);
+                        self.chassis.interrupts.request(interrupt);
                     }
                 } else {
-                    self.timers.write_register(register, value);
+                    self.chassis.timers.write_register(register, value);
                 }
             }
-            MappedAddress::AudioRegister(register) => self.audio.write_register(
+            MappedAddress::AudioRegister(register) => self.chassis.audio.write_register(
                 register,
                 value,
-                self.timers.internal_counter(),
+                self.chassis.timers.internal_counter(),
                 self.double_speed_active(),
             ),
-            MappedAddress::AudioWaveRam(offset) => self.audio.write_wave_ram(offset, value),
+            MappedAddress::AudioWaveRam(offset) => self.chassis.audio.write_wave_ram(offset, value),
             MappedAddress::PpuRegister(register) => {
-                let halt_wake_active = self.cpu.is_halt_wake_active();
+                let halt_wake_active = self.chassis.cpu.is_halt_wake_active();
                 if self
+                    .chassis
                     .ppu
                     .write_register(register, value, halt_wake_active, false)
                 {
-                    self.interrupts
+                    self.chassis
+                        .interrupts
                         .requested
                         .insert(InterruptFlags::VIDEO_STATUS);
                 }
             }
-            MappedAddress::BeginDmaTransfer => self.dma.begin_transfer(value),
+            MappedAddress::BeginDmaTransfer => self.chassis.dma.begin_transfer(value),
             MappedAddress::BootRomUnmap => {
                 if value & 0x01 != 0 {
-                    self.external.unmap_boot_rom();
+                    self.chassis.external.unmap_boot_rom();
                 }
             }
             MappedAddress::InterruptRegister(register) => match register {
                 interrupts::Register::EnabledInterrupts => {
-                    self.interrupts.enabled = InterruptFlags::from_bits_retain(value)
+                    self.chassis.interrupts.enabled = InterruptFlags::from_bits_retain(value)
                 }
                 interrupts::Register::RequestedInterrupts => {
-                    self.interrupts.requested = InterruptFlags::from_bits_retain(value);
+                    self.chassis.interrupts.requested = InterruptFlags::from_bits_retain(value);
                 }
             },
 
