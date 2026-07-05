@@ -12,7 +12,7 @@ use missingno_gb::ppu::memory::Vram;
 use missingno_gb::ppu::rendering::Mode;
 use missingno_gb::ppu::types::palette::Palette;
 use missingno_gb::ppu::types::sprites::{Attributes, SpriteId};
-use missingno_gb::{BootRom, ClockPhase, Console, Dmg, GameBoy, Model};
+use missingno_gb::{BootRom, Console, Dmg, GameBoy, Model};
 use missingno_gbc::{Cgb, GameBoyColor};
 
 use crate::render;
@@ -297,14 +297,10 @@ fn handle_request<M: HeadlessUi>(mut request: tiny_http::Request, debugger: &mut
             respond_json(request, pipeline_state(debugger.game_boy()));
         }
         (&Method::Post, "/step-phase") => {
-            debugger.step_phase();
-            let mut response = serde_json::to_value(pipeline_state(debugger.game_boy())).unwrap();
-            response["phase"] =
-                serde_json::Value::String(match debugger.game_boy().clock_phase() {
-                    ClockPhase::High => "high".to_string(),
-                    ClockPhase::Low => "low".to_string(),
-                });
-            respond_json(request, response);
+            // Half-phase stepping was removed; the finest exposed unit is the
+            // T-cycle (one dot at single speed). Retained for API stability.
+            debugger.step_tcycle();
+            respond_json(request, pipeline_state(debugger.game_boy()));
         }
         (&Method::Post, path) if path.starts_with("/trace-apu/") => {
             let n: usize = path.trim_start_matches("/trace-apu/").parse().unwrap_or(0);
@@ -994,11 +990,11 @@ fn timers_state<M: Model>(gb: &Console<M>) -> TimersState {
 }
 
 fn trace_apu<M: Model>(debugger: &mut Debugger<M>, n: usize) -> serde_json::Value {
-    // Capture per-half-T CH3 state across `n` step-phase calls. Used
+    // Capture per-T-cycle CH3 state across `n` step-tcycle calls. Used
     // by /trace-apu/{n} for side-by-side comparison against the
     // dmg-sim FST. The first row records the state BEFORE any step
-    // (step=0). The remaining rows record state AFTER each successive
-    // step-phase, with `phase=high` meaning rise just ran.
+    // (step=0, phase="boundary"); the remaining rows record state AFTER
+    // each successive T-cycle (phase="tcycle").
     fn snapshot<M: Model>(debugger: &Debugger<M>, step: usize, phase: &str) -> serde_json::Value {
         let gb = debugger.game_boy();
         let cpu = gb.cpu();
@@ -1031,18 +1027,10 @@ fn trace_apu<M: Model>(debugger: &mut Debugger<M>, n: usize) -> serde_json::Valu
     }
 
     let mut rows = Vec::with_capacity(n + 1);
-    let initial_phase = match debugger.game_boy().clock_phase() {
-        ClockPhase::High => "boundary-high",
-        ClockPhase::Low => "boundary-low",
-    };
-    rows.push(snapshot(debugger, 0, initial_phase));
+    rows.push(snapshot(debugger, 0, "boundary"));
     for step in 1..=n {
-        debugger.step_phase();
-        let phase = match debugger.game_boy().clock_phase() {
-            ClockPhase::High => "high",
-            ClockPhase::Low => "low",
-        };
-        rows.push(snapshot(debugger, step, phase));
+        debugger.step_tcycle();
+        rows.push(snapshot(debugger, step, "tcycle"));
     }
     serde_json::Value::Array(rows)
 }

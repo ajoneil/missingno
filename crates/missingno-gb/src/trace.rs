@@ -739,50 +739,51 @@ pub fn step_instruction_tcycle<M: Model>(
     gb: &mut Console<M>,
     tracer: &mut Tracer,
 ) -> crate::execute::StepResult {
+    use std::ops::ControlFlow;
+
     let mut new_screen = false;
     let mut tcycles = 0u32;
 
     gb.cpu_mut().take_instruction_boundary();
 
-    // A CPU T-cycle is two master edges in single speed (rise+fall) but a
-    // single edge in double speed (the CPU clock runs at 2× the dot clock).
-    // Capture once per T-cycle in both, so the trace stays T-cycle-granular.
+    // Speed is fixed across one instruction; a mid-instruction switch settles
+    // at the boundary in `resolve_stop`. Single speed captures once per T-cycle
+    // (after the fall, combining both edges' frame flag); double speed captures
+    // after every master edge — the CPU runs at 2× the dot clock — and may
+    // retire mid-pair, deferring the fall to the next call.
     let double_speed = gb.cpu_steps_per_dot() == 2;
 
     loop {
-        let rise = gb.step_phase();
-        new_screen |= rise.new_screen;
-        if let Some(pixel) = rise.pixel {
-            tracer.push_pixel(pixel.shade);
-        }
-
-        if double_speed {
-            // This edge already completed a full CPU T-cycle.
-            if rise.new_screen {
-                tracer.mark_frame().unwrap();
+        let mut first_new_screen = false;
+        let mut is_first = true;
+        gb.execute_tcycle_observed(|gb, result| {
+            new_screen |= result.new_screen;
+            if let Some(pixel) = result.pixel {
+                tracer.push_pixel(pixel.shade);
             }
-            tracer.capture(gb).unwrap();
-            tracer.advance_dot();
-            tcycles += 1;
-            if gb.cpu().at_instruction_boundary() {
-                break;
+            if double_speed {
+                if result.new_screen {
+                    tracer.mark_frame().unwrap();
+                }
+                tracer.capture(gb).unwrap();
+                tracer.advance_dot();
+                tcycles += 1;
+                if gb.cpu().at_instruction_boundary() {
+                    return ControlFlow::Break(());
+                }
+            } else if is_first {
+                first_new_screen = result.new_screen;
+                is_first = false;
+            } else {
+                if first_new_screen || result.new_screen {
+                    tracer.mark_frame().unwrap();
+                }
+                tracer.capture(gb).unwrap();
+                tracer.advance_dot();
+                tcycles += 1;
             }
-            continue;
-        }
-
-        let fall = gb.step_phase();
-        new_screen |= fall.new_screen;
-        if let Some(pixel) = fall.pixel {
-            tracer.push_pixel(pixel.shade);
-        }
-
-        if rise.new_screen || fall.new_screen {
-            tracer.mark_frame().unwrap();
-        }
-
-        tracer.capture(gb).unwrap();
-        tracer.advance_dot();
-        tcycles += 1;
+            ControlFlow::Continue(())
+        });
 
         if gb.cpu().at_instruction_boundary() {
             break;

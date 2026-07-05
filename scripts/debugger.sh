@@ -109,17 +109,18 @@ gb_step_dots() {
   done
 }
 
+# Step N T-cycles via /step-phase (half-phase stepping was removed; the endpoint
+# now advances one T-cycle, a dot at single speed).
 gb_step_phases() {
   local n="${1:?usage: gb_step_phases <count>}"
-  printf "%-4s  %-5s  %-3s  %-4s  %-4s  %-3s  %s\n" \
-    "step" "phase" "lx" "scan" "mode" "pc" "ready"
+  printf "%-4s  %-3s  %-4s  %-4s  %-3s  %s\n" \
+    "step" "lx" "scan" "mode" "pc" "ready"
   for i in $(seq 1 "$n"); do
     local result ppu
     result=$(curl -s -X POST "$GB_URL/step-phase")
     ppu=$(curl -s "$GB_URL/ppu")
-    printf "%-4s  %-5s  %-3s  %-4s  %-4s  %-3s  %s\n" \
+    printf "%-4s  %-3s  %-4s  %-4s  %-3s  %s\n" \
       "$i" \
-      "$(echo "$result" | jq -r '.phase')" \
       "$(echo "$ppu" | jq -r '.lx')" \
       "$(echo "$ppu" | jq -r '.scan_counter // "-"')" \
       "$(echo "$ppu" | jq -r '.stat.mode_number')" \

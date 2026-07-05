@@ -4,9 +4,8 @@
 
 /// One alternating edge of the continuous master clock (`ck1_ck2`). `Rise` and
 /// `Fall` are the two edges of one cycle — not an ordering. A DFF captures on
-/// one of them; that is their only meaning. This is `ClockPhase` renamed for the
-/// phase layer: `Rise` ≡ `ClockPhase::Low` (master rise), `Fall` ≡
-/// `ClockPhase::High` (master fall).
+/// one of them; that is their only meaning. `Rise` is the master rise (the
+/// even/`Low` level), `Fall` the master fall (the odd/`High` level).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Edge {
     Rise,

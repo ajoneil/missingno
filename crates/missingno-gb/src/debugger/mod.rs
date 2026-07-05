@@ -112,14 +112,6 @@ impl<M: Model> Debugger<M> {
         }
     }
 
-    pub fn step_phase(&mut self) -> Option<M::Screen> {
-        if self.game_boy.step_phase().new_screen {
-            Some(self.game_boy.screen().clone())
-        } else {
-            None
-        }
-    }
-
     pub fn step_tcycle(&mut self) -> Option<M::Screen> {
         self.tcycle_count += 1;
         if self.game_boy.step_tcycle() {
@@ -210,7 +202,7 @@ impl<M: Model> Debugger<M> {
 
     fn step_frame_watched_dots(&mut self) -> Option<M::Screen> {
         loop {
-            let screen = self.step_phase();
+            let screen = self.step_tcycle();
 
             if let Some(hit) = self.check_watchpoints(&[]) {
                 self.last_watchpoint_hit = Some(hit);
@@ -342,24 +334,29 @@ impl<M: Model> Debugger<M> {
             .mark_frame()
             .map_err(|e| format!("Trace mark_frame error: {e}"))?;
 
+        let mut trace_err = None;
         loop {
-            let rise = self.game_boy.step_phase();
-            if let Some(pixel) = rise.pixel {
-                tracer.push_pixel(pixel.shade);
+            let mut frame = false;
+            let mut is_first = true;
+            self.game_boy.execute_tcycle_observed(|gb, result| {
+                if let Some(pixel) = result.pixel {
+                    tracer.push_pixel(pixel.shade);
+                }
+                frame |= result.new_screen;
+                if is_first {
+                    is_first = false;
+                } else if let Err(e) = tracer.capture(gb) {
+                    trace_err = Some(format!("Trace capture error: {e}"));
+                } else {
+                    tracer.advance_dot();
+                }
+                std::ops::ControlFlow::Continue(())
+            });
+            if let Some(e) = trace_err {
+                return Err(e);
             }
-
-            let fall = self.game_boy.step_phase();
-            if let Some(pixel) = fall.pixel {
-                tracer.push_pixel(pixel.shade);
-            }
-
-            tracer
-                .capture(&self.game_boy)
-                .map_err(|e| format!("Trace capture error: {e}"))?;
-            tracer.advance_dot();
             self.tcycle_count += 1;
-
-            if rise.new_screen || fall.new_screen {
+            if frame {
                 break;
             }
         }

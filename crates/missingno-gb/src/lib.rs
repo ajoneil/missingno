@@ -9,7 +9,6 @@ pub mod dmg_sram;
 pub mod execute;
 pub mod interrupts;
 pub mod joypad;
-pub mod master_clock;
 pub mod memory;
 pub mod ppu;
 pub mod recording;
@@ -37,7 +36,6 @@ use ppu::model::PpuModel;
 pub use audio::channels::wave::WaveRamCoupling;
 pub use audio::{ApuSpec, DmgApu};
 pub use clock::{CpuDivider, CpuGate, Edge, MasterClock, Tick};
-pub use master_clock::ClockPhase;
 pub use memory::BootRom;
 pub use ppu::PixelOutput;
 
@@ -760,10 +758,6 @@ impl<M: Model> Console<M> {
 
     pub fn audio(&self) -> &Audio<M::Apu> {
         &self.chassis.audio
-    }
-
-    pub fn clock_phase(&self) -> ClockPhase {
-        self.chassis.clock.cpu_edge().into()
     }
 
     /// CPU T-cycles advanced per PPU dot (1 single speed, 2 CGB double speed).

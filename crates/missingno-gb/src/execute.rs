@@ -119,26 +119,21 @@ impl<M: Model> Console<M> {
             return self.step_blackout_chunk();
         }
 
-        const PHASE_BUDGET: u32 = 800;
-        let mut phases_remaining = PHASE_BUDGET;
+        const TCYCLE_BUDGET: u32 = 400;
+        let mut tcycles_remaining = TCYCLE_BUDGET;
         let mut tcycles = 0u32;
 
         loop {
             assert!(
-                phases_remaining > 0,
-                "step() exceeded {PHASE_BUDGET} phase budget — possible infinite loop in CPU"
+                tcycles_remaining > 0,
+                "step() exceeded {TCYCLE_BUDGET} T-cycle budget — possible infinite loop in CPU"
             );
-            phases_remaining -= 1;
+            tcycles_remaining -= 1;
 
-            let result = self.execute_phase(CpuGate::Running);
-            new_screen |= result.new_screen;
-
-            // A T-cycle completes every two CPU edges, at the return to a rise.
-            if self.chassis.clock.cpu_edge() == Edge::Rise {
-                tcycles += 1;
-                if self.chassis.cpu.at_instruction_boundary() {
-                    break;
-                }
+            new_screen |= self.execute_tcycle();
+            tcycles += 1;
+            if self.chassis.cpu.at_instruction_boundary() {
+                break;
             }
         }
         // Don't drain sram_dirty here — let the caller (step_traced) do it
@@ -151,31 +146,45 @@ impl<M: Model> Console<M> {
         }
     }
 
-    /// Advance exactly one half-phase — execute rise() or fall()
-    /// depending on current clock level.
-    pub fn step_phase(&mut self) -> PhaseResult {
-        self.execute_phase(CpuGate::Running)
+    /// Advance one CPU T-cycle — its two master edges, rise then fall. The unit
+    /// every step loop and the debugger advance by. Returns whether a new frame
+    /// was produced across the pair. A T-cycle boundary is always rise-aligned,
+    /// so the pair starts on the rise edge and ends back on a rise.
+    pub fn execute_tcycle(&mut self) -> bool {
+        let rise = self.execute_phase(CpuGate::Running);
+        let fall = self.execute_phase(CpuGate::Running);
+        rise.new_screen || fall.new_screen
     }
 
-    /// Advance to the next T-cycle boundary — the next Low state.
-    /// Executes 1 phase if clock is High, 2 if Low. Returns true if
-    /// a new frame was produced.
-    pub fn step_tcycle(&mut self) -> bool {
-        let mut new_screen = false;
-
-        // Run phases until the clock returns to a rise (T-cycle complete)
-        loop {
-            let result = self.execute_phase(CpuGate::Running);
-            new_screen |= result.new_screen;
-            if self.chassis.clock.cpu_edge() == Edge::Rise {
-                break;
-            }
+    /// Advance one CPU T-cycle, observing the machine after each of its two
+    /// master edges — the gbtrace capture hook. `after_phase` runs after the
+    /// rise then after the fall with that edge's [`PhaseResult`], so a tracer
+    /// keeps its exact between-edges sample points. A `Break` from the rise's
+    /// observer leaves the fall for the next call: the double-speed per-edge
+    /// capture defers the paired edge when the instruction retires on the rise.
+    #[cfg(feature = "gbtrace")]
+    pub fn execute_tcycle_observed(
+        &mut self,
+        mut after_phase: impl FnMut(&mut Self, &PhaseResult) -> std::ops::ControlFlow<()>,
+    ) -> bool {
+        let rise = self.execute_phase(CpuGate::Running);
+        let rise_screen = rise.new_screen;
+        if after_phase(self, &rise).is_break() {
+            return rise_screen;
         }
+        let fall = self.execute_phase(CpuGate::Running);
+        // The fall is the pair's last edge; nothing to defer, so its control
+        // signal is irrelevant.
+        let _ = after_phase(self, &fall);
+        rise_screen || fall.new_screen
+    }
 
-        // Consume the boundary flag so step_traced sees mid-instruction
-        // state after this returns.
+    /// Advance to the next T-cycle boundary. Returns true if a new frame was
+    /// produced. Consumes the boundary flag so a following `step`/`step_traced`
+    /// sees mid-instruction state.
+    pub fn step_tcycle(&mut self) -> bool {
+        let new_screen = self.execute_tcycle();
         self.chassis.cpu.take_instruction_boundary();
-
         new_screen
     }
 

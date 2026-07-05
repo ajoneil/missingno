@@ -19,7 +19,7 @@ Use this skill when the question can be answered by inspecting state at instruct
 
 ## When this is NOT enough — stop and tell the user
 
-This API operates at half-phase, dot, and instruction granularity. With `step-phase`, `step-dot`, bus watchpoints, `/ppu` (including scan counter), `/ppu/pipeline`, and `/audio`, most mid-scanline / mid-M-cycle observations are possible. It **cannot** observe:
+This API operates at T-cycle (dot) and instruction granularity. With `step-dot`, bus watchpoints, `/ppu` (including scan counter), `/ppu/pipeline`, and `/audio`, most mid-scanline / mid-M-cycle observations are possible. It **cannot** observe:
 
 - **Sub-dot timing** (what happens within a single dot tick — e.g., the order of operations inside one PPU clock)
 - **Memory bus conflicts** (DMA bus contention, OAM/VRAM locking during specific modes)
@@ -133,14 +133,13 @@ step  lx    pc   ready  lo     hi     sprite
 - `lo`/`hi`: bg_shifter.low/high
 - `sprite`: sprite_fetch phase ("fetching_data") or "none"
 
-**`gb_step_phases <n>`** — Step N half-phases, printing a table. Each row calls POST `/step-phase` then GET `/ppu`. Output columns:
+**`gb_step_phases <n>`** — Step N T-cycles, printing a table. Half-phase stepping was removed; `/step-phase` now advances one T-cycle (a dot at single speed), like `/step-dot`. Each row calls POST `/step-phase` then GET `/ppu`. Output columns:
 ```
-step  phase  lx   scan  mode  pc   ready
-1     high   0    5     0     0    F
-2     low    0    5     0     0    F
+step  lx   scan  mode  pc   ready
+1     0    5     0     0    F
+2     0    5     0     0    F
 ```
 - `step`: 1-based index
-- `phase`: "high" or "low" (clock level after this step)
 - `lx`: M-cycle counter from `/ppu`
 - `scan`: scan_counter from `/ppu` (OAM scan counter 0-39, or "-" when null)
 - `mode`: stat.mode_number from `/ppu` (0-3)
@@ -243,7 +242,7 @@ These are the exact field names in API responses. Use these in `jq` filters — 
 
 **`/step-dot`**: Same shape as `/ppu/pipeline` — returns pipeline state after the dot.
 
-**`/step-phase`**: Same shape as `/ppu/pipeline` plus a `phase` field (`"high"` or `"low"`) indicating the master clock level after execution. `"high"` = rise() just ran (next is fall). `"low"` = fall() just ran (next is rise).
+**`/step-phase`**: Same shape as `/ppu/pipeline`. Half-phase stepping was removed; this now advances one T-cycle (a dot at single speed), equivalent to `/step-dot`. Kept for API stability.
 
 **`/timers`**: `div`, `tima`, `tma`, `tac`, `timer_enabled` (bool), `clock_select` (int 0-3), `frequency` (int Hz), `internal_counter` (hex string), `internal_counter_decimal` (int)
 
@@ -280,7 +279,7 @@ These are the exact field names in API responses. Use these in `jq` filters — 
 | `/breakpoints` | GET | List of breakpoint addresses |
 | `/step` | POST | Execute one instruction, return CPU state |
 | `/step-dot` | POST | Execute one PPU dot, return pipeline state |
-| `/step-phase` | POST | Execute one half-phase (rise or fall), return pipeline state + phase |
+| `/step-phase` | POST | Execute one T-cycle (a dot at single speed), return pipeline state |
 | `/step-frame` | POST | Run to frame/breakpoint/watchpoint, return CPU state + `watchpoint_hit` |
 | `/step-over` | POST | Step over current instruction |
 | `/reset` | POST | Reset the Game Boy |
