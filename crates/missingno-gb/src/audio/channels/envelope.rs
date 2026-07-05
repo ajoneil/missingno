@@ -11,7 +11,7 @@ pub struct Envelope {
     pub timer: u8,
     /// `kyvo` — envelope-counter saturation arm. Set at kene↓; sampled
     /// into JOPA/KOZY on the next horu_512hz↑.
-    pub kyvo: bool,
+    pub saturation_armed: bool,
     /// `JEME` stop latch: a fire that samples a saturated counter latches
     /// it, pinning HOFO until the next trigger clears it.
     pub stopped: bool,
@@ -27,7 +27,7 @@ impl Envelope {
         self.volume = initial_volume;
         self.timer = pace;
         self.stopped = false;
-        self.kyvo = false;
+        self.saturation_armed = false;
     }
 
     /// Write-strobe transient: the pace bits read 1 while the cells settle,
@@ -51,7 +51,7 @@ impl Envelope {
         }
         if self.timer == 0 {
             self.timer = pace;
-            self.kyvo = true;
+            self.saturation_armed = true;
         }
     }
 
@@ -64,10 +64,10 @@ impl Envelope {
         channel_enabled: bool,
         direction: EnvelopeDirection,
     ) -> bool {
-        if !self.kyvo {
+        if !self.saturation_armed {
             return false;
         }
-        self.kyvo = false;
+        self.saturation_armed = false;
         if pace == 0 || !channel_enabled || self.stopped {
             return false;
         }

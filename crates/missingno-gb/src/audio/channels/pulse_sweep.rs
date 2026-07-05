@@ -201,7 +201,7 @@ impl PulseSweepChannel {
                 // pace=0 raises jupu → hafe=0 → KOZY async-reset; any
                 // armed kyvo is dropped before the next horu_512hz↑.
                 if new_pace == 0 {
-                    self.envelope.kyvo = false;
+                    self.envelope.saturation_armed = false;
                 }
                 // Disabling the DAC immediately disables the channel
                 if value & 0xf8 == 0 {
