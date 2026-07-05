@@ -447,12 +447,14 @@ impl<P: PpuModel> Rendering<P> {
             false
         };
 
-        let mux = pixel_output::current_mux::<P>(&self.bg_shifter, &self.obj_fifo);
-        let post_shift_pixel = model.resolve(&mux, regs);
+        let bg_shifter = &self.bg_shifter;
+        let obj_fifo = &self.obj_fifo;
+        let resolve_pixel =
+            || model.resolve(&pixel_output::current_mux::<P>(bg_shifter, obj_fifo), regs);
         let pixel = self.lcd.on_ppu_clock_rise(
             self.hblank.end_of_line_latched(),
             end_of_line,
-            post_shift_pixel,
+            resolve_pixel,
         );
 
         // Mode 3 exit: clear fetch cascade and fine-scroll on XYMU↑.

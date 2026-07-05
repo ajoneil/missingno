@@ -72,7 +72,7 @@ impl LcdControl {
         &mut self,
         end_of_line_latched: bool,
         end_of_line: bool,
-        post_shift_pixel: Pix,
+        resolve_pixel: impl FnOnce() -> Pix,
     ) -> Option<DrawnPixel<Pix>> {
         let pixel_out = if end_of_line
             && self.lcd_push_count < crate::ppu::screen::PIXELS_PER_LINE
@@ -81,7 +81,7 @@ impl LcdControl {
             let out = DrawnPixel {
                 x: self.lcd_push_count,
                 y: self.scanline,
-                color: post_shift_pixel,
+                color: resolve_pixel(),
             };
             self.lcd_push_count += 1;
             Some(out)
