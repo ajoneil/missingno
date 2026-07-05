@@ -175,7 +175,7 @@ The project is a Cargo workspace with crates under `crates/`:
 
 The Game Boy's master clock produces alternating edges. On hardware, each edge triggers specific circuits — there is no inherent "first" or "second" edge within a dot. The CPU and PPU share the master clock; at single speed they tick in lockstep, and at CGB double speed the `MasterClock`'s ÷2 divider advances the dot edge on alternate CPU edges (the divider is owned by `Chassis.clock`; KEY1 mutates it at the speed switch).
 
-**Emulator model**: `execute_phase()` in `execute.rs` advances one master-clock edge per call, dispatching to `rise_cpu_pre/post` and `fall_cpu_pre/post` around the PPU's `ppu.on_master_clock_rise()` / `on_master_clock_fall()`. One dot = one rise + one fall (`ck1_ck2` edges — see the DMG Timing Specification's Clock Tree chapter). Public single-stepping: `step_phase()` / `step_tcycle()`.
+**Emulator model**: `execute_tcycle()` in `execute.rs` advances one CPU T-cycle (its rise then its fall) as straight-line flow. `MasterClock::tcycle_schedule()` names the dot edges the T-cycle carries — `FullDot` at ÷1; at ÷2 exactly one dot edge on the rise, alternating `DotRiseOnRise`/`DotFallOnRise` (no other combination is representable). One dot = one rise + one fall (`ck1_ck2` edges — see the DMG Timing Specification's Clock Tree chapter). Public single-stepping is per T-cycle (`step_tcycle()`); there is no half-edge stepping. The speed-switch blackout drives held DOT edges through the clock's `Held` arm in its own loop, outside the fused path.
 - rise: PPU pixel output, CPU state advance, CPU reads
 - fall: PPU fetcher/control, memory write commit
 
