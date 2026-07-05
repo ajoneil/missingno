@@ -90,9 +90,9 @@ pub struct Cgb {
     pub(crate) speed_switch_blackout: u32,
     /// HALT-wake intake countdown: a timer overflowing during the post-STOP
     /// HALT spends one WakeIntake M-cycle (the divider ticking through it)
-    /// before its dispatch, like any HALT wake. -1 = no wake in flight; armed
-    /// to 1 on the IF-set edge, re-engaging once it reaches 0.
-    speed_switch_wake_latency: i32,
+    /// before its dispatch, like any HALT wake. `None` = no wake in flight;
+    /// armed to `Some(1)` on the IF-set edge, re-engaging once it reaches 0.
+    speed_switch_wake_latency: Option<u8>,
     /// Pre-ALET-rise XYMU (mode-3) state, sampled before this dot's ALET edge
     /// (where VOGA captures) — the pre-transition view a double-speed FF41 read's
     /// `data_phase_n↑` latch saw; `resolve_read_latch` resolves the read's STAT
@@ -143,7 +143,7 @@ impl Default for Cgb {
             dmg_compat: false,
             vram_dma: VramDma::default(),
             speed_switch_blackout: 0,
-            speed_switch_wake_latency: -1,
+            speed_switch_wake_latency: None,
             pre_alet_rendering: false,
             pre_alet_lock: None,
             read_drive_oam_lock: None,
@@ -411,13 +411,13 @@ impl Model for Cgb {
     }
 
     fn speed_switch_wake_ready(&mut self, mcycle_boundary: bool) -> bool {
-        if self.speed_switch_wake_latency < 0 {
-            // First IF-set edge: arm the WakeIntake M-cycle.
-            self.speed_switch_wake_latency = 1;
-        } else if mcycle_boundary && self.speed_switch_wake_latency > 0 {
-            self.speed_switch_wake_latency -= 1;
-        }
-        self.speed_switch_wake_latency == 0
+        let latency = match self.speed_switch_wake_latency {
+            None => 1, // First IF-set edge: arm the WakeIntake M-cycle.
+            Some(n) if mcycle_boundary && n > 0 => n - 1,
+            Some(n) => n,
+        };
+        self.speed_switch_wake_latency = Some(latency);
+        latency == 0
     }
 
     fn speed_switch_in_progress(&self) -> bool {
@@ -427,7 +427,7 @@ impl Model for Cgb {
     fn drain_speed_switch_blackout(&mut self, elapsed: u32) -> bool {
         self.speed_switch_blackout = self.speed_switch_blackout.saturating_sub(elapsed);
         if self.speed_switch_blackout == 0 {
-            self.speed_switch_wake_latency = -1;
+            self.speed_switch_wake_latency = None;
         }
         self.speed_switch_blackout == 0
     }
