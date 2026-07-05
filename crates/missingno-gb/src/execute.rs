@@ -25,18 +25,6 @@ pub struct PhaseResult {
     pub pixel: Option<ppu::PixelOutput>,
 }
 
-/// Which PPU master-clock edge a CPU rise carries. The PPU clock is
-/// speed-independent: one rise and one fall per dot. At single speed the dot
-/// rise sits on the CPU rise and the dot fall on the CPU fall; at double speed
-/// both dot edges land on a CPU rise — the dot's master rise on the first CPU
-/// T-cycle's rise and the master fall half a dot later on the second T-cycle's
-/// rise, not the dot's final edge.
-#[derive(Clone, Copy, PartialEq)]
-enum PpuEdge {
-    Rise,
-    Fall,
-}
-
 /// The facts a rising master-clock edge settles in its pre-PPU-rise work,
 /// carried from `rise_cpu_pre` to `rise_cpu_post`: whether the edge opened a
 /// new M-cycle, and the CPU T-cycle the PPU rise is keyed to.
@@ -212,8 +200,8 @@ impl<M: Model> Console<M> {
         // the dot rise; on the ÷2 T-cycle that carries the dot fall on this rise
         // it defers to the following CPU fall.
         let (ppu, dot_work) = match schedule {
-            TcycleSchedule::FullDot | TcycleSchedule::DotRiseOnRise => (PpuEdge::Rise, true),
-            TcycleSchedule::DotFallOnRise => (PpuEdge::Fall, false),
+            TcycleSchedule::FullDot | TcycleSchedule::DotRiseOnRise => (Edge::Rise, true),
+            TcycleSchedule::DotFallOnRise => (Edge::Fall, false),
         };
         self.chassis.clock.advance(CpuGate::Running);
 
@@ -362,14 +350,14 @@ impl<M: Model> Console<M> {
     /// every dot — one consistent CPU↔PPU phase (the spec pins a single fixed
     /// lattice; there is no per-dot CPU edge for it to vary against). The
     /// M-boundary additionally runs its boundary CPU work and the HDMA grant.
-    fn rise_cpu_pre(&mut self, ppu: PpuEdge, dot_work: bool) -> RiseEdge {
+    fn rise_cpu_pre(&mut self, ppu: Edge, dot_work: bool) -> RiseEdge {
         let is_mcycle_boundary = self.chassis.cpu.consume_boundary_pending();
 
         // Pre-ALET-rise XYMU (mode-3) view: the mode 3→0 XYMU.q↑ fires inside
         // this dot's `ppu_rise_edge`. A double-speed FF41 read latching on the
         // same phase resolves its mode to this pre-transition view (the CGB
         // CPU↔ALET read placement). Only double speed consumes it.
-        if ppu == PpuEdge::Rise && self.double_speed_active() {
+        if ppu == Edge::Rise && self.double_speed_active() {
             self.model
                 .note_pre_alet_rendering(self.chassis.ppu.is_rendering());
             if let Some(address) = self.chassis.cpu_bus.read_address() {
@@ -431,7 +419,7 @@ impl<M: Model> Console<M> {
             self.arm_oam_bugs();
         }
         if !is_mcycle_boundary {
-            self.tick_non_boundary_rise(tcycle, ppu == PpuEdge::Fall);
+            self.tick_non_boundary_rise(tcycle, ppu == Edge::Fall);
         }
         RiseEdge {
             mcycle_boundary: is_mcycle_boundary,
@@ -644,13 +632,13 @@ impl<M: Model> Console<M> {
     /// outputs. Double speed places the master fall on the High arm's rise.
     fn fire_dot_ppu(
         &mut self,
-        ppu: PpuEdge,
+        ppu: Edge,
         is_mcycle_boundary: bool,
         tcycle: TCycle,
     ) -> (bool, Option<ppu::PixelOutput>) {
         match ppu {
-            PpuEdge::Rise => self.ppu_rise_edge(),
-            PpuEdge::Fall => {
+            Edge::Rise => self.ppu_rise_edge(),
+            Edge::Fall => {
                 // A dot fall on a CPU rise (double speed only): an LY tick on
                 // the read's own T2 rise sits 3 half-edges before the latch,
                 // inside the mux ripple — stash LY_old for the latch's AND. A

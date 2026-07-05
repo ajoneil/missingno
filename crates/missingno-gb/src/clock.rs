@@ -116,11 +116,6 @@ pub struct MasterClock {
     /// Dot/ALET-family phase — today's `ppu_phase`. Free-running, untouched by
     /// the divider ratio.
     dot_phase: Edge,
-    /// Within-dot CPU sub-edge: `0..ratio`. At `÷1` always `0` (cpu ≡ dot). At
-    /// `÷2` it is `0` on the dot-carrying CPU edge, `1` on the bare second CPU
-    /// edge — the explicit phase carry that replaces
-    /// `ppu_advances = !double_speed || rising`.
-    cpu_phase_in_dot: u8,
 }
 
 impl MasterClock {
@@ -132,28 +127,12 @@ impl MasterClock {
             divider,
             cpu_phase: Edge::Rise,
             dot_phase: Edge::Rise,
-            cpu_phase_in_dot: 0,
         }
     }
 
     /// The CPU's current edge.
     pub fn cpu_edge(&self) -> Edge {
         self.cpu_phase
-    }
-
-    /// The dot edge this CPU edge carries, or `None` when this `÷2` CPU edge is
-    /// the bare second T-cycle. At `÷1` always `Some`.
-    pub fn dot_edge(&self) -> Option<Edge> {
-        if self.cpu_phase_in_dot == 0 {
-            Some(self.dot_phase)
-        } else {
-            None
-        }
-    }
-
-    /// Did the dot domain advance this master edge? (`ppu_advances` today.)
-    pub fn dot_step(&self) -> bool {
-        self.cpu_phase_in_dot == 0
     }
 
     /// The dot domain's own current edge (independent of whether this CPU edge
@@ -177,13 +156,11 @@ impl MasterClock {
     }
 
     /// Force the CPU phase to the master rise — the blackout-resume re-engage,
-    /// where the SM83's first fetch begins on a CPU rising edge. Re-anchors the
-    /// within-dot sub-edge to 0 so `cpu_phase_in_dot == 0 ⟺ cpu_phase == Rise`
-    /// holds on the first CPU edge after the freeze (the dot fires on the resume
-    /// rise, as `ppu_advances = rising` did).
+    /// where the SM83's first fetch begins on a CPU rising edge. Every freeze
+    /// exits through here, which is what keeps the `÷2` dot placement a pure
+    /// function of `cpu_phase` (the dot fires on rises, flips after falls).
     pub fn engage_on_rise(&mut self) {
         self.cpu_phase = Edge::Rise;
-        self.cpu_phase_in_dot = 0;
     }
 
     /// The dot edges the NEXT full CPU T-cycle (rise + fall) will carry, and
@@ -211,13 +188,15 @@ impl MasterClock {
         match gate {
             CpuGate::Running => {
                 let cpu = self.cpu_phase;
-                let dot = self.dot_edge();
+                // The dot fires on every ÷1 edge; at ÷2 only on the CPU rises
+                // (rise-alignment holds because every freeze exits via
+                // `engage_on_rise`).
+                let dot_fires = self.divider == CpuDivider::One || cpu == Edge::Rise;
+                let dot = if dot_fires { Some(self.dot_phase) } else { None };
                 self.cpu_phase = self.cpu_phase.flip();
-                // The dot advances every CPU edge at ÷1, every other at ÷2.
-                // Edges-per-dot is 1 or 2, so mask instead of a runtime modulo.
-                self.cpu_phase_in_dot =
-                    (self.cpu_phase_in_dot + 1) & (self.divider.cpu_edges_per_dot() - 1);
-                if self.cpu_phase_in_dot == 0 {
+                // The fired dot edge is spent once the dot's CPU edges are: on
+                // every ÷1 edge, and after the ÷2 bare fall.
+                if self.divider == CpuDivider::One || cpu == Edge::Fall {
                     self.dot_phase = self.dot_phase.flip();
                 }
                 Tick {
@@ -338,12 +317,7 @@ mod tests {
             },
         ];
         for (i, want) in expected.iter().enumerate() {
-            // The ratio=1 substitution identity: cpu_phase == dot_phase before
-            // every edge.
-            assert!(
-                clock.dot_step(),
-                "dot advances every edge at ÷1 (before edge {i})"
-            );
+            // The ratio=1 substitution identity: every edge carries its dot.
             assert_eq!(clock.advance(CpuGate::Running), *want, "edge {i}");
         }
     }
@@ -391,16 +365,12 @@ mod tests {
     /// At `÷2` the dot domain advances only on the dot-carrying CPU edge — half
     /// the master-edge rate — matching `ppu_advances = !double_speed || rising`.
     #[test]
-    fn dot_step_halves_at_two() {
+    fn dot_edges_halve_at_two() {
         let mut clock = MasterClock::new(CpuDivider::Two);
-        let mut dot_steps = 0;
-        for _ in 0..100 {
-            if clock.dot_step() {
-                dot_steps += 1;
-            }
-            clock.advance(CpuGate::Running);
-        }
-        assert_eq!(dot_steps, 50);
+        let dot_edges = (0..100)
+            .filter(|_| clock.advance(CpuGate::Running).dot.is_some())
+            .count();
+        assert_eq!(dot_edges, 50);
     }
 
     /// A `Held` advance freezes the CPU phase and free-runs the dot domain: the
