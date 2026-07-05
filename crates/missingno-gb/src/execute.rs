@@ -685,14 +685,8 @@ impl<M: Model> Console<M> {
         video_result: Option<ppu::PpuTickResult<<M::Ppu as ppu::PpuModel>::Pixel>>,
         dot_work: bool,
     ) -> (bool, Option<ppu::PixelOutput>) {
-        let mut new_screen = false;
-        let mut pixel = None;
-        // Double-speed boundary fall sharing a dot with no PPU fall: the
-        // CPU-clocked STAT register synchroniser still captures; its request
-        // joins the fall path's gating below.
-        let standalone_stat = video_result.is_none()
-            && is_mcycle_boundary
-            && self.chassis.ppu.capture_register_sync_standalone();
+        let standalone_stat =
+            self.capture_standalone_stat_sync(video_result.is_some(), is_mcycle_boundary);
 
         if tcycle.as_u8() == 2 {
             self.sample_mid_cupa_lock();
@@ -701,10 +695,39 @@ impl<M: Model> Console<M> {
         self.commit_read_latch(ly_at_latch);
         self.commit_write();
 
-        // HDMA trigger, evaluated each dot's fall with this fall's write
-        // commit visible: the pend forms on the post-rise mode view and
-        // commits to cancel-immunity one fall later (the pend pipeline
-        // lives in the model).
+        self.tick_vram_dma_trigger(dot_work, pre_fall_mode);
+
+        self.request_fall_path_interrupts(&video_result, standalone_stat);
+        self.reclear_held_ack();
+
+        let (new_screen, pixel) = self.apply_fall_ppu_result(video_result.as_ref());
+
+        self.clock_oam_dma_gate(tcycle);
+
+        if is_mcycle_boundary {
+            self.tick_mcycle_boundary_fall();
+        }
+
+        self.recapture_interrupts();
+        (new_screen, pixel)
+    }
+
+    /// Double-speed boundary fall sharing a dot with no PPU fall: the
+    /// CPU-clocked STAT register synchroniser still captures; its request
+    /// joins the fall path's gating.
+    fn capture_standalone_stat_sync(
+        &mut self,
+        has_ppu_fall: bool,
+        is_mcycle_boundary: bool,
+    ) -> bool {
+        !has_ppu_fall && is_mcycle_boundary && self.chassis.ppu.capture_register_sync_standalone()
+    }
+
+    /// HDMA trigger, evaluated each dot's fall with this fall's write
+    /// commit visible: the pend forms on the post-rise mode view and
+    /// commits to cancel-immunity one fall later (the pend pipeline
+    /// lives in the model).
+    fn tick_vram_dma_trigger(&mut self, dot_work: bool, pre_fall_mode: ppu::Mode) {
         if dot_work {
             // The engine thaws at the IF rise, ahead of the CPU's halt-exit
             // latency (a wake-coincident block is decided before the first
@@ -713,8 +736,16 @@ impl<M: Model> Console<M> {
             // trigger pipeline and hands back its committed bus claim.
             self.model.vram_dma_edge(&mut self.chassis, pre_fall_mode);
         }
+    }
 
-        if let Some(video_result) = &video_result {
+    /// Fall-path VBlank/STAT IF requests: POPU/SUKO transitions land on the
+    /// fall since the divider chain runs there.
+    fn request_fall_path_interrupts(
+        &mut self,
+        video_result: &Option<ppu::PpuTickResult<<M::Ppu as ppu::PpuModel>::Pixel>>,
+        standalone_stat: bool,
+    ) {
+        if let Some(video_result) = video_result {
             // VBlank IF: POPU transitions happen here since the divider
             // chain runs in fall().
             if video_result.request_vblank {
@@ -732,34 +763,37 @@ impl<M: Model> Console<M> {
         if standalone_stat && !self.chassis.cpu.irq.cpu_irq_ack1_pulse {
             self.chassis.interrupts.request(Interrupt::VideoStatus);
         }
+    }
 
-        // cpu_irq_ack1 holds the serviced IF bit's r_n LOW across the whole
-        // dispatch-ack window — re-assert it after every same-M-cycle setter
-        // (the FF0F PC-push commit above and the source requests) so a source
-        // rise inside the window is captured-but-suppressed.
+    /// cpu_irq_ack1 holds the serviced IF bit's r_n LOW across the whole
+    /// dispatch-ack window — re-assert it after every same-M-cycle setter
+    /// (the FF0F PC-push commit above and the source requests) so a source
+    /// rise inside the window is captured-but-suppressed.
+    fn reclear_held_ack(&mut self) {
         if let Some(interrupt) = self.chassis.cpu.irq.irq_ack_held {
             self.chassis.interrupts.clear(interrupt);
         }
+    }
 
-        if let Some(video_result) = &video_result {
-            let (ns, px) = self.apply_ppu_result(video_result);
-            new_screen |= ns;
-            pixel = px;
+    /// Apply this fall's PPU result — pixel draw and VSYNC/LCD-off present.
+    /// `None` on the double-speed CPU T-cycle that carries no PPU fall.
+    fn apply_fall_ppu_result(
+        &mut self,
+        video_result: Option<&ppu::PpuTickResult<<M::Ppu as ppu::PpuModel>::Pixel>>,
+    ) -> (bool, Option<ppu::PixelOutput>) {
+        match video_result {
+            Some(video_result) => self.apply_ppu_result(video_result),
+            None => (false, None),
         }
+    }
 
-        // OAM DMA control gates clock on dma_phi = !data_phase; tick
-        // every master-clock edge so the engage (dma_phi rising) and arm
-        // (dma_phi_n rising) edges are both seen. data_phase is held LOW
-        // during halt-spin, freezing the engine (matu/counter get no edge).
+    /// OAM DMA control gates clock on dma_phi = !data_phase; tick
+    /// every master-clock edge so the engage (dma_phi rising) and arm
+    /// (dma_phi_n rising) edges are both seen. data_phase is held LOW
+    /// during halt-spin, freezing the engine (matu/counter get no edge).
+    fn clock_oam_dma_gate(&mut self, tcycle: TCycle) {
         let data_phase = !self.chassis.cpu.halt_rs_latched() && matches!(tcycle.as_u8(), 2 | 3);
         self.drive_dma(data_phase);
-
-        if is_mcycle_boundary {
-            self.tick_mcycle_boundary_fall();
-        }
-
-        self.recapture_interrupts();
-        (new_screen, pixel)
     }
 
     /// M-cycle-boundary CPU work on the rising edge: irq_latched capture,
