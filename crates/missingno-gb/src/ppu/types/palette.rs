@@ -262,8 +262,7 @@ impl Palettes {
         if let Some(overlay) = self.recovery.overlay() {
             return overlay;
         }
-        // dlatch_ee transparency: a pixel emit between drive_ppu_bus (rise) and tick_palette_latches (fall)
-        // sees OR(prior, pending) — extends the NURA overlay one emulator edge backwards.
+        // dlatch_ee transparency: a pixel emit between drive_ppu_bus (rise) and tick_background (fall) sees OR(prior, pending) — the NURA overlay extends one emulator edge backwards.
         if self.recovery.pending_or_engaged()
             && let Some(pending) = self.background.pending()
         {
