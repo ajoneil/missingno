@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 
 use channels::wave::WaveRamCoupling;
+use channels::registers::Prescaler;
 use channels::{Channels, noise, pulse, pulse_sweep, wave};
 use volume::Volume;
 
@@ -53,6 +54,10 @@ const DIV_APU_BIT_DOUBLE: u16 = 1 << 11;
 #[derive(Clone)]
 pub struct Audio<A: ApuSpec> {
     pub(crate) enabled: bool,
+    /// The 1 MHz channel clock. Each pulse channel has its own CALO/AJER
+    /// divider pair on the die, but they share the master clock and the
+    /// power reset, so one counter serves CH1 and CH2.
+    pub(crate) channel_clock: Prescaler,
     pub(crate) channels: Channels,
     pub(crate) volume_left: Volume,
     pub(crate) volume_right: Volume,
@@ -106,6 +111,7 @@ impl<A: ApuSpec> Audio<A> {
     pub fn post_boot(internal_counter: u16) -> Self {
         Self {
             enabled: true,
+            channel_clock: Prescaler::default(),
             channels: Channels::default(),
             volume_left: Volume::max(),
             volume_right: Volume::max(),
@@ -148,6 +154,7 @@ impl<A: ApuSpec> Audio<A> {
         channels.reset_all();
         Self {
             enabled: false,
+            channel_clock: Prescaler::default(),
             channels,
             volume_left: Volume(0),
             volume_right: Volume(0),
@@ -174,6 +181,11 @@ impl<A: ApuSpec> Audio<A> {
 
     pub fn enabled(&self) -> bool {
         self.enabled
+    }
+
+    /// The shared 1 MHz channel-clock phase (CALO/AJER counter).
+    pub fn channel_clock_counter(&self) -> u8 {
+        self.channel_clock.counter
     }
 
     /// PCM12: CGB-only digital tap of the channel DACs — CH1 low nibble, CH2 high.
@@ -260,14 +272,18 @@ impl<A: ApuSpec> Audio<A> {
         }
         let c_next = (self.frame_sequencer_step + 1) % 8;
         let sweep_cate_due = fs_fire && (c_next == 0 || c_next == 4);
+        let channel_clock_rose = self
+            .channel_clock
+            .tcycle(apu_reset_n, t_index, double_speed);
+        let channel_clock_phase_one = self.channel_clock.counter == 1;
         self.channels.ch1.tcycle(
             apu_reset_n,
-            t_index,
-            double_speed,
+            channel_clock_rose,
+            channel_clock_phase_one,
             A::WIDE_SWEEP_LOAD_HOLD,
             sweep_cate_due,
         );
-        self.channels.ch2.tcycle(apu_reset_n, t_index, double_speed);
+        self.channels.ch2.tcycle(channel_clock_rose);
         self.channels.ch3.tcycle(apu_reset_n, A::WAVE_RAM_COUPLING);
         self.channels.ch4.tcycle(apu_reset_n, t_index, double_speed);
 
@@ -481,7 +497,6 @@ impl<A: ApuSpec> Audio<A> {
                     counter: 0,
                 },
                 period: Signed11(snap.ch1_period),
-                prescaler: Prescaler::default(),
                 divider: PeriodDivider::default(),
                 wave_duty_position: 0,
                 pwm_latch: false,
@@ -516,7 +531,6 @@ impl<A: ApuSpec> Audio<A> {
                     counter: 0,
                 },
                 period: Signed11(snap.ch2_period),
-                prescaler: Prescaler::default(),
                 divider: PeriodDivider::default(),
                 wave_duty_position: 0,
                 pwm_latch: false,
@@ -587,6 +601,7 @@ impl<A: ApuSpec> Audio<A> {
 
         Self {
             enabled: snap.sound_on & 0x80 != 0,
+            channel_clock: Prescaler::default(),
             channels,
             volume_left: Volume(0),
             volume_right: Volume(0),

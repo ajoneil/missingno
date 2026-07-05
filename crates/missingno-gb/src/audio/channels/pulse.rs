@@ -3,7 +3,7 @@ use super::{
     envelope::Envelope,
     length::LengthCounter,
     registers::{
-        PeriodDivider, PeriodHighAndControl, Prescaler, Signed11, VolumeAndEnvelope,
+        PeriodDivider, PeriodHighAndControl, Signed11, VolumeAndEnvelope,
         WaveformAndInitialLength,
     },
 };
@@ -31,7 +31,6 @@ pub struct PulseChannel {
     pub length: LengthCounter<64>,
     pub period: Signed11,
 
-    pub prescaler: Prescaler,
     pub divider: PeriodDivider,
     pub wave_duty_position: u8,
     /// `dome` PWM latch (CH2 mirror of CH1's `duwo`).
@@ -67,7 +66,6 @@ impl Default for PulseChannel {
             length: LengthCounter::default(),
             period: Signed11(0), // CH2 NR23/NR24 never written by boot ROM; acc_d = 0
 
-            prescaler: Prescaler::default(),
             divider: PeriodDivider::default(),
             wave_duty_position: 0,
             pwm_latch: false,
@@ -93,7 +91,6 @@ impl PulseChannel {
             },
             period: (0).into(),
 
-            prescaler: Prescaler::default(),
             divider: PeriodDivider::default(),
             wave_duty_position: 0,
             pwm_latch: false,
@@ -197,8 +194,10 @@ impl PulseChannel {
         }
     }
 
-    pub fn tcycle(&mut self, apu_reset_n: bool, t_index: u8, double_speed: bool) {
-        if !self.prescaler.tcycle(apu_reset_n, t_index, double_speed) || !self.enabled.enabled {
+    /// One master-clock rise. `channel_clock_rose` is the shared CALO↑
+    /// (ch2_1mhz↑) strobe, low while apu_reset holds the clock.
+    pub fn tcycle(&mut self, channel_clock_rose: bool) {
+        if !channel_clock_rose || !self.enabled.enabled {
             return;
         }
         // ch2_frst↓ (one ch2_1mhz↑ after an overflow): the duty counter (cule)

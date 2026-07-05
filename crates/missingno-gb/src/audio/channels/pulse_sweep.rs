@@ -3,7 +3,7 @@ use super::{
     envelope::Envelope,
     length::LengthCounter,
     registers::{
-        PeriodDivider, PeriodHighAndControl, Prescaler, Signed11, VolumeAndEnvelope,
+        PeriodDivider, PeriodHighAndControl, Signed11, VolumeAndEnvelope,
         WaveformAndInitialLength,
     },
 };
@@ -33,7 +33,6 @@ pub struct PulseSweepChannel {
     pub length: LengthCounter<64>,
     pub period: Signed11,
 
-    pub prescaler: Prescaler,
     pub divider: PeriodDivider,
     pub wave_duty_position: u8,
     /// `duwo` PWM latch — captures the duty-pattern bit on each
@@ -99,7 +98,6 @@ impl Default for PulseSweepChannel {
             volume_and_envelope: VolumeAndEnvelope(0xf3),
             length: LengthCounter::default(),
             period: Signed11(0x7C1),
-            prescaler: Prescaler { counter: 1 },
             divider: PeriodDivider { counter: 0x7F9 },
             wave_duty_position: 2,
             pwm_latch: false,
@@ -139,7 +137,6 @@ impl PulseSweepChannel {
             },
             period: (0).into(),
 
-            prescaler: Prescaler::default(),
             divider: PeriodDivider::default(),
             wave_duty_position: 0,
             pwm_latch: false,
@@ -301,12 +298,13 @@ impl PulseSweepChannel {
     pub fn tcycle(
         &mut self,
         apu_reset_n: bool,
-        t_index: u8,
-        double_speed: bool,
+        channel_clock_rose: bool,
+        clock_phase_one: bool,
         wide_sweep_hold: bool,
         sweep_cate_due: bool,
     ) {
-        let calo_rose = self.prescaler.tcycle(apu_reset_n, t_index, double_speed);
+        // The shared channel clock's CALO↑ (ch1_1mhz↑) strobe.
+        let calo_rose = channel_clock_rose;
         // cate↓ settles before the slot's wrap (measured sub-slot order:
         // cate +0.005, fire +0.25, wrap +0.52): tick it here so a wrap-
         // coincident arm's fire commits the period the wrap loads. A rise
@@ -329,7 +327,7 @@ impl PulseSweepChannel {
         // prescaler counter == 1 after the advance. Sample even when
         // the channel is disabled so a same-cycle re-trigger window
         // sees the cleared coze.
-        if apu_reset_n && self.prescaler.counter == 1 {
+        if apu_reset_n && clock_phase_one {
             self.tick_sweep_calc();
             self.sample_sweep_bexa(false);
         }
