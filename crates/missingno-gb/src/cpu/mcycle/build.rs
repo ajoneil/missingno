@@ -35,10 +35,7 @@ impl Cpu {
         match location {
             jump::Location::Address(address) => match address {
                 Address::Fixed(addr) => *addr,
-                Address::Relative(offset) => match offset {
-                    0.. => cpu.pc + offset.unsigned_abs() as u16,
-                    ..0 => cpu.pc - offset.unsigned_abs() as u16,
-                },
+                Address::Relative(offset) => cpu.pc.wrapping_add(*offset as i16 as u16),
                 _ => unreachable!(),
             },
             jump::Location::RegisterHl => cpu.get_register16(Register16::Hl),
