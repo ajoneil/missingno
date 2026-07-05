@@ -384,8 +384,7 @@ impl GameBoy {
                 bus_trace: crate::cpu_bus::BusTrace::new(),
                 clock: crate::MasterClock::new(crate::CpuDivider::One),
                 cpu_bus: crate::cpu_bus::CpuBus::new(),
-                dma_conflict_write_pending: None,
-                dma_pending_bank_write: None,
+                dma_conflict: crate::DmaConflictLatch::default(),
             },
             model: crate::Dmg {
                 sgb,

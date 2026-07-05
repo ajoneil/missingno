@@ -471,6 +471,35 @@ pub trait Model: Default {
     fn vram_dma_lcd_disabled(&mut self) {}
 }
 
+/// A CPU write that collided with OAM DMA on the source bus, deferred from
+/// `commit_write` to the M-boundary commit so the model's resolved byte lands
+/// at the OAM slot DMA is depositing into.
+pub struct DmaConflictWrite {
+    /// OAM slot DMA is depositing into (offset from 0xFE00).
+    pub oam_offset: u8,
+    /// The byte DMA fetched this M-cycle, AND-mixed on WRAM-source DMA where
+    /// both drivers stay live through the OAM write phase.
+    pub src_byte: u8,
+    /// The value the CPU drove.
+    pub cpu_value: u8,
+}
+
+/// A source-bank register (VBK/SVBK) write deferred from `commit_write` to the
+/// M-boundary so the coincident OAM-DMA byte reads the pre-write bank.
+pub struct DmaBankWrite {
+    pub address: u16,
+    pub value: u8,
+}
+
+/// The OAM-DMA write-conflict resolution latch: CPU writes that collided with
+/// the DMA engine on the shared bus, held past `commit_write` and drained at
+/// the M-cycle boundary.
+#[derive(Default)]
+pub struct DmaConflictLatch {
+    pub pending_write: Option<DmaConflictWrite>,
+    pub pending_bank_write: Option<DmaBankWrite>,
+}
+
 /// The shared hardware of a Game Boy–family console: the SM83 CPU, the
 /// PPU/APU/timer/DMA silicon, the buses, and the master clock. Every field is
 /// common to all consoles in the family; the DMG/CGB divergences live in the
@@ -505,18 +534,10 @@ pub struct Chassis<M: Model> {
     /// staged read/write activity for the in-flight M-cycle.
     pub cpu_bus: CpuBus,
     pub bus_trace: cpu_bus::BusTrace,
-    /// Conflict write deferred from `commit_write` to after DMA's
-    /// `mcycle()` commit. Tuple is `(oam_offset, src_byte, cpu_value)`:
-    /// `src_byte` is the byte DMA fetched this M-cycle, used to
-    /// AND-mix on WRAM-source DMA where both drivers stay live through
-    /// the OAM write phase. Set in `write_byte_with_cupa_lock`, drained
-    /// in `tick_mcycle_boundary_fall`.
-    pub dma_conflict_write_pending: Option<(u8, u8, u8)>,
-    /// Source-bank register write (VBK/SVBK) deferred from `commit_write` to the
-    /// M-cycle boundary, so the coincident OAM-DMA byte reads the pre-write bank.
-    /// Tuple is `(register address, value)`; drained in `tick_mcycle_boundary_fall`
-    /// after the byte commit.
-    pub dma_pending_bank_write: Option<(u16, u8)>,
+    /// OAM-DMA source-bus write conflicts deferred to the M-cycle boundary.
+    /// Set in `write_byte_with_cupa_lock`/`commit_write`, drained in
+    /// `tick_mcycle_boundary_fall`.
+    pub dma_conflict: DmaConflictLatch,
 }
 
 /// A Game Boy–family console: the shared [`Chassis`] silicon plus the [`Model`]
@@ -602,8 +623,7 @@ impl<M: Model> Console<M> {
                 clock: MasterClock::new(CpuDivider::One),
                 cpu_bus: CpuBus::new(),
                 bus_trace: cpu_bus::BusTrace::new(),
-                dma_conflict_write_pending: None,
-                dma_pending_bank_write: None,
+                dma_conflict: DmaConflictLatch::default(),
             },
             model: M::default(),
         };
@@ -701,8 +721,7 @@ impl<M: Model> Console<M> {
                 CpuDivider::One
             });
         self.chassis.cpu_bus = CpuBus::new();
-        self.chassis.dma_conflict_write_pending = None;
-        self.chassis.dma_pending_bank_write = None;
+        self.chassis.dma_conflict = DmaConflictLatch::default();
         self.model
             .console_state_mut()
             .set_dma_conflict_oam_zero(None);

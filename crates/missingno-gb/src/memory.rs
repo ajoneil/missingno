@@ -672,8 +672,11 @@ impl<M: Model> Console<M> {
                             .set_dma_conflict_oam_zero(Some(dst_offset));
                     } else {
                         let src_byte = self.read_dma_source(src_addr);
-                        self.chassis.dma_conflict_write_pending =
-                            Some((dst_offset, src_byte, value));
+                        self.chassis.dma_conflict.pending_write = Some(crate::DmaConflictWrite {
+                            oam_offset: dst_offset,
+                            src_byte,
+                            cpu_value: value,
+                        });
                     }
                 }
                 self.drive_bus(address, value);

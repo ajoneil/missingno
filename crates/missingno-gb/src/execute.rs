@@ -1137,7 +1137,10 @@ impl<M: Model> Console<M> {
                     .model
                     .oam_dma_source_bank_write(address, self.chassis.dma.source())
             {
-                self.chassis.dma_pending_bank_write = Some((address, self.chassis.cpu_bus.data));
+                self.chassis.dma_conflict.pending_bank_write = Some(crate::DmaBankWrite {
+                    address,
+                    value: self.chassis.cpu_bus.data,
+                });
                 return;
             }
             let (locked_at_snapshot, locked_at_mid) = self.chassis.cpu_bus.write_lock_samples();
@@ -1170,7 +1173,9 @@ impl<M: Model> Console<M> {
         // A source-bank register write (VBK/SVBK) latches here at the boundary,
         // after the coincident byte's source read above reads the pre-write
         // bank. Reuses the CPU write-commit path (map_write); no-op on the DMG.
-        if let Some((address, value)) = self.chassis.dma_pending_bank_write.take() {
+        if let Some(crate::DmaBankWrite { address, value }) =
+            self.chassis.dma_conflict.pending_bank_write.take()
+        {
             self.write_byte_with_cupa_lock(address, value, None, None);
         }
 
@@ -1178,10 +1183,13 @@ impl<M: Model> Console<M> {
         // the bus and deposits the contended byte at OAM. No-op on the DMG.
         self.model.vram_dma_boundary(&mut self.chassis);
 
-        if let Some((dst_offset, src_byte, cpu_value)) =
-            self.chassis.dma_conflict_write_pending.take()
+        if let Some(crate::DmaConflictWrite {
+            oam_offset,
+            src_byte,
+            cpu_value,
+        }) = self.chassis.dma_conflict.pending_write.take()
         {
-            let dst_addr = 0xfe00 + dst_offset as u16;
+            let dst_addr = 0xfe00 + oam_offset as u16;
             let oam_addr = match ppu::memory::MappedAddress::map(dst_addr) {
                 ppu::memory::MappedAddress::Oam(addr) => addr,
                 _ => unreachable!(),
