@@ -45,11 +45,13 @@ pub(super) fn write_bmp(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
     bmp.extend_from_slice(&0u32.to_le_bytes());
     bmp.extend_from_slice(&0u32.to_le_bytes());
 
-    // Pixel data (bottom-up)
+    // Pixel data (bottom-up; BMP rows are BGR-ordered)
     let padding = row_stride - width as usize * 3;
     for y in (0..height).rev() {
         let row_start = (y * width) as usize * 3;
-        bmp.extend_from_slice(&pixels[row_start..row_start + width as usize * 3]);
+        for rgb in pixels[row_start..row_start + width as usize * 3].chunks_exact(3) {
+            bmp.extend_from_slice(&[rgb[2], rgb[1], rgb[0]]);
+        }
         for _ in 0..padding {
             bmp.push(0);
         }
