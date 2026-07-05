@@ -37,6 +37,28 @@ enum PpuEdge {
     Fall,
 }
 
+/// The facts a rising master-clock edge settles in its pre-PPU-rise work,
+/// carried from `rise_cpu_pre` to `rise_cpu_post`: whether the edge opened a
+/// new M-cycle, and the CPU T-cycle the PPU rise is keyed to.
+#[derive(Clone, Copy)]
+struct RiseEdge {
+    mcycle_boundary: bool,
+    tcycle: TCycle,
+}
+
+/// The facts a falling master-clock edge settles before its PPU fall, carried
+/// from `fall_cpu_pre` to `fall_cpu_post`: the CPU T-cycle, whether the edge
+/// opened a new M-cycle, an LY value sampled pre-edge for a coincident FF44
+/// read latch, and the PPU mode the HDMA trigger reads before the fall mutates
+/// it.
+#[derive(Clone, Copy)]
+struct FallEdge {
+    tcycle: TCycle,
+    mcycle_boundary: bool,
+    ly_at_latch: Option<u8>,
+    pre_fall_mode: ppu::Mode,
+}
+
 impl<M: Model> Console<M> {
     pub fn step(&mut self) -> StepResult {
         self.step_traced(false).0
@@ -195,9 +217,9 @@ impl<M: Model> Console<M> {
                 let dot_work = ppu == PpuEdge::Rise;
                 // The PPU rise is its own domain's edge, sequenced here between the
                 // CPU's pre- and post-rise work rather than welded inside it.
-                let (is_mcycle_boundary, ppu_tcycle) = self.rise_cpu_pre(ppu, dot_work);
-                let edge = self.fire_dot_ppu(ppu, is_mcycle_boundary, ppu_tcycle);
-                self.rise_cpu_post(is_mcycle_boundary, ppu_tcycle);
+                let rise = self.rise_cpu_pre(ppu, dot_work);
+                let edge = self.fire_dot_ppu(ppu, rise.mcycle_boundary, rise.tcycle);
+                self.rise_cpu_post(rise);
                 edge
             }
             Some(Edge::Fall) => {
@@ -210,21 +232,13 @@ impl<M: Model> Console<M> {
                     ppu == PpuEdge::Fall || (double_speed && dot_phase_before == Edge::Fall);
                 // The PPU fall is its own domain's edge, sequenced here between the
                 // CPU's pre- and post-fall work rather than welded inside it.
-                let (tcycle, is_mcycle_boundary, ly_at_latch, pre_fall_mode) =
-                    self.fall_cpu_pre(dot_work);
+                let fall = self.fall_cpu_pre(dot_work);
                 let video_result = if ppu == PpuEdge::Fall {
-                    Some(self.ppu_fall_edge(is_mcycle_boundary, tcycle))
+                    Some(self.ppu_fall_edge(fall.mcycle_boundary, fall.tcycle))
                 } else {
                     None
                 };
-                self.fall_cpu_post(
-                    tcycle,
-                    is_mcycle_boundary,
-                    ly_at_latch,
-                    pre_fall_mode,
-                    video_result,
-                    dot_work,
-                )
+                self.fall_cpu_post(fall, video_result, dot_work)
             }
             // The held edge was dispatched above; a running edge always carries a
             // CPU edge.
@@ -339,7 +353,7 @@ impl<M: Model> Console<M> {
     /// every dot — one consistent CPU↔PPU phase (the spec pins a single fixed
     /// lattice; there is no per-dot CPU edge for it to vary against). The
     /// M-boundary additionally runs its boundary CPU work and the HDMA grant.
-    fn rise_cpu_pre(&mut self, ppu: PpuEdge, dot_work: bool) -> (bool, TCycle) {
+    fn rise_cpu_pre(&mut self, ppu: PpuEdge, dot_work: bool) -> RiseEdge {
         let is_mcycle_boundary = self.chassis.cpu.consume_boundary_pending();
 
         // Pre-ALET-rise XYMU (mode-3) view: the mode 3→0 XYMU.q↑ fires inside
@@ -416,13 +430,16 @@ impl<M: Model> Console<M> {
         if !is_mcycle_boundary {
             self.tick_non_boundary_rise(tcycle, ppu == PpuEdge::Fall);
         }
-        (is_mcycle_boundary, tcycle)
+        RiseEdge {
+            mcycle_boundary: is_mcycle_boundary,
+            tcycle,
+        }
     }
 
     /// CPU work on a rising edge after its PPU rise: off a boundary the dispatch
     /// latch update; an armed OAM bug fires last on both paths.
-    fn rise_cpu_post(&mut self, is_mcycle_boundary: bool, ppu_tcycle: TCycle) {
-        if !is_mcycle_boundary {
+    fn rise_cpu_post(&mut self, rise: RiseEdge) {
+        if !rise.mcycle_boundary {
             self.chassis.cpu.dispatch.update_latch(
                 self.chassis.interrupts.enabled,
                 self.chassis.interrupts.requested,
@@ -430,7 +447,7 @@ impl<M: Model> Console<M> {
         }
 
         // MOPA-rising fires any armed OAM bug.
-        if M::HAS_OAM_BUG && ppu_tcycle.as_u8() == 2 {
+        if M::HAS_OAM_BUG && rise.tcycle.as_u8() == 2 {
             self.chassis.ppu.apply_pending_oam_bug();
         }
     }
@@ -647,7 +664,7 @@ impl<M: Model> Console<M> {
     /// CPU work on a falling edge before its PPU fall: CH3 wave-latch sync, the
     /// T2 read drive-enable, the pre-edge LY sample, and the pre-fall mode the
     /// HDMA trigger reads. The PPU fall is the caller's, sequenced after this.
-    fn fall_cpu_pre(&mut self, dot_work: bool) -> (TCycle, bool, Option<u8>, ppu::Mode) {
+    fn fall_cpu_pre(&mut self, dot_work: bool) -> FallEdge {
         let tcycle = self.chassis.cpu.last_tcycle();
         let is_mcycle_boundary = self.chassis.cpu.at_mcycle_boundary();
 
@@ -672,7 +689,12 @@ impl<M: Model> Console<M> {
 
         let pre_fall_mode = self.chassis.ppu.mode();
 
-        (tcycle, is_mcycle_boundary, ly_at_latch, pre_fall_mode)
+        FallEdge {
+            tcycle,
+            mcycle_boundary: is_mcycle_boundary,
+            ly_at_latch,
+            pre_fall_mode,
+        }
     }
 
     /// CPU work on a falling edge after its PPU fall: STAT-sync capture, the
@@ -681,33 +703,30 @@ impl<M: Model> Console<M> {
     /// output, `None` on the double-speed CPU T-cycle that carries no PPU fall.
     fn fall_cpu_post(
         &mut self,
-        tcycle: TCycle,
-        is_mcycle_boundary: bool,
-        ly_at_latch: Option<u8>,
-        pre_fall_mode: ppu::Mode,
+        fall: FallEdge,
         video_result: Option<ppu::PpuTickResult<<M::Ppu as ppu::PpuModel>::Pixel>>,
         dot_work: bool,
     ) -> (bool, Option<ppu::PixelOutput>) {
         let standalone_stat =
-            self.capture_standalone_stat_sync(video_result.is_some(), is_mcycle_boundary);
+            self.capture_standalone_stat_sync(video_result.is_some(), fall.mcycle_boundary);
 
-        if tcycle.as_u8() == 2 {
+        if fall.tcycle.as_u8() == 2 {
             self.sample_mid_cupa_lock();
         }
 
-        self.commit_read_latch(ly_at_latch);
+        self.commit_read_latch(fall.ly_at_latch);
         self.commit_write();
 
-        self.tick_vram_dma_trigger(dot_work, pre_fall_mode);
+        self.tick_vram_dma_trigger(dot_work, fall.pre_fall_mode);
 
         self.request_fall_path_interrupts(&video_result, standalone_stat);
         self.reclear_held_ack();
 
         let (new_screen, pixel) = self.apply_fall_ppu_result(video_result.as_ref());
 
-        self.clock_oam_dma_gate(tcycle);
+        self.clock_oam_dma_gate(fall.tcycle);
 
-        if is_mcycle_boundary {
+        if fall.mcycle_boundary {
             self.tick_mcycle_boundary_fall();
         }
 
