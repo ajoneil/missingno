@@ -233,10 +233,13 @@ impl<M: Model> Console<M> {
         // The dot domain advanced this edge iff a dot edge fired — the divider's
         // `cpu_phase_in_dot==0`. `advance` already toggled
         // both phases; only the mode-2 settle ride stays here.
-        if tick.dot.is_some() {
-            self.chassis.ppu.tick_onset_settles();
-        }
+        // Both settle trackers feed double-speed read placement only; every
+        // consumer sits behind double_speed_active(), so consoles without the
+        // ÷2 cell never read them.
         if M::DOUBLE_SPEED {
+            if tick.dot.is_some() {
+                self.chassis.ppu.tick_onset_settles();
+            }
             self.chassis.interrupts.tick_set_settles();
         }
         PhaseResult { new_screen, pixel }
