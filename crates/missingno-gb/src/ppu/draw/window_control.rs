@@ -1,51 +1,27 @@
 use crate::ppu::types::sprites::SpriteSize;
 use crate::ppu::{DffLatch, NorLatch, PipelineRegisters, PpuModel, VideoControl};
 
-/// WY/WX/LCDC.5/LCDC.2 as one word crossing the register-file synchroniser.
+/// WY/WX/LCDC.5/LCDC.2 captured on the PPU side of the CGB register-file
+/// crossing (the write M-cycle's last PPU fall). Consumers split pre/post-capture
+/// by call order within that fall — SARY reads before the capture, XOFO / the
+/// NUKO WX slave / the scan Y-comparator after — so no pending/output DFF pair is
+/// needed. DMG reads the live cells and never builds this.
 #[derive(Clone, Copy)]
-struct RegisterWord {
+struct CrossedWindowRegisters {
     wy: u8,
     wx: u8,
     enabled: bool,
     sprite_size: SpriteSize,
 }
 
-/// CGB crossing for the window decode and the scan Y-comparator's XYMO view
-/// (DffLatch pending/tick shape): `write` stages the CPU-side cells, `tick`
-/// is the capture edge — the write M-cycle's last PPU fall. SARY's
-/// coinciding TALU↑ capture reads the pre-tick output (DFF chain); the
-/// trigger chain (XOFO, the NUKO slave) and the scan comparator read
-/// post-tick.
-struct RegisterSync {
-    pending: RegisterWord,
-    output: RegisterWord,
-}
-
-impl RegisterSync {
+impl CrossedWindowRegisters {
     fn new() -> Self {
-        let init = RegisterWord {
+        CrossedWindowRegisters {
             wy: 0,
             wx: 0,
             enabled: false,
             sprite_size: SpriteSize::Single,
-        };
-        RegisterSync {
-            pending: init,
-            output: init,
         }
-    }
-
-    fn write(&mut self, wy: u8, wx: u8, enabled: bool, sprite_size: SpriteSize) {
-        self.pending = RegisterWord {
-            wy,
-            wx,
-            enabled,
-            sprite_size,
-        };
-    }
-
-    fn tick(&mut self) {
-        self.output = self.pending;
     }
 }
 
@@ -96,7 +72,7 @@ pub(in crate::ppu) struct WindowControl {
     /// Y-comparator see them: register cells cross into the PPU domain at the
     /// write M-cycle's last PPU fall (the STAT register file's sibling
     /// crossing). Unused on DMG (the consumers read the cells live).
-    synced: RegisterSync,
+    synced: CrossedWindowRegisters,
     /// POPU's output at the previous TALU capture = its pre-edge value at this
     /// one (POPU only toggles on capture-co-located falls). REPU gates the CGB
     /// SARY input: captures up to and including the vblank-exit one take 0, so
@@ -120,7 +96,7 @@ impl WindowControl {
             sary: DffLatch::new(0),
             rejo: NorLatch::new(false),
             rejo_at_roco: false,
-            synced: RegisterSync::new(),
+            synced: CrossedWindowRegisters::new(),
             vblank_at_last_capture: true,
         }
     }
@@ -132,12 +108,16 @@ impl WindowControl {
         enabled: bool,
         sprite_size: SpriteSize,
     ) {
-        self.synced.write(wy, wx, enabled, sprite_size);
-        self.synced.tick();
+        self.synced = CrossedWindowRegisters {
+            wy,
+            wx,
+            enabled,
+            sprite_size,
+        };
     }
 
     pub(in crate::ppu) fn synced_sprite_size(&self) -> SpriteSize {
-        self.synced.output.sprite_size
+        self.synced.sprite_size
     }
 
     pub(in crate::ppu) fn init_nuko_wx(&mut self, wx: u8) {
@@ -145,14 +125,14 @@ impl WindowControl {
     }
 
     pub(in crate::ppu) fn update_nuko_wx(&mut self, wx: u8, synced: bool) {
-        self.nuko_wx = if synced { self.synced.output.wx } else { wx };
+        self.nuko_wx = if synced { self.synced.wx } else { wx };
     }
 
     fn capture_sary(&mut self, regs: &PipelineRegisters, video: &VideoControl, synced: bool) {
         let wy_match = if synced {
             !self.vblank_at_last_capture
-                && self.synced.output.enabled
-                && video.ly() == self.synced.output.wy
+                && self.synced.enabled
+                && video.ly() == self.synced.wy
         } else {
             regs.control.window_enabled() && video.ly() == regs.window.y
         };
@@ -249,7 +229,7 @@ impl WindowControl {
     /// DMG, through the M-boundary crossing on the CGB.
     fn compute_xofo(&self, regs: &PipelineRegisters, synced: bool) -> bool {
         if synced {
-            !self.synced.output.enabled
+            !self.synced.enabled
         } else {
             !regs.control.window_enabled()
         }
