@@ -28,6 +28,7 @@ These are the top-level rules governing how skills interact. They survive contex
 - **`.agents/skills/`** — Canonical skill/command definitions (slash commands). Tool-specific command directories (e.g. `.claude/commands/`) symlink here. **Symlinks between these directories are user-managed. Do not modify them.**
 - **`receipts/`** — Output directory for skill executions. Skills should write any persistent output (logs, reports, diffs) here. Gitignored. **Never reference receipt paths in committed code** (comments, commit messages, etc.) — they are ephemeral working documents, not permanent artifacts.
 - **`receipts/resources/`** — External resources: sibling projects, reference emulator source, hardware schematics, etc. Clone or download whatever you need into this directory. It's gitignored, so treat it as a workspace for external material.
+- **Long-running efforts** keep a spine at `receipts/<effort>/ROADMAP.md` (decisions, phase status, gates). Before starting work that might belong to an active effort, check for such a spine and read it first.
 
 ### Context hygiene
 
@@ -78,7 +79,7 @@ Missingno is a Game Boy emulator and debugger written in Rust.
 
 ## Build and Run Commands
 
-**Do not use `--release` unless explicitly asked.** Release builds are slow to compile. Debug builds are the default for development, testing, and debugging.
+**Do not use `--release` unless explicitly asked.** Release builds are slow to compile. Debug builds are the default for development, testing, and debugging. Standing exception: benchmarking and profiling are release-build work — the bench examples (`cargo run -p missingno-gb --example bench-dmg --release -- <rom> [frames]`, likewise `bench-gbc` in missingno-gbc) and `./scripts/pgo-build.sh` (PGO is the release/shipping configuration; trains on in-repo ROMs via the bench examples; needs the rustup `llvm-tools` component). Never benchmark with other builds/suites/agents running on the box.
 
 ```bash
 cargo run                                    # Build and run (debug)
@@ -96,6 +97,7 @@ cargo fmt                                    # Format
 ## Testing
 
 - Always run tests against missingno-gb: `cargo test -p missingno-gb`. Do not run `cargo test` against the whole workspace unless specifically asked. For GBC work, run `cargo test -p missingno-gbc`.
+- **Both suites fully pass** (steady state since 2026-07: DMG 2514/0, CGB 3445/0). The gate for any change is a fully-passing suite — ANY failure is a regression. The report scripts below exist for accuracy investigations and regression triage (partition/fan-out machinery); for ordinary changes against the green baseline, plain `cargo test` under `timeout` suffices.
 - For regression checking, use `./scripts/test-report-gb.sh --diff` instead of raw `cargo test`. It generates structured reports with baseline comparison and saves them to `receipts/test-reports/gb/`. The GBC variant is `./scripts/test-report-gbc.sh` (reports under `receipts/test-reports/gbc/`); use it when working on `missingno-gbc`.
 - Wrap suite runs in a timeout after disruptive changes (e.g. `timeout 1500 ./scripts/test-report-gb.sh --diff`; normal full-suite runtime is ~6 min). Interrupt/halt-adjacent changes can hang the emulator — treat a large overrun as a hang: kill it, then bisect with single-test probes (build with `--no-run` first, then `timeout 60-90` on the run so the timeout does not catch the rebuild).
 - To save a baseline before experimenting: `./scripts/test-report-gb.sh --save-baseline` (or the `-gbc` variant). Always save a baseline from `main` (or the known-good state) before making changes, so `--diff` has an accurate reference point.
@@ -117,7 +119,7 @@ The DMG methodology assumes **gate-level ground truth** — dmg-sim, the DMG-CPU
 
 - **CGB is a superset of DMG.** SM83 is identical; the PPU pixel pipeline, OAM scan, mode state machine, and FIFO are the same silicon family. For every circuit shared with DMG, **the DMG Timing Specification and its gate names remain authoritative** — don't re-derive them. CGB work is the *delta*: double-speed (KEY1), VRAM banking + BG tile attributes, BG/OBJ palette RAM (CRAM: BCPS/BCPD/OCPS/OCPD), HDMA/GDMA, object priority (OPRI), DMG-compatibility palettes, and the extra WRAM/VRAM banks.
 
-- **In-house first cut: diff our own two cores.** The cheapest, most informative CGB triage is the set-diff of the gb and gbc baselines. A test that **passes `missingno-gb` but fails `missingno-gbc`** is shared behaviour that's either a CGB-integration regression or an unimplemented CGB divergence — mechanism mostly already understood from the DMG model, and the DMG core is the reference. A test with **no DMG counterpart** is genuinely CGB-specific. Use this partition before any cross-emulator lookup; `test-report-gbc.sh` emits it automatically.
+- **In-house first cut: diff our own two cores.** The cheapest, most informative CGB triage is the set-diff of the gb and gbc baselines. A test that **passes `missingno-gb` but fails `missingno-gbc`** is shared behaviour that's either a CGB-integration regression or an unimplemented CGB divergence — mechanism mostly already understood from the DMG model, and the DMG core is the reference. A test with **no DMG counterpart** is genuinely CGB-specific. Use this partition before any cross-emulator lookup; `test-report-gbc.sh` emits it automatically. (Both suites fully pass in the steady state — this triage applies when a regression or a newly added test breaks the green baseline.)
 
 - **Ground-truth hierarchy for the CGB delta** (where no gate-level truth exists), in order:
   1. **Hardware test-ROM expected values** — measured on real CGB hardware; the only true ground truth left. Weight these *more* heavily than on DMG. (cgb-acid2, cgb-acid-hell, samesuite CGB, age CGB variants, mooneye CGB, gambatte CGB expected-output suffixes.)
@@ -130,7 +132,7 @@ The DMG methodology assumes **gate-level ground truth** — dmg-sim, the DMG-CPU
 
 - **CGB reference traces** (gbtrace): the traced emulators are **SameBoy, DocBoy, gambatte, missingno** — all behavioural. Preference order for CGB trace comparison: **SameBoy → DocBoy → gambatte**. The manifest schema is `systems.{dmg,cgb}.{emulator}`.
 
-- **Double-speed is an open clock-model question.** The rise()/fall() half-dot framing in *Clock Model and Phase Architecture* is DMG-derived. Double-speed (KEY1) clocks the CPU at 2× while the PPU/DMA timing relationships shift; how that maps onto the per-dot rise/fall model needs a dedicated design pass before deep CGB PPU-timing work. Don't assume the DMG framing transfers unchanged.
+- **Double-speed is implemented via the clock divider.** `MasterClock` owns a ÷1/÷2 divider between CPU edge and dot edge: at double speed (KEY1) the CPU takes two edges per dot and the dot edge lands on alternate CPU edges; the speed-switch blackout holds the CPU phase while the dot domain free-runs (`step_blackout_chunk`). The blackout/switch orchestration lives in `missingno-gbc`. Both suites fully pass under this model — extend it, don't redesign it.
 
 ## Investigation hygiene
 
@@ -157,37 +159,30 @@ These rules apply to all committed Rust code — production code, tests, and doc
 
 The project is a Cargo workspace with crates under `crates/`:
 
-- **`crates/missingno-gb/`** (`missingno-gb`) — Core emulation library. No GUI dependencies (only `bitflags` and `rgb`). Contains:
-  - **`crates/missingno-gb/src/`** — Core emulation. `GameBoy` owns all hardware components directly (`Cpu`, `Ppu`, `Audio`, `Joypad`, `Timers`, `Dma`, `ExternalBus`, `HighRam`, etc.). `GameBoy::step()` executes one instruction and returns a `StepResult` with `new_screen` and `dots` (T-cycle count).
-  - **`crates/missingno-gb/src/debugger/`** — Debugging backend. Wraps `GameBoy` with breakpoints, stepping, disassembly, and a T-cycle counter.
+- **`crates/missingno-gb/`** (`missingno-gb`) — Shared-silicon emulation library + the DMG model. No GUI dependencies. Contains:
+  - **`crates/missingno-gb/src/`** — The generic core: `Console<M: Model>` holds the shared hardware in a `Chassis<M>` struct (`chassis.cpu`, `chassis.ppu`, `chassis.audio`, `chassis.timers`, `chassis.clock`, …) plus the per-console `model: M`. The `Model` / `PpuModel` / `ApuSpec` traits are the DMG↔CGB divergence seam: associated types for console-specific state, associated consts for static silicon properties, hooks (some taking `&mut Chassis`) for console-specific behaviour. `GameBoy = Console<Dmg>`. `Console::step()` executes one instruction and returns a `StepResult` with `new_screen`, `sram_dirty`, and `tcycles`.
+  - **`crates/missingno-gb/src/debugger/`** — Debugging backend. Generic `Debugger<M>` wrapping `Console<M>` with breakpoints, stepping, disassembly, and a T-cycle counter.
   - **`crates/missingno-gb/tests/accuracy/`** — Integration tests (ROM-based accuracy tests).
-- **`crates/missingno/`** (`missingno`) — Iced 0.14 GUI binary. Elm architecture (`Message` → `update()` → `view()`), wgpu shader rendering, cpal audio output via lock-free ring buffer. Lives in `crates/missingno/src/app/`.
+- **`crates/missingno-gbc/`** (`missingno-gbc`) — The CGB model: `GameBoyColor = Console<Cgb>`. Owns everything CGB-specific — colour PPU (`CgbPpu`, CRAM, VRAM banking), `CgbApu`, the HDMA/GDMA engine, the KEY1 speed-switch blackout, DMG-compat palettes — attached through the `Model` seam. The DMG build provably contains none of this (its monomorphization has no CGB-mechanism symbols).
+- **`crates/missingno/`** (`missingno`) — Iced 0.14 GUI binary. Elm architecture (`Message` → `update()` → `view()`), wgpu shader rendering, cpal audio output via lock-free ring buffer. Lives in `crates/missingno/src/app/`. **Emulation runs on a dedicated thread** (`app/emu_thread.rs`): the UI sends `EmuCommand`s, the thread paces frames against a wall clock and publishes into latest-value slots (frame, running status, and — in debugger mode — a per-vblank `DebugView` inspection snapshot). Console/debugger ownership transfers to the thread while running and returns on pause/breakpoint; deep pane inspection happens paused, on the UI thread.
 
 ### Instruction Execution
 
-`GameBoy::step()` in `crates/missingno-gb/src/execute.rs` runs one instruction in two phases:
-
-1. **Fetch/decode**: Reads the opcode byte, ticks hardware, then reads operand bytes one at a time (ticking hardware after each). `operand_count()` determines byte count from the opcode alone. The buffered bytes are passed to `Instruction::decode()`.
-2. **Process**: The `Cpu` state machine (`crates/missingno-gb/src/cpu/mcycle/`) yields one `DotAction` per dot for post-decode work (memory reads/writes, internal cycles). The step loop executes each action and ticks hardware via `next_dot()`.
-
-The M-cycle logic is split across three files in `crates/missingno-gb/src/cpu/mcycle/`:
-- `mod.rs` — `DotAction` enum, `BusDot` ring counter model, `BusAction` enum, and `next_dot()` method
-- `build.rs` — Constructs the action sequence for each instruction type
-- `apply.rs` — Pure CPU mutations (ALU, flags, DAA, etc.)
+`Console::step()` (`crates/missingno-gb/src/execute.rs`) drives `execute_phase()` — one master-clock edge per call — until the CPU returns to an instruction boundary. The CPU's M-cycle machinery lives in `crates/missingno-gb/src/cpu/mcycle/`, split by role: `fetch.rs` (opcode/operand fetch and `Instruction::decode`, including `operand_count()`), `scheduler.rs` (M-cycle/T-cycle sequencing, bus arbitration parking), `execute.rs` (per-phase execution steps), `isr.rs` (interrupt dispatch), `build.rs` (action sequences per instruction type), `apply.rs` (pure CPU mutations — ALU, flags, DAA), `types.rs` (`BusAction` and friends). Read the module before trusting any finer-grained claim here — this split has been reshaped more than once.
 
 ### Clock Model and Phase Architecture
 
-The Game Boy's master clock produces alternating edges. On hardware, each edge triggers specific circuits — there is no inherent "first" or "second" edge within a dot. The CPU and PPU are clocked by the same master clock and tick in lockstep.
+The Game Boy's master clock produces alternating edges. On hardware, each edge triggers specific circuits — there is no inherent "first" or "second" edge within a dot. The CPU and PPU share the master clock; at single speed they tick in lockstep, and at CGB double speed the `MasterClock`'s ÷2 divider advances the dot edge on alternate CPU edges (the divider is owned by `Chassis.clock`; KEY1 mutates it at the speed switch).
 
-**Emulator model**: `execute.rs` alternates `rise()` and `fall()` phase methods. One dot = one `rise()` + one `fall()`. These are master-clock edges (`ck1_ck2` rising and falling — see the DMG Timing Specification's Clock Tree chapter). The CPU and PPU both do work on each edge:
-- `rise()`: PPU pixel output (`ppu.on_master_clock_rise()`), CPU state advance (`next_dot()`), CPU reads
-- `fall()`: PPU fetcher/control (`ppu.on_master_clock_fall()`), CPU bus writes
+**Emulator model**: `execute_phase()` in `execute.rs` advances one master-clock edge per call, dispatching to `rise_cpu_pre/post` and `fall_cpu_pre/post` around the PPU's `ppu.on_master_clock_rise()` / `on_master_clock_fall()`. One dot = one rise + one fall (`ck1_ck2` edges — see the DMG Timing Specification's Clock Tree chapter). Public single-stepping: `step_phase()` / `step_tcycle()`.
+- rise: PPU pixel output, CPU state advance, CPU reads
+- fall: PPU fetcher/control, memory write commit
 
 **There is no ordering between rise and fall.** They are alternating edges in a continuous clock. Do not reason about "rise happens before fall" — think about which edge a DFF captures on and which edge reads it.
 
 **DFF visibility**: When a DFF captures on edge E, the output holds that value until the next capture. No "same edge" vs "next edge" distinction. `DffLatch`: `write()` sets pending, `tick()` resolves to output (capture edge), `output()` reads last captured value.
 
-**CPU bus writes**: Action determined in `rise()` via `next_dot()`, executed in `fall()` via `drive_ppu_bus()`. DFF9 registers (LCDC, SCY, SCX) use the "early write path" before `ppu.on_master_clock_fall()`. DFF8 palette registers (BGP, OBP0, OBP1) use early write + `tick_palette_latches()` inside `ppu.on_master_clock_fall()`. To add registers to the early write path, update the match at `execute.rs` line ~398.
+**CPU bus writes**: PPU register writes drive the bus on the rise edge at T-cycle 2 (`drive_ppu_bus`, CUPA-high — registers latch combinationally while CUPA is high); memory commits at CUPA-falling in the fall path (`commit_write`). All PPU registers route through `ppu.write_register`; per-fall register-file latching is the register file's own `tick()` (staged `DffLatch` writes resolve there). Read `drive_ppu_bus` in `memory.rs` and the fall path in `execute.rs` before extending — the exact edge assignments are corpus-pinned.
 
 **Common pitfalls**: (1) Never frame timing hypotheses as "move X before/after Y in rise/fall" — think about DFF capture edges and combinational read points. (2) Multi-stage pipeline fixes: if a fix has zero effect, check whether another pipeline stage compensates — both stages may need fixing together. (3) Never say "integer-dot model" / "integer-dot rounding" / "discrete-dot pipeline can't represent X" / "busdot=N" as if those were limits of the emulator. Rise + fall per dot IS half-dot resolution — every hardware edge has a corresponding emulator edge; there is no precision being lost. Frame divergences as "which edge captures what", never as "the dot count is off by N." (4) Spec sub-dot phases (e.g. "WODU↑ at dot 1.5150", "XYMU.q↑ at +0.481 dots") are *edge identifiers*, not fractional dot counts to round. Translate them to edge labels (rise of dot N, fall of dot N) before reasoning. A divergence stated as "rounded to the wrong integer dot" is almost always actually "fired on the wrong edge of the same dot, or on an adjacent edge of the next/prior dot."
 
@@ -198,14 +193,14 @@ The Game Boy's master clock produces alternating edges. On hardware, each edge t
 
 ### Key Patterns
 
-- **Flat component ownership**: `GameBoy` owns all hardware components as separate fields (`cpu`, `ppu`, `audio`, `timers`, `interrupts`, `dma`, etc.) so subsystems can be borrowed independently.
+- **Chassis + model composition**: `Console<M> = { chassis: Chassis<M>, model: M }`. `Chassis` holds the shared hardware as separate fields (`cpu`, `ppu`, `audio`, `timers`, `interrupts`, `dma`, …) so subsystems borrow independently, and — because it names only `M`'s associated types, never `M` itself — model hooks can take `&mut Chassis<Self>` while the model is borrowed (disjoint borrows). Console-specific behaviour (CGB HDMA, speed switch) lives in the model, called at named seam points in the step loop.
 - **Memory-mapped I/O**: `MappedAddress::map()` translates raw addresses to typed enum variants, routing reads/writes to the correct subsystem.
 - **Enum-based MBC dispatch**: `Mbc` enum in `crates/missingno-gb/src/cartridge/mbc/mod.rs` with variants for all known Game Boy cartridge types (NoMbc, MBC1-3, MBC5-7, HuC1, HuC3), selected at runtime from cartridge header byte 0x147. ROM data is owned by `Cartridge` and passed to MBC `read()` methods as `&[u8]`.
-- **PPU state machine**: `Ppu` holds an `Option<Rendering>` — `None` when the LCD is off (hardware reset state), `Some(Rendering)` when on. `Rendering` persists through both active display and VBlank (matching hardware where pixel circuits are always present when LCD is on). Modes are derived from `video.vblank` and scanning state within `Rendering`. Draws pixels one at a time with cycle-accurate timing.
+- **PPU state machine**: `Ppu<P: PpuModel>` holds `pixel_pipeline: Option<Rendering<P>>` — `None` when the LCD is off (hardware reset state), `Some` when on. `Rendering` persists through both active display and VBlank (matching hardware where pixel circuits are always present when LCD is on); modes derive from the video-control dividers/line state plus scanning state. Draws pixels one at a time with cycle-accurate timing.
 - **Propagation delay analysis**: The sibling project [`gb-propagation-delay-analysis`](https://github.com/ajoneil/gb-propagation-delay-analysis) (local clone: `receipts/resources/gb-propagation-delay-analysis/`) provides static analysis of the DMG-CPU die netlist — signal races, deep combinatorial paths, and propagation delays. Key outputs in `receipts/resources/gb-propagation-delay-analysis/output/`: `race_pairs_report.md` (observable effects by symptom), `critical_paths_report.md` (deepest paths), `signal_concordance.md` (netlist cell names ↔ Pan Docs names). For one-dot timing discrepancies, check race pairs first.
 
 - **Execution tracing (gbtrace)**: The sibling project [`gbtrace`](https://github.com/ajoneil/gbtrace) (local clone: `receipts/resources/gbtrace/`) defines a standardised format for recording and comparing Game Boy emulator execution state across multiple emulators. Tracked emulators: gambatte, docboy, missingno, sameboy. Manifests carry per-system status under `systems.{dmg,cgb}.{emulator}`. DocBoy traces at T-cycle granularity. Missingno integrates this behind the `gbtrace` feature flag on `missingno-gb`:
-  - **Capturing traces** — `tests/accuracy/common/` wraps `GameBoy` in `TestRun`, which optionally traces each `step()`:
+  - **Capturing traces** — `TestRun<M>` (in `crates/missingno-gb/src/test_support.rs`, behind the `test-support` feature; `tests/accuracy/common/` re-exports it) wraps a console and optionally traces each `step()`. CGB capture: `missingno-gbc` has its own `gbtrace` feature, `load_cgb_rom_traced`, and the `GBTRACE_CAPTURE_ROM` harness. DMG example:
     ```bash
     GBTRACE_PROFILE=gbmicrotest cargo test -p missingno-gb --features gbtrace -- <test_name>
     ```
@@ -218,7 +213,7 @@ The Game Boy's master clock produces alternating edges. On hardware, each edge t
     - `gbtrace render <file> -o <dir>` — render LCD frames to PNG (`--frames 1,3,5`).
     - `gbtrace convert <file>` — convert JSONL to native `.gbtrace` format.
   - **Reference traces**: **Manifests** are on GitHub Pages — `https://ajoneil.github.io/gbtrace/tests/{suite}/manifest.json` (status under `systems.{dmg,cgb}.{emulator}`). **Trace blobs are NOT on Pages** (the full set exceeds the 1 GB limit) — they live on a DigitalOcean Spaces CDN: `https://gbtrace.syd1.cdn.digitaloceanspaces.com/tests/{suite}/{test}_{emulator}_{system}_{status}.gbtrace` (note the `_{system}_` segment — `cgb` or `dmg`). The web `{suite}` usually matches the local `test-suites/` folder **except gambatte: folder is `gambatte`, web suite is `gambatte-tests`** (authoritative list of web suite names: `receipts/resources/gbtrace/web/src/components/test-picker.js`). Use the `/compare-traces` skill for structured comparison and individual trace inspection.
-- **Boot ROM support**: Optional DMG boot ROM via `--boot-rom <path>` (CLI) or `DMG_BOOT_ROM=<path>` (tests). Boot ROMs are proprietary — never commit them. Without one, post-boot initialization is used. Only use on targeted tests (adds significant startup time).
+- **Boot ROM support**: Optional boot ROM via `--boot-rom <path>` (CLI) or `DMG_BOOT_ROM=<path>` / `CGB_BOOT_ROM=<path>` (tests). Boot ROMs are proprietary — never commit them. Without one, post-boot initialization is used. Only use on targeted tests (adds significant startup time).
 - **Config**: `settings.ron` and `recent.ron` in platform config dir via `dirs` crate. Uses `jiff` (not `chrono`) for timestamps.
 
 ### Data Sources for Debugging and Research
@@ -231,13 +226,13 @@ When investigating emulator issues, these data sources are available in priority
 4. **Propagation delay analysis** (`receipts/resources/gb-propagation-delay-analysis/`): Signal races and deep combinatorial paths. See Key Patterns above.
 5. **Hardware documentation**: Pan Docs, TCAGBD, hardware manuals. Useful for non-PPU behaviour and as cross-reference.
 6. **Cross-emulator execution traces** (gbtrace): 4 behavioural emulators (SameBoy, DocBoy, gambatte, missingno), 17 test suites. Use for both `diff` and individual inspection. References corroborate but never ground a hardware finding — prefer SameBoy, then DocBoy, then gambatte. Manifests use the `systems.{dmg,cgb}.{emulator}` schema. See Key Patterns above.
-7. **Hardware timing measurements** (`receipts/resources/gb-timing-data/`): Empirical cycle-level data from real hardware via Slowpeek. Campaigns cover PPU timing (mode 3 duration, sprite penalties, OAM/VRAM lock boundaries) and timer subsystem timing (DIV phase, TIMA increment). Results are CSV files with multi-dimensional sweep data. **Status: data collection in progress** — check `receipts/resources/gb-timing-data/campaigns/` for available campaigns.
+7. **Hardware timing measurements** (`receipts/resources/gb-timing-data/`): Empirical cycle-level data from real hardware via Slowpeek. Campaigns cover PPU timing (mode 3 duration, sprite penalties, OAM/VRAM lock boundaries) and timer subsystem timing (DIV phase, TIMA increment). Results are CSV files with multi-dimensional sweep data. **Status: data collection in progress** — the local clone's `campaigns/` directory is currently empty; check before planning around this source.
 8. **Test ROM sources**: Assembly source reveals exactly what tests measure and what expected values mean.
 9. **Hardware test harness** (`receipts/resources/slowpeek/`): Programmable harness for cycle-precise measurements on real Game Boy hardware via interrupt-driven sweeps. **Status: emulator-only for now; hardware serial bridge in development.** Note when a Slowpeek test would provide the definitive answer, but do not attempt hardware mode yet.
 
 ### Debugger
 
-- **Pane system**: `crates/missingno/src/app/debugger/panes.rs` manages a `pane_grid` of `DebuggerPane` variants (Screen, Instructions, Tiles, TileMap, Sprites, Audio). Each pane is a separate module with a struct (e.g. `ScreenPane`, `InstructionsPane`), a `content()` method returning `pane_grid::Content`, and optionally a `Message` enum. Register new panes by adding to `DebuggerPane` enum, `PaneInstance` enum, `construct_pane()`, `view()`, `available_panes()`, and `Display` impl.
+- **Pane system**: `crates/missingno/src/app/debugger/panes.rs` manages a `pane_grid` of `DebuggerPane` variants (Screen, Instructions, Tiles, TileMap(TileMapId), Sprites, Audio). Each pane is a separate module with a struct (e.g. `ScreenPane`, `InstructionsPane`), a `content()` method returning `pane_grid::Content`, and optionally a `Message` enum. Register new panes by adding to `DebuggerPane` enum, `PaneInstance` enum, `construct_pane()`, `view()`, `available_panes()`, and `Display` impl. While the debugger RUNS, panes render from the per-vblank `DebugView` snapshot (`app/debugger/inspect.rs`) via source traits; paused panes read the live debugger — new pane data must be reachable from both.
 - **Input recording**: `crates/missingno-gb/src/recording.rs` defines the `Recording` data model (ROM header + initial state + input events).
 
 ### Resources
