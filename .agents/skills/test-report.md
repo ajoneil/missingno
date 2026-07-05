@@ -1,6 +1,6 @@
 # Test Report
 
-Run the suite, categorise the failures by root cause, and label each cluster with cross-emulator status from the gbtrace manifests. **Effort scales to the size of the failure set** — a handful of DMG failures is a quick inline job; the thousands on the CGB core need fan-out and the core-diff partition. Match the effort to the count; don't run the heavy machinery for six failures.
+Run the suite, categorise the failures by root cause, and label each cluster with cross-emulator status from the gbtrace manifests. **Both suites currently fully pass**, so the typical run finds 0 failures — report all-green and stop. The machinery below is for when regressions appear: **effort scales to the size of the failure set** — a handful of DMG failures is a quick inline job; a large regression on the CGB core (which historically ran into the thousands) needs fan-out and the core-diff partition. Match the effort to the count; don't run the heavy machinery for six failures.
 
 ## Two rules that always hold
 
@@ -14,7 +14,7 @@ Run the suite, categorise the failures by root cause, and label each cluster wit
 | DMG | `missingno-gb` | `./scripts/test-report-gb.sh` |
 | CGB | `missingno-gbc` | `./scripts/test-report-gbc.sh` |
 
-The two are wildly different scales (DMG: a few failures; CGB: thousands), which is why effort is gated on the count rather than fixed.
+Both suites pass in the steady state; when a regression does land, the two cores tend toward wildly different failure scales (DMG: a few failures; CGB historically thousands during bring-up), which is why effort is gated on the live count rather than fixed.
 
 ## Step 1 — Census + capture (one suite run)
 

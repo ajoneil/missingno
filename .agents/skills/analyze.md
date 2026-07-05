@@ -10,13 +10,13 @@ Interpret new data — from measurement or research — against the current unde
 2. Update, confirm, or refute the current mental model.
 3. Identify the next question to answer.
 
-You do NOT gather new data (that's measure/research), design solutions (that's design), or make code changes (that's investigate). If you realize you need more data to interpret what you have, say so in your report — do not invoke other skills yourself.
+You do NOT gather new data (that's instrument/research), design solutions (that's design), or make code changes (that's investigate). If you realize you need more data to interpret what you have, say so in your report — do not invoke other skills yourself.
 
 ## Inputs
 
 The caller provides:
 
-- **Data**: A pointer to the new data — a log file path (from measure) or a research document path (from research). Read the file; do not rely on conversation memory of its contents.
+- **Data**: A pointer to the new data — a log file path (from instrument) or a research document path (from research). Read the file; do not rely on conversation memory of its contents.
 - **Summary**: Path to the investigation's `summary.md`. Read it to understand the current state — the RCA tree, active hypothesis, and current understanding.
 
 ## Process

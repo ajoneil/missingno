@@ -102,6 +102,8 @@ gb_stop            # Kills the server cleanly
 
 Test ROMs live under `crates/missingno-gb/tests/accuracy/roms/` (e.g. `crates/missingno-gb/tests/accuracy/roms/dmg-acid2/dmg-acid2.gb`). Always verify the path exists before starting the server.
 
+**CGB ROMs.** The headless server auto-detects the cartridge type from the ROM header — a CGB ROM is served on the CGB core, so all the endpoints above work against `missingno-gbc`. On CGB, `/vram/1` exposes the second VRAM bank (tile attributes) and `/cram` returns the BG/OBJ palette RAM; both return DMG-appropriate values (null CRAM) on a DMG ROM.
+
 ## Helper functions reference
 
 The helper library (`scripts/debugger.sh`) provides functions for all common operations. **Always use these instead of raw curl commands.** They handle JSON parsing with `jq` — no inline Python.
@@ -120,22 +122,22 @@ The helper library (`scripts/debugger.sh`) provides functions for all common ope
 
 **`gb_step_dots <n>`** — Step N dots, printing a table. Each row calls POST `/step-dot` then GET `/ppu`. Output columns:
 ```
-step  lx    pc   loaded  lo     hi     sprite
-1     20    0    true    255    0      none
-2     20    1    true    255    0      none
+step  lx    pc   ready  lo     hi     sprite
+1     20    0    T      255    0      none
+2     20    1    T      255    0      none
 ```
 - `step`: 1-based index
 - `lx`: M-cycle counter from `/ppu`
 - `pc`: pixel_counter from `/step-dot` response
-- `loaded`: bg_shifter.loaded (true/false)
+- `ready`: fetcher_ready (T/F)
 - `lo`/`hi`: bg_shifter.low/high
-- `sprite`: sprite_fetch phase or "none"
+- `sprite`: sprite_fetch phase ("fetching_data") or "none"
 
 **`gb_step_phases <n>`** — Step N half-phases, printing a table. Each row calls POST `/step-phase` then GET `/ppu`. Output columns:
 ```
-step  phase  lx   scan  mode  pc   loaded
-1     high   0    5     0     0    false
-2     low    0    5     0     0    false
+step  phase  lx   scan  mode  pc   ready
+1     high   0    5     0     0    F
+2     low    0    5     0     0    F
 ```
 - `step`: 1-based index
 - `phase`: "high" or "low" (clock level after this step)
@@ -143,7 +145,7 @@ step  phase  lx   scan  mode  pc   loaded
 - `scan`: scan_counter from `/ppu` (OAM scan counter 0-39, or "-" when null)
 - `mode`: stat.mode_number from `/ppu` (0-3)
 - `pc`: pixel_counter from `/step-phase` response
-- `loaded`: bg_shifter.loaded (true/false)
+- `ready`: fetcher_ready (T/F)
 
 ### State reading
 
@@ -155,7 +157,7 @@ LY=0 lx=20 mode=3 scan=39 SCX=0 SCY=0 WX=0 WY=0 BGP=[0,3,3,3]
 
 **`gb_pipeline`** — Read pixel pipeline state. Calls GET `/ppu/pipeline`. Output:
 ```
-pc=5 loaded=true lo=255 hi=0 phase=null sprite=none
+pc=5 ready=true lo=255 hi=0 lcd_x=0 sprite=none
 ```
 
 **`gb_cpu`** — Read CPU registers. Calls GET `/cpu`. Output:
@@ -229,7 +231,7 @@ These are the exact field names in API responses. Use these in `jq` filters — 
 
 **`/ppu`**: `lcdc` (object with `lcd_enable`, `window_tile_map`, `window_enable`, `bg_tile_data`, `bg_tile_map`, `obj_size`, `obj_enable`, `bg_window_enable`), `stat` (object with `mode` (string), `mode_number` (int 0-3)), `ly`, `lx` (M-cycle counter, increments every 4 dots, 0-113 per scanline), `lyc`, `scan_counter` (int 0-39 or null when not rendering — OAM scan counter, XUPY-clocked, triggers AVAP at 39), `scx`, `scy`, `wx`, `wy`, `bgp` (object with `colors` array), `obp0`, `obp1`
 
-**`/ppu/pipeline`**: `pixel_counter`, `render_phase`, `bg_shifter` (object with `low`, `high`, `loaded` (bool)), `obj_shifter` (object with `low`, `high`, `palette`, `priority`), `sprite_fetch` (string or null), `sprite_tile_data`
+**`/ppu/pipeline`**: `pixel_counter`, `rendering_active` (bool), `bg_shifter` (object with `low`, `high`), `obj_shifter` (object with `low`, `high`, `palette`, `priority`), `sprite_fetch` (`"fetching_data"` or null), `sprite_tile_data` (object with `low`/`high`, or null), `lcd_x`, `fetcher_step` (string, e.g. `"fetch_counter=3"`), `window_hit`, `pixel_gate`, `fine_scroll_match`, `fetcher_idle_stage_3`, `fetcher_ready` (bool), `wx_triggered`, `video_clock`, `scan_done`, `scan_done_prev`
 
 **`/sprites`**: Bare JSON array (not `{"sprites": [...]}`). Each entry: `id`, `x`, `y`, `tile`, `priority` (`"above_bg"` or `"behind_bg"`), `flip_x`, `flip_y`, `palette` (`"obp0"` or `"obp1"`), `visible`
 
@@ -257,7 +259,7 @@ These are the exact field names in API responses. Use these in `jq` filters — 
 |----------|--------|---------|
 | `/cpu` | GET | Registers, flags, IME, halted |
 | `/ppu` | GET | LCDC, STAT, LY, lx, LYC, scan_counter, scroll/window regs, palettes |
-| `/ppu/pipeline` | GET | Pixel pipeline: shifters, pixel_counter, render_phase, sprite_fetch |
+| `/ppu/pipeline` | GET | Pixel pipeline: shifters, pixel_counter, fetcher state, sprite_fetch |
 | `/screen` | GET | 144x160 color index array (0-3) — large, prefer `/screen/ascii` or `/screen/bitmap` |
 | `/screen/ascii` | GET | 144 strings of 160 chars: ` `=lightest `.`=light `o`=dark `#`=darkest |
 | `/screen/bitmap` | GET | 160x144 greyscale BMP image (`Content-Type: image/bmp`). Save to file and view. |
@@ -271,7 +273,10 @@ These are the exact field names in API responses. Use these in `jq` filters — 
 | `/instructions` | GET | 20 disassembled instructions from current PC |
 | `/memory/{hex_addr}` | GET | Single byte: value + hex |
 | `/memory/{hex_addr}/{length}` | GET | Byte range (length is decimal, 1-4096) |
-| `/vram` | GET | Full VRAM: 3 tile blocks (decoded) + 2 tile maps |
+| `/vram` | GET | Full VRAM: 3 tile blocks (decoded) + 2 tile maps (bank 0) |
+| `/vram/0` | GET | VRAM bank 0 (same as `/vram`) |
+| `/vram/1` | GET | VRAM bank 1 (CGB tile attributes / second tile bank) |
+| `/cram` | GET | CGB palette RAM: background + object palettes (null on DMG) |
 | `/breakpoints` | GET | List of breakpoint addresses |
 | `/step` | POST | Execute one instruction, return CPU state |
 | `/step-dot` | POST | Execute one PPU dot, return pipeline state |

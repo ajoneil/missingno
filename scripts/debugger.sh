@@ -137,7 +137,7 @@ gb_ppu() {
 
 gb_pipeline() {
   curl -s "$GB_URL/ppu/pipeline" | jq -r \
-    '"pc=\(.pixel_counter) ready=\(.fetcher_ready) lo=\(.bg_shifter.low) hi=\(.bg_shifter.high) phase=\(.render_phase) sprite=\(.sprite_fetch // "none")"'
+    '"pc=\(.pixel_counter) ready=\(.fetcher_ready) lo=\(.bg_shifter.low) hi=\(.bg_shifter.high) lcd_x=\(.lcd_x) sprite=\(.sprite_fetch // "none")"'
 }
 
 gb_cpu() {

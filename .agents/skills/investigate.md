@@ -117,7 +117,7 @@ The core loop:
   ├── measurements/     # Measurement receipts
   └── logs/             # Raw diagnostic output captures
   ```
-- **Capture a baseline.** Run `./scripts/test-report-gb.sh --diff` directly (not via a subroutine — use `-gbc` variant for CGB investigations) and record the pass/fail/ignored counts in summary.md's `## Baseline` section. This is investigate's bookkeeping — like branch hygiene, it's not delegated. This is a blocking prerequisite: no other work happens until the baseline is recorded.
+- **Capture a baseline.** Run `./scripts/test-report-gb.sh --diff` directly (not via a subroutine — use `-gbc` variant for CGB investigations) and record the pass/fail/ignored counts in summary.md's `## Baseline` section. Both suites currently fully pass, so the steady-state baseline is all-green: an investigation now typically triggers from a refactor-phase regression (a test that started failing) or a new behaviour question, not from a standing failure set — the baseline pins down exactly which tests, if any, are red. This is investigate's bookkeeping — like branch hygiene, it's not delegated. This is a blocking prerequisite: no other work happens until the baseline is recorded.
 - Invoke `/analyze` to interpret the initial results.
 - Classify the problem type and write it in summary.md.
 
@@ -196,7 +196,7 @@ When the root cause is in a different subsystem than scoped, or the investigatio
 
 Don't spin off for: refuted hypotheses within scope, more complex fixes, or changes to helper functions in other files.
 
-### 7. Branch and commit hygiene
+### 6. Branch and commit hygiene
 
 The investigate skill owns the investigation branch. The implement skill creates per-implementation branches from it and merges back on success.
 
@@ -216,7 +216,7 @@ The investigate skill owns the investigation branch. The implement skill creates
 - Do not force-push or rewrite history without explicit user approval.
 - Do not delete `impl/*` branches — leave cleanup to the user.
 
-### 8. Receipt conventions
+### 7. Receipt conventions
 
 The receipt folder is created in step 1 and written into continuously throughout the investigation. This section documents the format and conventions.
 
@@ -306,7 +306,7 @@ no dead ends — just the current state of knowledge.>
 - **No duplicating receipt content.** If a finding is documented in an analysis receipt, link to it — don't reproduce the finding in summary.md.
 - **Prune aggressively.** summary.md is a dashboard, not an archive. When updating, actively look for content that has become stale, redundant, or moved to receipts, and remove it. If a section is growing beyond its intended size (Hardware model > ~5 lines, Model divergence > ~5 lines, Current understanding > ~4 sentences, RCA tree > ~10 active/refuted entries), it needs pruning. Move detail to receipts and replace with links.
 
-### 9. Commit format
+### 8. Commit format
 
 ```
 Short summary of what changed

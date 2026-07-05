@@ -37,6 +37,14 @@ GBTRACE_PROFILE=gbmicrotest cargo test -p missingno-gb --features gbtrace -- <te
 
 The test runner captures state at every T-cycle (for tcycle profiles) or every instruction (for instruction profiles). Traces are written even when tests fail.
 
+### Missingno CGB trace
+The CGB core has its own `gbtrace` feature (`missingno-gbc`), captured through a dedicated `gbtrace_capture` test driven by an env var rather than a test-name filter:
+```bash
+GBTRACE_PROFILE=<suite> GBTRACE_CAPTURE_ROM=<rom-relative-to-gbc-roms-dir> \
+  cargo test -p missingno-gbc --features gbtrace -- gbtrace_capture
+# Uses load_cgb_rom_traced; writes to receipts/traces/<rom_name>.gbtrace
+```
+
 ### Reference traces from manifests
 **Manifests** are on GitHub Pages; **trace blobs** are on a DigitalOcean Spaces CDN (the full set exceeds the Pages 1 GB limit). Two different hosts:
 - Manifest: `https://ajoneil.github.io/gbtrace/tests/{suite}/manifest.json`

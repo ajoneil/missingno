@@ -32,7 +32,7 @@ Based on the caller's request, add targeted `eprintln!` tracing that captures:
 
 ## How to instrument
 
-- Add logging to the emulator code at the points relevant to the failing test. Gate output to only the lines/frames/cycles the test cares about to keep output manageable.
+- Add logging to the emulator code at the points relevant to the hypothesis under test — whether that's a failing test or a behaviour question on an otherwise-green suite. Gate output to only the lines/frames/cycles you care about to keep output manageable.
 - Use a consistent tag format: `[SUBSYSTEM] context: key=value key=value`
 - **Every log line must include enough context to interpret in isolation.** A line that says `mode=0` is useless without knowing which line, which dot, which frame, and which phase of the test ROM produced it. Include: LY, dot counter, and whatever discriminates "measurement I care about" from "background noise."
 
@@ -50,9 +50,10 @@ frame_count: u32,
 // At the frame boundary (e.g. start of new Rendering):
 self.frame_count += 1;
 
-// In the diagnostic logging:
-if self.frame_count == 2 && self.line_number == 6 {
-    eprintln!("[PPU] frame={} LY=6 dot={}: ...", self.frame_count, self.dot);
+// In the diagnostic logging (gate further on a real Rendering field —
+// e.g. pixel_counter.value() for within-scanline narrowing):
+if self.frame_count == 2 {
+    eprintln!("[PPU] frame={} pc={}: ...", self.frame_count, self.pixel_counter.value());
 }
 ```
 
@@ -64,7 +65,7 @@ if self.frame_count == 2 && self.line_number == 6 {
 
 **Before running the test, review your log lines and ask: "Will this output directly confirm or refute the hypothesis?"** Bad instrumentation wastes a test run. Common mistakes:
 
-- **Logging the wrong layer.** If the test ROM reads a register, log at the register read site (what the CPU actually sees), not at the internal state machine (what the hardware is doing internally). These can differ — e.g. `stat_mode()` vs `mode()`. If you need both, log both explicitly, but know which one the test ROM observes.
+- **Logging the wrong layer.** If the test ROM reads a register, log at the register read site (what the CPU actually sees), not at the internal state machine (what the hardware is doing internally). These can differ — e.g. the CPU-visible STAT bus `stat_mode2_bus()` vs the internal `mode()`. If you need both, log both explicitly, but know which one the test ROM observes.
 - **Logging without enough context.** Include the discriminating context: frame number, PC, loop counter, LY, dot — whatever distinguishes "this is the measurement I care about" from noise.
 - **Logging at the wrong granularity.** If the test checks a CPU register value after a sequence of instructions, logging PPU state at every dot produces thousands of irrelevant lines. Log at the decision point. Conversely, if the test measures a 1-2 dot timing window, logging at M-cycle boundaries (every 4 dots) might miss the critical transition.
 - **Not logging what the test actually checks.** If the test compares register B against a constant, log B at the comparison point. Don't just log the subsystem state and hope you can reconstruct what B was.
