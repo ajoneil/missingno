@@ -25,14 +25,21 @@
 pub mod screen;
 pub mod timing;
 
+mod apu;
+mod bus;
 mod compat_palette;
+mod console_state;
 mod cram;
 mod dmg_palette_data;
 mod obj_fifo;
 mod ppu_model;
+mod speed_switch;
 mod vram;
+mod vram_dma;
 
+pub use apu::CgbApu;
 pub use compat_palette::{DMG_COMPAT_BG, DMG_COMPAT_OBJ, dmg_compat_shade};
+pub use console_state::CgbConsoleState;
 pub use cram::{ColorRam, ColorRegister};
 pub use obj_fifo::CgbObjShifter;
 pub use ppu_model::{CgbPpu, SyncedStatCells, TileSelResetGlitch};
@@ -42,8 +49,8 @@ use missingno_gb::ppu::Ppu;
 use missingno_gb::ppu::memory::Vram;
 use missingno_gb::ppu::rendering::Mode;
 use missingno_gb::{
-    Chassis, Console, ConsoleShadow, Model, VramDmaClaim, WaveRamCoupling,
-    audio::{ApuSpec, Audio},
+    Chassis, Console, ConsoleShadow, Model, VramDmaClaim,
+    audio::Audio,
     cartridge::Cartridge,
     clock::CpuDivider,
     cpu::Cpu,
@@ -54,305 +61,9 @@ use missingno_gb::{
     timers::Timers,
 };
 
+use crate::bus::{CgbBus, cgb_bus, cgb_dma_source_bus};
 use crate::screen::Screen;
-
-/// CPU T-cycles the CPU stays `Stopped` during a double-speed switch (the
-/// ~0x20000-T-cycle blackout). The divider and PPU run throughout; the CPU
-/// re-engages at the new speed when this drains. Tuned against the age `spsw-*`
-/// expected values.
-const SPEED_SWITCH_BLACKOUT_TCYCLES: u32 = 0x2_0000;
-
-/// Master edges of clock-mux relock tail after the 1×→2× hold: the dot clock
-/// keeps stepping the PPU while the CPU clock is still settling, so the divider
-/// stays quiet here (DIV is set by the hold alone) but the PPU advances — that
-/// is the post-switch CPU↔dot re-phase.
-const SWITCH_TO_DOUBLE_RELOCK_EDGES: u32 = 5;
-
-/// Relock tail for the 2×→1× swap. The downward mux also settles to a phase;
-/// it sets the CPU↔dot alignment the NEXT 1×→2× switch enters from, so over
-/// repeated switches it determines whether the post-switch reads converge to
-/// the single-switch alignment.
-const SWITCH_TO_SINGLE_RELOCK_EDGES: u32 = 2;
-
-/// How the active VRAM DMA is paced. GDMA holds the CPU and flows continuously;
-/// HDMA copies one 16-byte block per HBlank, releasing the CPU between blocks.
-#[derive(Default, PartialEq)]
-enum TransferMode {
-    #[default]
-    Idle,
-    General,
-    HBlank,
-}
-
-/// A one-shot down-counter: armed to a tick count, stepped toward zero, then
-/// inert. Models the VRAM-DMA's scattered `if n > 0 { n -= 1 }` timers as one
-/// shape. Counters that step *up* (`halted_falls`, `seize_falls`, `pend_age`)
-/// or act as a running semaphore (`granted_ahead`) keep their own arithmetic —
-/// they are not this idiom.
-#[derive(Default, Clone, Copy, PartialEq)]
-struct Countdown(u8);
-
-impl Countdown {
-    fn arm(&mut self, ticks: u8) {
-        self.0 = ticks;
-    }
-    fn clear(&mut self) {
-        self.0 = 0;
-    }
-    fn active(&self) -> bool {
-        self.0 > 0
-    }
-    fn remaining(&self) -> u8 {
-        self.0
-    }
-    /// Step one tick while active; returns whether a tick was consumed (it was
-    /// active before this step).
-    fn tick(&mut self) -> bool {
-        let active = self.0 > 0;
-        self.0 = self.0.saturating_sub(1);
-        active
-    }
-    /// Step one tick; returns whether this step drained it to zero.
-    fn expired(&mut self) -> bool {
-        self.0 > 0 && {
-            self.0 -= 1;
-            self.0 == 0
-        }
-    }
-}
-
-/// CGB VRAM DMA ($FF51-55) controller. The source and destination pointers run
-/// as bytes are copied and persist after a transfer, so a follow-on transfer
-/// continues where the last left off. The step loop ticks it each M-cycle: a
-/// transfer flows `quota` bytes per M-cycle while it holds the CPU.
-/// The HBlank-block pend/grant arbiter: when a mode-0 entry (or an FF55 arm)
-/// requests a block, whether it commits now or defers across a HALT/wake, and
-/// how the FF55 status count tracks blocks granted ahead of their drain.
-///
-/// `pend_from_arm` and `pend_granted` are independent modifiers on the pending
-/// block, not mutually-exclusive origins: the halt-latch path grants a pend
-/// (`pend_granted`) whose block was launched by an arm strobe (`pend_from_arm`),
-/// so both hold at once. `pend_granted` also outlives `pend` (the grant survives
-/// a fall where the pend recomputes to false under an IRQ-latched halt). An
-/// origin enum can't represent either, so the flags stay independent.
-#[derive(Default)]
-struct HaltArbiter {
-    /// Trigger pend stage: the previous fall's view showed armed ∧ mode 0;
-    /// commits to a cancel-immune block one fall later.
-    pend: bool,
-    /// The pend formed on the fall of the FF55 arm commit itself — the arm
-    /// strobe pre-loads the engine's working pointers, so no setup cell.
-    pend_from_arm: bool,
-    /// FF55 armed on this fall (set by the write path, consumed by the tick).
-    armed_this_fall: bool,
-    /// Falls since the halt gate rose: the taken-clear path runs one
-    /// boundary-clocked synchronizer stage behind the gate, so a clear in
-    /// flight at the halt latch (within its M-cycle, 4 falls) still lands;
-    /// later clears wait for the resume.
-    halted_falls: u8,
-    /// The previous fall's mode view showed mode 0 — entry-edge detection for
-    /// the IF-rise-to-resume window (only an entry pends there).
-    prev_view_hblank: bool,
-    /// Falls since the registered request entered the trigger's two-stage
-    /// pipe: a token still inside (≤2 falls) at the IF-rise thaw commits
-    /// there; an older token relaunches through the pipe — the one-fall
-    /// penalty that decides the grant-vs-dispatch tie.
-    pend_age: u8,
-    /// The in-halt grant latched this pend: it survives the engine thaw and
-    /// commits there (the wake drains it), regardless of the live mode.
-    pend_granted: bool,
-    /// Running ticks left of the wake drain's bus tenure — an HBlank entry
-    /// inside it passes unserviced.
-    wake_tenure: Countdown,
-    /// This block committed onto a running CPU: its bus grant waits for the
-    /// in-flight instruction to retire. A halted-CPU commit (including the
-    /// same-fall wake flip) grants at the next M-boundary.
-    park_waits_for_fetch: bool,
-    /// A wake-tenure-consumed entry's standing claim: the engine holds the
-    /// VRAM select without moving bytes until the owed block really services.
-    /// CPU VRAM reads during the hold capture the undriven bus (0x00).
-    idle_claim: bool,
-    /// Running ticks left of the halt-wake entry blind: a mode-0 entry edge
-    /// on the wake fall or just after it passes unserviced (no retry). Unlike
-    /// the STOP-armed blind there is no first-tick exemption.
-    halt_wake_blind: Countdown,
-    /// `cpu_halted` at the previous running tick — the wake-flip detector.
-    prev_cpu_halted: bool,
-    /// The commit already counted this pending block's grant (the in-halt
-    /// grant path ran); the commit-time count skips it.
-    grant_counted: bool,
-    /// Post-switch re-engage window (running vram_dma ticks): a fresh mode-0
-    /// entry edge inside it does not pend — the HBlank passes unserviced. The
-    /// first tick is exempt (a blackout-carried mode-0 level, not an entry).
-    wake_pend_blind: Countdown,
-    /// HBlank blocks granted in-halt but not yet drained. A halted CPU does not
-    /// contend the bus, so an in-halt mode-0 grants a block (status complete)
-    /// while its bus-seizure transfer stays on the post-resume path; this offsets
-    /// the FF55 block count until the post-resume drain catches up.
-    granted_ahead: u8,
-}
-
-/// The running byte engine: the source/dest pointers, the transfer mode, and
-/// the whole-transfer/per-M-cycle byte counts. Pointers persist after a
-/// transfer so a follow-on continues where the last left off.
-#[derive(Default)]
-struct TransferCursor {
-    /// Running source pointer, 16-byte aligned (HDMA1/HDMA2).
-    source: u16,
-    /// Running destination, a raw 16-bit HDMA3/HDMA4 pointer. The write address
-    /// folds to VRAM via `write_address`; the transfer ends when it carries past
-    /// $FFFF rather than wrapping back into VRAM.
-    dest: u16,
-    mode: TransferMode,
-    /// Bytes left in the whole transfer.
-    remaining: u16,
-    /// Bytes still movable this M-cycle (refilled per tick: 2 single, 1 double).
-    quota: u8,
-    /// A speed-switch cancel caught the engine mid-byte: that byte completes
-    /// (pointers advance) without counting against the latched length.
-    escape_byte: bool,
-}
-
-impl TransferCursor {
-    /// VRAM address the next byte lands on; the dest register is 16-bit but VRAM
-    /// decodes only the low 13 bits.
-    fn write_address(&self) -> u16 {
-        0x8000 | (self.dest & 0x1FFF)
-    }
-}
-
-/// The per-HBlank 16-byte block sequencer and its bus tenure: how many bytes of
-/// the current block remain, when it fired, its setup/readiness timing, and the
-/// arm-strobe launch bookkeeping.
-#[derive(Default)]
-struct HblankBlock {
-    /// Bytes left in the current HBlank block (HBlank mode). The CPU is held
-    /// while this is >0.
-    remaining: u8,
-    /// Master edge at which the current HBlank block fired — its byte clock's
-    /// phase origin, aligned against a concurrent OAM-DMA's bus.
-    start_edge: u64,
-    /// This HBlank's block has been latched — one block per mode-0 period.
-    taken: bool,
-    /// Leading no-data cells of the block: the engine loads its working
-    /// pointers from the HDMA1-4 holding registers on a PPU-triggered block.
-    setup_cells: Countdown,
-    /// Dots until a committed block claims the bus (the transfer readies two
-    /// dots after the commit).
-    ready_in: Countdown,
-    /// Falls the bus has been seized continuously. A CPU read of the block's
-    /// destination sees the written byte only once the seize has settled one
-    /// fall (the double-speed half-dot from bus seizure to byte-readable).
-    seize_falls: u8,
-    /// The active block launched from an FF55 arm strobe. Its readiness must
-    /// complete inside mode 0 — a launch whose ready pipe crosses the mode-0
-    /// exit reverts and waits for the next entry.
-    from_arm: bool,
-    /// The arm-strobe readiness latch awaits its mode-0 confirmation sample:
-    /// the fall after expiry must still be mode 0, else the launch reverts.
-    arm_ready_probation: bool,
-}
-
-/// The OAM-DMA ↔ VRAM-DMA byte-clock co-arbitration: the two engines share one
-/// bus, so a coinciding byte is edge-detected and steered to OAM.
-#[derive(Default)]
-struct OamContention {
-    /// Whether the OAM-DMA drove a byte last M-cycle — edge-detects its
-    /// active→done boundary so the completion M-cycle still shares the bus with
-    /// a concurrent VRAM-DMA.
-    was_transferring: bool,
-    /// The pre-OAM arbitration found an OAM-DMA↔VRAM-DMA byte contention this
-    /// M-cycle: the coinciding VRAM-DMA byte lands at OAM. Carried from the
-    /// pre-OAM arbitration to the post-OAM byte engine.
-    contended: bool,
-}
-
-#[derive(Default)]
-struct VramDma {
-    /// The running byte engine (pointers, mode, counts).
-    cursor: TransferCursor,
-    /// The per-HBlank block sequencer and its bus tenure.
-    block: HblankBlock,
-    /// HBlank-block pend/grant arbitration across HALT/wake.
-    arb: HaltArbiter,
-    /// OAM-DMA ↔ VRAM-DMA byte-clock co-arbitration.
-    oam: OamContention,
-}
-
-impl VramDma {
-    const WAKE_PEND_BLIND_TICKS: u8 = 6;
-    /// Halt-wake blind width — bracketed by the m0halt pair (`_2`'s entry on
-    /// the flip fall blinded; `_1`'s at ≈flip+4 must run).
-    const HALT_WAKE_BLIND_TICKS: u8 = 3;
-    /// The wake drain's bus tenure in running ticks (per-fall): 72 master
-    /// edges — the A-pair variants' entries at thaw+66/+74 bracket it.
-    const WAKE_TENURE_TICKS: u8 = 36;
-
-    /// Whether a byte may move this M-cycle: a GDMA runs while bytes remain; a
-    /// latched HBlank block runs to completion regardless of the live `mode`
-    /// (the block sequencer, once started, does not consult the arming flag).
-    fn moving(&self) -> bool {
-        (self.block.remaining > 0 && self.cursor.remaining > 0 && !self.block.ready_in.active())
-            || (self.cursor.mode == TransferMode::General && self.cursor.remaining > 0)
-    }
-
-    /// VRAM address the next byte lands on.
-    fn write_address(&self) -> u16 {
-        self.cursor.write_address()
-    }
-}
-
-/// The CGB console-level arbitration state, relocated off the shared
-/// [`Console`] so a DMG build carries none of it (its `ConsoleState` is a ZST
-/// `()`). Holds the speed-switch blackout anchor, the HDMA bus-park, and the
-/// VRAM-source OAM-zero conflict store.
-#[derive(Default)]
-pub struct CgbConsoleState {
-    blackout_anchor: u64,
-    dma_cpu_hold: bool,
-    bus_suspended: bool,
-    vram_dma_claim: VramDmaClaim,
-    dma_conflict_oam_zero: Option<u8>,
-}
-
-impl ConsoleShadow for CgbConsoleState {
-    fn blackout_anchor(&self) -> u64 {
-        self.blackout_anchor
-    }
-    fn set_blackout_anchor(&mut self, edge: u64) {
-        self.blackout_anchor = edge;
-    }
-    fn dma_cpu_hold(&self) -> bool {
-        self.dma_cpu_hold
-    }
-    fn set_dma_cpu_hold(&mut self, held: bool) {
-        self.dma_cpu_hold = held;
-    }
-    fn bus_suspended(&self) -> bool {
-        self.bus_suspended
-    }
-    fn set_bus_suspended(&mut self, suspended: bool) {
-        self.bus_suspended = suspended;
-    }
-    fn vram_dma_claim(&self) -> VramDmaClaim {
-        self.vram_dma_claim
-    }
-    fn set_vram_dma_claim(&mut self, claim: VramDmaClaim) {
-        self.vram_dma_claim = claim;
-    }
-    fn clear_vram_dma_claim(&mut self) {
-        self.vram_dma_claim = VramDmaClaim::default();
-    }
-    fn dma_conflict_oam_zero(&self) -> Option<u8> {
-        self.dma_conflict_oam_zero
-    }
-    fn set_dma_conflict_oam_zero(&mut self, offset: Option<u8>) {
-        self.dma_conflict_oam_zero = offset;
-    }
-    fn take_dma_conflict_oam_zero(&mut self) -> Option<u8> {
-        self.dma_conflict_oam_zero.take()
-    }
-}
+use crate::vram_dma::{TransferMode, VramDma};
 
 /// The Game Boy Color [`Model`]. Remaining CGB features (the color pixel
 /// pipeline) attach here as they land.
@@ -366,7 +77,7 @@ pub struct Cgb {
     key1_armed: bool,
     /// KEY1 ($FF4D) bit 7 — current speed (false = normal, true = double).
     /// The switch toggles it; the 2× clock cadence itself lands later.
-    double_speed: bool,
+    pub(crate) double_speed: bool,
     /// A DMG cartridge is running in compatibility mode (KEY0 bit 2). Read back
     /// from KEY0 ($FF4C) as $04.
     dmg_compat: bool,
@@ -376,7 +87,7 @@ pub struct Cgb {
     /// clock is held (the dot clock / divider keep running off the master)
     /// until this drains, then the SM83 re-engages at the new speed and the
     /// dot-clock phase the count expired on. 0 = not switching.
-    speed_switch_blackout: u32,
+    pub(crate) speed_switch_blackout: u32,
     /// HALT-wake intake countdown: a timer overflowing during the post-STOP
     /// HALT spends one WakeIntake M-cycle (the divider ticking through it)
     /// before its dispatch, like any HALT wake. -1 = no wake in flight; armed
@@ -449,37 +160,6 @@ impl Default for Cgb {
 }
 
 impl Cgb {
-    /// Master edges of the clock-mux relock tail at the end of the blackout.
-    /// `double_speed` holds the NEW speed: the 1×→2× swap settles one way, the
-    /// 2×→1× swap another (the latter sets the entry phase of the next swap).
-    fn relock_edges(&self) -> u32 {
-        if self.double_speed {
-            SWITCH_TO_DOUBLE_RELOCK_EDGES
-        } else {
-            SWITCH_TO_SINGLE_RELOCK_EDGES
-        }
-    }
-
-    /// Master edges (dot-clock half-cycles) the CPU stays held across a
-    /// double-speed switch — a fixed real-time hold the dot clock runs through
-    /// while the SM83 is frozen. The count's residue past a whole CPU M-cycle
-    /// re-phases the SM83 against the dot clock at re-engage. `double_speed`
-    /// already holds the new speed, so convert the T-cycle figure by the
-    /// post-switch ratio (2 master edges per CPU T-cycle at single speed, 1 at
-    /// double). The relock tail rides on the end (PPU only, divider quiet).
-    fn speed_switch_blackout_master_edges(&self) -> u32 {
-        let hold = SPEED_SWITCH_BLACKOUT_TCYCLES * 2 / self.cpu_steps_per_dot() as u32;
-        hold + self.relock_edges()
-    }
-
-    /// An interrupt pending with IME set at the speed-switch STOP skips the
-    /// post-STOP oscillation-stabilization HALT (Pan Docs STOP decision table):
-    /// only the clock-mux relock tail remains, during which the divider is
-    /// frozen — so DIV stays 0 until the CPU re-engages and services it.
-    fn preempt_speed_switch_halt(&mut self) {
-        self.speed_switch_blackout = self.relock_edges();
-    }
-
     /// Index into `extra_oam` for a $FEA0-$FEFF address: row from address
     /// bits 6-5, offset from bits 2-0 (bits 3-4 ignored by the decoder).
     fn extra_oam_index(address: u16) -> usize {
@@ -500,49 +180,6 @@ impl Cgb {
         }
     }
 }
-
-/// CGB splits the cartridge and WRAM onto separate buses (DMG shares one
-/// external bus), so the CPU can touch one while OAM DMA drives the other.
-#[derive(PartialEq)]
-enum CgbBus {
-    Cartridge,
-    WorkRam,
-    Video,
-}
-
-fn cgb_bus(address: u16) -> Option<CgbBus> {
-    match address {
-        0x8000..=0x9FFF => Some(CgbBus::Video),
-        0xC000..=0xFDFF => Some(CgbBus::WorkRam),
-        0x0000..=0x7FFF | 0xA000..=0xBFFF => Some(CgbBus::Cartridge),
-        _ => None,
-    }
-}
-
-/// The bus an OAM-DMA *source* page drives, per the DMA decoder's external-RAM
-/// `/CS` for `$A0–$FF`. Differs from `cgb_bus` in the echo region: `$E000–$FDFF`
-/// is WRAM to the CPU but, to the DMA, is past the cart-RAM window — the
-/// cartridge bus (which floats to `$FF`, see `dma_source_open_bus`). `$C0–$DF`
-/// still reaches real WRAM on the WRAM bus.
-fn cgb_dma_source_bus(address: u16) -> CgbBus {
-    match address {
-        0x8000..=0x9FFF => CgbBus::Video,
-        0xC000..=0xDFFF => CgbBus::WorkRam,
-        _ => CgbBus::Cartridge,
-    }
-}
-
-/// CGB APU spec: KEY1 double-speed, the widened CH1 sweep load-hold, the CH4
-/// divisor-code grid anchor, and channel-position wave-RAM coupling.
-#[derive(Clone, Copy, Default)]
-pub struct CgbApu;
-impl ApuSpec for CgbApu {
-    const DOUBLE_SPEED: bool = true;
-    const WIDE_SWEEP_LOAD_HOLD: bool = true;
-    const NOISE_GRID_ANCHOR: bool = true;
-    const WAVE_RAM_COUPLING: WaveRamCoupling = WaveRamCoupling::ChannelPosition;
-}
-
 impl Model for Cgb {
     type Ppu = CgbPpu;
     type Screen = Screen;
