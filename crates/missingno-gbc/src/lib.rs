@@ -56,7 +56,7 @@ use missingno_gb::{
     cpu::Cpu,
     cpu::flags::Flags,
     dma::Dma,
-    joypad::Joypad,
+    joypad::{Buttons, Joypad},
     shared_oam_dma_write_conflict_byte,
     timers::Timers,
 };
@@ -297,7 +297,7 @@ impl Model for Cgb {
         Joypad {
             read_buttons: false,
             read_dpad: false,
-            pressed_buttons: Vec::new(),
+            pressed: Buttons::empty(),
         }
     }
 

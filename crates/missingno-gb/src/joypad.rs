@@ -1,9 +1,11 @@
+use bitflags::bitflags;
+
 #[derive(Clone)]
 pub struct Joypad {
     pub read_buttons: bool,
     pub read_dpad: bool,
 
-    pub pressed_buttons: Vec<Button>,
+    pub pressed: Buttons,
 }
 
 #[derive(Eq, PartialEq, Hash, Debug, Clone, Copy)]
@@ -23,6 +25,36 @@ pub enum DirectionalPad {
     Right,
 }
 
+bitflags! {
+    /// The 8-key button matrix as a bitset — one bit per key, allocation-free.
+    #[derive(Clone, Copy)]
+    pub struct Buttons: u8 {
+        const START  = 1 << 0;
+        const SELECT = 1 << 1;
+        const A      = 1 << 2;
+        const B      = 1 << 3;
+        const UP     = 1 << 4;
+        const DOWN   = 1 << 5;
+        const LEFT   = 1 << 6;
+        const RIGHT  = 1 << 7;
+    }
+}
+
+impl From<Button> for Buttons {
+    fn from(button: Button) -> Self {
+        match button {
+            Button::Start => Buttons::START,
+            Button::Select => Buttons::SELECT,
+            Button::A => Buttons::A,
+            Button::B => Buttons::B,
+            Button::DirectionalPad(DirectionalPad::Up) => Buttons::UP,
+            Button::DirectionalPad(DirectionalPad::Down) => Buttons::DOWN,
+            Button::DirectionalPad(DirectionalPad::Left) => Buttons::LEFT,
+            Button::DirectionalPad(DirectionalPad::Right) => Buttons::RIGHT,
+        }
+    }
+}
+
 impl Joypad {
     const UNUSED: u8 = 0b1100_0000;
     const READ_BUTTONS: u8 = 0b0010_0000;
@@ -37,7 +69,7 @@ impl Joypad {
         Self {
             read_buttons: true,
             read_dpad: true,
-            pressed_buttons: Vec::new(),
+            pressed: Buttons::empty(),
         }
     }
 
@@ -46,16 +78,16 @@ impl Joypad {
         let mut value = Self::UNUSED | Self::NONE_PRESSED;
 
         if self.read_buttons {
-            if self.pressed_buttons.contains(&Button::Start) {
+            if self.pressed.contains(Buttons::START) {
                 value &= !Self::START_DOWN;
             }
-            if self.pressed_buttons.contains(&Button::Select) {
+            if self.pressed.contains(Buttons::SELECT) {
                 value &= !Self::SELECT_UP;
             }
-            if self.pressed_buttons.contains(&Button::B) {
+            if self.pressed.contains(Buttons::B) {
                 value &= !Self::B_LEFT;
             }
-            if self.pressed_buttons.contains(&Button::A) {
+            if self.pressed.contains(Buttons::A) {
                 value &= !Self::A_RIGHT;
             }
         } else {
@@ -63,28 +95,16 @@ impl Joypad {
         }
 
         if self.read_dpad {
-            if self
-                .pressed_buttons
-                .contains(&Button::DirectionalPad(DirectionalPad::Down))
-            {
+            if self.pressed.contains(Buttons::DOWN) {
                 value &= !Self::START_DOWN;
             }
-            if self
-                .pressed_buttons
-                .contains(&Button::DirectionalPad(DirectionalPad::Up))
-            {
+            if self.pressed.contains(Buttons::UP) {
                 value &= !Self::SELECT_UP;
             }
-            if self
-                .pressed_buttons
-                .contains(&Button::DirectionalPad(DirectionalPad::Left))
-            {
+            if self.pressed.contains(Buttons::LEFT) {
                 value &= !Self::B_LEFT;
             }
-            if self
-                .pressed_buttons
-                .contains(&Button::DirectionalPad(DirectionalPad::Right))
-            {
+            if self.pressed.contains(Buttons::RIGHT) {
                 value &= !Self::A_RIGHT;
             }
         } else {
@@ -107,12 +127,10 @@ impl Joypad {
     }
 
     pub fn press_button(&mut self, button: Button) {
-        if !self.pressed_buttons.contains(&button) {
-            self.pressed_buttons.push(button);
-        }
+        self.pressed.insert(button.into());
     }
 
     pub fn release_button(&mut self, button: Button) {
-        self.pressed_buttons.retain(|b| b != &button);
+        self.pressed.remove(button.into());
     }
 }
