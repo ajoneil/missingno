@@ -94,7 +94,7 @@ impl<M: Model> Console<M> {
     /// is advanced and control returns to the caller.
     fn step_instruction(&mut self) -> StepResult {
         let mut new_screen = false;
-        self.chassis.cpu.data_latch = 0;
+        self.chassis.cpu.bus.data_latch = 0;
 
         // Consume the current instruction boundary (we're starting
         // from a boundary — we want to run until the NEXT one).

@@ -26,22 +26,22 @@ pub(crate) use types::{BusGrants, CpuPhase, HaltPhase, MCycleAction, Phase};
 impl Cpu {
     /// The T-cycle that produced the most recent `BusAction`.
     pub fn last_tcycle(&self) -> TCycle {
-        self.last_tcycle
+        self.seq.last_tcycle
     }
 
     /// True at the last T-cycle of the current M-cycle, where boundary
     /// work (timers, DMA, serial, audio, PPU boundary) completes before
     /// the next M-cycle begins.
     pub fn at_mcycle_boundary(&self) -> bool {
-        self.last_tcycle.as_u8() == 3
+        self.seq.last_tcycle.as_u8() == 3
     }
 
     /// Check and consume the instruction boundary flag. Consuming hands the
     /// event to the DMA bus arbiter: the next M-boundary pick starts a fresh
     /// instruction, the point a retirement-deferred block grant engages at.
     pub fn take_instruction_boundary(&mut self) -> bool {
-        if self.boundary_flag {
-            self.boundary_flag = false;
+        if self.seq.boundary_flag {
+            self.seq.boundary_flag = false;
             self.bus_arbitration.mark_at_boundary();
             true
         } else {
@@ -51,7 +51,7 @@ impl Cpu {
 
     /// Check the instruction boundary flag without consuming it.
     pub fn at_instruction_boundary(&self) -> bool {
-        self.boundary_flag
+        self.seq.boundary_flag
     }
 
     /// IE push bug: consume the pending vector-resolution request.

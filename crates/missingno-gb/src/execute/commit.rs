@@ -51,7 +51,7 @@ impl<M: Model> Console<M> {
     /// Resolves the drive-enable snapshot against mid-M-cycle flux
     /// before the SM83 captures cpu_port_d.
     pub(super) fn commit_read_latch(&mut self, ly_at_latch: Option<u8>) {
-        if let BusAction::Read { address } = &self.chassis.cpu.last_bus_action {
+        if let BusAction::Read { address } = &self.chassis.cpu.bus.last_bus_action {
             let address = *address;
             // Double speed: the LY tick can land mid-M on the read's own dot
             // fall (no CPU fall carries it), so the ripple LY_old arrives from
@@ -101,7 +101,7 @@ impl<M: Model> Console<M> {
             } else {
                 value
             };
-            self.chassis.cpu.data_latch = value;
+            self.chassis.cpu.bus.data_latch = value;
             // A next-opcode overlap prefetch that latched after a GDMA seized the
             // bus keeps its byte: it read the pre-transfer value (the transfer
             // suppresses the fetch, it does not re-drive the read). Retain it so
@@ -117,7 +117,7 @@ impl<M: Model> Console<M> {
     /// registers were already written at CUPA-rising via
     /// `drive_ppu_bus` in rise(); this commits memory.
     pub(super) fn commit_write(&mut self) {
-        if let BusAction::Write { address, value: _ } = &self.chassis.cpu.last_bus_action {
+        if let BusAction::Write { address, value: _ } = &self.chassis.cpu.bus.last_bus_action {
             let address = *address;
             if self.chassis.dma.is_active_on_bus().is_some()
                 && self

@@ -252,6 +252,101 @@ enum OverlapPrefetch {
     Held(u8),
 }
 
+/// The SM83's bus interface: the M-cycle action currently driven, the
+/// `BusAction` it resolves to, the byte captured off `cpu_port_d`, and the
+/// overlap-prefetch retention held across a bus-master hold.
+pub(crate) struct BusInterface {
+    /// The `MCycleAction` for the current M-cycle (read/write/internal +
+    /// address). `None` between M-cycles.
+    current_action: Option<MCycleAction>,
+    /// The `BusAction` produced by the most recent `next_tcycle`. The executor
+    /// reads this between rise/fall edges of the same T-cycle to route memory.
+    pub(crate) last_bus_action: BusAction,
+    /// Bus data latch — the byte the SM83 captured off `cpu_port_d` near the
+    /// end of T-cycle 3 of a read M-cycle. Holds until the next read latches.
+    pub(crate) data_latch: u8,
+    /// A next-opcode overlap prefetch retained across a bus-master hold; see
+    /// [`OverlapPrefetch`]. `Held` only across such a hold; the fetch consumes it.
+    overlap_prefetch: OverlapPrefetch,
+}
+
+impl BusInterface {
+    fn new() -> Self {
+        Self {
+            current_action: None,
+            last_bus_action: BusAction::Idle,
+            data_latch: 0,
+            overlap_prefetch: OverlapPrefetch::Idle,
+        }
+    }
+}
+
+/// The SM83 instruction sequencer: the microcode/timing state machine that
+/// walks each instruction (or dispatch) through its M-cycles, plus the
+/// internal working registers it fills along the way. Not programmer-visible —
+/// the architectural register file sits directly on `Cpu`.
+pub(crate) struct Sequencer {
+    /// Current execution phase of the CPU state machine.
+    pub(crate) phase: CpuPhase,
+    /// The decoded instruction, preserved for debugger display.
+    pub(crate) instruction: instructions::Instruction,
+    /// T-cycle position within the current M-cycle (0–3).
+    pub(crate) tcycle: TCycle,
+    /// T-cycle that produced the last `BusAction` — the executor reads
+    /// this to time per-T-cycle work after `next_tcycle()`.
+    pub(crate) last_tcycle: TCycle,
+    /// Step counter for Fetch / Halted phases (tracks M-cycle sub-steps).
+    pub(crate) exec_step: u8,
+    /// Whether an M-cycle is in flight.
+    pub(crate) mcycle_active: bool,
+    /// Whether the next rise() should fire the M-cycle-boundary block.
+    /// Decoupled from `mcycle_active` so the skip-boot constructor can
+    /// encode "M-cycle in flight, but the opening CLK9↑'s boundary work
+    /// fired in the boot ROM's domain." Normally tracks `!mcycle_active`.
+    pub(crate) boundary_pending: bool,
+    /// Set when the CPU transitions to Fetch. The executor reads this
+    /// to detect instruction boundaries.
+    pub(crate) boundary_flag: bool,
+    /// WZ temp register. Holds an assembled new-PC value (jump/call
+    /// target, restart vector, or address popped from the stack) until
+    /// the `PC ← WZ` copy at the instruction's retiring cycle. Every
+    /// control-flow op routes its new PC through here so `pc` never holds
+    /// the target before the install.
+    pub(crate) wz: u16,
+    /// The `PC ← WZ` misc-op: set when a control-flow op has assembled a
+    /// new PC in `wz`, consumed (and cleared) by the copy at the retiring
+    /// M-cycle. Distinct from `wz` itself, which always holds a value.
+    pub(crate) wz_to_pc: bool,
+    /// Scratch byte for multi-read phases (Pop, CondReturn).
+    pub(crate) scratch: u8,
+    /// The operand byte a yielded STOP discard-fetch latched: IR retains it
+    /// through the stop spin; resume routes it as a just-fetched opcode.
+    pub(crate) stop_retained: Option<u8>,
+    /// The M-cycle in flight is the first fetch after a halt exit (the
+    /// halt-release path drives it); cleared when it routes.
+    pub(crate) post_halt_fetch: bool,
+}
+
+impl Sequencer {
+    fn new() -> Self {
+        Self {
+            phase: CpuPhase::Fetch,
+            instruction: instructions::Instruction::NoOperation,
+            tcycle: TCycle::ZERO,
+            last_tcycle: TCycle::ZERO,
+            exec_step: 0,
+            mcycle_active: false,
+            boundary_pending: true,
+            boundary_flag: true,
+            wz: 0,
+            wz_to_pc: false,
+            scratch: 0,
+            stop_retained: None,
+            post_halt_fetch: false,
+        }
+    }
+}
+
 /// The SM83 CPU. Owns register file, IME, halt state, and the
 /// state-machine fields that sequence each instruction's M-cycles.
 pub struct Cpu {
@@ -276,70 +371,20 @@ pub struct Cpu {
     /// the debugger key on.
     pub ir_address: u16,
 
-    /// Bus data latch — the byte the SM83 captured off `cpu_port_d`
-    /// near the end of T-cycle 3 of a read M-cycle. Holds until the
-    /// next read latches. Read by the state machine each T-cycle.
-    pub data_latch: u8,
-
-    /// A next-opcode overlap prefetch retained across a bus-master hold; see
-    /// [`OverlapPrefetch`]. `Held` only across such a hold; the fetch consumes it.
-    overlap_prefetch: OverlapPrefetch,
-
-    /// The `BusAction` produced by the most recent `next_tcycle`. The
-    /// executor reads this between rise/fall edges of the same T-cycle
-    /// to route memory reads/writes.
-    pub last_bus_action: BusAction,
+    /// Address/data bus latches and the overlap-prefetch retention.
+    pub(crate) bus: BusInterface,
 
     pub flags: Flags,
 
     pub irq: IrqContext,
     pub halt: HaltContext,
 
-    // ── Persistent state machine fields ──
-    /// Current execution phase of the CPU state machine.
-    pub(super) phase: CpuPhase,
-    /// The decoded instruction, preserved for debugger display.
-    pub(super) instruction: instructions::Instruction,
-    /// T-cycle position within the current M-cycle (0–3).
-    pub(super) tcycle: TCycle,
-    /// Whether an M-cycle is in flight.
-    pub(super) mcycle_active: bool,
+    /// The instruction sequencer: phase machine, T-cycle/M-cycle counters,
+    /// boundary flags, and the WZ/scratch working registers.
+    pub(crate) seq: Sequencer,
     /// The DMA↔dispatch bus-pick synchronizer that arbitrates the shared bus
     /// between an in-flight instruction and a pending VRAM-DMA block.
     pub(crate) bus_arbitration: BusArbitration,
-    /// The operand byte a yielded STOP discard-fetch latched: IR retains it
-    /// through the stop spin; resume routes it as a just-fetched opcode.
-    pub(super) stop_retained: Option<u8>,
-    /// The M-cycle in flight is the first fetch after a halt exit (the
-    /// halt-release path drives it); cleared when it routes.
-    pub(super) post_halt_fetch: bool,
-    /// Whether the next rise() should fire the M-cycle-boundary block.
-    /// Decoupled from `mcycle_active` so the skip-boot constructor can
-    /// encode "M-cycle in flight, but the opening CLK9↑'s boundary work
-    /// fired in the boot ROM's domain." Normally tracks `!mcycle_active`.
-    pub(super) boundary_pending: bool,
-    /// The `MCycleAction` for the current M-cycle.
-    current_action: Option<mcycle::MCycleAction>,
-    /// Step counter for Fetch / Halted phases (tracks M-cycle sub-steps).
-    pub(super) exec_step: u8,
-    /// WZ temp register. Holds an assembled new-PC value (jump/call
-    /// target, restart vector, or address popped from the stack) until
-    /// the `PC ← WZ` copy at the instruction's retiring cycle. Every
-    /// control-flow op routes its new PC through here so `pc` never holds
-    /// the target before the install.
-    pub(super) wz: u16,
-    /// The `PC ← WZ` misc-op: set when a control-flow op has assembled a
-    /// new PC in `wz`, consumed (and cleared) by the copy at the retiring
-    /// M-cycle. Distinct from `wz` itself, which always holds a value.
-    pub(super) wz_to_pc: bool,
-    /// Scratch byte for multi-read phases (Pop, CondReturn).
-    pub(super) scratch: u8,
-    /// T-cycle that produced the last `BusAction` — the executor reads
-    /// this to time per-T-cycle work after `next_tcycle()`.
-    pub(super) last_tcycle: TCycle,
-    /// Set when the CPU transitions to Fetch. The executor reads this
-    /// to detect instruction boundaries.
-    pub(super) boundary_flag: bool,
     /// Running-CPU dispatch chain: per-bit irq_latch_inst<i> →
     /// priority chain → int_take → zaij → zkog/zloz → zfex → zacw.
     /// Owns the `data_phase_n` latch and the EI/DI block.
@@ -388,19 +433,23 @@ impl Cpu {
             flags,
 
             // ── In-flight M-cycle: opening m1 fetch of cartridge code ──
-            phase: CpuPhase::Execute {
-                phase: Phase::FetchOverlap {
-                    commit: Commit::NoOperation,
+            seq: Sequencer {
+                phase: CpuPhase::Execute {
+                    phase: Phase::FetchOverlap {
+                        commit: Commit::NoOperation,
+                    },
+                    step: 1,
                 },
-                step: 1,
+                tcycle: TCycle::ONE,
+                mcycle_active: true,
+                boundary_pending: false,
+                exec_step: 1,
+                ..Sequencer::new()
             },
-            tcycle: TCycle::ONE,
-            mcycle_active: true,
-            stop_retained: None,
-            post_halt_fetch: false,
-            boundary_pending: false,
-            current_action: Some(MCycleAction::Read { address: 0x0100 }),
-            exec_step: 1,
+            bus: BusInterface {
+                current_action: Some(MCycleAction::Read { address: 0x0100 }),
+                ..BusInterface::new()
+            },
 
             ..Self::boundary_state()
         }
@@ -460,27 +509,12 @@ impl Cpu {
             stack_pointer: 0,
             pc: 0,
             ir_address: 0,
-            data_latch: 0,
-            overlap_prefetch: OverlapPrefetch::Idle,
+            bus: BusInterface::new(),
             flags: Flags::empty(),
             irq: IrqContext::new(),
             halt: HaltContext::new(),
-            phase: CpuPhase::Fetch,
-            instruction: instructions::Instruction::NoOperation,
-            tcycle: TCycle::ZERO,
-            mcycle_active: false,
+            seq: Sequencer::new(),
             bus_arbitration: BusArbitration::new(),
-            stop_retained: None,
-            post_halt_fetch: false,
-            boundary_pending: true,
-            current_action: None,
-            exec_step: 0,
-            wz: 0,
-            wz_to_pc: false,
-            scratch: 0,
-            last_tcycle: TCycle::ZERO,
-            last_bus_action: BusAction::Idle,
-            boundary_flag: true,
             dispatch: dispatch_chain::DispatchChain::new(),
         }
     }
@@ -550,7 +584,7 @@ impl Cpu {
     /// 1 = first post-fetch M-cycle, etc. Interrupt dispatch's
     /// 5 M-cycles report 0..=4 (M0 overlaps the fetch). Halt: 0.
     pub fn op_state(&self) -> u8 {
-        match &self.phase {
+        match &self.seq.phase {
             mcycle::CpuPhase::Fetch => 0,
             mcycle::CpuPhase::Execute { step, .. } => *step as u8,
             mcycle::CpuPhase::InterruptDispatch { step, .. } => *step as u8,
@@ -563,7 +597,7 @@ impl Cpu {
     /// `AFUR<<3 | ALEF<<2 | APUK<<1 | ADYK<<0` to match GateBoy's
     /// encoding at the post-fall sampling instant.
     pub fn mcycle_phase(&self) -> u8 {
-        match self.last_tcycle.as_u8() {
+        match self.seq.last_tcycle.as_u8() {
             0 => 0x0E, // AFUR=1 ALEF=1 APUK=1 ADYK=0
             1 => 0x07, // AFUR=0 ALEF=1 APUK=1 ADYK=1
             2 => 0x01, // AFUR=0 ALEF=0 APUK=0 ADYK=1
@@ -574,7 +608,7 @@ impl Cpu {
 
     /// Address on the CPU bus for the current M-cycle.
     pub fn bus_address(&self) -> u16 {
-        match &self.current_action {
+        match &self.bus.current_action {
             Some(mcycle::MCycleAction::Read { address }) => *address,
             Some(mcycle::MCycleAction::Write { address, .. }) => *address,
             Some(mcycle::MCycleAction::InternalOamBug { address }) => *address,
@@ -603,8 +637,8 @@ impl Cpu {
 
     /// Return `boundary_pending` and clear it. Called once per rise().
     pub fn consume_boundary_pending(&mut self) -> bool {
-        let pending = self.boundary_pending;
-        self.boundary_pending = false;
+        let pending = self.seq.boundary_pending;
+        self.seq.boundary_pending = false;
         pending
     }
 
@@ -631,7 +665,7 @@ impl Cpu {
     /// The CPU is inside its interrupt-dispatch sequence — one indivisible
     /// bus tenure that a DMA grant waits behind.
     pub(crate) fn in_dispatch(&self) -> bool {
-        matches!(self.phase, mcycle::CpuPhase::InterruptDispatch { .. })
+        matches!(self.seq.phase, mcycle::CpuPhase::InterruptDispatch { .. })
     }
 
     /// Re-engage the CPU after STOP: resume at the instruction following
@@ -656,7 +690,7 @@ impl Cpu {
                 .ime
                 .write_immediate(InterruptMasterEnable::Disabled);
             self.irq.ime_delay = false;
-            self.phase = CpuPhase::InterruptDispatch {
+            self.seq.phase = CpuPhase::InterruptDispatch {
                 sp: self.stack_pointer,
                 pc_hi: (pc >> 8) as u8,
                 pc_lo: (pc & 0xff) as u8,
@@ -664,7 +698,7 @@ impl Cpu {
             };
             self.irq.pending_vector_resolve = false;
         } else {
-            self.phase = match self.stop_retained.take() {
+            self.seq.phase = match self.seq.stop_retained.take() {
                 // A yielded discard-fetch left its byte in IR: route it as a
                 // just-fetched opcode instead of re-fetching.
                 Some(opcode) => CpuPhase::Execute {
@@ -674,17 +708,17 @@ impl Cpu {
                 None => CpuPhase::Fetch,
             };
         }
-        self.exec_step = 0;
-        self.mcycle_active = false;
-        self.boundary_pending = true;
-        self.boundary_flag = true;
+        self.seq.exec_step = 0;
+        self.seq.mcycle_active = false;
+        self.seq.boundary_pending = true;
+        self.seq.boundary_flag = true;
     }
 
     /// Mark an instruction boundary so the step driver returns. Used by the
     /// held speed-switch blackout, which advances the master clock without
     /// stepping the SM83's own M-cycle state machine.
     pub fn mark_instruction_boundary(&mut self) {
-        self.boundary_flag = true;
+        self.seq.boundary_flag = true;
     }
 
     /// Hold every CPU cycle until `end_bus_hold`: a bus master (CGB GDMA)
@@ -696,30 +730,30 @@ impl Cpu {
         // M-cycle (with the pre-transfer byte). Arm the retention so the
         // post-hold fetch decodes it rather than re-reading.
         if matches!(
-            self.phase,
+            self.seq.phase,
             CpuPhase::Execute {
                 phase: Phase::FetchOverlap { .. },
                 ..
             }
         ) {
-            self.overlap_prefetch = OverlapPrefetch::ArmedOverHold;
-        } else if !matches!(self.overlap_prefetch, OverlapPrefetch::Held(_)) {
-            self.overlap_prefetch = OverlapPrefetch::Idle;
+            self.bus.overlap_prefetch = OverlapPrefetch::ArmedOverHold;
+        } else if !matches!(self.bus.overlap_prefetch, OverlapPrefetch::Held(_)) {
+            self.bus.overlap_prefetch = OverlapPrefetch::Idle;
         }
     }
 
     /// Latch the pre-transfer byte into the retained overlap prefetch if a hold
     /// armed it; a no-op otherwise.
     pub(crate) fn latch_overlap_prefetch(&mut self, value: u8) {
-        if matches!(self.overlap_prefetch, OverlapPrefetch::ArmedOverHold) {
-            self.overlap_prefetch = OverlapPrefetch::Held(value);
+        if matches!(self.bus.overlap_prefetch, OverlapPrefetch::ArmedOverHold) {
+            self.bus.overlap_prefetch = OverlapPrefetch::Held(value);
         }
     }
 
     /// Take a retained overlap-prefetch byte if the post-hold fetch has one.
     fn take_overlap_prefetch(&mut self) -> Option<u8> {
-        if let OverlapPrefetch::Held(byte) = self.overlap_prefetch {
-            self.overlap_prefetch = OverlapPrefetch::Idle;
+        if let OverlapPrefetch::Held(byte) = self.bus.overlap_prefetch {
+            self.bus.overlap_prefetch = OverlapPrefetch::Idle;
             Some(byte)
         } else {
             None
@@ -730,13 +764,13 @@ impl Cpu {
     /// cancelled by the bus master taking the cycle; it re-issues from PC.
     /// A stop spin held through the hold stays a stop spin.
     pub fn end_bus_hold(&mut self) {
-        self.phase = if self.halt.state == HaltState::Stopped {
+        self.seq.phase = if self.halt.state == HaltState::Stopped {
             CpuPhase::Halted(HaltPhase::Spin)
         } else {
             CpuPhase::Fetch
         };
-        self.exec_step = 0;
-        self.boundary_flag = true;
+        self.seq.exec_step = 0;
+        self.seq.boundary_flag = true;
     }
 
     pub fn halt_rs_latched(&self) -> bool {
@@ -751,7 +785,7 @@ impl Cpu {
     /// Drives `ctl_fetch` in the dispatch chain's xogs gate.
     pub fn is_fetch_phase(&self) -> bool {
         matches!(
-            self.phase,
+            self.seq.phase,
             CpuPhase::Fetch
                 | CpuPhase::Execute {
                     phase: Phase::FetchOverlap { .. },
@@ -762,7 +796,7 @@ impl Cpu {
 
     /// Address + value the CPU is writing this M-cycle.
     pub fn pending_bus_write(&self) -> Option<(u16, u8)> {
-        match &self.current_action {
+        match &self.bus.current_action {
             Some(mcycle::MCycleAction::Write { address, value }) => Some((*address, *value)),
             _ => None,
         }
@@ -770,7 +804,7 @@ impl Cpu {
 
     /// Address the CPU is reading this M-cycle.
     pub fn pending_bus_read(&self) -> Option<u16> {
-        match &self.current_action {
+        match &self.bus.current_action {
             Some(mcycle::MCycleAction::Read { address }) => Some(*address),
             _ => None,
         }

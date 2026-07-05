@@ -13,7 +13,7 @@ impl Cpu {
     /// flag is set and the first T-cycle of the next instruction is
     /// deferred to the next call.
     pub(crate) fn next_tcycle(&mut self, grants: BusGrants) -> BusAction {
-        if !self.mcycle_active {
+        if !self.seq.mcycle_active {
             // Bus arbitration, M-boundary-quantized: the grant takes effect
             // between M-cycles, so a transaction in flight always completes;
             // one STARTING while the DMA owns the VRAM/external buses waits
@@ -22,7 +22,7 @@ impl Cpu {
             let action = if grants.held {
                 // GDMA owns the full bus bandwidth: passive spin cells, each
                 // an instruction boundary, with no instruction-state advance.
-                self.boundary_flag = true;
+                self.seq.boundary_flag = true;
                 MCycleAction::Internal { address: self.pc }
             } else {
                 let mut action = if self.bus_arbitration.parked_action.is_some() {
@@ -56,23 +56,23 @@ impl Cpu {
                 }
                 action
             };
-            self.current_action = Some(action);
-            self.tcycle = TCycle::ZERO;
-            self.mcycle_active = true;
+            self.bus.current_action = Some(action);
+            self.seq.tcycle = TCycle::ZERO;
+            self.seq.mcycle_active = true;
             // Claims are per-M-cycle: the pick above consumed any claim committed
             // during the M-cycle that just ended; the console clears its stored
             // claim after this pick returns.
         }
 
-        let tcycle = self.tcycle;
-        self.last_tcycle = tcycle;
-        self.tcycle = if tcycle.as_u8() == 3 {
+        let tcycle = self.seq.tcycle;
+        self.seq.last_tcycle = tcycle;
+        self.seq.tcycle = if tcycle.as_u8() == 3 {
             TCycle::ZERO
         } else {
             tcycle.advance()
         };
 
-        let result = match &self.current_action {
+        let result = match &self.bus.current_action {
             Some(MCycleAction::Read { address }) => {
                 // CPU latches read data at the end of the M-cycle.
                 if tcycle.as_u8() == 3 {
@@ -105,11 +105,11 @@ impl Cpu {
         };
 
         if tcycle.as_u8() == 3 {
-            self.mcycle_active = false;
-            self.boundary_pending = true;
+            self.seq.mcycle_active = false;
+            self.seq.boundary_pending = true;
         }
 
-        self.last_bus_action = result;
+        self.bus.last_bus_action = result;
         result
     }
 
@@ -134,15 +134,15 @@ impl Cpu {
                     self.pc = self.pc.wrapping_sub(1);
                     if self.dispatch.dispatch_active() {
                         let pc = self.pc;
-                        self.phase = CpuPhase::InterruptDispatch {
+                        self.seq.phase = CpuPhase::InterruptDispatch {
                             sp: self.stack_pointer,
                             pc_hi: (pc >> 8) as u8,
                             pc_lo: (pc & 0xff) as u8,
                             step: 0,
                         };
-                        self.exec_step = 0;
+                        self.seq.exec_step = 0;
                         self.irq.pending_vector_resolve = false;
-                        self.boundary_flag = true;
+                        self.seq.boundary_flag = true;
                         return self.mcycle_isr(claim);
                     }
                 } else {
@@ -156,12 +156,12 @@ impl Cpu {
             } else {
                 // No IF pending at M_h start: halt RS-latch sets.
                 self.halt.rs_latched = true;
-                self.phase = CpuPhase::Halted(HaltPhase::Spin);
-                self.exec_step = 0;
+                self.seq.phase = CpuPhase::Halted(HaltPhase::Spin);
+                self.seq.exec_step = 0;
             }
         }
 
-        match &self.phase {
+        match &self.seq.phase {
             CpuPhase::Fetch => self.mcycle_fetch(claim),
             CpuPhase::Execute { .. } => self.mcycle_execute(claim),
             CpuPhase::InterruptDispatch { .. } => self.mcycle_isr(claim),
@@ -199,7 +199,7 @@ impl Cpu {
                 }
             }
             CpuPhase::Locked => {
-                self.boundary_flag = true;
+                self.seq.boundary_flag = true;
                 Some(MCycleAction::Internal { address: self.pc })
             }
             CpuPhase::Halted(HaltPhase::WakeIntake) => {
@@ -214,15 +214,15 @@ impl Cpu {
                     self.halt.rs_latched = false;
                     self.halt.wake_active = true;
                     let pc = self.pc;
-                    self.phase = CpuPhase::InterruptDispatch {
+                    self.seq.phase = CpuPhase::InterruptDispatch {
                         sp: self.stack_pointer,
                         pc_hi: (pc >> 8) as u8,
                         pc_lo: (pc & 0xff) as u8,
                         step: 0,
                     };
-                    self.exec_step = 0;
+                    self.seq.exec_step = 0;
                     self.irq.pending_vector_resolve = false;
-                    self.boundary_flag = true;
+                    self.seq.boundary_flag = true;
                     self.mcycle_isr(claim)
                 } else {
                     self.enter_post_halt_fetch(claim)
@@ -235,9 +235,9 @@ impl Cpu {
     /// state holds the address bus passively (dmg-sim shows no
     /// `bus_read` fires in any of the three halt sub-phases).
     pub(super) fn mcycle_halted_entry(&mut self, phase: HaltPhase) -> MCycleAction {
-        self.phase = CpuPhase::Halted(phase);
-        self.exec_step = 0;
-        self.boundary_flag = true;
+        self.seq.phase = CpuPhase::Halted(phase);
+        self.seq.exec_step = 0;
+        self.seq.boundary_flag = true;
         MCycleAction::Internal { address: self.pc }
     }
 }

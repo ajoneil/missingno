@@ -14,7 +14,7 @@ impl Cpu {
     ///   step 4 → M5 vector fetch (via enter_fetch_overlap)
     /// IME clears at step 0 (zacw on dispatching CLK9↑).
     pub(super) fn mcycle_isr(&mut self, claim: VramDmaClaim) -> Option<MCycleAction> {
-        let (sp, pc_hi, pc_lo, step) = match &mut self.phase {
+        let (sp, pc_hi, pc_lo, step) = match &mut self.seq.phase {
             CpuPhase::InterruptDispatch {
                 sp,
                 pc_hi,

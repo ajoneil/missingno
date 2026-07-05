@@ -12,7 +12,7 @@ impl Cpu {
     /// Returns `None` when the instruction completes (CPU has
     /// transitioned to Fetch).
     pub(super) fn mcycle_execute(&mut self, claim: VramDmaClaim) -> Option<MCycleAction> {
-        let taken = std::mem::replace(&mut self.phase, CpuPhase::Fetch);
+        let taken = std::mem::replace(&mut self.seq.phase, CpuPhase::Fetch);
         let (mut phase, mut step) = match taken {
             CpuPhase::Execute { phase, step } => (phase, step),
             _ => unreachable!("mcycle_execute called outside Execute phase"),
@@ -24,7 +24,7 @@ impl Cpu {
         let (action, put_back) = self.execute_phase_step(claim, &mut phase, current_step);
 
         if put_back {
-            self.phase = CpuPhase::Execute { phase, step };
+            self.seq.phase = CpuPhase::Execute { phase, step };
         }
 
         action
@@ -45,17 +45,17 @@ impl Cpu {
         if self.dispatch.dispatch_active() {
             // A dispatch preempting a just-yielded STOP abandons the stop;
             // its retained byte must not survive into a later resume.
-            self.stop_retained = None;
+            self.seq.stop_retained = None;
             let pc = fetch_addr;
-            self.phase = CpuPhase::InterruptDispatch {
+            self.seq.phase = CpuPhase::InterruptDispatch {
                 sp: self.stack_pointer,
                 pc_hi: (pc >> 8) as u8,
                 pc_lo: (pc & 0xff) as u8,
                 step: 0,
             };
-            self.exec_step = 0;
+            self.seq.exec_step = 0;
             self.irq.pending_vector_resolve = false;
-            self.boundary_flag = true;
+            self.seq.boundary_flag = true;
             self.pc = pc;
             return self.next_mcycle(claim);
         }
@@ -70,19 +70,19 @@ impl Cpu {
         if needed == 0 {
             let bytes = [opcode, 0, 0];
             let (instruction, next_phase, next_commit) = self.decode_retire(bytes, 1);
-            self.instruction = instruction;
+            self.seq.instruction = instruction;
             if matches!(next_phase, Phase::Empty) {
                 Some(self.enter_fetch_overlap(claim, next_commit))
             } else {
-                self.phase = CpuPhase::Execute {
+                self.seq.phase = CpuPhase::Execute {
                     phase: next_phase,
                     step: 0,
                 };
-                self.exec_step = 0;
+                self.seq.exec_step = 0;
                 self.next_mcycle(claim)
             }
         } else {
-            self.phase = CpuPhase::Execute {
+            self.seq.phase = CpuPhase::Execute {
                 phase: Phase::Operands {
                     pc: self.pc,
                     bytes: [opcode, 0, 0],
@@ -91,14 +91,14 @@ impl Cpu {
                 },
                 step: 0,
             };
-            self.exec_step = 0;
+            self.seq.exec_step = 0;
             self.next_mcycle(claim)
         }
     }
 
     /// One step of the active `Phase`. Returns `(action, put_back)` —
     /// `put_back = true` means the phase is still in flight and should
-    /// be restored to `self.phase`.
+    /// be restored to `self.seq.phase`.
     fn execute_phase_step(
         &mut self,
         claim: VramDmaClaim,
@@ -123,9 +123,9 @@ impl Cpu {
                 // the next opcode at resume (no re-fetch).
                 let yields_to_claim = bytes[0] == 0x10 && claim.committed;
                 if yields_to_claim {
-                    self.stop_retained = Some(self.data_latch);
+                    self.seq.stop_retained = Some(self.bus.data_latch);
                 } else {
-                    bytes[*bytes_read as usize] = self.data_latch;
+                    bytes[*bytes_read as usize] = self.bus.data_latch;
                     *bytes_read += 1;
                     *pc = pc.wrapping_add(1);
                     self.pc = *pc;
@@ -135,12 +135,12 @@ impl Cpu {
                     let b = *bytes;
                     let n = *bytes_read;
                     let (instruction, phase, commit) = self.decode_retire(b, n);
-                    self.instruction = instruction;
+                    self.seq.instruction = instruction;
                     if matches!(phase, Phase::Empty) {
                         return (Some(self.enter_fetch_overlap(claim, commit)), false);
                     }
-                    self.phase = CpuPhase::Execute { phase, step: 0 };
-                    self.exec_step = 0;
+                    self.seq.phase = CpuPhase::Execute { phase, step: 0 };
+                    self.seq.exec_step = 0;
                     return (self.next_mcycle(claim), false);
                 }
 
@@ -162,8 +162,8 @@ impl Cpu {
                 let carried = std::mem::replace(commit, Commit::NoOperation);
                 Self::apply_commit(self, carried);
 
-                let opcode = self.data_latch;
-                let fetch_addr = match &self.current_action {
+                let opcode = self.bus.data_latch;
+                let fetch_addr = match &self.bus.current_action {
                     Some(MCycleAction::Read { address }) => *address,
                     _ => self.pc,
                 };
@@ -182,7 +182,7 @@ impl Cpu {
             Phase::ReadOp { address, action } => match current_step {
                 0 => (Some(MCycleAction::Read { address: *address }), true),
                 _ => {
-                    Self::apply_read_action(self, action, self.data_latch);
+                    Self::apply_read_action(self, action, self.bus.data_latch);
                     (
                         Some(self.enter_fetch_overlap(claim, Commit::NoOperation)),
                         false,
@@ -195,7 +195,7 @@ impl Cpu {
                 match current_step {
                     0 => (Some(MCycleAction::Read { address }), true),
                     1 => {
-                        let result = Self::apply_rmw(self, op, self.data_latch);
+                        let result = Self::apply_rmw(self, op, self.bus.data_latch);
                         (
                             Some(MCycleAction::Write {
                                 address,
@@ -286,7 +286,7 @@ impl Cpu {
                 match current_step {
                     0 => (Some(MCycleAction::Read { address: sp }), true),
                     1 => {
-                        self.scratch = self.data_latch;
+                        self.seq.scratch = self.bus.data_latch;
                         (
                             Some(MCycleAction::Read {
                                 address: sp.wrapping_add(1),
@@ -295,7 +295,7 @@ impl Cpu {
                         )
                     }
                     2 => {
-                        Self::apply_pop(self, action, self.scratch, self.data_latch, sp);
+                        Self::apply_pop(self, action, self.seq.scratch, self.bus.data_latch, sp);
                         let has_trailing =
                             matches!(action, PopAction::SetPc | PopAction::SetPcEnableInterrupts);
                         if has_trailing {
@@ -351,8 +351,8 @@ impl Cpu {
                 if current_step == 0 && *taken {
                     // PC stays at the post-operand address this M-cycle; the
                     // target waits in wz until the retiring PC ← WZ copy.
-                    self.wz = *target;
-                    self.wz_to_pc = true;
+                    self.seq.wz = *target;
+                    self.seq.wz_to_pc = true;
                     (Some(MCycleAction::Internal { address: 0x0000 }), true)
                 } else {
                     (
@@ -412,7 +412,7 @@ impl Cpu {
                     ),
                     1 => (Some(MCycleAction::Read { address: sp }), true),
                     2 => {
-                        self.scratch = self.data_latch;
+                        self.seq.scratch = self.bus.data_latch;
                         (
                             Some(MCycleAction::Read {
                                 address: sp.wrapping_add(1),
@@ -421,7 +421,7 @@ impl Cpu {
                         )
                     }
                     3 => {
-                        Self::apply_pop(self, action, self.scratch, self.data_latch, sp);
+                        Self::apply_pop(self, action, self.seq.scratch, self.bus.data_latch, sp);
                         (Some(MCycleAction::Internal { address: 0x0000 }), true)
                     }
                     _ => (

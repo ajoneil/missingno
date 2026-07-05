@@ -44,8 +44,8 @@ impl Cpu {
     /// Fetch M-cycle: single read at [PC]. Returns `None` when the
     /// fetched instruction completes immediately (e.g. NOP).
     pub(super) fn mcycle_fetch(&mut self, claim: VramDmaClaim) -> Option<MCycleAction> {
-        let step = self.exec_step;
-        self.exec_step += 1;
+        let step = self.seq.exec_step;
+        self.seq.exec_step += 1;
 
         if step == 0 {
             self.ir_address = self.pc;
@@ -57,8 +57,8 @@ impl Cpu {
         // latched before a GDMA hold seized the bus supplies the byte here —
         // the re-fetch M-cycle still runs (cycle count unchanged) but decodes
         // the prefetched byte, not the transfer-clobbered re-read.
-        let opcode = self.take_overlap_prefetch().unwrap_or(self.data_latch);
-        let fetch_addr = match &self.current_action {
+        let opcode = self.take_overlap_prefetch().unwrap_or(self.bus.data_latch);
+        let fetch_addr = match &self.bus.current_action {
             Some(MCycleAction::Read { address }) => *address,
             _ => self.pc,
         };
@@ -66,8 +66,8 @@ impl Cpu {
         // committing during this fetch's M-cycle takes the cycle's tail and
         // kills the IDU increment — the byte routes, PC holds (halt-bug
         // family).
-        let handover_kill = claim.standing && self.post_halt_fetch;
-        self.post_halt_fetch = false;
+        let handover_kill = claim.standing && self.seq.post_halt_fetch;
+        self.seq.post_halt_fetch = false;
         if self.halt.bug {
             self.halt.bug = false;
         } else if !handover_kill {
@@ -78,18 +78,18 @@ impl Cpu {
         if needed == 0 {
             let bytes = [opcode, 0, 0];
             let (instruction, phase, commit) = self.decode_retire(bytes, 1);
-            self.instruction = instruction;
+            self.seq.instruction = instruction;
             if matches!(phase, Phase::Empty) {
                 Some(self.enter_fetch_overlap(claim, commit))
             } else {
                 // Multi-Mcyc 0-operand op (LD (HL),A, POP rr, etc.):
                 // run its execute phase before fetch overlap.
-                self.phase = CpuPhase::Execute { phase, step: 0 };
-                self.exec_step = 0;
+                self.seq.phase = CpuPhase::Execute { phase, step: 0 };
+                self.seq.exec_step = 0;
                 self.mcycle_execute(claim)
             }
         } else {
-            self.phase = CpuPhase::Execute {
+            self.seq.phase = CpuPhase::Execute {
                 phase: Phase::Operands {
                     pc: self.pc,
                     bytes: [opcode, 0, 0],
@@ -98,7 +98,7 @@ impl Cpu {
                 },
                 step: 0,
             };
-            self.exec_step = 0;
+            self.seq.exec_step = 0;
             self.mcycle_execute(claim)
         }
     }
@@ -109,10 +109,10 @@ impl Cpu {
     pub(super) fn enter_post_halt_fetch(&mut self, claim: VramDmaClaim) -> Option<MCycleAction> {
         self.halt.state = HaltState::Running;
         self.halt.rs_latched = false;
-        self.phase = CpuPhase::Fetch;
-        self.exec_step = 0;
-        self.boundary_flag = true;
-        self.post_halt_fetch = true;
+        self.seq.phase = CpuPhase::Fetch;
+        self.seq.exec_step = 0;
+        self.seq.boundary_flag = true;
+        self.seq.post_halt_fetch = true;
         self.mcycle_fetch(claim)
     }
 
@@ -167,11 +167,11 @@ impl Cpu {
         Self::apply_commit(self, commit);
         let deferred = Commit::NoOperation;
 
-        if self.wz_to_pc {
-            self.pc = self.wz;
-            self.wz_to_pc = false;
+        if self.seq.wz_to_pc {
+            self.pc = self.seq.wz;
+            self.seq.wz_to_pc = false;
         }
-        self.boundary_flag = true;
+        self.seq.boundary_flag = true;
 
         if self.dispatch.dispatch_active() {
             // zkog/zloz reset fires at ctl_int_entry_m6 (M3→M4 vector
@@ -179,13 +179,13 @@ impl Cpu {
             self.halt.state = HaltState::Running;
             self.halt.rs_latched = false;
             let pc = self.pc;
-            self.phase = CpuPhase::InterruptDispatch {
+            self.seq.phase = CpuPhase::InterruptDispatch {
                 sp: self.stack_pointer,
                 pc_hi: (pc >> 8) as u8,
                 pc_lo: (pc & 0xff) as u8,
                 step: 0,
             };
-            self.exec_step = 0;
+            self.seq.exec_step = 0;
             self.irq.pending_vector_resolve = false;
             return self
                 .next_mcycle(claim)
@@ -193,8 +193,8 @@ impl Cpu {
         }
 
         if self.halt.state == HaltState::Locked {
-            self.phase = CpuPhase::Locked;
-            self.exec_step = 0;
+            self.seq.phase = CpuPhase::Locked;
+            self.seq.exec_step = 0;
             return MCycleAction::Internal { address: self.pc };
         }
 
@@ -215,11 +215,11 @@ impl Cpu {
             self.halt.bug_check_pending = true;
         }
 
-        self.phase = CpuPhase::Execute {
+        self.seq.phase = CpuPhase::Execute {
             phase: Phase::FetchOverlap { commit: deferred },
             step: 1,
         };
-        self.exec_step = 1;
+        self.seq.exec_step = 1;
         self.ir_address = self.pc;
         MCycleAction::Read { address: self.pc }
     }

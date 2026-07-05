@@ -230,7 +230,7 @@ impl<M: Model> Console<M> {
         // data_phase_n↑ precedes this fall's edge: sample LY pre-edge so an
         // FF44 latch coincident with the RUTU-clocked capture resolves the
         // mid-ripple flux.
-        let ly_at_latch = match self.chassis.cpu.last_bus_action {
+        let ly_at_latch = match self.chassis.cpu.bus.last_bus_action {
             BusAction::Read { address: 0xFF44 } => Some(self.read(0xFF44)),
             _ => None,
         };
@@ -519,7 +519,7 @@ impl<M: Model> Console<M> {
     /// must be visible at T-cycle 0 so the same M-cycle's MOPA edge
     /// picks it up.
     fn arm_oam_bugs(&mut self) {
-        if let BusAction::InternalOamBug { address } = self.chassis.cpu.last_bus_action {
+        if let BusAction::InternalOamBug { address } = self.chassis.cpu.bus.last_bus_action {
             self.chassis.ppu.arm_oam_bug_for_write(address);
         }
         if let Some(address) = self.chassis.cpu.pending_bus_read() {
