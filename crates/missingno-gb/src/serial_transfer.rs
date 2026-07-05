@@ -1,6 +1,38 @@
+use std::num::NonZeroU8;
+
 use bitflags::bitflags;
 
 use crate::interrupts::Interrupt;
+
+/// Serial shift-register state. A transfer shifts eight bits, one per clock
+/// edge; when the last bit shifts out the register returns to `Idle`.
+#[derive(Clone, Copy)]
+pub enum Shift {
+    Idle,
+    Active { bits_remaining: NonZeroU8 },
+}
+
+impl Shift {
+    /// Rebuild from a bit count — `0` is `Idle`, so an in-progress transfer
+    /// can never carry a zero count.
+    fn from_count(count: u8) -> Self {
+        match NonZeroU8::new(count) {
+            Some(bits_remaining) => Shift::Active { bits_remaining },
+            None => Shift::Idle,
+        }
+    }
+
+    fn is_active(&self) -> bool {
+        matches!(self, Shift::Active { .. })
+    }
+
+    pub fn bits_remaining(&self) -> u8 {
+        match self {
+            Shift::Idle => 0,
+            Shift::Active { bits_remaining } => bits_remaining.get(),
+        }
+    }
+}
 
 /// Bit of the internal counter whose falling edge clocks the serial shift register.
 /// On DMG, this is bit 5 of the M-cycle counter, giving a base period of 256 T-cycles.
@@ -91,8 +123,8 @@ impl SerialLink for Disconnected {
 pub struct Registers {
     pub data: u8,
     pub control: Control,
-    /// Number of bits remaining to shift (0 = idle, 1-8 = transfer in progress).
-    pub bits_remaining: u8,
+    /// Shift-register state: idle, or a transfer with 1-8 bits left to shift.
+    pub shift: Shift,
     /// Internal serial clock state, toggled on each falling edge of the
     /// internal counter's clock bit. A shift occurs on each falling edge
     /// of this flag (i.e., every second falling edge of the clock bit).
@@ -106,7 +138,7 @@ impl Registers {
         Registers {
             data: 0,
             control: Control::from_bits_retain(0x7e),
-            bits_remaining: 0,
+            shift: Shift::Idle,
             serial_clock: false,
             previous_counter: 0x2AF3,
         }
@@ -117,7 +149,7 @@ impl Registers {
         Registers {
             data: snap.sb,
             control: Control::from_bits_retain(snap.sc),
-            bits_remaining: snap.bits_remaining,
+            shift: Shift::from_count(snap.bits_remaining),
             serial_clock: snap.shift_clock,
             previous_counter: 0,
         }
@@ -126,12 +158,13 @@ impl Registers {
     /// Called when the SC register is written. Arms the shift register for
     /// a new transfer if ENABLE is set.
     pub fn start_transfer(&mut self, link: &mut dyn SerialLink) {
-        self.bits_remaining = 0;
         self.serial_clock = false;
 
         if self.control.contains(Control::ENABLE) {
-            self.bits_remaining = 8;
+            self.shift = Shift::from_count(8);
             link.notify_transfer_start(self.data, self.control.contains(Control::INTERNAL_CLOCK));
+        } else {
+            self.shift = Shift::Idle;
         }
     }
 
@@ -140,9 +173,10 @@ impl Registers {
         let out_bit = self.data & 0x80 != 0;
         let in_bit = link.exchange_bit(out_bit);
         self.data = (self.data << 1) | (in_bit as u8);
-        self.bits_remaining -= 1;
+        let remaining = self.shift.bits_remaining().saturating_sub(1);
+        self.shift = Shift::from_count(remaining);
 
-        if self.bits_remaining == 0 {
+        if remaining == 0 {
             self.control.remove(Control::ENABLE);
             Some(Interrupt::Serial)
         } else {
@@ -172,7 +206,7 @@ impl Registers {
         link.tick();
 
         // External clock: let the link device drive the transfer.
-        if self.bits_remaining > 0
+        if self.shift.is_active()
             && self.control.contains(Control::ENABLE)
             && !self.control.contains(Control::INTERNAL_CLOCK)
             && link.clock()
@@ -226,7 +260,7 @@ impl Registers {
     fn clock_fall(&mut self, link: &mut dyn SerialLink) -> Option<Interrupt> {
         self.serial_clock = !self.serial_clock;
         if !self.serial_clock
-            && self.bits_remaining > 0
+            && self.shift.is_active()
             && self.control.contains(Control::INTERNAL_CLOCK)
         {
             self.shift_bit(link)

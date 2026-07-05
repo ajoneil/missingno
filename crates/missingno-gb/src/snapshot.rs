@@ -209,7 +209,7 @@ pub fn capture_serial(gb: &GameBoy) -> SerialSnapshot {
     SerialSnapshot {
         sb: r.data,
         sc: r.control.bits(),
-        bits_remaining: r.bits_remaining,
+        bits_remaining: r.shift.bits_remaining(),
         shift_clock: r.serial_clock,
     }
 }
