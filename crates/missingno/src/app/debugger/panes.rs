@@ -1,5 +1,5 @@
 use core::fmt;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use iced::{
     Border, Color, Element, Theme,
@@ -16,6 +16,7 @@ use crate::app::{
     debugger::{
         self,
         audio::AudioPane,
+        inspect::{ConsoleSnapshot, CpuSource},
         instructions::InstructionsPane,
         ppu::{
             sprites::{self, SpritesPane},
@@ -275,9 +276,47 @@ impl DebuggerPanes {
         }
     }
 
-    /// The pane grid while the console runs on the emu thread: the screen pane
-    /// stays live; console-inspecting panes show placeholders.
-    pub fn running_view(&self) -> Element<'_, app::Message> {
+    /// The pane grid while the core runs on the emu thread, rendered from the
+    /// per-vblank [`ConsoleSnapshot`] instead of the live console. The screen
+    /// pane stays live from the frame slot; every other pane draws the
+    /// snapshot. Breakpoint-gutter clicks in the instructions pane still emit
+    /// their messages, but the run doesn't stop until the core does.
+    pub fn running_view<'a, M: ConsoleUi>(
+        &'a self,
+        snapshot: &'a ConsoleSnapshot<M>,
+        breakpoints: &'a BTreeSet<u16>,
+        colors: &ConsoleColors,
+    ) -> Element<'a, app::Message> {
+        if let Some(panes) = &self.panes {
+            pane_grid(panes, |_handle, instance, _is_maximized| match instance {
+                PaneInstance::Screen(screen) => screen.content(),
+                PaneInstance::Instructions(instructions) => {
+                    instructions.content(&snapshot.memory, snapshot.cpu.ir_address(), breakpoints)
+                }
+                PaneInstance::Tiles(tiles) => tiles.content(&snapshot.vram, colors),
+                PaneInstance::TileMap(tile_map) => {
+                    tile_map.content(&snapshot.ppu, &snapshot.vram, colors)
+                }
+                PaneInstance::Sprites(sprites) => {
+                    sprites.content(&snapshot.ppu, &snapshot.vram, colors)
+                }
+                PaneInstance::Audio(audio) => audio.content(&snapshot.audio),
+            })
+            .on_resize(10.0, |resize| Message::ResizePane(resize).into())
+            .on_drag(|drag| Message::DragPane(drag).into())
+            .spacing(s())
+            .into()
+        } else {
+            iced::widget::Space::new()
+                .width(iced::Length::Fill)
+                .height(iced::Length::Fill)
+                .into()
+        }
+    }
+
+    /// The pane grid before the first snapshot arrives: the screen pane stays
+    /// live, everything else shows a titled placeholder.
+    pub fn running_placeholders(&self) -> Element<'_, app::Message> {
         if let Some(panes) = &self.panes {
             pane_grid(panes, |_handle, instance, _is_maximized| match instance {
                 PaneInstance::Screen(screen) => screen.content(),

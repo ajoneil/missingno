@@ -119,6 +119,10 @@ impl App {
                     .emu
                     .as_ref()
                     .and_then(|handle| *handle.status().lock().ok()?);
+                let snapshot = self
+                    .emu
+                    .as_ref()
+                    .and_then(|handle| handle.snapshot().lock().ok()?.take());
                 match &mut self.game {
                     Game::Loaded(LoadedGame::Emulator(emulator)) => {
                         if let Some(display) = display {
@@ -131,6 +135,9 @@ impl App {
                         }
                         if let Some(status) = status {
                             debugger.apply_status(status);
+                        }
+                        if let Some(snapshot) = snapshot {
+                            debugger.apply_snapshot(snapshot);
                         }
                     }
                     _ => {}

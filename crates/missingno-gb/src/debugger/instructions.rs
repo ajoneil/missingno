@@ -1,13 +1,26 @@
 use crate::cpu::instructions::instruction_length;
-use crate::{Console, Dmg, Model};
+use crate::{Console, Model};
 
-pub struct InstructionsIterator<'a, M: Model = Dmg> {
-    pub address: Option<u16>,
-    pub memory: &'a Console<M>,
+/// A byte-addressable memory the disassembler can read without side effects:
+/// the live [`Console`] when paused, or a copied window around PC when the
+/// core is running on the emulation thread.
+pub trait ReadInstructionMemory {
+    fn read(&self, address: u16) -> u8;
 }
 
-impl<'a, M: Model> InstructionsIterator<'a, M> {
-    pub fn new(address: u16, memory: &'a Console<M>) -> Self {
+impl<M: Model> ReadInstructionMemory for Console<M> {
+    fn read(&self, address: u16) -> u8 {
+        Console::<M>::read(self, address)
+    }
+}
+
+pub struct InstructionsIterator<'a, R: ReadInstructionMemory> {
+    pub address: Option<u16>,
+    pub memory: &'a R,
+}
+
+impl<'a, R: ReadInstructionMemory> InstructionsIterator<'a, R> {
+    pub fn new(address: u16, memory: &'a R) -> Self {
         InstructionsIterator {
             address: Some(address),
             memory,
@@ -15,7 +28,7 @@ impl<'a, M: Model> InstructionsIterator<'a, M> {
     }
 }
 
-impl<'a, M: Model> Iterator for InstructionsIterator<'a, M> {
+impl<R: ReadInstructionMemory> Iterator for InstructionsIterator<'_, R> {
     type Item = u8;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -33,7 +46,7 @@ impl<'a, M: Model> Iterator for InstructionsIterator<'a, M> {
 /// Tries disassembling forward from candidate start addresses before PC.
 /// Returns addresses that produce an instruction stream landing exactly on PC,
 /// giving up to `count` instructions of context before the current position.
-pub fn addresses_before<M: Model>(pc: u16, count: usize, memory: &Console<M>) -> Vec<u16> {
+pub fn addresses_before<R: ReadInstructionMemory>(pc: u16, count: usize, memory: &R) -> Vec<u16> {
     // Search back far enough to find `count` instructions.
     // Max instruction length is 3 bytes, so we need at most count*3 bytes back.
     let search_distance = (count * 3).min(128) as u16;

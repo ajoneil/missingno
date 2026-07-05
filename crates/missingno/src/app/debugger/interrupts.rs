@@ -14,8 +14,7 @@ use crate::app::{
         sizes::{border_s, s},
     },
 };
-use missingno_gb::interrupts::Interrupt;
-use missingno_gb::{Console, Model};
+use missingno_gb::interrupts::{self, Interrupt};
 
 const LABEL_SIZE: f32 = 14.0;
 
@@ -25,10 +24,7 @@ const COL: f32 = 24.0;
 /// Fixed width for the label column — sized to fit the IME badge so it sits flush left.
 const LABEL_COL: f32 = 36.0;
 
-pub fn interrupts<M: Model>(game_boy: &Console<M>) -> Element<'static, Message> {
-    let ints = game_boy.interrupts();
-    let ime = game_boy.cpu().interrupts_enabled();
-
+pub fn interrupts(ints: &interrupts::Registers, ime: bool) -> Element<'static, Message> {
     column![
         // Icon header row
         row![

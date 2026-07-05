@@ -4,6 +4,7 @@ use missingno_gb::{
 };
 use missingno_gbc::{Cgb, GameBoyColor};
 
+use crate::app::debugger::inspect::ColorSnapshot;
 use crate::app::library::activity::FrameCapture;
 use crate::app::screen::{CgbScreen, GameBoyScreen, ScreenDisplay, SgbScreen};
 use crate::render::cram_palettes;
@@ -144,6 +145,10 @@ pub trait ConsoleUi: Model {
 
     fn colors(console: &Console<Self>, user_palette: &Palette) -> ConsoleColors;
 
+    /// The palette-independent colour data to publish while the core runs, so
+    /// the running panes rebuild [`ConsoleColors`] with the live user palette.
+    fn color_snapshot(console: &Console<Self>) -> ColorSnapshot;
+
     fn capture_frame(
         console: &Console<Self>,
         use_sgb_colors: bool,
@@ -181,6 +186,12 @@ impl ConsoleUi for Dmg {
         }
     }
 
+    fn color_snapshot(console: &Console<Self>) -> ColorSnapshot {
+        ColorSnapshot::Dmg {
+            sgb: console.sgb().is_some(),
+        }
+    }
+
     fn capture_frame(
         console: &Console<Self>,
         use_sgb_colors: bool,
@@ -214,6 +225,14 @@ impl ConsoleUi for Cgb {
     fn colors(console: &Console<Self>, _user_palette: &Palette) -> ConsoleColors {
         let ppu = console.ppu().model();
         ConsoleColors::Cgb {
+            background: cram_palettes(|palette, index| ppu.bg_color(palette, index)),
+            objects: cram_palettes(|palette, index| ppu.obj_color(palette, index)),
+        }
+    }
+
+    fn color_snapshot(console: &Console<Self>) -> ColorSnapshot {
+        let ppu = console.ppu().model();
+        ColorSnapshot::Cgb {
             background: cram_palettes(|palette, index| ppu.bg_color(palette, index)),
             objects: cram_palettes(|palette, index| ppu.obj_color(palette, index)),
         }

@@ -5,7 +5,7 @@ use super::types::{
 
 /// One 8 KiB VRAM bank (0x8000–0x9FFF): tile data and tile maps. The DMG has a
 /// single bank; the CGB has two (the second carrying BG map attributes).
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct VramBank {
     pub(crate) tiles: [TileBlock; 3],
     pub(crate) tile_maps: [TileMap; 2],

@@ -8,7 +8,10 @@ use iced::{
 use crate::app::{
     self,
     console::{ConsoleColors, ConsoleUi},
-    debugger,
+    debugger::{
+        self,
+        inspect::{ConsoleSnapshot, CpuSource, PpuSource},
+    },
     emu_thread::RunningStatus,
     ui::{
         fonts, palette,
@@ -16,13 +19,11 @@ use crate::app::{
     },
 };
 use missingno_gb::cpu::{
-    Cpu, HaltState,
     flags::Flags,
     registers::{Register8, Register16},
 };
 use missingno_gb::debugger::Debugger;
-use missingno_gb::ppu::{Ppu, model::PpuModel};
-use missingno_gb::{Console, Model};
+use missingno_gb::interrupts::Registers;
 
 use super::interrupts::interrupts;
 use super::ppu::ppu_sidebar;
@@ -90,9 +91,10 @@ impl Sidebar {
         colors: &ConsoleColors,
     ) -> Element<'a, app::Message> {
         let game_boy = debugger.game_boy();
+        let cpu = game_boy.cpu();
 
         column![
-            self.cpu_section(game_boy.cpu(), game_boy),
+            self.cpu_section(cpu, game_boy.interrupts(), cpu.interrupts_enabled()),
             self.ppu_section(game_boy.ppu(), colors),
         ]
         .width(Length::Fixed(SIDEBAR_WIDTH))
@@ -101,9 +103,31 @@ impl Sidebar {
         .into()
     }
 
-    /// The sidebar while the console runs on the emu thread: collapsed CPU/PPU
-    /// summaries fed by the published [`RunningStatus`].
-    pub fn running_view(&self, status: Option<&RunningStatus>) -> Element<'_, app::Message> {
+    /// The sidebar while the core runs on the emu thread: the full CPU/PPU
+    /// sections, fed from the per-vblank [`ConsoleSnapshot`] instead of the
+    /// live console.
+    pub fn running_view<'a, M: ConsoleUi>(
+        &'a self,
+        snapshot: &'a ConsoleSnapshot<M>,
+        colors: &ConsoleColors,
+    ) -> Element<'a, app::Message> {
+        column![
+            self.cpu_section(
+                &snapshot.cpu,
+                &snapshot.interrupts,
+                snapshot.cpu.interrupts_enabled(),
+            ),
+            self.ppu_section(&snapshot.ppu, colors),
+        ]
+        .width(Length::Fixed(SIDEBAR_WIDTH))
+        .height(Fill)
+        .spacing(s())
+        .into()
+    }
+
+    /// The collapsed CPU/PPU summary shown before the first snapshot arrives,
+    /// fed by the lightweight [`RunningStatus`].
+    pub fn running_summary(&self, status: Option<&RunningStatus>) -> Element<'_, app::Message> {
         let (cpu_summary, ppu_summary) = match status {
             Some(status) => (
                 format!("pc {:04X} · sp {:04X}", status.pc, status.sp),
@@ -138,12 +162,17 @@ impl Sidebar {
         .into()
     }
 
-    fn cpu_section<'a, M: Model>(
+    fn cpu_section<'a, C: CpuSource>(
         &self,
-        cpu: &'a Cpu,
-        game_boy: &'a Console<M>,
+        cpu: &'a C,
+        ints: &'a Registers,
+        ime: bool,
     ) -> Element<'a, app::Message> {
-        let summary = format!("pc {:04X} · sp {:04X}", cpu.ir_address, cpu.stack_pointer,);
+        let summary = format!(
+            "pc {:04X} · sp {:04X}",
+            cpu.ir_address(),
+            cpu.stack_pointer(),
+        );
         let collapsed = self.is_collapsed(Section::Cpu);
 
         let body = column![
@@ -154,13 +183,13 @@ impl Sidebar {
             register_pair_row(cpu, Register8::D, Register8::E, Register16::De),
             register_pair_row(cpu, Register8::H, Register8::L, Register16::Hl),
             rule::horizontal(1),
-            interrupts(game_boy),
+            interrupts(ints, ime),
         ]
         .padding(s())
         .spacing(s())
         .into();
 
-        let running = cpu.halt.state != HaltState::Halted;
+        let running = !cpu.halted();
         section(
             "CPU",
             &summary,
@@ -172,14 +201,14 @@ impl Sidebar {
         )
     }
 
-    fn ppu_section<'a, P: PpuModel>(
+    fn ppu_section<'a, Pv: PpuSource>(
         &self,
-        ppu: &'a Ppu<P>,
+        ppu: &'a Pv,
         pal: &ConsoleColors,
     ) -> Element<'a, app::Message> {
         let mode = ppu.mode();
         let (mode_text, mode_color) = mode_display(mode);
-        let summary = format!("{} · ly {}", mode_text, ppu.video.ly());
+        let summary = format!("{} · ly {}", mode_text, ppu.ly());
         let collapsed = self.is_collapsed(Section::Ppu);
 
         let mode_detail: Element<'_, app::Message> = text(mode_text)
@@ -311,8 +340,8 @@ pub fn tooltip_style(theme: &iced::Theme) -> container::Style {
 
 // --- Pointers + halt ---
 
-fn pointers(cpu: &Cpu) -> Element<'_, app::Message> {
-    let halted = cpu.halt.state == HaltState::Halted;
+fn pointers<C: CpuSource>(cpu: &C) -> Element<'_, app::Message> {
+    let halted = cpu.halted();
     let pc_color = if halted {
         palette::OVERLAY0
     } else {
@@ -324,7 +353,7 @@ fn pointers(cpu: &Cpu) -> Element<'_, app::Message> {
             .font(fonts::monospace())
             .size(REG)
             .color(palette::MUTED),
-        text(format!("{:04X}", cpu.ir_address))
+        text(format!("{:04X}", cpu.ir_address()))
             .font(fonts::monospace())
             .size(20.0)
             .color(pc_color),
@@ -347,7 +376,7 @@ fn pointers(cpu: &Cpu) -> Element<'_, app::Message> {
 
     row![
         pc_element,
-        pointer("sp", format!("{:04X}", cpu.stack_pointer)),
+        pointer("sp", format!("{:04X}", cpu.stack_pointer())),
     ]
     .spacing(s())
     .align_y(Vertical::Center)
@@ -375,12 +404,12 @@ fn pointer(label: &str, value: String) -> Element<'_, app::Message> {
 /// Fixed width for one 8-bit register display ("b 04"), so columns align.
 const REG8_WIDTH: f32 = 48.0;
 
-fn register_a_row(cpu: &Cpu) -> Element<'_, app::Message> {
+fn register_a_row<C: CpuSource>(cpu: &C) -> Element<'_, app::Message> {
     row![
         container(register8(cpu, Register8::A)).width(Length::Fixed(REG8_WIDTH)),
         container("").width(Length::Fixed(REG8_WIDTH)),
         compound_register(cpu, Register16::Af),
-        flags_display(cpu.flags),
+        flags_display(cpu.flags()),
     ]
     .spacing(s())
     .align_y(Vertical::Center)
@@ -411,8 +440,8 @@ fn flag_char(label: &str, set: bool) -> Element<'_, app::Message> {
         .into()
 }
 
-fn register_pair_row(
-    cpu: &Cpu,
+fn register_pair_row<C: CpuSource>(
+    cpu: &C,
     reg1: Register8,
     reg2: Register8,
     pair: Register16,
@@ -427,7 +456,7 @@ fn register_pair_row(
     .into()
 }
 
-fn register8(cpu: &Cpu, register: Register8) -> Element<'_, app::Message> {
+fn register8<C: CpuSource>(cpu: &C, register: Register8) -> Element<'_, app::Message> {
     row![
         text(register.to_string())
             .font(fonts::monospace())
@@ -442,7 +471,7 @@ fn register8(cpu: &Cpu, register: Register8) -> Element<'_, app::Message> {
     .into()
 }
 
-fn compound_register(cpu: &Cpu, register: Register16) -> Element<'_, app::Message> {
+fn compound_register<C: CpuSource>(cpu: &C, register: Register16) -> Element<'_, app::Message> {
     row![
         text(register.to_string())
             .font(fonts::monospace())
