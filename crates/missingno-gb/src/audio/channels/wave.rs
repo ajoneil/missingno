@@ -375,6 +375,11 @@ impl WaveChannel {
         }
     }
 
+    // DAC power = NR30 bit 7 (GUXE).
+    pub fn dac_enabled(&self) -> bool {
+        self.dac_enabled
+    }
+
     pub fn digital_sample(&self) -> u8 {
         if !self.enabled.enabled {
             return 0;

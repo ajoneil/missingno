@@ -47,7 +47,7 @@ impl Channels {
     }
 
     /// Drain the four channels' `output_dirty` flags; true when any
-    /// `mix_digital()` input may have changed since the last drain.
+    /// `mix_dac()` input may have changed since the last drain.
     pub fn take_output_dirty(&mut self) -> bool {
         let dirty = self.ch1.output_dirty
             | self.ch2.output_dirty
@@ -60,23 +60,46 @@ impl Channels {
         dirty
     }
 
-    /// Sum the four channels' digital outputs (0–15 each) into a
-    /// `(left, right)` pair, gated by each channel's panning bits.
-    pub fn mix_digital(&self) -> (u32, u32) {
-        let mut left = 0u32;
-        let mut right = 0u32;
-        let mut mix = |enabled: Enabled, sample: u8| {
+    /// Sum the four DAC outputs into a `(left, right)` pair, gated by each
+    /// channel's panning bits, in half-LSB units: a powered DAC drives
+    /// `15 - 2*digital` (digital 0 = +15, the positive extreme through the
+    /// inverting volume amp); an unpowered DAC is high-impedance and
+    /// contributes nothing.
+    pub fn mix_dac(&self) -> (i32, i32) {
+        let mut left = 0i32;
+        let mut right = 0i32;
+        let mut mix = |enabled: Enabled, dac_enabled: bool, sample: u8| {
+            if !dac_enabled {
+                return;
+            }
+            let level = 15 - 2 * sample as i32;
             if enabled.output_left {
-                left += sample as u32;
+                left += level;
             }
             if enabled.output_right {
-                right += sample as u32;
+                right += level;
             }
         };
-        mix(self.ch1.enabled, self.ch1.digital_sample());
-        mix(self.ch2.enabled, self.ch2.digital_sample());
-        mix(self.ch3.enabled, self.ch3.digital_sample());
-        mix(self.ch4.enabled, self.ch4.digital_sample());
+        mix(
+            self.ch1.enabled,
+            self.ch1.dac_enabled(),
+            self.ch1.digital_sample(),
+        );
+        mix(
+            self.ch2.enabled,
+            self.ch2.dac_enabled(),
+            self.ch2.digital_sample(),
+        );
+        mix(
+            self.ch3.enabled,
+            self.ch3.dac_enabled(),
+            self.ch3.digital_sample(),
+        );
+        mix(
+            self.ch4.enabled,
+            self.ch4.dac_enabled(),
+            self.ch4.digital_sample(),
+        );
         (left, right)
     }
 }

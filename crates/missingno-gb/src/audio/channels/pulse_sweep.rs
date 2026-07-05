@@ -282,7 +282,7 @@ impl PulseSweepChannel {
         self.sweep_calc_restart = true;
 
         // DAC check
-        if self.volume_and_envelope.0 & 0xf8 == 0 {
+        if !self.dac_enabled() {
             self.enabled.enabled = false;
         }
     }
@@ -508,6 +508,11 @@ impl PulseSweepChannel {
             self.enabled.enabled = false;
             self.output_dirty = true;
         }
+    }
+
+    // DAC power = NRx2 upper five bits (HOCA).
+    pub fn dac_enabled(&self) -> bool {
+        self.volume_and_envelope.0 & 0xf8 != 0
     }
 
     pub fn digital_sample(&self) -> u8 {

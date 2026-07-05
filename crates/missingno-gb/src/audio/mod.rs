@@ -78,13 +78,13 @@ pub struct Audio<A: ApuSpec> {
     sample_counter: f32,
     // Digital channel sums accumulate as integers; fold_pending() applies
     // the DAC scale and NR50 volume when either changes or a window closes.
-    pending_left: u32,
-    pending_right: u32,
+    pending_left: i32,
+    pending_right: i32,
     pending_count: u32,
     // The mix only changes when a channel flags output_dirty, so the
     // per-tcycle accumulation is run-length compressed: `last_mix`
     // held for `mix_run` T-cycles, flushed into pending_* on change.
-    last_mix: (u32, u32),
+    last_mix: (i32, i32),
     mix_run: u32,
     sample_accum_left: f32,
     sample_accum_right: f32,
@@ -303,10 +303,10 @@ impl<A: ApuSpec> Audio<A> {
 
         if self.channels.take_output_dirty() {
             self.flush_mix_run();
-            self.last_mix = self.channels.mix_digital();
+            self.last_mix = self.channels.mix_dac();
         }
         self.mix_run += 1;
-        debug_assert_eq!(self.last_mix, self.channels.mix_digital());
+        debug_assert_eq!(self.last_mix, self.channels.mix_dac());
 
         // The ripple's remaining strobes land here, after the channels'
         // prescaler consume (a kene↓ inside an open load window is held).
@@ -343,15 +343,15 @@ impl<A: ApuSpec> Audio<A> {
         if self.mix_run == 0 {
             return;
         }
-        self.pending_left += self.last_mix.0 * self.mix_run;
-        self.pending_right += self.last_mix.1 * self.mix_run;
+        self.pending_left += self.last_mix.0 * self.mix_run as i32;
+        self.pending_right += self.last_mix.1 * self.mix_run as i32;
         self.pending_count += self.mix_run;
         self.mix_run = 0;
     }
 
-    /// Fold the pending digital sums into the f32 accumulators at the
-    /// current NR50 volume. Channels span 0–15 across four channels per
-    /// side, so full scale is 60.
+    /// Fold the pending DAC sums into the f32 accumulators at the current
+    /// NR50 volume. Each powered DAC swings ±15 half-LSB units, four
+    /// channels per side, so full scale is ±60.
     pub(crate) fn fold_pending(&mut self) {
         self.flush_mix_run();
         if self.pending_count == 0 {

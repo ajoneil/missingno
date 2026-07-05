@@ -192,7 +192,7 @@ impl PulseChannel {
         );
 
         // DAC check: if upper 5 bits of volume register are 0, channel is disabled
-        if self.volume_and_envelope.0 & 0xf8 == 0 {
+        if !self.dac_enabled() {
             self.enabled.enabled = false;
         }
     }
@@ -268,6 +268,11 @@ impl PulseChannel {
         ) {
             self.output_dirty = true;
         }
+    }
+
+    // DAC power = NRx2 upper five bits (FUTE).
+    pub fn dac_enabled(&self) -> bool {
+        self.volume_and_envelope.0 & 0xf8 != 0
     }
 
     pub fn digital_sample(&self) -> u8 {
