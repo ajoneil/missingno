@@ -57,7 +57,7 @@ impl Cpu {
         // latched before a GDMA hold seized the bus supplies the byte here —
         // the re-fetch M-cycle still runs (cycle count unchanged) but decodes
         // the prefetched byte, not the transfer-clobbered re-read.
-        let opcode = self.held_overlap_opcode.take().unwrap_or(self.data_latch);
+        let opcode = self.take_overlap_prefetch().unwrap_or(self.data_latch);
         let fetch_addr = match &self.current_action {
             Some(MCycleAction::Read { address }) => *address,
             _ => self.pc,

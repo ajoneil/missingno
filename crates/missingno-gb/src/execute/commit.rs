@@ -106,10 +106,8 @@ impl<M: Model> Console<M> {
             // bus keeps its byte: it read the pre-transfer value (the transfer
             // suppresses the fetch, it does not re-drive the read). Retain it so
             // the post-hold re-fetch decodes it instead of the open-bus re-read.
-            if self.model.console_state().dma_cpu_hold() && self.chassis.cpu.bus_hold_over_prefetch
-            {
-                self.chassis.cpu.held_overlap_opcode = Some(value);
-                self.chassis.cpu.bus_hold_over_prefetch = false;
+            if self.model.console_state().dma_cpu_hold() {
+                self.chassis.cpu.latch_overlap_prefetch(value);
             }
             self.commit_bus_read(address, value);
         }

@@ -236,6 +236,22 @@ impl BusArbitration {
     }
 }
 
+/// A next-opcode overlap prefetch's retention across a bus-master hold. When a
+/// CGB GDMA seizes the bus mid-prefetch, the prefetch's read has already
+/// latched the pre-transfer byte (the transfer suppresses the fetch, it does
+/// not re-drive the read); retaining that byte lets the post-hold re-fetch
+/// decode it rather than the transfer-clobbered open-bus re-read. Arm and
+/// latched byte are one machine — a byte can't be both awaited and held.
+enum OverlapPrefetch {
+    /// No prefetch byte is being retained.
+    Idle,
+    /// A hold engaged during a fetch overlap; the prefetch's read latch will
+    /// capture its byte into `Held` when this M-cycle's read commits.
+    ArmedOverHold,
+    /// The retained pre-transfer opcode, consumed by the post-hold fetch.
+    Held(u8),
+}
+
 /// The SM83 CPU. Owns register file, IME, halt state, and the
 /// state-machine fields that sequence each instruction's M-cycles.
 pub struct Cpu {
@@ -265,15 +281,9 @@ pub struct Cpu {
     /// next read latches. Read by the state machine each T-cycle.
     pub data_latch: u8,
 
-    /// A next-opcode overlap prefetch that latched while a GDMA held the bus:
-    /// it read the pre-transfer byte before the hold suppressed the fetch, so
-    /// the post-hold re-fetch decodes this retained byte rather than re-reading
-    /// the (now transfer-clobbered / open-bus) address. `Some` only across such
-    /// a hold; the fetch consumes it.
-    pub held_overlap_opcode: Option<u8>,
-    /// Set when a bus hold engages mid-overlap-prefetch; the prefetch's read
-    /// latch then captures its byte into `held_overlap_opcode`.
-    pub bus_hold_over_prefetch: bool,
+    /// A next-opcode overlap prefetch retained across a bus-master hold; see
+    /// [`OverlapPrefetch`]. `Held` only across such a hold; the fetch consumes it.
+    overlap_prefetch: OverlapPrefetch,
 
     /// The `BusAction` produced by the most recent `next_tcycle`. The
     /// executor reads this between rise/fall edges of the same T-cycle
@@ -451,8 +461,7 @@ impl Cpu {
             pc: 0,
             ir_address: 0,
             data_latch: 0,
-            held_overlap_opcode: None,
-            bus_hold_over_prefetch: false,
+            overlap_prefetch: OverlapPrefetch::Idle,
             flags: Flags::empty(),
             irq: IrqContext::new(),
             halt: HaltContext::new(),
@@ -684,15 +693,37 @@ impl Cpu {
     /// is the scheduler's.
     pub fn begin_bus_hold(&mut self) {
         // The next-opcode overlap prefetch is in flight; its read latches this
-        // M-cycle (with the pre-transfer byte). Arm the latch to retain it so
-        // the post-hold fetch decodes it rather than re-reading.
-        self.bus_hold_over_prefetch = matches!(
+        // M-cycle (with the pre-transfer byte). Arm the retention so the
+        // post-hold fetch decodes it rather than re-reading.
+        if matches!(
             self.phase,
             CpuPhase::Execute {
                 phase: Phase::FetchOverlap { .. },
                 ..
             }
-        );
+        ) {
+            self.overlap_prefetch = OverlapPrefetch::ArmedOverHold;
+        } else if !matches!(self.overlap_prefetch, OverlapPrefetch::Held(_)) {
+            self.overlap_prefetch = OverlapPrefetch::Idle;
+        }
+    }
+
+    /// Latch the pre-transfer byte into the retained overlap prefetch if a hold
+    /// armed it; a no-op otherwise.
+    pub(crate) fn latch_overlap_prefetch(&mut self, value: u8) {
+        if matches!(self.overlap_prefetch, OverlapPrefetch::ArmedOverHold) {
+            self.overlap_prefetch = OverlapPrefetch::Held(value);
+        }
+    }
+
+    /// Take a retained overlap-prefetch byte if the post-hold fetch has one.
+    fn take_overlap_prefetch(&mut self) -> Option<u8> {
+        if let OverlapPrefetch::Held(byte) = self.overlap_prefetch {
+            self.overlap_prefetch = OverlapPrefetch::Idle;
+            Some(byte)
+        } else {
+            None
+        }
     }
 
     /// Release the hold. The prefetch in flight when the hold engaged was
