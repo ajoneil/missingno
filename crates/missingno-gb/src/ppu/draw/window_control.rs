@@ -1,5 +1,5 @@
 use crate::ppu::types::sprites::SpriteSize;
-use crate::ppu::{DffLatch, NorLatch, PipelineRegisters, PpuModel, VideoControl};
+use crate::ppu::{DffBit, DffLatch, NorLatch, PipelineRegisters, PpuModel, VideoControl};
 
 /// WY/WX/LCDC.5/LCDC.2 captured on the PPU side of the CGB register-file
 /// crossing (the write M-cycle's last PPU fall). Consumers split pre/post-capture
@@ -60,7 +60,7 @@ pub(in crate::ppu) struct WindowControl {
     /// WAZY → VYNO ripple, clocked by PYNU 1→0 transitions during rendering.
     window_line_counter: u8,
     /// SOVY: MYVO-clocked DFF delaying RYDY; SUZU = AND2(!RYDY, SOVY).
-    sovy: bool,
+    delayed_window_hit: DffBit,
     /// SARY: hclk-clocked DFF sampling `wy_match = LCDC.5 ∧ (LY == WY)`.
     sary: DffLatch,
     /// REJO WY-match frame latch. Set by SARY.q; reset by REPU = vblank (mode1).
@@ -92,7 +92,7 @@ impl WindowControl {
             window_rendered: false,
             nuko_wx: 0xFF,
             window_line_counter: 0,
-            sovy: false,
+            delayed_window_hit: DffBit::new(false, false),
             sary: DffLatch::new(0),
             rejo: NorLatch::new(false),
             rejo_at_roco: false,
@@ -130,9 +130,7 @@ impl WindowControl {
 
     fn capture_sary(&mut self, regs: &PipelineRegisters, video: &VideoControl, synced: bool) {
         let wy_match = if synced {
-            !self.vblank_at_last_capture
-                && self.synced.enabled
-                && video.ly() == self.synced.wy
+            !self.vblank_at_last_capture && self.synced.enabled && video.ly() == self.synced.wy
         } else {
             regs.control.window_enabled() && video.ly() == regs.window.y
         };
@@ -180,12 +178,13 @@ impl WindowControl {
         if fetcher_reset {
             self.rydy.clear();
         }
-        self.sovy && !self.rydy.output()
+        self.delayed_window_hit.output() && !self.rydy.output()
     }
 
     /// SOVY captures RYDY on MYVO; free-runs even when NAFY gates the fetcher advance.
-    pub(in crate::ppu) fn tick_sovy_falling(&mut self) {
-        self.sovy = self.rydy.output();
+    pub(in crate::ppu) fn tick_delayed_window_hit(&mut self) {
+        self.delayed_window_hit.write(self.rydy.output());
+        self.delayed_window_hit.tick();
     }
 
     fn compute_nuko(&self, pixel_counter: u8, rejo: bool) -> bool {
@@ -323,7 +322,7 @@ impl WindowControl {
     /// so the cascade re-fires fresh each line where the DMG's stays armed.
     pub(in crate::ppu) fn reset_scanline(&mut self, xofo_reaches_capture_chain: bool) {
         self.rydy.clear();
-        self.sovy = false;
+        self.delayed_window_hit = DffBit::new(false, false);
         if self.pynu.output() && self.window_rendered {
             self.window_line_counter = self.window_line_counter.wrapping_add(1);
             self.window_rendered = false;

@@ -1,3 +1,5 @@
+use crate::ppu::DffBit;
+
 /// ROXY NOR-latch: gates SACU until the fine counter matches SCX & 7. One-shot per line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Roxy {
@@ -17,10 +19,9 @@ pub(in crate::ppu) struct FineScroll {
     /// 3-bit counter (0–7).
     pub(in crate::ppu) count: u8,
     roxy: Roxy,
-    /// NYZE — previous-rise's PUXA, for the rising-edge detector that produces POVA.
-    prev_match_captured: bool,
-    /// POHU combinational match; PUXA captures this on the next rise (ROXO).
-    match_pending: bool,
+    /// PUXA DFF. D = POHU (count == SCX&7) match; Q captured on the ROXO rise.
+    /// The pre-tick Q is NYZE, the previous match feeding the POVA rising-edge.
+    scx_match: DffBit,
 }
 
 impl FineScroll {
@@ -28,8 +29,7 @@ impl FineScroll {
         Self {
             count: 0,
             roxy: Roxy::Gating,
-            prev_match_captured: false,
-            match_pending: false,
+            scx_match: DffBit::new(false, false),
         }
     }
 
@@ -51,15 +51,15 @@ impl FineScroll {
 
     /// Combinational POHU = (count == SCX & 7); captured into PUXA on the next rise (ROXO).
     pub(in crate::ppu) fn compare_falling(&mut self, scx: u8) {
-        self.match_pending = self.count == (scx & 7);
+        self.scx_match.write(self.count == (scx & 7));
     }
 
     /// Capture PUXA, edge-detect POVA, clear ROXY on match. Caller gates on TYFA.
     /// Returns true on the PUXA 0→1 rising edge (POVA pulse).
     pub(in crate::ppu) fn capture_rising(&mut self) -> bool {
-        let match_captured = self.match_pending;
-        let match_edge = match_captured && !self.prev_match_captured;
-        self.prev_match_captured = match_captured;
+        let prev = self.scx_match.output();
+        let match_captured = self.scx_match.tick();
+        let match_edge = match_captured && !prev;
 
         if self.roxy == Roxy::Gating && match_captured {
             self.roxy = Roxy::Done;

@@ -564,7 +564,7 @@ impl<P: PpuModel> Rendering<P> {
             };
             // MOSU is also a direct NYXU input; the pulse holds the BG shifter on this dot.
             let advance_nyxu_pulse = mosu_fired || deferred_window_trigger || load_window_pulse;
-            self.window.tick_sovy_falling();
+            self.window.tick_delayed_window_hit();
             let px = self.mode3_pixel_pipeline(
                 model,
                 regs,
