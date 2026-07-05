@@ -1,6 +1,6 @@
 use super::{
     Console, ConsoleShadow, Model, ScreenBuffer,
-    clock::{CpuDivider, CpuGate, Edge},
+    clock::{CpuGate, Edge, TcycleSchedule},
     cpu::mcycle::{BusAction, TCycle},
     cpu_bus::{BusAccess, BusAccessKind},
     interrupts::Interrupt,
@@ -25,14 +25,14 @@ pub struct PhaseResult {
     pub pixel: Option<ppu::PixelOutput>,
 }
 
-/// Which PPU master-clock edge a CPU edge carries. The PPU clock is
-/// speed-independent: one rise and one fall per dot. At single speed they sit
-/// on the CPU's own rise and fall; at double speed the dot's master rise lands
-/// on the first CPU edge and the master fall half a dot later — the second CPU
-/// T-cycle's rise — not the dot's final edge.
+/// Which PPU master-clock edge a CPU rise carries. The PPU clock is
+/// speed-independent: one rise and one fall per dot. At single speed the dot
+/// rise sits on the CPU rise and the dot fall on the CPU fall; at double speed
+/// both dot edges land on a CPU rise — the dot's master rise on the first CPU
+/// T-cycle's rise and the master fall half a dot later on the second T-cycle's
+/// rise, not the dot's final edge.
 #[derive(Clone, Copy, PartialEq)]
 enum PpuEdge {
-    None,
     Rise,
     Fall,
 }
@@ -146,13 +146,17 @@ impl<M: Model> Console<M> {
         }
     }
 
-    /// Advance one CPU T-cycle — its two master edges, rise then fall. The unit
-    /// every step loop and the debugger advance by. Returns whether a new frame
-    /// was produced across the pair. A T-cycle boundary is always rise-aligned,
-    /// so the pair starts on the rise edge and ends back on a rise.
+    /// Advance one CPU T-cycle — its two master edges, rise then fall — as one
+    /// straight-line flow. The [`TcycleSchedule`] read up front names where the
+    /// dot's rise and fall land: at ÷1 the rise carries the dot rise and the
+    /// fall the dot fall; at ÷2 the T-cycle carries one dot edge, on its rise.
+    /// The unit every step loop and the debugger advance by. Returns whether a
+    /// new frame was produced across the pair. A T-cycle boundary is always
+    /// rise-aligned, so the pair starts on the rise edge and ends back on a rise.
     pub fn execute_tcycle(&mut self) -> bool {
-        let rise = self.execute_phase(CpuGate::Running);
-        let fall = self.execute_phase(CpuGate::Running);
+        let schedule = self.chassis.clock.tcycle_schedule();
+        let rise = self.tcycle_rise(schedule);
+        let fall = self.tcycle_fall(schedule);
         rise.new_screen || fall.new_screen
     }
 
@@ -161,22 +165,30 @@ impl<M: Model> Console<M> {
     /// rise then after the fall with that edge's [`PhaseResult`], so a tracer
     /// keeps its exact between-edges sample points. A `Break` from the rise's
     /// observer leaves the fall for the next call: the double-speed per-edge
-    /// capture defers the paired edge when the instruction retires on the rise.
+    /// capture defers the paired edge when the instruction retires on the rise,
+    /// leaving the clock parked on the fall — so a resuming call runs only the
+    /// fall (the pre-advance dot phase reproduces this T-cycle's schedule, since
+    /// the ÷2 rise leaves the dot phase untouched).
     #[cfg(feature = "gbtrace")]
     pub fn execute_tcycle_observed(
         &mut self,
         mut after_phase: impl FnMut(&mut Self, &PhaseResult) -> std::ops::ControlFlow<()>,
     ) -> bool {
-        let rise = self.execute_phase(CpuGate::Running);
-        let rise_screen = rise.new_screen;
-        if after_phase(self, &rise).is_break() {
-            return rise_screen;
+        let schedule = self.chassis.clock.tcycle_schedule();
+        let mut new_screen = false;
+        if self.chassis.clock.cpu_edge() == Edge::Rise {
+            let rise = self.tcycle_rise(schedule);
+            new_screen |= rise.new_screen;
+            if after_phase(self, &rise).is_break() {
+                return new_screen;
+            }
         }
-        let fall = self.execute_phase(CpuGate::Running);
+        let fall = self.tcycle_fall(schedule);
+        new_screen |= fall.new_screen;
         // The fall is the pair's last edge; nothing to defer, so its control
         // signal is irrelevant.
         let _ = after_phase(self, &fall);
-        rise_screen || fall.new_screen
+        new_screen
     }
 
     /// Advance to the next T-cycle boundary. Returns true if a new frame was
@@ -188,79 +200,67 @@ impl<M: Model> Console<M> {
         new_screen
     }
 
-    /// Advance the machine by one master edge under a CPU-clock gate. The CPU and
-    /// PPU are separate state machines on the one master clock; `MasterClock`
-    /// owns both phases. At ÷1 (single speed) the CPU and dot edges coincide; at
-    /// ÷2 (double speed) the dot edge lands only on the CPU rise edges. The
-    /// `Held` gate (the speed-switch blackout) freezes the CPU phase while the
-    /// dot domain free-runs, so the post-switch alignment emerges from the held
-    /// count rather than a fixed map.
-    fn execute_phase(&mut self, gate: CpuGate) -> PhaseResult {
-        // The clock owns the ÷1/÷2 ratio; KEY1 mutates it at the speed switch.
-        let double_speed = self.chassis.clock.divider() == CpuDivider::Two;
-        // The pre-advance dot phase — the fall arm's standalone dot_work read of
-        // the dot domain's current edge.
-        let dot_phase_before = self.chassis.clock.dot_phase();
-        let master_edge_before = self.chassis.clock.master_edge();
-        let tick = self.chassis.clock.advance(gate);
-        // A held edge: the CPU is frozen and the dot domain alone advanced.
-        if tick.cpu.is_none() {
-            let dot = tick.dot.expect("a held edge always carries a dot edge");
-            // Correctness relies on no Running edge falling between arming the
-            // blackout anchor and draining it: the elapsed count is the
-            // pre-advance anchor difference, the held edges already completed.
-            let held_elapsed =
-                master_edge_before.wrapping_sub(self.model.console_state().blackout_anchor());
-            return self.held_dot_advance(dot, held_elapsed);
-        }
-        let ppu = match tick.dot {
-            Some(Edge::Rise) => PpuEdge::Rise,
-            Some(Edge::Fall) => PpuEdge::Fall,
-            None => PpuEdge::None,
+    /// The rising master edge of a T-cycle: advance the clock, then the CPU's
+    /// pre-rise work, the dot edge the schedule places here, and the post-rise
+    /// work. The rise always carries a dot edge — a dot rise at ÷1 and on the
+    /// first ÷2 T-cycle, a dot fall on the second ÷2 T-cycle (a double-speed
+    /// dot fall lands on a CPU rise, half a dot from the dot's own rise). The
+    /// PPU rise is its own domain's edge, sequenced between the CPU's pre- and
+    /// post-rise work rather than welded inside it.
+    fn tcycle_rise(&mut self, schedule: TcycleSchedule) -> PhaseResult {
+        // `dot_work` (the APU prescaler / CH3 sync / HDMA-trigger ride) belongs to
+        // the dot rise; on the ÷2 T-cycle that carries the dot fall on this rise
+        // it defers to the following CPU fall.
+        let (ppu, dot_work) = match schedule {
+            TcycleSchedule::FullDot | TcycleSchedule::DotRiseOnRise => (PpuEdge::Rise, true),
+            TcycleSchedule::DotFallOnRise => (PpuEdge::Fall, false),
         };
-        // Per-dot master-clock work rides the PPU edges: the APU tick on the PPU
-        // rise, the CH3 fall-sync / HDMA trigger on the PPU fall (which at double
-        // speed lands on a CPU rise, so its work runs on the following CPU fall).
-        let (new_screen, pixel) = match tick.cpu {
-            Some(Edge::Rise) => {
-                let dot_work = ppu == PpuEdge::Rise;
-                // The PPU rise is its own domain's edge, sequenced here between the
-                // CPU's pre- and post-rise work rather than welded inside it.
-                let rise = self.rise_cpu_pre(ppu, dot_work);
-                let edge = self.fire_dot_ppu(ppu, rise.mcycle_boundary, rise.tcycle);
-                self.rise_cpu_post(rise);
-                edge
-            }
-            Some(Edge::Fall) => {
-                // The double-speed fall that shares a dot with no PPU fall still
-                // does dot_work when this is the dot's bare second CPU edge — i.e.
-                // the next dot edge to fire is the dot's rise. The dot phase
-                // toggles lazily (after the second sub-edge), so a pending dot
-                // rise reads as the held phase being `Fall`.
-                let dot_work =
-                    ppu == PpuEdge::Fall || (double_speed && dot_phase_before == Edge::Fall);
-                // The PPU fall is its own domain's edge, sequenced here between the
-                // CPU's pre- and post-fall work rather than welded inside it.
-                let fall = self.fall_cpu_pre(dot_work);
-                let video_result = if ppu == PpuEdge::Fall {
-                    Some(self.ppu_fall_edge(fall.mcycle_boundary, fall.tcycle))
-                } else {
-                    None
-                };
-                self.fall_cpu_post(fall, video_result, dot_work)
-            }
-            // The held edge was dispatched above; a running edge always carries a
-            // CPU edge.
-            None => unreachable!("running edge carries a CPU edge"),
-        };
-        // The dot domain advanced this edge iff a dot edge fired — the divider's
-        // `cpu_phase_in_dot==0`. `advance` already toggled
-        // both phases; only the mode-2 settle ride stays here.
-        // Both settle trackers feed double-speed read placement only; every
-        // consumer sits behind double_speed_active(), so consoles without the
-        // ÷2 cell never read them.
+        self.chassis.clock.advance(CpuGate::Running);
+
+        let rise = self.rise_cpu_pre(ppu, dot_work);
+        let (new_screen, pixel) = self.fire_dot_ppu(ppu, rise.mcycle_boundary, rise.tcycle);
+        self.rise_cpu_post(rise);
+
+        // Every rise carries a dot edge, so the ÷2 mode-2 onset settle rides it;
+        // the interrupt set-settle rides every master edge. Both feed double-speed
+        // read placement only — every consumer sits behind double_speed_active(),
+        // so consoles without the ÷2 cell never read them.
         if M::DOUBLE_SPEED {
-            if tick.dot.is_some() {
+            self.chassis.ppu.tick_onset_settles();
+            self.chassis.interrupts.tick_set_settles();
+        }
+        PhaseResult { new_screen, pixel }
+    }
+
+    /// The falling master edge of a T-cycle: advance the clock, then the CPU's
+    /// pre-fall work, the dot fall the schedule places here (only at ÷1 — the ÷2
+    /// fall is bare, the dot fall having ridden a CPU rise), and the post-fall
+    /// work. The PPU fall is its own domain's edge, sequenced between the CPU's
+    /// pre- and post-fall work rather than welded inside it.
+    fn tcycle_fall(&mut self, schedule: TcycleSchedule) -> PhaseResult {
+        // The ÷1 fall carries the dot fall; the ÷2 fall is bare. On the ÷2
+        // T-cycle whose rise carried the dot fall, `dot_work` runs here — the dot
+        // rise it belongs to fires next, so this fall is the dot's bare second
+        // CPU edge that owes the deferred dot work.
+        let (has_dot_fall, dot_work) = match schedule {
+            TcycleSchedule::FullDot => (true, true),
+            TcycleSchedule::DotRiseOnRise => (false, false),
+            TcycleSchedule::DotFallOnRise => (false, true),
+        };
+        self.chassis.clock.advance(CpuGate::Running);
+
+        let fall = self.fall_cpu_pre(dot_work);
+        let video_result = if has_dot_fall {
+            Some(self.ppu_fall_edge(fall.mcycle_boundary, fall.tcycle))
+        } else {
+            None
+        };
+        let (new_screen, pixel) = self.fall_cpu_post(fall, video_result, dot_work);
+
+        // Only the ÷1 fall carries a dot edge for the onset settle to ride; the
+        // set-settle rides every master edge.
+        if M::DOUBLE_SPEED {
+            if has_dot_fall {
                 self.chassis.ppu.tick_onset_settles();
             }
             self.chassis.interrupts.tick_set_settles();
@@ -523,8 +523,9 @@ impl<M: Model> Console<M> {
         self.apply_ppu_result(video_result)
     }
 
-    /// Run one CPU M-cycle of the speed-switch blackout through the main
-    /// `execute_phase` loop with the CPU clock `Held`. Returns when the divider
+    /// Run one CPU M-cycle of the speed-switch blackout: a loop of held master
+    /// edges (the clock's `Held` arm freezes the CPU and free-runs the dot
+    /// domain), never entering the fused running path. Returns when the divider
     /// M-cycle completes — so the blackout drains across `step()`s — or earlier
     /// when the count empties and the CPU re-engages. `tcycles` reports the
     /// CPU-time equivalent so the step harness's accounting matches the running
@@ -543,7 +544,15 @@ impl<M: Model> Console<M> {
             // signal a DS-HDMA straddle is distinguished by); the spike does not
             // yet consume it.
             let froze_on = self.chassis.clock.dot_phase();
-            new_screen |= self.execute_phase(CpuGate::Held { froze_on }).new_screen;
+            // Correctness relies on no Running edge falling between arming the
+            // blackout anchor and draining it: the elapsed count is the
+            // pre-advance anchor difference, the held edges already completed.
+            let master_edge_before = self.chassis.clock.master_edge();
+            let tick = self.chassis.clock.advance(CpuGate::Held { froze_on });
+            let dot = tick.dot.expect("a held edge always carries a dot edge");
+            let held_elapsed =
+                master_edge_before.wrapping_sub(self.model.console_state().blackout_anchor());
+            new_screen |= self.held_dot_advance(dot, held_elapsed).new_screen;
             edges += 1;
             if !self.chassis.cpu.is_stopped() {
                 // The count emptied this edge and the CPU re-engaged; its first
@@ -640,7 +649,6 @@ impl<M: Model> Console<M> {
         tcycle: TCycle,
     ) -> (bool, Option<ppu::PixelOutput>) {
         match ppu {
-            PpuEdge::None => (false, None),
             PpuEdge::Rise => self.ppu_rise_edge(),
             PpuEdge::Fall => {
                 // A dot fall on a CPU rise (double speed only): an LY tick on
