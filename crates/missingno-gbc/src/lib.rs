@@ -37,8 +37,13 @@ use missingno_gb::ppu::{
 use missingno_gb::{
     Console, ConsoleShadow, Model, StopAction, VramDmaClaim, WaveRamCoupling,
     audio::{ApuSpec, Audio},
-    cartridge::Cartridge, cpu::Cpu, cpu::flags::Flags, dma::Dma, joypad::Joypad,
-    shared_oam_dma_write_conflict_byte, timers::Timers,
+    cartridge::Cartridge,
+    cpu::Cpu,
+    cpu::flags::Flags,
+    dma::Dma,
+    joypad::Joypad,
+    shared_oam_dma_write_conflict_byte,
+    timers::Timers,
 };
 
 use crate::screen::{Color555, GREYSCALE, Screen};
@@ -545,7 +550,11 @@ impl PpuModel for CgbPpu {
     }
 
     fn obj_data_bank(&self, attrs: Attributes) -> u8 {
-        if self.dmg_compat { 0 } else { attrs.vram_bank() }
+        if self.dmg_compat {
+            0
+        } else {
+            attrs.vram_bank()
+        }
     }
 
     fn obj_attr(&self, attrs: Attributes) -> ObjAttr {
@@ -1407,11 +1416,17 @@ impl Model for Cgb {
                 let active = self.vram_dma.mode == TransferMode::HBlank && visible > 0;
                 Some(((!active as u8) << 7) | (visible.wrapping_sub(1) & 0x7F) as u8)
             }
-            0xFF68 => Some(ppu.model().read_color_register(ColorRegister::BackgroundIndex)), // BCPS
-            0xFF69 => Some(ppu.model().read_color_register(ColorRegister::BackgroundData)),  // BCPD
-            0xFF6A => Some(ppu.model().read_color_register(ColorRegister::ObjectIndex)),     // OCPS
-            0xFF6B => Some(ppu.model().read_color_register(ColorRegister::ObjectData)),      // OCPD
-            0xFF6C => Some(ppu.read_object_priority()),                              // OPRI
+            0xFF68 => Some(
+                ppu.model()
+                    .read_color_register(ColorRegister::BackgroundIndex),
+            ), // BCPS
+            0xFF69 => Some(
+                ppu.model()
+                    .read_color_register(ColorRegister::BackgroundData),
+            ), // BCPD
+            0xFF6A => Some(ppu.model().read_color_register(ColorRegister::ObjectIndex)), // OCPS
+            0xFF6B => Some(ppu.model().read_color_register(ColorRegister::ObjectData)),  // OCPD
+            0xFF6C => Some(ppu.read_object_priority()),                                  // OPRI
             0xFF70 => Some(self.svbk | 0xF8), // SVBK: bits 0-2
             0xFF72 => Some(self.ff72),
             0xFF73 => Some(self.ff73),
@@ -1500,19 +1515,23 @@ impl Model for Cgb {
                 true
             }
             0xFF68 => {
-                ppu.model_mut().write_color_register(ColorRegister::BackgroundIndex, value); // BCPS
+                ppu.model_mut()
+                    .write_color_register(ColorRegister::BackgroundIndex, value); // BCPS
                 true
             }
             0xFF69 => {
-                ppu.model_mut().write_color_register(ColorRegister::BackgroundData, value); // BCPD
+                ppu.model_mut()
+                    .write_color_register(ColorRegister::BackgroundData, value); // BCPD
                 true
             }
             0xFF6A => {
-                ppu.model_mut().write_color_register(ColorRegister::ObjectIndex, value); // OCPS
+                ppu.model_mut()
+                    .write_color_register(ColorRegister::ObjectIndex, value); // OCPS
                 true
             }
             0xFF6B => {
-                ppu.model_mut().write_color_register(ColorRegister::ObjectData, value); // OCPD
+                ppu.model_mut()
+                    .write_color_register(ColorRegister::ObjectData, value); // OCPD
                 true
             }
             0xFF6C => {

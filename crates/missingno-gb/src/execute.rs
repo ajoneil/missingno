@@ -287,12 +287,11 @@ impl<M: Model> Console<M> {
                 }
                 // KEY1 has flipped the model's speed bit; align the clock's ÷1/÷2
                 // cell to the new ratio so the clock stays the sole ratio owner.
-                self.clock
-                    .set_divider(if self.double_speed_active() {
-                        CpuDivider::Two
-                    } else {
-                        CpuDivider::One
-                    });
+                self.clock.set_divider(if self.double_speed_active() {
+                    CpuDivider::Two
+                } else {
+                    CpuDivider::One
+                });
                 // An interrupt pending with IME set at the STOP preempts the
                 // post-STOP HALT: the switch happens but the CPU services the
                 // interrupt at once (DIV ≈ 0), not after the long wait.
@@ -394,11 +393,8 @@ impl<M: Model> Console<M> {
         // APU prescaler tick (apuv ↑) on every master-clock rise.
         if dot_work {
             let double_speed = self.double_speed_active();
-            self.audio.tcycle(
-                self.timers.internal_counter(),
-                tcycle.as_u8(),
-                double_speed,
-            );
+            self.audio
+                .tcycle(self.timers.internal_counter(), tcycle.as_u8(), double_speed);
         }
         tcycle
     }
@@ -623,11 +619,8 @@ impl<M: Model> Console<M> {
         let (new_screen, pixel) = match dot {
             Edge::Rise => {
                 let r = self.ppu_rise_edge();
-                self.audio.tcycle(
-                    self.timers.internal_counter(),
-                    0,
-                    double_speed,
-                );
+                self.audio
+                    .tcycle(self.timers.internal_counter(), 0, double_speed);
                 r
             }
             Edge::Fall => {
@@ -779,10 +772,12 @@ impl<M: Model> Console<M> {
                 // An active OAM DMA already owns a bus, blocking the
                 // handover that would take the halt-release fetch's tail.
                 let bus_free = self.dma.is_active_on_bus().is_none();
-                self.model.console_state_mut().set_vram_dma_claim(crate::VramDmaClaim {
-                    committed: true,
-                    standing: claim.standing && bus_free,
-                });
+                self.model
+                    .console_state_mut()
+                    .set_vram_dma_claim(crate::VramDmaClaim {
+                        committed: true,
+                        standing: claim.standing && bus_free,
+                    });
             }
         }
 
@@ -850,8 +845,7 @@ impl<M: Model> Console<M> {
         // yoii captures dispatch.latched() before data_phase_n↑ refreshes
         // the per-bit irq_latch — preserves pre-release values held
         // through the prior M-cycle's data phase.
-        self.cpu
-            .tick_irq_latched(M::HALT_WAKE_SAMPLES_EARLY);
+        self.cpu.tick_irq_latched(M::HALT_WAKE_SAMPLES_EARLY);
 
         // data_phase_n↑ reopens the per-bit irq_latch_inst<i> to
         // re-snapshot IF for this M-cycle's dispatch.
@@ -1057,12 +1051,11 @@ impl<M: Model> Console<M> {
             // The double-speed write-lock follows this mid sample; it counts only
             // the genuine mode lock, not the RUTU pre-onset that the single-speed
             // window's later samples already exclude.
-            let locked =
-                if self.double_speed_active() && matches!(address, 0xFE00..=0xFEFF) {
-                    Some(self.ppu.oam_mode_locked())
-                } else {
-                    self.ppu.write_lock(address)
-                };
+            let locked = if self.double_speed_active() && matches!(address, 0xFE00..=0xFEFF) {
+                Some(self.ppu.oam_mode_locked())
+            } else {
+                self.ppu.write_lock(address)
+            };
             self.cpu_bus.record_mid_lock(locked);
         }
     }

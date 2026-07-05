@@ -50,7 +50,10 @@ pub enum EmuCommand {
     Reset,
     Press(Button),
     Release(Button),
-    RequestScreenshot { use_sgb_colors: bool, palette: String },
+    RequestScreenshot {
+        use_sgb_colors: bool,
+        palette: String,
+    },
 }
 
 /// Events the emu thread sends to the UI (via the Iced subscription).

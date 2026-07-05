@@ -183,7 +183,10 @@ impl Cpu {
                 0 => (Some(MCycleAction::Read { address: *address }), true),
                 _ => {
                     Self::apply_read_action(self, action, self.data_latch);
-                    (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false)
+                    (
+                        Some(self.enter_fetch_overlap(claim, Commit::NoOperation)),
+                        false,
+                    )
                 }
             },
 
@@ -201,7 +204,10 @@ impl Cpu {
                             true,
                         )
                     }
-                    _ => (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false),
+                    _ => (
+                        Some(self.enter_fetch_overlap(claim, Commit::NoOperation)),
+                        false,
+                    ),
                 }
             }
 
@@ -223,7 +229,10 @@ impl Cpu {
                         true,
                     )
                 }
-                _ => (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false),
+                _ => (
+                    Some(self.enter_fetch_overlap(claim, Commit::NoOperation)),
+                    false,
+                ),
             },
 
             Phase::Write16 { address, lo, hi } => {
@@ -243,7 +252,10 @@ impl Cpu {
                         }),
                         true,
                     ),
-                    _ => (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false),
+                    _ => (
+                        Some(self.enter_fetch_overlap(claim, Commit::NoOperation)),
+                        false,
+                    ),
                 }
             }
 
@@ -251,7 +263,10 @@ impl Cpu {
                 if current_step < *count {
                     (Some(MCycleAction::Internal { address: 0x0000 }), true)
                 } else {
-                    (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false)
+                    (
+                        Some(self.enter_fetch_overlap(claim, Commit::NoOperation)),
+                        false,
+                    )
                 }
             }
 
@@ -260,7 +275,10 @@ impl Cpu {
                     Some(MCycleAction::InternalOamBug { address: *address }),
                     true,
                 ),
-                _ => (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false),
+                _ => (
+                    Some(self.enter_fetch_overlap(claim, Commit::NoOperation)),
+                    false,
+                ),
             },
 
             Phase::Pop { sp, action } => {
@@ -283,10 +301,16 @@ impl Cpu {
                         if has_trailing {
                             (Some(MCycleAction::Internal { address: 0x0000 }), true)
                         } else {
-                            (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false)
+                            (
+                                Some(self.enter_fetch_overlap(claim, Commit::NoOperation)),
+                                false,
+                            )
                         }
                     }
-                    _ => (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false),
+                    _ => (
+                        Some(self.enter_fetch_overlap(claim, Commit::NoOperation)),
+                        false,
+                    ),
                 }
             }
 
@@ -316,7 +340,10 @@ impl Cpu {
                             true,
                         )
                     }
-                    _ => (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false),
+                    _ => (
+                        Some(self.enter_fetch_overlap(claim, Commit::NoOperation)),
+                        false,
+                    ),
                 }
             }
 
@@ -328,13 +355,19 @@ impl Cpu {
                     self.wz_to_pc = true;
                     (Some(MCycleAction::Internal { address: 0x0000 }), true)
                 } else {
-                    (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false)
+                    (
+                        Some(self.enter_fetch_overlap(claim, Commit::NoOperation)),
+                        false,
+                    )
                 }
             }
 
             Phase::CondCall { taken, sp, hi, lo } => {
                 if !*taken {
-                    return (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false);
+                    return (
+                        Some(self.enter_fetch_overlap(claim, Commit::NoOperation)),
+                        false,
+                    );
                 }
                 let sp = *sp;
                 match current_step {
@@ -361,7 +394,10 @@ impl Cpu {
                             true,
                         )
                     }
-                    _ => (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false),
+                    _ => (
+                        Some(self.enter_fetch_overlap(claim, Commit::NoOperation)),
+                        false,
+                    ),
                 }
             }
 
@@ -370,7 +406,10 @@ impl Cpu {
                 let taken = *taken;
                 match current_step {
                     0 => (Some(MCycleAction::Internal { address: 0x0000 }), true),
-                    1 if !taken => (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false),
+                    1 if !taken => (
+                        Some(self.enter_fetch_overlap(claim, Commit::NoOperation)),
+                        false,
+                    ),
                     1 => (Some(MCycleAction::Read { address: sp }), true),
                     2 => {
                         self.scratch = self.data_latch;
@@ -385,7 +424,10 @@ impl Cpu {
                         Self::apply_pop(self, action, self.scratch, self.data_latch, sp);
                         (Some(MCycleAction::Internal { address: 0x0000 }), true)
                     }
-                    _ => (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false),
+                    _ => (
+                        Some(self.enter_fetch_overlap(claim, Commit::NoOperation)),
+                        false,
+                    ),
                 }
             }
         }

@@ -752,12 +752,11 @@ impl<M: Model> Console<M> {
         self.clock.engage_on_rise();
         // The model resets to single speed; realign the clock's ÷1/÷2 cell so it
         // stays the sole ratio owner across a reset.
-        self.clock
-            .set_divider(if self.double_speed_active() {
-                CpuDivider::Two
-            } else {
-                CpuDivider::One
-            });
+        self.clock.set_divider(if self.double_speed_active() {
+            CpuDivider::Two
+        } else {
+            CpuDivider::One
+        });
         self.cpu_bus = CpuBus::new();
         self.dma_conflict_write_pending = None;
         self.dma_pending_bank_write = None;

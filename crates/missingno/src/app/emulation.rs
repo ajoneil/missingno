@@ -113,7 +113,11 @@ impl App {
                 }
             }
             EmuEvent::SramDirty(ram) => {
-                if let Some(title) = self.current_game.as_ref().map(|c| c.cartridge_title.clone()) {
+                if let Some(title) = self
+                    .current_game
+                    .as_ref()
+                    .map(|c| c.cartridge_title.clone())
+                {
                     self.persist_sram(&ram, &title);
                 }
             }

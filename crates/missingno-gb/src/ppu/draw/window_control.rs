@@ -222,7 +222,8 @@ impl WindowControl {
         fepo: bool,
         regs: &PipelineRegisters,
     ) {
-        if P::ENABLE_QUALIFIED_WINDOW_HIT && self.compute_xofo(regs, P::WINDOW_CROSSING.is_synced()) {
+        if P::ENABLE_QUALIFIED_WINDOW_HIT && self.compute_xofo(regs, P::WINDOW_CROSSING.is_synced())
+        {
             self.pyco.write_immediate(0);
             return;
         }

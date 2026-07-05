@@ -159,7 +159,11 @@ impl Cpu {
     /// Captures `zacw` (dispatch_active) and routes early to dispatch
     /// or halt when needed. Commits apply inline so the new register
     /// values are visible at the start of the next M-cycle.
-    pub(super) fn enter_fetch_overlap(&mut self, claim: VramDmaClaim, commit: Commit) -> MCycleAction {
+    pub(super) fn enter_fetch_overlap(
+        &mut self,
+        claim: VramDmaClaim,
+        commit: Commit,
+    ) -> MCycleAction {
         Self::apply_commit(self, commit);
         let deferred = Commit::NoOperation;
 
