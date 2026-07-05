@@ -4,8 +4,7 @@ use super::{
     cpu::mcycle::{BusAction, TCycle},
     cpu_bus::{BusAccess, BusAccessKind},
     interrupts::Interrupt,
-    memory::Bus,
-    ppu::{self, memory::Vram},
+    ppu,
 };
 
 /// Result of executing one instruction.
@@ -294,31 +293,7 @@ impl<M: Model> Console<M> {
     /// The single byte-transfer OAM DMA and the CGB VRAM DMA share.
     fn dma_move(&mut self, source: u16, dest: u16) {
         let byte = self.read_dma_source(source);
-        self.dma_commit(source, dest, byte);
-    }
-
-    fn dma_commit(&mut self, source: u16, dest: u16, byte: u8) {
-        match ppu::memory::MappedAddress::map(dest) {
-            ppu::memory::MappedAddress::Oam(address) => self.chassis.ppu.write_oam(address, byte),
-            ppu::memory::MappedAddress::Vram(address) => {
-                self.chassis.vram_bus.vram.cpu_write(address, byte)
-            }
-        }
-        self.chassis.bus_trace.record(BusAccess {
-            address: source,
-            value: byte,
-            kind: BusAccessKind::DmaRead,
-        });
-        self.chassis.bus_trace.record(BusAccess {
-            address: dest,
-            value: byte,
-            kind: BusAccessKind::DmaWrite,
-        });
-        match Bus::of(source) {
-            Some(Bus::External) => self.chassis.external.drive(byte),
-            Some(Bus::Vram) => self.chassis.vram_bus.drive(byte),
-            None => {}
-        }
+        self.chassis.dma_commit(source, dest, byte);
     }
 
     /// CPU work for a rising master-clock edge, optionally carrying a PPU edge.
@@ -734,25 +709,9 @@ impl<M: Model> Console<M> {
             // The engine thaws at the IF rise, ahead of the CPU's halt-exit
             // latency (a wake-coincident block is decided before the first
             // fetch and the dispatch pick); level re-evaluation and the
-            // taken-clear wait for the CPU's own resume.
-            let cpu_halted = self.chassis.cpu.is_halted();
-            let engine_gated =
-                (cpu_halted && !self.chassis.cpu.irq_latched()) || self.chassis.cpu.is_stopped();
-            let master_edge = self.chassis.clock.master_edge();
-            let claim =
-                self.model
-                    .vram_dma_tick(pre_fall_mode, engine_gated, cpu_halted, master_edge);
-            if claim.committed {
-                // An active OAM DMA already owns a bus, blocking the
-                // handover that would take the halt-release fetch's tail.
-                let bus_free = self.chassis.dma.is_active_on_bus().is_none();
-                self.model
-                    .console_state_mut()
-                    .set_vram_dma_claim(crate::VramDmaClaim {
-                        committed: true,
-                        standing: claim.standing && bus_free,
-                    });
-            }
+            // taken-clear wait for the CPU's own resume. The model owns the
+            // trigger pipeline and hands back its committed bus claim.
+            self.model.vram_dma_edge(&mut self.chassis, pre_fall_mode);
         }
 
         if let Some(video_result) = &video_result {
@@ -1146,91 +1105,28 @@ impl<M: Model> Console<M> {
     /// that collided with DMA on the source bus open-drains at the OAM
     /// slot DMA deposits. (Audio mcycle is at boundary rise.)
     fn tick_mcycle_boundary_fall(&mut self) {
-        let double_speed = self.chassis.clock.divider() == CpuDivider::Two;
         let oam = self.chassis.dma.peek_transfer();
-        let hdma_active =
-            self.model.console_state().dma_cpu_hold() || self.model.console_state().bus_suspended();
-        // The OAM-DMA's final byte still shares the bus on the M-cycle it
-        // completes; edge-detect its active→done boundary so that M-cycle
-        // still contends with a concurrent VRAM-DMA.
-        let oam_transferring = oam.is_some();
-        let oam_just_completed = self.chassis.dma_oam_was_transferring && !oam_transferring;
-        self.chassis.dma_oam_was_transferring = oam_transferring;
-        // The two engines share one bus: when an OAM-DMA and a VRAM-DMA block
-        // both move a byte this M-cycle, the OAM-DMA latches the VRAM-DMA byte
-        // that coincides with its write rather than its own source.
-        let contended = !double_speed
-            && (oam_transferring || oam_just_completed)
-            && hdma_active
-            && self.model.vram_dma_will_move();
-        // Double speed: a switch-cancel escape byte's bus tenure stalls the
-        // concurrent OAM-DMA byte one M-cycle (the engine resumes it next M).
-        let escape_stall =
-            double_speed && oam_transferring && hdma_active && self.model.vram_dma_escape_pending();
-        if escape_stall {
-            self.chassis.dma.stall_advance();
-        }
-
-        if !contended && !escape_stall {
+        // The CGB VRAM DMA arbitrates the shared bus before the OAM byte moves:
+        // it may take this M-cycle's OAM deposit (single-speed contention) or
+        // stall the OAM engine (a double-speed switch-cancel escape byte). DMG:
+        // never suppresses.
+        let suppress_oam = self.model.vram_dma_arbitrate_oam(&mut self.chassis);
+        if !suppress_oam {
             if let Some((src_addr, dst_offset)) = oam {
                 self.dma_move(src_addr, 0xfe00 + dst_offset as u16);
             }
         }
 
         // A source-bank register write (VBK/SVBK) latches here at the boundary,
-        // after the coincident byte's source read above reads the pre-write bank.
+        // after the coincident byte's source read above reads the pre-write
+        // bank. Reuses the CPU write-commit path (map_write); no-op on the DMG.
         if let Some((address, value)) = self.chassis.dma_pending_bank_write.take() {
             self.write_byte_with_cupa_lock(address, value, None, None);
         }
 
-        // CGB VRAM DMA: commit the bytes it moves while it actually holds the
-        // bus — gating on the hold keeps the transfer from overlapping the
-        // arming instruction. (The trigger/quota tick ran before this edge's
-        // write commit.) Idle (no-op) on the DMG.
-        let mut hdma_bytes: (Option<(u16, u8)>, Option<(u16, u8)>) = (None, None);
-        if hdma_active {
-            if !self.model.vram_dma_take_setup_cell() {
-                while let Some((src, dst)) = self.model.vram_dma_next_byte() {
-                    let byte = match self.model.vram_dma_source_open_bus(src) {
-                        Some(open) => open,
-                        None => self.read_dma_source(src),
-                    };
-                    self.dma_commit(src, dst, byte);
-                    if contended {
-                        if hdma_bytes.0.is_none() {
-                            hdma_bytes.0 = Some((src, byte));
-                        } else if hdma_bytes.1.is_none() {
-                            hdma_bytes.1 = Some((src, byte));
-                        }
-                    }
-                }
-            }
-        }
-
-        // The OAM-DMA's deposit this M-cycle is the coinciding VRAM-DMA byte,
-        // landing at OAM[source_low]. Which of the M-cycle's two VRAM-DMA bytes
-        // coincides is the phase between the two byte clocks (the OAM-DMA's start
-        // edge vs the block's), 2nd byte at residue {0,3}. The coinciding OAM byte
-        // commits one T-cycle after start_edge marks dma_run engaging, so align
-        // the phase to that commit before taking the residue.
-        if contended {
-            const OAM_BYTE_COMMIT_LAG_EDGES: u64 = 2;
-            let phase = self
-                .model
-                .vram_dma_block_start_edge()
-                .wrapping_sub(self.chassis.dma.start_edge())
-                .wrapping_sub(OAM_BYTE_COMMIT_LAG_EDGES)
-                / 2
-                % 4;
-            let coinciding = if matches!(phase, 0 | 3) {
-                hdma_bytes.1.or(hdma_bytes.0)
-            } else {
-                hdma_bytes.0
-            };
-            if let Some((hsrc, hdata)) = coinciding {
-                self.dma_commit(hsrc, 0xfe00 | (hsrc & 0xFF), hdata);
-            }
-        }
+        // The CGB VRAM-DMA byte engine: moves this M-cycle's bytes while it holds
+        // the bus and deposits the contended byte at OAM. No-op on the DMG.
+        self.model.vram_dma_boundary(&mut self.chassis);
 
         if let Some((dst_offset, src_byte, cpu_value)) =
             self.chassis.dma_conflict_write_pending.take()

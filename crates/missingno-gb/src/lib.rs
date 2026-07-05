@@ -372,14 +372,6 @@ pub trait Model: Default {
         None
     }
 
-    /// Open-bus value a *VRAM-DMA* source read returns, or None to read the bus
-    /// normally. A VRAM-DMA source must be ROM/cart-RAM; VRAM ($8000-$9FFF) is
-    /// off that source bus and floats to `$FF`. OAM-DMA — whose source range
-    /// includes VRAM — does not use this. DMG has no VRAM-DMA.
-    fn vram_dma_source_open_bus(&self, _source: u16) -> Option<u8> {
-        None
-    }
-
     /// This console's own memory map: the registers/regions its map defines
     /// that the shared map doesn't. DMG adds nothing. CGB adds KEY1, VBK,
     /// SVBK, BCPS/BCPD, OCPS/OCPD, HDMA1-5, OPRI, and banked WRAM. Consulted
@@ -404,33 +396,29 @@ pub trait Model: Default {
         false
     }
 
-    /// Advance this console's VRAM DMA one M-cycle, refilling the bytes it may
-    /// move this M-cycle. `mode` lets an H-Blank transfer gate on mode 0.
-    /// Returns the claim committed this fall: `committed` (the cancel-immune
-    /// bus claim) and `standing` (the claim aged through its synchronizer —
-    /// it wins the bus race against a halt-release fetch). DMG: no VRAM DMA.
-    fn vram_dma_tick(
-        &mut self,
-        _mode: ppu::rendering::Mode,
-        _engine_gated: bool,
-        _cpu_halted: bool,
-        _master_edge: u64,
-    ) -> VramDmaClaim {
-        VramDmaClaim::default()
-    }
+    /// Advance this console's VRAM DMA one master-clock fall: the trigger
+    /// pend/commit pipeline and the byte-quota refill, plus the committed bus
+    /// claim it hands the dispatch arbitration (through `chassis`'s console
+    /// shadow). `mode` is the pre-fall PPU mode an H-Blank block gates on. DMG:
+    /// no VRAM DMA, no-op.
+    fn vram_dma_edge(&mut self, _chassis: &mut Chassis<Self>, _mode: ppu::rendering::Mode) {}
 
-    /// Whether the VRAM DMA will move at least one byte this M-cycle (block
-    /// active, quota available, no setup cell pending) — read-only, for the
-    /// OAM-DMA bus-contention check. DMG: never.
-    fn vram_dma_will_move(&self) -> bool {
+    /// M-cycle-boundary arbitration between the OAM DMA and the VRAM DMA over
+    /// the shared bus, before the OAM byte moves: resolves single-speed
+    /// contention and the double-speed escape-byte stall (stalling the OAM
+    /// engine when it must), and returns whether this M-cycle's OAM byte move is
+    /// suppressed (the VRAM DMA takes the deposit, or the escape stalls it).
+    /// DMG: no VRAM DMA, never suppresses.
+    fn vram_dma_arbitrate_oam(&mut self, _chassis: &mut Chassis<Self>) -> bool {
         false
     }
 
-    /// Master edge at which the active HBlank block fired — its byte clock's
-    /// phase origin, for aligning a concurrent OAM-DMA's bus latch. DMG: 0.
-    fn vram_dma_block_start_edge(&self) -> u64 {
-        0
-    }
+    /// The VRAM-DMA byte engine at the M-cycle boundary, after the OAM byte and
+    /// the deferred VBK/SVBK bank write committed: moves this M-cycle's VRAM-DMA
+    /// bytes (open-bus/source read → destination commit) and deposits the
+    /// contended byte at OAM per the byte-clock phase residue. DMG: no VRAM
+    /// DMA, no-op.
+    fn vram_dma_boundary(&mut self, _chassis: &mut Chassis<Self>) {}
 
     /// A ready HBlank block owns the VRAM/external buses: M-cycles targeting
     /// them stretch until release; the rest run concurrently. DMG: never.
@@ -445,30 +433,11 @@ pub trait Model: Default {
         None
     }
 
-    /// An entry-triggered block spends one leading no-data cell — the engine
-    /// loading its working pointers from the HDMA1-4 holding registers (the
-    /// FF55 arm strobe performs that load itself). Consumed once per block.
-    fn vram_dma_take_setup_cell(&mut self) -> bool {
-        false
-    }
-
-    /// The byte the VRAM DMA is about to move is a switch-cancel escape byte.
-    /// Its bus tenure stalls a concurrent OAM-DMA byte at double speed. DMG: no.
-    fn vram_dma_escape_pending(&self) -> bool {
-        false
-    }
-
     /// Take the graded escape byte for an in-blackout drain — the CPU is held
     /// and the bus free, so the escape's tenure completes inside the blackout
     /// instead of parking the resumed stream. DMG: never.
     fn vram_dma_drain_escape(&mut self) -> Option<(u16, u16)> {
         None
-    }
-
-    /// A dispatch-wake thaw commit's drain is in flight — the halt-exit
-    /// seizure deferral applies to it alone. DMG: never.
-    fn vram_dma_thaw_drain(&self) -> bool {
-        false
     }
 
     /// The committed block landed on a running CPU and the instruction it
@@ -488,13 +457,6 @@ pub trait Model: Default {
     /// dispatch pick arbitration. DMG: never.
     fn vram_dma_request_standing(&self) -> bool {
         false
-    }
-
-    /// The next byte the VRAM DMA moves this M-cycle — `(source, destination)`
-    /// resolved addresses — advancing its cursor. `None` once this M-cycle's
-    /// quota is spent. DMG: never.
-    fn vram_dma_next_byte(&mut self) -> Option<(u16, u16)> {
-        None
     }
 
     /// Whether the VRAM DMA is holding the CPU clock right now (mid transfer or
@@ -529,10 +491,6 @@ pub struct Chassis<M: Model> {
     pub serial: serial_transfer::Serial,
     pub timers: timers::Timers,
     pub dma: Dma,
-    /// Whether the OAM-DMA drove a byte last M-cycle — edge-detects its
-    /// active→done boundary so the completion M-cycle still shares the bus
-    /// with a concurrent VRAM-DMA (the OAM-DMA↔HDMA byte-clock conflict).
-    pub dma_oam_was_transferring: bool,
 
     /// The master-clock phase layer: the CPU CLK9 edge, the free-running PPU dot
     /// edge, and the `÷1`/`÷2` divider between them. Owns the per-edge dispatch
@@ -641,7 +599,6 @@ impl<M: Model> Console<M> {
                 serial: serial_transfer::Serial::new(),
                 timers: timers::Timers::new(),
                 dma: Dma::new(),
-                dma_oam_was_transferring: false,
                 clock: MasterClock::new(CpuDivider::One),
                 cpu_bus: CpuBus::new(),
                 bus_trace: cpu_bus::BusTrace::new(),

@@ -1,5 +1,5 @@
 use crate::{
-    Console, ConsoleShadow, Model, audio,
+    Chassis, Console, ConsoleShadow, Model, audio,
     cpu_bus::{BusAccess, BusAccessKind},
     dmg_sram,
     interrupts::{self, InterruptFlags},
@@ -314,6 +314,51 @@ impl MappedAddress {
     }
 }
 
+impl<M: Model> Chassis<M> {
+    /// Storage-only read of a DMA source, after the model's open-bus and
+    /// register-map consults. A DMA source resolves to the external or VRAM bus
+    /// (`Bus::of` routes $FE00–$FFFF to the WRAM echo on the external bus), so
+    /// the register-backed arms of the full map are unreachable here.
+    pub fn read_dma_storage(&self, address: u16) -> u8 {
+        let mapped = match Bus::of(address) {
+            Some(_) => MappedAddress::map(address),
+            None => MappedAddress::External(ExternalAddress::WorkRam(address.wrapping_sub(0xE000))),
+        };
+        match mapped {
+            MappedAddress::External(addr) => self.external.read(addr),
+            MappedAddress::Vram(addr) => self.vram_bus.vram.cpu_read(addr),
+            _ => unreachable!("DMA source maps only to external or VRAM storage"),
+        }
+    }
+
+    /// Commit one DMA byte to its mapped destination — OAM or the VBK-selected
+    /// VRAM bank — trace the read and write, and decay the source bus. Shared by
+    /// the single-byte OAM DMA and the CGB VRAM DMA.
+    pub fn dma_commit(&mut self, source: u16, dest: u16, byte: u8) {
+        match ppu::memory::MappedAddress::map(dest) {
+            ppu::memory::MappedAddress::Oam(address) => self.ppu.write_oam(address, byte),
+            ppu::memory::MappedAddress::Vram(address) => {
+                self.vram_bus.vram.cpu_write(address, byte)
+            }
+        }
+        self.bus_trace.record(BusAccess {
+            address: source,
+            value: byte,
+            kind: BusAccessKind::DmaRead,
+        });
+        self.bus_trace.record(BusAccess {
+            address: dest,
+            value: byte,
+            kind: BusAccessKind::DmaWrite,
+        });
+        match Bus::of(source) {
+            Some(Bus::External) => self.external.drive(byte),
+            Some(Bus::Vram) => self.vram_bus.drive(byte),
+            None => {}
+        }
+    }
+}
+
 impl<M: Model> Console<M> {
     /// Apply the side effects of a CPU bus read whose value was already
     /// captured into `cpu_bus.data` at the driver-enable edge: drive
@@ -464,11 +509,7 @@ impl<M: Model> Console<M> {
         {
             return value;
         }
-        let mapped = match Bus::of(address) {
-            Some(_) => MappedAddress::map(address),
-            None => MappedAddress::External(ExternalAddress::WorkRam(address.wrapping_sub(0xE000))),
-        };
-        self.read_mapped(mapped)
+        self.chassis.read_dma_storage(address)
     }
 
     /// If DMA is driving a bus that conflicts with `address`, return
