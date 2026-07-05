@@ -10,7 +10,7 @@
 use super::crossing::CaptureSpec;
 use super::draw::shifters::ObjShifter;
 use super::memory::{Vram, VramBank};
-use super::registers::PipelineRegisters;
+use super::registers::{PipelineRegisters, TileSelGlitch};
 use super::stat_interrupt::StatShadow;
 use super::types::palette::{PaletteIndex, PaletteMap};
 use super::types::sprites::{self, ObjAttr};
@@ -106,6 +106,14 @@ pub trait PpuModel: Default {
 
     fn stat_shadow(&self) -> &Self::StatShadow;
     fn stat_shadow_mut(&mut self) -> &mut Self::StatShadow;
+
+    /// The mid-Mode-3 LCDC.4-clear TILE_SEL reset glitch cell: CGB substitutes
+    /// the tile index byte into the bitplane read on the crossing-capture dot,
+    /// DMG carries a ZST `()`.
+    type TileSelGlitch: TileSelGlitch + Default;
+
+    fn tile_sel_glitch(&self) -> &Self::TileSelGlitch;
+    fn tile_sel_glitch_mut(&mut self) -> &mut Self::TileSelGlitch;
 
     /// The console's object FIFO. The DMG resolves overlaps by fetch order with a
     /// 1-bit OBP-select; the CGB resolves by OAM index with a 3-bit palette. The
@@ -336,6 +344,8 @@ pub struct DmgPpu {
     /// The STAT-IRQ block reads the cells combinationally — the synchroniser is
     /// a ZST.
     stat_shadow: (),
+    /// No TILE_SEL reset glitch on DMG silicon — a ZST.
+    tile_sel_glitch: (),
 }
 
 impl PpuModel for DmgPpu {
@@ -350,6 +360,15 @@ impl PpuModel for DmgPpu {
     }
     fn stat_shadow_mut(&mut self) -> &mut () {
         &mut self.stat_shadow
+    }
+
+    type TileSelGlitch = ();
+
+    fn tile_sel_glitch(&self) -> &() {
+        &self.tile_sel_glitch
+    }
+    fn tile_sel_glitch_mut(&mut self) -> &mut () {
+        &mut self.tile_sel_glitch
     }
 
     fn bg_attribute(_vram: &VramBank, _map_offset: u16) {}

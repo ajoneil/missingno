@@ -5,6 +5,7 @@ use super::super::instructions::Instruction;
 use super::super::instructions::Interrupt as InterruptInstruction;
 use super::super::{Cpu, HaltState};
 use super::types::{CpuPhase, HaltPhase, MCycleAction, Phase};
+use crate::VramDmaClaim;
 
 /// Number of operand bytes following a given opcode (0, 1, or 2).
 pub(super) fn operand_count(opcode: u8) -> u8 {
@@ -42,7 +43,7 @@ pub(super) fn operand_count(opcode: u8) -> u8 {
 impl Cpu {
     /// Fetch M-cycle: single read at [PC]. Returns `None` when the
     /// fetched instruction completes immediately (e.g. NOP).
-    pub(super) fn mcycle_fetch(&mut self) -> Option<MCycleAction> {
+    pub(super) fn mcycle_fetch(&mut self, claim: VramDmaClaim) -> Option<MCycleAction> {
         let step = self.exec_step;
         self.exec_step += 1;
 
@@ -65,7 +66,7 @@ impl Cpu {
         // committing during this fetch's M-cycle takes the cycle's tail and
         // kills the IDU increment — the byte routes, PC holds (halt-bug
         // family).
-        let handover_kill = self.vram_dma_claim.standing && self.post_halt_fetch;
+        let handover_kill = claim.standing && self.post_halt_fetch;
         self.post_halt_fetch = false;
         if self.halt.bug {
             self.halt.bug = false;
@@ -79,13 +80,13 @@ impl Cpu {
             let (instruction, phase, commit) = self.decode_retire(bytes, 1);
             self.instruction = instruction;
             if matches!(phase, Phase::Empty) {
-                Some(self.enter_fetch_overlap(commit))
+                Some(self.enter_fetch_overlap(claim, commit))
             } else {
                 // Multi-Mcyc 0-operand op (LD (HL),A, POP rr, etc.):
                 // run its execute phase before fetch overlap.
                 self.phase = CpuPhase::Execute { phase, step: 0 };
                 self.exec_step = 0;
-                self.mcycle_execute()
+                self.mcycle_execute(claim)
             }
         } else {
             self.phase = CpuPhase::Execute {
@@ -98,21 +99,21 @@ impl Cpu {
                 step: 0,
             };
             self.exec_step = 0;
-            self.mcycle_execute()
+            self.mcycle_execute(claim)
         }
     }
 
     /// Drop halt and start the post-halt opcode fetch on the IME=0 wake
     /// path. With `mcyc = m7` parked through HALT, this M-cycle carries
     /// the m7-driven post-body fetch from PC.
-    pub(super) fn enter_post_halt_fetch(&mut self) -> Option<MCycleAction> {
+    pub(super) fn enter_post_halt_fetch(&mut self, claim: VramDmaClaim) -> Option<MCycleAction> {
         self.halt.state = HaltState::Running;
         self.halt.rs_latched = false;
         self.phase = CpuPhase::Fetch;
         self.exec_step = 0;
         self.boundary_flag = true;
         self.post_halt_fetch = true;
-        self.mcycle_fetch()
+        self.mcycle_fetch(claim)
     }
 
     /// Pure decode — returns the decoded `Instruction` with its `Phase`
@@ -158,7 +159,7 @@ impl Cpu {
     /// Captures `zacw` (dispatch_active) and routes early to dispatch
     /// or halt when needed. Commits apply inline so the new register
     /// values are visible at the start of the next M-cycle.
-    pub(super) fn enter_fetch_overlap(&mut self, commit: Commit) -> MCycleAction {
+    pub(super) fn enter_fetch_overlap(&mut self, claim: VramDmaClaim, commit: Commit) -> MCycleAction {
         Self::apply_commit(self, commit);
         let deferred = Commit::NoOperation;
 
@@ -183,7 +184,7 @@ impl Cpu {
             self.exec_step = 0;
             self.irq.pending_vector_resolve = false;
             return self
-                .next_mcycle()
+                .next_mcycle(claim)
                 .expect("next_mcycle must return Some after dispatch arm");
         }
 

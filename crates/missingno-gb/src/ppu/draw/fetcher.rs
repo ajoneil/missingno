@@ -249,8 +249,8 @@ impl<P: PpuModel> TileFetcher<P> {
 
     /// CGB TILE_SEL reset glitch: a bitplane read on the crossing-capture dot
     /// of an LCDC.4-clearing write returns the tile index byte instead.
-    fn tile_sel_glitched_bitplane(&self, regs: &PipelineRegisters) -> Option<u8> {
-        (regs.tile_sel_reset_glitch.active() && self.tile_index < 0x80).then_some(self.tile_index)
+    fn tile_sel_glitched_bitplane(&self, glitch_active: bool) -> Option<u8> {
+        (glitch_active && self.tile_index < 0x80).then_some(self.tile_index)
     }
 
     /// PPU fall: VRAM reads at counter 0/2/4 (no counter increment — LEBO only fires on rise).
@@ -264,6 +264,7 @@ impl<P: PpuModel> TileFetcher<P> {
         regs: &PipelineRegisters,
         video: &VideoControl,
         vram: &P::Vram,
+        tile_sel_glitch_active: bool,
     ) {
         match self.fetch_counter {
             0 => {
@@ -294,7 +295,7 @@ impl<P: PpuModel> TileFetcher<P> {
                     self.set_glitch_armed = false;
                     self.glitch_src_low
                 } else {
-                    self.tile_sel_glitched_bitplane(regs)
+                    self.tile_sel_glitched_bitplane(tile_sel_glitch_active)
                         .unwrap_or(self.bus_low)
                 };
             }
@@ -307,7 +308,7 @@ impl<P: PpuModel> TileFetcher<P> {
                     self.set_glitch_armed = false;
                     self.glitch_src_high
                 } else {
-                    self.tile_sel_glitched_bitplane(regs)
+                    self.tile_sel_glitched_bitplane(tile_sel_glitch_active)
                         .unwrap_or(self.bus_high)
                 };
                 // A TILE_SEL clear armed this fetch to snapshot the bus as the

@@ -50,33 +50,30 @@ impl OldOverlay {
     }
 }
 
-/// CGB TILE_SEL reset glitch: an LCDC.4-clearing write reaches the tile-data
-/// addressing at the crossing-capture dot; a bitplane read on that dot returns
-/// the tile index byte instead of VRAM data. Live for one dot.
-#[derive(Default)]
-pub(in crate::ppu) struct TileSelResetGlitch {
-    pending: bool,
-    active: bool,
+/// The TILE_SEL reset glitch cell, behind a [`PpuModel`] associated type: an
+/// LCDC.4-clearing write reaches the tile-data addressing at the crossing-capture
+/// dot, so a bitplane read on that dot returns the tile index byte instead of
+/// VRAM data. Live for one dot. The CGB owns the real cell; the DMG a ZST `()`.
+///
+/// [`PpuModel`]: super::PpuModel
+pub trait TileSelGlitch {
+    /// Arm from an LCDC.4-clearing write; it goes active on the next tick.
+    fn arm(&mut self);
+    /// Per-fall advance: the armed pending value becomes this dot's active value.
+    fn tick(&mut self);
+    /// Whether a bitplane read this dot substitutes the tile index byte.
+    fn active(&self) -> bool;
+    /// LCD-off freeze/clear.
+    fn clear(&mut self);
 }
 
-impl TileSelResetGlitch {
-    pub(in crate::ppu) fn arm(&mut self) {
-        self.pending = true;
+impl TileSelGlitch for () {
+    fn arm(&mut self) {}
+    fn tick(&mut self) {}
+    fn active(&self) -> bool {
+        false
     }
-
-    fn tick(&mut self) {
-        self.active = self.pending;
-        self.pending = false;
-    }
-
-    pub(in crate::ppu) fn active(&self) -> bool {
-        self.active
-    }
-
-    fn clear(&mut self) {
-        self.pending = false;
-        self.active = false;
-    }
+    fn clear(&mut self) {}
 }
 
 /// CPU → pixel pipeline register file (DFF bank). DFF8/DFF9 write-conflict behaviour during Mode 3 is specific to this group.
@@ -108,7 +105,6 @@ pub struct PipelineRegisters {
     pub(in crate::ppu) sprites_enabled_overlay: OldOverlay,
     /// LCDC.1 snapshot taken at start of rise() before staged write applies; consumed by FEPO-for-TEKY (SOBU/CUPA race).
     pub(in crate::ppu) sprites_enabled_pre_cupa: bool,
-    pub(in crate::ppu) tile_sel_reset_glitch: TileSelResetGlitch,
 }
 
 impl PipelineRegisters {
@@ -137,7 +133,6 @@ impl PipelineRegisters {
 
         self.bg_window_enabled_overlay.tick();
         self.sprites_enabled_overlay.tick();
-        self.tile_sel_reset_glitch.tick();
     }
 
     /// Freeze latches at their current output (LCD off).
@@ -155,7 +150,6 @@ impl PipelineRegisters {
         self.obj_size_select.clear();
         self.bg_window_enabled_overlay.clear();
         self.sprites_enabled_overlay.clear();
-        self.tile_sel_reset_glitch.clear();
     }
 
     /// The LCDC byte the tile-map-select fetch samples — the live byte on DMG,

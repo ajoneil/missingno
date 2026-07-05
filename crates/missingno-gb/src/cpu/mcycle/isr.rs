@@ -3,6 +3,7 @@
 use super::super::commit::Commit;
 use super::super::{Cpu, InterruptMasterEnable};
 use super::types::{CpuPhase, MCycleAction};
+use crate::VramDmaClaim;
 
 impl Cpu {
     /// ISR dispatch: 5 M-cycles (steps 0..=4), gb-ctr RST n p129.
@@ -12,7 +13,7 @@ impl Cpu {
     ///   step 3 → M4 push pc_lo (Write {sp-2}); vector resolved here
     ///   step 4 → M5 vector fetch (via enter_fetch_overlap)
     /// IME clears at step 0 (zacw on dispatching CLK9↑).
-    pub(super) fn mcycle_isr(&mut self) -> Option<MCycleAction> {
+    pub(super) fn mcycle_isr(&mut self, claim: VramDmaClaim) -> Option<MCycleAction> {
         let (sp, pc_hi, pc_lo, step) = match &mut self.phase {
             CpuPhase::InterruptDispatch {
                 sp,
@@ -58,7 +59,7 @@ impl Cpu {
                     value: pc_lo,
                 })
             }
-            4 => Some(self.enter_fetch_overlap(Commit::NoOperation)),
+            4 => Some(self.enter_fetch_overlap(claim, Commit::NoOperation)),
             _ => unreachable!(),
         }
     }

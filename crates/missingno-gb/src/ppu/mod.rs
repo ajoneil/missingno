@@ -15,7 +15,7 @@ pub use dff::{DffLatch, NorLatch};
 pub use model::{
     CartridgeBootHeader, DmgPixel, PixelMux, PpuModel, resolve_dmg_pixel, resolve_shade,
 };
-pub use registers::PipelineRegisters;
+pub use registers::{PipelineRegisters, TileSelGlitch};
 pub use rendering::{
     Mode, PipelineSnapshot, PpuTraceSnapshot, SpriteFetchPhase, SpriteStoreEntrySnapshot,
     SpriteStoreSnapshot,
@@ -174,7 +174,6 @@ impl<P: PpuModel> Ppu<P> {
                 bg_window_enabled_overlay: registers::OldOverlay::default(),
                 sprites_enabled_overlay: registers::OldOverlay::default(),
                 sprites_enabled_pre_cupa: false,
-                tile_sel_reset_glitch: registers::TileSelResetGlitch::default(),
             },
             video: VideoControl {
                 dividers: Dividers {
@@ -336,7 +335,6 @@ impl<P: PpuModel> Ppu<P> {
             bg_window_enabled_overlay: registers::OldOverlay::default(),
             sprites_enabled_overlay: registers::OldOverlay::default(),
             sprites_enabled_pre_cupa: lcd_on,
-            tile_sel_reset_glitch: registers::TileSelResetGlitch::default(),
         };
 
         let mut ppu = Ppu {

@@ -256,7 +256,7 @@ impl<M: Model> Console<M> {
         }
 
         // The settle is bus-coupled: a bus master holding the CPU defers it.
-        if self.cpu.bus_held {
+        if self.model.console_state().dma_cpu_hold() {
             return;
         }
 
@@ -322,7 +322,7 @@ impl<M: Model> Console<M> {
         // An HBlank block owning the bus finishes before a GDMA hold engages
         // (the two cannot share the buses), and the dispatch tenure is
         // indivisible — the hold waits for it like the HDMA grant does.
-        if self.cpu.bus_suspended || self.cpu.in_dispatch() {
+        if self.model.console_state().bus_suspended() || self.cpu.in_dispatch() {
             return;
         }
         let holds = self.model.vram_dma_holds_cpu();
@@ -373,7 +373,13 @@ impl<M: Model> Console<M> {
     /// step, vector resolve at T3, dispatch logic, and the APU prescaler tick.
     /// Runs before the PPU rise off a boundary, after it on an M-boundary.
     fn rise_cpu_advance(&mut self, dot_work: bool) -> TCycle {
-        self.cpu.next_tcycle();
+        let state = self.model.console_state();
+        let grants = crate::cpu::mcycle::BusGrants {
+            suspended: state.bus_suspended(),
+            held: state.dma_cpu_hold(),
+            claim: state.vram_dma_claim(),
+        };
+        self.cpu.next_tcycle(grants);
         // cpu_irq_ack1↑ at +2.993 dots into the dispatching M-cycle —
         // tcycle 3 rise in our half-phase resolution. Deferring to
         // tcycle 3 also lets M4's bus write commit (tcycle 2 fall)
@@ -448,16 +454,21 @@ impl<M: Model> Console<M> {
                 self.cpu.dma_arbiter_at_boundary = false;
                 self.model.vram_dma_instruction_retired();
             }
-            self.cpu.bus_suspended = self.model.vram_dma_seizes_bus()
-                && (self.cpu.bus_suspended
+            let suspended = self.model.vram_dma_seizes_bus()
+                && (self.model.console_state().bus_suspended()
                     || if self.cpu.in_dispatch() {
                         self.cpu.dispatch_parks_behind_dma
                     } else {
                         !self.model.vram_dma_park_waits_for_fetch()
                     });
+            self.model.console_state_mut().set_bus_suspended(suspended);
             self.cpu.dma_request_stood_prev2_boundary = self.cpu.dma_request_stood_prev_boundary;
             self.cpu.dma_request_stood_prev_boundary = self.model.vram_dma_request_standing();
             let tcycle = self.rise_cpu_advance(dot_work);
+            // The M-cycle pick inside `rise_cpu_advance` consumed the claim; clear
+            // the stored claim so a fresh one can commit in the new M-cycle (the
+            // relocated per-M reset).
+            self.model.console_state_mut().clear_vram_dma_claim();
             self.stage_mcycle_bus_activity();
             tcycle
         } else {
@@ -770,10 +781,10 @@ impl<M: Model> Console<M> {
                 // An active OAM DMA already owns a bus, blocking the
                 // handover that would take the halt-release fetch's tail.
                 let bus_free = self.dma.is_active_on_bus().is_none();
-                self.cpu.vram_dma_claim = crate::VramDmaClaim {
+                self.model.console_state_mut().set_vram_dma_claim(crate::VramDmaClaim {
                     committed: true,
                     standing: claim.standing && bus_free,
-                };
+                });
             }
         }
 
@@ -1117,7 +1128,7 @@ impl<M: Model> Console<M> {
             // bus keeps its byte: it read the pre-transfer value (the transfer
             // suppresses the fetch, it does not re-drive the read). Retain it so
             // the post-hold re-fetch decodes it instead of the open-bus re-read.
-            if self.cpu.bus_held && self.cpu.bus_hold_over_prefetch {
+            if self.model.console_state().dma_cpu_hold() && self.cpu.bus_hold_over_prefetch {
                 self.cpu.held_overlap_opcode = Some(value);
                 self.cpu.bus_hold_over_prefetch = false;
             }
@@ -1156,7 +1167,8 @@ impl<M: Model> Console<M> {
     fn tick_mcycle_boundary_fall(&mut self) {
         let double_speed = self.clock.divider() == CpuDivider::Two;
         let oam = self.dma.peek_transfer();
-        let hdma_active = self.model.console_state().dma_cpu_hold() || self.cpu.bus_suspended;
+        let hdma_active =
+            self.model.console_state().dma_cpu_hold() || self.model.console_state().bus_suspended();
         // The OAM-DMA's final byte still shares the bus on the M-cycle it
         // completes; edge-detect its active→done boundary so that M-cycle
         // still contends with a concurrent VRAM-DMA.

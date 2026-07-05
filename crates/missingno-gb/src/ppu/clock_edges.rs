@@ -2,7 +2,7 @@
 
 use crate::dma::OamBusOwner;
 
-use super::{Ppu, PpuModel, PpuTickResult, screen};
+use super::{Ppu, PpuModel, PpuTickResult, TileSelGlitch, screen};
 
 impl<P: PpuModel> Ppu<P> {
     /// Snapshot LCDC.1 (XYLO) before the CPU's staged bus write applies, for the SOBU/CUPA race in mode3_rising.
@@ -73,6 +73,7 @@ impl<P: PpuModel> Ppu<P> {
             P::BGP_WRITE_RACE,
             P::OBP_WRITE_RACE,
         );
+        self.model.tile_sel_glitch_mut().tick();
         self.run_ppu_clock_fall(
             oam_bus,
             scan_clock_rising,
@@ -217,6 +218,7 @@ impl<P: PpuModel> Ppu<P> {
         if self.pixel_pipeline.is_some() {
             self.pixel_pipeline = None;
             self.registers.clear_latches();
+            self.model.tile_sel_glitch_mut().clear();
             result.lcd_disabled = true;
         }
         // Hardware holds counters at 0 while LCD is off; comparison_latched freezes (clock stops).

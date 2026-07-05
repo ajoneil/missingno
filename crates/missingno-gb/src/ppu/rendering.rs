@@ -4,7 +4,8 @@ use core::fmt;
 
 use crate::dma::OamBusOwner;
 use crate::ppu::{
-    DrawnPixel, PipelineRegisters, PpuModel, VideoControl, memory::Oam, types::sprites::SpriteId,
+    DrawnPixel, PipelineRegisters, PpuModel, TileSelGlitch, VideoControl, memory::Oam,
+    types::sprites::SpriteId,
 };
 
 use super::draw::fetch_cascade::FetchCascade;
@@ -636,6 +637,7 @@ impl<P: PpuModel> Rendering<P> {
             regs,
             video,
             vram,
+            model.tile_sel_glitch().active(),
         );
 
         // Cascade advance runs before tick_rising so POKY's just-set value reaches the window's PYCO gate.

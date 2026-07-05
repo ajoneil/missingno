@@ -5,12 +5,13 @@ use super::super::commit::Commit;
 use super::super::registers::Register16;
 use super::fetch::operand_count;
 use super::types::{CpuPhase, MCycleAction, Phase, PopAction};
+use crate::VramDmaClaim;
 
 impl Cpu {
     /// Execute phase: operand reading and post-decode M-cycles.
     /// Returns `None` when the instruction completes (CPU has
     /// transitioned to Fetch).
-    pub(super) fn mcycle_execute(&mut self) -> Option<MCycleAction> {
+    pub(super) fn mcycle_execute(&mut self, claim: VramDmaClaim) -> Option<MCycleAction> {
         let taken = std::mem::replace(&mut self.phase, CpuPhase::Fetch);
         let (mut phase, mut step) = match taken {
             CpuPhase::Execute { phase, step } => (phase, step),
@@ -20,7 +21,7 @@ impl Cpu {
         let current_step = step;
         step += 1;
 
-        let (action, put_back) = self.execute_phase_step(&mut phase, current_step);
+        let (action, put_back) = self.execute_phase_step(claim, &mut phase, current_step);
 
         if put_back {
             self.phase = CpuPhase::Execute { phase, step };
@@ -32,7 +33,12 @@ impl Cpu {
     /// Route a fetched opcode to its decoded phase: dispatch check,
     /// PC advance past the fetch address, then decode — 1-M
     /// instructions retire through the next fetch overlap.
-    fn route_fetched_opcode(&mut self, opcode: u8, fetch_addr: u16) -> Option<MCycleAction> {
+    fn route_fetched_opcode(
+        &mut self,
+        claim: VramDmaClaim,
+        opcode: u8,
+        fetch_addr: u16,
+    ) -> Option<MCycleAction> {
         // zacw captures dispatch_active.q HIGH at this M-cycle's
         // closing edge — dispatch saves PC = fetch_addr so RETI
         // resumes at the prefetched-then-discarded instruction.
@@ -51,7 +57,7 @@ impl Cpu {
             self.irq.pending_vector_resolve = false;
             self.boundary_flag = true;
             self.pc = pc;
-            return self.next_mcycle();
+            return self.next_mcycle(claim);
         }
 
         if self.halt.bug {
@@ -66,14 +72,14 @@ impl Cpu {
             let (instruction, next_phase, next_commit) = self.decode_retire(bytes, 1);
             self.instruction = instruction;
             if matches!(next_phase, Phase::Empty) {
-                Some(self.enter_fetch_overlap(next_commit))
+                Some(self.enter_fetch_overlap(claim, next_commit))
             } else {
                 self.phase = CpuPhase::Execute {
                     phase: next_phase,
                     step: 0,
                 };
                 self.exec_step = 0;
-                self.next_mcycle()
+                self.next_mcycle(claim)
             }
         } else {
             self.phase = CpuPhase::Execute {
@@ -86,7 +92,7 @@ impl Cpu {
                 step: 0,
             };
             self.exec_step = 0;
-            self.next_mcycle()
+            self.next_mcycle(claim)
         }
     }
 
@@ -95,6 +101,7 @@ impl Cpu {
     /// be restored to `self.phase`.
     fn execute_phase_step(
         &mut self,
+        claim: VramDmaClaim,
         phase: &mut Phase,
         current_step: u8,
     ) -> (Option<MCycleAction>, bool) {
@@ -114,7 +121,7 @@ impl Cpu {
                 // during its tenure: the discard is what gets dropped — the
                 // byte stays in IR through the stop spin and executes as
                 // the next opcode at resume (no re-fetch).
-                let yields_to_claim = bytes[0] == 0x10 && self.vram_dma_claim.committed;
+                let yields_to_claim = bytes[0] == 0x10 && claim.committed;
                 if yields_to_claim {
                     self.stop_retained = Some(self.data_latch);
                 } else {
@@ -130,11 +137,11 @@ impl Cpu {
                     let (instruction, phase, commit) = self.decode_retire(b, n);
                     self.instruction = instruction;
                     if matches!(phase, Phase::Empty) {
-                        return (Some(self.enter_fetch_overlap(commit)), false);
+                        return (Some(self.enter_fetch_overlap(claim, commit)), false);
                     }
                     self.phase = CpuPhase::Execute { phase, step: 0 };
                     self.exec_step = 0;
-                    return (self.next_mcycle(), false);
+                    return (self.next_mcycle(claim), false);
                 }
 
                 (Some(MCycleAction::Read { address: *pc }), true)
@@ -160,7 +167,7 @@ impl Cpu {
                     Some(MCycleAction::Read { address }) => *address,
                     _ => self.pc,
                 };
-                (self.route_fetched_opcode(opcode, fetch_addr), false)
+                (self.route_fetched_opcode(claim, opcode, fetch_addr), false)
             }
 
             // IR retained the yielded STOP operand through the stop spin;
@@ -169,14 +176,14 @@ impl Cpu {
                 let opcode = *opcode;
                 let fetch_addr = self.pc;
                 self.ir_address = fetch_addr;
-                (self.route_fetched_opcode(opcode, fetch_addr), false)
+                (self.route_fetched_opcode(claim, opcode, fetch_addr), false)
             }
 
             Phase::ReadOp { address, action } => match current_step {
                 0 => (Some(MCycleAction::Read { address: *address }), true),
                 _ => {
                     Self::apply_read_action(self, action, self.data_latch);
-                    (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
+                    (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false)
                 }
             },
 
@@ -194,7 +201,7 @@ impl Cpu {
                             true,
                         )
                     }
-                    _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
+                    _ => (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false),
                 }
             }
 
@@ -216,7 +223,7 @@ impl Cpu {
                         true,
                     )
                 }
-                _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
+                _ => (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false),
             },
 
             Phase::Write16 { address, lo, hi } => {
@@ -236,7 +243,7 @@ impl Cpu {
                         }),
                         true,
                     ),
-                    _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
+                    _ => (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false),
                 }
             }
 
@@ -244,7 +251,7 @@ impl Cpu {
                 if current_step < *count {
                     (Some(MCycleAction::Internal { address: 0x0000 }), true)
                 } else {
-                    (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
+                    (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false)
                 }
             }
 
@@ -253,7 +260,7 @@ impl Cpu {
                     Some(MCycleAction::InternalOamBug { address: *address }),
                     true,
                 ),
-                _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
+                _ => (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false),
             },
 
             Phase::Pop { sp, action } => {
@@ -276,10 +283,10 @@ impl Cpu {
                         if has_trailing {
                             (Some(MCycleAction::Internal { address: 0x0000 }), true)
                         } else {
-                            (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
+                            (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false)
                         }
                     }
-                    _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
+                    _ => (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false),
                 }
             }
 
@@ -309,7 +316,7 @@ impl Cpu {
                             true,
                         )
                     }
-                    _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
+                    _ => (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false),
                 }
             }
 
@@ -321,13 +328,13 @@ impl Cpu {
                     self.wz_to_pc = true;
                     (Some(MCycleAction::Internal { address: 0x0000 }), true)
                 } else {
-                    (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
+                    (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false)
                 }
             }
 
             Phase::CondCall { taken, sp, hi, lo } => {
                 if !*taken {
-                    return (Some(self.enter_fetch_overlap(Commit::NoOperation)), false);
+                    return (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false);
                 }
                 let sp = *sp;
                 match current_step {
@@ -354,7 +361,7 @@ impl Cpu {
                             true,
                         )
                     }
-                    _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
+                    _ => (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false),
                 }
             }
 
@@ -363,7 +370,7 @@ impl Cpu {
                 let taken = *taken;
                 match current_step {
                     0 => (Some(MCycleAction::Internal { address: 0x0000 }), true),
-                    1 if !taken => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
+                    1 if !taken => (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false),
                     1 => (Some(MCycleAction::Read { address: sp }), true),
                     2 => {
                         self.scratch = self.data_latch;
@@ -378,7 +385,7 @@ impl Cpu {
                         Self::apply_pop(self, action, self.scratch, self.data_latch, sp);
                         (Some(MCycleAction::Internal { address: 0x0000 }), true)
                     }
-                    _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
+                    _ => (Some(self.enter_fetch_overlap(claim, Commit::NoOperation)), false),
                 }
             }
         }

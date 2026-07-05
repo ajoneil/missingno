@@ -65,6 +65,18 @@ pub trait ConsoleShadow {
     fn dma_cpu_hold(&self) -> bool;
     fn set_dma_cpu_hold(&mut self, held: bool);
 
+    /// A bus master owns the VRAM/external bus this M-cycle, so a CPU access
+    /// starting here waits for release (per-bus wait states, the sibling of the
+    /// whole-bandwidth `dma_cpu_hold`). Computed at each M-boundary.
+    fn bus_suspended(&self) -> bool;
+    fn set_bus_suspended(&mut self, suspended: bool);
+
+    /// The VRAM-DMA trigger's bus claim committed this M-cycle (consumed at the
+    /// next M-cycle pick and then cleared).
+    fn vram_dma_claim(&self) -> VramDmaClaim;
+    fn set_vram_dma_claim(&mut self, claim: VramDmaClaim);
+    fn clear_vram_dma_claim(&mut self);
+
     /// OAM offset whose DMA-deposited byte a VRAM-source bus conflict forces to
     /// `$00`, drained at the M-cycle-boundary fall.
     fn dma_conflict_oam_zero(&self) -> Option<u8>;
@@ -81,6 +93,15 @@ impl ConsoleShadow for () {
         false
     }
     fn set_dma_cpu_hold(&mut self, _held: bool) {}
+    fn bus_suspended(&self) -> bool {
+        false
+    }
+    fn set_bus_suspended(&mut self, _suspended: bool) {}
+    fn vram_dma_claim(&self) -> VramDmaClaim {
+        VramDmaClaim::default()
+    }
+    fn set_vram_dma_claim(&mut self, _claim: VramDmaClaim) {}
+    fn clear_vram_dma_claim(&mut self) {}
     fn dma_conflict_oam_zero(&self) -> Option<u8> {
         None
     }
@@ -831,7 +852,7 @@ impl<M: Model> Console<M> {
     /// block's bus ownership) — the CPU's stop/park is the bus master's,
     /// not a software STOP/HALT.
     pub fn vram_dma_holds_cpu(&self) -> bool {
-        self.model.console_state().dma_cpu_hold() || self.cpu.bus_suspended
+        self.model.console_state().dma_cpu_hold() || self.model.console_state().bus_suspended()
     }
 
     pub fn dma(&self) -> &Dma {
@@ -876,14 +897,20 @@ mod cgb_residual_size {
         pub const CGB_BYTES: usize = 0;
     }
 
-    /// `Cpu` CGB-only fields: `irq.halt_wake_presample`, `bus_suspended`, `vram_dma_claim`, `bus_held`.
+    /// `Cpu` CGB-only residual: `irq.halt_wake_presample` — the halt-wake
+    /// comparator presample latch. It is a CPU interrupt-latch stage (a function
+    /// of `dispatch.latched()`), not a bus-arbitration grant, so it stays on the
+    /// CPU rather than riding the `BusGrants` signal; dead on a DMG build (never
+    /// written under `!HALT_WAKE_SAMPLES_EARLY`). The bus-park/hold/claim bytes
+    /// relocated behind `Model::ConsoleState`.
     mod cpu {
-        pub const CGB_BYTES: usize = 1 + 1 + 2 + 1;
+        pub const CGB_BYTES: usize = 1;
     }
 
-    /// `PipelineRegisters` CGB-only field: `tile_sel_reset_glitch` (`P::TILE_SEL_RESET_GLITCH`).
+    /// `PipelineRegisters` CGB-only storage relocated behind the
+    /// `PpuModel::TileSelGlitch` seam.
     mod pipeline_registers {
-        pub const CGB_BYTES: usize = 2;
+        pub const CGB_BYTES: usize = 0;
     }
 
     /// `StatInterrupt` FF41/FF45 synchroniser DFFs relocated behind the `PpuModel::StatShadow` seam.
@@ -898,6 +925,6 @@ mod cgb_residual_size {
             + cpu::CGB_BYTES
             + pipeline_registers::CGB_BYTES
             + stat_interrupt::CGB_BYTES;
-        assert_eq!(REMAINING, 7, "CGB-only residual byte budget changed");
+        assert_eq!(REMAINING, 1, "CGB-only residual byte budget changed");
     }
 }

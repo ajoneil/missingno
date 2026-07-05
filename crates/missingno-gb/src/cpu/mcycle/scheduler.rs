@@ -3,7 +3,8 @@
 //! `MCycleAction` by dispatching on the CPU's current phase.
 
 use super::super::{Cpu, HaltState, InterruptMasterEnable};
-use super::types::{BusAction, CpuPhase, HaltPhase, MCycleAction, TCycle};
+use super::types::{BusAction, BusGrants, CpuPhase, HaltPhase, MCycleAction, TCycle};
+use crate::VramDmaClaim;
 
 impl Cpu {
     /// Advance one T-cycle. Returns a `BusAction` that the executor
@@ -11,30 +12,30 @@ impl Cpu {
     /// always returns — when an instruction completes, the boundary
     /// flag is set and the first T-cycle of the next instruction is
     /// deferred to the next call.
-    pub fn next_tcycle(&mut self) -> BusAction {
+    pub(crate) fn next_tcycle(&mut self, grants: BusGrants) -> BusAction {
         if !self.mcycle_active {
             // Bus arbitration, M-boundary-quantized: the grant takes effect
             // between M-cycles, so a transaction in flight always completes;
             // one STARTING while the DMA owns the VRAM/external buses waits
             // for release. IO/HRAM/OAM and internal M-cycles proceed
             // concurrently; the ring keeps counting throughout.
-            let action = if self.bus_held {
+            let action = if grants.held {
                 // GDMA owns the full bus bandwidth: passive spin cells, each
                 // an instruction boundary, with no instruction-state advance.
                 self.boundary_flag = true;
                 MCycleAction::Internal { address: self.pc }
             } else {
                 let mut action = if self.parked_action.is_some() {
-                    if self.bus_suspended {
+                    if grants.suspended {
                         MCycleAction::Internal { address: self.pc }
                     } else {
                         self.parked_action.take().expect("checked is_some")
                     }
                 } else {
-                    self.next_mcycle()
+                    self.next_mcycle(grants.claim)
                         .expect("next_mcycle must always return Some (CPU chains at boundaries)")
                 };
-                if self.bus_suspended && self.parked_action.is_none() {
+                if grants.suspended && self.parked_action.is_none() {
                     let targets_bus = match &action {
                         MCycleAction::Read { address } | MCycleAction::Write { address, .. } => {
                             crate::memory::Bus::of(*address).is_some()
@@ -55,9 +56,9 @@ impl Cpu {
             self.current_action = Some(action);
             self.tcycle = TCycle::ZERO;
             self.mcycle_active = true;
-            // Claims are per-M-cycle: the pick above consumed any claim
-            // committed during the M-cycle that just ended.
-            self.vram_dma_claim = crate::VramDmaClaim::default();
+            // Claims are per-M-cycle: the pick above consumed any claim committed
+            // during the M-cycle that just ended; the console clears its stored
+            // claim after this pick returns.
         }
 
         let tcycle = self.tcycle;
@@ -113,7 +114,7 @@ impl Cpu {
     /// selector over post-edge state — `irq_latched.q`,
     /// `dispatch_active.q`, and `irq_pending` have all settled when
     /// this runs.
-    pub(super) fn next_mcycle(&mut self) -> Option<MCycleAction> {
+    pub(super) fn next_mcycle(&mut self, claim: VramDmaClaim) -> Option<MCycleAction> {
         // M_h start: halt-bug-vs-halt-state decision. yoii captured
         // the pre-update_latch dispatch.latched() at this boundary, so
         // IF rises held by the per-bit latch through HALT body's
@@ -139,7 +140,7 @@ impl Cpu {
                         self.exec_step = 0;
                         self.irq.pending_vector_resolve = false;
                         self.boundary_flag = true;
-                        return self.mcycle_isr();
+                        return self.mcycle_isr(claim);
                     }
                 } else {
                     // HALT-bug: PC++ suppression at the next opcode
@@ -158,9 +159,9 @@ impl Cpu {
         }
 
         match &self.phase {
-            CpuPhase::Fetch => self.mcycle_fetch(),
-            CpuPhase::Execute { .. } => self.mcycle_execute(),
-            CpuPhase::InterruptDispatch { .. } => self.mcycle_isr(),
+            CpuPhase::Fetch => self.mcycle_fetch(claim),
+            CpuPhase::Execute { .. } => self.mcycle_execute(claim),
+            CpuPhase::InterruptDispatch { .. } => self.mcycle_isr(claim),
             CpuPhase::Halted(HaltPhase::Spin) => {
                 if self.halt.state == HaltState::Stopped {
                     // STOP idle: no interrupt-wake; resume is external.
@@ -172,7 +173,7 @@ impl Cpu {
                     if dispatch_pending {
                         Some(self.mcycle_halted_entry(HaltPhase::WakeIntake))
                     } else {
-                        self.enter_post_halt_fetch()
+                        self.enter_post_halt_fetch(claim)
                     }
                 } else if self.irq.irq_pending {
                     Some(self.mcycle_halted_entry(HaltPhase::SetupMiss))
@@ -191,7 +192,7 @@ impl Cpu {
                 if dispatch_pending {
                     Some(self.mcycle_halted_entry(HaltPhase::WakeIntake))
                 } else {
-                    self.enter_post_halt_fetch()
+                    self.enter_post_halt_fetch(claim)
                 }
             }
             CpuPhase::Locked => {
@@ -219,9 +220,9 @@ impl Cpu {
                     self.exec_step = 0;
                     self.irq.pending_vector_resolve = false;
                     self.boundary_flag = true;
-                    self.mcycle_isr()
+                    self.mcycle_isr(claim)
                 } else {
-                    self.enter_post_halt_fetch()
+                    self.enter_post_halt_fetch(claim)
                 }
             }
         }

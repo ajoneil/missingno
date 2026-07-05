@@ -3,6 +3,7 @@
 use super::Ppu;
 use super::PpuModel;
 use super::Register;
+use super::TileSelGlitch;
 use super::crossing::CaptureSpec;
 use super::stat_interrupt::InterruptFlags;
 use super::types::control::{Control, ControlFlags};
@@ -112,7 +113,7 @@ impl<P: PpuModel> Ppu<P> {
                     && value & ControlFlags::TILE_ADDRESS_MODE.bits() == 0
                     && !edge_carries_dot_fall;
                 if P::TILE_SEL_RESET_GLITCH && tile_sel_reset {
-                    self.registers.tile_sel_reset_glitch.arm();
+                    self.model.tile_sel_glitch_mut().arm();
                 }
 
                 // The SET-direction sibling substitutes the tile-data bus's frozen

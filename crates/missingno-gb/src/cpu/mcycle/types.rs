@@ -3,6 +3,20 @@
 use super::super::commit::Commit;
 use super::super::instructions::bit_shift::{Carry, Direction};
 use super::super::registers::{Register8, Register16};
+use crate::VramDmaClaim;
+
+// ── Bus-arbitration input signals ───────────────────────────────────────
+
+/// The bus-arbitration lines the console drives into the SM83 for one T-cycle
+/// advance: a bus master's per-bus wait-state (`suspended`) or whole-bandwidth
+/// (`held`) hold, and the VRAM-DMA trigger's per-M-cycle `claim`. Zero on DMG
+/// (no bus master exists), so the DMG monomorphisation reads a constant default.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct BusGrants {
+    pub suspended: bool,
+    pub held: bool,
+    pub claim: VramDmaClaim,
+}
 
 // ── Bus action ──────────────────────────────────────────────────────────
 

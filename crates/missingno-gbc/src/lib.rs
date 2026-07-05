@@ -32,7 +32,7 @@ use missingno_gb::ppu::rendering::Mode;
 use missingno_gb::ppu::types::sprites::{Attributes, ObjAttr};
 use missingno_gb::ppu::{
     CaptureSpec, CartridgeBootHeader, DmgPixel, InterruptFlags, PipelineRegisters, PixelMux, Ppu,
-    PpuModel, StatShadow, resolve_dmg_pixel,
+    PpuModel, StatShadow, TileSelGlitch, resolve_dmg_pixel,
 };
 use missingno_gb::{
     Console, ConsoleShadow, Model, StopAction, VramDmaClaim, WaveRamCoupling, audio::Audio,
@@ -388,6 +388,34 @@ pub struct CgbPpu {
     palette_drawing_synced: bool,
     /// FF41/FF45 → STAT-IRQ-block synchroniser DFFs.
     stat_shadow: SyncedStatCells,
+    /// The mid-Mode-3 LCDC.4-clear TILE_SEL reset glitch cell.
+    tile_sel_glitch: TileSelResetGlitch,
+}
+
+/// The CGB TILE_SEL reset glitch cell: an LCDC.4-clearing write reaches the
+/// tile-data addressing at the crossing-capture dot, so a bitplane read on that
+/// dot returns the tile index byte instead of VRAM data. Live for one dot.
+#[derive(Default)]
+pub struct TileSelResetGlitch {
+    pending: bool,
+    active: bool,
+}
+
+impl TileSelGlitch for TileSelResetGlitch {
+    fn arm(&mut self) {
+        self.pending = true;
+    }
+    fn tick(&mut self) {
+        self.active = self.pending;
+        self.pending = false;
+    }
+    fn active(&self) -> bool {
+        self.active
+    }
+    fn clear(&mut self) {
+        self.pending = false;
+        self.active = false;
+    }
 }
 
 impl PpuModel for CgbPpu {
@@ -433,6 +461,15 @@ impl PpuModel for CgbPpu {
     }
     fn stat_shadow_mut(&mut self) -> &mut SyncedStatCells {
         &mut self.stat_shadow
+    }
+
+    type TileSelGlitch = TileSelResetGlitch;
+
+    fn tile_sel_glitch(&self) -> &TileSelResetGlitch {
+        &self.tile_sel_glitch
+    }
+    fn tile_sel_glitch_mut(&mut self) -> &mut TileSelResetGlitch {
+        &mut self.tile_sel_glitch
     }
 
     fn bg_attribute(vram: &CgbVram, map_offset: u16) -> BgAttribute {
@@ -797,6 +834,8 @@ impl VramDma {
 pub struct CgbConsoleState {
     blackout_anchor: u64,
     dma_cpu_hold: bool,
+    bus_suspended: bool,
+    vram_dma_claim: VramDmaClaim,
     dma_conflict_oam_zero: Option<u8>,
 }
 
@@ -812,6 +851,21 @@ impl ConsoleShadow for CgbConsoleState {
     }
     fn set_dma_cpu_hold(&mut self, held: bool) {
         self.dma_cpu_hold = held;
+    }
+    fn bus_suspended(&self) -> bool {
+        self.bus_suspended
+    }
+    fn set_bus_suspended(&mut self, suspended: bool) {
+        self.bus_suspended = suspended;
+    }
+    fn vram_dma_claim(&self) -> VramDmaClaim {
+        self.vram_dma_claim
+    }
+    fn set_vram_dma_claim(&mut self, claim: VramDmaClaim) {
+        self.vram_dma_claim = claim;
+    }
+    fn clear_vram_dma_claim(&mut self) {
+        self.vram_dma_claim = VramDmaClaim::default();
     }
     fn dma_conflict_oam_zero(&self) -> Option<u8> {
         self.dma_conflict_oam_zero

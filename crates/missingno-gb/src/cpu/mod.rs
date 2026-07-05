@@ -203,10 +203,6 @@ pub struct Cpu {
     pub(super) tcycle: TCycle,
     /// Whether an M-cycle is in flight.
     pub(super) mcycle_active: bool,
-    /// A bus master (CGB VRAM DMA) gates the CPU clock: the scheduler yields
-    /// passive spin M-cycles, deferring instruction progress without touching
-    /// its state. The ring keeps counting (timers/serial are free-running).
-    pub(crate) bus_suspended: bool,
     /// One-shot arbitration at the dispatch's M1 pick: a VRAM-DMA request
     /// standing at the pick makes this dispatch yield its entire tenure to
     /// the block (and any chained block); otherwise the dispatch holds the
@@ -231,21 +227,12 @@ pub struct Cpu {
     /// Bus access selected while a DMA owns its bus: it waits at the pick —
     /// no edge has run — and starts as the next M-cycle when the bus releases.
     pub(crate) parked_action: Option<super::cpu::mcycle::MCycleAction>,
-    /// The DMA bus claim committed during the current M-cycle, cleared at
-    /// each M start. `committed` is what STOP's operand discard-fetch yields
-    /// to; `standing` (already masked by the bus being free) is what kills
-    /// the halt-release fetch's IDU increment.
-    pub(crate) vram_dma_claim: crate::VramDmaClaim,
     /// The operand byte a yielded STOP discard-fetch latched: IR retains it
     /// through the stop spin; resume routes it as a just-fetched opcode.
     pub(super) stop_retained: Option<u8>,
     /// The M-cycle in flight is the first fetch after a halt exit (the
     /// halt-release path drives it); cleared when it routes.
     pub(super) post_halt_fetch: bool,
-    /// A bus master (CGB GDMA) holds every CPU cycle: the scheduler yields
-    /// passive spins without touching instruction or halt state. The
-    /// whole-bandwidth sibling of `bus_suspended`'s per-bus wait states.
-    pub(crate) bus_held: bool,
     /// Whether the next rise() should fire the M-cycle-boundary block.
     /// Decoupled from `mcycle_active` so the skip-boot constructor can
     /// encode "M-cycle in flight, but the opening CLK9↑'s boundary work
@@ -329,12 +316,9 @@ impl Cpu {
             },
             tcycle: TCycle::ONE,
             mcycle_active: true,
-            bus_suspended: false,
             parked_action: None,
-            vram_dma_claim: crate::VramDmaClaim::default(),
             stop_retained: None,
             post_halt_fetch: false,
-            bus_held: false,
             boundary_pending: false,
             current_action: Some(MCycleAction::Read { address: 0x0100 }),
             exec_step: 1,
@@ -407,17 +391,14 @@ impl Cpu {
             instruction: instructions::Instruction::NoOperation,
             tcycle: TCycle::ZERO,
             mcycle_active: false,
-            bus_suspended: false,
             dispatch_parks_behind_dma: false,
             dispatch_entry_sampled: false,
             dma_request_stood_prev_boundary: false,
             dma_request_stood_prev2_boundary: false,
             dma_arbiter_at_boundary: false,
             parked_action: None,
-            vram_dma_claim: crate::VramDmaClaim::default(),
             stop_retained: None,
             post_halt_fetch: false,
-            bus_held: false,
             boundary_pending: true,
             current_action: None,
             exec_step: 0,
@@ -638,7 +619,6 @@ impl Cpu {
     /// Call at an instruction boundary; halt state is untouched — the spin
     /// is the scheduler's.
     pub fn begin_bus_hold(&mut self) {
-        self.bus_held = true;
         // The next-opcode overlap prefetch is in flight; its read latches this
         // M-cycle (with the pre-transfer byte). Arm the latch to retain it so
         // the post-hold fetch decodes it rather than re-reading.
@@ -655,7 +635,6 @@ impl Cpu {
     /// cancelled by the bus master taking the cycle; it re-issues from PC.
     /// A stop spin held through the hold stays a stop spin.
     pub fn end_bus_hold(&mut self) {
-        self.bus_held = false;
         self.phase = if self.halt.state == HaltState::Stopped {
             CpuPhase::Halted(HaltPhase::Spin)
         } else {
