@@ -19,6 +19,7 @@ use super::draw::shifters::BgShifter;
 use super::draw::sprite_fetch::{SpriteFetch, SpriteState};
 use super::draw::sprite_trigger::SpriteTrigger;
 use super::draw::window_control::WindowControl;
+use super::scan::oam_scan::OFF_SCREEN_SPRITE_X;
 use super::scan::scanner::SpriteScanner;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -884,7 +885,7 @@ impl<P: PpuModel> Rendering<P> {
 
     /// FEPO: any unfetched sprite's X matches the pixel counter. Feeds VYBO/XENA/TEKY.
     /// Collapses XYLO/AROR/per-sprite-decoders/FOVE/FEFY into the store's
-    /// precomputed comparator bank; off-screen X≥168 excluded.
+    /// precomputed comparator bank; off-screen X excluded.
     fn fepo(&self, sprites_enabled: bool) -> bool {
         if !sprites_enabled && P::FETCH_TRIGGER_GATED_BY_OBJ_ENABLE {
             return false;
@@ -907,7 +908,7 @@ impl<P: PpuModel> Rendering<P> {
             if sprites.fetched & (1 << i) != 0 {
                 continue;
             }
-            if sprites.entries[i].x == match_x && sprites.entries[i].x < 168 {
+            if sprites.entries[i].x == match_x && sprites.entries[i].x < OFF_SCREEN_SPRITE_X {
                 return true;
             }
         }
@@ -925,7 +926,7 @@ impl<P: PpuModel> Rendering<P> {
                 continue;
             }
             let entry = &sprites.entries[i];
-            if entry.x == match_x && entry.x < 168 {
+            if entry.x == match_x && entry.x < OFF_SCREEN_SPRITE_X {
                 self.sprite_state =
                     SpriteState::Fetching(SpriteFetch::new_fetching(*entry, i as u8));
                 break;

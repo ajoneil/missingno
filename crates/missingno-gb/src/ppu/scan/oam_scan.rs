@@ -5,6 +5,10 @@ use crate::ppu::types::sprites::SpriteId;
 
 pub(in crate::ppu) const MAX_SPRITES_PER_LINE: usize = 10;
 
+/// Sprite X at or above this never matches — the per-sprite comparator
+/// decoder has no range beyond the 160-pixel line plus the 8-pixel offset.
+pub(in crate::ppu) const OFF_SCREEN_SPRITE_X: u8 = 168;
+
 /// FETO_SCAN_DONE AND4 decode of scan-counter bits 0/1/2/5. Equivalent to `entry == 39`
 /// since the counter freezes at 39 (bits 3/4 don't reach this gate's input).
 const FETO_SCAN_DONE_DECODE: u8 = 0b100111;
@@ -45,9 +49,9 @@ impl SpriteStore {
     }
 
     /// Register a freshly scanned slot in the comparator bank. Off-screen
-    /// X ≥ 168 never matches (per-sprite decoder range).
+    /// X never matches (per-sprite decoder range).
     pub(in crate::ppu) fn note_slot_added(&mut self, x: u8) {
-        if x < 168 {
+        if x < OFF_SCREEN_SPRITE_X {
             self.match_mask[(x >> 6) as usize] |= 1 << (x & 63);
         }
     }
@@ -60,7 +64,7 @@ impl SpriteStore {
         for i in 0..self.count as usize {
             if self.fetched & (1 << i) == 0 {
                 let x = self.entries[i].x;
-                if x < 168 {
+                if x < OFF_SCREEN_SPRITE_X {
                     self.match_mask[(x >> 6) as usize] |= 1 << (x & 63);
                 }
             }
