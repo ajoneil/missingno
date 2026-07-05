@@ -459,6 +459,7 @@ impl<A: ApuSpec> Audio<A> {
         use channels::{
             Enabled,
             envelope::Envelope,
+            length::LengthCounter,
             noise::NoiseChannel,
             pulse::PulseChannel,
             pulse_sweep::{PulseSweepChannel, Sweep},
@@ -475,7 +476,10 @@ impl<A: ApuSpec> Audio<A> {
                 sweep: Sweep(snap.ch1_sweep),
                 waveform_and_initial_length: WaveformAndInitialLength(snap.ch1_duty_len),
                 volume_and_envelope: VolumeAndEnvelope(snap.ch1_vol_env),
-                length_enabled: snap.ch1_length_enabled,
+                length: LengthCounter {
+                    enabled: snap.ch1_length_enabled,
+                    counter: 0,
+                },
                 period: Signed11(snap.ch1_period),
                 prescaler: Prescaler::default(),
                 divider: PeriodDivider::default(),
@@ -488,7 +492,6 @@ impl<A: ApuSpec> Audio<A> {
                     timer: snap.ch1_envelope_timer,
                     ..Envelope::default()
                 },
-                length_counter: 0,
                 shadow_frequency: snap.ch1_period,
                 sweep_timer: snap.ch1_sweep_timer,
                 sweep_enabled: snap.ch1_sweep_enabled,
@@ -508,7 +511,10 @@ impl<A: ApuSpec> Audio<A> {
                 },
                 waveform_and_initial_length: WaveformAndInitialLength(snap.ch2_duty_len),
                 volume_and_envelope: VolumeAndEnvelope(snap.ch2_vol_env),
-                length_enabled: snap.ch2_length_enabled,
+                length: LengthCounter {
+                    enabled: snap.ch2_length_enabled,
+                    counter: 0,
+                },
                 period: Signed11(snap.ch2_period),
                 prescaler: Prescaler::default(),
                 divider: PeriodDivider::default(),
@@ -521,7 +527,6 @@ impl<A: ApuSpec> Audio<A> {
                     timer: snap.ch2_envelope_timer,
                     ..Envelope::default()
                 },
-                length_counter: 0,
                 output_dirty: true,
             },
             ch3: WaveChannel {
@@ -532,10 +537,12 @@ impl<A: ApuSpec> Audio<A> {
                 },
                 dac_enabled: snap.ch3_dac & 0x80 != 0,
                 volume: WaveVolume(snap.ch3_vol),
-                length_enabled: snap.ch3_length_enabled,
+                length: LengthCounter {
+                    enabled: snap.ch3_length_enabled,
+                    counter: 0,
+                },
                 period: Signed11(snap.ch3_period),
                 ram: wave_ram,
-                length_counter: 0,
                 ch3_2mhz: false,
                 frequency_timer: 0,
                 wave_position: 0,
@@ -554,7 +561,10 @@ impl<A: ApuSpec> Audio<A> {
                     output_right: true,
                 },
                 volume_and_envelope: VolumeAndEnvelope(snap.ch4_vol_env),
-                length_enabled: snap.ch4_length_enabled,
+                length: LengthCounter {
+                    enabled: snap.ch4_length_enabled,
+                    counter: 0,
+                },
                 frequency_and_randomness: FrequencyAndRandomness(snap.ch4_freq),
                 divider: 0,
                 divider_subcounter: 0,
@@ -571,7 +581,6 @@ impl<A: ApuSpec> Audio<A> {
                     timer: snap.ch4_envelope_timer,
                     ..Envelope::default()
                 },
-                length_counter: 0,
                 output_dirty: true,
             },
         };

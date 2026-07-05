@@ -1,6 +1,7 @@
 use super::super::{ApuSpec, Audio};
 use super::{
     Enabled,
+    length::LengthCounter,
     registers::{PeriodHighAndControl, Signed11},
 };
 
@@ -71,10 +72,9 @@ pub struct WaveChannel {
     pub enabled: Enabled,
     pub dac_enabled: bool,
     pub volume: Volume,
-    pub length_enabled: bool,
+    pub length: LengthCounter<256>,
     pub period: Signed11,
     pub ram: [u8; 16],
-    pub length_counter: u16,
 
     /// `cery` /2 prescaler — toggles on every master-clock rise;
     /// held at 0 while `apu_reset = 1`.
@@ -115,10 +115,9 @@ impl Default for WaveChannel {
             },
             dac_enabled: false,
             volume: Volume(0x9f),
-            length_enabled: false,
+            length: LengthCounter::default(),
             period: (-1).into(),
             ram: [0; 16],
-            length_counter: 0,
 
             ch3_2mhz: false,
             frequency_timer: 0,
@@ -138,15 +137,17 @@ impl Default for WaveChannel {
 impl WaveChannel {
     pub fn reset(&mut self) {
         let ram = self.ram; // Wave RAM is preserved across APU power off
-        let length_counter = self.length_counter; // DMG: length timers preserved on power-off
+        let length_counter = self.length.counter; // DMG: length timers preserved on power-off
         *self = Self {
             enabled: Enabled::disabled(),
             dac_enabled: false,
             volume: Volume(0),
-            length_enabled: false,
+            length: LengthCounter {
+                enabled: false,
+                counter: length_counter,
+            },
             period: 0.into(),
             ram,
-            length_counter,
 
             ch3_2mhz: false,
             frequency_timer: 0,
@@ -174,7 +175,7 @@ impl WaveChannel {
                 }
             }
             Register::PeriodLow => 0xff,
-            Register::PeriodHighAndControl => PeriodHighAndControl::read(self.length_enabled),
+            Register::PeriodHighAndControl => PeriodHighAndControl::read(self.length.enabled),
         }
     }
 
@@ -183,7 +184,7 @@ impl WaveChannel {
         match register {
             Register::Volume => self.volume = Volume(value),
             Register::Length => {
-                self.length_counter = 256 - value as u16;
+                self.length.load(value as u16);
             }
             Register::DacEnabled => {
                 self.dac_enabled = value & 0b1000_0000 != 0;
@@ -203,22 +204,16 @@ impl WaveChannel {
 
                 // doda = NOR(fugo, bufy_256hz, ff23_d6_n): length-enable
                 // 0→1 rises doda (one extra length count) iff caru is low.
-                let was_length_enabled = self.length_enabled;
-                self.length_enabled = ctrl.enable_length();
-
-                if caru_low && !was_length_enabled && self.length_enabled && self.length_counter > 0
+                if self
+                    .length
+                    .enable_glitch(caru_low, ctrl.enable_length(), ctrl.trigger())
                 {
-                    self.length_counter -= 1;
-                    if self.length_counter == 0 && !ctrl.trigger() {
-                        self.enabled.enabled = false;
-                    }
+                    self.enabled.enabled = false;
                 }
 
                 if ctrl.trigger() {
                     self.trigger();
-                    if caru_low && self.length_enabled && self.length_counter == 256 {
-                        self.length_counter = 255;
-                    }
+                    self.length.trigger_enable_fixup(caru_low);
                 }
             }
         }
@@ -230,9 +225,7 @@ impl WaveChannel {
         self.trigger_sync.bit_latch = true;
 
         self.enabled.enabled = true;
-        if self.length_counter == 0 {
-            self.length_counter = 256;
-        }
+        self.length.trigger_reload();
 
         if !self.dac_enabled {
             self.enabled.enabled = false;
@@ -376,12 +369,9 @@ impl WaveChannel {
     }
 
     pub fn tick_length(&mut self) {
-        if self.length_enabled && self.length_counter > 0 {
-            self.length_counter -= 1;
-            if self.length_counter == 0 {
-                self.enabled.enabled = false;
-                self.output_dirty = true;
-            }
+        if self.length.tick() {
+            self.enabled.enabled = false;
+            self.output_dirty = true;
         }
     }
 

@@ -1,6 +1,7 @@
 use super::{
     Enabled,
     envelope::Envelope,
+    length::LengthCounter,
     registers::{Prescaler, VolumeAndEnvelope},
 };
 
@@ -16,7 +17,7 @@ pub enum Register {
 pub struct NoiseChannel {
     pub enabled: Enabled,
     pub volume_and_envelope: VolumeAndEnvelope,
-    pub length_enabled: bool,
+    pub length: LengthCounter<64>,
     pub frequency_and_randomness: FrequencyAndRandomness,
 
     /// 14-bit shift divider (CEXO…ESEP). The NR43 shift code combinationally
@@ -55,7 +56,6 @@ pub struct NoiseChannel {
     pub skip_first_clock: bool,
     pub lfsr: u16,
     pub envelope: Envelope,
-    pub length_counter: u16,
     /// An input to `digital_sample()` / the mix may have changed.
     pub output_dirty: bool,
 }
@@ -69,7 +69,7 @@ impl Default for NoiseChannel {
                 output_right: false,
             },
             volume_and_envelope: VolumeAndEnvelope(0),
-            length_enabled: false,
+            length: LengthCounter::default(),
             frequency_and_randomness: FrequencyAndRandomness(0),
 
             divider: 0,
@@ -84,7 +84,6 @@ impl Default for NoiseChannel {
             skip_first_clock: false,
             lfsr: 0x7fff,
             envelope: Envelope::default(),
-            length_counter: 0,
             output_dirty: true,
         }
     }
@@ -92,10 +91,13 @@ impl Default for NoiseChannel {
 
 impl NoiseChannel {
     pub fn reset(&mut self) {
-        let length_counter = self.length_counter; // DMG: NR41 length timer preserved on power-off
+        let length_counter = self.length.counter; // DMG: NR41 length timer preserved on power-off
         self.enabled = Enabled::disabled();
         self.volume_and_envelope = VolumeAndEnvelope(0);
-        self.length_enabled = false;
+        self.length = LengthCounter {
+            enabled: false,
+            counter: length_counter,
+        };
         self.frequency_and_randomness = FrequencyAndRandomness(0);
 
         self.divider = 0;
@@ -109,7 +111,6 @@ impl NoiseChannel {
         self.skip_first_clock = false;
         self.lfsr = 0x7fff;
         self.envelope = Envelope::default();
-        self.length_counter = length_counter;
         self.output_dirty = true;
     }
 
@@ -118,7 +119,7 @@ impl NoiseChannel {
             Register::LengthTimer => 0xff,
             Register::VolumeAndEnvelope => self.volume_and_envelope.0,
             Register::FrequencyAndRandomness => self.frequency_and_randomness.0,
-            Register::Control => Control::read(self.length_enabled),
+            Register::Control => Control::read(self.length.enabled),
         }
     }
 
@@ -132,12 +133,13 @@ impl NoiseChannel {
         self.output_dirty = true;
         match register {
             Register::LengthTimer => {
-                self.length_counter = 64 - (value & 0x3f) as u16;
+                self.length.load((value & 0x3f) as u16);
             }
             Register::VolumeAndEnvelope => {
                 // Write-strobe transient (CH4 mirror of CH1/CH2): one +1
                 // volume clock iff the old pace was 0, free 4-bit wrap.
-                self.envelope.zombie_bump(self.volume_and_envelope.sweep_pace());
+                self.envelope
+                    .zombie_bump(self.volume_and_envelope.sweep_pace());
                 self.volume_and_envelope = VolumeAndEnvelope(value);
                 // pace=0 → JOPA async-reset; any armed kyvo is dropped before horu↑.
                 if self.volume_and_envelope.sweep_pace() == 0 {
@@ -188,22 +190,16 @@ impl NoiseChannel {
 
                 // gepy = NOR(fexu, bufy_256hz, ff1e_d6_n): length-enable
                 // 0→1 rises gepy (one extra length count) iff caru is low.
-                let was_length_enabled = self.length_enabled;
-                self.length_enabled = ctrl.enable_length();
-
-                if caru_low && !was_length_enabled && self.length_enabled && self.length_counter > 0
+                if self
+                    .length
+                    .enable_glitch(caru_low, ctrl.enable_length(), ctrl.trigger())
                 {
-                    self.length_counter -= 1;
-                    if self.length_counter == 0 && !ctrl.trigger() {
-                        self.enabled.enabled = false;
-                    }
+                    self.enabled.enabled = false;
                 }
 
                 if ctrl.trigger() {
                     self.trigger();
-                    if caru_low && self.length_enabled && self.length_counter == 64 {
-                        self.length_counter = 63;
-                    }
+                    self.length.trigger_enable_fixup(caru_low);
                 }
             }
         }
@@ -212,9 +208,7 @@ impl NoiseChannel {
     pub fn trigger(&mut self) {
         let was_running = self.enabled.enabled;
         self.enabled.enabled = true;
-        if self.length_counter == 0 {
-            self.length_counter = 64;
-        }
+        self.length.trigger_reload();
         // The divider restarts from 0; its first tap lands at period/2. The
         // cold synchroniser adds a hama-phase-dependent hold so the first tap is
         // at the measured cold-load (sync_delay + period/2): mid-cell / code 0
@@ -327,12 +321,9 @@ impl NoiseChannel {
     }
 
     pub fn tick_length(&mut self) {
-        if self.length_enabled && self.length_counter > 0 {
-            self.length_counter -= 1;
-            if self.length_counter == 0 {
-                self.enabled.enabled = false;
-                self.output_dirty = true;
-            }
+        if self.length.tick() {
+            self.enabled.enabled = false;
+            self.output_dirty = true;
         }
     }
 

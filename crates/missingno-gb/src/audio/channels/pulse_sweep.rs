@@ -1,6 +1,7 @@
 use super::{
     Enabled,
     envelope::Envelope,
+    length::LengthCounter,
     registers::{
         PeriodDivider, PeriodHighAndControl, Prescaler, Signed11, VolumeAndEnvelope,
         WaveformAndInitialLength,
@@ -29,7 +30,7 @@ pub struct PulseSweepChannel {
     pub sweep: Sweep,
     pub waveform_and_initial_length: WaveformAndInitialLength,
     pub volume_and_envelope: VolumeAndEnvelope,
-    pub length_enabled: bool,
+    pub length: LengthCounter<64>,
     pub period: Signed11,
 
     pub prescaler: Prescaler,
@@ -51,7 +52,6 @@ pub struct PulseSweepChannel {
     /// per ch1_1mhz↑); 0 elsewhere, so DMG keeps the single-cycle settle.
     pub sweep_load_hold: u8,
     pub envelope: Envelope,
-    pub length_counter: u16,
     pub shadow_frequency: u16,
     pub sweep_timer: u8,
     pub sweep_enabled: bool,
@@ -97,7 +97,7 @@ impl Default for PulseSweepChannel {
             sweep: Sweep(0x80),
             waveform_and_initial_length: WaveformAndInitialLength(0xbf),
             volume_and_envelope: VolumeAndEnvelope(0xf3),
-            length_enabled: false,
+            length: LengthCounter::default(),
             period: Signed11(0x7C1),
             prescaler: Prescaler { counter: 1 },
             divider: PeriodDivider { counter: 0x7F9 },
@@ -111,7 +111,6 @@ impl Default for PulseSweepChannel {
                 stopped: true,
                 ..Envelope::default()
             },
-            length_counter: 0,
             shadow_frequency: 0,
             sweep_timer: 0,
             sweep_enabled: false,
@@ -128,13 +127,16 @@ impl Default for PulseSweepChannel {
 
 impl PulseSweepChannel {
     pub fn reset(&mut self) {
-        let length_counter = self.length_counter; // DMG: length timers preserved on power-off
+        let length_counter = self.length.counter; // DMG: length timers preserved on power-off
         *self = Self {
             enabled: Enabled::disabled(),
             sweep: Sweep(0),
             waveform_and_initial_length: WaveformAndInitialLength(0),
             volume_and_envelope: VolumeAndEnvelope(0),
-            length_enabled: false,
+            length: LengthCounter {
+                enabled: false,
+                counter: length_counter,
+            },
             period: (0).into(),
 
             prescaler: Prescaler::default(),
@@ -145,7 +147,6 @@ impl PulseSweepChannel {
             divider_load_settle: false,
             sweep_load_hold: 0,
             envelope: Envelope::default(),
-            length_counter,
             shadow_frequency: 0,
             sweep_timer: 0,
             sweep_enabled: false,
@@ -165,7 +166,7 @@ impl PulseSweepChannel {
             Register::Volume => self.volume_and_envelope.0,
             Register::PeriodSweep => self.sweep.0 | 0x80,
             Register::PeriodLow => 0xff,
-            Register::PeriodHighAndControl => PeriodHighAndControl::read(self.length_enabled),
+            Register::PeriodHighAndControl => PeriodHighAndControl::read(self.length.enabled),
         }
     }
 
@@ -174,7 +175,8 @@ impl PulseSweepChannel {
         match register {
             Register::WaveformAndInitialLength => {
                 self.waveform_and_initial_length = WaveformAndInitialLength(value);
-                self.length_counter = 64 - self.waveform_and_initial_length.initial_length() as u16;
+                self.length
+                    .load(self.waveform_and_initial_length.initial_length() as u16);
             }
             Register::Volume => {
                 // Write-strobe transient: the pace bits read 1 while the
@@ -230,22 +232,16 @@ impl PulseSweepChannel {
 
                 // capy = NOR(cero, bufy_256hz, ff14_d6_n): length-enable
                 // 0→1 rises capy (one extra length count) iff caru is low.
-                let was_length_enabled = self.length_enabled;
-                self.length_enabled = ctrl.enable_length();
-
-                if caru_low && !was_length_enabled && self.length_enabled && self.length_counter > 0
+                if self
+                    .length
+                    .enable_glitch(caru_low, ctrl.enable_length(), ctrl.trigger())
                 {
-                    self.length_counter -= 1;
-                    if self.length_counter == 0 && !ctrl.trigger() {
-                        self.enabled.enabled = false;
-                    }
+                    self.enabled.enabled = false;
                 }
 
                 if ctrl.trigger() {
                     self.trigger();
-                    if caru_low && self.length_enabled && self.length_counter == 64 {
-                        self.length_counter = 63;
-                    }
+                    self.length.trigger_enable_fixup(caru_low);
                 }
             }
         }
@@ -259,9 +255,7 @@ impl PulseSweepChannel {
         // enabling case to the reload arm.
         let was_running = self.enabled.enabled;
         self.enabled.enabled = true;
-        if self.length_counter == 0 {
-            self.length_counter = 64;
-        }
+        self.length.trigger_reload();
         // Arm the ch1_restart sync: the reload applies at the next
         // ch1_1mhz↑, not on this write edge. A coincident natural
         // overflow on that wrap is suppressed (dyru async-resets
@@ -392,12 +386,9 @@ impl PulseSweepChannel {
     }
 
     pub fn tick_length(&mut self) {
-        if self.length_enabled && self.length_counter > 0 {
-            self.length_counter -= 1;
-            if self.length_counter == 0 {
-                self.enabled.enabled = false;
-                self.output_dirty = true;
-            }
+        if self.length.tick() {
+            self.enabled.enabled = false;
+            self.output_dirty = true;
         }
     }
 
@@ -412,8 +403,10 @@ impl PulseSweepChannel {
     /// next horu_512hz↑ sample so a same-step NR12 pace=0 write can
     /// clear `kyvo` and suppress the fire (CH1 mirror of CH2).
     pub fn tick_envelope_counter(&mut self) {
-        self.envelope
-            .tick_counter(self.volume_and_envelope.sweep_pace(), self.divider_load_settle);
+        self.envelope.tick_counter(
+            self.volume_and_envelope.sweep_pace(),
+            self.divider_load_settle,
+        );
     }
 
     /// horu_512hz↑ edge (every fs step transition). Drains `kyvo` into

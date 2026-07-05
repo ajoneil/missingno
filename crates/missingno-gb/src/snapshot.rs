@@ -132,23 +132,23 @@ pub fn capture_apu(gb: &GameBoy) -> ApuSnapshot {
         ch1_duty_len: ch.ch1.waveform_and_initial_length.0,
         ch1_vol_env: ch.ch1.volume_and_envelope.0,
         ch1_freq_lo: ch.ch1.period.0 as u8,
-        ch1_freq_hi: (ch.ch1.period.0 >> 8) as u8 | if ch.ch1.length_enabled { 0x40 } else { 0 },
+        ch1_freq_hi: (ch.ch1.period.0 >> 8) as u8 | if ch.ch1.length.enabled { 0x40 } else { 0 },
 
         ch2_duty_len: ch.ch2.waveform_and_initial_length.0,
         ch2_vol_env: ch.ch2.volume_and_envelope.0,
         ch2_freq_lo: ch.ch2.period.0 as u8,
-        ch2_freq_hi: (ch.ch2.period.0 >> 8) as u8 | if ch.ch2.length_enabled { 0x40 } else { 0 },
+        ch2_freq_hi: (ch.ch2.period.0 >> 8) as u8 | if ch.ch2.length.enabled { 0x40 } else { 0 },
 
         ch3_dac: if ch.ch3.dac_enabled { 0x80 } else { 0 },
         ch3_len: gb.peek(0xFF1B),
         ch3_vol: ch.ch3.volume.0,
         ch3_freq_lo: ch.ch3.period.0 as u8,
-        ch3_freq_hi: (ch.ch3.period.0 >> 8) as u8 | if ch.ch3.length_enabled { 0x40 } else { 0 },
+        ch3_freq_hi: (ch.ch3.period.0 >> 8) as u8 | if ch.ch3.length.enabled { 0x40 } else { 0 },
 
         ch4_len: gb.peek(0xFF20),
         ch4_vol_env: ch.ch4.volume_and_envelope.0,
         ch4_freq: ch.ch4.frequency_and_randomness.0,
-        ch4_control: if ch.ch4.length_enabled { 0x40 } else { 0 },
+        ch4_control: if ch.ch4.length.enabled { 0x40 } else { 0 },
 
         frame_sequencer_step: audio.frame_sequencer_step,
         prev_div_apu_bit: audio.prev_div_apu_bit,
@@ -158,17 +158,17 @@ pub fn capture_apu(gb: &GameBoy) -> ApuSnapshot {
         ch1_sweep_timer: ch.ch1.sweep_timer,
         ch1_sweep_enabled: ch.ch1.sweep_enabled,
         ch1_sweep_negate_used: ch.ch1.sweep_negate_used,
-        ch1_length_enabled: ch.ch1.length_enabled,
+        ch1_length_enabled: ch.ch1.length.enabled,
 
         ch2_period: ch.ch2.period.0,
         ch2_envelope_timer: ch.ch2.envelope.timer,
-        ch2_length_enabled: ch.ch2.length_enabled,
+        ch2_length_enabled: ch.ch2.length.enabled,
 
         ch3_period: ch.ch3.period.0,
-        ch3_length_enabled: ch.ch3.length_enabled,
+        ch3_length_enabled: ch.ch3.length.enabled,
 
         ch4_envelope_timer: ch.ch4.envelope.timer,
-        ch4_length_enabled: ch.ch4.length_enabled,
+        ch4_length_enabled: ch.ch4.length.enabled,
     }
 }
 

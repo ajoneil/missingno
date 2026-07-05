@@ -1,6 +1,7 @@
 use super::{
     Enabled,
     envelope::Envelope,
+    length::LengthCounter,
     registers::{
         PeriodDivider, PeriodHighAndControl, Prescaler, Signed11, VolumeAndEnvelope,
         WaveformAndInitialLength,
@@ -27,7 +28,7 @@ pub struct PulseChannel {
     pub enabled: Enabled,
     pub waveform_and_initial_length: WaveformAndInitialLength,
     pub volume_and_envelope: VolumeAndEnvelope,
-    pub length_enabled: bool,
+    pub length: LengthCounter<64>,
     pub period: Signed11,
 
     pub prescaler: Prescaler,
@@ -47,7 +48,6 @@ pub struct PulseChannel {
     /// divider DFFs settle out of load mode (CH1/CH2 mirror).
     pub divider_load_settle: bool,
     pub envelope: Envelope,
-    pub length_counter: u16,
     /// An input to `digital_sample()` / the mix may have changed.
     pub output_dirty: bool,
 }
@@ -64,7 +64,7 @@ impl Default for PulseChannel {
             },
             waveform_and_initial_length: WaveformAndInitialLength(0x3f),
             volume_and_envelope: VolumeAndEnvelope(0),
-            length_enabled: false,
+            length: LengthCounter::default(),
             period: Signed11(0), // CH2 NR23/NR24 never written by boot ROM; acc_d = 0
 
             prescaler: Prescaler::default(),
@@ -75,7 +75,6 @@ impl Default for PulseChannel {
             pending_trigger_sync: 0,
             divider_load_settle: false,
             envelope: Envelope::default(),
-            length_counter: 0,
             output_dirty: true,
         }
     }
@@ -83,12 +82,15 @@ impl Default for PulseChannel {
 
 impl PulseChannel {
     pub fn reset(&mut self) {
-        let length_counter = self.length_counter; // DMG: length timers preserved on power-off
+        let length_counter = self.length.counter; // DMG: length timers preserved on power-off
         *self = Self {
             enabled: Enabled::disabled(),
             waveform_and_initial_length: WaveformAndInitialLength(0),
             volume_and_envelope: VolumeAndEnvelope(0),
-            length_enabled: false,
+            length: LengthCounter {
+                enabled: false,
+                counter: length_counter,
+            },
             period: (0).into(),
 
             prescaler: Prescaler::default(),
@@ -99,7 +101,6 @@ impl PulseChannel {
             pending_trigger_sync: 0,
             divider_load_settle: false,
             envelope: Envelope::default(),
-            length_counter,
             output_dirty: true,
         };
     }
@@ -109,7 +110,7 @@ impl PulseChannel {
             Register::WaveformAndInitialLength => self.waveform_and_initial_length.0 | 0x3F,
             Register::VolumeAndEnvelope => self.volume_and_envelope.0,
             Register::PeriodLow => 0xff,
-            Register::PeriodHighAndControl => PeriodHighAndControl::read(self.length_enabled),
+            Register::PeriodHighAndControl => PeriodHighAndControl::read(self.length.enabled),
         }
     }
 
@@ -118,7 +119,8 @@ impl PulseChannel {
         match register {
             Register::WaveformAndInitialLength => {
                 self.waveform_and_initial_length = WaveformAndInitialLength(value);
-                self.length_counter = 64 - self.waveform_and_initial_length.initial_length() as u16;
+                self.length
+                    .load(self.waveform_and_initial_length.initial_length() as u16);
             }
             Register::VolumeAndEnvelope => {
                 // Write-strobe transient: the pace bits read 1 while the
@@ -157,22 +159,16 @@ impl PulseChannel {
 
                 // deme = NOR(cyre, bufy_256hz, ff19_d6_n): length-enable
                 // 0→1 rises deme (one extra length count) iff caru is low.
-                let was_length_enabled = self.length_enabled;
-                self.length_enabled = ctrl.enable_length();
-
-                if caru_low && !was_length_enabled && self.length_enabled && self.length_counter > 0
+                if self
+                    .length
+                    .enable_glitch(caru_low, ctrl.enable_length(), ctrl.trigger())
                 {
-                    self.length_counter -= 1;
-                    if self.length_counter == 0 && !ctrl.trigger() {
-                        self.enabled.enabled = false;
-                    }
+                    self.enabled.enabled = false;
                 }
 
                 if ctrl.trigger() {
                     self.trigger();
-                    if caru_low && self.length_enabled && self.length_counter == 64 {
-                        self.length_counter = 63;
-                    }
+                    self.length.trigger_enable_fixup(caru_low);
                 }
             }
         }
@@ -184,9 +180,7 @@ impl PulseChannel {
         // no +1. `2` flags the enabling case.
         let was_running = self.enabled.enabled;
         self.enabled.enabled = true;
-        if self.length_counter == 0 {
-            self.length_counter = 64;
-        }
+        self.length.trigger_reload();
         // Arm the ch2_restart sync: the reload applies at the next
         // ch2_1mhz↑, not on this write edge.
         self.pending_trigger_sync = if was_running { 1 } else { 2 };
@@ -238,12 +232,9 @@ impl PulseChannel {
     }
 
     pub fn tick_length(&mut self) {
-        if self.length_enabled && self.length_counter > 0 {
-            self.length_counter -= 1;
-            if self.length_counter == 0 {
-                self.enabled.enabled = false;
-                self.output_dirty = true;
-            }
+        if self.length.tick() {
+            self.enabled.enabled = false;
+            self.output_dirty = true;
         }
     }
 
@@ -258,8 +249,10 @@ impl PulseChannel {
     /// next horu_512hz↑ sample so a same-step NR22 pace=0 write can
     /// clear `kyvo` and suppress the fire.
     pub fn tick_envelope_counter(&mut self) {
-        self.envelope
-            .tick_counter(self.volume_and_envelope.sweep_pace(), self.divider_load_settle);
+        self.envelope.tick_counter(
+            self.volume_and_envelope.sweep_pace(),
+            self.divider_load_settle,
+        );
     }
 
     /// horu_512hz↑ edge (every fs step transition). Drains `kyvo` into
