@@ -8,6 +8,7 @@ mod cartridge_rw;
 mod headless;
 mod link_cable;
 mod patch;
+mod printer;
 mod render;
 mod trace;
 
