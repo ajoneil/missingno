@@ -34,6 +34,10 @@ pub struct IndexedFrame {
     /// Row-major palette indices, `width * height` entries.
     pub pixels: std::sync::Arc<[u8]>,
     pub palette: std::sync::Arc<[RGB8]>,
+    /// How wide one pixel displays relative to its height — a display-side
+    /// calibratable stage, derived from the system's dot clock on an NTSC
+    /// 4:3 screen.
+    pub pixel_aspect: f32,
 }
 
 impl IndexedFrame {
@@ -42,12 +46,18 @@ impl IndexedFrame {
         not(any(feature = "vcs", feature = "sms", feature = "nes")),
         allow(dead_code)
     )]
-    pub fn blank(width: u32, height: u32, palette: std::sync::Arc<[RGB8]>) -> Self {
+    pub fn blank(
+        width: u32,
+        height: u32,
+        pixel_aspect: f32,
+        palette: std::sync::Arc<[RGB8]>,
+    ) -> Self {
         IndexedFrame {
             width,
             height,
             pixels: vec![0; (width * height) as usize].into(),
             palette,
+            pixel_aspect,
         }
     }
 
@@ -198,6 +208,22 @@ impl ScreenView {
         match &self.indexed {
             Some(frame) => (frame.width, frame.height),
             None => (screen::PIXELS_PER_LINE as u32, screen::NUM_SCANLINES as u32),
+        }
+    }
+
+    /// Widget dimensions filling the available space: indexed frames fit
+    /// their true display aspect; the GB paths keep the shell's square fit.
+    pub fn fitted_size(&self, available: iced::Size) -> (f32, f32) {
+        match &self.indexed {
+            Some(frame) => {
+                let aspect = frame.width as f32 * frame.pixel_aspect / frame.height as f32;
+                let width = available.width.min(available.height * aspect);
+                (width, width / aspect)
+            }
+            None => {
+                let shortest = available.width.min(available.height);
+                (shortest, shortest)
+            }
         }
     }
 }

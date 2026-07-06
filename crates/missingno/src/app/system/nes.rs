@@ -24,6 +24,10 @@ pub const ROM_EXTENSIONS: &[&str] = &["nes"];
 /// CPU cycles per frame step, generous over the ~29.8k typical.
 const FRAME_BUDGET: u32 = 200_000;
 
+/// NTSC pixel aspect at the 2C02's 5.37 MHz dot clock — a display-side
+/// calibratable stage.
+const PIXEL_ASPECT: f32 = 8.0 / 7.0;
+
 const DISASSEMBLY_ROWS: usize = 12;
 const JSR: u8 = 0x20;
 
@@ -87,6 +91,7 @@ impl SteppingSystem for NesSystem {
             height: ppu::VISIBLE_LINES as u32,
             pixels: frame.pixels.clone().into(),
             palette: nes_palette(),
+            pixel_aspect: PIXEL_ASPECT,
         }
     }
 
@@ -94,6 +99,7 @@ impl SteppingSystem for NesSystem {
         IndexedFrame::blank(
             ppu::PIXELS_PER_LINE as u32,
             ppu::VISIBLE_LINES as u32,
+            PIXEL_ASPECT,
             nes_palette(),
         )
     }

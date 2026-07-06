@@ -23,6 +23,10 @@ pub const ROM_EXTENSIONS: &[&str] = &["sms"];
 /// Instruction budget per frame step; generous over the ~15k typical.
 const FRAME_BUDGET: u32 = 200_000;
 
+/// NTSC pixel aspect at the VDP's 5.37 MHz dot clock — a display-side
+/// calibratable stage.
+const PIXEL_ASPECT: f32 = 8.0 / 7.0;
+
 const CODE_WINDOW_ROWS: usize = 10;
 
 pub fn is_sms_rom(path: &std::path::Path) -> bool {
@@ -87,6 +91,7 @@ impl SteppingSystem for SmsSystem {
             height: vdp::ACTIVE_LINES as u32,
             pixels: frame.pixels.clone().into(),
             palette: cram_palette(&frame.cram),
+            pixel_aspect: PIXEL_ASPECT,
         }
     }
 
@@ -94,6 +99,7 @@ impl SteppingSystem for SmsSystem {
         IndexedFrame::blank(
             vdp::PIXELS_PER_LINE as u32,
             vdp::ACTIVE_LINES as u32,
+            PIXEL_ASPECT,
             cram_palette(&[0; 32]),
         )
     }

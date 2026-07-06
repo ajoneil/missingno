@@ -57,12 +57,12 @@ impl ScreenPane {
         pane(
             title_bar("Screen"),
             responsive(|size| {
-                let shortest = size.width.min(size.height);
+                let (width, height) = self.screen_view.fitted_size(size);
 
                 container(
                     shader(&self.screen_view)
-                        .width(Length::Fixed(shortest))
-                        .height(Length::Fixed(shortest)),
+                        .width(Length::Fixed(width))
+                        .height(Length::Fixed(height)),
                 )
                 .center(Fill)
                 .into()

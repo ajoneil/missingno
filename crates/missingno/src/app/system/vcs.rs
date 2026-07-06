@@ -31,6 +31,10 @@ const FRAME_INTERVAL: Duration = Duration::from_micros(16_684);
 /// syncs cannot stall the emulation thread.
 const FRAME_BUDGET_LINES: usize = 1000;
 
+/// NTSC pixel aspect at the TIA's 3.58 MHz colour clock — a display-side
+/// calibratable stage.
+const PIXEL_ASPECT: f32 = 12.0 / 7.0;
+
 /// A `.a26` is always ours; a `.bin` only at the family's bare ROM sizes
 /// (Game Boy ROMs start at 32 KiB, so the ranges cannot collide).
 pub fn is_vcs_rom(path: &std::path::Path, rom: &[u8]) -> bool {
@@ -71,11 +75,12 @@ fn indexed_frame(frame: &Frame) -> IndexedFrame {
         height,
         pixels: pixels.into(),
         palette: ntsc_palette(),
+        pixel_aspect: PIXEL_ASPECT,
     }
 }
 
 fn blank_frame() -> IndexedFrame {
-    IndexedFrame::blank(VISIBLE_CLOCKS as u32, 192, ntsc_palette())
+    IndexedFrame::blank(VISIBLE_CLOCKS as u32, 192, PIXEL_ASPECT, ntsc_palette())
 }
 
 impl SystemConsole for VcsConsole {

@@ -136,20 +136,18 @@ impl Emulator {
 
     pub fn view(&self, fullscreen: bool) -> Element<'_, app::Message> {
         let screen: Element<'_, app::Message> = responsive(|size| {
-            let shortest = size.width.min(size.height);
+            let (width, height) = self.screen_view.fitted_size(size);
 
             container(
                 mouse_area(
                     shader(&self.screen_view)
-                        .width(Length::Fixed(shortest))
-                        .height(Length::Fixed(shortest)),
+                        .width(Length::Fixed(width))
+                        .height(Length::Fixed(height)),
                 )
                 // Horizontal position over the screen drives the first
                 // analog control (the VCS paddle); digital-only systems
                 // ignore the axis.
-                .on_move(move |point| {
-                    app::Message::SetAxis(8, (point.x / shortest).clamp(0.0, 1.0))
-                }),
+                .on_move(move |point| app::Message::SetAxis(8, (point.x / width).clamp(0.0, 1.0))),
             )
             .center(Fill)
             .into()
