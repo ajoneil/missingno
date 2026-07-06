@@ -20,6 +20,67 @@ pub struct GameSummary {
     pub save_count: usize,
 }
 
+impl GameSummary {
+    fn matches(&self, lowercase_filter: &str) -> bool {
+        if lowercase_filter.is_empty() {
+            return true;
+        }
+        let title_hit = self
+            .entry
+            .display_title()
+            .to_lowercase()
+            .contains(lowercase_filter);
+        let publisher_hit = self
+            .entry
+            .publisher
+            .as_ref()
+            .is_some_and(|publisher| publisher.to_lowercase().contains(lowercase_filter));
+        title_hit || publisher_hit
+    }
+}
+
+/// Library grid orderings. Every key falls back to title order so ties are
+/// stable and scannable. The non-default keys await the library toolbar.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[allow(dead_code)]
+pub enum SortKey {
+    #[default]
+    LastPlayed,
+    Title,
+    Year,
+    MostPlayed,
+}
+
+impl SortKey {
+    fn compare(self, a: &GameSummary, b: &GameSummary) -> std::cmp::Ordering {
+        let by_title = |a: &GameSummary, b: &GameSummary| {
+            a.entry
+                .display_title()
+                .to_lowercase()
+                .cmp(&b.entry.display_title().to_lowercase())
+        };
+        match self {
+            SortKey::Title => by_title(a, b),
+            SortKey::LastPlayed => match (&a.last_played, &b.last_played) {
+                (Some(a_ts), Some(b_ts)) => b_ts.cmp(a_ts),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => by_title(a, b),
+            },
+            SortKey::Year => match (&a.entry.year, &b.entry.year) {
+                (Some(a_year), Some(b_year)) => a_year.cmp(b_year).then_with(|| by_title(a, b)),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => by_title(a, b),
+            },
+            SortKey::MostPlayed => b
+                .play_time_secs
+                .total_cmp(&a.play_time_secs)
+                .then_with(|| by_title(a, b)),
+        }
+    }
+}
+
 /// Activity detail for the currently viewed game.
 /// The state of activity data for a game.
 pub enum ActivityState {
@@ -99,6 +160,17 @@ pub struct GameStore {
 
 impl GameStore {
     /// Create a new store and scan the library directory.
+    #[cfg(test)]
+    fn empty_for_tests() -> Self {
+        Self {
+            index: HashMap::new(),
+            summaries: HashMap::new(),
+            activity_state: None,
+            live_screenshots: Vec::new(),
+            live_screenshot_count: 0,
+        }
+    }
+
     pub fn new() -> Self {
         let mut store = Self {
             index: HashMap::new(),
@@ -150,24 +222,22 @@ impl GameStore {
 
     // ── Summaries (library grid) ───────────────────────────────────────
 
-    /// Get all game summaries, sorted for the library grid.
+    /// Get all game summaries in the default library order.
     pub fn all_summaries(&self) -> Vec<&GameSummary> {
-        let mut entries: Vec<&GameSummary> = self.summaries.values().collect();
-        entries.sort_by(|a, b| Self::sort_cmp(a, b));
-        entries
+        self.summaries_sorted(SortKey::default(), "")
     }
 
-    fn sort_cmp(a: &GameSummary, b: &GameSummary) -> std::cmp::Ordering {
-        match (&a.last_played, &b.last_played) {
-            (Some(a_ts), Some(b_ts)) => b_ts.cmp(a_ts),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => a
-                .entry
-                .display_title()
-                .to_lowercase()
-                .cmp(&b.entry.display_title().to_lowercase()),
-        }
+    /// Game summaries matching `filter` (case-insensitive substring of title
+    /// or publisher; empty matches all), ordered by `sort`.
+    pub fn summaries_sorted(&self, sort: SortKey, filter: &str) -> Vec<&GameSummary> {
+        let filter = filter.trim().to_lowercase();
+        let mut entries: Vec<&GameSummary> = self
+            .summaries
+            .values()
+            .filter(|summary| summary.matches(&filter))
+            .collect();
+        entries.sort_by(|a, b| sort.compare(a, b));
+        entries
     }
 
     /// Get a specific game summary.
@@ -414,5 +484,98 @@ impl GameStore {
         if matches!(&self.activity_state, Some((s, _)) if s == sha1) {
             self.activity_state = None;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn summary(title: &str, publisher: Option<&str>, year: Option<&str>) -> GameSummary {
+        let mut entry = GameEntry::new(
+            format!("sha-{title}"),
+            title.to_string(),
+            PathBuf::from("/tmp/rom.gb"),
+        );
+        entry.publisher = publisher.map(str::to_string);
+        entry.year = year.map(str::to_string);
+        GameSummary {
+            entry,
+            thumbnail: None,
+            play_time_secs: 0.0,
+            last_played: None,
+            save_count: 0,
+        }
+    }
+
+    fn titles(summaries: &[&GameSummary]) -> Vec<String> {
+        summaries.iter().map(|s| s.entry.title.clone()).collect()
+    }
+
+    fn store_with(summaries: Vec<GameSummary>) -> GameStore {
+        let mut store = GameStore::empty_for_tests();
+        for summary in summaries {
+            store.summaries.insert(summary.entry.sha1.clone(), summary);
+        }
+        store
+    }
+
+    #[test]
+    fn last_played_sorts_recent_first_then_titles() {
+        let mut played = summary("Zelda", None, None);
+        played.last_played = Some(Timestamp::UNIX_EPOCH);
+        let store = store_with(vec![
+            summary("Metroid II", None, None),
+            played,
+            summary("Alleyway", None, None),
+        ]);
+        assert_eq!(
+            titles(&store.summaries_sorted(SortKey::LastPlayed, "")),
+            ["Zelda", "Alleyway", "Metroid II"]
+        );
+    }
+
+    #[test]
+    fn year_sort_puts_unknown_years_last() {
+        let store = store_with(vec![
+            summary("B", None, Some("1993")),
+            summary("C", None, None),
+            summary("A", None, Some("1989")),
+        ]);
+        assert_eq!(
+            titles(&store.summaries_sorted(SortKey::Year, "")),
+            ["A", "B", "C"]
+        );
+    }
+
+    #[test]
+    fn most_played_sorts_by_play_time() {
+        let mut long = summary("Long", None, None);
+        long.play_time_secs = 4000.0;
+        let mut short = summary("Short", None, None);
+        short.play_time_secs = 10.0;
+        let store = store_with(vec![short, long]);
+        assert_eq!(
+            titles(&store.summaries_sorted(SortKey::MostPlayed, "")),
+            ["Long", "Short"]
+        );
+    }
+
+    #[test]
+    fn filter_matches_title_and_publisher_case_insensitively() {
+        let store = store_with(vec![
+            summary("Wario Land", Some("Nintendo"), None),
+            summary("Shantae", Some("Capcom"), None),
+        ]);
+        assert_eq!(
+            titles(&store.summaries_sorted(SortKey::Title, "WARIO")),
+            ["Wario Land"]
+        );
+        assert_eq!(
+            titles(&store.summaries_sorted(SortKey::Title, "capcom")),
+            ["Shantae"]
+        );
+        assert_eq!(store.summaries_sorted(SortKey::Title, "tetris").len(), 0);
+        assert_eq!(store.summaries_sorted(SortKey::Title, "  ").len(), 2);
     }
 }
