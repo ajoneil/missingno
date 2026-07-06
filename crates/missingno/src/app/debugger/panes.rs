@@ -75,16 +75,29 @@ impl From<Message> for app::Message {
 pub struct PaneContext<'b> {
     /// The Game Boy family's inspection surface, when that family is live.
     pub gb: Option<&'b dyn InspectSource>,
-    #[cfg(feature = "vcs")]
-    pub vcs: Option<&'b crate::app::debugger::vcs::VcsInspectState>,
-    #[cfg(feature = "sms")]
-    pub sms: Option<&'b crate::app::debugger::sms::SmsInspectState>,
-    #[cfg(feature = "nes")]
-    pub nes: Option<&'b crate::app::debugger::nes::NesInspectState>,
+    /// The active family's typed inspection state; family panes downcast it
+    /// back out with [`PaneContext::family_state`].
+    // Only the feature-gated families' panes read it.
+    #[cfg_attr(
+        not(any(feature = "vcs", feature = "sms", feature = "nes")),
+        allow(dead_code)
+    )]
+    pub family: &'b dyn std::any::Any,
     pub breakpoints: &'b BTreeSet<u16>,
     pub colors: &'b ConsoleColors,
     pub symbols: &'b SymbolTable,
     pub cdl: &'b CdlWindow,
+}
+
+impl<'b> PaneContext<'b> {
+    /// The family state, if the active family's is of type `T`.
+    #[cfg_attr(
+        not(any(feature = "vcs", feature = "sms", feature = "nes")),
+        allow(dead_code)
+    )]
+    pub fn family_state<T: 'static>(&self) -> Option<&'b T> {
+        self.family.downcast_ref()
+    }
 }
 
 /// One debugger pane behind the grid. Implementations live with their pane
@@ -134,21 +147,22 @@ pub static VCS_FAMILY: Family = Family {
     default_layout: vcs_default_layout,
 };
 
+/// Every family's pane set, for label and kind lookups across saved layouts.
+static PANE_FAMILIES: &[&Family] = &[
+    &GB_FAMILY,
+    #[cfg(feature = "vcs")]
+    &VCS_FAMILY,
+    #[cfg(feature = "sms")]
+    &SMS_FAMILY,
+    #[cfg(feature = "nes")]
+    &NES_FAMILY,
+];
+
 /// Every registered pane across all families, for label and kind lookups.
 pub fn all_descriptors() -> impl Iterator<Item = &'static PaneDescriptor> {
-    #[cfg(feature = "vcs")]
-    let vcs = VCS_PANE_REGISTRY.iter();
-    #[cfg(not(feature = "vcs"))]
-    let vcs = [].iter();
-    #[cfg(feature = "sms")]
-    let sms = SMS_PANE_REGISTRY.iter();
-    #[cfg(not(feature = "sms"))]
-    let sms = [].iter();
-    #[cfg(feature = "nes")]
-    let nes = NES_PANE_REGISTRY.iter();
-    #[cfg(not(feature = "nes"))]
-    let nes = [].iter();
-    PANE_REGISTRY.iter().chain(vcs).chain(sms).chain(nes)
+    PANE_FAMILIES
+        .iter()
+        .flat_map(|family| family.registry.iter())
 }
 
 #[cfg(feature = "nes")]

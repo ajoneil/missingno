@@ -445,26 +445,17 @@ pub trait InspectSource {
     fn switchable_rom_bank(&self) -> Option<u16>;
 }
 
-/// An owned [`InspectSource`] that can cross from the emulation thread.
-/// A system's inspection surface, family-erased at the seam. Each family
-/// exposes its typed surface through an accessor; a consumer asks for the
-/// family it understands and falls back gracefully otherwise. The blanket
-/// concrete impls hand each Game Boy source through as-is.
+/// A system's inspection surface, family-erased at the seam. The Game Boy's
+/// structured surface goes through [`Inspection::as_gb`]; every other family
+/// exposes one typed state object that its own panes downcast back out of
+/// [`Inspection::family_state`] — the shell never names the family.
 pub trait Inspection {
     fn as_gb(&self) -> Option<&dyn InspectSource> {
         None
     }
-    #[cfg(feature = "vcs")]
-    fn as_vcs(&self) -> Option<&crate::app::debugger::vcs::VcsInspectState> {
-        None
-    }
-    #[cfg(feature = "sms")]
-    fn as_sms(&self) -> Option<&crate::app::debugger::sms::SmsInspectState> {
-        None
-    }
-    #[cfg(feature = "nes")]
-    fn as_nes(&self) -> Option<&crate::app::debugger::nes::NesInspectState> {
-        None
+    /// The family's typed inspection state, for its own panes to downcast.
+    fn family_state(&self) -> &dyn std::any::Any {
+        &()
     }
 }
 

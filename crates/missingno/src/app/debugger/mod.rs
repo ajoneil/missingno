@@ -25,7 +25,7 @@ use missingno_gb::{
     ppu::types::palette::PaletteChoice,
 };
 
-use inspect::{DebugView, Inspection};
+use inspect::DebugView;
 use panes::{DebuggerPanes, PaneContext};
 use sidebar::Sidebar;
 
@@ -626,12 +626,7 @@ impl Debugger {
         let cdl = core.cdl_window();
         let ctx = PaneContext {
             gb,
-            #[cfg(feature = "vcs")]
-            vcs: inspection.as_vcs(),
-            #[cfg(feature = "sms")]
-            sms: inspection.as_sms(),
-            #[cfg(feature = "nes")]
-            nes: inspection.as_nes(),
+            family: inspection.family_state(),
             breakpoints: core.breakpoints(),
             colors: &colors,
             symbols: &symbols,
@@ -657,37 +652,19 @@ impl Debugger {
             self.panes.view(Some(ctx))
         };
 
+        // Non-GB families summarise through the same CPU/video status the
+        // running view uses; their panes carry the detail.
+        let status;
         let sidebar = if let Some(source) = gb {
             self.sidebar.view(source, &colors)
         } else {
-            self.family_summary_sidebar(inspection)
+            status = core.running_status(self.frame);
+            self.sidebar.running_summary(Some(&status))
         };
         row![sidebar, center, self.icon_rail(),]
             .spacing(s())
             .padding(s())
             .into()
-    }
-
-    /// The sidebar for a non-GB family's surface, falling back to the
-    /// running summary when no family claims it.
-    fn family_summary_sidebar<'a>(
-        &'a self,
-        inspection: &'a dyn Inspection,
-    ) -> Element<'a, app::Message> {
-        #[cfg(feature = "vcs")]
-        if let Some(state) = inspection.as_vcs() {
-            return self.sidebar.vcs_view(state);
-        }
-        #[cfg(feature = "sms")]
-        if let Some(state) = inspection.as_sms() {
-            return self.sidebar.sms_view(state);
-        }
-        #[cfg(feature = "nes")]
-        if let Some(state) = inspection.as_nes() {
-            return self.sidebar.nes_view(state);
-        }
-        let _ = inspection;
-        self.sidebar.running_summary(self.last_status.as_ref())
     }
 
     /// The view while the core runs on the emu thread. The screen pane stays
@@ -730,10 +707,8 @@ impl Debugger {
             &colors,
         ) {
             (Some(source), Some(colors)) => self.sidebar.view(source, colors),
-            _ => match self.last_snapshot.as_deref() {
-                Some(snapshot) => self.family_summary_sidebar(snapshot as &dyn Inspection),
-                None => self.sidebar.running_summary(self.last_status.as_ref()),
-            },
+            // Non-GB families summarise from the per-frame status.
+            _ => self.sidebar.running_summary(self.last_status.as_ref()),
         };
 
         row![sidebar, center, self.icon_rail(),]
@@ -748,12 +723,7 @@ impl Debugger {
         match (self.last_snapshot.as_deref(), colors) {
             (Some(snapshot), Some(colors)) => self.panes.view(Some(PaneContext {
                 gb: snapshot.as_gb(),
-                #[cfg(feature = "vcs")]
-                vcs: snapshot.as_vcs(),
-                #[cfg(feature = "sms")]
-                sms: snapshot.as_sms(),
-                #[cfg(feature = "nes")]
-                nes: snapshot.as_nes(),
+                family: snapshot.family_state(),
                 breakpoints: &self.breakpoints,
                 colors,
                 symbols: snapshot.symbols(),

@@ -37,8 +37,8 @@ pub struct DisasmRow {
 }
 
 impl Inspection for NesInspectState {
-    fn as_nes(&self) -> Option<&NesInspectState> {
-        Some(self)
+    fn family_state(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -61,8 +61,8 @@ impl NesSnapshot {
 }
 
 impl Inspection for NesSnapshot {
-    fn as_nes(&self) -> Option<&NesInspectState> {
-        Some(&self.state)
+    fn family_state(&self) -> &dyn std::any::Any {
+        &self.state
     }
 }
 
@@ -100,7 +100,7 @@ impl Pane for CpuPane {
     }
 
     fn view<'a>(&'a self, ctx: Option<&PaneContext<'_>>) -> pane_grid::Content<'a, app::Message> {
-        let Some(state) = ctx.and_then(|ctx| ctx.nes) else {
+        let Some(state) = ctx.and_then(PaneContext::family_state::<NesInspectState>) else {
             return panes::running_placeholder("2A03");
         };
         let mut rows = column![
@@ -133,7 +133,7 @@ impl Pane for PpuPane {
     }
 
     fn view<'a>(&'a self, ctx: Option<&PaneContext<'_>>) -> pane_grid::Content<'a, app::Message> {
-        let Some(state) = ctx.and_then(|ctx| ctx.nes) else {
+        let Some(state) = ctx.and_then(PaneContext::family_state::<NesInspectState>) else {
             return panes::running_placeholder("2C02");
         };
         let rows = column![

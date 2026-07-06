@@ -38,8 +38,8 @@ pub struct DisasmRow {
 }
 
 impl Inspection for VcsInspectState {
-    fn as_vcs(&self) -> Option<&VcsInspectState> {
-        Some(self)
+    fn family_state(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -62,8 +62,8 @@ impl VcsSnapshot {
 }
 
 impl Inspection for VcsSnapshot {
-    fn as_vcs(&self) -> Option<&VcsInspectState> {
-        Some(&self.state)
+    fn family_state(&self) -> &dyn std::any::Any {
+        &self.state
     }
 }
 
@@ -101,7 +101,7 @@ impl Pane for CpuPane {
     }
 
     fn view<'a>(&'a self, ctx: Option<&PaneContext<'_>>) -> pane_grid::Content<'a, app::Message> {
-        let Some(state) = ctx.and_then(|ctx| ctx.vcs) else {
+        let Some(state) = ctx.and_then(PaneContext::family_state::<VcsInspectState>) else {
             return panes::running_placeholder("6507");
         };
         let mut rows = column![
@@ -134,7 +134,7 @@ impl Pane for TiaPane {
     }
 
     fn view<'a>(&'a self, ctx: Option<&PaneContext<'_>>) -> pane_grid::Content<'a, app::Message> {
-        let Some(state) = ctx.and_then(|ctx| ctx.vcs) else {
+        let Some(state) = ctx.and_then(PaneContext::family_state::<VcsInspectState>) else {
             return panes::running_placeholder("TIA");
         };
         let collision_names = ["m0p", "m1p", "p0fb", "p1fb", "m0fb", "m1fb", "blpf", "ppmm"];

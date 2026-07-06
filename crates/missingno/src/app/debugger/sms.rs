@@ -34,8 +34,8 @@ pub struct SmsInspectState {
 }
 
 impl Inspection for SmsInspectState {
-    fn as_sms(&self) -> Option<&SmsInspectState> {
-        Some(self)
+    fn family_state(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -58,8 +58,8 @@ impl SmsSnapshot {
 }
 
 impl Inspection for SmsSnapshot {
-    fn as_sms(&self) -> Option<&SmsInspectState> {
-        Some(&self.state)
+    fn family_state(&self) -> &dyn std::any::Any {
+        &self.state
     }
 }
 
@@ -83,7 +83,7 @@ impl Pane for CpuPane {
     }
 
     fn view<'a>(&'a self, ctx: Option<&PaneContext<'_>>) -> pane_grid::Content<'a, app::Message> {
-        let Some(state) = ctx.and_then(|ctx| ctx.sms) else {
+        let Some(state) = ctx.and_then(PaneContext::family_state::<SmsInspectState>) else {
             return panes::running_placeholder("Z80");
         };
         let mut rows = column![
@@ -121,7 +121,7 @@ impl Pane for VdpPane {
     }
 
     fn view<'a>(&'a self, ctx: Option<&PaneContext<'_>>) -> pane_grid::Content<'a, app::Message> {
-        let Some(state) = ctx.and_then(|ctx| ctx.sms) else {
+        let Some(state) = ctx.and_then(PaneContext::family_state::<SmsInspectState>) else {
             return panes::running_placeholder("VDP");
         };
         let mut rows = column![
