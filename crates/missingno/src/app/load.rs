@@ -103,23 +103,30 @@ fn start_console(
     }
     let palette = app.settings.palette;
 
-    if app.debugger_enabled {
-        let mut debugger = app::debugger::Debugger::new(console);
-        debugger.load_symbols(rom_path);
-        debugger.set_palette(palette);
-        debugger.set_frame_blending(app.settings.frame_blending);
-        app.game = Game::Loaded(LoadedGame::Debugger(debugger));
+    let console = if app.debugger_enabled {
+        match app::debugger::Debugger::new(console) {
+            Ok(mut debugger) => {
+                debugger.load_symbols(rom_path);
+                debugger.set_palette(palette);
+                debugger.set_frame_blending(app.settings.frame_blending);
+                app.game = Game::Loaded(LoadedGame::Debugger(debugger));
+                return cartridge_title;
+            }
+            // No debugger backend for this system: plain emulation.
+            Err(console) => console,
+        }
     } else {
-        let mut emu = app::emulator::Emulator::new(
-            console,
-            app.settings.use_sgb_colors,
-            app.settings.frame_blending,
-        );
-        emu.set_palette(palette);
-        emu.set_running(true);
-        app.game = Game::Loaded(LoadedGame::Emulator(emu));
-        app.start_running();
-    }
+        console
+    };
+    let mut emu = app::emulator::Emulator::new(
+        console,
+        app.settings.use_sgb_colors,
+        app.settings.frame_blending,
+    );
+    emu.set_palette(palette);
+    emu.set_running(true);
+    app.game = Game::Loaded(LoadedGame::Emulator(emu));
+    app.start_running();
     cartridge_title
 }
 

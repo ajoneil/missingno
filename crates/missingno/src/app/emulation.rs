@@ -90,12 +90,16 @@ impl App {
                         }
                         LoadedGame::Emulator(emulator) => {
                             if debugger_enabled {
-                                let mut dbg = emulator.enable_debugger();
-                                if let Some(rom_path) = &rom_path {
-                                    dbg.load_symbols(rom_path);
+                                match emulator.enable_debugger() {
+                                    Ok(mut dbg) => {
+                                        if let Some(rom_path) = &rom_path {
+                                            dbg.load_symbols(rom_path);
+                                        }
+                                        dbg.set_palette(palette);
+                                        LoadedGame::Debugger(dbg)
+                                    }
+                                    Err(emulator) => LoadedGame::Emulator(*emulator),
                                 }
-                                dbg.set_palette(palette);
-                                LoadedGame::Debugger(dbg)
                             } else {
                                 LoadedGame::Emulator(emulator)
                             }

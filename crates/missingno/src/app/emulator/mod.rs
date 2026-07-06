@@ -102,11 +102,23 @@ impl Emulator {
         self.screen_view.apply(display);
     }
 
-    pub fn enable_debugger(self) -> app::debugger::Debugger {
+    /// Switch to debugger mode; systems without a debugger backend come
+    /// back unchanged.
+    pub fn enable_debugger(self) -> Result<app::debugger::Debugger, Box<Emulator>> {
+        let use_sgb_colors = self.use_sgb_colors;
+        let frame_blending = self.frame_blending;
         let console = self
             .console
             .expect("console present when enabling the debugger");
-        app::debugger::Debugger::from_console(console, self.screen_view)
+        app::debugger::Debugger::from_console(console, self.screen_view).map_err(|returned| {
+            let (console, screen_view) = *returned;
+            Box::new(Emulator::from_debugger(
+                console,
+                screen_view,
+                use_sgb_colors,
+                frame_blending,
+            ))
+        })
     }
 
     pub fn update(&mut self, message: Message) -> Task<app::Message> {

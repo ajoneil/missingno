@@ -151,16 +151,25 @@ pub struct Debugger {
     label_name_input: String,
 }
 
+/// A console handed back by a system with no debugger backend, with the
+/// screen view that was to be carried over.
+pub type ReturnedConsole = Box<(Box<dyn SystemConsole>, ScreenView)>;
+
 impl Debugger {
-    pub fn new(console: Box<dyn SystemConsole>) -> Self {
-        Self::build(console.into_debugger(), DebuggerPanes::new())
+    pub fn new(console: Box<dyn SystemConsole>) -> Result<Self, Box<dyn SystemConsole>> {
+        console
+            .into_debugger()
+            .map(|core| Self::build(core, DebuggerPanes::new()))
     }
 
-    pub fn from_console(console: Box<dyn SystemConsole>, screen_view: ScreenView) -> Self {
-        Self::build(
-            console.into_debugger(),
-            DebuggerPanes::with_screen(screen_view),
-        )
+    pub fn from_console(
+        console: Box<dyn SystemConsole>,
+        screen_view: ScreenView,
+    ) -> Result<Self, ReturnedConsole> {
+        match console.into_debugger() {
+            Ok(core) => Ok(Self::build(core, DebuggerPanes::with_screen(screen_view))),
+            Err(console) => Err(Box::new((console, screen_view))),
+        }
     }
 
     fn build(core: Box<dyn SystemDebugger>, panes: DebuggerPanes) -> Self {

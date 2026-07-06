@@ -50,7 +50,9 @@ pub trait SystemConsole: Send {
     fn set_link(&mut self, link: Box<dyn SerialLink>);
     /// Wall-clock duration of one emulated frame, for the pacing loop.
     fn frame_interval(&self) -> Duration;
-    fn into_debugger(self: Box<Self>) -> Box<dyn SystemDebugger>;
+    /// Convert to the debugger-backed form. Systems without a debugger
+    /// backend hand the console back; callers fall back to plain emulation.
+    fn into_debugger(self: Box<Self>) -> Result<Box<dyn SystemDebugger>, Box<dyn SystemConsole>>;
 }
 
 /// A console under a debugger: stepping, breakpoints, and inspection.

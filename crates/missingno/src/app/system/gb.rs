@@ -121,10 +121,10 @@ where
         FRAME_INTERVAL
     }
 
-    fn into_debugger(self: Box<Self>) -> Box<dyn SystemDebugger> {
-        Box::new(GbDebugger {
+    fn into_debugger(self: Box<Self>) -> Result<Box<dyn SystemDebugger>, Box<dyn SystemConsole>> {
+        Ok(Box::new(GbDebugger {
             core: missingno_gb::debugger::Debugger::new(*self),
-        })
+        }))
     }
 }
 
