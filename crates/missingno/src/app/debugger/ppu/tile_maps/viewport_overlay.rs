@@ -4,11 +4,12 @@ use iced::{
 };
 
 use crate::app::ui::palette;
+use missingno_gb::ppu::screen;
 
 /// GB screen width in pixels.
-const SCREEN_W: f32 = 160.0;
+const SCREEN_W: f32 = screen::PIXELS_PER_LINE as f32;
 /// GB screen height in pixels.
-const SCREEN_H: f32 = 144.0;
+const SCREEN_H: f32 = screen::NUM_SCANLINES as f32;
 /// GB tile map size in pixels.
 const MAP_SIZE: f32 = 256.0;
 
@@ -50,8 +51,8 @@ impl<Message> canvas::Program<Message> for ViewportOverlay {
         }
 
         if let Some((wx, wy)) = self.win_viewport {
-            let win_w = (160.0 - (wx as f32 - 7.0).max(0.0)).max(0.0);
-            let win_h = (144.0 - wy as f32).max(0.0);
+            let win_w = (SCREEN_W - (wx as f32 - 7.0).max(0.0)).max(0.0);
+            let win_h = (SCREEN_H - wy as f32).max(0.0);
 
             if win_w > 0.0 && win_h > 0.0 {
                 draw_rect(

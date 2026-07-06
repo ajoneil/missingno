@@ -18,6 +18,12 @@ use crate::app::{
     },
 };
 
+/// The console's native frame size in pixels.
+fn native_screen_size() -> (u32, u32) {
+    use missingno_gb::ppu::screen;
+    (screen::PIXELS_PER_LINE as u32, screen::NUM_SCANLINES as u32)
+}
+
 /// State for the screenshot gallery view.
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -137,8 +143,9 @@ impl GalleryState {
     /// Create a scaled image handle for the preview (nearest-neighbour).
     fn selected_image_handle_scaled(&self) -> iced::widget::image::Handle {
         let rgba = self.selected_rgba();
-        let scaled = scale_nearest_neighbour(&rgba, 160, 144, self.scale);
-        iced::widget::image::Handle::from_rgba(160 * self.scale, 144 * self.scale, scaled)
+        let (width, height) = native_screen_size();
+        let scaled = scale_nearest_neighbour(&rgba, width, height, self.scale);
+        iced::widget::image::Handle::from_rgba(width * self.scale, height * self.scale, scaled)
     }
 
     /// Whether the current screenshot has SGB data.
@@ -166,8 +173,9 @@ pub fn scale_nearest_neighbour(rgba: &[u8], w: u32, h: u32, scale: u32) -> Vec<u
 pub(crate) fn view(state: &GalleryState) -> Element<'_, app::Message> {
     let main_image = {
         let handle = state.selected_image_handle_scaled();
-        let px = 160 * state.scale;
-        let py = 144 * state.scale;
+        let (width, height) = native_screen_size();
+        let px = width * state.scale;
+        let py = height * state.scale;
         container(
             image(handle)
                 .width(px as f32)

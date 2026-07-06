@@ -2,8 +2,10 @@ use iced::Task;
 
 use missingno_gb::cartridge::Cartridge;
 
+use crate::app::system;
 use crate::app::{self, DetailSubScreen, FlashState, Game, Screen, load};
 use crate::cartridge_rw;
+use missingno_gb::ppu::screen;
 
 use super::{homebrew_browser, screenshot_gallery};
 
@@ -140,7 +142,8 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                     }
                 }
                 ImportSave => {
-                    let dialog = rfd::AsyncFileDialog::new().add_filter("Game Boy Save", &["sav"]);
+                    let dialog = rfd::AsyncFileDialog::new()
+                        .add_filter(system::gb::SAVE_FILTER_NAME, system::gb::SAVE_EXTENSIONS);
                     return Task::perform(dialog.pick_file(), |handle| {
                         app::Message::Detail(ImportSaveSelected(handle))
                     });
@@ -177,7 +180,7 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                 ExportSave(save_id) => {
                     let dialog = rfd::AsyncFileDialog::new()
                         .set_file_name("save.sav")
-                        .add_filter("Game Boy Save", &["sav"]);
+                        .add_filter(system::gb::SAVE_FILTER_NAME, system::gb::SAVE_EXTENSIONS);
                     return Task::perform(dialog.save_file(), move |handle| {
                         app::Message::Detail(ExportSaveSelected(save_id.clone(), handle))
                     });
@@ -549,12 +552,14 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                     {
                         if let Some(handle) = handle {
                             let rgba = gallery_state.selected_rgba();
-                            let width = 160 * gallery_state.scale;
-                            let height = 144 * gallery_state.scale;
+                            let native_width = screen::PIXELS_PER_LINE as u32;
+                            let native_height = screen::NUM_SCANLINES as u32;
+                            let width = native_width * gallery_state.scale;
+                            let height = native_height * gallery_state.scale;
                             let scaled = screenshot_gallery::scale_nearest_neighbour(
                                 &rgba,
-                                160,
-                                144,
+                                native_width,
+                                native_height,
                                 gallery_state.scale,
                             );
                             if let Some(img) = image::RgbaImage::from_raw(width, height, scaled) {
@@ -591,7 +596,11 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                 Some(super::catalogue::GameSource::HomebrewHub { filename, .. }) => {
                     filename.clone()
                 }
-                _ => format!("{}.gb", title.to_lowercase().replace(' ', "-")),
+                _ => format!(
+                    "{}.{}",
+                    title.to_lowercase().replace(' ', "-"),
+                    system::gb::DEFAULT_ROM_EXTENSION
+                ),
             };
             let filename = std::path::Path::new(&filename)
                 .file_name()
@@ -608,7 +617,7 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
             } else {
                 Some(header_title)
             };
-            entry.platform = Some("Nintendo Game Boy".to_string());
+            entry.platform = Some(system::gb::PLATFORM_NAME.to_string());
             entry.year = manifest.date.clone();
             entry.description = manifest.description.clone();
             entry.publisher = manifest.developer.clone();
@@ -844,7 +853,8 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                         None => return Task::none(),
                     };
                     let _ = std::fs::create_dir_all(&game_dir);
-                    let rom_path = game_dir.join(format!("{title}.gb"));
+                    let rom_path =
+                        game_dir.join(format!("{title}.{}", system::gb::DEFAULT_ROM_EXTENSION));
                     if std::fs::write(&rom_path, &rom).is_err() {
                         return Task::none();
                     }

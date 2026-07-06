@@ -26,7 +26,8 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
     match message {
         Message::Pick => {
             app.game = Game::Loading;
-            let mut dialog = AsyncFileDialog::new().add_filter("Game Boy ROM", &["gb", "gbc"]);
+            let mut dialog = AsyncFileDialog::new()
+                .add_filter(system::gb::ROM_FILTER_NAME, system::gb::ROM_EXTENSIONS);
             if let Some(dir) = app.recent_games.most_recent_dir() {
                 dialog = dialog.set_directory(dir);
             }

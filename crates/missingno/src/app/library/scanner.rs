@@ -45,7 +45,7 @@ pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<l
             let mut entry = if let Some(cat_entry) = catalogue.lookup_hash(&sha1) {
                 let mut e =
                     library::GameEntry::new(sha1, cat_entry.manifest.title.clone(), path.clone());
-                e.platform = Some("Nintendo Game Boy".to_string());
+                e.platform = Some(crate::app::system::gb::PLATFORM_NAME.to_string());
                 e.publisher = cat_entry
                     .manifest
                     .publisher
@@ -154,8 +154,8 @@ pub fn enrich_next() -> EnrichResult {
 
 fn is_rom_file(path: &std::path::Path) -> bool {
     path.is_file()
-        && matches!(
-            path.extension().and_then(|e| e.to_str()),
-            Some("gb" | "gbc")
-        )
+        && path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|ext| crate::app::system::gb::ROM_EXTENSIONS.contains(&ext))
 }

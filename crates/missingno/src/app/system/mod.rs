@@ -7,6 +7,7 @@
 
 use std::collections::BTreeSet;
 use std::path::Path;
+use std::time::Duration;
 
 use missingno_gb::{cartridge::Cartridge, joypad::Button, serial_transfer::SerialLink};
 
@@ -37,6 +38,8 @@ pub trait SystemConsole: Send {
     fn capture_frame(&self, use_sgb_colors: bool, palette_name: &str) -> FrameCapture;
     fn cartridge(&self) -> &Cartridge;
     fn set_link(&mut self, link: Box<dyn SerialLink>);
+    /// Wall-clock duration of one emulated frame, for the pacing loop.
+    fn frame_interval(&self) -> Duration;
     fn into_debugger(self: Box<Self>) -> Box<dyn SystemDebugger>;
 }
 
@@ -67,6 +70,7 @@ pub trait SystemDebugger: Send {
     fn running_status(&self, frame: u64) -> RunningStatus;
 
     fn cartridge(&self) -> &Cartridge;
+    fn frame_interval(&self) -> Duration;
     fn capture_frame(&self, use_sgb_colors: bool, palette_name: &str) -> FrameCapture;
     /// Step one frame while writing an execution trace to `path`; `None` on
     /// capture failure.

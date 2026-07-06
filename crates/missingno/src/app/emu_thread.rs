@@ -20,12 +20,9 @@ use super::library::activity::FrameCapture;
 use super::screen::ScreenDisplay;
 use super::system::{FrameOutcome, SystemConsole, SystemDebugger};
 
-/// One emulated frame at the DMG dot rate (~59.7 Hz).
-const FRAME_INTERVAL: Duration = Duration::from_micros(16_740);
-
-/// Cap on how far behind schedule the loop is allowed to fall before the
-/// backlog is dropped — degrades to slow-but-steady instead of spiralling.
-const MAX_DEFICIT: Duration = Duration::from_micros(16_740 * 4);
+/// Backlog cap, in frames: falling further behind schedule than this drops
+/// the deficit — degrades to slow-but-steady instead of spiralling.
+const MAX_DEFICIT_FRAMES: u32 = 4;
 
 /// Frames of quiet before a debounced SRAM save is emitted. Games write SRAM
 /// across several consecutive frames during a save; we wait for writes to stop.
@@ -229,7 +226,8 @@ fn run_emu_thread(
             }
             if state.running() {
                 state.emulate_frame(&mut audio);
-                state.pace();
+                let interval = state.frame_interval();
+                state.pace(interval);
             }
         } else {
             // Idle: block until the next command (with a timeout so a paused
@@ -385,14 +383,22 @@ impl EmuLoop {
         }
     }
 
+    fn frame_interval(&self) -> Duration {
+        match &self.payload {
+            Some(Payload::Console(console)) => console.frame_interval(),
+            Some(Payload::Debugger(payload)) => payload.core.frame_interval(),
+            None => Duration::ZERO,
+        }
+    }
+
     /// Fixed-timestep pacing against a wall clock: sleep when ahead, drop the
     /// backlog when it exceeds the deficit cap.
-    fn pace(&mut self) {
-        self.next_deadline += FRAME_INTERVAL;
+    fn pace(&mut self, interval: Duration) {
+        self.next_deadline += interval;
         let now = Instant::now();
         if now < self.next_deadline {
             std::thread::sleep(self.next_deadline - now);
-        } else if now - self.next_deadline > MAX_DEFICIT {
+        } else if now - self.next_deadline > interval * MAX_DEFICIT_FRAMES {
             self.next_deadline = now;
         }
     }

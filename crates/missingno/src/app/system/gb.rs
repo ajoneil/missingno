@@ -3,6 +3,7 @@
 
 use std::collections::BTreeSet;
 use std::path::Path;
+use std::time::Duration;
 
 use missingno_gb::{
     BootRom, Console, GameBoy, cartridge::Cartridge, joypad::Button, ppu::model::PpuModel,
@@ -16,6 +17,19 @@ use crate::app::debugger::inspect::{ConsoleSnapshot, DebugView, InspectSource};
 use crate::app::emu_thread::RunningStatus;
 use crate::app::library::activity::FrameCapture;
 use crate::app::screen::ScreenDisplay;
+
+/// How the Game Boy family's media appears in file dialogs, scanning, and
+/// library metadata.
+pub const PLATFORM_NAME: &str = "Nintendo Game Boy";
+pub const ROM_FILTER_NAME: &str = "Game Boy ROM";
+pub const ROM_EXTENSIONS: &[&str] = &["gb", "gbc"];
+pub const DEFAULT_ROM_EXTENSION: &str = "gb";
+pub const SAVE_FILTER_NAME: &str = "Game Boy Save";
+pub const SAVE_EXTENSIONS: &[&str] = &["sav"];
+
+/// One emulated frame at the DMG dot rate (~59.7 Hz); the CGB matches it
+/// (double speed doubles CPU cycles per frame, not the frame rate).
+const FRAME_INTERVAL: Duration = Duration::from_micros(16_740);
 
 /// The registration point: picks the console model from the cartridge header —
 /// CGB-aware ROMs get the CGB core, everything else the DMG core.
@@ -81,6 +95,10 @@ where
 
     fn set_link(&mut self, link: Box<dyn SerialLink>) {
         Console::set_link(self, link);
+    }
+
+    fn frame_interval(&self) -> Duration {
+        FRAME_INTERVAL
     }
 
     fn into_debugger(self: Box<Self>) -> Box<dyn SystemDebugger> {
@@ -173,6 +191,10 @@ where
 
     fn cartridge(&self) -> &Cartridge {
         self.core.game_boy().cartridge()
+    }
+
+    fn frame_interval(&self) -> Duration {
+        FRAME_INTERVAL
     }
 
     fn capture_frame(&self, use_sgb_colors: bool, palette_name: &str) -> FrameCapture {
