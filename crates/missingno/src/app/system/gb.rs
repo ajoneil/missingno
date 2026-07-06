@@ -40,6 +40,13 @@ pub const SAVE_EXTENSIONS: &[&str] = &["sav"];
 /// (double speed doubles CPU cycles per frame, not the frame rate).
 const FRAME_INTERVAL: Duration = Duration::from_micros(16_740);
 
+fn battery_save(cartridge: &Cartridge) -> Option<Vec<u8>> {
+    if !cartridge.has_battery() {
+        return None;
+    }
+    crate::sram::save_blob(cartridge, crate::sram::now_unix())
+}
+
 /// The registration point: picks the console model from the cartridge header —
 /// CGB-aware ROMs get the CGB core, everything else the DMG core.
 pub fn create_console(cartridge: Cartridge, boot_rom: Option<BootRom>) -> Box<dyn SystemConsole> {
@@ -98,8 +105,12 @@ where
         M::capture_frame(self, use_sgb_colors, palette_name)
     }
 
-    fn cartridge(&self) -> &Cartridge {
-        Console::cartridge(self)
+    fn game_title(&self) -> String {
+        Console::cartridge(self).title().to_string()
+    }
+
+    fn battery_save(&self) -> Option<Vec<u8>> {
+        battery_save(Console::cartridge(self))
     }
 
     fn set_link(&mut self, link: Box<dyn SerialLink>) {
@@ -269,8 +280,12 @@ where
         }
     }
 
-    fn cartridge(&self) -> &Cartridge {
-        self.core.game_boy().cartridge()
+    fn game_title(&self) -> String {
+        self.core.game_boy().cartridge().title().to_string()
+    }
+
+    fn battery_save(&self) -> Option<Vec<u8>> {
+        battery_save(self.core.game_boy().cartridge())
     }
 
     fn frame_interval(&self) -> Duration {

@@ -485,14 +485,10 @@ impl Payload {
     }
 
     fn sram(&self) -> Option<Vec<u8>> {
-        let cartridge = match self {
-            Self::Console(console) => console.cartridge(),
-            Self::Debugger(payload) => payload.core.cartridge(),
-        };
-        if !cartridge.has_battery() {
-            return None;
+        match self {
+            Self::Console(console) => console.battery_save(),
+            Self::Debugger(payload) => payload.core.battery_save(),
         }
-        crate::sram::save_blob(cartridge, crate::sram::now_unix())
     }
 
     fn running_status(&self) -> Option<RunningStatus> {

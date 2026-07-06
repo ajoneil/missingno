@@ -14,7 +14,7 @@ use missingno_gb::debugger::{
     cdl::CdlWindow,
     symbols::{Symbol, SymbolTable},
 };
-use missingno_gb::{cartridge::Cartridge, joypad::Button, serial_transfer::SerialLink};
+use missingno_gb::{joypad::Button, serial_transfer::SerialLink};
 
 use std::sync::Arc;
 
@@ -43,7 +43,10 @@ pub trait SystemConsole: Send {
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)>;
     fn screen_display(&self) -> ScreenDisplay;
     fn capture_frame(&self, use_sgb_colors: bool, palette_name: &str) -> FrameCapture;
-    fn cartridge(&self) -> &Cartridge;
+    /// The game's title for filenames and session records.
+    fn game_title(&self) -> String;
+    /// Serialized battery-backed save contents, if the media persists any.
+    fn battery_save(&self) -> Option<Vec<u8>>;
     fn set_link(&mut self, link: Box<dyn SerialLink>);
     /// Wall-clock duration of one emulated frame, for the pacing loop.
     fn frame_interval(&self) -> Duration;
@@ -93,7 +96,8 @@ pub trait SystemDebugger: Send {
     fn snapshot(&self, frame: u64) -> DebugView;
     fn running_status(&self, frame: u64) -> RunningStatus;
 
-    fn cartridge(&self) -> &Cartridge;
+    fn game_title(&self) -> String;
+    fn battery_save(&self) -> Option<Vec<u8>>;
     fn frame_interval(&self) -> Duration;
     fn capture_frame(&self, use_sgb_colors: bool, palette_name: &str) -> FrameCapture;
     /// Step one frame while writing an execution trace to `path`; `None` on

@@ -341,32 +341,25 @@ impl App {
     pub(super) fn save(&mut self) {
         let (ram, cartridge_title) = match &self.game {
             Game::Loaded(LoadedGame::Debugger(debugger)) => {
-                let Some(cartridge) = debugger.cartridge() else {
+                let Some(ram) = debugger.battery_save() else {
                     return;
                 };
-                if !cartridge.has_battery() {
+                let Some(title) = debugger.game_title() else {
                     return;
-                }
-                (
-                    crate::sram::save_blob(cartridge, crate::sram::now_unix()),
-                    cartridge.title().to_string(),
-                )
+                };
+                (ram, title)
             }
             Game::Loaded(LoadedGame::Emulator(emulator)) => {
                 let Some(console) = emulator.console() else {
                     return;
                 };
-                if !console.cartridge().has_battery() {
+                let Some(ram) = console.battery_save() else {
                     return;
-                }
-                (
-                    crate::sram::save_blob(console.cartridge(), crate::sram::now_unix()),
-                    console.cartridge().title().to_string(),
-                )
+                };
+                (ram, console.game_title())
             }
             _ => return,
         };
-        let Some(ram) = ram else { return };
         self.persist_sram(&ram, &cartridge_title);
     }
 

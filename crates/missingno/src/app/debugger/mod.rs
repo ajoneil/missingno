@@ -20,7 +20,6 @@ use crate::app::{
     },
 };
 use missingno_gb::{
-    cartridge::Cartridge,
     debugger::{WatchCondition, symbols::Symbol},
     joypad::Button,
     ppu::types::palette::PaletteChoice,
@@ -206,9 +205,14 @@ impl Debugger {
         }
     }
 
-    /// The cartridge, present only while the core is on the UI thread.
-    pub fn cartridge(&self) -> Option<&Cartridge> {
-        self.debugger.as_ref().map(|core| core.cartridge())
+    /// Save contents, available only while the core is on the UI thread.
+    pub fn battery_save(&self) -> Option<Vec<u8>> {
+        self.debugger.as_ref().and_then(|core| core.battery_save())
+    }
+
+    /// Game title, available only while the core is on the UI thread.
+    pub fn game_title(&self) -> Option<String> {
+        self.debugger.as_ref().map(|core| core.game_title())
     }
 
     pub fn capture_screenshot(
@@ -405,7 +409,7 @@ impl Debugger {
                 let Some(core) = &self.debugger else {
                     return Task::none();
                 };
-                let title = core.cartridge().title().to_lowercase().replace(' ', "_");
+                let title = core.game_title().to_lowercase().replace(' ', "_");
                 let default_name = format!("{title}_frame{}.gbtrace", self.frame);
 
                 let dialog = rfd::AsyncFileDialog::new()
