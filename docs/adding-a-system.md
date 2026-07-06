@@ -71,26 +71,27 @@ consoles only through two object-safe traits in `app/system/mod.rs`:
   produce a `ScreenDisplay`, capture screenshots, expose save data, report its
   wall-clock `frame_interval()` for the pacing loop, and convert
   `into_debugger()`.
-- **`SystemDebugger`** — stepping (instruction / over / frame), breakpoints and
-  watchpoints, debug symbols, an `inspect()` surface for the paused panes, an
-  owned `snapshot()` the running view renders from, and `into_console()`.
+- **`SystemDebugger`** — stepping (instruction / over / frame), breakpoints,
+  an `inspect()` surface for the paused panes, an owned `snapshot()` the
+  running view renders from, and `into_console()`. Watchpoints, debug
+  symbols, code/data logging, trace capture, and battery saves have default
+  no-op implementations — a family implements only the backends it has.
 
 The Game Boy family implements both once, generically over its `Model` seam, in
-`app/system/gb.rs`. That file is the template: media metadata (file-dialog
-filters, extensions, platform name) lives there as named constants, and
-`create_console` is the family's single registration point.
+`app/system/gb.rs`. Non-GB families register in the `FAMILIES` descriptor
+table in `app/system/mod.rs` — platform name, extensions, a `detect`
+predicate, and a console factory. The file dialog, ROM loading, headerless
+title detection, and the library scanner all iterate that table; the Game Boy
+stays the loader's explicit fallback (its media carries battery saves, boot
+ROMs, and the serial link, which attach in its own factory).
 
-A new family means: one new submodule implementing the two traits, and factory
-dispatch wherever ROMs are identified (today `create_console` is GB-only and
-called from `app/load.rs`, which detects the family by extension and
-header shape and picks its factory).
-
-The seams a second family exercises are in place (the Atari 2600 is the
-worked second consumer, feature-gated):
+The seams several families exercise (VCS, SMS, and NES are the worked
+consumers, feature-gated):
 
 - **Frames**: `ScreenDisplay::Indexed` carries per-frame dimensions,
   palette-index pixels, and the family's palette table, resolved to RGBA
-  at draw time. The GB render formats remain their own variants.
+  at draw time (`IndexedFrame::blank`, `FrameCapture::from_indexed` are the
+  shared helpers). The GB render formats remain their own variants.
 - **Input**: the seam takes `set_control(ControlId, ControlInput)` —
   family-interpreted ids (0-7 mirror the GB button order so the bindings
   pipeline translates numerically; 8 and up are analog and
@@ -99,47 +100,55 @@ worked second consumer, feature-gated):
   family serializes saves is its own concern.
 - **Audio**: the contract is 44.1 kHz stereo `f32`; families convert from
   their native rate on their own side.
-- **Debugger**: `Inspection` family-erases the inspection surface (each
-  family exposes a typed accessor); pane registries, default layouts, and
-  layout sidecars are family-provided; `into_debugger` is fallible so a
-  family without a debugger backend falls back to plain emulation;
-  `RunningStatus` words its own video summary.
+- **Debugger**: `Inspection` family-erases the inspection surface — the GB's
+  structured surface goes through `as_gb()`; every other family exposes one
+  typed state object through `family_state()` (a `&dyn Any`) that its own
+  panes downcast back out of the `PaneContext`. Pane registries, default
+  layouts, and layout sidecars are family-provided through `panes::Family`;
+  the paused sidebar for non-GB families renders the same `RunningStatus`
+  summary as the running view; `into_debugger` is fallible so a family
+  without a debugger backend falls back to plain emulation.
 
 ## Honest inventory: what is still Game Boy-shaped
 
 1. **The bindings/settings model** — the biggest remaining piece. Input
    bindings speak `Action::Gb*` → `joypad::Button` and translate
-   numerically at the seam. Path: families publish labelled control
+   numerically at the seam, so the settings UI labels every family's
+   controls with GB names. Path: families publish labelled control
    tables; the settings model and bindings UI become per-family (needs a
    settings-file migration, and it is UI-design-heavy).
-2. **Ancillary debugger types in the seam** — `WatchCondition`,
-   `SymbolTable`/`Symbol`, `CdlWindow`, and `SerialLink` are GB types;
-   non-GB families accept and report empty. Generalize when a second
+2. **GB types ride the seam signatures** — `WatchCondition`,
+   `SymbolTable`/`Symbol`, and `CdlWindow` are GB types in `SystemDebugger`
+   method signatures. The default implementations quarantine them (non-GB
+   families never mention them); generalize the payload types when a second
    family grows real watchpoints/symbols — the natural moment is its
    bus-observability work.
 3. **Presentation details** — `IndexedFrame` has no pixel-aspect hint
-   (some systems' pixels are non-square); `ScreenView` carries GB
-   palette/SGB fields beside the indexed path; the screenshot gallery
-   sizes thumbnails from the GB frame dimensions (the captures themselves
-   carry their own).
-4. **Family registration is by hand** — extensions, platform names, and
-   detection live as per-family constants with call-site branches in
-   `app/load.rs` and the library scanner. Fine at two families; a family
-   descriptor table earns its keep at the third.
-5. **The library/gamedb** — game identification is SHA1-based and
+   (some systems' pixels are non-square — the VCS's are roughly 2:1);
+   `ScreenView` carries GB palette/SGB fields beside the indexed path; the
+   screenshot gallery sizes thumbnails from the GB frame dimensions (the
+   captures themselves carry their own). `capture_frame`'s SGB/palette
+   parameters are likewise GB-shaped.
+4. **The library/gamedb** — game identification is SHA1-based and
    platform-tagged (`GameEntry.platform` is already a string field);
    the bundled catalogue is Game Boy titles. Mostly data, not code shape.
+5. **16-bit addressing** — breakpoints, symbols, and `RunningStatus.pc/sp`
+   assume `u16` addresses. Fine for every current family; widen when a
+   32-bit-bus system arrives.
 
 ## Checklist for a new family
 
 1. Core crate with the console type (hardware-model quality bar applies).
 2. `app/system/<family>.rs`: `SystemConsole` + `SystemDebugger` impls,
-   media-metadata constants, factory.
-3. Detection branch in `app/load.rs` and extensions in the library
-   scanner and file dialog.
-4. A palette table (or RGBA-producing path) for `ScreenDisplay::Indexed`,
+   media-metadata constants, factory — plus one entry in the `FAMILIES`
+   descriptor table in `app/system/mod.rs`. Dialogs, loading, and library
+   scanning follow from the table.
+3. A palette table (or RGBA-producing path) for `ScreenDisplay::Indexed`,
    and the family's reading of the shared control ids.
-5. Family pane set + default layout if it ships a debugger; otherwise
-   return the console from `into_debugger` and the shell falls back to
-   plain emulation.
-6. Convert audio to 44.1 kHz on the family's side of the seam.
+4. If it ships a debugger: an inspection-state struct + panes module under
+   `app/debugger/<family>.rs` (implement `Inspection::family_state` on the
+   state and its snapshot), a `panes::Family` static with its registry and
+   default layout, entries in `DebuggerPane` and `PANE_FAMILIES`, and a
+   `running_status()` wording its own video summary. Otherwise return the
+   console from `into_debugger` and the shell falls back to plain emulation.
+5. Convert audio to 44.1 kHz on the family's side of the seam.
