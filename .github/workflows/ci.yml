@@ -24,6 +24,20 @@ jobs:
       - name: CGB suite
         run: cargo test -p missingno-gbc
 
+  # VCS core: the 6502 sweep runs against the SingleStepTests oracle
+  # (fetched, not committed — 1.2 GB of per-cycle JSON).
+  vcs-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Fetch SingleStepTests oracle
+        run: ./scripts/fetch-single-step-tests.sh
+      - name: VCS tests + 6502 oracle sweep
+        run: cargo test -p missingno-vcs -- --include-ignored
+
   # The GUI crate compiles headlessly but needs audio/input/dialog system
   # libraries present to build on Linux.
   frontend:
