@@ -8,21 +8,20 @@ use iced::{
 
 use crate::app::{
     self,
-    console::{AnyConsole, ConsoleColors, ConsoleUi},
-    emu_thread::{EmuCommand, EmuHandle, RunningStatus},
+    console::ConsoleColors,
+    emu_thread::{DebuggerPayload, EmuCommand, EmuHandle, RunningStatus},
     emulator::Emulator,
     library::activity::FrameCapture,
     screen::{ScreenDisplay, ScreenView},
+    system::{SystemConsole, SystemDebugger},
     ui::{
         fonts, icons, palette,
         sizes::{s, xs},
     },
 };
-use missingno_gb::{
-    cartridge::Cartridge, joypad::Button, ppu::rendering::Mode, ppu::types::palette::PaletteChoice,
-};
+use missingno_gb::{cartridge::Cartridge, joypad::Button, ppu::types::palette::PaletteChoice};
 
-use inspect::{ConsoleSnapshot, DebugView, InspectSource};
+use inspect::{DebugView, InspectSource};
 use panes::DebuggerPanes;
 use sidebar::Sidebar;
 
@@ -83,327 +82,9 @@ impl Into<super::Message> for Message {
     }
 }
 
-/// The wrapped console's debugger, dispatched to the matching [`Debugger<M>`].
-pub enum AnyDebugger {
-    Dmg(Debugger<missingno_gb::Dmg>),
-    Cgb(Debugger<missingno_gbc::Cgb>),
-}
-
-impl AnyDebugger {
-    pub fn new(console: AnyConsole) -> Self {
-        match console {
-            AnyConsole::Dmg(game_boy) => Self::Dmg(Debugger::new(game_boy)),
-            AnyConsole::Cgb(console) => Self::Cgb(Debugger::new(console)),
-        }
-    }
-
-    pub fn from_emulator(console: AnyConsole, screen_view: ScreenView) -> Self {
-        match console {
-            AnyConsole::Dmg(game_boy) => Self::Dmg(Debugger::from_console(game_boy, screen_view)),
-            AnyConsole::Cgb(console) => Self::Cgb(Debugger::from_console(console, screen_view)),
-        }
-    }
-
-    pub fn disable_debugger(self, use_sgb_colors: bool, frame_blending: bool) -> Emulator {
-        match self {
-            Self::Dmg(debugger) => debugger.into_emulator(use_sgb_colors, frame_blending),
-            Self::Cgb(debugger) => debugger.into_emulator(use_sgb_colors, frame_blending),
-        }
-    }
-
-    pub fn update(&mut self, message: Message, emu: Option<&EmuHandle>) -> Task<app::Message> {
-        match self {
-            Self::Dmg(debugger) => debugger.update(message, emu),
-            Self::Cgb(debugger) => debugger.update(message, emu),
-        }
-    }
-
-    pub fn view(&self) -> Element<'_, app::Message> {
-        match self {
-            Self::Dmg(debugger) => debugger.view(),
-            Self::Cgb(debugger) => debugger.view(),
-        }
-    }
-
-    pub fn set_palette(&mut self, palette: PaletteChoice) {
-        match self {
-            Self::Dmg(debugger) => debugger.set_palette(palette),
-            Self::Cgb(debugger) => debugger.set_palette(palette),
-        }
-    }
-
-    pub fn set_frame_blending(&mut self, blend: bool) {
-        match self {
-            Self::Dmg(debugger) => debugger.set_frame_blending(blend),
-            Self::Cgb(debugger) => debugger.set_frame_blending(blend),
-        }
-    }
-
-    /// The cartridge, present only while the core is on the UI thread.
-    pub fn cartridge(&self) -> Option<&Cartridge> {
-        match self {
-            Self::Dmg(debugger) => debugger.game_boy().map(|gb| gb.cartridge()),
-            Self::Cgb(debugger) => debugger.game_boy().map(|gb| gb.cartridge()),
-        }
-    }
-
-    pub fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
-        match self {
-            Self::Dmg(debugger) => debugger.drain_audio_samples(),
-            Self::Cgb(debugger) => debugger.drain_audio_samples(),
-        }
-    }
-
-    pub fn capture_screenshot(
-        &self,
-        use_sgb_colors: bool,
-        palette_name: &str,
-    ) -> Option<FrameCapture> {
-        match self {
-            Self::Dmg(debugger) => debugger
-                .game_boy()
-                .map(|gb| missingno_gb::Dmg::capture_frame(gb, use_sgb_colors, palette_name)),
-            Self::Cgb(debugger) => debugger
-                .game_boy()
-                .map(|gb| missingno_gbc::Cgb::capture_frame(gb, use_sgb_colors, palette_name)),
-        }
-    }
-
-    /// Take the core to hand it to the emu thread for running.
-    pub fn take_payload(&mut self) -> Option<DebuggerPayload> {
-        match self {
-            Self::Dmg(debugger) => debugger.take_core().map(|(core, frame)| DebuggerPayload {
-                core: DebuggerCore::Dmg(Box::new(core)),
-                frame,
-            }),
-            Self::Cgb(debugger) => debugger.take_core().map(|(core, frame)| DebuggerPayload {
-                core: DebuggerCore::Cgb(Box::new(core)),
-                frame,
-            }),
-        }
-    }
-
-    /// Put the core back when the emu thread returns it on pause or breakpoint.
-    pub fn restore_payload(&mut self, payload: DebuggerPayload) {
-        match (self, payload.core) {
-            (Self::Dmg(debugger), DebuggerCore::Dmg(core)) => {
-                debugger.restore_core(*core, payload.frame)
-            }
-            (Self::Cgb(debugger), DebuggerCore::Cgb(core)) => {
-                debugger.restore_core(*core, payload.frame)
-            }
-            _ => {}
-        }
-    }
-
-    /// Whether the core is away on the emu thread.
-    pub fn is_detached(&self) -> bool {
-        match self {
-            Self::Dmg(debugger) => debugger.debugger.is_none(),
-            Self::Cgb(debugger) => debugger.debugger.is_none(),
-        }
-    }
-
-    /// Update the screen pane from the emu thread's latest-frame slot.
-    pub fn apply_frame(&mut self, display: ScreenDisplay) {
-        match self {
-            Self::Dmg(debugger) => debugger.apply_frame(display),
-            Self::Cgb(debugger) => debugger.apply_frame(display),
-        }
-    }
-
-    /// Update the live status shown while the core runs on the emu thread.
-    pub fn apply_status(&mut self, status: RunningStatus) {
-        match self {
-            Self::Dmg(debugger) => debugger.apply_status(status),
-            Self::Cgb(debugger) => debugger.apply_status(status),
-        }
-    }
-
-    /// Update the per-vblank inspection snapshot the running panes render from.
-    pub fn apply_snapshot(&mut self, view: DebugView) {
-        match self {
-            Self::Dmg(debugger) => debugger.apply_snapshot(view),
-            Self::Cgb(debugger) => debugger.apply_snapshot(view),
-        }
-    }
-
-    pub fn running(&self) -> bool {
-        match self {
-            Self::Dmg(debugger) => debugger.running(),
-            Self::Cgb(debugger) => debugger.running(),
-        }
-    }
-
-    pub fn run(&mut self) {
-        match self {
-            Self::Dmg(debugger) => debugger.run(),
-            Self::Cgb(debugger) => debugger.run(),
-        }
-    }
-
-    pub fn pause(&mut self) {
-        match self {
-            Self::Dmg(debugger) => debugger.pause(),
-            Self::Cgb(debugger) => debugger.pause(),
-        }
-    }
-
-    pub fn reset(&mut self) {
-        match self {
-            Self::Dmg(debugger) => debugger.reset(),
-            Self::Cgb(debugger) => debugger.reset(),
-        }
-    }
-
-    pub fn press_button(&mut self, button: Button) {
-        match self {
-            Self::Dmg(debugger) => debugger.press_button(button),
-            Self::Cgb(debugger) => debugger.press_button(button),
-        }
-    }
-
-    pub fn release_button(&mut self, button: Button) {
-        match self {
-            Self::Dmg(debugger) => debugger.release_button(button),
-            Self::Cgb(debugger) => debugger.release_button(button),
-        }
-    }
-}
-
-/// The debugger state that moves to the emu thread while running: the core
-/// (console, breakpoints, counters) plus the UI's frame counter. Pane and
-/// layout state stays behind on the UI thread.
-pub struct DebuggerPayload {
-    core: DebuggerCore,
-    frame: u64,
-}
-
-enum DebuggerCore {
-    Dmg(Box<missingno_gb::debugger::Debugger<missingno_gb::Dmg>>),
-    Cgb(Box<missingno_gb::debugger::Debugger<missingno_gbc::Cgb>>),
-}
-
-impl DebuggerPayload {
-    /// Step until the next frame or breakpoint. Returns the display (if a
-    /// frame completed) and whether a breakpoint stopped the run.
-    pub fn step_frame(&mut self) -> (Option<ScreenDisplay>, bool) {
-        self.frame += 1;
-        match &mut self.core {
-            DebuggerCore::Dmg(core) => step_core_frame(core),
-            DebuggerCore::Cgb(core) => step_core_frame(core),
-        }
-    }
-
-    pub fn running_status(&self) -> RunningStatus {
-        let (pc, sp, ly, mode) = match &self.core {
-            DebuggerCore::Dmg(core) => console_status(core.game_boy()),
-            DebuggerCore::Cgb(core) => console_status(core.game_boy()),
-        };
-        RunningStatus {
-            pc,
-            sp,
-            ly,
-            mode,
-            frame: self.frame,
-        }
-    }
-
-    /// Copy the pane-relevant console state for the UI to render while the core
-    /// runs here. Called once per completed frame.
-    pub fn debug_view(&self) -> DebugView {
-        match &self.core {
-            DebuggerCore::Dmg(core) => {
-                Box::new(ConsoleSnapshot::capture(core.game_boy(), self.frame))
-            }
-            DebuggerCore::Cgb(core) => {
-                Box::new(ConsoleSnapshot::capture(core.game_boy(), self.frame))
-            }
-        }
-    }
-
-    pub fn reset(&mut self) {
-        self.frame = 0;
-        match &mut self.core {
-            DebuggerCore::Dmg(core) => core.reset(),
-            DebuggerCore::Cgb(core) => core.reset(),
-        }
-    }
-
-    pub fn press_button(&mut self, button: Button) {
-        match &mut self.core {
-            DebuggerCore::Dmg(core) => core.game_boy_mut().press_button(button),
-            DebuggerCore::Cgb(core) => core.game_boy_mut().press_button(button),
-        }
-    }
-
-    pub fn release_button(&mut self, button: Button) {
-        match &mut self.core {
-            DebuggerCore::Dmg(core) => core.game_boy_mut().release_button(button),
-            DebuggerCore::Cgb(core) => core.game_boy_mut().release_button(button),
-        }
-    }
-
-    pub fn set_breakpoint(&mut self, address: u16) {
-        match &mut self.core {
-            DebuggerCore::Dmg(core) => core.set_breakpoint(address),
-            DebuggerCore::Cgb(core) => core.set_breakpoint(address),
-        }
-    }
-
-    pub fn clear_breakpoint(&mut self, address: u16) {
-        match &mut self.core {
-            DebuggerCore::Dmg(core) => core.clear_breakpoint(address),
-            DebuggerCore::Cgb(core) => core.clear_breakpoint(address),
-        }
-    }
-
-    pub fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
-        match &mut self.core {
-            DebuggerCore::Dmg(core) => core.game_boy_mut().drain_audio_samples(),
-            DebuggerCore::Cgb(core) => core.game_boy_mut().drain_audio_samples(),
-        }
-    }
-
-    pub fn capture_frame(&self, use_sgb_colors: bool, palette_name: &str) -> FrameCapture {
-        match &self.core {
-            DebuggerCore::Dmg(core) => {
-                missingno_gb::Dmg::capture_frame(core.game_boy(), use_sgb_colors, palette_name)
-            }
-            DebuggerCore::Cgb(core) => {
-                missingno_gbc::Cgb::capture_frame(core.game_boy(), use_sgb_colors, palette_name)
-            }
-        }
-    }
-
-    pub fn cartridge(&self) -> &Cartridge {
-        match &self.core {
-            DebuggerCore::Dmg(core) => core.game_boy().cartridge(),
-            DebuggerCore::Cgb(core) => core.game_boy().cartridge(),
-        }
-    }
-}
-
-fn step_core_frame<M: ConsoleUi>(
-    core: &mut missingno_gb::debugger::Debugger<M>,
-) -> (Option<ScreenDisplay>, bool) {
-    let screen = core.step_frame();
-    let breakpoint_hit = screen.is_none();
-    (M::screen_display(core.game_boy(), screen), breakpoint_hit)
-}
-
-fn console_status<M: ConsoleUi>(console: &missingno_gb::Console<M>) -> (u16, u16, u8, Mode) {
-    (
-        console.cpu().ir_address,
-        console.cpu().stack_pointer,
-        console.ppu().video.ly(),
-        console.ppu().mode(),
-    )
-}
-
-pub struct Debugger<M: ConsoleUi> {
+pub struct Debugger {
     /// The core (console + breakpoints) — `None` while it runs on the emu thread.
-    debugger: Option<missingno_gb::debugger::Debugger<M>>,
+    debugger: Option<Box<dyn SystemDebugger>>,
     /// UI copy of the breakpoint set, kept editable while the core is away.
     breakpoints: BTreeSet<u16>,
     /// Lightweight status published every frame while the core is away; feeds
@@ -423,18 +104,21 @@ pub struct Debugger<M: ConsoleUi> {
     breakpoint_input: String,
 }
 
-impl<M: ConsoleUi> Debugger<M> {
-    pub fn new(console: missingno_gb::Console<M>) -> Self {
-        Self::build(console, DebuggerPanes::new())
+impl Debugger {
+    pub fn new(console: Box<dyn SystemConsole>) -> Self {
+        Self::build(console.into_debugger(), DebuggerPanes::new())
     }
 
-    pub fn from_console(console: missingno_gb::Console<M>, screen_view: ScreenView) -> Self {
-        Self::build(console, DebuggerPanes::with_screen(screen_view))
+    pub fn from_console(console: Box<dyn SystemConsole>, screen_view: ScreenView) -> Self {
+        Self::build(
+            console.into_debugger(),
+            DebuggerPanes::with_screen(screen_view),
+        )
     }
 
-    fn build(console: missingno_gb::Console<M>, panes: DebuggerPanes) -> Self {
+    fn build(core: Box<dyn SystemDebugger>, panes: DebuggerPanes) -> Self {
         Self {
-            debugger: Some(missingno_gb::debugger::Debugger::new(console)),
+            debugger: Some(core),
             breakpoints: BTreeSet::new(),
             last_status: None,
             last_snapshot: None,
@@ -449,17 +133,32 @@ impl<M: ConsoleUi> Debugger<M> {
         }
     }
 
-    /// The console, present only while the core is on the UI thread.
-    pub fn game_boy(&self) -> Option<&missingno_gb::Console<M>> {
-        self.debugger.as_ref().map(|core| core.game_boy())
+    /// The cartridge, present only while the core is on the UI thread.
+    pub fn cartridge(&self) -> Option<&Cartridge> {
+        self.debugger.as_ref().map(|core| core.cartridge())
     }
 
-    fn take_core(&mut self) -> Option<(missingno_gb::debugger::Debugger<M>, u64)> {
+    pub fn capture_screenshot(
+        &self,
+        use_sgb_colors: bool,
+        palette_name: &str,
+    ) -> Option<FrameCapture> {
+        self.debugger
+            .as_ref()
+            .map(|core| core.capture_frame(use_sgb_colors, palette_name))
+    }
+
+    /// Take the core to hand it to the emu thread for running.
+    pub fn take_payload(&mut self) -> Option<DebuggerPayload> {
         let frame = self.frame;
-        self.debugger.take().map(|core| (core, frame))
+        self.debugger
+            .take()
+            .map(|core| DebuggerPayload { core, frame })
     }
 
-    fn restore_core(&mut self, mut core: missingno_gb::debugger::Debugger<M>, frame: u64) {
+    /// Put the core back when the emu thread returns it on pause or breakpoint.
+    pub fn restore_payload(&mut self, payload: DebuggerPayload) {
+        let mut core = payload.core;
         // Resync from the UI's set: a breakpoint edit can race the payload's
         // return and get dropped by the idle emu thread.
         let stale: Vec<u16> = core
@@ -474,45 +173,50 @@ impl<M: ConsoleUi> Debugger<M> {
             core.set_breakpoint(address);
         }
         self.debugger = Some(core);
-        self.frame = frame;
+        self.frame = payload.frame;
         self.last_status = None;
         self.last_snapshot = None;
     }
 
-    fn apply_frame(&mut self, display: ScreenDisplay) {
+    /// Whether the core is away on the emu thread.
+    pub fn is_detached(&self) -> bool {
+        self.debugger.is_none()
+    }
+
+    /// Update the screen pane from the emu thread's latest-frame slot.
+    pub fn apply_frame(&mut self, display: ScreenDisplay) {
         self.panes
             .update(panes::Message::Pane(panes::PaneMessage::Screen(
                 screen::Message::Update(display),
             )));
     }
 
-    fn apply_status(&mut self, status: RunningStatus) {
+    /// Update the live status shown while the core runs on the emu thread.
+    pub fn apply_status(&mut self, status: RunningStatus) {
         self.frame = status.frame;
         self.last_status = Some(status);
     }
 
-    fn apply_snapshot(&mut self, view: DebugView) {
+    /// Update the per-vblank inspection snapshot the running panes render from.
+    pub fn apply_snapshot(&mut self, view: DebugView) {
         self.frame = view.frame();
         self.last_snapshot = Some(view);
     }
 
-    fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
+    pub fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
         match &mut self.debugger {
-            Some(core) => core.game_boy_mut().drain_audio_samples(),
+            Some(core) => core.drain_audio_samples(),
             None => Vec::new(),
         }
     }
 
-    fn into_emulator(self, use_sgb_colors: bool, frame_blending: bool) -> Emulator
-    where
-        AnyConsole: From<missingno_gb::Console<M>>,
-    {
+    pub fn disable_debugger(self, use_sgb_colors: bool, frame_blending: bool) -> Emulator {
         let core = self
             .debugger
             .expect("core present when disabling the debugger");
         let screen_view = self.panes.take_screen_view();
         Emulator::from_debugger(
-            core.game_boy_take().into(),
+            core.into_console(),
             screen_view,
             use_sgb_colors,
             frame_blending,
@@ -543,11 +247,8 @@ impl<M: ConsoleUi> Debugger<M> {
         }
     }
 
-    fn screen_update_task(&self, screen: Option<M::Screen>) -> Task<app::Message> {
-        let Some(core) = &self.debugger else {
-            return Task::none();
-        };
-        match M::screen_display(core.game_boy(), screen) {
+    fn display_task(display: Option<ScreenDisplay>) -> Task<app::Message> {
+        match display {
             Some(display) => Task::done(screen::Message::Update(display).into()),
             None => Task::none(),
         }
@@ -559,37 +260,30 @@ impl<M: ConsoleUi> Debugger<M> {
                 let Some(core) = &mut self.debugger else {
                     return Task::none();
                 };
-                let screen = core.step();
-                self.screen_update_task(screen)
+                Self::display_task(core.step())
             }
             Message::StepOver => {
                 let Some(core) = &mut self.debugger else {
                     return Task::none();
                 };
-                let screen = core.step_over();
-                self.screen_update_task(screen)
+                Self::display_task(core.step_over())
             }
             Message::StepFrame => {
                 let Some(core) = &mut self.debugger else {
                     return Task::none();
                 };
-                let screen = core.step_frame();
+                let (display, breakpoint_hit) = core.step_frame();
                 self.frame += 1;
-                if screen.is_none() {
+                if breakpoint_hit {
                     self.running = false;
                 }
-                self.screen_update_task(screen)
+                Self::display_task(display)
             }
             Message::CaptureFrame => {
                 let Some(core) = &self.debugger else {
                     return Task::none();
                 };
-                let title = core
-                    .game_boy()
-                    .cartridge()
-                    .title()
-                    .to_lowercase()
-                    .replace(' ', "_");
+                let title = core.cartridge().title().to_lowercase().replace(' ', "_");
                 let default_name = format!("{title}_frame{}.gbtrace", self.frame);
 
                 let dialog = rfd::AsyncFileDialog::new()
@@ -605,12 +299,12 @@ impl<M: ConsoleUi> Debugger<M> {
                 let Some(core) = &mut self.debugger else {
                     return Task::none();
                 };
-                match core.capture_frame(&path) {
-                    Ok(screen) => {
+                match core.capture_trace(&path) {
+                    Some(display) => {
                         self.frame += 1;
-                        self.screen_update_task(Some(screen))
+                        Self::display_task(Some(display))
                     }
-                    Err(_) => Task::none(),
+                    None => Task::none(),
                 }
             }
 
@@ -716,7 +410,7 @@ impl<M: ConsoleUi> Debugger<M> {
         let Some(core) = &self.debugger else {
             return self.running_view();
         };
-        let source: &dyn InspectSource = core.game_boy();
+        let source: &dyn InspectSource = core.inspect();
         let colors = source.colors(self.panes.palette());
 
         let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
@@ -893,13 +587,13 @@ impl<M: ConsoleUi> Debugger<M> {
 
     pub fn press_button(&mut self, button: Button) {
         if let Some(core) = &mut self.debugger {
-            core.game_boy_mut().press_button(button);
+            core.press_button(button);
         }
     }
 
     pub fn release_button(&mut self, button: Button) {
         if let Some(core) = &mut self.debugger {
-            core.game_boy_mut().release_button(button);
+            core.release_button(button);
         }
     }
 }

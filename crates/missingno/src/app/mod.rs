@@ -19,6 +19,7 @@ mod load;
 mod recent;
 mod screen;
 pub mod settings;
+mod system;
 mod texture_renderer;
 mod ui;
 mod views;
@@ -235,7 +236,7 @@ enum Game {
 }
 
 enum LoadedGame {
-    Debugger(debugger::AnyDebugger),
+    Debugger(debugger::Debugger),
     Emulator(emulator::Emulator),
 }
 

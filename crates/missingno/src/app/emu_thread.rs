@@ -15,11 +15,10 @@ use missingno_gb::joypad::Button;
 use missingno_gb::ppu::rendering::Mode;
 
 use super::audio_output::AudioOutput;
-use super::console::AnyConsole;
-use super::debugger::DebuggerPayload;
 use super::debugger::inspect::DebugView;
 use super::library::activity::FrameCapture;
 use super::screen::ScreenDisplay;
+use super::system::{FrameOutcome, SystemConsole, SystemDebugger};
 
 /// One emulated frame at the DMG dot rate (~59.7 Hz).
 const FRAME_INTERVAL: Duration = Duration::from_micros(16_740);
@@ -40,8 +39,16 @@ pub type FrameSlot = Arc<Mutex<Option<ScreenDisplay>>>;
 /// console, or the debugger's core (console + breakpoints) in debugger mode.
 /// The debugger's pane/layout state stays on the UI thread.
 pub enum Payload {
-    Console(Box<AnyConsole>),
-    Debugger(Box<DebuggerPayload>),
+    Console(Box<dyn SystemConsole>),
+    Debugger(DebuggerPayload),
+}
+
+/// The debugger state that moves to the emu thread while running: the core
+/// (console, breakpoints, counters) plus the UI's frame counter. Pane and
+/// layout state stays behind on the UI thread.
+pub struct DebuggerPayload {
+    pub core: Box<dyn SystemDebugger>,
+    pub frame: u64,
 }
 
 /// Live console state published each frame while the debugger runs, so the UI
@@ -61,13 +68,6 @@ pub type StatusSlot = Arc<Mutex<Option<RunningStatus>>>;
 /// Latest-value handoff for the debugger's per-vblank inspection snapshot. Only
 /// written while a debugger payload runs; `None` for plain-console payloads.
 pub type SnapshotSlot = Arc<Mutex<Option<DebugView>>>;
-
-/// One frame's worth of stepping, as seen by the emu-thread loop.
-struct FrameOutcome {
-    display: Option<ScreenDisplay>,
-    sram_dirty: bool,
-    breakpoint_hit: bool,
-}
 
 /// Commands the UI sends to the emu thread. The thread terminates when the
 /// command channel is dropped (the UI holds the only sender).
@@ -335,7 +335,7 @@ impl EmuLoop {
         let Some(payload) = &mut self.payload else {
             return;
         };
-        let outcome = payload.step_frame();
+        let (outcome, breakpoint_hit) = payload.step_frame();
         let new_frame = outcome.display.is_some();
         if let Some(display) = outcome.display
             && let Ok(mut slot) = self.frames.lock()
@@ -370,7 +370,7 @@ impl EmuLoop {
             }
         }
 
-        if outcome.breakpoint_hit {
+        if breakpoint_hit {
             self.return_payload();
             let _ = self.events.unbounded_send(EmuEvent::BreakpointHit);
         }
@@ -402,56 +402,59 @@ impl Payload {
     fn reset(&mut self) {
         match self {
             Self::Console(console) => console.reset(),
-            Self::Debugger(debugger) => debugger.reset(),
+            Self::Debugger(payload) => {
+                payload.frame = 0;
+                payload.core.reset();
+            }
         }
     }
 
     fn press_button(&mut self, button: Button) {
         match self {
             Self::Console(console) => console.press_button(button),
-            Self::Debugger(debugger) => debugger.press_button(button),
+            Self::Debugger(payload) => payload.core.press_button(button),
         }
     }
 
     fn release_button(&mut self, button: Button) {
         match self {
             Self::Console(console) => console.release_button(button),
-            Self::Debugger(debugger) => debugger.release_button(button),
+            Self::Debugger(payload) => payload.core.release_button(button),
         }
     }
 
     fn set_breakpoint(&mut self, address: u16) {
         match self {
             Self::Console(_) => {}
-            Self::Debugger(debugger) => debugger.set_breakpoint(address),
+            Self::Debugger(payload) => payload.core.set_breakpoint(address),
         }
     }
 
     fn clear_breakpoint(&mut self, address: u16) {
         match self {
             Self::Console(_) => {}
-            Self::Debugger(debugger) => debugger.clear_breakpoint(address),
+            Self::Debugger(payload) => payload.core.clear_breakpoint(address),
         }
     }
 
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
         match self {
             Self::Console(console) => console.drain_audio_samples(),
-            Self::Debugger(debugger) => debugger.drain_audio_samples(),
+            Self::Debugger(payload) => payload.core.drain_audio_samples(),
         }
     }
 
     fn capture_frame(&self, use_sgb_colors: bool, palette: &str) -> FrameCapture {
         match self {
             Self::Console(console) => console.capture_frame(use_sgb_colors, palette),
-            Self::Debugger(debugger) => debugger.capture_frame(use_sgb_colors, palette),
+            Self::Debugger(payload) => payload.core.capture_frame(use_sgb_colors, palette),
         }
     }
 
     fn sram(&self) -> Option<Vec<u8>> {
         let cartridge = match self {
             Self::Console(console) => console.cartridge(),
-            Self::Debugger(debugger) => debugger.cartridge(),
+            Self::Debugger(payload) => payload.core.cartridge(),
         };
         if !cartridge.has_battery() {
             return None;
@@ -462,47 +465,33 @@ impl Payload {
     fn running_status(&self) -> Option<RunningStatus> {
         match self {
             Self::Console(_) => None,
-            Self::Debugger(debugger) => Some(debugger.running_status()),
+            Self::Debugger(payload) => Some(payload.core.running_status(payload.frame)),
         }
     }
 
     fn debug_view(&self) -> Option<DebugView> {
         match self {
             Self::Console(_) => None,
-            Self::Debugger(debugger) => Some(debugger.debug_view()),
+            Self::Debugger(payload) => Some(payload.core.snapshot(payload.frame)),
         }
     }
 
-    /// Emulate up to one frame, returning the completed display if any. The
-    /// LCD-off guard caps the console's step budget so an idle PPU can't
-    /// stall; the debugger's frame step honours breakpoints instead.
-    fn step_frame(&mut self) -> FrameOutcome {
+    /// Emulate up to one frame; the flag reports a breakpoint stop. The
+    /// console path never stops early; the debugger's frame step honours
+    /// breakpoints.
+    fn step_frame(&mut self) -> (FrameOutcome, bool) {
         match self {
-            Self::Console(console) => {
-                let max = 70224 * 2 * console.cpu_tcycles_per_dot() as u32;
-                let mut tcycles = 0;
-                let mut sram_dirty = false;
-                loop {
-                    let result = console.step();
-                    tcycles += result.tcycles;
-                    sram_dirty |= result.sram_dirty;
-                    if result.new_screen || tcycles >= max {
-                        break;
-                    }
-                }
-                FrameOutcome {
-                    display: Some(console.screen_display()),
-                    sram_dirty,
-                    breakpoint_hit: false,
-                }
-            }
-            Self::Debugger(debugger) => {
-                let (display, breakpoint_hit) = debugger.step_frame();
-                FrameOutcome {
-                    display,
-                    sram_dirty: false,
+            Self::Console(console) => (console.step_frame(), false),
+            Self::Debugger(payload) => {
+                payload.frame += 1;
+                let (display, breakpoint_hit) = payload.core.step_frame();
+                (
+                    FrameOutcome {
+                        display,
+                        sram_dirty: false,
+                    },
                     breakpoint_hit,
-                }
+                )
             }
         }
     }

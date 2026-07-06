@@ -151,7 +151,7 @@ impl App {
                         && let Some(handle) = &self.emu
                         && let Some(Payload::Debugger(payload)) = handle.recover()
                     {
-                        debugger.restore_payload(*payload);
+                        debugger.restore_payload(payload);
                     }
                     debugger.pause();
                 }
@@ -199,12 +199,12 @@ impl App {
         match &mut self.game {
             Game::Loaded(LoadedGame::Emulator(emulator)) if emulator.running() => {
                 if let Some(console) = emulator.take_console() {
-                    handle.run(Payload::Console(Box::new(console)));
+                    handle.run(Payload::Console(console));
                 }
             }
             Game::Loaded(LoadedGame::Debugger(debugger)) if debugger.running() => {
                 if let Some(payload) = debugger.take_payload() {
-                    handle.run(Payload::Debugger(Box::new(payload)));
+                    handle.run(Payload::Debugger(payload));
                 }
             }
             _ => {}
@@ -225,11 +225,11 @@ impl App {
                     (
                         Some(Payload::Console(console)),
                         Game::Loaded(LoadedGame::Emulator(emulator)),
-                    ) => emulator.restore_console(*console),
+                    ) => emulator.restore_console(console),
                     (
                         Some(Payload::Debugger(payload)),
                         Game::Loaded(LoadedGame::Debugger(debugger)),
-                    ) => debugger.restore_payload(*payload),
+                    ) => debugger.restore_payload(payload),
                     _ => {}
                 }
             }

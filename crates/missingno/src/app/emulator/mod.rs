@@ -7,8 +7,8 @@ use iced::{
 
 use crate::app::{
     self,
-    console::AnyConsole,
     screen::{ScreenDisplay, ScreenView},
+    system::SystemConsole,
     ui::{
         icons::{self, Icon},
         sizes::border_s,
@@ -20,7 +20,7 @@ use missingno_gb::ppu::types::palette::PaletteChoice;
 /// console lives on the emu thread (`console` is `None`); it is recovered here
 /// synchronously on pause so all inspection paths keep working.
 pub struct Emulator {
-    console: Option<AnyConsole>,
+    console: Option<Box<dyn SystemConsole>>,
     screen_view: ScreenView,
     running: bool,
     screen_hovered: bool,
@@ -41,7 +41,11 @@ impl From<Message> for app::Message {
 }
 
 impl Emulator {
-    pub fn new(console: AnyConsole, use_sgb_colors: bool, frame_blending: bool) -> Self {
+    pub fn new(
+        console: Box<dyn SystemConsole>,
+        use_sgb_colors: bool,
+        frame_blending: bool,
+    ) -> Self {
         Self {
             console: Some(console),
             screen_view: ScreenView::new(),
@@ -53,7 +57,7 @@ impl Emulator {
     }
 
     pub fn from_debugger(
-        console: AnyConsole,
+        console: Box<dyn SystemConsole>,
         screen_view: ScreenView,
         use_sgb_colors: bool,
         frame_blending: bool,
@@ -77,17 +81,17 @@ impl Emulator {
     }
 
     /// The console, present only while paused/idle (not while running).
-    pub fn console(&self) -> Option<&AnyConsole> {
-        self.console.as_ref()
+    pub fn console(&self) -> Option<&dyn SystemConsole> {
+        self.console.as_deref()
     }
 
     /// Take the console to hand it to the emu thread for running.
-    pub fn take_console(&mut self) -> Option<AnyConsole> {
+    pub fn take_console(&mut self) -> Option<Box<dyn SystemConsole>> {
         self.console.take()
     }
 
     /// Put the console back when the emu thread returns it on pause.
-    pub fn restore_console(&mut self, console: AnyConsole) {
+    pub fn restore_console(&mut self, console: Box<dyn SystemConsole>) {
         self.console = Some(console);
     }
 
@@ -98,11 +102,11 @@ impl Emulator {
         self.screen_view.apply(display);
     }
 
-    pub fn enable_debugger(self) -> app::debugger::AnyDebugger {
+    pub fn enable_debugger(self) -> app::debugger::Debugger {
         let console = self
             .console
             .expect("console present when enabling the debugger");
-        app::debugger::AnyDebugger::from_emulator(console, self.screen_view)
+        app::debugger::Debugger::from_console(console, self.screen_view)
     }
 
     pub fn update(&mut self, message: Message) -> Task<app::Message> {

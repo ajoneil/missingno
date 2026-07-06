@@ -4,7 +4,7 @@ use iced::Task;
 use jiff::Timestamp;
 use rfd::{AsyncFileDialog, FileHandle};
 
-use crate::app::{self, App, CurrentGame, Game, LoadedGame, Screen, console::AnyConsole, library};
+use crate::app::{self, App, CurrentGame, Game, LoadedGame, Screen, library, system};
 use missingno_gb::cartridge::Cartridge;
 
 #[derive(Debug, Clone)]
@@ -66,14 +66,14 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
 /// emulator), storing it in `app.game`. Returns the cartridge header title.
 fn start_console(app: &mut App, cartridge: Cartridge) -> String {
     let cartridge_title = cartridge.title().to_string();
-    let mut console = AnyConsole::new(cartridge, None);
+    let mut console = system::gb::create_console(cartridge, None);
     if let Some(link) = app.serial_link.take() {
         console.set_link(link);
     }
     let palette = app.settings.palette;
 
     if app.debugger_enabled {
-        let mut debugger = app::debugger::AnyDebugger::new(console);
+        let mut debugger = app::debugger::Debugger::new(console);
         debugger.set_palette(palette);
         debugger.set_frame_blending(app.settings.frame_blending);
         app.game = Game::Loaded(LoadedGame::Debugger(debugger));
