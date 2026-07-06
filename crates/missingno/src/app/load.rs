@@ -32,6 +32,10 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
             {
                 dialog = dialog.add_filter(system::vcs::PLATFORM_NAME, system::vcs::ROM_EXTENSIONS);
             }
+            #[cfg(feature = "sms")]
+            {
+                dialog = dialog.add_filter(system::sms::PLATFORM_NAME, system::sms::ROM_EXTENSIONS);
+            }
             if let Some(dir) = app.recent_games.most_recent_dir() {
                 dialog = dialog.set_directory(dir);
             }
@@ -101,6 +105,12 @@ fn start_console(
     {
         return finish_start(app, console, rom_path);
     }
+    #[cfg(feature = "sms")]
+    if system::sms::is_sms_rom(rom_path)
+        && let Ok(console) = system::sms::create_console(&rom, file_stem_title(rom_path))
+    {
+        return finish_start(app, console, rom_path);
+    }
     let cartridge = build_cartridge(rom, save_data);
     let cartridge_title = cartridge.title().to_string();
     let mut console = system::gb::create_console(cartridge, None);
@@ -118,13 +128,27 @@ fn start_console(
     title
 }
 
-#[cfg(feature = "vcs")]
 fn file_stem_title(rom_path: &std::path::Path) -> String {
     rom_path
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("Unknown")
         .to_string()
+}
+
+/// Families whose media carries no header title: it comes from the file
+/// stem instead.
+fn headerless_family_rom(rom_path: &std::path::Path, rom: &[u8]) -> bool {
+    #[cfg(feature = "vcs")]
+    if system::vcs::is_vcs_rom(rom_path, rom) {
+        return true;
+    }
+    #[cfg(feature = "sms")]
+    if system::sms::is_sms_rom(rom_path) {
+        return true;
+    }
+    let _ = (rom_path, rom);
+    false
 }
 
 /// Wrap a built console for the active mode (debugger where the system
@@ -291,14 +315,11 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
         (dir, existing)
     } else {
         // New game — create entry with ROM header title
-        #[cfg(feature = "vcs")]
-        let header_title = if system::vcs::is_vcs_rom(&rom_path, &rom) {
+        let header_title = if headerless_family_rom(&rom_path, &rom) {
             file_stem_title(&rom_path)
         } else {
             Cartridge::peek_title(&rom)
         };
-        #[cfg(not(feature = "vcs"))]
-        let header_title = Cartridge::peek_title(&rom);
         let title = if header_title.is_empty() {
             "Unknown".to_string()
         } else {

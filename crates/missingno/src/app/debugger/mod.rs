@@ -25,7 +25,7 @@ use missingno_gb::{
     ppu::types::palette::PaletteChoice,
 };
 
-use inspect::DebugView;
+use inspect::{DebugView, Inspection};
 use panes::{DebuggerPanes, PaneContext};
 use sidebar::Sidebar;
 
@@ -38,6 +38,8 @@ pub mod panes;
 mod ppu;
 mod screen;
 pub(crate) mod sidebar;
+#[cfg(feature = "sms")]
+pub(crate) mod sms;
 #[cfg(feature = "vcs")]
 pub(crate) mod vcs;
 
@@ -624,6 +626,8 @@ impl Debugger {
             gb,
             #[cfg(feature = "vcs")]
             vcs: inspection.as_vcs(),
+            #[cfg(feature = "sms")]
+            sms: inspection.as_sms(),
             breakpoints: core.breakpoints(),
             colors: &colors,
             symbols: &symbols,
@@ -652,19 +656,30 @@ impl Debugger {
         let sidebar = if let Some(source) = gb {
             self.sidebar.view(source, &colors)
         } else {
-            #[cfg(feature = "vcs")]
-            if let Some(state) = inspection.as_vcs() {
-                self.sidebar.vcs_view(state)
-            } else {
-                self.sidebar.running_summary(self.last_status.as_ref())
-            }
-            #[cfg(not(feature = "vcs"))]
-            self.sidebar.running_summary(self.last_status.as_ref())
+            self.family_summary_sidebar(inspection)
         };
         row![sidebar, center, self.icon_rail(),]
             .spacing(s())
             .padding(s())
             .into()
+    }
+
+    /// The sidebar for a non-GB family's surface, falling back to the
+    /// running summary when no family claims it.
+    fn family_summary_sidebar<'a>(
+        &'a self,
+        inspection: &'a dyn Inspection,
+    ) -> Element<'a, app::Message> {
+        #[cfg(feature = "vcs")]
+        if let Some(state) = inspection.as_vcs() {
+            return self.sidebar.vcs_view(state);
+        }
+        #[cfg(feature = "sms")]
+        if let Some(state) = inspection.as_sms() {
+            return self.sidebar.sms_view(state);
+        }
+        let _ = inspection;
+        self.sidebar.running_summary(self.last_status.as_ref())
     }
 
     /// The view while the core runs on the emu thread. The screen pane stays
@@ -707,16 +722,10 @@ impl Debugger {
             &colors,
         ) {
             (Some(source), Some(colors)) => self.sidebar.view(source, colors),
-            _ => {
-                #[cfg(feature = "vcs")]
-                if let Some(state) = self.last_snapshot.as_deref().and_then(|s| s.as_vcs()) {
-                    self.sidebar.vcs_view(state)
-                } else {
-                    self.sidebar.running_summary(self.last_status.as_ref())
-                }
-                #[cfg(not(feature = "vcs"))]
-                self.sidebar.running_summary(self.last_status.as_ref())
-            }
+            _ => match self.last_snapshot.as_deref() {
+                Some(snapshot) => self.family_summary_sidebar(snapshot as &dyn Inspection),
+                None => self.sidebar.running_summary(self.last_status.as_ref()),
+            },
         };
 
         row![sidebar, center, self.icon_rail(),]
@@ -733,6 +742,8 @@ impl Debugger {
                 gb: snapshot.as_gb(),
                 #[cfg(feature = "vcs")]
                 vcs: snapshot.as_vcs(),
+                #[cfg(feature = "sms")]
+                sms: snapshot.as_sms(),
                 breakpoints: &self.breakpoints,
                 colors,
                 symbols: snapshot.symbols(),

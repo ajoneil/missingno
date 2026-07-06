@@ -12,10 +12,13 @@ path = "src/main.rs"
 [features]
 # Atari 2600 support; off until it is ready to be public.
 vcs = ["dep:missingno-vcs"]
+# Sega Master System support; off until it is ready to be public.
+sms = ["dep:missingno-sms"]
 
 [dependencies]
 missingno-gb = { path = "../missingno-gb", features = ["gbtrace"] }
 missingno-gbc = { path = "../missingno-gbc", features = ["gbtrace"] }
+missingno-sms = { path = "../missingno-sms", optional = true }
 missingno-vcs = { path = "../missingno-vcs", optional = true }
 cpal = "0.17"
 bytemuck = { version = "1.25", features = ["derive"] }

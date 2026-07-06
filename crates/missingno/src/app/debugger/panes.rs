@@ -77,6 +77,8 @@ pub struct PaneContext<'b> {
     pub gb: Option<&'b dyn InspectSource>,
     #[cfg(feature = "vcs")]
     pub vcs: Option<&'b crate::app::debugger::vcs::VcsInspectState>,
+    #[cfg(feature = "sms")]
+    pub sms: Option<&'b crate::app::debugger::sms::SmsInspectState>,
     pub breakpoints: &'b BTreeSet<u16>,
     pub colors: &'b ConsoleColors,
     pub symbols: &'b SymbolTable,
@@ -133,14 +135,44 @@ pub static VCS_FAMILY: Family = Family {
 /// Every registered pane across all families, for label and kind lookups.
 pub fn all_descriptors() -> impl Iterator<Item = &'static PaneDescriptor> {
     #[cfg(feature = "vcs")]
-    {
-        PANE_REGISTRY.iter().chain(VCS_PANE_REGISTRY.iter())
-    }
+    let vcs = VCS_PANE_REGISTRY.iter();
     #[cfg(not(feature = "vcs"))]
-    {
-        PANE_REGISTRY.iter()
-    }
+    let vcs = [].iter();
+    #[cfg(feature = "sms")]
+    let sms = SMS_PANE_REGISTRY.iter();
+    #[cfg(not(feature = "sms"))]
+    let sms = [].iter();
+    PANE_REGISTRY.iter().chain(vcs).chain(sms)
 }
+
+#[cfg(feature = "sms")]
+pub static SMS_FAMILY: Family = Family {
+    registry: SMS_PANE_REGISTRY,
+    layout_key: "sms",
+    default_layout: sms_default_layout,
+};
+
+#[cfg(feature = "sms")]
+pub static SMS_PANE_REGISTRY: &[PaneDescriptor] = &[
+    PaneDescriptor {
+        kind: DebuggerPane::Screen,
+        icon: Icon::Monitor,
+        label: "Screen",
+        construct: || Box::new(ScreenPane::new()),
+    },
+    PaneDescriptor {
+        kind: DebuggerPane::SmsCpu,
+        icon: Icon::FileText,
+        label: "Z80",
+        construct: || Box::new(crate::app::debugger::sms::CpuPane),
+    },
+    PaneDescriptor {
+        kind: DebuggerPane::SmsVdp,
+        icon: Icon::Image,
+        label: "VDP",
+        construct: || Box::new(crate::app::debugger::sms::VdpPane),
+    },
+];
 
 #[cfg(feature = "vcs")]
 pub static VCS_PANE_REGISTRY: &[PaneDescriptor] = &[
@@ -228,6 +260,10 @@ pub enum DebuggerPane {
     VcsCpu,
     #[cfg(feature = "vcs")]
     VcsTia,
+    #[cfg(feature = "sms")]
+    SmsCpu,
+    #[cfg(feature = "sms")]
+    SmsVdp,
 }
 
 impl DebuggerPane {
@@ -299,6 +335,20 @@ fn gb_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
         )
         .unwrap();
     panes.resize(split, 1.0 / 3.0);
+    Some(panes)
+}
+
+/// The SMS starts with the Z80 beside the screen, the VDP below.
+#[cfg(feature = "sms")]
+fn sms_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
+    let (mut panes, cpu_handle) = pane_grid::State::new(DebuggerPane::SmsCpu.construct());
+    let (screen_handle, split) = panes
+        .split(Vertical, cpu_handle, DebuggerPane::Screen.construct())
+        .unwrap();
+    panes.resize(split, 1.0 / 3.0);
+    panes
+        .split(Horizontal, screen_handle, DebuggerPane::SmsVdp.construct())
+        .unwrap();
     Some(panes)
 }
 

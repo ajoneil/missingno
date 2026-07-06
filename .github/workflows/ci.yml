@@ -62,3 +62,8 @@ jobs:
         run: cargo test -p missingno
       - name: Clippy (workspace, informational failures only on errors)
         run: cargo clippy --workspace
+      - name: Frontend feature configs build
+        run: |
+          cargo clippy -p missingno --features vcs
+          cargo clippy -p missingno --features sms
+          cargo clippy -p missingno --features vcs,sms

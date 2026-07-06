@@ -145,6 +145,40 @@ impl Sidebar {
         .into()
     }
 
+    /// The SMS sidebar: CPU and VDP summaries; the panes carry the detail.
+    #[cfg(feature = "sms")]
+    pub fn sms_view(
+        &self,
+        state: &crate::app::debugger::sms::SmsInspectState,
+    ) -> Element<'_, app::Message> {
+        let cpu_summary = format!("pc {:04X} · sp {:04X}", state.pc, state.sp);
+        let vdp_summary = format!("line {} · dot {}", state.line, state.dot);
+        column![
+            section(
+                "CPU",
+                &cpu_summary,
+                true,
+                Section::Cpu,
+                Some((true, palette::GREEN)),
+                None,
+                Space::new().into(),
+            ),
+            section(
+                "VDP",
+                &vdp_summary,
+                true,
+                Section::Ppu,
+                Some((true, palette::GREEN)),
+                None,
+                Space::new().into(),
+            ),
+        ]
+        .width(Length::Fixed(SIDEBAR_WIDTH))
+        .height(Fill)
+        .spacing(s())
+        .into()
+    }
+
     /// The collapsed CPU/PPU summary shown before the first snapshot arrives,
     /// fed by the lightweight [`RunningStatus`].
     pub fn running_summary(&self, status: Option<&RunningStatus>) -> Element<'_, app::Message> {

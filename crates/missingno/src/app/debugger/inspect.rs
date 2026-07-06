@@ -458,6 +458,10 @@ pub trait Inspection {
     fn as_vcs(&self) -> Option<&crate::app::debugger::vcs::VcsInspectState> {
         None
     }
+    #[cfg(feature = "sms")]
+    fn as_sms(&self) -> Option<&crate::app::debugger::sms::SmsInspectState> {
+        None
+    }
 }
 
 impl<M: ConsoleUi> Inspection for Console<M>
