@@ -28,17 +28,8 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
             app.game = Game::Loading;
             let mut dialog = AsyncFileDialog::new()
                 .add_filter(system::gb::ROM_FILTER_NAME, system::gb::ROM_EXTENSIONS);
-            #[cfg(feature = "vcs")]
-            {
-                dialog = dialog.add_filter(system::vcs::PLATFORM_NAME, system::vcs::ROM_EXTENSIONS);
-            }
-            #[cfg(feature = "sms")]
-            {
-                dialog = dialog.add_filter(system::sms::PLATFORM_NAME, system::sms::ROM_EXTENSIONS);
-            }
-            #[cfg(feature = "nes")]
-            {
-                dialog = dialog.add_filter(system::nes::PLATFORM_NAME, system::nes::ROM_EXTENSIONS);
+            for family in system::FAMILIES {
+                dialog = dialog.add_filter(family.platform_name, family.extensions);
             }
             if let Some(dir) = app.recent_games.most_recent_dir() {
                 dialog = dialog.set_directory(dir);
@@ -103,23 +94,12 @@ fn start_console(
     rom_path: &std::path::Path,
     game_dir: &std::path::Path,
 ) -> String {
-    #[cfg(feature = "vcs")]
-    if system::vcs::is_vcs_rom(rom_path, &rom)
-        && let Ok(console) = system::vcs::create_console(&rom, file_stem_title(rom_path))
-    {
-        return finish_start(app, console, rom_path);
-    }
-    #[cfg(feature = "sms")]
-    if system::sms::is_sms_rom(rom_path)
-        && let Ok(console) = system::sms::create_console(&rom, file_stem_title(rom_path))
-    {
-        return finish_start(app, console, rom_path);
-    }
-    #[cfg(feature = "nes")]
-    if system::nes::is_nes_rom(&rom)
-        && let Ok(console) = system::nes::create_console(&rom, file_stem_title(rom_path))
-    {
-        return finish_start(app, console, rom_path);
+    for family in system::FAMILIES {
+        if (family.is_rom)(rom_path, &rom)
+            && let Some(console) = (family.create_console)(&rom, file_stem_title(rom_path))
+        {
+            return finish_start(app, console, rom_path);
+        }
     }
     let cartridge = build_cartridge(rom, save_data);
     let cartridge_title = cartridge.title().to_string();
@@ -144,22 +124,11 @@ fn file_stem_title(rom_path: &std::path::Path) -> String {
 }
 
 /// Families whose media carries no header title: it comes from the file
-/// stem instead.
+/// stem instead. Only the Game Boy's media has one.
 fn headerless_family_rom(rom_path: &std::path::Path, rom: &[u8]) -> bool {
-    #[cfg(feature = "vcs")]
-    if system::vcs::is_vcs_rom(rom_path, rom) {
-        return true;
-    }
-    #[cfg(feature = "sms")]
-    if system::sms::is_sms_rom(rom_path) {
-        return true;
-    }
-    #[cfg(feature = "nes")]
-    if system::nes::is_nes_rom(rom) {
-        return true;
-    }
-    let _ = (rom_path, rom);
-    false
+    system::FAMILIES
+        .iter()
+        .any(|family| (family.is_rom)(rom_path, rom))
 }
 
 /// Wrap a built console for the active mode (debugger where the system

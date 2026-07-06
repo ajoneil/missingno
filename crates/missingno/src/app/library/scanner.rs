@@ -158,18 +158,9 @@ fn is_rom_file(path: &std::path::Path) -> bool {
             .extension()
             .and_then(|e| e.to_str())
             .is_some_and(|ext| {
-                #[cfg(feature = "vcs")]
-                if crate::app::system::vcs::ROM_EXTENSIONS.contains(&ext) {
-                    return true;
-                }
-                #[cfg(feature = "sms")]
-                if crate::app::system::sms::ROM_EXTENSIONS.contains(&ext) {
-                    return true;
-                }
-                #[cfg(feature = "nes")]
-                if crate::app::system::nes::ROM_EXTENSIONS.contains(&ext) {
-                    return true;
-                }
                 crate::app::system::gb::ROM_EXTENSIONS.contains(&ext)
+                    || crate::app::system::FAMILIES
+                        .iter()
+                        .any(|family| family.extensions.contains(&ext))
             })
 }

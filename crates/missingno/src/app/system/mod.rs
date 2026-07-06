@@ -60,6 +60,47 @@ pub mod sms;
 #[cfg(feature = "vcs")]
 pub mod vcs;
 
+/// Build a console from ROM bytes and a display title; `None` when the
+/// media fails to parse (the loader falls through to the next family).
+pub type CreateConsole = fn(&[u8], String) -> Option<Box<dyn SystemConsole>>;
+
+/// A family's registration on the load path: how its media is recognised in
+/// file dialogs, library scans, and ROM loads, and how a console is built.
+pub struct FamilyDescriptor {
+    /// Platform display name; also the file-dialog filter label.
+    pub platform_name: &'static str,
+    pub extensions: &'static [&'static str],
+    /// Whether path and contents identify this family's media.
+    pub is_rom: fn(&Path, &[u8]) -> bool,
+    pub create_console: CreateConsole,
+}
+
+/// Every registered family except the Game Boy, which stays the loader's
+/// fallback (its media needs battery saves, boot ROMs, and the link port).
+pub static FAMILIES: &[FamilyDescriptor] = &[
+    #[cfg(feature = "vcs")]
+    FamilyDescriptor {
+        platform_name: vcs::PLATFORM_NAME,
+        extensions: vcs::ROM_EXTENSIONS,
+        is_rom: vcs::is_vcs_rom,
+        create_console: |rom, title| vcs::create_console(rom, title).ok(),
+    },
+    #[cfg(feature = "sms")]
+    FamilyDescriptor {
+        platform_name: sms::PLATFORM_NAME,
+        extensions: sms::ROM_EXTENSIONS,
+        is_rom: |path, _| sms::is_sms_rom(path),
+        create_console: |rom, title| sms::create_console(rom, title).ok(),
+    },
+    #[cfg(feature = "nes")]
+    FamilyDescriptor {
+        platform_name: nes::PLATFORM_NAME,
+        extensions: nes::ROM_EXTENSIONS,
+        is_rom: |_, rom| nes::is_nes_rom(rom),
+        create_console: |rom, title| nes::create_console(rom, title).ok(),
+    },
+];
+
 /// One emulated frame's outcome, as seen by the emu-thread loop.
 pub struct FrameOutcome {
     pub display: Option<ScreenDisplay>,
