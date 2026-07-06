@@ -59,6 +59,24 @@ impl Riot {
         }
     }
 
+    /// Inspection read: no underflow-flag clearing, no re-arming.
+    pub fn peek(&self, register: u16) -> u8 {
+        match register & 0x07 {
+            0x00 => self.port_a,
+            0x01 => self.ddr_a,
+            0x02 => self.port_b,
+            0x03 => self.ddr_b,
+            0x05 | 0x07 => {
+                if self.underflowed {
+                    0x80
+                } else {
+                    0x00
+                }
+            }
+            _ => self.timer,
+        }
+    }
+
     pub fn read(&mut self, register: u16) -> u8 {
         match register & 0x07 {
             0x00 => self.port_a,

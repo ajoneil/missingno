@@ -147,6 +147,25 @@ impl Vcs {
         }
     }
 
+    /// Side-effect-free bus read for inspection: the debugger's view of
+    /// any address without perturbing latches or timer flags.
+    pub fn peek(&self, address: u16) -> u8 {
+        if address & 0x1000 != 0 {
+            self.cartridge.read(address)
+        } else if address & 0x0080 == 0 {
+            self.tia.peek(address)
+        } else if address & 0x0200 == 0 {
+            self.riot.ram[(address & 0x7F) as usize]
+        } else {
+            self.riot.peek(address)
+        }
+    }
+
+    /// A frame completed since the last take, if any.
+    pub fn take_frame(&mut self) -> Option<Frame> {
+        self.finished_frame.take()
+    }
+
     /// Power-cycle: fresh chip state, same cartridge.
     pub fn power_cycle(&mut self) {
         self.cpu = Cpu::new();

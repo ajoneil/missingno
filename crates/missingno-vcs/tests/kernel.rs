@@ -190,3 +190,42 @@ fn budget_guard_returns_none_without_vsync() {
     let mut vcs = Vcs::new(&asm.into_rom()).unwrap();
     assert!(vcs.step_frame(400).is_none());
 }
+
+#[test]
+fn debugger_breakpoints_and_peek_are_side_effect_free() {
+    use missingno_vcs::debugger::{Debugger, Stop};
+
+    let mut asm = Asm::new(0xF000);
+    asm.lda_imm(0x02);
+    asm.sta_zp(0x02); // WSYNC
+    let target = asm.here();
+    asm.lda_imm(0x2A);
+    let spin = asm.here();
+    asm.jmp_abs(spin);
+    let rom = asm.into_rom();
+
+    let mut debugger = Debugger::new(missingno_vcs::console::Vcs::new(&rom).unwrap());
+    debugger.set_breakpoint(target);
+    let (_, stop) = debugger.run();
+    assert_eq!(stop, Stop::Breakpoint);
+    assert_eq!(debugger.console().cpu.pc & 0x1FFF, target & 0x1FFF);
+
+    // Repeated peeks at the RIOT timer flag and TIA inputs are inert.
+    let first = debugger.console().peek(0x0285);
+    let again = debugger.console().peek(0x0285);
+    assert_eq!(first, again);
+    assert_eq!(debugger.console().peek(0x000C), 0x80, "trigger unpressed");
+}
+
+#[test]
+fn disassembles_the_basics() {
+    use missingno_vcs::cpu::disasm::disassemble;
+    let d = disassemble(0xF000, [0xA9, 0x42, 0x00]);
+    assert_eq!(d.mnemonic, "lda #$42");
+    assert_eq!(d.length, 2);
+    let d = disassemble(0xF000, [0x10, 0xFE, 0x00]);
+    assert_eq!(d.mnemonic, "bpl $f000");
+    let d = disassemble(0xF000, [0x4C, 0x34, 0x12]);
+    assert_eq!(d.mnemonic, "jmp $1234");
+    assert_eq!(d.length, 3);
+}

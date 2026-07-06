@@ -3,5 +3,6 @@
 pub mod cartridge;
 pub mod console;
 pub mod cpu;
+pub mod debugger;
 pub mod riot;
 pub mod tia;

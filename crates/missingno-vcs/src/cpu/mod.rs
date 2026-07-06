@@ -13,6 +13,7 @@
 
 mod apply;
 pub mod decode;
+pub mod disasm;
 
 use decode::{Access, DECODE, Instr, Mode, Op};
 

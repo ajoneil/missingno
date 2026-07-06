@@ -432,6 +432,25 @@ impl Tia {
         }
     }
 
+    /// Inspection read: what a bus read would return, with no side
+    /// effects (the trigger latch normally updates on INPT reads).
+    pub fn peek(&self, address: u16) -> u8 {
+        match address & 0x0F {
+            reg @ 0x00..=0x07 => self.collisions[reg as usize],
+            0x08..=0x0B => 0x00,
+            reg @ (0x0C | 0x0D) => {
+                let port = (reg - 0x0C) as usize;
+                let level = if self.trigger_latch_enabled {
+                    self.trigger_latches[port] && !self.triggers[port]
+                } else {
+                    !self.triggers[port]
+                };
+                if level { 0x80 } else { 0x00 }
+            }
+            _ => 0x00,
+        }
+    }
+
     pub fn read(&mut self, address: u16) -> u8 {
         match address & 0x0F {
             reg @ 0x00..=0x07 => self.collisions[reg as usize],
