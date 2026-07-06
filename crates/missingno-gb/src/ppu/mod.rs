@@ -115,6 +115,25 @@ pub enum Register {
     Sprite1Palette,
 }
 
+impl std::fmt::Display for Register {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Register::Control => "LCDC",
+            Register::Status => "STAT",
+            Register::BackgroundViewportY => "SCY",
+            Register::BackgroundViewportX => "SCX",
+            Register::WindowY => "WY",
+            Register::WindowX => "WX",
+            Register::CurrentScanline => "LY",
+            Register::InterruptOnScanline => "LYC",
+            Register::BackgroundPalette => "BGP",
+            Register::Sprite0Palette => "OBP0",
+            Register::Sprite1Palette => "OBP1",
+        };
+        f.write_str(name)
+    }
+}
+
 pub struct Ppu<P: PpuModel> {
     /// `None` while LCD is off (VID_RST asserted).
     pub(super) pixel_pipeline: Option<Rendering<P>>,

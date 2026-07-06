@@ -3,7 +3,7 @@ use std::collections::{BTreeSet, HashMap};
 use iced::{
     Element, Length, Task,
     alignment::Vertical,
-    widget::{Column, button, column, container, pane_grid, row, text, text_input},
+    widget::{Column, button, column, container, pane_grid, pick_list, row, text, text_input},
 };
 
 use crate::app::{
@@ -19,7 +19,10 @@ use crate::app::{
         sizes::{s, xs},
     },
 };
-use missingno_gb::{cartridge::Cartridge, joypad::Button, ppu::types::palette::PaletteChoice};
+use missingno_gb::{
+    cartridge::Cartridge, debugger::WatchCondition, joypad::Button,
+    ppu::types::palette::PaletteChoice,
+};
 
 use inspect::{DebugView, InspectSource};
 use panes::{DebuggerPanes, PaneContext};
@@ -38,6 +41,27 @@ mod sidebar;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BottomPanel {
     Breakpoints,
+    Watchpoints,
+}
+
+/// The bus-access direction offered by the watchpoint add row's picker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessKind {
+    Read,
+    Write,
+}
+
+impl AccessKind {
+    const ALL: [AccessKind; 2] = [AccessKind::Read, AccessKind::Write];
+}
+
+impl std::fmt::Display for AccessKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            AccessKind::Read => "Read",
+            AccessKind::Write => "Write",
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -70,6 +94,11 @@ pub enum Message {
     BreakpointInputChanged(String),
     AddBreakpoint,
 
+    RemoveWatchpoint(WatchCondition),
+    WatchpointInputChanged(String),
+    WatchpointKindChanged(AccessKind),
+    AddWatchpoint,
+
     BottomPane(BottomPaneMessage),
     MainSplitResize(pane_grid::ResizeEvent),
 
@@ -88,6 +117,8 @@ pub struct Debugger {
     debugger: Option<Box<dyn SystemDebugger>>,
     /// UI copy of the breakpoint set, kept editable while the core is away.
     breakpoints: BTreeSet<u16>,
+    /// UI copy of the watchpoint list, kept editable while the core is away.
+    watchpoints: Vec<WatchCondition>,
     /// Lightweight status published every frame while the core is away; feeds
     /// the sidebar summary until the first full snapshot lands.
     last_status: Option<RunningStatus>,
@@ -103,6 +134,8 @@ pub struct Debugger {
     bottom_handles: HashMap<BottomPanel, pane_grid::Pane>,
     main_split: Option<pane_grid::State<MainSplit>>,
     breakpoint_input: String,
+    watchpoint_input: String,
+    watchpoint_kind: AccessKind,
 }
 
 impl Debugger {
@@ -121,6 +154,7 @@ impl Debugger {
         Self {
             debugger: Some(core),
             breakpoints: BTreeSet::new(),
+            watchpoints: Vec::new(),
             last_status: None,
             last_snapshot: None,
             sidebar: Sidebar::new(),
@@ -131,6 +165,8 @@ impl Debugger {
             bottom_handles: HashMap::new(),
             main_split: None,
             breakpoint_input: String::new(),
+            watchpoint_input: String::new(),
+            watchpoint_kind: AccessKind::Write,
         }
     }
 
@@ -182,6 +218,18 @@ impl Debugger {
         }
         for &address in &self.breakpoints {
             core.set_breakpoint(address);
+        }
+        let stale: Vec<WatchCondition> = core
+            .watchpoints()
+            .iter()
+            .filter(|w| !self.watchpoints.contains(w))
+            .cloned()
+            .collect();
+        for condition in &stale {
+            core.remove_watchpoint(condition);
+        }
+        for condition in &self.watchpoints {
+            core.add_watchpoint(condition.clone());
         }
         self.debugger = Some(core);
         self.frame = payload.frame;
@@ -256,6 +304,41 @@ impl Debugger {
                 }
             }
         }
+    }
+
+    fn add_watchpoint(&mut self, condition: WatchCondition, emu: Option<&EmuHandle>) {
+        if self.watchpoints.contains(&condition) {
+            return;
+        }
+        self.watchpoints.push(condition.clone());
+        match &mut self.debugger {
+            Some(core) => core.add_watchpoint(condition),
+            None => {
+                if let Some(emu) = emu {
+                    emu.send(EmuCommand::AddWatchpoint(condition));
+                }
+            }
+        }
+    }
+
+    fn remove_watchpoint(&mut self, condition: &WatchCondition, emu: Option<&EmuHandle>) {
+        self.watchpoints.retain(|w| w != condition);
+        match &mut self.debugger {
+            Some(core) => core.remove_watchpoint(condition),
+            None => {
+                if let Some(emu) = emu {
+                    emu.send(EmuCommand::RemoveWatchpoint(condition.clone()));
+                }
+            }
+        }
+    }
+
+    /// The most recent watchpoint the core stopped on, present only while the
+    /// core is on the UI thread (paused after a hit).
+    fn last_watchpoint_hit(&self) -> Option<WatchCondition> {
+        self.debugger
+            .as_ref()
+            .and_then(|core| core.last_watchpoint_hit())
     }
 
     fn display_task(display: Option<ScreenDisplay>) -> Task<app::Message> {
@@ -340,6 +423,35 @@ impl Debugger {
                     let address = u16::from_str_radix(&self.breakpoint_input, 16).unwrap();
                     self.set_breakpoint(address, emu);
                     self.breakpoint_input.clear();
+                }
+                Task::none()
+            }
+
+            Message::RemoveWatchpoint(condition) => {
+                self.remove_watchpoint(&condition, emu);
+                Task::none()
+            }
+            Message::WatchpointInputChanged(input) => {
+                self.watchpoint_input = input
+                    .chars()
+                    .filter(|c| c.is_ascii_hexdigit())
+                    .take(4)
+                    .collect();
+                Task::none()
+            }
+            Message::WatchpointKindChanged(kind) => {
+                self.watchpoint_kind = kind;
+                Task::none()
+            }
+            Message::AddWatchpoint => {
+                if self.watchpoint_input.len() == 4 {
+                    let address = u16::from_str_radix(&self.watchpoint_input, 16).unwrap();
+                    let condition = match self.watchpoint_kind {
+                        AccessKind::Read => WatchCondition::BusRead { address },
+                        AccessKind::Write => WatchCondition::BusWrite { address },
+                    };
+                    self.add_watchpoint(condition, emu);
+                    self.watchpoint_input.clear();
                 }
                 Task::none()
             }
@@ -521,6 +633,7 @@ impl Debugger {
         pane_grid(state, |_handle, panel, _maximized| {
             let content: Element<'_, app::Message> = match panel {
                 BottomPanel::Breakpoints => self.breakpoints_content(),
+                BottomPanel::Watchpoints => self.watchpoints_content(),
             };
 
             panes::pane(panes::title_bar(panel.label()), content)
@@ -551,6 +664,32 @@ impl Debugger {
             .into()
     }
 
+    fn watchpoints_content(&self) -> Element<'_, app::Message> {
+        let watchpoint_list = Column::from_iter(self.watchpoints.iter().map(watchpoint_row));
+
+        let address = text_input("Address (hex)...", &self.watchpoint_input)
+            .font(fonts::monospace())
+            .on_input(|value| Message::WatchpointInputChanged(value).into())
+            .on_submit(Message::AddWatchpoint.into());
+
+        let kind = pick_list(AccessKind::ALL, Some(self.watchpoint_kind), |kind| {
+            Message::WatchpointKindChanged(kind).into()
+        });
+
+        let add_row = row![address, kind].spacing(s()).align_y(Vertical::Center);
+
+        let panel = match self.last_watchpoint_hit() {
+            Some(hit) => column![
+                text(format!("hit: {hit}")).font(fonts::monospace()),
+                watchpoint_list,
+                add_row,
+            ],
+            None => column![watchpoint_list, add_row],
+        };
+
+        panel.spacing(s()).padding(s()).into()
+    }
+
     fn icon_rail(&self) -> Element<'_, app::Message> {
         use icons::Icon;
 
@@ -563,17 +702,20 @@ impl Debugger {
             )
         });
 
-        let panel_buttons = [(BottomPanel::Breakpoints, Icon::Circle, "Breakpoints")]
-            .into_iter()
-            .map(|(panel, icon, label)| {
-                let shown = self.bottom_handles.contains_key(&panel);
-                let message = if shown {
-                    BottomPaneMessage::Close(panel)
-                } else {
-                    BottomPaneMessage::Show(panel)
-                };
-                rail_icon(icon, label, shown, Message::BottomPane(message).into())
-            });
+        let panel_buttons = [
+            (BottomPanel::Breakpoints, Icon::Circle, "Breakpoints"),
+            (BottomPanel::Watchpoints, Icon::Eye, "Watchpoints"),
+        ]
+        .into_iter()
+        .map(|(panel, icon, label)| {
+            let shown = self.bottom_handles.contains_key(&panel);
+            let message = if shown {
+                BottomPaneMessage::Close(panel)
+            } else {
+                BottomPaneMessage::Show(panel)
+            };
+            rail_icon(icon, label, shown, Message::BottomPane(message).into())
+        });
 
         column![
             column(pane_buttons).spacing(xs()),
@@ -629,6 +771,7 @@ impl BottomPanel {
     fn label(&self) -> &'static str {
         match self {
             BottomPanel::Breakpoints => "Breakpoints",
+            BottomPanel::Watchpoints => "Watchpoints",
         }
     }
 }
@@ -659,6 +802,19 @@ fn rail_icon<'a>(
         tooltip::Position::Left,
     )
     .style(tooltip_style)
+    .into()
+}
+
+fn watchpoint_row(condition: &WatchCondition) -> Element<'static, app::Message> {
+    container(
+        row![
+            button(icons::m(icons::Icon::Close))
+                .on_press(Message::RemoveWatchpoint(condition.clone()).into())
+                .style(button::text),
+            text(condition.to_string()).font(fonts::monospace())
+        ]
+        .align_y(Vertical::Center),
+    )
     .into()
 }
 

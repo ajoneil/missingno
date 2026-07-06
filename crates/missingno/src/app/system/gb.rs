@@ -7,8 +7,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use missingno_gb::{
-    BootRom, Console, GameBoy, cartridge::Cartridge, debugger::symbols::SymbolTable,
-    joypad::Button, ppu::model::PpuModel, serial_transfer::SerialLink,
+    BootRom, Console, GameBoy,
+    cartridge::Cartridge,
+    debugger::{WatchCondition, symbols::SymbolTable},
+    joypad::Button,
+    ppu::model::PpuModel,
+    serial_transfer::SerialLink,
 };
 use missingno_gbc::GameBoyColor;
 
@@ -169,6 +173,22 @@ where
 
     fn breakpoints(&self) -> &BTreeSet<u16> {
         self.core.breakpoints()
+    }
+
+    fn add_watchpoint(&mut self, condition: WatchCondition) {
+        self.core.add_watchpoint(condition);
+    }
+
+    fn remove_watchpoint(&mut self, condition: &WatchCondition) {
+        self.core.remove_watchpoint(condition);
+    }
+
+    fn watchpoints(&self) -> &[WatchCondition] {
+        self.core.watchpoints()
+    }
+
+    fn last_watchpoint_hit(&self) -> Option<WatchCondition> {
+        self.core.last_watchpoint_hit().cloned()
     }
 
     fn inspect(&self) -> &dyn InspectSource {

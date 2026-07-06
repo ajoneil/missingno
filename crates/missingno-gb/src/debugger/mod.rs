@@ -41,6 +41,21 @@ pub enum CpuRegister {
     L,
 }
 
+impl std::fmt::Display for CpuRegister {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            CpuRegister::A => "A",
+            CpuRegister::B => "B",
+            CpuRegister::C => "C",
+            CpuRegister::D => "D",
+            CpuRegister::E => "E",
+            CpuRegister::H => "H",
+            CpuRegister::L => "L",
+        };
+        f.write_str(name)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WatchCondition {
     BusRead { address: u16 },
@@ -53,6 +68,35 @@ pub enum WatchCondition {
     PpuRegister { register: ppu::Register, value: u8 },
     CpuRegister { register: CpuRegister, value: u8 },
     All(Vec<WatchCondition>),
+}
+
+impl std::fmt::Display for WatchCondition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WatchCondition::BusRead { address } => write!(f, "read {address:#06X}"),
+            WatchCondition::BusWrite { address } => write!(f, "write {address:#06X}"),
+            WatchCondition::DmaRead { address } => write!(f, "dma read {address:#06X}"),
+            WatchCondition::DmaWrite { address } => write!(f, "dma write {address:#06X}"),
+            WatchCondition::Scanline(line) => write!(f, "scanline {line}"),
+            WatchCondition::PpuMode(mode) => write!(f, "mode {mode}"),
+            WatchCondition::PixelCounter(counter) => write!(f, "pixel {counter}"),
+            WatchCondition::PpuRegister { register, value } => {
+                write!(f, "{register}={value:#04X}")
+            }
+            WatchCondition::CpuRegister { register, value } => {
+                write!(f, "{register}={value:#04X}")
+            }
+            WatchCondition::All(conditions) => {
+                for (i, condition) in conditions.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, " & ")?;
+                    }
+                    write!(f, "{condition}")?;
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 impl WatchCondition {

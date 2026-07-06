@@ -11,6 +11,7 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
+use missingno_gb::debugger::WatchCondition;
 use missingno_gb::joypad::Button;
 use missingno_gb::ppu::rendering::Mode;
 
@@ -79,6 +80,8 @@ pub enum EmuCommand {
     Release(Button),
     SetBreakpoint(u16),
     ClearBreakpoint(u16),
+    AddWatchpoint(WatchCondition),
+    RemoveWatchpoint(WatchCondition),
     RequestScreenshot {
         use_sgb_colors: bool,
         palette: String,
@@ -309,6 +312,16 @@ impl EmuLoop {
                     payload.clear_breakpoint(address);
                 }
             }
+            EmuCommand::AddWatchpoint(condition) => {
+                if let Some(payload) = &mut self.payload {
+                    payload.add_watchpoint(condition);
+                }
+            }
+            EmuCommand::RemoveWatchpoint(condition) => {
+                if let Some(payload) = &mut self.payload {
+                    payload.remove_watchpoint(&condition);
+                }
+            }
             EmuCommand::RequestScreenshot {
                 use_sgb_colors,
                 palette,
@@ -440,6 +453,20 @@ impl Payload {
         match self {
             Self::Console(_) => {}
             Self::Debugger(payload) => payload.core.clear_breakpoint(address),
+        }
+    }
+
+    fn add_watchpoint(&mut self, condition: WatchCondition) {
+        match self {
+            Self::Console(_) => {}
+            Self::Debugger(payload) => payload.core.add_watchpoint(condition),
+        }
+    }
+
+    fn remove_watchpoint(&mut self, condition: &WatchCondition) {
+        match self {
+            Self::Console(_) => {}
+            Self::Debugger(payload) => payload.core.remove_watchpoint(condition),
         }
     }
 

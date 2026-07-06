@@ -53,7 +53,7 @@ impl InstructionsPane {
         symbols: &SymbolTable,
     ) -> pane_grid::Content<'_, app::Message> {
         let mut instructions = Vec::new();
-        let mut push_label = |rows: &mut Vec<_>, address: u16| {
+        let push_label = |rows: &mut Vec<_>, address: u16| {
             if let Some(label) = symbols.label_at(address, None) {
                 rows.push(label_row(label));
             }

@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 
-use missingno_gb::debugger::symbols::SymbolTable;
+use missingno_gb::debugger::{WatchCondition, symbols::SymbolTable};
 use missingno_gb::{cartridge::Cartridge, joypad::Button, serial_transfer::SerialLink};
 
 use std::sync::Arc;
@@ -65,6 +65,10 @@ pub trait SystemDebugger: Send {
     fn set_breakpoint(&mut self, address: u16);
     fn clear_breakpoint(&mut self, address: u16);
     fn breakpoints(&self) -> &BTreeSet<u16>;
+    fn add_watchpoint(&mut self, condition: WatchCondition);
+    fn remove_watchpoint(&mut self, condition: &WatchCondition);
+    fn watchpoints(&self) -> &[WatchCondition];
+    fn last_watchpoint_hit(&self) -> Option<WatchCondition>;
 
     /// The live inspection surface the debugger panes render from while paused.
     fn inspect(&self) -> &dyn InspectSource;
