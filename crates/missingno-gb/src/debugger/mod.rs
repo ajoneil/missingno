@@ -204,7 +204,9 @@ impl<M: Model> Debugger<M> {
 
         let result = self.game_boy.step_recorded();
 
-        for offset in 0..length {
+        self.cdl
+            .mark(before, bank_before, cdl::CODE | cdl::INSTRUCTION_START);
+        for offset in 1..length {
             self.cdl
                 .mark(before.wrapping_add(offset), bank_before, cdl::CODE);
         }
@@ -520,8 +522,13 @@ mod tests {
         }
 
         let flags = |address| debugger.cdl().flags(address, Some(1));
-        assert_eq!(flags(0x0100) & cdl::CODE, cdl::CODE);
-        assert_eq!(flags(0x0103) & cdl::CODE, cdl::CODE); // JP operand byte
+        assert_eq!(
+            flags(0x0100) & (cdl::CODE | cdl::INSTRUCTION_START),
+            cdl::CODE | cdl::INSTRUCTION_START
+        );
+        // JP operand byte: code, but not an instruction start.
+        assert_eq!(flags(0x0103) & cdl::CODE, cdl::CODE);
+        assert_eq!(flags(0x0103) & cdl::INSTRUCTION_START, 0);
         assert_eq!(
             flags(0x0150) & (cdl::CODE | cdl::JUMP_TARGET),
             cdl::CODE | cdl::JUMP_TARGET

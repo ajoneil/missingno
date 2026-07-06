@@ -9,6 +9,10 @@ use std::path::Path;
 
 pub const CODE: u8 = 0x01;
 pub const DATA: u8 = 0x02;
+/// missingno extension (a bit the Mesen GB set leaves unused): set on the
+/// opcode byte only, so exact backward disassembly can anchor on real
+/// instruction starts rather than operand bytes.
+pub const INSTRUCTION_START: u8 = 0x04;
 pub const JUMP_TARGET: u8 = 0x10;
 pub const SUB_ENTRY_POINT: u8 = 0x80;
 
@@ -121,6 +125,10 @@ impl CdlWindow {
     pub fn is_data(&self, address: u16) -> bool {
         let flags = self.flags_at(address);
         flags & DATA != 0 && flags & CODE == 0
+    }
+
+    pub fn is_instruction_start(&self, address: u16) -> bool {
+        self.flags_at(address) & INSTRUCTION_START != 0
     }
 }
 
