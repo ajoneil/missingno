@@ -482,6 +482,7 @@ impl Tracer {
             pix_format,
             extension_fields,
             notes: String::new(),
+            ..Default::default()
         };
 
         let groups = derive_groups_pub(&header.fields);
