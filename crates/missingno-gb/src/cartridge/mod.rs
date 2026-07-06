@@ -41,6 +41,12 @@ pub fn parse_header(rom: &[u8]) -> (String, bool, bool) {
 }
 
 impl Cartridge {
+    /// The 16KB ROM bank currently mapped at 0x4000–0x7FFF; `None` for
+    /// half-window mappers.
+    pub fn switchable_rom_bank(&self) -> Option<u16> {
+        self.mbc.switchable_rom_bank(self.rom.len())
+    }
+
     pub fn new(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Cartridge {
         let (title, sgb_flag, has_battery) = parse_header(&rom);
         let cartridge_type = rom[0x147];

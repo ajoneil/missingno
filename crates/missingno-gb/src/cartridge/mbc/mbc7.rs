@@ -229,6 +229,10 @@ impl Mbc7 {
         Some(self.eeprom.to_vec())
     }
 
+    pub(super) fn switchable_rom_bank(&self) -> u16 {
+        self.rom_bank.max(1) as u16
+    }
+
     pub fn read(&self, rom: &[u8], address: u16) -> u8 {
         match address {
             0x0000..=0x3fff => rom[address as usize],

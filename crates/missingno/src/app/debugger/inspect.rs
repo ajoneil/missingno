@@ -440,6 +440,8 @@ pub trait InspectSource {
     fn colors(&self, user_palette: &Palette) -> ConsoleColors;
     /// CGB register state for the sidebar; `None` on DMG.
     fn cgb(&self) -> Option<CgbView>;
+    /// The 16KB ROM bank mapped at 0x4000–0x7FFF, for symbol resolution.
+    fn switchable_rom_bank(&self) -> Option<u16>;
 }
 
 /// An owned [`InspectSource`] that can cross from the emulation thread.
@@ -476,6 +478,9 @@ impl<M: ConsoleUi> InspectSource for Console<M> {
     fn cgb(&self) -> Option<CgbView> {
         M::cgb_view(self)
     }
+    fn switchable_rom_bank(&self) -> Option<u16> {
+        self.cartridge().switchable_rom_bank()
+    }
 }
 
 // --- Console snapshot --------------------------------------------------------
@@ -490,6 +495,7 @@ pub struct ConsoleSnapshot {
     pub interrupts: interrupts::Registers,
     pub colors: ColorSnapshot,
     pub cgb: Option<CgbView>,
+    pub switchable_rom_bank: Option<u16>,
     pub memory: MemoryWindow,
     pub symbols: Arc<SymbolTable>,
     pub frame: u64,
@@ -512,6 +518,7 @@ impl ConsoleSnapshot {
             interrupts: console.interrupts().clone(),
             colors: M::color_snapshot(console),
             cgb: M::cgb_view(console),
+            switchable_rom_bank: console.cartridge().switchable_rom_bank(),
             memory: MemoryWindow::capture(console, console.cpu().ir_address),
             symbols,
             frame,
@@ -543,6 +550,9 @@ impl InspectSource for ConsoleSnapshot {
     }
     fn cgb(&self) -> Option<CgbView> {
         self.cgb.clone()
+    }
+    fn switchable_rom_bank(&self) -> Option<u16> {
+        self.switchable_rom_bank
     }
 }
 

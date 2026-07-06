@@ -51,10 +51,11 @@ impl InstructionsPane {
         pc: u16,
         breakpoints: &BTreeSet<u16>,
         symbols: &SymbolTable,
+        rom_bank: Option<u16>,
     ) -> pane_grid::Content<'_, app::Message> {
         let mut instructions = Vec::new();
         let push_label = |rows: &mut Vec<_>, address: u16| {
-            if let Some(label) = symbols.label_at(address, None) {
+            if let Some(label) = symbols.label_at(address, rom_bank) {
                 rows.push(label_row(label));
             }
         };
@@ -67,6 +68,7 @@ impl InstructionsPane {
                 push_label(&mut instructions, addr);
                 instructions.push(instruction_row(
                     addr,
+                    rom_bank,
                     decoded,
                     false,
                     breakpoints.contains(&addr),
@@ -82,6 +84,7 @@ impl InstructionsPane {
                     push_label(&mut instructions, address);
                     instructions.push(instruction_row(
                         address,
+                        rom_bank,
                         decoded,
                         address == pc,
                         breakpoints.contains(&address),
@@ -130,10 +133,17 @@ fn label_row(label: &str) -> Element<'static, app::Message> {
 
 fn instruction_row(
     address: u16,
+    rom_bank: Option<u16>,
     instruction: Instruction,
     is_current: bool,
     is_breakpoint: bool,
 ) -> Element<'static, app::Message> {
+    let address_text = match rom_bank {
+        Some(bank) if (0x4000..0x8000).contains(&address) => {
+            format!("{bank:02X}:{address:04X}")
+        }
+        _ => format!("{address:04X}"),
+    };
     let bp_icon: Element<'static, app::Message> = if is_breakpoint {
         container("")
             .width(Length::Fixed(8.0))
@@ -169,7 +179,7 @@ fn instruction_row(
 
     let the_row = row![
         gutter,
-        text(format!("{:04X}", address))
+        text(address_text)
             .font(fonts::monospace())
             .size(13.0)
             .color(palette::OVERLAY0),
@@ -297,6 +307,7 @@ impl panes::Pane for InstructionsPane {
                 ctx.source.cpu().ir_address(),
                 ctx.breakpoints,
                 ctx.symbols,
+                ctx.source.switchable_rom_bank(),
             ),
             None => running_placeholder("Instructions"),
         }
