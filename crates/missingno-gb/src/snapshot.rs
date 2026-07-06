@@ -116,7 +116,7 @@ pub fn capture_ppu(gb: &GameBoy) -> PpuSnapshot {
         dma: gb.dma().source_register(),
         dot_position: ppu.lx(),
         stat_line_was_high: ppu.stat_line_was_high(),
-        window_line_counter: 0, // TODO: only accessible mid-frame via Rendering
+        window_line_counter: ppu.window_line_counter().unwrap_or(0),
     }
 }
 

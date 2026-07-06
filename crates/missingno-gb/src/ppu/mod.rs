@@ -558,6 +558,13 @@ impl<P: PpuModel> Ppu<P> {
     }
 
     /// CPU read/write of OPRI ($FF6C). DMG has no such register (reads 0xFF).
+    /// The window's internal line counter; `None` while the LCD is off.
+    pub fn window_line_counter(&self) -> Option<u8> {
+        self.pixel_pipeline
+            .as_ref()
+            .map(|rendering| rendering.window_line_counter())
+    }
+
     pub fn read_object_priority(&self) -> u8 {
         self.model.object_priority_register()
     }

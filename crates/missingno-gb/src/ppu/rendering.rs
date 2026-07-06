@@ -157,6 +157,10 @@ pub struct Rendering<P: PpuModel> {
 }
 
 impl<P: PpuModel> Rendering<P> {
+    pub(crate) fn window_line_counter(&self) -> u8 {
+        self.window.window_line_counter()
+    }
+
     pub(super) fn new() -> Self {
         Rendering {
             hblank: HblankPipeline::new(),

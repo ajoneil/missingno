@@ -353,7 +353,7 @@ impl WindowControl {
         self.window_rendered
     }
 
-    pub(in crate::ppu) fn window_line_counter(&self) -> u8 {
+    pub(crate) fn window_line_counter(&self) -> u8 {
         self.window_line_counter
     }
 }
