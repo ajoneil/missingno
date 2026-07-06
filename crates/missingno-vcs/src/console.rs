@@ -35,7 +35,13 @@ pub struct Vcs {
     building: Vec<Scanline>,
     in_vsync: bool,
     finished_frame: Option<Frame>,
+    sample_clock: f32,
+    samples: Vec<(f32, f32)>,
 }
+
+/// The frontend consumes 44.1 kHz stereo; one sample per this many
+/// colour clocks (3.579545 MHz / 44.1 kHz).
+const CLOCKS_PER_SAMPLE: f32 = 3_579_545.0 / 44_100.0;
 
 /// The 6507's view of the board: A12 selects the cartridge; below it, A7
 /// splits TIA from RIOT and A9 splits RIOT RAM from its I/O registers.
@@ -100,6 +106,8 @@ impl Vcs {
             building: Vec::new(),
             in_vsync: false,
             finished_frame: None,
+            sample_clock: 0.0,
+            samples: Vec::new(),
         })
     }
 
@@ -130,6 +138,18 @@ impl Vcs {
         if let Some(line) = self.tia.take_line() {
             self.collect_line(line);
         }
+
+        self.sample_clock += 1.0;
+        if self.sample_clock >= CLOCKS_PER_SAMPLE {
+            self.sample_clock -= CLOCKS_PER_SAMPLE;
+            let level = self.tia.audio_level();
+            self.samples.push((level, level));
+        }
+    }
+
+    /// Accumulated 44.1 kHz stereo samples since the last drain.
+    pub fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
+        std::mem::take(&mut self.samples)
     }
 
     fn collect_line(&mut self, line: Scanline) {
@@ -182,6 +202,8 @@ impl Vcs {
         self.building.clear();
         self.in_vsync = false;
         self.finished_frame = None;
+        self.sample_clock = 0.0;
+        self.samples.clear();
     }
 
     /// Player-0 joystick direction lines into RIOT port A, active-low.

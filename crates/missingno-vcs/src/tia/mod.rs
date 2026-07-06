@@ -8,14 +8,18 @@
 //! comb). Late/mid-line strobes reuse the same machinery, so the classic
 //! "illegal HMOVE" positions emerge rather than being special-cased.
 
+pub mod audio;
 pub mod objects;
 
+use audio::Channel;
 use objects::{Ball, Missile, Player, Playfield};
 
 pub const CLOCKS_PER_LINE: u16 = 228;
 pub const HBLANK_CLOCKS: u16 = 68;
 pub const VISIBLE_CLOCKS: usize = 160;
 const LATE_HBLANK_CLOCKS: u16 = HBLANK_CLOCKS + 8;
+const AUDIO_CLOCK_A: u16 = 10;
+const AUDIO_CLOCK_B: u16 = 124;
 
 mod registers {
     pub const VSYNC: u16 = 0x00;
@@ -39,6 +43,12 @@ mod registers {
     pub const RESM0: u16 = 0x12;
     pub const RESM1: u16 = 0x13;
     pub const RESBL: u16 = 0x14;
+    pub const AUDC0: u16 = 0x15;
+    pub const AUDC1: u16 = 0x16;
+    pub const AUDF0: u16 = 0x17;
+    pub const AUDF1: u16 = 0x18;
+    pub const AUDV0: u16 = 0x19;
+    pub const AUDV1: u16 = 0x1A;
     pub const GRP0: u16 = 0x1B;
     pub const GRP1: u16 = 0x1C;
     pub const ENAM0: u16 = 0x1D;
@@ -163,6 +173,8 @@ pub struct Tia {
 
     collisions: [u8; 8],
 
+    pub audio: [Channel; 2],
+
     /// Trigger buttons, true = pressed (the pin reads low).
     pub triggers: [bool; 2],
     trigger_latch_enabled: bool,
@@ -200,12 +212,18 @@ impl Tia {
             motion: MotionSequencer::new(),
             late_hblank: false,
             collisions: [0; 8],
+            audio: [Channel::new(), Channel::new()],
             triggers: [false; 2],
             trigger_latch_enabled: false,
             trigger_latches: [true; 2],
             line: [0; VISIBLE_CLOCKS],
             finished_line: None,
         }
+    }
+
+    /// The two channels' summed output, 0.0-1.0.
+    pub fn audio_level(&self) -> f32 {
+        (self.audio[0].level() + self.audio[1].level()) as f32 / 30.0
     }
 
     /// Current colour clock within the line (0..228) — inspection only.
@@ -250,6 +268,12 @@ impl Tia {
         } else if self.beam >= HBLANK_CLOCKS {
             // Inside the HMOVE comb: blanked, and motion clocks gated.
             self.line[(self.beam - HBLANK_CLOCKS) as usize] = 0;
+        }
+
+        // The audio circuits clock twice per scanline (~31.4 kHz).
+        if self.beam == AUDIO_CLOCK_A || self.beam == AUDIO_CLOCK_B {
+            self.audio[0].tick();
+            self.audio[1].tick();
         }
 
         self.beam += 1;
@@ -383,6 +407,12 @@ impl Tia {
             RESM0 => self.missile0.reset_position(),
             RESM1 => self.missile1.reset_position(),
             RESBL => self.ball.reset_position(),
+            AUDC0 => self.audio[0].control = value,
+            AUDC1 => self.audio[1].control = value,
+            AUDF0 => self.audio[0].frequency = value & 0x1F,
+            AUDF1 => self.audio[1].frequency = value & 0x1F,
+            AUDV0 => self.audio[0].volume = value,
+            AUDV1 => self.audio[1].volume = value,
             // The vertical-delay latches cross-couple: a GRP0 write
             // freezes player 1's old graphics, a GRP1 write freezes
             // player 0's and the ball's.

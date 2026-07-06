@@ -117,7 +117,7 @@ impl SystemConsole for VcsConsole {
     }
 
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
-        Vec::new()
+        self.vcs.drain_audio_samples()
     }
 
     fn screen_display(&self) -> ScreenDisplay {
@@ -343,7 +343,7 @@ impl SystemDebugger for VcsDebugger {
     }
 
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
-        Vec::new()
+        self.core.console_mut().drain_audio_samples()
     }
 
     fn set_breakpoint(&mut self, address: u16) {

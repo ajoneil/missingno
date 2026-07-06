@@ -229,3 +229,37 @@ fn disassembles_the_basics() {
     assert_eq!(d.mnemonic, "jmp $1234");
     assert_eq!(d.length, 3);
 }
+
+#[test]
+fn audio_produces_samples_at_the_seam_rate() {
+    // Pure tone on channel 0 at moderate pitch, full volume.
+    let mut asm = Asm::new(0xF000);
+    asm.lda_imm(0x04);
+    asm.sta_zp(0x15); // AUDC0: pure tone
+    asm.lda_imm(0x10);
+    asm.sta_zp(0x17); // AUDF0
+    asm.lda_imm(0x0F);
+    asm.sta_zp(0x19); // AUDV0: full volume
+    let spin = asm.here();
+    asm.jmp_abs(spin);
+
+    let mut vcs = Vcs::new(&asm.into_rom()).unwrap();
+    // One NTSC frame's worth of clocks ≈ 262 × 228; expect ~735 samples.
+    for _ in 0..262 * 228 {
+        vcs.step_clock();
+    }
+    let samples = vcs.drain_audio_samples();
+    assert!(
+        (700..800).contains(&samples.len()),
+        "expected ~735 samples per frame, got {}",
+        samples.len()
+    );
+    assert!(
+        samples.iter().any(|&(l, _)| l > 0.4),
+        "tone should reach full-volume level"
+    );
+    assert!(
+        samples.iter().any(|&(l, _)| l < 0.1),
+        "square wave should also swing low"
+    );
+}

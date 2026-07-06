@@ -43,6 +43,8 @@ pub trait SystemConsole: Send {
     fn reset(&mut self);
     fn press_button(&mut self, button: Button);
     fn release_button(&mut self, button: Button);
+    /// Stereo samples at 44.1 kHz — the seam's fixed rate. Families
+    /// convert from their native rate on their own side.
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)>;
     fn screen_display(&self) -> ScreenDisplay;
     fn capture_frame(&self, use_sgb_colors: bool, palette_name: &str) -> FrameCapture;
