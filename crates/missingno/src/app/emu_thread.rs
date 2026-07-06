@@ -13,7 +13,6 @@ use std::time::{Duration, Instant};
 
 use missingno_gb::debugger::WatchCondition;
 use missingno_gb::joypad::Button;
-use missingno_gb::ppu::rendering::Mode;
 
 use super::audio_output::AudioOutput;
 use super::debugger::inspect::DebugView;
@@ -51,12 +50,14 @@ pub struct DebuggerPayload {
 
 /// Live console state published each frame while the debugger runs, so the UI
 /// can render its running view without owning the console.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct RunningStatus {
     pub pc: u16,
     pub sp: u16,
-    pub ly: u8,
-    pub mode: Mode,
+    /// The video section's sidebar heading ("PPU", "TIA", ...).
+    pub video_label: &'static str,
+    /// One-line video position summary in that section.
+    pub video_summary: String,
     pub frame: u64,
 }
 

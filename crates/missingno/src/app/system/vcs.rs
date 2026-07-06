@@ -11,7 +11,21 @@ use missingno_vcs::console::{JoystickDirection, Vcs};
 use missingno_vcs::tia::VISIBLE_CLOCKS;
 use rgb::RGB8;
 
+use std::collections::BTreeSet;
+use std::path::Path;
+use std::sync::Arc;
+
+use missingno_gb::debugger::WatchCondition;
+use missingno_gb::debugger::cdl::CdlWindow;
+use missingno_gb::debugger::symbols::{Symbol, SymbolTable};
+use missingno_vcs::console::Frame;
+use missingno_vcs::cpu::disasm;
+
 use super::{FrameOutcome, SystemConsole, SystemDebugger};
+use crate::app::debugger::inspect::{DebugView, Inspection};
+use crate::app::debugger::panes;
+use crate::app::debugger::vcs::{DisasmRow, VcsInspectState, VcsSnapshot};
+use crate::app::emu_thread::RunningStatus;
 use crate::app::library::activity::{DisplayMode, FrameCapture, RgbaCapture};
 use crate::app::screen::{IndexedFrame, ScreenDisplay};
 
@@ -54,6 +68,21 @@ struct VcsConsole {
     last_frame: IndexedFrame,
 }
 
+fn indexed_frame(frame: &Frame) -> IndexedFrame {
+    let height = frame.lines.len() as u32;
+    let mut pixels = Vec::with_capacity(frame.lines.len() * VISIBLE_CLOCKS);
+    for line in &frame.lines {
+        // TIA colour bytes drop bit 0; the palette is 7-bit indexed.
+        pixels.extend(line.iter().map(|&p| p >> 1));
+    }
+    IndexedFrame {
+        width: VISIBLE_CLOCKS as u32,
+        height,
+        pixels: pixels.into(),
+        palette: ntsc_palette(),
+    }
+}
+
 fn blank_frame() -> IndexedFrame {
     IndexedFrame {
         width: VISIBLE_CLOCKS as u32,
@@ -66,18 +95,7 @@ fn blank_frame() -> IndexedFrame {
 impl SystemConsole for VcsConsole {
     fn step_frame(&mut self) -> FrameOutcome {
         let display = self.vcs.step_frame(FRAME_BUDGET_LINES).map(|frame| {
-            let height = frame.lines.len() as u32;
-            let mut pixels = Vec::with_capacity(frame.lines.len() * VISIBLE_CLOCKS);
-            for line in &frame.lines {
-                // TIA colour bytes drop bit 0; the palette is 7-bit indexed.
-                pixels.extend(line.iter().map(|&p| p >> 1));
-            }
-            self.last_frame = IndexedFrame {
-                width: VISIBLE_CLOCKS as u32,
-                height,
-                pixels: pixels.into(),
-                palette: ntsc_palette(),
-            };
+            self.last_frame = indexed_frame(&frame);
             ScreenDisplay::Indexed(self.last_frame.clone())
         });
         FrameOutcome {
@@ -91,11 +109,11 @@ impl SystemConsole for VcsConsole {
     }
 
     fn press_button(&mut self, button: Button) {
-        self.apply_button(button, true);
+        apply_button(&mut self.vcs, button, true);
     }
 
     fn release_button(&mut self, button: Button) {
-        self.apply_button(button, false);
+        apply_button(&mut self.vcs, button, false);
     }
 
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
@@ -107,27 +125,7 @@ impl SystemConsole for VcsConsole {
     }
 
     fn capture_frame(&self, _use_sgb_colors: bool, _palette_name: &str) -> FrameCapture {
-        let frame = &self.last_frame;
-        let mut data = Vec::with_capacity(frame.pixels.len() * 4);
-        for &index in frame.pixels.iter() {
-            let color = frame
-                .palette
-                .get(index as usize)
-                .copied()
-                .unwrap_or(RGB8::new(0, 0, 0));
-            data.extend_from_slice(&[color.r, color.g, color.b, 255]);
-        }
-        FrameCapture {
-            pixels: Vec::new(),
-            sgb: None,
-            display_mode: DisplayMode::Palette(String::new()),
-            cgb_rgba: None,
-            rgba: Some(RgbaCapture {
-                width: frame.width,
-                height: frame.height,
-                data,
-            }),
-        }
+        capture_indexed(&self.last_frame)
     }
 
     fn game_title(&self) -> String {
@@ -145,28 +143,54 @@ impl SystemConsole for VcsConsole {
     }
 
     fn into_debugger(self: Box<Self>) -> Result<Box<dyn SystemDebugger>, Box<dyn SystemConsole>> {
-        Err(self)
+        Ok(Box::new(VcsDebugger::new(
+            missingno_vcs::debugger::Debugger::new(self.vcs),
+            self.title,
+            self.last_frame,
+        )))
     }
 }
 
-impl VcsConsole {
-    /// The interim mapping onto the Game Boy button vocabulary: directions
-    /// pass through, A fires, Start/Select work the console switches.
-    fn apply_button(&mut self, button: Button, pressed: bool) {
-        match button {
-            Button::DirectionalPad(pad) => {
-                let direction = match pad {
-                    DirectionalPad::Up => JoystickDirection::Up,
-                    DirectionalPad::Down => JoystickDirection::Down,
-                    DirectionalPad::Left => JoystickDirection::Left,
-                    DirectionalPad::Right => JoystickDirection::Right,
-                };
-                self.vcs.set_joystick(direction, pressed);
-            }
-            Button::A | Button::B => self.vcs.set_fire(pressed),
-            Button::Start => self.vcs.set_console_reset(pressed),
-            Button::Select => self.vcs.set_console_select(pressed),
+/// The interim mapping onto the Game Boy button vocabulary: directions
+/// pass through, A fires, Start/Select work the console switches.
+fn apply_button(vcs: &mut Vcs, button: Button, pressed: bool) {
+    match button {
+        Button::DirectionalPad(pad) => {
+            let direction = match pad {
+                DirectionalPad::Up => JoystickDirection::Up,
+                DirectionalPad::Down => JoystickDirection::Down,
+                DirectionalPad::Left => JoystickDirection::Left,
+                DirectionalPad::Right => JoystickDirection::Right,
+            };
+            vcs.set_joystick(direction, pressed);
         }
+        Button::A | Button::B => vcs.set_fire(pressed),
+        Button::Start => vcs.set_console_reset(pressed),
+        Button::Select => vcs.set_console_select(pressed),
+    }
+}
+
+/// A display-ready RGBA screenshot of an indexed frame.
+fn capture_indexed(frame: &IndexedFrame) -> FrameCapture {
+    let mut data = Vec::with_capacity(frame.pixels.len() * 4);
+    for &index in frame.pixels.iter() {
+        let color = frame
+            .palette
+            .get(index as usize)
+            .copied()
+            .unwrap_or(RGB8::new(0, 0, 0));
+        data.extend_from_slice(&[color.r, color.g, color.b, 255]);
+    }
+    FrameCapture {
+        pixels: Vec::new(),
+        sgb: None,
+        display_mode: DisplayMode::Palette(String::new()),
+        cgb_rgba: None,
+        rgba: Some(RgbaCapture {
+            width: frame.width,
+            height: frame.height,
+            data,
+        }),
     }
 }
 
@@ -201,4 +225,223 @@ fn ntsc_palette() -> &'static [RGB8] {
 
 fn channel(value: f32) -> u8 {
     (value.clamp(0.0, 1.0) * 255.0) as u8
+}
+
+/// The VCS under its debugging backend, adapted to the seam. Symbols,
+/// code/data logging, and watchpoints have no backend yet: those seam
+/// methods accept and report nothing.
+struct VcsDebugger {
+    core: missingno_vcs::debugger::Debugger,
+    title: String,
+    last_frame: IndexedFrame,
+    inspect: VcsInspectState,
+    symbols: Arc<SymbolTable>,
+    frame_count: u64,
+}
+
+/// Disassembly rows shown from the current instruction forward.
+const DISASSEMBLY_ROWS: usize = 12;
+
+impl VcsDebugger {
+    fn new(
+        core: missingno_vcs::debugger::Debugger,
+        title: String,
+        last_frame: IndexedFrame,
+    ) -> Self {
+        let mut this = VcsDebugger {
+            core,
+            title,
+            last_frame,
+            inspect: VcsInspectState::default(),
+            symbols: Arc::new(SymbolTable::default()),
+            frame_count: 0,
+        };
+        this.refresh();
+        this
+    }
+
+    /// Rebuild the inspection state from the console (peek-only).
+    fn refresh(&mut self) {
+        let vcs = self.core.console();
+        let cpu = &vcs.cpu;
+        let mut disassembly = Vec::with_capacity(DISASSEMBLY_ROWS);
+        let mut address = cpu.pc;
+        for i in 0..DISASSEMBLY_ROWS {
+            let bytes = [
+                vcs.peek(address),
+                vcs.peek(address.wrapping_add(1)),
+                vcs.peek(address.wrapping_add(2)),
+            ];
+            let row = disasm::disassemble(address, bytes);
+            disassembly.push(DisasmRow {
+                address,
+                text: row.mnemonic,
+                current: i == 0,
+            });
+            address = address.wrapping_add(row.length as u16);
+        }
+        self.inspect = VcsInspectState {
+            a: cpu.a,
+            x: cpu.x,
+            y: cpu.y,
+            s: cpu.s,
+            p: cpu.p,
+            pc: cpu.pc,
+            beam: vcs.tia.beam(),
+            scanline: vcs.scanline(),
+            timer: vcs.peek(0x0284),
+            timer_underflowed: vcs.peek(0x0285) & 0x80 != 0,
+            swcha: vcs.peek(0x0280),
+            swchb: vcs.peek(0x0282),
+            collisions: std::array::from_fn(|i| vcs.peek(i as u16)),
+            disassembly,
+            frame: self.frame_count,
+        };
+    }
+
+    fn display(&mut self, frame: Option<Frame>) -> Option<ScreenDisplay> {
+        let frame = frame?;
+        self.frame_count += 1;
+        self.last_frame = indexed_frame(&frame);
+        Some(ScreenDisplay::Indexed(self.last_frame.clone()))
+    }
+}
+
+impl SystemDebugger for VcsDebugger {
+    fn step(&mut self) -> Option<ScreenDisplay> {
+        let frame = self.core.step();
+        let display = self.display(frame);
+        self.refresh();
+        display
+    }
+
+    fn step_over(&mut self) -> Option<ScreenDisplay> {
+        let (frame, _) = self.core.step_over();
+        let display = self.display(frame);
+        self.refresh();
+        display
+    }
+
+    fn step_frame(&mut self) -> (Option<ScreenDisplay>, bool) {
+        let (frame, stop) = self.core.step_frame();
+        let display = self.display(frame);
+        self.refresh();
+        (display, stop == missingno_vcs::debugger::Stop::Breakpoint)
+    }
+
+    fn reset(&mut self) {
+        self.core.console_mut().power_cycle();
+        self.refresh();
+    }
+
+    fn press_button(&mut self, button: Button) {
+        apply_button(self.core.console_mut(), button, true);
+    }
+
+    fn release_button(&mut self, button: Button) {
+        apply_button(self.core.console_mut(), button, false);
+    }
+
+    fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
+        Vec::new()
+    }
+
+    fn set_breakpoint(&mut self, address: u16) {
+        self.core.set_breakpoint(address);
+    }
+
+    fn clear_breakpoint(&mut self, address: u16) {
+        self.core.clear_breakpoint(address);
+    }
+
+    fn breakpoints(&self) -> &BTreeSet<u16> {
+        self.core.breakpoints()
+    }
+
+    fn add_watchpoint(&mut self, _condition: WatchCondition) {}
+
+    fn remove_watchpoint(&mut self, _condition: &WatchCondition) {}
+
+    fn watchpoints(&self) -> &[WatchCondition] {
+        &[]
+    }
+
+    fn last_watchpoint_hit(&self) -> Option<WatchCondition> {
+        None
+    }
+
+    fn inspect(&self) -> &dyn Inspection {
+        &self.inspect
+    }
+
+    fn pane_family(&self) -> &'static panes::Family {
+        &panes::VCS_FAMILY
+    }
+
+    fn symbols(&self) -> Arc<SymbolTable> {
+        self.symbols.clone()
+    }
+
+    fn set_symbols(&mut self, _symbols: SymbolTable) {}
+
+    fn add_symbol(&mut self, _address: u16, _name: String) {}
+
+    fn remove_symbol(&mut self, _symbol: &Symbol) {}
+
+    fn save_symbols(&self, _path: &Path) {}
+
+    fn cdl_window(&self) -> CdlWindow {
+        CdlWindow::default()
+    }
+
+    fn load_cdl(&mut self, _path: &Path) {}
+
+    fn save_cdl(&self, _path: &Path) {}
+
+    fn snapshot(&self, frame: u64) -> DebugView {
+        let mut state = self.inspect.clone();
+        state.frame = frame;
+        Box::new(VcsSnapshot::new(state))
+    }
+
+    fn running_status(&self, frame: u64) -> RunningStatus {
+        RunningStatus {
+            pc: self.inspect.pc,
+            sp: self.inspect.s as u16 | 0x0100,
+            video_label: "TIA",
+            video_summary: format!(
+                "beam {} · line {}",
+                self.inspect.beam, self.inspect.scanline
+            ),
+            frame,
+        }
+    }
+
+    fn game_title(&self) -> String {
+        self.title.clone()
+    }
+
+    fn battery_save(&self) -> Option<Vec<u8>> {
+        None
+    }
+
+    fn frame_interval(&self) -> Duration {
+        FRAME_INTERVAL
+    }
+
+    fn capture_frame(&self, _use_sgb_colors: bool, _palette_name: &str) -> FrameCapture {
+        capture_indexed(&self.last_frame)
+    }
+
+    fn capture_trace(&mut self, _path: &Path) -> Option<ScreenDisplay> {
+        None
+    }
+
+    fn into_console(self: Box<Self>) -> Box<dyn SystemConsole> {
+        Box::new(VcsConsole {
+            vcs: self.core.into_console(),
+            title: self.title,
+            last_frame: self.last_frame,
+        })
+    }
 }

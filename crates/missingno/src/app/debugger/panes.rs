@@ -73,7 +73,10 @@ impl From<Message> for app::Message {
 /// has arrived yet.
 #[derive(Clone, Copy)]
 pub struct PaneContext<'b> {
-    pub source: &'b dyn InspectSource,
+    /// The Game Boy family's inspection surface, when that family is live.
+    pub gb: Option<&'b dyn InspectSource>,
+    #[cfg(feature = "vcs")]
+    pub vcs: Option<&'b crate::app::debugger::vcs::VcsInspectState>,
     pub breakpoints: &'b BTreeSet<u16>,
     pub colors: &'b ConsoleColors,
     pub symbols: &'b SymbolTable,
@@ -104,6 +107,62 @@ pub struct PaneDescriptor {
     pub label: &'static str,
     pub(super) construct: fn() -> Box<dyn Pane>,
 }
+
+/// Everything a family brings to the pane grid: its pane set, the key its
+/// layout persists under, and its out-of-the-box arrangement.
+pub struct Family {
+    pub registry: &'static [PaneDescriptor],
+    pub layout_key: &'static str,
+    default_layout: fn() -> Option<pane_grid::State<Box<dyn Pane>>>,
+}
+
+pub static GB_FAMILY: Family = Family {
+    registry: PANE_REGISTRY,
+    // The empty key keeps the Game Boy's pre-family layout filename.
+    layout_key: "",
+    default_layout: gb_default_layout,
+};
+
+#[cfg(feature = "vcs")]
+pub static VCS_FAMILY: Family = Family {
+    registry: VCS_PANE_REGISTRY,
+    layout_key: "vcs",
+    default_layout: vcs_default_layout,
+};
+
+/// Every registered pane across all families, for label and kind lookups.
+pub fn all_descriptors() -> impl Iterator<Item = &'static PaneDescriptor> {
+    #[cfg(feature = "vcs")]
+    {
+        PANE_REGISTRY.iter().chain(VCS_PANE_REGISTRY.iter())
+    }
+    #[cfg(not(feature = "vcs"))]
+    {
+        PANE_REGISTRY.iter()
+    }
+}
+
+#[cfg(feature = "vcs")]
+pub static VCS_PANE_REGISTRY: &[PaneDescriptor] = &[
+    PaneDescriptor {
+        kind: DebuggerPane::Screen,
+        icon: Icon::Monitor,
+        label: "Screen",
+        construct: || Box::new(ScreenPane::new()),
+    },
+    PaneDescriptor {
+        kind: DebuggerPane::VcsCpu,
+        icon: Icon::FileText,
+        label: "6507",
+        construct: || Box::new(crate::app::debugger::vcs::CpuPane),
+    },
+    PaneDescriptor {
+        kind: DebuggerPane::VcsTia,
+        icon: Icon::Sliders,
+        label: "TIA",
+        construct: || Box::new(crate::app::debugger::vcs::TiaPane),
+    },
+];
 
 pub static PANE_REGISTRY: &[PaneDescriptor] = &[
     PaneDescriptor {
@@ -151,6 +210,7 @@ pub static PANE_REGISTRY: &[PaneDescriptor] = &[
 ];
 
 pub struct DebuggerPanes {
+    family: &'static Family,
     panes: Option<pane_grid::State<Box<dyn Pane>>>,
     handles: HashMap<DebuggerPane, pane_grid::Pane>,
     palette: PaletteChoice,
@@ -164,12 +224,15 @@ pub enum DebuggerPane {
     TileMap(TileMapId),
     Sprites,
     Audio,
+    #[cfg(feature = "vcs")]
+    VcsCpu,
+    #[cfg(feature = "vcs")]
+    VcsTia,
 }
 
 impl DebuggerPane {
     pub fn descriptor(&self) -> &'static PaneDescriptor {
-        PANE_REGISTRY
-            .iter()
+        all_descriptors()
             .find(|descriptor| descriptor.kind == *self)
             .expect("every pane kind is registered")
     }
@@ -190,20 +253,21 @@ impl fmt::Display for DebuggerPane {
 }
 
 impl DebuggerPanes {
-    pub fn new() -> Self {
-        Self::build(None)
+    pub fn new(family: &'static Family) -> Self {
+        Self::build(family, None)
     }
 
-    pub fn with_screen(screen_view: ScreenView) -> Self {
-        Self::build(Some(screen_view))
+    pub fn with_screen(family: &'static Family, screen_view: ScreenView) -> Self {
+        Self::build(family, Some(screen_view))
     }
 
-    fn build(screen_view: Option<ScreenView>) -> Self {
-        let panes = layout::load()
+    fn build(family: &'static Family, screen_view: Option<ScreenView>) -> Self {
+        let panes = layout::load(family.layout_key)
             .and_then(|saved| saved.into_state())
-            .unwrap_or_else(Self::default_layout);
+            .unwrap_or_else(family.default_layout);
 
         let mut this = Self {
+            family,
             handles: panes
                 .as_ref()
                 .map(|state| {
@@ -221,22 +285,38 @@ impl DebuggerPanes {
         }
         this
     }
+}
 
-    /// The out-of-the-box arrangement: instructions beside the screen.
-    fn default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
-        let (mut panes, instructions_handle) =
-            pane_grid::State::new(DebuggerPane::Instructions.construct());
-        let (_, split) = panes
-            .split(
-                Vertical,
-                instructions_handle,
-                DebuggerPane::Screen.construct(),
-            )
-            .unwrap();
-        panes.resize(split, 1.0 / 3.0);
-        Some(panes)
-    }
+/// The Game Boy's out-of-the-box arrangement: instructions beside the screen.
+fn gb_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
+    let (mut panes, instructions_handle) =
+        pane_grid::State::new(DebuggerPane::Instructions.construct());
+    let (_, split) = panes
+        .split(
+            Vertical,
+            instructions_handle,
+            DebuggerPane::Screen.construct(),
+        )
+        .unwrap();
+    panes.resize(split, 1.0 / 3.0);
+    Some(panes)
+}
 
+/// The VCS starts with the 6507 beside the screen, the TIA below.
+#[cfg(feature = "vcs")]
+fn vcs_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
+    let (mut panes, cpu_handle) = pane_grid::State::new(DebuggerPane::VcsCpu.construct());
+    let (screen_handle, split) = panes
+        .split(Vertical, cpu_handle, DebuggerPane::Screen.construct())
+        .unwrap();
+    panes.resize(split, 1.0 / 3.0);
+    panes
+        .split(Horizontal, screen_handle, DebuggerPane::VcsTia.construct())
+        .unwrap();
+    Some(panes)
+}
+
+impl DebuggerPanes {
     fn adopt_screen_view(&mut self, view: ScreenView) {
         if let Some(panes) = &mut self.panes {
             for (_, pane) in panes.iter_mut() {
@@ -315,7 +395,7 @@ impl DebuggerPanes {
     }
 
     fn persist(&self) {
-        layout::save(self.panes.as_ref());
+        layout::save(self.family.layout_key, self.panes.as_ref());
     }
 
     pub fn palette(&self) -> &Palette {
@@ -367,7 +447,10 @@ impl DebuggerPanes {
     }
 
     pub fn available_panes(&self) -> impl Iterator<Item = DebuggerPane> {
-        PANE_REGISTRY.iter().map(|descriptor| descriptor.kind)
+        self.family
+            .registry
+            .iter()
+            .map(|descriptor| descriptor.kind)
     }
 }
 

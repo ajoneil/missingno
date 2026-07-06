@@ -130,7 +130,7 @@ impl App {
                 let status = self
                     .emu
                     .as_ref()
-                    .and_then(|handle| *handle.status().lock().ok()?);
+                    .and_then(|handle| handle.status().lock().ok()?.clone());
                 let snapshot = self
                     .emu
                     .as_ref()

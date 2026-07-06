@@ -369,13 +369,13 @@ impl panes::Pane for InstructionsPane {
     }
 
     fn view<'a>(&'a self, ctx: Option<&PaneContext<'_>>) -> pane_grid::Content<'a, app::Message> {
-        match ctx {
-            Some(ctx) => self.content(
-                ctx.source.instruction_memory(),
-                ctx.source.cpu().ir_address(),
+        match ctx.and_then(|ctx| ctx.gb.map(|source| (ctx, source))) {
+            Some((ctx, source)) => self.content(
+                source.instruction_memory(),
+                source.cpu().ir_address(),
                 ctx.breakpoints,
                 ctx.symbols,
-                ctx.source.switchable_rom_bank(),
+                source.switchable_rom_bank(),
                 ctx.cdl,
             ),
             None => running_placeholder("Instructions"),

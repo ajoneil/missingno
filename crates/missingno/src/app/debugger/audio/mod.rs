@@ -56,8 +56,8 @@ impl panes::Pane for AudioPane {
     }
 
     fn view<'a>(&'a self, ctx: Option<&panes::PaneContext<'_>>) -> pane_grid::Content<'a, Message> {
-        match ctx {
-            Some(ctx) => self.content(&ctx.source.audio()),
+        match ctx.and_then(|ctx| ctx.gb) {
+            Some(source) => self.content(&source.audio()),
             None => panes::running_placeholder("Audio"),
         }
     }

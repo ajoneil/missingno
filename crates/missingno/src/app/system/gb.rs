@@ -22,7 +22,7 @@ use missingno_gbc::GameBoyColor;
 
 use super::{FrameOutcome, SystemConsole, SystemDebugger};
 use crate::app::console::ConsoleUi;
-use crate::app::debugger::inspect::{ConsoleSnapshot, DebugView, InspectSource};
+use crate::app::debugger::inspect::{ConsoleSnapshot, DebugView, Inspection};
 use crate::app::emu_thread::RunningStatus;
 use crate::app::library::activity::FrameCapture;
 use crate::app::screen::ScreenDisplay;
@@ -206,7 +206,7 @@ where
         self.core.last_watchpoint_hit().cloned()
     }
 
-    fn inspect(&self) -> &dyn InspectSource {
+    fn inspect(&self) -> &dyn Inspection {
         self.core.game_boy()
     }
 
@@ -274,8 +274,12 @@ where
         RunningStatus {
             pc: console.cpu().ir_address,
             sp: console.cpu().stack_pointer,
-            ly: console.ppu().video.ly(),
-            mode: console.ppu().mode(),
+            video_label: "PPU",
+            video_summary: format!(
+                "{} · ly {}",
+                crate::app::debugger::sidebar::mode_display(console.ppu().mode()).0,
+                console.ppu().video.ly()
+            ),
             frame,
         }
     }

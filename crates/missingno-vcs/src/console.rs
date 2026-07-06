@@ -161,6 +161,11 @@ impl Vcs {
         }
     }
 
+    /// Scanlines completed since the current frame began.
+    pub fn scanline(&self) -> usize {
+        self.building.len()
+    }
+
     /// A frame completed since the last take, if any.
     pub fn take_frame(&mut self) -> Option<Frame> {
         self.finished_frame.take()

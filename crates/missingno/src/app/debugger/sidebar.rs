@@ -111,15 +111,50 @@ impl Sidebar {
             .into()
     }
 
+    /// The VCS sidebar: CPU and beam summaries; the panes carry the detail.
+    #[cfg(feature = "vcs")]
+    pub fn vcs_view(
+        &self,
+        state: &crate::app::debugger::vcs::VcsInspectState,
+    ) -> Element<'_, app::Message> {
+        let cpu_summary = format!("pc {:04X} · sp {:04X}", state.pc, state.s as u16 | 0x0100);
+        let tia_summary = format!("beam {} · line {}", state.beam, state.scanline);
+        column![
+            section(
+                "CPU",
+                &cpu_summary,
+                true,
+                Section::Cpu,
+                Some((true, palette::GREEN)),
+                None,
+                Space::new().into(),
+            ),
+            section(
+                "TIA",
+                &tia_summary,
+                true,
+                Section::Ppu,
+                Some((true, palette::GREEN)),
+                None,
+                Space::new().into(),
+            ),
+        ]
+        .width(Length::Fixed(SIDEBAR_WIDTH))
+        .height(Fill)
+        .spacing(s())
+        .into()
+    }
+
     /// The collapsed CPU/PPU summary shown before the first snapshot arrives,
     /// fed by the lightweight [`RunningStatus`].
     pub fn running_summary(&self, status: Option<&RunningStatus>) -> Element<'_, app::Message> {
-        let (cpu_summary, ppu_summary) = match status {
+        let (cpu_summary, video_label, video_summary) = match status {
             Some(status) => (
                 format!("pc {:04X} · sp {:04X}", status.pc, status.sp),
-                format!("{} · ly {}", mode_display(status.mode).0, status.ly),
+                status.video_label,
+                status.video_summary.clone(),
             ),
-            None => (String::from("running"), String::from("running")),
+            None => (String::from("running"), "PPU", String::from("running")),
         };
 
         column![
@@ -133,8 +168,8 @@ impl Sidebar {
                 Space::new().into(),
             ),
             section(
-                "PPU",
-                &ppu_summary,
+                video_label,
+                &video_summary,
                 true,
                 Section::Ppu,
                 Some((true, palette::GREEN)),
@@ -365,7 +400,7 @@ fn section_header_style(_theme: &iced::Theme) -> container::Style {
     }
 }
 
-fn mode_display(mode: missingno_gb::ppu::rendering::Mode) -> (&'static str, Color) {
+pub(crate) fn mode_display(mode: missingno_gb::ppu::rendering::Mode) -> (&'static str, Color) {
     use missingno_gb::ppu::rendering::Mode;
     match mode {
         Mode::HorizontalBlank => ("HBlank", palette::BLUE),

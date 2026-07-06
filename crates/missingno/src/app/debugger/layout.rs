@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use iced::widget::pane_grid;
 use serde::{Deserialize, Serialize};
 
-use super::panes::{PANE_REGISTRY, Pane};
+use super::panes::{Pane, all_descriptors};
 
 #[derive(Serialize, Deserialize)]
 pub struct SavedPanes(Option<SavedLayout>);
@@ -26,18 +26,23 @@ enum SavedLayout {
     Pane(String),
 }
 
-fn layout_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|dir| dir.join("missingno").join("debugger_layout.ron"))
+fn layout_path(key: &str) -> Option<PathBuf> {
+    let file = if key.is_empty() {
+        "debugger_layout.ron".to_string()
+    } else {
+        format!("debugger_layout_{key}.ron")
+    };
+    dirs::config_dir().map(|dir| dir.join("missingno").join(file))
 }
 
-pub fn load() -> Option<SavedPanes> {
-    let path = layout_path()?;
+pub fn load(key: &str) -> Option<SavedPanes> {
+    let path = layout_path(key)?;
     let data = fs::read_to_string(path).ok()?;
     ron::from_str(&data).ok()
 }
 
-pub fn save(state: Option<&pane_grid::State<Box<dyn Pane>>>) {
-    let Some(path) = layout_path() else {
+pub fn save(key: &str, state: Option<&pane_grid::State<Box<dyn Pane>>>) {
+    let Some(path) = layout_path(key) else {
         return;
     };
     let saved = SavedPanes(state.and_then(|state| SavedLayout::capture(state.layout(), state)));
@@ -97,9 +102,7 @@ impl SavedLayout {
                 b: Box::new(b.into_configuration()?),
             }),
             Self::Pane(label) => {
-                let descriptor = PANE_REGISTRY
-                    .iter()
-                    .find(|descriptor| descriptor.label == label)?;
+                let descriptor = all_descriptors().find(|descriptor| descriptor.label == label)?;
                 Some(pane_grid::Configuration::Pane((descriptor.construct)()))
             }
         }

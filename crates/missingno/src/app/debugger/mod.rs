@@ -25,7 +25,7 @@ use missingno_gb::{
     ppu::types::palette::PaletteChoice,
 };
 
-use inspect::{DebugView, InspectSource};
+use inspect::DebugView;
 use panes::{DebuggerPanes, PaneContext};
 use sidebar::Sidebar;
 
@@ -37,7 +37,9 @@ mod layout;
 pub mod panes;
 mod ppu;
 mod screen;
-mod sidebar;
+pub(crate) mod sidebar;
+#[cfg(feature = "vcs")]
+pub(crate) mod vcs;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BottomPanel {
@@ -157,9 +159,10 @@ pub type ReturnedConsole = Box<(Box<dyn SystemConsole>, ScreenView)>;
 
 impl Debugger {
     pub fn new(console: Box<dyn SystemConsole>) -> Result<Self, Box<dyn SystemConsole>> {
-        console
-            .into_debugger()
-            .map(|core| Self::build(core, DebuggerPanes::new()))
+        console.into_debugger().map(|core| {
+            let panes = DebuggerPanes::new(core.pane_family());
+            Self::build(core, panes)
+        })
     }
 
     pub fn from_console(
@@ -167,7 +170,10 @@ impl Debugger {
         screen_view: ScreenView,
     ) -> Result<Self, ReturnedConsole> {
         match console.into_debugger() {
-            Ok(core) => Ok(Self::build(core, DebuggerPanes::with_screen(screen_view))),
+            Ok(core) => {
+                let panes = DebuggerPanes::with_screen(core.pane_family(), screen_view);
+                Ok(Self::build(core, panes))
+            }
             Err(console) => Err(Box::new((console, screen_view))),
         }
     }
@@ -605,21 +611,29 @@ impl Debugger {
         let Some(core) = &self.debugger else {
             return self.running_view();
         };
-        let source: &dyn InspectSource = core.inspect();
-        let colors = source.colors(self.panes.palette());
+        let inspection = core.inspect();
+        let gb = inspection.as_gb();
+        let colors = gb
+            .map(|source| source.colors(self.panes.palette()))
+            .unwrap_or_else(|| ConsoleColors::Dmg {
+                palette: *self.panes.palette(),
+            });
         let symbols = core.symbols();
         let cdl = core.cdl_window();
+        let ctx = PaneContext {
+            gb,
+            #[cfg(feature = "vcs")]
+            vcs: inspection.as_vcs(),
+            breakpoints: core.breakpoints(),
+            colors: &colors,
+            symbols: &symbols,
+            cdl: &cdl,
+        };
 
         let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
             pane_grid(split_state, |_handle, zone, _maximized| {
                 let content: Element<'_, app::Message> = match zone {
-                    MainSplit::Top => self.panes.view(Some(PaneContext {
-                        source,
-                        breakpoints: core.breakpoints(),
-                        colors: &colors,
-                        symbols: &symbols,
-                        cdl: &cdl,
-                    })),
+                    MainSplit::Top => self.panes.view(Some(ctx)),
                     MainSplit::Bottom => self.bottom_pane_grid(
                         self.bottom_panes
                             .as_ref()
@@ -632,16 +646,22 @@ impl Debugger {
             .spacing(s())
             .into()
         } else {
-            self.panes.view(Some(PaneContext {
-                source,
-                breakpoints: core.breakpoints(),
-                colors: &colors,
-                symbols: &symbols,
-                cdl: &cdl,
-            }))
+            self.panes.view(Some(ctx))
         };
 
-        row![self.sidebar.view(source, &colors), center, self.icon_rail(),]
+        let sidebar = if let Some(source) = gb {
+            self.sidebar.view(source, &colors)
+        } else {
+            #[cfg(feature = "vcs")]
+            if let Some(state) = inspection.as_vcs() {
+                self.sidebar.vcs_view(state)
+            } else {
+                self.sidebar.running_summary(self.last_status.as_ref())
+            }
+            #[cfg(not(feature = "vcs"))]
+            self.sidebar.running_summary(self.last_status.as_ref())
+        };
+        row![sidebar, center, self.icon_rail(),]
             .spacing(s())
             .padding(s())
             .into()
@@ -655,7 +675,13 @@ impl Debugger {
         let colors = self
             .last_snapshot
             .as_deref()
-            .map(|snapshot| snapshot.colors(self.panes.palette()));
+            .and_then(|snapshot| snapshot.as_gb())
+            .map(|source| source.colors(self.panes.palette()))
+            .or_else(|| {
+                self.last_snapshot.as_deref().map(|_| ConsoleColors::Dmg {
+                    palette: *self.panes.palette(),
+                })
+            });
 
         let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
             pane_grid(split_state, |_handle, zone, _maximized| {
@@ -676,9 +702,21 @@ impl Debugger {
             self.running_center(colors.as_ref())
         };
 
-        let sidebar = match (self.last_snapshot.as_deref(), &colors) {
-            (Some(snapshot), Some(colors)) => self.sidebar.view(snapshot, colors),
-            _ => self.sidebar.running_summary(self.last_status.as_ref()),
+        let sidebar = match (
+            self.last_snapshot.as_deref().and_then(|s| s.as_gb()),
+            &colors,
+        ) {
+            (Some(source), Some(colors)) => self.sidebar.view(source, colors),
+            _ => {
+                #[cfg(feature = "vcs")]
+                if let Some(state) = self.last_snapshot.as_deref().and_then(|s| s.as_vcs()) {
+                    self.sidebar.vcs_view(state)
+                } else {
+                    self.sidebar.running_summary(self.last_status.as_ref())
+                }
+                #[cfg(not(feature = "vcs"))]
+                self.sidebar.running_summary(self.last_status.as_ref())
+            }
         };
 
         row![sidebar, center, self.icon_rail(),]
@@ -692,7 +730,9 @@ impl Debugger {
     fn running_center<'a>(&'a self, colors: Option<&ConsoleColors>) -> Element<'a, app::Message> {
         match (self.last_snapshot.as_deref(), colors) {
             (Some(snapshot), Some(colors)) => self.panes.view(Some(PaneContext {
-                source: snapshot,
+                gb: snapshot.as_gb(),
+                #[cfg(feature = "vcs")]
+                vcs: snapshot.as_vcs(),
                 breakpoints: &self.breakpoints,
                 colors,
                 symbols: snapshot.symbols(),

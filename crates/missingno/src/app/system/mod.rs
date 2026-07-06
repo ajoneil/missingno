@@ -18,7 +18,8 @@ use missingno_gb::{joypad::Button, serial_transfer::SerialLink};
 
 use std::sync::Arc;
 
-use crate::app::debugger::inspect::{DebugView, InspectSource};
+use crate::app::debugger::inspect::{DebugView, Inspection};
+use crate::app::debugger::panes;
 use crate::app::emu_thread::RunningStatus;
 use crate::app::library::activity::FrameCapture;
 use crate::app::screen::ScreenDisplay;
@@ -82,7 +83,11 @@ pub trait SystemDebugger: Send {
     fn last_watchpoint_hit(&self) -> Option<WatchCondition>;
 
     /// The live inspection surface the debugger panes render from while paused.
-    fn inspect(&self) -> &dyn InspectSource;
+    fn inspect(&self) -> &dyn Inspection;
+    /// The family's debugger pane set and layout identity.
+    fn pane_family(&self) -> &'static panes::Family {
+        &panes::GB_FAMILY
+    }
     /// Labels from the ROM's debug-symbol sidecar, if one was loaded.
     fn symbols(&self) -> Arc<SymbolTable>;
     fn set_symbols(&mut self, symbols: SymbolTable);

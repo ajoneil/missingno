@@ -446,7 +446,36 @@ pub trait InspectSource {
 }
 
 /// An owned [`InspectSource`] that can cross from the emulation thread.
-pub trait InspectSnapshot: InspectSource + Send {
+/// A system's inspection surface, family-erased at the seam. Each family
+/// exposes its typed surface through an accessor; a consumer asks for the
+/// family it understands and falls back gracefully otherwise. The blanket
+/// concrete impls hand each Game Boy source through as-is.
+pub trait Inspection {
+    fn as_gb(&self) -> Option<&dyn InspectSource> {
+        None
+    }
+    #[cfg(feature = "vcs")]
+    fn as_vcs(&self) -> Option<&crate::app::debugger::vcs::VcsInspectState> {
+        None
+    }
+}
+
+impl<M: ConsoleUi> Inspection for Console<M>
+where
+    Console<M>: InspectSource,
+{
+    fn as_gb(&self) -> Option<&dyn InspectSource> {
+        Some(self)
+    }
+}
+
+impl Inspection for ConsoleSnapshot {
+    fn as_gb(&self) -> Option<&dyn InspectSource> {
+        Some(self)
+    }
+}
+
+pub trait InspectSnapshot: Inspection + Send {
     fn frame(&self) -> u64;
     fn symbols(&self) -> &SymbolTable;
     fn cdl(&self) -> &CdlWindow;
