@@ -1,0 +1,304 @@
+//! The TIA's movable objects: two players, two missiles, one ball, and
+//! the playfield. Position is a free-running counter per object, wrapped
+//! at the 160 visible clocks; copies come from extra start decodes on the
+//! same counter (the NUSIZ mechanism), and drawing begins a fixed pipeline
+//! delay after a decode fires.
+
+/// Visible clocks per line — the objects' position space.
+pub const COUNTER_RANGE: u8 = 160;
+
+/// Start decodes per NUSIZ player mode: main copy plus the close (+16),
+/// medium (+32) and far (+64) copy decodes the mode enables.
+fn copy_decodes(mode: u8) -> &'static [u8] {
+    match mode & 0x07 {
+        1 => &[0, 16],
+        2 => &[0, 32],
+        3 => &[0, 16, 32],
+        4 => &[0, 64],
+        6 => &[0, 32, 64],
+        _ => &[0],
+    }
+}
+
+/// Clocks per pixel for player modes (double/quad stretch).
+fn player_pixel_clocks(mode: u8) -> u8 {
+    match mode & 0x07 {
+        5 => 2,
+        7 => 4,
+        _ => 1,
+    }
+}
+
+struct Scan {
+    bit: u8,
+    clocks_left: u8,
+}
+
+pub struct Player {
+    pub grp_new: u8,
+    pub grp_old: u8,
+    pub vertical_delay: bool,
+    pub reflect: bool,
+    pub nusiz: u8,
+    counter: u8,
+    start_countdown: Option<u8>,
+    scan: Option<Scan>,
+}
+
+impl Default for Player {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Player {
+    pub fn new() -> Self {
+        Player {
+            grp_new: 0,
+            grp_old: 0,
+            vertical_delay: false,
+            reflect: false,
+            nusiz: 0,
+            counter: 0,
+            start_countdown: None,
+            scan: None,
+        }
+    }
+
+    pub fn reset_position(&mut self) {
+        self.counter = 0;
+        // The reset decode doubles as a start decode; like the wrap
+        // decode, its first pipeline stage clocks on the decode tick.
+        self.start_countdown = Some(START_DELAY_PLAYER - 1);
+    }
+
+    pub fn counter(&self) -> u8 {
+        self.counter
+    }
+
+    /// One motion clock; returns this clock's pixel.
+    pub fn tick(&mut self) -> bool {
+        let pixel = self.output();
+        self.advance_scan();
+        self.counter = (self.counter + 1) % COUNTER_RANGE;
+        if copy_decodes(self.nusiz).contains(&self.counter) {
+            self.start_countdown = Some(START_DELAY_PLAYER);
+        }
+        if let Some(remaining) = self.start_countdown {
+            if remaining == 0 {
+                self.start_countdown = None;
+                self.scan = Some(Scan {
+                    bit: 0,
+                    clocks_left: player_pixel_clocks(self.nusiz),
+                });
+            } else {
+                self.start_countdown = Some(remaining - 1);
+            }
+        }
+        pixel
+    }
+
+    fn advance_scan(&mut self) {
+        if let Some(scan) = &mut self.scan {
+            scan.clocks_left -= 1;
+            if scan.clocks_left == 0 {
+                scan.bit += 1;
+                if scan.bit == 8 {
+                    self.scan = None;
+                } else {
+                    scan.clocks_left = player_pixel_clocks(self.nusiz);
+                }
+            }
+        }
+    }
+
+    fn output(&self) -> bool {
+        let Some(scan) = &self.scan else {
+            return false;
+        };
+        let graphics = if self.vertical_delay {
+            self.grp_old
+        } else {
+            self.grp_new
+        };
+        let bit = if self.reflect { scan.bit } else { 7 - scan.bit };
+        graphics & (1 << bit) != 0
+    }
+}
+
+// Pipeline clocks between a start decode and the first pixel, pinned by
+// the hblank-reset landing positions (player x=3, missile/ball x=2).
+const START_DELAY_PLAYER: u8 = 3;
+const START_DELAY_MISSILE: u8 = 2;
+const START_DELAY_BALL: u8 = 2;
+
+pub struct Missile {
+    pub enabled: bool,
+    /// While set, the missile hides and tracks its player (RESMPx).
+    pub locked_to_player: bool,
+    pub nusiz: u8,
+    counter: u8,
+    start_countdown: Option<u8>,
+    scan_clocks_left: u8,
+}
+
+impl Default for Missile {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Missile {
+    pub fn new() -> Self {
+        Missile {
+            enabled: false,
+            locked_to_player: false,
+            nusiz: 0,
+            counter: 0,
+            start_countdown: None,
+            scan_clocks_left: 0,
+        }
+    }
+
+    pub fn reset_position(&mut self) {
+        self.counter = 0;
+        self.start_countdown = Some(START_DELAY_MISSILE);
+    }
+
+    /// RESMPx released: park at the player's centre.
+    pub fn release_at(&mut self, player_counter: u8, player_mode: u8) {
+        let centre = match player_mode & 0x07 {
+            5 => 6,
+            7 => 10,
+            _ => 3,
+        };
+        self.counter = (player_counter + COUNTER_RANGE - centre) % COUNTER_RANGE;
+    }
+
+    fn width(&self) -> u8 {
+        1 << ((self.nusiz >> 4) & 0x03)
+    }
+
+    pub fn tick(&mut self) -> bool {
+        let pixel = self.enabled && !self.locked_to_player && self.scan_clocks_left > 0;
+        self.scan_clocks_left = self.scan_clocks_left.saturating_sub(1);
+        self.counter = (self.counter + 1) % COUNTER_RANGE;
+        if copy_decodes(self.nusiz).contains(&self.counter) {
+            self.start_countdown = Some(START_DELAY_MISSILE);
+        }
+        if let Some(remaining) = self.start_countdown {
+            if remaining == 0 {
+                self.start_countdown = None;
+                self.scan_clocks_left = self.width();
+            } else {
+                self.start_countdown = Some(remaining - 1);
+            }
+        }
+        pixel
+    }
+}
+
+pub struct Ball {
+    pub enabled_new: bool,
+    pub enabled_old: bool,
+    pub vertical_delay: bool,
+    /// CTRLPF width bits (4-5).
+    pub width_exponent: u8,
+    counter: u8,
+    start_countdown: Option<u8>,
+    scan_clocks_left: u8,
+}
+
+impl Default for Ball {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Ball {
+    pub fn new() -> Self {
+        Ball {
+            enabled_new: false,
+            enabled_old: false,
+            vertical_delay: false,
+            width_exponent: 0,
+            counter: 0,
+            start_countdown: None,
+            scan_clocks_left: 0,
+        }
+    }
+
+    pub fn reset_position(&mut self) {
+        self.counter = 0;
+        self.start_countdown = Some(START_DELAY_BALL);
+    }
+
+    fn enabled(&self) -> bool {
+        if self.vertical_delay {
+            self.enabled_old
+        } else {
+            self.enabled_new
+        }
+    }
+
+    pub fn tick(&mut self) -> bool {
+        let pixel = self.enabled() && self.scan_clocks_left > 0;
+        self.scan_clocks_left = self.scan_clocks_left.saturating_sub(1);
+        self.counter = (self.counter + 1) % COUNTER_RANGE;
+        if self.counter == 0 {
+            self.start_countdown = Some(START_DELAY_BALL);
+        }
+        if let Some(remaining) = self.start_countdown {
+            if remaining == 0 {
+                self.start_countdown = None;
+                self.scan_clocks_left = 1 << self.width_exponent;
+            } else {
+                self.start_countdown = Some(remaining - 1);
+            }
+        }
+        pixel
+    }
+}
+
+/// The playfield is beam-derived, not counter-driven: 20 bits across the
+/// left half (PF0 high nibble low-bit-first, PF1 high-bit-first, PF2
+/// low-bit-first), repeated or mirrored on the right per CTRLPF.
+pub struct Playfield {
+    pub pf0: u8,
+    pub pf1: u8,
+    pub pf2: u8,
+    pub mirrored: bool,
+}
+
+impl Default for Playfield {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Playfield {
+    pub fn new() -> Self {
+        Playfield {
+            pf0: 0,
+            pf1: 0,
+            pf2: 0,
+            mirrored: false,
+        }
+    }
+
+    pub fn pixel(&self, x: u8) -> bool {
+        let half_index = if x < 80 {
+            x / 4
+        } else if self.mirrored {
+            39 - (x - 80) / 4
+        } else {
+            (x - 80) / 4
+        };
+        let lit = match half_index {
+            0..=3 => self.pf0 & (0x10 << half_index),
+            4..=11 => self.pf1 & (0x80 >> (half_index - 4)),
+            _ => self.pf2 & (0x01 << (half_index - 12)),
+        };
+        lit != 0
+    }
+}

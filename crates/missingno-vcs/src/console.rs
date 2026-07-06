@@ -23,6 +23,7 @@ pub struct Vcs {
     pub riot: Riot,
     cartridge: Cartridge,
     clock_phase: u8,
+    pending_tia_write: Option<TiaWrite>,
     building: Vec<Scanline>,
     in_vsync: bool,
     finished_frame: Option<Frame>,
@@ -30,10 +31,21 @@ pub struct Vcs {
 
 /// The 6507's view of the board: A12 selects the cartridge; below it, A7
 /// splits TIA from RIOT and A9 splits RIOT RAM from its I/O registers.
+///
+/// TIA writes are deferred: the data bus is valid at φ2, two colour
+/// clocks into the CPU cycle, so the write registers at clock 3N+2 —
+/// pinned by the RESP landing corpus (hblank x=3 AND mid-line strobe+5).
 struct BoardBus<'a> {
     tia: &'a mut Tia,
     riot: &'a mut Riot,
     cartridge: &'a Cartridge,
+    pending_tia_write: &'a mut Option<TiaWrite>,
+}
+
+pub(crate) struct TiaWrite {
+    address: u16,
+    data: u8,
+    clocks_until_effective: u8,
 }
 
 impl Bus for BoardBus<'_> {
@@ -52,7 +64,11 @@ impl Bus for BoardBus<'_> {
     fn write(&mut self, address: u16, data: u8) {
         if address & 0x1000 != 0 {
         } else if address & 0x0080 == 0 {
-            self.tia.write(address, data);
+            *self.pending_tia_write = Some(TiaWrite {
+                address,
+                data,
+                clocks_until_effective: 3,
+            });
         } else if address & 0x0200 == 0 {
             self.riot.ram[(address & 0x7F) as usize] = data;
         } else {
@@ -72,6 +88,7 @@ impl Vcs {
             riot: Riot::new(),
             cartridge,
             clock_phase: 0,
+            pending_tia_write: None,
             building: Vec::new(),
             in_vsync: false,
             finished_frame: None,
@@ -87,12 +104,20 @@ impl Vcs {
                 tia: &mut self.tia,
                 riot: &mut self.riot,
                 cartridge: &self.cartridge,
+                pending_tia_write: &mut self.pending_tia_write,
             };
             self.cpu.step_cycle(&mut bus);
             self.riot.tick();
         }
         self.clock_phase = (self.clock_phase + 1) % 3;
 
+        if let Some(write) = &mut self.pending_tia_write {
+            write.clocks_until_effective -= 1;
+            if write.clocks_until_effective == 0 {
+                let write = self.pending_tia_write.take().unwrap();
+                self.tia.write(write.address, write.data);
+            }
+        }
         self.tia.step_clock();
         if let Some(line) = self.tia.take_line() {
             self.collect_line(line);
