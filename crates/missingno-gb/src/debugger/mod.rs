@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-#[cfg(feature = "gbtrace")]
 use std::path::Path;
 
 use crate::{
@@ -156,6 +155,18 @@ impl<M: Model> Debugger<M> {
 
     pub fn symbols(&self) -> &Arc<SymbolTable> {
         &self.symbols
+    }
+
+    pub fn add_user_symbol(&mut self, symbol: symbols::Symbol) {
+        Arc::make_mut(&mut self.symbols).add_user(symbol);
+    }
+
+    pub fn remove_user_symbol(&mut self, symbol: &symbols::Symbol) {
+        Arc::make_mut(&mut self.symbols).remove_user(symbol);
+    }
+
+    pub fn save_symbols(&self, path: &Path) {
+        self.symbols.save(path);
     }
 
     pub fn game_boy(&self) -> &Console<M> {

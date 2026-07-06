@@ -12,7 +12,7 @@ use missingno_gb::{
     debugger::{
         WatchCondition,
         cdl::{CdlWindow, CodeDataLog},
-        symbols::SymbolTable,
+        symbols::{Symbol, SymbolTable},
     },
     joypad::Button,
     ppu::model::PpuModel,
@@ -205,6 +205,31 @@ where
 
     fn set_symbols(&mut self, symbols: SymbolTable) {
         self.core.set_symbols(symbols);
+    }
+
+    fn add_symbol(&mut self, address: u16, name: String) {
+        let bank = match address {
+            0x4000..=0x7fff => self
+                .core
+                .game_boy()
+                .cartridge()
+                .switchable_rom_bank()
+                .unwrap_or(0),
+            _ => 0,
+        };
+        self.core.add_user_symbol(Symbol {
+            bank,
+            address,
+            name,
+        });
+    }
+
+    fn remove_symbol(&mut self, symbol: &Symbol) {
+        self.core.remove_user_symbol(symbol);
+    }
+
+    fn save_symbols(&self, path: &Path) {
+        self.core.save_symbols(path);
     }
 
     fn cdl_window(&self) -> CdlWindow {

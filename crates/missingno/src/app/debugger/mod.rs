@@ -20,7 +20,9 @@ use crate::app::{
     },
 };
 use missingno_gb::{
-    cartridge::Cartridge, debugger::WatchCondition, joypad::Button,
+    cartridge::Cartridge,
+    debugger::{WatchCondition, symbols::Symbol},
+    joypad::Button,
     ppu::types::palette::PaletteChoice,
 };
 
@@ -42,6 +44,7 @@ mod sidebar;
 pub enum BottomPanel {
     Breakpoints,
     Watchpoints,
+    Labels,
 }
 
 /// The bus-access direction offered by the watchpoint add row's picker.
@@ -99,6 +102,11 @@ pub enum Message {
     WatchpointKindChanged(AccessKind),
     AddWatchpoint,
 
+    RemoveLabel(Symbol),
+    LabelAddressChanged(String),
+    LabelNameChanged(String),
+    AddLabel,
+
     BottomPane(BottomPaneMessage),
     MainSplitResize(pane_grid::ResizeEvent),
 
@@ -138,6 +146,8 @@ pub struct Debugger {
     breakpoint_input: String,
     watchpoint_input: String,
     watchpoint_kind: AccessKind,
+    label_address_input: String,
+    label_name_input: String,
 }
 
 impl Debugger {
@@ -170,6 +180,8 @@ impl Debugger {
             breakpoint_input: String::new(),
             watchpoint_input: String::new(),
             watchpoint_kind: AccessKind::Write,
+            label_address_input: String::new(),
+            label_name_input: String::new(),
         }
     }
 
@@ -185,9 +197,10 @@ impl Debugger {
         }
     }
 
-    fn save_cdl(&self) {
+    fn save_sidecars(&self) {
         if let (Some(core), Some(rom_path)) = (&self.debugger, &self.rom_path) {
             core.save_cdl(&rom_path.with_extension("cdl"));
+            core.save_symbols(&rom_path.with_extension("sym"));
         }
     }
 
@@ -281,7 +294,7 @@ impl Debugger {
     }
 
     pub fn disable_debugger(mut self, use_sgb_colors: bool, frame_blending: bool) -> Emulator {
-        self.save_cdl();
+        self.save_sidecars();
         let core = self
             .debugger
             .take()
@@ -469,6 +482,37 @@ impl Debugger {
                 Task::none()
             }
 
+            Message::RemoveLabel(symbol) => {
+                if let Some(core) = &mut self.debugger {
+                    core.remove_symbol(&symbol);
+                }
+                self.save_sidecars();
+                Task::none()
+            }
+            Message::LabelAddressChanged(input) => {
+                self.label_address_input = input
+                    .chars()
+                    .filter(|c| c.is_ascii_hexdigit())
+                    .take(4)
+                    .collect();
+                Task::none()
+            }
+            Message::LabelNameChanged(input) => {
+                self.label_name_input = input.chars().filter(|c| !c.is_whitespace()).collect();
+                Task::none()
+            }
+            Message::AddLabel => {
+                if self.label_address_input.len() == 4 && !self.label_name_input.is_empty() {
+                    let address = u16::from_str_radix(&self.label_address_input, 16).unwrap();
+                    if let Some(core) = &mut self.debugger {
+                        core.add_symbol(address, std::mem::take(&mut self.label_name_input));
+                        self.label_address_input.clear();
+                    }
+                    self.save_sidecars();
+                }
+                Task::none()
+            }
+
             Message::BottomPane(msg) => {
                 match msg {
                     BottomPaneMessage::Show(panel) => {
@@ -651,6 +695,7 @@ impl Debugger {
             let content: Element<'_, app::Message> = match panel {
                 BottomPanel::Breakpoints => self.breakpoints_content(),
                 BottomPanel::Watchpoints => self.watchpoints_content(),
+                BottomPanel::Labels => self.labels_content(),
             };
 
             panes::pane(panes::title_bar(panel.label()), content)
@@ -707,6 +752,44 @@ impl Debugger {
         panel.spacing(s()).padding(s()).into()
     }
 
+    /// Label editing needs the core on the UI thread; while it runs on the
+    /// emu thread the panel is read-only.
+    fn labels_content(&self) -> Element<'_, app::Message> {
+        let Some(core) = &self.debugger else {
+            return column![text("Pause to edit labels").font(fonts::monospace()),]
+                .spacing(s())
+                .padding(s())
+                .into();
+        };
+        let symbols = core.symbols();
+
+        let user_rows = Column::from_iter(symbols.user_symbols().iter().map(label_row));
+
+        let address = text_input("Address (hex)...", &self.label_address_input)
+            .font(fonts::monospace())
+            .on_input(|value| Message::LabelAddressChanged(value).into())
+            .on_submit(Message::AddLabel.into());
+        let name = text_input("Name...", &self.label_name_input)
+            .font(fonts::monospace())
+            .on_input(|value| Message::LabelNameChanged(value).into())
+            .on_submit(Message::AddLabel.into());
+        let add_row = row![address, name].spacing(s()).align_y(Vertical::Center);
+
+        let total = text(format!(
+            "{} labels · {} yours",
+            symbols.len(),
+            symbols.user_symbols().len()
+        ))
+        .font(fonts::monospace())
+        .size(11.0)
+        .color(palette::MUTED);
+
+        column![total, user_rows, add_row]
+            .spacing(s())
+            .padding(s())
+            .into()
+    }
+
     fn icon_rail(&self) -> Element<'_, app::Message> {
         use icons::Icon;
 
@@ -722,6 +805,7 @@ impl Debugger {
         let panel_buttons = [
             (BottomPanel::Breakpoints, Icon::Circle, "Breakpoints"),
             (BottomPanel::Watchpoints, Icon::Eye, "Watchpoints"),
+            (BottomPanel::Labels, Icon::FileText, "Labels"),
         ]
         .into_iter()
         .map(|(panel, icon, label)| {
@@ -784,11 +868,11 @@ impl Debugger {
     }
 }
 
-/// The code/data log persists when the debugger goes away — same rationale
-/// as the pane layout's drop-save.
+/// Debug sidecars persist when the debugger goes away — same rationale as
+/// the pane layout's drop-save.
 impl Drop for Debugger {
     fn drop(&mut self) {
-        self.save_cdl();
+        self.save_sidecars();
     }
 }
 
@@ -797,6 +881,7 @@ impl BottomPanel {
         match self {
             BottomPanel::Breakpoints => "Breakpoints",
             BottomPanel::Watchpoints => "Watchpoints",
+            BottomPanel::Labels => "Labels",
         }
     }
 }
@@ -827,6 +912,23 @@ fn rail_icon<'a>(
         tooltip::Position::Left,
     )
     .style(tooltip_style)
+    .into()
+}
+
+fn label_row(symbol: &Symbol) -> Element<'static, app::Message> {
+    container(
+        row![
+            button(icons::m(icons::Icon::Close))
+                .on_press(Message::RemoveLabel(symbol.clone()).into())
+                .style(button::text),
+            text(format!(
+                "{:02X}:{:04X} {}",
+                symbol.bank, symbol.address, symbol.name
+            ))
+            .font(fonts::monospace())
+        ]
+        .align_y(Vertical::Center),
+    )
     .into()
 }
 
