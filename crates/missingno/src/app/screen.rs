@@ -22,16 +22,18 @@ pub enum ScreenDisplay {
     Indexed(IndexedFrame),
 }
 
-/// A frame of palette indices plus the system's palette table, resolved to
-/// RGBA at draw time. Height is per-frame: systems without a hardware frame
-/// (emergent sync) legitimately vary line counts.
+/// A frame of palette indices plus the palette to resolve them with,
+/// converted to RGBA at draw time. Height is per-frame: systems without a
+/// hardware frame (emergent sync) legitimately vary line counts. The
+/// palette is shared, not static — systems with programmable colour RAM
+/// send the palette as it stood when the frame completed.
 #[derive(Clone, Debug)]
 pub struct IndexedFrame {
     pub width: u32,
     pub height: u32,
     /// Row-major palette indices, `width * height` entries.
     pub pixels: std::sync::Arc<[u8]>,
-    pub palette: &'static [RGB8],
+    pub palette: std::sync::Arc<[RGB8]>,
 }
 
 impl IndexedFrame {
