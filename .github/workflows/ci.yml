@@ -68,4 +68,5 @@ jobs:
         run: |
           cargo clippy -p missingno --features vcs
           cargo clippy -p missingno --features sms
-          cargo clippy -p missingno --features vcs,sms
+          cargo clippy -p missingno --features nes
+          cargo clippy -p missingno --features vcs,sms,nes

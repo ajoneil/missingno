@@ -14,10 +14,14 @@ path = "src/main.rs"
 vcs = ["dep:missingno-vcs"]
 # Sega Master System support; off until it is ready to be public.
 sms = ["dep:missingno-sms"]
+# NES / Famicom support; off until it is ready to be public.
+nes = ["dep:missingno-nes", "dep:missingno-6502"]
 
 [dependencies]
 missingno-gb = { path = "../missingno-gb", features = ["gbtrace"] }
 missingno-gbc = { path = "../missingno-gbc", features = ["gbtrace"] }
+missingno-6502 = { path = "../missingno-6502", optional = true }
+missingno-nes = { path = "../missingno-nes", optional = true }
 missingno-sms = { path = "../missingno-sms", optional = true }
 missingno-vcs = { path = "../missingno-vcs", optional = true }
 cpal = "0.17"

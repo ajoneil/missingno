@@ -34,6 +34,8 @@ pub mod inspect;
 mod instructions;
 mod interrupts;
 mod layout;
+#[cfg(feature = "nes")]
+pub(crate) mod nes;
 pub mod panes;
 mod ppu;
 mod screen;
@@ -628,6 +630,8 @@ impl Debugger {
             vcs: inspection.as_vcs(),
             #[cfg(feature = "sms")]
             sms: inspection.as_sms(),
+            #[cfg(feature = "nes")]
+            nes: inspection.as_nes(),
             breakpoints: core.breakpoints(),
             colors: &colors,
             symbols: &symbols,
@@ -677,6 +681,10 @@ impl Debugger {
         #[cfg(feature = "sms")]
         if let Some(state) = inspection.as_sms() {
             return self.sidebar.sms_view(state);
+        }
+        #[cfg(feature = "nes")]
+        if let Some(state) = inspection.as_nes() {
+            return self.sidebar.nes_view(state);
         }
         let _ = inspection;
         self.sidebar.running_summary(self.last_status.as_ref())
@@ -744,6 +752,8 @@ impl Debugger {
                 vcs: snapshot.as_vcs(),
                 #[cfg(feature = "sms")]
                 sms: snapshot.as_sms(),
+                #[cfg(feature = "nes")]
+                nes: snapshot.as_nes(),
                 breakpoints: &self.breakpoints,
                 colors,
                 symbols: snapshot.symbols(),

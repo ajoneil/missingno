@@ -79,6 +79,8 @@ pub struct PaneContext<'b> {
     pub vcs: Option<&'b crate::app::debugger::vcs::VcsInspectState>,
     #[cfg(feature = "sms")]
     pub sms: Option<&'b crate::app::debugger::sms::SmsInspectState>,
+    #[cfg(feature = "nes")]
+    pub nes: Option<&'b crate::app::debugger::nes::NesInspectState>,
     pub breakpoints: &'b BTreeSet<u16>,
     pub colors: &'b ConsoleColors,
     pub symbols: &'b SymbolTable,
@@ -142,8 +144,41 @@ pub fn all_descriptors() -> impl Iterator<Item = &'static PaneDescriptor> {
     let sms = SMS_PANE_REGISTRY.iter();
     #[cfg(not(feature = "sms"))]
     let sms = [].iter();
-    PANE_REGISTRY.iter().chain(vcs).chain(sms)
+    #[cfg(feature = "nes")]
+    let nes = NES_PANE_REGISTRY.iter();
+    #[cfg(not(feature = "nes"))]
+    let nes = [].iter();
+    PANE_REGISTRY.iter().chain(vcs).chain(sms).chain(nes)
 }
+
+#[cfg(feature = "nes")]
+pub static NES_FAMILY: Family = Family {
+    registry: NES_PANE_REGISTRY,
+    layout_key: "nes",
+    default_layout: nes_default_layout,
+};
+
+#[cfg(feature = "nes")]
+pub static NES_PANE_REGISTRY: &[PaneDescriptor] = &[
+    PaneDescriptor {
+        kind: DebuggerPane::Screen,
+        icon: Icon::Monitor,
+        label: "Screen",
+        construct: || Box::new(ScreenPane::new()),
+    },
+    PaneDescriptor {
+        kind: DebuggerPane::NesCpu,
+        icon: Icon::FileText,
+        label: "2A03",
+        construct: || Box::new(crate::app::debugger::nes::CpuPane),
+    },
+    PaneDescriptor {
+        kind: DebuggerPane::NesPpu,
+        icon: Icon::Image,
+        label: "2C02",
+        construct: || Box::new(crate::app::debugger::nes::PpuPane),
+    },
+];
 
 #[cfg(feature = "sms")]
 pub static SMS_FAMILY: Family = Family {
@@ -264,6 +299,10 @@ pub enum DebuggerPane {
     SmsCpu,
     #[cfg(feature = "sms")]
     SmsVdp,
+    #[cfg(feature = "nes")]
+    NesCpu,
+    #[cfg(feature = "nes")]
+    NesPpu,
 }
 
 impl DebuggerPane {
@@ -335,6 +374,20 @@ fn gb_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
         )
         .unwrap();
     panes.resize(split, 1.0 / 3.0);
+    Some(panes)
+}
+
+/// The NES starts with the 2A03 beside the screen, the 2C02 below.
+#[cfg(feature = "nes")]
+fn nes_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
+    let (mut panes, cpu_handle) = pane_grid::State::new(DebuggerPane::NesCpu.construct());
+    let (screen_handle, split) = panes
+        .split(Vertical, cpu_handle, DebuggerPane::Screen.construct())
+        .unwrap();
+    panes.resize(split, 1.0 / 3.0);
+    panes
+        .split(Horizontal, screen_handle, DebuggerPane::NesPpu.construct())
+        .unwrap();
     Some(panes)
 }
 

@@ -462,6 +462,10 @@ pub trait Inspection {
     fn as_sms(&self) -> Option<&crate::app::debugger::sms::SmsInspectState> {
         None
     }
+    #[cfg(feature = "nes")]
+    fn as_nes(&self) -> Option<&crate::app::debugger::nes::NesInspectState> {
+        None
+    }
 }
 
 impl<M: ConsoleUi> Inspection for Console<M>

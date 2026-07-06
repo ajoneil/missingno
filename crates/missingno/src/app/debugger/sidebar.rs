@@ -179,6 +179,40 @@ impl Sidebar {
         .into()
     }
 
+    /// The NES sidebar: CPU and PPU summaries; the panes carry the detail.
+    #[cfg(feature = "nes")]
+    pub fn nes_view(
+        &self,
+        state: &crate::app::debugger::nes::NesInspectState,
+    ) -> Element<'_, app::Message> {
+        let cpu_summary = format!("pc {:04X} · sp {:04X}", state.pc, state.s as u16 | 0x0100);
+        let ppu_summary = format!("scanline {} · dot {}", state.scanline, state.dot);
+        column![
+            section(
+                "CPU",
+                &cpu_summary,
+                true,
+                Section::Cpu,
+                Some((true, palette::GREEN)),
+                None,
+                Space::new().into(),
+            ),
+            section(
+                "PPU",
+                &ppu_summary,
+                true,
+                Section::Ppu,
+                Some((true, palette::GREEN)),
+                None,
+                Space::new().into(),
+            ),
+        ]
+        .width(Length::Fixed(SIDEBAR_WIDTH))
+        .height(Fill)
+        .spacing(s())
+        .into()
+    }
+
     /// The collapsed CPU/PPU summary shown before the first snapshot arrives,
     /// fed by the lightweight [`RunningStatus`].
     pub fn running_summary(&self, status: Option<&RunningStatus>) -> Element<'_, app::Message> {

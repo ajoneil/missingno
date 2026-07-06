@@ -36,6 +36,10 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
             {
                 dialog = dialog.add_filter(system::sms::PLATFORM_NAME, system::sms::ROM_EXTENSIONS);
             }
+            #[cfg(feature = "nes")]
+            {
+                dialog = dialog.add_filter(system::nes::PLATFORM_NAME, system::nes::ROM_EXTENSIONS);
+            }
             if let Some(dir) = app.recent_games.most_recent_dir() {
                 dialog = dialog.set_directory(dir);
             }
@@ -111,6 +115,12 @@ fn start_console(
     {
         return finish_start(app, console, rom_path);
     }
+    #[cfg(feature = "nes")]
+    if system::nes::is_nes_rom(&rom)
+        && let Ok(console) = system::nes::create_console(&rom, file_stem_title(rom_path))
+    {
+        return finish_start(app, console, rom_path);
+    }
     let cartridge = build_cartridge(rom, save_data);
     let cartridge_title = cartridge.title().to_string();
     let mut console = system::gb::create_console(cartridge, None);
@@ -145,6 +155,10 @@ fn headerless_family_rom(rom_path: &std::path::Path, rom: &[u8]) -> bool {
     }
     #[cfg(feature = "sms")]
     if system::sms::is_sms_rom(rom_path) {
+        return true;
+    }
+    #[cfg(feature = "nes")]
+    if system::nes::is_nes_rom(rom) {
         return true;
     }
     let _ = (rom_path, rom);

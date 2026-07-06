@@ -54,6 +54,8 @@ use crate::app::library::activity::FrameCapture;
 use crate::app::screen::ScreenDisplay;
 
 pub mod gb;
+#[cfg(feature = "nes")]
+pub mod nes;
 #[cfg(feature = "sms")]
 pub mod sms;
 #[cfg(feature = "vcs")]
