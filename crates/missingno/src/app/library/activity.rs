@@ -112,6 +112,18 @@ pub struct FrameCapture {
     /// palette to re-apply later.
     #[serde(default)]
     pub cgb_rgba: Option<Vec<u8>>,
+    /// Self-sized RGBA capture from a non-GB system; overrides the GB
+    /// render paths entirely when present.
+    #[serde(default)]
+    pub rgba: Option<RgbaCapture>,
+}
+
+/// A display-ready RGBA frame with its own dimensions.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RgbaCapture {
+    pub width: u32,
+    pub height: u32,
+    pub data: Vec<u8>,
 }
 
 /// How the screenshot was displayed at capture time.
@@ -177,6 +189,7 @@ impl FrameCapture {
             sgb,
             display_mode,
             cgb_rgba: None,
+            rgba: None,
         }
     }
 
@@ -186,6 +199,7 @@ impl FrameCapture {
             sgb: None,
             display_mode: DisplayMode::Cgb,
             cgb_rgba: Some(screen.to_corrected_rgba()),
+            rgba: None,
         }
     }
 
@@ -282,6 +296,13 @@ impl FrameCapture {
     pub fn to_image_handle(&self) -> iced::widget::image::Handle {
         use missingno_gb::ppu::screen::{NUM_SCANLINES, PIXELS_PER_LINE};
 
+        if let Some(capture) = &self.rgba {
+            return iced::widget::image::Handle::from_rgba(
+                capture.width,
+                capture.height,
+                capture.data.clone(),
+            );
+        }
         let rgba = self.to_rgba();
         iced::widget::image::Handle::from_rgba(PIXELS_PER_LINE as u32, NUM_SCANLINES as u32, rgba)
     }

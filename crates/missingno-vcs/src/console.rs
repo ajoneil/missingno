@@ -17,6 +17,14 @@ pub struct Frame {
     pub lines: Vec<[u8; VISIBLE_CLOCKS]>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum JoystickDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
 pub struct Vcs {
     pub cpu: Cpu,
     pub tia: Tia,
@@ -136,6 +144,57 @@ impl Vcs {
         self.in_vsync = line.vsync;
         if !line.vsync {
             self.building.push(line);
+        }
+    }
+
+    /// Power-cycle: fresh chip state, same cartridge.
+    pub fn power_cycle(&mut self) {
+        self.cpu = Cpu::new();
+        self.cpu.reset();
+        self.tia = Tia::new();
+        self.riot = Riot::new();
+        self.clock_phase = 0;
+        self.pending_tia_write = None;
+        self.building.clear();
+        self.in_vsync = false;
+        self.finished_frame = None;
+    }
+
+    /// Player-0 joystick direction lines into RIOT port A, active-low.
+    pub fn set_joystick(&mut self, direction: JoystickDirection, pressed: bool) {
+        let bit = match direction {
+            JoystickDirection::Right => 0x80,
+            JoystickDirection::Left => 0x40,
+            JoystickDirection::Down => 0x20,
+            JoystickDirection::Up => 0x10,
+        };
+        if pressed {
+            self.riot.port_a &= !bit;
+        } else {
+            self.riot.port_a |= bit;
+        }
+    }
+
+    /// Player-0 trigger into TIA INPT4.
+    pub fn set_fire(&mut self, pressed: bool) {
+        self.tia.triggers[0] = pressed;
+    }
+
+    /// The console's momentary Game Reset switch (SWCHB bit 0, active-low).
+    pub fn set_console_reset(&mut self, pressed: bool) {
+        if pressed {
+            self.riot.port_b &= !0x01;
+        } else {
+            self.riot.port_b |= 0x01;
+        }
+    }
+
+    /// The console's momentary Game Select switch (SWCHB bit 1, active-low).
+    pub fn set_console_select(&mut self, pressed: bool) {
+        if pressed {
+            self.riot.port_b &= !0x02;
+        } else {
+            self.riot.port_b |= 0x02;
         }
     }
 

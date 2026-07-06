@@ -24,6 +24,8 @@ use crate::app::library::activity::FrameCapture;
 use crate::app::screen::ScreenDisplay;
 
 pub mod gb;
+#[cfg(feature = "vcs")]
+pub mod vcs;
 
 /// One emulated frame's outcome, as seen by the emu-thread loop.
 pub struct FrameOutcome {

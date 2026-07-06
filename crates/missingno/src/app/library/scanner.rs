@@ -157,5 +157,14 @@ fn is_rom_file(path: &std::path::Path) -> bool {
         && path
             .extension()
             .and_then(|e| e.to_str())
-            .is_some_and(|ext| crate::app::system::gb::ROM_EXTENSIONS.contains(&ext))
+            .is_some_and(|ext| {
+                crate::app::system::gb::ROM_EXTENSIONS.contains(&ext) || {
+                    #[cfg(feature = "vcs")]
+                    {
+                        crate::app::system::vcs::ROM_EXTENSIONS.contains(&ext)
+                    }
+                    #[cfg(not(feature = "vcs"))]
+                    false
+                }
+            })
 }

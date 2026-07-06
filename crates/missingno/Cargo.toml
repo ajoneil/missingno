@@ -9,9 +9,14 @@ license = "MIT"
 name = "missingno"
 path = "src/main.rs"
 
+[features]
+# Atari 2600 support; off until it is ready to be public.
+vcs = ["dep:missingno-vcs"]
+
 [dependencies]
 missingno-gb = { path = "../missingno-gb", features = ["gbtrace"] }
 missingno-gbc = { path = "../missingno-gbc", features = ["gbtrace"] }
+missingno-vcs = { path = "../missingno-vcs", optional = true }
 cpal = "0.17"
 bytemuck = { version = "1.25", features = ["derive"] }
 clap = { version = "4.6.1", features = ["derive"] }

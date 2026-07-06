@@ -28,6 +28,10 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
             app.game = Game::Loading;
             let mut dialog = AsyncFileDialog::new()
                 .add_filter(system::gb::ROM_FILTER_NAME, system::gb::ROM_EXTENSIONS);
+            #[cfg(feature = "vcs")]
+            {
+                dialog = dialog.add_filter(system::vcs::PLATFORM_NAME, system::vcs::ROM_EXTENSIONS);
+            }
             if let Some(dir) = app.recent_games.most_recent_dir() {
                 dialog = dialog.set_directory(dir);
             }
@@ -83,13 +87,21 @@ fn build_cartridge(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Cartridge {
 }
 
 /// Build the console for a ROM and wrap it for the active mode (debugger or
-/// emulator), storing it in `app.game`. Returns the cartridge header title.
+/// emulator), storing it in `app.game`. Returns the game's title.
 fn start_console(
     app: &mut App,
-    cartridge: Cartridge,
+    rom: Vec<u8>,
+    save_data: Option<Vec<u8>>,
     rom_path: &std::path::Path,
     game_dir: &std::path::Path,
 ) -> String {
+    #[cfg(feature = "vcs")]
+    if system::vcs::is_vcs_rom(rom_path, &rom)
+        && let Ok(console) = system::vcs::create_console(&rom, file_stem_title(rom_path))
+    {
+        return finish_start(app, console, rom_path);
+    }
+    let cartridge = build_cartridge(rom, save_data);
     let cartridge_title = cartridge.title().to_string();
     let mut console = system::gb::create_console(cartridge, None);
     if let Some(link) = app.serial_link.take() {
@@ -101,6 +113,28 @@ fn start_console(
             game_dir.join("prints"),
         )));
     }
+    let title = finish_start(app, console, rom_path);
+    let _ = cartridge_title;
+    title
+}
+
+#[cfg(feature = "vcs")]
+fn file_stem_title(rom_path: &std::path::Path) -> String {
+    rom_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Unknown")
+        .to_string()
+}
+
+/// Wrap a built console for the active mode (debugger where the system
+/// supports one, plain emulation otherwise) and store it in `app.game`.
+fn finish_start(
+    app: &mut App,
+    console: Box<dyn system::SystemConsole>,
+    rom_path: &std::path::Path,
+) -> String {
+    let title = console.game_title();
     let palette = app.settings.palette;
 
     let console = if app.debugger_enabled {
@@ -110,7 +144,7 @@ fn start_console(
                 debugger.set_palette(palette);
                 debugger.set_frame_blending(app.settings.frame_blending);
                 app.game = Game::Loaded(LoadedGame::Debugger(debugger));
-                return cartridge_title;
+                return title;
             }
             // No debugger backend for this system: plain emulation.
             Err(console) => console,
@@ -127,7 +161,7 @@ fn start_console(
     emu.set_running(true);
     app.game = Game::Loaded(LoadedGame::Emulator(emu));
     app.start_running();
-    cartridge_title
+    title
 }
 
 /// Select a game from the library by SHA1 and populate CurrentGame.
@@ -171,7 +205,7 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
 
     let save_data = library::activity::load_current_sram(&game_dir);
     let initial_sram = save_data.clone();
-    let cartridge_title = start_console(app, build_cartridge(rom, save_data), &rom_path, &game_dir);
+    let cartridge_title = start_console(app, rom, save_data, &rom_path, &game_dir);
 
     // Start play session
     if let Some(current) = &mut app.current_game {
@@ -219,7 +253,7 @@ pub fn play_with_save(app: &mut App, activity_filename: &str) -> Task<app::Messa
 
     let save_data = library::activity::load_sram_from(&game_dir, activity_filename);
     let initial_sram = save_data.clone();
-    let cartridge_title = start_console(app, build_cartridge(rom, save_data), &rom_path, &game_dir);
+    let cartridge_title = start_console(app, rom, save_data, &rom_path, &game_dir);
 
     if let Some(current) = &mut app.current_game {
         let session = library::activity::SessionFile::new(
@@ -257,6 +291,13 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
         (dir, existing)
     } else {
         // New game — create entry with ROM header title
+        #[cfg(feature = "vcs")]
+        let header_title = if system::vcs::is_vcs_rom(&rom_path, &rom) {
+            file_stem_title(&rom_path)
+        } else {
+            Cartridge::peek_title(&rom)
+        };
+        #[cfg(not(feature = "vcs"))]
         let header_title = Cartridge::peek_title(&rom);
         let title = if header_title.is_empty() {
             "Unknown".to_string()
@@ -292,7 +333,7 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
     let cover = library::load_cover(&game_dir).map(iced::widget::image::Handle::from_bytes);
 
     // Create cartridge and start emulation
-    let cartridge_title = start_console(app, build_cartridge(rom, save_data), &rom_path, &game_dir);
+    let cartridge_title = start_console(app, rom, save_data, &rom_path, &game_dir);
 
     let session = library::activity::SessionFile::new(Timestamp::now(), None);
     library::activity::write_session(&game_dir, &session);
