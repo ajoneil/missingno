@@ -14,7 +14,7 @@ use crate::app::{
     texture_renderer::TextureRenderer,
 };
 use crate::render::{tile_map_rgba, tile_map_rgba_cgb};
-use missingno_gb::ppu::{memory::Vram, types::tiles::TileMapId};
+use missingno_gb::ppu::{memory::VramView, types::tiles::TileMapId};
 
 mod viewport_overlay;
 
@@ -35,10 +35,10 @@ impl TileMapPane {
         &self.title
     }
 
-    pub fn content<Pv: PpuSource>(
+    pub fn content(
         &self,
-        ppu: &Pv,
-        vram: &impl Vram,
+        ppu: &dyn PpuSource,
+        vram: &dyn VramView,
         colors: &ConsoleColors,
     ) -> pane_grid::Content<'_, Message> {
         let control = ppu.control();

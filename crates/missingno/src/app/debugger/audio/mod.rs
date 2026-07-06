@@ -2,10 +2,12 @@ use iced::widget::{column, pane_grid, row, rule, slider, text};
 
 use crate::app::{
     Message,
-    debugger::panes::{checkbox_title_bar, pane},
+    debugger::{
+        inspect::AudioView,
+        panes::{checkbox_title_bar, pane},
+    },
     ui::sizes::{l, s},
 };
-use missingno_gb::audio::{ApuSpec, Audio};
 
 mod channels;
 
@@ -16,33 +18,29 @@ impl AudioPane {
         Self
     }
 
-    pub fn content<A: ApuSpec>(&self, audio: &Audio<A>) -> pane_grid::Content<'_, Message> {
+    pub fn content(&self, audio: &AudioView) -> pane_grid::Content<'_, Message> {
         pane(
-            checkbox_title_bar("Audio", audio.enabled()),
+            checkbox_title_bar("Audio", audio.enabled),
             column![
                 row![
                     column![
                         text("Left"),
-                        slider(0..=7, audio.volume_left().0, |_| -> Message {
-                            Message::None
-                        })
+                        slider(0..=7, audio.volume_left, |_| -> Message { Message::None })
                     ],
                     column![
                         text("Right"),
-                        slider(0..=7, audio.volume_right().0, |_| -> Message {
-                            Message::None
-                        })
+                        slider(0..=7, audio.volume_right, |_| -> Message { Message::None })
                     ]
                 ]
                 .spacing(l()),
                 row![
-                    channels::ch1(&audio.channels().ch1),
+                    channels::envelope_channel("Channel 1", &audio.ch1),
                     rule::vertical(1),
-                    channels::ch2(&audio.channels().ch2),
+                    channels::envelope_channel("Channel 2", &audio.ch2),
                     rule::vertical(1),
-                    channels::ch3(&audio.channels().ch3),
+                    channels::wave_channel("Channel 3", &audio.ch3),
                     rule::vertical(1),
-                    channels::ch4(&audio.channels().ch4),
+                    channels::envelope_channel("Channel 4", &audio.ch4),
                 ]
                 .spacing(s())
             ]

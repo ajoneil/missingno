@@ -12,11 +12,11 @@ use iced::{
 
 use crate::app::{
     self,
-    console::{ConsoleColors, ConsoleUi},
+    console::ConsoleColors,
     debugger::{
         self,
         audio::AudioPane,
-        inspect::{ConsoleSnapshot, CpuSource},
+        inspect::InspectSource,
         instructions::InstructionsPane,
         ppu::{
             sprites::{self, SpritesPane},
@@ -33,7 +33,6 @@ use crate::app::{
         sizes::{self as sizes, s, xs},
     },
 };
-use missingno_gb::debugger::Debugger;
 use missingno_gb::ppu::types::{
     palette::{Palette, PaletteChoice},
     tiles::TileMapId,
@@ -250,69 +249,33 @@ impl DebuggerPanes {
         }
     }
 
-    pub fn view<'a, M: ConsoleUi>(
+    /// The pane grid, rendered from the live console while paused or the
+    /// per-vblank snapshot while the core runs on the emu thread. The screen
+    /// pane always renders from its own live frame slot. While running,
+    /// breakpoint-gutter clicks in the instructions pane still emit their
+    /// messages, but the run doesn't stop until the core does.
+    pub fn view<'a>(
         &'a self,
-        debugger: &'a Debugger<M>,
-        colors: &ConsoleColors,
-    ) -> Element<'a, app::Message> {
-        if let Some(panes) = &self.panes {
-            pane_grid(panes, |_handle, instance, _is_maximized| match instance {
-                PaneInstance::Screen(screen) => screen.content(),
-                PaneInstance::Instructions(instructions) => instructions.content(
-                    debugger.game_boy(),
-                    debugger.game_boy().cpu().ir_address,
-                    debugger.breakpoints(),
-                ),
-                PaneInstance::Tiles(tiles) => tiles.content(debugger.game_boy().vram(), colors),
-                PaneInstance::TileMap(tile_map) => tile_map.content(
-                    debugger.game_boy().ppu(),
-                    debugger.game_boy().vram(),
-                    colors,
-                ),
-                PaneInstance::Sprites(sprites) => sprites.content(
-                    debugger.game_boy().ppu(),
-                    debugger.game_boy().vram(),
-                    colors,
-                ),
-                PaneInstance::Audio(audio) => audio.content(debugger.game_boy().audio()),
-            })
-            .on_resize(10.0, |resize| Message::ResizePane(resize).into())
-            .on_drag(|drag| Message::DragPane(drag).into())
-            .spacing(s())
-            .into()
-        } else {
-            iced::widget::Space::new()
-                .width(iced::Length::Fill)
-                .height(iced::Length::Fill)
-                .into()
-        }
-    }
-
-    /// The pane grid while the core runs on the emu thread, rendered from the
-    /// per-vblank [`ConsoleSnapshot`] instead of the live console. The screen
-    /// pane stays live from the frame slot; every other pane draws the
-    /// snapshot. Breakpoint-gutter clicks in the instructions pane still emit
-    /// their messages, but the run doesn't stop until the core does.
-    pub fn running_view<'a, M: ConsoleUi>(
-        &'a self,
-        snapshot: &'a ConsoleSnapshot<M>,
+        source: &'a dyn InspectSource,
         breakpoints: &'a BTreeSet<u16>,
         colors: &ConsoleColors,
     ) -> Element<'a, app::Message> {
         if let Some(panes) = &self.panes {
             pane_grid(panes, |_handle, instance, _is_maximized| match instance {
                 PaneInstance::Screen(screen) => screen.content(),
-                PaneInstance::Instructions(instructions) => {
-                    instructions.content(&snapshot.memory, snapshot.cpu.ir_address(), breakpoints)
-                }
-                PaneInstance::Tiles(tiles) => tiles.content(&snapshot.vram, colors),
+                PaneInstance::Instructions(instructions) => instructions.content(
+                    source.instruction_memory(),
+                    source.cpu().ir_address(),
+                    breakpoints,
+                ),
+                PaneInstance::Tiles(tiles) => tiles.content(source.vram(), colors),
                 PaneInstance::TileMap(tile_map) => {
-                    tile_map.content(&snapshot.ppu, &snapshot.vram, colors)
+                    tile_map.content(source.ppu(), source.vram(), colors)
                 }
                 PaneInstance::Sprites(sprites) => {
-                    sprites.content(&snapshot.ppu, &snapshot.vram, colors)
+                    sprites.content(source.ppu(), source.vram(), colors)
                 }
-                PaneInstance::Audio(audio) => audio.content(&snapshot.audio),
+                PaneInstance::Audio(audio) => audio.content(&source.audio()),
             })
             .on_resize(10.0, |resize| Message::ResizePane(resize).into())
             .on_drag(|drag| Message::DragPane(drag).into())

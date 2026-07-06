@@ -7,7 +7,10 @@
 //! core's `ReadInstructionMemory`), so one pane body serves both a live source
 //! (`Cpu`, `Ppu`, `Console`) and its snapshot counterpart.
 
-use missingno_gb::audio::Audio;
+use missingno_gb::audio::{
+    ApuSpec, Audio,
+    channels::{Enabled, registers::VolumeAndEnvelope},
+};
 use missingno_gb::cpu::{
     Cpu, HaltState,
     flags::Flags,
@@ -17,6 +20,7 @@ use missingno_gb::debugger::instructions::ReadInstructionMemory;
 use missingno_gb::interrupts;
 use missingno_gb::ppu::{
     Ppu, Register,
+    memory::VramView,
     model::PpuModel,
     rendering::Mode,
     types::{
@@ -273,6 +277,61 @@ impl PpuSource for PpuView {
     }
 }
 
+// --- Audio -------------------------------------------------------------------
+
+/// The APU state the audio pane draws, captured as plain data so the pane
+/// serves both a live [`Audio`] and its snapshot copy.
+#[derive(Clone)]
+pub struct AudioView {
+    pub enabled: bool,
+    pub volume_left: u8,
+    pub volume_right: u8,
+    pub ch1: EnvelopeChannelView,
+    pub ch2: EnvelopeChannelView,
+    pub ch3: WaveChannelView,
+    pub ch4: EnvelopeChannelView,
+}
+
+#[derive(Clone, Copy)]
+pub struct EnvelopeChannelView {
+    pub enabled: Enabled,
+    pub volume_and_envelope: VolumeAndEnvelope,
+}
+
+#[derive(Clone, Copy)]
+pub struct WaveChannelView {
+    pub enabled: Enabled,
+    /// Output volume as a fraction of full scale.
+    pub volume: f32,
+}
+
+impl AudioView {
+    pub fn capture<A: ApuSpec>(audio: &Audio<A>) -> Self {
+        let channels = audio.channels();
+        Self {
+            enabled: audio.enabled(),
+            volume_left: audio.volume_left().0,
+            volume_right: audio.volume_right().0,
+            ch1: EnvelopeChannelView {
+                enabled: channels.ch1.enabled,
+                volume_and_envelope: channels.ch1.volume_and_envelope,
+            },
+            ch2: EnvelopeChannelView {
+                enabled: channels.ch2.enabled,
+                volume_and_envelope: channels.ch2.volume_and_envelope,
+            },
+            ch3: WaveChannelView {
+                enabled: channels.ch3.enabled,
+                volume: channels.ch3.volume.volume(),
+            },
+            ch4: EnvelopeChannelView {
+                enabled: channels.ch4.enabled,
+                volume_and_envelope: channels.ch4.volume_and_envelope,
+            },
+        }
+    }
+}
+
 // --- Memory window -----------------------------------------------------------
 
 /// A copied span of address space around PC, big enough for the instructions
@@ -341,32 +400,78 @@ impl ColorSnapshot {
     }
 }
 
+// --- Inspection source -------------------------------------------------------
+
+/// Everything the debugger panes and sidebar render from, behind one
+/// model-erased surface: the live console while paused, or the per-vblank
+/// [`ConsoleSnapshot`] while the core runs on the emulation thread.
+pub trait InspectSource {
+    fn cpu(&self) -> &dyn CpuSource;
+    fn ppu(&self) -> &dyn PpuSource;
+    fn vram(&self) -> &dyn VramView;
+    fn audio(&self) -> AudioView;
+    fn interrupts(&self) -> interrupts::Registers;
+    fn instruction_memory(&self) -> &dyn ReadInstructionMemory;
+    fn colors(&self, user_palette: &Palette) -> ConsoleColors;
+}
+
+/// An owned [`InspectSource`] that can cross from the emulation thread.
+pub trait InspectSnapshot: InspectSource + Send {
+    fn frame(&self) -> u64;
+}
+
+/// The model-erased snapshot handed from the emulation thread to the UI.
+pub type DebugView = Box<dyn InspectSnapshot>;
+
+impl<M: ConsoleUi> InspectSource for Console<M> {
+    fn cpu(&self) -> &dyn CpuSource {
+        Console::cpu(self)
+    }
+    fn ppu(&self) -> &dyn PpuSource {
+        Console::ppu(self)
+    }
+    fn vram(&self) -> &dyn VramView {
+        Console::vram(self)
+    }
+    fn audio(&self) -> AudioView {
+        AudioView::capture(Console::audio(self))
+    }
+    fn interrupts(&self) -> interrupts::Registers {
+        Console::interrupts(self).clone()
+    }
+    fn instruction_memory(&self) -> &dyn ReadInstructionMemory {
+        self
+    }
+    fn colors(&self, user_palette: &Palette) -> ConsoleColors {
+        M::colors(self, user_palette)
+    }
+}
+
 // --- Console snapshot --------------------------------------------------------
 
 /// A per-vblank copy of everything the debugger panes render, taken on the
 /// emulation thread while the core runs there.
-pub struct ConsoleSnapshot<M: ConsoleUi> {
+pub struct ConsoleSnapshot {
     pub cpu: CpuView,
     pub ppu: PpuView,
-    pub vram: <M::Ppu as PpuModel>::Vram,
-    pub audio: Audio<M::Apu>,
+    pub vram: Box<dyn VramView + Send>,
+    pub audio: AudioView,
     pub interrupts: interrupts::Registers,
     pub colors: ColorSnapshot,
     pub memory: MemoryWindow,
     pub frame: u64,
 }
 
-impl<M: ConsoleUi> ConsoleSnapshot<M>
-where
-    <M::Ppu as PpuModel>::Vram: Clone,
-    M::Apu: Clone,
-{
-    pub fn capture(console: &Console<M>, frame: u64) -> Self {
+impl ConsoleSnapshot {
+    pub fn capture<M: ConsoleUi>(console: &Console<M>, frame: u64) -> Self
+    where
+        <M::Ppu as PpuModel>::Vram: Clone + Send + 'static,
+    {
         Self {
             cpu: CpuView::capture(console.cpu()),
             ppu: PpuView::capture(console.ppu()),
-            vram: console.vram().clone(),
-            audio: console.audio().clone(),
+            vram: Box::new(console.vram().clone()),
+            audio: AudioView::capture(console.audio()),
             interrupts: console.interrupts().clone(),
             colors: M::color_snapshot(console),
             memory: MemoryWindow::capture(console, console.cpu().ir_address),
@@ -375,8 +480,32 @@ where
     }
 }
 
-/// A model-erased snapshot handed from the emulation thread to the UI.
-pub enum DebugView {
-    Dmg(Box<ConsoleSnapshot<missingno_gb::Dmg>>),
-    Cgb(Box<ConsoleSnapshot<missingno_gbc::Cgb>>),
+impl InspectSource for ConsoleSnapshot {
+    fn cpu(&self) -> &dyn CpuSource {
+        &self.cpu
+    }
+    fn ppu(&self) -> &dyn PpuSource {
+        &self.ppu
+    }
+    fn vram(&self) -> &dyn VramView {
+        &*self.vram
+    }
+    fn audio(&self) -> AudioView {
+        self.audio.clone()
+    }
+    fn interrupts(&self) -> interrupts::Registers {
+        self.interrupts.clone()
+    }
+    fn instruction_memory(&self) -> &dyn ReadInstructionMemory {
+        &self.memory
+    }
+    fn colors(&self, user_palette: &Palette) -> ConsoleColors {
+        self.colors.to_colors(user_palette)
+    }
+}
+
+impl InspectSnapshot for ConsoleSnapshot {
+    fn frame(&self) -> u64 {
+        self.frame
+    }
 }

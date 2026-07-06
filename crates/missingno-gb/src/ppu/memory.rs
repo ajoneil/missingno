@@ -130,6 +130,18 @@ pub trait Vram: Default {
     fn init_post_boot(&mut self, logo: &[u8; 0x30]);
 }
 
+/// Object-safe, read-only bank access for inspection UIs, where [`Vram`]
+/// itself (with its `Default` bound) can't be a trait object.
+pub trait VramView {
+    fn bank(&self, bank: u8) -> &VramBank;
+}
+
+impl<V: Vram> VramView for V {
+    fn bank(&self, bank: u8) -> &VramBank {
+        Vram::bank(self, bank)
+    }
+}
+
 impl Vram for VramBank {
     fn cpu_read(&self, address: VramAddress) -> u8 {
         self.read(address)

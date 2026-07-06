@@ -7,10 +7,10 @@ use iced::{
 
 use crate::app::{
     self,
-    console::{ConsoleColors, ConsoleUi},
+    console::ConsoleColors,
     debugger::{
         self,
-        inspect::{ConsoleSnapshot, CpuSource, PpuSource},
+        inspect::{CpuSource, InspectSource, PpuSource},
     },
     emu_thread::RunningStatus,
     ui::{
@@ -22,7 +22,6 @@ use missingno_gb::cpu::{
     flags::Flags,
     registers::{Register8, Register16},
 };
-use missingno_gb::debugger::Debugger;
 use missingno_gb::interrupts::Registers;
 
 use super::interrupts::interrupts;
@@ -85,39 +84,19 @@ impl Sidebar {
         }
     }
 
-    pub fn view<'a, M: ConsoleUi>(
+    /// The full CPU/PPU sections, fed from the live console while paused or
+    /// the per-vblank snapshot while the core runs on the emu thread.
+    pub fn view<'a>(
         &'a self,
-        debugger: &'a Debugger<M>,
+        source: &'a dyn InspectSource,
         colors: &ConsoleColors,
     ) -> Element<'a, app::Message> {
-        let game_boy = debugger.game_boy();
-        let cpu = game_boy.cpu();
+        let cpu = source.cpu();
+        let interrupts = source.interrupts();
 
         column![
-            self.cpu_section(cpu, game_boy.interrupts(), cpu.interrupts_enabled()),
-            self.ppu_section(game_boy.ppu(), colors),
-        ]
-        .width(Length::Fixed(SIDEBAR_WIDTH))
-        .height(Fill)
-        .spacing(s())
-        .into()
-    }
-
-    /// The sidebar while the core runs on the emu thread: the full CPU/PPU
-    /// sections, fed from the per-vblank [`ConsoleSnapshot`] instead of the
-    /// live console.
-    pub fn running_view<'a, M: ConsoleUi>(
-        &'a self,
-        snapshot: &'a ConsoleSnapshot<M>,
-        colors: &ConsoleColors,
-    ) -> Element<'a, app::Message> {
-        column![
-            self.cpu_section(
-                &snapshot.cpu,
-                &snapshot.interrupts,
-                snapshot.cpu.interrupts_enabled(),
-            ),
-            self.ppu_section(&snapshot.ppu, colors),
+            self.cpu_section(cpu, &interrupts, cpu.interrupts_enabled()),
+            self.ppu_section(source.ppu(), colors),
         ]
         .width(Length::Fixed(SIDEBAR_WIDTH))
         .height(Fill)
@@ -162,10 +141,10 @@ impl Sidebar {
         .into()
     }
 
-    fn cpu_section<'a, C: CpuSource>(
+    fn cpu_section<'a>(
         &self,
-        cpu: &'a C,
-        ints: &'a Registers,
+        cpu: &'a dyn CpuSource,
+        ints: &Registers,
         ime: bool,
     ) -> Element<'a, app::Message> {
         let summary = format!(
@@ -201,9 +180,9 @@ impl Sidebar {
         )
     }
 
-    fn ppu_section<'a, Pv: PpuSource>(
+    fn ppu_section<'a>(
         &self,
-        ppu: &'a Pv,
+        ppu: &'a dyn PpuSource,
         pal: &ConsoleColors,
     ) -> Element<'a, app::Message> {
         let mode = ppu.mode();
@@ -340,7 +319,7 @@ pub fn tooltip_style(theme: &iced::Theme) -> container::Style {
 
 // --- Pointers + halt ---
 
-fn pointers<C: CpuSource>(cpu: &C) -> Element<'_, app::Message> {
+fn pointers(cpu: &dyn CpuSource) -> Element<'_, app::Message> {
     let halted = cpu.halted();
     let pc_color = if halted {
         palette::OVERLAY0
@@ -404,7 +383,7 @@ fn pointer(label: &str, value: String) -> Element<'_, app::Message> {
 /// Fixed width for one 8-bit register display ("b 04"), so columns align.
 const REG8_WIDTH: f32 = 48.0;
 
-fn register_a_row<C: CpuSource>(cpu: &C) -> Element<'_, app::Message> {
+fn register_a_row(cpu: &dyn CpuSource) -> Element<'_, app::Message> {
     row![
         container(register8(cpu, Register8::A)).width(Length::Fixed(REG8_WIDTH)),
         container("").width(Length::Fixed(REG8_WIDTH)),
@@ -440,8 +419,8 @@ fn flag_char(label: &str, set: bool) -> Element<'_, app::Message> {
         .into()
 }
 
-fn register_pair_row<C: CpuSource>(
-    cpu: &C,
+fn register_pair_row(
+    cpu: &dyn CpuSource,
     reg1: Register8,
     reg2: Register8,
     pair: Register16,
@@ -456,7 +435,7 @@ fn register_pair_row<C: CpuSource>(
     .into()
 }
 
-fn register8<C: CpuSource>(cpu: &C, register: Register8) -> Element<'_, app::Message> {
+fn register8(cpu: &dyn CpuSource, register: Register8) -> Element<'_, app::Message> {
     row![
         text(register.to_string())
             .font(fonts::monospace())
@@ -471,7 +450,7 @@ fn register8<C: CpuSource>(cpu: &C, register: Register8) -> Element<'_, app::Mes
     .into()
 }
 
-fn compound_register<C: CpuSource>(cpu: &C, register: Register16) -> Element<'_, app::Message> {
+fn compound_register(cpu: &dyn CpuSource, register: Register16) -> Element<'_, app::Message> {
     row![
         text(register.to_string())
             .font(fonts::monospace())

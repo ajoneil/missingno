@@ -22,7 +22,7 @@ use missingno_gb::{
     cartridge::Cartridge, joypad::Button, ppu::rendering::Mode, ppu::types::palette::PaletteChoice,
 };
 
-use inspect::{ConsoleSnapshot, DebugView};
+use inspect::{ConsoleSnapshot, DebugView, InspectSource};
 use panes::DebuggerPanes;
 use sidebar::Sidebar;
 
@@ -222,10 +222,9 @@ impl AnyDebugger {
 
     /// Update the per-vblank inspection snapshot the running panes render from.
     pub fn apply_snapshot(&mut self, view: DebugView) {
-        match (self, view) {
-            (Self::Dmg(debugger), DebugView::Dmg(snapshot)) => debugger.apply_snapshot(snapshot),
-            (Self::Cgb(debugger), DebugView::Cgb(snapshot)) => debugger.apply_snapshot(snapshot),
-            _ => {}
+        match self {
+            Self::Dmg(debugger) => debugger.apply_snapshot(view),
+            Self::Cgb(debugger) => debugger.apply_snapshot(view),
         }
     }
 
@@ -314,14 +313,12 @@ impl DebuggerPayload {
     /// runs here. Called once per completed frame.
     pub fn debug_view(&self) -> DebugView {
         match &self.core {
-            DebuggerCore::Dmg(core) => DebugView::Dmg(Box::new(ConsoleSnapshot::capture(
-                core.game_boy(),
-                self.frame,
-            ))),
-            DebuggerCore::Cgb(core) => DebugView::Cgb(Box::new(ConsoleSnapshot::capture(
-                core.game_boy(),
-                self.frame,
-            ))),
+            DebuggerCore::Dmg(core) => {
+                Box::new(ConsoleSnapshot::capture(core.game_boy(), self.frame))
+            }
+            DebuggerCore::Cgb(core) => {
+                Box::new(ConsoleSnapshot::capture(core.game_boy(), self.frame))
+            }
         }
     }
 
@@ -412,10 +409,10 @@ pub struct Debugger<M: ConsoleUi> {
     /// Lightweight status published every frame while the core is away; feeds
     /// the sidebar summary until the first full snapshot lands.
     last_status: Option<RunningStatus>,
-    /// The per-vblank inspection snapshot the running panes render from. Boxed
-    /// — a `ConsoleSnapshot` carries a full VRAM copy and shouldn't inflate the
+    /// The per-vblank inspection snapshot the running panes render from.
+    /// Boxed — a snapshot carries a full VRAM copy and shouldn't inflate the
     /// paused-path `Debugger` (and the `Game` enum) by that much.
-    last_snapshot: Option<Box<ConsoleSnapshot<M>>>,
+    last_snapshot: Option<DebugView>,
     sidebar: Sidebar,
     panes: DebuggerPanes,
     running: bool,
@@ -494,9 +491,9 @@ impl<M: ConsoleUi> Debugger<M> {
         self.last_status = Some(status);
     }
 
-    fn apply_snapshot(&mut self, snapshot: Box<ConsoleSnapshot<M>>) {
-        self.frame = snapshot.frame;
-        self.last_snapshot = Some(snapshot);
+    fn apply_snapshot(&mut self, view: DebugView) {
+        self.frame = view.frame();
+        self.last_snapshot = Some(view);
     }
 
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
@@ -719,12 +716,13 @@ impl<M: ConsoleUi> Debugger<M> {
         let Some(core) = &self.debugger else {
             return self.running_view();
         };
-        let colors = M::colors(core.game_boy(), self.panes.palette());
+        let source: &dyn InspectSource = core.game_boy();
+        let colors = source.colors(self.panes.palette());
 
         let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
             pane_grid(split_state, |_handle, zone, _maximized| {
                 let content: Element<'_, app::Message> = match zone {
-                    MainSplit::Top => self.panes.view(core, &colors),
+                    MainSplit::Top => self.panes.view(source, core.breakpoints(), &colors),
                     MainSplit::Bottom => self.bottom_pane_grid(
                         self.bottom_panes
                             .as_ref()
@@ -737,10 +735,10 @@ impl<M: ConsoleUi> Debugger<M> {
             .spacing(s())
             .into()
         } else {
-            self.panes.view(core, &colors)
+            self.panes.view(source, core.breakpoints(), &colors)
         };
 
-        row![self.sidebar.view(core, &colors), center, self.icon_rail(),]
+        row![self.sidebar.view(source, &colors), center, self.icon_rail(),]
             .spacing(s())
             .padding(s())
             .into()
@@ -753,8 +751,8 @@ impl<M: ConsoleUi> Debugger<M> {
     fn running_view(&self) -> Element<'_, app::Message> {
         let colors = self
             .last_snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.colors.to_colors(self.panes.palette()));
+            .as_deref()
+            .map(|snapshot| snapshot.colors(self.panes.palette()));
 
         let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
             pane_grid(split_state, |_handle, zone, _maximized| {
@@ -775,8 +773,8 @@ impl<M: ConsoleUi> Debugger<M> {
             self.running_center(colors.as_ref())
         };
 
-        let sidebar = match (&self.last_snapshot, &colors) {
-            (Some(snapshot), Some(colors)) => self.sidebar.running_view(snapshot, colors),
+        let sidebar = match (self.last_snapshot.as_deref(), &colors) {
+            (Some(snapshot), Some(colors)) => self.sidebar.view(snapshot, colors),
             _ => self.sidebar.running_summary(self.last_status.as_ref()),
         };
 
@@ -789,10 +787,8 @@ impl<M: ConsoleUi> Debugger<M> {
     /// The main pane area while running: snapshot-backed panes when a snapshot
     /// is present, titled placeholders otherwise.
     fn running_center<'a>(&'a self, colors: Option<&ConsoleColors>) -> Element<'a, app::Message> {
-        match (&self.last_snapshot, colors) {
-            (Some(snapshot), Some(colors)) => {
-                self.panes.running_view(snapshot, &self.breakpoints, colors)
-            }
+        match (self.last_snapshot.as_deref(), colors) {
+            (Some(snapshot), Some(colors)) => self.panes.view(snapshot, &self.breakpoints, colors),
             _ => self.panes.running_placeholders(),
         }
     }

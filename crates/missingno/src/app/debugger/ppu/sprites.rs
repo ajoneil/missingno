@@ -23,7 +23,7 @@ use crate::app::{
     },
 };
 use missingno_gb::ppu::{
-    memory::{Vram, VramBank},
+    memory::{VramBank, VramView},
     types::palette::Palette,
     types::sprites::{Position, Priority, Sprite, SpriteId, SpriteSize},
     types::tiles::{TileAddressMode, TileIndex},
@@ -57,10 +57,10 @@ impl SpritesPane {
         }
     }
 
-    pub fn content<'a, Pv: PpuSource, V: Vram>(
+    pub fn content<'a>(
         &'a self,
-        ppu: &'a Pv,
-        vram: &'a V,
+        ppu: &'a dyn PpuSource,
+        vram: &'a dyn VramView,
         colors: &ConsoleColors,
     ) -> pane_grid::Content<'a, app::Message> {
         let size = ppu.control().sprite_size();
@@ -94,10 +94,10 @@ impl SpritesPane {
         )
     }
 
-    fn sprites<'a, Pv: PpuSource, V: Vram>(
+    fn sprites<'a>(
         &'a self,
-        ppu: &'a Pv,
-        vram: &'a V,
+        ppu: &'a dyn PpuSource,
+        vram: &'a dyn VramView,
         colors: &ConsoleColors,
     ) -> Element<'a, app::Message> {
         let mut sprites = (0u8..40)
@@ -125,11 +125,11 @@ impl SpritesPane {
         }
     }
 
-    fn sprite<'a, Pv: PpuSource, V: Vram>(
+    fn sprite<'a>(
         &'a self,
         index: u8,
-        ppu: &'a Pv,
-        vram: &'a V,
+        ppu: &'a dyn PpuSource,
+        vram: &'a dyn VramView,
         sprite: &Sprite,
         colors: &ConsoleColors,
     ) -> Element<'a, app::Message> {
@@ -153,11 +153,11 @@ impl SpritesPane {
         row![left, right].spacing(xs()).into()
     }
 
-    fn tiles<Pv: PpuSource, V: Vram>(
+    fn tiles(
         &self,
         sprite: &Sprite,
-        vram: &V,
-        ppu: &Pv,
+        vram: &dyn VramView,
+        ppu: &dyn PpuSource,
         colors: &ConsoleColors,
     ) -> Element<'_, app::Message> {
         // CGB sprites carry their CRAM palette and tile bank in OAM attributes.

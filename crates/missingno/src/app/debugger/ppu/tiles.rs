@@ -14,7 +14,7 @@ use crate::app::{
     ui::sizes::m,
 };
 use missingno_gb::ppu::{
-    memory::{Vram, VramBank},
+    memory::{VramBank, VramView},
     types::palette::Palette,
     types::tiles::TileBlockId,
 };
@@ -47,7 +47,7 @@ impl TilesPane {
 
     pub fn content(
         &self,
-        vram: &impl Vram,
+        vram: &dyn VramView,
         colors: &ConsoleColors,
     ) -> pane_grid::Content<'_, app::Message> {
         let palette = colors.tiles_palette();

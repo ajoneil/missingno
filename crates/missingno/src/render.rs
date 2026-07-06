@@ -2,7 +2,7 @@
 //! headless HTTP endpoints.
 
 use missingno_gb::ppu::{
-    memory::{Vram, VramBank},
+    memory::{VramBank, VramView},
     types::control::Control,
     types::palette::Palette,
     types::tiles::TileMapId,
@@ -40,7 +40,7 @@ pub fn tile_map_rgba(
 /// CGB pre-render: each cell's attribute byte in bank 1 selects its palette,
 /// tile bank, and flips.
 pub fn tile_map_rgba_cgb(
-    vram: &impl Vram,
+    vram: &dyn VramView,
     tile_map_id: TileMapId,
     control: Control,
     bg_palettes: &[Palette; 8],

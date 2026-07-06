@@ -33,7 +33,7 @@ const LABEL: f32 = 11.0;
 
 /// PPU section body for the left sidebar — returns the PPU state display as an Element.
 /// The section header is handled by the sidebar's collapsible section wrapper.
-pub fn ppu_sidebar<'a, Pv: PpuSource>(ppu: &'a Pv, colors: &ConsoleColors) -> Element<'a, Message> {
+pub fn ppu_sidebar<'a>(ppu: &'a dyn PpuSource, colors: &ConsoleColors) -> Element<'a, Message> {
     let control = ppu.control();
 
     column![
@@ -57,10 +57,10 @@ pub fn ppu_sidebar<'a, Pv: PpuSource>(ppu: &'a Pv, colors: &ConsoleColors) -> El
 
 // --- Subsystem sections ---
 
-fn background_section<Pv: PpuSource>(
+fn background_section(
     control: Control,
     bgp: u8,
-    ppu: &Pv,
+    ppu: &dyn PpuSource,
     colors: &ConsoleColors,
 ) -> Element<'static, Message> {
     let scx = ppu.scx();
@@ -90,7 +90,7 @@ fn background_section<Pv: PpuSource>(
     section.into()
 }
 
-fn window_section<Pv: PpuSource>(control: Control, ppu: &Pv) -> Element<'static, Message> {
+fn window_section(control: Control, ppu: &dyn PpuSource) -> Element<'static, Message> {
     let wx = ppu.wx();
     let wy = ppu.wy();
 

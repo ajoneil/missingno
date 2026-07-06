@@ -41,9 +41,9 @@ impl InstructionsPane {
         Self
     }
 
-    pub fn content<R: ReadInstructionMemory>(
+    pub fn content(
         &self,
-        memory: &R,
+        memory: &dyn ReadInstructionMemory,
         pc: u16,
         breakpoints: &BTreeSet<u16>,
     ) -> pane_grid::Content<'_, app::Message> {

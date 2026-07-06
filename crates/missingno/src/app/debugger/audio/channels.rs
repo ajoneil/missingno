@@ -4,43 +4,27 @@ use iced::{
 };
 
 use crate::app::Message;
+use crate::app::debugger::inspect::{EnvelopeChannelView, WaveChannelView};
 use missingno_gb::audio::channels::{
     Enabled,
-    noise::NoiseChannel,
-    pulse::PulseChannel,
-    pulse_sweep::PulseSweepChannel,
     registers::{EnvelopeDirection, VolumeAndEnvelope},
-    wave::WaveChannel,
 };
 
-pub fn ch1(channel: &PulseSweepChannel) -> Element<'static, Message> {
+pub fn envelope_channel(
+    label: &'static str,
+    channel: &EnvelopeChannelView,
+) -> Element<'static, Message> {
     column![
-        enabled("Channel 1", channel.enabled),
+        enabled(label, channel.enabled),
         volume_and_envelope(channel.volume_and_envelope)
     ]
     .into()
 }
 
-pub fn ch2(channel: &PulseChannel) -> Element<'static, Message> {
+pub fn wave_channel(label: &'static str, channel: &WaveChannelView) -> Element<'static, Message> {
     column![
-        enabled("Channel 2", channel.enabled),
-        volume_and_envelope(channel.volume_and_envelope)
-    ]
-    .into()
-}
-
-pub fn ch3(channel: &WaveChannel) -> Element<'static, Message> {
-    column![
-        enabled("Channel 3", channel.enabled),
-        text!("Vol {}%", (channel.volume.volume() * 100.0) as u8)
-    ]
-    .into()
-}
-
-pub fn ch4(channel: &NoiseChannel) -> Element<'static, Message> {
-    column![
-        enabled("Channel 4", channel.enabled),
-        volume_and_envelope(channel.volume_and_envelope)
+        enabled(label, channel.enabled),
+        text!("Vol {}%", (channel.volume * 100.0) as u8)
     ]
     .into()
 }
