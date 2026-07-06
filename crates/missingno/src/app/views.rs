@@ -47,7 +47,7 @@ impl App {
                 &self.settings,
                 *section,
                 *listening_for,
-                &self.detected_cartridge_devices,
+                &self.cartridge_rw.detected_devices,
             ),
             (
                 Screen::ViewingGame {

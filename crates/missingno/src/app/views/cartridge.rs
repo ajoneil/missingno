@@ -19,7 +19,8 @@ use super::friendly_ago;
 impl App {
     /// Get the cartridge header from the first connected device with a cartridge inserted.
     pub(super) fn inserted_cartridge(&self) -> Option<&cartridge_rw::CartridgeHeader> {
-        self.detected_cartridge_devices
+        self.cartridge_rw
+            .detected_devices
             .iter()
             .find_map(|d| d.cartridge.as_ref())
     }

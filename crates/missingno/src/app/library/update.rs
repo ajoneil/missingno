@@ -7,94 +7,94 @@ use crate::cartridge_rw;
 
 use super::{homebrew_browser, screenshot_gallery};
 
-pub(in crate::app) fn handle_library_message(
-    app: &mut app::App,
-    message: super::view::Message,
-) -> Task<app::Message> {
-    match message {
-        super::view::Message::SelectGame(sha1) => {
-            return app.go_to_detail(&sha1);
-        }
-        super::view::Message::HoverGame(sha1) => {
-            if let Screen::Library { hovered_game, .. } = &mut app.screen {
-                *hovered_game = Some(sha1);
-            }
-        }
-        super::view::Message::UnhoverGame => {
-            if let Screen::Library { hovered_game, .. } = &mut app.screen {
-                *hovered_game = None;
-            }
-        }
-        super::view::Message::DumpCartridge => {
-            // Find the first device with a cartridge
-            if let Some(device) = app
-                .detected_cartridge_devices
-                .iter()
-                .find(|d| d.cartridge.is_some())
-            {
-                let port_name = device.port_name.clone();
-                let header = device.cartridge.clone().unwrap();
-                app.cartridge_dump_progress = Some(cartridge_rw::DumpProgress {
-                    bytes_done: 0,
-                    bytes_total: header.rom_size as usize,
-                });
-
-                let (tx, rx) = smol::channel::bounded(32);
-                // Progress subscription
-                let progress_task = Task::run(
-                    smol::stream::unfold(rx, |rx| async { rx.recv().await.ok().map(|p| (p, rx)) }),
-                    app::Message::CartridgeRwDumpProgress,
-                );
-
-                let dump_task = Task::perform(
-                    smol::unblock(move || {
-                        let rom = cartridge_rw::dump_rom(&port_name, &header, &mut |p| {
-                            let _ = tx.send_blocking(p);
-                        })?;
-                        // Also read SRAM if the cartridge has battery-backed save
-                        let sram = if header.has_battery && header.ram_size > 0 {
-                            match cartridge_rw::read_sram(&port_name, &header) {
-                                Ok(data) => Some(data),
-                                Err(_) => None,
-                            }
-                        } else {
-                            None
-                        };
-                        Ok((rom, sram))
-                    }),
-                    app::Message::CartridgeRwDumpComplete,
-                );
-
-                return Task::batch([dump_task, progress_task]);
-            }
-        }
-        super::view::Message::QuickPlay(sha1) => {
-            let same_game = app
-                .current_game
-                .as_ref()
-                .map(|c| c.entry.sha1 == sha1)
-                .unwrap_or(false);
-
-            if same_game {
-                // Already loaded, just resume
-                app.run();
-                app.screen = Screen::Emulator;
-            } else if matches!(app.game, Game::Loaded(_)) {
-                // Different game loaded, confirm first
-                app.pending_action = Some(app::PendingAction::SwitchGame(sha1));
-            } else {
-                // Nothing loaded, go ahead
-                load::select_game(app, &sha1);
-                return load::play_current_game(app);
-            }
-        }
-    }
-
-    Task::none()
-}
-
 pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<app::Message> {
     match message {
+        // Library grid messages
+        app::Message::Library(library_msg) => {
+            use super::view::Message::*;
+            match library_msg {
+                SelectGame(sha1) => {
+                    return app.go_to_detail(&sha1);
+                }
+                HoverGame(sha1) => {
+                    if let Screen::Library { hovered_game, .. } = &mut app.screen {
+                        *hovered_game = Some(sha1);
+                    }
+                }
+                UnhoverGame => {
+                    if let Screen::Library { hovered_game, .. } = &mut app.screen {
+                        *hovered_game = None;
+                    }
+                }
+                DumpCartridge => {
+                    // Find the first device with a cartridge
+                    if let Some(device) = app
+                        .cartridge_rw
+                        .detected_devices
+                        .iter()
+                        .find(|d| d.cartridge.is_some())
+                    {
+                        let port_name = device.port_name.clone();
+                        let header = device.cartridge.clone().unwrap();
+                        app.cartridge_rw.dump_progress = Some(cartridge_rw::DumpProgress {
+                            bytes_done: 0,
+                            bytes_total: header.rom_size as usize,
+                        });
+
+                        let (tx, rx) = smol::channel::bounded(32);
+                        // Progress subscription
+                        let progress_task = Task::run(
+                            smol::stream::unfold(rx, |rx| async {
+                                rx.recv().await.ok().map(|p| (p, rx))
+                            }),
+                            app::Message::CartridgeRwDumpProgress,
+                        );
+
+                        let dump_task = Task::perform(
+                            smol::unblock(move || {
+                                let rom = cartridge_rw::dump_rom(&port_name, &header, &mut |p| {
+                                    let _ = tx.send_blocking(p);
+                                })?;
+                                // Also read SRAM if the cartridge has battery-backed save
+                                let sram = if header.has_battery && header.ram_size > 0 {
+                                    match cartridge_rw::read_sram(&port_name, &header) {
+                                        Ok(data) => Some(data),
+                                        Err(_) => None,
+                                    }
+                                } else {
+                                    None
+                                };
+                                Ok((rom, sram))
+                            }),
+                            app::Message::CartridgeRwDumpComplete,
+                        );
+
+                        return Task::batch([dump_task, progress_task]);
+                    }
+                }
+                QuickPlay(sha1) => {
+                    let same_game = app
+                        .current_game
+                        .as_ref()
+                        .map(|c| c.entry.sha1 == sha1)
+                        .unwrap_or(false);
+
+                    if same_game {
+                        // Already loaded, just resume
+                        app.run();
+                        app.screen = Screen::Emulator;
+                    } else if matches!(app.game, Game::Loaded(_)) {
+                        // Different game loaded, confirm first
+                        app.pending_action = Some(app::PendingAction::SwitchGame(sha1));
+                    } else {
+                        // Nothing loaded, go ahead
+                        load::select_game(app, &sha1);
+                        return load::play_current_game(app);
+                    }
+                }
+            }
+        }
+
         // Detail screen messages
         app::Message::Detail(detail_msg) => {
             use app::DetailMessage::*;
@@ -282,7 +282,7 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                     app.screen = Screen::Library { hovered_game: None };
                 }
                 ImportSave => {
-                    if let Some(device) = app.detected_cartridge_devices.iter().find(|d| {
+                    if let Some(device) = app.cartridge_rw.detected_devices.iter().find(|d| {
                         d.cartridge
                             .as_ref()
                             .is_some_and(|c| c.has_battery && c.ram_size > 0)
@@ -311,7 +311,7 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                         if let Some((game_dir, _)) = super::find_by_sha1(sha1) {
                             if let Some(sram) = super::activity::load_current_sram(&game_dir) {
                                 if let Some(device) =
-                                    app.detected_cartridge_devices.iter().find(|d| {
+                                    app.cartridge_rw.detected_devices.iter().find(|d| {
                                         d.cartridge
                                             .as_ref()
                                             .is_some_and(|c| c.has_battery && c.ram_size > 0)
@@ -356,7 +356,7 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                     );
 
                     let entry = app.store.entry(&sha1).cloned();
-                    let device = app.detected_cartridge_devices.iter().find(|d| {
+                    let device = app.cartridge_rw.detected_devices.iter().find(|d| {
                         d.cartridge
                             .as_ref()
                             .and_then(|c| c.flash.as_ref())
@@ -485,8 +485,8 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                                 *flash_state = FlashState::Complete;
                             }
                             // Force full re-detection to read the new cartridge header
-                            app.detected_cartridge_devices.clear();
-                            app.cartridge_rw_known_ports.clear();
+                            app.cartridge_rw.detected_devices.clear();
+                            app.cartridge_rw.known_ports.clear();
                         }
                         Err(e) => {
                             if let Screen::ViewingGame {
@@ -824,10 +824,10 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
             let _ = open::that(url);
         }
         app::Message::CartridgeRwDumpProgress(progress) => {
-            app.cartridge_dump_progress = Some(progress);
+            app.cartridge_rw.dump_progress = Some(progress);
         }
         app::Message::CartridgeRwDumpComplete(result) => {
-            app.cartridge_dump_progress = None;
+            app.cartridge_rw.dump_progress = None;
             match result {
                 Ok((rom, sram)) => {
                     let header_title = Cartridge::peek_title(&rom);

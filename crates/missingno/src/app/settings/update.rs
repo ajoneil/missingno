@@ -92,8 +92,8 @@ pub(in crate::app) fn handle(
             app.settings.cartridge_rw_enabled = enabled;
             app.settings.save();
             if !enabled {
-                app.detected_cartridge_devices.clear();
-                app.cartridge_rw_known_ports.clear();
+                app.cartridge_rw.detected_devices.clear();
+                app.cartridge_rw.known_ports.clear();
             }
         }
         super::view::Message::StartListening(target) => {

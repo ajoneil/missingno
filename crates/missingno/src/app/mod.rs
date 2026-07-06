@@ -94,14 +94,21 @@ struct App {
     homebrew_client: std::sync::Arc<library::homebrew_hub::HomebrewHubClient>,
     /// Bundled game catalogue (commercial + homebrew).
     catalogue: std::sync::Arc<library::catalogue::Catalogue>,
-    /// Cartridge reader/writer devices detected on the system.
-    detected_cartridge_devices: Vec<cartridge_rw::DetectedDevice>,
-    /// Last-seen port names for cartridge RW polling (to detect changes cheaply).
-    cartridge_rw_known_ports: Vec<String>,
-    /// Progress of an active ROM dump, if any.
-    cartridge_dump_progress: Option<cartridge_rw::DumpProgress>,
+    /// Cartridge reader/writer device detection and dump progress.
+    cartridge_rw: CartridgeRwState,
     /// Whether the hamburger menu overlay is open.
     menu_open: bool,
+}
+
+/// Cartridge reader/writer polling state (device detection and active-dump progress).
+#[derive(Default)]
+struct CartridgeRwState {
+    /// Devices detected on the system.
+    detected_devices: Vec<cartridge_rw::DetectedDevice>,
+    /// Last-seen port names (to detect changes cheaply).
+    known_ports: Vec<String>,
+    /// Progress of an active ROM dump, if any.
+    dump_progress: Option<cartridge_rw::DumpProgress>,
 }
 
 impl App {
@@ -118,6 +125,16 @@ impl App {
         match &self.screen {
             Screen::Settings { listening_for, .. } => *listening_for,
             _ => None,
+        }
+    }
+
+    /// Stamp the current session's end time and flush it to disk.
+    fn end_current_session(&mut self) {
+        if let Some(current) = &mut self.current_game {
+            if let Some(session) = &mut current.session {
+                session.end = Some(jiff::Timestamp::now());
+                library::activity::write_session(&current.game_dir, session);
+            }
         }
     }
 }
@@ -352,9 +369,7 @@ impl App {
             serial_link,
             homebrew_client: std::sync::Arc::new(library::homebrew_hub::HomebrewHubClient::new()),
             catalogue: std::sync::Arc::new(library::catalogue::Catalogue::load()),
-            detected_cartridge_devices: Vec::new(),
-            cartridge_rw_known_ports: Vec::new(),
-            cartridge_dump_progress: None,
+            cartridge_rw: CartridgeRwState::default(),
             menu_open: false,
         };
 
@@ -428,14 +443,10 @@ impl App {
             Message::Settings(message) => return settings::update::handle(self, message),
 
             // Library messages
-            Message::Library(message) => {
-                return library::update::handle_library_message(self, message);
-            }
-            Message::Detail(msg) => return library::update::handle(self, Message::Detail(msg)),
-            Message::Cartridge(msg) => {
-                return library::update::handle(self, Message::Cartridge(msg));
-            }
-            Message::HomebrewDownloaded(..)
+            Message::Library(_)
+            | Message::Detail(_)
+            | Message::Cartridge(_)
+            | Message::HomebrewDownloaded(..)
             | Message::OpenHomebrewBrowser
             | Message::HomebrewBrowser(_)
             | Message::ScreenshotGallery(_)
@@ -462,13 +473,7 @@ impl App {
                     Some(PendingAction::SwitchGame(sha1)) => {
                         // Recover the console and flush SRAM before unloading.
                         self.pause();
-                        // Close current game
-                        if let Some(current) = &mut self.current_game {
-                            if let Some(session) = &mut current.session {
-                                session.end = Some(jiff::Timestamp::now());
-                                library::activity::write_session(&current.game_dir, session);
-                            }
-                        }
+                        self.end_current_session();
                         self.game = Game::Unloaded;
                         self.current_game = None;
 
@@ -481,11 +486,8 @@ impl App {
                     Some(PendingAction::StopGame) => {
                         // Recover the console and flush SRAM before unloading.
                         self.pause();
-                        let sha1 = if let Some(current) = &mut self.current_game {
-                            if let Some(session) = &mut current.session {
-                                session.end = Some(jiff::Timestamp::now());
-                                library::activity::write_session(&current.game_dir, session);
-                            }
+                        self.end_current_session();
+                        let sha1 = if let Some(current) = &self.current_game {
                             self.store.notify_activity_changed(&current.entry.sha1);
                             Some(current.entry.sha1.clone())
                         } else {
@@ -509,12 +511,7 @@ impl App {
                     Some(PendingAction::CloseApp) => {
                         // Recover the console and flush SRAM before exiting.
                         self.pause();
-                        if let Some(current) = &mut self.current_game {
-                            if let Some(session) = &mut current.session {
-                                session.end = Some(jiff::Timestamp::now());
-                                library::activity::write_session(&current.game_dir, session);
-                            }
-                        }
+                        self.end_current_session();
                         return window::latest().and_then(window::close);
                     }
                     None => {}
@@ -644,19 +641,20 @@ impl App {
             // Cartridge RW polling (stays here — not library-specific)
             Message::CartridgeRwPoll => {
                 let ports = cartridge_rw::list_ports();
-                if ports != self.cartridge_rw_known_ports {
+                if ports != self.cartridge_rw.known_ports {
                     // Find which ports are new (need querying)
                     let new_ports: Vec<String> = ports
                         .iter()
-                        .filter(|p| !self.cartridge_rw_known_ports.contains(p))
+                        .filter(|p| !self.cartridge_rw.known_ports.contains(p))
                         .cloned()
                         .collect();
 
                     // Remove devices on ports that disappeared
-                    self.detected_cartridge_devices
+                    self.cartridge_rw
+                        .detected_devices
                         .retain(|d| ports.contains(&d.port_name));
 
-                    self.cartridge_rw_known_ports = ports;
+                    self.cartridge_rw.known_ports = ports;
 
                     // Only query newly appeared ports
                     if !new_ports.is_empty() {
@@ -671,11 +669,12 @@ impl App {
                 // Merge newly detected devices into the list
                 for device in new_devices {
                     if !self
-                        .detected_cartridge_devices
+                        .cartridge_rw
+                        .detected_devices
                         .iter()
                         .any(|d| d.port_name == device.port_name)
                     {
-                        self.detected_cartridge_devices.push(device);
+                        self.cartridge_rw.detected_devices.push(device);
                     }
                 }
             }

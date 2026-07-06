@@ -136,7 +136,7 @@ impl App {
             &self.store,
             hovered_game,
             self.inserted_cartridge(),
-            self.cartridge_dump_progress.as_ref(),
+            self.cartridge_rw.dump_progress.as_ref(),
             self.homebrew_enabled(),
         )
     }
