@@ -49,6 +49,7 @@ impl From<SgbScreen> for ScreenDisplay {
     }
 }
 
+#[derive(Clone)]
 pub struct ScreenView {
     pub screen: Screen,
     pub palette: PaletteChoice,

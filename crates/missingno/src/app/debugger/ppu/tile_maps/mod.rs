@@ -9,7 +9,7 @@ use crate::app::{
     console::ConsoleColors,
     debugger::{
         inspect::PpuSource,
-        panes::{pane, title_bar},
+        panes::{self, pane, title_bar},
     },
     texture_renderer::TextureRenderer,
 };
@@ -29,10 +29,6 @@ impl TileMapPane {
             tile_map,
             title: tile_map.to_string(),
         }
-    }
-
-    pub fn title(&self) -> &str {
-        &self.title
     }
 
     pub fn content(
@@ -102,5 +98,18 @@ impl TileMapPane {
             })
             .into(),
         )
+    }
+}
+
+impl panes::Pane for TileMapPane {
+    fn kind(&self) -> panes::DebuggerPane {
+        panes::DebuggerPane::TileMap(self.tile_map)
+    }
+
+    fn view<'a>(&'a self, ctx: Option<&panes::PaneContext<'_>>) -> pane_grid::Content<'a, Message> {
+        match ctx {
+            Some(ctx) => self.content(ctx.source.ppu(), ctx.source.vram(), ctx.colors),
+            None => panes::running_placeholder(&self.title),
+        }
     }
 }

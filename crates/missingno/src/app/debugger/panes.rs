@@ -18,6 +18,7 @@ use crate::app::{
         audio::AudioPane,
         inspect::InspectSource,
         instructions::InstructionsPane,
+        layout,
         ppu::{
             sprites::{self, SpritesPane},
             tile_maps::TileMapPane,
@@ -62,8 +63,88 @@ impl From<Message> for app::Message {
     }
 }
 
+/// What a pane renders from: the live console while paused, or the per-vblank
+/// snapshot while the core runs. `None` means the core is away and no snapshot
+/// has arrived yet.
+#[derive(Clone, Copy)]
+pub struct PaneContext<'b> {
+    pub source: &'b dyn InspectSource,
+    pub breakpoints: &'b BTreeSet<u16>,
+    pub colors: &'b ConsoleColors,
+}
+
+/// One debugger pane behind the grid. Implementations live with their pane
+/// modules; adding a pane means implementing this and adding one
+/// [`PANE_REGISTRY`] entry.
+pub trait Pane {
+    fn kind(&self) -> DebuggerPane;
+    fn view<'a>(&'a self, ctx: Option<&PaneContext<'_>>) -> pane_grid::Content<'a, app::Message>;
+    fn on_message(&mut self, _message: &PaneMessage) {}
+    fn set_palette(&mut self, _palette: PaletteChoice) {}
+    fn set_frame_blending(&mut self, _blend: bool) {}
+    /// The live screen state, so it can carry across a debugger↔emulator
+    /// toggle. Only the screen pane has one.
+    fn screen_view(&self) -> Option<ScreenView> {
+        None
+    }
+    fn adopt_screen_view(&mut self, _view: ScreenView) {}
+}
+
+pub struct PaneDescriptor {
+    pub kind: DebuggerPane,
+    pub icon: Icon,
+    /// Stable display name; also the key saved layouts refer to panes by.
+    pub label: &'static str,
+    pub(super) construct: fn() -> Box<dyn Pane>,
+}
+
+pub static PANE_REGISTRY: &[PaneDescriptor] = &[
+    PaneDescriptor {
+        kind: DebuggerPane::Screen,
+        icon: Icon::Monitor,
+        label: "Screen",
+        construct: || Box::new(ScreenPane::new()),
+    },
+    PaneDescriptor {
+        kind: DebuggerPane::Instructions,
+        icon: Icon::FileText,
+        label: "Instructions",
+        construct: || Box::new(InstructionsPane::new()),
+    },
+    PaneDescriptor {
+        kind: DebuggerPane::Tiles,
+        icon: Icon::Grid,
+        label: "Tiles",
+        construct: || Box::new(TilesPane::new()),
+    },
+    PaneDescriptor {
+        kind: DebuggerPane::TileMap(TileMapId(0)),
+        icon: Icon::Image,
+        label: "Tile Map 0",
+        construct: || Box::new(TileMapPane::new(TileMapId(0))),
+    },
+    PaneDescriptor {
+        kind: DebuggerPane::TileMap(TileMapId(1)),
+        icon: Icon::Image,
+        label: "Tile Map 1",
+        construct: || Box::new(TileMapPane::new(TileMapId(1))),
+    },
+    PaneDescriptor {
+        kind: DebuggerPane::Sprites,
+        icon: Icon::Human,
+        label: "Sprites",
+        construct: || Box::new(SpritesPane::new()),
+    },
+    PaneDescriptor {
+        kind: DebuggerPane::Audio,
+        icon: Icon::Sliders,
+        label: "Audio",
+        construct: || Box::new(AudioPane::new()),
+    },
+];
+
 pub struct DebuggerPanes {
-    panes: Option<pane_grid::State<PaneInstance>>,
+    panes: Option<pane_grid::State<Box<dyn Pane>>>,
     handles: HashMap<DebuggerPane, pane_grid::Pane>,
     palette: PaletteChoice,
 }
@@ -78,95 +159,115 @@ pub enum DebuggerPane {
     Audio,
 }
 
-enum PaneInstance {
-    Screen(ScreenPane),
-    Instructions(InstructionsPane),
-    Tiles(TilesPane),
-    TileMap(TileMapPane),
-    Sprites(SpritesPane),
-    Audio(AudioPane),
+impl DebuggerPane {
+    pub fn descriptor(&self) -> &'static PaneDescriptor {
+        PANE_REGISTRY
+            .iter()
+            .find(|descriptor| descriptor.kind == *self)
+            .expect("every pane kind is registered")
+    }
+
+    pub fn icon(&self) -> Icon {
+        self.descriptor().icon
+    }
+
+    fn construct(&self) -> Box<dyn Pane> {
+        (self.descriptor().construct)()
+    }
+}
+
+impl fmt::Display for DebuggerPane {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.descriptor().label)
+    }
 }
 
 impl DebuggerPanes {
     pub fn new() -> Self {
-        Self::build(ScreenPane::new())
+        Self::build(None)
     }
 
     pub fn with_screen(screen_view: ScreenView) -> Self {
-        Self::build(ScreenPane::with_screen(screen_view))
+        Self::build(Some(screen_view))
+    }
+
+    fn build(screen_view: Option<ScreenView>) -> Self {
+        let panes = layout::load()
+            .and_then(|saved| saved.into_state())
+            .unwrap_or_else(Self::default_layout);
+
+        let mut this = Self {
+            handles: panes
+                .as_ref()
+                .map(|state| {
+                    state
+                        .iter()
+                        .map(|(&handle, pane)| (pane.kind(), handle))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            panes,
+            palette: PaletteChoice::default(),
+        };
+        if let Some(view) = screen_view {
+            this.adopt_screen_view(view);
+        }
+        this
+    }
+
+    /// The out-of-the-box arrangement: instructions beside the screen.
+    fn default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
+        let (mut panes, instructions_handle) =
+            pane_grid::State::new(DebuggerPane::Instructions.construct());
+        let (_, split) = panes
+            .split(
+                Vertical,
+                instructions_handle,
+                DebuggerPane::Screen.construct(),
+            )
+            .unwrap();
+        panes.resize(split, 1.0 / 3.0);
+        Some(panes)
+    }
+
+    fn adopt_screen_view(&mut self, view: ScreenView) {
+        if let Some(panes) = &mut self.panes {
+            for (_, pane) in panes.iter_mut() {
+                if pane.kind() == DebuggerPane::Screen {
+                    pane.adopt_screen_view(view);
+                    return;
+                }
+            }
+        }
     }
 
     pub fn take_screen_view(self) -> ScreenView {
         if let Some(panes) = &self.panes {
             for (_, pane) in panes.iter() {
-                if let PaneInstance::Screen(screen_pane) = pane {
-                    let view = screen_pane.screen_view();
-                    return ScreenView {
-                        screen: view.screen.clone(),
-                        palette: view.palette,
-                        sgb_render_data: view.sgb_render_data,
-                        use_sgb_colors: view.use_sgb_colors,
-                        cgb_rgba: view.cgb_rgba.clone(),
-                        blend: view.blend,
-                        prev_rgba: view.prev_rgba.clone(),
-                    };
+                if let Some(view) = pane.screen_view() {
+                    return view;
                 }
             }
         }
         ScreenView::new()
     }
 
-    fn build(screen_pane: ScreenPane) -> Self {
-        let mut handles = HashMap::new();
-
-        let (mut panes, instructions_handle) =
-            pane_grid::State::new(Self::construct_pane(DebuggerPane::Instructions));
-        handles.insert(DebuggerPane::Instructions, instructions_handle);
-
-        let (screen_handle, split) = panes
-            .split(
-                Vertical,
-                instructions_handle,
-                PaneInstance::Screen(screen_pane),
-            )
-            .unwrap();
-        handles.insert(DebuggerPane::Screen, screen_handle);
-        panes.resize(split, 1.0 / 3.0);
-
-        Self {
-            panes: Some(panes),
-            handles,
-            palette: PaletteChoice::default(),
-        }
-    }
-
-    fn construct_pane(pane: DebuggerPane) -> PaneInstance {
-        match pane {
-            DebuggerPane::Screen => PaneInstance::Screen(ScreenPane::new()),
-            DebuggerPane::Instructions => PaneInstance::Instructions(InstructionsPane::new()),
-            DebuggerPane::Tiles => PaneInstance::Tiles(TilesPane::new()),
-            DebuggerPane::TileMap(map) => PaneInstance::TileMap(TileMapPane::new(map)),
-            DebuggerPane::Sprites => PaneInstance::Sprites(SpritesPane::new()),
-            DebuggerPane::Audio => PaneInstance::Audio(AudioPane::new()),
-        }
-    }
-
     pub fn update(&mut self, message: Message) {
         match message {
             Message::ShowPane(pane) => {
-                if self.handles.get(&pane).is_none() {
-                    let pane_instance = Self::construct_pane(pane);
+                if !self.handles.contains_key(&pane) {
+                    let instance = pane.construct();
 
                     if let Some(panes) = &mut self.panes {
                         let (last_pane, _) = panes.iter().last().unwrap();
-                        let (handle, _) =
-                            panes.split(Horizontal, *last_pane, pane_instance).unwrap();
+                        let (handle, _) = panes.split(Horizontal, *last_pane, instance).unwrap();
                         self.handles.insert(pane, handle);
                     } else {
-                        let (panes, handle) = pane_grid::State::new(pane_instance);
+                        let (panes, handle) = pane_grid::State::new(instance);
                         self.handles.insert(pane, handle);
                         self.panes = Some(panes);
                     }
+                    self.persist();
                 }
             }
             Message::ClosePane(pane) => {
@@ -178,6 +279,7 @@ impl DebuggerPanes {
                         panes.close(handle);
                         self.handles.remove(&pane);
                     }
+                    self.persist();
                 }
             }
 
@@ -191,37 +293,22 @@ impl DebuggerPanes {
                     if let Some(panes) = &mut self.panes {
                         panes.drop(pane, target);
                     }
+                    self.persist();
                 }
             }
 
             Message::Pane(pane_message) => {
                 if let Some(panes) = &mut self.panes {
-                    match &pane_message {
-                        PaneMessage::Screen(message) => {
-                            panes.iter_mut().for_each(|(_, pane)| {
-                                if let PaneInstance::Screen(screen_pane) = pane {
-                                    screen_pane.update(message.clone());
-                                }
-                            });
-                        }
-                        PaneMessage::Sprites(message) => {
-                            panes.iter_mut().for_each(|(_, pane)| {
-                                if let PaneInstance::Sprites(sprites_pane) = pane {
-                                    sprites_pane.update(*message);
-                                }
-                            });
-                        }
-                        PaneMessage::Tiles(message) => {
-                            panes.iter_mut().for_each(|(_, pane)| {
-                                if let PaneInstance::Tiles(tiles_pane) = pane {
-                                    tiles_pane.update(*message);
-                                }
-                            });
-                        }
-                    }
+                    panes
+                        .iter_mut()
+                        .for_each(|(_, pane)| pane.on_message(&pane_message));
                 }
             }
         }
+    }
+
+    fn persist(&self) {
+        layout::save(self.panes.as_ref());
     }
 
     pub fn palette(&self) -> &Palette {
@@ -230,76 +317,31 @@ impl DebuggerPanes {
 
     pub fn set_frame_blending(&mut self, blend: bool) {
         if let Some(panes) = &mut self.panes {
-            panes.iter_mut().for_each(|(_, pane)| {
-                if let PaneInstance::Screen(screen_pane) = pane {
-                    screen_pane.set_frame_blending(blend);
-                }
-            });
+            panes
+                .iter_mut()
+                .for_each(|(_, pane)| pane.set_frame_blending(blend));
         }
     }
 
     pub fn set_palette(&mut self, palette: PaletteChoice) {
         self.palette = palette;
         if let Some(panes) = &mut self.panes {
-            panes.iter_mut().for_each(|(_, pane)| {
-                if let PaneInstance::Screen(screen_pane) = pane {
-                    screen_pane.set_palette(palette);
-                }
-            });
+            panes
+                .iter_mut()
+                .for_each(|(_, pane)| pane.set_palette(palette));
         }
     }
 
     /// The pane grid, rendered from the live console while paused or the
-    /// per-vblank snapshot while the core runs on the emu thread. The screen
-    /// pane always renders from its own live frame slot. While running,
+    /// per-vblank snapshot while the core runs on the emu thread. Without a
+    /// context (core away, no snapshot yet) panes show placeholders — except
+    /// the screen, which always renders its own live frame. While running,
     /// breakpoint-gutter clicks in the instructions pane still emit their
     /// messages, but the run doesn't stop until the core does.
-    pub fn view<'a>(
-        &'a self,
-        source: &'a dyn InspectSource,
-        breakpoints: &'a BTreeSet<u16>,
-        colors: &ConsoleColors,
-    ) -> Element<'a, app::Message> {
+    pub fn view<'a>(&'a self, ctx: Option<PaneContext<'_>>) -> Element<'a, app::Message> {
         if let Some(panes) = &self.panes {
-            pane_grid(panes, |_handle, instance, _is_maximized| match instance {
-                PaneInstance::Screen(screen) => screen.content(),
-                PaneInstance::Instructions(instructions) => instructions.content(
-                    source.instruction_memory(),
-                    source.cpu().ir_address(),
-                    breakpoints,
-                ),
-                PaneInstance::Tiles(tiles) => tiles.content(source.vram(), colors),
-                PaneInstance::TileMap(tile_map) => {
-                    tile_map.content(source.ppu(), source.vram(), colors)
-                }
-                PaneInstance::Sprites(sprites) => {
-                    sprites.content(source.ppu(), source.vram(), colors)
-                }
-                PaneInstance::Audio(audio) => audio.content(&source.audio()),
-            })
-            .on_resize(10.0, |resize| Message::ResizePane(resize).into())
-            .on_drag(|drag| Message::DragPane(drag).into())
-            .spacing(s())
-            .into()
-        } else {
-            iced::widget::Space::new()
-                .width(iced::Length::Fill)
-                .height(iced::Length::Fill)
-                .into()
-        }
-    }
-
-    /// The pane grid before the first snapshot arrives: the screen pane stays
-    /// live, everything else shows a titled placeholder.
-    pub fn running_placeholders(&self) -> Element<'_, app::Message> {
-        if let Some(panes) = &self.panes {
-            pane_grid(panes, |_handle, instance, _is_maximized| match instance {
-                PaneInstance::Screen(screen) => screen.content(),
-                PaneInstance::Instructions(_) => running_placeholder("Instructions"),
-                PaneInstance::Tiles(_) => running_placeholder("Tiles"),
-                PaneInstance::TileMap(tile_map) => running_placeholder(tile_map.title()),
-                PaneInstance::Sprites(_) => running_placeholder("Sprites"),
-                PaneInstance::Audio(_) => running_placeholder("Audio"),
+            pane_grid(panes, move |_handle, instance, _is_maximized| {
+                instance.view(ctx.as_ref())
             })
             .on_resize(10.0, |resize| Message::ResizePane(resize).into())
             .on_drag(|drag| Message::DragPane(drag).into())
@@ -317,16 +359,16 @@ impl DebuggerPanes {
         self.handles.contains_key(&plane)
     }
 
-    pub fn available_panes(&self) -> &[DebuggerPane] {
-        &[
-            DebuggerPane::Screen,
-            DebuggerPane::Instructions,
-            DebuggerPane::Tiles,
-            DebuggerPane::TileMap(TileMapId(0)),
-            DebuggerPane::TileMap(TileMapId(1)),
-            DebuggerPane::Sprites,
-            DebuggerPane::Audio,
-        ]
+    pub fn available_panes(&self) -> impl Iterator<Item = DebuggerPane> {
+        PANE_REGISTRY.iter().map(|descriptor| descriptor.kind)
+    }
+}
+
+/// Ratios only change through resize drags, which have no end event to hook a
+/// save to — persist the final layout when the debugger goes away instead.
+impl Drop for DebuggerPanes {
+    fn drop(&mut self) {
+        self.persist();
     }
 }
 
@@ -340,33 +382,7 @@ impl Message {
     }
 }
 
-impl DebuggerPane {
-    pub fn icon(&self) -> Icon {
-        match self {
-            DebuggerPane::Screen => Icon::Monitor,
-            DebuggerPane::Instructions => Icon::FileText,
-            DebuggerPane::Tiles => Icon::Grid,
-            DebuggerPane::TileMap(_) => Icon::Image,
-            DebuggerPane::Sprites => Icon::Human,
-            DebuggerPane::Audio => Icon::Sliders,
-        }
-    }
-}
-
-impl fmt::Display for DebuggerPane {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            DebuggerPane::Screen => write!(f, "Screen"),
-            DebuggerPane::Instructions => write!(f, "Instructions"),
-            DebuggerPane::Tiles => write!(f, "Tiles"),
-            DebuggerPane::TileMap(map) => write!(f, "{}", map),
-            DebuggerPane::Sprites => write!(f, "Sprites"),
-            DebuggerPane::Audio => write!(f, "Audio"),
-        }
-    }
-}
-
-fn running_placeholder(label: &str) -> pane_grid::Content<'_, app::Message> {
+pub fn running_placeholder(label: &str) -> pane_grid::Content<'_, app::Message> {
     pane(
         title_bar(label),
         container(iced::widget::text("Running…").color(palette::MUTED))

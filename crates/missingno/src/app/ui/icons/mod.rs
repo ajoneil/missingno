@@ -6,6 +6,7 @@ use iced::{Theme, widget::svg};
 use crate::app::ui::text;
 
 #[allow(dead_code)]
+#[derive(Clone, Copy)]
 pub enum Icon {
     Back,
     Brush,

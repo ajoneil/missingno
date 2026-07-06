@@ -94,3 +94,25 @@ fn tile_block(
     ]
     .into()
 }
+
+impl panes::Pane for TilesPane {
+    fn kind(&self) -> panes::DebuggerPane {
+        panes::DebuggerPane::Tiles
+    }
+
+    fn view<'a>(
+        &'a self,
+        ctx: Option<&panes::PaneContext<'_>>,
+    ) -> pane_grid::Content<'a, app::Message> {
+        match ctx {
+            Some(ctx) => self.content(ctx.source.vram(), ctx.colors),
+            None => panes::running_placeholder("Tiles"),
+        }
+    }
+
+    fn on_message(&mut self, message: &panes::PaneMessage) {
+        if let panes::PaneMessage::Tiles(message) = message {
+            self.update(*message);
+        }
+    }
+}

@@ -59,8 +59,8 @@ impl SpritesPane {
 
     pub fn content<'a>(
         &'a self,
-        ppu: &'a dyn PpuSource,
-        vram: &'a dyn VramView,
+        ppu: &dyn PpuSource,
+        vram: &dyn VramView,
         colors: &ConsoleColors,
     ) -> pane_grid::Content<'a, app::Message> {
         let size = ppu.control().sprite_size();
@@ -96,8 +96,8 @@ impl SpritesPane {
 
     fn sprites<'a>(
         &'a self,
-        ppu: &'a dyn PpuSource,
-        vram: &'a dyn VramView,
+        ppu: &dyn PpuSource,
+        vram: &dyn VramView,
         colors: &ConsoleColors,
     ) -> Element<'a, app::Message> {
         let mut sprites = (0u8..40)
@@ -128,8 +128,8 @@ impl SpritesPane {
     fn sprite<'a>(
         &'a self,
         index: u8,
-        ppu: &'a dyn PpuSource,
-        vram: &'a dyn VramView,
+        ppu: &dyn PpuSource,
+        vram: &dyn VramView,
         sprite: &Sprite,
         colors: &ConsoleColors,
     ) -> Element<'a, app::Message> {
@@ -237,4 +237,26 @@ fn priority_icon(priority: Priority) -> Element<'static, app::Message> {
     )
     .style(tooltip_style)
     .into()
+}
+
+impl panes::Pane for SpritesPane {
+    fn kind(&self) -> panes::DebuggerPane {
+        panes::DebuggerPane::Sprites
+    }
+
+    fn view<'a>(
+        &'a self,
+        ctx: Option<&panes::PaneContext<'_>>,
+    ) -> pane_grid::Content<'a, app::Message> {
+        match ctx {
+            Some(ctx) => self.content(ctx.source.ppu(), ctx.source.vram(), ctx.colors),
+            None => panes::running_placeholder("Sprites"),
+        }
+    }
+
+    fn on_message(&mut self, message: &panes::PaneMessage) {
+        if let panes::PaneMessage::Sprites(message) = message {
+            self.update(*message);
+        }
+    }
 }

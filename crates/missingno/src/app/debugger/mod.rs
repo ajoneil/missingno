@@ -22,13 +22,14 @@ use crate::app::{
 use missingno_gb::{cartridge::Cartridge, joypad::Button, ppu::types::palette::PaletteChoice};
 
 use inspect::{DebugView, InspectSource};
-use panes::DebuggerPanes;
+use panes::{DebuggerPanes, PaneContext};
 use sidebar::Sidebar;
 
 mod audio;
 pub mod inspect;
 mod instructions;
 mod interrupts;
+mod layout;
 pub mod panes;
 mod ppu;
 mod screen;
@@ -416,7 +417,11 @@ impl Debugger {
         let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
             pane_grid(split_state, |_handle, zone, _maximized| {
                 let content: Element<'_, app::Message> = match zone {
-                    MainSplit::Top => self.panes.view(source, core.breakpoints(), &colors),
+                    MainSplit::Top => self.panes.view(Some(PaneContext {
+                        source,
+                        breakpoints: core.breakpoints(),
+                        colors: &colors,
+                    })),
                     MainSplit::Bottom => self.bottom_pane_grid(
                         self.bottom_panes
                             .as_ref()
@@ -429,7 +434,11 @@ impl Debugger {
             .spacing(s())
             .into()
         } else {
-            self.panes.view(source, core.breakpoints(), &colors)
+            self.panes.view(Some(PaneContext {
+                source,
+                breakpoints: core.breakpoints(),
+                colors: &colors,
+            }))
         };
 
         row![self.sidebar.view(source, &colors), center, self.icon_rail(),]
@@ -482,8 +491,12 @@ impl Debugger {
     /// is present, titled placeholders otherwise.
     fn running_center<'a>(&'a self, colors: Option<&ConsoleColors>) -> Element<'a, app::Message> {
         match (self.last_snapshot.as_deref(), colors) {
-            (Some(snapshot), Some(colors)) => self.panes.view(snapshot, &self.breakpoints, colors),
-            _ => self.panes.running_placeholders(),
+            (Some(snapshot), Some(colors)) => self.panes.view(Some(PaneContext {
+                source: snapshot,
+                breakpoints: &self.breakpoints,
+                colors,
+            })),
+            _ => self.panes.view(None),
         }
     }
 
@@ -527,7 +540,7 @@ impl Debugger {
     fn icon_rail(&self) -> Element<'_, app::Message> {
         use icons::Icon;
 
-        let pane_buttons = self.panes.available_panes().iter().map(|&pane| {
+        let pane_buttons = self.panes.available_panes().map(|pane| {
             rail_icon(
                 pane.icon(),
                 &pane.to_string(),

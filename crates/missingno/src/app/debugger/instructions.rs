@@ -11,7 +11,10 @@ use crate::app::{
     self,
     debugger::{
         self,
-        panes::{pane, title_bar, title_bar_with_detail},
+        panes::{
+            self, DebuggerPane, PaneContext, pane, running_placeholder, title_bar,
+            title_bar_with_detail,
+        },
     },
     ui::{fonts, palette, sizes::s},
 };
@@ -262,4 +265,21 @@ fn classify_operand(operand: &str) -> iced::Color {
 
     // Fallback
     palette::TEXT
+}
+
+impl panes::Pane for InstructionsPane {
+    fn kind(&self) -> DebuggerPane {
+        DebuggerPane::Instructions
+    }
+
+    fn view<'a>(&'a self, ctx: Option<&PaneContext<'_>>) -> pane_grid::Content<'a, app::Message> {
+        match ctx {
+            Some(ctx) => self.content(
+                ctx.source.instruction_memory(),
+                ctx.source.cpu().ir_address(),
+                ctx.breakpoints,
+            ),
+            None => running_placeholder("Instructions"),
+        }
+    }
 }

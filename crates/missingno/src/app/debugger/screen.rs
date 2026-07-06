@@ -7,7 +7,7 @@ use crate::app::{
     self,
     debugger::{
         self,
-        panes::{self, pane, title_bar},
+        panes::{self, DebuggerPane, PaneContext, PaneMessage, pane, title_bar},
     },
     screen::{ScreenDisplay, ScreenView},
 };
@@ -35,14 +35,6 @@ impl ScreenPane {
         Self {
             screen_view: ScreenView::new(),
         }
-    }
-
-    pub fn with_screen(screen_view: ScreenView) -> Self {
-        Self { screen_view }
-    }
-
-    pub fn screen_view(&self) -> &ScreenView {
-        &self.screen_view
     }
 
     pub fn update(&mut self, message: Message) {
@@ -77,5 +69,38 @@ impl ScreenPane {
             })
             .into(),
         )
+    }
+}
+
+impl panes::Pane for ScreenPane {
+    fn kind(&self) -> DebuggerPane {
+        DebuggerPane::Screen
+    }
+
+    /// The screen renders its own live frame slot even without a context.
+    fn view<'a>(&'a self, _ctx: Option<&PaneContext<'_>>) -> pane_grid::Content<'a, app::Message> {
+        self.content()
+    }
+
+    fn on_message(&mut self, message: &PaneMessage) {
+        if let PaneMessage::Screen(message) = message {
+            self.update(message.clone());
+        }
+    }
+
+    fn set_palette(&mut self, palette: PaletteChoice) {
+        ScreenPane::set_palette(self, palette);
+    }
+
+    fn set_frame_blending(&mut self, blend: bool) {
+        ScreenPane::set_frame_blending(self, blend);
+    }
+
+    fn screen_view(&self) -> Option<ScreenView> {
+        Some(self.screen_view.clone())
+    }
+
+    fn adopt_screen_view(&mut self, view: ScreenView) {
+        self.screen_view = view;
     }
 }

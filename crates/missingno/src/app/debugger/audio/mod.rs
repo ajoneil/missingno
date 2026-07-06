@@ -4,7 +4,7 @@ use crate::app::{
     Message,
     debugger::{
         inspect::AudioView,
-        panes::{checkbox_title_bar, pane},
+        panes::{self, checkbox_title_bar, pane},
     },
     ui::sizes::{l, s},
 };
@@ -47,5 +47,18 @@ impl AudioPane {
             .spacing(s())
             .into(),
         )
+    }
+}
+
+impl panes::Pane for AudioPane {
+    fn kind(&self) -> panes::DebuggerPane {
+        panes::DebuggerPane::Audio
+    }
+
+    fn view<'a>(&'a self, ctx: Option<&panes::PaneContext<'_>>) -> pane_grid::Content<'a, Message> {
+        match ctx {
+            Some(ctx) => self.content(&ctx.source.audio()),
+            None => panes::running_placeholder("Audio"),
+        }
     }
 }
