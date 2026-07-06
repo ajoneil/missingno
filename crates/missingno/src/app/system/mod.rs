@@ -57,6 +57,8 @@ pub mod gb;
 pub mod nes;
 #[cfg(feature = "sms")]
 pub mod sms;
+#[cfg(any(feature = "nes", feature = "sms"))]
+pub mod stepping;
 #[cfg(feature = "vcs")]
 pub mod vcs;
 

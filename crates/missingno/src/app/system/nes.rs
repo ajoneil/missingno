@@ -1,6 +1,6 @@
-//! The NES / Famicom implementation of the system seam.
+//! The NES / Famicom implementation of the system seam, as a
+//! [`SteppingSystem`] over the console.
 
-use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,55 +10,149 @@ use missingno_nes::console::Nes;
 use missingno_nes::ppu::{self, Frame};
 use rgb::RGB8;
 
-use super::{ControlId, ControlInput, FrameOutcome, SystemConsole, SystemDebugger};
-use crate::app::debugger::inspect::{DebugView, Inspection};
+use super::stepping::{SteppingConsole, SteppingSystem};
+use super::{ControlId, ControlInput, SystemConsole};
+use crate::app::debugger::inspect::DebugView;
 use crate::app::debugger::nes::{DisasmRow, NesInspectState, NesSnapshot};
 use crate::app::debugger::panes;
 use crate::app::emu_thread::RunningStatus;
-use crate::app::library::activity::FrameCapture;
-use crate::app::screen::{IndexedFrame, ScreenDisplay};
+use crate::app::screen::IndexedFrame;
 
 pub const PLATFORM_NAME: &str = "Nintendo Entertainment System";
 pub const ROM_EXTENSIONS: &[&str] = &["nes"];
 
-/// One NTSC frame: 262 lines × 341 dots ÷ 3 CPU cycles ≈ 29780 cycles.
-const FRAME_INTERVAL: Duration = Duration::from_micros(16_639);
-
 /// CPU cycles per frame step, generous over the ~29.8k typical.
 const FRAME_BUDGET: u32 = 200_000;
+
+const DISASSEMBLY_ROWS: usize = 12;
+const JSR: u8 = 0x20;
 
 pub fn is_nes_rom(rom: &[u8]) -> bool {
     rom.len() >= 4 && &rom[0..4] == b"NES\x1A"
 }
 
 pub fn create_console(rom: &[u8], title: String) -> Result<Box<dyn SystemConsole>, CartridgeError> {
-    Ok(Box::new(NesConsole {
-        nes: Nes::new(rom)?,
+    Ok(Box::new(SteppingConsole::<NesSystem>::new(
+        Nes::new(rom)?,
         title,
-        last_frame: blank_frame(),
-    }))
+    )))
 }
 
-struct NesConsole {
-    nes: Nes,
-    title: String,
-    last_frame: IndexedFrame,
-}
+pub struct NesSystem;
 
-fn blank_frame() -> IndexedFrame {
-    IndexedFrame::blank(
-        ppu::PIXELS_PER_LINE as u32,
-        ppu::VISIBLE_LINES as u32,
-        nes_palette(),
-    )
-}
+impl SteppingSystem for NesSystem {
+    type Core = Nes;
+    type Frame = Frame;
+    type InspectState = NesInspectState;
 
-fn indexed_frame(frame: &Frame) -> IndexedFrame {
-    IndexedFrame {
-        width: ppu::PIXELS_PER_LINE as u32,
-        height: ppu::VISIBLE_LINES as u32,
-        pixels: frame.pixels.clone().into(),
-        palette: nes_palette(),
+    /// One NTSC frame: 262 lines × 341 dots ÷ 3 CPU cycles ≈ 29780 cycles.
+    const FRAME_INTERVAL: Duration = Duration::from_micros(16_639);
+    const RUN_BUDGET: u32 = 400_000;
+
+    fn pane_family() -> &'static panes::Family {
+        &panes::NES_FAMILY
+    }
+
+    fn pc(nes: &Nes) -> u16 {
+        nes.cpu.pc
+    }
+
+    fn step_instruction(nes: &mut Nes) {
+        nes.step_instruction();
+    }
+
+    fn take_frame(nes: &mut Nes) -> Option<Frame> {
+        nes.take_frame()
+    }
+
+    fn step_frame(nes: &mut Nes) -> Option<Frame> {
+        nes.step_frame(FRAME_BUDGET)
+    }
+
+    fn power_cycle(nes: &mut Nes) {
+        nes.power_cycle();
+    }
+
+    fn apply_control(nes: &mut Nes, control: ControlId, input: ControlInput) {
+        apply_control(nes, control, input);
+    }
+
+    fn drain_audio_samples(nes: &mut Nes) -> Vec<(f32, f32)> {
+        nes.drain_audio_samples()
+    }
+
+    fn indexed_frame(frame: &Frame) -> IndexedFrame {
+        IndexedFrame {
+            width: ppu::PIXELS_PER_LINE as u32,
+            height: ppu::VISIBLE_LINES as u32,
+            pixels: frame.pixels.clone().into(),
+            palette: nes_palette(),
+        }
+    }
+
+    fn blank_frame() -> IndexedFrame {
+        IndexedFrame::blank(
+            ppu::PIXELS_PER_LINE as u32,
+            ppu::VISIBLE_LINES as u32,
+            nes_palette(),
+        )
+    }
+
+    fn step_over_target(nes: &Nes) -> Option<u16> {
+        (nes.peek(nes.cpu.pc) == JSR).then(|| nes.cpu.pc.wrapping_add(3))
+    }
+
+    fn inspect(nes: &Nes, frame_count: u64) -> NesInspectState {
+        let cpu = &nes.cpu;
+        let mut disassembly = Vec::with_capacity(DISASSEMBLY_ROWS);
+        let mut address = cpu.pc;
+        for i in 0..DISASSEMBLY_ROWS {
+            let bytes = [
+                nes.peek(address),
+                nes.peek(address.wrapping_add(1)),
+                nes.peek(address.wrapping_add(2)),
+            ];
+            let row = disasm::disassemble(address, bytes);
+            disassembly.push(DisasmRow {
+                address,
+                text: row.mnemonic,
+                current: i == 0,
+            });
+            address = address.wrapping_add(row.length as u16);
+        }
+        let (scroll_v, _, _) = nes.ppu.scroll_state();
+        NesInspectState {
+            a: cpu.a,
+            x: cpu.x,
+            y: cpu.y,
+            s: cpu.s,
+            p: cpu.p,
+            pc: cpu.pc,
+            scanline: nes.ppu.line(),
+            dot: nes.ppu.dot(),
+            ppu_control: nes.ppu.control,
+            ppu_mask: nes.ppu.mask,
+            ppu_status: nes.ppu.peek_status(),
+            scroll_v,
+            disassembly,
+            frame: frame_count,
+        }
+    }
+
+    fn snapshot(state: &NesInspectState, frame: u64) -> DebugView {
+        let mut state = state.clone();
+        state.frame = frame;
+        Box::new(NesSnapshot::new(state))
+    }
+
+    fn running_status(state: &NesInspectState, frame: u64) -> RunningStatus {
+        RunningStatus {
+            pc: state.pc,
+            sp: state.s as u16 | 0x0100,
+            video_label: "PPU",
+            video_summary: format!("scanline {} · dot {}", state.scanline, state.dot),
+            frame,
+        }
     }
 }
 
@@ -86,253 +180,6 @@ fn apply_control(nes: &mut Nes, control: ControlId, input: ControlInput) {
         state &= !bit;
     }
     nes.set_controller(state);
-}
-
-impl SystemConsole for NesConsole {
-    fn step_frame(&mut self) -> FrameOutcome {
-        let display = self.nes.step_frame(FRAME_BUDGET).map(|frame| {
-            self.last_frame = indexed_frame(&frame);
-            ScreenDisplay::Indexed(self.last_frame.clone())
-        });
-        FrameOutcome {
-            display,
-            sram_dirty: false,
-        }
-    }
-
-    fn reset(&mut self) {
-        self.nes.power_cycle();
-    }
-
-    fn set_control(&mut self, control: ControlId, input: ControlInput) {
-        apply_control(&mut self.nes, control, input);
-    }
-
-    fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
-        self.nes.drain_audio_samples()
-    }
-
-    fn screen_display(&self) -> ScreenDisplay {
-        ScreenDisplay::Indexed(self.last_frame.clone())
-    }
-
-    fn capture_frame(&self, _use_sgb_colors: bool, _palette_name: &str) -> FrameCapture {
-        FrameCapture::from_indexed(&self.last_frame)
-    }
-
-    fn game_title(&self) -> String {
-        self.title.clone()
-    }
-
-    fn frame_interval(&self) -> Duration {
-        FRAME_INTERVAL
-    }
-
-    fn into_debugger(self: Box<Self>) -> Result<Box<dyn SystemDebugger>, Box<dyn SystemConsole>> {
-        Ok(Box::new(NesDebugger::new(
-            self.nes,
-            self.title,
-            self.last_frame,
-        )))
-    }
-}
-
-/// The NES under the seam's debugger: stepping and breakpoints over the
-/// console with real 6502 disassembly. Symbols, code/data logging, and
-/// watchpoints have no backend yet — the seam defaults report them absent.
-struct NesDebugger {
-    nes: Nes,
-    breakpoints: BTreeSet<u16>,
-    title: String,
-    last_frame: IndexedFrame,
-    inspect: NesInspectState,
-    frame_count: u64,
-}
-
-const DISASSEMBLY_ROWS: usize = 12;
-const RUN_BUDGET: u32 = 400_000;
-const JSR: u8 = 0x20;
-
-impl NesDebugger {
-    fn new(nes: Nes, title: String, last_frame: IndexedFrame) -> Self {
-        let mut this = NesDebugger {
-            nes,
-            breakpoints: BTreeSet::new(),
-            title,
-            last_frame,
-            inspect: NesInspectState::default(),
-            frame_count: 0,
-        };
-        this.refresh();
-        this
-    }
-
-    fn refresh(&mut self) {
-        let cpu = &self.nes.cpu;
-        let mut disassembly = Vec::with_capacity(DISASSEMBLY_ROWS);
-        let mut address = cpu.pc;
-        for i in 0..DISASSEMBLY_ROWS {
-            let bytes = [
-                self.nes.peek(address),
-                self.nes.peek(address.wrapping_add(1)),
-                self.nes.peek(address.wrapping_add(2)),
-            ];
-            let row = disasm::disassemble(address, bytes);
-            disassembly.push(DisasmRow {
-                address,
-                text: row.mnemonic,
-                current: i == 0,
-            });
-            address = address.wrapping_add(row.length as u16);
-        }
-        let (scroll_v, _, _) = self.nes.ppu.scroll_state();
-        self.inspect = NesInspectState {
-            a: cpu.a,
-            x: cpu.x,
-            y: cpu.y,
-            s: cpu.s,
-            p: cpu.p,
-            pc: cpu.pc,
-            scanline: self.nes.ppu.line(),
-            dot: self.nes.ppu.dot(),
-            ppu_control: self.nes.ppu.control,
-            ppu_mask: self.nes.ppu.mask,
-            ppu_status: self.nes.ppu.peek_status(),
-            scroll_v,
-            disassembly,
-            frame: self.frame_count,
-        };
-    }
-
-    fn display(&mut self, frame: Option<Frame>) -> Option<ScreenDisplay> {
-        let frame = frame?;
-        self.frame_count += 1;
-        self.last_frame = indexed_frame(&frame);
-        Some(ScreenDisplay::Indexed(self.last_frame.clone()))
-    }
-
-    fn at_breakpoint(&self) -> bool {
-        self.breakpoints.contains(&self.nes.cpu.pc)
-    }
-}
-
-impl SystemDebugger for NesDebugger {
-    fn step(&mut self) -> Option<ScreenDisplay> {
-        self.nes.step_instruction();
-        let frame = self.nes.take_frame();
-        let display = self.display(frame);
-        self.refresh();
-        display
-    }
-
-    fn step_over(&mut self) -> Option<ScreenDisplay> {
-        if self.nes.peek(self.nes.cpu.pc) != JSR {
-            return self.step();
-        }
-        let return_address = self.nes.cpu.pc.wrapping_add(3);
-        let mut frame = None;
-        for _ in 0..RUN_BUDGET {
-            self.nes.step_instruction();
-            frame = self.nes.take_frame().or(frame);
-            if self.nes.cpu.pc == return_address || self.at_breakpoint() {
-                break;
-            }
-        }
-        let display = self.display(frame);
-        self.refresh();
-        display
-    }
-
-    fn step_frame(&mut self) -> (Option<ScreenDisplay>, bool) {
-        let mut breakpoint_hit = false;
-        let mut frame = None;
-        for _ in 0..RUN_BUDGET {
-            self.nes.step_instruction();
-            if let Some(finished) = self.nes.take_frame() {
-                frame = Some(finished);
-                break;
-            }
-            if self.at_breakpoint() {
-                breakpoint_hit = true;
-                break;
-            }
-        }
-        let display = self.display(frame);
-        self.refresh();
-        (display, breakpoint_hit)
-    }
-
-    fn reset(&mut self) {
-        self.nes.power_cycle();
-        self.refresh();
-    }
-
-    fn set_control(&mut self, control: ControlId, input: ControlInput) {
-        apply_control(&mut self.nes, control, input);
-    }
-
-    fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
-        self.nes.drain_audio_samples()
-    }
-
-    fn set_breakpoint(&mut self, address: u16) {
-        self.breakpoints.insert(address);
-    }
-
-    fn clear_breakpoint(&mut self, address: u16) {
-        self.breakpoints.remove(&address);
-    }
-
-    fn breakpoints(&self) -> &BTreeSet<u16> {
-        &self.breakpoints
-    }
-
-    fn inspect(&self) -> &dyn Inspection {
-        &self.inspect
-    }
-
-    fn pane_family(&self) -> &'static panes::Family {
-        &panes::NES_FAMILY
-    }
-
-    fn snapshot(&self, frame: u64) -> DebugView {
-        let mut state = self.inspect.clone();
-        state.frame = frame;
-        Box::new(NesSnapshot::new(state))
-    }
-
-    fn running_status(&self, frame: u64) -> RunningStatus {
-        RunningStatus {
-            pc: self.inspect.pc,
-            sp: self.inspect.s as u16 | 0x0100,
-            video_label: "PPU",
-            video_summary: format!(
-                "scanline {} · dot {}",
-                self.inspect.scanline, self.inspect.dot
-            ),
-            frame,
-        }
-    }
-
-    fn game_title(&self) -> String {
-        self.title.clone()
-    }
-
-    fn frame_interval(&self) -> Duration {
-        FRAME_INTERVAL
-    }
-
-    fn capture_frame(&self, _use_sgb_colors: bool, _palette_name: &str) -> FrameCapture {
-        FrameCapture::from_indexed(&self.last_frame)
-    }
-
-    fn into_console(self: Box<Self>) -> Box<dyn SystemConsole> {
-        Box::new(NesConsole {
-            nes: self.nes,
-            title: self.title,
-            last_frame: self.last_frame,
-        })
-    }
 }
 
 /// The canonical 2C02 palette (64 entries), approximated from the standard
