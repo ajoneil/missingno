@@ -347,9 +347,14 @@ impl WaveChannel {
     }
 
     /// `ch3_restart ↓` (gyta-driven self-clear): divider exits load
-    /// mode on the next cery↑; `ch3_fdis` is cleared on the same edge.
+    /// mode on the next cery↑; `ch3_fdis` is cleared on the same edge —
+    /// unless the DAC is off, whose set input dominates the
+    /// trigger-derived clear, so a DAC-off trigger leaves the divider
+    /// frozen and the wave data latch never loads.
     fn on_ch3_restart_fall(&mut self) {
-        self.ch3_fdis = false;
+        if self.dac_enabled {
+            self.ch3_fdis = false;
+        }
     }
 
     /// Half-T-cycle synchroniser step on master-clock fall (=
