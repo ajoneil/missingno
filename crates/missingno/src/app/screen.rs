@@ -37,7 +37,21 @@ pub struct IndexedFrame {
 }
 
 impl IndexedFrame {
-    fn to_rgba(&self) -> Vec<u8> {
+    // Only the feature-gated indexed families construct blank frames.
+    #[cfg_attr(
+        not(any(feature = "vcs", feature = "sms", feature = "nes")),
+        allow(dead_code)
+    )]
+    pub fn blank(width: u32, height: u32, palette: std::sync::Arc<[RGB8]>) -> Self {
+        IndexedFrame {
+            width,
+            height,
+            pixels: vec![0; (width * height) as usize].into(),
+            palette,
+        }
+    }
+
+    pub fn to_rgba(&self) -> Vec<u8> {
         let mut rgba = Vec::with_capacity(self.pixels.len() * 4);
         for &index in self.pixels.iter() {
             let color = self

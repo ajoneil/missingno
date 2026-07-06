@@ -19,7 +19,7 @@ use crate::app::debugger::inspect::{DebugView, Inspection};
 use crate::app::debugger::panes;
 use crate::app::debugger::sms::{SmsInspectState, SmsSnapshot};
 use crate::app::emu_thread::RunningStatus;
-use crate::app::library::activity::{DisplayMode, FrameCapture, RgbaCapture};
+use crate::app::library::activity::FrameCapture;
 use crate::app::screen::{IndexedFrame, ScreenDisplay};
 
 pub const PLATFORM_NAME: &str = "Sega Master System";
@@ -52,12 +52,11 @@ struct SmsConsole {
 }
 
 fn blank_frame() -> IndexedFrame {
-    IndexedFrame {
-        width: vdp::PIXELS_PER_LINE as u32,
-        height: vdp::ACTIVE_LINES as u32,
-        pixels: vec![0; vdp::PIXELS_PER_LINE * vdp::ACTIVE_LINES as usize].into(),
-        palette: cram_palette(&[0; 32]),
-    }
+    IndexedFrame::blank(
+        vdp::PIXELS_PER_LINE as u32,
+        vdp::ACTIVE_LINES as u32,
+        cram_palette(&[0; 32]),
+    )
 }
 
 /// Resolve a CRAM snapshot (6-bit --BBGGRR) to display RGB.
@@ -76,30 +75,6 @@ fn indexed_frame(frame: &Frame) -> IndexedFrame {
         height: vdp::ACTIVE_LINES as u32,
         pixels: frame.pixels.clone().into(),
         palette: cram_palette(&frame.cram),
-    }
-}
-
-/// A display-ready RGBA screenshot of an indexed frame.
-fn capture_indexed(frame: &IndexedFrame) -> FrameCapture {
-    let mut data = Vec::with_capacity(frame.pixels.len() * 4);
-    for &index in frame.pixels.iter() {
-        let color = frame
-            .palette
-            .get(index as usize)
-            .copied()
-            .unwrap_or(RGB8::new(0, 0, 0));
-        data.extend_from_slice(&[color.r, color.g, color.b, 255]);
-    }
-    FrameCapture {
-        pixels: Vec::new(),
-        sgb: None,
-        display_mode: DisplayMode::Palette(String::new()),
-        cgb_rgba: None,
-        rgba: Some(RgbaCapture {
-            width: frame.width,
-            height: frame.height,
-            data,
-        }),
     }
 }
 
@@ -160,7 +135,7 @@ impl SystemConsole for SmsConsole {
     }
 
     fn capture_frame(&self, _use_sgb_colors: bool, _palette_name: &str) -> FrameCapture {
-        capture_indexed(&self.last_frame)
+        FrameCapture::from_indexed(&self.last_frame)
     }
 
     fn game_title(&self) -> String {
@@ -414,7 +389,7 @@ impl SystemDebugger for SmsDebugger {
     }
 
     fn capture_frame(&self, _use_sgb_colors: bool, _palette_name: &str) -> FrameCapture {
-        capture_indexed(&self.last_frame)
+        FrameCapture::from_indexed(&self.last_frame)
     }
 
     fn capture_trace(&mut self, _path: &Path) -> Option<ScreenDisplay> {

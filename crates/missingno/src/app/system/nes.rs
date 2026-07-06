@@ -20,7 +20,7 @@ use crate::app::debugger::inspect::{DebugView, Inspection};
 use crate::app::debugger::nes::{DisasmRow, NesInspectState, NesSnapshot};
 use crate::app::debugger::panes;
 use crate::app::emu_thread::RunningStatus;
-use crate::app::library::activity::{DisplayMode, FrameCapture, RgbaCapture};
+use crate::app::library::activity::FrameCapture;
 use crate::app::screen::{IndexedFrame, ScreenDisplay};
 
 pub const PLATFORM_NAME: &str = "Nintendo Entertainment System";
@@ -51,12 +51,11 @@ struct NesConsole {
 }
 
 fn blank_frame() -> IndexedFrame {
-    IndexedFrame {
-        width: ppu::PIXELS_PER_LINE as u32,
-        height: ppu::VISIBLE_LINES as u32,
-        pixels: vec![0; ppu::PIXELS_PER_LINE * ppu::VISIBLE_LINES as usize].into(),
-        palette: nes_palette(),
-    }
+    IndexedFrame::blank(
+        ppu::PIXELS_PER_LINE as u32,
+        ppu::VISIBLE_LINES as u32,
+        nes_palette(),
+    )
 }
 
 fn indexed_frame(frame: &Frame) -> IndexedFrame {
@@ -65,29 +64,6 @@ fn indexed_frame(frame: &Frame) -> IndexedFrame {
         height: ppu::VISIBLE_LINES as u32,
         pixels: frame.pixels.clone().into(),
         palette: nes_palette(),
-    }
-}
-
-fn capture_indexed(frame: &IndexedFrame) -> FrameCapture {
-    let mut data = Vec::with_capacity(frame.pixels.len() * 4);
-    for &index in frame.pixels.iter() {
-        let color = frame
-            .palette
-            .get(index as usize)
-            .copied()
-            .unwrap_or(RGB8::new(0, 0, 0));
-        data.extend_from_slice(&[color.r, color.g, color.b, 255]);
-    }
-    FrameCapture {
-        pixels: Vec::new(),
-        sgb: None,
-        display_mode: DisplayMode::Palette(String::new()),
-        cgb_rgba: None,
-        rgba: Some(RgbaCapture {
-            width: frame.width,
-            height: frame.height,
-            data,
-        }),
     }
 }
 
@@ -146,7 +122,7 @@ impl SystemConsole for NesConsole {
     }
 
     fn capture_frame(&self, _use_sgb_colors: bool, _palette_name: &str) -> FrameCapture {
-        capture_indexed(&self.last_frame)
+        FrameCapture::from_indexed(&self.last_frame)
     }
 
     fn game_title(&self) -> String {
@@ -396,7 +372,7 @@ impl SystemDebugger for NesDebugger {
     }
 
     fn capture_frame(&self, _use_sgb_colors: bool, _palette_name: &str) -> FrameCapture {
-        capture_indexed(&self.last_frame)
+        FrameCapture::from_indexed(&self.last_frame)
     }
 
     fn capture_trace(&mut self, _path: &Path) -> Option<ScreenDisplay> {
