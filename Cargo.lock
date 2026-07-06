@@ -3005,6 +3005,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "missingno-6502"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "missingno-gb"
 version = "0.0.1"
 dependencies = [
@@ -3038,6 +3046,7 @@ dependencies = [
 name = "missingno-vcs"
 version = "0.1.0"
 dependencies = [
+ "missingno-6502",
  "serde",
  "serde_json",
 ]

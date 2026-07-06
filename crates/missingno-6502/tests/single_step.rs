@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use missingno_vcs::cpu::{Bus, Cpu};
+use missingno_6502::{Bus, Cpu};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -54,17 +54,23 @@ impl Bus for FlatBus {
     }
 }
 
-fn data_dir() -> Option<PathBuf> {
+fn data_dir(variant: &str) -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("SINGLE_STEP_TESTS_DIR") {
-        return Some(PathBuf::from(dir));
+        return Some(PathBuf::from(dir).join(variant).join("v1"));
     }
     let default = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../receipts/resources/single-step-tests/6502/v1");
+        .join("../../receipts/resources/single-step-tests")
+        .join(variant)
+        .join("v1");
     default.is_dir().then_some(default)
 }
 
-fn run_case(case: &Case) -> Result<(), String> {
-    let mut cpu = Cpu::new();
+fn run_case(case: &Case, decimal: bool) -> Result<(), String> {
+    let mut cpu = if decimal {
+        Cpu::new()
+    } else {
+        Cpu::new_without_decimal()
+    };
     cpu.pc = case.initial.pc;
     cpu.s = case.initial.s;
     cpu.a = case.initial.a;
@@ -123,14 +129,14 @@ fn run_case(case: &Case) -> Result<(), String> {
     }
 }
 
-fn run_file(path: &PathBuf) -> (usize, usize, Vec<String>) {
+fn run_file(path: &PathBuf, decimal: bool) -> (usize, usize, Vec<String>) {
     let raw = std::fs::read(path).expect("readable test file");
     let cases: Vec<Case> = serde_json::from_slice(&raw).expect("valid test JSON");
     let mut passed = 0;
     let mut failed = 0;
     let mut examples = Vec::new();
     for case in &cases {
-        match run_case(case) {
+        match run_case(case, decimal) {
             Ok(()) => passed += 1,
             Err(problem) => {
                 failed += 1;
@@ -143,10 +149,8 @@ fn run_file(path: &PathBuf) -> (usize, usize, Vec<String>) {
     (passed, failed, examples)
 }
 
-#[test]
-#[ignore = "needs fetched oracle data; run via scripts/fetch-single-step-tests.sh"]
-fn single_step_sweep() {
-    let Some(dir) = data_dir() else {
+fn sweep(variant: &str, decimal: bool) {
+    let Some(dir) = data_dir(variant) else {
         panic!("oracle data missing: run scripts/fetch-single-step-tests.sh");
     };
     let mut total_passed = 0usize;
@@ -156,7 +160,7 @@ fn single_step_sweep() {
         if !path.exists() {
             continue;
         }
-        let (passed, failed, examples) = run_file(&path);
+        let (passed, failed, examples) = run_file(&path, decimal);
         total_passed += passed;
         if failed > 0 {
             bad_files.push(format!(
@@ -175,6 +179,18 @@ fn single_step_sweep() {
         total_passed > 2_000_000,
         "suspiciously few cases ran: {total_passed}"
     );
+}
+
+#[test]
+#[ignore = "needs fetched oracle data; run via scripts/fetch-single-step-tests.sh"]
+fn single_step_sweep() {
+    sweep("6502", true);
+}
+
+#[test]
+#[ignore = "needs fetched oracle data; run via scripts/fetch-single-step-tests.sh"]
+fn single_step_sweep_nes6502() {
+    sweep("nes6502", false);
 }
 
 /// Data-free sanity check so plain `cargo test` exercises the core.

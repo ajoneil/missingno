@@ -39,7 +39,7 @@ impl Cpu {
     fn adc(&mut self, value: u8) {
         let carry_in = self.flag(flags::CARRY) as u16;
         let binary = self.a as u16 + value as u16 + carry_in;
-        if self.flag(flags::DECIMAL) {
+        if self.flag(flags::DECIMAL) && self.decimal_enabled {
             // NMOS decimal: Z from the binary sum; N/V from the
             // pre-correction high nibble; C from the corrected result.
             let mut lo = (self.a & 0x0F) as u16 + (value & 0x0F) as u16 + carry_in;
@@ -82,7 +82,7 @@ impl Cpu {
             (self.a ^ value) & (self.a ^ result) & 0x80 != 0,
         );
         self.set_zn(result);
-        if self.flag(flags::DECIMAL) {
+        if self.flag(flags::DECIMAL) && self.decimal_enabled {
             let mut lo = (self.a & 0x0F) as i16 - (value & 0x0F) as i16 - borrow;
             let mut hi = (self.a >> 4) as i16 - (value >> 4) as i16;
             if lo < 0 {
@@ -192,7 +192,7 @@ impl Cpu {
         let rotated = (and >> 1) | (carry_in << 7);
         self.set_zn(rotated);
         self.set_flag(flags::OVERFLOW, (and ^ rotated) & 0x40 != 0);
-        if self.flag(flags::DECIMAL) {
+        if self.flag(flags::DECIMAL) && self.decimal_enabled {
             let mut result = rotated;
             if (and & 0x0F) + (and & 0x01) > 5 {
                 result = (result & 0xF0) | (result.wrapping_add(6) & 0x0F);

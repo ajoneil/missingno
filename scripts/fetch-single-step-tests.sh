@@ -7,13 +7,10 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 dest="$root/receipts/resources/single-step-tests"
 
-if [ -d "$dest/6502/v1" ]; then
-    echo "already present: $dest/6502/v1 ($(git -C "$dest" rev-parse --short HEAD))"
-    exit 0
+if [ ! -d "$dest" ]; then
+    git clone --depth 1 --filter=blob:none --sparse \
+        https://github.com/SingleStepTests/65x02 "$dest"
 fi
-
-git clone --depth 1 --filter=blob:none --sparse \
-    https://github.com/SingleStepTests/65x02 "$dest"
-git -C "$dest" sparse-checkout set 6502/v1
+git -C "$dest" sparse-checkout set 6502/v1 nes6502/v1
 git -C "$dest" rev-parse HEAD > "$dest/FETCHED_COMMIT"
 echo "fetched $(cat "$dest/FETCHED_COMMIT")"

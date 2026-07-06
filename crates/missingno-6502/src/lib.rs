@@ -1,4 +1,4 @@
-//! NMOS 6502 core, stepped one bus cycle at a time.
+//! NMOS 6502-family core, stepped one bus cycle at a time.
 //!
 //! Every cycle performs exactly one bus access. Addresses are computed
 //! before any state mutation, so a cycle frozen by RDY re-issues the same
@@ -77,6 +77,9 @@ pub struct Cpu {
     pub pc: u16,
     /// The RDY pin: while low, read cycles freeze (writes complete).
     pub rdy: bool,
+    /// The 2A03 carries this core with the decimal-correction circuitry
+    /// disconnected: the D flag still sets, but arithmetic stays binary.
+    pub(crate) decimal_enabled: bool,
     nmi_pending: bool,
     irq_line: bool,
     state: State,
@@ -98,9 +101,18 @@ impl Cpu {
             p: flags::UNUSED | flags::INTERRUPT_DISABLE,
             pc: 0,
             rdy: true,
+            decimal_enabled: true,
             nmi_pending: false,
             irq_line: false,
             state: State::Fetch,
+        }
+    }
+
+    /// A 2A03-style core: the decimal flag exists but never corrects.
+    pub fn new_without_decimal() -> Self {
+        Cpu {
+            decimal_enabled: false,
+            ..Cpu::new()
         }
     }
 

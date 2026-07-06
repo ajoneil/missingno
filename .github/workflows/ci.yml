@@ -34,8 +34,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Fetch SingleStepTests oracle
         run: ./scripts/fetch-single-step-tests.sh
-      - name: VCS tests + 6502 oracle sweep
-        run: cargo test -p missingno-vcs -- --include-ignored
+      - name: 6502-family oracle sweeps
+        run: cargo test -p missingno-6502 -- --include-ignored
+      - name: VCS tests
+        run: cargo test -p missingno-vcs
       - name: Fetch SingleStepTests z80 oracle
         run: ./scripts/fetch-single-step-tests-z80.sh
       - name: SMS tests + Z80 oracle sweep
