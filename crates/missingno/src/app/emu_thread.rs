@@ -492,7 +492,7 @@ impl Payload {
         if !cartridge.has_battery() {
             return None;
         }
-        cartridge.ram().map(|ram| ram.to_vec())
+        crate::sram::save_blob(cartridge, crate::sram::now_unix())
     }
 
     fn running_status(&self) -> Option<RunningStatus> {

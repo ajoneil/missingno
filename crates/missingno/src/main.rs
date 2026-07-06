@@ -10,6 +10,7 @@ mod link_cable;
 mod patch;
 mod printer;
 mod render;
+mod sram;
 mod trace;
 
 #[derive(Parser)]

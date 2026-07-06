@@ -348,7 +348,7 @@ impl App {
                     return;
                 }
                 (
-                    cartridge.ram().map(|ram| ram.to_vec()),
+                    crate::sram::save_blob(cartridge, crate::sram::now_unix()),
                     cartridge.title().to_string(),
                 )
             }
@@ -360,7 +360,7 @@ impl App {
                     return;
                 }
                 (
-                    console.cartridge().ram().map(|ram| ram.to_vec()),
+                    crate::sram::save_blob(console.cartridge(), crate::sram::now_unix()),
                     console.cartridge().title().to_string(),
                 )
             }
@@ -391,9 +391,15 @@ impl App {
             return;
         };
 
+        // Compare the SRAM portion only — an RTC tail's save timestamp
+        // differs every time without the game having saved anything.
         let previous = session.last_sram().or(current.initial_sram.as_deref());
         let changed = match previous {
-            Some(prev) => library::game_db::sram_changed(cartridge_title, ram, prev),
+            Some(prev) => {
+                let (new_ram, _) = crate::sram::split_blob(ram.to_vec());
+                let (prev_ram, _) = crate::sram::split_blob(prev.to_vec());
+                library::game_db::sram_changed(cartridge_title, &new_ram, &prev_ram)
+            }
             None => true,
         };
 

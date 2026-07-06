@@ -64,6 +64,24 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
     Task::none()
 }
 
+/// A cartridge from ROM + saved battery contents: any RTC tail in the save
+/// restores the clock and catches it up on the time since the save.
+fn build_cartridge(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Cartridge {
+    let (ram, rtc) = match save_data {
+        Some(blob) => {
+            let (ram, rtc) = crate::sram::split_blob(blob);
+            (Some(ram), rtc)
+        }
+        None => (None, None),
+    };
+    let mut cartridge = Cartridge::new(rom, ram);
+    if let Some((snapshot, saved_at)) = rtc {
+        let elapsed = crate::sram::now_unix().saturating_sub(saved_at);
+        cartridge.restore_rtc(snapshot, elapsed);
+    }
+    cartridge
+}
+
 /// Build the console for a ROM and wrap it for the active mode (debugger or
 /// emulator), storing it in `app.game`. Returns the cartridge header title.
 fn start_console(
@@ -147,7 +165,7 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
 
     let save_data = library::activity::load_current_sram(&game_dir);
     let initial_sram = save_data.clone();
-    let cartridge_title = start_console(app, Cartridge::new(rom, save_data), &rom_path, &game_dir);
+    let cartridge_title = start_console(app, build_cartridge(rom, save_data), &rom_path, &game_dir);
 
     // Start play session
     if let Some(current) = &mut app.current_game {
@@ -195,7 +213,7 @@ pub fn play_with_save(app: &mut App, activity_filename: &str) -> Task<app::Messa
 
     let save_data = library::activity::load_sram_from(&game_dir, activity_filename);
     let initial_sram = save_data.clone();
-    let cartridge_title = start_console(app, Cartridge::new(rom, save_data), &rom_path, &game_dir);
+    let cartridge_title = start_console(app, build_cartridge(rom, save_data), &rom_path, &game_dir);
 
     if let Some(current) = &mut app.current_game {
         let session = library::activity::SessionFile::new(
@@ -269,7 +287,7 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
         library::load_cover(&game_dir).map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
 
     // Create cartridge and start emulation
-    let cartridge_title = start_console(app, Cartridge::new(rom, save_data), &rom_path, &game_dir);
+    let cartridge_title = start_console(app, build_cartridge(rom, save_data), &rom_path, &game_dir);
 
     let session = library::activity::SessionFile::new(Timestamp::now(), None);
     library::activity::write_session(&game_dir, &session);

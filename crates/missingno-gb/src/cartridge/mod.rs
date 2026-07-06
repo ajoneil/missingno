@@ -1,9 +1,17 @@
 pub mod mbc;
 
+use mbc::mbc3::ClockRegisters;
 use mbc::{
     Mbc, dbz_trans::DbzTrans, huc1::Huc1, huc3::Huc3, mbc1::Mbc1, mbc2::Mbc2, mbc3::Mbc3,
     mbc5::Mbc5, mbc6::Mbc6, mbc7::Mbc7, no_mbc::NoMbc,
 };
+
+/// Real-time-clock state as saved alongside SRAM.
+#[derive(Clone, Copy)]
+pub struct RtcSnapshot {
+    pub registers: ClockRegisters,
+    pub latched: ClockRegisters,
+}
 
 pub struct Cartridge {
     title: String,
@@ -49,6 +57,29 @@ impl Cartridge {
 
     pub fn rom_len(&self) -> usize {
         self.rom.len()
+    }
+
+    /// The real-time clock's register state, on carts that have one.
+    pub fn rtc(&self) -> Option<RtcSnapshot> {
+        match &self.mbc {
+            Mbc::Mbc3(m) => m.clock.as_ref().map(|clock| RtcSnapshot {
+                registers: clock.registers,
+                latched: clock.latched,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Restore a saved clock and advance it by the wall-clock seconds that
+    /// passed since the save was written.
+    pub fn restore_rtc(&mut self, snapshot: RtcSnapshot, elapsed_seconds: u64) {
+        if let Mbc::Mbc3(m) = &mut self.mbc
+            && let Some(clock) = &mut m.clock
+        {
+            clock.registers = snapshot.registers;
+            clock.latched = snapshot.latched;
+            clock.advance_seconds(elapsed_seconds);
+        }
     }
 
     pub fn new(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Cartridge {

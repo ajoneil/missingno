@@ -131,6 +131,30 @@ impl Clock {
         self.latched = self.registers;
     }
 
+    /// Catch up on wall-clock time that passed while not emulating, honouring
+    /// the halt bit. Decomposed per field so the carry chain matches what
+    /// second-by-second ticking would do; the 9-bit day counter is periodic
+    /// past its first overflow, which sets the sticky carry either way.
+    pub fn advance_seconds(&mut self, seconds: u64) {
+        if self.registers.days_upper & HALT_BIT != 0 {
+            return;
+        }
+        for _ in 0..seconds % 60 {
+            self.registers.increment_second();
+        }
+        for _ in 0..(seconds / 60) % 60 {
+            self.registers.increment_minute();
+        }
+        for _ in 0..(seconds / 3600) % 24 {
+            self.registers.increment_hour();
+        }
+        let days = seconds / 86400;
+        let effective_days = if days > 512 { days % 512 + 512 } else { days };
+        for _ in 0..effective_days {
+            self.registers.increment_day();
+        }
+    }
+
     /// Advance the RTC by `dots` of real master-clock time. Halted by RTCDH
     /// bit 6, in which case the sub-second counter freezes and resumes in place.
     fn tick(&mut self, dots: u32) {
@@ -294,5 +318,60 @@ impl Mbc3 {
             },
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn clock_at(seconds: u8, minutes: u8, hours: u8, days: u16) -> Clock {
+        Clock {
+            registers: ClockRegisters {
+                seconds,
+                minutes,
+                hours,
+                days_lower: days as u8,
+                days_upper: (days >> 8) as u8 & 1,
+            },
+            latched: ClockRegisters::default(),
+            latch_ready: false,
+            sub_second_dots: 0,
+        }
+    }
+
+    #[test]
+    fn advance_carries_through_every_field() {
+        let mut clock = clock_at(59, 59, 23, 5);
+        clock.advance_seconds(1);
+        let r = clock.registers;
+        assert_eq!((r.seconds, r.minutes, r.hours, r.days_lower), (0, 0, 0, 6));
+
+        let mut clock = clock_at(30, 10, 5, 0);
+        clock.advance_seconds(2 * 86400 + 3 * 3600 + 4 * 60 + 5);
+        let r = clock.registers;
+        assert_eq!(
+            (r.seconds, r.minutes, r.hours, r.days_lower),
+            (35, 14, 8, 2)
+        );
+    }
+
+    #[test]
+    fn advance_respects_halt_and_sets_day_carry() {
+        let mut clock = clock_at(0, 0, 0, 0);
+        clock.registers.days_upper |= HALT_BIT;
+        clock.advance_seconds(1000);
+        assert_eq!(clock.registers.seconds, 0);
+
+        let mut clock = clock_at(0, 0, 0, 0x1ff);
+        clock.advance_seconds(86400);
+        assert_eq!(clock.registers.days_lower, 0);
+        assert_eq!(clock.registers.days_upper & 0x80, 0x80);
+
+        // Years offline still land on the right day-counter phase.
+        let mut clock = clock_at(0, 0, 0, 0);
+        clock.advance_seconds(86400 * (512 + 7));
+        assert_eq!(clock.registers.days_lower, 7);
+        assert_eq!(clock.registers.days_upper & 0x80, 0x80);
     }
 }
