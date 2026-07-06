@@ -3026,6 +3026,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "missingno-sms"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "missingno-vcs"
 version = "0.1.0"
 dependencies = [
