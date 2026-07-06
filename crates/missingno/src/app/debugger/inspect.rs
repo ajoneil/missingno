@@ -17,6 +17,7 @@ use missingno_gb::cpu::{
     registers::{Register8, Register16},
 };
 use missingno_gb::debugger::instructions::ReadInstructionMemory;
+use missingno_gb::debugger::symbols::SymbolTable;
 use missingno_gb::interrupts;
 use missingno_gb::ppu::{
     Ppu, Register,
@@ -30,6 +31,7 @@ use missingno_gb::ppu::{
     },
 };
 use missingno_gb::{Console, Model};
+use std::sync::Arc;
 
 use crate::app::console::{ConsoleColors, ConsoleUi};
 
@@ -418,6 +420,7 @@ pub trait InspectSource {
 /// An owned [`InspectSource`] that can cross from the emulation thread.
 pub trait InspectSnapshot: InspectSource + Send {
     fn frame(&self) -> u64;
+    fn symbols(&self) -> &SymbolTable;
 }
 
 /// The model-erased snapshot handed from the emulation thread to the UI.
@@ -459,11 +462,16 @@ pub struct ConsoleSnapshot {
     pub interrupts: interrupts::Registers,
     pub colors: ColorSnapshot,
     pub memory: MemoryWindow,
+    pub symbols: Arc<SymbolTable>,
     pub frame: u64,
 }
 
 impl ConsoleSnapshot {
-    pub fn capture<M: ConsoleUi>(console: &Console<M>, frame: u64) -> Self
+    pub fn capture<M: ConsoleUi>(
+        console: &Console<M>,
+        frame: u64,
+        symbols: Arc<SymbolTable>,
+    ) -> Self
     where
         <M::Ppu as PpuModel>::Vram: Clone + Send + 'static,
     {
@@ -475,6 +483,7 @@ impl ConsoleSnapshot {
             interrupts: console.interrupts().clone(),
             colors: M::color_snapshot(console),
             memory: MemoryWindow::capture(console, console.cpu().ir_address),
+            symbols,
             frame,
         }
     }
@@ -507,5 +516,8 @@ impl InspectSource for ConsoleSnapshot {
 impl InspectSnapshot for ConsoleSnapshot {
     fn frame(&self) -> u64 {
         self.frame
+    }
+    fn symbols(&self) -> &SymbolTable {
+        &self.symbols
     }
 }

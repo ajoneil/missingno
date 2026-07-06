@@ -9,7 +9,10 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 
+use missingno_gb::debugger::symbols::SymbolTable;
 use missingno_gb::{cartridge::Cartridge, joypad::Button, serial_transfer::SerialLink};
+
+use std::sync::Arc;
 
 use crate::app::debugger::inspect::{DebugView, InspectSource};
 use crate::app::emu_thread::RunningStatus;
@@ -65,6 +68,9 @@ pub trait SystemDebugger: Send {
 
     /// The live inspection surface the debugger panes render from while paused.
     fn inspect(&self) -> &dyn InspectSource;
+    /// Labels from the ROM's debug-symbol sidecar, if one was loaded.
+    fn symbols(&self) -> Arc<SymbolTable>;
+    fn set_symbols(&mut self, symbols: SymbolTable);
     /// An owned per-vblank snapshot for the UI to render from while running.
     fn snapshot(&self, frame: u64) -> DebugView;
     fn running_status(&self, frame: u64) -> RunningStatus;

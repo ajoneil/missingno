@@ -72,6 +72,9 @@ impl App {
 
                 if let Game::Loaded(game) = &mut self.game {
                     let palette = self.settings.palette;
+                    let rom_path = self.current_game.as_ref().and_then(|current| {
+                        current.entry.rom_paths.iter().find(|p| p.exists()).cloned()
+                    });
                     replace_with_or_abort(game, |game| match game {
                         LoadedGame::Debugger(debugger) => {
                             if debugger_enabled {
@@ -88,6 +91,9 @@ impl App {
                         LoadedGame::Emulator(emulator) => {
                             if debugger_enabled {
                                 let mut dbg = emulator.enable_debugger();
+                                if let Some(rom_path) = &rom_path {
+                                    dbg.load_symbols(rom_path);
+                                }
                                 dbg.set_palette(palette);
                                 LoadedGame::Debugger(dbg)
                             } else {

@@ -9,8 +9,11 @@ use crate::{
     ppu::{self, rendering::Mode},
 };
 use instructions::InstructionsIterator;
+use std::sync::Arc;
+use symbols::SymbolTable;
 
 pub mod instructions;
+pub mod symbols;
 
 /// Embedded profile for full T-cycle frame capture with all PPU details.
 #[cfg(feature = "gbtrace")]
@@ -70,6 +73,8 @@ pub struct Debugger<M: Model = Dmg> {
     breakpoints: BTreeSet<u16>,
     watchpoints: Vec<WatchCondition>,
     last_watchpoint_hit: Option<WatchCondition>,
+    /// Labels from the ROM's `.sym` sidecar; shared so snapshots ride along.
+    symbols: Arc<SymbolTable>,
     /// T-cycle counter. Increments once per dot. Not hardware state —
     /// debugging/tracing infrastructure built on top of the emulation core.
     tcycle_count: u64,
@@ -82,8 +87,17 @@ impl<M: Model> Debugger<M> {
             breakpoints: BTreeSet::new(),
             watchpoints: Vec::new(),
             last_watchpoint_hit: None,
+            symbols: Arc::new(SymbolTable::default()),
             tcycle_count: 0,
         }
+    }
+
+    pub fn set_symbols(&mut self, symbols: SymbolTable) {
+        self.symbols = Arc::new(symbols);
+    }
+
+    pub fn symbols(&self) -> &Arc<SymbolTable> {
+        &self.symbols
     }
 
     pub fn game_boy(&self) -> &Console<M> {

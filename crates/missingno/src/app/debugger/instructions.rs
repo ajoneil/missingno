@@ -22,6 +22,7 @@ use missingno_gb::cpu::instructions::Instruction;
 use missingno_gb::debugger::instructions::{
     InstructionsIterator, ReadInstructionMemory, addresses_before,
 };
+use missingno_gb::debugger::symbols::SymbolTable;
 
 // Syntax highlighting — mapped from palette colors.
 use palette::{
@@ -49,14 +50,21 @@ impl InstructionsPane {
         memory: &dyn ReadInstructionMemory,
         pc: u16,
         breakpoints: &BTreeSet<u16>,
+        symbols: &SymbolTable,
     ) -> pane_grid::Content<'_, app::Message> {
         let mut instructions = Vec::new();
+        let mut push_label = |rows: &mut Vec<_>, address: u16| {
+            if let Some(label) = symbols.label_at(address, None) {
+                rows.push(label_row(label));
+            }
+        };
 
         // Instructions before PC (backward sweep)
         let before = addresses_before(pc, CONTEXT_BEFORE, memory);
         for &addr in &before {
             let mut iter = InstructionsIterator::new(addr, memory);
             if let Some(decoded) = Instruction::decode(&mut iter) {
+                push_label(&mut instructions, addr);
                 instructions.push(instruction_row(
                     addr,
                     decoded,
@@ -71,6 +79,7 @@ impl InstructionsPane {
         for _ in 0..CONTEXT_AFTER {
             if let Some(address) = iterator.address {
                 if let Some(decoded) = Instruction::decode(&mut iterator) {
+                    push_label(&mut instructions, address);
                     instructions.push(instruction_row(
                         address,
                         decoded,
@@ -108,6 +117,15 @@ impl InstructionsPane {
                 .into(),
         )
     }
+}
+
+fn label_row(label: &str) -> Element<'static, app::Message> {
+    text(format!("{label}:"))
+        .font(fonts::monospace())
+        .size(13.0)
+        .color(palette::YELLOW)
+        .height(Length::Fixed(ROW_HEIGHT))
+        .into()
 }
 
 fn instruction_row(
@@ -278,6 +296,7 @@ impl panes::Pane for InstructionsPane {
                 ctx.source.instruction_memory(),
                 ctx.source.cpu().ir_address(),
                 ctx.breakpoints,
+                ctx.symbols,
             ),
             None => running_placeholder("Instructions"),
         }

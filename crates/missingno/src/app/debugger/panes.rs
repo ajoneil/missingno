@@ -34,6 +34,7 @@ use crate::app::{
         sizes::{self as sizes, s, xs},
     },
 };
+use missingno_gb::debugger::symbols::SymbolTable;
 use missingno_gb::ppu::types::{
     palette::{Palette, PaletteChoice},
     tiles::TileMapId,
@@ -71,6 +72,7 @@ pub struct PaneContext<'b> {
     pub source: &'b dyn InspectSource,
     pub breakpoints: &'b BTreeSet<u16>,
     pub colors: &'b ConsoleColors,
+    pub symbols: &'b SymbolTable,
 }
 
 /// One debugger pane behind the grid. Implementations live with their pane

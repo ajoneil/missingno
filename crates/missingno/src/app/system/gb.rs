@@ -3,11 +3,12 @@
 
 use std::collections::BTreeSet;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use missingno_gb::{
-    BootRom, Console, GameBoy, cartridge::Cartridge, joypad::Button, ppu::model::PpuModel,
-    serial_transfer::SerialLink,
+    BootRom, Console, GameBoy, cartridge::Cartridge, debugger::symbols::SymbolTable,
+    joypad::Button, ppu::model::PpuModel, serial_transfer::SerialLink,
 };
 use missingno_gbc::GameBoyColor;
 
@@ -174,8 +175,20 @@ where
         self.core.game_boy()
     }
 
+    fn symbols(&self) -> Arc<SymbolTable> {
+        self.core.symbols().clone()
+    }
+
+    fn set_symbols(&mut self, symbols: SymbolTable) {
+        self.core.set_symbols(symbols);
+    }
+
     fn snapshot(&self, frame: u64) -> DebugView {
-        Box::new(ConsoleSnapshot::capture(self.core.game_boy(), frame))
+        Box::new(ConsoleSnapshot::capture(
+            self.core.game_boy(),
+            frame,
+            self.core.symbols().clone(),
+        ))
     }
 
     fn running_status(&self, frame: u64) -> RunningStatus {

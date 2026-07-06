@@ -134,6 +134,16 @@ impl Debugger {
         }
     }
 
+    /// Load the ROM's `.sym` sidecar, if present. No-op while the core is
+    /// away on the emu thread.
+    pub fn load_symbols(&mut self, rom_path: &std::path::Path) {
+        if let Some(core) = &mut self.debugger {
+            core.set_symbols(missingno_gb::debugger::symbols::SymbolTable::for_rom(
+                rom_path,
+            ));
+        }
+    }
+
     /// The cartridge, present only while the core is on the UI thread.
     pub fn cartridge(&self) -> Option<&Cartridge> {
         self.debugger.as_ref().map(|core| core.cartridge())
@@ -413,6 +423,7 @@ impl Debugger {
         };
         let source: &dyn InspectSource = core.inspect();
         let colors = source.colors(self.panes.palette());
+        let symbols = core.symbols();
 
         let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
             pane_grid(split_state, |_handle, zone, _maximized| {
@@ -421,6 +432,7 @@ impl Debugger {
                         source,
                         breakpoints: core.breakpoints(),
                         colors: &colors,
+                        symbols: &symbols,
                     })),
                     MainSplit::Bottom => self.bottom_pane_grid(
                         self.bottom_panes
@@ -438,6 +450,7 @@ impl Debugger {
                 source,
                 breakpoints: core.breakpoints(),
                 colors: &colors,
+                symbols: &symbols,
             }))
         };
 
@@ -495,6 +508,7 @@ impl Debugger {
                 source: snapshot,
                 breakpoints: &self.breakpoints,
                 colors,
+                symbols: snapshot.symbols(),
             })),
             _ => self.panes.view(None),
         }
