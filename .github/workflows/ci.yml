@@ -37,8 +37,10 @@ jobs:
           sudo apt-get install -y libasound2-dev libudev-dev libgtk-3-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      - name: Formatting
+        run: cargo fmt --all --check
       - name: Build and unit tests
         run: cargo test -p missingno
       - name: Clippy (workspace, informational failures only on errors)
