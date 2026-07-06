@@ -134,7 +134,6 @@ fn halt_bug() {
 // that tests interrupt timing at both normal and double CPU speed. On DMG
 // hardware the ROM immediately displays "Failed" and halts. Matching that
 // failure screenshot tests nothing about emulation accuracy.
-// See receipts/research/systems/game-boy/testing/test-rom-reliability.md
 
 // DMG sound — individual sub-tests (cart RAM result, not serial)
 fn run_dmg_sound_single(name: &str, timeout_frames: u32) {

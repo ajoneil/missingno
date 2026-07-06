@@ -3,8 +3,8 @@
 Missingno is built so a second console family can arrive without disturbing the
 first. This document maps the seams a new system plugs into, what each one
 demands, and which parts of the frontend are still Game Boy-shaped and would
-need widening first. It reflects the code as of 2026-07; trust the seams named
-here, but verify signatures against the source before building on them.
+need widening first. Trust the seams named here, but verify signatures
+against the source before building on them.
 
 ## Two different axes
 
@@ -24,15 +24,13 @@ Don't confuse the two kinds of "new system":
 ## The accuracy philosophy, per core
 
 Use the available evidence to reach the highest accuracy possible — **and the
-mechanism that achieves it is a per-core decision** (Andrew, 2026-07-06). The
+mechanism that achieves it is a per-core decision**. The
 Game Boy runs a fused-T-cycle lockstep because gate-level ground truth
 (dmg-sim, the netlist) makes sub-cycle ordering verifiable and the suites
 demand it. A system whose best evidence is test-ROM-granular must not pay
 for — or claim — fidelity nobody can check; its design doc picks the
 internal quantum (dot, color clock, master-cycle slice, instruction-granular
-catch-up) and defends it against that system's ground-truth tier. See
-`receipts/fable-sprint-2026-07/research/systems/SYNTHESIS.md` for the
-per-system assessments.
+catch-up) and defends it against that system's ground-truth tier.
 
 What is NOT per-core is the contract with the frontend, debugger, tests, and
 tracing. Any internal mechanism must provide:
@@ -101,8 +99,7 @@ work, in roughly this order:
 2. **`joypad::Button` in the seam traits** — the input vocabulary is GB's
    eight buttons, and the settings bindings model (`Action::Gb*` in
    `app/settings/mod.rs`) matches. Path: per-system button sets; needs a
-   settings-file migration (see the sprint plan docs under
-   `receipts/fable-sprint-2026-07/plans/`).
+   settings-file migration.
 3. **`Cartridge` in the seam traits** — load/detail/save flows consume
    `missingno_gb::cartridge::Cartridge` directly. Path: narrow the seam to
    the operations actually used (title, battery presence, save bytes).

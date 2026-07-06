@@ -7,9 +7,9 @@
 //!
 //! The 6507 packaging differences (13 address lines, no IRQ/NMI pins) live
 //! in the console, not here: the console masks the bus and never asserts
-//! the interrupt lines. Interrupt *dispatch* is implemented; its
-//! cycle-level poll points are not yet pinned against an oracle (no VCS
-//! software can observe them — revisit for consumers with wired IRQs).
+//! the interrupt lines. Interrupt dispatch is implemented, but its
+//! cycle-level poll points are unverified against an oracle — no VCS
+//! software can observe them.
 
 mod apply;
 pub mod decode;

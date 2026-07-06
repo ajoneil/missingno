@@ -435,8 +435,8 @@ impl Tia {
     pub fn read(&mut self, address: u16) -> u8 {
         match address & 0x0F {
             reg @ 0x00..=0x07 => self.collisions[reg as usize],
-            // INPT0-3: pot inputs — the paddle charge model arrives with
-            // the input-device milestone; they read discharged for now.
+            // INPT0-3 pot inputs: no RC charge model — they read as
+            // permanently dumped (discharged).
             0x08..=0x0B => 0x00,
             reg @ (0x0C | 0x0D) => {
                 let port = (reg - 0x0C) as usize;

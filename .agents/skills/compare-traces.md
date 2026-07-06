@@ -253,9 +253,9 @@ When the full diff is too noisy, narrow the comparison to a specific region:
 ### Data sources for context
 
 When interpreting trace data, cross-reference with:
-- **Hardware timing data** (`receipts/resources/gb-timing-data/`): If a campaign exists for the behavior you're investigating, the CSV data provides ground-truth cycle measurements. Check `receipts/resources/gb-timing-data/campaigns/` for relevant TOML definitions. **Note: data collection is in progress — check what's available before assuming a campaign has results.**
+- **Hardware timing data** (`receipts/resources/gb-timing-data/`): If a campaign exists for the behavior you're investigating, the CSV data provides ground-truth cycle measurements. Check `receipts/resources/gb-timing-data/campaigns/` for relevant TOML definitions. Check what's available before assuming a campaign has results.
 - **PPU race pairs** (`receipts/resources/gb-propagation-delay-analysis/output/race_pairs_report.md`): For 1-dot timing discrepancies, check whether the divergence corresponds to a known signal race.
-- **Slowpeek** (`receipts/resources/slowpeek/`): For behaviors where no existing data covers the question, note that a Slowpeek sweep test could provide definitive hardware measurements. **Note: hardware serial path not yet complete — emulator-only for now.**
+- **Slowpeek** (`receipts/resources/slowpeek/`): For behaviors where no existing data covers the question, note that a Slowpeek sweep test could provide definitive hardware measurements. Check whether the hardware serial path is available before planning a hardware run.
 
 ## Limitations — suggest improvements
 

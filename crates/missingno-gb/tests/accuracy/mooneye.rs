@@ -270,8 +270,7 @@ mooneye_test!(
 // specific. The expected PNG matches MGB behavior only; DMG produces a
 // different (undocumented) result due to model-specific OAM corruption
 // patterns during halted DMA. No DMG reference image exists upstream or
-// elsewhere. See receipts/research/systems/game-boy/testing/
-// madness-mgb-oam-dma-halt-sprites.md for details.
+// elsewhere.
 //
 // #[test]
 // fn madness_mgb_oam_dma_halt_sprites() {

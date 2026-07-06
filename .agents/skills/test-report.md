@@ -1,6 +1,6 @@
 # Test Report
 
-Run the suite, categorise the failures by root cause, and label each cluster with cross-emulator status from the gbtrace manifests. **Both suites currently fully pass**, so the typical run finds 0 failures — report all-green and stop. The machinery below is for when regressions appear: **effort scales to the size of the failure set** — a handful of DMG failures is a quick inline job; a large regression on the CGB core (which historically ran into the thousands) needs fan-out and the core-diff partition. Match the effort to the count; don't run the heavy machinery for six failures.
+Run the suite, categorise the failures by root cause, and label each cluster with cross-emulator status from the gbtrace manifests. **The steady state is all-green**, so the typical run finds 0 failures — report all-green and stop. The machinery below is for when regressions appear: **effort scales to the size of the failure set** — a handful of DMG failures is a quick inline job; a large regression on the CGB core (which historically ran into the thousands) needs fan-out and the core-diff partition. Match the effort to the count; don't run the heavy machinery for six failures.
 
 ## Two rules that always hold
 
@@ -122,4 +122,4 @@ For DMG drop the partition line and the P1/P2/P3 framing — just subsystem clus
 - `cargo test -p missingno-gb` / `-gbc`, never bare `cargo test` (pulls in GUI tests).
 - Manifests may lag the suite — try the fuzzy matches, else mark "no manifest".
 - DocBoy traces at T-cycle granularity — note it when a cluster needs cycle-level localisation.
-- Hardware timing data (`receipts/resources/gb-timing-data/`) can confirm a hypothesised timing cause; check which campaigns exist. A Slowpeek sweep (`receipts/resources/slowpeek/`) is the definitive hardware measurement when no data source covers a cluster (hardware serial path not yet complete).
+- Hardware timing data (`receipts/resources/gb-timing-data/`) can confirm a hypothesised timing cause; check which campaigns exist. A Slowpeek sweep (`receipts/resources/slowpeek/`) is the definitive hardware measurement when no data source covers a cluster (check hardware-path availability first).

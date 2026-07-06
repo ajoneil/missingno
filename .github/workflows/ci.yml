@@ -10,8 +10,7 @@ env:
   # Test ROMs are committed; nothing here needs proprietary boot ROMs.
 
 jobs:
-  # The gate: both accuracy suites fully green. Any failure is a regression —
-  # the suites have been at zero failures since 2026-07.
+  # The gate: both accuracy suites fully green. Any failure is a regression.
   core-suites:
     runs-on: ubuntu-latest
     timeout-minutes: 60
