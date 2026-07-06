@@ -50,16 +50,24 @@ struct FallEdge {
 
 impl<M: Model> Console<M> {
     pub fn step(&mut self) -> StepResult {
-        self.step_traced(false).0
+        self.chassis.bus_trace.disable();
+        self.step_inner()
     }
 
-    /// Step one instruction, optionally recording all bus accesses.
-    /// Returns (result, trace). Trace is empty when `trace` is false.
-    pub fn step_traced(&mut self, trace: bool) -> (StepResult, Vec<BusAccess>) {
-        if trace {
-            self.chassis.bus_trace.enable();
-        }
+    /// Step one instruction, recording every bus access into the reusable
+    /// trace buffer — read it with [`Console::bus_trace`] before the next
+    /// recorded step.
+    pub fn step_recorded(&mut self) -> StepResult {
+        self.chassis.bus_trace.enable();
+        self.step_inner()
+    }
 
+    /// The bus accesses of the last [`Console::step_recorded`].
+    pub fn bus_trace(&self) -> &[BusAccess] {
+        self.chassis.bus_trace.entries()
+    }
+
+    fn step_inner(&mut self) -> StepResult {
         // If step_tcycle() left us mid-instruction, drain to the next
         // boundary first, then run one full instruction.
         let mut new_screen = false;
@@ -77,14 +85,11 @@ impl<M: Model> Console<M> {
         self.manage_dma_hold();
 
         let sram_dirty = self.chassis.external.cartridge.take_sram_dirty();
-        (
-            StepResult {
-                new_screen,
-                sram_dirty,
-                tcycles,
-            },
-            self.chassis.bus_trace.take(),
-        )
+        StepResult {
+            new_screen,
+            sram_dirty,
+            tcycles,
+        }
     }
 
     /// Run one complete instruction from start to finish.
@@ -125,7 +130,7 @@ impl<M: Model> Console<M> {
                 break;
             }
         }
-        // Don't drain sram_dirty here — let the caller (step_traced) do it
+        // Don't drain sram_dirty here — let the caller (step_inner) do it
         // so the flag accumulates across multiple step_instruction calls.
         let sram_dirty = self.chassis.external.cartridge.sram_dirty;
         StepResult {
@@ -181,7 +186,7 @@ impl<M: Model> Console<M> {
     }
 
     /// Advance to the next T-cycle boundary. Returns true if a new frame was
-    /// produced. Consumes the boundary flag so a following `step`/`step_traced`
+    /// produced. Consumes the boundary flag so a following `step`/`step_recorded`
     /// sees mid-instruction state.
     pub fn step_tcycle(&mut self) -> bool {
         let new_screen = self.execute_tcycle();

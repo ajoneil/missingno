@@ -171,29 +171,38 @@ pub struct BusAccess {
     pub kind: BusAccessKind,
 }
 
-/// Optional recording of every CPU/DMA bus access during a step.
-/// Allocation-free unless `enable` is called.
+/// Optional recording of every CPU/DMA bus access during a step. The buffer
+/// is reused across steps, so steady-state recording never allocates.
 pub struct BusTrace {
-    entries: Option<Vec<BusAccess>>,
+    entries: Vec<BusAccess>,
+    enabled: bool,
 }
 
 impl BusTrace {
     pub fn new() -> Self {
-        Self { entries: None }
-    }
-
-    pub fn enable(&mut self) {
-        self.entries = Some(Vec::new());
-    }
-
-    pub fn record(&mut self, access: BusAccess) {
-        if let Some(entries) = &mut self.entries {
-            entries.push(access);
+        Self {
+            entries: Vec::new(),
+            enabled: false,
         }
     }
 
-    /// Drain the accumulated trace and disable recording.
-    pub fn take(&mut self) -> Vec<BusAccess> {
-        self.entries.take().unwrap_or_default()
+    pub fn enable(&mut self) {
+        self.entries.clear();
+        self.enabled = true;
+    }
+
+    pub fn disable(&mut self) {
+        self.enabled = false;
+    }
+
+    pub fn record(&mut self, access: BusAccess) {
+        if self.enabled {
+            self.entries.push(access);
+        }
+    }
+
+    /// The accesses recorded since `enable`, valid until the next `enable`.
+    pub fn entries(&self) -> &[BusAccess] {
+        &self.entries
     }
 }

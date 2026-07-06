@@ -47,6 +47,10 @@ impl Cartridge {
         self.mbc.switchable_rom_bank(self.rom.len())
     }
 
+    pub fn rom_len(&self) -> usize {
+        self.rom.len()
+    }
+
     pub fn new(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Cartridge {
         let (title, sgb_flag, has_battery) = parse_header(&rom);
         let cartridge_type = rom[0x147];

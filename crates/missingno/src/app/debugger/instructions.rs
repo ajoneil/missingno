@@ -19,6 +19,7 @@ use crate::app::{
     ui::{fonts, palette, sizes::s},
 };
 use missingno_gb::cpu::instructions::Instruction;
+use missingno_gb::debugger::cdl::CdlWindow;
 use missingno_gb::debugger::instructions::{
     InstructionsIterator, ReadInstructionMemory, addresses_before,
 };
@@ -52,6 +53,7 @@ impl InstructionsPane {
         breakpoints: &BTreeSet<u16>,
         symbols: &SymbolTable,
         rom_bank: Option<u16>,
+        cdl: &CdlWindow,
     ) -> pane_grid::Content<'_, app::Message> {
         let mut instructions = Vec::new();
         let push_label = |rows: &mut Vec<_>, address: u16| {
@@ -76,10 +78,17 @@ impl InstructionsPane {
             }
         }
 
-        // Instructions from PC onwards
+        // Instructions from PC onwards; bytes the code/data log knows were
+        // never executed render as data instead of decoding through them.
         let mut iterator = InstructionsIterator::new(pc, memory);
         for _ in 0..CONTEXT_AFTER {
             if let Some(address) = iterator.address {
+                if cdl.is_data(address) {
+                    push_label(&mut instructions, address);
+                    instructions.push(data_row(address, rom_bank, memory.read(address)));
+                    iterator.address = Some(address.wrapping_add(1));
+                    continue;
+                }
                 if let Some(decoded) = Instruction::decode(&mut iterator) {
                     push_label(&mut instructions, address);
                     instructions.push(instruction_row(
@@ -120,6 +129,30 @@ impl InstructionsPane {
                 .into(),
         )
     }
+}
+
+fn data_row(address: u16, rom_bank: Option<u16>, byte: u8) -> Element<'static, app::Message> {
+    let address_text = match rom_bank {
+        Some(bank) if (0x4000..0x8000).contains(&address) => {
+            format!("{bank:02X}:{address:04X}")
+        }
+        _ => format!("{address:04X}"),
+    };
+    row![
+        container("").width(Length::Fixed(24.0)),
+        text(address_text)
+            .font(fonts::monospace())
+            .size(13.0)
+            .color(palette::OVERLAY0),
+        text(format!("db ${byte:02X}"))
+            .font(fonts::monospace())
+            .size(13.0)
+            .color(palette::MUTED),
+    ]
+    .align_y(Vertical::Center)
+    .spacing(s())
+    .height(Length::Fixed(ROW_HEIGHT))
+    .into()
 }
 
 fn label_row(label: &str) -> Element<'static, app::Message> {
@@ -308,6 +341,7 @@ impl panes::Pane for InstructionsPane {
                 ctx.breakpoints,
                 ctx.symbols,
                 ctx.source.switchable_rom_bank(),
+                ctx.cdl,
             ),
             None => running_placeholder("Instructions"),
         }

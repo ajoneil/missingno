@@ -9,7 +9,11 @@ use std::time::Duration;
 use missingno_gb::{
     BootRom, Console, GameBoy,
     cartridge::Cartridge,
-    debugger::{WatchCondition, symbols::SymbolTable},
+    debugger::{
+        WatchCondition,
+        cdl::{CdlWindow, CodeDataLog},
+        symbols::SymbolTable,
+    },
     joypad::Button,
     ppu::model::PpuModel,
     serial_transfer::SerialLink,
@@ -203,11 +207,29 @@ where
         self.core.set_symbols(symbols);
     }
 
+    fn cdl_window(&self) -> CdlWindow {
+        let console = self.core.game_boy();
+        self.core.cdl().window(
+            console.cpu().ir_address,
+            console.cartridge().switchable_rom_bank(),
+        )
+    }
+
+    fn load_cdl(&mut self, path: &Path) {
+        let rom_len = self.core.game_boy().cartridge().rom_len();
+        self.core.set_cdl(CodeDataLog::load(path, rom_len));
+    }
+
+    fn save_cdl(&self, path: &Path) {
+        self.core.cdl().save(path);
+    }
+
     fn snapshot(&self, frame: u64) -> DebugView {
         Box::new(ConsoleSnapshot::capture(
             self.core.game_boy(),
             frame,
             self.core.symbols().clone(),
+            self.cdl_window(),
         ))
     }
 

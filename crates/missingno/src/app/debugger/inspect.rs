@@ -16,6 +16,7 @@ use missingno_gb::cpu::{
     flags::Flags,
     registers::{Register8, Register16},
 };
+use missingno_gb::debugger::cdl::CdlWindow;
 use missingno_gb::debugger::instructions::ReadInstructionMemory;
 use missingno_gb::debugger::symbols::SymbolTable;
 use missingno_gb::interrupts;
@@ -448,6 +449,7 @@ pub trait InspectSource {
 pub trait InspectSnapshot: InspectSource + Send {
     fn frame(&self) -> u64;
     fn symbols(&self) -> &SymbolTable;
+    fn cdl(&self) -> &CdlWindow;
 }
 
 /// The model-erased snapshot handed from the emulation thread to the UI.
@@ -498,6 +500,7 @@ pub struct ConsoleSnapshot {
     pub switchable_rom_bank: Option<u16>,
     pub memory: MemoryWindow,
     pub symbols: Arc<SymbolTable>,
+    pub cdl: CdlWindow,
     pub frame: u64,
 }
 
@@ -506,6 +509,7 @@ impl ConsoleSnapshot {
         console: &Console<M>,
         frame: u64,
         symbols: Arc<SymbolTable>,
+        cdl: CdlWindow,
     ) -> Self
     where
         <M::Ppu as PpuModel>::Vram: Clone + Send + 'static,
@@ -521,6 +525,7 @@ impl ConsoleSnapshot {
             switchable_rom_bank: console.cartridge().switchable_rom_bank(),
             memory: MemoryWindow::capture(console, console.cpu().ir_address),
             symbols,
+            cdl,
             frame,
         }
     }
@@ -562,5 +567,8 @@ impl InspectSnapshot for ConsoleSnapshot {
     }
     fn symbols(&self) -> &SymbolTable {
         &self.symbols
+    }
+    fn cdl(&self) -> &CdlWindow {
+        &self.cdl
     }
 }

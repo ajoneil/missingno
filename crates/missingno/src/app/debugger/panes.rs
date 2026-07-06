@@ -34,6 +34,7 @@ use crate::app::{
         sizes::{self as sizes, s, xs},
     },
 };
+use missingno_gb::debugger::cdl::CdlWindow;
 use missingno_gb::debugger::symbols::SymbolTable;
 use missingno_gb::ppu::types::{
     palette::{Palette, PaletteChoice},
@@ -73,6 +74,7 @@ pub struct PaneContext<'b> {
     pub breakpoints: &'b BTreeSet<u16>,
     pub colors: &'b ConsoleColors,
     pub symbols: &'b SymbolTable,
+    pub cdl: &'b CdlWindow,
 }
 
 /// One debugger pane behind the grid. Implementations live with their pane
@@ -243,7 +245,7 @@ impl DebuggerPanes {
         }
     }
 
-    pub fn take_screen_view(self) -> ScreenView {
+    pub fn take_screen_view(&self) -> ScreenView {
         if let Some(panes) = &self.panes {
             for (_, pane) in panes.iter() {
                 if let Some(view) = pane.screen_view() {

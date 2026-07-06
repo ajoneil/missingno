@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 
-use missingno_gb::debugger::{WatchCondition, symbols::SymbolTable};
+use missingno_gb::debugger::{WatchCondition, cdl::CdlWindow, symbols::SymbolTable};
 use missingno_gb::{cartridge::Cartridge, joypad::Button, serial_transfer::SerialLink};
 
 use std::sync::Arc;
@@ -75,6 +75,11 @@ pub trait SystemDebugger: Send {
     /// Labels from the ROM's debug-symbol sidecar, if one was loaded.
     fn symbols(&self) -> Arc<SymbolTable>;
     fn set_symbols(&mut self, symbols: SymbolTable);
+    /// Code/data-log flags around the current instruction, for the
+    /// disassembly's data-byte display.
+    fn cdl_window(&self) -> CdlWindow;
+    fn load_cdl(&mut self, path: &Path);
+    fn save_cdl(&self, path: &Path);
     /// An owned per-vblank snapshot for the UI to render from while running.
     fn snapshot(&self, frame: u64) -> DebugView;
     fn running_status(&self, frame: u64) -> RunningStatus;

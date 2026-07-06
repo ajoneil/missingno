@@ -115,6 +115,8 @@ impl Into<super::Message> for Message {
 pub struct Debugger {
     /// The core (console + breakpoints) — `None` while it runs on the emu thread.
     debugger: Option<Box<dyn SystemDebugger>>,
+    /// Where the ROM's debug sidecars (.sym, .cdl) live; set on load.
+    rom_path: Option<std::path::PathBuf>,
     /// UI copy of the breakpoint set, kept editable while the core is away.
     breakpoints: BTreeSet<u16>,
     /// UI copy of the watchpoint list, kept editable while the core is away.
@@ -153,6 +155,7 @@ impl Debugger {
     fn build(core: Box<dyn SystemDebugger>, panes: DebuggerPanes) -> Self {
         Self {
             debugger: Some(core),
+            rom_path: None,
             breakpoints: BTreeSet::new(),
             watchpoints: Vec::new(),
             last_status: None,
@@ -170,13 +173,21 @@ impl Debugger {
         }
     }
 
-    /// Load the ROM's `.sym` sidecar, if present. No-op while the core is
-    /// away on the emu thread.
+    /// Load the ROM's debug sidecars — `.sym` labels and the `.cdl`
+    /// code/data log. No-op while the core is away on the emu thread.
     pub fn load_symbols(&mut self, rom_path: &std::path::Path) {
         if let Some(core) = &mut self.debugger {
             core.set_symbols(missingno_gb::debugger::symbols::SymbolTable::for_rom(
                 rom_path,
             ));
+            core.load_cdl(&rom_path.with_extension("cdl"));
+            self.rom_path = Some(rom_path.to_path_buf());
+        }
+    }
+
+    fn save_cdl(&self) {
+        if let (Some(core), Some(rom_path)) = (&self.debugger, &self.rom_path) {
+            core.save_cdl(&rom_path.with_extension("cdl"));
         }
     }
 
@@ -269,9 +280,11 @@ impl Debugger {
         }
     }
 
-    pub fn disable_debugger(self, use_sgb_colors: bool, frame_blending: bool) -> Emulator {
+    pub fn disable_debugger(mut self, use_sgb_colors: bool, frame_blending: bool) -> Emulator {
+        self.save_cdl();
         let core = self
             .debugger
+            .take()
             .expect("core present when disabling the debugger");
         let screen_view = self.panes.take_screen_view();
         Emulator::from_debugger(
@@ -536,6 +549,7 @@ impl Debugger {
         let source: &dyn InspectSource = core.inspect();
         let colors = source.colors(self.panes.palette());
         let symbols = core.symbols();
+        let cdl = core.cdl_window();
 
         let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
             pane_grid(split_state, |_handle, zone, _maximized| {
@@ -545,6 +559,7 @@ impl Debugger {
                         breakpoints: core.breakpoints(),
                         colors: &colors,
                         symbols: &symbols,
+                        cdl: &cdl,
                     })),
                     MainSplit::Bottom => self.bottom_pane_grid(
                         self.bottom_panes
@@ -563,6 +578,7 @@ impl Debugger {
                 breakpoints: core.breakpoints(),
                 colors: &colors,
                 symbols: &symbols,
+                cdl: &cdl,
             }))
         };
 
@@ -621,6 +637,7 @@ impl Debugger {
                 breakpoints: &self.breakpoints,
                 colors,
                 symbols: snapshot.symbols(),
+                cdl: snapshot.cdl(),
             })),
             _ => self.panes.view(None),
         }
@@ -764,6 +781,14 @@ impl Debugger {
         if let Some(core) = &mut self.debugger {
             core.release_button(button);
         }
+    }
+}
+
+/// The code/data log persists when the debugger goes away — same rationale
+/// as the pane layout's drop-save.
+impl Drop for Debugger {
+    fn drop(&mut self) {
+        self.save_cdl();
     }
 }
 

@@ -8,10 +8,12 @@ use crate::{
     cpu_bus::{BusAccess, BusAccessKind},
     ppu::{self, rendering::Mode},
 };
+use cdl::CodeDataLog;
 use instructions::InstructionsIterator;
 use std::sync::Arc;
 use symbols::SymbolTable;
 
+pub mod cdl;
 pub mod instructions;
 pub mod symbols;
 
@@ -119,6 +121,8 @@ pub struct Debugger<M: Model = Dmg> {
     last_watchpoint_hit: Option<WatchCondition>,
     /// Labels from the ROM's `.sym` sidecar; shared so snapshots ride along.
     symbols: Arc<SymbolTable>,
+    /// How each ROM byte has been used, filled in as the debugger runs.
+    cdl: CodeDataLog,
     /// T-cycle counter. Increments once per dot. Not hardware state —
     /// debugging/tracing infrastructure built on top of the emulation core.
     tcycle_count: u64,
@@ -126,14 +130,24 @@ pub struct Debugger<M: Model = Dmg> {
 
 impl<M: Model> Debugger<M> {
     pub fn new(game_boy: Console<M>) -> Self {
+        let cdl = CodeDataLog::new(game_boy.cartridge().rom_len());
         Self {
             game_boy,
             breakpoints: BTreeSet::new(),
             watchpoints: Vec::new(),
             last_watchpoint_hit: None,
             symbols: Arc::new(SymbolTable::default()),
+            cdl,
             tcycle_count: 0,
         }
+    }
+
+    pub fn cdl(&self) -> &CodeDataLog {
+        &self.cdl
+    }
+
+    pub fn set_cdl(&mut self, cdl: CodeDataLog) {
+        self.cdl = cdl;
     }
 
     pub fn set_symbols(&mut self, symbols: SymbolTable) {
@@ -161,13 +175,50 @@ impl<M: Model> Debugger<M> {
     }
 
     pub fn step(&mut self) -> Option<M::Screen> {
-        let result = self.game_boy.step();
+        let result = self.step_logged();
         self.tcycle_count += result.tcycles as u64;
         if result.new_screen {
             Some(self.game_boy.screen().clone())
         } else {
             None
         }
+    }
+
+    /// Step one instruction while logging its code/data usage into the CDL.
+    fn step_logged(&mut self) -> crate::execute::StepResult {
+        let before = self.game_boy.cpu().ir_address;
+        let bank_before = self.game_boy.cartridge().switchable_rom_bank();
+        let opcode = self.game_boy.read(before);
+        let length = crate::cpu::instructions::instruction_length(opcode);
+
+        let result = self.game_boy.step_recorded();
+
+        for offset in 0..length {
+            self.cdl
+                .mark(before.wrapping_add(offset), bank_before, cdl::CODE);
+        }
+        let instruction_end = before.wrapping_add(length);
+        for access in self.game_boy.bus_trace() {
+            let is_read = matches!(access.kind, BusAccessKind::Read | BusAccessKind::DmaRead);
+            let in_instruction = access.address >= before && access.address < instruction_end;
+            if is_read && !in_instruction {
+                self.cdl.mark(access.address, bank_before, cdl::DATA);
+            }
+        }
+
+        let after = self.game_boy.cpu().ir_address;
+        if after != instruction_end {
+            let bank_after = self.game_boy.cartridge().switchable_rom_bank();
+            let to_subroutine =
+                matches!(opcode, 0xcd | 0xc4 | 0xcc | 0xd4 | 0xdc) || opcode & 0xc7 == 0xc7;
+            let bits = if to_subroutine {
+                cdl::JUMP_TARGET | cdl::SUB_ENTRY_POINT
+            } else {
+                cdl::JUMP_TARGET
+            };
+            self.cdl.mark(after, bank_after, bits);
+        }
+        result
     }
 
     pub fn step_tcycle(&mut self) -> Option<M::Screen> {
@@ -187,6 +238,7 @@ impl<M: Model> Debugger<M> {
         let temp_breakpoint = if self.breakpoints.contains(&next_address) {
             None
         } else {
+            self.breakpoints.insert(next_address);
             Some(next_address)
         };
 
@@ -239,7 +291,7 @@ impl<M: Model> Debugger<M> {
 
     fn step_frame_watched_traced(&mut self) -> Option<M::Screen> {
         loop {
-            let (result, trace) = self.game_boy.step_traced(true);
+            let result = self.step_logged();
             self.tcycle_count += result.tcycles as u64;
             let screen = if result.new_screen {
                 Some(self.game_boy.screen().clone())
@@ -247,7 +299,12 @@ impl<M: Model> Debugger<M> {
                 None
             };
 
-            if let Some(hit) = self.check_watchpoints(&trace) {
+            let hit = self
+                .watchpoints
+                .iter()
+                .find(|condition| self.condition_matches(condition, self.game_boy.bus_trace()))
+                .cloned();
+            if let Some(hit) = hit {
                 self.last_watchpoint_hit = Some(hit);
                 return screen;
             }
@@ -424,5 +481,56 @@ impl<M: Model> Debugger<M> {
             .map_err(|e| format!("Failed to finish trace: {e}"))?;
 
         Ok(self.game_boy.screen().clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// NOP; JP 0150 → CALL 0160 { LD A,42; LD A,(0200); RET } → JR self.
+    fn traced_program_console() -> Console<Dmg> {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x100] = 0x00;
+        rom[0x101..0x104].copy_from_slice(&[0xc3, 0x50, 0x01]);
+        rom[0x150..0x153].copy_from_slice(&[0xcd, 0x60, 0x01]);
+        rom[0x153..0x155].copy_from_slice(&[0x18, 0xfe]);
+        rom[0x160..0x162].copy_from_slice(&[0x3e, 0x42]);
+        rom[0x162..0x165].copy_from_slice(&[0xfa, 0x00, 0x02]);
+        rom[0x165] = 0xc9;
+        Console::new(crate::cartridge::Cartridge::new(rom, None), None)
+    }
+
+    #[test]
+    fn stepping_logs_code_data_and_control_flow() {
+        let mut debugger = Debugger::new(traced_program_console());
+        for _ in 0..6 {
+            debugger.step();
+        }
+
+        let flags = |address| debugger.cdl().flags(address, Some(1));
+        assert_eq!(flags(0x0100) & cdl::CODE, cdl::CODE);
+        assert_eq!(flags(0x0103) & cdl::CODE, cdl::CODE); // JP operand byte
+        assert_eq!(
+            flags(0x0150) & (cdl::CODE | cdl::JUMP_TARGET),
+            cdl::CODE | cdl::JUMP_TARGET
+        );
+        assert_eq!(
+            flags(0x0160) & (cdl::CODE | cdl::JUMP_TARGET | cdl::SUB_ENTRY_POINT),
+            cdl::CODE | cdl::JUMP_TARGET | cdl::SUB_ENTRY_POINT
+        );
+        assert_eq!(flags(0x0200), cdl::DATA);
+        assert_eq!(flags(0x0300), 0);
+    }
+
+    #[test]
+    fn step_over_runs_a_call_to_completion() {
+        let mut debugger = Debugger::new(traced_program_console());
+        debugger.step(); // NOP
+        debugger.step(); // JP → at the CALL
+        assert_eq!(debugger.game_boy().cpu().ir_address, 0x0150);
+        debugger.step_over();
+        assert_eq!(debugger.game_boy().cpu().ir_address, 0x0153);
+        assert!(debugger.breakpoints().is_empty());
     }
 }
