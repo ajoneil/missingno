@@ -18,6 +18,35 @@ pub enum ScreenDisplay {
     GameBoy(GameBoyScreen),
     Sgb(SgbScreen),
     Cgb(CgbScreen),
+    /// System-agnostic palette-indexed frame, any dimensions.
+    Indexed(IndexedFrame),
+}
+
+/// A frame of palette indices plus the system's palette table, resolved to
+/// RGBA at draw time. Height is per-frame: systems without a hardware frame
+/// (emergent sync) legitimately vary line counts.
+#[derive(Clone, Debug)]
+pub struct IndexedFrame {
+    pub width: u32,
+    pub height: u32,
+    /// Row-major palette indices, `width * height` entries.
+    pub pixels: std::sync::Arc<[u8]>,
+    pub palette: &'static [RGB8],
+}
+
+impl IndexedFrame {
+    fn to_rgba(&self) -> Vec<u8> {
+        let mut rgba = Vec::with_capacity(self.pixels.len() * 4);
+        for &index in self.pixels.iter() {
+            let color = self
+                .palette
+                .get(index as usize)
+                .copied()
+                .unwrap_or(RGB8::new(0, 0, 0));
+            rgba.extend_from_slice(&[color.r, color.g, color.b, 255]);
+        }
+        rgba
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -51,6 +80,12 @@ impl From<SgbScreen> for ScreenDisplay {
     }
 }
 
+impl From<IndexedFrame> for ScreenDisplay {
+    fn from(frame: IndexedFrame) -> Self {
+        ScreenDisplay::Indexed(frame)
+    }
+}
+
 #[derive(Clone)]
 pub struct ScreenView {
     pub screen: Screen,
@@ -59,6 +94,8 @@ pub struct ScreenView {
     pub use_sgb_colors: bool,
     /// Pre-corrected CGB RGBA frame; bypasses the palette paths when set.
     pub cgb_rgba: Option<std::sync::Arc<[u8]>>,
+    /// Palette-indexed frame from a non-GB system; carries its own size.
+    pub indexed: Option<IndexedFrame>,
     /// Average each frame with the previous one, like the LCD's slow response.
     pub blend: bool,
     pub prev_rgba: Option<std::sync::Arc<[u8]>>,
@@ -72,12 +109,16 @@ impl ScreenView {
             sgb_render_data: None,
             use_sgb_colors: true,
             cgb_rgba: None,
+            indexed: None,
             blend: true,
             prev_rgba: None,
         }
     }
 
     fn resolve_rgba(&self) -> std::sync::Arc<[u8]> {
+        if let Some(frame) = &self.indexed {
+            return frame.to_rgba().into();
+        }
         match &self.cgb_rgba {
             Some(rgba) => rgba.clone(),
             None => screen_to_pixels(
@@ -97,6 +138,7 @@ impl ScreenView {
                 self.screen = screen;
                 self.sgb_render_data = None;
                 self.cgb_rgba = None;
+                self.indexed = None;
             }
             ScreenDisplay::GameBoy(GameBoyScreen::Off) => {
                 // NOTE: On real hardware, LCD off produces a different shade than
@@ -104,24 +146,42 @@ impl ScreenView {
                 self.screen = Screen::default();
                 self.sgb_render_data = None;
                 self.cgb_rgba = None;
+                self.indexed = None;
             }
             ScreenDisplay::Sgb(SgbScreen::Display(screen, sgb_data)) => {
                 self.screen = screen;
                 self.sgb_render_data = Some(sgb_data);
                 self.cgb_rgba = None;
+                self.indexed = None;
             }
             ScreenDisplay::Sgb(SgbScreen::Freeze(sgb_data)) => {
                 self.sgb_render_data = Some(sgb_data);
                 self.cgb_rgba = None;
+                self.indexed = None;
             }
             ScreenDisplay::Cgb(CgbScreen::Display(rgba)) => {
                 self.sgb_render_data = None;
                 self.cgb_rgba = Some(rgba.into());
+                self.indexed = None;
             }
             ScreenDisplay::Cgb(CgbScreen::Off) => {
                 self.sgb_render_data = None;
                 self.cgb_rgba = Some(cgb_blank_rgba().into());
+                self.indexed = None;
             }
+            ScreenDisplay::Indexed(frame) => {
+                self.sgb_render_data = None;
+                self.cgb_rgba = None;
+                self.indexed = Some(frame);
+            }
+        }
+    }
+
+    /// The active frame's pixel dimensions.
+    fn dimensions(&self) -> (u32, u32) {
+        match &self.indexed {
+            Some(frame) => (frame.width, frame.height),
+            None => (screen::PIXELS_PER_LINE as u32, screen::NUM_SCANLINES as u32),
         }
     }
 }
@@ -151,11 +211,8 @@ impl<Message> shader::Program<Message> for ScreenView {
                 .into(),
             _ => current,
         };
-        let renderer = TextureRenderer::with_pixels(
-            screen::PIXELS_PER_LINE as u32,
-            screen::NUM_SCANLINES as u32,
-            pixels,
-        );
+        let (width, height) = self.dimensions();
+        let renderer = TextureRenderer::with_pixels(width, height, pixels);
 
         <TextureRenderer as shader::Program<Message>>::draw(&renderer, &(), cursor, bounds)
     }
