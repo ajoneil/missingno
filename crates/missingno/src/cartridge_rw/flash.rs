@@ -50,10 +50,7 @@ pub(super) fn detect_flash(
     // Reset again after CFI query
     let _ = cart_write_flash(port, &[(0x0000, 0x00F0)]);
 
-    match cfi {
-        Some(info) => Some(FlashInfo { chip_id, ..info }),
-        None => None,
-    }
+    cfi.map(|info| FlashInfo { chip_id, ..info })
 }
 
 /// Query the CFI (Common Flash Interface) table from a flash chip.
@@ -241,7 +238,7 @@ pub fn flash_rom(
 
     // Pad to 16K bank boundary
     let mut padded = rom_data.to_vec();
-    if padded.len() % 0x4000 != 0 {
+    if !padded.len().is_multiple_of(0x4000) {
         padded.resize(padded.len() + (0x4000 - padded.len() % 0x4000), 0xFF);
     }
 
@@ -426,10 +423,10 @@ fn chip_erase_amd(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) -> Re
     loop {
         std::thread::sleep(Duration::from_millis(500));
 
-        if let Some(data) = read_rom_bytes(port, fw_ver, 0, 2) {
-            if data[0] == 0xFF {
-                return Ok(());
-            }
+        if let Some(data) = read_rom_bytes(port, fw_ver, 0, 2)
+            && data[0] == 0xFF
+        {
+            return Ok(());
         }
 
         if start.elapsed() > timeout {

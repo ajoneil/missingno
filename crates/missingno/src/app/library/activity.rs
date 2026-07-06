@@ -87,6 +87,8 @@ pub struct SessionEvent {
 }
 
 /// What kind of event occurred.
+// Session events are built rarely and immediately serialized.
+#[allow(clippy::large_enum_variant)]
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum EventKind {
     /// SRAM changed.
@@ -698,12 +700,11 @@ pub fn format_date(ts: &Timestamp) -> String {
 /// Handles ISO dates, unix timestamps, MM-DD-YYYY, DD/MM/YYYY, and plain years.
 pub fn format_date_string(raw: &str) -> String {
     // Try unix timestamp (must be > 1_000_000_000 to avoid matching plain years)
-    if let Ok(ts) = raw.parse::<i64>() {
-        if ts > 1_000_000_000 {
-            if let Ok(timestamp) = Timestamp::from_second(ts) {
-                return format_date(&timestamp);
-            }
-        }
+    if let Ok(ts) = raw.parse::<i64>()
+        && ts > 1_000_000_000
+        && let Ok(timestamp) = Timestamp::from_second(ts)
+    {
+        return format_date(&timestamp);
     }
 
     // Try full ISO timestamp
@@ -712,32 +713,32 @@ pub fn format_date_string(raw: &str) -> String {
     }
 
     // Try YYYY-MM-DD as a civil date
-    if raw.len() >= 10 && raw.as_bytes().get(4) == Some(&b'-') {
-        if let Ok(date) = raw[..10].parse::<jiff::civil::Date>() {
-            if let Ok(ts) = date.at(0, 0, 0, 0).to_zoned(jiff::tz::TimeZone::UTC) {
-                return format_date(&ts.timestamp());
-            }
-        }
+    if raw.len() >= 10
+        && raw.as_bytes().get(4) == Some(&b'-')
+        && let Ok(date) = raw[..10].parse::<jiff::civil::Date>()
+        && let Ok(ts) = date.at(0, 0, 0, 0).to_zoned(jiff::tz::TimeZone::UTC)
+    {
+        return format_date(&ts.timestamp());
     }
 
     // Try MM-DD-YYYY or MM/DD/YYYY
-    let parts: Vec<&str> = raw.splitn(3, |c| c == '-' || c == '/').collect();
-    if parts.len() == 3 {
-        if let (Ok(a), Ok(b), Ok(c)) = (
+    let parts: Vec<&str> = raw.splitn(3, ['-', '/']).collect();
+    if parts.len() == 3
+        && let (Ok(a), Ok(b), Ok(c)) = (
             parts[0].parse::<i16>(),
             parts[1].parse::<i8>(),
             parts[2].parse::<i16>(),
-        ) {
-            let (year, month, day) = if c > 31 {
-                (c, a as i8, b)
-            } else {
-                (a, b as i8, c as i8)
-            };
-            if let Ok(date) = jiff::civil::Date::new(year, month, day) {
-                if let Ok(ts) = date.at(0, 0, 0, 0).to_zoned(jiff::tz::TimeZone::UTC) {
-                    return format_date(&ts.timestamp());
-                }
-            }
+        )
+    {
+        let (year, month, day) = if c > 31 {
+            (c, a as i8, b)
+        } else {
+            (a, b, c as i8)
+        };
+        if let Ok(date) = jiff::civil::Date::new(year, month, day)
+            && let Ok(ts) = date.at(0, 0, 0, 0).to_zoned(jiff::tz::TimeZone::UTC)
+        {
+            return format_date(&ts.timestamp());
         }
     }
 

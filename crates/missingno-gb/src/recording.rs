@@ -16,6 +16,12 @@ pub enum Input {
     Release(Button),
 }
 
+impl Default for Recording {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Recording {
     pub fn new() -> Self {
         Self { input: Vec::new() }

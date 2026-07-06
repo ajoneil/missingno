@@ -42,6 +42,12 @@ pub struct DispatchChain {
     zacw: Dff<bool>,
 }
 
+impl Default for DispatchChain {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DispatchChain {
     pub fn new() -> Self {
         Self {

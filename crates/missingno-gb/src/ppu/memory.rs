@@ -14,17 +14,16 @@ pub struct VramBank {
 impl VramBank {
     pub fn from_bytes(data: &[u8]) -> Self {
         let mut vram = VramBank::default();
-        let len = data.len().min(0x2000);
-        for i in 0..len {
+        for (i, &byte) in data.iter().enumerate().take(0x2000) {
             if i < 0x1800 {
                 let block = i / 0x800;
                 let within = i % 0x800;
-                vram.tiles[block].data[within] = data[i];
+                vram.tiles[block].data[within] = byte;
             } else {
                 let map_offset = i - 0x1800;
                 let map = map_offset / 0x400;
                 let within = map_offset % 0x400;
-                vram.tile_maps[map].data[within] = TileIndex(data[i]);
+                vram.tile_maps[map].data[within] = TileIndex(byte);
             }
         }
         vram

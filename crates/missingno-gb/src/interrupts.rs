@@ -78,6 +78,12 @@ pub struct Registers {
     stat_set_settle: u8,
 }
 
+impl Default for Registers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Registers {
     const IF_SET_SETTLE: u8 = 2;
     /// The five real IRQ bits (VBLANK, STAT, TIMER, SERIAL, JOYPAD).

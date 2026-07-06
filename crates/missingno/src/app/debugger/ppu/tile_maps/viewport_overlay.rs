@@ -72,6 +72,7 @@ impl<Message> canvas::Program<Message> for ViewportOverlay {
 }
 
 /// Draw a rectangle that wraps around the tile map edges.
+#[allow(clippy::too_many_arguments)]
 fn draw_wrapping_rect(
     frame: &mut Frame,
     x: f32,

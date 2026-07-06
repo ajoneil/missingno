@@ -117,13 +117,13 @@ pub fn list_all() -> Vec<(PathBuf, GameEntry)> {
     let mut games = Vec::new();
     for dir_entry in entries.flatten() {
         let path = dir_entry.path();
-        if path.is_dir() {
-            if let Some(entry) = load_entry(&path) {
-                games.push((path, entry));
-            }
+        if path.is_dir()
+            && let Some(entry) = load_entry(&path)
+        {
+            games.push((path, entry));
         }
     }
-    games.sort_by(|a, b| a.1.title.to_lowercase().cmp(&b.1.title.to_lowercase()));
+    games.sort_by_key(|a| a.1.title.to_lowercase());
     games
 }
 
@@ -136,10 +136,10 @@ pub fn find_by_sha1(sha1: &str) -> Option<(PathBuf, GameEntry)> {
         if !path.is_dir() {
             continue;
         }
-        if let Some(entry) = load_entry(&path) {
-            if entry.sha1 == sha1 {
-                return Some((path, entry));
-            }
+        if let Some(entry) = load_entry(&path)
+            && entry.sha1 == sha1
+        {
+            return Some((path, entry));
         }
     }
     None
@@ -171,16 +171,14 @@ fn migrate(entry: &mut GameEntry) {
     use missingno_gb::cartridge::Cartridge;
 
     // v0 → v1: backfill header_title from ROM file
-    if entry.version < 1 {
-        if entry.header_title.is_none() {
-            entry.header_title = entry.rom_paths.iter().find_map(|path| {
-                let mut file = fs::File::open(path).ok()?;
-                let mut buf = vec![0u8; 0x144];
-                std::io::Read::read_exact(&mut file, &mut buf).ok()?;
-                let title = Cartridge::peek_title(&buf);
-                if title.is_empty() { None } else { Some(title) }
-            });
-        }
+    if entry.version < 1 && entry.header_title.is_none() {
+        entry.header_title = entry.rom_paths.iter().find_map(|path| {
+            let mut file = fs::File::open(path).ok()?;
+            let mut buf = vec![0u8; 0x144];
+            std::io::Read::read_exact(&mut file, &mut buf).ok()?;
+            let title = Cartridge::peek_title(&buf);
+            if title.is_empty() { None } else { Some(title) }
+        });
     }
 
     entry.version = CURRENT_VERSION;

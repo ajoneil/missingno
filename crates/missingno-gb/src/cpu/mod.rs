@@ -391,6 +391,12 @@ pub struct Cpu {
     pub dispatch: dispatch_chain::DispatchChain,
 }
 
+impl Default for Cpu {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Cpu {
     /// Cold-start state: all registers zeroed, PC=0x0000 ready for
     /// the boot ROM to execute from address 0.
@@ -586,8 +592,8 @@ impl Cpu {
     pub fn op_state(&self) -> u8 {
         match &self.seq.phase {
             mcycle::CpuPhase::Fetch => 0,
-            mcycle::CpuPhase::Execute { step, .. } => *step as u8,
-            mcycle::CpuPhase::InterruptDispatch { step, .. } => *step as u8,
+            mcycle::CpuPhase::Execute { step, .. } => *step,
+            mcycle::CpuPhase::InterruptDispatch { step, .. } => *step,
             mcycle::CpuPhase::Halted(_) => 0,
             mcycle::CpuPhase::Locked => 0,
         }

@@ -443,46 +443,37 @@ fn restore_mbc(snap: &MbcSnapshot, mbc: &mut Mbc) {
 // ── Capture ──────────────────────────────────────────────────────
 
 pub fn capture_memory(gb: &GameBoy) -> Vec<u8> {
-    let mut regions = Vec::new();
-
-    // VRAM
-    regions.push(MemoryRegion {
-        start: 0x8000,
-        data: gb.peek_range(0x8000, 0x2000),
-    });
-
-    // WRAM
-    regions.push(MemoryRegion {
-        start: 0xC000,
-        data: gb.external_bus().work_ram.to_vec(),
-    });
-
-    // OAM
-    regions.push(MemoryRegion {
-        start: 0xFE00,
-        data: gb.peek_range(0xFE00, 0x00A0),
-    });
-
-    // HRAM
-    regions.push(MemoryRegion {
-        start: 0xFF80,
-        data: gb.high_ram().data().to_vec(),
-    });
-
-    // Wave RAM
-    regions.push(MemoryRegion {
-        start: 0xFF30,
-        data: gb.audio().channels().ch3.ram.to_vec(),
-    });
+    let mut regions = vec![
+        MemoryRegion {
+            start: 0x8000,
+            data: gb.peek_range(0x8000, 0x2000),
+        },
+        MemoryRegion {
+            start: 0xC000,
+            data: gb.external_bus().work_ram.to_vec(),
+        },
+        MemoryRegion {
+            start: 0xFE00,
+            data: gb.peek_range(0xFE00, 0x00A0),
+        },
+        MemoryRegion {
+            start: 0xFF80,
+            data: gb.high_ram().data().to_vec(),
+        },
+        MemoryRegion {
+            start: 0xFF30,
+            data: gb.audio().channels().ch3.ram.to_vec(),
+        },
+    ];
 
     // Cartridge RAM (full contents, not just the mapped bank)
-    if let Some(ram) = gb.cartridge().ram() {
-        if !ram.is_empty() {
-            regions.push(MemoryRegion {
-                start: 0xA000,
-                data: ram,
-            });
-        }
+    if let Some(ram) = gb.cartridge().ram()
+        && !ram.is_empty()
+    {
+        regions.push(MemoryRegion {
+            start: 0xA000,
+            data: ram,
+        });
     }
 
     build_memory_payload(&regions)

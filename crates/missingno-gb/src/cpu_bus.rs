@@ -39,6 +39,12 @@ enum Activity {
     },
 }
 
+impl Default for CpuBus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CpuBus {
     pub fn new() -> Self {
         Self {
@@ -176,6 +182,12 @@ pub struct BusAccess {
 pub struct BusTrace {
     entries: Vec<BusAccess>,
     enabled: bool,
+}
+
+impl Default for BusTrace {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BusTrace {

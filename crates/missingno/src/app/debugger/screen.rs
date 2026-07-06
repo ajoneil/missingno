@@ -22,10 +22,10 @@ pub enum Message {
     Update(ScreenDisplay),
 }
 
-impl Into<app::Message> for Message {
-    fn into(self) -> app::Message {
+impl From<Message> for app::Message {
+    fn from(val: Message) -> Self {
         app::Message::Debugger(debugger::Message::Pane(panes::Message::Pane(
-            panes::PaneMessage::Screen(self),
+            panes::PaneMessage::Screen(val),
         )))
     }
 }

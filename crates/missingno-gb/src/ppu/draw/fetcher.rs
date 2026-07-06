@@ -253,6 +253,7 @@ impl<P: PpuModel> TileFetcher<P> {
     }
 
     /// PPU fall: VRAM reads at counter 0/2/4 (no counter increment — LEBO only fires on rise).
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::ppu) fn advance_falling(
         &mut self,
         pixel_counter: u8,

@@ -26,6 +26,12 @@ pub struct Timers {
     pub tima_fell_this_mcycle: bool,
 }
 
+impl Default for Timers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Timers {
     /// Post-boot state at the M-cycle boundary CLK9↑ that opens the
     /// PC=$0100 fetch. dmg-sim-aligned: reg_div16=0xEAF3 (FF04=0xAB).

@@ -84,6 +84,8 @@ enum MainSplit {
     Bottom,
 }
 
+// Frame-carrying messages are produced once per frame; boxing buys nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum Message {
     Step,
@@ -114,9 +116,9 @@ pub enum Message {
     Pane(panes::Message),
 }
 
-impl Into<super::Message> for Message {
-    fn into(self) -> super::Message {
-        super::Message::Debugger(self)
+impl From<Message> for super::Message {
+    fn from(val: Message) -> Self {
+        super::Message::Debugger(val)
     }
 }
 
@@ -410,10 +412,10 @@ impl Debugger {
                     .set_file_name(&default_name)
                     .add_filter("gbtrace", &["gbtrace"]);
 
-                return Task::perform(dialog.save_file(), |handle| match handle {
+                Task::perform(dialog.save_file(), |handle| match handle {
                     Some(h) => Message::CaptureFrameTo(h.path().to_path_buf()).into(),
                     None => app::Message::None,
-                });
+                })
             }
             Message::CaptureFrameTo(path) => {
                 let Some(core) = &mut self.debugger else {
@@ -549,10 +551,10 @@ impl Debugger {
                         }
                     }
                     BottomPaneMessage::Drag(drag) => {
-                        if let pane_grid::DragEvent::Dropped { pane, target } = drag {
-                            if let Some(panes) = &mut self.bottom_panes {
-                                panes.drop(pane, target);
-                            }
+                        if let pane_grid::DragEvent::Dropped { pane, target } = drag
+                            && let Some(panes) = &mut self.bottom_panes
+                        {
+                            panes.drop(pane, target);
                         }
                     }
                 }

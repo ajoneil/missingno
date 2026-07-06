@@ -11,6 +11,8 @@ use missingno_gb::{
 
 use super::texture_renderer::TextureRenderer;
 
+// One frame per variant per frame tick; indirection would just add a hop.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum ScreenDisplay {
     GameBoy(GameBoyScreen),

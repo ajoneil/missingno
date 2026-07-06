@@ -115,6 +115,8 @@ pub(crate) enum ReadAction {
 
 /// What to do after popping 2 bytes from the stack.
 #[derive(Debug)]
+// The Set prefix is the semantics: each variant names what the popped word sets.
+#[allow(clippy::enum_variant_names)]
 pub(crate) enum PopAction {
     /// Set a 16-bit register pair.
     SetRegister(Register16),

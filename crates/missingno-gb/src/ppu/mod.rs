@@ -172,6 +172,12 @@ pub struct Ppu<P: PpuModel> {
     pub(super) model: P,
 }
 
+impl<P: PpuModel> Default for Ppu<P> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<P: PpuModel> Ppu<P> {
     pub fn new() -> Self {
         Self {

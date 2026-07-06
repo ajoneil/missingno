@@ -55,6 +55,12 @@ impl From<Button> for Buttons {
     }
 }
 
+impl Default for Joypad {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Joypad {
     const UNUSED: u8 = 0b1100_0000;
     const READ_BUTTONS: u8 = 0b0010_0000;

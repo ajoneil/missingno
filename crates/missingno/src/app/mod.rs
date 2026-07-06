@@ -131,11 +131,11 @@ impl App {
 
     /// Stamp the current session's end time and flush it to disk.
     fn end_current_session(&mut self) {
-        if let Some(current) = &mut self.current_game {
-            if let Some(session) = &mut current.session {
-                session.end = Some(jiff::Timestamp::now());
-                library::activity::write_session(&current.game_dir, session);
-            }
+        if let Some(current) = &mut self.current_game
+            && let Some(session) = &mut current.session
+        {
+            session.end = Some(jiff::Timestamp::now());
+            library::activity::write_session(&current.game_dir, session);
         }
     }
 }
@@ -246,6 +246,8 @@ enum Fullscreen {
     },
 }
 
+// A single Game exists for the app's lifetime.
+#[allow(clippy::large_enum_variant)]
 enum Game {
     Unloaded,
     Loading,
@@ -381,11 +383,11 @@ impl App {
 
         let mut tasks = Vec::new();
 
-        if let Some(rom_path) = rom_path {
-            if let Ok(rom) = fs::read(&rom_path) {
-                let rom = crate::patch::soft_patch(&rom_path, rom);
-                tasks.push(load::setup_game(&mut app, rom_path, rom));
-            }
+        if let Some(rom_path) = rom_path
+            && let Ok(rom) = fs::read(&rom_path)
+        {
+            let rom = crate::patch::soft_patch(&rom_path, rom);
+            tasks.push(load::setup_game(&mut app, rom_path, rom));
         }
 
         // Scan configured ROM directories on startup
@@ -399,8 +401,8 @@ impl App {
         } else if app.settings.internet_enabled && app.settings.hasheous_enabled {
             // No directories to scan, but still enrich any unenriched games
             tasks.push(Task::perform(
-                smol::unblock(|| library::scanner::enrich_next()),
-                |result| Message::EnrichComplete(result),
+                smol::unblock(library::scanner::enrich_next),
+                Message::EnrichComplete,
             ));
         }
 
@@ -699,6 +701,6 @@ impl App {
             Message::None => {}
         }
 
-        return Task::none();
+        Task::none()
     }
 }

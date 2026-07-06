@@ -1,3 +1,5 @@
+// RAM lives inline — the mapper is the storage, not an indirection to it.
+#[allow(clippy::large_enum_variant)]
 pub enum Ram {
     None,
     Unbanked { data: [u8; 8 * 1024] },

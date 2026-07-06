@@ -92,7 +92,7 @@ impl<M: Model> Console<M> {
 
         // The M-cycle phase, derived from elapsed master edges so it pulses
         // at the CPU rate independent of the frozen SM83.
-        let mcycle_boundary = elapsed % mcycle_edges == 0;
+        let mcycle_boundary = elapsed.is_multiple_of(mcycle_edges);
 
         // The divider/STAT crossing run at the CPU rate through the hold but
         // freeze during the clock-mux relock tail (the CPU clock is settling),

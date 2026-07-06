@@ -71,10 +71,8 @@ impl<M: Model> Console<M> {
         // stall the OAM engine (a double-speed switch-cancel escape byte). DMG:
         // never suppresses.
         let suppress_oam = self.model.vram_dma_arbitrate_oam(&mut self.chassis);
-        if !suppress_oam {
-            if let Some((src_addr, dst_offset)) = oam {
-                self.dma_move(src_addr, 0xfe00 + dst_offset as u16);
-            }
+        if !suppress_oam && let Some((src_addr, dst_offset)) = oam {
+            self.dma_move(src_addr, 0xfe00 + dst_offset as u16);
         }
 
         // A source-bank register write (VBK/SVBK) latches here at the boundary,

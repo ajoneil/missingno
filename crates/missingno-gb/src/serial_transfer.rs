@@ -133,6 +133,12 @@ pub struct Registers {
     pub previous_counter: u16,
 }
 
+impl Default for Registers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Registers {
     pub fn new() -> Self {
         Registers {

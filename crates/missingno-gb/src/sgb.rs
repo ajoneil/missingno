@@ -42,7 +42,7 @@ fn screen_to_transfer_data(screen: &Screen) -> Vec<u8> {
 }
 
 /// 15-bit RGB555 color as used by the SNES/SGB.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct Rgb555(pub u16);
 
 /// Gamma ramp for SNES RGB555 output, derived from SameBoy's SGB-specific
@@ -64,12 +64,6 @@ impl Rgb555 {
 
     pub fn from_bytes(low: u8, high: u8) -> Self {
         Self(u16::from_le_bytes([low, high]))
-    }
-}
-
-impl Default for Rgb555 {
-    fn default() -> Self {
-        Self(0)
     }
 }
 
@@ -97,6 +91,12 @@ impl Default for SgbPalette {
 #[derive(Copy, Clone, Debug)]
 pub struct AttributeMap {
     pub cells: [[u8; 20]; 18],
+}
+
+impl Default for AttributeMap {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AttributeMap {
@@ -157,6 +157,12 @@ pub struct Sgb {
     last_screen: Screen,
     // Deferred VRAM transfer: countdown frames + transfer type
     pending_transfer: Option<(u8, PendingTransfer)>,
+}
+
+impl Default for Sgb {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Sgb {
@@ -558,7 +564,7 @@ impl Sgb {
     fn cmd_attr_set(&mut self, data: &[u8]) {
         let atf_idx = (data[1] & 0x3F) as usize;
         if atf_idx < self.attribute_files.len() {
-            self.attribute_map = self.attribute_files[atf_idx].clone();
+            self.attribute_map = self.attribute_files[atf_idx];
         }
         if data[1] & 0x40 != 0 {
             self.mask_mode = MaskMode::Disabled;

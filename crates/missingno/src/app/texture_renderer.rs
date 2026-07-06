@@ -297,7 +297,7 @@ impl TexturePipeline {
 
         let needs_creation = textures
             .get(&id)
-            .map_or(true, |data| data.width != width || data.height != height);
+            .is_none_or(|data| data.width != width || data.height != height);
 
         if needs_creation {
             let texture = device.create_texture(&wgpu::TextureDescriptor {

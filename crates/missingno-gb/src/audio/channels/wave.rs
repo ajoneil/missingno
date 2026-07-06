@@ -300,7 +300,7 @@ impl WaveChannel {
         {
             self.frequency_timer -= 1;
             if self.frequency_timer == 0 {
-                self.frequency_timer = 2048 - self.period.0 as u16;
+                self.frequency_timer = 2048 - self.period.0;
                 self.pending_overflow = true;
             }
         }
@@ -341,7 +341,7 @@ impl WaveChannel {
         // the divider load window.
         self.wave_position = 0;
         self.output_dirty = true;
-        self.frequency_timer = 2048 - self.period.0 as u16;
+        self.frequency_timer = 2048 - self.period.0;
         self.ch3_frst = false;
         self.pending_overflow = false;
     }

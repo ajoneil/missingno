@@ -190,7 +190,7 @@ fn empty_view(homebrew_enabled: bool) -> Element<'static, app::Message> {
 fn game_card(game: &GameSummary, hovered: bool) -> Element<'_, app::Message> {
     use iced::widget::stack;
 
-    let has_rom = game.entry.rom_paths.first().is_some();
+    let has_rom = !game.entry.rom_paths.is_empty();
     let sha1 = &game.entry.sha1;
 
     // Cover art

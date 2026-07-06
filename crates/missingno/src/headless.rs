@@ -353,7 +353,7 @@ fn handle_request<M: HeadlessUi>(mut request: tiny_http::Request, debugger: &mut
             };
             let length: u16 = if parts.len() > 1 {
                 match parts[1].parse() {
-                    Ok(n) if n >= 1 && n <= 0x1000 => n,
+                    Ok(n) if (1..=0x1000).contains(&n) => n,
                     _ => {
                         respond_error(request, 400, "invalid length (1-4096)");
                         return;
@@ -389,12 +389,12 @@ fn handle_request<M: HeadlessUi>(mut request: tiny_http::Request, debugger: &mut
         _ if path.starts_with("/breakpoints/") => {
             let addr_str = &path["/breakpoints/".len()..];
             match u16::from_str_radix(addr_str, 16) {
-                Ok(addr) => match &method {
-                    &Method::Put => {
+                Ok(addr) => match method {
+                    Method::Put => {
                         debugger.set_breakpoint(addr);
                         respond_json(request, serde_json::json!({ "set": format!("{addr:04x}") }));
                     }
-                    &Method::Delete => {
+                    Method::Delete => {
                         debugger.clear_breakpoint(addr);
                         respond_json(
                             request,
@@ -434,15 +434,15 @@ fn handle_request<M: HeadlessUi>(mut request: tiny_http::Request, debugger: &mut
             match u16::from_str_radix(addr_str, 16) {
                 Ok(addr) => {
                     let condition = WatchCondition::BusRead { address: addr };
-                    match &method {
-                        &Method::Put => {
+                    match method {
+                        Method::Put => {
                             debugger.add_watchpoint(condition.clone());
                             respond_json(
                                 request,
                                 serde_json::json!({ "added": watchpoint_json(&condition) }),
                             );
                         }
-                        &Method::Delete => {
+                        Method::Delete => {
                             debugger.remove_watchpoint(&condition);
                             respond_json(
                                 request,
@@ -460,15 +460,15 @@ fn handle_request<M: HeadlessUi>(mut request: tiny_http::Request, debugger: &mut
             match u16::from_str_radix(addr_str, 16) {
                 Ok(addr) => {
                     let condition = WatchCondition::BusWrite { address: addr };
-                    match &method {
-                        &Method::Put => {
+                    match method {
+                        Method::Put => {
                             debugger.add_watchpoint(condition.clone());
                             respond_json(
                                 request,
                                 serde_json::json!({ "added": watchpoint_json(&condition) }),
                             );
                         }
-                        &Method::Delete => {
+                        Method::Delete => {
                             debugger.remove_watchpoint(&condition);
                             respond_json(
                                 request,
@@ -486,15 +486,15 @@ fn handle_request<M: HeadlessUi>(mut request: tiny_http::Request, debugger: &mut
             match u16::from_str_radix(addr_str, 16) {
                 Ok(addr) => {
                     let condition = WatchCondition::DmaRead { address: addr };
-                    match &method {
-                        &Method::Put => {
+                    match method {
+                        Method::Put => {
                             debugger.add_watchpoint(condition.clone());
                             respond_json(
                                 request,
                                 serde_json::json!({ "added": watchpoint_json(&condition) }),
                             );
                         }
-                        &Method::Delete => {
+                        Method::Delete => {
                             debugger.remove_watchpoint(&condition);
                             respond_json(
                                 request,
@@ -512,15 +512,15 @@ fn handle_request<M: HeadlessUi>(mut request: tiny_http::Request, debugger: &mut
             match u16::from_str_radix(addr_str, 16) {
                 Ok(addr) => {
                     let condition = WatchCondition::DmaWrite { address: addr };
-                    match &method {
-                        &Method::Put => {
+                    match method {
+                        Method::Put => {
                             debugger.add_watchpoint(condition.clone());
                             respond_json(
                                 request,
                                 serde_json::json!({ "added": watchpoint_json(&condition) }),
                             );
                         }
-                        &Method::Delete => {
+                        Method::Delete => {
                             debugger.remove_watchpoint(&condition);
                             respond_json(
                                 request,
@@ -538,15 +538,15 @@ fn handle_request<M: HeadlessUi>(mut request: tiny_http::Request, debugger: &mut
             match val_str.parse::<u8>() {
                 Ok(ly) => {
                     let condition = WatchCondition::Scanline(ly);
-                    match &method {
-                        &Method::Put => {
+                    match method {
+                        Method::Put => {
                             debugger.add_watchpoint(condition.clone());
                             respond_json(
                                 request,
                                 serde_json::json!({ "added": watchpoint_json(&condition) }),
                             );
                         }
-                        &Method::Delete => {
+                        Method::Delete => {
                             debugger.remove_watchpoint(&condition);
                             respond_json(
                                 request,
@@ -564,15 +564,15 @@ fn handle_request<M: HeadlessUi>(mut request: tiny_http::Request, debugger: &mut
             match val_str.parse::<u8>() {
                 Ok(pc) => {
                     let condition = WatchCondition::PixelCounter(pc);
-                    match &method {
-                        &Method::Put => {
+                    match method {
+                        Method::Put => {
                             debugger.add_watchpoint(condition.clone());
                             respond_json(
                                 request,
                                 serde_json::json!({ "added": watchpoint_json(&condition) }),
                             );
                         }
-                        &Method::Delete => {
+                        Method::Delete => {
                             debugger.remove_watchpoint(&condition);
                             respond_json(
                                 request,
@@ -597,15 +597,15 @@ fn handle_request<M: HeadlessUi>(mut request: tiny_http::Request, debugger: &mut
             match mode {
                 Some(mode) => {
                     let condition = WatchCondition::PpuMode(mode);
-                    match &method {
-                        &Method::Put => {
+                    match method {
+                        Method::Put => {
                             debugger.add_watchpoint(condition.clone());
                             respond_json(
                                 request,
                                 serde_json::json!({ "added": watchpoint_json(&condition) }),
                             );
                         }
-                        &Method::Delete => {
+                        Method::Delete => {
                             debugger.remove_watchpoint(&condition);
                             respond_json(
                                 request,

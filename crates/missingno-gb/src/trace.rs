@@ -379,23 +379,21 @@ fn resolve_emitter(field: &str, memory: &BTreeMap<String, u16>) -> Emitter {
         "win_mode" => Emitter::PpuInternal(PpuField::WinMode),
         _ => {
             // OAM sprite fields: oam0_x, oam3_attr, etc.
-            if let Some(rest) = field.strip_prefix("oam") {
-                if let Some((idx_str, suffix)) = rest.split_once('_') {
-                    if let Ok(idx) = idx_str.parse::<usize>() {
-                        if idx < 10 {
-                            let component = match suffix {
-                                "x" => OamComponent::X,
-                                "id" => OamComponent::Id,
-                                "attr" => OamComponent::Attr,
-                                _ => return Emitter::Unknown(FieldType::UInt8, false),
-                            };
-                            return Emitter::PpuInternal(PpuField::Oam {
-                                index: idx,
-                                component,
-                            });
-                        }
-                    }
-                }
+            if let Some(rest) = field.strip_prefix("oam")
+                && let Some((idx_str, suffix)) = rest.split_once('_')
+                && let Ok(idx) = idx_str.parse::<usize>()
+                && idx < 10
+            {
+                let component = match suffix {
+                    "x" => OamComponent::X,
+                    "id" => OamComponent::Id,
+                    "attr" => OamComponent::Attr,
+                    _ => return Emitter::Unknown(FieldType::UInt8, false),
+                };
+                return Emitter::PpuInternal(PpuField::Oam {
+                    index: idx,
+                    component,
+                });
             }
             // IO register
             if let Some(&(_, addr)) = IO_FIELDS.iter().find(|(name, _)| *name == field) {
@@ -624,7 +622,7 @@ impl Tracer {
                 Emitter::Ch3WaveIdx => w.set_u8(col, channels.ch3.wave_position),
                 Emitter::Ch3Sample => {
                     let byte = channels.ch3.ram[channels.ch3.wave_position as usize / 2];
-                    let nibble = if channels.ch3.wave_position % 2 == 0 {
+                    let nibble = if channels.ch3.wave_position.is_multiple_of(2) {
                         byte >> 4
                     } else {
                         byte & 0x0F

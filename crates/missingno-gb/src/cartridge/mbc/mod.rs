@@ -9,6 +9,8 @@ pub mod mbc6;
 pub mod mbc7;
 pub mod no_mbc;
 
+// Mapper state (including RAM) lives inline; one Mbc exists per console.
+#[allow(clippy::large_enum_variant)]
 pub enum Mbc {
     NoMbc(no_mbc::NoMbc),
     Mbc1(mbc1::Mbc1),

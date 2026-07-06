@@ -41,6 +41,8 @@ use missingno_gb::ppu::types::{
     tiles::TileMapId,
 };
 
+// Frame-carrying messages are produced once per frame; boxing buys nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum Message {
     ShowPane(DebuggerPane),
@@ -52,6 +54,7 @@ pub enum Message {
     Pane(PaneMessage),
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum PaneMessage {
     Screen(screen::Message),

@@ -165,14 +165,14 @@ fn controls(running: bool, debugger: bool) -> Element<'static, app::Message> {
 
 fn play_pause(running: bool) -> Button<'static, app::Message> {
     if running {
-        buttons::primary("Pause").on_press(app::Message::Pause.into())
+        buttons::primary("Pause").on_press(app::Message::Pause)
     } else {
         buttons::primary(
             row![icons::m(Icon::Play), "Play"]
                 .spacing(s())
                 .align_y(Center),
         )
-        .on_press(app::Message::Run.into())
+        .on_press(app::Message::Run)
     }
 }
 

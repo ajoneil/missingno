@@ -212,10 +212,10 @@ impl BgbLink {
 
     /// Send a packet (non-blocking best-effort).
     fn send(&mut self, packet: Packet) {
-        if let Some(stream) = &mut self.stream {
-            if stream.write_all(&packet.to_bytes()).is_err() {
-                self.handle_disconnect();
-            }
+        if let Some(stream) = &mut self.stream
+            && stream.write_all(&packet.to_bytes()).is_err()
+        {
+            self.handle_disconnect();
         }
     }
 

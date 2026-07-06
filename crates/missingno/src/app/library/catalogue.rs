@@ -179,11 +179,8 @@ impl Catalogue {
             };
 
             // Deserialize
-            match ron::from_str::<GameManifest>(&content) {
-                Ok(manifest) => {
-                    entries.push(CatalogueEntry { slug, manifest });
-                }
-                Err(_) => {}
+            if let Ok(manifest) = ron::from_str::<GameManifest>(&content) {
+                entries.push(CatalogueEntry { slug, manifest });
             }
         }
 

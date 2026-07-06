@@ -119,12 +119,10 @@ pub fn capture_event_handler(
                 Some(app::Message::Settings(
                     super::settings::view::Message::ClearBinding,
                 ))
-            } else if let Some(key_str) = key_to_string(&key) {
-                Some(app::Message::Settings(
-                    super::settings::view::Message::CaptureBinding(key_str),
-                ))
             } else {
-                None
+                key_to_string(&key).map(|key_str| {
+                    app::Message::Settings(super::settings::view::Message::CaptureBinding(key_str))
+                })
             }
         }
         _ => None,
@@ -151,22 +149,19 @@ pub fn gamepad_subscription() -> Subscription<app::Message> {
                     };
                     match event {
                         gilrs::EventType::ButtonPressed(button, ..) => {
-                            if let Some(button_str) = gamepad_button_to_string(button) {
-                                if let Some(action) = bindings.find_action(&button_str) {
-                                    let _ = sender.try_send(action_to_press_message(action));
-                                }
+                            if let Some(button_str) = gamepad_button_to_string(button)
+                                && let Some(action) = bindings.find_action(&button_str)
+                            {
+                                let _ = sender.try_send(action_to_press_message(action));
                             }
                         }
                         gilrs::EventType::ButtonReleased(button, ..) => {
-                            if let Some(button_str) = gamepad_button_to_string(button) {
-                                if let Some(action) = bindings.find_action(&button_str) {
-                                    if action.is_game_button() {
-                                        if let Some(btn) = action_to_joypad(action) {
-                                            let _ =
-                                                sender.try_send(app::Message::ReleaseButton(btn));
-                                        }
-                                    }
-                                }
+                            if let Some(button_str) = gamepad_button_to_string(button)
+                                && let Some(action) = bindings.find_action(&button_str)
+                                && action.is_game_button()
+                                && let Some(btn) = action_to_joypad(action)
+                            {
+                                let _ = sender.try_send(app::Message::ReleaseButton(btn));
                             }
                         }
                         gilrs::EventType::AxisChanged(axis, value, ..) => match axis {
@@ -248,12 +243,12 @@ fn gamepad_capture_stream() -> impl iced::futures::Stream<Item = app::Message> {
         let mut gilrs = gilrs::Gilrs::new().unwrap();
         loop {
             while let Some(gilrs::Event { event, .. }) = gilrs.next_event() {
-                if let gilrs::EventType::ButtonPressed(button, ..) = event {
-                    if let Some(s) = gamepad_button_to_string(button) {
-                        let _ = sender.try_send(app::Message::Settings(
-                            super::settings::view::Message::CaptureBinding(s),
-                        ));
-                    }
+                if let gilrs::EventType::ButtonPressed(button, ..) = event
+                    && let Some(s) = gamepad_button_to_string(button)
+                {
+                    let _ = sender.try_send(app::Message::Settings(
+                        super::settings::view::Message::CaptureBinding(s),
+                    ));
                 }
             }
             smol::Timer::after(Duration::from_millis(4)).await;

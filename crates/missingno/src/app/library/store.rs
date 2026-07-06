@@ -200,12 +200,12 @@ impl GameStore {
 
         for dir_entry in entries.flatten() {
             let path = dir_entry.path();
-            if path.is_dir() {
-                if let Some(entry) = super::load_entry(&path) {
-                    let sha1 = entry.sha1.clone();
-                    self.index.insert(sha1.clone(), path.clone());
-                    self.summaries.insert(sha1, Self::load_summary(path, entry));
-                }
+            if path.is_dir()
+                && let Some(entry) = super::load_entry(&path)
+            {
+                let sha1 = entry.sha1.clone();
+                self.index.insert(sha1.clone(), path.clone());
+                self.summaries.insert(sha1, Self::load_summary(path, entry));
             }
         }
     }
@@ -250,8 +250,7 @@ impl GameStore {
     }
 
     fn load_summary(game_dir: PathBuf, entry: GameEntry) -> GameSummary {
-        let thumbnail =
-            super::load_thumbnail(&game_dir).map(|bytes| image::Handle::from_bytes(bytes));
+        let thumbnail = super::load_thumbnail(&game_dir).map(image::Handle::from_bytes);
         let stats = activity::compute_stats(&game_dir);
 
         GameSummary {
@@ -443,26 +442,25 @@ impl GameStore {
         }
 
         // Refresh the summary stats for this game
-        if let Some(game_dir) = self.index.get(sha1).cloned() {
-            if let Some(summary) = self.summaries.get_mut(sha1) {
-                let stats = activity::compute_stats(&game_dir);
-                summary.play_time_secs = stats.total_play_time_secs;
-                summary.last_played = stats.last_played;
-                summary.save_count = stats.save_count;
-            }
+        if let Some(game_dir) = self.index.get(sha1).cloned()
+            && let Some(summary) = self.summaries.get_mut(sha1)
+        {
+            let stats = activity::compute_stats(&game_dir);
+            summary.play_time_secs = stats.total_play_time_secs;
+            summary.last_played = stats.last_played;
+            summary.save_count = stats.save_count;
         }
     }
 
     /// Called after metadata changes (enrichment, title update).
     pub fn notify_metadata_changed(&mut self, sha1: &str) {
-        if let Some(game_dir) = self.index.get(sha1).cloned() {
-            if let Some(entry) = super::load_entry(&game_dir) {
-                let thumbnail =
-                    super::load_thumbnail(&game_dir).map(|b| image::Handle::from_bytes(b));
-                if let Some(summary) = self.summaries.get_mut(sha1) {
-                    summary.entry = entry;
-                    summary.thumbnail = thumbnail;
-                }
+        if let Some(game_dir) = self.index.get(sha1).cloned()
+            && let Some(entry) = super::load_entry(&game_dir)
+        {
+            let thumbnail = super::load_thumbnail(&game_dir).map(image::Handle::from_bytes);
+            if let Some(summary) = self.summaries.get_mut(sha1) {
+                summary.entry = entry;
+                summary.thumbnail = thumbnail;
             }
         }
     }

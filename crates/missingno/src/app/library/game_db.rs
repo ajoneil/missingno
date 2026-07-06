@@ -9,6 +9,8 @@ use std::ops::Range;
 /// Regions of SRAM that should be ignored when detecting save changes.
 /// These are scratch areas that games write to frequently during normal
 /// gameplay without the player actually saving.
+// The single-element arrays are slices of Ranges, not range-as-initializer.
+#[allow(clippy::single_range_in_vec_init)]
 pub fn ignored_sram_regions(title: &str) -> &'static [Range<usize>] {
     match title {
         // Pokemon Gen 1: sprite decompression buffers in SRAM bank 0

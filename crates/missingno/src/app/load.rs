@@ -130,8 +130,7 @@ pub fn select_game(app: &mut App, sha1: &str) -> bool {
         return false;
     };
 
-    let cover =
-        library::load_cover(&game_dir).map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
+    let cover = library::load_cover(&game_dir).map(iced::widget::image::Handle::from_bytes);
 
     app.current_game = Some(CurrentGame {
         entry,
@@ -283,8 +282,7 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
     // Load save data and cover
     let save_data = library::activity::load_current_sram(&game_dir);
     let initial_sram = save_data.clone();
-    let cover =
-        library::load_cover(&game_dir).map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
+    let cover = library::load_cover(&game_dir).map(iced::widget::image::Handle::from_bytes);
 
     // Create cartridge and start emulation
     let cartridge_title = start_console(app, build_cartridge(rom, save_data), &rom_path, &game_dir);

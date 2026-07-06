@@ -76,9 +76,7 @@ pub fn link_text<'a>(
         })
         .collect();
 
-    rich_text(spans)
-        .on_link_click(|url| app::Message::OpenUrl(url))
-        .into()
+    rich_text(spans).on_link_click(app::Message::OpenUrl).into()
 }
 
 /// Progress text with monospace numbers: "Label… 128 KB / 512 KB (25%)"

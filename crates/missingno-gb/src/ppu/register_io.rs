@@ -123,16 +123,17 @@ impl<P: PpuModel> Ppu<P> {
                 // is refreshed by two events: a TILE_SEL reset (CLEAR) snapshots the
                 // BG tile fetched next; a 0->1 SET at an odd BG fetch counter then
                 // corrupts the following read (counter 1 → low, counter 3 → high).
-                if P::TILE_SEL_SET_GLITCH && is_drawing {
-                    if let Some(rendering) = self.pixel_pipeline.as_mut() {
-                        if tile_sel_reset {
-                            rendering.arm_bg_glitch_capture();
-                        } else if !old_block0_tiles
-                            && value & ControlFlags::TILE_ADDRESS_MODE.bits() != 0
-                            && !edge_carries_dot_fall
-                        {
-                            rendering.arm_bg_set_glitch();
-                        }
+                if P::TILE_SEL_SET_GLITCH
+                    && is_drawing
+                    && let Some(rendering) = self.pixel_pipeline.as_mut()
+                {
+                    if tile_sel_reset {
+                        rendering.arm_bg_glitch_capture();
+                    } else if !old_block0_tiles
+                        && value & ControlFlags::TILE_ADDRESS_MODE.bits() != 0
+                        && !edge_carries_dot_fall
+                    {
+                        rendering.arm_bg_set_glitch();
                     }
                 }
 

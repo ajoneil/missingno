@@ -223,7 +223,7 @@ impl Model for Cgb {
     fn oam_dma_wram_remap(&self, cpu_addr: u16, dma_source: u16) -> Option<u16> {
         (cgb_bus(cpu_addr) == Some(CgbBus::WorkRam)
             && cgb_dma_source_bus(dma_source) == CgbBus::Cartridge)
-            .then(|| (dma_source & 0x1000) | (cpu_addr & 0x0FFF) | 0xC000)
+            .then_some((dma_source & 0x1000) | (cpu_addr & 0x0FFF) | 0xC000)
     }
 
     /// On the WRAM bus the colliding CPU write sits on a different bus from the
@@ -1077,16 +1077,16 @@ impl Model for Cgb {
         // Commit the bytes the VRAM DMA moves while it actually holds the bus —
         // the hold keeps the transfer from overlapping the arming instruction.
         // (The trigger/quota tick ran before this edge's write commit.)
-        let mut hdma_bytes: (Option<(u16, u8)>, Option<(u16, u8)>) = (None, None);
+        let mut hdma_bytes: [Option<(u16, u8)>; 2] = [None, None];
         if !self.vram_dma_take_setup_cell() {
             while let Some((src, dst)) = self.vram_dma_next_byte() {
                 let byte = self.read_hdma_source(chassis, src);
                 chassis.dma_commit(src, dst, byte);
                 if contended {
-                    if hdma_bytes.0.is_none() {
-                        hdma_bytes.0 = Some((src, byte));
-                    } else if hdma_bytes.1.is_none() {
-                        hdma_bytes.1 = Some((src, byte));
+                    if hdma_bytes[0].is_none() {
+                        hdma_bytes[0] = Some((src, byte));
+                    } else if hdma_bytes[1].is_none() {
+                        hdma_bytes[1] = Some((src, byte));
                     }
                 }
             }
@@ -1109,9 +1109,9 @@ impl Model for Cgb {
                 / 2
                 % 4;
             let coinciding = if matches!(phase, 0 | 3) {
-                hdma_bytes.1.or(hdma_bytes.0)
+                hdma_bytes[1].or(hdma_bytes[0])
             } else {
-                hdma_bytes.0
+                hdma_bytes[0]
             };
             if let Some((hsrc, hdata)) = coinciding {
                 chassis.dma_commit(hsrc, 0xfe00 | (hsrc & 0xFF), hdata);

@@ -59,10 +59,7 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                                 })?;
                                 // Also read SRAM if the cartridge has battery-backed save
                                 let sram = if header.has_battery && header.ram_size > 0 {
-                                    match cartridge_rw::read_sram(&port_name, &header) {
-                                        Ok(data) => Some(data),
-                                        Err(_) => None,
-                                    }
+                                    cartridge_rw::read_sram(&port_name, &header).ok()
                                 } else {
                                     None
                                 };
@@ -102,10 +99,10 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
             use app::DetailMessage::*;
             match detail_msg {
                 OpenGameFolder => {
-                    if let Some(sha1) = app.viewing_sha1() {
-                        if let Some(dir) = super::find_by_sha1(sha1).map(|(d, _)| d) {
-                            let _ = open::that(&dir);
-                        }
+                    if let Some(sha1) = app.viewing_sha1()
+                        && let Some(dir) = super::find_by_sha1(sha1).map(|(d, _)| d)
+                    {
+                        let _ = open::that(&dir);
                     }
                 }
                 RefreshMetadata => {
@@ -123,22 +120,22 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                     }
                 }
                 GameMetadataRefreshed(info) => {
-                    if let Some(sha1) = app.viewing_sha1().map(str::to_owned) {
-                        if let Some((game_dir, mut entry)) = super::find_by_sha1(&sha1) {
-                            entry.title = info.name;
-                            entry.platform = info.platform;
-                            entry.publisher = info.publisher;
-                            entry.year = info.year;
-                            entry.description = info.description;
-                            entry.wikipedia_url = info.wikipedia_url;
-                            entry.igdb_url = info.igdb_url;
-                            entry.enrichment_attempted = true;
-                            super::save_entry(&game_dir, &entry);
-                            if let Some(bytes) = &info.cover_art {
-                                super::save_cover(&game_dir, bytes);
-                            }
-                            app.store.notify_metadata_changed(&sha1);
+                    if let Some(sha1) = app.viewing_sha1().map(str::to_owned)
+                        && let Some((game_dir, mut entry)) = super::find_by_sha1(&sha1)
+                    {
+                        entry.title = info.name;
+                        entry.platform = info.platform;
+                        entry.publisher = info.publisher;
+                        entry.year = info.year;
+                        entry.description = info.description;
+                        entry.wikipedia_url = info.wikipedia_url;
+                        entry.igdb_url = info.igdb_url;
+                        entry.enrichment_attempted = true;
+                        super::save_entry(&game_dir, &entry);
+                        if let Some(bytes) = &info.cover_art {
+                            super::save_cover(&game_dir, bytes);
                         }
+                        app.store.notify_metadata_changed(&sha1);
                     }
                 }
                 ImportSave => {
@@ -149,12 +146,11 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                     });
                 }
                 ImportSaveSelected(handle) => {
-                    if let (Some(handle), Some(sha1)) = (handle, app.viewing_sha1()) {
-                        if let Some((game_dir, _)) = super::find_by_sha1(sha1) {
-                            if let Ok(data) = std::fs::read(handle.path()) {
-                                super::activity::write_import(&game_dir, &data);
-                            }
-                        }
+                    if let (Some(handle), Some(sha1)) = (handle, app.viewing_sha1())
+                        && let Some((game_dir, _)) = super::find_by_sha1(sha1)
+                        && let Ok(data) = std::fs::read(handle.path())
+                    {
+                        super::activity::write_import(&game_dir, &data);
                     }
                 }
                 PlayWithSave(save_id) => {
@@ -186,31 +182,27 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                     });
                 }
                 ExportSaveSelected(save_id, handle) => {
-                    if let (Some(handle), Some(sha1)) = (handle, app.viewing_sha1()) {
-                        if let Some((game_dir, _)) = super::find_by_sha1(sha1) {
-                            if let Some(data) = super::activity::load_sram_from(&game_dir, &save_id)
-                            {
-                                let _ = std::fs::write(handle.path(), data);
-                            }
-                        }
+                    if let (Some(handle), Some(sha1)) = (handle, app.viewing_sha1())
+                        && let Some((game_dir, _)) = super::find_by_sha1(sha1)
+                        && let Some(data) = super::activity::load_sram_from(&game_dir, &save_id)
+                    {
+                        let _ = std::fs::write(handle.path(), data);
                     }
                 }
                 OpenScreenshotGallery(session_filename, screenshot_idx) => {
-                    if let Screen::ViewingGame { sha1, .. } = &app.screen {
-                        if let Some((game_dir, _)) = super::find_by_sha1(sha1) {
-                            if let Some(mut state) =
-                                screenshot_gallery::GalleryState::load(&game_dir, &session_filename)
-                            {
-                                state.select(screenshot_idx);
-                                let sha1 = sha1.clone();
-                                app.screen = Screen::ViewingGame {
-                                    sha1,
-                                    sub_screen: DetailSubScreen::ScreenshotGallery {
-                                        gallery_state: state,
-                                    },
-                                };
-                            }
-                        }
+                    if let Screen::ViewingGame { sha1, .. } = &app.screen
+                        && let Some((game_dir, _)) = super::find_by_sha1(sha1)
+                        && let Some(mut state) =
+                            screenshot_gallery::GalleryState::load(&game_dir, &session_filename)
+                    {
+                        state.select(screenshot_idx);
+                        let sha1 = sha1.clone();
+                        app.screen = Screen::ViewingGame {
+                            sha1,
+                            sub_screen: DetailSubScreen::ScreenshotGallery {
+                                gallery_state: state,
+                            },
+                        };
                     }
                 }
                 HoverLogEntry(idx) => {
@@ -298,53 +290,45 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                         );
                     }
                 }
-                ImportSaveComplete(result) => match result {
-                    Ok(sram) => {
-                        if let Some(sha1) = app.viewing_sha1().map(str::to_owned) {
-                            if let Some((game_dir, _)) = super::find_by_sha1(&sha1) {
-                                super::activity::write_cartridge_import(&game_dir, &sram);
-                                app.store.notify_activity_changed(&sha1);
-                            }
-                        }
-                    }
-                    Err(_) => {}
-                },
-                WriteSave => {
-                    if let Some(sha1) = app.viewing_sha1() {
-                        if let Some((game_dir, _)) = super::find_by_sha1(sha1) {
-                            if let Some(sram) = super::activity::load_current_sram(&game_dir) {
-                                if let Some(device) =
-                                    app.cartridge_rw.detected_devices.iter().find(|d| {
-                                        d.cartridge
-                                            .as_ref()
-                                            .is_some_and(|c| c.has_battery && c.ram_size > 0)
-                                    })
-                                {
-                                    let port_name = device.port_name.clone();
-                                    let header = device.cartridge.clone().unwrap();
-                                    return Task::perform(
-                                        smol::unblock(move || {
-                                            cartridge_rw::write_sram(&port_name, &header, &sram)?;
-                                            Ok(sram)
-                                        }),
-                                        |result| app::Message::Cartridge(WriteSaveComplete(result)),
-                                    );
-                                }
-                            }
-                        }
+                ImportSaveComplete(result) => {
+                    if let Ok(sram) = result
+                        && let Some(sha1) = app.viewing_sha1().map(str::to_owned)
+                        && let Some((game_dir, _)) = super::find_by_sha1(&sha1)
+                    {
+                        super::activity::write_cartridge_import(&game_dir, &sram);
+                        app.store.notify_activity_changed(&sha1);
                     }
                 }
-                WriteSaveComplete(result) => match result {
-                    Ok(sram) => {
-                        if let Some(sha1) = app.viewing_sha1().map(str::to_owned) {
-                            if let Some((game_dir, _)) = super::find_by_sha1(&sha1) {
-                                super::activity::write_cart_write(&game_dir, &sram);
-                                app.store.notify_activity_changed(&sha1);
-                            }
-                        }
+                WriteSave => {
+                    if let Some(sha1) = app.viewing_sha1()
+                        && let Some((game_dir, _)) = super::find_by_sha1(sha1)
+                        && let Some(sram) = super::activity::load_current_sram(&game_dir)
+                        && let Some(device) = app.cartridge_rw.detected_devices.iter().find(|d| {
+                            d.cartridge
+                                .as_ref()
+                                .is_some_and(|c| c.has_battery && c.ram_size > 0)
+                        })
+                    {
+                        let port_name = device.port_name.clone();
+                        let header = device.cartridge.clone().unwrap();
+                        return Task::perform(
+                            smol::unblock(move || {
+                                cartridge_rw::write_sram(&port_name, &header, &sram)?;
+                                Ok(sram)
+                            }),
+                            |result| app::Message::Cartridge(WriteSaveComplete(result)),
+                        );
                     }
-                    Err(_) => {}
-                },
+                }
+                WriteSaveComplete(result) => {
+                    if let Ok(sram) = result
+                        && let Some(sha1) = app.viewing_sha1().map(str::to_owned)
+                        && let Some((game_dir, _)) = super::find_by_sha1(&sha1)
+                    {
+                        super::activity::write_cart_write(&game_dir, &sram);
+                        app.store.notify_activity_changed(&sha1);
+                    }
+                }
                 Flash(sha1) => {
                     // Read write_save preference from the CartridgeActions screen
                     let write_save = matches!(
@@ -473,12 +457,11 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                     match result {
                         Ok(written_sram) => {
                             // Record cartridge sync if save was written
-                            if let Some(sram) = &written_sram {
-                                if let Some(sha1) = app.viewing_sha1() {
-                                    if let Some((game_dir, _)) = super::find_by_sha1(sha1) {
-                                        super::activity::write_cart_write(&game_dir, sram);
-                                    }
-                                }
+                            if let Some(sram) = &written_sram
+                                && let Some(sha1) = app.viewing_sha1()
+                                && let Some((game_dir, _)) = super::find_by_sha1(sha1)
+                            {
+                                super::activity::write_cart_write(&game_dir, sram);
                             }
                             if let Screen::ViewingGame {
                                 sub_screen: DetailSubScreen::FlashCartridge { flash_state },
@@ -549,22 +532,21 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                         sub_screen: DetailSubScreen::ScreenshotGallery { gallery_state },
                         ..
                     } = &app.screen
+                        && let Some(handle) = handle
                     {
-                        if let Some(handle) = handle {
-                            let rgba = gallery_state.selected_rgba();
-                            let native_width = screen::PIXELS_PER_LINE as u32;
-                            let native_height = screen::NUM_SCANLINES as u32;
-                            let width = native_width * gallery_state.scale;
-                            let height = native_height * gallery_state.scale;
-                            let scaled = screenshot_gallery::scale_nearest_neighbour(
-                                &rgba,
-                                native_width,
-                                native_height,
-                                gallery_state.scale,
-                            );
-                            if let Some(img) = image::RgbaImage::from_raw(width, height, scaled) {
-                                let _ = img.save(handle.path());
-                            }
+                        let rgba = gallery_state.selected_rgba();
+                        let native_width = screen::PIXELS_PER_LINE as u32;
+                        let native_height = screen::NUM_SCANLINES as u32;
+                        let width = native_width * gallery_state.scale;
+                        let height = native_height * gallery_state.scale;
+                        let scaled = screenshot_gallery::scale_nearest_neighbour(
+                            &rgba,
+                            native_width,
+                            native_height,
+                            gallery_state.scale,
+                        );
+                        if let Some(img) = image::RgbaImage::from_raw(width, height, scaled) {
+                            let _ = img.save(handle.path());
                         }
                     }
                 }
@@ -643,31 +625,31 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
             let detail_task = app.go_to_detail(&sha1);
 
             // If no cached cover, download in background
-            if cached_cover.is_none() {
-                if let Some(slug) = slug {
-                    let cover_url = format!(
-                        "https://raw.githubusercontent.com/gbdev/database/master/entries/{slug}/cover.png"
-                    );
-                    let client = app.homebrew_client.clone();
-                    let gd = game_dir;
-                    let sha1_clone = sha1;
-                    let cover_task = Task::perform(
-                        smol::unblock(move || {
-                            if let Ok(bytes) = client.download_image(&cover_url) {
-                                super::save_cover(&gd, &bytes);
-                            }
-                            sha1_clone
-                        }),
-                        |sha1| {
-                            app::Message::EnrichComplete(super::scanner::EnrichResult {
-                                sha1: Some(sha1),
-                                data_changed: true,
-                                has_more: false,
-                            })
-                        },
-                    );
-                    return Task::batch([detail_task, cover_task]);
-                }
+            if cached_cover.is_none()
+                && let Some(slug) = slug
+            {
+                let cover_url = format!(
+                    "https://raw.githubusercontent.com/gbdev/database/master/entries/{slug}/cover.png"
+                );
+                let client = app.homebrew_client.clone();
+                let gd = game_dir;
+                let sha1_clone = sha1;
+                let cover_task = Task::perform(
+                    smol::unblock(move || {
+                        if let Ok(bytes) = client.download_image(&cover_url) {
+                            super::save_cover(&gd, &bytes);
+                        }
+                        sha1_clone
+                    }),
+                    |sha1| {
+                        app::Message::EnrichComplete(super::scanner::EnrichResult {
+                            sha1: Some(sha1),
+                            data_changed: true,
+                            has_more: false,
+                        })
+                    },
+                );
+                return Task::batch([detail_task, cover_task]);
             }
             return detail_task;
         }
@@ -719,55 +701,54 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                         state.selected_slug = Some(slug.clone());
 
                         // Load cover image if not cached
-                        if !state.covers.contains_key(&slug) {
-                            if let Some(entry) = app.catalogue.lookup_slug(&slug) {
-                                if let Some(url) = entry.download_cover_url() {
-                                    let client = app.homebrew_client.clone();
-                                    let s = slug;
-                                    return Task::perform(
-                                        smol::unblock(move || {
-                                            client.download_image(&url).ok().map(|bytes| (s, bytes))
-                                        }),
-                                        |result| match result {
-                                            Some((slug, bytes)) => app::Message::HomebrewBrowser(
-                                                H::CoverLoaded(slug, bytes),
-                                            ),
-                                            None => app::Message::None,
-                                        },
-                                    );
-                                }
-                            }
+                        if !state.covers.contains_key(&slug)
+                            && let Some(entry) = app.catalogue.lookup_slug(&slug)
+                            && let Some(url) = entry.download_cover_url()
+                        {
+                            let client = app.homebrew_client.clone();
+                            let s = slug;
+                            return Task::perform(
+                                smol::unblock(move || {
+                                    client.download_image(&url).ok().map(|bytes| (s, bytes))
+                                }),
+                                |result| match result {
+                                    Some((slug, bytes)) => {
+                                        app::Message::HomebrewBrowser(H::CoverLoaded(slug, bytes))
+                                    }
+                                    None => app::Message::None,
+                                },
+                            );
                         }
                     }
                 }
                 H::Download(slug) => {
-                    if let Some(entry) = app.catalogue.lookup_slug(&slug) {
-                        if let Some(url) = entry.download_url() {
-                            let title = entry.manifest.title.clone();
-                            let manifest = entry.manifest.clone();
-                            return Task::perform(
-                                smol::unblock(move || {
-                                    let response = ureq::get(&url)
-                                        .call()
-                                        .map_err(|e| format!("Download failed: {e}"))?;
-                                    response
-                                        .into_body()
-                                        .read_to_vec()
-                                        .map_err(|e| format!("Failed to read: {e}"))
-                                        .map(|bytes| (title, bytes, manifest))
-                                }),
-                                |result| match result {
-                                    Ok((title, rom_bytes, manifest)) => {
-                                        app::Message::HomebrewDownloaded(title, rom_bytes, manifest)
-                                    }
-                                    Err(e) => app::Message::HomebrewBrowser(
-                                        homebrew_browser::Message::DownloadFailed(format!(
-                                            "Download failed: {e}"
-                                        )),
-                                    ),
-                                },
-                            );
-                        }
+                    if let Some(entry) = app.catalogue.lookup_slug(&slug)
+                        && let Some(url) = entry.download_url()
+                    {
+                        let title = entry.manifest.title.clone();
+                        let manifest = entry.manifest.clone();
+                        return Task::perform(
+                            smol::unblock(move || {
+                                let response = ureq::get(&url)
+                                    .call()
+                                    .map_err(|e| format!("Download failed: {e}"))?;
+                                response
+                                    .into_body()
+                                    .read_to_vec()
+                                    .map_err(|e| format!("Failed to read: {e}"))
+                                    .map(|bytes| (title, bytes, manifest))
+                            }),
+                            |result| match result {
+                                Ok((title, rom_bytes, manifest)) => {
+                                    app::Message::HomebrewDownloaded(title, rom_bytes, manifest)
+                                }
+                                Err(e) => app::Message::HomebrewBrowser(
+                                    homebrew_browser::Message::DownloadFailed(format!(
+                                        "Download failed: {e}"
+                                    )),
+                                ),
+                            },
+                        );
                     }
                 }
                 H::Back => {
@@ -794,16 +775,16 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                 app.store.rebuild_index();
             }
             if app.settings.internet_enabled && app.settings.hasheous_enabled {
-                return Task::perform(smol::unblock(|| super::scanner::enrich_next()), |result| {
+                return Task::perform(smol::unblock(super::scanner::enrich_next), |result| {
                     app::Message::EnrichComplete(result)
                 });
             }
         }
         app::Message::EnrichComplete(result) => {
-            if let Some(sha1) = &result.sha1 {
-                if result.data_changed {
-                    app.store.notify_metadata_changed(sha1);
-                }
+            if let Some(sha1) = &result.sha1
+                && result.data_changed
+            {
+                app.store.notify_metadata_changed(sha1);
             }
 
             // Sync recent game titles with enriched library entries
@@ -814,17 +795,17 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
             app.recent_games.save();
 
             // Also update the current game if loaded
-            if let Some(current) = &mut app.current_game {
-                if let Some((_dir, entry)) = super::find_by_sha1(&current.entry.sha1) {
-                    current.entry = entry;
-                    current.cover = super::load_cover(&current.game_dir)
-                        .map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
-                }
+            if let Some(current) = &mut app.current_game
+                && let Some((_dir, entry)) = super::find_by_sha1(&current.entry.sha1)
+            {
+                current.entry = entry;
+                current.cover = super::load_cover(&current.game_dir)
+                    .map(iced::widget::image::Handle::from_bytes);
             }
 
             // Chain: enrich next game if there are more
             if result.has_more && app.settings.internet_enabled && app.settings.hasheous_enabled {
-                return Task::perform(smol::unblock(|| super::scanner::enrich_next()), |result| {
+                return Task::perform(smol::unblock(super::scanner::enrich_next), |result| {
                     app::Message::EnrichComplete(result)
                 });
             }
@@ -837,54 +818,51 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
         }
         app::Message::CartridgeRwDumpComplete(result) => {
             app.cartridge_rw.dump_progress = None;
-            match result {
-                Ok((rom, sram)) => {
-                    let header_title = Cartridge::peek_title(&rom);
-                    let title = if header_title.is_empty() {
-                        "Unknown".to_string()
-                    } else {
-                        header_title.clone()
-                    };
-                    let sha1 = super::hasheous::rom_sha1(&rom);
+            if let Ok((rom, sram)) = result {
+                let header_title = Cartridge::peek_title(&rom);
+                let title = if header_title.is_empty() {
+                    "Unknown".to_string()
+                } else {
+                    header_title.clone()
+                };
+                let sha1 = super::hasheous::rom_sha1(&rom);
 
-                    // Save ROM file to library
-                    let game_dir = match super::game_dir_for(&title, &sha1) {
-                        Some(dir) => dir,
-                        None => return Task::none(),
-                    };
-                    let _ = std::fs::create_dir_all(&game_dir);
-                    let rom_path =
-                        game_dir.join(format!("{title}.{}", system::gb::DEFAULT_ROM_EXTENSION));
-                    if std::fs::write(&rom_path, &rom).is_err() {
-                        return Task::none();
-                    }
-
-                    // Create library entry
-                    let mut entry = super::GameEntry::new(sha1, title, rom_path);
-                    entry.header_title = if header_title.is_empty() {
-                        None
-                    } else {
-                        Some(header_title)
-                    };
-                    super::save_entry(&game_dir, &entry);
-
-                    // Import SRAM if we read it from the cartridge
-                    if let Some(sram) = &sram {
-                        super::activity::write_cartridge_import(&game_dir, sram);
-                    }
-
-                    // Refresh the library view
-                    app.store.rebuild_index();
-
-                    // Trigger enrichment for cover art etc.
-                    if app.settings.internet_enabled && app.settings.hasheous_enabled {
-                        return Task::perform(
-                            smol::unblock(|| super::scanner::enrich_next()),
-                            |result| app::Message::EnrichComplete(result),
-                        );
-                    }
+                // Save ROM file to library
+                let game_dir = match super::game_dir_for(&title, &sha1) {
+                    Some(dir) => dir,
+                    None => return Task::none(),
+                };
+                let _ = std::fs::create_dir_all(&game_dir);
+                let rom_path =
+                    game_dir.join(format!("{title}.{}", system::gb::DEFAULT_ROM_EXTENSION));
+                if std::fs::write(&rom_path, &rom).is_err() {
+                    return Task::none();
                 }
-                Err(_) => {}
+
+                // Create library entry
+                let mut entry = super::GameEntry::new(sha1, title, rom_path);
+                entry.header_title = if header_title.is_empty() {
+                    None
+                } else {
+                    Some(header_title)
+                };
+                super::save_entry(&game_dir, &entry);
+
+                // Import SRAM if we read it from the cartridge
+                if let Some(sram) = &sram {
+                    super::activity::write_cartridge_import(&game_dir, sram);
+                }
+
+                // Refresh the library view
+                app.store.rebuild_index();
+
+                // Trigger enrichment for cover art etc.
+                if app.settings.internet_enabled && app.settings.hasheous_enabled {
+                    return Task::perform(
+                        smol::unblock(super::scanner::enrich_next),
+                        app::Message::EnrichComplete,
+                    );
+                }
             }
         }
 

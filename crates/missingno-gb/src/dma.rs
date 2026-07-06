@@ -61,6 +61,12 @@ pub struct Dma {
     advance_stalled: bool,
 }
 
+impl Default for Dma {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Dma {
     pub fn new() -> Self {
         Self {

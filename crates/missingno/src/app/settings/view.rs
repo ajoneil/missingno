@@ -133,7 +133,7 @@ fn controls_section(
         "Keyboard",
         &settings.keyboard_bindings,
         listening_for,
-        |action| ListeningFor::Keyboard(action),
+        ListeningFor::Keyboard,
         |s| controls::display_key_name(s).to_string(),
     );
 
@@ -141,7 +141,7 @@ fn controls_section(
         "Controller",
         &settings.gamepad_bindings,
         listening_for,
-        |action| ListeningFor::Gamepad(action),
+        ListeningFor::Gamepad,
         |s| controls::display_gamepad_name(s).to_string(),
     );
 
@@ -219,7 +219,7 @@ fn binding_row(
     } else {
         let display = bindings
             .get(action)
-            .map(|s| display_name(s))
+            .map(display_name)
             .unwrap_or_else(|| "—".to_string());
         buttons::standard(text(display))
             .on_press(Message::StartListening(target).into())

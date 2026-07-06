@@ -63,13 +63,9 @@ impl Mbc2 {
                 }
                 false
             }
-            0xa000..=0xbfff => {
-                if self.ram_enabled {
-                    self.ram[((address - 0xa000) % 0x200) as usize] = value & 0x0f;
-                    true
-                } else {
-                    false
-                }
+            0xa000..=0xbfff if self.ram_enabled => {
+                self.ram[((address - 0xa000) % 0x200) as usize] = value & 0x0f;
+                true
             }
             _ => false,
         }

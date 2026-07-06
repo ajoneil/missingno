@@ -100,10 +100,11 @@ pub fn list_ports() -> Vec<String> {
     let mut names: Vec<String> = ports
         .into_iter()
         .filter_map(|port| {
-            if let SerialPortType::UsbPort(usb) = &port.port_type {
-                if usb.vid == GBXCART_VID && usb.pid == GBXCART_PID {
-                    return Some(port.port_name);
-                }
+            if let SerialPortType::UsbPort(usb) = &port.port_type
+                && usb.vid == GBXCART_VID
+                && usb.pid == GBXCART_PID
+            {
+                return Some(port.port_name);
             }
             None
         })
@@ -193,17 +194,16 @@ pub(super) fn query_firmware_info(
 
     let mut device_name = String::new();
 
-    if fw_ver >= 12 {
-        if let Some(name_size) = read_byte(port) {
-            if name_size > 0 {
-                let mut name_buf = vec![0u8; name_size as usize];
-                if port.read_exact(&mut name_buf).is_ok() {
-                    if let Some(null_pos) = name_buf.iter().position(|&b| b == 0) {
-                        name_buf.truncate(null_pos);
-                    }
-                    device_name = String::from_utf8_lossy(&name_buf).into_owned();
-                }
+    if fw_ver >= 12
+        && let Some(name_size) = read_byte(port)
+        && name_size > 0
+    {
+        let mut name_buf = vec![0u8; name_size as usize];
+        if port.read_exact(&mut name_buf).is_ok() {
+            if let Some(null_pos) = name_buf.iter().position(|&b| b == 0) {
+                name_buf.truncate(null_pos);
             }
+            device_name = String::from_utf8_lossy(&name_buf).into_owned();
         }
     }
 
@@ -250,9 +250,7 @@ fn read_cartridge_header(
 ) -> Option<CartridgeHeader> {
     port.set_timeout(Duration::from_millis(500)).ok()?;
 
-    if enter_dmg_mode(port, fw_ver).is_none() {
-        return None;
-    }
+    enter_dmg_mode(port, fw_ver)?;
 
     // Configure for header read
     set_variable(port, fw_ver, 2, 0x00, CHUNK_SIZE as u32)?; // TRANSFER_SIZE
@@ -263,9 +261,7 @@ fn read_cartridge_header(
     let mut header = vec![0u8; HEADER_SIZE];
     let chunks = HEADER_SIZE / CHUNK_SIZE as usize;
     for i in 0..chunks {
-        if write_cmd(port, &[DMG_CART_READ]).is_none() {
-            return None;
-        }
+        write_cmd(port, &[DMG_CART_READ])?;
         let offset = i * CHUNK_SIZE as usize;
         if port
             .read_exact(&mut header[offset..offset + CHUNK_SIZE as usize])
@@ -322,14 +318,12 @@ fn cart_power_on(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) -> Opt
     for _attempt in 0..10 {
         std::thread::sleep(Duration::from_millis(100));
         let mut buf = [0u8; 64];
-        match port.read(&mut buf) {
-            Ok(n) => {
-                if n > 0 && buf[n - 1] == 0x01 {
-                    got_ack = true;
-                    break;
-                }
-            }
-            Err(_) => {}
+        if let Ok(n) = port.read(&mut buf)
+            && n > 0
+            && buf[n - 1] == 0x01
+        {
+            got_ack = true;
+            break;
         }
     }
 

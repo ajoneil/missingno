@@ -285,12 +285,12 @@ impl Mbc7 {
                         false
                     }
                     0x1 => {
-                        if let LatchState::WroteErase = self.latch_state {
-                            if value == 0xaa {
-                                // Latch accelerometer — return center values (no tilt)
-                                self.accel_x = 0x81d0;
-                                self.accel_y = 0x81d0;
-                            }
+                        if let LatchState::WroteErase = self.latch_state
+                            && value == 0xaa
+                        {
+                            // Latch accelerometer — return center values (no tilt)
+                            self.accel_x = 0x81d0;
+                            self.accel_y = 0x81d0;
                         }
                         self.latch_state = LatchState::Idle;
                         false

@@ -355,7 +355,7 @@ fn classify_operand(operand: &str) -> iced::Color {
     }
 
     // Hex immediates ($xxxx) or decimal numbers
-    if op.starts_with('$') || op.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+    if op.starts_with('$') || op.chars().next().is_some_and(|c| c.is_ascii_digit()) {
         return SYN_IMMEDIATE;
     }
 

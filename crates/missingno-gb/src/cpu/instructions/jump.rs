@@ -150,8 +150,8 @@ impl fmt::Display for Jump {
     }
 }
 
-impl Into<Instruction> for Jump {
-    fn into(self) -> Instruction {
-        Instruction::Jump(self)
+impl From<Jump> for Instruction {
+    fn from(val: Jump) -> Self {
+        Instruction::Jump(val)
     }
 }

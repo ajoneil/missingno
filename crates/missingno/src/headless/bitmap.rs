@@ -52,9 +52,7 @@ pub(super) fn write_bmp(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
         for rgb in pixels[row_start..row_start + width as usize * 3].chunks_exact(3) {
             bmp.extend_from_slice(&[rgb[2], rgb[1], rgb[0]]);
         }
-        for _ in 0..padding {
-            bmp.push(0);
-        }
+        bmp.extend(std::iter::repeat_n(0u8, padding));
     }
 
     bmp

@@ -38,9 +38,9 @@ pub enum Message {
     ToggleOnScreenOnly(bool),
 }
 
-impl Into<app::Message> for Message {
-    fn into(self) -> app::Message {
-        panes::Message::Pane(panes::PaneMessage::Sprites(self)).into()
+impl From<Message> for app::Message {
+    fn from(val: Message) -> Self {
+        panes::Message::Pane(panes::PaneMessage::Sprites(val)).into()
     }
 }
 

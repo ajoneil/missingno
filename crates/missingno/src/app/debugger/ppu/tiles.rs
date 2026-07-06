@@ -28,9 +28,9 @@ pub enum Message {
     SelectBank(u8),
 }
 
-impl Into<app::Message> for Message {
-    fn into(self) -> app::Message {
-        panes::Message::Pane(panes::PaneMessage::Tiles(self)).into()
+impl From<Message> for app::Message {
+    fn from(val: Message) -> Self {
+        panes::Message::Pane(panes::PaneMessage::Tiles(val)).into()
     }
 }
 

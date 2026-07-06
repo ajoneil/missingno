@@ -89,12 +89,12 @@ impl Signed11 {
     }
 }
 
-impl Into<i16> for Signed11 {
-    fn into(self) -> i16 {
-        if self.0 & Self::SIGN != 0 {
-            -((!self.0 & Self::VALUE) as i16)
+impl From<Signed11> for i16 {
+    fn from(val: Signed11) -> Self {
+        if val.0 & Signed11::SIGN != 0 {
+            -((!val.0 & Signed11::VALUE) as i16)
         } else {
-            (self.0 & Self::VALUE) as i16
+            (val.0 & Signed11::VALUE) as i16
         }
     }
 }
@@ -102,17 +102,17 @@ impl From<i16> for Signed11 {
     fn from(value: i16) -> Self {
         match value {
             0..=Self::MAX => Self(value as u16),
-            Self::MIN..0 => Self(Self::SIGN | (value.abs() as u16)),
+            Self::MIN..0 => Self(Self::SIGN | value.unsigned_abs()),
             _ => unreachable!(),
         }
     }
 }
 
-/// CH1/CH2 /4 prescaler — two toggle DFFs (AJER + CALO on CH1, ATEP
-/// + CEMO on CH2) that divide apu_4mhz down to 1 MHz. Free-running;
-/// reset only by `apu_reset`. NR14/NR24 trigger writes have no input
-/// to these stages — the silicon-level realisation of "low two bits
-/// of the frequency timer are NOT modified".
+/// CH1/CH2 /4 prescaler — two toggle DFFs (AJER/CALO on CH1, ATEP/CEMO
+/// on CH2) that divide apu_4mhz down to 1 MHz. Free-running; reset only
+/// by `apu_reset`. NR14/NR24 trigger writes have no input to these
+/// stages — the silicon-level realisation of "low two bits of the
+/// frequency timer are NOT modified".
 #[derive(Clone, Default)]
 pub struct Prescaler {
     pub counter: u8,

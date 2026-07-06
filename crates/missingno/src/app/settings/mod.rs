@@ -141,7 +141,7 @@ impl Default for Bindings {
 // ── Settings persistence ──────────────────────────────────────────────
 
 // Legacy flat struct for migrating old settings files.
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct LegacyKeyBindings {
     #[serde(default)]
     a: String,
@@ -159,21 +159,6 @@ struct LegacyKeyBindings {
     left: String,
     #[serde(default)]
     right: String,
-}
-
-impl Default for LegacyKeyBindings {
-    fn default() -> Self {
-        Self {
-            a: String::new(),
-            b: String::new(),
-            start: String::new(),
-            select: String::new(),
-            up: String::new(),
-            down: String::new(),
-            left: String::new(),
-            right: String::new(),
-        }
-    }
 }
 
 impl From<LegacyKeyBindings> for Bindings {

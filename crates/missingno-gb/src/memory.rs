@@ -18,6 +18,12 @@ const EXTERNAL_BUS_DECAY_MCYCLES: u8 = 12;
 /// either bus — always accessible to the CPU, even during OAM DMA.
 pub struct HighRam([u8; 0x7F]);
 
+impl Default for HighRam {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HighRam {
     pub fn new() -> Self {
         Self([0; 0x7F])
@@ -190,6 +196,12 @@ pub struct VramBus<V: Vram> {
     pub vram: V,
     /// Retained value on the VRAM data bus.
     pub latch: u8,
+}
+
+impl<V: Vram> Default for VramBus<V> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<V: Vram> VramBus<V> {

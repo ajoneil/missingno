@@ -22,9 +22,9 @@ pub enum Arithmetic8 {
     CompareA(Source8),
 }
 
-impl Into<Arithmetic> for Arithmetic8 {
-    fn into(self) -> Arithmetic {
-        Arithmetic::Arithmetic8(self)
+impl From<Arithmetic8> for Arithmetic {
+    fn from(val: Arithmetic8) -> Self {
+        Arithmetic::Arithmetic8(val)
     }
 }
 
@@ -65,9 +65,9 @@ pub enum Arithmetic16 {
     AddHl(Register16),
 }
 
-impl Into<Arithmetic> for Arithmetic16 {
-    fn into(self) -> Arithmetic {
-        Arithmetic::Arithmetic16(self)
+impl From<Arithmetic16> for Arithmetic {
+    fn from(val: Arithmetic16) -> Self {
+        Arithmetic::Arithmetic16(val)
     }
 }
 

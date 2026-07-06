@@ -108,32 +108,30 @@ impl App {
             }
 
             // Reflash (troubleshooting)
-            if cart.flashable() {
-                if let Some(sha1) = sha1 {
-                    let mut reflash_col = column![
+            if cart.flashable()
+                && let Some(sha1) = sha1
+            {
+                let mut reflash_col = column![
                         text::label("Troubleshooting"),
                         iced_text("Reflash the ROM if the cartridge is not working correctly. Make sure your saves are synced first.").color(MUTED),
                     ]
                     .spacing(s());
 
-                    if has_save && cart.ram_size > 0 {
-                        reflash_col = reflash_col.push(
-                            iced::widget::toggler(flash_write_save)
-                                .label("Also write save to cartridge")
-                                .on_toggle(|v| {
-                                    Message::Cartridge(CartridgeMessage::FlashToggleSave(v))
-                                })
-                                .size(m()),
-                        );
-                    }
-
-                    reflash_col =
-                        reflash_col.push(buttons::subtle("Reflash ROM to Cartridge").on_press(
-                            Message::Cartridge(CartridgeMessage::Flash(sha1.to_string())),
-                        ));
-
-                    body = body.push(reflash_col);
+                if has_save && cart.ram_size > 0 {
+                    reflash_col = reflash_col.push(
+                        iced::widget::toggler(flash_write_save)
+                            .label("Also write save to cartridge")
+                            .on_toggle(|v| Message::Cartridge(CartridgeMessage::FlashToggleSave(v)))
+                            .size(m()),
+                    );
                 }
+
+                reflash_col =
+                    reflash_col.push(buttons::subtle("Reflash ROM to Cartridge").on_press(
+                        Message::Cartridge(CartridgeMessage::Flash(sha1.to_string())),
+                    ));
+
+                body = body.push(reflash_col);
             }
         } else if cart.flashable() {
             // ── Scenario 3: Different game, flashable cart ──

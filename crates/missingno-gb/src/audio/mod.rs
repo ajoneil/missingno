@@ -93,6 +93,12 @@ pub struct Audio<A: ApuSpec> {
     _spec: PhantomData<A>,
 }
 
+impl<A: ApuSpec> Default for Audio<A> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<A: ApuSpec> Audio<A> {
     /// Override CH1's post-boot duty/divider phase. The boot chime leaves CH1
     /// free-running with the duty position un-reset across triggers; the CGB
@@ -222,7 +228,7 @@ impl<A: ApuSpec> Audio<A> {
     /// deme NOR length-clock gate's level input that an NRx4 length-enable
     /// 0→1 write reads to decide the extra clock.
     fn caru_low(&self) -> bool {
-        self.frame_sequencer_step % 2 == 0
+        self.frame_sequencer_step.is_multiple_of(2)
     }
 
     pub fn prev_div_apu_bit(&self) -> bool {
@@ -392,7 +398,7 @@ impl<A: ApuSpec> Audio<A> {
         let c = self.frame_sequencer_step;
 
         // caru↓ (bufy_256hz↓ → deme↑): C entered an even value.
-        if c % 2 == 0 {
+        if c.is_multiple_of(2) {
             self.channels.tick_length_all();
             // Envelope-enable bug (enable on an odd step): the next even DIV-APU
             // tick advances the envelope counter. An enable on an even step is

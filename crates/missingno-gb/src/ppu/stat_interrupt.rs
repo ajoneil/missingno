@@ -245,6 +245,7 @@ impl StatInterrupt {
     /// the per-leg constant); SUKO is the OR of the legs. The LALU dffsr
     /// captures a 0→1 only when the preceding low interval and the following
     /// high interval both meet the capture threshold.
+    #[allow(clippy::too_many_arguments)]
     fn detect_suko_waveform(
         &mut self,
         conditions_before: InterruptFlags,

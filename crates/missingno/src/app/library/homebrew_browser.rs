@@ -79,10 +79,10 @@ pub(crate) fn view<'a>(
     catalogue: &'a Catalogue,
 ) -> Element<'a, app::Message> {
     // If an entry is selected, show the detail view
-    if let Some(slug) = &state.selected_slug {
-        if let Some(entry) = catalogue.lookup_slug(slug) {
-            return entry_detail(entry, state.covers.get(slug), state.error.as_deref());
-        }
+    if let Some(slug) = &state.selected_slug
+        && let Some(entry) = catalogue.lookup_slug(slug)
+    {
+        return entry_detail(entry, state.covers.get(slug), state.error.as_deref());
     }
 
     let search_bar = text_input("Search homebrew games...", &state.search_text)
