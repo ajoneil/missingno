@@ -337,3 +337,204 @@ fn vertical_delay_swaps_on_grp1_write() {
     let (_, lit) = find_color(&lines, COLOR_B).expect("committed graphics visible");
     assert_eq!(lit.len(), 8);
 }
+
+const COLUP1: u8 = 0x07;
+const ENAM0: u8 = 0x1D;
+const ENABL: u8 = 0x1F;
+const CTRLPF: u8 = 0x0A;
+const RESM0: u8 = 0x12;
+const RESBL: u8 = 0x14;
+const REFP0: u8 = 0x0B;
+const COLUPF: u8 = 0x08;
+const PF1: u8 = 0x0E;
+
+/// Missile: hblank RESM parks at x=2; NUSIZ bits 4-5 set the width.
+#[test]
+fn missile_width_and_landing() {
+    let rom = kernel(
+        |asm| {
+            asm.lda_imm(0x02);
+            asm.sta_zp(ENAM0);
+            asm.lda_imm(0x20); // width 4
+            asm.sta_zp(NUSIZ0);
+            asm.lda_imm(COLOR_A);
+            asm.sta_zp(COLUP0);
+        },
+        |asm| {
+            asm.sta_zp(RESM0);
+        },
+    );
+    let (_, lit) = find_color(&second_frame(&rom), COLOR_A).expect("missile drawn");
+    assert_eq!(lit, vec![2, 3, 4, 5], "4-wide missile parked at x=2");
+}
+
+/// Ball: hblank RESBL parks at x=2; CTRLPF bits 4-5 set the width.
+#[test]
+fn ball_width_and_landing() {
+    let rom = kernel(
+        |asm| {
+            asm.lda_imm(0x02);
+            asm.sta_zp(ENABL);
+            asm.lda_imm(0x20); // width 4
+            asm.sta_zp(CTRLPF);
+            asm.lda_imm(COLOR_A);
+            asm.sta_zp(COLUPF); // ball draws in the playfield colour
+        },
+        |asm| {
+            asm.sta_zp(RESBL);
+        },
+    );
+    let (_, lit) = find_color(&second_frame(&rom), COLOR_A).expect("ball drawn");
+    assert_eq!(lit, vec![2, 3, 4, 5], "4-wide ball parked at x=2");
+}
+
+/// REFP: GRP0=0xC0 draws its two lit bits leading normally, trailing
+/// when reflected.
+#[test]
+fn player_reflection_mirrors_the_bits() {
+    let rom = kernel(
+        |asm| {
+            asm.lda_imm(0xC0);
+            asm.sta_zp(GRP0);
+        },
+        |asm| {
+            asm.lda_imm(0x00);
+            asm.sta_zp(REFP0);
+            asm.lda_imm(COLOR_A);
+            asm.sta_zp(COLUP0);
+            asm.sta_zp(RESP0);
+            asm.sta_zp(WSYNC);
+            asm.sta_zp(WSYNC);
+            asm.lda_imm(0x08);
+            asm.sta_zp(REFP0);
+            asm.lda_imm(COLOR_B);
+            asm.sta_zp(COLUP0);
+        },
+    );
+    let lines = second_frame(&rom);
+    let (line_a, _) = find_color(&lines, COLOR_A).expect("normal player");
+    let (_, lit_b) = find_color_after(&lines, COLOR_B, line_a + 1).expect("reflected player");
+    let lit_a = lit_pixels(&lines[line_a], COLOR_A);
+    assert_eq!(lit_a, vec![3, 4], "bits 7-6 lead unreflected");
+    assert_eq!(lit_b, vec![9, 10], "bits 7-6 trail reflected");
+}
+
+/// NUSIZ 7: quad-width player, 32 clocks wide.
+#[test]
+fn quad_player_stretches_to_32() {
+    let rom = kernel(
+        |asm| {
+            asm.lda_imm(0xFF);
+            asm.sta_zp(GRP0);
+            asm.lda_imm(0x07);
+            asm.sta_zp(NUSIZ0);
+            asm.lda_imm(COLOR_A);
+            asm.sta_zp(COLUP0);
+        },
+        |asm| {
+            asm.sta_zp(RESP0);
+        },
+    );
+    let (_, lit) = find_color(&second_frame(&rom), COLOR_A).expect("quad player");
+    assert_eq!(lit.len(), 32, "8 bits at 4 clocks each, got {lit:?}");
+    assert_eq!(lit[0], 3);
+}
+
+/// Score mode colours the left playfield half with COLUP0, the right
+/// with COLUP1; priority mode puts the playfield above the players.
+#[test]
+fn score_and_priority_modes() {
+    let rom = kernel(
+        |asm| {
+            asm.lda_imm(0xFF);
+            asm.sta_zp(PF1); // band at x=16..48 each half
+            asm.lda_imm(COLOR_A);
+            asm.sta_zp(COLUP0);
+            asm.lda_imm(COLOR_B);
+            asm.sta_zp(COLUP1);
+            asm.lda_imm(0x02); // score mode
+            asm.sta_zp(CTRLPF);
+        },
+        |asm| {
+            asm.nop();
+        },
+    );
+    let lines = second_frame(&rom);
+    let (_, left) = find_color(&lines, COLOR_A).expect("left half in COLUP0");
+    assert_eq!(left, (16..48).collect::<Vec<_>>());
+    let (_, right) = find_color(&lines, COLOR_B).expect("right half in COLUP1");
+    assert_eq!(right, (96..128).collect::<Vec<_>>());
+
+    // Priority: a player overlapping the playfield hides behind it.
+    let rom = kernel(
+        |asm| {
+            asm.lda_imm(0xFF);
+            asm.sta_zp(PF0); // playfield over x=0..16
+            asm.sta_zp(GRP0);
+            asm.lda_imm(COLOR_A);
+            asm.sta_zp(COLUP0);
+            asm.lda_imm(0x4E);
+            asm.sta_zp(COLUPF);
+            asm.lda_imm(0x04); // playfield priority
+            asm.sta_zp(CTRLPF);
+        },
+        |asm| {
+            asm.sta_zp(RESP0); // player at x=3, fully under the playfield
+        },
+    );
+    let lines = second_frame(&rom);
+    assert!(
+        find_color(&lines, COLOR_A).is_none(),
+        "player hidden behind the prioritised playfield"
+    );
+}
+
+/// A mid-line ("illegal") HMOVE delivers its extra clocks without the
+/// hblank compensation: HM=+7 shifts a full 15 left. Characterises the
+/// mechanism's emergent behaviour — the value the Cosmic Ark family of
+/// tricks builds on.
+#[test]
+fn illegal_mid_line_hmove_shifts_uncompensated() {
+    let rom = kernel(
+        |asm| {
+            asm.lda_imm(0xFF);
+            asm.sta_zp(GRP0);
+            asm.lda_imm(0x70);
+            asm.sta_zp(HMP0);
+        },
+        |asm| {
+            asm.lda_imm(COLOR_A);
+            asm.sta_zp(COLUP0);
+            for _ in 0..25 {
+                asm.nop();
+            }
+            asm.sta_zp(RESP0); // parks at x=93
+            asm.sta_zp(WSYNC);
+            asm.sta_zp(WSYNC);
+            asm.lda_imm(COLOR_B);
+            asm.sta_zp(COLUP0);
+            for _ in 0..20 {
+                asm.nop(); // reach mid-visible before strobing
+            }
+            asm.sta_zp(HMOVE);
+            asm.sta_zp(WSYNC);
+        },
+    );
+    let lines = second_frame(&rom);
+    let (line_a, _) = find_color(&lines, COLOR_A).expect("parked player");
+    let (_, lit_b) = find_color_after(&lines, COLOR_B, line_a + 1).expect("moved player");
+    let lit_a = lit_pixels(&lines[line_a + 1], COLOR_A);
+    assert_eq!(lit_a.first(), Some(&108), "settled pre-move position");
+    // Find the settled post-move line (skip the smeared strobe line).
+    let settled_b = lines
+        .iter()
+        .rev()
+        .map(|l| lit_pixels(l, COLOR_B))
+        .find(|lit| lit.len() == 8)
+        .expect("settled post-move line");
+    assert_eq!(
+        settled_b[0],
+        108 - 15,
+        "mid-line HMOVE: 15 extra clocks, no comb compensation (got {settled_b:?}, strobe-line {lit_b:?})"
+    );
+}
