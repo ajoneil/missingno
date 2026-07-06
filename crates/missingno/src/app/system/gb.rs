@@ -64,12 +64,25 @@ fn battery_save(cartridge: &Cartridge) -> Option<Vec<u8>> {
 }
 
 /// The registration point: picks the console model from the cartridge header —
-/// CGB-aware ROMs get the CGB core, everything else the DMG core.
-pub fn create_console(cartridge: Cartridge, boot_rom: Option<BootRom>) -> Box<dyn SystemConsole> {
+/// CGB-aware ROMs get the CGB core, everything else the DMG core. The serial
+/// link is a Game Boy peripheral, so it attaches here rather than at the seam.
+pub fn create_console(
+    cartridge: Cartridge,
+    boot_rom: Option<BootRom>,
+    link: Option<Box<dyn SerialLink>>,
+) -> Box<dyn SystemConsole> {
     if cartridge.is_cgb() {
-        Box::new(GameBoyColor::new(cartridge, boot_rom))
+        let mut console = GameBoyColor::new(cartridge, boot_rom);
+        if let Some(link) = link {
+            console.set_link(link);
+        }
+        Box::new(console)
     } else {
-        Box::new(GameBoy::new(cartridge, boot_rom))
+        let mut console = GameBoy::new(cartridge, boot_rom);
+        if let Some(link) = link {
+            console.set_link(link);
+        }
+        Box::new(console)
     }
 }
 
@@ -131,10 +144,6 @@ where
 
     fn battery_save(&self) -> Option<Vec<u8>> {
         battery_save(Console::cartridge(self))
-    }
-
-    fn set_link(&mut self, link: Box<dyn SerialLink>) {
-        Console::set_link(self, link);
     }
 
     fn frame_interval(&self) -> Duration {

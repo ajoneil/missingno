@@ -123,16 +123,13 @@ fn start_console(
     }
     let cartridge = build_cartridge(rom, save_data);
     let cartridge_title = cartridge.title().to_string();
-    let mut console = system::gb::create_console(cartridge, None);
-    if let Some(link) = app.serial_link.take() {
-        console.set_link(link);
-    } else {
-        // A virtual printer sits on the link port by default; it stays inert
-        // unless a game prints, and prints land in the game's folder.
-        console.set_link(Box::new(crate::printer::GbPrinter::new(
-            game_dir.join("prints"),
-        )));
-    }
+    // A virtual printer sits on the link port by default; it stays inert
+    // unless a game prints, and prints land in the game's folder.
+    let link = app
+        .serial_link
+        .take()
+        .unwrap_or_else(|| Box::new(crate::printer::GbPrinter::new(game_dir.join("prints"))));
+    let console = system::gb::create_console(cartridge, None, Some(link));
     let title = finish_start(app, console, rom_path);
     let _ = cartridge_title;
     title

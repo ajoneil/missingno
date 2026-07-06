@@ -2,19 +2,13 @@
 
 use std::time::Duration;
 
-use missingno_gb::serial_transfer::SerialLink;
 use missingno_vcs::cartridge::CartridgeError;
 use missingno_vcs::console::{JoystickDirection, Vcs};
 use missingno_vcs::tia::VISIBLE_CLOCKS;
 use rgb::RGB8;
 
 use std::collections::BTreeSet;
-use std::path::Path;
-use std::sync::Arc;
 
-use missingno_gb::debugger::WatchCondition;
-use missingno_gb::debugger::cdl::CdlWindow;
-use missingno_gb::debugger::symbols::{Symbol, SymbolTable};
 use missingno_vcs::console::Frame;
 use missingno_vcs::cpu::disasm;
 
@@ -120,12 +114,6 @@ impl SystemConsole for VcsConsole {
         self.title.clone()
     }
 
-    fn battery_save(&self) -> Option<Vec<u8>> {
-        None
-    }
-
-    fn set_link(&mut self, _link: Box<dyn SerialLink>) {}
-
     fn frame_interval(&self) -> Duration {
         FRAME_INTERVAL
     }
@@ -204,14 +192,13 @@ fn channel(value: f32) -> u8 {
 }
 
 /// The VCS under its debugging backend, adapted to the seam. Symbols,
-/// code/data logging, and watchpoints have no backend yet: those seam
-/// methods accept and report nothing.
+/// code/data logging, and watchpoints have no backend yet — the seam
+/// defaults report them absent.
 struct VcsDebugger {
     core: missingno_vcs::debugger::Debugger,
     title: String,
     last_frame: IndexedFrame,
     inspect: VcsInspectState,
-    symbols: Arc<SymbolTable>,
     frame_count: u64,
 }
 
@@ -229,7 +216,6 @@ impl VcsDebugger {
             title,
             last_frame,
             inspect: VcsInspectState::default(),
-            symbols: Arc::new(SymbolTable::default()),
             frame_count: 0,
         };
         this.refresh();
@@ -330,18 +316,6 @@ impl SystemDebugger for VcsDebugger {
         self.core.breakpoints()
     }
 
-    fn add_watchpoint(&mut self, _condition: WatchCondition) {}
-
-    fn remove_watchpoint(&mut self, _condition: &WatchCondition) {}
-
-    fn watchpoints(&self) -> &[WatchCondition] {
-        &[]
-    }
-
-    fn last_watchpoint_hit(&self) -> Option<WatchCondition> {
-        None
-    }
-
     fn inspect(&self) -> &dyn Inspection {
         &self.inspect
     }
@@ -349,26 +323,6 @@ impl SystemDebugger for VcsDebugger {
     fn pane_family(&self) -> &'static panes::Family {
         &panes::VCS_FAMILY
     }
-
-    fn symbols(&self) -> Arc<SymbolTable> {
-        self.symbols.clone()
-    }
-
-    fn set_symbols(&mut self, _symbols: SymbolTable) {}
-
-    fn add_symbol(&mut self, _address: u16, _name: String) {}
-
-    fn remove_symbol(&mut self, _symbol: &Symbol) {}
-
-    fn save_symbols(&self, _path: &Path) {}
-
-    fn cdl_window(&self) -> CdlWindow {
-        CdlWindow::default()
-    }
-
-    fn load_cdl(&mut self, _path: &Path) {}
-
-    fn save_cdl(&self, _path: &Path) {}
 
     fn snapshot(&self, frame: u64) -> DebugView {
         let mut state = self.inspect.clone();
@@ -393,20 +347,12 @@ impl SystemDebugger for VcsDebugger {
         self.title.clone()
     }
 
-    fn battery_save(&self) -> Option<Vec<u8>> {
-        None
-    }
-
     fn frame_interval(&self) -> Duration {
         FRAME_INTERVAL
     }
 
     fn capture_frame(&self, _use_sgb_colors: bool, _palette_name: &str) -> FrameCapture {
         FrameCapture::from_indexed(&self.last_frame)
-    }
-
-    fn capture_trace(&mut self, _path: &Path) -> Option<ScreenDisplay> {
-        None
     }
 
     fn into_console(self: Box<Self>) -> Box<dyn SystemConsole> {

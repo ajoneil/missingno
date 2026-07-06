@@ -15,7 +15,6 @@ use missingno_gb::debugger::{
     symbols::{Symbol, SymbolTable},
 };
 use missingno_gb::joypad::{Button, DirectionalPad};
-use missingno_gb::serial_transfer::SerialLink;
 
 /// A family-interpreted control identifier. Ids 0-7 mirror the Game Boy
 /// button order so the existing bindings pipeline translates numerically;
@@ -84,8 +83,9 @@ pub trait SystemConsole: Send {
     /// The game's title for filenames and session records.
     fn game_title(&self) -> String;
     /// Serialized battery-backed save contents, if the media persists any.
-    fn battery_save(&self) -> Option<Vec<u8>>;
-    fn set_link(&mut self, link: Box<dyn SerialLink>);
+    fn battery_save(&self) -> Option<Vec<u8>> {
+        None
+    }
     /// Wall-clock duration of one emulated frame, for the pacing loop.
     fn frame_interval(&self) -> Duration;
     /// Convert to the debugger-backed form. Systems without a debugger
@@ -98,6 +98,9 @@ pub trait SystemConsole: Send {
 /// Step results come back as ready-to-show [`ScreenDisplay`]s — the system
 /// decides what a step with no completed frame looks like (e.g. an LCD-off
 /// screen still displays).
+///
+/// Watchpoints, symbols, code/data logging, and trace capture default to
+/// absent — a family implements only the backends it has.
 pub trait SystemDebugger: Send {
     fn step(&mut self) -> Option<ScreenDisplay>;
     fn step_over(&mut self) -> Option<ScreenDisplay>;
@@ -111,10 +114,14 @@ pub trait SystemDebugger: Send {
     fn set_breakpoint(&mut self, address: u16);
     fn clear_breakpoint(&mut self, address: u16);
     fn breakpoints(&self) -> &BTreeSet<u16>;
-    fn add_watchpoint(&mut self, condition: WatchCondition);
-    fn remove_watchpoint(&mut self, condition: &WatchCondition);
-    fn watchpoints(&self) -> &[WatchCondition];
-    fn last_watchpoint_hit(&self) -> Option<WatchCondition>;
+    fn add_watchpoint(&mut self, _condition: WatchCondition) {}
+    fn remove_watchpoint(&mut self, _condition: &WatchCondition) {}
+    fn watchpoints(&self) -> &[WatchCondition] {
+        &[]
+    }
+    fn last_watchpoint_hit(&self) -> Option<WatchCondition> {
+        None
+    }
 
     /// The live inspection surface the debugger panes render from while paused.
     fn inspect(&self) -> &dyn Inspection;
@@ -123,29 +130,46 @@ pub trait SystemDebugger: Send {
         &panes::GB_FAMILY
     }
     /// Labels from the ROM's debug-symbol sidecar, if one was loaded.
-    fn symbols(&self) -> Arc<SymbolTable>;
-    fn set_symbols(&mut self, symbols: SymbolTable);
+    fn symbols(&self) -> Arc<SymbolTable> {
+        empty_symbols()
+    }
+    fn set_symbols(&mut self, _symbols: SymbolTable) {}
     /// Create a user label at an address; the system decides the bank from
     /// the current mapping.
-    fn add_symbol(&mut self, address: u16, name: String);
-    fn remove_symbol(&mut self, symbol: &Symbol);
-    fn save_symbols(&self, path: &Path);
+    fn add_symbol(&mut self, _address: u16, _name: String) {}
+    fn remove_symbol(&mut self, _symbol: &Symbol) {}
+    fn save_symbols(&self, _path: &Path) {}
     /// Code/data-log flags around the current instruction, for the
     /// disassembly's data-byte display.
-    fn cdl_window(&self) -> CdlWindow;
-    fn load_cdl(&mut self, path: &Path);
-    fn save_cdl(&self, path: &Path);
+    fn cdl_window(&self) -> CdlWindow {
+        CdlWindow::default()
+    }
+    fn load_cdl(&mut self, _path: &Path) {}
+    fn save_cdl(&self, _path: &Path) {}
     /// An owned per-vblank snapshot for the UI to render from while running.
     fn snapshot(&self, frame: u64) -> DebugView;
     fn running_status(&self, frame: u64) -> RunningStatus;
 
     fn game_title(&self) -> String;
-    fn battery_save(&self) -> Option<Vec<u8>>;
+    fn battery_save(&self) -> Option<Vec<u8>> {
+        None
+    }
     fn frame_interval(&self) -> Duration;
     fn capture_frame(&self, use_sgb_colors: bool, palette_name: &str) -> FrameCapture;
-    /// Step one frame while writing an execution trace to `path`; `None` on
-    /// capture failure.
-    fn capture_trace(&mut self, path: &Path) -> Option<ScreenDisplay>;
+    /// Step one frame while writing an execution trace to `path`; `None` when
+    /// the system has no capture backend or capture fails.
+    fn capture_trace(&mut self, _path: &Path) -> Option<ScreenDisplay> {
+        None
+    }
 
     fn into_console(self: Box<Self>) -> Box<dyn SystemConsole>;
+}
+
+/// The shared empty table behind the default [`SystemDebugger::symbols`].
+fn empty_symbols() -> Arc<SymbolTable> {
+    use std::sync::OnceLock;
+    static EMPTY: OnceLock<Arc<SymbolTable>> = OnceLock::new();
+    EMPTY
+        .get_or_init(|| Arc::new(SymbolTable::default()))
+        .clone()
 }

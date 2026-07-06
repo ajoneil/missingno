@@ -1,14 +1,9 @@
 //! The Sega Master System's implementation of the system seam.
 
 use std::collections::BTreeSet;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use missingno_gb::debugger::WatchCondition;
-use missingno_gb::debugger::cdl::CdlWindow;
-use missingno_gb::debugger::symbols::{Symbol, SymbolTable};
-use missingno_gb::serial_transfer::SerialLink;
 use missingno_sms::cartridge::CartridgeError;
 use missingno_sms::console::Sms;
 use missingno_sms::vdp::{self, Frame};
@@ -142,12 +137,6 @@ impl SystemConsole for SmsConsole {
         self.title.clone()
     }
 
-    fn battery_save(&self) -> Option<Vec<u8>> {
-        None
-    }
-
-    fn set_link(&mut self, _link: Box<dyn SerialLink>) {}
-
     fn frame_interval(&self) -> Duration {
         FRAME_INTERVAL
     }
@@ -162,15 +151,14 @@ impl SystemConsole for SmsConsole {
 }
 
 /// The SMS under the seam's debugger: stepping and breakpoints over the
-/// console; symbols, code/data logging, and watchpoints have no backend
-/// yet and report empty.
+/// console. Symbols, code/data logging, and watchpoints have no backend
+/// yet — the seam defaults report them absent.
 struct SmsDebugger {
     sms: Sms,
     breakpoints: BTreeSet<u16>,
     title: String,
     last_frame: IndexedFrame,
     inspect: SmsInspectState,
-    symbols: Arc<SymbolTable>,
     frame_count: u64,
 }
 
@@ -185,7 +173,6 @@ impl SmsDebugger {
             title,
             last_frame,
             inspect: SmsInspectState::default(),
-            symbols: Arc::new(SymbolTable::default()),
             frame_count: 0,
         };
         this.refresh();
@@ -320,18 +307,6 @@ impl SystemDebugger for SmsDebugger {
         &self.breakpoints
     }
 
-    fn add_watchpoint(&mut self, _condition: WatchCondition) {}
-
-    fn remove_watchpoint(&mut self, _condition: &WatchCondition) {}
-
-    fn watchpoints(&self) -> &[WatchCondition] {
-        &[]
-    }
-
-    fn last_watchpoint_hit(&self) -> Option<WatchCondition> {
-        None
-    }
-
     fn inspect(&self) -> &dyn Inspection {
         &self.inspect
     }
@@ -339,26 +314,6 @@ impl SystemDebugger for SmsDebugger {
     fn pane_family(&self) -> &'static panes::Family {
         &panes::SMS_FAMILY
     }
-
-    fn symbols(&self) -> Arc<SymbolTable> {
-        self.symbols.clone()
-    }
-
-    fn set_symbols(&mut self, _symbols: SymbolTable) {}
-
-    fn add_symbol(&mut self, _address: u16, _name: String) {}
-
-    fn remove_symbol(&mut self, _symbol: &Symbol) {}
-
-    fn save_symbols(&self, _path: &Path) {}
-
-    fn cdl_window(&self) -> CdlWindow {
-        CdlWindow::default()
-    }
-
-    fn load_cdl(&mut self, _path: &Path) {}
-
-    fn save_cdl(&self, _path: &Path) {}
 
     fn snapshot(&self, frame: u64) -> DebugView {
         let mut state = self.inspect.clone();
@@ -380,20 +335,12 @@ impl SystemDebugger for SmsDebugger {
         self.title.clone()
     }
 
-    fn battery_save(&self) -> Option<Vec<u8>> {
-        None
-    }
-
     fn frame_interval(&self) -> Duration {
         FRAME_INTERVAL
     }
 
     fn capture_frame(&self, _use_sgb_colors: bool, _palette_name: &str) -> FrameCapture {
         FrameCapture::from_indexed(&self.last_frame)
-    }
-
-    fn capture_trace(&mut self, _path: &Path) -> Option<ScreenDisplay> {
-        None
     }
 
     fn into_console(self: Box<Self>) -> Box<dyn SystemConsole> {
