@@ -383,6 +383,7 @@ impl App {
 
         if let Some(rom_path) = rom_path {
             if let Ok(rom) = fs::read(&rom_path) {
+                let rom = crate::patch::soft_patch(&rom_path, rom);
                 tasks.push(load::setup_game(&mut app, rom_path, rom));
             }
         }

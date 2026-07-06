@@ -56,6 +56,7 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
         }
 
         Message::Loaded(rom_path, rom) => {
+            let rom = crate::patch::soft_patch(&rom_path, rom);
             return setup_game(app, rom_path, rom);
         }
     }
@@ -131,6 +132,7 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
     let Ok(rom) = std::fs::read(&rom_path) else {
         return Task::none();
     };
+    let rom = crate::patch::soft_patch(&rom_path, rom);
 
     let save_data = library::activity::load_current_sram(&game_dir);
     let initial_sram = save_data.clone();
@@ -178,6 +180,7 @@ pub fn play_with_save(app: &mut App, activity_filename: &str) -> Task<app::Messa
     let Ok(rom) = std::fs::read(&rom_path) else {
         return Task::none();
     };
+    let rom = crate::patch::soft_patch(&rom_path, rom);
 
     let save_data = library::activity::load_sram_from(&game_dir, activity_filename);
     let initial_sram = save_data.clone();

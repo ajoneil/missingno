@@ -7,6 +7,7 @@ mod app;
 mod cartridge_rw;
 mod headless;
 mod link_cable;
+mod patch;
 mod render;
 mod trace;
 
