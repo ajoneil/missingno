@@ -233,9 +233,11 @@ When investigating emulator issues, these data sources are available in priority
 
 ### Debugger
 
+- **Adding an emulated system**: read `docs/adding-a-system.md` — the seam map (core `Model` axis vs frontend `app/system/` family axis) and the honest inventory of remaining GB-shaped surfaces.
 - **Pane system**: `crates/missingno/src/app/debugger/panes.rs` holds a `pane_grid` of `Box<dyn Pane>` trait objects. Each pane is a separate module owning its struct (e.g. `ScreenPane`), its optional `Message` enum, and its `impl Pane` (render via `view(Option<&PaneContext>)` — `Some` = live console or snapshot through the `InspectSource` trait, `None` = "Running…" placeholder). **Registering a pane = one `PANE_REGISTRY` entry** (kind, icon, label, constructor) plus a `DebuggerPane` variant; nothing else to thread through. New pane data must be reachable from `InspectSource` (`app/debugger/inspect.rs`) — implemented by both the live `Console<M>` and the per-vblank `ConsoleSnapshot`, so extend both when adding inspection state. Pane layout persists to `debugger_layout.ron` keyed by registry labels (unknown label ⇒ whole saved layout discarded).
 - **Frontend verification recipe**: `cargo check` + `cargo clippy` (no NEW warnings) + `cargo test -p missingno` after every stage; GUI behaviour changes need a manual run (`cargo run -- <rom> --debugger`) since panes/layout aren't machine-verifiable. iced pitfalls: `pane_grid` view closures run eagerly (short-lived captures are fine); widget `Element`s should copy data eagerly rather than borrow inspection state; `iced::Task` messages route through the single `update()` — keep one sink per subsystem (library messages all route through `library::update::handle`).
-- **Input recording**: `crates/missingno-gb/src/recording.rs` defines the `Recording` data model (ROM header + initial state + input events).
+- **Debug symbols**: the core debugger auto-loads `<rom>.sym` sidecars (no$gmb/RGBDS format, `debugger/symbols.rs`) and the instructions pane shows label rows; switchable-ROM labels resolve only when unambiguous until mappers expose their current bank. Watchpoints (rich `WatchCondition` backend) and breakpoints each have a bottom panel; CGB games get a third sidebar section (speed/VBK/SVBK/OPRI/BCPS/OCPS/HDMA).
+- **Input recording**: `crates/missingno-gb/src/recording.rs` defines the `Recording` data model (ROM header + initial state + input events). Currently dead scaffolding — no UI or replay engine consumes it.
 
 ### Resources
 
