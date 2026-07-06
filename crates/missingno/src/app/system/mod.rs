@@ -14,8 +14,6 @@ use missingno_gb::debugger::{
     cdl::CdlWindow,
     symbols::{Symbol, SymbolTable},
 };
-use missingno_gb::joypad::{Button, DirectionalPad};
-
 /// A family-interpreted control identifier. Ids 0-7 mirror the Game Boy
 /// button order so the existing bindings pipeline translates numerically;
 /// analog and family-specific controls take ids from 8 up.
@@ -28,20 +26,6 @@ pub enum ControlInput {
     /// Normalised 0.0-1.0 (paddle knobs, pots). Only families with
     /// analog hardware read it, and those are feature-gated today.
     Axis(#[cfg_attr(not(feature = "vcs"), allow(dead_code))] f32),
-}
-
-/// The numeric convention the bindings pipeline maps buttons through.
-pub fn control_for_button(button: Button) -> ControlId {
-    ControlId(match button {
-        Button::Start => 0,
-        Button::Select => 1,
-        Button::A => 2,
-        Button::B => 3,
-        Button::DirectionalPad(DirectionalPad::Up) => 4,
-        Button::DirectionalPad(DirectionalPad::Down) => 5,
-        Button::DirectionalPad(DirectionalPad::Left) => 6,
-        Button::DirectionalPad(DirectionalPad::Right) => 7,
-    })
 }
 
 use std::sync::Arc;
@@ -71,7 +55,12 @@ pub type CreateConsole = fn(&[u8], String) -> Option<Box<dyn SystemConsole>>;
 pub struct FamilyDescriptor {
     /// Platform display name; also the file-dialog filter label.
     pub platform_name: &'static str,
+    /// Short name for compact UI (bindings rows, badges).
+    pub short_name: &'static str,
     pub extensions: &'static [&'static str],
+    /// The family's names for the shared control ids, indexed by id;
+    /// empty string for ids the family ignores.
+    pub control_labels: &'static [&'static str; 8],
     /// Whether path and contents identify this family's media.
     pub is_rom: fn(&Path, &[u8]) -> bool,
     pub create_console: CreateConsole,
@@ -83,21 +72,27 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
     #[cfg(feature = "vcs")]
     FamilyDescriptor {
         platform_name: vcs::PLATFORM_NAME,
+        short_name: "2600",
         extensions: vcs::ROM_EXTENSIONS,
+        control_labels: &vcs::CONTROL_LABELS,
         is_rom: vcs::is_vcs_rom,
         create_console: |rom, title| vcs::create_console(rom, title).ok(),
     },
     #[cfg(feature = "sms")]
     FamilyDescriptor {
         platform_name: sms::PLATFORM_NAME,
+        short_name: "SMS",
         extensions: sms::ROM_EXTENSIONS,
+        control_labels: &sms::CONTROL_LABELS,
         is_rom: |path, _| sms::is_sms_rom(path),
         create_console: |rom, title| sms::create_console(rom, title).ok(),
     },
     #[cfg(feature = "nes")]
     FamilyDescriptor {
         platform_name: nes::PLATFORM_NAME,
+        short_name: "NES",
         extensions: nes::ROM_EXTENSIONS,
+        control_labels: &nes::CONTROL_LABELS,
         is_rom: |_, rom| nes::is_nes_rom(rom),
         create_console: |rom, title| nes::create_console(rom, title).ok(),
     },

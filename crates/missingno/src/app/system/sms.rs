@@ -20,6 +20,12 @@ use crate::app::screen::IndexedFrame;
 pub const PLATFORM_NAME: &str = "Sega Master System";
 pub const ROM_EXTENSIONS: &[&str] = &["sms"];
 
+/// The family's names for the shared control ids, indexed by id.
+/// Start works the console Pause button; Select has no SMS reading.
+pub const CONTROL_LABELS: [&str; 8] = [
+    "Pause", "", "Button 1", "Button 2", "Up", "Down", "Left", "Right",
+];
+
 /// Instruction budget per frame step; generous over the ~15k typical.
 const FRAME_BUDGET: u32 = 200_000;
 

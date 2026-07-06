@@ -9,7 +9,6 @@ use iced::{
 
 use crate::app;
 use crate::app::settings::{Action, Bindings};
-use missingno_gb::joypad;
 
 /// Current keyboard bindings, updated from settings.
 static KEYBOARD_BINDINGS: Mutex<Option<Bindings>> = Mutex::new(None);
@@ -38,9 +37,9 @@ pub fn event_handler(
         Event::Keyboard(keyboard::Event::KeyReleased { key, .. }) => {
             let key_str = key_to_string(&key)?;
             let action = bindings.find_action(&key_str)?;
-            // Only game buttons produce release messages
-            if action.is_game_button() {
-                Some(app::Message::ReleaseButton(action_to_joypad(action)?))
+            // Only game controls produce release messages
+            if let Action::Control(id) = action {
+                Some(app::Message::SetControl(id, false))
             } else {
                 None
             }
@@ -52,33 +51,11 @@ pub fn event_handler(
 /// Convert an action press into the appropriate app message.
 fn action_to_press_message(action: Action) -> app::Message {
     match action {
-        // Game buttons → PressButton
-        action if action.is_game_button() => {
-            // unwrap is safe: we just checked is_game_button
-            app::Message::PressButton(action_to_joypad(action).unwrap())
-        }
+        Action::Control(id) => app::Message::SetControl(id, true),
         // Emulator actions → dedicated messages
         Action::Screenshot => app::Message::TakeScreenshot,
         Action::ToggleFullscreen => app::Message::ToggleFullscreen,
         Action::Pause => app::Message::TogglePause,
-        _ => unreachable!(),
-    }
-}
-
-/// Map a game button action to a joypad button. Returns None for non-game actions.
-fn action_to_joypad(action: Action) -> Option<joypad::Button> {
-    match action {
-        Action::GbA => Some(joypad::Button::A),
-        Action::GbB => Some(joypad::Button::B),
-        Action::GbStart => Some(joypad::Button::Start),
-        Action::GbSelect => Some(joypad::Button::Select),
-        Action::GbUp => Some(joypad::Button::DirectionalPad(joypad::DirectionalPad::Up)),
-        Action::GbDown => Some(joypad::Button::DirectionalPad(joypad::DirectionalPad::Down)),
-        Action::GbLeft => Some(joypad::Button::DirectionalPad(joypad::DirectionalPad::Left)),
-        Action::GbRight => Some(joypad::Button::DirectionalPad(
-            joypad::DirectionalPad::Right,
-        )),
-        _ => None,
     }
 }
 
@@ -157,11 +134,9 @@ pub fn gamepad_subscription() -> Subscription<app::Message> {
                         }
                         gilrs::EventType::ButtonReleased(button, ..) => {
                             if let Some(button_str) = gamepad_button_to_string(button)
-                                && let Some(action) = bindings.find_action(&button_str)
-                                && action.is_game_button()
-                                && let Some(btn) = action_to_joypad(action)
+                                && let Some(Action::Control(id)) = bindings.find_action(&button_str)
                             {
-                                let _ = sender.try_send(app::Message::ReleaseButton(btn));
+                                let _ = sender.try_send(app::Message::SetControl(id, false));
                             }
                         }
                         gilrs::EventType::AxisChanged(axis, value, ..) => match axis {
@@ -171,27 +146,13 @@ pub fn gamepad_subscription() -> Subscription<app::Message> {
 
                                 if now_right != stick_right {
                                     stick_right = now_right;
-                                    let btn = joypad::Button::DirectionalPad(
-                                        joypad::DirectionalPad::Right,
-                                    );
-                                    let msg = if stick_right {
-                                        app::Message::PressButton(btn)
-                                    } else {
-                                        app::Message::ReleaseButton(btn)
-                                    };
-                                    let _ = sender.try_send(msg);
+                                    let _ =
+                                        sender.try_send(app::Message::SetControl(7, stick_right));
                                 }
                                 if now_left != stick_left {
                                     stick_left = now_left;
-                                    let btn = joypad::Button::DirectionalPad(
-                                        joypad::DirectionalPad::Left,
-                                    );
-                                    let msg = if stick_left {
-                                        app::Message::PressButton(btn)
-                                    } else {
-                                        app::Message::ReleaseButton(btn)
-                                    };
-                                    let _ = sender.try_send(msg);
+                                    let _ =
+                                        sender.try_send(app::Message::SetControl(6, stick_left));
                                 }
                             }
                             gilrs::Axis::LeftStickY => {
@@ -200,26 +161,12 @@ pub fn gamepad_subscription() -> Subscription<app::Message> {
 
                                 if now_up != stick_up {
                                     stick_up = now_up;
-                                    let btn =
-                                        joypad::Button::DirectionalPad(joypad::DirectionalPad::Up);
-                                    let msg = if stick_up {
-                                        app::Message::PressButton(btn)
-                                    } else {
-                                        app::Message::ReleaseButton(btn)
-                                    };
-                                    let _ = sender.try_send(msg);
+                                    let _ = sender.try_send(app::Message::SetControl(4, stick_up));
                                 }
                                 if now_down != stick_down {
                                     stick_down = now_down;
-                                    let btn = joypad::Button::DirectionalPad(
-                                        joypad::DirectionalPad::Down,
-                                    );
-                                    let msg = if stick_down {
-                                        app::Message::PressButton(btn)
-                                    } else {
-                                        app::Message::ReleaseButton(btn)
-                                    };
-                                    let _ = sender.try_send(msg);
+                                    let _ =
+                                        sender.try_send(app::Message::SetControl(5, stick_down));
                                 }
                             }
                             _ => {}

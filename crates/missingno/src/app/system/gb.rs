@@ -52,6 +52,10 @@ pub const DEFAULT_ROM_EXTENSION: &str = "gb";
 pub const SAVE_FILTER_NAME: &str = "Game Boy Save";
 pub const SAVE_EXTENSIONS: &[&str] = &["sav"];
 
+/// The family's names for the shared control ids, indexed by id; also the
+/// bindings UI's primary labels.
+pub const CONTROL_LABELS: [&str; 8] = ["Start", "Select", "A", "B", "Up", "Down", "Left", "Right"];
+
 /// One emulated frame at the DMG dot rate (~59.7 Hz); the CGB matches it
 /// (double speed doubles CPU cycles per frame, not the frame rate).
 const FRAME_INTERVAL: Duration = Duration::from_micros(16_740);

@@ -9,7 +9,7 @@ use iced::{
 
 use crate::app::{
     self, controls,
-    settings::{Action, Bindings, EMULATOR_ACTIONS, GB_ACTIONS},
+    settings::{Action, Bindings, EMULATOR_ACTIONS, GAME_CONTROLS},
     ui::{
         buttons, containers, horizontal_rule,
         icons::{self, Icon},
@@ -167,9 +167,9 @@ fn binding_column<'a>(
 ) -> Element<'a, app::Message> {
     let mut col = column![app_text::label(title)].spacing(s());
 
-    // Game Boy buttons
-    col = col.push(section_header("Game Boy"));
-    for &action in &GB_ACTIONS {
+    // Game controls, shared across families
+    col = col.push(section_header("Controls"));
+    for &action in &GAME_CONTROLS {
         col = col.push(binding_row(
             action,
             bindings,
@@ -202,6 +202,21 @@ fn section_header(label: &'static str) -> Element<'static, app::Message> {
     .into()
 }
 
+/// The row label: the Game Boy's name for the control, plus any other
+/// enabled family's differing reading of it.
+fn control_label(action: Action) -> String {
+    let mut label = action.to_string();
+    if let Action::Control(id) = action {
+        for family in crate::app::system::FAMILIES {
+            let family_label = family.control_labels[id as usize];
+            if !family_label.is_empty() && family_label != label {
+                label.push_str(&format!("\n{} {}", family.short_name, family_label));
+            }
+        }
+    }
+    label
+}
+
 fn binding_row(
     action: Action,
     bindings: &Bindings,
@@ -212,7 +227,7 @@ fn binding_row(
     let target = make_target(action);
     let is_listening = listening_for == Some(target);
 
-    let label = text(format!("{action}")).width(120);
+    let label = text(control_label(action)).width(120);
 
     let binding_btn = if is_listening {
         buttons::primary(text("Press key…").color(iced::Color::WHITE)).width(150)

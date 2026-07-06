@@ -3,7 +3,6 @@ use std::{fs, path::PathBuf, time::Instant};
 use action_bar::ActionBar;
 use audio_output::AudioOutput;
 use iced::{Task, Theme, window};
-use missingno_gb::joypad;
 use ui::fonts;
 
 mod action_bar;
@@ -302,8 +301,8 @@ enum Message {
     Reset,
     TakeScreenshot,
 
-    PressButton(joypad::Button),
-    ReleaseButton(joypad::Button),
+    /// A digital control (seam control id, pressed).
+    SetControl(u8, bool),
     /// An analog control (seam control id, normalised 0-1).
     SetAxis(u8, f32),
 
@@ -434,8 +433,7 @@ impl App {
             | Message::Reset
             | Message::TakeScreenshot
             | Message::DismissScreenshotToast
-            | Message::PressButton(_)
-            | Message::ReleaseButton(_)
+            | Message::SetControl(..)
             | Message::SetAxis(..)
             | Message::ToggleDebugger(_) => return self.handle_emulation_message(message),
 

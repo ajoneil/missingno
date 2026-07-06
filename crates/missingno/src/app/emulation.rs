@@ -3,12 +3,10 @@ use std::time::Instant;
 use iced::Task;
 use replace_with::replace_with_or_abort;
 
-use missingno_gb::joypad::Button;
-
 use super::emu_thread::{EmuCommand, EmuEvent, Payload};
 use super::{App, Game, LoadedGame, Message, PendingAction, library};
 use crate::app::library::activity::FrameCapture;
-use crate::app::system::{ControlId, ControlInput, control_for_button};
+use crate::app::system::{ControlId, ControlInput};
 
 impl App {
     pub(super) fn handle_emulation_message(&mut self, message: Message) -> Task<Message> {
@@ -64,8 +62,9 @@ impl App {
             Message::DismissScreenshotToast => {
                 self.screenshot_toast = None;
             }
-            Message::PressButton(button) => self.press_button(button),
-            Message::ReleaseButton(button) => self.release_button(button),
+            Message::SetControl(control, pressed) => {
+                self.set_control(ControlId(control), ControlInput::Digital(pressed))
+            }
             Message::SetAxis(control, value) => {
                 self.set_control(ControlId(control), ControlInput::Axis(value))
             }
@@ -280,14 +279,6 @@ impl App {
             }
             _ => {}
         }
-    }
-
-    pub(super) fn press_button(&mut self, button: Button) {
-        self.set_control(control_for_button(button), ControlInput::Digital(true));
-    }
-
-    pub(super) fn release_button(&mut self, button: Button) {
-        self.set_control(control_for_button(button), ControlInput::Digital(false));
     }
 
     pub(super) fn set_control(&mut self, control: ControlId, input: ControlInput) {

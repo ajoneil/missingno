@@ -23,6 +23,12 @@ use crate::app::screen::{IndexedFrame, ScreenDisplay};
 pub const PLATFORM_NAME: &str = "Atari 2600";
 pub const ROM_EXTENSIONS: &[&str] = &["a26", "bin"];
 
+/// The family's names for the shared control ids, indexed by id.
+/// Start/Select work the console switches; both buttons fire.
+pub const CONTROL_LABELS: [&str; 8] = [
+    "Reset", "Select", "Fire", "Fire", "Up", "Down", "Left", "Right",
+];
+
 /// Nominal NTSC frame: 262 lines × 228 clocks at the 3.579545 MHz colour
 /// clock. Kernels vary line counts; the pacing loop uses the convention.
 const FRAME_INTERVAL: Duration = Duration::from_micros(16_684);

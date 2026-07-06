@@ -21,6 +21,9 @@ use crate::app::screen::IndexedFrame;
 pub const PLATFORM_NAME: &str = "Nintendo Entertainment System";
 pub const ROM_EXTENSIONS: &[&str] = &["nes"];
 
+/// The family's names for the shared control ids, indexed by id.
+pub const CONTROL_LABELS: [&str; 8] = ["Start", "Select", "A", "B", "Up", "Down", "Left", "Right"];
+
 /// CPU cycles per frame step, generous over the ~29.8k typical.
 const FRAME_BUDGET: u32 = 200_000;
 
