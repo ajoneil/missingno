@@ -2985,6 +2985,7 @@ dependencies = [
  "libc",
  "missingno-gb",
  "missingno-gbc",
+ "missingno-sms",
  "missingno-vcs",
  "open",
  "replace_with",
