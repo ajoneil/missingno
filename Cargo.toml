@@ -5,6 +5,7 @@ members = [
     "crates/missingno-gb",
     "crates/missingno-gbc",
     "crates/missingno-6502",
+    "crates/missingno-nes",
     "crates/missingno-sms",
     "crates/missingno-vcs",
 ]
