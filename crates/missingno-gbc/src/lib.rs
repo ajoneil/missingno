@@ -65,6 +65,8 @@ use crate::bus::{CgbBus, cgb_bus, cgb_dma_source_bus};
 use crate::screen::Screen;
 use crate::vram_dma::{TransferMode, VramDma};
 
+pub use crate::vram_dma::VramDmaStatus;
+
 /// The Game Boy Color [`Model`]. Remaining CGB features (the color pixel
 /// pipeline) attach here as they land.
 pub struct Cgb {
@@ -178,6 +180,21 @@ impl Cgb {
             0xF000..=0xFDFF => Some(banked(address - 0xF000)),
             _ => None,
         }
+    }
+
+    /// KEY1 speed bit: the CPU is running at double speed.
+    pub fn double_speed(&self) -> bool {
+        self.double_speed
+    }
+
+    /// Effective D000-DFFF work-RAM bank (SVBK, floored to 1).
+    pub fn wram_bank(&self) -> u8 {
+        self.svbk.max(1)
+    }
+
+    /// A read-only snapshot of the VRAM-DMA engine for the debugger.
+    pub fn vram_dma_status(&self) -> VramDmaStatus {
+        self.vram_dma.status()
     }
 }
 impl Model for Cgb {

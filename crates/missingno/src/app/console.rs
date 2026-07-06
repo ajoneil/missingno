@@ -1,7 +1,7 @@
 use missingno_gb::{Console, Dmg, Model, ppu::types::palette::Palette, sgb::MaskMode};
 use missingno_gbc::Cgb;
 
-use crate::app::debugger::inspect::ColorSnapshot;
+use crate::app::debugger::inspect::{CgbView, ColorSnapshot};
 use crate::app::library::activity::FrameCapture;
 use crate::app::screen::{CgbScreen, GameBoyScreen, ScreenDisplay, SgbScreen};
 use crate::render::cram_palettes;
@@ -46,6 +46,9 @@ pub trait ConsoleUi: Model {
     /// the running panes rebuild [`ConsoleColors`] with the live user palette.
     fn color_snapshot(console: &Console<Self>) -> ColorSnapshot;
 
+    /// The CGB-only register state for the debugger sidebar; `None` on DMG.
+    fn cgb_view(console: &Console<Self>) -> Option<CgbView>;
+
     fn capture_frame(
         console: &Console<Self>,
         use_sgb_colors: bool,
@@ -87,6 +90,10 @@ impl ConsoleUi for Dmg {
         ColorSnapshot::Dmg {
             sgb: console.sgb().is_some(),
         }
+    }
+
+    fn cgb_view(_console: &Console<Self>) -> Option<CgbView> {
+        None
     }
 
     fn capture_frame(
@@ -133,6 +140,21 @@ impl ConsoleUi for Cgb {
             background: cram_palettes(|palette, index| ppu.bg_color(palette, index)),
             objects: cram_palettes(|palette, index| ppu.obj_color(palette, index)),
         }
+    }
+
+    fn cgb_view(console: &Console<Self>) -> Option<CgbView> {
+        let model = console.model();
+        let ppu = console.ppu();
+        let (bcps, ocps) = ppu.model().palette_index_registers();
+        Some(CgbView {
+            double_speed: model.double_speed(),
+            vram_bank: console.vram().selected_bank(),
+            wram_bank: model.wram_bank(),
+            opri: ppu.read_object_priority(),
+            bcps,
+            ocps,
+            vram_dma: model.vram_dma_status(),
+        })
     }
 
     fn capture_frame(

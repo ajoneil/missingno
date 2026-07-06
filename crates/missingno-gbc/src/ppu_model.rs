@@ -313,6 +313,15 @@ impl CgbPpu {
         }
     }
 
+    /// BCPS/OCPS ($FF68/$FF6A) index registers for the debugger — the raw
+    /// auto-increment flag and index the CPU reads back. Read-only.
+    pub fn palette_index_registers(&self) -> (u8, u8) {
+        (
+            self.read_color_register(ColorRegister::BackgroundIndex),
+            self.read_color_register(ColorRegister::ObjectIndex),
+        )
+    }
+
     /// CPU read of a CGB colour-palette register; the palette block's own
     /// clock-domain sample supplies the data-port mode-3 lock.
     pub(crate) fn read_color_register(&self, register: ColorRegister) -> u8 {

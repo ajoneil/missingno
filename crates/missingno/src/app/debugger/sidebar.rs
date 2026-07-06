@@ -10,7 +10,7 @@ use crate::app::{
     console::ConsoleColors,
     debugger::{
         self,
-        inspect::{CpuSource, InspectSource, PpuSource},
+        inspect::{CgbView, CpuSource, InspectSource, PpuSource},
     },
     emu_thread::RunningStatus,
     ui::{
@@ -23,6 +23,7 @@ use missingno_gb::cpu::{
     registers::{Register8, Register16},
 };
 use missingno_gb::interrupts::Registers;
+use missingno_gbc::VramDmaStatus;
 
 use super::interrupts::interrupts;
 use super::ppu::ppu_sidebar;
@@ -38,10 +39,11 @@ const SIDEBAR_WIDTH: f32 = 260.0;
 pub enum Section {
     Cpu,
     Ppu,
+    Cgb,
 }
 
 pub struct Sidebar {
-    collapsed: [bool; 2], // indexed by Section
+    collapsed: [bool; 3], // indexed by Section
 }
 
 impl Section {
@@ -49,6 +51,7 @@ impl Section {
         match self {
             Section::Cpu => 0,
             Section::Ppu => 1,
+            Section::Cgb => 2,
         }
     }
 }
@@ -67,7 +70,7 @@ impl From<Message> for app::Message {
 impl Sidebar {
     pub fn new() -> Self {
         Self {
-            collapsed: [false, false], // CPU and PPU expanded by default
+            collapsed: [false, false, false], // all sections expanded by default
         }
     }
 
@@ -94,14 +97,18 @@ impl Sidebar {
         let cpu = source.cpu();
         let interrupts = source.interrupts();
 
-        column![
+        let mut sections = column![
             self.cpu_section(cpu, &interrupts, cpu.interrupts_enabled()),
             self.ppu_section(source.ppu(), colors),
-        ]
-        .width(Length::Fixed(SIDEBAR_WIDTH))
-        .height(Fill)
-        .spacing(s())
-        .into()
+        ];
+        if let Some(cgb) = source.cgb() {
+            sections = sections.push(self.cgb_section(cgb));
+        }
+        sections
+            .width(Length::Fixed(SIDEBAR_WIDTH))
+            .height(Fill)
+            .spacing(s())
+            .into()
     }
 
     /// The collapsed CPU/PPU summary shown before the first snapshot arrives,
@@ -205,6 +212,69 @@ impl Sidebar {
             Some(mode_detail),
             ppu_sidebar(ppu, pal),
         )
+    }
+
+    fn cgb_section<'a>(&self, cgb: CgbView) -> Element<'a, app::Message> {
+        let speed = if cgb.double_speed { "2x" } else { "1x" };
+        let summary = format!("{} · svbk {}", speed, cgb.wram_bank);
+        let collapsed = self.is_collapsed(Section::Cgb);
+
+        let body = column![
+            cgb_row("speed", speed.to_owned()),
+            cgb_row("vbk", cgb.vram_bank.to_string()),
+            cgb_row("svbk", cgb.wram_bank.to_string()),
+            cgb_row("opri", format!("{:02X}", cgb.opri)),
+            cgb_row("bcps", format!("{:02X}", cgb.bcps)),
+            cgb_row("ocps", format!("{:02X}", cgb.ocps)),
+            rule::horizontal(1),
+            cgb_row("hdma", hdma_status(cgb.vram_dma)),
+        ]
+        .padding(s())
+        .spacing(s())
+        .into();
+
+        section(
+            "CGB",
+            &summary,
+            collapsed,
+            Section::Cgb,
+            Some((cgb.double_speed, palette::GREEN)),
+            None,
+            body,
+        )
+    }
+}
+
+// --- CGB rows ---
+
+fn cgb_row(label: &str, value: String) -> Element<'static, app::Message> {
+    row![
+        container(
+            text(label.to_owned())
+                .font(fonts::monospace())
+                .size(REG)
+                .color(palette::MUTED),
+        )
+        .width(Length::Fixed(56.0)),
+        text(value)
+            .font(fonts::monospace())
+            .size(REG)
+            .color(palette::TEXT),
+    ]
+    .spacing(s())
+    .align_y(Vertical::Center)
+    .into()
+}
+
+fn hdma_status(status: VramDmaStatus) -> String {
+    match status {
+        VramDmaStatus::Idle => "idle".to_owned(),
+        VramDmaStatus::General { remaining } => format!("gdma {remaining}B"),
+        VramDmaStatus::HBlank {
+            remaining,
+            source,
+            dest,
+        } => format!("hdma {remaining}B {source:04X}\u{2192}{dest:04X}"),
     }
 }
 

@@ -31,6 +31,7 @@ use missingno_gb::ppu::{
     },
 };
 use missingno_gb::{Console, Model};
+use missingno_gbc::VramDmaStatus;
 use std::sync::Arc;
 
 use crate::app::console::{ConsoleColors, ConsoleUi};
@@ -402,6 +403,28 @@ impl ColorSnapshot {
     }
 }
 
+// --- CGB ---------------------------------------------------------------------
+
+/// The CGB-only register state the sidebar draws — absent on DMG. Plain data,
+/// read live when paused or copied into the snapshot while the core runs.
+#[derive(Clone)]
+pub struct CgbView {
+    /// KEY1 speed bit: running at double speed.
+    pub double_speed: bool,
+    /// VBK ($FF4F) bank select.
+    pub vram_bank: u8,
+    /// Effective SVBK ($FF70) work-RAM bank.
+    pub wram_bank: u8,
+    /// OPRI ($FF6C) object-priority register.
+    pub opri: u8,
+    /// BCPS ($FF68) background palette index.
+    pub bcps: u8,
+    /// OCPS ($FF6A) object palette index.
+    pub ocps: u8,
+    /// VRAM-DMA (HDMA/GDMA) engine state.
+    pub vram_dma: VramDmaStatus,
+}
+
 // --- Inspection source -------------------------------------------------------
 
 /// Everything the debugger panes and sidebar render from, behind one
@@ -415,6 +438,8 @@ pub trait InspectSource {
     fn interrupts(&self) -> interrupts::Registers;
     fn instruction_memory(&self) -> &dyn ReadInstructionMemory;
     fn colors(&self, user_palette: &Palette) -> ConsoleColors;
+    /// CGB register state for the sidebar; `None` on DMG.
+    fn cgb(&self) -> Option<CgbView>;
 }
 
 /// An owned [`InspectSource`] that can cross from the emulation thread.
@@ -448,6 +473,9 @@ impl<M: ConsoleUi> InspectSource for Console<M> {
     fn colors(&self, user_palette: &Palette) -> ConsoleColors {
         M::colors(self, user_palette)
     }
+    fn cgb(&self) -> Option<CgbView> {
+        M::cgb_view(self)
+    }
 }
 
 // --- Console snapshot --------------------------------------------------------
@@ -461,6 +489,7 @@ pub struct ConsoleSnapshot {
     pub audio: AudioView,
     pub interrupts: interrupts::Registers,
     pub colors: ColorSnapshot,
+    pub cgb: Option<CgbView>,
     pub memory: MemoryWindow,
     pub symbols: Arc<SymbolTable>,
     pub frame: u64,
@@ -482,6 +511,7 @@ impl ConsoleSnapshot {
             audio: AudioView::capture(console.audio()),
             interrupts: console.interrupts().clone(),
             colors: M::color_snapshot(console),
+            cgb: M::cgb_view(console),
             memory: MemoryWindow::capture(console, console.cpu().ir_address),
             symbols,
             frame,
@@ -510,6 +540,9 @@ impl InspectSource for ConsoleSnapshot {
     }
     fn colors(&self, user_palette: &Palette) -> ConsoleColors {
         self.colors.to_colors(user_palette)
+    }
+    fn cgb(&self) -> Option<CgbView> {
+        self.cgb.clone()
     }
 }
 

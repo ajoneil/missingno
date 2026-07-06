@@ -38,6 +38,13 @@ pub struct CgbVram {
     selected: u8,
 }
 
+impl CgbVram {
+    /// VBK ($FF4F) bit 0 — the bank the CPU sees at $8000-$9FFF.
+    pub fn selected_bank(&self) -> u8 {
+        self.selected
+    }
+}
+
 impl Vram for CgbVram {
     fn cpu_read(&self, address: VramAddress) -> u8 {
         self.banks[self.selected as usize].read(address)

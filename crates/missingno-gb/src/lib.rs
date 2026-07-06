@@ -747,6 +747,12 @@ impl<M: Model> Console<M> {
         &self.chassis.ppu
     }
 
+    /// The console-specific model — the DMG/CGB divergence state, for read-only
+    /// inspection (the debugger reads CGB registers through it).
+    pub fn model(&self) -> &M {
+        &self.model
+    }
+
     pub fn vram(&self) -> &<M::Ppu as PpuModel>::Vram {
         &self.chassis.vram_bus.vram
     }

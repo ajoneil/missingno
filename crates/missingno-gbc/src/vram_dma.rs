@@ -203,7 +203,38 @@ pub(crate) struct VramDma {
     pub(crate) oam: OamContention,
 }
 
+/// A read-only view of the VRAM-DMA engine for the debugger sidebar. GDMA holds
+/// the CPU for the whole transfer; HDMA copies one 16-byte block per HBlank.
+#[derive(Clone, Copy)]
+pub enum VramDmaStatus {
+    Idle,
+    General {
+        remaining: u16,
+    },
+    HBlank {
+        remaining: u16,
+        source: u16,
+        dest: u16,
+    },
+}
+
 impl VramDma {
+    /// A snapshot of the running transfer for inspection. `remaining` is the
+    /// whole-transfer byte count; `dest` folds to the VRAM write address.
+    pub(crate) fn status(&self) -> VramDmaStatus {
+        match self.cursor.mode {
+            TransferMode::Idle => VramDmaStatus::Idle,
+            TransferMode::General => VramDmaStatus::General {
+                remaining: self.cursor.remaining,
+            },
+            TransferMode::HBlank => VramDmaStatus::HBlank {
+                remaining: self.cursor.remaining,
+                source: self.cursor.source,
+                dest: self.cursor.write_address(),
+            },
+        }
+    }
+
     pub(crate) const WAKE_PEND_BLIND_TICKS: u8 = 6;
     /// Halt-wake blind width — bracketed by the m0halt pair (`_2`'s entry on
     /// the flip fall blinded; `_1`'s at ≈flip+4 must run).
