@@ -203,7 +203,7 @@ impl Timers {
     }
 
     #[cfg(feature = "gbtrace")]
-    pub fn from_snapshot(snap: &gbtrace::snapshot::TimerSnapshot) -> Self {
+    pub fn from_snapshot(snap: &gbtrace::family::gb::snapshot::TimerSnapshot) -> Self {
         Self {
             internal_counter: snap.internal_counter,
             counter: snap.tima,

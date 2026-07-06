@@ -292,7 +292,7 @@ impl<P: PpuModel> Ppu<P> {
     }
 
     #[cfg(feature = "gbtrace")]
-    pub fn from_snapshot(snap: &gbtrace::snapshot::PpuSnapshot, oam: Oam) -> Self {
+    pub fn from_snapshot(snap: &gbtrace::family::gb::snapshot::PpuSnapshot, oam: Oam) -> Self {
         let control = Control::new(ControlFlags::from_bits_retain(snap.lcdc));
         let lcd_on = control.video_enabled();
         let enables = InterruptFlags::from_bits_truncate(snap.stat);

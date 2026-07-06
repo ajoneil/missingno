@@ -5,10 +5,10 @@
 //! it directly from the snapshot data (no mutation after construction).
 
 use gbtrace::format::SnapshotType;
-use gbtrace::snapshot::{
-    ApuSnapshot, CpuSnapshot, DmaSnapshot, MbcSnapshot, MemoryRegion, PpuSnapshot, SerialSnapshot,
-    TimerSnapshot, build_memory_payload,
+use gbtrace::family::gb::snapshot::{
+    ApuSnapshot, CpuSnapshot, DmaSnapshot, MbcSnapshot, PpuSnapshot, SerialSnapshot, TimerSnapshot,
 };
+use gbtrace::snapshot::{MemoryRegion, build_memory_payload};
 
 use crate::audio::Audio;
 use crate::cartridge::Cartridge;

@@ -222,7 +222,7 @@ impl Dma {
     }
 
     #[cfg(feature = "gbtrace")]
-    pub fn from_snapshot(snap: &gbtrace::snapshot::DmaSnapshot) -> Dma {
+    pub fn from_snapshot(snap: &gbtrace::family::gb::snapshot::DmaSnapshot) -> Dma {
         let mut dma = Dma::new();
         if snap.active {
             dma.source_register = (snap.source >> 8) as u8;

@@ -151,7 +151,7 @@ impl Registers {
     }
 
     #[cfg(feature = "gbtrace")]
-    pub fn from_snapshot(snap: &gbtrace::snapshot::SerialSnapshot) -> Self {
+    pub fn from_snapshot(snap: &gbtrace::family::gb::snapshot::SerialSnapshot) -> Self {
         Registers {
             data: snap.sb,
             control: Control::from_bits_retain(snap.sc),
@@ -326,7 +326,7 @@ impl Serial {
     }
 
     #[cfg(feature = "gbtrace")]
-    pub fn from_snapshot(snap: &gbtrace::snapshot::SerialSnapshot) -> Self {
+    pub fn from_snapshot(snap: &gbtrace::family::gb::snapshot::SerialSnapshot) -> Self {
         Self {
             registers: Registers::from_snapshot(snap),
             link: Box::new(Disconnected::new()),

@@ -465,7 +465,7 @@ impl Cpu {
     /// boundary. The state machine fields are reset to their boundary
     /// defaults (Fetch phase, step 0, no pending actions).
     #[cfg(feature = "gbtrace")]
-    pub fn from_snapshot(snap: &gbtrace::snapshot::CpuSnapshot) -> Cpu {
+    pub fn from_snapshot(snap: &gbtrace::family::gb::snapshot::CpuSnapshot) -> Cpu {
         Cpu {
             a: snap.a,
             b: snap.b,
