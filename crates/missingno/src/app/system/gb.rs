@@ -20,7 +20,23 @@ use missingno_gb::{
 };
 use missingno_gbc::GameBoyColor;
 
-use super::{FrameOutcome, SystemConsole, SystemDebugger};
+use super::{ControlId, ControlInput, FrameOutcome, SystemConsole, SystemDebugger};
+
+/// The inverse of the seam's numeric convention; ids 8+ are not GB controls.
+fn button_for_control(control: ControlId) -> Option<Button> {
+    use missingno_gb::joypad::DirectionalPad::*;
+    Some(match control.0 {
+        0 => Button::Start,
+        1 => Button::Select,
+        2 => Button::A,
+        3 => Button::B,
+        4 => Button::DirectionalPad(Up),
+        5 => Button::DirectionalPad(Down),
+        6 => Button::DirectionalPad(Left),
+        7 => Button::DirectionalPad(Right),
+        _ => return None,
+    })
+}
 use crate::app::console::ConsoleUi;
 use crate::app::debugger::inspect::{ConsoleSnapshot, DebugView, Inspection};
 use crate::app::emu_thread::RunningStatus;
@@ -84,12 +100,16 @@ where
         Console::reset(self);
     }
 
-    fn press_button(&mut self, button: Button) {
-        Console::press_button(self, button);
-    }
-
-    fn release_button(&mut self, button: Button) {
-        Console::release_button(self, button);
+    fn set_control(&mut self, control: ControlId, input: ControlInput) {
+        let (Some(button), ControlInput::Digital(pressed)) = (button_for_control(control), input)
+        else {
+            return;
+        };
+        if pressed {
+            Console::press_button(self, button);
+        } else {
+            Console::release_button(self, button);
+        }
     }
 
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
@@ -166,12 +186,16 @@ where
         self.core.reset();
     }
 
-    fn press_button(&mut self, button: Button) {
-        self.core.game_boy_mut().press_button(button);
-    }
-
-    fn release_button(&mut self, button: Button) {
-        self.core.game_boy_mut().release_button(button);
+    fn set_control(&mut self, control: ControlId, input: ControlInput) {
+        let (Some(button), ControlInput::Digital(pressed)) = (button_for_control(control), input)
+        else {
+            return;
+        };
+        if pressed {
+            self.core.game_boy_mut().press_button(button);
+        } else {
+            self.core.game_boy_mut().release_button(button);
+        }
     }
 
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {

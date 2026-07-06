@@ -304,6 +304,8 @@ enum Message {
 
     PressButton(joypad::Button),
     ReleaseButton(joypad::Button),
+    /// An analog control (seam control id, normalised 0-1).
+    SetAxis(u8, f32),
 
     ToggleDebugger(bool),
     CompleteSetup {
@@ -434,6 +436,7 @@ impl App {
             | Message::DismissScreenshotToast
             | Message::PressButton(_)
             | Message::ReleaseButton(_)
+            | Message::SetAxis(..)
             | Message::ToggleDebugger(_) => return self.handle_emulation_message(message),
 
             Message::Emu(event) => return self.handle_emu_event(event),

@@ -221,6 +221,11 @@ impl Vcs {
         }
     }
 
+    /// Paddle knob position, 0.0-1.0.
+    pub fn set_paddle(&mut self, index: usize, position: f32) {
+        self.tia.set_paddle(index, position);
+    }
+
     /// Player-0 trigger into TIA INPT4.
     pub fn set_fire(&mut self, pressed: bool) {
         self.tia.triggers[0] = pressed;

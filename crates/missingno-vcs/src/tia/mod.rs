@@ -20,6 +20,8 @@ pub const VISIBLE_CLOCKS: usize = 160;
 const LATE_HBLANK_CLOCKS: u16 = HBLANK_CLOCKS + 8;
 const AUDIO_CLOCK_A: u16 = 10;
 const AUDIO_CLOCK_B: u16 = 124;
+/// Full-scale paddle charge time; the readable range games sweep.
+const POT_CHARGE_LINES: f32 = 380.0;
 
 mod registers {
     pub const VSYNC: u16 = 0x00;
@@ -180,6 +182,11 @@ pub struct Tia {
     trigger_latch_enabled: bool,
     trigger_latches: [bool; 2],
 
+    /// Paddle knob positions, 0.0 (instant charge) to 1.0 (slowest).
+    pot_positions: [f32; 4],
+    pot_dumped: bool,
+    pot_countdown: [u16; 4],
+
     line: [u8; VISIBLE_CLOCKS],
     finished_line: Option<Scanline>,
 }
@@ -216,9 +223,17 @@ impl Tia {
             triggers: [false; 2],
             trigger_latch_enabled: false,
             trigger_latches: [true; 2],
+            pot_positions: [0.5; 4],
+            pot_dumped: false,
+            pot_countdown: [0; 4],
             line: [0; VISIBLE_CLOCKS],
             finished_line: None,
         }
+    }
+
+    /// Point a paddle knob: 0.0 charges instantly, 1.0 slowest.
+    pub fn set_paddle(&mut self, index: usize, position: f32) {
+        self.pot_positions[index] = position.clamp(0.0, 1.0);
     }
 
     /// The two channels' summed output, 0.0-1.0.
@@ -281,6 +296,11 @@ impl Tia {
             self.beam = 0;
             self.cpu_ready = true;
             self.late_hblank = false;
+            if !self.pot_dumped {
+                for countdown in &mut self.pot_countdown {
+                    *countdown = countdown.saturating_sub(1);
+                }
+            }
             self.finished_line = Some(Scanline {
                 pixels: self.line,
                 vsync: self.vsync,
@@ -376,6 +396,17 @@ impl Tia {
                     self.trigger_latches = [true; 2];
                 }
                 self.trigger_latch_enabled = latch_enable;
+                // D7 grounds the pot capacitors; releasing it starts the
+                // RC charge, measured by software in scanlines.
+                let dump = value & 0x80 != 0;
+                if self.pot_dumped && !dump {
+                    for (countdown, position) in
+                        self.pot_countdown.iter_mut().zip(self.pot_positions)
+                    {
+                        *countdown = (position.clamp(0.0, 1.0) * POT_CHARGE_LINES) as u16;
+                    }
+                }
+                self.pot_dumped = dump;
             }
             WSYNC => self.cpu_ready = false,
             RSYNC => self.beam = 0,
@@ -462,12 +493,20 @@ impl Tia {
         }
     }
 
+    fn pot_level(&self, index: usize) -> u8 {
+        if !self.pot_dumped && self.pot_countdown[index] == 0 {
+            0x80
+        } else {
+            0x00
+        }
+    }
+
     /// Inspection read: what a bus read would return, with no side
     /// effects (the trigger latch normally updates on INPT reads).
     pub fn peek(&self, address: u16) -> u8 {
         match address & 0x0F {
             reg @ 0x00..=0x07 => self.collisions[reg as usize],
-            0x08..=0x0B => 0x00,
+            reg @ 0x08..=0x0B => self.pot_level((reg - 0x08) as usize),
             reg @ (0x0C | 0x0D) => {
                 let port = (reg - 0x0C) as usize;
                 let level = if self.trigger_latch_enabled {
@@ -484,9 +523,7 @@ impl Tia {
     pub fn read(&mut self, address: u16) -> u8 {
         match address & 0x0F {
             reg @ 0x00..=0x07 => self.collisions[reg as usize],
-            // INPT0-3 pot inputs: no RC charge model — they read as
-            // permanently dumped (discharged).
-            0x08..=0x0B => 0x00,
+            reg @ 0x08..=0x0B => self.pot_level((reg - 0x08) as usize),
             reg @ (0x0C | 0x0D) => {
                 let port = (reg - 0x0C) as usize;
                 if self.trigger_latch_enabled && self.triggers[port] {

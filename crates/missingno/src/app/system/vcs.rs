@@ -4,7 +4,6 @@
 
 use std::time::Duration;
 
-use missingno_gb::joypad::{Button, DirectionalPad};
 use missingno_gb::serial_transfer::SerialLink;
 use missingno_vcs::cartridge::CartridgeError;
 use missingno_vcs::console::{JoystickDirection, Vcs};
@@ -21,7 +20,7 @@ use missingno_gb::debugger::symbols::{Symbol, SymbolTable};
 use missingno_vcs::console::Frame;
 use missingno_vcs::cpu::disasm;
 
-use super::{FrameOutcome, SystemConsole, SystemDebugger};
+use super::{ControlId, ControlInput, FrameOutcome, SystemConsole, SystemDebugger};
 use crate::app::debugger::inspect::{DebugView, Inspection};
 use crate::app::debugger::panes;
 use crate::app::debugger::vcs::{DisasmRow, VcsInspectState, VcsSnapshot};
@@ -108,12 +107,8 @@ impl SystemConsole for VcsConsole {
         self.vcs.power_cycle();
     }
 
-    fn press_button(&mut self, button: Button) {
-        apply_button(&mut self.vcs, button, true);
-    }
-
-    fn release_button(&mut self, button: Button) {
-        apply_button(&mut self.vcs, button, false);
+    fn set_control(&mut self, control: ControlId, input: ControlInput) {
+        apply_control(&mut self.vcs, control, input);
     }
 
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
@@ -151,22 +146,32 @@ impl SystemConsole for VcsConsole {
     }
 }
 
-/// The interim mapping onto the Game Boy button vocabulary: directions
-/// pass through, A fires, Start/Select work the console switches.
-fn apply_button(vcs: &mut Vcs, button: Button, pressed: bool) {
-    match button {
-        Button::DirectionalPad(pad) => {
-            let direction = match pad {
-                DirectionalPad::Up => JoystickDirection::Up,
-                DirectionalPad::Down => JoystickDirection::Down,
-                DirectionalPad::Left => JoystickDirection::Left,
-                DirectionalPad::Right => JoystickDirection::Right,
+/// Paddle 0's knob rides the first analog control id.
+pub const PADDLE_CONTROL: ControlId = ControlId(8);
+
+/// The family's reading of the shared control ids: the standard pad maps
+/// onto the joystick and fire, Start/Select work the console switches,
+/// and the paddle takes the axis.
+fn apply_control(vcs: &mut Vcs, control: ControlId, input: ControlInput) {
+    match input {
+        ControlInput::Digital(pressed) => {
+            let direction = match control.0 {
+                0 => return vcs.set_console_reset(pressed),
+                1 => return vcs.set_console_select(pressed),
+                2 | 3 => return vcs.set_fire(pressed),
+                4 => JoystickDirection::Up,
+                5 => JoystickDirection::Down,
+                6 => JoystickDirection::Left,
+                7 => JoystickDirection::Right,
+                _ => return,
             };
             vcs.set_joystick(direction, pressed);
         }
-        Button::A | Button::B => vcs.set_fire(pressed),
-        Button::Start => vcs.set_console_reset(pressed),
-        Button::Select => vcs.set_console_select(pressed),
+        ControlInput::Axis(value) => {
+            if control == PADDLE_CONTROL {
+                vcs.set_paddle(0, value);
+            }
+        }
     }
 }
 
@@ -334,12 +339,8 @@ impl SystemDebugger for VcsDebugger {
         self.refresh();
     }
 
-    fn press_button(&mut self, button: Button) {
-        apply_button(self.core.console_mut(), button, true);
-    }
-
-    fn release_button(&mut self, button: Button) {
-        apply_button(self.core.console_mut(), button, false);
+    fn set_control(&mut self, control: ControlId, input: ControlInput) {
+        apply_control(self.core.console_mut(), control, input);
     }
 
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {

@@ -14,7 +14,36 @@ use missingno_gb::debugger::{
     cdl::CdlWindow,
     symbols::{Symbol, SymbolTable},
 };
-use missingno_gb::{joypad::Button, serial_transfer::SerialLink};
+use missingno_gb::joypad::{Button, DirectionalPad};
+use missingno_gb::serial_transfer::SerialLink;
+
+/// A family-interpreted control identifier. Ids 0-7 mirror the Game Boy
+/// button order so the existing bindings pipeline translates numerically;
+/// analog and family-specific controls take ids from 8 up.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ControlId(pub u8);
+
+#[derive(Clone, Copy, Debug)]
+pub enum ControlInput {
+    Digital(bool),
+    /// Normalised 0.0-1.0 (paddle knobs, pots). Only families with
+    /// analog hardware read it, and those are feature-gated today.
+    Axis(#[cfg_attr(not(feature = "vcs"), allow(dead_code))] f32),
+}
+
+/// The numeric convention the bindings pipeline maps buttons through.
+pub fn control_for_button(button: Button) -> ControlId {
+    ControlId(match button {
+        Button::Start => 0,
+        Button::Select => 1,
+        Button::A => 2,
+        Button::B => 3,
+        Button::DirectionalPad(DirectionalPad::Up) => 4,
+        Button::DirectionalPad(DirectionalPad::Down) => 5,
+        Button::DirectionalPad(DirectionalPad::Left) => 6,
+        Button::DirectionalPad(DirectionalPad::Right) => 7,
+    })
+}
 
 use std::sync::Arc;
 
@@ -41,8 +70,8 @@ pub trait SystemConsole: Send {
     /// stall the loop.
     fn step_frame(&mut self) -> FrameOutcome;
     fn reset(&mut self);
-    fn press_button(&mut self, button: Button);
-    fn release_button(&mut self, button: Button);
+    /// Apply an input to a family-interpreted control.
+    fn set_control(&mut self, control: ControlId, input: ControlInput);
     /// Stereo samples at 44.1 kHz — the seam's fixed rate. Families
     /// convert from their native rate on their own side.
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)>;
@@ -72,8 +101,7 @@ pub trait SystemDebugger: Send {
     /// stop.
     fn step_frame(&mut self) -> (Option<ScreenDisplay>, bool);
     fn reset(&mut self);
-    fn press_button(&mut self, button: Button);
-    fn release_button(&mut self, button: Button);
+    fn set_control(&mut self, control: ControlId, input: ControlInput);
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)>;
 
     fn set_breakpoint(&mut self, address: u16);

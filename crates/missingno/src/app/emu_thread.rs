@@ -12,13 +12,12 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 use missingno_gb::debugger::WatchCondition;
-use missingno_gb::joypad::Button;
 
 use super::audio_output::AudioOutput;
 use super::debugger::inspect::DebugView;
 use super::library::activity::FrameCapture;
 use super::screen::ScreenDisplay;
-use super::system::{FrameOutcome, SystemConsole, SystemDebugger};
+use super::system::{ControlId, ControlInput, FrameOutcome, SystemConsole, SystemDebugger};
 
 /// Backlog cap, in frames: falling further behind schedule than this drops
 /// the deficit — degrades to slow-but-steady instead of spiralling.
@@ -77,8 +76,7 @@ pub enum EmuCommand {
     /// persists any final SRAM from the recovered payload synchronously.
     Pause,
     Reset,
-    Press(Button),
-    Release(Button),
+    SetControl(ControlId, ControlInput),
     SetBreakpoint(u16),
     ClearBreakpoint(u16),
     AddWatchpoint(WatchCondition),
@@ -293,14 +291,9 @@ impl EmuLoop {
                     payload.reset();
                 }
             }
-            EmuCommand::Press(button) => {
+            EmuCommand::SetControl(control, input) => {
                 if let Some(payload) = &mut self.payload {
-                    payload.press_button(button);
-                }
-            }
-            EmuCommand::Release(button) => {
-                if let Some(payload) = &mut self.payload {
-                    payload.release_button(button);
+                    payload.set_control(control, input);
                 }
             }
             EmuCommand::SetBreakpoint(address) => {
@@ -429,17 +422,10 @@ impl Payload {
         }
     }
 
-    fn press_button(&mut self, button: Button) {
+    fn set_control(&mut self, control: ControlId, input: ControlInput) {
         match self {
-            Self::Console(console) => console.press_button(button),
-            Self::Debugger(payload) => payload.core.press_button(button),
-        }
-    }
-
-    fn release_button(&mut self, button: Button) {
-        match self {
-            Self::Console(console) => console.release_button(button),
-            Self::Debugger(payload) => payload.core.release_button(button),
+            Self::Console(console) => console.set_control(control, input),
+            Self::Debugger(payload) => payload.core.set_control(control, input),
         }
     }
 

@@ -5,6 +5,7 @@ use iced::{
     widget::{button, container, mouse_area, responsive, shader, stack, svg},
 };
 
+use crate::app::system::{ControlId, ControlInput};
 use crate::app::{
     self,
     screen::{ScreenDisplay, ScreenView},
@@ -138,9 +139,17 @@ impl Emulator {
             let shortest = size.width.min(size.height);
 
             container(
-                shader(&self.screen_view)
-                    .width(Length::Fixed(shortest))
-                    .height(Length::Fixed(shortest)),
+                mouse_area(
+                    shader(&self.screen_view)
+                        .width(Length::Fixed(shortest))
+                        .height(Length::Fixed(shortest)),
+                )
+                // Horizontal position over the screen drives the first
+                // analog control (the VCS paddle); digital-only systems
+                // ignore the axis.
+                .on_move(move |point| {
+                    app::Message::SetAxis(8, (point.x / shortest).clamp(0.0, 1.0))
+                }),
             )
             .center(Fill)
             .into()
@@ -208,15 +217,9 @@ impl Emulator {
         }
     }
 
-    pub fn press_button(&mut self, button: missingno_gb::joypad::Button) {
+    pub fn set_control(&mut self, control: ControlId, input: ControlInput) {
         if let Some(console) = &mut self.console {
-            console.press_button(button);
-        }
-    }
-
-    pub fn release_button(&mut self, button: missingno_gb::joypad::Button) {
-        if let Some(console) = &mut self.console {
-            console.release_button(button);
+            console.set_control(control, input);
         }
     }
 }

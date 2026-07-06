@@ -6,6 +6,7 @@ use iced::{
     widget::{Column, button, column, container, pane_grid, pick_list, row, text, text_input},
 };
 
+use crate::app::system::{ControlId, ControlInput};
 use crate::app::{
     self,
     console::ConsoleColors,
@@ -21,7 +22,6 @@ use crate::app::{
 };
 use missingno_gb::{
     debugger::{WatchCondition, symbols::Symbol},
-    joypad::Button,
     ppu::types::palette::PaletteChoice,
 };
 
@@ -910,15 +910,9 @@ impl Debugger {
         }
     }
 
-    pub fn press_button(&mut self, button: Button) {
+    pub fn set_control(&mut self, control: ControlId, input: ControlInput) {
         if let Some(core) = &mut self.debugger {
-            core.press_button(button);
-        }
-    }
-
-    pub fn release_button(&mut self, button: Button) {
-        if let Some(core) = &mut self.debugger {
-            core.release_button(button);
+            core.set_control(control, input);
         }
     }
 }
