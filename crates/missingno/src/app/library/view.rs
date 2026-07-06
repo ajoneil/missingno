@@ -18,6 +18,7 @@ use crate::app::{
 };
 
 use crate::app::library;
+use crate::app::views::friendly_ago;
 
 /// Deterministic accent colour from a title string, using Catppuccin Mocha accents
 /// darkened to work as backgrounds with white text.
@@ -577,32 +578,4 @@ pub(crate) fn cartridge_tile<'a>(
         .clip(true)
         .style(containers::cartridge)
         .into()
-}
-
-fn friendly_ago(timestamp: jiff::Timestamp) -> String {
-    let secs = jiff::Timestamp::now().duration_since(timestamp).as_secs();
-    if secs < 60 {
-        "just now".to_string()
-    } else if secs < 3600 {
-        let mins = secs / 60;
-        if mins == 1 {
-            "1 minute ago".to_string()
-        } else {
-            format!("{mins} minutes ago")
-        }
-    } else if secs < 86400 {
-        let hours = secs / 3600;
-        if hours == 1 {
-            "1 hour ago".to_string()
-        } else {
-            format!("{hours} hours ago")
-        }
-    } else {
-        let days = secs / 86400;
-        if days == 1 {
-            "yesterday".to_string()
-        } else {
-            format!("{days} days ago")
-        }
-    }
 }
