@@ -21,12 +21,36 @@ Don't confuse the two kinds of "new system":
 - **A new family entirely** (Game Gear, NES, …) — a new core crate plus a new
   frontend submodule. The rest of this document is about this axis.
 
+## The accuracy philosophy, per core
+
+Use the available evidence to reach the highest accuracy possible — **and the
+mechanism that achieves it is a per-core decision** (Andrew, 2026-07-06). The
+Game Boy runs a fused-T-cycle lockstep because gate-level ground truth
+(dmg-sim, the netlist) makes sub-cycle ordering verifiable and the suites
+demand it. A system whose best evidence is test-ROM-granular must not pay
+for — or claim — fidelity nobody can check; its design doc picks the
+internal quantum (dot, color clock, master-cycle slice, instruction-granular
+catch-up) and defends it against that system's ground-truth tier. See
+`receipts/fable-sprint-2026-07/research/systems/SYNTHESIS.md` for the
+per-system assessments.
+
+What is NOT per-core is the contract with the frontend, debugger, tests, and
+tracing. Any internal mechanism must provide:
+
+1. **Determinism** — same ROM + inputs → bit-exact execution (replay,
+   tracing, and bisection depend on it).
+2. **Instruction-boundary stepping** for the debugger's step/breakpoints.
+3. **On-demand bus observability** without behaviour change (watchpoints,
+   code/data logging, trace capture — the `BusTrace` pattern).
+4. **Side-effect-free inspection reads** (disassembly, memory panes).
+5. **A cheap owned per-frame snapshot** for the running debugger view.
+6. **Budgeted frame stepping** with a stall guard, frames as data.
+7. **Committable test oracles in CI from day one** — accuracy claims live
+   in tests.
+
 ## What a new core crate provides
 
-The core crates are hardware models first; the emulation philosophy in
-AGENTS.md (edge-level modelling, code-as-documentation, hardware as the source
-of truth) applies to any new core. Structurally, the frontend needs a console
-type that can:
+Structurally, the frontend needs a console type that can:
 
 - construct from ROM bytes plus optional save data and boot ROM
 - step, reporting per-step: cycles consumed, whether a display frame

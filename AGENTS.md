@@ -111,7 +111,7 @@ cargo fmt                                    # Format
 - **Hardware over emulator comparisons**: Other emulators are reference material, not ground truth. Always attribute emulator-sourced findings explicitly ("SameBoy does X") rather than as hardware fact. The traced reference emulators (SameBoy, DocBoy, gambatte) are all behavioural — they corroborate a finding but never ground it. Prefer SameBoy. See *CGB Core — Methodology Deltas* for the CGB reference order.
 - **Data-driven debugging**: Use available data resources (the DMG Timing Specification, gb-ctr, dmg-sim, gb-propagation-delay-analysis, gbtrace, gb-timing-data, slowpeek) rather than reasoning about behavior from code alone. Observe first, hypothesize second.
 - **Flag spec gaps, don't paper over them**: When the DMG Timing Specification (https://ajoneil.github.io/dmg-timing-spec/) doesn't cover a behaviour but a dmg-sim run could provide the measurement, raise it with the user so the spec can be extended. Do not fall back to emulator source or hand-wave the answer.
-- **Future cores**: These principles apply to any emulation core added to the project, not just Game Boy.
+- **Future cores**: hardware-first applies to every core, but the internal timing mechanism is per-core — use each system's available evidence to reach the highest verifiable accuracy (gate-level lockstep where a die sim exists; coarser quanta where test ROMs are the ceiling), chosen in that core's design doc. The invariant contract every core owes the frontend/debugger/tests is listed in `docs/adding-a-system.md`.
 
 ## CGB Core — Methodology Deltas
 
