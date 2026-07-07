@@ -1765,7 +1765,7 @@ dependencies = [
 [[package]]
 name = "gbtrace"
 version = "0.1.0"
-source = "git+https://github.com/ajoneil/gbtrace#0ec2e73579f0ab57f6ca2a6c08bd4643bf23fabc"
+source = "git+https://github.com/ajoneil/gbtrace#eb7eceb665f74bd2e0792729304cd94d387dc26d"
 dependencies = [
  "arrow",
  "flate2",
@@ -3057,9 +3057,11 @@ dependencies = [
 name = "missingno-vcs"
 version = "0.1.0"
 dependencies = [
+ "gbtrace",
  "missingno-6502",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
 ]
 
 [[package]]

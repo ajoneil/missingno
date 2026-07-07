@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [features]
 # Atari 2600 support; off until it is ready to be public.
-vcs = ["dep:missingno-vcs"]
+vcs = ["dep:missingno-vcs", "missingno-vcs/gbtrace"]
 # Sega Master System support; off until it is ready to be public.
 sms = ["dep:missingno-sms"]
 # NES / Famicom support; off until it is ready to be public.

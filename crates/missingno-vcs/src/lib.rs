@@ -6,3 +6,5 @@ pub use missingno_6502 as cpu;
 pub mod debugger;
 pub mod riot;
 pub mod tia;
+#[cfg(feature = "gbtrace")]
+pub mod trace;

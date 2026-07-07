@@ -251,6 +251,19 @@ impl Vcs {
 
     /// Run to the next instruction boundary. A WSYNC-parked opcode fetch
     /// waits here until the beam wraps and the TIA releases RDY.
+    /// Advance exactly one CPU cycle (three colour clocks), first
+    /// aligning to the colour-clock phase so the CPU's bus access lands
+    /// at phase 0.
+    pub fn step_cpu_cycle(&mut self) {
+        while self.clock_phase != 0 {
+            self.step_clock();
+        }
+        self.step_clock();
+        while self.clock_phase != 0 {
+            self.step_clock();
+        }
+    }
+
     pub fn step_instruction(&mut self) {
         if self.cpu.halted() {
             return;

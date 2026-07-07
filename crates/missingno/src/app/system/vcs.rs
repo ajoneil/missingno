@@ -167,39 +167,19 @@ fn apply_control(vcs: &mut Vcs, control: ControlId, input: ControlInput) {
     }
 }
 
-/// The 128-colour NTSC TIA palette (colour byte bits 7-1: hue 4, luma 3),
-/// approximated from hue-angle chroma — a display-side calibratable stage,
-/// not a hardware claim.
+/// The core's NTSC TIA palette as the screen path's shared RGB8 slice.
 fn ntsc_palette() -> std::sync::Arc<[RGB8]> {
     use std::sync::OnceLock;
     static PALETTE: OnceLock<std::sync::Arc<[RGB8]>> = OnceLock::new();
     PALETTE
         .get_or_init(|| {
-            let mut palette = [RGB8::new(0, 0, 0); 128];
-            for (index, entry) in palette.iter_mut().enumerate() {
-                let hue = (index >> 3) & 0x0F;
-                let luma = (index & 0x07) as f32;
-                let y = 0.12 + 0.85 * (luma / 7.0);
-                let (i, q) = if hue == 0 {
-                    (0.0, 0.0)
-                } else {
-                    // Hue 1 starts gold and the phase walks the colour wheel.
-                    let angle = (103.0 - 25.7 * (hue as f32 - 1.0)).to_radians();
-                    let saturation = 0.28 - 0.02 * (luma / 7.0);
-                    (saturation * angle.cos(), saturation * angle.sin())
-                };
-                let r = y + 0.956 * i + 0.619 * q;
-                let g = y - 0.272 * i - 0.647 * q;
-                let b = y - 1.106 * i + 1.703 * q;
-                *entry = RGB8::new(channel(r), channel(g), channel(b));
-            }
-            palette.into()
+            missingno_vcs::tia::ntsc_palette()
+                .iter()
+                .map(|&(r, g, b)| RGB8::new(r, g, b))
+                .collect::<Vec<_>>()
+                .into()
         })
         .clone()
-}
-
-fn channel(value: f32) -> u8 {
-    (value.clamp(0.0, 1.0) * 255.0) as u8
 }
 
 /// The VCS under its debugging backend, adapted to the seam. Symbols,

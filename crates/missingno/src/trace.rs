@@ -48,6 +48,26 @@ pub fn run(
         }
     }
 
+    let is_a26 = rom_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("a26"));
+    if is_a26 || matches!(rom_data.len(), 0x800 | 0x1000) {
+        // Bare VCS ROM sizes cannot collide with Game Boy ROMs (those
+        // start at 32 KiB).
+        #[cfg(feature = "vcs")]
+        {
+            eprintln!("limit: {cycles} CPU cycles");
+            trace_vcs(&rom_data, &profile, &output_path, cycles);
+            return;
+        }
+        #[cfg(not(feature = "vcs"))]
+        {
+            eprintln!("error: VCS ROM, but this build has no VCS support (--features vcs)");
+            process::exit(1);
+        }
+    }
+
     eprintln!("limit: {cycles} T-cycles");
     let save_path = rom_path.with_extension("sav");
     let save_data = std::fs::read(&save_path).ok();
@@ -158,6 +178,54 @@ fn trace_nes(rom: &[u8], profile: &Profile, output_path: &PathBuf, cycle_limit: 
         }
         total_cycles += last_cycles as u64;
         if let Some(frame) = nes.take_frame() {
+            frames += 1;
+            tracer.mark_frame(Some(&frame)).unwrap();
+        }
+    }
+
+    tracer.finish().unwrap_or_else(|e| {
+        eprintln!("error: failed to finalize trace: {e}");
+        process::exit(1);
+    });
+    if per_cycle {
+        eprintln!("done: {total_cycles} cycles, {frames} frames");
+    } else {
+        eprintln!("done: {instructions} instructions, {total_cycles} cycles, {frames} frames");
+    }
+}
+
+#[cfg(feature = "vcs")]
+fn trace_vcs(rom: &[u8], profile: &Profile, output_path: &PathBuf, cycle_limit: u64) {
+    use missingno_vcs::console::Vcs;
+    use missingno_vcs::trace::{Tracer, step_instruction_counted};
+
+    let mut vcs = Vcs::new(rom).unwrap_or_else(|e| {
+        eprintln!("error: failed to load VCS ROM: {e:?}");
+        process::exit(1);
+    });
+    let mut tracer = Tracer::create(output_path, profile, rom).unwrap_or_else(|e| {
+        eprintln!("error: failed to create trace file: {e}");
+        process::exit(1);
+    });
+
+    let per_cycle = profile.trigger == Trigger::Cycle;
+    let mut total_cycles: u64 = 0;
+    let mut instructions = 0u64;
+    let mut frames = 0u64;
+    let mut last_cycles = 0u16;
+
+    while total_cycles < cycle_limit {
+        // Pre-execution state, with the previous step's cycle cost.
+        tracer.capture(&vcs, last_cycles).unwrap();
+        if per_cycle {
+            vcs.step_cpu_cycle();
+            last_cycles = 1;
+        } else {
+            last_cycles = step_instruction_counted(&mut vcs);
+            instructions += 1;
+        }
+        total_cycles += last_cycles as u64;
+        if let Some(frame) = vcs.take_frame() {
             frames += 1;
             tracer.mark_frame(Some(&frame)).unwrap();
         }

@@ -3,8 +3,13 @@ name = "missingno-vcs"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+gbtrace = ["dep:gbtrace", "dep:sha2"]
+
 [dependencies]
 missingno-6502 = { path = "../missingno-6502" }
+gbtrace = { git = "https://github.com/ajoneil/gbtrace", optional = true }
+sha2 = { version = "0.11", optional = true }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
