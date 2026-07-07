@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use gbtrace::format::SnapshotType;
-use gbtrace::format::read::derive_groups_pub;
 use gbtrace::format::write::GbtraceWriter;
 use gbtrace::header::{ExtensionField, PixFormat, TraceHeader};
 use gbtrace::profile::{FieldType, field_nullable, field_type};
@@ -485,8 +483,8 @@ impl Tracer {
             ..Default::default()
         };
 
-        let groups = derive_groups_pub(&header.fields);
-        let writer = GbtraceWriter::create(path, &header, &groups)?;
+        // Empty groups: the writer groups columns by the header's field defs.
+        let writer = GbtraceWriter::create(path, &header, &[])?;
 
         // Resolve all fields to emitters at creation time
         let mut emitters = Vec::with_capacity(header.fields.len());
@@ -539,13 +537,11 @@ impl Tracer {
         self.apu_write_data = data;
     }
 
-    /// Write a typed snapshot record into the trace stream.
-    pub fn write_snapshot(
-        &mut self,
-        snapshot_type: SnapshotType,
-        payload: &[u8],
-    ) -> Result<(), gbtrace::Error> {
-        self.writer.write_snapshot(snapshot_type, payload)
+    /// Write a typed snapshot record into the trace stream. `tag` is a
+    /// format-level tag (`format::TAG_MEMORY`) or one of the GB family's
+    /// (`family::gb::snapshot::TAG_*`).
+    pub fn write_snapshot(&mut self, tag: u8, payload: &[u8]) -> Result<(), gbtrace::Error> {
+        self.writer.write_snapshot(tag, payload)
     }
 
     pub fn capture<T: Traceable>(&mut self, gb: &T) -> Result<(), gbtrace::Error> {

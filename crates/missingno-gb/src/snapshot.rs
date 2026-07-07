@@ -4,7 +4,10 @@
 //! Restore: each component has a `from_snapshot` constructor that builds
 //! it directly from the snapshot data (no mutation after construction).
 
-use gbtrace::format::SnapshotType;
+use gbtrace::family::gb::snapshot::{
+    TAG_APU, TAG_CPU, TAG_DMA, TAG_MBC, TAG_PPU, TAG_SERIAL, TAG_TIMER,
+};
+use gbtrace::format::TAG_MEMORY;
 use gbtrace::family::gb::snapshot::{
     ApuSnapshot, CpuSnapshot, DmaSnapshot, MbcSnapshot, PpuSnapshot, SerialSnapshot, TimerSnapshot,
 };
@@ -17,9 +20,11 @@ use crate::cpu::HaltState;
 use crate::interrupts::InterruptFlags;
 use crate::{Chassis, Console, GameBoy};
 
-/// A typed snapshot payload ready to be written.
+/// A typed snapshot payload ready to be written. The tag is one of the
+/// GB family's snapshot tags (or `TAG_MEMORY`); the trace header's
+/// `snapshot_kinds` names it.
 pub struct SnapshotRecord {
-    pub snapshot_type: SnapshotType,
+    pub tag: u8,
     pub payload: Vec<u8>,
 }
 
@@ -30,35 +35,35 @@ pub struct SnapshotRecord {
 pub fn capture_snapshots(gb: &GameBoy) -> Vec<SnapshotRecord> {
     vec![
         SnapshotRecord {
-            snapshot_type: SnapshotType::CpuState,
+            tag: TAG_CPU,
             payload: capture_cpu(gb).to_bytes(),
         },
         SnapshotRecord {
-            snapshot_type: SnapshotType::PpuTiming,
+            tag: TAG_PPU,
             payload: capture_ppu(gb).to_bytes(),
         },
         SnapshotRecord {
-            snapshot_type: SnapshotType::ApuState,
+            tag: TAG_APU,
             payload: capture_apu(gb).to_bytes(),
         },
         SnapshotRecord {
-            snapshot_type: SnapshotType::TimerState,
+            tag: TAG_TIMER,
             payload: capture_timer(gb).to_bytes(),
         },
         SnapshotRecord {
-            snapshot_type: SnapshotType::DmaState,
+            tag: TAG_DMA,
             payload: capture_dma(gb).to_bytes(),
         },
         SnapshotRecord {
-            snapshot_type: SnapshotType::SerialState,
+            tag: TAG_SERIAL,
             payload: capture_serial(gb).to_bytes(),
         },
         SnapshotRecord {
-            snapshot_type: SnapshotType::MbcState,
+            tag: TAG_MBC,
             payload: capture_mbc(gb).to_bytes(),
         },
         SnapshotRecord {
-            snapshot_type: SnapshotType::Memory,
+            tag: TAG_MEMORY,
             payload: capture_memory(gb),
         },
     ]

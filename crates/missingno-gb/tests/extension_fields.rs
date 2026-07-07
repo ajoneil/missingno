@@ -58,6 +58,7 @@ fn missingno_extension_field_roundtrip() {
 
     let profile = Profile {
         name: "ext_test".into(),
+        family: "gb".into(),
         description: "extension-fields smoke test".into(),
         trigger: Trigger::Instruction,
         fields: vec!["pc".into(), "a".into()],
@@ -126,6 +127,7 @@ fn unknown_extension_name_is_rejected() {
 
     let profile = Profile {
         name: "bad_test".into(),
+        family: "gb".into(),
         description: String::new(),
         trigger: Trigger::Instruction,
         fields: vec!["pc".into()],
