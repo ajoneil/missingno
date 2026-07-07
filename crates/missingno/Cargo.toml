@@ -15,7 +15,7 @@ vcs = ["dep:missingno-vcs"]
 # Sega Master System support; off until it is ready to be public.
 sms = ["dep:missingno-sms"]
 # NES / Famicom support; off until it is ready to be public.
-nes = ["dep:missingno-nes", "dep:missingno-6502"]
+nes = ["dep:missingno-nes", "dep:missingno-6502", "missingno-nes/gbtrace"]
 
 [dependencies]
 missingno-gb = { path = "../missingno-gb", features = ["gbtrace"] }

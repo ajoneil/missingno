@@ -26,10 +26,6 @@ pub fn run(
         process::exit(1);
     });
 
-    let save_path = rom_path.with_extension("sav");
-    let save_data = std::fs::read(&save_path).ok();
-    let cartridge = Cartridge::new(rom_data, save_data);
-
     let output_path = output.unwrap_or_else(|| {
         let stem = rom_path.file_stem().unwrap().to_string_lossy();
         PathBuf::from(format!("{stem}.gbtrace"))
@@ -37,7 +33,25 @@ pub fn run(
 
     eprintln!("profile: {}", profile_path.display());
     eprintln!("output: {}", output_path.display());
+
+    if rom_data.len() >= 4 && &rom_data[0..4] == b"NES\x1a" {
+        #[cfg(feature = "nes")]
+        {
+            eprintln!("limit: {cycles} CPU cycles");
+            trace_nes(&rom_data, &profile, &output_path, cycles);
+            return;
+        }
+        #[cfg(not(feature = "nes"))]
+        {
+            eprintln!("error: iNES ROM, but this build has no NES support (--features nes)");
+            process::exit(1);
+        }
+    }
+
     eprintln!("limit: {cycles} T-cycles");
+    let save_path = rom_path.with_extension("sav");
+    let save_data = std::fs::read(&save_path).ok();
+    let cartridge = Cartridge::new(rom_data, save_data);
 
     if cartridge.is_cgb() {
         trace_console(
@@ -110,4 +124,52 @@ fn trace_console<M: Model>(
         process::exit(1);
     });
     eprintln!("done: {instructions} instructions, {tcycles} T-cycles, {frames} frames");
+}
+
+#[cfg(feature = "nes")]
+fn trace_nes(rom: &[u8], profile: &Profile, output_path: &PathBuf, cycle_limit: u64) {
+    use missingno_nes::console::Nes;
+    use missingno_nes::trace::{Tracer, step_instruction_counted};
+
+    let mut nes = Nes::new(rom).unwrap_or_else(|e| {
+        eprintln!("error: failed to load NES ROM: {e:?}");
+        process::exit(1);
+    });
+    let mut tracer = Tracer::create(output_path, profile, rom).unwrap_or_else(|e| {
+        eprintln!("error: failed to create trace file: {e}");
+        process::exit(1);
+    });
+
+    let per_cycle = profile.trigger == Trigger::Cycle;
+    let mut total_cycles: u64 = 0;
+    let mut instructions = 0u64;
+    let mut frames = 0u64;
+    let mut last_cycles = 0u16;
+
+    while total_cycles < cycle_limit {
+        // Pre-execution state, with the previous step's cycle cost.
+        tracer.capture(&nes, last_cycles).unwrap();
+        if per_cycle {
+            nes.step_cycle();
+            last_cycles = 1;
+        } else {
+            last_cycles = step_instruction_counted(&mut nes);
+            instructions += 1;
+        }
+        total_cycles += last_cycles as u64;
+        if let Some(frame) = nes.take_frame() {
+            frames += 1;
+            tracer.mark_frame(Some(&frame)).unwrap();
+        }
+    }
+
+    tracer.finish().unwrap_or_else(|e| {
+        eprintln!("error: failed to finalize trace: {e}");
+        process::exit(1);
+    });
+    if per_cycle {
+        eprintln!("done: {total_cycles} cycles, {frames} frames");
+    } else {
+        eprintln!("done: {instructions} instructions, {total_cycles} cycles, {frames} frames");
+    }
 }
