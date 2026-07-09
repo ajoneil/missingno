@@ -21,13 +21,16 @@ below them and only corroborate.**
   real cartridge ROMs. It is the VCS analog of dmg-sim: the runnable oracle for
   *why* the CPU and the beam do what they do — undocumented opcodes, RESP/HMOVE
   landing, RSYNC, WSYNC release, mid-line register races. For any CPU or TIA
-  gate-level question it is authoritative. It is slow (transistor-level; tens of
-  thousands of half-clocks before the first pixel), so treat a run like a dmg-sim
-  run: name the specific wire and half-clock to observe (signals are queried by
-  name, e.g. `sim6502.isHighWN('P0')`, `'AB'`, `'DB'`), and don't spin one up for
-  a question the schematics already answer. It is Python 2 / OpenGL vintage; a
-  headless signal-observation harness (the `dmg-sim-observe.sh` analog) does not
-  yet exist — flag it to the user when a run is needed.
+  gate-level question it is authoritative. Run it headless with
+  `scripts/sim2600-observe.sh <rom> [half_clocks] [output_dir] [extra_wires]`
+  (the `dmg-sim-observe.sh` analog) — it clones + Py3-ports Sim2600 on first use,
+  runs the ROM, and dumps a VCD of the CPU/TIA wires per half-clock for GTKWave
+  (CLK0, RDY, R/W, SYNC, address/data buses, PC/A/X/Y/S/P; TIA
+  VSYNC/VBLANK/WSYNC/RSYNC, colour, luminance). Add targeted probes with
+  `cpu:NAME,tia:NAME` (e.g. `tia:BL_lowCtrl`). It is slow (transistor-level,
+  ~500 half-clocks/s; ~40000 to the first pixel), so like a dmg-sim run, name the
+  specific wire and half-clock rather than running long from a dispatch — and
+  don't spin one up for a question the schematics already answer.
 
 - **The RIOT has no gate-level oracle.** The 6532 (RAM + I/O + timer) was never
   fully reverse-engineered — visual6502's RIOT netlist is ~⅓ complete, so Sim2600
@@ -70,7 +73,8 @@ below them and only corroborate.**
 
 | Resource | Location / URL | Description |
 |----------|----------------|-------------|
-| Sim2600 | `receipts/resources/Sim2600/` (https://github.com/gregjames/Sim2600) | Transistor-level sim of the 6507 + TIA from the visual6502 decapped netlists — the gate-level oracle. RIOT is emulated (`emuPIA.py`), not netlist-simulated. |
+| Sim2600 | `receipts/resources/Sim2600/` (https://github.com/gregjames/Sim2600) | Transistor-level sim of the 6507 + TIA from the visual6502 decapped netlists — the gate-level oracle. RIOT is emulated (`emuPIA.py`), not netlist-simulated. Run headless via `scripts/sim2600-observe.sh`. |
+| sim2600-observe | `scripts/sim2600-observe.sh` (+ `scripts/sim2600_observe.py`) | Headless harness: runs a ROM through Sim2600 and dumps a per-half-clock VCD of the CPU/TIA wires for GTKWave (the `dmg-sim-observe.sh` analog). |
 | Stella Programmer's Guide | https://atarihq.com/danb/files/stella.pdf | Canonical TIA/RIOT programming reference (VCS equivalent of gb-ctr). |
 | TIA_HW_Notes | https://www.atarihq.com/danb/files/TIA_HW_Notes.txt | Andrew Towers' TIA hardware timing notes — the static-analysis layer. |
 | MOS 6532 datasheet | https://6502.org/documents/datasheets/mos/mos_6532_riot.pdf | RIOT chip reference — the primary RIOT source (no gate-level sim exists). |
