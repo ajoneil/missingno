@@ -734,11 +734,10 @@ pub fn step_instruction_tcycle<M: Model>(
     gb: &mut Console<M>,
     tracer: &mut Tracer,
 ) -> crate::execute::StepResult {
-    use std::ops::ControlFlow;
-
     let mut new_screen = false;
     let mut tcycles = 0u32;
 
+    gb.cpu_mut().bus.data_latch = 0;
     gb.cpu_mut().take_instruction_boundary();
 
     // Speed is fixed across one instruction; a mid-instruction switch settles
@@ -766,9 +765,6 @@ pub fn step_instruction_tcycle<M: Model>(
                 tracer.capture(gb).unwrap();
                 tracer.advance_dot();
                 tcycles += 1;
-                if gb.cpu().at_instruction_boundary() {
-                    return ControlFlow::Break(());
-                }
             } else if is_first {
                 first_new_screen = result.new_screen;
                 is_first = false;
@@ -780,7 +776,6 @@ pub fn step_instruction_tcycle<M: Model>(
                 tracer.advance_dot();
                 tcycles += 1;
             }
-            ControlFlow::Continue(())
         });
 
         if gb.cpu().at_instruction_boundary() {
