@@ -1,0 +1,71 @@
+use crate::common;
+
+#[test]
+fn io_mirrors_ntsc() {
+    common::run_self_test("riot/io-mirrors_ntsc.a26");
+}
+
+#[test]
+fn io_mirrors_pal() {
+    common::run_self_test("riot/io-mirrors_pal.a26");
+}
+
+#[test]
+fn io_ports_ntsc() {
+    common::run_self_test("riot/io-ports_ntsc.a26");
+}
+
+#[test]
+fn io_ports_pal() {
+    common::run_self_test("riot/io-ports_pal.a26");
+}
+
+#[test]
+fn ram_ntsc() {
+    common::run_self_test("riot/ram_ntsc.a26");
+}
+
+#[test]
+fn ram_pal() {
+    common::run_self_test("riot/ram_pal.a26");
+}
+
+#[test]
+fn ram_mirrors_ntsc() {
+    common::run_self_test("riot/ram-mirrors_ntsc.a26");
+}
+
+#[test]
+fn ram_mirrors_pal() {
+    common::run_self_test("riot/ram-mirrors_pal.a26");
+}
+
+#[test]
+fn timer_ntsc() {
+    common::run_self_test("riot/timer_ntsc.a26");
+}
+
+#[test]
+fn timer_pal() {
+    common::run_self_test("riot/timer_pal.a26");
+}
+
+#[test]
+fn timer_divisors_ntsc() {
+    common::run_self_test("riot/timer-divisors_ntsc.a26");
+}
+
+#[test]
+fn timer_divisors_pal() {
+    common::run_self_test("riot/timer-divisors_pal.a26");
+}
+
+#[test]
+fn timer_vblank_spin_ntsc() {
+    common::run_self_test("riot/timer-vblank-spin_ntsc.a26");
+}
+
+#[test]
+fn timer_vblank_spin_pal() {
+    common::run_self_test("riot/timer-vblank-spin_pal.a26");
+}
