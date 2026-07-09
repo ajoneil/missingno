@@ -169,7 +169,14 @@ impl Vcs {
         for slot in &mut self.pending_tia_writes {
             if let Some(write) = slot {
                 write.clocks_until_effective -= 1;
-                if write.clocks_until_effective == 0 {
+                if write.clocks_until_effective == 1 {
+                    // The missile reset's scan-kill leads its plant.
+                    match write.address & 0x3F {
+                        crate::tia::registers::RESM0 => self.tia.missile_reset_kill(0),
+                        crate::tia::registers::RESM1 => self.tia.missile_reset_kill(1),
+                        _ => {}
+                    }
+                } else if write.clocks_until_effective == 0 {
                     let write = slot.take().unwrap();
                     self.tia.write(write.address, write.data);
                 }

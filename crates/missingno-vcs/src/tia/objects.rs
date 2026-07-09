@@ -172,6 +172,14 @@ impl Missile {
         }
     }
 
+    /// RESMx is level-active across the strobe: the scan-counter clear
+    /// leads the counter plant by one clock, killing an unlit scan.
+    pub fn reset_kill(&mut self) {
+        if self.scan_clocks_left > 0 && self.scan_clocks_left == self.width() {
+            self.scan_clocks_left = 0;
+        }
+    }
+
     pub fn reset_position(&mut self) {
         self.counter = 0;
         if self.start_countdown.is_some()

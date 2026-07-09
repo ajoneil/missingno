@@ -458,6 +458,14 @@ impl Tia {
         }
     }
 
+    /// The reset strobe's leading scan-kill, one clock before it applies.
+    pub(crate) fn missile_reset_kill(&mut self, which: usize) {
+        match which {
+            0 => self.missile0.reset_kill(),
+            _ => self.missile1.reset_kill(),
+        }
+    }
+
     pub fn write(&mut self, address: u16, value: u8) {
         use registers::*;
         match address & 0x3F {
