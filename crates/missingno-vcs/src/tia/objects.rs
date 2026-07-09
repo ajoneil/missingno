@@ -179,12 +179,13 @@ impl Missile {
         self.start_countdown = None;
     }
 
-    /// RESMPx released: park at the player's centre.
+    /// RESMPx released: park at the re-centre landing — the missile's
+    /// first pixel lands 4/6/10 clocks right of the player's per size.
     pub fn release_at(&mut self, player_counter: u8, player_mode: u8) {
         let centre: u16 = match player_mode & 0x07 {
-            5 => 6,
-            7 => 10,
-            _ => 3,
+            5 => 8,
+            7 => 12,
+            _ => 5,
         };
         self.counter = ((u16::from(player_counter) + u16::from(COUNTER_RANGE) - centre)
             % u16::from(COUNTER_RANGE)) as u8;
