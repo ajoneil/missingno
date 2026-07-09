@@ -7,3 +7,5 @@ CLAUDE.md
 receipts
 scripts/.test-baseline-*
 net.andyofniall.missingno
+__pycache__
+*.pyc
