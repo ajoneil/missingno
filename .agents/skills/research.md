@@ -25,7 +25,7 @@ Work through sources in this order, stopping when you have a clear, specific ans
 These describe what the hardware actually does. They are the source of truth.
 
 **First, identify the target system — the ordered source hierarchy is per-core and lives beside the crate.** Read `crates/missingno-<core>/AGENTS.md` for the target core's hierarchy before searching, and follow it:
-- `missingno-vcs` — **Sim2600** (`receipts/resources/Sim2600/`) is the gate-level oracle for any **CPU or TIA** question; **schematics + `TIA_HW_Notes` + the 6532 datasheet** ground the **RIOT** (no gate-level sim exists — never trust Sim2600's emulated PIA); behavioural VCS emulators (**Stella → Gopher2600 → MAME**) corroborate only. Full rationale in `crates/missingno-vcs/AGENTS.md`.
+- `missingno-vcs` — **Sim2600** (`receipts/resources/Sim2600/`, run headless via `scripts/sim2600-observe.sh`) is the gate-level oracle for any **CPU or TIA** question; **schematics + `TIA_HW_Notes` + the 6532 datasheet** ground the **RIOT** (no gate-level sim exists — never trust Sim2600's emulated PIA); behavioural VCS emulators (**Stella → Gopher2600 → MAME**) corroborate only. It's slow — surface the specific wire/half-clock rather than running a long capture from a research dispatch. Full rationale in `crates/missingno-vcs/AGENTS.md`.
 - `missingno-gbc` — no gate-level sim; hardware test-ROM values lead. See `crates/missingno-gbc/AGENTS.md`.
 - `missingno-gb` (DMG) — the worked example below; full detail in `crates/missingno-gb/AGENTS.md`.
 
