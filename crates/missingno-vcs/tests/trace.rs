@@ -24,7 +24,7 @@ fn test_rom() -> Vec<u8> {
         0x85, 0x09, // sta COLUBK
         0xa2, 0x00, // ldx #$00    (256 iterations)
         0x85, 0x02, // sta WSYNC   <- loop
-        0xca,       // dex
+        0xca, // dex
         0xd0, 0xfb, // bne loop
         0x85, 0x02, // sta WSYNC   } three more lines to reach 259
         0x85, 0x02, // sta WSYNC
@@ -101,8 +101,11 @@ ram80 = "0080"
     assert_eq!(header.family_def().id, "vcs");
     assert_eq!(
         header.fields,
-        ["pc", "a", "x", "y", "s", "p", "cycles", "line", "clock", "timer", "port_a", "port_b", "ram80"]
-            .map(String::from)
+        [
+            "pc", "a", "x", "y", "s", "p", "cycles", "line", "clock", "timer", "port_a", "port_b",
+            "ram80"
+        ]
+        .map(String::from)
     );
 
     use gbtrace::store::TraceStore;
@@ -123,7 +126,9 @@ ram80 = "0080"
 
     // The WSYNC stall shows up as multi-cycle instructions: a store that
     // parks the CPU costs most of a 76-cycle scanline.
-    let indices = store.query_range("cycles&40", 0, store.entry_count()).unwrap();
+    let indices = store
+        .query_range("cycles&40", 0, store.entry_count())
+        .unwrap();
     assert!(
         !indices.is_empty(),
         "expected WSYNC-stalled instructions with large cycle counts"

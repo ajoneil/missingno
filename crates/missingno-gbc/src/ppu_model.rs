@@ -277,7 +277,11 @@ impl PpuModel for CgbPpu {
     fn trace_pixel(pixel: Color555) -> TracePixel {
         // gbtrace's rgb555 pix field packs red high (bits 10-14); CGB Color555
         // packs red low, so swap red and blue into the trace's normalised order.
-        let (r, g, b) = (pixel.red() as u16, pixel.green() as u16, pixel.blue() as u16);
+        let (r, g, b) = (
+            pixel.red() as u16,
+            pixel.green() as u16,
+            pixel.blue() as u16,
+        );
         TracePixel::Rgb555((r << 10) | (g << 5) | b)
     }
 }

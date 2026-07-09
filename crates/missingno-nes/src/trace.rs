@@ -162,7 +162,10 @@ impl Tracer {
                 width: PIXELS_PER_LINE as u16,
                 height: VISIBLE_LINES,
                 pixel_aspect: PIXEL_ASPECT,
-                palette: master_palette().iter().map(|&(r, g, b)| [r, g, b]).collect(),
+                palette: master_palette()
+                    .iter()
+                    .map(|&(r, g, b)| [r, g, b])
+                    .collect(),
                 pixels: frame.pixels.clone(),
             }
             .to_bytes()
