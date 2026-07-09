@@ -77,7 +77,9 @@ counter = "0200"
     assert_eq!(header.family_def().id, "nes");
     assert_eq!(
         header.fields,
-        ["pc", "a", "x", "y", "s", "p", "cycles", "control", "mask", "line", "dot", "counter"]
+        [
+            "pc", "a", "x", "y", "s", "p", "cycles", "control", "mask", "line", "dot", "counter"
+        ]
     );
     // Self-describing metadata arrived without this crate doing anything.
     assert_eq!(header.field_defs.len(), header.fields.len());
@@ -97,7 +99,9 @@ counter = "0200"
 
     // The NES flag vocabulary works against the trace: INX wraps X past
     // 0xFF, setting Z.
-    let hits = store.query_range("flag z becomes set", 0, store.entry_count()).unwrap();
+    let hits = store
+        .query_range("flag z becomes set", 0, store.entry_count())
+        .unwrap();
     assert!(!hits.is_empty(), "no Z-flag transitions found");
 
     // Frame snapshots decode as indexed frames with the master palette.
