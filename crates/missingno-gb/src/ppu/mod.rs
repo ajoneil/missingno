@@ -51,12 +51,20 @@ pub struct DrawnPixel<Pix> {
     pub color: Pix,
 }
 
-/// A pixel pushed to the LCD, as a 2-bit shade for the gbtrace pixel stream.
+/// A pixel as it enters the gbtrace pixel stream, in the trace's native
+/// format: a 2-bit shade on DMG, a 15-bit RGB555 colour on CGB/AGB.
+#[derive(Clone, Copy, Debug)]
+pub enum TracePixel {
+    Shade(u8),
+    Rgb555(u16),
+}
+
+/// A pixel pushed to the LCD, carrying its gbtrace pixel-stream representation.
 #[derive(Clone, Copy, Debug)]
 pub struct PixelOutput {
     pub x: u8,
     pub y: u8,
-    pub shade: u8,
+    pub pixel: TracePixel,
 }
 
 pub struct PpuTickResult<Pix> {
