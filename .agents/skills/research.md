@@ -24,6 +24,15 @@ Work through sources in this order, stopping when you have a clear, specific ans
 
 These describe what the hardware actually does. They are the source of truth.
 
+**First, identify the target system — the ordered source hierarchy is per-core and lives beside the crate.** Read `crates/missingno-<core>/AGENTS.md` for the target core's hierarchy before searching, and follow it:
+- `missingno-vcs` — **Sim2600** (`receipts/resources/Sim2600/`) is the gate-level oracle for any **CPU or TIA** question; **schematics + `TIA_HW_Notes` + the 6532 datasheet** ground the **RIOT** (no gate-level sim exists — never trust Sim2600's emulated PIA); behavioural VCS emulators (**Stella → Gopher2600 → MAME**) corroborate only. Full rationale in `crates/missingno-vcs/AGENTS.md`.
+- `missingno-gbc` — no gate-level sim; hardware test-ROM values lead. See `crates/missingno-gbc/AGENTS.md`.
+- `missingno-gb` (DMG) — the worked example below; full detail in `crates/missingno-gb/AGENTS.md`.
+
+Report emulator-sourced findings *attributed to the emulator*, never as hardware fact, whatever the core.
+
+#### Game Boy (DMG) source hierarchy
+
 1. **Project docs and existing research**: Check AGENTS.md, README, commit messages, and `receipts/research/` — they often document hardware edge cases already discovered.
 2. **The DMG Timing Specification** (https://ajoneil.github.io/dmg-timing-spec/): The canonical gate-level hardware reference for the whole DMG SoC (PPU, APU, CPU boundaries, DMA, interrupts, timers), collated from dmg-sim measurements, netlist analysis, and propagation-delay analysis. For any gate-level timing question, **check this first**. Its concordance chapter maps gate names to semantic roles. **If the spec doesn't cover the question but a dmg-sim measurement could, stop and report this to the caller as a "spec gap":** list the specific signal or timing event that needs measuring so the spec can be extended. Do not silently fall back to emulator source to fill the gap.
 3. **gekkio's gb-ctr** (Game Boy Complete Technical Reference, https://gekkio.fi/files/gb-docs/gbctr.pdf): Detailed, reliable hardware reference for the whole console. Fetch with `curl -LO https://gekkio.fi/files/gb-docs/gbctr.pdf` and read with `pdftotext` or the Read tool. Primary written reference outside the PPU spec.

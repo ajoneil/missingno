@@ -28,9 +28,11 @@ mechanism that achieves it is a per-core decision**. The
 Game Boy runs a fused-T-cycle lockstep because gate-level ground truth
 (dmg-sim, the netlist) makes sub-cycle ordering verifiable and the suites
 demand it. A system whose best evidence is test-ROM-granular must not pay
-for — or claim — fidelity nobody can check; its design doc picks the
-internal quantum (dot, color clock, master-cycle slice, instruction-granular
-catch-up) and defends it against that system's ground-truth tier.
+for — or claim — fidelity nobody can check; its methodology doc
+(`crates/<crate>/AGENTS.md`) picks the internal quantum (dot, color clock,
+master-cycle slice, instruction-granular catch-up), names its ground-truth
+hierarchy, and defends the quantum against that tier. The VCS doc is the
+worked example: Sim2600 for the CPU/TIA, datasheet/schematics for the RIOT.
 
 What is NOT per-core is the contract with the frontend, debugger, tests, and
 tracing. Any internal mechanism must provide:
@@ -143,7 +145,10 @@ consumers, feature-gated):
 
 ## Checklist for a new family
 
-1. Core crate with the console type (hardware-model quality bar applies).
+1. Core crate with the console type (hardware-model quality bar applies), plus
+   a `crates/<crate>/AGENTS.md` methodology doc (ground-truth hierarchy,
+   resources, timing model) and one routing row in the root `AGENTS.md`
+   *Per-core methodology* table.
 2. `app/system/<family>.rs`: a `SteppingSystem` impl for a simple stepping
    core (or hand-written `SystemConsole` + `SystemDebugger` impls where the
    core has its own debugger backend), media-metadata constants, factory —
