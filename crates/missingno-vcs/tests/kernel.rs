@@ -123,7 +123,7 @@ fn gradient_kernel() -> Vec<u8> {
 
 #[test]
 fn gradient_kernel_produces_ntsc_frames() {
-    let mut vcs = Vcs::new(&gradient_kernel()).unwrap();
+    let mut vcs = Vcs::new(&gradient_kernel(), missingno_vcs::TvStandard::Ntsc).unwrap();
 
     // The first frame is the ragged power-on one; judge the second.
     let _ = vcs.step_frame(1000).expect("first frame");
@@ -154,7 +154,7 @@ fn gradient_kernel_produces_ntsc_frames() {
 
 #[test]
 fn frames_keep_coming() {
-    let mut vcs = Vcs::new(&gradient_kernel()).unwrap();
+    let mut vcs = Vcs::new(&gradient_kernel(), missingno_vcs::TvStandard::Ntsc).unwrap();
     for _ in 0..5 {
         let frame = vcs.step_frame(1000).expect("steady stream of frames");
         assert_eq!(frame.lines.len(), 259);
@@ -170,7 +170,7 @@ fn wsync_parks_the_cpu_until_line_start() {
     asm.stx_zp(COLUBK);
     let spin = asm.here();
     asm.jmp_abs(spin);
-    let mut vcs = Vcs::new(&asm.into_rom()).unwrap();
+    let mut vcs = Vcs::new(&asm.into_rom(), missingno_vcs::TvStandard::Ntsc).unwrap();
 
     vcs.step_instruction(); // the reset sequence
     vcs.step_instruction(); // LDA
@@ -187,7 +187,7 @@ fn budget_guard_returns_none_without_vsync() {
     let mut asm = Asm::new(0xF000);
     let spin = asm.here();
     asm.jmp_abs(spin);
-    let mut vcs = Vcs::new(&asm.into_rom()).unwrap();
+    let mut vcs = Vcs::new(&asm.into_rom(), missingno_vcs::TvStandard::Ntsc).unwrap();
     assert!(vcs.step_frame(400).is_none());
 }
 
@@ -204,7 +204,9 @@ fn debugger_breakpoints_and_peek_are_side_effect_free() {
     asm.jmp_abs(spin);
     let rom = asm.into_rom();
 
-    let mut debugger = Debugger::new(missingno_vcs::console::Vcs::new(&rom).unwrap());
+    let mut debugger = Debugger::new(
+        missingno_vcs::console::Vcs::new(&rom, missingno_vcs::TvStandard::Ntsc).unwrap(),
+    );
     debugger.set_breakpoint(target);
     let (_, stop) = debugger.run();
     assert_eq!(stop, Stop::Breakpoint);
@@ -243,7 +245,7 @@ fn audio_produces_samples_at_the_seam_rate() {
     let spin = asm.here();
     asm.jmp_abs(spin);
 
-    let mut vcs = Vcs::new(&asm.into_rom()).unwrap();
+    let mut vcs = Vcs::new(&asm.into_rom(), missingno_vcs::TvStandard::Ntsc).unwrap();
     // One NTSC frame's worth of clocks ≈ 262 × 228; expect ~735 samples.
     for _ in 0..262 * 228 {
         vcs.step_clock();

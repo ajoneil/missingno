@@ -13,8 +13,9 @@
 
 use std::path::{Path, PathBuf};
 
+use missingno_vcs::TvStandard;
 use missingno_vcs::console::{Frame, Vcs};
-use missingno_vcs::tia::{VISIBLE_CLOCKS, ntsc_palette};
+use missingno_vcs::tia::{VISIBLE_CLOCKS, palette};
 
 /// RESULT convention (see `missingno-vcs-tests/include/result.h`).
 const RESULT: u16 = 0x0080;
@@ -38,18 +39,19 @@ pub fn rom_path(relative: &str) -> PathBuf {
         .join(relative)
 }
 
-fn load(relative: &str) -> Vcs {
+fn load(relative: &str, standard: TvStandard) -> Vcs {
     let path = rom_path(relative);
     let rom = std::fs::read(&path)
         .unwrap_or_else(|e| panic!("failed to read ROM {}: {e}", path.display()));
-    Vcs::new(&rom).unwrap_or_else(|e| panic!("failed to load ROM {}: {e:?}", path.display()))
+    Vcs::new(&rom, standard)
+        .unwrap_or_else(|e| panic!("failed to load ROM {}: {e:?}", path.display()))
 }
 
 /// Run a self-checking ROM to its verdict and assert PASS. Panics with the
 /// failing sub-check code and observed/expected bytes on FAIL, or after the
 /// instruction budget if the ROM never reports a verdict.
-pub fn run_self_test(relative: &str) {
-    let mut vcs = load(relative);
+pub fn run_self_test(relative: &str, standard: TvStandard) {
+    let mut vcs = load(relative, standard);
 
     for _ in 0..MAX_INSTRUCTIONS {
         vcs.step_instruction();
@@ -75,11 +77,10 @@ pub fn run_self_test(relative: &str) {
 }
 
 /// Render one settled frame and diff it against the reference PNG, asserting
-/// no pixel mismatches. The frame is rendered through the NTSC palette for
-/// both regions — the core has no separate PAL palette yet, so PAL chroma is
-/// a known source of mismatches.
-pub fn run_screenshot(rom_relative: &str, png_relative: &str) {
-    let mut vcs = load(rom_relative);
+/// no pixel mismatches. The frame is rendered through the standard's palette,
+/// so PAL ROMs decode through the PAL colour table.
+pub fn run_screenshot(rom_relative: &str, png_relative: &str, standard: TvStandard) {
+    let mut vcs = load(rom_relative, standard);
 
     // Let the picture settle; keep the last frame produced within the budget.
     let mut frame = None;
@@ -89,7 +90,7 @@ pub fn run_screenshot(rom_relative: &str, png_relative: &str) {
         }
     }
     let frame = frame.unwrap_or_else(|| panic!("{rom_relative}: produced no frame"));
-    let actual = frame_to_rgb(&frame);
+    let actual = frame_to_rgb(&frame, standard);
 
     let reference = Png::load(&rom_path(png_relative));
 
@@ -115,8 +116,8 @@ pub fn run_screenshot(rom_relative: &str, png_relative: &str) {
 }
 
 /// TIA colour bytes drop bit 0; the palette is 7-bit indexed.
-fn frame_to_rgb(frame: &Frame) -> Vec<(u8, u8, u8)> {
-    let palette = ntsc_palette();
+fn frame_to_rgb(frame: &Frame, standard: TvStandard) -> Vec<(u8, u8, u8)> {
+    let palette = palette(standard);
     frame
         .lines
         .iter()

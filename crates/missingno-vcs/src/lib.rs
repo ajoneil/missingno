@@ -8,3 +8,5 @@ pub mod riot;
 pub mod tia;
 #[cfg(feature = "gbtrace")]
 pub mod trace;
+pub mod tv_standard;
+pub use tv_standard::TvStandard;

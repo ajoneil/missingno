@@ -199,14 +199,15 @@ fn trace_vcs(rom: &[u8], profile: &Profile, output_path: &PathBuf, cycle_limit: 
     use missingno_vcs::console::Vcs;
     use missingno_vcs::trace::{Tracer, step_instruction_counted};
 
-    let mut vcs = Vcs::new(rom).unwrap_or_else(|e| {
+    let mut vcs = Vcs::new(rom, missingno_vcs::TvStandard::Ntsc).unwrap_or_else(|e| {
         eprintln!("error: failed to load VCS ROM: {e:?}");
         process::exit(1);
     });
-    let mut tracer = Tracer::create(output_path, profile, rom).unwrap_or_else(|e| {
-        eprintln!("error: failed to create trace file: {e}");
-        process::exit(1);
-    });
+    let mut tracer =
+        Tracer::create(output_path, profile, rom, vcs.tv_standard()).unwrap_or_else(|e| {
+            eprintln!("error: failed to create trace file: {e}");
+            process::exit(1);
+        });
 
     let per_cycle = profile.trigger == Trigger::Cycle;
     let mut total_cycles: u64 = 0;

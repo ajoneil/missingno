@@ -40,7 +40,7 @@ fn test_rom() -> Vec<u8> {
 #[test]
 fn captures_a_readable_trace_with_emergent_frames() {
     let rom = test_rom();
-    let mut vcs = Vcs::new(&rom).unwrap();
+    let mut vcs = Vcs::new(&rom, missingno_vcs::TvStandard::Ntsc).unwrap();
 
     let profile = Profile::parse(
         r#"
@@ -65,7 +65,7 @@ ram80 = "0080"
         "missingno-vcs-trace-test-{}.gbtrace",
         std::process::id()
     ));
-    let mut tracer = Tracer::create(&path, &profile, &rom).unwrap();
+    let mut tracer = Tracer::create(&path, &profile, &rom, vcs.tv_standard()).unwrap();
 
     // A bit over two frames of the kernel (one frame = 262 lines × 76
     // CPU cycles).

@@ -14,6 +14,8 @@ pub mod objects;
 use audio::Channel;
 use objects::{Ball, Missile, Player, Playfield};
 
+use crate::TvStandard;
+
 pub const CLOCKS_PER_LINE: u16 = 228;
 pub const HBLANK_CLOCKS: u16 = 68;
 pub const VISIBLE_CLOCKS: usize = 160;
@@ -541,32 +543,53 @@ impl Tia {
     }
 }
 
-/// The 128-colour NTSC TIA palette (colour byte bits 7-1: hue 4, luma 3),
-/// approximated from hue-angle chroma — a display-side calibratable stage,
-/// not a hardware claim. Frame pixels (colour bytes >> 1) index into it.
-pub fn ntsc_palette() -> &'static [(u8, u8, u8); 128] {
+/// The hue codes PAL decodes to greyscale (colour-loss): the phase-alternating
+/// line collapses these four to the luminance ramp.
+const PAL_GREYSCALE_HUES: [usize; 4] = [0, 1, 14, 15];
+
+/// The 128-colour TIA palette for a standard (colour byte bits 7-1: hue 4,
+/// luma 3), approximated from hue-angle chroma — a display-side calibratable
+/// stage, not a hardware claim (the TIA has no palette ROM; RGB is a decode
+/// convention). Frame pixels (colour bytes >> 1) index into it.
+pub fn palette(standard: TvStandard) -> &'static [(u8, u8, u8); 128] {
     use std::sync::OnceLock;
-    static PALETTE: OnceLock<[(u8, u8, u8); 128]> = OnceLock::new();
-    PALETTE.get_or_init(|| {
-        let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0) as u8;
-        let mut palette = [(0, 0, 0); 128];
-        for (index, entry) in palette.iter_mut().enumerate() {
-            let hue = (index >> 3) & 0x0F;
-            let luma = (index & 0x07) as f32;
-            let y = 0.12 + 0.85 * (luma / 7.0);
-            let (i, q) = if hue == 0 {
-                (0.0, 0.0)
-            } else {
-                // Hue 1 starts gold and the phase walks the colour wheel.
-                let angle = (103.0 - 25.7 * (hue as f32 - 1.0)).to_radians();
-                let saturation = 0.28 - 0.02 * (luma / 7.0);
-                (saturation * angle.cos(), saturation * angle.sin())
-            };
-            let r = y + 0.956 * i + 0.619 * q;
-            let g = y - 0.272 * i - 0.647 * q;
-            let b = y - 1.106 * i + 1.703 * q;
-            *entry = (channel(r), channel(g), channel(b));
-        }
-        palette
-    })
+    static NTSC: OnceLock<[(u8, u8, u8); 128]> = OnceLock::new();
+    static PAL: OnceLock<[(u8, u8, u8); 128]> = OnceLock::new();
+    match standard {
+        TvStandard::Ntsc => NTSC.get_or_init(|| build_palette(false)),
+        TvStandard::Pal => PAL.get_or_init(|| build_palette(true)),
+    }
+}
+
+fn build_palette(pal: bool) -> [(u8, u8, u8); 128] {
+    let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0) as u8;
+    let mut palette = [(0, 0, 0); 128];
+    for (index, entry) in palette.iter_mut().enumerate() {
+        let hue = (index >> 3) & 0x0F;
+        let luma = (index & 0x07) as f32;
+        let y = 0.12 + 0.85 * (luma / 7.0);
+        let greyscale = if pal {
+            PAL_GREYSCALE_HUES.contains(&hue)
+        } else {
+            hue == 0
+        };
+        let (i, q) = if greyscale {
+            (0.0, 0.0)
+        } else if pal {
+            // PAL's coloured hues (2..13) walk the wheel with a wider phase step.
+            let angle = (103.0 - 31.3 * (hue as f32 - 2.0)).to_radians();
+            let saturation = 0.28 - 0.02 * (luma / 7.0);
+            (saturation * angle.cos(), saturation * angle.sin())
+        } else {
+            // Hue 1 starts gold and the phase walks the colour wheel.
+            let angle = (103.0 - 25.7 * (hue as f32 - 1.0)).to_radians();
+            let saturation = 0.28 - 0.02 * (luma / 7.0);
+            (saturation * angle.cos(), saturation * angle.sin())
+        };
+        let r = y + 0.956 * i + 0.619 * q;
+        let g = y - 0.272 * i - 0.647 * q;
+        let b = y - 1.106 * i + 1.703 * q;
+        *entry = (channel(r), channel(g), channel(b));
+    }
+    palette
 }

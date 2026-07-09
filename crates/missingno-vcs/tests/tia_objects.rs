@@ -101,7 +101,7 @@ fn kernel(setup: impl Fn(&mut Asm), body: impl Fn(&mut Asm)) -> Vec<u8> {
 }
 
 fn second_frame(rom: &[u8]) -> Vec<[u8; 160]> {
-    let mut vcs = Vcs::new(rom).unwrap();
+    let mut vcs = Vcs::new(rom, missingno_vcs::TvStandard::Ntsc).unwrap();
     let _ = vcs.step_frame(1000).expect("first frame");
     vcs.step_frame(1000).expect("second frame").lines
 }
@@ -290,7 +290,7 @@ fn player_playfield_collision_latches() {
             asm.sta_zp(0x80); // stash the latch in RIOT RAM
         },
     );
-    let mut vcs = Vcs::new(&rom).unwrap();
+    let mut vcs = Vcs::new(&rom, missingno_vcs::TvStandard::Ntsc).unwrap();
     let _ = vcs.step_frame(1000).unwrap();
     let _ = vcs.step_frame(1000).unwrap();
     assert_eq!(

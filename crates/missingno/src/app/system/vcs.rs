@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use missingno_vcs::TvStandard;
 use missingno_vcs::cartridge::CartridgeError;
 use missingno_vcs::console::{JoystickDirection, Vcs};
 use missingno_vcs::tia::VISIBLE_CLOCKS;
@@ -56,8 +57,10 @@ pub fn is_vcs_rom(path: &std::path::Path, rom: &[u8]) -> bool {
 }
 
 pub fn create_console(rom: &[u8], title: String) -> Result<Box<dyn SystemConsole>, CartridgeError> {
+    // Region detection (ROM-hash → standard) is a future game-db concern; the
+    // frontend runs NTSC until then. Pacing, aspect, and palette follow suit.
     Ok(Box::new(VcsConsole {
-        vcs: Vcs::new(rom)?,
+        vcs: Vcs::new(rom, TvStandard::Ntsc)?,
         title,
         last_frame: blank_frame(),
     }))
@@ -173,7 +176,7 @@ fn ntsc_palette() -> std::sync::Arc<[RGB8]> {
     static PALETTE: OnceLock<std::sync::Arc<[RGB8]>> = OnceLock::new();
     PALETTE
         .get_or_init(|| {
-            missingno_vcs::tia::ntsc_palette()
+            missingno_vcs::tia::palette(TvStandard::Ntsc)
                 .iter()
                 .map(|&(r, g, b)| RGB8::new(r, g, b))
                 .collect::<Vec<_>>()

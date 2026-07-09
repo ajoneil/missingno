@@ -6,6 +6,7 @@
 //! beam" kernels depend on. WSYNC parks the CPU through the 6502 module's
 //! RDY pin; the TIA raises it again as the beam wraps.
 
+use crate::TvStandard;
 use crate::cartridge::{Cartridge, CartridgeError};
 use crate::cpu::{Bus, Cpu};
 use crate::riot::Riot;
@@ -30,18 +31,17 @@ pub struct Vcs {
     pub tia: Tia,
     pub riot: Riot,
     cartridge: Cartridge,
+    region: TvStandard,
     clock_phase: u8,
     pending_tia_write: Option<TiaWrite>,
     building: Vec<Scanline>,
     in_vsync: bool,
     finished_frame: Option<Frame>,
     sample_clock: f32,
+    /// Colour clocks per 44.1 kHz sample, from the region's master clock.
+    clocks_per_sample: f32,
     samples: Vec<(f32, f32)>,
 }
-
-/// The frontend consumes 44.1 kHz stereo; one sample per this many
-/// colour clocks (3.579545 MHz / 44.1 kHz).
-const CLOCKS_PER_SAMPLE: f32 = 3_579_545.0 / 44_100.0;
 
 /// The 6507's view of the board: A12 selects the cartridge; below it, A7
 /// splits TIA from RIOT and A9 splits RIOT RAM from its I/O registers.
@@ -92,7 +92,7 @@ impl Bus for BoardBus<'_> {
 }
 
 impl Vcs {
-    pub fn new(rom: &[u8]) -> Result<Vcs, CartridgeError> {
+    pub fn new(rom: &[u8], region: TvStandard) -> Result<Vcs, CartridgeError> {
         let cartridge = Cartridge::load(rom)?;
         let mut cpu = Cpu::new();
         cpu.reset();
@@ -101,14 +101,26 @@ impl Vcs {
             tia: Tia::new(),
             riot: Riot::new(),
             cartridge,
+            region,
             clock_phase: 0,
             pending_tia_write: None,
             building: Vec::new(),
             in_vsync: false,
             finished_frame: None,
             sample_clock: 0.0,
+            clocks_per_sample: region.clocks_per_sample(),
             samples: Vec::new(),
         })
+    }
+
+    /// The broadcast standard this console is wired to.
+    pub fn tv_standard(&self) -> TvStandard {
+        self.region
+    }
+
+    /// The region-correct 128-colour palette for rendering this console's frames.
+    pub fn palette(&self) -> &'static [(u8, u8, u8); 128] {
+        crate::tia::palette(self.region)
     }
 
     /// Advance one colour clock. Every third clock carries the CPU (and
@@ -140,8 +152,8 @@ impl Vcs {
         }
 
         self.sample_clock += 1.0;
-        if self.sample_clock >= CLOCKS_PER_SAMPLE {
-            self.sample_clock -= CLOCKS_PER_SAMPLE;
+        if self.sample_clock >= self.clocks_per_sample {
+            self.sample_clock -= self.clocks_per_sample;
             let level = self.tia.audio_level();
             self.samples.push((level, level));
         }

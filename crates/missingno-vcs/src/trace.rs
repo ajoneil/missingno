@@ -13,8 +13,9 @@ use gbtrace::snapshot::IndexedFrame;
 pub use gbtrace::{Profile, Trigger};
 use sha2::{Digest, Sha256};
 
+use crate::TvStandard;
 use crate::console::{Frame, Vcs};
-use crate::tia::{VISIBLE_CLOCKS, ntsc_palette};
+use crate::tia::{VISIBLE_CLOCKS, palette};
 
 /// NTSC pixel aspect at the TIA's 3.58 MHz colour clock.
 pub const PIXEL_ASPECT: f32 = 12.0 / 7.0;
@@ -83,6 +84,7 @@ pub fn step_instruction_counted(vcs: &mut Vcs) -> u16 {
 pub struct Tracer {
     writer: GbtraceWriter,
     emitters: Vec<(usize, Emitter)>,
+    region: TvStandard,
 }
 
 impl Tracer {
@@ -90,6 +92,7 @@ impl Tracer {
         path: impl AsRef<Path>,
         profile: &Profile,
         rom: &[u8],
+        region: TvStandard,
     ) -> Result<Tracer, gbtrace::Error> {
         if profile.family != "vcs" {
             return Err(gbtrace::Error::Profile(format!(
@@ -113,7 +116,7 @@ impl Tracer {
             emulator_version: env!("CARGO_PKG_VERSION").into(),
             rom_sha256,
             family: "vcs".into(),
-            model: "NTSC".into(),
+            model: region.name().into(),
             profile: profile.name.clone(),
             fields: profile.fields.clone(),
             trigger: profile.trigger.clone(),
@@ -130,7 +133,11 @@ impl Tracer {
             emitters.push((col, resolve_emitter(field, profile)?));
         }
 
-        Ok(Tracer { writer, emitters })
+        Ok(Tracer {
+            writer,
+            emitters,
+            region,
+        })
     }
 
     /// Write one entry from the console's current state. `cycles` is the
@@ -168,7 +175,10 @@ impl Tracer {
                 width: VISIBLE_CLOCKS as u16,
                 height: frame.lines.len() as u16,
                 pixel_aspect: PIXEL_ASPECT,
-                palette: ntsc_palette().iter().map(|&(r, g, b)| [r, g, b]).collect(),
+                palette: palette(self.region)
+                    .iter()
+                    .map(|&(r, g, b)| [r, g, b])
+                    .collect(),
                 // TIA colour bytes drop bit 0; the palette is 7-bit indexed.
                 pixels: frame
                     .lines
