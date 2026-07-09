@@ -287,6 +287,9 @@ pub struct Playfield {
     pub pf1: u8,
     pub pf2: u8,
     pub mirrored: bool,
+    /// The serialiser reads the registers once per 4-clock cell; a write
+    /// landing mid-cell takes effect from the next cell.
+    latched: [u8; 3],
 }
 
 impl Default for Playfield {
@@ -302,7 +305,12 @@ impl Playfield {
             pf1: 0,
             pf2: 0,
             mirrored: false,
+            latched: [0; 3],
         }
+    }
+
+    pub fn latch_cell(&mut self) {
+        self.latched = [self.pf0, self.pf1, self.pf2];
     }
 
     pub fn pixel(&self, x: u8) -> bool {
@@ -314,10 +322,11 @@ impl Playfield {
         } else {
             (x - 80) / 4
         };
+        let [pf0, pf1, pf2] = self.latched;
         let lit = match cell {
-            0..=3 => self.pf0 & (0x10 << cell),
-            4..=11 => self.pf1 & (0x80 >> (cell - 4)),
-            _ => self.pf2 & (0x01 << (cell - 12)),
+            0..=3 => pf0 & (0x10 << cell),
+            4..=11 => pf1 & (0x80 >> (cell - 4)),
+            _ => pf2 & (0x01 << (cell - 12)),
         };
         lit != 0
     }

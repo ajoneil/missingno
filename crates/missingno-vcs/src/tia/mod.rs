@@ -313,6 +313,9 @@ impl Tia {
 
     fn render_clock(&mut self) {
         let x = (self.beam - HBLANK_CLOCKS) as u8;
+        if x.is_multiple_of(4) {
+            self.playfield.latch_cell();
+        }
         let px = Pixels {
             p0: self.player0.tick(),
             p1: self.player1.tick(),
