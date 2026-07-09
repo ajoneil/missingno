@@ -7,6 +7,7 @@
 //! conditional-free code, and the CGB colour hardware (CRAM, attributes, the
 //! colour resolve) lives in `missingno-gbc`'s impl rather than behind a flag.
 
+use super::TracePixel;
 use super::crossing::CaptureSpec;
 use super::draw::shifters::ObjShifter;
 use super::memory::{Vram, VramBank};
@@ -151,8 +152,9 @@ pub trait PpuModel: Default {
     /// LCDC are read live from `regs`.
     fn resolve(&self, mux: &PixelMux<Self::BgCell>, regs: &PipelineRegisters) -> Self::Pixel;
 
-    /// The 2-bit shade a gbtrace pixel stream records for this pixel.
-    fn trace_shade(pixel: Self::Pixel) -> u8;
+    /// This pixel as the gbtrace pixel stream records it — a shade on DMG, an
+    /// RGB555 colour on CGB (matching the trace's declared `pix_format`).
+    fn trace_pixel(pixel: Self::Pixel) -> TracePixel;
 
     /// The model has synchronisers capturing on the CPU-clock M-cycle
     /// boundary (CGB): the palette block's mode-3 sample on the boundary
@@ -410,7 +412,7 @@ impl PpuModel for DmgPpu {
         PaletteIndex(resolve_shade(mux, regs))
     }
 
-    fn trace_shade(pixel: PaletteIndex) -> u8 {
-        pixel.0
+    fn trace_pixel(pixel: PaletteIndex) -> TracePixel {
+        TracePixel::Shade(pixel.0)
     }
 }

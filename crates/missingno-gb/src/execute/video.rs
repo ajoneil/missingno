@@ -133,7 +133,7 @@ impl<M: Model> Console<M> {
             ppu::PixelOutput {
                 x: pixel.x,
                 y: pixel.y,
-                shade: <M::Ppu as ppu::PpuModel>::trace_shade(pixel.color),
+                pixel: <M::Ppu as ppu::PpuModel>::trace_pixel(pixel.color),
             }
         });
         if result.new_frame {

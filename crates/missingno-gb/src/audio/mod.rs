@@ -472,7 +472,10 @@ impl<A: ApuSpec> Audio<A> {
 
     /// Construct an Audio instance from a gbtrace snapshot.
     #[cfg(feature = "gbtrace")]
-    pub fn from_snapshot(snap: &gbtrace::family::gb::snapshot::ApuSnapshot, wave_ram: [u8; 16]) -> Self {
+    pub fn from_snapshot(
+        snap: &gbtrace::family::gb::snapshot::ApuSnapshot,
+        wave_ram: [u8; 16],
+    ) -> Self {
         use channels::noise::FrequencyAndRandomness;
         use channels::registers::{
             PeriodDivider, Prescaler, Signed11, VolumeAndEnvelope, WaveformAndInitialLength,

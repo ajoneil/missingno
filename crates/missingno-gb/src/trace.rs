@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use crate::audio::{ApuSpec, Audio};
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
-use crate::ppu::{Ppu, PpuModel, PpuTraceSnapshot};
+use crate::ppu::{Ppu, PpuModel, PpuTraceSnapshot, TracePixel};
 use crate::{Console, Model};
 
 /// Abstraction over a Game Boy–family console that the [`Tracer`] can
@@ -734,11 +734,10 @@ pub fn step_instruction_tcycle<M: Model>(
     gb: &mut Console<M>,
     tracer: &mut Tracer,
 ) -> crate::execute::StepResult {
-    use std::ops::ControlFlow;
-
     let mut new_screen = false;
     let mut tcycles = 0u32;
 
+    gb.cpu_mut().bus.data_latch = 0;
     gb.cpu_mut().take_instruction_boundary();
 
     // Speed is fixed across one instruction; a mid-instruction switch settles
@@ -754,7 +753,10 @@ pub fn step_instruction_tcycle<M: Model>(
         gb.execute_tcycle_observed(|gb, result| {
             new_screen |= result.new_screen;
             if let Some(pixel) = result.pixel {
-                tracer.push_pixel(pixel.shade);
+                match pixel.pixel {
+                    TracePixel::Shade(shade) => tracer.push_pixel(shade),
+                    TracePixel::Rgb555(color) => tracer.push_pixel_rgb555(color),
+                }
             }
             if double_speed {
                 if result.new_screen {
@@ -763,9 +765,6 @@ pub fn step_instruction_tcycle<M: Model>(
                 tracer.capture(gb).unwrap();
                 tracer.advance_dot();
                 tcycles += 1;
-                if gb.cpu().at_instruction_boundary() {
-                    return ControlFlow::Break(());
-                }
             } else if is_first {
                 first_new_screen = result.new_screen;
                 is_first = false;
@@ -777,7 +776,6 @@ pub fn step_instruction_tcycle<M: Model>(
                 tracer.advance_dot();
                 tcycles += 1;
             }
-            ControlFlow::Continue(())
         });
 
         if gb.cpu().at_instruction_boundary() {

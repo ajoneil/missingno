@@ -468,7 +468,10 @@ impl<M: Model> Debugger<M> {
             let mut is_first = true;
             self.game_boy.execute_tcycle_observed(|gb, result| {
                 if let Some(pixel) = result.pixel {
-                    tracer.push_pixel(pixel.shade);
+                    match pixel.pixel {
+                        ppu::TracePixel::Shade(shade) => tracer.push_pixel(shade),
+                        ppu::TracePixel::Rgb555(color) => tracer.push_pixel_rgb555(color),
+                    }
                 }
                 frame |= result.new_screen;
                 if is_first {
@@ -478,7 +481,6 @@ impl<M: Model> Debugger<M> {
                 } else {
                     tracer.advance_dot();
                 }
-                std::ops::ControlFlow::Continue(())
             });
             if let Some(e) = trace_err {
                 return Err(e);

@@ -2,13 +2,13 @@ use missingno_gb::ppu::memory::Vram;
 use missingno_gb::ppu::types::sprites::{Attributes, ObjAttr};
 use missingno_gb::ppu::{
     CaptureSpec, CartridgeBootHeader, DmgPixel, InterruptFlags, PipelineRegisters, PixelMux,
-    PpuModel, StatShadow, TileSelGlitch, resolve_dmg_pixel,
+    PpuModel, StatShadow, TileSelGlitch, TracePixel, resolve_dmg_pixel,
 };
 
-use crate::compat_palette::{dmg_compat_palettes, dmg_compat_shade};
+use crate::compat_palette::dmg_compat_palettes;
 use crate::cram::{ColorRam, ColorRegister};
 use crate::obj_fifo::CgbObjShifter;
-use crate::screen::{Color555, GREYSCALE};
+use crate::screen::Color555;
 use crate::vram::{BgAttribute, CgbVram};
 
 /// The CGB FF41/FF45 synchroniser DFFs feeding the STAT-IRQ block.
@@ -274,15 +274,8 @@ impl PpuModel for CgbPpu {
         live && self.drawing_synced
     }
 
-    fn trace_shade(pixel: Color555) -> u8 {
-        // Greyscale fallback, then the DMG-compat boot palette (matching
-        // `Screen::to_greyscale_bytes`); full-CGB colours have no 2-bit shade.
-        GREYSCALE
-            .iter()
-            .position(|&grey| grey == pixel)
-            .map(|i| i as u8)
-            .or_else(|| dmg_compat_shade(pixel))
-            .unwrap_or(0)
+    fn trace_pixel(pixel: Color555) -> TracePixel {
+        TracePixel::Rgb555(pixel.0 & 0x7FFF)
     }
 }
 

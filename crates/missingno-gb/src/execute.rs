@@ -1,5 +1,3 @@
-#[cfg(feature = "gbtrace")]
-use super::clock::Edge;
 use super::{Console, Model, cpu::mcycle::TCycle, cpu_bus::BusAccess, ppu};
 
 mod blackout;
@@ -154,35 +152,25 @@ impl<M: Model> Console<M> {
         rise.new_screen || fall.new_screen
     }
 
-    /// Advance one CPU T-cycle, observing the machine after each of its two
-    /// master edges — the gbtrace capture hook. `after_phase` runs after the
-    /// rise then after the fall with that edge's [`PhaseResult`], so a tracer
-    /// keeps its exact between-edges sample points. A `Break` from the rise's
-    /// observer leaves the fall for the next call: the double-speed per-edge
-    /// capture defers the paired edge when the instruction retires on the rise,
-    /// leaving the clock parked on the fall — so a resuming call runs only the
-    /// fall (the pre-advance dot phase reproduces this T-cycle's schedule, since
-    /// the ÷2 rise leaves the dot phase untouched).
+    /// Advance one CPU T-cycle — rise then fall — observing the machine after
+    /// each edge, the gbtrace capture hook. Drives the machine identically to
+    /// [`Console::execute_tcycle`]: the schedule is read once and both edges
+    /// always run, with `after_phase` invoked after the rise then after the fall
+    /// with that edge's [`PhaseResult`] so a tracer keeps its exact
+    /// between-edges sample points. The observer never retires the instruction —
+    /// the caller checks the boundary after the completed T-cycle, so both edges
+    /// run inside the same instruction as on the plain path.
     #[cfg(feature = "gbtrace")]
     pub fn execute_tcycle_observed(
         &mut self,
-        mut after_phase: impl FnMut(&mut Self, &PhaseResult) -> std::ops::ControlFlow<()>,
+        mut after_phase: impl FnMut(&mut Self, &PhaseResult),
     ) -> bool {
         let schedule = self.chassis.clock.tcycle_schedule();
-        let mut new_screen = false;
-        if self.chassis.clock.cpu_edge() == Edge::Rise {
-            let rise = self.tcycle_rise(schedule);
-            new_screen |= rise.new_screen;
-            if after_phase(self, &rise).is_break() {
-                return new_screen;
-            }
-        }
+        let rise = self.tcycle_rise(schedule);
+        after_phase(self, &rise);
         let fall = self.tcycle_fall(schedule);
-        new_screen |= fall.new_screen;
-        // The fall is the pair's last edge; nothing to defer, so its control
-        // signal is irrelevant.
-        let _ = after_phase(self, &fall);
-        new_screen
+        after_phase(self, &fall);
+        rise.new_screen || fall.new_screen
     }
 
     /// Advance to the next T-cycle boundary. Returns true if a new frame was
