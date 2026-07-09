@@ -173,10 +173,19 @@ impl Missile {
     }
 
     pub fn reset_position(&mut self) {
-        // Reset also resets the two-phase clock: an in-flight start
-        // decode is lost, and the main copy waits for the counter wrap.
         self.counter = 0;
-        self.start_countdown = None;
+        if self.start_countdown.is_some()
+            || (self.scan_clocks_left > 0 && self.scan_clocks_left == self.width())
+        {
+            // Reset re-phases an in-flight start onto the new counter
+            // grid; like the wrap decode, its first stage clocks on the
+            // decode tick. A dot already emitting survives unmoved.
+            self.start_countdown = Some(START_DELAY_MISSILE - 1);
+            self.scan_clocks_left = 0;
+        } else {
+            // No start in flight: a decode not yet fired is pre-empted.
+            self.start_countdown = None;
+        }
     }
 
     /// RESMPx released: park at the re-centre landing — the missile's
