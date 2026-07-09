@@ -4,7 +4,7 @@ Compare and inspect execution traces between missingno and reference emulators (
 
 ## Adapter preference
 
-The reference emulators (SameBoy, DocBoy, gambatte) are all **behavioural** — none is die-derived, so none is ground truth. They show *where* execution diverges; *why* comes from the hardware (the DMG Timing Specification, gb-ctr, race pairs), never from matching another emulator. **Prefer SameBoy**, then DocBoy, then gambatte — the same order for DMG and CGB (see *AGENTS.md → CGB Core — Methodology Deltas*). Fall back down the order when the preferred emulator has no passing trace for the test, and state the reason in the receipt (e.g. "no SameBoy pass trace for blargg/halt_bug; using DocBoy"). Don't silently treat any single emulator's behaviour as the hardware's.
+The reference emulators are all **behavioural** — none is die-derived, so none is ground truth. They show *where* execution diverges; *why* comes from the hardware, never from matching another emulator. The preferred order is per-core (see the target core's `crates/missingno-<core>/AGENTS.md`): **Game Boy (DMG/CGB) — SameBoy → DocBoy → gambatte** (why-source: the DMG Timing Specification, gb-ctr, race pairs); **Atari 2600 (VCS) — Stella → Gopher2600 → MAME** (why-source: Sim2600 for CPU/TIA, the schematics + 6532 datasheet for RIOT). Fall back down the order when the preferred emulator has no passing trace for the test, and state the reason in the receipt (e.g. "no SameBoy pass trace for blargg/halt_bug; using DocBoy"). Don't silently treat any single emulator's behaviour as the hardware's.
 
 ## When to use
 

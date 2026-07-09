@@ -139,6 +139,7 @@ The core loop:
 
 ### 2. Understand the domain and research correct behavior
 
+- Identify the target core first, and read its methodology doc (`crates/missingno-<core>/AGENTS.md`) — the ground-truth hierarchy is per-core (DMG: spec + dmg-sim; VCS: Sim2600 for CPU/TIA, datasheet/schematics for RIOT; CGB: hardware test-ROM values). This decides which sources `/research` should consult.
 - Identify the hardware subsystem. Use `/research` to fill knowledge gaps — frame questions as "what does the hardware do?" not "what does emulator X do?"
 - Use `/research` any time you're uncertain about expected behavior — not just at the start.
 - Pass research results through `/analyze` before updating summary.md.
