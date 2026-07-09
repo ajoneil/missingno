@@ -25,7 +25,7 @@ const AUDIO_CLOCK_B: u16 = 124;
 /// Full-scale paddle charge time; the readable range games sweep.
 const POT_CHARGE_LINES: f32 = 380.0;
 
-mod registers {
+pub(crate) mod registers {
     pub const VSYNC: u16 = 0x00;
     pub const VBLANK: u16 = 0x01;
     pub const WSYNC: u16 = 0x02;
