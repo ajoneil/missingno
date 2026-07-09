@@ -150,10 +150,10 @@ Run `./scripts/test-report-gb.sh --diff` directly (investigate's bookkeeping; `-
 
 ### 4. Observe and diagnose
 
-Observation priority: `/compare-traces` → `/inspect` → `/instrument` (with user approval). Don't guess — observe.
+Observation priority: `/compare-traces` → `/inspect` → `/instrument`. Don't guess — observe.
 
-- `/inspect` first for runtime observation. If it can't answer, ask the user before falling back to `/instrument`.
-- `/instrument` only after `/inspect` is insufficient. More invasive — modifies code temporarily.
+- `/inspect` first for runtime observation. When the debugger can't observe the needed state, fall back to `/instrument` directly — no approval step. If the gap is one the headless debugger could reasonably cover (and would keep being useful), consider extending the debugger instead; where its tooling is GB-specific, consider bringing other cores up to parity.
+- `/instrument` modifies code temporarily — instrumentation must be removed before any merge.
 - Pass all observation results through `/analyze` before updating summary.md.
 
 ### 5. Analyze and fix

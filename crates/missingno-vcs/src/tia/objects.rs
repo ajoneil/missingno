@@ -32,6 +32,9 @@ fn player_pixel_clocks(mode: u8) -> u8 {
 struct Scan {
     bit: u8,
     clocks_left: u8,
+    // The stretched serial clock divides down from the two-phase grid;
+    // its first pulse lands 1 CLK after START (2x and 4x alike).
+    serial_lag: u8,
 }
 
 pub struct Player {
@@ -66,10 +69,10 @@ impl Player {
     }
 
     pub fn reset_position(&mut self) {
+        // Reset also resets the two-phase clock: an in-flight start
+        // decode is lost, and the main copy waits for the counter wrap.
         self.counter = 0;
-        // The reset decode doubles as a start decode; like the wrap
-        // decode, its first pipeline stage clocks on the decode tick.
-        self.start_countdown = Some(START_DELAY_PLAYER - 1);
+        self.start_countdown = None;
     }
 
     pub fn counter(&self) -> u8 {
@@ -87,9 +90,11 @@ impl Player {
         if let Some(remaining) = self.start_countdown {
             if remaining == 0 {
                 self.start_countdown = None;
+                let clocks = player_pixel_clocks(self.nusiz);
                 self.scan = Some(Scan {
                     bit: 0,
-                    clocks_left: player_pixel_clocks(self.nusiz),
+                    clocks_left: clocks,
+                    serial_lag: if clocks > 1 { 1 } else { 0 },
                 });
             } else {
                 self.start_countdown = Some(remaining - 1);
@@ -100,6 +105,10 @@ impl Player {
 
     fn advance_scan(&mut self) {
         if let Some(scan) = &mut self.scan {
+            if scan.serial_lag > 0 {
+                scan.serial_lag -= 1;
+                return;
+            }
             scan.clocks_left -= 1;
             if scan.clocks_left == 0 {
                 scan.bit += 1;
@@ -116,6 +125,9 @@ impl Player {
         let Some(scan) = &self.scan else {
             return false;
         };
+        if scan.serial_lag > 0 {
+            return false;
+        }
         let graphics = if self.vertical_delay {
             self.grp_old
         } else {
@@ -161,18 +173,22 @@ impl Missile {
     }
 
     pub fn reset_position(&mut self) {
+        // Reset also resets the two-phase clock: an in-flight start
+        // decode is lost, and the main copy waits for the counter wrap.
         self.counter = 0;
-        self.start_countdown = Some(START_DELAY_MISSILE);
+        self.start_countdown = None;
     }
 
-    /// RESMPx released: park at the player's centre.
+    /// RESMPx released: park at the re-centre landing — the missile's
+    /// first pixel lands 4/6/10 clocks right of the player's per size.
     pub fn release_at(&mut self, player_counter: u8, player_mode: u8) {
-        let centre = match player_mode & 0x07 {
-            5 => 6,
-            7 => 10,
-            _ => 3,
+        let centre: u16 = match player_mode & 0x07 {
+            5 => 8,
+            7 => 12,
+            _ => 5,
         };
-        self.counter = (player_counter + COUNTER_RANGE - centre) % COUNTER_RANGE;
+        self.counter = ((u16::from(player_counter) + u16::from(COUNTER_RANGE) - centre)
+            % u16::from(COUNTER_RANGE)) as u8;
     }
 
     fn width(&self) -> u8 {
@@ -230,7 +246,10 @@ impl Ball {
 
     pub fn reset_position(&mut self) {
         self.counter = 0;
-        self.start_countdown = Some(START_DELAY_BALL);
+        // Unlike the players and missiles, the ball's reset decode is
+        // also a start decode; like the wrap decode, its first pipeline
+        // stage clocks on the decode tick.
+        self.start_countdown = Some(START_DELAY_BALL - 1);
     }
 
     fn enabled(&self) -> bool {
@@ -287,17 +306,18 @@ impl Playfield {
     }
 
     pub fn pixel(&self, x: u8) -> bool {
-        let half_index = if x < 80 {
+        let cell = if x < 80 {
             x / 4
         } else if self.mirrored {
-            39 - (x - 80) / 4
+            // The reflected right half scans the same 20 cells backwards.
+            19 - (x - 80) / 4
         } else {
             (x - 80) / 4
         };
-        let lit = match half_index {
-            0..=3 => self.pf0 & (0x10 << half_index),
-            4..=11 => self.pf1 & (0x80 >> (half_index - 4)),
-            _ => self.pf2 & (0x01 << (half_index - 12)),
+        let lit = match cell {
+            0..=3 => self.pf0 & (0x10 << cell),
+            4..=11 => self.pf1 & (0x80 >> (cell - 4)),
+            _ => self.pf2 & (0x01 << (cell - 12)),
         };
         lit != 0
     }

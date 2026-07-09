@@ -33,7 +33,7 @@ pub struct Vcs {
     cartridge: Cartridge,
     region: TvStandard,
     clock_phase: u8,
-    pending_tia_write: Option<TiaWrite>,
+    pending_tia_writes: [Option<TiaWrite>; 2],
     building: Vec<Scanline>,
     in_vsync: bool,
     finished_frame: Option<Frame>,
@@ -43,17 +43,24 @@ pub struct Vcs {
     samples: Vec<(f32, f32)>,
 }
 
+/// Colour clocks from a CPU write until the TIA sees it: the data bus is
+/// valid at φ2, two colour clocks into the CPU cycle.
+const TIA_WRITE_CLOCKS: u8 = 3;
+/// Position-counter resets land a two-phase-clock cycle later than other
+/// writes; the residue vs the ordinary write path is 2 colour clocks.
+/// Calibrated against the suite's oracle anchor, pending PAL hardware.
+const TIA_RESET_STROBE_CLOCKS: u8 = TIA_WRITE_CLOCKS + 2;
+
 /// The 6507's view of the board: A12 selects the cartridge; below it, A7
 /// splits TIA from RIOT and A9 splits RIOT RAM from its I/O registers.
 ///
-/// TIA writes are deferred: the data bus is valid at φ2, two colour
-/// clocks into the CPU cycle, so the write registers at clock 3N+2 —
-/// pinned by the RESP landing corpus (hblank x=3 AND mid-line strobe+5).
+/// TIA writes are deferred through a two-slot pipe: a reset strobe and the
+/// next instruction's write sit three clocks apart and can overlap.
 struct BoardBus<'a> {
     tia: &'a mut Tia,
     riot: &'a mut Riot,
     cartridge: &'a Cartridge,
-    pending_tia_write: &'a mut Option<TiaWrite>,
+    pending_tia_writes: &'a mut [Option<TiaWrite>; 2],
 }
 
 pub(crate) struct TiaWrite {
@@ -76,12 +83,22 @@ impl Bus for BoardBus<'_> {
     }
 
     fn write(&mut self, address: u16, data: u8) {
+        use crate::tia::registers::{RESBL, RESM0, RESM1, RESP0, RESP1};
         if address & 0x1000 != 0 {
         } else if address & 0x0080 == 0 {
-            *self.pending_tia_write = Some(TiaWrite {
+            let clocks = match address & 0x3F {
+                RESP0 | RESP1 | RESM0 | RESM1 | RESBL => TIA_RESET_STROBE_CLOCKS,
+                _ => TIA_WRITE_CLOCKS,
+            };
+            let slot = self
+                .pending_tia_writes
+                .iter_mut()
+                .find(|slot| slot.is_none())
+                .expect("more than two TIA writes in flight");
+            *slot = Some(TiaWrite {
                 address,
                 data,
-                clocks_until_effective: 3,
+                clocks_until_effective: clocks,
             });
         } else if address & 0x0200 == 0 {
             self.riot.ram[(address & 0x7F) as usize] = data;
@@ -103,7 +120,7 @@ impl Vcs {
             cartridge,
             region,
             clock_phase: 0,
-            pending_tia_write: None,
+            pending_tia_writes: [None, None],
             building: Vec::new(),
             in_vsync: false,
             finished_frame: None,
@@ -132,18 +149,20 @@ impl Vcs {
                 tia: &mut self.tia,
                 riot: &mut self.riot,
                 cartridge: &self.cartridge,
-                pending_tia_write: &mut self.pending_tia_write,
+                pending_tia_writes: &mut self.pending_tia_writes,
             };
             self.cpu.step_cycle(&mut bus);
             self.riot.tick();
         }
         self.clock_phase = (self.clock_phase + 1) % 3;
 
-        if let Some(write) = &mut self.pending_tia_write {
-            write.clocks_until_effective -= 1;
-            if write.clocks_until_effective == 0 {
-                let write = self.pending_tia_write.take().unwrap();
-                self.tia.write(write.address, write.data);
+        for slot in &mut self.pending_tia_writes {
+            if let Some(write) = slot {
+                write.clocks_until_effective -= 1;
+                if write.clocks_until_effective == 0 {
+                    let write = slot.take().unwrap();
+                    self.tia.write(write.address, write.data);
+                }
             }
         }
         self.tia.step_clock();
@@ -210,7 +229,7 @@ impl Vcs {
         self.tia = Tia::new();
         self.riot = Riot::new();
         self.clock_phase = 0;
-        self.pending_tia_write = None;
+        self.pending_tia_writes = [None, None];
         self.building.clear();
         self.in_vsync = false;
         self.finished_frame = None;
