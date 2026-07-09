@@ -478,7 +478,6 @@ impl<M: Model> Debugger<M> {
                 } else {
                     tracer.advance_dot();
                 }
-                std::ops::ControlFlow::Continue(())
             });
             if let Some(e) = trace_err {
                 return Err(e);
