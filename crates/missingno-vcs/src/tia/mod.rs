@@ -425,6 +425,9 @@ impl Tia {
         if self.motion.at_seam(MovableIndex::M1, grid_tick) {
             px.m1 = self.missile1.fires_next_clock();
         }
+        if self.motion.at_seam(MovableIndex::Bl, grid_tick) {
+            px.bl = self.ball.fires_next_clock();
+        }
 
         self.latch_collisions(px);
 
