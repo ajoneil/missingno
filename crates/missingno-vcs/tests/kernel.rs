@@ -153,7 +153,12 @@ fn debugger_breakpoints_and_peek_are_side_effect_free() {
     let first = debugger.console().peek(0x0285);
     let again = debugger.console().peek(0x0285);
     assert_eq!(first, again);
-    assert_eq!(debugger.console().peek(0x000C), 0x80, "trigger unpressed");
+    // The TIA drives only D7 on input reads; the low bits float.
+    assert_eq!(
+        debugger.console().peek(0x000C) & 0x80,
+        0x80,
+        "trigger unpressed"
+    );
 }
 
 #[test]

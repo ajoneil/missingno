@@ -98,8 +98,8 @@ impl Bus for BoardBus<'_> {
         let value = if selects_cartridge(address) {
             self.cartridge.read(address)
         } else if selects_tia(address) {
-            // An undriven TIA decode leaves the bus holding its last byte.
-            self.tia.read(address).unwrap_or(*self.last_bus_value)
+            // The TIA drives only D7-D6; the rest floats to the bus's byte.
+            self.tia.read(address, *self.last_bus_value)
         } else if selects_riot_ram(address) {
             self.riot.ram[(address & 0x7F) as usize]
         } else {
@@ -251,7 +251,7 @@ impl Vcs {
         if selects_cartridge(address) {
             self.cartridge.peek(address)
         } else if selects_tia(address) {
-            self.tia.peek(address)
+            self.tia.read(address, self.last_bus_value)
         } else if selects_riot_ram(address) {
             self.riot.ram[(address & 0x7F) as usize]
         } else {

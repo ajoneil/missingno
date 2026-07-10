@@ -591,31 +591,13 @@ impl Tia {
         }
     }
 
-    /// Inspection read: what a bus read would return, with no side
-    /// effects (the trigger latch normally updates on INPT reads).
-    pub fn peek(&self, address: u16) -> u8 {
+    /// What a read returns with `floating` held on the data bus: the TIA
+    /// drives D7-D6 on collision reads and D7 on input reads; every
+    /// undriven line keeps the bus's retained byte. Side-effect-free.
+    pub fn read(&self, address: u16, floating: u8) -> u8 {
         match address & 0x0F {
-            reg @ 0x00..=0x07 => self.collisions[reg as usize],
-            reg @ 0x08..=0x0B => self.pot_level((reg - 0x08) as usize),
-            reg @ (0x0C | 0x0D) => {
-                let port = (reg - 0x0C) as usize;
-                let level = if self.trigger_latch_enabled {
-                    self.trigger_latches[port] && !self.triggers[port]
-                } else {
-                    !self.triggers[port]
-                };
-                if level { 0x80 } else { 0x00 }
-            }
-            _ => 0x00,
-        }
-    }
-
-    /// `None` when no read register decodes — the TIA leaves the data
-    /// bus undriven and the board's retained byte shows through.
-    pub(crate) fn read(&mut self, address: u16) -> Option<u8> {
-        match address & 0x0F {
-            reg @ 0x00..=0x07 => Some(self.collisions[reg as usize]),
-            reg @ 0x08..=0x0B => Some(self.pot_level((reg - 0x08) as usize)),
+            reg @ 0x00..=0x07 => self.collisions[reg as usize] | (floating & 0x3F),
+            reg @ 0x08..=0x0B => self.pot_level((reg - 0x08) as usize) | (floating & 0x7F),
             reg @ (0x0C | 0x0D) => {
                 let port = (reg - 0x0C) as usize;
                 // Latched mode reads the latch; unlatched, the pin.
@@ -624,9 +606,9 @@ impl Tia {
                 } else {
                     !self.triggers[port]
                 };
-                Some(if level { 0x80 } else { 0x00 })
+                (if level { 0x80 } else { 0x00 }) | (floating & 0x7F)
             }
-            _ => None,
+            _ => floating,
         }
     }
 }
