@@ -121,9 +121,10 @@ const MOVABLES: [MovableIndex; 5] = [
     MovableIndex::Bl,
 ];
 
-/// The HMOVE motion sequencer. Its comparators read the live HM values, so
-/// a mid-sequence rewrite that never matches leaves the latch stuffing
-/// clocks every pulse until the next HMOVE — HMCLR clears only the HM values.
+/// The HMOVE motion sequencer. Its comparators read the HM values as
+/// captured at each H@1 edge, so a mid-sequence rewrite that never matches
+/// a captured compare leaves the latch stuffing clocks every pulse until
+/// the next HMOVE — HMCLR clears only the HM values.
 struct MotionSequencer {
     /// Colour clocks until a strobe's pulse train arms.
     start_countdown: Option<u8>,
@@ -132,6 +133,8 @@ struct MotionSequencer {
     more_movement: [bool; 5],
     /// HM values, indexed in MOVABLES order: P0, P1, M0, M1, BL.
     values: [u8; 5],
+    /// The H@1-edge capture the pulse comparator reads.
+    captured_values: [u8; 5],
 }
 
 impl MotionSequencer {
@@ -141,6 +144,7 @@ impl MotionSequencer {
             ripple: None,
             more_movement: [false; 5],
             values: [0; 5],
+            captured_values: [0; 5],
         }
     }
 
@@ -157,13 +161,20 @@ impl MotionSequencer {
     /// coincident with this sequencer's pulse events, which arrive two
     /// clocks after H@1 through the write pipe. There the train perturbs a
     /// serialiser without moving it.
-    fn at_seam(&self, which: MovableIndex, grid_tick: bool) -> bool {
-        grid_tick && self.more_movement[which as usize] && self.start_countdown.is_none()
+    fn at_seam(&self, which: MovableIndex, phase: u16) -> bool {
+        phase == MOTION_GRID_PHASE
+            && self.more_movement[which as usize]
+            && self.start_countdown.is_none()
     }
 
     /// Advance one colour clock; `Some(ticks)` on a grid-tick pulse, where
     /// a set latch requests an extra motion clock for its object.
-    fn step(&mut self, grid_tick: bool) -> Option<[bool; 5]> {
+    fn step(&mut self, phase: u16) -> Option<[bool; 5]> {
+        // The H@1 edge capture feeds the pulse two clocks later; a write
+        // landing on the edge clock itself still makes the capture.
+        if phase == 0 {
+            self.captured_values = self.values;
+        }
         if let Some(remaining) = self.start_countdown {
             if remaining > 0 {
                 self.start_countdown = Some(remaining - 1);
@@ -172,7 +183,7 @@ impl MotionSequencer {
             self.start_countdown = None;
             self.ripple = Some(15);
         }
-        if !grid_tick || !self.any_movement() {
+        if phase != MOTION_GRID_PHASE || !self.any_movement() {
             return None;
         }
 
@@ -181,7 +192,7 @@ impl MotionSequencer {
         // wired: rewriting HM to $8x clears a latch stuck past the ripple.
         let ripple = self.ripple.unwrap_or(RESTING_RIPPLE);
         for (i, more) in self.more_movement.iter_mut().enumerate() {
-            if *more && ripple == (self.values[i] >> 4) ^ 0x07 {
+            if *more && ripple == (self.captured_values[i] >> 4) ^ 0x07 {
                 *more = false;
             }
             ticks[i] = *more;
@@ -353,8 +364,8 @@ impl Tia {
 
         // Stuffed motion clocks only move an object while the beam is
         // blanked; visible-region pulses advance the ripple but no object.
-        let grid_tick = self.beam % 4 == MOTION_GRID_PHASE;
-        if let Some(ticks) = self.motion.step(grid_tick)
+        let phase = self.beam % 4;
+        if let Some(ticks) = self.motion.step(phase)
             && self.beam < self.hblank_end()
         {
             for (i, &tick) in ticks.iter().enumerate() {
@@ -418,14 +429,14 @@ impl Tia {
 
         // At the seam the merged pulse advances the enclockifier window a
         // clock: a dot due now is swallowed, a dot due next clock opens early.
-        let grid_tick = self.beam % 4 == MOTION_GRID_PHASE;
-        if self.motion.at_seam(MovableIndex::M0, grid_tick) {
+        let phase = self.beam % 4;
+        if self.motion.at_seam(MovableIndex::M0, phase) {
             px.m0 = self.missile0.fires_next_clock();
         }
-        if self.motion.at_seam(MovableIndex::M1, grid_tick) {
+        if self.motion.at_seam(MovableIndex::M1, phase) {
             px.m1 = self.missile1.fires_next_clock();
         }
-        if self.motion.at_seam(MovableIndex::Bl, grid_tick) {
+        if self.motion.at_seam(MovableIndex::Bl, phase) {
             px.bl = self.ball.fires_next_clock();
         }
 
