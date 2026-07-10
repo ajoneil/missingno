@@ -83,10 +83,14 @@ impl Riot {
             0x01 => self.ddr_a,
             0x02 => self.port_b,
             0x03 => self.ddr_b,
+            // Reading the interrupt-flag register leaves the timer flag
+            // intact; only timer-register accesses clear it.
             0x05 | 0x07 => {
-                let flag = if self.underflowed { 0x80 } else { 0x00 };
-                self.underflowed = false;
-                flag
+                if self.underflowed {
+                    0x80
+                } else {
+                    0x00
+                }
             }
             _ => {
                 let value = self.timer;
@@ -108,7 +112,9 @@ impl Riot {
                 _ => 1024,
             };
             self.timer = value;
-            self.prescaler = 0;
+            // First decrement one clock after the write: underflow lands
+            // at (value x divisor) + 1 clocks.
+            self.prescaler = self.interval - 1;
             self.underflowed = false;
             return;
         }
