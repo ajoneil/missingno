@@ -24,9 +24,9 @@ const LATE_HBLANK_CLOCKS: u16 = HBLANK_CLOCKS + 8;
 const HBLANK_EXTENSION_DECODE_CLOCKS: u8 = 3;
 /// The RHB/LRHB choice: hblank ends at 68, or 76 when SEC is holding.
 const RESET_SELECT_CLOCK: u16 = 64;
-/// SEC decode + latch set: colour clocks from the strobe's write reaching
-/// the TIA until the pulse train is armed.
-const MOTION_START_CLOCKS: u8 = 9;
+/// Grid-quantised SEC decode + latch set: colour clocks from the strobe's
+/// write applying until the train arms; the first pulse is the next H@1.
+const MOTION_START_CLOCKS: u8 = 8;
 /// H@1 in beam coordinates: stuffed pulses ride the HSync counter's
 /// line-fixed two-phase grid, one pulse per four colour clocks.
 const MOTION_GRID_PHASE: u16 = 2;
