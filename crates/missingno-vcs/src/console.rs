@@ -34,6 +34,7 @@ pub struct Vcs {
     region: TvStandard,
     clock_phase: u8,
     pending_tia_writes: [Option<TiaWrite>; 2],
+    last_bus_value: u8,
     building: Vec<Scanline>,
     in_vsync: bool,
     finished_frame: Option<Frame>,
@@ -69,6 +70,8 @@ struct BoardBus<'a> {
     riot: &'a mut Riot,
     cartridge: &'a mut Cartridge,
     pending_tia_writes: &'a mut [Option<TiaWrite>; 2],
+    /// The data bus holds its last driven byte (bus capacitance).
+    last_bus_value: &'a mut u8,
 }
 
 pub(crate) struct TiaWrite {
@@ -79,18 +82,22 @@ pub(crate) struct TiaWrite {
 
 impl Bus for BoardBus<'_> {
     fn read(&mut self, address: u16) -> u8 {
-        if address & 0x1000 != 0 {
+        let value = if address & 0x1000 != 0 {
             self.cartridge.read(address)
         } else if address & 0x0080 == 0 {
-            self.tia.read(address)
+            // An undriven TIA decode leaves the bus holding its last byte.
+            self.tia.read(address).unwrap_or(*self.last_bus_value)
         } else if address & 0x0200 == 0 {
             self.riot.ram[(address & 0x7F) as usize]
         } else {
             self.riot.read(address)
-        }
+        };
+        *self.last_bus_value = value;
+        value
     }
 
     fn write(&mut self, address: u16, data: u8) {
+        *self.last_bus_value = data;
         use crate::tia::registers::{
             GRP0, GRP1, PF0, PF1, PF2, RESBL, RESM0, RESM1, RESP0, RESP1, RSYNC, VBLANK,
         };
@@ -135,6 +142,7 @@ impl Vcs {
             region,
             clock_phase: 0,
             pending_tia_writes: [None, None],
+            last_bus_value: 0,
             building: Vec::new(),
             in_vsync: false,
             finished_frame: None,
@@ -164,6 +172,7 @@ impl Vcs {
                 riot: &mut self.riot,
                 cartridge: &mut self.cartridge,
                 pending_tia_writes: &mut self.pending_tia_writes,
+                last_bus_value: &mut self.last_bus_value,
             };
             self.cpu.step_cycle(&mut bus);
             self.riot.tick();
@@ -251,6 +260,7 @@ impl Vcs {
         self.riot = Riot::new();
         self.clock_phase = 0;
         self.pending_tia_writes = [None, None];
+        self.last_bus_value = 0;
         self.building.clear();
         self.in_vsync = false;
         self.finished_frame = None;
