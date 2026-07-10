@@ -367,20 +367,26 @@ impl Tia {
 
         self.beam += 1;
         if self.beam == CLOCKS_PER_LINE {
-            self.beam = 0;
-            self.cpu_ready = true;
-            self.late_hblank = false;
-            self.hblank_extension_armed = false;
-            if !self.pot_dumped {
-                for countdown in &mut self.pot_countdown {
-                    *countdown = countdown.saturating_sub(1);
-                }
-            }
-            self.finished_line = Some(Scanline {
-                pixels: self.line,
-                vsync: self.vsync,
-            });
+            self.end_line();
         }
+    }
+
+    /// The HSync-counter wrap: one mechanism with two triggers — the
+    /// natural end of line, and RSYNC forcing it early.
+    fn end_line(&mut self) {
+        self.beam = 0;
+        self.cpu_ready = true;
+        self.late_hblank = false;
+        self.hblank_extension_armed = false;
+        if !self.pot_dumped {
+            for countdown in &mut self.pot_countdown {
+                *countdown = countdown.saturating_sub(1);
+            }
+        }
+        self.finished_line = Some(Scanline {
+            pixels: self.line,
+            vsync: self.vsync,
+        });
     }
 
     fn render_clock(&mut self) {
@@ -501,7 +507,13 @@ impl Tia {
                 self.pot_dumped = dump;
             }
             WSYNC => self.cpu_ready = false,
-            RSYNC => self.beam = 0,
+            RSYNC => {
+                // The forced wrap ends the line where it stands: the TV
+                // gets a short line — undrawn pixels never left the gun.
+                let drawn = (self.beam.saturating_sub(HBLANK_CLOCKS) as usize).min(VISIBLE_CLOCKS);
+                self.line[drawn..].fill(0);
+                self.end_line();
+            }
             NUSIZ0 => {
                 self.player0.nusiz = value;
                 self.missile0.nusiz = value;
