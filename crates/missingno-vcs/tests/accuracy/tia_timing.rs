@@ -94,6 +94,24 @@ fn hmove_live_seam_pal() {
 }
 
 #[test]
+fn hmove_live_reach_ntsc() {
+    common::run_screenshot(
+        "tia-timing/hmove-live-reach_ntsc.a26",
+        "tia-timing/hmove-live-reach_ntsc.png",
+        TvStandard::Ntsc,
+    );
+}
+
+#[test]
+fn hmove_live_reach_pal() {
+    common::run_screenshot(
+        "tia-timing/hmove-live-reach_pal.a26",
+        "tia-timing/hmove-live-reach_pal.png",
+        TvStandard::Pal,
+    );
+}
+
+#[test]
 fn hmove_strobe_line_ntsc() {
     common::run_screenshot(
         "tia-timing/hmove-strobe-line_ntsc.a26",
@@ -197,6 +215,24 @@ fn hmove_stuck_widths_pal() {
     common::run_screenshot(
         "tia-timing/hmove-stuck-widths_pal.a26",
         "tia-timing/hmove-stuck-widths_pal.png",
+        TvStandard::Pal,
+    );
+}
+
+#[test]
+fn hmove_stuck_stretch_ntsc() {
+    common::run_screenshot(
+        "tia-timing/hmove-stuck-stretch_ntsc.a26",
+        "tia-timing/hmove-stuck-stretch_ntsc.png",
+        TvStandard::Ntsc,
+    );
+}
+
+#[test]
+fn hmove_stuck_stretch_pal() {
+    common::run_screenshot(
+        "tia-timing/hmove-stuck-stretch_pal.a26",
+        "tia-timing/hmove-stuck-stretch_pal.png",
         TvStandard::Pal,
     );
 }
