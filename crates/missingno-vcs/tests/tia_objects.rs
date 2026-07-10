@@ -5,6 +5,10 @@
 
 use missingno_vcs::console::Vcs;
 
+#[path = "support/asm.rs"]
+mod asm;
+use asm::Asm;
+
 const VSYNC: u8 = 0x00;
 const WSYNC: u8 = 0x02;
 const NUSIZ0: u8 = 0x04;
@@ -22,62 +26,10 @@ const CXP0FB: u8 = 0x02;
 const COLOR_A: u8 = 0x1E;
 const COLOR_B: u8 = 0x5E;
 
-struct Asm {
-    origin: u16,
-    bytes: Vec<u8>,
-}
-
-impl Asm {
-    fn new() -> Self {
-        Asm {
-            origin: 0xF000,
-            bytes: Vec::new(),
-        }
-    }
-    fn here(&self) -> u16 {
-        self.origin + self.bytes.len() as u16
-    }
-    fn emit(&mut self, bytes: &[u8]) {
-        self.bytes.extend_from_slice(bytes);
-    }
-    fn lda_imm(&mut self, v: u8) {
-        self.emit(&[0xA9, v]);
-    }
-    fn ldx_imm(&mut self, v: u8) {
-        self.emit(&[0xA2, v]);
-    }
-    fn sta_zp(&mut self, a: u8) {
-        self.emit(&[0x85, a]);
-    }
-    fn lda_zp(&mut self, a: u8) {
-        self.emit(&[0xA5, a]);
-    }
-    fn nop(&mut self) {
-        self.emit(&[0xEA]);
-    }
-    fn dex(&mut self) {
-        self.emit(&[0xCA]);
-    }
-    fn bne_to(&mut self, target: u16) {
-        let offset = target as i32 - (self.here() as i32 + 2);
-        self.emit(&[0xD0, i8::try_from(offset).unwrap() as u8]);
-    }
-    fn jmp_abs(&mut self, target: u16) {
-        self.emit(&[0x4C, target as u8, (target >> 8) as u8]);
-    }
-    fn into_rom(self) -> Vec<u8> {
-        let mut rom = self.bytes;
-        rom.resize(0x1000, 0);
-        rom[0xFFC] = self.origin as u8;
-        rom[0xFFD] = (self.origin >> 8) as u8;
-        rom
-    }
-}
-
 /// Frame skeleton: VSYNC, a body that runs once per frame starting at a
 /// line boundary, then padding lines and the loop.
 fn kernel(setup: impl Fn(&mut Asm), body: impl Fn(&mut Asm)) -> Vec<u8> {
-    let mut asm = Asm::new();
+    let mut asm = Asm::new(0xF000);
     setup(&mut asm);
 
     let frame = asm.here();
@@ -171,7 +123,7 @@ fn nusiz_three_copies_close() {
 /// RESP mid-line: the player lands strobe-position + 5 (the documented
 /// mid-line landing: write cycle's clock + the start pipeline).
 #[test]
-fn resp_mid_line_lands_at_strobe_plus_five() {
+fn resp_mid_line_lands_at_strobe_plus_seven() {
     let rom = kernel(
         |asm| {
             asm.lda_imm(0xFF);
@@ -191,8 +143,9 @@ fn resp_mid_line_lands_at_strobe_plus_five() {
     );
     let (_, lit) = find_color(&second_frame(&rom), COLOR_A).expect("player drawn");
     assert_eq!(lit.len(), 8, "8-pixel player, got {lit:?}");
-    // Strobe at visible x=88; hardware lands the player at x+5.
-    assert_eq!(lit[0], 88 + 5, "mid-line RESP lands strobe+5, got {lit:?}");
+    // Strobe at visible x=88; reset strobes land two clocks after
+    // ordinary writes, so the player lands at x+7.
+    assert_eq!(lit[0], 88 + 7, "mid-line RESP lands strobe+7, got {lit:?}");
 }
 
 /// HMOVE +7 after positioning: colour A marks pre-move lines, colour B
@@ -437,7 +390,8 @@ fn quad_player_stretches_to_32() {
     );
     let (_, lit) = find_color(&second_frame(&rom), COLOR_A).expect("quad player");
     assert_eq!(lit.len(), 32, "8 bits at 4 clocks each, got {lit:?}");
-    assert_eq!(lit[0], 3);
+    // The stretched serial clock's first pulse lands one clock late.
+    assert_eq!(lit[0], 4);
 }
 
 /// Score mode colours the left playfield half with COLUP0, the right
@@ -489,12 +443,10 @@ fn score_and_priority_modes() {
     );
 }
 
-/// A mid-line ("illegal") HMOVE delivers its extra clocks without the
-/// hblank compensation: HM=+7 shifts a full 15 left. Characterises the
-/// mechanism's emergent behaviour — the value the Cosmic Ark family of
-/// tricks builds on.
+/// A mid-visible HMOVE moves nothing: every stuffed clock lands in the
+/// visible region, where pulses advance the ripple but no object.
 #[test]
-fn illegal_mid_line_hmove_shifts_uncompensated() {
+fn mid_visible_hmove_moves_nothing() {
     let rom = kernel(
         |asm| {
             asm.lda_imm(0xFF);
@@ -524,7 +476,7 @@ fn illegal_mid_line_hmove_shifts_uncompensated() {
     let (line_a, _) = find_color(&lines, COLOR_A).expect("parked player");
     let (_, lit_b) = find_color_after(&lines, COLOR_B, line_a + 1).expect("moved player");
     let lit_a = lit_pixels(&lines[line_a + 1], COLOR_A);
-    assert_eq!(lit_a.first(), Some(&108), "settled pre-move position");
+    assert_eq!(lit_a.first(), Some(&110), "settled pre-move position");
     // Find the settled post-move line (skip the smeared strobe line).
     let settled_b = lines
         .iter()
@@ -532,9 +484,10 @@ fn illegal_mid_line_hmove_shifts_uncompensated() {
         .map(|l| lit_pixels(l, COLOR_B))
         .find(|lit| lit.len() == 8)
         .expect("settled post-move line");
+    // Stuffed clocks only move an object while the beam is blanked; a
+    // strobe this deep into the visible region moves nothing at all.
     assert_eq!(
-        settled_b[0],
-        108 - 15,
-        "mid-line HMOVE: 15 extra clocks, no comb compensation (got {settled_b:?}, strobe-line {lit_b:?})"
+        settled_b[0], 110,
+        "mid-visible HMOVE moves nothing (got {settled_b:?}, strobe-line {lit_b:?})"
     );
 }

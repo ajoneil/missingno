@@ -15,10 +15,8 @@ use sha2::{Digest, Sha256};
 
 use crate::TvStandard;
 use crate::console::{Frame, Vcs};
-use crate::tia::{VISIBLE_CLOCKS, palette};
-
-/// NTSC pixel aspect at the TIA's 3.58 MHz colour clock.
-pub const PIXEL_ASPECT: f32 = 12.0 / 7.0;
+use crate::tia::{VISIBLE_CLOCKS, palette, palette_index};
+use crate::tv_standard::PIXEL_ASPECT;
 
 enum Emitter {
     Pc,
@@ -179,11 +177,10 @@ impl Tracer {
                     .iter()
                     .map(|&(r, g, b)| [r, g, b])
                     .collect(),
-                // TIA colour bytes drop bit 0; the palette is 7-bit indexed.
                 pixels: frame
                     .lines
                     .iter()
-                    .flat_map(|line| line.iter().map(|&pixel| pixel >> 1))
+                    .flat_map(|line| line.iter().map(|&pixel| palette_index(pixel) as u8))
                     .collect(),
             }
             .to_bytes()

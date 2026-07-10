@@ -33,7 +33,7 @@ pub struct Vcs {
     cartridge: Cartridge,
     region: TvStandard,
     clock_phase: u8,
-    pending_tia_writes: [Option<TiaWrite>; 2],
+    pending_tia_writes: [Option<TiaWrite>; MAX_TIA_WRITES_IN_FLIGHT],
     last_bus_value: u8,
     building: Vec<Scanline>,
     in_vsync: bool,
@@ -57,37 +57,50 @@ const TIA_CELL_WRITE_CLOCKS: u8 = TIA_WRITE_CLOCKS + 2;
 const TIA_RSYNC_CLOCKS: u8 = TIA_WRITE_CLOCKS + 3;
 /// Position-counter resets land a two-phase-clock cycle later than other
 /// writes; the residue vs the ordinary write path is 2 colour clocks.
-/// Calibrated against the suite's oracle anchor, pending PAL hardware.
 const TIA_RESET_STROBE_CLOCKS: u8 = TIA_WRITE_CLOCKS + 2;
 
-/// The 6507's view of the board: A12 selects the cartridge; below it, A7
-/// splits TIA from RIOT and A9 splits RIOT RAM from its I/O registers.
-///
+/// A reset strobe and the next write can overlap; ≤6-clock delays never
+/// make three (BRK's mirror-push triple is the binding case).
+const MAX_TIA_WRITES_IN_FLIGHT: usize = 2;
+
+// The 6507's 13-line board decode: A12 selects the cartridge; below it,
+// A7 splits TIA from RIOT and A9 splits RIOT RAM from its I/O registers.
+fn selects_cartridge(address: u16) -> bool {
+    address & 0x1000 != 0
+}
+fn selects_tia(address: u16) -> bool {
+    address & 0x0080 == 0
+}
+fn selects_riot_ram(address: u16) -> bool {
+    address & 0x0200 == 0
+}
+
 /// TIA writes are deferred through a two-slot pipe: a reset strobe and the
 /// next instruction's write sit three clocks apart and can overlap.
 struct BoardBus<'a> {
     tia: &'a mut Tia,
     riot: &'a mut Riot,
     cartridge: &'a mut Cartridge,
-    pending_tia_writes: &'a mut [Option<TiaWrite>; 2],
+    pending_tia_writes: &'a mut [Option<TiaWrite>; MAX_TIA_WRITES_IN_FLIGHT],
     /// The data bus holds its last driven byte (bus capacitance).
     last_bus_value: &'a mut u8,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct TiaWrite {
-    address: u16,
+    register: u8,
     data: u8,
     clocks_until_effective: u8,
 }
 
 impl Bus for BoardBus<'_> {
     fn read(&mut self, address: u16) -> u8 {
-        let value = if address & 0x1000 != 0 {
+        let value = if selects_cartridge(address) {
             self.cartridge.read(address)
-        } else if address & 0x0080 == 0 {
-            // An undriven TIA decode leaves the bus holding its last byte.
-            self.tia.read(address).unwrap_or(*self.last_bus_value)
-        } else if address & 0x0200 == 0 {
+        } else if selects_tia(address) {
+            // The TIA drives only D7-D6; the rest floats to the bus's byte.
+            self.tia.read(address, *self.last_bus_value)
+        } else if selects_riot_ram(address) {
             self.riot.ram[(address & 0x7F) as usize]
         } else {
             self.riot.read(address)
@@ -101,10 +114,11 @@ impl Bus for BoardBus<'_> {
         use crate::tia::registers::{
             GRP0, GRP1, PF0, PF1, PF2, RESBL, RESM0, RESM1, RESP0, RESP1, RSYNC, VBLANK,
         };
-        if address & 0x1000 != 0 {
+        if selects_cartridge(address) {
             self.cartridge.write_access(address);
-        } else if address & 0x0080 == 0 {
-            let clocks = match address & 0x3F {
+        } else if selects_tia(address) {
+            let register = (address & 0x3F) as u8;
+            let clocks = match u16::from(register) {
                 RESP0 | RESP1 | RESM0 | RESM1 | RESBL => TIA_RESET_STROBE_CLOCKS,
                 RSYNC => TIA_RSYNC_CLOCKS,
                 VBLANK | GRP0 | GRP1 => TIA_GATED_WRITE_CLOCKS,
@@ -117,11 +131,11 @@ impl Bus for BoardBus<'_> {
                 .find(|slot| slot.is_none())
                 .expect("more than two TIA writes in flight");
             *slot = Some(TiaWrite {
-                address,
+                register,
                 data,
                 clocks_until_effective: clocks,
             });
-        } else if address & 0x0200 == 0 {
+        } else if selects_riot_ram(address) {
             self.riot.ram[(address & 0x7F) as usize] = data;
         } else {
             self.riot.write(address, data);
@@ -131,17 +145,20 @@ impl Bus for BoardBus<'_> {
 
 impl Vcs {
     pub fn new(rom: &[u8], region: TvStandard) -> Result<Vcs, CartridgeError> {
-        let cartridge = Cartridge::load(rom)?;
+        Ok(Vcs::with_cartridge(Cartridge::load(rom)?, region))
+    }
+
+    fn with_cartridge(cartridge: Cartridge, region: TvStandard) -> Vcs {
         let mut cpu = Cpu::new();
         cpu.reset();
-        Ok(Vcs {
+        Vcs {
             cpu,
             tia: Tia::new(),
             riot: Riot::new(),
             cartridge,
             region,
             clock_phase: 0,
-            pending_tia_writes: [None, None],
+            pending_tia_writes: [None; MAX_TIA_WRITES_IN_FLIGHT],
             last_bus_value: 0,
             building: Vec::new(),
             in_vsync: false,
@@ -149,7 +166,7 @@ impl Vcs {
             sample_clock: 0.0,
             clocks_per_sample: region.clocks_per_sample(),
             samples: Vec::new(),
-        })
+        }
     }
 
     /// The broadcast standard this console is wired to.
@@ -184,14 +201,15 @@ impl Vcs {
                 write.clocks_until_effective -= 1;
                 if write.clocks_until_effective == 1 {
                     // The missile reset's scan-kill leads its plant.
-                    match write.address & 0x3F {
+                    match u16::from(write.register) {
                         crate::tia::registers::RESM0 => self.tia.missile_reset_kill(0),
                         crate::tia::registers::RESM1 => self.tia.missile_reset_kill(1),
+                        crate::tia::registers::RESBL => self.tia.ball_reset_kill(),
                         _ => {}
                     }
                 } else if write.clocks_until_effective == 0 {
                     let write = slot.take().unwrap();
-                    self.tia.write(write.address, write.data);
+                    self.tia.write(u16::from(write.register), write.data);
                 }
             }
         }
@@ -231,11 +249,11 @@ impl Vcs {
     /// Side-effect-free bus read for inspection: the debugger's view of
     /// any address without perturbing latches or timer flags.
     pub fn peek(&self, address: u16) -> u8 {
-        if address & 0x1000 != 0 {
+        if selects_cartridge(address) {
             self.cartridge.peek(address)
-        } else if address & 0x0080 == 0 {
-            self.tia.peek(address)
-        } else if address & 0x0200 == 0 {
+        } else if selects_tia(address) {
+            self.tia.read(address, self.last_bus_value)
+        } else if selects_riot_ram(address) {
             self.riot.ram[(address & 0x7F) as usize]
         } else {
             self.riot.peek(address)
@@ -252,20 +270,11 @@ impl Vcs {
         self.finished_frame.take()
     }
 
-    /// Power-cycle: fresh chip state, same cartridge.
+    /// Power-cycle: fresh chip state, same cartridge (bank state included).
     pub fn power_cycle(&mut self) {
-        self.cpu = Cpu::new();
-        self.cpu.reset();
-        self.tia = Tia::new();
-        self.riot = Riot::new();
-        self.clock_phase = 0;
-        self.pending_tia_writes = [None, None];
-        self.last_bus_value = 0;
-        self.building.clear();
-        self.in_vsync = false;
-        self.finished_frame = None;
-        self.sample_clock = 0.0;
-        self.samples.clear();
+        let placeholder = Cartridge::Rom2K(Box::new([0; 0x800]));
+        let cartridge = std::mem::replace(&mut self.cartridge, placeholder);
+        *self = Vcs::with_cartridge(cartridge, self.region);
     }
 
     /// Player-0 joystick direction lines into RIOT port A, active-low.
@@ -277,42 +286,41 @@ impl Vcs {
             JoystickDirection::Up => 0x10,
         };
         if pressed {
-            self.riot.port_a &= !bit;
+            self.riot.set_pin_a(bit, false);
         } else {
-            self.riot.port_a |= bit;
+            self.riot.set_pin_a(bit, true);
         }
     }
 
     /// Paddle knob position, 0.0-1.0.
     pub fn set_paddle(&mut self, index: usize, position: f32) {
+        debug_assert!(index < 4, "the TIA has four pot inputs");
         self.tia.set_paddle(index, position);
     }
 
     /// Player-0 trigger into TIA INPT4.
     pub fn set_fire(&mut self, pressed: bool) {
-        self.tia.triggers[0] = pressed;
+        self.tia.set_trigger(0, pressed);
     }
 
     /// The console's momentary Game Reset switch (SWCHB bit 0, active-low).
     pub fn set_console_reset(&mut self, pressed: bool) {
         if pressed {
-            self.riot.port_b &= !0x01;
+            self.riot.set_pin_b(0x01, false);
         } else {
-            self.riot.port_b |= 0x01;
+            self.riot.set_pin_b(0x01, true);
         }
     }
 
     /// The console's momentary Game Select switch (SWCHB bit 1, active-low).
     pub fn set_console_select(&mut self, pressed: bool) {
         if pressed {
-            self.riot.port_b &= !0x02;
+            self.riot.set_pin_b(0x02, false);
         } else {
-            self.riot.port_b |= 0x02;
+            self.riot.set_pin_b(0x02, true);
         }
     }
 
-    /// Run to the next instruction boundary. A WSYNC-parked opcode fetch
-    /// waits here until the beam wraps and the TIA releases RDY.
     /// Advance exactly one CPU cycle (three colour clocks), first
     /// aligning to the colour-clock phase so the CPU's bus access lands
     /// at phase 0.
@@ -326,6 +334,8 @@ impl Vcs {
         }
     }
 
+    /// Run to the next instruction boundary. A WSYNC-parked opcode fetch
+    /// waits here until the beam wraps and the TIA releases RDY.
     pub fn step_instruction(&mut self) {
         if self.cpu.halted() {
             return;

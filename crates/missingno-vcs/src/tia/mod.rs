@@ -8,8 +8,8 @@
 //! comb). Late/mid-line strobes reuse the same machinery, so the classic
 //! "illegal HMOVE" positions emerge rather than being special-cased.
 
-pub mod audio;
-pub mod objects;
+pub(crate) mod audio;
+pub(crate) mod objects;
 
 use audio::Channel;
 use objects::{Ball, Missile, Player, Playfield};
@@ -21,9 +21,14 @@ pub const HBLANK_CLOCKS: u16 = 68;
 pub const VISIBLE_CLOCKS: usize = 160;
 const LATE_HBLANK_CLOCKS: u16 = HBLANK_CLOCKS + 8;
 /// Colour clocks from an HMOVE write reaching the TIA to its SEC decode.
-const SEC_DECODE_CLOCKS: u8 = 3;
+const HBLANK_EXTENSION_DECODE_CLOCKS: u8 = 3;
 /// The RHB/LRHB choice: hblank ends at 68, or 76 when SEC is holding.
 const RESET_SELECT_CLOCK: u16 = 64;
+/// SEC decode + latch set: the strobe's first stuffed pulse lands this
+/// many colour clocks after the write reaches the TIA.
+const MOTION_START_CLOCKS: u8 = 9;
+/// The motion ripple counter's value between sequences (%1111).
+const RESTING_RIPPLE: u8 = 15;
 const AUDIO_CLOCK_A: u16 = 10;
 const AUDIO_CLOCK_B: u16 = 124;
 /// Full-scale paddle charge time; the readable range games sweep.
@@ -88,12 +93,11 @@ struct Pixels {
     pf: bool,
 }
 
-/// One finished scanline: 160 TIA colour indices plus its blanking state.
+/// One finished scanline: 160 TIA colour indices plus its VSYNC state.
 #[derive(Clone)]
-pub struct Scanline {
+pub(crate) struct Scanline {
     pub pixels: [u8; VISIBLE_CLOCKS],
     pub vsync: bool,
-    pub vblank: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -112,13 +116,9 @@ const MOVABLES: [MovableIndex; 5] = [
     MovableIndex::Bl,
 ];
 
-/// The HMOVE motion sequencer: the strobe arms every object's "more
-/// movement" latch and, after the SEC decode settles, a four-clock pulse
-/// cadence runs a descending ripple past each object's comparator (HM
-/// value, D7 inverted). A set latch requests one extra motion clock per
-/// pulse; the comparator reads the live HM value, so a mid-sequence
-/// rewrite that never matches leaves the latch stuffing clocks every
-/// pulse until the next HMOVE — HMCLR clears only the HM values.
+/// The HMOVE motion sequencer. Its comparators read the live HM values, so
+/// a mid-sequence rewrite that never matches leaves the latch stuffing
+/// clocks every pulse until the next HMOVE — HMCLR clears only the HM values.
 struct MotionSequencer {
     /// Colour clocks until the first stuffed pulse after a strobe.
     start_countdown: Option<u8>,
@@ -126,12 +126,9 @@ struct MotionSequencer {
     ripple: Option<u8>,
     pulse_phase: u8,
     more_movement: [bool; 5],
+    /// HM values, indexed in MOVABLES order: P0, P1, M0, M1, BL.
     values: [u8; 5],
 }
-
-/// SEC decode + latch set: the strobe's first stuffed pulse lands this
-/// many colour clocks after the write reaches the TIA.
-const MOTION_START_CLOCKS: u8 = 9;
 
 impl MotionSequencer {
     fn new() -> Self {
@@ -175,13 +172,12 @@ impl MotionSequencer {
         }
 
         let mut ticks = [false; 5];
+        // The exhausted ripple rests at %1111 with the comparator still
+        // wired: rewriting HM to $8x clears a latch stuck past the ripple.
+        let ripple = self.ripple.unwrap_or(RESTING_RIPPLE);
         for (i, more) in self.more_movement.iter_mut().enumerate() {
-            if *more {
-                if let Some(ripple) = self.ripple {
-                    if ripple == (self.values[i] >> 4) ^ 0x07 {
-                        *more = false;
-                    }
-                }
+            if *more && ripple == (self.values[i] >> 4) ^ 0x07 {
+                *more = false;
             }
             ticks[i] = *more;
         }
@@ -198,7 +194,7 @@ pub struct Tia {
     vsync: bool,
     vblank: bool,
     /// Low while a WSYNC strobe holds the CPU; released at line start.
-    pub cpu_ready: bool,
+    pub(crate) cpu_ready: bool,
 
     player0: Player,
     player1: Player,
@@ -217,15 +213,15 @@ pub struct Tia {
     motion: MotionSequencer,
     late_hblank: bool,
     /// HMOVE's SEC decode on its way to (or holding at) the reset-select.
-    sec_countdown: Option<u8>,
-    sec_active: bool,
+    hblank_extension_pending: Option<u8>,
+    hblank_extension_armed: bool,
 
     collisions: [u8; 8],
 
-    pub audio: [Channel; 2],
+    audio: [Channel; 2],
 
     /// Trigger buttons, true = pressed (the pin reads low).
-    pub triggers: [bool; 2],
+    triggers: [bool; 2],
     trigger_latch_enabled: bool,
     trigger_latches: [bool; 2],
 
@@ -265,8 +261,8 @@ impl Tia {
             score_mode: false,
             motion: MotionSequencer::new(),
             late_hblank: false,
-            sec_countdown: None,
-            sec_active: false,
+            hblank_extension_pending: None,
+            hblank_extension_armed: false,
             collisions: [0; 8],
             audio: [Channel::new(), Channel::new()],
             triggers: [false; 2],
@@ -285,6 +281,16 @@ impl Tia {
         self.pot_positions[index] = position.clamp(0.0, 1.0);
     }
 
+    /// A trigger button's state into INPT4/5, true = pressed.
+    pub fn set_trigger(&mut self, port: usize, pressed: bool) {
+        self.triggers[port] = pressed;
+        // The I4/I5 latches capture any low level while enabled, read or
+        // no read — the feature's point for once-a-frame pollers.
+        if self.trigger_latch_enabled && pressed {
+            self.trigger_latches[port] = false;
+        }
+    }
+
     /// The two channels' summed output, 0.0-1.0.
     pub fn audio_level(&self) -> f32 {
         (self.audio[0].level() + self.audio[1].level()) as f32 / 30.0
@@ -295,7 +301,7 @@ impl Tia {
         self.beam
     }
 
-    pub fn take_line(&mut self) -> Option<Scanline> {
+    pub(crate) fn take_line(&mut self) -> Option<Scanline> {
         self.finished_line.take()
     }
 
@@ -309,45 +315,44 @@ impl Tia {
         }
     }
 
+    /// RHB/LRHB: hblank ends at 68, or 76 when the extension latched.
+    fn hblank_end(&self) -> u16 {
+        if self.late_hblank {
+            LATE_HBLANK_CLOCKS
+        } else {
+            HBLANK_CLOCKS
+        }
+    }
+
     /// Advance one colour clock; completed lines surface via `take_line`.
-    pub fn step_clock(&mut self) {
+    pub(crate) fn step_clock(&mut self) {
         // SEC decode: the reset-select at CLK 64 samples it, choosing the
         // extended hblank; a countdown straddling the wrap arms next line.
-        if let Some(remaining) = self.sec_countdown {
+        if let Some(remaining) = self.hblank_extension_pending {
             if remaining == 0 {
-                self.sec_countdown = None;
-                self.sec_active = true;
+                self.hblank_extension_pending = None;
+                self.hblank_extension_armed = true;
             } else {
-                self.sec_countdown = Some(remaining - 1);
+                self.hblank_extension_pending = Some(remaining - 1);
             }
         }
         if self.beam == RESET_SELECT_CLOCK {
-            self.late_hblank = self.sec_active;
+            self.late_hblank = self.hblank_extension_armed;
         }
 
         // Stuffed motion clocks only move an object while the beam is
         // blanked; visible-region pulses advance the ripple but no object.
-        if let Some(ticks) = self.motion.step() {
-            let stuffing_end = if self.late_hblank {
-                LATE_HBLANK_CLOCKS
-            } else {
-                HBLANK_CLOCKS
-            };
-            if self.beam < stuffing_end {
-                for (i, &tick) in ticks.iter().enumerate() {
-                    if tick {
-                        self.tick_movable(MOVABLES[i]);
-                    }
+        if let Some(ticks) = self.motion.step()
+            && self.beam < self.hblank_end()
+        {
+            for (i, &tick) in ticks.iter().enumerate() {
+                if tick {
+                    self.tick_movable(MOVABLES[i]);
                 }
             }
         }
 
-        let hblank_end = if self.late_hblank {
-            LATE_HBLANK_CLOCKS
-        } else {
-            HBLANK_CLOCKS
-        };
-        if self.beam >= hblank_end {
+        if self.beam >= self.hblank_end() {
             self.render_clock();
         } else if self.beam >= HBLANK_CLOCKS {
             // Inside the HMOVE comb: blanked, and motion clocks gated.
@@ -362,21 +367,26 @@ impl Tia {
 
         self.beam += 1;
         if self.beam == CLOCKS_PER_LINE {
-            self.beam = 0;
-            self.cpu_ready = true;
-            self.late_hblank = false;
-            self.sec_active = false;
-            if !self.pot_dumped {
-                for countdown in &mut self.pot_countdown {
-                    *countdown = countdown.saturating_sub(1);
-                }
-            }
-            self.finished_line = Some(Scanline {
-                pixels: self.line,
-                vsync: self.vsync,
-                vblank: self.vblank,
-            });
+            self.end_line();
         }
+    }
+
+    /// The HSync-counter wrap: one mechanism with two triggers — the
+    /// natural end of line, and RSYNC forcing it early.
+    fn end_line(&mut self) {
+        self.beam = 0;
+        self.cpu_ready = true;
+        self.late_hblank = false;
+        self.hblank_extension_armed = false;
+        if !self.pot_dumped {
+            for countdown in &mut self.pot_countdown {
+                *countdown = countdown.saturating_sub(1);
+            }
+        }
+        self.finished_line = Some(Scanline {
+            pixels: self.line,
+            vsync: self.vsync,
+        });
     }
 
     fn render_clock(&mut self) {
@@ -466,7 +476,11 @@ impl Tia {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) {
+    pub(crate) fn ball_reset_kill(&mut self) {
+        self.ball.reset_kill();
+    }
+
+    pub(crate) fn write(&mut self, address: u16, value: u8) {
         use registers::*;
         match address & 0x3F {
             VSYNC => self.vsync = value & 0x02 != 0,
@@ -475,6 +489,13 @@ impl Tia {
                 let latch_enable = value & 0x40 != 0;
                 if !latch_enable {
                     self.trigger_latches = [true; 2];
+                } else if !self.trigger_latch_enabled {
+                    // Enabling captures a button already held.
+                    for port in 0..2 {
+                        if self.triggers[port] {
+                            self.trigger_latches[port] = false;
+                        }
+                    }
                 }
                 self.trigger_latch_enabled = latch_enable;
                 // D7 grounds the pot capacitors; releasing it starts the
@@ -490,7 +511,13 @@ impl Tia {
                 self.pot_dumped = dump;
             }
             WSYNC => self.cpu_ready = false,
-            RSYNC => self.beam = 0,
+            RSYNC => {
+                // The forced wrap ends the line where it stands: the TV
+                // gets a short line — undrawn pixels never left the gun.
+                let drawn = (self.beam.saturating_sub(HBLANK_CLOCKS) as usize).min(VISIBLE_CLOCKS);
+                self.line[drawn..].fill(0);
+                self.end_line();
+            }
             NUSIZ0 => {
                 self.player0.nusiz = value;
                 self.missile0.nusiz = value;
@@ -523,8 +550,8 @@ impl Tia {
             AUDC1 => self.audio[1].control = value,
             AUDF0 => self.audio[0].frequency = value & 0x1F,
             AUDF1 => self.audio[1].frequency = value & 0x1F,
-            AUDV0 => self.audio[0].volume = value,
-            AUDV1 => self.audio[1].volume = value,
+            AUDV0 => self.audio[0].volume = value & 0x0F,
+            AUDV1 => self.audio[1].volume = value & 0x0F,
             // The vertical-delay latches cross-couple: a GRP0 write
             // freezes player 1's old graphics, a GRP1 write freezes
             // player 0's and the ball's.
@@ -566,7 +593,7 @@ impl Tia {
             }
             HMOVE => {
                 self.motion.strobe();
-                self.sec_countdown = Some(SEC_DECODE_CLOCKS);
+                self.hblank_extension_pending = Some(HBLANK_EXTENSION_DECODE_CLOCKS);
             }
             HMCLR => self.motion.values = [0; 5],
             CXCLR => self.collisions = [0; 8],
@@ -582,58 +609,42 @@ impl Tia {
         }
     }
 
-    /// Inspection read: what a bus read would return, with no side
-    /// effects (the trigger latch normally updates on INPT reads).
-    pub fn peek(&self, address: u16) -> u8 {
+    /// What a read returns with `floating` held on the data bus: the TIA
+    /// drives D7-D6 on collision reads and D7 on input reads; every
+    /// undriven line keeps the bus's retained byte. Side-effect-free.
+    pub fn read(&self, address: u16, floating: u8) -> u8 {
         match address & 0x0F {
-            reg @ 0x00..=0x07 => self.collisions[reg as usize],
-            reg @ 0x08..=0x0B => self.pot_level((reg - 0x08) as usize),
+            reg @ 0x00..=0x07 => self.collisions[reg as usize] | (floating & 0x3F),
+            reg @ 0x08..=0x0B => self.pot_level((reg - 0x08) as usize) | (floating & 0x7F),
             reg @ (0x0C | 0x0D) => {
                 let port = (reg - 0x0C) as usize;
-                let level = if self.trigger_latch_enabled {
-                    self.trigger_latches[port] && !self.triggers[port]
-                } else {
-                    !self.triggers[port]
-                };
-                if level { 0x80 } else { 0x00 }
-            }
-            _ => 0x00,
-        }
-    }
-
-    /// `None` when no read register decodes — the TIA leaves the data
-    /// bus undriven and the board's retained byte shows through.
-    pub fn read(&mut self, address: u16) -> Option<u8> {
-        match address & 0x0F {
-            reg @ 0x00..=0x07 => Some(self.collisions[reg as usize]),
-            reg @ 0x08..=0x0B => Some(self.pot_level((reg - 0x08) as usize)),
-            reg @ (0x0C | 0x0D) => {
-                let port = (reg - 0x0C) as usize;
-                if self.trigger_latch_enabled && self.triggers[port] {
-                    self.trigger_latches[port] = false;
-                }
+                // Latched mode reads the latch; unlatched, the pin.
                 let level = if self.trigger_latch_enabled {
                     self.trigger_latches[port]
                 } else {
                     !self.triggers[port]
                 };
-                Some(if level { 0x80 } else { 0x00 })
+                (if level { 0x80 } else { 0x00 }) | (floating & 0x7F)
             }
-            _ => None,
+            _ => floating,
         }
     }
 }
 
 /// The 128-colour TIA palette for a standard (colour byte bits 7-1: hue 4,
-/// luma 3) — the canonical TIA colour decode, a display-side calibratable stage,
-/// not a hardware claim (the TIA has no palette ROM; RGB is a decode
-/// convention). PAL collapses hue codes 0/1/14/15 to the grey ramp (colour
-/// loss). Frame pixels (colour bytes >> 1) index into it.
+/// luma 3) — the canonical TIA colour decode, a display-side calibratable
+/// stage, not a hardware claim. PAL collapses hue codes 0/1/14/15 to the
+/// grey ramp (colour loss). Frame pixels index into it via [`palette_index`].
 pub fn palette(standard: TvStandard) -> &'static [(u8, u8, u8); 128] {
     match standard {
         TvStandard::Ntsc => &NTSC_PALETTE,
         TvStandard::Pal => &PAL_PALETTE,
     }
+}
+
+/// TIA colour bytes drop bit 0; the palette is 7-bit indexed.
+pub fn palette_index(colour_byte: u8) -> usize {
+    (colour_byte >> 1) as usize
 }
 
 const NTSC_PALETTE: [(u8, u8, u8); 128] = [

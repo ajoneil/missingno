@@ -9,8 +9,7 @@ use crate::console::{Frame, Vcs};
 /// A JSR opcode, for step-over.
 const JSR: u8 = 0x20;
 
-/// Guard for step_frame: a bit over four NTSC frames' worth of the
-/// shortest instructions, so a syncless kernel cannot stall the caller.
+/// Bounds a syncless kernel: ~20 NTSC frames of minimum-length instructions.
 const FRAME_INSTRUCTION_BUDGET: u32 = 200_000;
 
 pub struct Debugger {
@@ -21,7 +20,7 @@ pub struct Debugger {
 /// Why a stepping call returned.
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum Stop {
-    FrameComplete,
+    Completed,
     Breakpoint,
     BudgetExhausted,
 }
@@ -77,15 +76,16 @@ impl Debugger {
     pub fn step_over(&mut self) -> (Option<Frame>, Stop) {
         if self.vcs.peek(self.vcs.cpu.pc) != JSR {
             let frame = self.step();
-            return (frame, Stop::FrameComplete);
+            return (frame, Stop::Completed);
         }
         let return_address = self.vcs.cpu.pc.wrapping_add(3);
         let mut frame = None;
         for _ in 0..FRAME_INSTRUCTION_BUDGET {
             self.vcs.step_instruction();
+            // Keep the newest frame completed while stepping.
             frame = self.vcs.take_frame().or(frame);
             if self.vcs.cpu.pc & 0x1FFF == return_address & 0x1FFF {
-                return (frame, Stop::FrameComplete);
+                return (frame, Stop::Completed);
             }
             if self.at_breakpoint() {
                 return (frame, Stop::Breakpoint);
@@ -99,7 +99,7 @@ impl Debugger {
         for _ in 0..FRAME_INSTRUCTION_BUDGET {
             self.vcs.step_instruction();
             if let Some(frame) = self.vcs.take_frame() {
-                return (Some(frame), Stop::FrameComplete);
+                return (Some(frame), Stop::Completed);
             }
             if self.at_breakpoint() {
                 return (None, Stop::Breakpoint);
@@ -113,6 +113,7 @@ impl Debugger {
         let mut frame = None;
         for _ in 0..FRAME_INSTRUCTION_BUDGET {
             self.vcs.step_instruction();
+            // Keep the newest frame completed while stepping.
             frame = self.vcs.take_frame().or(frame);
             if self.at_breakpoint() {
                 return (frame, Stop::Breakpoint);
