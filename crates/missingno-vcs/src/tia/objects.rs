@@ -69,10 +69,15 @@ impl Player {
     }
 
     pub fn reset_position(&mut self) {
-        // Reset also resets the two-phase clock: an in-flight start
-        // decode is lost, and the main copy waits for the counter wrap.
         self.counter = 0;
-        self.start_countdown = None;
+        if self.start_countdown.is_some() {
+            // A start decode in flight re-phases onto the new counter
+            // grid; its first pipeline stage clocks on the decode tick.
+            self.start_countdown = Some(START_DELAY_PLAYER - 1);
+        } else {
+            // No start in flight: the main copy waits for the wrap.
+            self.start_countdown = None;
+        }
     }
 
     pub fn counter(&self) -> u8 {
