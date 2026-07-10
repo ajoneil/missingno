@@ -213,13 +213,13 @@ impl Missile {
         1 << ((self.nusiz >> 4) & 0x03)
     }
 
-    /// After this clock's tick, whether the scan outputs on the next one.
-    pub fn fires_next_clock(&self) -> bool {
+    /// Combinational serialiser output for the current scan state.
+    pub fn output(&self) -> bool {
         self.enabled && !self.locked_to_player && self.scan_clocks_left > 0
     }
 
     pub fn tick(&mut self) -> bool {
-        let pixel = self.enabled && !self.locked_to_player && self.scan_clocks_left > 0;
+        let pixel = self.output();
         self.scan_clocks_left = self.scan_clocks_left.saturating_sub(1);
         self.counter = (self.counter + 1) % COUNTER_RANGE;
         if copy_decodes(self.nusiz).contains(&self.counter) {
@@ -291,13 +291,13 @@ impl Ball {
         }
     }
 
-    /// After this clock's tick, whether the scan outputs on the next one.
-    pub fn fires_next_clock(&self) -> bool {
+    /// Combinational serialiser output for the current scan state.
+    pub fn output(&self) -> bool {
         self.enabled() && self.scan_clocks_left > 0
     }
 
     pub fn tick(&mut self) -> bool {
-        let pixel = self.enabled() && self.scan_clocks_left > 0;
+        let pixel = self.output();
         self.scan_clocks_left = self.scan_clocks_left.saturating_sub(1);
         self.counter = (self.counter + 1) % COUNTER_RANGE;
         if self.counter == 0 {

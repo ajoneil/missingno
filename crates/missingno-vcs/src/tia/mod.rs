@@ -1,12 +1,15 @@
 //! TIA: beam timing, the five movable objects, playfield, collisions, and
 //! the HMOVE motion mechanism.
 //!
-//! Motion is modelled as the hardware does it: HMOVE arms a per-object
-//! "more movement" latch and a ripple counter delivers extra motion clocks
-//! every four colour clocks until each object's comparator (HM value ^ 8)
-//! matches; the strobe also latches an 8-clock hblank extension (the HMOVE
-//! comb). Late/mid-line strobes reuse the same machinery, so the classic
-//! "illegal HMOVE" positions emerge rather than being special-cased.
+//! Motion is modelled as the hardware does it: HMOVE arms per-object
+//! "more movement" latches; stuffed pulses ride the HSync counter's
+//! line-fixed H@1 grid, each comparing a descending ripple against the
+//! D7-inverted HM values captured at the H@1 edge until the latch clears;
+//! the strobe also latches an 8-clock hblank extension (the HMOVE comb).
+//! Hblank pulses move an object; a visible pulse instead advances its
+//! serialiser's output window one clock at the merge seam. Late/mid-line
+//! strobes reuse the same machinery, so the classic "illegal HMOVE"
+//! positions emerge rather than being special-cased.
 
 pub(crate) mod audio;
 pub(crate) mod objects;
@@ -25,14 +28,16 @@ const HBLANK_EXTENSION_DECODE_CLOCKS: u8 = 3;
 /// The RHB/LRHB choice: hblank ends at 68, or 76 when SEC is holding.
 const RESET_SELECT_CLOCK: u16 = 64;
 /// Grid-quantised SEC decode + latch set: colour clocks from the strobe's
-/// write applying until the train arms; the first pulse is the next H@1.
+/// write applying until the train arms; the first pulse is the next pulse
+/// instant, the arming clock included.
 const MOTION_START_CLOCKS: u8 = 8;
-/// H@1 in beam coordinates: stuffed pulses ride the HSync counter's
-/// line-fixed two-phase grid, one pulse per four colour clocks.
-const MOTION_GRID_PHASE: u16 = 2;
+/// The H@1 edge in beam coordinates: comparator inputs capture here.
+const MOTION_CAPTURE_PHASE: u16 = 0;
+/// The stuffed pulse trails the H@1-edge capture by two colour clocks.
+const MOTION_PULSE_PHASE: u16 = 2;
 /// The motion ripple counter's value between sequences (%1111).
 const RESTING_RIPPLE: u8 = 15;
-/// One CPU cycle: the width of SHB's latched reset past the wrap.
+/// SHB's latched reset absorbs a WSYNC set through the wrap's first CPU cycle.
 const WSYNC_RESET_HOLD_CLOCKS: u8 = 3;
 const AUDIO_CLOCK_A: u16 = 10;
 const AUDIO_CLOCK_B: u16 = 124;
@@ -157,22 +162,11 @@ impl MotionSequencer {
         self.more_movement.iter().any(|&m| m)
     }
 
-    /// The merged H@1/MOTCK seam trails the H@1 pulse by two clocks —
-    /// coincident with this sequencer's pulse events, which arrive two
-    /// clocks after H@1 through the write pipe. There the train perturbs a
-    /// serialiser without moving it.
-    fn at_seam(&self, which: MovableIndex, phase: u16) -> bool {
-        phase == MOTION_GRID_PHASE
-            && self.more_movement[which as usize]
-            && self.start_countdown.is_none()
-    }
-
-    /// Advance one colour clock; `Some(ticks)` on a grid-tick pulse, where
-    /// a set latch requests an extra motion clock for its object.
+    /// Advance one colour clock; `Some(ticks)` on a pulse, where a set
+    /// latch requests an extra motion clock for its object.
     fn step(&mut self, phase: u16) -> Option<[bool; 5]> {
-        // The H@1 edge capture feeds the pulse two clocks later; a write
-        // landing on the edge clock itself still makes the capture.
-        if phase == 0 {
+        // A write landing on the edge clock itself still makes the capture.
+        if phase == MOTION_CAPTURE_PHASE {
             self.captured_values = self.values;
         }
         if let Some(remaining) = self.start_countdown {
@@ -183,7 +177,7 @@ impl MotionSequencer {
             self.start_countdown = None;
             self.ripple = Some(15);
         }
-        if phase != MOTION_GRID_PHASE || !self.any_movement() {
+        if phase != MOTION_PULSE_PHASE || !self.any_movement() {
             return None;
         }
 
@@ -363,9 +357,9 @@ impl Tia {
         }
 
         // Stuffed motion clocks only move an object while the beam is
-        // blanked; visible-region pulses advance the ripple but no object.
-        let phase = self.beam % 4;
-        if let Some(ticks) = self.motion.step(phase)
+        // blanked; a visible pulse instead reaches the serialisers below.
+        let pulse = self.motion.step(self.beam % 4);
+        if let Some(ticks) = pulse
             && self.beam < self.hblank_end()
         {
             for (i, &tick) in ticks.iter().enumerate() {
@@ -376,7 +370,7 @@ impl Tia {
         }
 
         if self.beam >= self.hblank_end() {
-            self.render_clock();
+            self.render_clock(pulse);
         } else if self.beam >= HBLANK_CLOCKS {
             // Inside the HMOVE comb: blanked, and motion clocks gated.
             self.line[(self.beam - HBLANK_CLOCKS) as usize] = 0;
@@ -413,7 +407,7 @@ impl Tia {
         });
     }
 
-    fn render_clock(&mut self) {
+    fn render_clock(&mut self, pulse: Option<[bool; 5]>) {
         let x = (self.beam - HBLANK_CLOCKS) as u8;
         if x.is_multiple_of(4) {
             self.playfield.latch_cell();
@@ -427,17 +421,18 @@ impl Tia {
             pf: self.playfield.pixel(x),
         };
 
-        // At the seam the merged pulse advances the enclockifier window a
-        // clock: a dot due now is swallowed, a dot due next clock opens early.
-        let phase = self.beam % 4;
-        if self.motion.at_seam(MovableIndex::M0, phase) {
-            px.m0 = self.missile0.fires_next_clock();
-        }
-        if self.motion.at_seam(MovableIndex::M1, phase) {
-            px.m1 = self.missile1.fires_next_clock();
-        }
-        if self.motion.at_seam(MovableIndex::Bl, phase) {
-            px.bl = self.ball.fires_next_clock();
+        // A stuffed pulse merging with a serialiser's clock advances its
+        // output window one clock: post-tick output is next clock's pixel.
+        if let Some(ticks) = pulse {
+            if ticks[MovableIndex::M0 as usize] {
+                px.m0 = self.missile0.output();
+            }
+            if ticks[MovableIndex::M1 as usize] {
+                px.m1 = self.missile1.output();
+            }
+            if ticks[MovableIndex::Bl as usize] {
+                px.bl = self.ball.output();
+            }
         }
 
         self.latch_collisions(px);
