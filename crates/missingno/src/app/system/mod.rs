@@ -23,9 +23,8 @@ pub struct ControlId(pub u8);
 #[derive(Clone, Copy, Debug)]
 pub enum ControlInput {
     Digital(bool),
-    /// Normalised 0.0-1.0 (paddle knobs, pots). Only families with
-    /// analog hardware read it, and those are feature-gated today.
-    Axis(#[cfg_attr(not(feature = "vcs"), allow(dead_code))] f32),
+    /// Normalised 0.0-1.0 (paddle knobs, pots).
+    Axis(f32),
 }
 
 use std::sync::Arc;
@@ -43,7 +42,6 @@ pub mod nes;
 pub mod sms;
 #[cfg(any(feature = "nes", feature = "sms"))]
 pub mod stepping;
-#[cfg(feature = "vcs")]
 pub mod vcs;
 
 /// Build a console from ROM bytes and a display title; `None` when the
@@ -69,7 +67,6 @@ pub struct FamilyDescriptor {
 /// Every registered family except the Game Boy, which stays the loader's
 /// fallback (its media needs battery saves, boot ROMs, and the link port).
 pub static FAMILIES: &[FamilyDescriptor] = &[
-    #[cfg(feature = "vcs")]
     FamilyDescriptor {
         platform_name: vcs::PLATFORM_NAME,
         short_name: "2600",

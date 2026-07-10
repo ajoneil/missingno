@@ -42,7 +42,6 @@ mod screen;
 pub(crate) mod sidebar;
 #[cfg(feature = "sms")]
 pub(crate) mod sms;
-#[cfg(feature = "vcs")]
 pub(crate) mod vcs;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

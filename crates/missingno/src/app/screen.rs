@@ -41,11 +41,6 @@ pub struct IndexedFrame {
 }
 
 impl IndexedFrame {
-    // Only the feature-gated indexed families construct blank frames.
-    #[cfg_attr(
-        not(any(feature = "vcs", feature = "sms", feature = "nes")),
-        allow(dead_code)
-    )]
     pub fn blank(
         width: u32,
         height: u32,

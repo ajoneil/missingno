@@ -10,8 +10,6 @@ name = "missingno"
 path = "src/main.rs"
 
 [features]
-# Atari 2600 support; off until it is ready to be public.
-vcs = ["dep:missingno-vcs", "missingno-vcs/gbtrace"]
 # Sega Master System support; off until it is ready to be public.
 sms = ["dep:missingno-sms"]
 # NES / Famicom support; off until it is ready to be public.
@@ -23,7 +21,7 @@ missingno-gbc = { path = "../missingno-gbc", features = ["gbtrace"] }
 missingno-6502 = { path = "../missingno-6502", optional = true }
 missingno-nes = { path = "../missingno-nes", optional = true }
 missingno-sms = { path = "../missingno-sms", optional = true }
-missingno-vcs = { path = "../missingno-vcs", optional = true }
+missingno-vcs = { path = "../missingno-vcs", features = ["gbtrace"] }
 cpal = "0.17"
 bytemuck = { version = "1.25", features = ["derive"] }
 clap = { version = "4.6.1", features = ["derive"] }

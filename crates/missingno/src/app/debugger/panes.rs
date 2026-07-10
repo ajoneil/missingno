@@ -77,11 +77,6 @@ pub struct PaneContext<'b> {
     pub gb: Option<&'b dyn InspectSource>,
     /// The active family's typed inspection state; family panes downcast it
     /// back out with [`PaneContext::family_state`].
-    // Only the feature-gated families' panes read it.
-    #[cfg_attr(
-        not(any(feature = "vcs", feature = "sms", feature = "nes")),
-        allow(dead_code)
-    )]
     pub family: &'b dyn std::any::Any,
     pub breakpoints: &'b BTreeSet<u16>,
     pub colors: &'b ConsoleColors,
@@ -91,10 +86,6 @@ pub struct PaneContext<'b> {
 
 impl<'b> PaneContext<'b> {
     /// The family state, if the active family's is of type `T`.
-    #[cfg_attr(
-        not(any(feature = "vcs", feature = "sms", feature = "nes")),
-        allow(dead_code)
-    )]
     pub fn family_state<T: 'static>(&self) -> Option<&'b T> {
         self.family.downcast_ref()
     }
@@ -140,7 +131,6 @@ pub static GB_FAMILY: Family = Family {
     default_layout: gb_default_layout,
 };
 
-#[cfg(feature = "vcs")]
 pub static VCS_FAMILY: Family = Family {
     registry: VCS_PANE_REGISTRY,
     layout_key: "vcs",
@@ -150,7 +140,6 @@ pub static VCS_FAMILY: Family = Family {
 /// Every family's pane set, for label and kind lookups across saved layouts.
 static PANE_FAMILIES: &[&Family] = &[
     &GB_FAMILY,
-    #[cfg(feature = "vcs")]
     &VCS_FAMILY,
     #[cfg(feature = "sms")]
     &SMS_FAMILY,
@@ -223,7 +212,6 @@ pub static SMS_PANE_REGISTRY: &[PaneDescriptor] = &[
     },
 ];
 
-#[cfg(feature = "vcs")]
 pub static VCS_PANE_REGISTRY: &[PaneDescriptor] = &[
     PaneDescriptor {
         kind: DebuggerPane::Screen,
@@ -305,9 +293,7 @@ pub enum DebuggerPane {
     TileMap(TileMapId),
     Sprites,
     Audio,
-    #[cfg(feature = "vcs")]
     VcsCpu,
-    #[cfg(feature = "vcs")]
     VcsTia,
     #[cfg(feature = "sms")]
     SmsCpu,
@@ -420,7 +406,6 @@ fn sms_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
 }
 
 /// The VCS starts with the 6507 beside the screen, the TIA below.
-#[cfg(feature = "vcs")]
 fn vcs_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
     let (mut panes, cpu_handle) = pane_grid::State::new(DebuggerPane::VcsCpu.construct());
     let (screen_handle, split) = panes

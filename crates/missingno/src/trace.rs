@@ -55,17 +55,9 @@ pub fn run(
     if is_a26 || matches!(rom_data.len(), 0x800 | 0x1000) {
         // Bare VCS ROM sizes cannot collide with Game Boy ROMs (those
         // start at 32 KiB).
-        #[cfg(feature = "vcs")]
-        {
-            eprintln!("limit: {cycles} CPU cycles");
-            trace_vcs(&rom_data, &profile, &output_path, cycles);
-            return;
-        }
-        #[cfg(not(feature = "vcs"))]
-        {
-            eprintln!("error: VCS ROM, but this build has no VCS support (--features vcs)");
-            process::exit(1);
-        }
+        eprintln!("limit: {cycles} CPU cycles");
+        trace_vcs(&rom_data, &profile, &output_path, cycles);
+        return;
     }
 
     eprintln!("limit: {cycles} T-cycles");
@@ -194,7 +186,6 @@ fn trace_nes(rom: &[u8], profile: &Profile, output_path: &PathBuf, cycle_limit: 
     }
 }
 
-#[cfg(feature = "vcs")]
 fn trace_vcs(rom: &[u8], profile: &Profile, output_path: &PathBuf, cycle_limit: u64) {
     use missingno_vcs::console::Vcs;
     use missingno_vcs::trace::{Tracer, step_instruction_counted};

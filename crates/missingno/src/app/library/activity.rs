@@ -204,11 +204,6 @@ impl FrameCapture {
     }
 
     /// A display-ready RGBA capture of a palette-indexed frame.
-    // Only the feature-gated indexed families capture this way.
-    #[cfg_attr(
-        not(any(feature = "vcs", feature = "sms", feature = "nes")),
-        allow(dead_code)
-    )]
     pub fn from_indexed(frame: &crate::app::screen::IndexedFrame) -> Self {
         Self {
             pixels: Vec::new(),
