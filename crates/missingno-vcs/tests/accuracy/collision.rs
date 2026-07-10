@@ -50,3 +50,13 @@ fn per_pixel_ntsc() {
 fn per_pixel_pal() {
     common::run_self_test("collision/per-pixel_pal.a26", TvStandard::Pal);
 }
+
+#[test]
+fn stuck_drift_ntsc() {
+    common::run_self_test("collision/stuck-drift_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn stuck_drift_pal() {
+    common::run_self_test("collision/stuck-drift_pal.a26", TvStandard::Pal);
+}

@@ -76,6 +76,24 @@ fn hmove_line_end_pal() {
 }
 
 #[test]
+fn hmove_live_seam_ntsc() {
+    common::run_screenshot(
+        "tia-timing/hmove-live-seam_ntsc.a26",
+        "tia-timing/hmove-live-seam_ntsc.png",
+        TvStandard::Ntsc,
+    );
+}
+
+#[test]
+fn hmove_live_seam_pal() {
+    common::run_screenshot(
+        "tia-timing/hmove-live-seam_pal.a26",
+        "tia-timing/hmove-live-seam_pal.png",
+        TvStandard::Pal,
+    );
+}
+
+#[test]
 fn hmove_strobe_line_ntsc() {
     common::run_screenshot(
         "tia-timing/hmove-strobe-line_ntsc.a26",
@@ -94,6 +112,24 @@ fn hmove_strobe_line_pal() {
 }
 
 #[test]
+fn hmove_stuck_grid_ntsc() {
+    common::run_screenshot(
+        "tia-timing/hmove-stuck-grid_ntsc.a26",
+        "tia-timing/hmove-stuck-grid_ntsc.png",
+        TvStandard::Ntsc,
+    );
+}
+
+#[test]
+fn hmove_stuck_grid_pal() {
+    common::run_screenshot(
+        "tia-timing/hmove-stuck-grid_pal.a26",
+        "tia-timing/hmove-stuck-grid_pal.png",
+        TvStandard::Pal,
+    );
+}
+
+#[test]
 fn hmove_stuck_latch_ntsc() {
     common::run_screenshot(
         "tia-timing/hmove-stuck-latch_ntsc.a26",
@@ -107,6 +143,60 @@ fn hmove_stuck_latch_pal() {
     common::run_screenshot(
         "tia-timing/hmove-stuck-latch_pal.a26",
         "tia-timing/hmove-stuck-latch_pal.png",
+        TvStandard::Pal,
+    );
+}
+
+#[test]
+fn hmove_stuck_player_ntsc() {
+    common::run_screenshot(
+        "tia-timing/hmove-stuck-player_ntsc.a26",
+        "tia-timing/hmove-stuck-player_ntsc.png",
+        TvStandard::Ntsc,
+    );
+}
+
+#[test]
+fn hmove_stuck_player_pal() {
+    common::run_screenshot(
+        "tia-timing/hmove-stuck-player_pal.a26",
+        "tia-timing/hmove-stuck-player_pal.png",
+        TvStandard::Pal,
+    );
+}
+
+#[test]
+fn hmove_stuck_release_ntsc() {
+    common::run_screenshot(
+        "tia-timing/hmove-stuck-release_ntsc.a26",
+        "tia-timing/hmove-stuck-release_ntsc.png",
+        TvStandard::Ntsc,
+    );
+}
+
+#[test]
+fn hmove_stuck_release_pal() {
+    common::run_screenshot(
+        "tia-timing/hmove-stuck-release_pal.a26",
+        "tia-timing/hmove-stuck-release_pal.png",
+        TvStandard::Pal,
+    );
+}
+
+#[test]
+fn hmove_stuck_widths_ntsc() {
+    common::run_screenshot(
+        "tia-timing/hmove-stuck-widths_ntsc.a26",
+        "tia-timing/hmove-stuck-widths_ntsc.png",
+        TvStandard::Ntsc,
+    );
+}
+
+#[test]
+fn hmove_stuck_widths_pal() {
+    common::run_screenshot(
+        "tia-timing/hmove-stuck-widths_pal.a26",
+        "tia-timing/hmove-stuck-widths_pal.png",
         TvStandard::Pal,
     );
 }
@@ -265,6 +355,16 @@ fn rsync_ntsc() {
 #[test]
 fn rsync_pal() {
     common::run_self_test("tia-timing/rsync_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn wsync_line_end_ntsc() {
+    common::run_self_test("tia-timing/wsync-line-end_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn wsync_line_end_pal() {
+    common::run_self_test("tia-timing/wsync-line-end_pal.a26", TvStandard::Pal);
 }
 
 #[test]
