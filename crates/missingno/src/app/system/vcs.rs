@@ -69,15 +69,44 @@ struct VcsConsole {
     last_frame: IndexedFrame,
 }
 
-fn indexed_frame(frame: &Frame) -> IndexedFrame {
-    let height = frame.lines.len() as u32;
-    let mut pixels = Vec::with_capacity(frame.lines.len() * VISIBLE_CLOCKS);
-    for line in &frame.lines {
-        pixels.extend(line.iter().map(|&p| palette_index(p) as u8));
+/// The picture window shown from the full field the core emits: skip the
+/// VBLANK lead-in after VSYNC, then show a fixed height so on-screen
+/// geometry stays stable across kernels of varying line count. Values are
+/// the standard NTSC/PAL picture regions (a TV crops to roughly this).
+/// Frontend-only — the core keeps emitting every scanline.
+struct DisplayWindow {
+    skip: usize,
+    height: usize,
+}
+
+fn display_window(standard: TvStandard) -> DisplayWindow {
+    match standard {
+        TvStandard::Ntsc => DisplayWindow {
+            skip: 23,
+            height: 228,
+        },
+        TvStandard::Pal => DisplayWindow {
+            skip: 32,
+            height: 274,
+        },
+    }
+}
+
+fn indexed_frame(frame: &Frame, standard: TvStandard) -> IndexedFrame {
+    let window = display_window(standard);
+    let black = palette_index(0) as u8;
+    let mut pixels = vec![black; window.height * VISIBLE_CLOCKS];
+    for row in 0..window.height {
+        if let Some(line) = frame.lines.get(window.skip + row) {
+            let dst = row * VISIBLE_CLOCKS;
+            for (i, &p) in line.iter().enumerate() {
+                pixels[dst + i] = palette_index(p) as u8;
+            }
+        }
     }
     IndexedFrame {
         width: VISIBLE_CLOCKS as u32,
-        height,
+        height: window.height as u32,
         pixels: pixels.into(),
         palette: ntsc_palette(),
         pixel_aspect: PIXEL_ASPECT,
@@ -85,13 +114,15 @@ fn indexed_frame(frame: &Frame) -> IndexedFrame {
 }
 
 fn blank_frame() -> IndexedFrame {
-    IndexedFrame::blank(VISIBLE_CLOCKS as u32, 192, PIXEL_ASPECT, ntsc_palette())
+    let height = display_window(TvStandard::Ntsc).height as u32;
+    IndexedFrame::blank(VISIBLE_CLOCKS as u32, height, PIXEL_ASPECT, ntsc_palette())
 }
 
 impl SystemConsole for VcsConsole {
     fn step_frame(&mut self) -> FrameOutcome {
+        let standard = self.vcs.tv_standard();
         let display = self.vcs.step_frame(FRAME_BUDGET_LINES).map(|frame| {
-            self.last_frame = indexed_frame(&frame);
+            self.last_frame = indexed_frame(&frame, standard);
             ScreenDisplay::Indexed(self.last_frame.clone())
         });
         FrameOutcome {
@@ -254,7 +285,8 @@ impl VcsDebugger {
     fn display(&mut self, frame: Option<Frame>) -> Option<ScreenDisplay> {
         let frame = frame?;
         self.frame_count += 1;
-        self.last_frame = indexed_frame(&frame);
+        let standard = self.core.console().tv_standard();
+        self.last_frame = indexed_frame(&frame, standard);
         Some(ScreenDisplay::Indexed(self.last_frame.clone()))
     }
 }
