@@ -130,7 +130,8 @@ impl Player {
         }
     }
 
-    fn output(&self) -> bool {
+    /// Combinational serialiser output for the current scan state.
+    pub fn output(&self) -> bool {
         let Some(scan) = &self.scan else {
             return false;
         };

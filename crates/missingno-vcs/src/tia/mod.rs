@@ -424,6 +424,12 @@ impl Tia {
         // A stuffed pulse merging with a serialiser's clock advances its
         // output window one clock: post-tick output is next clock's pixel.
         if let Some(ticks) = pulse {
+            if ticks[MovableIndex::P0 as usize] {
+                px.p0 = self.player0.output();
+            }
+            if ticks[MovableIndex::P1 as usize] {
+                px.p1 = self.player1.output();
+            }
             if ticks[MovableIndex::M0 as usize] {
                 px.m0 = self.missile0.output();
             }
