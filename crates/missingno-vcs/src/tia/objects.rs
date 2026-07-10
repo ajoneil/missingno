@@ -262,6 +262,14 @@ impl Ball {
         }
     }
 
+    /// RESBL is level-active across the strobe: the width-gate clear
+    /// leads the counter plant by one clock, killing an unlit scan.
+    pub fn reset_kill(&mut self) {
+        if self.scan_clocks_left > 0 && self.scan_clocks_left == (1 << self.width_exponent) {
+            self.scan_clocks_left = 0;
+        }
+    }
+
     pub fn reset_position(&mut self) {
         self.counter = 0;
         // Unlike the players and missiles, the ball's reset decode is

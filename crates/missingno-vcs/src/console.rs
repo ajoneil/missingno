@@ -204,6 +204,7 @@ impl Vcs {
                     match u16::from(write.register) {
                         crate::tia::registers::RESM0 => self.tia.missile_reset_kill(0),
                         crate::tia::registers::RESM1 => self.tia.missile_reset_kill(1),
+                        crate::tia::registers::RESBL => self.tia.ball_reset_kill(),
                         _ => {}
                     }
                 } else if write.clocks_until_effective == 0 {

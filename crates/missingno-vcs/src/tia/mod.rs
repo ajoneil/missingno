@@ -476,6 +476,10 @@ impl Tia {
         }
     }
 
+    pub(crate) fn ball_reset_kill(&mut self) {
+        self.ball.reset_kill();
+    }
+
     pub(crate) fn write(&mut self, address: u16, value: u8) {
         use registers::*;
         match address & 0x3F {
