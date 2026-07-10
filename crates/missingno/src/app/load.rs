@@ -26,7 +26,14 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
     match message {
         Message::Pick => {
             app.game = Game::Loading;
+            // "All supported" first so it is the default filter, then one
+            // per family for narrowing.
+            let mut all_extensions: Vec<&str> = system::gb::ROM_EXTENSIONS.to_vec();
+            for family in system::FAMILIES {
+                all_extensions.extend_from_slice(family.extensions);
+            }
             let mut dialog = AsyncFileDialog::new()
+                .add_filter("All supported ROMs", &all_extensions)
                 .add_filter(system::gb::ROM_FILTER_NAME, system::gb::ROM_EXTENSIONS);
             for family in system::FAMILIES {
                 dialog = dialog.add_filter(family.platform_name, family.extensions);
