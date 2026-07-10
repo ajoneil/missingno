@@ -9,6 +9,14 @@ members = [
     "crates/missingno-sms",
     "crates/missingno-vcs",
 ]
+# The shipping set; the immature cores build only via -p.
+default-members = [
+    "crates/missingno",
+    "crates/missingno-gb",
+    "crates/missingno-gbc",
+    "crates/missingno-6502",
+    "crates/missingno-vcs",
+]
 
 [workspace.dependencies]
 bitflags = "2.11.1"

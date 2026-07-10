@@ -83,7 +83,7 @@ cargo run -- path/to/rom.gb --headless       # Headless debugger (HTTP API)
 cargo run -- path/to/rom.gb --boot-rom path/to/dmg_boot.bin  # Run with boot ROM
 cargo check                                  # Type check
 cargo test -p missingno-gb                 # Run core tests (fast, no GUI deps)
-cargo test                                   # Run all workspace tests
+cargo test                                   # Run default-member tests (shipping crates; NES/SMS need -p)
 cargo clippy                                 # Lint
 cargo fmt                                    # Format
 ```
