@@ -51,20 +51,15 @@ impl Riot {
         }
     }
 
-    /// A port-A pin driven from outside (joysticks); PA7 transitions feed
-    /// the edge detect.
+    /// A port-A pin driven from outside (joysticks).
     pub fn set_pin_a(&mut self, mask: u8, high: bool) {
-        let before = self.pins_a;
+        let before = self.pa7_level();
         if high {
             self.pins_a |= mask;
         } else {
             self.pins_a &= !mask;
         }
-        let was_high = before & 0x80 != 0;
-        let is_high = self.pins_a & 0x80 != 0;
-        if was_high != is_high && is_high == self.pa7_positive_edge {
-            self.pa7_flag = true;
-        }
+        self.pa7_edge(before);
     }
 
     /// A port-B pin driven from outside (console switches).
@@ -84,6 +79,19 @@ impl Riot {
 
     fn port_b_pins(&self) -> u8 {
         (self.orb & self.ddr_b) | (self.pins_b & !self.ddr_b)
+    }
+
+    /// The edge detect watches the PA7 pin — which follows ORA when the
+    /// line is an output, so software can raise the flag by itself.
+    fn pa7_level(&self) -> bool {
+        self.port_a_pins() & 0x80 != 0
+    }
+
+    fn pa7_edge(&mut self, was_high: bool) {
+        let is_high = self.pa7_level();
+        if was_high != is_high && is_high == self.pa7_positive_edge {
+            self.pa7_flag = true;
+        }
     }
 
     fn interrupt_flags(&self) -> u8 {
@@ -168,8 +176,15 @@ impl Riot {
             return;
         }
         match register & 0x07 {
-            0x00 => self.ora = value,
-            0x01 => self.ddr_a = value,
+            0x00 | 0x01 => {
+                let before = self.pa7_level();
+                if register & 0x07 == 0x00 {
+                    self.ora = value;
+                } else {
+                    self.ddr_a = value;
+                }
+                self.pa7_edge(before);
+            }
             0x02 => self.orb = value,
             0x03 => self.ddr_b = value,
             _ => {}
