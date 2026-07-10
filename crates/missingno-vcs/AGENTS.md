@@ -42,12 +42,12 @@ below them and only corroborate.**
   only to localise. **Never treat Sim2600's PIA as ground truth.**
 
 - **Static-analysis layer (the gb-propagation-delay-analysis analog): schematics +
-  TIA_HW_Notes.** The reverse-engineered TIA/RIOT/console schematics and Andrew
-  Towers' `TIA_HW_Notes.txt` explain which signal gates which — and races and
-  timing — *without* running a sim. Reach for them first to frame a question, then
-  use Sim2600 to confirm the specific edge. (These live in the user's Atari 2600
-  reference library, not in-repo; ask for a copy in `receipts/resources/` when one
-  is needed.)
+  TIA_HW_Notes.** Chip and console schematics and Andrew Towers'
+  `TIA_HW_Notes.txt` explain which signal gates which — and races and timing —
+  *without* running a sim. Reach for them first to frame a question, then use
+  Sim2600 to confirm the specific edge. Where a schematic reading and a Sim2600
+  measurement disagree, the sim wins (it is the decapped die; schematics are
+  design drawings, and hand-scan reads are fallible).
 
 - **Documented hardware behaviour.** The **Stella Programmer's Guide** is the
   canonical TIA/RIOT programming reference; the **TIA Technical Manual** and the
@@ -78,6 +78,7 @@ below them and only corroborate.**
 | Stella Programmer's Guide | https://atarihq.com/danb/files/stella.pdf | Canonical TIA/RIOT programming reference (VCS equivalent of gb-ctr). |
 | TIA_HW_Notes | https://www.atarihq.com/danb/files/TIA_HW_Notes.txt | Andrew Towers' TIA hardware timing notes — the static-analysis layer. |
 | MOS 6532 datasheet | https://6502.org/documents/datasheets/mos/mos_6532_riot.pdf | RIOT chip reference — the primary RIOT source (no gate-level sim exists). |
+| Local reference library | `receipts/resources/` | Additional core reference material — schematics, chip documentation, test cartridges. Inventory: `receipts/resources/vcs-library.md`. |
 | vcs-tests suite | `crates/missingno-vcs/tests/accuracy/` | The in-repo accuracy suite (RESULT RAM convention; NTSC + PAL). Baseline/diff via `scripts/test-report-vcs.sh`. |
 
 ## Core shape
