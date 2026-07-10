@@ -601,10 +601,12 @@ impl Tia {
         }
     }
 
-    pub fn read(&mut self, address: u16) -> u8 {
+    /// `None` when no read register decodes — the TIA leaves the data
+    /// bus undriven and the board's retained byte shows through.
+    pub fn read(&mut self, address: u16) -> Option<u8> {
         match address & 0x0F {
-            reg @ 0x00..=0x07 => self.collisions[reg as usize],
-            reg @ 0x08..=0x0B => self.pot_level((reg - 0x08) as usize),
+            reg @ 0x00..=0x07 => Some(self.collisions[reg as usize]),
+            reg @ 0x08..=0x0B => Some(self.pot_level((reg - 0x08) as usize)),
             reg @ (0x0C | 0x0D) => {
                 let port = (reg - 0x0C) as usize;
                 if self.trigger_latch_enabled && self.triggers[port] {
@@ -615,9 +617,9 @@ impl Tia {
                 } else {
                     !self.triggers[port]
                 };
-                if level { 0x80 } else { 0x00 }
+                Some(if level { 0x80 } else { 0x00 })
             }
-            _ => 0x00,
+            _ => None,
         }
     }
 }
