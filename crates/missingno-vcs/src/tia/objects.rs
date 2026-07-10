@@ -213,6 +213,11 @@ impl Missile {
         1 << ((self.nusiz >> 4) & 0x03)
     }
 
+    /// After this clock's tick, whether the scan outputs on the next one.
+    pub fn fires_next_clock(&self) -> bool {
+        self.enabled && !self.locked_to_player && self.scan_clocks_left > 0
+    }
+
     pub fn tick(&mut self) -> bool {
         let pixel = self.enabled && !self.locked_to_player && self.scan_clocks_left > 0;
         self.scan_clocks_left = self.scan_clocks_left.saturating_sub(1);

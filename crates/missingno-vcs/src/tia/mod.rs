@@ -152,6 +152,12 @@ impl MotionSequencer {
         self.more_movement.iter().any(|&m| m)
     }
 
+    /// The merged H@1/MOTCK seam trails each stuffed pulse by two clocks;
+    /// there the pulse train perturbs a serialiser without moving it.
+    fn at_seam(&self, which: MovableIndex) -> bool {
+        self.more_movement[which as usize] && self.start_countdown.is_none() && self.pulse_phase == 2
+    }
+
     /// Advance one colour clock; `Some(ticks)` on a pulse, where a set
     /// latch requests an extra motion clock for its object.
     fn step(&mut self) -> Option<[bool; 5]> {
@@ -403,7 +409,7 @@ impl Tia {
         if x.is_multiple_of(4) {
             self.playfield.latch_cell();
         }
-        let px = Pixels {
+        let mut px = Pixels {
             p0: self.player0.tick(),
             p1: self.player1.tick(),
             m0: self.missile0.tick(),
@@ -411,6 +417,15 @@ impl Tia {
             bl: self.ball.tick(),
             pf: self.playfield.pixel(x),
         };
+
+        // At the seam the merged pulse advances the enclockifier window a
+        // clock: a dot due now is swallowed, a dot due next clock opens early.
+        if self.motion.at_seam(MovableIndex::M0) {
+            px.m0 = self.missile0.fires_next_clock();
+        }
+        if self.motion.at_seam(MovableIndex::M1) {
+            px.m1 = self.missile1.fires_next_clock();
+        }
 
         self.latch_collisions(px);
 
