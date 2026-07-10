@@ -29,6 +29,8 @@ const RESET_SELECT_CLOCK: u16 = 64;
 const MOTION_START_CLOCKS: u8 = 9;
 /// The motion ripple counter's value between sequences (%1111).
 const RESTING_RIPPLE: u8 = 15;
+/// One CPU cycle: the width of SHB's latched reset past the wrap.
+const WSYNC_RESET_HOLD_CLOCKS: u8 = 3;
 const AUDIO_CLOCK_A: u16 = 10;
 const AUDIO_CLOCK_B: u16 = 124;
 /// Full-scale paddle charge time; the readable range games sweep.
@@ -195,6 +197,9 @@ pub struct Tia {
     vblank: bool,
     /// Low while a WSYNC strobe holds the CPU; released at line start.
     pub(crate) cpu_ready: bool,
+    /// SHB's latched reset outlasts the wrap; while it holds, a WSYNC
+    /// set is overridden and never reaches RDY.
+    wsync_reset_hold: u8,
 
     player0: Player,
     player1: Player,
@@ -247,6 +252,7 @@ impl Tia {
             vsync: false,
             vblank: false,
             cpu_ready: true,
+            wsync_reset_hold: 0,
             player0: Player::new(),
             player1: Player::new(),
             missile0: Missile::new(),
@@ -326,6 +332,8 @@ impl Tia {
 
     /// Advance one colour clock; completed lines surface via `take_line`.
     pub(crate) fn step_clock(&mut self) {
+        self.wsync_reset_hold = self.wsync_reset_hold.saturating_sub(1);
+
         // SEC decode: the reset-select at CLK 64 samples it, choosing the
         // extended hblank; a countdown straddling the wrap arms next line.
         if let Some(remaining) = self.hblank_extension_pending {
@@ -376,6 +384,7 @@ impl Tia {
     fn end_line(&mut self) {
         self.beam = 0;
         self.cpu_ready = true;
+        self.wsync_reset_hold = WSYNC_RESET_HOLD_CLOCKS;
         self.late_hblank = false;
         self.hblank_extension_armed = false;
         if !self.pot_dumped {
@@ -510,7 +519,11 @@ impl Tia {
                 }
                 self.pot_dumped = dump;
             }
-            WSYNC => self.cpu_ready = false,
+            WSYNC => {
+                if self.wsync_reset_hold == 0 {
+                    self.cpu_ready = false;
+                }
+            }
             RSYNC => {
                 // The forced wrap ends the line where it stands: the TV
                 // gets a short line — undrawn pixels never left the gun.
