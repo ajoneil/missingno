@@ -7,6 +7,12 @@
 /// Visible clocks per line — the objects' position space.
 pub const COUNTER_RANGE: u8 = 160;
 
+// Pipeline clocks between a start decode and the first pixel, pinned by
+// the hblank-reset landing positions (player x=3, missile/ball x=2).
+const START_DELAY_PLAYER: u8 = 3;
+const START_DELAY_MISSILE: u8 = 2;
+const START_DELAY_BALL: u8 = 2;
+
 /// Start decodes per NUSIZ player mode: main copy plus the close (+16),
 /// medium (+32) and far (+64) copy decodes the mode enables.
 fn copy_decodes(mode: u8) -> &'static [u8] {
@@ -70,13 +76,11 @@ impl Player {
 
     pub fn reset_position(&mut self) {
         self.counter = 0;
+        // A start decode in flight re-phases onto the new counter grid,
+        // its first pipeline stage clocking on the decode tick; with no
+        // start in flight the main copy waits for the wrap.
         if self.start_countdown.is_some() {
-            // A start decode in flight re-phases onto the new counter
-            // grid; its first pipeline stage clocks on the decode tick.
             self.start_countdown = Some(START_DELAY_PLAYER - 1);
-        } else {
-            // No start in flight: the main copy waits for the wrap.
-            self.start_countdown = None;
         }
     }
 
@@ -143,12 +147,6 @@ impl Player {
     }
 }
 
-// Pipeline clocks between a start decode and the first pixel, pinned by
-// the hblank-reset landing positions (player x=3, missile/ball x=2).
-const START_DELAY_PLAYER: u8 = 3;
-const START_DELAY_MISSILE: u8 = 2;
-const START_DELAY_BALL: u8 = 2;
-
 pub struct Missile {
     pub enabled: bool,
     /// While set, the missile hides and tracks its player (RESMPx).
@@ -187,17 +185,15 @@ impl Missile {
 
     pub fn reset_position(&mut self) {
         self.counter = 0;
+        // Reset re-phases an in-flight start onto the new counter grid;
+        // like the wrap decode, its first stage clocks on the decode
+        // tick. A dot already emitting survives unmoved; with no start
+        // in flight, a decode not yet fired is pre-empted.
         if self.start_countdown.is_some()
             || (self.scan_clocks_left > 0 && self.scan_clocks_left == self.width())
         {
-            // Reset re-phases an in-flight start onto the new counter
-            // grid; like the wrap decode, its first stage clocks on the
-            // decode tick. A dot already emitting survives unmoved.
             self.start_countdown = Some(START_DELAY_MISSILE - 1);
             self.scan_clocks_left = 0;
-        } else {
-            // No start in flight: a decode not yet fired is pre-empted.
-            self.start_countdown = None;
         }
     }
 

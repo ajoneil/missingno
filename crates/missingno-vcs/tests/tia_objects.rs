@@ -5,6 +5,10 @@
 
 use missingno_vcs::console::Vcs;
 
+#[path = "support/asm.rs"]
+mod asm;
+use asm::Asm;
+
 const VSYNC: u8 = 0x00;
 const WSYNC: u8 = 0x02;
 const NUSIZ0: u8 = 0x04;
@@ -22,62 +26,10 @@ const CXP0FB: u8 = 0x02;
 const COLOR_A: u8 = 0x1E;
 const COLOR_B: u8 = 0x5E;
 
-struct Asm {
-    origin: u16,
-    bytes: Vec<u8>,
-}
-
-impl Asm {
-    fn new() -> Self {
-        Asm {
-            origin: 0xF000,
-            bytes: Vec::new(),
-        }
-    }
-    fn here(&self) -> u16 {
-        self.origin + self.bytes.len() as u16
-    }
-    fn emit(&mut self, bytes: &[u8]) {
-        self.bytes.extend_from_slice(bytes);
-    }
-    fn lda_imm(&mut self, v: u8) {
-        self.emit(&[0xA9, v]);
-    }
-    fn ldx_imm(&mut self, v: u8) {
-        self.emit(&[0xA2, v]);
-    }
-    fn sta_zp(&mut self, a: u8) {
-        self.emit(&[0x85, a]);
-    }
-    fn lda_zp(&mut self, a: u8) {
-        self.emit(&[0xA5, a]);
-    }
-    fn nop(&mut self) {
-        self.emit(&[0xEA]);
-    }
-    fn dex(&mut self) {
-        self.emit(&[0xCA]);
-    }
-    fn bne_to(&mut self, target: u16) {
-        let offset = target as i32 - (self.here() as i32 + 2);
-        self.emit(&[0xD0, i8::try_from(offset).unwrap() as u8]);
-    }
-    fn jmp_abs(&mut self, target: u16) {
-        self.emit(&[0x4C, target as u8, (target >> 8) as u8]);
-    }
-    fn into_rom(self) -> Vec<u8> {
-        let mut rom = self.bytes;
-        rom.resize(0x1000, 0);
-        rom[0xFFC] = self.origin as u8;
-        rom[0xFFD] = (self.origin >> 8) as u8;
-        rom
-    }
-}
-
 /// Frame skeleton: VSYNC, a body that runs once per frame starting at a
 /// line boundary, then padding lines and the loop.
 fn kernel(setup: impl Fn(&mut Asm), body: impl Fn(&mut Asm)) -> Vec<u8> {
-    let mut asm = Asm::new();
+    let mut asm = Asm::new(0xF000);
     setup(&mut asm);
 
     let frame = asm.here();

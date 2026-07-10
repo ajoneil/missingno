@@ -5,7 +5,8 @@ use std::time::Duration;
 use missingno_vcs::TvStandard;
 use missingno_vcs::cartridge::CartridgeError;
 use missingno_vcs::console::{JoystickDirection, Vcs};
-use missingno_vcs::tia::VISIBLE_CLOCKS;
+use missingno_vcs::tia::{VISIBLE_CLOCKS, palette_index};
+use missingno_vcs::tv_standard::PIXEL_ASPECT;
 use rgb::RGB8;
 
 use std::collections::BTreeSet;
@@ -37,10 +38,6 @@ const FRAME_INTERVAL: Duration = Duration::from_micros(16_684);
 /// Frames are emergent from VSYNC; bound the search so a kernel that never
 /// syncs cannot stall the emulation thread.
 const FRAME_BUDGET_LINES: usize = 1000;
-
-/// NTSC pixel aspect at the TIA's 3.58 MHz colour clock — a display-side
-/// calibratable stage.
-const PIXEL_ASPECT: f32 = 12.0 / 7.0;
 
 /// A `.a26` is always ours; a `.bin` only at the family's bare ROM sizes
 /// (Game Boy ROMs start at 32 KiB, so the ranges cannot collide).
@@ -76,8 +73,7 @@ fn indexed_frame(frame: &Frame) -> IndexedFrame {
     let height = frame.lines.len() as u32;
     let mut pixels = Vec::with_capacity(frame.lines.len() * VISIBLE_CLOCKS);
     for line in &frame.lines {
-        // TIA colour bytes drop bit 0; the palette is 7-bit indexed.
-        pixels.extend(line.iter().map(|&p| p >> 1));
+        pixels.extend(line.iter().map(|&p| palette_index(p) as u8));
     }
     IndexedFrame {
         width: VISIBLE_CLOCKS as u32,

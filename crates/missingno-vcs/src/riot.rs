@@ -10,7 +10,7 @@ pub struct Riot {
     timer: u8,
     interval: u16,
     prescaler: u16,
-    underflowed: bool,
+    timer_underflowed: bool,
     /// Joystick lines, active-low: port 1 in the high nibble.
     pub port_a: u8,
     /// Console switches, active-low momentaries (see `switches`).
@@ -32,7 +32,7 @@ impl Riot {
             timer: 0,
             interval: 1024,
             prescaler: 0,
-            underflowed: false,
+            timer_underflowed: false,
             port_a: 0xFF,
             // Reset/Select released, Color mode, both difficulties Beginner.
             port_b: 0x0B,
@@ -43,7 +43,7 @@ impl Riot {
 
     /// One CPU-clock tick.
     pub fn tick(&mut self) {
-        if self.underflowed {
+        if self.timer_underflowed {
             self.timer = self.timer.wrapping_sub(1);
             return;
         }
@@ -51,7 +51,7 @@ impl Riot {
         if self.prescaler >= self.interval {
             self.prescaler = 0;
             if self.timer == 0 {
-                self.underflowed = true;
+                self.timer_underflowed = true;
                 self.timer = 0xFF;
             } else {
                 self.timer -= 1;
@@ -67,7 +67,7 @@ impl Riot {
             0x02 => self.port_b,
             0x03 => self.ddr_b,
             0x05 | 0x07 => {
-                if self.underflowed {
+                if self.timer_underflowed {
                     0x80
                 } else {
                     0x00
@@ -86,7 +86,7 @@ impl Riot {
             // Reading the interrupt-flag register leaves the timer flag
             // intact; only timer-register accesses clear it.
             0x05 | 0x07 => {
-                if self.underflowed {
+                if self.timer_underflowed {
                     0x80
                 } else {
                     0x00
@@ -94,8 +94,8 @@ impl Riot {
             }
             _ => {
                 let value = self.timer;
-                if self.underflowed {
-                    self.underflowed = false;
+                if self.timer_underflowed {
+                    self.timer_underflowed = false;
                     self.prescaler = 0;
                 }
                 value
@@ -115,7 +115,7 @@ impl Riot {
             // First decrement one clock after the write: underflow lands
             // at (value x divisor) + 1 clocks.
             self.prescaler = self.interval - 1;
-            self.underflowed = false;
+            self.timer_underflowed = false;
             return;
         }
         match register & 0x07 {

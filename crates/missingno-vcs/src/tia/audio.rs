@@ -1,7 +1,7 @@
 //! TIA audio: two channels of AUDC-selected waveforms clocked from line
 //! timing, so pitch is coupled to video rate. The waveform relationships
 //! are the community-documented behavioural model; their gate-level
-//! structure is unanalysed territory and a notes-program target.
+//! structure is unanalysed territory.
 
 pub struct Channel {
     pub control: u8,
@@ -127,6 +127,6 @@ impl Channel {
 
     /// Current level, 0-15.
     pub fn level(&self) -> u8 {
-        if self.output { self.volume & 0x0F } else { 0 }
+        if self.output { self.volume } else { 0 }
     }
 }

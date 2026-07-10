@@ -2,6 +2,9 @@
 //! region header, so the standard is supplied by the caller, not detected —
 //! it selects the colour decode and the master-clock-derived audio rate.
 
+/// Display aspect of a TIA pixel (12/7).
+pub const PIXEL_ASPECT: f32 = 12.0 / 7.0;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum TvStandard {
     #[default]
