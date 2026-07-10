@@ -24,9 +24,12 @@ const LATE_HBLANK_CLOCKS: u16 = HBLANK_CLOCKS + 8;
 const HBLANK_EXTENSION_DECODE_CLOCKS: u8 = 3;
 /// The RHB/LRHB choice: hblank ends at 68, or 76 when SEC is holding.
 const RESET_SELECT_CLOCK: u16 = 64;
-/// SEC decode + latch set: the strobe's first stuffed pulse lands this
-/// many colour clocks after the write reaches the TIA.
+/// SEC decode + latch set: colour clocks from the strobe's write reaching
+/// the TIA until the pulse train is armed.
 const MOTION_START_CLOCKS: u8 = 9;
+/// H@1 in beam coordinates: stuffed pulses ride the HSync counter's
+/// line-fixed two-phase grid, one pulse per four colour clocks.
+const MOTION_GRID_PHASE: u16 = 2;
 /// The motion ripple counter's value between sequences (%1111).
 const RESTING_RIPPLE: u8 = 15;
 /// One CPU cycle: the width of SHB's latched reset past the wrap.
@@ -122,11 +125,10 @@ const MOVABLES: [MovableIndex; 5] = [
 /// a mid-sequence rewrite that never matches leaves the latch stuffing
 /// clocks every pulse until the next HMOVE — HMCLR clears only the HM values.
 struct MotionSequencer {
-    /// Colour clocks until the first stuffed pulse after a strobe.
+    /// Colour clocks until a strobe's pulse train arms.
     start_countdown: Option<u8>,
     /// Descending comparator ripple; comparisons stop when it runs out.
     ripple: Option<u8>,
-    pulse_phase: u8,
     more_movement: [bool; 5],
     /// HM values, indexed in MOVABLES order: P0, P1, M0, M1, BL.
     values: [u8; 5],
@@ -137,7 +139,6 @@ impl MotionSequencer {
         MotionSequencer {
             start_countdown: None,
             ripple: None,
-            pulse_phase: 0,
             more_movement: [false; 5],
             values: [0; 5],
         }
@@ -153,17 +154,16 @@ impl MotionSequencer {
     }
 
     /// The merged H@1/MOTCK seam trails the H@1 pulse by two clocks —
-    /// coincident with this sequencer's pulse events, which run two clocks
-    /// behind H@1. There the train perturbs a serialiser without moving it.
-    fn at_seam(&self, which: MovableIndex) -> bool {
-        self.more_movement[which as usize]
-            && self.start_countdown.is_none()
-            && self.pulse_phase == 0
+    /// coincident with this sequencer's pulse events, which arrive two
+    /// clocks after H@1 through the write pipe. There the train perturbs a
+    /// serialiser without moving it.
+    fn at_seam(&self, which: MovableIndex, grid_tick: bool) -> bool {
+        grid_tick && self.more_movement[which as usize] && self.start_countdown.is_none()
     }
 
-    /// Advance one colour clock; `Some(ticks)` on a pulse, where a set
-    /// latch requests an extra motion clock for its object.
-    fn step(&mut self) -> Option<[bool; 5]> {
+    /// Advance one colour clock; `Some(ticks)` on a grid-tick pulse, where
+    /// a set latch requests an extra motion clock for its object.
+    fn step(&mut self, grid_tick: bool) -> Option<[bool; 5]> {
         if let Some(remaining) = self.start_countdown {
             if remaining > 0 {
                 self.start_countdown = Some(remaining - 1);
@@ -171,15 +171,9 @@ impl MotionSequencer {
             }
             self.start_countdown = None;
             self.ripple = Some(15);
-            self.pulse_phase = 0;
-        } else {
-            if !self.any_movement() {
-                return None;
-            }
-            self.pulse_phase = (self.pulse_phase + 1) % 4;
-            if self.pulse_phase != 0 {
-                return None;
-            }
+        }
+        if !grid_tick || !self.any_movement() {
+            return None;
         }
 
         let mut ticks = [false; 5];
@@ -359,7 +353,8 @@ impl Tia {
 
         // Stuffed motion clocks only move an object while the beam is
         // blanked; visible-region pulses advance the ripple but no object.
-        if let Some(ticks) = self.motion.step()
+        let grid_tick = self.beam % 4 == MOTION_GRID_PHASE;
+        if let Some(ticks) = self.motion.step(grid_tick)
             && self.beam < self.hblank_end()
         {
             for (i, &tick) in ticks.iter().enumerate() {
@@ -423,10 +418,11 @@ impl Tia {
 
         // At the seam the merged pulse advances the enclockifier window a
         // clock: a dot due now is swallowed, a dot due next clock opens early.
-        if self.motion.at_seam(MovableIndex::M0) {
+        let grid_tick = self.beam % 4 == MOTION_GRID_PHASE;
+        if self.motion.at_seam(MovableIndex::M0, grid_tick) {
             px.m0 = self.missile0.fires_next_clock();
         }
-        if self.motion.at_seam(MovableIndex::M1) {
+        if self.motion.at_seam(MovableIndex::M1, grid_tick) {
             px.m1 = self.missile1.fires_next_clock();
         }
 
