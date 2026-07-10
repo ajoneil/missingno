@@ -282,6 +282,11 @@ impl Tia {
     /// A trigger button's state into INPT4/5, true = pressed.
     pub fn set_trigger(&mut self, port: usize, pressed: bool) {
         self.triggers[port] = pressed;
+        // The I4/I5 latches capture any low level while enabled, read or
+        // no read — the feature's point for once-a-frame pollers.
+        if self.trigger_latch_enabled && pressed {
+            self.trigger_latches[port] = false;
+        }
     }
 
     /// The two channels' summed output, 0.0-1.0.
@@ -472,6 +477,13 @@ impl Tia {
                 let latch_enable = value & 0x40 != 0;
                 if !latch_enable {
                     self.trigger_latches = [true; 2];
+                } else if !self.trigger_latch_enabled {
+                    // Enabling captures a button already held.
+                    for port in 0..2 {
+                        if self.triggers[port] {
+                            self.trigger_latches[port] = false;
+                        }
+                    }
                 }
                 self.trigger_latch_enabled = latch_enable;
                 // D7 grounds the pot capacitors; releasing it starts the
@@ -606,9 +618,7 @@ impl Tia {
             reg @ 0x08..=0x0B => Some(self.pot_level((reg - 0x08) as usize)),
             reg @ (0x0C | 0x0D) => {
                 let port = (reg - 0x0C) as usize;
-                if self.trigger_latch_enabled && self.triggers[port] {
-                    self.trigger_latches[port] = false;
-                }
+                // Latched mode reads the latch; unlatched, the pin.
                 let level = if self.trigger_latch_enabled {
                     self.trigger_latches[port]
                 } else {
