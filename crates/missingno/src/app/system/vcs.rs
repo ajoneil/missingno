@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 use missingno_vcs::console::Frame;
 use missingno_vcs::cpu::disasm;
 
-use super::{ControlId, ControlInput, FrameOutcome, SystemConsole, SystemDebugger};
+use super::{ConsoleSwitch, ControlId, ControlInput, FrameOutcome, SystemConsole, SystemDebugger};
 use crate::app::debugger::inspect::{DebugView, Inspection};
 use crate::app::debugger::panes;
 use crate::app::debugger::vcs::{DisasmRow, VcsInspectState, VcsSnapshot};
@@ -29,6 +29,29 @@ pub const ROM_EXTENSIONS: &[&str] = &["a26", "bin"];
 /// Start/Select work the console switches; both buttons fire.
 pub const CONTROL_LABELS: [&str; 8] = [
     "Reset", "Select", "Fire", "Fire", "Up", "Down", "Left", "Right",
+];
+
+/// The latching console switches, driven through control ids past the
+/// paddle (id 8). Positions and defaults match the RIOT's SWCHB state.
+pub const CONSOLE_SWITCHES: [ConsoleSwitch; 3] = [
+    ConsoleSwitch {
+        control: ControlId(9),
+        label: "Left Difficulty",
+        positions: ["B", "A"],
+        default_high: false,
+    },
+    ConsoleSwitch {
+        control: ControlId(10),
+        label: "Right Difficulty",
+        positions: ["B", "A"],
+        default_high: false,
+    },
+    ConsoleSwitch {
+        control: ControlId(11),
+        label: "TV Type",
+        positions: ["B•W", "Color"],
+        default_high: true,
+    },
 ];
 
 /// Nominal NTSC frame: 262 lines × 228 clocks at the 3.579545 MHz colour
@@ -139,6 +162,10 @@ impl SystemConsole for VcsConsole {
         apply_control(&mut self.vcs, control, input);
     }
 
+    fn console_switches(&self) -> &'static [ConsoleSwitch] {
+        &CONSOLE_SWITCHES
+    }
+
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
         self.vcs.drain_audio_samples()
     }
@@ -185,6 +212,10 @@ fn apply_control(vcs: &mut Vcs, control: ControlId, input: ControlInput) {
                 5 => JoystickDirection::Down,
                 6 => JoystickDirection::Left,
                 7 => JoystickDirection::Right,
+                // Latching console switches carry their level, not a press.
+                9 => return vcs.set_difficulty(0, pressed),
+                10 => return vcs.set_difficulty(1, pressed),
+                11 => return vcs.set_color_mode(pressed),
                 _ => return,
             };
             vcs.set_joystick(direction, pressed);

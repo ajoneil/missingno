@@ -27,6 +27,20 @@ pub enum ControlInput {
     Axis(f32),
 }
 
+/// A latching console switch a family exposes for in-play toggling — the
+/// 2600's difficulty and colour switches. Unlike the momentary controls on
+/// the key-binding path, these hold a position the user flips; toggling one
+/// sends its new level through `set_control` as `ControlInput::Digital`.
+#[derive(Clone, Copy, Debug)]
+pub struct ConsoleSwitch {
+    pub control: ControlId,
+    pub label: &'static str,
+    /// Position names for the two levels, `[low, high]`.
+    pub positions: [&'static str; 2],
+    /// The power-on level, matching the core's default switch state.
+    pub default_high: bool,
+}
+
 use std::sync::Arc;
 
 use crate::app::debugger::inspect::{DebugView, Inspection};
@@ -110,6 +124,11 @@ pub trait SystemConsole: Send {
     fn reset(&mut self);
     /// Apply an input to a family-interpreted control.
     fn set_control(&mut self, control: ControlId, input: ControlInput);
+    /// Latching console switches shown as in-play toggles (empty for
+    /// families without any).
+    fn console_switches(&self) -> &'static [ConsoleSwitch] {
+        &[]
+    }
     /// Stereo samples at 44.1 kHz — the seam's fixed rate. Families
     /// convert from their native rate on their own side.
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)>;

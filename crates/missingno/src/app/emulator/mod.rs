@@ -2,10 +2,10 @@ use iced::{
     Element,
     Length::{self, Fill},
     Task,
-    widget::{button, container, mouse_area, responsive, shader, stack, svg},
+    widget::{button, container, mouse_area, responsive, row, shader, stack, svg, text},
 };
 
-use crate::app::system::{ControlId, ControlInput};
+use crate::app::system::{ConsoleSwitch, ControlId, ControlInput};
 use crate::app::{
     self,
     screen::{ScreenDisplay, ScreenView},
@@ -27,12 +27,18 @@ pub struct Emulator {
     screen_hovered: bool,
     use_sgb_colors: bool,
     frame_blending: bool,
+    /// The family's latching console switches and their current levels,
+    /// captured at load so the overlay renders while the console is on the
+    /// emu thread. Empty for families with none.
+    switches: &'static [ConsoleSwitch],
+    switch_levels: Vec<bool>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
     ScreenHovered,
     ScreenUnhovered,
+    ToggleSwitch(usize),
 }
 
 impl From<Message> for app::Message {
@@ -47,6 +53,7 @@ impl Emulator {
         use_sgb_colors: bool,
         frame_blending: bool,
     ) -> Self {
+        let switches = console.console_switches();
         Self {
             console: Some(console),
             screen_view: ScreenView::new(),
@@ -54,6 +61,8 @@ impl Emulator {
             screen_hovered: false,
             use_sgb_colors,
             frame_blending,
+            switches,
+            switch_levels: switches.iter().map(|s| s.default_high).collect(),
         }
     }
 
@@ -63,6 +72,7 @@ impl Emulator {
         use_sgb_colors: bool,
         frame_blending: bool,
     ) -> Self {
+        let switches = console.console_switches();
         Self {
             console: Some(console),
             screen_view,
@@ -70,6 +80,8 @@ impl Emulator {
             screen_hovered: false,
             use_sgb_colors,
             frame_blending,
+            switches,
+            switch_levels: switches.iter().map(|s| s.default_high).collect(),
         }
     }
 
@@ -126,6 +138,16 @@ impl Emulator {
         match message {
             Message::ScreenHovered => self.screen_hovered = true,
             Message::ScreenUnhovered => self.screen_hovered = false,
+            Message::ToggleSwitch(index) => {
+                if let (Some(level), Some(switch)) =
+                    (self.switch_levels.get_mut(index), self.switches.get(index))
+                {
+                    *level = !*level;
+                    // Route through the shared control path so it reaches
+                    // the console whether it is local or on the emu thread.
+                    return Task::done(app::Message::SetControl(switch.control.0, *level));
+                }
+            }
         }
         Task::none()
     }
@@ -176,7 +198,7 @@ impl Emulator {
                     }
                 }
 
-                stack![
+                let mut layers = stack![
                     screen,
                     container(
                         button(icons::m(Icon::Expand).style(|_, _| svg::Style {
@@ -187,8 +209,29 @@ impl Emulator {
                     )
                     .align_right(Fill)
                     .padding(8)
-                ]
-                .into()
+                ];
+
+                // The family's latching console switches (2600 difficulty /
+                // TV type), top-left; each button flips its position.
+                if !self.switches.is_empty() {
+                    let mut switch_row = row![].spacing(8);
+                    for (index, switch) in self.switches.iter().enumerate() {
+                        let level = self
+                            .switch_levels
+                            .get(index)
+                            .copied()
+                            .unwrap_or(switch.default_high);
+                        let label = format!("{}: {}", switch.label, switch.positions[level as usize]);
+                        switch_row = switch_row.push(
+                            button(text(label).size(12))
+                                .style(overlay_button_style)
+                                .on_press(Message::ToggleSwitch(index).into()),
+                        );
+                    }
+                    layers = layers.push(container(switch_row).width(Fill).padding(8));
+                }
+
+                layers.into()
             } else {
                 screen
             };

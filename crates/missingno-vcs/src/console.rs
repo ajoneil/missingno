@@ -321,6 +321,18 @@ impl Vcs {
         }
     }
 
+    /// A player difficulty switch (SWCHB: P0 = bit 6, P1 = bit 7). Pro (A)
+    /// drives the pin high, amateur (B) low.
+    pub fn set_difficulty(&mut self, player: usize, pro: bool) {
+        let mask = if player == 0 { 0x40 } else { 0x80 };
+        self.riot.set_pin_b(mask, pro);
+    }
+
+    /// The colour / black-and-white switch (SWCHB bit 3). Colour is high.
+    pub fn set_color_mode(&mut self, color: bool) {
+        self.riot.set_pin_b(0x08, color);
+    }
+
     /// Advance exactly one CPU cycle (three colour clocks), first
     /// aligning to the colour-clock phase so the CPU's bus access lands
     /// at phase 0.
