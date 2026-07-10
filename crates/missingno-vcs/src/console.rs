@@ -67,7 +67,7 @@ const TIA_RESET_STROBE_CLOCKS: u8 = TIA_WRITE_CLOCKS + 2;
 struct BoardBus<'a> {
     tia: &'a mut Tia,
     riot: &'a mut Riot,
-    cartridge: &'a Cartridge,
+    cartridge: &'a mut Cartridge,
     pending_tia_writes: &'a mut [Option<TiaWrite>; 2],
 }
 
@@ -95,6 +95,7 @@ impl Bus for BoardBus<'_> {
             GRP0, GRP1, PF0, PF1, PF2, RESBL, RESM0, RESM1, RESP0, RESP1, RSYNC, VBLANK,
         };
         if address & 0x1000 != 0 {
+            self.cartridge.write_access(address);
         } else if address & 0x0080 == 0 {
             let clocks = match address & 0x3F {
                 RESP0 | RESP1 | RESM0 | RESM1 | RESBL => TIA_RESET_STROBE_CLOCKS,
@@ -161,7 +162,7 @@ impl Vcs {
             let mut bus = BoardBus {
                 tia: &mut self.tia,
                 riot: &mut self.riot,
-                cartridge: &self.cartridge,
+                cartridge: &mut self.cartridge,
                 pending_tia_writes: &mut self.pending_tia_writes,
             };
             self.cpu.step_cycle(&mut bus);
@@ -222,7 +223,7 @@ impl Vcs {
     /// any address without perturbing latches or timer flags.
     pub fn peek(&self, address: u16) -> u8 {
         if address & 0x1000 != 0 {
-            self.cartridge.read(address)
+            self.cartridge.peek(address)
         } else if address & 0x0080 == 0 {
             self.tia.peek(address)
         } else if address & 0x0200 == 0 {
