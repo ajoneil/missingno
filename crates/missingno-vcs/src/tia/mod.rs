@@ -152,10 +152,13 @@ impl MotionSequencer {
         self.more_movement.iter().any(|&m| m)
     }
 
-    /// The merged H@1/MOTCK seam trails each stuffed pulse by two clocks;
-    /// there the pulse train perturbs a serialiser without moving it.
+    /// The merged H@1/MOTCK seam trails the H@1 pulse by two clocks —
+    /// coincident with this sequencer's pulse events, which run two clocks
+    /// behind H@1. There the train perturbs a serialiser without moving it.
     fn at_seam(&self, which: MovableIndex) -> bool {
-        self.more_movement[which as usize] && self.start_countdown.is_none() && self.pulse_phase == 2
+        self.more_movement[which as usize]
+            && self.start_countdown.is_none()
+            && self.pulse_phase == 0
     }
 
     /// Advance one colour clock; `Some(ticks)` on a pulse, where a set
