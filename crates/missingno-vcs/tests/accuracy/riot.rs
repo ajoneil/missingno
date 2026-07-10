@@ -12,6 +12,16 @@ fn io_mirrors_pal() {
 }
 
 #[test]
+fn io_output_ntsc() {
+    common::run_self_test("riot/io-output_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn io_output_pal() {
+    common::run_self_test("riot/io-output_pal.a26", TvStandard::Pal);
+}
+
+#[test]
 fn io_ports_ntsc() {
     common::run_self_test("riot/io-ports_ntsc.a26", TvStandard::Ntsc);
 }
@@ -19,6 +29,16 @@ fn io_ports_ntsc() {
 #[test]
 fn io_ports_pal() {
     common::run_self_test("riot/io-ports_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn pa7_edge_ntsc() {
+    common::run_self_test("riot/pa7-edge_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn pa7_edge_pal() {
+    common::run_self_test("riot/pa7-edge_pal.a26", TvStandard::Pal);
 }
 
 #[test]

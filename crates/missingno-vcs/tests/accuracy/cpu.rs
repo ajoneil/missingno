@@ -12,6 +12,16 @@ fn floating_bus_pal() {
 }
 
 #[test]
+fn partial_drive_ntsc() {
+    common::run_self_test("cpu/partial-drive_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn partial_drive_pal() {
+    common::run_self_test("cpu/partial-drive_pal.a26", TvStandard::Pal);
+}
+
+#[test]
 fn rmw_strobe_ntsc() {
     common::run_self_test("cpu/rmw-strobe_ntsc.a26", TvStandard::Ntsc);
 }
@@ -39,4 +49,14 @@ fn stack_aliases_ram_ntsc() {
 #[test]
 fn stack_aliases_ram_pal() {
     common::run_self_test("cpu/stack-aliases-ram_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn stack_aliases_tia_ntsc() {
+    common::run_self_test("cpu/stack-aliases-tia_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn stack_aliases_tia_pal() {
+    common::run_self_test("cpu/stack-aliases-tia_pal.a26", TvStandard::Pal);
 }

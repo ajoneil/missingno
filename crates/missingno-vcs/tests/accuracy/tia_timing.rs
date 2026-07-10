@@ -58,6 +58,24 @@ fn hmove_line_aligned_pal() {
 }
 
 #[test]
+fn hmove_line_end_ntsc() {
+    common::run_screenshot(
+        "tia-timing/hmove-line-end_ntsc.a26",
+        "tia-timing/hmove-line-end_ntsc.png",
+        TvStandard::Ntsc,
+    );
+}
+
+#[test]
+fn hmove_line_end_pal() {
+    common::run_screenshot(
+        "tia-timing/hmove-line-end_pal.a26",
+        "tia-timing/hmove-line-end_pal.png",
+        TvStandard::Pal,
+    );
+}
+
+#[test]
 fn hmove_strobe_line_ntsc() {
     common::run_screenshot(
         "tia-timing/hmove-strobe-line_ntsc.a26",
@@ -71,6 +89,24 @@ fn hmove_strobe_line_pal() {
     common::run_screenshot(
         "tia-timing/hmove-strobe-line_pal.a26",
         "tia-timing/hmove-strobe-line_pal.png",
+        TvStandard::Pal,
+    );
+}
+
+#[test]
+fn hmove_stuck_latch_ntsc() {
+    common::run_screenshot(
+        "tia-timing/hmove-stuck-latch_ntsc.a26",
+        "tia-timing/hmove-stuck-latch_ntsc.png",
+        TvStandard::Ntsc,
+    );
+}
+
+#[test]
+fn hmove_stuck_latch_pal() {
+    common::run_screenshot(
+        "tia-timing/hmove-stuck-latch_pal.a26",
+        "tia-timing/hmove-stuck-latch_pal.png",
         TvStandard::Pal,
     );
 }
@@ -209,6 +245,16 @@ fn nusiz_draw_pal() {
         "tia-timing/nusiz-draw_pal.png",
         TvStandard::Pal,
     );
+}
+
+#[test]
+fn reset_same_line_ntsc() {
+    common::run_self_test("tia-timing/reset-same-line_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn reset_same_line_pal() {
+    common::run_self_test("tia-timing/reset-same-line_pal.a26", TvStandard::Pal);
 }
 
 #[test]
