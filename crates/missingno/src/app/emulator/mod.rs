@@ -221,7 +221,8 @@ impl Emulator {
                             .get(index)
                             .copied()
                             .unwrap_or(switch.default_high);
-                        let label = format!("{}: {}", switch.label, switch.positions[level as usize]);
+                        let label =
+                            format!("{}: {}", switch.label, switch.positions[level as usize]);
                         switch_row = switch_row.push(
                             button(text(label).size(12))
                                 .style(overlay_button_style)
