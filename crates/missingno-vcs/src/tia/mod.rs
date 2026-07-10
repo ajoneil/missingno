@@ -20,6 +20,10 @@ pub const CLOCKS_PER_LINE: u16 = 228;
 pub const HBLANK_CLOCKS: u16 = 68;
 pub const VISIBLE_CLOCKS: usize = 160;
 const LATE_HBLANK_CLOCKS: u16 = HBLANK_CLOCKS + 8;
+/// Colour clocks from an HMOVE write reaching the TIA to its SEC decode.
+const SEC_DECODE_CLOCKS: u8 = 3;
+/// The RHB/LRHB choice: hblank ends at 68, or 76 when SEC is holding.
+const RESET_SELECT_CLOCK: u16 = 64;
 const AUDIO_CLOCK_A: u16 = 10;
 const AUDIO_CLOCK_B: u16 = 124;
 /// Full-scale paddle charge time; the readable range games sweep.
@@ -108,46 +112,84 @@ const MOVABLES: [MovableIndex; 5] = [
     MovableIndex::Bl,
 ];
 
-/// The HMOVE ripple sequence: latches armed by the strobe, cleared when
-/// the up-counter matches an object's comparator; a set latch converts
-/// each four-clock pulse into an extra motion clock for its object.
+/// The HMOVE motion sequencer: the strobe arms every object's "more
+/// movement" latch and, after the SEC decode settles, a four-clock pulse
+/// cadence runs a descending ripple past each object's comparator (HM
+/// value, D7 inverted). A set latch requests one extra motion clock per
+/// pulse; the comparator reads the live HM value, so a mid-sequence
+/// rewrite that never matches leaves the latch stuffing clocks every
+/// pulse until the next HMOVE — HMCLR clears only the HM values.
 struct MotionSequencer {
-    active: bool,
-    pulse_count: u8,
+    /// Colour clocks until the first stuffed pulse after a strobe.
+    start_countdown: Option<u8>,
+    /// Descending comparator ripple; comparisons stop when it runs out.
+    ripple: Option<u8>,
+    pulse_phase: u8,
     more_movement: [bool; 5],
     values: [u8; 5],
 }
 
+/// SEC decode + latch set: the strobe's first stuffed pulse lands this
+/// many colour clocks after the write reaches the TIA.
+const MOTION_START_CLOCKS: u8 = 9;
+
 impl MotionSequencer {
     fn new() -> Self {
         MotionSequencer {
-            active: false,
-            pulse_count: 0,
+            start_countdown: None,
+            ripple: None,
+            pulse_phase: 0,
             more_movement: [false; 5],
             values: [0; 5],
         }
     }
 
     fn strobe(&mut self) {
-        self.active = true;
-        self.pulse_count = 0;
+        self.start_countdown = Some(MOTION_START_CLOCKS);
         self.more_movement = [true; 5];
     }
 
-    /// Which objects receive an extra clock on this pulse.
-    fn pulse(&mut self) -> [bool; 5] {
+    fn any_movement(&self) -> bool {
+        self.more_movement.iter().any(|&m| m)
+    }
+
+    /// Advance one colour clock; `Some(ticks)` on a pulse, where a set
+    /// latch requests an extra motion clock for its object.
+    fn step(&mut self) -> Option<[bool; 5]> {
+        if let Some(remaining) = self.start_countdown {
+            if remaining > 0 {
+                self.start_countdown = Some(remaining - 1);
+                return None;
+            }
+            self.start_countdown = None;
+            self.ripple = Some(15);
+            self.pulse_phase = 0;
+        } else {
+            if !self.any_movement() {
+                return None;
+            }
+            self.pulse_phase = (self.pulse_phase + 1) % 4;
+            if self.pulse_phase != 0 {
+                return None;
+            }
+        }
+
         let mut ticks = [false; 5];
         for (i, more) in self.more_movement.iter_mut().enumerate() {
-            if *more && self.pulse_count == (self.values[i] >> 4) ^ 0x08 {
-                *more = false;
+            if *more {
+                if let Some(ripple) = self.ripple {
+                    if ripple == (self.values[i] >> 4) ^ 0x07 {
+                        *more = false;
+                    }
+                }
             }
             ticks[i] = *more;
         }
-        self.pulse_count += 1;
-        if self.pulse_count == 16 {
-            self.active = false;
-        }
-        ticks
+        self.ripple = match self.ripple {
+            Some(0) | None => None,
+            Some(r) => Some(r - 1),
+        };
+        Some(ticks)
     }
 }
 
@@ -174,6 +216,9 @@ pub struct Tia {
 
     motion: MotionSequencer,
     late_hblank: bool,
+    /// HMOVE's SEC decode on its way to (or holding at) the reset-select.
+    sec_countdown: Option<u8>,
+    sec_active: bool,
 
     collisions: [u8; 8],
 
@@ -220,6 +265,8 @@ impl Tia {
             score_mode: false,
             motion: MotionSequencer::new(),
             late_hblank: false,
+            sec_countdown: None,
+            sec_active: false,
             collisions: [0; 8],
             audio: [Channel::new(), Channel::new()],
             triggers: [false; 2],
@@ -264,13 +311,33 @@ impl Tia {
 
     /// Advance one colour clock; completed lines surface via `take_line`.
     pub fn step_clock(&mut self) {
-        // The motion sequencer's extra clocks ride every fourth colour
-        // clock, hblank included — that is where HMOVE movement happens.
-        if self.motion.active && self.beam.is_multiple_of(4) {
-            let ticks = self.motion.pulse();
-            for (i, &tick) in ticks.iter().enumerate() {
-                if tick {
-                    self.tick_movable(MOVABLES[i]);
+        // SEC decode: the reset-select at CLK 64 samples it, choosing the
+        // extended hblank; a countdown straddling the wrap arms next line.
+        if let Some(remaining) = self.sec_countdown {
+            if remaining == 0 {
+                self.sec_countdown = None;
+                self.sec_active = true;
+            } else {
+                self.sec_countdown = Some(remaining - 1);
+            }
+        }
+        if self.beam == RESET_SELECT_CLOCK {
+            self.late_hblank = self.sec_active;
+        }
+
+        // Stuffed motion clocks only move an object while the beam is
+        // blanked; visible-region pulses advance the ripple but no object.
+        if let Some(ticks) = self.motion.step() {
+            let stuffing_end = if self.late_hblank {
+                LATE_HBLANK_CLOCKS
+            } else {
+                HBLANK_CLOCKS
+            };
+            if self.beam < stuffing_end {
+                for (i, &tick) in ticks.iter().enumerate() {
+                    if tick {
+                        self.tick_movable(MOVABLES[i]);
+                    }
                 }
             }
         }
@@ -298,6 +365,7 @@ impl Tia {
             self.beam = 0;
             self.cpu_ready = true;
             self.late_hblank = false;
+            self.sec_active = false;
             if !self.pot_dumped {
                 for countdown in &mut self.pot_countdown {
                     *countdown = countdown.saturating_sub(1);
@@ -313,6 +381,9 @@ impl Tia {
 
     fn render_clock(&mut self) {
         let x = (self.beam - HBLANK_CLOCKS) as u8;
+        if x.is_multiple_of(4) {
+            self.playfield.latch_cell();
+        }
         let px = Pixels {
             p0: self.player0.tick(),
             p1: self.player1.tick(),
@@ -384,6 +455,14 @@ impl Tia {
             playfield_color
         } else {
             self.color_bk
+        }
+    }
+
+    /// The reset strobe's leading scan-kill, one clock before it applies.
+    pub(crate) fn missile_reset_kill(&mut self, which: usize) {
+        match which {
+            0 => self.missile0.reset_kill(),
+            _ => self.missile1.reset_kill(),
         }
     }
 
@@ -487,7 +566,7 @@ impl Tia {
             }
             HMOVE => {
                 self.motion.strobe();
-                self.late_hblank = true;
+                self.sec_countdown = Some(SEC_DECODE_CLOCKS);
             }
             HMCLR => self.motion.values = [0; 5],
             CXCLR => self.collisions = [0; 8],

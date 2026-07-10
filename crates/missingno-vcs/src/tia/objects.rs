@@ -69,10 +69,15 @@ impl Player {
     }
 
     pub fn reset_position(&mut self) {
-        // Reset also resets the two-phase clock: an in-flight start
-        // decode is lost, and the main copy waits for the counter wrap.
         self.counter = 0;
-        self.start_countdown = None;
+        if self.start_countdown.is_some() {
+            // A start decode in flight re-phases onto the new counter
+            // grid; its first pipeline stage clocks on the decode tick.
+            self.start_countdown = Some(START_DELAY_PLAYER - 1);
+        } else {
+            // No start in flight: the main copy waits for the wrap.
+            self.start_countdown = None;
+        }
     }
 
     pub fn counter(&self) -> u8 {
@@ -172,11 +177,28 @@ impl Missile {
         }
     }
 
+    /// RESMx is level-active across the strobe: the scan-counter clear
+    /// leads the counter plant by one clock, killing an unlit scan.
+    pub fn reset_kill(&mut self) {
+        if self.scan_clocks_left > 0 && self.scan_clocks_left == self.width() {
+            self.scan_clocks_left = 0;
+        }
+    }
+
     pub fn reset_position(&mut self) {
-        // Reset also resets the two-phase clock: an in-flight start
-        // decode is lost, and the main copy waits for the counter wrap.
         self.counter = 0;
-        self.start_countdown = None;
+        if self.start_countdown.is_some()
+            || (self.scan_clocks_left > 0 && self.scan_clocks_left == self.width())
+        {
+            // Reset re-phases an in-flight start onto the new counter
+            // grid; like the wrap decode, its first stage clocks on the
+            // decode tick. A dot already emitting survives unmoved.
+            self.start_countdown = Some(START_DELAY_MISSILE - 1);
+            self.scan_clocks_left = 0;
+        } else {
+            // No start in flight: a decode not yet fired is pre-empted.
+            self.start_countdown = None;
+        }
     }
 
     /// RESMPx released: park at the re-centre landing — the missile's
@@ -287,6 +309,9 @@ pub struct Playfield {
     pub pf1: u8,
     pub pf2: u8,
     pub mirrored: bool,
+    /// The serialiser reads the registers once per 4-clock cell; a write
+    /// landing mid-cell takes effect from the next cell.
+    latched: [u8; 3],
 }
 
 impl Default for Playfield {
@@ -302,7 +327,12 @@ impl Playfield {
             pf1: 0,
             pf2: 0,
             mirrored: false,
+            latched: [0; 3],
         }
+    }
+
+    pub fn latch_cell(&mut self) {
+        self.latched = [self.pf0, self.pf1, self.pf2];
     }
 
     pub fn pixel(&self, x: u8) -> bool {
@@ -314,10 +344,11 @@ impl Playfield {
         } else {
             (x - 80) / 4
         };
+        let [pf0, pf1, pf2] = self.latched;
         let lit = match cell {
-            0..=3 => self.pf0 & (0x10 << cell),
-            4..=11 => self.pf1 & (0x80 >> (cell - 4)),
-            _ => self.pf2 & (0x01 << (cell - 12)),
+            0..=3 => pf0 & (0x10 << cell),
+            4..=11 => pf1 & (0x80 >> (cell - 4)),
+            _ => pf2 & (0x01 << (cell - 12)),
         };
         lit != 0
     }

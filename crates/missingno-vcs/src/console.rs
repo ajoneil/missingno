@@ -46,6 +46,14 @@ pub struct Vcs {
 /// Colour clocks from a CPU write until the TIA sees it: the data bus is
 /// valid at φ2, two colour clocks into the CPU cycle.
 const TIA_WRITE_CLOCKS: u8 = 3;
+/// The VBLANK gate and the player graphics consume a write one clock
+/// behind the combinational colour path.
+const TIA_GATED_WRITE_CLOCKS: u8 = TIA_WRITE_CLOCKS + 1;
+/// Playfield registers reach the serialiser a clock later still; the
+/// per-cell latch in the playfield completes the in-flight cell.
+const TIA_CELL_WRITE_CLOCKS: u8 = TIA_WRITE_CLOCKS + 2;
+/// RSYNC's counter reset requantises onto the next H@1-H@2 cycle.
+const TIA_RSYNC_CLOCKS: u8 = TIA_WRITE_CLOCKS + 3;
 /// Position-counter resets land a two-phase-clock cycle later than other
 /// writes; the residue vs the ordinary write path is 2 colour clocks.
 /// Calibrated against the suite's oracle anchor, pending PAL hardware.
@@ -83,11 +91,16 @@ impl Bus for BoardBus<'_> {
     }
 
     fn write(&mut self, address: u16, data: u8) {
-        use crate::tia::registers::{RESBL, RESM0, RESM1, RESP0, RESP1};
+        use crate::tia::registers::{
+            GRP0, GRP1, PF0, PF1, PF2, RESBL, RESM0, RESM1, RESP0, RESP1, RSYNC, VBLANK,
+        };
         if address & 0x1000 != 0 {
         } else if address & 0x0080 == 0 {
             let clocks = match address & 0x3F {
                 RESP0 | RESP1 | RESM0 | RESM1 | RESBL => TIA_RESET_STROBE_CLOCKS,
+                RSYNC => TIA_RSYNC_CLOCKS,
+                VBLANK | GRP0 | GRP1 => TIA_GATED_WRITE_CLOCKS,
+                PF0 | PF1 | PF2 => TIA_CELL_WRITE_CLOCKS,
                 _ => TIA_WRITE_CLOCKS,
             };
             let slot = self
@@ -159,7 +172,14 @@ impl Vcs {
         for slot in &mut self.pending_tia_writes {
             if let Some(write) = slot {
                 write.clocks_until_effective -= 1;
-                if write.clocks_until_effective == 0 {
+                if write.clocks_until_effective == 1 {
+                    // The missile reset's scan-kill leads its plant.
+                    match write.address & 0x3F {
+                        crate::tia::registers::RESM0 => self.tia.missile_reset_kill(0),
+                        crate::tia::registers::RESM1 => self.tia.missile_reset_kill(1),
+                        _ => {}
+                    }
+                } else if write.clocks_until_effective == 0 {
                     let write = slot.take().unwrap();
                     self.tia.write(write.address, write.data);
                 }
