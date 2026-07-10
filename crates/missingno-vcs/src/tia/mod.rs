@@ -129,7 +129,10 @@ const MOVABLES: [MovableIndex; 5] = [
 /// The HMOVE motion sequencer. Its comparators read the HM values as
 /// captured at each H@1 edge, so a mid-sequence rewrite that never matches
 /// a captured compare leaves the latch stuffing clocks every pulse until
-/// the next HMOVE — HMCLR clears only the HM values.
+/// the next HMOVE — HMCLR clears only the HM values. The live descending
+/// compare samples the HM value one stuffed pulse earlier than the resting
+/// (exhausted-ripple) release compare — the Cosmic Ark starfield's jam
+/// lives in that one-pulse gap.
 struct MotionSequencer {
     /// Colour clocks until a strobe's pulse train arms.
     start_countdown: Option<u8>,
@@ -138,8 +141,11 @@ struct MotionSequencer {
     more_movement: [bool; 5],
     /// HM values, indexed in MOVABLES order: P0, P1, M0, M1, BL.
     values: [u8; 5],
-    /// The H@1-edge capture the pulse comparator reads.
+    /// The H@1-edge capture the resting release compare reads.
     captured_values: [u8; 5],
+    /// The HM values as of the previous pulse — what the live descending
+    /// compare reads, one pulse period before the resting compare.
+    previous_pulse_values: [u8; 5],
 }
 
 impl MotionSequencer {
@@ -150,6 +156,7 @@ impl MotionSequencer {
             more_movement: [false; 5],
             values: [0; 5],
             captured_values: [0; 5],
+            previous_pulse_values: [0; 5],
         }
     }
 
@@ -177,7 +184,20 @@ impl MotionSequencer {
             self.start_countdown = None;
             self.ripple = Some(15);
         }
-        if phase != MOTION_PULSE_PHASE || !self.any_movement() {
+        if phase != MOTION_PULSE_PHASE {
+            return None;
+        }
+        // A live descending ripple compares the HM value as of the previous
+        // pulse; only the exhausted-ripple release compare reads the H@1
+        // capture. Refresh the previous-pulse snapshot every pulse (even
+        // between trains) so it always trails the live values by one pulse.
+        let compare_values = if self.ripple.is_some() {
+            self.previous_pulse_values
+        } else {
+            self.captured_values
+        };
+        self.previous_pulse_values = self.values;
+        if !self.any_movement() {
             return None;
         }
 
@@ -186,7 +206,7 @@ impl MotionSequencer {
         // wired: rewriting HM to $8x clears a latch stuck past the ripple.
         let ripple = self.ripple.unwrap_or(RESTING_RIPPLE);
         for (i, more) in self.more_movement.iter_mut().enumerate() {
-            if *more && ripple == (self.captured_values[i] >> 4) ^ 0x07 {
+            if *more && ripple == (compare_values[i] >> 4) ^ 0x07 {
                 *more = false;
             }
             ticks[i] = *more;
