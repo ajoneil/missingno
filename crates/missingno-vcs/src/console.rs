@@ -52,6 +52,8 @@ const TIA_GATED_WRITE_CLOCKS: u8 = TIA_WRITE_CLOCKS + 1;
 /// Playfield registers reach the serialiser a clock later still; the
 /// per-cell latch in the playfield completes the in-flight cell.
 const TIA_CELL_WRITE_CLOCKS: u8 = TIA_WRITE_CLOCKS + 2;
+/// RSYNC's counter reset requantises onto the next H@1-H@2 cycle.
+const TIA_RSYNC_CLOCKS: u8 = TIA_WRITE_CLOCKS + 3;
 /// Position-counter resets land a two-phase-clock cycle later than other
 /// writes; the residue vs the ordinary write path is 2 colour clocks.
 /// Calibrated against the suite's oracle anchor, pending PAL hardware.
@@ -90,12 +92,13 @@ impl Bus for BoardBus<'_> {
 
     fn write(&mut self, address: u16, data: u8) {
         use crate::tia::registers::{
-            GRP0, GRP1, PF0, PF1, PF2, RESBL, RESM0, RESM1, RESP0, RESP1, VBLANK,
+            GRP0, GRP1, PF0, PF1, PF2, RESBL, RESM0, RESM1, RESP0, RESP1, RSYNC, VBLANK,
         };
         if address & 0x1000 != 0 {
         } else if address & 0x0080 == 0 {
             let clocks = match address & 0x3F {
                 RESP0 | RESP1 | RESM0 | RESM1 | RESBL => TIA_RESET_STROBE_CLOCKS,
+                RSYNC => TIA_RSYNC_CLOCKS,
                 VBLANK | GRP0 | GRP1 => TIA_GATED_WRITE_CLOCKS,
                 PF0 | PF1 | PF2 => TIA_CELL_WRITE_CLOCKS,
                 _ => TIA_WRITE_CLOCKS,
