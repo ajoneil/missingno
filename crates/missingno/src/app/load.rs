@@ -115,7 +115,7 @@ fn start_console(
     title
 }
 
-fn file_stem_title(rom_path: &std::path::Path) -> String {
+pub(crate) fn file_stem_title(rom_path: &std::path::Path) -> String {
     rom_path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -125,7 +125,7 @@ fn file_stem_title(rom_path: &std::path::Path) -> String {
 
 /// Families whose media carries no header title: it comes from the file
 /// stem instead. Only the Game Boy's media has one.
-fn headerless_family_rom(rom_path: &std::path::Path, rom: &[u8]) -> bool {
+pub(crate) fn headerless_family_rom(rom_path: &std::path::Path, rom: &[u8]) -> bool {
     system::FAMILIES
         .iter()
         .any(|family| (family.is_rom)(rom_path, rom))

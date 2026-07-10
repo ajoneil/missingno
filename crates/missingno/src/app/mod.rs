@@ -15,6 +15,7 @@ mod emulation;
 mod emulator;
 pub mod library;
 mod load;
+pub(crate) use load::{file_stem_title, headerless_family_rom};
 mod recent;
 mod screen;
 pub mod settings;

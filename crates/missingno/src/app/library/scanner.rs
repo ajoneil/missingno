@@ -33,15 +33,18 @@ pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<l
                 continue;
             }
 
-            // Always capture the raw header title for cartridge matching
-            let header_title = Cartridge::peek_title(&rom);
-            let header_title = if header_title.is_empty() {
+            // Headerless media (VCS and future families) has no in-ROM
+            // title — its name comes from the file stem until Hasheous
+            // enriches it. Only Game Boy media carries a header title.
+            let header_title = if crate::app::headerless_family_rom(&path, &rom) {
                 None
             } else {
-                Some(header_title)
+                let title = Cartridge::peek_title(&rom);
+                (!title.is_empty()).then_some(title)
             };
 
-            // Try catalogue first for a good title, fall back to cartridge header
+            // Try catalogue first for a good title, fall back to header
+            // (Game Boy) or the file stem (headerless families).
             let mut entry = if let Some(cat_entry) = catalogue.lookup_hash(&sha1) {
                 let mut e =
                     library::GameEntry::new(sha1, cat_entry.manifest.title.clone(), path.clone());
@@ -58,7 +61,7 @@ pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<l
             } else {
                 let title = header_title
                     .clone()
-                    .unwrap_or_else(|| "Unknown".to_string());
+                    .unwrap_or_else(|| crate::app::file_stem_title(&path));
                 library::GameEntry::new(sha1, title, path.clone())
             };
             entry.header_title = header_title;
