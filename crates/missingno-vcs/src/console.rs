@@ -285,9 +285,9 @@ impl Vcs {
             JoystickDirection::Up => 0x10,
         };
         if pressed {
-            self.riot.port_a &= !bit;
+            self.riot.set_pin_a(bit, false);
         } else {
-            self.riot.port_a |= bit;
+            self.riot.set_pin_a(bit, true);
         }
     }
 
@@ -305,18 +305,18 @@ impl Vcs {
     /// The console's momentary Game Reset switch (SWCHB bit 0, active-low).
     pub fn set_console_reset(&mut self, pressed: bool) {
         if pressed {
-            self.riot.port_b &= !0x01;
+            self.riot.set_pin_b(0x01, false);
         } else {
-            self.riot.port_b |= 0x01;
+            self.riot.set_pin_b(0x01, true);
         }
     }
 
     /// The console's momentary Game Select switch (SWCHB bit 1, active-low).
     pub fn set_console_select(&mut self, pressed: bool) {
         if pressed {
-            self.riot.port_b &= !0x02;
+            self.riot.set_pin_b(0x02, false);
         } else {
-            self.riot.port_b |= 0x02;
+            self.riot.set_pin_b(0x02, true);
         }
     }
 
