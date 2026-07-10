@@ -130,6 +130,24 @@ fn hmove_strobe_line_pal() {
 }
 
 #[test]
+fn hmove_rewrite_race_ntsc() {
+    common::run_screenshot(
+        "tia-timing/hmove-rewrite-race_ntsc.a26",
+        "tia-timing/hmove-rewrite-race_ntsc.png",
+        TvStandard::Ntsc,
+    );
+}
+
+#[test]
+fn hmove_rewrite_race_pal() {
+    common::run_screenshot(
+        "tia-timing/hmove-rewrite-race_pal.a26",
+        "tia-timing/hmove-rewrite-race_pal.png",
+        TvStandard::Pal,
+    );
+}
+
+#[test]
 fn hmove_stuck_grid_ntsc() {
     common::run_screenshot(
         "tia-timing/hmove-stuck-grid_ntsc.a26",
