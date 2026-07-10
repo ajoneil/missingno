@@ -27,6 +27,8 @@ const RESET_SELECT_CLOCK: u16 = 64;
 /// SEC decode + latch set: the strobe's first stuffed pulse lands this
 /// many colour clocks after the write reaches the TIA.
 const MOTION_START_CLOCKS: u8 = 9;
+/// The motion ripple counter's value between sequences (%1111).
+const RESTING_RIPPLE: u8 = 15;
 const AUDIO_CLOCK_A: u16 = 10;
 const AUDIO_CLOCK_B: u16 = 124;
 /// Full-scale paddle charge time; the readable range games sweep.
@@ -170,11 +172,11 @@ impl MotionSequencer {
         }
 
         let mut ticks = [false; 5];
+        // The exhausted ripple rests at %1111 with the comparator still
+        // wired: rewriting HM to $8x clears a latch stuck past the ripple.
+        let ripple = self.ripple.unwrap_or(RESTING_RIPPLE);
         for (i, more) in self.more_movement.iter_mut().enumerate() {
-            if *more
-                && let Some(ripple) = self.ripple
-                && ripple == (self.values[i] >> 4) ^ 0x07
-            {
+            if *more && ripple == (self.values[i] >> 4) ^ 0x07 {
                 *more = false;
             }
             ticks[i] = *more;
