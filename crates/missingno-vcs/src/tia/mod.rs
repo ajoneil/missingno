@@ -27,12 +27,11 @@ pub const VISIBLE_CLOCKS: usize = 160;
 const LATE_HBLANK_CLOCKS: u16 = HBLANK_CLOCKS + 8;
 /// Colour clocks from an HMOVE write reaching the TIA to its SEC decode.
 const HBLANK_EXTENSION_DECODE_CLOCKS: u8 = 3;
-/// Grid-quantised SEC decode + latch set: colour clocks from the strobe's
-/// write applying until the train arms; the first pulse is the next pulse
-/// instant, the arming clock included.
-const MOTION_START_CLOCKS: u8 = 8;
-/// H@1 in beam coordinates: the ripple steps and stuffs a clock here.
-const MOTION_PULSE_PHASE: u16 = 2;
+/// H@1 (visible x ≡ 1 mod 4): each latched object stuffs a clock and its
+/// comparator samples the live HM value.
+const MOTION_STUFF_PHASE: u16 = 1;
+/// H@2 (x ≡ 3 = H@1 + 2): the ripple counter decrements.
+const MOTION_DECREMENT_PHASE: u16 = 3;
 /// The motion ripple counter's value between sequences (%1111).
 const RESTING_RIPPLE: u8 = 15;
 /// SHB's latched reset absorbs a WSYNC set through the wrap's first CPU cycle.
@@ -124,18 +123,31 @@ const MOVABLES: [MovableIndex; 5] = [
     MovableIndex::Bl,
 ];
 
-/// The HMOVE motion engine. A strobe latches [SEC]; after a fixed decode the
-/// per-object "more movement" latches set and a 4-bit ripple counter starts at
-/// 15 and counts down, one step every 4 CLK on H@1. Each step every latched
-/// object gets one stuffed motion clock, and each object's comparator clears
-/// its latch when the ripple reaches that object's HM nibble with D7 inverted
-/// (so the stuffed count is 0..15 = 8 − net move). The comparator reads the HM
-/// latches LIVE, so a mid-sequence rewrite that dodges every remaining ripple
-/// value never clears the latch — it stuffs a clock every line until the next
-/// HMOVE (the Cosmic Ark starfield). HMCLR zeroes the HM values only.
+/// [SEC] propagating through the HSync two-phase clock after an HMOVE strobe.
+/// The strobe sets the latch; it clocks forward on the next H@1, then arms on
+/// the following H@2 — a two-phase shift, so the arm delay falls out of the
+/// grid rather than a colour-clock count.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SecDecode {
+    Idle,
+    /// Latched by the strobe; the next H@1 clocks it forward.
+    Set,
+    /// Clocked through H@1; the next H@2 arms the latches.
+    Clocked,
+}
+
+/// The HMOVE motion engine. A strobe latches [SEC], which clocks through the
+/// two-phase clock ([`SecDecode`]) to arm every object's "more movement" latch
+/// and load a 4-bit ripple counter to 15. The ripple counts down one step per
+/// H@2; each H@1 every latched object gets a stuffed motion clock, and each
+/// object's comparator clears its latch when the ripple reaches that object's
+/// HM nibble with D7 inverted (so the stuffed count is 0..15 = 8 − net move).
+/// The comparator reads the HM latches LIVE, so a mid-sequence rewrite that
+/// dodges every remaining ripple value never clears the latch — it stuffs a
+/// clock every line until the next HMOVE (the Cosmic Ark starfield). HMCLR
+/// zeroes the HM values only.
 struct MotionSequencer {
-    /// [SEC] decode: colour clocks until the ripple starts and the latches set.
-    start_countdown: Option<u8>,
+    sec: SecDecode,
     /// The 4-bit ripple counter, 15 down to 0; `None` once exhausted (the
     /// comparator then rests against %1111).
     ripple: Option<u8>,
@@ -147,7 +159,7 @@ struct MotionSequencer {
 impl MotionSequencer {
     fn new() -> Self {
         MotionSequencer {
-            start_countdown: None,
+            sec: SecDecode::Idle,
             ripple: None,
             more_movement: [false; 5],
             values: [0; 5],
@@ -155,48 +167,59 @@ impl MotionSequencer {
     }
 
     fn strobe(&mut self) {
-        self.start_countdown = Some(MOTION_START_CLOCKS);
-        self.more_movement = [true; 5];
+        self.sec = SecDecode::Set;
     }
 
     fn any_movement(&self) -> bool {
         self.more_movement.iter().any(|&m| m)
     }
 
-    /// Advance one colour clock; `Some(ticks)` on a pulse, where a set
+    /// Advance one colour clock; `Some(ticks)` on an H@1 stuff, where a set
     /// latch requests an extra motion clock for its object.
     fn step(&mut self, phase: u16) -> Option<[bool; 5]> {
-        if let Some(remaining) = self.start_countdown {
-            if remaining > 0 {
-                self.start_countdown = Some(remaining - 1);
+        // [SEC] shifts H@1 → H@2; on that H@2 the more-movement latches arm
+        // for every object and the ripple counter loads to 15.
+        match (self.sec, phase) {
+            (SecDecode::Set, MOTION_STUFF_PHASE) => {
+                self.sec = SecDecode::Clocked;
                 return None;
             }
-            self.start_countdown = None;
-            self.ripple = Some(15);
+            (SecDecode::Clocked, MOTION_DECREMENT_PHASE) => {
+                self.sec = SecDecode::Idle;
+                self.more_movement = [true; 5];
+                self.ripple = Some(15);
+                // The load edge that arms the counter is not a count edge.
+                return None;
+            }
+            _ => {}
         }
-        // The ripple steps and stuffs once every 4 CLK, on H@1.
-        if phase != MOTION_PULSE_PHASE {
-            return None;
-        }
-        if !self.any_movement() {
+
+        // H@2: the ripple counter decrements one step — the phase after H@1's
+        // stuff, so each H@1 sees 15, 14, 13, … in turn.
+        if phase == MOTION_DECREMENT_PHASE {
+            self.ripple = match self.ripple {
+                Some(0) | None => None,
+                Some(r) => Some(r - 1),
+            };
             return None;
         }
 
-        let mut ticks = [false; 5];
-        // The comparator reads the HM latches live: it clears an object's
-        // latch when the ripple reaches that object's D7-inverted nibble. An
-        // exhausted ripple rests at %1111, so a late HM rewrite still clears.
+        // H@1: each latched object stuffs a clock, unless its comparator
+        // matches the ripple this step — then it clears instead (reading the
+        // HM value live; an exhausted ripple rests at %1111 so a late HM
+        // rewrite still clears). Clearing before the tick keeps the matching
+        // step from stuffing (HM $8x → 0 stuffs).
+        if phase != MOTION_STUFF_PHASE || !self.any_movement() {
+            return None;
+        }
         let ripple = self.ripple.unwrap_or(RESTING_RIPPLE);
+        let mut ticks = [false; 5];
         for i in 0..self.more_movement.len() {
             if self.more_movement[i] && ripple == (self.values[i] >> 4) ^ 0x07 {
                 self.more_movement[i] = false;
             }
             ticks[i] = self.more_movement[i];
         }
-        self.ripple = match self.ripple {
-            Some(0) | None => None,
-            Some(r) => Some(r - 1),
-        };
         Some(ticks)
     }
 }
