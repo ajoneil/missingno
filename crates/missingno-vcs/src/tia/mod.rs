@@ -6,10 +6,9 @@
 //! line-fixed H@1 grid, each comparing a descending ripple against the
 //! D7-inverted HM values captured at the H@1 edge until the latch clears;
 //! the strobe also latches an 8-clock hblank extension (the HMOVE comb).
-//! Hblank pulses move an object; a visible pulse instead advances its
-//! serialiser's output window one clock at the merge seam. Late/mid-line
-//! strobes reuse the same machinery, so the classic "illegal HMOVE"
-//! positions emerge rather than being special-cased.
+//! A stuffed pulse is an extra serialiser clock whether MOTCK is gated or
+//! live. Late/mid-line strobes reuse the same machinery, so the classic
+//! "illegal HMOVE" positions emerge rather than being special-cased.
 
 pub(crate) mod audio;
 pub(crate) mod hsync;
@@ -342,7 +341,7 @@ impl Tia {
         self.finished_line.take()
     }
 
-    fn tick_movable(&mut self, which: MovableIndex) -> bool {
+    fn tick_movable(&mut self, which: MovableIndex) {
         match which {
             MovableIndex::P0 => self.player0.tick(),
             MovableIndex::P1 => self.player1.tick(),
@@ -367,24 +366,24 @@ impl Tia {
             }
         }
 
-        let beam = self.hsync.beam();
-
-        // Stuffed motion clocks only move an object while MOTCK is gated off
-        // (blank or comb); a visible pulse instead reaches the serialisers.
-        let pulse = self.motion.step(self.hsync.phase());
-        if let Some(ticks) = pulse
-            && !matches!(beam, Beam::Pixel(_))
-        {
-            for (i, &tick) in ticks.iter().enumerate() {
-                if tick {
-                    self.tick_movable(MOVABLES[i]);
+        // A stuffed motion pulse is an extra serialiser clock, gated or live.
+        if let Some(ticks) = self.motion.step(self.hsync.phase()) {
+            for (movable, ticked) in MOVABLES.into_iter().zip(ticks) {
+                if ticked {
+                    self.tick_movable(movable);
                 }
             }
         }
 
-        match beam {
-            Beam::Pixel(x) => self.render_clock(x, pulse),
-            // Inside the HMOVE comb: blanked, and motion clocks gated.
+        if self.hsync.motck_fires() {
+            for which in MOVABLES {
+                self.tick_movable(which);
+            }
+        }
+
+        match self.hsync.beam() {
+            Beam::Pixel(x) => self.render_clock(x),
+            // Inside the HMOVE comb: blanked output.
             Beam::Comb(x) => self.line[x as usize] = 0,
             Beam::Blank => {}
         }
@@ -419,38 +418,18 @@ impl Tia {
         });
     }
 
-    fn render_clock(&mut self, x: u8, pulse: Option<[bool; 5]>) {
+    fn render_clock(&mut self, x: u8) {
         if x.is_multiple_of(4) {
             self.playfield.latch_cell();
         }
-        let mut px = Pixels {
-            p0: self.player0.tick(),
-            p1: self.player1.tick(),
-            m0: self.missile0.tick(),
-            m1: self.missile1.tick(),
-            bl: self.ball.tick(),
+        let px = Pixels {
+            p0: self.player0.output(),
+            p1: self.player1.output(),
+            m0: self.missile0.output(),
+            m1: self.missile1.output(),
+            bl: self.ball.output(),
             pf: self.playfield.pixel(x),
         };
-
-        // A stuffed pulse merging with a serialiser's clock advances its
-        // output window one clock: post-tick output is next clock's pixel.
-        if let Some(ticks) = pulse {
-            if ticks[MovableIndex::P0 as usize] {
-                px.p0 = self.player0.output();
-            }
-            if ticks[MovableIndex::P1 as usize] {
-                px.p1 = self.player1.output();
-            }
-            if ticks[MovableIndex::M0 as usize] {
-                px.m0 = self.missile0.output();
-            }
-            if ticks[MovableIndex::M1 as usize] {
-                px.m1 = self.missile1.output();
-            }
-            if ticks[MovableIndex::Bl as usize] {
-                px.bl = self.ball.output();
-            }
-        }
 
         self.latch_collisions(px);
 
@@ -515,12 +494,6 @@ impl Tia {
         } else {
             self.color_bk
         }
-    }
-
-    /// Whether a reset committing now plants its object on the visible grid:
-    /// true while MOTCK is gated (hblank or the HMOVE comb), false mid-pixel.
-    fn reset_grid_aligned(&self) -> bool {
-        !matches!(self.hsync.beam(), Beam::Pixel(_))
     }
 
     /// The reset strobe's leading scan-kill, one clock before it applies.
@@ -600,14 +573,13 @@ impl Tia {
             PF0 => self.playfield.pf0 = value,
             PF1 => self.playfield.pf1 = value,
             PF2 => self.playfield.pf2 = value,
-            // MOTCK is gated off the object counters during hblank/comb, so a
-            // reset there re-phases the ÷4 divider onto the visible grid; a
-            // visible reset lands it off-grid (the CPU-write ½-CLK sub-phase).
-            RESP0 => self.player0.reset_position(self.reset_grid_aligned()),
-            RESP1 => self.player1.reset_position(self.reset_grid_aligned()),
-            RESM0 => self.missile0.reset_position(self.reset_grid_aligned()),
-            RESM1 => self.missile1.reset_position(self.reset_grid_aligned()),
-            RESBL => self.ball.reset_position(self.reset_grid_aligned()),
+            // The strobe grounds the object's ÷4 ring; hblank-vs-visible
+            // landings emerge from the MOTCK gating alone.
+            RESP0 => self.player0.reset_position(),
+            RESP1 => self.player1.reset_position(),
+            RESM0 => self.missile0.reset_position(),
+            RESM1 => self.missile1.reset_position(),
+            RESBL => self.ball.reset_position(),
             AUDC0 => self.audio[0].control = value,
             AUDC1 => self.audio[1].control = value,
             AUDF0 => self.audio[0].frequency = value & 0x1F,

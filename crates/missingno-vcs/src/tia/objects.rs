@@ -1,36 +1,30 @@
 //! The TIA's movable objects: two players, two missiles, one ball, and the
 //! playfield. Each object runs on its own MOTCK grid: a local ÷4 two-phase clock
-//! (the [`Divider`]) drives a position counter through the 40 counts of a visible
-//! line. Copies come from extra START decodes on that counter (the NUSIZ
-//! mechanism); after a decode the START passes through one full ÷4 cycle (+ a
-//! player-only latch) before the graphics scan counter serialises. RESxx
-//! re-phases the local divider to the strobe.
+//! (the [`Divider`]) advances a position counter through the 40 counts of a
+//! visible line. Copies come from extra START decodes on that counter (the NUSIZ
+//! mechanism); a decode caught at one divider wrap is delivered to the serialiser
+//! at the next — the silicon's "full cycle of the two-phase clock". RESxx grounds
+//! the local divider to its pinned phase and it resumes on the strobe release.
 
 /// Visible clocks per line — the objects' colour-clock position space.
 pub const COUNTER_RANGE: u8 = 160;
 /// Position counts per line: the ÷4 divider turns 160 colour clocks into 40.
 const COUNTS: u8 = 40;
 
-/// A START decode passes through one full ÷4 two-phase cycle (the divider's
-/// N868/N1480 phases) before it reaches the scan counter.
-const DECODE_CYCLE: u8 = 4;
-/// The extra MOTCK edge (N90) to latch the player START; missiles/ball omit it.
+/// The player START latch (decode NOR N1080 → /START N2279): one extra MOTCK
+/// edge on the serialiser tail; missiles and the ball have no such stage.
 const PLAYER_START_LATCH: u8 = 1;
-/// The graphics scan register's serialiser tail: the N90-clocked scan cells
-/// (N2517→N410→N2267) walk to their first output this many MOTCK edges after
-/// START — the missile/ball hblank landing (x=2); the player adds the latch.
-const SCAN_STARTUP: u8 = 2;
-
-/// A mid-visible reset re-phases the ÷4 divider one count later than a hblank
-/// reset: N868 falls fresh on the live release edge, vs held pre-loaded through
-/// the gated hblank (mid-line N1480 at x≡1 vs hblank at x≡0).
-const VISIBLE_PLANT_SETTLE: u8 = 1;
+/// MOTCK edges from a START delivery to the serialiser's first output — the
+/// measured select-network tail (the scan register begins its walk on the
+/// delivery edge; the first lit pixel follows two edges later).
+const SERIAL_TAIL: u8 = 2;
 
 /// The main-copy START decode: the counter's wrap (count 39).
 const MAIN_DECODE: u8 = COUNTS - 1;
 
 /// The local ÷4 two-phase clock (ring A→B→D→C→A, N90/MOTCK-clocked): `phase`
-/// steps once per MOTCK and the position counter advances when it wraps.
+/// steps once per MOTCK and the position counter advances on the wrap — the
+/// N1480 slave-transfer phase.
 #[derive(Clone, Copy)]
 struct Divider {
     phase: u8,
@@ -47,9 +41,11 @@ impl Divider {
         self.phase == 0
     }
 
-    /// RESxx grounds the ring: the counter re-phases to the strobe.
-    fn rephase(&mut self) {
-        self.phase = 0;
+    /// RESxx async-grounds the ring to its pinned state — N868 high, N1480 low,
+    /// two MOTCK edges short of the wrap: the release-coincident edge drops
+    /// N868 and the next edge fires N1480.
+    fn ground(&mut self) {
+        self.phase = 2;
     }
 }
 
@@ -77,6 +73,9 @@ fn player_pixel_clocks(mode: u8) -> u8 {
 }
 
 struct Scan {
+    /// MOTCK edges until the serialiser presents bit 0: the player START
+    /// latch plus the select-network tail.
+    lead: u8,
     bit: u8,
     clocks_left: u8,
     // The stretched serial clock divides down from the two-phase grid;
@@ -92,10 +91,9 @@ pub struct Player {
     pub nusiz: u8,
     div: Divider,
     position: u8,
-    /// The ÷4 divider's half-CLK sub-phase: set when a reset planted the counter
-    /// mid-visible (off the visible grid), cleared when it planted in hblank.
-    half_offset: bool,
-    start_countdown: Option<u8>,
+    /// A START decode caught at the divider wrap, riding the ÷4 cycle to the
+    /// next wrap's delivery.
+    start_pending: bool,
     scan: Option<Scan>,
 }
 
@@ -115,41 +113,17 @@ impl Player {
             nusiz: 0,
             div: Divider::new(),
             position: 0,
-            half_offset: false,
-            start_countdown: None,
+            start_pending: false,
             scan: None,
         }
     }
 
-    /// MOTCK edges from the latched START to the first pixel: the player START
-    /// latch, the scan-counter spin-up, and the divider's sub-phase settle.
-    fn start_to_pixel(&self) -> u8 {
-        PLAYER_START_LATCH
-            + SCAN_STARTUP
-            + if self.half_offset {
-                VISIBLE_PLANT_SETTLE
-            } else {
-                0
-            }
-    }
-
-    /// MOTCK edges from a fresh START decode to the first pixel: the full ÷4
-    /// decode cycle ahead of the latch/scan.
-    fn decode_to_pixel(&self) -> u8 {
-        DECODE_CYCLE + self.start_to_pixel()
-    }
-
-    pub fn reset_position(&mut self, grid_aligned: bool) {
+    /// RESxx: plant the counter and ground the ring to the strobe. A decode
+    /// already caught in the pending latch is phase-clocked state downstream
+    /// of the counter — it rides through onto the re-phased grid.
+    pub fn reset_position(&mut self) {
         self.position = 0;
-        self.div.rephase();
-        // RESxx re-phases the local ÷4 divider to the strobe; a mid-visible
-        // strobe lands it off the visible grid.
-        self.half_offset = !grid_aligned;
-        // A start already decoded and in flight re-phases onto the new grid past
-        // the decode cycle; with none in flight the main copy waits for the wrap.
-        if self.start_countdown.is_some() {
-            self.start_countdown = Some(self.start_to_pixel() - 1);
-        }
+        self.div.ground();
     }
 
     /// Colour-clock position within the line (0..160) — position count × 4 plus
@@ -158,34 +132,33 @@ impl Player {
         self.position * 4 + self.div.phase
     }
 
-    /// One motion clock; returns this clock's pixel.
-    pub fn tick(&mut self) -> bool {
-        let pixel = self.output();
+    /// One motion clock (MOTCK edge).
+    pub fn tick(&mut self) {
         self.advance_scan();
         if self.div.tick() {
+            // The wrap retimes the decode of the count-span just ended into
+            // the pending latch, and delivers the previous wrap's catch.
+            let deliver = self.start_pending;
+            self.start_pending = copy_decodes(self.nusiz).contains(&self.position);
             self.position = (self.position + 1) % COUNTS;
-            if copy_decodes(self.nusiz).contains(&self.position) {
-                self.start_countdown = Some(self.decode_to_pixel());
-            }
-        }
-        if let Some(remaining) = self.start_countdown {
-            if remaining == 0 {
-                self.start_countdown = None;
+            if deliver {
                 let clocks = player_pixel_clocks(self.nusiz);
                 self.scan = Some(Scan {
+                    lead: PLAYER_START_LATCH + SERIAL_TAIL,
                     bit: 0,
                     clocks_left: clocks,
                     serial_lag: if clocks > 1 { 1 } else { 0 },
                 });
-            } else {
-                self.start_countdown = Some(remaining - 1);
             }
         }
-        pixel
     }
 
     fn advance_scan(&mut self) {
         if let Some(scan) = &mut self.scan {
+            if scan.lead > 0 {
+                scan.lead -= 1;
+                return;
+            }
             if scan.serial_lag > 0 {
                 scan.serial_lag -= 1;
                 return;
@@ -207,7 +180,7 @@ impl Player {
         let Some(scan) = &self.scan else {
             return false;
         };
-        if scan.serial_lag > 0 {
+        if scan.lead > 0 || scan.serial_lag > 0 {
             return false;
         }
         let graphics = if self.vertical_delay {
@@ -227,8 +200,9 @@ pub struct Missile {
     pub nusiz: u8,
     div: Divider,
     position: u8,
-    half_offset: bool,
-    start_countdown: Option<u8>,
+    start_pending: bool,
+    /// MOTCK edges until the width gate opens: the select-network tail.
+    lead: u8,
     scan_clocks_left: u8,
 }
 
@@ -246,45 +220,31 @@ impl Missile {
             nusiz: 0,
             div: Divider::new(),
             position: 0,
-            half_offset: false,
-            start_countdown: None,
+            start_pending: false,
+            lead: 0,
             scan_clocks_left: 0,
         }
-    }
-
-    fn start_to_pixel(&self) -> u8 {
-        SCAN_STARTUP
-            + if self.half_offset {
-                VISIBLE_PLANT_SETTLE
-            } else {
-                0
-            }
-    }
-
-    fn decode_to_pixel(&self) -> u8 {
-        DECODE_CYCLE + self.start_to_pixel()
     }
 
     /// RESMx is level-active across the strobe: the scan-counter clear
     /// leads the counter plant by one clock, killing an unlit scan.
     pub fn reset_kill(&mut self) {
-        if self.scan_clocks_left > 0 && self.scan_clocks_left == self.width() {
+        if self.lead > 0 {
+            self.lead = 0;
             self.scan_clocks_left = 0;
         }
     }
 
-    pub fn reset_position(&mut self, grid_aligned: bool) {
+    /// RESxx: plant the counter and ground the ring to the strobe. A START
+    /// still in its serialiser tail re-phases onto the new grid — back into
+    /// the pending latch for the next wrap's delivery.
+    pub fn reset_position(&mut self) {
         self.position = 0;
-        self.div.rephase();
-        self.half_offset = !grid_aligned;
-        // Reset re-phases an in-flight (already-decoded) start onto the new
-        // grid past the decode cycle. A dot already emitting survives unmoved;
-        // with no start in flight, a decode not yet fired is pre-empted.
-        if self.start_countdown.is_some()
-            || (self.scan_clocks_left > 0 && self.scan_clocks_left == self.width())
-        {
-            self.start_countdown = Some(self.start_to_pixel() - 1);
+        self.div.ground();
+        if self.lead > 0 {
+            self.lead = 0;
             self.scan_clocks_left = 0;
+            self.start_pending = true;
         }
     }
 
@@ -308,27 +268,25 @@ impl Missile {
 
     /// Combinational serialiser output for the current scan state.
     pub fn output(&self) -> bool {
-        self.enabled && !self.locked_to_player && self.scan_clocks_left > 0
+        self.enabled && !self.locked_to_player && self.lead == 0 && self.scan_clocks_left > 0
     }
 
-    pub fn tick(&mut self) -> bool {
-        let pixel = self.output();
-        self.scan_clocks_left = self.scan_clocks_left.saturating_sub(1);
+    /// One motion clock (MOTCK edge).
+    pub fn tick(&mut self) {
+        if self.lead > 0 {
+            self.lead -= 1;
+        } else {
+            self.scan_clocks_left = self.scan_clocks_left.saturating_sub(1);
+        }
         if self.div.tick() {
+            let deliver = self.start_pending;
+            self.start_pending = copy_decodes(self.nusiz).contains(&self.position);
             self.position = (self.position + 1) % COUNTS;
-            if copy_decodes(self.nusiz).contains(&self.position) {
-                self.start_countdown = Some(self.decode_to_pixel());
-            }
-        }
-        if let Some(remaining) = self.start_countdown {
-            if remaining == 0 {
-                self.start_countdown = None;
+            if deliver {
+                self.lead = SERIAL_TAIL;
                 self.scan_clocks_left = self.width();
-            } else {
-                self.start_countdown = Some(remaining - 1);
             }
         }
-        pixel
     }
 }
 
@@ -340,8 +298,9 @@ pub struct Ball {
     pub width_exponent: u8,
     div: Divider,
     position: u8,
-    half_offset: bool,
-    start_countdown: Option<u8>,
+    start_pending: bool,
+    /// MOTCK edges until the width gate opens: the select-network tail.
+    lead: u8,
     scan_clocks_left: u8,
 }
 
@@ -360,40 +319,28 @@ impl Ball {
             width_exponent: 0,
             div: Divider::new(),
             position: 0,
-            half_offset: false,
-            start_countdown: None,
+            start_pending: false,
+            lead: 0,
             scan_clocks_left: 0,
         }
-    }
-
-    fn start_to_pixel(&self) -> u8 {
-        SCAN_STARTUP
-            + if self.half_offset {
-                VISIBLE_PLANT_SETTLE
-            } else {
-                0
-            }
-    }
-
-    fn decode_to_pixel(&self) -> u8 {
-        DECODE_CYCLE + self.start_to_pixel()
     }
 
     /// RESBL is level-active across the strobe: the width-gate clear
     /// leads the counter plant by one clock, killing an unlit scan.
     pub fn reset_kill(&mut self) {
-        if self.scan_clocks_left > 0 && self.scan_clocks_left == (1 << self.width_exponent) {
+        if self.lead > 0 {
+            self.lead = 0;
             self.scan_clocks_left = 0;
         }
     }
 
-    pub fn reset_position(&mut self, grid_aligned: bool) {
+    /// RESxx: plant the counter and ground the ring to the strobe. Unlike the
+    /// players and missiles, RESBL is itself a START — injected straight into
+    /// the pending latch, delivered at the first wrap rather than a decode.
+    pub fn reset_position(&mut self) {
         self.position = 0;
-        self.div.rephase();
-        self.half_offset = !grid_aligned;
-        // Unlike the players and missiles, RESBL is itself a START — it draws
-        // immediately, latching past the decode cycle rather than waiting a wrap.
-        self.start_countdown = Some(self.start_to_pixel() - 1);
+        self.div.ground();
+        self.start_pending = true;
     }
 
     fn enabled(&self) -> bool {
@@ -406,27 +353,25 @@ impl Ball {
 
     /// Combinational serialiser output for the current scan state.
     pub fn output(&self) -> bool {
-        self.enabled() && self.scan_clocks_left > 0
+        self.enabled() && self.lead == 0 && self.scan_clocks_left > 0
     }
 
-    pub fn tick(&mut self) -> bool {
-        let pixel = self.output();
-        self.scan_clocks_left = self.scan_clocks_left.saturating_sub(1);
+    /// One motion clock (MOTCK edge).
+    pub fn tick(&mut self) {
+        if self.lead > 0 {
+            self.lead -= 1;
+        } else {
+            self.scan_clocks_left = self.scan_clocks_left.saturating_sub(1);
+        }
         if self.div.tick() {
+            let deliver = self.start_pending;
+            self.start_pending = self.position == MAIN_DECODE;
             self.position = (self.position + 1) % COUNTS;
-            if self.position == MAIN_DECODE {
-                self.start_countdown = Some(self.decode_to_pixel());
-            }
-        }
-        if let Some(remaining) = self.start_countdown {
-            if remaining == 0 {
-                self.start_countdown = None;
+            if deliver {
+                self.lead = SERIAL_TAIL;
                 self.scan_clocks_left = 1 << self.width_exponent;
-            } else {
-                self.start_countdown = Some(remaining - 1);
             }
         }
-        pixel
     }
 }
 

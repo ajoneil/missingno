@@ -101,6 +101,14 @@ impl HSyncCounter {
         false
     }
 
+    /// Whether MOTCK reaches the objects this clock: the HB gate opens one
+    /// colour clock ahead of the pixel window (N90's measured per-line edges
+    /// run x=−1..158 — one rise on the last blank clock, none on the last
+    /// visible one).
+    pub(crate) fn motck_fires(&self) -> bool {
+        (self.position + 1) % CLOCKS_PER_LINE >= self.hblank_release
+    }
+
     /// Force the line back to its start (the SHB wrap, or an RSYNC strobe).
     pub(crate) fn reset_line(&mut self) {
         self.position = 0;
