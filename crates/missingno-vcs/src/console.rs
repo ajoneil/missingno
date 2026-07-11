@@ -32,7 +32,6 @@ pub struct Vcs {
     pub riot: Riot,
     cartridge: Cartridge,
     region: TvStandard,
-    clock_phase: u8,
     pending_tia_writes: [Option<TiaWrite>; MAX_TIA_WRITES_IN_FLIGHT],
     last_bus_value: u8,
     building: Vec<Scanline>,
@@ -56,8 +55,14 @@ const TIA_GATED_WRITE_HC: u8 = TIA_WRITE_HC + 2;
 /// Playfield registers reach the serialiser a colour clock later still; the
 /// per-cell latch in the playfield completes the in-flight cell.
 const TIA_CELL_WRITE_HC: u8 = TIA_WRITE_HC + 4;
-/// RSYNC's counter reset requantises onto the next H@1-H@2 cycle.
-const TIA_RSYNC_HC: u8 = TIA_WRITE_HC + 6;
+/// RSYNC's counter reset lands the wrap 3.5 colour clocks after the write end.
+const TIA_RSYNC_HC: u8 = TIA_WRITE_HC + 7;
+
+/// The TIA's φ0 (÷3) divider phase: CPU cycles begin where the line position
+/// ≡ this (mod 3). RSYNC requantises the divider with the counter, so the
+/// phase is line-locked; the value is the power-on settle, fixed at the
+/// verified reference convention.
+const PHI0_GRID_PHASE: u16 = 2;
 
 /// A write and the next can overlap; ≤6-clock delays never make three (BRK's
 /// mirror-push triple is the binding case).
@@ -159,7 +164,6 @@ impl Vcs {
             riot: Riot::new(),
             cartridge,
             region,
-            clock_phase: 0,
             pending_tia_writes: [None; MAX_TIA_WRITES_IN_FLIGHT],
             last_bus_value: 0,
             building: Vec::new(),
@@ -193,7 +197,7 @@ impl Vcs {
     /// colour clocks, so its write registers ahead of the low-half render.
     fn step_half_high(&mut self) {
         self.advance_pending_writes();
-        if self.clock_phase == 0 {
+        if self.tia.beam() % 3 == PHI0_GRID_PHASE {
             self.cpu.rdy = self.tia.cpu_ready;
             let mut bus = BoardBus {
                 tia: &mut self.tia,
@@ -210,7 +214,6 @@ impl Vcs {
     /// The colour clock's low half: pending writes tick a half-clock (a reset
     /// strobe releases here), MOTCK fires and the TIA renders the pixel.
     fn step_half_low(&mut self) {
-        self.clock_phase = (self.clock_phase + 1) % 3;
         self.advance_pending_writes();
         self.tia.step_clock();
         if let Some(line) = self.tia.take_line() {
@@ -355,14 +358,14 @@ impl Vcs {
     }
 
     /// Advance exactly one CPU cycle (three colour clocks), first
-    /// aligning to the colour-clock phase so the CPU's bus access lands
-    /// at phase 0.
+    /// aligning to the φ0 grid so the CPU's bus access lands on its
+    /// boundary clock.
     pub fn step_cpu_cycle(&mut self) {
-        while self.clock_phase != 0 {
+        while self.tia.beam() % 3 != PHI0_GRID_PHASE {
             self.step_clock();
         }
         self.step_clock();
-        while self.clock_phase != 0 {
+        while self.tia.beam() % 3 != PHI0_GRID_PHASE {
             self.step_clock();
         }
     }
