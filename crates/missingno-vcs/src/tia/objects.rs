@@ -10,27 +10,34 @@
 /// (position count × 4 + ÷4 divider phase, one running count at MOTCK rate).
 pub const COUNTER_RANGE: u8 = 160;
 
-/// MOTCK edges from a START decode to the first pixel off the grid-aligned
-/// plant: the ÷4 two-phase decode cycle tail (missile/ball land at hblank x=2).
-const START_TAIL: u8 = 2;
+/// A START decode passes through one full ÷4 two-phase cycle (the divider's
+/// N868/N1480 phases) before it reaches the scan counter.
+const DECODE_CYCLE: u8 = 4;
 /// The extra MOTCK edge (N90) to latch the player START; missiles/ball omit it.
 const PLAYER_START_LATCH: u8 = 1;
+/// The scan counter's spin-up to its first serial bit (N90-clocked); pinned by
+/// the hblank landings (player x=3, missile/ball x=2).
+const SCAN_STARTUP: u8 = 2;
 
 /// A reset planting mid-visible re-phases the ÷4 divider onto the CPU-write
 /// grid, ½ CLK off the visible grid, settling the landing ~2 CLK later than a
 /// hblank plant that re-aligns to the visible grid when MOTCK resumes at x=0.
 const VISIBLE_PLANT_SETTLE: u8 = 2;
 
-/// Start decodes per NUSIZ player mode: main copy plus the close (+16),
-/// medium (+32) and far (+64) copy decodes the mode enables.
+/// The main-copy START decode: the counter's wrap (count 39, ×4 colour clocks).
+const MAIN_DECODE: u8 = 156;
+
+/// Counter positions of the START decodes per NUSIZ player mode: the main copy
+/// (the wrap) plus the close (count 3), medium (count 7) and far (count 15)
+/// copies the mode enables — the LFSR decode counts, ×4 colour clocks.
 fn copy_decodes(mode: u8) -> &'static [u8] {
     match mode & 0x07 {
-        1 => &[0, 16],
-        2 => &[0, 32],
-        3 => &[0, 16, 32],
-        4 => &[0, 64],
-        6 => &[0, 32, 64],
-        _ => &[0],
+        1 => &[MAIN_DECODE, 12],
+        2 => &[MAIN_DECODE, 28],
+        3 => &[MAIN_DECODE, 12, 28],
+        4 => &[MAIN_DECODE, 60],
+        6 => &[MAIN_DECODE, 28, 60],
+        _ => &[MAIN_DECODE],
     }
 }
 
@@ -86,11 +93,11 @@ impl Player {
         }
     }
 
-    /// MOTCK edges from a START decode to the first pixel, for the divider's
-    /// current sub-phase.
-    fn start_delay(&self) -> u8 {
-        START_TAIL
-            + PLAYER_START_LATCH
+    /// MOTCK edges from the latched START to the first pixel: the player START
+    /// latch, the scan-counter spin-up, and the divider's sub-phase settle.
+    fn start_to_pixel(&self) -> u8 {
+        PLAYER_START_LATCH
+            + SCAN_STARTUP
             + if self.half_offset {
                 VISIBLE_PLANT_SETTLE
             } else {
@@ -98,16 +105,21 @@ impl Player {
             }
     }
 
+    /// MOTCK edges from a fresh START decode to the first pixel: the full ÷4
+    /// decode cycle ahead of the latch/scan.
+    fn decode_to_pixel(&self) -> u8 {
+        DECODE_CYCLE + self.start_to_pixel()
+    }
+
     pub fn reset_position(&mut self, grid_aligned: bool) {
         self.counter = 0;
         // RESxx re-phases the local ÷4 divider to the strobe; a mid-visible
         // strobe lands it off the visible grid.
         self.half_offset = !grid_aligned;
-        // A start decode in flight re-phases onto the new counter grid, its
-        // first pipeline stage clocking on the decode tick; with no start in
-        // flight the main copy waits for the wrap.
+        // A start already decoded and in flight re-phases onto the new grid past
+        // the decode cycle; with none in flight the main copy waits for the wrap.
         if self.start_countdown.is_some() {
-            self.start_countdown = Some(self.start_delay() - 1);
+            self.start_countdown = Some(self.start_to_pixel() - 1);
         }
     }
 
@@ -121,7 +133,7 @@ impl Player {
         self.advance_scan();
         self.counter = (self.counter + 1) % COUNTER_RANGE;
         if copy_decodes(self.nusiz).contains(&self.counter) {
-            self.start_countdown = Some(self.start_delay());
+            self.start_countdown = Some(self.decode_to_pixel());
         }
         if let Some(remaining) = self.start_countdown {
             if remaining == 0 {
@@ -205,13 +217,17 @@ impl Missile {
         }
     }
 
-    fn start_delay(&self) -> u8 {
-        START_TAIL
+    fn start_to_pixel(&self) -> u8 {
+        SCAN_STARTUP
             + if self.half_offset {
                 VISIBLE_PLANT_SETTLE
             } else {
                 0
             }
+    }
+
+    fn decode_to_pixel(&self) -> u8 {
+        DECODE_CYCLE + self.start_to_pixel()
     }
 
     /// RESMx is level-active across the strobe: the scan-counter clear
@@ -225,14 +241,13 @@ impl Missile {
     pub fn reset_position(&mut self, grid_aligned: bool) {
         self.counter = 0;
         self.half_offset = !grid_aligned;
-        // Reset re-phases an in-flight start onto the new counter grid;
-        // like the wrap decode, its first stage clocks on the decode
-        // tick. A dot already emitting survives unmoved; with no start
-        // in flight, a decode not yet fired is pre-empted.
+        // Reset re-phases an in-flight (already-decoded) start onto the new
+        // grid past the decode cycle. A dot already emitting survives unmoved;
+        // with no start in flight, a decode not yet fired is pre-empted.
         if self.start_countdown.is_some()
             || (self.scan_clocks_left > 0 && self.scan_clocks_left == self.width())
         {
-            self.start_countdown = Some(self.start_delay() - 1);
+            self.start_countdown = Some(self.start_to_pixel() - 1);
             self.scan_clocks_left = 0;
         }
     }
@@ -263,7 +278,7 @@ impl Missile {
         self.scan_clocks_left = self.scan_clocks_left.saturating_sub(1);
         self.counter = (self.counter + 1) % COUNTER_RANGE;
         if copy_decodes(self.nusiz).contains(&self.counter) {
-            self.start_countdown = Some(self.start_delay());
+            self.start_countdown = Some(self.decode_to_pixel());
         }
         if let Some(remaining) = self.start_countdown {
             if remaining == 0 {
@@ -309,13 +324,17 @@ impl Ball {
         }
     }
 
-    fn start_delay(&self) -> u8 {
-        START_TAIL
+    fn start_to_pixel(&self) -> u8 {
+        SCAN_STARTUP
             + if self.half_offset {
                 VISIBLE_PLANT_SETTLE
             } else {
                 0
             }
+    }
+
+    fn decode_to_pixel(&self) -> u8 {
+        DECODE_CYCLE + self.start_to_pixel()
     }
 
     /// RESBL is level-active across the strobe: the width-gate clear
@@ -329,10 +348,9 @@ impl Ball {
     pub fn reset_position(&mut self, grid_aligned: bool) {
         self.counter = 0;
         self.half_offset = !grid_aligned;
-        // Unlike the players and missiles, the ball's reset decode is
-        // also a start decode; like the wrap decode, its first pipeline
-        // stage clocks on the decode tick.
-        self.start_countdown = Some(self.start_delay() - 1);
+        // Unlike the players and missiles, RESBL is itself a START — it draws
+        // immediately, latching past the decode cycle rather than waiting a wrap.
+        self.start_countdown = Some(self.start_to_pixel() - 1);
     }
 
     fn enabled(&self) -> bool {
@@ -352,8 +370,8 @@ impl Ball {
         let pixel = self.output();
         self.scan_clocks_left = self.scan_clocks_left.saturating_sub(1);
         self.counter = (self.counter + 1) % COUNTER_RANGE;
-        if self.counter == 0 {
-            self.start_countdown = Some(self.start_delay());
+        if self.counter == MAIN_DECODE {
+            self.start_countdown = Some(self.decode_to_pixel());
         }
         if let Some(remaining) = self.start_countdown {
             if remaining == 0 {
