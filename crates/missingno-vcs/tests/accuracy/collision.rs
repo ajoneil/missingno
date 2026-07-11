@@ -32,6 +32,16 @@ fn latches_pal() {
 }
 
 #[test]
+fn latency_swallow_ntsc() {
+    common::run_self_test("collision/latency-swallow_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn latency_swallow_pal() {
+    common::run_self_test("collision/latency-swallow_pal.a26", TvStandard::Pal);
+}
+
+#[test]
 fn onset_sweep_ntsc() {
     common::run_self_test("collision/onset-sweep_ntsc.a26", TvStandard::Ntsc);
 }
