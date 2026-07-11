@@ -55,12 +55,9 @@ const TIA_GATED_WRITE_CLOCKS: u8 = TIA_WRITE_CLOCKS + 1;
 const TIA_CELL_WRITE_CLOCKS: u8 = TIA_WRITE_CLOCKS + 2;
 /// RSYNC's counter reset requantises onto the next H@1-H@2 cycle.
 const TIA_RSYNC_CLOCKS: u8 = TIA_WRITE_CLOCKS + 3;
-/// Position-counter resets land a two-phase-clock cycle later than other
-/// writes; the residue vs the ordinary write path is 2 colour clocks.
-const TIA_RESET_STROBE_CLOCKS: u8 = TIA_WRITE_CLOCKS + 2;
 
-/// A reset strobe and the next write can overlap; ≤6-clock delays never
-/// make three (BRK's mirror-push triple is the binding case).
+/// A write and the next can overlap; ≤6-clock delays never make three (BRK's
+/// mirror-push triple is the binding case).
 const MAX_TIA_WRITES_IN_FLIGHT: usize = 2;
 
 // The 6507's 13-line board decode: A12 selects the cartridge; below it,
@@ -75,8 +72,8 @@ fn selects_riot_ram(address: u16) -> bool {
     address & 0x0200 == 0
 }
 
-/// TIA writes are deferred through a two-slot pipe: a reset strobe and the
-/// next instruction's write sit three clocks apart and can overlap.
+/// TIA writes are deferred through a two-slot pipe: a write and the next
+/// instruction's write can overlap in flight.
 struct BoardBus<'a> {
     tia: &'a mut Tia,
     riot: &'a mut Riot,
@@ -111,15 +108,14 @@ impl Bus for BoardBus<'_> {
 
     fn write(&mut self, address: u16, data: u8) {
         *self.last_bus_value = data;
-        use crate::tia::registers::{
-            GRP0, GRP1, PF0, PF1, PF2, RESBL, RESM0, RESM1, RESP0, RESP1, RSYNC, VBLANK,
-        };
+        use crate::tia::registers::{GRP0, GRP1, PF0, PF1, PF2, RSYNC, VBLANK};
         if selects_cartridge(address) {
             self.cartridge.write_access(address);
         } else if selects_tia(address) {
             let register = (address & 0x3F) as u8;
+            // Every write commits at the φ2-fall; reset strobes are ordinary
+            // writes here — their extra propagation is the object's ÷4 re-phase.
             let clocks = match u16::from(register) {
-                RESP0 | RESP1 | RESM0 | RESM1 | RESBL => TIA_RESET_STROBE_CLOCKS,
                 RSYNC => TIA_RSYNC_CLOCKS,
                 VBLANK | GRP0 | GRP1 => TIA_GATED_WRITE_CLOCKS,
                 PF0 | PF1 | PF2 => TIA_CELL_WRITE_CLOCKS,

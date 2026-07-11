@@ -517,6 +517,12 @@ impl Tia {
         }
     }
 
+    /// Whether a reset committing now plants its object on the visible grid:
+    /// true while MOTCK is gated (hblank or the HMOVE comb), false mid-pixel.
+    fn reset_grid_aligned(&self) -> bool {
+        !matches!(self.hsync.beam(), Beam::Pixel(_))
+    }
+
     /// The reset strobe's leading scan-kill, one clock before it applies.
     pub(crate) fn missile_reset_kill(&mut self, which: usize) {
         match which {
@@ -594,11 +600,14 @@ impl Tia {
             PF0 => self.playfield.pf0 = value,
             PF1 => self.playfield.pf1 = value,
             PF2 => self.playfield.pf2 = value,
-            RESP0 => self.player0.reset_position(),
-            RESP1 => self.player1.reset_position(),
-            RESM0 => self.missile0.reset_position(),
-            RESM1 => self.missile1.reset_position(),
-            RESBL => self.ball.reset_position(),
+            // MOTCK is gated off the object counters during hblank/comb, so a
+            // reset there re-phases the ÷4 divider onto the visible grid; a
+            // visible reset lands it off-grid (the CPU-write ½-CLK sub-phase).
+            RESP0 => self.player0.reset_position(self.reset_grid_aligned()),
+            RESP1 => self.player1.reset_position(self.reset_grid_aligned()),
+            RESM0 => self.missile0.reset_position(self.reset_grid_aligned()),
+            RESM1 => self.missile1.reset_position(self.reset_grid_aligned()),
+            RESBL => self.ball.reset_position(self.reset_grid_aligned()),
             AUDC0 => self.audio[0].control = value,
             AUDC1 => self.audio[1].control = value,
             AUDF0 => self.audio[0].frequency = value & 0x1F,
