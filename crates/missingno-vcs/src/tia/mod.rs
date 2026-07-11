@@ -31,9 +31,7 @@ const HBLANK_EXTENSION_DECODE_CLOCKS: u8 = 3;
 /// write applying until the train arms; the first pulse is the next pulse
 /// instant, the arming clock included.
 const MOTION_START_CLOCKS: u8 = 8;
-/// The H@1 edge in beam coordinates: comparator inputs capture here.
-const MOTION_CAPTURE_PHASE: u16 = 0;
-/// The stuffed pulse trails the H@1-edge capture by two colour clocks.
+/// H@1 in beam coordinates: the ripple steps and stuffs a clock here.
 const MOTION_PULSE_PHASE: u16 = 2;
 /// The motion ripple counter's value between sequences (%1111).
 const RESTING_RIPPLE: u8 = 15;
@@ -126,26 +124,24 @@ const MOVABLES: [MovableIndex; 5] = [
     MovableIndex::Bl,
 ];
 
-/// The HMOVE motion sequencer. Its comparators read the HM values as
-/// captured at each H@1 edge, so a mid-sequence rewrite that never matches
-/// a captured compare leaves the latch stuffing clocks every pulse until
-/// the next HMOVE — HMCLR clears only the HM values. The live descending
-/// compare samples the HM value one stuffed pulse earlier than the resting
-/// (exhausted-ripple) release compare — the Cosmic Ark starfield's jam
-/// lives in that one-pulse gap.
+/// The HMOVE motion engine. A strobe latches [SEC]; after a fixed decode the
+/// per-object "more movement" latches set and a 4-bit ripple counter starts at
+/// 15 and counts down, one step every 4 CLK on H@1. Each step every latched
+/// object gets one stuffed motion clock, and each object's comparator clears
+/// its latch when the ripple reaches that object's HM nibble with D7 inverted
+/// (so the stuffed count is 0..15 = 8 − net move). The comparator reads the HM
+/// latches LIVE, so a mid-sequence rewrite that dodges every remaining ripple
+/// value never clears the latch — it stuffs a clock every line until the next
+/// HMOVE (the Cosmic Ark starfield). HMCLR zeroes the HM values only.
 struct MotionSequencer {
-    /// Colour clocks until a strobe's pulse train arms.
+    /// [SEC] decode: colour clocks until the ripple starts and the latches set.
     start_countdown: Option<u8>,
-    /// Descending comparator ripple; comparisons stop when it runs out.
+    /// The 4-bit ripple counter, 15 down to 0; `None` once exhausted (the
+    /// comparator then rests against %1111).
     ripple: Option<u8>,
     more_movement: [bool; 5],
     /// HM values, indexed in MOVABLES order: P0, P1, M0, M1, BL.
     values: [u8; 5],
-    /// The H@1-edge capture the resting release compare reads.
-    captured_values: [u8; 5],
-    /// The HM values as of the previous pulse — what the live descending
-    /// compare reads, one pulse period before the resting compare.
-    previous_pulse_values: [u8; 5],
 }
 
 impl MotionSequencer {
@@ -155,8 +151,6 @@ impl MotionSequencer {
             ripple: None,
             more_movement: [false; 5],
             values: [0; 5],
-            captured_values: [0; 5],
-            previous_pulse_values: [0; 5],
         }
     }
 
@@ -172,10 +166,6 @@ impl MotionSequencer {
     /// Advance one colour clock; `Some(ticks)` on a pulse, where a set
     /// latch requests an extra motion clock for its object.
     fn step(&mut self, phase: u16) -> Option<[bool; 5]> {
-        // A write landing on the edge clock itself still makes the capture.
-        if phase == MOTION_CAPTURE_PHASE {
-            self.captured_values = self.values;
-        }
         if let Some(remaining) = self.start_countdown {
             if remaining > 0 {
                 self.start_countdown = Some(remaining - 1);
@@ -184,32 +174,24 @@ impl MotionSequencer {
             self.start_countdown = None;
             self.ripple = Some(15);
         }
+        // The ripple steps and stuffs once every 4 CLK, on H@1.
         if phase != MOTION_PULSE_PHASE {
             return None;
         }
-        // A live descending ripple compares the HM value as of the previous
-        // pulse; only the exhausted-ripple release compare reads the H@1
-        // capture. Refresh the previous-pulse snapshot every pulse (even
-        // between trains) so it always trails the live values by one pulse.
-        let compare_values = if self.ripple.is_some() {
-            self.previous_pulse_values
-        } else {
-            self.captured_values
-        };
-        self.previous_pulse_values = self.values;
         if !self.any_movement() {
             return None;
         }
 
         let mut ticks = [false; 5];
-        // The exhausted ripple rests at %1111 with the comparator still
-        // wired: rewriting HM to $8x clears a latch stuck past the ripple.
+        // The comparator reads the HM latches live: it clears an object's
+        // latch when the ripple reaches that object's D7-inverted nibble. An
+        // exhausted ripple rests at %1111, so a late HM rewrite still clears.
         let ripple = self.ripple.unwrap_or(RESTING_RIPPLE);
-        for (i, more) in self.more_movement.iter_mut().enumerate() {
-            if *more && ripple == (compare_values[i] >> 4) ^ 0x07 {
-                *more = false;
+        for i in 0..self.more_movement.len() {
+            if self.more_movement[i] && ripple == (self.values[i] >> 4) ^ 0x07 {
+                self.more_movement[i] = false;
             }
-            ticks[i] = *more;
+            ticks[i] = self.more_movement[i];
         }
         self.ripple = match self.ripple {
             Some(0) | None => None,
