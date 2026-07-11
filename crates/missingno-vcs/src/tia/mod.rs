@@ -252,6 +252,11 @@ pub struct Tia {
     /// HMOVE's SEC decode on its way to (or holding at) the reset-select.
     hblank_extension_pending: Option<u8>,
     hblank_extension_armed: bool,
+    /// A merged live stuff stretches the object's motion-clock high through
+    /// the stuff slot; the serialiser shows the NEXT clock's output one clock
+    /// early (measured: a dot two clocks after the slot swallows, three
+    /// clocks after widens, and nothing persists to the next line).
+    seam_lookahead: [bool; 5],
 
     collisions: [u8; 8],
 
@@ -300,6 +305,7 @@ impl Tia {
             motion: MotionSequencer::new(),
             hblank_extension_pending: None,
             hblank_extension_armed: false,
+            seam_lookahead: [false; 5],
             collisions: [0; 8],
             audio: [Channel::new(), Channel::new()],
             triggers: [false; 2],
@@ -368,15 +374,21 @@ impl Tia {
         }
 
         // A stuffed motion pulse ORs onto the object's own motion-clock node:
-        // coincident with a firing MOTCK it merges into one pulse (no extra
-        // advance); while MOTCK is gated the stuff is the pulse that moves.
+        // coincident with a firing MOTCK it merges into one stretched pulse
+        // (no extra advance, but the serialiser shows the next clock's output
+        // one clock early); while MOTCK is gated the stuff is the pulse that
+        // moves the object.
+        let seam = self.seam_lookahead;
+        self.seam_lookahead = [false; 5];
         let motck = self.hsync.motck_fires();
-        if let Some(ticks) = self.motion.step(self.hsync.phase())
-            && !motck
-        {
-            for (movable, ticked) in MOVABLES.into_iter().zip(ticks) {
+        if let Some(ticks) = self.motion.step(self.hsync.phase()) {
+            for (i, (movable, ticked)) in MOVABLES.into_iter().zip(ticks).enumerate() {
                 if ticked {
-                    self.tick_movable(movable);
+                    if motck {
+                        self.seam_lookahead[i] = true;
+                    } else {
+                        self.tick_movable(movable);
+                    }
                 }
             }
         }
@@ -388,7 +400,7 @@ impl Tia {
         }
 
         match self.hsync.beam() {
-            Beam::Pixel(x) => self.render_clock(x),
+            Beam::Pixel(x) => self.render_clock(x, seam),
             // Inside the HMOVE comb: blanked output.
             Beam::Comb(x) => self.line[x as usize] = 0,
             Beam::Blank => {}
@@ -424,16 +436,61 @@ impl Tia {
         });
     }
 
-    fn render_clock(&mut self, x: u8) {
+    /// One tick ahead of the live state — the merged pulse's early window.
+    fn peek_movable(&self, which: MovableIndex) -> bool {
+        match which {
+            MovableIndex::P0 => {
+                let mut ghost = self.player0.clone();
+                ghost.tick();
+                ghost.output()
+            }
+            MovableIndex::P1 => {
+                let mut ghost = self.player1.clone();
+                ghost.tick();
+                ghost.output()
+            }
+            MovableIndex::M0 => {
+                let mut ghost = self.missile0.clone();
+                ghost.tick();
+                ghost.output()
+            }
+            MovableIndex::M1 => {
+                let mut ghost = self.missile1.clone();
+                ghost.tick();
+                ghost.output()
+            }
+            MovableIndex::Bl => {
+                let mut ghost = self.ball.clone();
+                ghost.tick();
+                ghost.output()
+            }
+        }
+    }
+
+    fn movable_pixel(&self, which: MovableIndex, seam: [bool; 5]) -> bool {
+        if seam[which as usize] {
+            self.peek_movable(which)
+        } else {
+            match which {
+                MovableIndex::P0 => self.player0.output(),
+                MovableIndex::P1 => self.player1.output(),
+                MovableIndex::M0 => self.missile0.output(),
+                MovableIndex::M1 => self.missile1.output(),
+                MovableIndex::Bl => self.ball.output(),
+            }
+        }
+    }
+
+    fn render_clock(&mut self, x: u8, seam: [bool; 5]) {
         if x.is_multiple_of(4) {
             self.playfield.latch_cell();
         }
         let px = Pixels {
-            p0: self.player0.output(),
-            p1: self.player1.output(),
-            m0: self.missile0.output(),
-            m1: self.missile1.output(),
-            bl: self.ball.output(),
+            p0: self.movable_pixel(MovableIndex::P0, seam),
+            p1: self.movable_pixel(MovableIndex::P1, seam),
+            m0: self.movable_pixel(MovableIndex::M0, seam),
+            m1: self.movable_pixel(MovableIndex::M1, seam),
+            bl: self.movable_pixel(MovableIndex::Bl, seam),
             pf: self.playfield.pixel(x),
         };
 

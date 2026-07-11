@@ -72,6 +72,7 @@ fn player_pixel_clocks(mode: u8) -> u8 {
     }
 }
 
+#[derive(Clone)]
 struct Scan {
     /// MOTCK edges until the serialiser presents bit 0: the player START
     /// latch plus the select-network tail.
@@ -83,6 +84,7 @@ struct Scan {
     serial_lag: u8,
 }
 
+#[derive(Clone)]
 pub struct Player {
     pub grp_new: u8,
     pub grp_old: u8,
@@ -193,6 +195,7 @@ impl Player {
     }
 }
 
+#[derive(Clone)]
 pub struct Missile {
     pub enabled: bool,
     /// While set, the missile hides and tracks its player (RESMPx).
@@ -290,6 +293,7 @@ impl Missile {
     }
 }
 
+#[derive(Clone)]
 pub struct Ball {
     pub enabled_new: bool,
     pub enabled_old: bool,
