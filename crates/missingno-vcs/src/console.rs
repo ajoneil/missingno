@@ -49,12 +49,10 @@ const TIA_WRITE_HC: u8 = 4;
 /// A reset strobe (RESxx) re-phases the object counters on the strobe level
 /// release — the low half one half-clock after φ2.
 const TIA_RESET_HC: u8 = TIA_WRITE_HC + 1;
-/// The VBLANK gate and the player graphics consume a write one colour clock
-/// behind the combinational colour path.
-const TIA_GATED_WRITE_HC: u8 = TIA_WRITE_HC + 2;
-/// Playfield registers reach the serialiser a colour clock later still; the
-/// per-cell latch in the playfield completes the in-flight cell.
-const TIA_CELL_WRITE_HC: u8 = TIA_WRITE_HC + 4;
+/// The colour registers are transparent latches read combinationally by the
+/// output mux: the new colour reaches the pads while the write still drives
+/// the bus, so the effect lands on the write cycle's own pixel.
+const TIA_COLOUR_WRITE_HC: u8 = TIA_WRITE_HC - 2;
 /// RSYNC's counter reset lands the wrap 3.5 colour clocks after the write end.
 const TIA_RSYNC_HC: u8 = TIA_WRITE_HC + 7;
 
@@ -117,7 +115,7 @@ impl Bus for BoardBus<'_> {
     fn write(&mut self, address: u16, data: u8) {
         *self.last_bus_value = data;
         use crate::tia::registers::{
-            GRP0, GRP1, PF0, PF1, PF2, RESBL, RESM0, RESM1, RESP0, RESP1, RSYNC, VBLANK,
+            COLUBK, COLUP0, COLUP1, COLUPF, RESBL, RESM0, RESM1, RESP0, RESP1, RSYNC,
         };
         if selects_cartridge(address) {
             self.cartridge.write_access(address);
@@ -128,8 +126,7 @@ impl Bus for BoardBus<'_> {
             let hc = match u16::from(register) {
                 RSYNC => TIA_RSYNC_HC,
                 RESP0 | RESP1 | RESM0 | RESM1 | RESBL => TIA_RESET_HC,
-                VBLANK | GRP0 | GRP1 => TIA_GATED_WRITE_HC,
-                PF0 | PF1 | PF2 => TIA_CELL_WRITE_HC,
+                COLUP0 | COLUP1 | COLUPF | COLUBK => TIA_COLOUR_WRITE_HC,
                 _ => TIA_WRITE_HC,
             };
             let slot = self
