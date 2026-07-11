@@ -16,13 +16,15 @@ const COUNTS: u8 = 40;
 const DECODE_CYCLE: u8 = 4;
 /// The extra MOTCK edge (N90) to latch the player START; missiles/ball omit it.
 const PLAYER_START_LATCH: u8 = 1;
-/// The scan counter's spin-up to its first serial bit (N90-clocked); pinned by
-/// the hblank landings (player x=3, missile/ball x=2).
+/// The graphics scan register's serialiser tail: the N90-clocked scan cells
+/// (N2517→N410→N2267) walk to their first output this many MOTCK edges after
+/// START — the missile/ball hblank landing (x=2); the player adds the latch.
 const SCAN_STARTUP: u8 = 2;
 
-/// A reset planting mid-visible re-phases the ÷4 divider onto the CPU-write
-/// grid, ½ CLK off the visible grid, settling the landing ~2 CLK later than a
-/// hblank plant that re-aligns to the visible grid when MOTCK resumes at x=0.
+/// A mid-visible reset re-phases the ÷4 divider one count later than a hblank
+/// reset: N868 falls fresh on the live release edge, vs held pre-loaded through
+/// the gated hblank (mid-line N1480 at x≡1 vs hblank at x≡0). The integer landing
+/// settles ~2 CLK — the +1 divider shift plus the ½-CLK CPU-write-grid offset.
 const VISIBLE_PLANT_SETTLE: u8 = 2;
 
 /// The main-copy START decode: the counter's wrap (count 39).
