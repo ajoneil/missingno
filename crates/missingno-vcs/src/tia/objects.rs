@@ -23,9 +23,8 @@ const SCAN_STARTUP: u8 = 2;
 
 /// A mid-visible reset re-phases the ÷4 divider one count later than a hblank
 /// reset: N868 falls fresh on the live release edge, vs held pre-loaded through
-/// the gated hblank (mid-line N1480 at x≡1 vs hblank at x≡0). The integer landing
-/// settles ~2 CLK — the +1 divider shift plus the ½-CLK CPU-write-grid offset.
-const VISIBLE_PLANT_SETTLE: u8 = 2;
+/// the gated hblank (mid-line N1480 at x≡1 vs hblank at x≡0).
+const VISIBLE_PLANT_SETTLE: u8 = 1;
 
 /// The main-copy START decode: the counter's wrap (count 39).
 const MAIN_DECODE: u8 = COUNTS - 1;
