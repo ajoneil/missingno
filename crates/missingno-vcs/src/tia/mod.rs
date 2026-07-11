@@ -124,14 +124,17 @@ const MOVABLES: [MovableIndex; 5] = [
 ];
 
 /// [SEC] propagating through the HSync two-phase clock after an HMOVE strobe.
-/// The strobe sets the latch; it clocks forward on the next H@1, then arms on
-/// the following H@2 — a two-phase shift, so the arm delay falls out of the
-/// grid rather than a colour-clock count.
+/// The strobe sets the latch transparently; it is sampled at the first H@2
+/// strictly after it set (a set coincident with the slot start misses), clocks
+/// through the next H@1, then arms on the following H@2 — a three-stage
+/// two-phase shift, so the arm delay falls out of the grid per strobe parity.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SecDecode {
     Idle,
-    /// Latched by the strobe; the next H@1 clocks it forward.
+    /// Latched by the strobe; the next strict H@2 samples it.
     Set,
+    /// Sampled at H@2; the next H@1 clocks it forward.
+    Sampled,
     /// Clocked through H@1; the next H@2 arms the latches.
     Clocked,
 }
@@ -148,6 +151,8 @@ enum SecDecode {
 /// zeroes the HM values only.
 struct MotionSequencer {
     sec: SecDecode,
+    /// Set for the strobe's own colour clock: its H@2 must not sample it.
+    just_strobed: bool,
     /// The 4-bit ripple counter, 15 down to 0; `None` once exhausted (the
     /// comparator then rests against %1111).
     ripple: Option<u8>,
@@ -160,6 +165,7 @@ impl MotionSequencer {
     fn new() -> Self {
         MotionSequencer {
             sec: SecDecode::Idle,
+            just_strobed: false,
             ripple: None,
             more_movement: [false; 5],
             values: [0; 5],
@@ -168,6 +174,7 @@ impl MotionSequencer {
 
     fn strobe(&mut self) {
         self.sec = SecDecode::Set;
+        self.just_strobed = true;
     }
 
     fn any_movement(&self) -> bool {
@@ -177,10 +184,16 @@ impl MotionSequencer {
     /// Advance one colour clock; `Some(ticks)` on an H@1 stuff, where a set
     /// latch requests an extra motion clock for its object.
     fn step(&mut self, phase: u16) -> Option<[bool; 5]> {
-        // [SEC] shifts H@1 → H@2; on that H@2 the more-movement latches arm
-        // for every object and the ripple counter loads to 15.
+        // [SEC] shifts H@2 → H@1 → H@2; on the final H@2 the more-movement
+        // latches arm for every object and the ripple counter loads to 15.
+        let strobed_this_clock = self.just_strobed;
+        self.just_strobed = false;
         match (self.sec, phase) {
-            (SecDecode::Set, MOTION_STUFF_PHASE) => {
+            (SecDecode::Set, MOTION_DECREMENT_PHASE) if !strobed_this_clock => {
+                self.sec = SecDecode::Sampled;
+                return None;
+            }
+            (SecDecode::Sampled, MOTION_STUFF_PHASE) => {
                 self.sec = SecDecode::Clocked;
                 return None;
             }
