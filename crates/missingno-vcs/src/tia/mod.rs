@@ -12,9 +12,11 @@
 //! positions emerge rather than being special-cased.
 
 pub(crate) mod audio;
+pub(crate) mod hsync;
 pub(crate) mod objects;
 
 use audio::Channel;
+use hsync::{Beam, HSyncCounter};
 use objects::{Ball, Missile, Player, Playfield};
 
 use crate::TvStandard;
@@ -25,16 +27,11 @@ pub const VISIBLE_CLOCKS: usize = 160;
 const LATE_HBLANK_CLOCKS: u16 = HBLANK_CLOCKS + 8;
 /// Colour clocks from an HMOVE write reaching the TIA to its SEC decode.
 const HBLANK_EXTENSION_DECODE_CLOCKS: u8 = 3;
-/// The RHB/LRHB choice: hblank ends at 68, or 76 when SEC is holding.
-const RESET_SELECT_CLOCK: u16 = 64;
-/// Grid-quantised SEC decode + latch set: colour clocks from the strobe's
-/// write applying until the train arms; the first pulse is the next pulse
-/// instant, the arming clock included.
-const MOTION_START_CLOCKS: u8 = 8;
-/// The H@1 edge in beam coordinates: comparator inputs capture here.
-const MOTION_CAPTURE_PHASE: u16 = 0;
-/// The stuffed pulse trails the H@1-edge capture by two colour clocks.
-const MOTION_PULSE_PHASE: u16 = 2;
+/// H@1 (visible x ≡ 1 mod 4): each latched object stuffs a clock and its
+/// comparator samples the live HM value.
+const MOTION_STUFF_PHASE: u16 = 1;
+/// H@2 (x ≡ 3 = H@1 + 2): the ripple counter decrements.
+const MOTION_DECREMENT_PHASE: u16 = 3;
 /// The motion ripple counter's value between sequences (%1111).
 const RESTING_RIPPLE: u8 = 15;
 /// SHB's latched reset absorbs a WSYNC set through the wrap's first CPU cycle.
@@ -126,101 +123,109 @@ const MOVABLES: [MovableIndex; 5] = [
     MovableIndex::Bl,
 ];
 
-/// The HMOVE motion sequencer. Its comparators read the HM values as
-/// captured at each H@1 edge, so a mid-sequence rewrite that never matches
-/// a captured compare leaves the latch stuffing clocks every pulse until
-/// the next HMOVE — HMCLR clears only the HM values. The live descending
-/// compare samples the HM value one stuffed pulse earlier than the resting
-/// (exhausted-ripple) release compare — the Cosmic Ark starfield's jam
-/// lives in that one-pulse gap.
+/// [SEC] propagating through the HSync two-phase clock after an HMOVE strobe.
+/// The strobe sets the latch; it clocks forward on the next H@1, then arms on
+/// the following H@2 — a two-phase shift, so the arm delay falls out of the
+/// grid rather than a colour-clock count.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SecDecode {
+    Idle,
+    /// Latched by the strobe; the next H@1 clocks it forward.
+    Set,
+    /// Clocked through H@1; the next H@2 arms the latches.
+    Clocked,
+}
+
+/// The HMOVE motion engine. A strobe latches [SEC], which clocks through the
+/// two-phase clock ([`SecDecode`]) to arm every object's "more movement" latch
+/// and load a 4-bit ripple counter to 15. The ripple counts down one step per
+/// H@2; each H@1 every latched object gets a stuffed motion clock, and each
+/// object's comparator clears its latch when the ripple reaches that object's
+/// HM nibble with D7 inverted (so the stuffed count is 0..15 = 8 − net move).
+/// The comparator reads the HM latches LIVE, so a mid-sequence rewrite that
+/// dodges every remaining ripple value never clears the latch — it stuffs a
+/// clock every line until the next HMOVE (the Cosmic Ark starfield). HMCLR
+/// zeroes the HM values only.
 struct MotionSequencer {
-    /// Colour clocks until a strobe's pulse train arms.
-    start_countdown: Option<u8>,
-    /// Descending comparator ripple; comparisons stop when it runs out.
+    sec: SecDecode,
+    /// The 4-bit ripple counter, 15 down to 0; `None` once exhausted (the
+    /// comparator then rests against %1111).
     ripple: Option<u8>,
     more_movement: [bool; 5],
     /// HM values, indexed in MOVABLES order: P0, P1, M0, M1, BL.
     values: [u8; 5],
-    /// The H@1-edge capture the resting release compare reads.
-    captured_values: [u8; 5],
-    /// The HM values as of the previous pulse — what the live descending
-    /// compare reads, one pulse period before the resting compare.
-    previous_pulse_values: [u8; 5],
 }
 
 impl MotionSequencer {
     fn new() -> Self {
         MotionSequencer {
-            start_countdown: None,
+            sec: SecDecode::Idle,
             ripple: None,
             more_movement: [false; 5],
             values: [0; 5],
-            captured_values: [0; 5],
-            previous_pulse_values: [0; 5],
         }
     }
 
     fn strobe(&mut self) {
-        self.start_countdown = Some(MOTION_START_CLOCKS);
-        self.more_movement = [true; 5];
+        self.sec = SecDecode::Set;
     }
 
     fn any_movement(&self) -> bool {
         self.more_movement.iter().any(|&m| m)
     }
 
-    /// Advance one colour clock; `Some(ticks)` on a pulse, where a set
+    /// Advance one colour clock; `Some(ticks)` on an H@1 stuff, where a set
     /// latch requests an extra motion clock for its object.
     fn step(&mut self, phase: u16) -> Option<[bool; 5]> {
-        // A write landing on the edge clock itself still makes the capture.
-        if phase == MOTION_CAPTURE_PHASE {
-            self.captured_values = self.values;
-        }
-        if let Some(remaining) = self.start_countdown {
-            if remaining > 0 {
-                self.start_countdown = Some(remaining - 1);
+        // [SEC] shifts H@1 → H@2; on that H@2 the more-movement latches arm
+        // for every object and the ripple counter loads to 15.
+        match (self.sec, phase) {
+            (SecDecode::Set, MOTION_STUFF_PHASE) => {
+                self.sec = SecDecode::Clocked;
                 return None;
             }
-            self.start_countdown = None;
-            self.ripple = Some(15);
+            (SecDecode::Clocked, MOTION_DECREMENT_PHASE) => {
+                self.sec = SecDecode::Idle;
+                self.more_movement = [true; 5];
+                self.ripple = Some(15);
+                // The load edge that arms the counter is not a count edge.
+                return None;
+            }
+            _ => {}
         }
-        if phase != MOTION_PULSE_PHASE {
-            return None;
-        }
-        // A live descending ripple compares the HM value as of the previous
-        // pulse; only the exhausted-ripple release compare reads the H@1
-        // capture. Refresh the previous-pulse snapshot every pulse (even
-        // between trains) so it always trails the live values by one pulse.
-        let compare_values = if self.ripple.is_some() {
-            self.previous_pulse_values
-        } else {
-            self.captured_values
-        };
-        self.previous_pulse_values = self.values;
-        if !self.any_movement() {
+
+        // H@2: the ripple counter decrements one step — the phase after H@1's
+        // stuff, so each H@1 sees 15, 14, 13, … in turn.
+        if phase == MOTION_DECREMENT_PHASE {
+            self.ripple = match self.ripple {
+                Some(0) | None => None,
+                Some(r) => Some(r - 1),
+            };
             return None;
         }
 
-        let mut ticks = [false; 5];
-        // The exhausted ripple rests at %1111 with the comparator still
-        // wired: rewriting HM to $8x clears a latch stuck past the ripple.
-        let ripple = self.ripple.unwrap_or(RESTING_RIPPLE);
-        for (i, more) in self.more_movement.iter_mut().enumerate() {
-            if *more && ripple == (compare_values[i] >> 4) ^ 0x07 {
-                *more = false;
-            }
-            ticks[i] = *more;
+        // H@1: each latched object stuffs a clock, unless its comparator
+        // matches the ripple this step — then it clears instead (reading the
+        // HM value live; an exhausted ripple rests at %1111 so a late HM
+        // rewrite still clears). Clearing before the tick keeps the matching
+        // step from stuffing (HM $8x → 0 stuffs).
+        if phase != MOTION_STUFF_PHASE || !self.any_movement() {
+            return None;
         }
-        self.ripple = match self.ripple {
-            Some(0) | None => None,
-            Some(r) => Some(r - 1),
-        };
+        let ripple = self.ripple.unwrap_or(RESTING_RIPPLE);
+        let mut ticks = [false; 5];
+        for i in 0..self.more_movement.len() {
+            if self.more_movement[i] && ripple == (self.values[i] >> 4) ^ 0x07 {
+                self.more_movement[i] = false;
+            }
+            ticks[i] = self.more_movement[i];
+        }
         Some(ticks)
     }
 }
 
 pub struct Tia {
-    beam: u16,
+    hsync: HSyncCounter,
     vsync: bool,
     vblank: bool,
     /// Low while a WSYNC strobe holds the CPU; released at line start.
@@ -244,7 +249,6 @@ pub struct Tia {
     score_mode: bool,
 
     motion: MotionSequencer,
-    late_hblank: bool,
     /// HMOVE's SEC decode on its way to (or holding at) the reset-select.
     hblank_extension_pending: Option<u8>,
     hblank_extension_armed: bool,
@@ -276,7 +280,7 @@ impl Default for Tia {
 impl Tia {
     pub fn new() -> Self {
         Tia {
-            beam: 0,
+            hsync: HSyncCounter::new(),
             vsync: false,
             vblank: false,
             cpu_ready: true,
@@ -294,7 +298,6 @@ impl Tia {
             playfield_priority: false,
             score_mode: false,
             motion: MotionSequencer::new(),
-            late_hblank: false,
             hblank_extension_pending: None,
             hblank_extension_armed: false,
             collisions: [0; 8],
@@ -332,7 +335,7 @@ impl Tia {
 
     /// Current colour clock within the line (0..228) — inspection only.
     pub fn beam(&self) -> u16 {
-        self.beam
+        self.hsync.position()
     }
 
     pub(crate) fn take_line(&mut self) -> Option<Scanline> {
@@ -349,21 +352,12 @@ impl Tia {
         }
     }
 
-    /// RHB/LRHB: hblank ends at 68, or 76 when the extension latched.
-    fn hblank_end(&self) -> u16 {
-        if self.late_hblank {
-            LATE_HBLANK_CLOCKS
-        } else {
-            HBLANK_CLOCKS
-        }
-    }
-
     /// Advance one colour clock; completed lines surface via `take_line`.
     pub(crate) fn step_clock(&mut self) {
         self.wsync_reset_hold = self.wsync_reset_hold.saturating_sub(1);
 
-        // SEC decode: the reset-select at CLK 64 samples it, choosing the
-        // extended hblank; a countdown straddling the wrap arms next line.
+        // SEC decode: HMOVE's extension arms after its countdown; the HSync
+        // counter's RHB decode samples the armed flag to hold the blank late.
         if let Some(remaining) = self.hblank_extension_pending {
             if remaining == 0 {
                 self.hblank_extension_pending = None;
@@ -372,15 +366,14 @@ impl Tia {
                 self.hblank_extension_pending = Some(remaining - 1);
             }
         }
-        if self.beam == RESET_SELECT_CLOCK {
-            self.late_hblank = self.hblank_extension_armed;
-        }
 
-        // Stuffed motion clocks only move an object while the beam is
-        // blanked; a visible pulse instead reaches the serialisers below.
-        let pulse = self.motion.step(self.beam % 4);
+        let beam = self.hsync.beam();
+
+        // Stuffed motion clocks only move an object while MOTCK is gated off
+        // (blank or comb); a visible pulse instead reaches the serialisers.
+        let pulse = self.motion.step(self.hsync.phase());
         if let Some(ticks) = pulse
-            && self.beam < self.hblank_end()
+            && !matches!(beam, Beam::Pixel(_))
         {
             for (i, &tick) in ticks.iter().enumerate() {
                 if tick {
@@ -389,21 +382,21 @@ impl Tia {
             }
         }
 
-        if self.beam >= self.hblank_end() {
-            self.render_clock(pulse);
-        } else if self.beam >= HBLANK_CLOCKS {
+        match beam {
+            Beam::Pixel(x) => self.render_clock(x, pulse),
             // Inside the HMOVE comb: blanked, and motion clocks gated.
-            self.line[(self.beam - HBLANK_CLOCKS) as usize] = 0;
+            Beam::Comb(x) => self.line[x as usize] = 0,
+            Beam::Blank => {}
         }
 
         // The audio circuits clock twice per scanline (~31.4 kHz).
-        if self.beam == AUDIO_CLOCK_A || self.beam == AUDIO_CLOCK_B {
+        let position = self.hsync.position();
+        if position == AUDIO_CLOCK_A || position == AUDIO_CLOCK_B {
             self.audio[0].tick();
             self.audio[1].tick();
         }
 
-        self.beam += 1;
-        if self.beam == CLOCKS_PER_LINE {
+        if self.hsync.advance(self.hblank_extension_armed) {
             self.end_line();
         }
     }
@@ -411,10 +404,9 @@ impl Tia {
     /// The HSync-counter wrap: one mechanism with two triggers — the
     /// natural end of line, and RSYNC forcing it early.
     fn end_line(&mut self) {
-        self.beam = 0;
+        self.hsync.reset_line();
         self.cpu_ready = true;
         self.wsync_reset_hold = WSYNC_RESET_HOLD_CLOCKS;
-        self.late_hblank = false;
         self.hblank_extension_armed = false;
         if !self.pot_dumped {
             for countdown in &mut self.pot_countdown {
@@ -427,8 +419,7 @@ impl Tia {
         });
     }
 
-    fn render_clock(&mut self, pulse: Option<[bool; 5]>) {
-        let x = (self.beam - HBLANK_CLOCKS) as u8;
+    fn render_clock(&mut self, x: u8, pulse: Option<[bool; 5]>) {
         if x.is_multiple_of(4) {
             self.playfield.latch_cell();
         }
@@ -526,6 +517,12 @@ impl Tia {
         }
     }
 
+    /// Whether a reset committing now plants its object on the visible grid:
+    /// true while MOTCK is gated (hblank or the HMOVE comb), false mid-pixel.
+    fn reset_grid_aligned(&self) -> bool {
+        !matches!(self.hsync.beam(), Beam::Pixel(_))
+    }
+
     /// The reset strobe's leading scan-kill, one clock before it applies.
     pub(crate) fn missile_reset_kill(&mut self, which: usize) {
         match which {
@@ -576,7 +573,7 @@ impl Tia {
             RSYNC => {
                 // The forced wrap ends the line where it stands: the TV
                 // gets a short line — undrawn pixels never left the gun.
-                let drawn = (self.beam.saturating_sub(HBLANK_CLOCKS) as usize).min(VISIBLE_CLOCKS);
+                let drawn = self.hsync.columns_drawn();
                 self.line[drawn..].fill(0);
                 self.end_line();
             }
@@ -603,11 +600,14 @@ impl Tia {
             PF0 => self.playfield.pf0 = value,
             PF1 => self.playfield.pf1 = value,
             PF2 => self.playfield.pf2 = value,
-            RESP0 => self.player0.reset_position(),
-            RESP1 => self.player1.reset_position(),
-            RESM0 => self.missile0.reset_position(),
-            RESM1 => self.missile1.reset_position(),
-            RESBL => self.ball.reset_position(),
+            // MOTCK is gated off the object counters during hblank/comb, so a
+            // reset there re-phases the ÷4 divider onto the visible grid; a
+            // visible reset lands it off-grid (the CPU-write ½-CLK sub-phase).
+            RESP0 => self.player0.reset_position(self.reset_grid_aligned()),
+            RESP1 => self.player1.reset_position(self.reset_grid_aligned()),
+            RESM0 => self.missile0.reset_position(self.reset_grid_aligned()),
+            RESM1 => self.missile1.reset_position(self.reset_grid_aligned()),
+            RESBL => self.ball.reset_position(self.reset_grid_aligned()),
             AUDC0 => self.audio[0].control = value,
             AUDC1 => self.audio[1].control = value,
             AUDF0 => self.audio[0].frequency = value & 0x1F,

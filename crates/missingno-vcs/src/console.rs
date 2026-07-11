@@ -44,23 +44,23 @@ pub struct Vcs {
     samples: Vec<(f32, f32)>,
 }
 
-/// Colour clocks from a CPU write until the TIA sees it: the data bus is
-/// valid at φ2, two colour clocks into the CPU cycle.
-const TIA_WRITE_CLOCKS: u8 = 3;
-/// The VBLANK gate and the player graphics consume a write one clock
+/// Half-clocks from a CPU write until the TIA sees it: the data bus is valid at
+/// φ2 — the colour clock's high half, two colour clocks into the CPU cycle.
+const TIA_WRITE_HC: u8 = 4;
+/// A reset strobe (RESxx) re-phases the object counters on the strobe level
+/// release — the low half one half-clock after φ2.
+const TIA_RESET_HC: u8 = TIA_WRITE_HC + 1;
+/// The VBLANK gate and the player graphics consume a write one colour clock
 /// behind the combinational colour path.
-const TIA_GATED_WRITE_CLOCKS: u8 = TIA_WRITE_CLOCKS + 1;
-/// Playfield registers reach the serialiser a clock later still; the
+const TIA_GATED_WRITE_HC: u8 = TIA_WRITE_HC + 2;
+/// Playfield registers reach the serialiser a colour clock later still; the
 /// per-cell latch in the playfield completes the in-flight cell.
-const TIA_CELL_WRITE_CLOCKS: u8 = TIA_WRITE_CLOCKS + 2;
+const TIA_CELL_WRITE_HC: u8 = TIA_WRITE_HC + 4;
 /// RSYNC's counter reset requantises onto the next H@1-H@2 cycle.
-const TIA_RSYNC_CLOCKS: u8 = TIA_WRITE_CLOCKS + 3;
-/// Position-counter resets land a two-phase-clock cycle later than other
-/// writes; the residue vs the ordinary write path is 2 colour clocks.
-const TIA_RESET_STROBE_CLOCKS: u8 = TIA_WRITE_CLOCKS + 2;
+const TIA_RSYNC_HC: u8 = TIA_WRITE_HC + 6;
 
-/// A reset strobe and the next write can overlap; ≤6-clock delays never
-/// make three (BRK's mirror-push triple is the binding case).
+/// A write and the next can overlap; ≤6-clock delays never make three (BRK's
+/// mirror-push triple is the binding case).
 const MAX_TIA_WRITES_IN_FLIGHT: usize = 2;
 
 // The 6507's 13-line board decode: A12 selects the cartridge; below it,
@@ -75,8 +75,8 @@ fn selects_riot_ram(address: u16) -> bool {
     address & 0x0200 == 0
 }
 
-/// TIA writes are deferred through a two-slot pipe: a reset strobe and the
-/// next instruction's write sit three clocks apart and can overlap.
+/// TIA writes are deferred through a two-slot pipe: a write and the next
+/// instruction's write can overlap in flight.
 struct BoardBus<'a> {
     tia: &'a mut Tia,
     riot: &'a mut Riot,
@@ -90,7 +90,7 @@ struct BoardBus<'a> {
 pub(crate) struct TiaWrite {
     register: u8,
     data: u8,
-    clocks_until_effective: u8,
+    hc_until_effective: u8,
 }
 
 impl Bus for BoardBus<'_> {
@@ -118,12 +118,14 @@ impl Bus for BoardBus<'_> {
             self.cartridge.write_access(address);
         } else if selects_tia(address) {
             let register = (address & 0x3F) as u8;
-            let clocks = match u16::from(register) {
-                RESP0 | RESP1 | RESM0 | RESM1 | RESBL => TIA_RESET_STROBE_CLOCKS,
-                RSYNC => TIA_RSYNC_CLOCKS,
-                VBLANK | GRP0 | GRP1 => TIA_GATED_WRITE_CLOCKS,
-                PF0 | PF1 | PF2 => TIA_CELL_WRITE_CLOCKS,
-                _ => TIA_WRITE_CLOCKS,
+            // Data commits at φ2 (the high half); a reset strobe re-phases the
+            // object counters on the strobe-level release, the next low half.
+            let hc = match u16::from(register) {
+                RSYNC => TIA_RSYNC_HC,
+                RESP0 | RESP1 | RESM0 | RESM1 | RESBL => TIA_RESET_HC,
+                VBLANK | GRP0 | GRP1 => TIA_GATED_WRITE_HC,
+                PF0 | PF1 | PF2 => TIA_CELL_WRITE_HC,
+                _ => TIA_WRITE_HC,
             };
             let slot = self
                 .pending_tia_writes
@@ -133,7 +135,7 @@ impl Bus for BoardBus<'_> {
             *slot = Some(TiaWrite {
                 register,
                 data,
-                clocks_until_effective: clocks,
+                hc_until_effective: hc,
             });
         } else if selects_riot_ram(address) {
             self.riot.ram[(address & 0x7F) as usize] = data;
@@ -179,9 +181,18 @@ impl Vcs {
         crate::tia::palette(self.region)
     }
 
-    /// Advance one colour clock. Every third clock carries the CPU (and
-    /// RIOT) cycle before the TIA sees its clock.
+    /// Advance one colour clock as its two half-clocks: the CPU bus access lands
+    /// on the high (φ2) half, the TIA render and MOTCK on the low half.
     pub fn step_clock(&mut self) {
+        self.step_half_high();
+        self.step_half_low();
+    }
+
+    /// The colour clock's high half: pending writes tick a half-clock (data
+    /// commits at φ2 here), then the CPU (and RIOT) cycle runs, once per three
+    /// colour clocks, so its write registers ahead of the low-half render.
+    fn step_half_high(&mut self) {
+        self.advance_pending_writes();
         if self.clock_phase == 0 {
             self.cpu.rdy = self.tia.cpu_ready;
             let mut bus = BoardBus {
@@ -194,25 +205,13 @@ impl Vcs {
             self.cpu.step_cycle(&mut bus);
             self.riot.tick();
         }
-        self.clock_phase = (self.clock_phase + 1) % 3;
+    }
 
-        for slot in &mut self.pending_tia_writes {
-            if let Some(write) = slot {
-                write.clocks_until_effective -= 1;
-                if write.clocks_until_effective == 1 {
-                    // The missile reset's scan-kill leads its plant.
-                    match u16::from(write.register) {
-                        crate::tia::registers::RESM0 => self.tia.missile_reset_kill(0),
-                        crate::tia::registers::RESM1 => self.tia.missile_reset_kill(1),
-                        crate::tia::registers::RESBL => self.tia.ball_reset_kill(),
-                        _ => {}
-                    }
-                } else if write.clocks_until_effective == 0 {
-                    let write = slot.take().unwrap();
-                    self.tia.write(u16::from(write.register), write.data);
-                }
-            }
-        }
+    /// The colour clock's low half: pending writes tick a half-clock (a reset
+    /// strobe releases here), MOTCK fires and the TIA renders the pixel.
+    fn step_half_low(&mut self) {
+        self.clock_phase = (self.clock_phase + 1) % 3;
+        self.advance_pending_writes();
         self.tia.step_clock();
         if let Some(line) = self.tia.take_line() {
             self.collect_line(line);
@@ -223,6 +222,28 @@ impl Vcs {
             self.sample_clock -= self.clocks_per_sample;
             let level = self.tia.audio_level();
             self.samples.push((level, level));
+        }
+    }
+
+    /// Tick every in-flight TIA write one half-clock; a write reaching its φ2
+    /// commits, and a reset strobe's scan-kill leads its plant by one half-clock.
+    fn advance_pending_writes(&mut self) {
+        for slot in &mut self.pending_tia_writes {
+            if let Some(write) = slot {
+                write.hc_until_effective -= 1;
+                if write.hc_until_effective == 1 {
+                    // The missile reset's scan-kill leads its plant.
+                    match u16::from(write.register) {
+                        crate::tia::registers::RESM0 => self.tia.missile_reset_kill(0),
+                        crate::tia::registers::RESM1 => self.tia.missile_reset_kill(1),
+                        crate::tia::registers::RESBL => self.tia.ball_reset_kill(),
+                        _ => {}
+                    }
+                } else if write.hc_until_effective == 0 {
+                    let write = slot.take().unwrap();
+                    self.tia.write(u16::from(write.register), write.data);
+                }
+            }
         }
     }
 
