@@ -12,9 +12,11 @@
 //! positions emerge rather than being special-cased.
 
 pub(crate) mod audio;
+pub(crate) mod hsync;
 pub(crate) mod objects;
 
 use audio::Channel;
+use hsync::{Beam, HSyncCounter};
 use objects::{Ball, Missile, Player, Playfield};
 
 use crate::TvStandard;
@@ -25,8 +27,6 @@ pub const VISIBLE_CLOCKS: usize = 160;
 const LATE_HBLANK_CLOCKS: u16 = HBLANK_CLOCKS + 8;
 /// Colour clocks from an HMOVE write reaching the TIA to its SEC decode.
 const HBLANK_EXTENSION_DECODE_CLOCKS: u8 = 3;
-/// The RHB/LRHB choice: hblank ends at 68, or 76 when SEC is holding.
-const RESET_SELECT_CLOCK: u16 = 64;
 /// Grid-quantised SEC decode + latch set: colour clocks from the strobe's
 /// write applying until the train arms; the first pulse is the next pulse
 /// instant, the arming clock included.
@@ -220,7 +220,7 @@ impl MotionSequencer {
 }
 
 pub struct Tia {
-    beam: u16,
+    hsync: HSyncCounter,
     vsync: bool,
     vblank: bool,
     /// Low while a WSYNC strobe holds the CPU; released at line start.
@@ -244,7 +244,6 @@ pub struct Tia {
     score_mode: bool,
 
     motion: MotionSequencer,
-    late_hblank: bool,
     /// HMOVE's SEC decode on its way to (or holding at) the reset-select.
     hblank_extension_pending: Option<u8>,
     hblank_extension_armed: bool,
@@ -276,7 +275,7 @@ impl Default for Tia {
 impl Tia {
     pub fn new() -> Self {
         Tia {
-            beam: 0,
+            hsync: HSyncCounter::new(),
             vsync: false,
             vblank: false,
             cpu_ready: true,
@@ -294,7 +293,6 @@ impl Tia {
             playfield_priority: false,
             score_mode: false,
             motion: MotionSequencer::new(),
-            late_hblank: false,
             hblank_extension_pending: None,
             hblank_extension_armed: false,
             collisions: [0; 8],
@@ -332,7 +330,7 @@ impl Tia {
 
     /// Current colour clock within the line (0..228) — inspection only.
     pub fn beam(&self) -> u16 {
-        self.beam
+        self.hsync.position()
     }
 
     pub(crate) fn take_line(&mut self) -> Option<Scanline> {
@@ -349,21 +347,12 @@ impl Tia {
         }
     }
 
-    /// RHB/LRHB: hblank ends at 68, or 76 when the extension latched.
-    fn hblank_end(&self) -> u16 {
-        if self.late_hblank {
-            LATE_HBLANK_CLOCKS
-        } else {
-            HBLANK_CLOCKS
-        }
-    }
-
     /// Advance one colour clock; completed lines surface via `take_line`.
     pub(crate) fn step_clock(&mut self) {
         self.wsync_reset_hold = self.wsync_reset_hold.saturating_sub(1);
 
-        // SEC decode: the reset-select at CLK 64 samples it, choosing the
-        // extended hblank; a countdown straddling the wrap arms next line.
+        // SEC decode: HMOVE's extension arms after its countdown; the HSync
+        // counter's RHB decode samples the armed flag to hold the blank late.
         if let Some(remaining) = self.hblank_extension_pending {
             if remaining == 0 {
                 self.hblank_extension_pending = None;
@@ -372,15 +361,14 @@ impl Tia {
                 self.hblank_extension_pending = Some(remaining - 1);
             }
         }
-        if self.beam == RESET_SELECT_CLOCK {
-            self.late_hblank = self.hblank_extension_armed;
-        }
 
-        // Stuffed motion clocks only move an object while the beam is
-        // blanked; a visible pulse instead reaches the serialisers below.
-        let pulse = self.motion.step(self.beam % 4);
+        let beam = self.hsync.beam();
+
+        // Stuffed motion clocks only move an object while MOTCK is gated off
+        // (blank or comb); a visible pulse instead reaches the serialisers.
+        let pulse = self.motion.step(self.hsync.phase());
         if let Some(ticks) = pulse
-            && self.beam < self.hblank_end()
+            && !matches!(beam, Beam::Pixel(_))
         {
             for (i, &tick) in ticks.iter().enumerate() {
                 if tick {
@@ -389,21 +377,21 @@ impl Tia {
             }
         }
 
-        if self.beam >= self.hblank_end() {
-            self.render_clock(pulse);
-        } else if self.beam >= HBLANK_CLOCKS {
+        match beam {
+            Beam::Pixel(x) => self.render_clock(x, pulse),
             // Inside the HMOVE comb: blanked, and motion clocks gated.
-            self.line[(self.beam - HBLANK_CLOCKS) as usize] = 0;
+            Beam::Comb(x) => self.line[x as usize] = 0,
+            Beam::Blank => {}
         }
 
         // The audio circuits clock twice per scanline (~31.4 kHz).
-        if self.beam == AUDIO_CLOCK_A || self.beam == AUDIO_CLOCK_B {
+        let position = self.hsync.position();
+        if position == AUDIO_CLOCK_A || position == AUDIO_CLOCK_B {
             self.audio[0].tick();
             self.audio[1].tick();
         }
 
-        self.beam += 1;
-        if self.beam == CLOCKS_PER_LINE {
+        if self.hsync.advance(self.hblank_extension_armed) {
             self.end_line();
         }
     }
@@ -411,10 +399,9 @@ impl Tia {
     /// The HSync-counter wrap: one mechanism with two triggers — the
     /// natural end of line, and RSYNC forcing it early.
     fn end_line(&mut self) {
-        self.beam = 0;
+        self.hsync.reset_line();
         self.cpu_ready = true;
         self.wsync_reset_hold = WSYNC_RESET_HOLD_CLOCKS;
-        self.late_hblank = false;
         self.hblank_extension_armed = false;
         if !self.pot_dumped {
             for countdown in &mut self.pot_countdown {
@@ -427,8 +414,7 @@ impl Tia {
         });
     }
 
-    fn render_clock(&mut self, pulse: Option<[bool; 5]>) {
-        let x = (self.beam - HBLANK_CLOCKS) as u8;
+    fn render_clock(&mut self, x: u8, pulse: Option<[bool; 5]>) {
         if x.is_multiple_of(4) {
             self.playfield.latch_cell();
         }
@@ -576,7 +562,7 @@ impl Tia {
             RSYNC => {
                 // The forced wrap ends the line where it stands: the TV
                 // gets a short line — undrawn pixels never left the gun.
-                let drawn = (self.beam.saturating_sub(HBLANK_CLOCKS) as usize).min(VISIBLE_CLOCKS);
+                let drawn = self.hsync.columns_drawn();
                 self.line[drawn..].fill(0);
                 self.end_line();
             }
