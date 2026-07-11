@@ -175,9 +175,16 @@ impl Vcs {
         crate::tia::palette(self.region)
     }
 
-    /// Advance one colour clock. Every third clock carries the CPU (and
-    /// RIOT) cycle before the TIA sees its clock.
+    /// Advance one colour clock as its two half-clocks: the CPU bus access lands
+    /// on the high (φ2) half, the TIA render and MOTCK on the low half.
     pub fn step_clock(&mut self) {
+        self.step_half_high();
+        self.step_half_low();
+    }
+
+    /// The colour clock's high half: the CPU (and RIOT) cycle runs here, once per
+    /// three colour clocks, so its φ2 write commits ahead of the low-half render.
+    fn step_half_high(&mut self) {
         if self.clock_phase == 0 {
             self.cpu.rdy = self.tia.cpu_ready;
             let mut bus = BoardBus {
@@ -190,6 +197,10 @@ impl Vcs {
             self.cpu.step_cycle(&mut bus);
             self.riot.tick();
         }
+    }
+
+    /// The colour clock's low half: MOTCK fires and the TIA renders the pixel.
+    fn step_half_low(&mut self) {
         self.clock_phase = (self.clock_phase + 1) % 3;
 
         for slot in &mut self.pending_tia_writes {
