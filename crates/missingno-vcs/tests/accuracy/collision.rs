@@ -62,6 +62,16 @@ fn per_pixel_pal() {
 }
 
 #[test]
+fn reset_phase_ntsc() {
+    common::run_self_test("collision/reset-phase_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn reset_phase_pal() {
+    common::run_self_test("collision/reset-phase_pal.a26", TvStandard::Pal);
+}
+
+#[test]
 fn stuck_drift_ntsc() {
     common::run_self_test("collision/stuck-drift_ntsc.a26", TvStandard::Ntsc);
 }
