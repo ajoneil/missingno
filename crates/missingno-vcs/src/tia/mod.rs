@@ -6,9 +6,10 @@
 //! line-fixed H@1 grid, each comparing a descending ripple against the
 //! D7-inverted HM values captured at the H@1 edge until the latch clears;
 //! the strobe also latches an 8-clock hblank extension (the HMOVE comb).
-//! A stuffed pulse is an extra serialiser clock whether MOTCK is gated or
-//! live. Late/mid-line strobes reuse the same machinery, so the classic
-//! "illegal HMOVE" positions emerge rather than being special-cased.
+//! A stuffed pulse rides the object's own motion-clock node: while MOTCK
+//! is gated it moves the object; coincident with a firing MOTCK it merges
+//! into one pulse. Late/mid-line strobes reuse the same machinery, so the
+//! classic "illegal HMOVE" positions emerge rather than being special-cased.
 
 pub(crate) mod audio;
 pub(crate) mod hsync;
@@ -366,8 +367,13 @@ impl Tia {
             }
         }
 
-        // A stuffed motion pulse is an extra serialiser clock, gated or live.
-        if let Some(ticks) = self.motion.step(self.hsync.phase()) {
+        // A stuffed motion pulse ORs onto the object's own motion-clock node:
+        // coincident with a firing MOTCK it merges into one pulse (no extra
+        // advance); while MOTCK is gated the stuff is the pulse that moves.
+        let motck = self.hsync.motck_fires();
+        if let Some(ticks) = self.motion.step(self.hsync.phase())
+            && !motck
+        {
             for (movable, ticked) in MOVABLES.into_iter().zip(ticks) {
                 if ticked {
                     self.tick_movable(movable);
@@ -375,7 +381,7 @@ impl Tia {
             }
         }
 
-        if self.hsync.motck_fires() {
+        if motck {
             for which in MOVABLES {
                 self.tick_movable(which);
             }
