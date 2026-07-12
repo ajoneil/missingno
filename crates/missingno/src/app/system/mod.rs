@@ -58,6 +58,63 @@ pub mod sms;
 pub mod stepping;
 pub mod vcs;
 
+/// The platforms the frontend knows, one per family descriptor. The
+/// canonical platform identity for library metadata: external sources'
+/// platform strings are mapped into it, and display always goes through
+/// [`Platform::name`]. Variants are never cfg-gated — a library entry
+/// written by a fuller build must still parse.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+pub enum Platform {
+    GameBoy,
+    GameBoyColor,
+    AtariVcs,
+    MasterSystem,
+    Nes,
+}
+
+impl Platform {
+    /// Display name; also the file-dialog filter label.
+    pub fn name(self) -> &'static str {
+        match self {
+            Platform::GameBoy => "Nintendo Game Boy",
+            Platform::GameBoyColor => "Nintendo Game Boy Color",
+            Platform::AtariVcs => "Atari VCS",
+            Platform::MasterSystem => "Sega Master System",
+            Platform::Nes => "Nintendo Entertainment System",
+        }
+    }
+
+    /// Short name for compact UI (bindings rows, badges).
+    pub fn short_name(self) -> &'static str {
+        match self {
+            Platform::GameBoy => "GB",
+            Platform::GameBoyColor => "GBC",
+            Platform::AtariVcs => "VCS",
+            Platform::MasterSystem => "SMS",
+            Platform::Nes => "NES",
+        }
+    }
+
+    /// Best-effort mapping from an external platform description — a
+    /// Hasheous platform name, or the string an older library entry stored.
+    pub fn from_description(text: &str) -> Option<Platform> {
+        let text = text.to_ascii_lowercase();
+        if text.contains("game boy color") {
+            Some(Platform::GameBoyColor)
+        } else if text.contains("game boy") && !text.contains("advance") {
+            Some(Platform::GameBoy)
+        } else if text.contains("2600") || text.contains("atari vcs") {
+            Some(Platform::AtariVcs)
+        } else if text.contains("master system") {
+            Some(Platform::MasterSystem)
+        } else if text.contains("nintendo entertainment system") || text.contains("famicom") {
+            Some(Platform::Nes)
+        } else {
+            None
+        }
+    }
+}
+
 /// Everything the loader hands a family's console factory. The fields are
 /// family-agnostic except the two Game Boy peripheral ones, quarantined here
 /// under the same rule as the GB types on the seam traits: generalize when a
@@ -97,10 +154,7 @@ pub struct TraceRequest<'a> {
 /// A family's registration on the load path: how its media is recognised in
 /// file dialogs, library scans, and ROM loads, and how a console is built.
 pub struct FamilyDescriptor {
-    /// Platform display name; also the file-dialog filter label.
-    pub platform_name: &'static str,
-    /// Short name for compact UI (bindings rows, badges).
-    pub short_name: &'static str,
+    pub platform: Platform,
     pub extensions: &'static [&'static str],
     /// The family's names for the shared control ids, indexed by id;
     /// empty string for ids the family ignores.
@@ -127,8 +181,7 @@ pub fn family_for(path: &Path, rom: &[u8]) -> Option<&'static FamilyDescriptor> 
 /// Every registered family, in file-dialog filter order.
 pub static FAMILIES: &[FamilyDescriptor] = &[
     FamilyDescriptor {
-        platform_name: gb::PLATFORM_NAME,
-        short_name: gb::SHORT_NAME,
+        platform: Platform::GameBoy,
         extensions: gb::ROM_EXTENSIONS,
         control_labels: &gb::CONTROL_LABELS,
         is_rom: gb::is_gb_rom,
@@ -137,8 +190,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         trace: Some(crate::trace::trace_gb),
     },
     FamilyDescriptor {
-        platform_name: gb::GBC_PLATFORM_NAME,
-        short_name: gb::GBC_SHORT_NAME,
+        platform: Platform::GameBoyColor,
         extensions: gb::GBC_ROM_EXTENSIONS,
         control_labels: &gb::CONTROL_LABELS,
         is_rom: gb::is_gbc_rom,
@@ -148,8 +200,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         trace: Some(crate::trace::trace_gb),
     },
     FamilyDescriptor {
-        platform_name: vcs::PLATFORM_NAME,
-        short_name: "VCS",
+        platform: Platform::AtariVcs,
         extensions: vcs::ROM_EXTENSIONS,
         control_labels: &vcs::CONTROL_LABELS,
         is_rom: vcs::is_vcs_rom,
@@ -159,8 +210,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
     },
     #[cfg(feature = "sms")]
     FamilyDescriptor {
-        platform_name: sms::PLATFORM_NAME,
-        short_name: "SMS",
+        platform: Platform::MasterSystem,
         extensions: sms::ROM_EXTENSIONS,
         control_labels: &sms::CONTROL_LABELS,
         is_rom: |path, _| sms::is_sms_rom(path),
@@ -170,8 +220,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
     },
     #[cfg(feature = "nes")]
     FamilyDescriptor {
-        platform_name: nes::PLATFORM_NAME,
-        short_name: "NES",
+        platform: Platform::Nes,
         extensions: nes::ROM_EXTENSIONS,
         control_labels: &nes::CONTROL_LABELS,
         is_rom: |_, rom| nes::is_nes_rom(rom),

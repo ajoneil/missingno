@@ -216,8 +216,8 @@ fn control_label(action: Action) -> String {
             continue;
         }
         match readings.iter_mut().find(|(_, l)| *l == label) {
-            Some((families, _)) => families.push(family.short_name),
-            None => readings.push((vec![family.short_name], label)),
+            Some((families, _)) => families.push(family.platform.short_name()),
+            None => readings.push((vec![family.platform.short_name()], label)),
         }
     }
     match readings.as_slice() {

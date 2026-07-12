@@ -17,7 +17,6 @@ use crate::app::debugger::sms::{SmsInspectState, SmsSnapshot};
 use crate::app::emu_thread::RunningStatus;
 use crate::app::screen::IndexedFrame;
 
-pub const PLATFORM_NAME: &str = "Sega Master System";
 pub const ROM_EXTENSIONS: &[&str] = &["sms"];
 
 /// The family's names for the shared control ids, indexed by id.

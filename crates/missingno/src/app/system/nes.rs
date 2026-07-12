@@ -18,7 +18,6 @@ use crate::app::debugger::panes;
 use crate::app::emu_thread::RunningStatus;
 use crate::app::screen::IndexedFrame;
 
-pub const PLATFORM_NAME: &str = "Nintendo Entertainment System";
 pub const ROM_EXTENSIONS: &[&str] = &["nes"];
 
 /// The family's names for the shared control ids, indexed by id.

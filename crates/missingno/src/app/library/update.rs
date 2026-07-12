@@ -123,7 +123,15 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                         && let Some((game_dir, mut entry)) = super::find_by_sha1(&sha1)
                     {
                         entry.title = info.name;
-                        entry.platform = info.platform;
+                        // Hasheous's platform string never overrides the
+                        // header-derived classification; it only fills a
+                        // gap, mapped to our own type.
+                        if entry.platform.is_none() {
+                            entry.platform = info
+                                .platform
+                                .as_deref()
+                                .and_then(system::Platform::from_description);
+                        }
                         entry.publisher = info.publisher;
                         entry.year = info.year;
                         entry.description = info.description;
@@ -594,7 +602,7 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
             let family = system::family_for(&rom_path, &rom_bytes);
             let mut entry = super::GameEntry::new(sha1.clone(), title, rom_path);
             entry.header_title = family.and_then(|f| (f.title_from_rom)(&rom_bytes));
-            entry.platform = family.map(|f| f.platform_name.to_string());
+            entry.platform = family.map(|f| f.platform);
             entry.year = manifest.date.clone();
             entry.description = manifest.description.clone();
             entry.publisher = manifest.developer.clone();

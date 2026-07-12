@@ -122,7 +122,7 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
             .year
             .as_ref()
             .map(|y| activity::format_date_string(y)),
-        data.entry.platform.clone(),
+        data.entry.platform.map(|p| p.name().to_string()),
     ]
     .into_iter()
     .flatten()

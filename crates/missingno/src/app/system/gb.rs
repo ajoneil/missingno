@@ -43,14 +43,9 @@ use crate::app::emu_thread::RunningStatus;
 use crate::app::library::activity::{CaptureOptions, FrameCapture};
 use crate::app::screen::ScreenDisplay;
 
-/// How the family's two platforms appear in file dialogs, scanning, and
-/// library metadata. Dual-mode media ships as `.gbc` files, so the Game Boy
-/// platform's dialog filter must include that extension too.
-pub const PLATFORM_NAME: &str = "Nintendo Game Boy";
-pub const SHORT_NAME: &str = "GB";
+/// Dual-mode media ships as `.gbc` files, so the Game Boy platform's dialog
+/// filter must include that extension too.
 pub const ROM_EXTENSIONS: &[&str] = &["gb", "gbc"];
-pub const GBC_PLATFORM_NAME: &str = "Nintendo Game Boy Color";
-pub const GBC_SHORT_NAME: &str = "GBC";
 pub const GBC_ROM_EXTENSIONS: &[&str] = &["gbc"];
 pub const DEFAULT_ROM_EXTENSION: &str = "gb";
 pub const SAVE_FILTER_NAME: &str = "Game Boy Save";

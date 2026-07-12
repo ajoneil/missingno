@@ -40,7 +40,7 @@ pub fn run(
         process::exit(1);
     };
     let Some(trace) = family.trace else {
-        eprintln!("error: {} has no trace backend", family.platform_name);
+        eprintln!("error: {} has no trace backend", family.platform.name());
         process::exit(1);
     };
     trace(TraceRequest {

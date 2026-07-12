@@ -21,6 +21,24 @@ use serde::{Deserialize, Serialize};
 /// Current version of the GameEntry format. Increment when adding migrations.
 const CURRENT_VERSION: u32 = 1;
 
+/// Accepts the platform enum, or the free-text platform string older
+/// entries stored (our old names or raw Hasheous ones), mapped best-effort.
+fn compat_platform<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<crate::app::system::Platform>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Compat {
+        Platform(crate::app::system::Platform),
+        Legacy(String),
+    }
+    Ok(match Option::<Compat>::deserialize(deserializer)? {
+        Some(Compat::Platform(platform)) => Some(platform),
+        Some(Compat::Legacy(text)) => crate::app::system::Platform::from_description(&text),
+        None => None,
+    })
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct GameEntry {
     /// Schema version. Migrations run on load when this is less than CURRENT_VERSION.
@@ -32,7 +50,8 @@ pub struct GameEntry {
     /// so we can match against physical cartridge headers.
     #[serde(default)]
     pub header_title: Option<String>,
-    pub platform: Option<String>,
+    #[serde(default, deserialize_with = "compat_platform")]
+    pub platform: Option<crate::app::system::Platform>,
     pub publisher: Option<String>,
     pub year: Option<String>,
     pub description: Option<String>,
@@ -245,5 +264,43 @@ fn sanitize_folder_name(name: &str) -> String {
         trimmed[..64].trim_end().to_string()
     } else {
         trimmed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::system::Platform;
+
+    fn entry_ron(platform: &str) -> String {
+        format!(
+            "(version: 1, sha1: \"abc\", title: \"T\", platform: {platform}, \
+             publisher: None, year: None, description: None, rom_paths: [])"
+        )
+    }
+
+    #[test]
+    fn platform_round_trips_as_enum() {
+        let mut entry = GameEntry::new("abc".into(), "T".into(), PathBuf::from("t.gb"));
+        entry.platform = Some(Platform::GameBoyColor);
+        let ron = ron::ser::to_string(&entry).unwrap();
+        let back: GameEntry = ron::from_str(&ron).unwrap();
+        assert_eq!(back.platform, Some(Platform::GameBoyColor));
+    }
+
+    #[test]
+    fn legacy_platform_strings_map_to_the_enum() {
+        let entry: GameEntry = ron::from_str(&entry_ron("Some(\"Atari 2600\")")).unwrap();
+        assert_eq!(entry.platform, Some(Platform::AtariVcs));
+        let entry: GameEntry = ron::from_str(&entry_ron("Some(\"Nintendo Game Boy\")")).unwrap();
+        assert_eq!(entry.platform, Some(Platform::GameBoy));
+        let entry: GameEntry = ron::from_str(&entry_ron("Some(\"Game Boy Color\")")).unwrap();
+        assert_eq!(entry.platform, Some(Platform::GameBoyColor));
+    }
+
+    #[test]
+    fn unknown_platform_strings_drop_to_none() {
+        let entry: GameEntry = ron::from_str(&entry_ron("Some(\"Neo Geo\")")).unwrap();
+        assert_eq!(entry.platform, None);
     }
 }

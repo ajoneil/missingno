@@ -31,8 +31,10 @@ pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<l
 
             let sha1 = hasheous::rom_sha1(&rom);
 
-            // Check if already in library
+            // Check if already in library; older entries may predate
+            // platform classification, so stamp it while the ROM is at hand.
             if let Some((game_dir, mut existing)) = library::find_by_sha1(&sha1) {
+                existing.platform.get_or_insert(family.platform);
                 existing.add_rom_path(path);
                 library::save_entry(&game_dir, &existing);
                 continue;
@@ -45,7 +47,7 @@ pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<l
             let mut entry = if let Some(cat_entry) = catalogue.lookup_hash(&sha1) {
                 let mut e =
                     library::GameEntry::new(sha1, cat_entry.manifest.title.clone(), path.clone());
-                e.platform = Some(family.platform_name.to_string());
+                e.platform = Some(family.platform);
                 e.publisher = cat_entry
                     .manifest
                     .publisher
@@ -60,7 +62,7 @@ pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<l
                     .clone()
                     .unwrap_or_else(|| crate::app::file_stem_title(&path));
                 let mut e = library::GameEntry::new(sha1, title, path.clone());
-                e.platform = Some(family.platform_name.to_string());
+                e.platform = Some(family.platform);
                 e
             };
             entry.header_title = header_title;
@@ -134,7 +136,14 @@ pub fn enrich_next() -> EnrichResult {
     };
 
     entry.title = info.name;
-    entry.platform = info.platform;
+    // Hasheous's platform string never overrides the header-derived
+    // classification; it only fills a gap, mapped to our own type.
+    if entry.platform.is_none() {
+        entry.platform = info
+            .platform
+            .as_deref()
+            .and_then(system::Platform::from_description);
+    }
     entry.publisher = info.publisher;
     entry.year = info.year;
     entry.description = info.description;

@@ -80,10 +80,13 @@ consoles only through two object-safe traits in `app/system/mod.rs`:
   no-op implementations — a family implements only the backends it has.
 
 Every family registers in the `FAMILIES` descriptor table in
-`app/system/mod.rs` — platform name, extensions, control labels, an `is_rom`
-predicate, an optional header-title hook (`title_from_rom`), a console
-factory, and an optional gbtrace entry point for the `trace` subcommand. The
-file dialog, ROM loading, title detection, the library scanner (which stamps
+`app/system/mod.rs` — a `Platform` variant (the canonical platform identity;
+its `name()`/`short_name()` are the only display strings, and external
+platform descriptions such as Hasheous's are mapped into the enum rather
+than shown raw), extensions, control labels, an `is_rom` predicate, an
+optional header-title hook (`title_from_rom`), a console factory, and an
+optional gbtrace entry point for the `trace` subcommand. The file dialog,
+ROM loading, title detection, the library scanner (which stamps
 `GameEntry.platform` from the descriptor), the bindings UI, and the trace CLI
 all iterate that table; `family_for` is the single classification point, and
 media no family claims is reported as unsupported rather than guessed at.
@@ -173,8 +176,9 @@ consumers, feature-gated):
 2. `app/system/<family>.rs`: a `SteppingSystem` impl for a simple stepping
    core (or hand-written `SystemConsole` + `SystemDebugger` impls where the
    core has its own debugger backend), media-metadata constants, a
-   `MediaLoad`-taking factory — plus one entry in the `FAMILIES` descriptor
-   table in `app/system/mod.rs` (including `control_labels`, `short_name`,
+   `MediaLoad`-taking factory — plus a `Platform` variant (with its
+   `name()`/`short_name()`) and one entry in the `FAMILIES` descriptor
+   table in `app/system/mod.rs` (including `control_labels`,
    `title_from_rom`, and the `trace` hook or `None`). Dialogs, loading,
    library scanning, platform badges, the bindings UI, and the trace CLI
    follow from the table. Keep `is_rom` predicates mutually exclusive across

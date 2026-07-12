@@ -36,7 +36,7 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
             let mut dialog =
                 AsyncFileDialog::new().add_filter("All supported ROMs", &all_extensions);
             for family in system::FAMILIES {
-                dialog = dialog.add_filter(family.platform_name, family.extensions);
+                dialog = dialog.add_filter(family.platform.name(), family.extensions);
             }
             if let Some(dir) = app.recent_games.most_recent_dir() {
                 dialog = dialog.set_directory(dir);
@@ -290,7 +290,7 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
             .unwrap_or_else(|| file_stem_title(&rom_path));
         let mut entry = library::GameEntry::new(sha1.clone(), title, rom_path.clone());
         entry.header_title = header_title;
-        entry.platform = Some(family.platform_name.to_string());
+        entry.platform = Some(family.platform);
         let game_dir = library::game_dir_for(&entry.title, &entry.sha1)
             .expect("Could not determine library directory");
 
@@ -304,7 +304,9 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
         (game_dir, entry)
     };
 
-    // Add this ROM path if not already tracked
+    // Add this ROM path if not already tracked; older entries may predate
+    // platform classification, so stamp it while the ROM is at hand.
+    entry.platform.get_or_insert(family.platform);
     entry.add_rom_path(rom_path.clone());
     library::save_entry(&game_dir, &entry);
 
