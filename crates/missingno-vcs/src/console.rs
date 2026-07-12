@@ -57,6 +57,9 @@ const TIA_COLOUR_WRITE_HC: u8 = TIA_WRITE_HC - 2;
 /// clock behind the φ2 latch: a write half a clock ahead of a cell boundary
 /// leaves that cell on the old value; one and a half clocks ahead lands it.
 const TIA_PF_WRITE_HC: u8 = TIA_WRITE_HC + 2;
+/// A strobe's address-decoded level rises one colour clock before the write's
+/// φ2 fall; HMOVE's SEC latch sets on that rise.
+const TIA_STROBE_RISE_HC: u8 = TIA_WRITE_HC - 2;
 /// RSYNC's counter reset lands the wrap 3.5 colour clocks after the write end.
 const TIA_RSYNC_HC: u8 = TIA_WRITE_HC + 7;
 
@@ -119,8 +122,8 @@ impl Bus for BoardBus<'_> {
     fn write(&mut self, address: u16, data: u8) {
         *self.last_bus_value = data;
         use crate::tia::registers::{
-            COLUBK, COLUP0, COLUP1, COLUPF, PF0, PF1, PF2, RESBL, RESM0, RESM1, RESP0, RESP1,
-            RSYNC,
+            COLUBK, COLUP0, COLUP1, COLUPF, HMOVE, PF0, PF1, PF2, RESBL, RESM0, RESM1, RESP0,
+            RESP1, RSYNC,
         };
         if selects_cartridge(address) {
             self.cartridge.write_access(address);
@@ -133,6 +136,7 @@ impl Bus for BoardBus<'_> {
                 RESP0 | RESP1 | RESM0 | RESM1 | RESBL => TIA_RESET_HC,
                 COLUP0 | COLUP1 | COLUPF | COLUBK => TIA_COLOUR_WRITE_HC,
                 PF0 | PF1 | PF2 => TIA_PF_WRITE_HC,
+                HMOVE => TIA_STROBE_RISE_HC,
                 _ => TIA_WRITE_HC,
             };
             let slot = self
