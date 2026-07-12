@@ -14,7 +14,12 @@ pub struct Banked {
     bank: usize,
     hotspot_base: u16,
     banks: usize,
+    /// Superchip (SARA) cart RAM: write port at window offsets
+    /// $000–$07F, read port at $080–$0FF.
+    superchip_ram: Option<Box<[u8; SUPERCHIP_RAM_SIZE]>>,
 }
+
+const SUPERCHIP_RAM_SIZE: usize = 0x80;
 
 impl Banked {
     fn hotspot(&mut self, address: u16) {
@@ -26,8 +31,21 @@ impl Banked {
     }
 
     fn byte(&self, address: u16) -> u8 {
-        self.data[self.bank * 0x1000 + (address & 0x0FFF) as usize]
+        let offset = (address & 0x0FFF) as usize;
+        if let Some(ram) = &self.superchip_ram
+            && offset < 2 * SUPERCHIP_RAM_SIZE
+        {
+            return ram[offset % SUPERCHIP_RAM_SIZE];
+        }
+        self.data[self.bank * 0x1000 + offset]
     }
+}
+
+/// The RAM ports shadow the bottom 256 bytes of every bank, so a Superchip
+/// dump repeats each bank's first 128 bytes of filler into the next 128.
+fn has_superchip_signature(rom: &[u8]) -> bool {
+    rom.chunks_exact(0x1000)
+        .all(|bank| bank[..SUPERCHIP_RAM_SIZE] == bank[SUPERCHIP_RAM_SIZE..2 * SUPERCHIP_RAM_SIZE])
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -43,6 +61,8 @@ impl Cartridge {
                 bank: 0,
                 hotspot_base,
                 banks,
+                superchip_ram: has_superchip_signature(rom)
+                    .then(|| Box::new([0; SUPERCHIP_RAM_SIZE])),
             })
         };
         match rom.len() {
@@ -55,18 +75,33 @@ impl Cartridge {
         }
     }
 
-    pub fn read(&mut self, address: u16) -> u8 {
+    pub fn read(&mut self, address: u16, bus: u8) -> u8 {
         if let Cartridge::Banked(banked) = self {
             banked.hotspot(address);
+            if let Some(ram) = &mut banked.superchip_ram {
+                let offset = (address & 0x0FFF) as usize;
+                // The cart slot has no R/W line: a write-port read still
+                // stores, latching the floating bus byte the CPU also sees.
+                if offset < SUPERCHIP_RAM_SIZE {
+                    ram[offset] = bus;
+                    return bus;
+                }
+            }
         }
         self.peek(address)
     }
 
-    /// A write cycle on the cart bus: no data lands in ROM, but the
-    /// address still drives the hotspot decode.
-    pub fn write_access(&mut self, address: u16) {
+    /// A write cycle on the cart bus: no data lands in ROM, but the address
+    /// still drives the hotspot decode and the Superchip write port.
+    pub fn write_access(&mut self, address: u16, data: u8) {
         if let Cartridge::Banked(banked) = self {
             banked.hotspot(address);
+            if let Some(ram) = &mut banked.superchip_ram {
+                let offset = (address & 0x0FFF) as usize;
+                if offset < SUPERCHIP_RAM_SIZE {
+                    ram[offset] = data;
+                }
+            }
         }
     }
 

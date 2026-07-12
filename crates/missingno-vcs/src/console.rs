@@ -111,7 +111,7 @@ pub(crate) struct TiaWrite {
 impl Bus for BoardBus<'_> {
     fn read(&mut self, address: u16) -> u8 {
         let value = if selects_cartridge(address) {
-            self.cartridge.read(address)
+            self.cartridge.read(address, *self.last_bus_value)
         } else if selects_tia(address) {
             // The TIA drives only D7-D6; the rest floats to the bus's byte.
             self.tia.read(address, *self.last_bus_value)
@@ -131,7 +131,7 @@ impl Bus for BoardBus<'_> {
             RESP1, RSYNC,
         };
         if selects_cartridge(address) {
-            self.cartridge.write_access(address);
+            self.cartridge.write_access(address, data);
         } else if selects_tia(address) {
             let register = (address & 0x3F) as u8;
             // Data commits at φ2 (the high half); a reset strobe re-phases the
