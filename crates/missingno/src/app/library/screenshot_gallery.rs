@@ -18,12 +18,6 @@ use crate::app::{
     },
 };
 
-/// The console's native frame size in pixels.
-fn native_screen_size() -> (u32, u32) {
-    use missingno_gb::ppu::screen;
-    (screen::PIXELS_PER_LINE as u32, screen::NUM_SCANLINES as u32)
-}
-
 /// State for the screenshot gallery view.
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -130,9 +124,17 @@ impl GalleryState {
         }
     }
 
+    /// The selected capture, for sizing and render-path decisions.
+    pub fn selected_capture(&self) -> &FrameCapture {
+        &self.screenshots[self.selected].capture
+    }
+
     /// Render the current selection at 1x as RGBA.
     pub fn selected_rgba(&self) -> Vec<u8> {
-        let capture = &self.screenshots[self.selected].capture;
+        let capture = self.selected_capture();
+        if let Some(rgba) = &capture.rgba {
+            return rgba.data.clone();
+        }
         match &self.palette {
             PaletteSelection::Sgb => capture.to_rgba_sgb_or_fallback(),
             PaletteSelection::Dmg(choice) => capture.to_rgba_with_palette_choice(*choice),
@@ -143,7 +145,7 @@ impl GalleryState {
     /// Create a scaled image handle for the preview (nearest-neighbour).
     fn selected_image_handle_scaled(&self) -> iced::widget::image::Handle {
         let rgba = self.selected_rgba();
-        let (width, height) = native_screen_size();
+        let (width, height) = self.selected_capture().dimensions();
         let scaled = scale_nearest_neighbour(&rgba, width, height, self.scale);
         iced::widget::image::Handle::from_rgba(width * self.scale, height * self.scale, scaled)
     }
@@ -173,7 +175,7 @@ pub fn scale_nearest_neighbour(rgba: &[u8], w: u32, h: u32, scale: u32) -> Vec<u
 pub(crate) fn view(state: &GalleryState) -> Element<'_, app::Message> {
     let main_image = {
         let handle = state.selected_image_handle_scaled();
-        let (width, height) = native_screen_size();
+        let (width, height) = state.selected_capture().dimensions();
         let px = width * state.scale;
         let py = height * state.scale;
         container(
@@ -208,8 +210,11 @@ fn controls_panel(state: &GalleryState) -> Element<'_, app::Message> {
     ]
     .spacing(m());
 
-    // Palette selection — CGB captures are fixed colour, nothing to choose.
-    if !matches!(screenshot.capture.display_mode, DisplayMode::Cgb) {
+    // Palette selection applies only to GB shade captures; CGB and
+    // self-sized RGBA captures are fixed colour.
+    if !matches!(screenshot.capture.display_mode, DisplayMode::Cgb)
+        && screenshot.capture.rgba.is_none()
+    {
         col = col.push(app_text::label("Palette"));
 
         let mut palette_col = column![].spacing(2);

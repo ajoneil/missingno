@@ -104,8 +104,8 @@ impl panes::Pane for TilesPane {
         &'a self,
         ctx: Option<&panes::PaneContext<'_>>,
     ) -> pane_grid::Content<'a, app::Message> {
-        match ctx.and_then(|ctx| ctx.gb.map(|source| (ctx, source))) {
-            Some((ctx, source)) => self.content(source.vram(), ctx.colors),
+        match ctx.and_then(|ctx| ctx.gb) {
+            Some(gb) => self.content(gb.source.vram(), gb.colors),
             None => panes::running_placeholder("Tiles"),
         }
     }

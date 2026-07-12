@@ -22,6 +22,13 @@ pub struct Cartridge {
     pub(crate) sram_dirty: bool,
 }
 
+/// The boot logo at $0104; the boot ROM refuses to unmap without it.
+pub(crate) const NINTENDO_LOGO: [u8; 48] = [
+    0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
+    0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99,
+    0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
+];
+
 pub fn parse_title(rom: &[u8]) -> String {
     if rom.len() < 0x144 {
         return String::new();
@@ -120,6 +127,18 @@ impl Cartridge {
 
     pub fn peek_title(rom: &[u8]) -> String {
         parse_title(rom)
+    }
+
+    /// Whether `rom` carries the boot logo (the CGB boot ROM checks only its
+    /// first half, so that is the validity bar).
+    pub fn peek_valid_header(rom: &[u8]) -> bool {
+        rom.len() >= 0x150 && rom[0x104..0x11C] == NINTENDO_LOGO[..24]
+    }
+
+    /// CGB flag (header $0143): $C0 marks media that requires the CGB, as
+    /// opposed to $80's dual-mode enhancement.
+    pub fn peek_cgb_only(rom: &[u8]) -> bool {
+        rom.get(0x143).is_some_and(|flag| flag & 0xC0 == 0xC0)
     }
 
     pub fn title(&self) -> &str {

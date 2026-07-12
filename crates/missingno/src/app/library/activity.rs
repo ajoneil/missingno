@@ -97,6 +97,14 @@ pub enum EventKind {
     Screenshot { frame: FrameCapture },
 }
 
+/// Display-presentation snapshot handed to a frame capture; each family
+/// reads the knobs that apply to it.
+#[derive(Clone, Debug)]
+pub struct CaptureOptions {
+    pub use_sgb_colors: bool,
+    pub palette_name: String,
+}
+
 /// A captured frame: the PPU's shade output plus display context for re-rendering.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct FrameCapture {
@@ -229,7 +237,7 @@ impl FrameCapture {
             DisplayMode::Cgb => self
                 .cgb_rgba
                 .clone()
-                .unwrap_or_else(crate::app::screen::cgb_blank_rgba),
+                .unwrap_or_else(crate::app::screen::gb::cgb_blank_rgba),
         }
     }
 
@@ -307,6 +315,15 @@ fn parse_palette_choice(name: &str) -> missingno_gb::ppu::types::palette::Palett
 }
 
 impl FrameCapture {
+    /// The capture's own frame size; GB shade captures are the fixed 160×144.
+    pub fn dimensions(&self) -> (u32, u32) {
+        use missingno_gb::ppu::screen::{NUM_SCANLINES, PIXELS_PER_LINE};
+        match &self.rgba {
+            Some(capture) => (capture.width, capture.height),
+            None => (PIXELS_PER_LINE as u32, NUM_SCANLINES as u32),
+        }
+    }
+
     /// Create an iced image handle rendered with the capture-time display mode.
     pub fn to_image_handle(&self) -> iced::widget::image::Handle {
         use missingno_gb::ppu::screen::{NUM_SCANLINES, PIXELS_PER_LINE};

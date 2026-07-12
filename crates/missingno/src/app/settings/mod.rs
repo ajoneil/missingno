@@ -39,13 +39,9 @@ pub const EMULATOR_ACTIONS: [Action; 3] =
 impl fmt::Display for Action {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Action::Control(id) => {
-                let label = crate::app::system::gb::CONTROL_LABELS
-                    .get(*id as usize)
-                    .copied()
-                    .unwrap_or("Control");
-                write!(f, "{label}")
-            }
+            // Family-neutral; the bindings UI derives each family's name for
+            // a control from the descriptor table.
+            Action::Control(id) => write!(f, "Control {id}"),
             Action::Screenshot => write!(f, "Screenshot"),
             Action::ToggleFullscreen => write!(f, "Fullscreen"),
             Action::Pause => write!(f, "Pause"),
@@ -334,6 +330,14 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// The display-presentation snapshot handed to frame captures.
+    pub fn capture_options(&self) -> crate::app::library::activity::CaptureOptions {
+        crate::app::library::activity::CaptureOptions {
+            use_sgb_colors: self.use_sgb_colors,
+            palette_name: self.palette.to_string(),
+        }
+    }
+
     pub fn load() -> Self {
         let Some(path) = settings_path() else {
             return Self::default();

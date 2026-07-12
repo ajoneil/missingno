@@ -15,11 +15,11 @@ mod emulation;
 mod emulator;
 pub mod library;
 mod load;
-pub(crate) use load::{file_stem_title, headerless_family_rom};
+pub(crate) use load::file_stem_title;
 mod recent;
 mod screen;
 pub mod settings;
-mod system;
+pub(crate) mod system;
 mod texture_renderer;
 mod ui;
 mod views;
@@ -31,6 +31,7 @@ pub fn run(
     rom_path: Option<PathBuf>,
     debugger: bool,
     link: Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
+    boot_rom: Option<missingno_gb::BootRom>,
 ) -> iced::Result {
     // Load settings early to get saved window size
     let saved = settings::Settings::load();
@@ -40,7 +41,14 @@ pub fn run(
     // Wrap in a Cell so the non-Clone link can be taken from the FnMut closure.
     let link_cell = std::cell::Cell::new(link);
     let mut app = iced::application(
-        move || App::new(rom_path.clone(), debugger, link_cell.take()),
+        move || {
+            App::new(
+                rom_path.clone(),
+                debugger,
+                link_cell.take(),
+                boot_rom.clone(),
+            )
+        },
         App::update,
         App::view,
     )
@@ -91,6 +99,8 @@ struct App {
     screenshot_toast: Option<Instant>,
     /// Serial link cable connection (BGB link protocol), injected into GameBoy on load.
     serial_link: Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
+    /// Boot ROM supplied on the CLI, applied to every Game Boy family load.
+    boot_rom: Option<missingno_gb::BootRom>,
     /// Homebrew Hub API client (shared, thread-safe).
     homebrew_client: std::sync::Arc<library::homebrew_hub::HomebrewHubClient>,
     /// Bundled game catalogue (commercial + homebrew).
@@ -351,6 +361,7 @@ impl App {
         rom_path: Option<PathBuf>,
         debugger: bool,
         serial_link: Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
+        boot_rom: Option<missingno_gb::BootRom>,
     ) -> (Self, Task<Message>) {
         let settings = settings::Settings::load();
         let recent_games = recent::RecentGames::load();
@@ -372,6 +383,7 @@ impl App {
             pending_action: None,
             screenshot_toast: None,
             serial_link,
+            boot_rom,
             homebrew_client: std::sync::Arc::new(library::homebrew_hub::HomebrewHubClient::new()),
             catalogue: std::sync::Arc::new(library::catalogue::Catalogue::load()),
             cartridge_rw: CartridgeRwState::default(),

@@ -8,8 +8,6 @@ use crate::app;
 use crate::app::debugger::inspect::{InspectSnapshot, Inspection};
 use crate::app::debugger::panes::{self, DebuggerPane, Pane, PaneContext};
 use crate::app::ui::{fonts, sizes::s};
-use missingno_gb::debugger::cdl::CdlWindow;
-use missingno_gb::debugger::symbols::SymbolTable;
 
 #[derive(Clone, Default)]
 pub struct NesInspectState {
@@ -42,21 +40,14 @@ impl Inspection for NesInspectState {
     }
 }
 
-/// The per-frame snapshot for the running view; symbols and code/data logs
-/// have no NES backend yet, so it carries empty ones.
+/// The per-frame snapshot for the running view.
 pub struct NesSnapshot {
     pub state: NesInspectState,
-    symbols: SymbolTable,
-    cdl: CdlWindow,
 }
 
 impl NesSnapshot {
     pub fn new(state: NesInspectState) -> Self {
-        NesSnapshot {
-            state,
-            symbols: SymbolTable::default(),
-            cdl: CdlWindow::default(),
-        }
+        NesSnapshot { state }
     }
 }
 
@@ -69,12 +60,6 @@ impl Inspection for NesSnapshot {
 impl InspectSnapshot for NesSnapshot {
     fn frame(&self) -> u64 {
         self.state.frame
-    }
-    fn symbols(&self) -> &SymbolTable {
-        &self.symbols
-    }
-    fn cdl(&self) -> &CdlWindow {
-        &self.cdl
     }
 }
 

@@ -19,7 +19,7 @@ use crate::app::debugger::inspect::{DebugView, Inspection};
 use crate::app::debugger::panes;
 use crate::app::debugger::vcs::{DisasmRow, VcsInspectState, VcsSnapshot};
 use crate::app::emu_thread::RunningStatus;
-use crate::app::library::activity::FrameCapture;
+use crate::app::library::activity::{CaptureOptions, FrameCapture};
 use crate::app::screen::{IndexedFrame, ScreenDisplay};
 
 pub const PLATFORM_NAME: &str = "Atari 2600";
@@ -289,7 +289,7 @@ impl SystemConsole for VcsConsole {
         ScreenDisplay::Indexed(self.last_frame.clone())
     }
 
-    fn capture_frame(&self, _use_sgb_colors: bool, _palette_name: &str) -> FrameCapture {
+    fn capture_frame(&self, _options: &CaptureOptions) -> FrameCapture {
         FrameCapture::from_indexed(&self.last_frame)
     }
 
@@ -519,7 +519,7 @@ impl SystemDebugger for VcsDebugger {
         FRAME_INTERVAL
     }
 
-    fn capture_frame(&self, _use_sgb_colors: bool, _palette_name: &str) -> FrameCapture {
+    fn capture_frame(&self, _options: &CaptureOptions) -> FrameCapture {
         FrameCapture::from_indexed(&self.last_frame)
     }
 

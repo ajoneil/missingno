@@ -11,7 +11,7 @@ use super::{ControlId, ControlInput, FrameOutcome, SystemConsole, SystemDebugger
 use crate::app::debugger::inspect::{DebugView, Inspection};
 use crate::app::debugger::panes;
 use crate::app::emu_thread::RunningStatus;
-use crate::app::library::activity::FrameCapture;
+use crate::app::library::activity::{CaptureOptions, FrameCapture};
 use crate::app::screen::{IndexedFrame, ScreenDisplay};
 
 pub trait SteppingSystem: 'static {
@@ -92,7 +92,7 @@ impl<S: SteppingSystem> SystemConsole for SteppingConsole<S> {
         ScreenDisplay::Indexed(self.last_frame.clone())
     }
 
-    fn capture_frame(&self, _use_sgb_colors: bool, _palette_name: &str) -> FrameCapture {
+    fn capture_frame(&self, _options: &CaptureOptions) -> FrameCapture {
         FrameCapture::from_indexed(&self.last_frame)
     }
 
@@ -247,7 +247,7 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
         S::FRAME_INTERVAL
     }
 
-    fn capture_frame(&self, _use_sgb_colors: bool, _palette_name: &str) -> FrameCapture {
+    fn capture_frame(&self, _options: &CaptureOptions) -> FrameCapture {
         FrameCapture::from_indexed(&self.last_frame)
     }
 

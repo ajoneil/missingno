@@ -1,8 +1,7 @@
 use std::{fs, path::PathBuf};
 
 use crate::app::library::{self, catalogue::Catalogue, hasheous};
-
-use missingno_gb::cartridge::Cartridge;
+use crate::app::system;
 
 pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<library::GameEntry> {
     let mut new_entries = Vec::new();
@@ -24,6 +23,12 @@ pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<l
                 Err(_) => continue,
             };
 
+            // Skip media no family claims — an unlaunchable library entry
+            // helps nobody.
+            let Some(family) = system::family_for(&path, &rom) else {
+                continue;
+            };
+
             let sha1 = hasheous::rom_sha1(&rom);
 
             // Check if already in library
@@ -33,22 +38,14 @@ pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<l
                 continue;
             }
 
-            // Headerless media (VCS and future families) has no in-ROM
-            // title — its name comes from the file stem until Hasheous
-            // enriches it. Only Game Boy media carries a header title.
-            let header_title = if crate::app::headerless_family_rom(&path, &rom) {
-                None
-            } else {
-                let title = Cartridge::peek_title(&rom);
-                (!title.is_empty()).then_some(title)
-            };
+            let header_title = (family.title_from_rom)(&rom);
 
-            // Try catalogue first for a good title, fall back to header
-            // (Game Boy) or the file stem (headerless families).
+            // Try catalogue first for a good title, fall back to the header
+            // title or the file stem.
             let mut entry = if let Some(cat_entry) = catalogue.lookup_hash(&sha1) {
                 let mut e =
                     library::GameEntry::new(sha1, cat_entry.manifest.title.clone(), path.clone());
-                e.platform = Some(crate::app::system::gb::PLATFORM_NAME.to_string());
+                e.platform = Some(family.platform_name.to_string());
                 e.publisher = cat_entry
                     .manifest
                     .publisher
@@ -62,7 +59,9 @@ pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<l
                 let title = header_title
                     .clone()
                     .unwrap_or_else(|| crate::app::file_stem_title(&path));
-                library::GameEntry::new(sha1, title, path.clone())
+                let mut e = library::GameEntry::new(sha1, title, path.clone());
+                e.platform = Some(family.platform_name.to_string());
+                e
             };
             entry.header_title = header_title;
 
@@ -161,9 +160,8 @@ fn is_rom_file(path: &std::path::Path) -> bool {
             .extension()
             .and_then(|e| e.to_str())
             .is_some_and(|ext| {
-                crate::app::system::gb::ROM_EXTENSIONS.contains(&ext)
-                    || crate::app::system::FAMILIES
-                        .iter()
-                        .any(|family| family.extensions.contains(&ext))
+                system::FAMILIES
+                    .iter()
+                    .any(|family| family.extensions.contains(&ext))
             })
 }

@@ -46,7 +46,7 @@ use std::sync::Arc;
 use crate::app::debugger::inspect::{DebugView, Inspection};
 use crate::app::debugger::panes;
 use crate::app::emu_thread::RunningStatus;
-use crate::app::library::activity::FrameCapture;
+use crate::app::library::activity::{CaptureOptions, FrameCapture};
 use crate::app::screen::ScreenDisplay;
 
 pub mod gb;
@@ -58,9 +58,41 @@ pub mod sms;
 pub mod stepping;
 pub mod vcs;
 
-/// Build a console from ROM bytes and a display title; `None` when the
-/// media fails to parse (the loader falls through to the next family).
-pub type CreateConsole = fn(&[u8], String) -> Option<Box<dyn SystemConsole>>;
+/// Everything the loader hands a family's console factory. The fields are
+/// family-agnostic except the two Game Boy peripheral ones, quarantined here
+/// under the same rule as the GB types on the seam traits: generalize when a
+/// second family grows an equivalent, not before.
+pub struct MediaLoad<'a> {
+    /// Soft-patched ROM contents.
+    pub rom: &'a [u8],
+    /// Display-title fallback (the file stem); families whose media carries
+    /// a header title ignore it.
+    pub fallback_title: String,
+    /// Battery-save contents to restore, if the library holds any.
+    pub save_data: Option<Vec<u8>>,
+    /// The game's library folder, for peripherals that write artifacts.
+    pub game_dir: &'a Path,
+    /// Boot ROM supplied on the CLI; the Game Boy family attaches it.
+    pub boot_rom: Option<missingno_gb::BootRom>,
+    /// Link-cable connection, borrowed mutably so only the family that owns
+    /// the concept takes it.
+    pub serial_link: &'a mut Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
+}
+
+/// Build a console from loaded media; `None` when the media fails to parse.
+pub type CreateConsole = fn(MediaLoad) -> Option<Box<dyn SystemConsole>>;
+
+/// A gbtrace capture request, dispatched through the family table by the
+/// `trace` subcommand.
+pub struct TraceRequest<'a> {
+    pub rom: &'a [u8],
+    /// For the Game Boy family's `.sav` sidecar lookup.
+    pub rom_path: &'a Path,
+    pub profile: &'a missingno_gb::trace::Profile,
+    pub output: &'a Path,
+    pub cycles: u64,
+    pub boot_rom: Option<missingno_gb::BootRom>,
+}
 
 /// A family's registration on the load path: how its media is recognised in
 /// file dialogs, library scans, and ROM loads, and how a console is built.
@@ -73,21 +105,57 @@ pub struct FamilyDescriptor {
     /// The family's names for the shared control ids, indexed by id;
     /// empty string for ids the family ignores.
     pub control_labels: &'static [&'static str; 8],
-    /// Whether path and contents identify this family's media.
+    /// Whether path and contents identify this family's media. Predicates
+    /// across the table are mutually exclusive; table order sets the
+    /// file-dialog filter order, not claim precedence.
     pub is_rom: fn(&Path, &[u8]) -> bool,
+    /// Title carried in the media's header, for families whose media has
+    /// one; `None` falls back to the file stem.
+    pub title_from_rom: fn(&[u8]) -> Option<String>,
     pub create_console: CreateConsole,
+    /// gbtrace capture entry point for the `trace` subcommand; `None` for
+    /// families without a trace backend.
+    pub trace: Option<fn(TraceRequest)>,
 }
 
-/// Every registered family except the Game Boy, which stays the loader's
-/// fallback (its media needs battery saves, boot ROMs, and the link port).
+/// The single classification point: the family whose media this is. Media
+/// no family claims is unsupported.
+pub fn family_for(path: &Path, rom: &[u8]) -> Option<&'static FamilyDescriptor> {
+    FAMILIES.iter().find(|family| (family.is_rom)(path, rom))
+}
+
+/// Every registered family, in file-dialog filter order.
 pub static FAMILIES: &[FamilyDescriptor] = &[
+    FamilyDescriptor {
+        platform_name: gb::PLATFORM_NAME,
+        short_name: gb::SHORT_NAME,
+        extensions: gb::ROM_EXTENSIONS,
+        control_labels: &gb::CONTROL_LABELS,
+        is_rom: gb::is_gb_rom,
+        title_from_rom: gb::title_from_rom,
+        create_console: gb::create_console,
+        trace: Some(crate::trace::trace_gb),
+    },
+    FamilyDescriptor {
+        platform_name: gb::GBC_PLATFORM_NAME,
+        short_name: gb::GBC_SHORT_NAME,
+        extensions: gb::GBC_ROM_EXTENSIONS,
+        control_labels: &gb::CONTROL_LABELS,
+        is_rom: gb::is_gbc_rom,
+        title_from_rom: gb::title_from_rom,
+        // The same factory serves both platforms: the header picks the core.
+        create_console: gb::create_console,
+        trace: Some(crate::trace::trace_gb),
+    },
     FamilyDescriptor {
         platform_name: vcs::PLATFORM_NAME,
         short_name: "2600",
         extensions: vcs::ROM_EXTENSIONS,
         control_labels: &vcs::CONTROL_LABELS,
         is_rom: vcs::is_vcs_rom,
-        create_console: |rom, title| vcs::create_console(rom, title).ok(),
+        title_from_rom: |_| None,
+        create_console: |media| vcs::create_console(media.rom, media.fallback_title).ok(),
+        trace: Some(crate::trace::trace_vcs),
     },
     #[cfg(feature = "sms")]
     FamilyDescriptor {
@@ -96,7 +164,9 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         extensions: sms::ROM_EXTENSIONS,
         control_labels: &sms::CONTROL_LABELS,
         is_rom: |path, _| sms::is_sms_rom(path),
-        create_console: |rom, title| sms::create_console(rom, title).ok(),
+        title_from_rom: |_| None,
+        create_console: |media| sms::create_console(media.rom, media.fallback_title).ok(),
+        trace: None,
     },
     #[cfg(feature = "nes")]
     FamilyDescriptor {
@@ -105,7 +175,9 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         extensions: nes::ROM_EXTENSIONS,
         control_labels: &nes::CONTROL_LABELS,
         is_rom: |_, rom| nes::is_nes_rom(rom),
-        create_console: |rom, title| nes::create_console(rom, title).ok(),
+        title_from_rom: |_| None,
+        create_console: |media| nes::create_console(media.rom, media.fallback_title).ok(),
+        trace: Some(crate::trace::trace_nes),
     },
 ];
 
@@ -133,7 +205,7 @@ pub trait SystemConsole: Send {
     /// convert from their native rate on their own side.
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)>;
     fn screen_display(&self) -> ScreenDisplay;
-    fn capture_frame(&self, use_sgb_colors: bool, palette_name: &str) -> FrameCapture;
+    fn capture_frame(&self, options: &CaptureOptions) -> FrameCapture;
     /// The game's title for filenames and session records.
     fn game_title(&self) -> String;
     /// Serialized battery-backed save contents, if the media persists any.
@@ -180,26 +252,25 @@ pub trait SystemDebugger: Send {
     /// The live inspection surface the debugger panes render from while paused.
     fn inspect(&self) -> &dyn Inspection;
     /// The family's debugger pane set and layout identity.
-    fn pane_family(&self) -> &'static panes::Family {
-        &panes::GB_FAMILY
-    }
+    fn pane_family(&self) -> &'static panes::Family;
     /// Labels from the ROM's debug-symbol sidecar, if one was loaded.
     fn symbols(&self) -> Arc<SymbolTable> {
         empty_symbols()
     }
-    fn set_symbols(&mut self, _symbols: SymbolTable) {}
     /// Create a user label at an address; the system decides the bank from
     /// the current mapping.
     fn add_symbol(&mut self, _address: u16, _name: String) {}
     fn remove_symbol(&mut self, _symbol: &Symbol) {}
-    fn save_symbols(&self, _path: &Path) {}
     /// Code/data-log flags around the current instruction, for the
     /// disassembly's data-byte display.
     fn cdl_window(&self) -> CdlWindow {
         CdlWindow::default()
     }
-    fn load_cdl(&mut self, _path: &Path) {}
-    fn save_cdl(&self, _path: &Path) {}
+    /// Load debug sidecars found beside the ROM (the Game Boy's `.sym`
+    /// labels and `.cdl` code/data log); families without any do nothing.
+    fn load_sidecars(&mut self, _rom_path: &Path) {}
+    /// Write updated debug sidecars back beside the ROM.
+    fn save_sidecars(&self, _rom_path: &Path) {}
     /// An owned per-vblank snapshot for the UI to render from while running.
     fn snapshot(&self, frame: u64) -> DebugView;
     fn running_status(&self, frame: u64) -> RunningStatus;
@@ -209,7 +280,7 @@ pub trait SystemDebugger: Send {
         None
     }
     fn frame_interval(&self) -> Duration;
-    fn capture_frame(&self, use_sgb_colors: bool, palette_name: &str) -> FrameCapture;
+    fn capture_frame(&self, options: &CaptureOptions) -> FrameCapture;
     /// Step one frame while writing an execution trace to `path`; `None` when
     /// the system has no capture backend or capture fails.
     fn capture_trace(&mut self, _path: &Path) -> Option<ScreenDisplay> {

@@ -5,7 +5,6 @@ use missingno_gb::cartridge::Cartridge;
 use crate::app::system;
 use crate::app::{self, DetailSubScreen, FlashState, Game, Screen, load};
 use crate::cartridge_rw;
-use missingno_gb::ppu::screen;
 
 use super::{homebrew_browser, screenshot_gallery};
 
@@ -535,8 +534,8 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                         && let Some(handle) = handle
                     {
                         let rgba = gallery_state.selected_rgba();
-                        let native_width = screen::PIXELS_PER_LINE as u32;
-                        let native_height = screen::NUM_SCANLINES as u32;
+                        let (native_width, native_height) =
+                            gallery_state.selected_capture().dimensions();
                         let width = native_width * gallery_state.scale;
                         let height = native_height * gallery_state.scale;
                         let scaled = screenshot_gallery::scale_nearest_neighbour(
@@ -592,14 +591,10 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
             let _ = std::fs::write(&rom_path, &rom_bytes);
 
             // Create library entry
-            let header_title = Cartridge::peek_title(&rom_bytes);
+            let family = system::family_for(&rom_path, &rom_bytes);
             let mut entry = super::GameEntry::new(sha1.clone(), title, rom_path);
-            entry.header_title = if header_title.is_empty() {
-                None
-            } else {
-                Some(header_title)
-            };
-            entry.platform = Some(system::gb::PLATFORM_NAME.to_string());
+            entry.header_title = family.and_then(|f| (f.title_from_rom)(&rom_bytes));
+            entry.platform = family.map(|f| f.platform_name.to_string());
             entry.year = manifest.date.clone();
             entry.description = manifest.description.clone();
             entry.publisher = manifest.developer.clone();

@@ -12,7 +12,7 @@ use crate::app::{
     console::ConsoleColors,
     emu_thread::{DebuggerPayload, EmuCommand, EmuHandle, RunningStatus},
     emulator::Emulator,
-    library::activity::FrameCapture,
+    library::activity::{CaptureOptions, FrameCapture},
     screen::{ScreenDisplay, ScreenView},
     system::{SystemConsole, SystemDebugger},
     ui::{
@@ -25,7 +25,7 @@ use missingno_gb::{
     ppu::types::palette::PaletteChoice,
 };
 
-use inspect::DebugView;
+use inspect::{DebugView, GbPaneContext};
 use panes::{DebuggerPanes, PaneContext};
 use sidebar::Sidebar;
 
@@ -204,22 +204,18 @@ impl Debugger {
         }
     }
 
-    /// Load the ROM's debug sidecars — `.sym` labels and the `.cdl`
-    /// code/data log. No-op while the core is away on the emu thread.
-    pub fn load_symbols(&mut self, rom_path: &std::path::Path) {
+    /// Load the ROM's debug sidecars, whatever the system keeps beside its
+    /// media. No-op while the core is away on the emu thread.
+    pub fn load_sidecars(&mut self, rom_path: &std::path::Path) {
         if let Some(core) = &mut self.debugger {
-            core.set_symbols(missingno_gb::debugger::symbols::SymbolTable::for_rom(
-                rom_path,
-            ));
-            core.load_cdl(&rom_path.with_extension("cdl"));
+            core.load_sidecars(rom_path);
             self.rom_path = Some(rom_path.to_path_buf());
         }
     }
 
     fn save_sidecars(&self) {
         if let (Some(core), Some(rom_path)) = (&self.debugger, &self.rom_path) {
-            core.save_cdl(&rom_path.with_extension("cdl"));
-            core.save_symbols(&rom_path.with_extension("sym"));
+            core.save_sidecars(rom_path);
         }
     }
 
@@ -233,14 +229,10 @@ impl Debugger {
         self.debugger.as_ref().map(|core| core.game_title())
     }
 
-    pub fn capture_screenshot(
-        &self,
-        use_sgb_colors: bool,
-        palette_name: &str,
-    ) -> Option<FrameCapture> {
+    pub fn capture_screenshot(&self, options: &CaptureOptions) -> Option<FrameCapture> {
         self.debugger
             .as_ref()
-            .map(|core| core.capture_frame(use_sgb_colors, palette_name))
+            .map(|core| core.capture_frame(options))
     }
 
     /// Take the core to hand it to the emu thread for running.
@@ -615,21 +607,23 @@ impl Debugger {
             return self.running_view();
         };
         let inspection = core.inspect();
-        let gb = inspection.as_gb();
-        let colors = gb
-            .map(|source| source.colors(self.panes.palette()))
-            .unwrap_or_else(|| ConsoleColors::Dmg {
-                palette: *self.panes.palette(),
-            });
+        let gb_source = inspection.as_gb();
+        let colors = gb_source.map(|source| source.colors(self.panes.palette()));
         let symbols = core.symbols();
         let cdl = core.cdl_window();
+        let gb = match (gb_source, &colors) {
+            (Some(source), Some(colors)) => Some(GbPaneContext {
+                source,
+                colors,
+                symbols: &symbols,
+                cdl: &cdl,
+            }),
+            _ => None,
+        };
         let ctx = PaneContext {
             gb,
             family: inspection.family_state(),
             breakpoints: core.breakpoints(),
-            colors: &colors,
-            symbols: &symbols,
-            cdl: &cdl,
         };
 
         let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
@@ -654,11 +648,12 @@ impl Debugger {
         // Non-GB families summarise through the same CPU/video status the
         // running view uses; their panes carry the detail.
         let status;
-        let sidebar = if let Some(source) = gb {
-            self.sidebar.view(source, &colors)
-        } else {
-            status = core.running_status(self.frame);
-            self.sidebar.running_summary(Some(&status))
+        let sidebar = match (gb_source, &colors) {
+            (Some(source), Some(colors)) => self.sidebar.view(source, colors),
+            _ => {
+                status = core.running_status(self.frame);
+                self.sidebar.running_summary(Some(&status))
+            }
         };
         row![sidebar, center, self.icon_rail(),]
             .spacing(s())
@@ -675,12 +670,7 @@ impl Debugger {
             .last_snapshot
             .as_deref()
             .and_then(|snapshot| snapshot.as_gb())
-            .map(|source| source.colors(self.panes.palette()))
-            .or_else(|| {
-                self.last_snapshot.as_deref().map(|_| ConsoleColors::Dmg {
-                    palette: *self.panes.palette(),
-                })
-            });
+            .map(|source| source.colors(self.panes.palette()));
 
         let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
             pane_grid(split_state, |_handle, zone, _maximized| {
@@ -719,17 +709,23 @@ impl Debugger {
     /// The main pane area while running: snapshot-backed panes when a snapshot
     /// is present, titled placeholders otherwise.
     fn running_center<'a>(&'a self, colors: Option<&ConsoleColors>) -> Element<'a, app::Message> {
-        match (self.last_snapshot.as_deref(), colors) {
-            (Some(snapshot), Some(colors)) => self.panes.view(Some(PaneContext {
-                gb: snapshot.as_gb(),
-                family: snapshot.family_state(),
-                breakpoints: &self.breakpoints,
+        let Some(snapshot) = self.last_snapshot.as_deref() else {
+            return self.panes.view(None);
+        };
+        let gb = match (snapshot.as_gb(), colors, snapshot.gb_sidecars()) {
+            (Some(source), Some(colors), Some((symbols, cdl))) => Some(GbPaneContext {
+                source,
                 colors,
-                symbols: snapshot.symbols(),
-                cdl: snapshot.cdl(),
-            })),
-            _ => self.panes.view(None),
-        }
+                symbols,
+                cdl,
+            }),
+            _ => None,
+        };
+        self.panes.view(Some(PaneContext {
+            gb,
+            family: snapshot.family_state(),
+            breakpoints: &self.breakpoints,
+        }))
     }
 
     fn bottom_pane_grid<'a>(

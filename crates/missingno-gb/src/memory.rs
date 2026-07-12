@@ -61,12 +61,23 @@ pub enum ExternalAddress {
 /// over 0x0000–0x00FF; the CGB boot ROM is 2304 bytes over 0x0000–0x00FF
 /// AND 0x0200–0x08FF, leaving the 0x0100–0x01FF cartridge-header window
 /// visible so the boot ROM can read the header it inspects.
+#[derive(Clone)]
 pub enum BootRom {
     Dmg(Box<[u8; 0x100]>),
     Cgb(Box<[u8; 0x900]>),
 }
 
 impl BootRom {
+    /// Classify a boot-ROM image by length; `Err` carries the bad length.
+    pub fn from_bytes(data: Vec<u8>) -> Result<BootRom, usize> {
+        let len = data.len();
+        match len {
+            0x100 => Ok(BootRom::Dmg(data.into_boxed_slice().try_into().unwrap())),
+            0x900 => Ok(BootRom::Cgb(data.into_boxed_slice().try_into().unwrap())),
+            _ => Err(len),
+        }
+    }
+
     /// The boot-ROM byte overlaying `addr`, or `None` if `addr` shows the
     /// cartridge through (always, or the CGB header window).
     fn overlay_byte(&self, addr: u16) -> Option<u8> {

@@ -1,10 +1,11 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 
-use missingno_gb::cartridge::Cartridge;
 use missingno_gb::trace::{Profile, Tracer, Trigger};
 use missingno_gb::{BootRom, Console, GameBoy, Model};
 use missingno_gbc::GameBoyColor;
+
+use crate::app::system::{self, TraceRequest, gb::GbLaunch};
 
 pub fn run(
     rom_path: PathBuf,
@@ -34,60 +35,56 @@ pub fn run(
     eprintln!("profile: {}", profile_path.display());
     eprintln!("output: {}", output_path.display());
 
-    if rom_data.len() >= 4 && &rom_data[0..4] == b"NES\x1a" {
-        #[cfg(feature = "nes")]
-        {
-            eprintln!("limit: {cycles} CPU cycles");
-            trace_nes(&rom_data, &profile, &output_path, cycles);
-            return;
-        }
-        #[cfg(not(feature = "nes"))]
-        {
-            eprintln!("error: iNES ROM, but this build has no NES support (--features nes)");
-            process::exit(1);
-        }
-    }
-
-    let is_a26 = rom_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("a26"));
-    if is_a26 || matches!(rom_data.len(), 0x800 | 0x1000) {
-        // Bare VCS ROM sizes cannot collide with Game Boy ROMs (those
-        // start at 32 KiB).
-        eprintln!("limit: {cycles} CPU cycles");
-        trace_vcs(&rom_data, &profile, &output_path, cycles);
-        return;
-    }
-
-    eprintln!("limit: {cycles} T-cycles");
-    let save_path = rom_path.with_extension("sav");
-    let save_data = std::fs::read(&save_path).ok();
-    let cartridge = Cartridge::new(rom_data, save_data);
-
-    if cartridge.is_cgb() {
-        trace_console(
-            GameBoyColor::new(cartridge, boot_rom),
-            &profile,
-            &output_path,
-            cycles,
-        );
-    } else {
-        trace_console(
-            GameBoy::new(cartridge, boot_rom),
-            &profile,
-            &output_path,
-            cycles,
-        );
-    }
+    let Some(family) = system::family_for(&rom_path, &rom_data) else {
+        eprintln!("error: unsupported ROM: {}", rom_path.display());
+        process::exit(1);
+    };
+    let Some(trace) = family.trace else {
+        eprintln!("error: {} has no trace backend", family.platform_name);
+        process::exit(1);
+    };
+    trace(TraceRequest {
+        rom: &rom_data,
+        rom_path: &rom_path,
+        profile: &profile,
+        output: &output_path,
+        cycles,
+        boot_rom,
+    });
 }
 
-fn trace_console<M: Model>(
-    mut gb: Console<M>,
-    profile: &Profile,
-    output_path: &PathBuf,
-    cycles: u64,
-) {
+pub(crate) fn trace_gb(request: TraceRequest) {
+    eprintln!("limit: {} T-cycles", request.cycles);
+    let save_data = std::fs::read(request.rom_path.with_extension("sav")).ok();
+
+    struct Trace<'a> {
+        profile: &'a Profile,
+        output: &'a Path,
+        cycles: u64,
+    }
+    impl GbLaunch for Trace<'_> {
+        type Output = ();
+        fn dmg(self, console: GameBoy) {
+            trace_console(console, self.profile, self.output, self.cycles);
+        }
+        fn cgb(self, console: GameBoyColor) {
+            trace_console(console, self.profile, self.output, self.cycles);
+        }
+    }
+    system::gb::launch(
+        request.rom.to_vec(),
+        save_data,
+        request.boot_rom,
+        None,
+        Trace {
+            profile: request.profile,
+            output: request.output,
+            cycles: request.cycles,
+        },
+    );
+}
+
+fn trace_console<M: Model>(mut gb: Console<M>, profile: &Profile, output_path: &Path, cycles: u64) {
     let title = gb.cartridge().title().to_string();
     let boot = missingno_gb::trace::BootRom::Skip;
 
@@ -139,9 +136,13 @@ fn trace_console<M: Model>(
 }
 
 #[cfg(feature = "nes")]
-fn trace_nes(rom: &[u8], profile: &Profile, output_path: &PathBuf, cycle_limit: u64) {
+pub(crate) fn trace_nes(request: TraceRequest) {
     use missingno_nes::console::Nes;
     use missingno_nes::trace::{Tracer, step_instruction_counted};
+
+    let (rom, profile, output_path, cycle_limit) =
+        (request.rom, request.profile, request.output, request.cycles);
+    eprintln!("limit: {cycle_limit} CPU cycles");
 
     let mut nes = Nes::new(rom).unwrap_or_else(|e| {
         eprintln!("error: failed to load NES ROM: {e:?}");
@@ -186,9 +187,13 @@ fn trace_nes(rom: &[u8], profile: &Profile, output_path: &PathBuf, cycle_limit: 
     }
 }
 
-fn trace_vcs(rom: &[u8], profile: &Profile, output_path: &PathBuf, cycle_limit: u64) {
+pub(crate) fn trace_vcs(request: TraceRequest) {
     use missingno_vcs::console::Vcs;
     use missingno_vcs::trace::{Tracer, step_instruction_counted};
+
+    let (rom, profile, output_path, cycle_limit) =
+        (request.rom, request.profile, request.output, request.cycles);
+    eprintln!("limit: {cycle_limit} CPU cycles");
 
     let mut vcs = Vcs::new(rom, missingno_vcs::TvStandard::Ntsc).unwrap_or_else(|e| {
         eprintln!("error: failed to load VCS ROM: {e:?}");

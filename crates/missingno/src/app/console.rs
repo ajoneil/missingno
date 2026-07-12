@@ -2,8 +2,11 @@ use missingno_gb::{Console, Dmg, Model, ppu::types::palette::Palette, sgb::MaskM
 use missingno_gbc::Cgb;
 
 use crate::app::debugger::inspect::{CgbView, ColorSnapshot};
-use crate::app::library::activity::FrameCapture;
-use crate::app::screen::{CgbScreen, GameBoyScreen, ScreenDisplay, SgbScreen};
+use crate::app::library::activity::{CaptureOptions, FrameCapture};
+use crate::app::screen::{
+    ScreenDisplay,
+    gb::{CgbScreen, GameBoyScreen, SgbScreen},
+};
 use crate::render::cram_palettes;
 
 /// The colours the debugger panes draw with: the user-selected palette on
@@ -49,11 +52,7 @@ pub trait ConsoleUi: Model {
     /// The CGB-only register state for the debugger sidebar; `None` on DMG.
     fn cgb_view(console: &Console<Self>) -> Option<CgbView>;
 
-    fn capture_frame(
-        console: &Console<Self>,
-        use_sgb_colors: bool,
-        palette_name: &str,
-    ) -> FrameCapture;
+    fn capture_frame(console: &Console<Self>, options: &CaptureOptions) -> FrameCapture;
 }
 
 impl ConsoleUi for Dmg {
@@ -96,19 +95,15 @@ impl ConsoleUi for Dmg {
         None
     }
 
-    fn capture_frame(
-        console: &Console<Self>,
-        use_sgb_colors: bool,
-        palette_name: &str,
-    ) -> FrameCapture {
+    fn capture_frame(console: &Console<Self>, options: &CaptureOptions) -> FrameCapture {
         let sgb_data = console
             .sgb()
             .map(|sgb| sgb.render_data(console.ppu().control().video_enabled()));
         FrameCapture::capture(
             console.screen().front(),
             sgb_data.as_ref(),
-            use_sgb_colors,
-            palette_name,
+            options.use_sgb_colors,
+            &options.palette_name,
         )
     }
 }
@@ -157,11 +152,7 @@ impl ConsoleUi for Cgb {
         })
     }
 
-    fn capture_frame(
-        console: &Console<Self>,
-        _use_sgb_colors: bool,
-        _palette_name: &str,
-    ) -> FrameCapture {
+    fn capture_frame(console: &Console<Self>, _options: &CaptureOptions) -> FrameCapture {
         FrameCapture::capture_cgb(console.screen())
     }
 }

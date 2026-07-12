@@ -8,8 +8,6 @@ use crate::app;
 use crate::app::debugger::inspect::{InspectSnapshot, Inspection};
 use crate::app::debugger::panes::{self, DebuggerPane, Pane, PaneContext};
 use crate::app::ui::{fonts, sizes::s};
-use missingno_gb::debugger::cdl::CdlWindow;
-use missingno_gb::debugger::symbols::SymbolTable;
 
 #[derive(Clone, Default)]
 pub struct SmsInspectState {
@@ -39,21 +37,14 @@ impl Inspection for SmsInspectState {
     }
 }
 
-/// The per-frame snapshot for the running view; symbols and code/data logs
-/// have no SMS backend yet, so it carries empty ones.
+/// The per-frame snapshot for the running view.
 pub struct SmsSnapshot {
     pub state: SmsInspectState,
-    symbols: SymbolTable,
-    cdl: CdlWindow,
 }
 
 impl SmsSnapshot {
     pub fn new(state: SmsInspectState) -> Self {
-        SmsSnapshot {
-            state,
-            symbols: SymbolTable::default(),
-            cdl: CdlWindow::default(),
-        }
+        SmsSnapshot { state }
     }
 }
 
@@ -66,12 +57,6 @@ impl Inspection for SmsSnapshot {
 impl InspectSnapshot for SmsSnapshot {
     fn frame(&self) -> u64 {
         self.state.frame
-    }
-    fn symbols(&self) -> &SymbolTable {
-        &self.symbols
-    }
-    fn cdl(&self) -> &CdlWindow {
-        &self.cdl
     }
 }
 

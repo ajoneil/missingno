@@ -12,11 +12,10 @@ use iced::{
 
 use crate::app::{
     self,
-    console::ConsoleColors,
     debugger::{
         self,
         audio::AudioPane,
-        inspect::InspectSource,
+        inspect::GbPaneContext,
         instructions::InstructionsPane,
         layout,
         ppu::{
@@ -34,8 +33,6 @@ use crate::app::{
         sizes::{self as sizes, s, xs},
     },
 };
-use missingno_gb::debugger::cdl::CdlWindow;
-use missingno_gb::debugger::symbols::SymbolTable;
 use missingno_gb::ppu::types::{
     palette::{Palette, PaletteChoice},
     tiles::TileMapId,
@@ -73,15 +70,12 @@ impl From<Message> for app::Message {
 /// has arrived yet.
 #[derive(Clone, Copy)]
 pub struct PaneContext<'b> {
-    /// The Game Boy family's inspection surface, when that family is live.
-    pub gb: Option<&'b dyn InspectSource>,
+    /// The Game Boy family's typed pane surface, when that family is live.
+    pub gb: Option<GbPaneContext<'b>>,
     /// The active family's typed inspection state; family panes downcast it
     /// back out with [`PaneContext::family_state`].
     pub family: &'b dyn std::any::Any,
     pub breakpoints: &'b BTreeSet<u16>,
-    pub colors: &'b ConsoleColors,
-    pub symbols: &'b SymbolTable,
-    pub cdl: &'b CdlWindow,
 }
 
 impl<'b> PaneContext<'b> {

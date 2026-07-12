@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 use std::process;
 
-use missingno_gb::cartridge::Cartridge;
 use missingno_gb::debugger::{Debugger, WatchCondition};
 use missingno_gb::ppu;
 use missingno_gb::ppu::rendering::Mode;
@@ -42,22 +41,22 @@ pub fn run(
     let save_path = rom_path.with_extension("sav");
     let save_data = std::fs::read(&save_path).ok();
 
-    let cartridge = Cartridge::new(rom_data, save_data);
-    let title = cartridge.title().to_string();
-
-    if cartridge.is_cgb() {
-        let mut console = GameBoyColor::new(cartridge, boot_rom);
-        if let Some(link) = link {
-            console.set_link(link);
+    struct Serve;
+    impl crate::app::system::gb::GbLaunch for Serve {
+        type Output = ();
+        fn dmg(self, console: GameBoy) {
+            serve_console(console);
         }
-        serve(&title, Debugger::new(console));
-    } else {
-        let mut game_boy = GameBoy::new(cartridge, boot_rom);
-        if let Some(link) = link {
-            game_boy.set_link(link);
+        fn cgb(self, console: GameBoyColor) {
+            serve_console(console);
         }
-        serve(&title, Debugger::new(game_boy));
     }
+    crate::app::system::gb::launch(rom_data, save_data, boot_rom, link, Serve);
+}
+
+fn serve_console<M: HeadlessUi>(console: Console<M>) {
+    let title = console.cartridge().title().to_string();
+    serve(&title, Debugger::new(console));
 }
 
 fn serve<M: HeadlessUi>(title: &str, mut debugger: Debugger<M>) {

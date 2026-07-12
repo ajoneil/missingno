@@ -107,8 +107,8 @@ impl panes::Pane for TileMapPane {
     }
 
     fn view<'a>(&'a self, ctx: Option<&panes::PaneContext<'_>>) -> pane_grid::Content<'a, Message> {
-        match ctx.and_then(|ctx| ctx.gb.map(|source| (ctx, source))) {
-            Some((ctx, source)) => self.content(source.ppu(), source.vram(), ctx.colors),
+        match ctx.and_then(|ctx| ctx.gb) {
+            Some(gb) => self.content(gb.source.ppu(), gb.source.vram(), gb.colors),
             None => panes::running_placeholder(&self.title),
         }
     }

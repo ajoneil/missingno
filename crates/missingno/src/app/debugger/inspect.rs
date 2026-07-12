@@ -445,6 +445,17 @@ pub trait InspectSource {
     fn switchable_rom_bank(&self) -> Option<u16>;
 }
 
+/// The Game Boy family's typed pane surface: its trait-erased inspection
+/// source plus the GB-typed sidecar and colour context its panes render
+/// with. Bundled so shared pane plumbing carries one optional GB field.
+#[derive(Clone, Copy)]
+pub struct GbPaneContext<'b> {
+    pub source: &'b dyn InspectSource,
+    pub colors: &'b ConsoleColors,
+    pub symbols: &'b SymbolTable,
+    pub cdl: &'b CdlWindow,
+}
+
 /// A system's inspection surface, family-erased at the seam. The Game Boy's
 /// structured surface goes through [`Inspection::as_gb`]; every other family
 /// exposes one typed state object that its own panes downcast back out of
@@ -476,8 +487,11 @@ impl Inspection for ConsoleSnapshot {
 
 pub trait InspectSnapshot: Inspection + Send {
     fn frame(&self) -> u64;
-    fn symbols(&self) -> &SymbolTable;
-    fn cdl(&self) -> &CdlWindow;
+    /// The Game Boy family's sidecar state (symbols, code/data log); `None`
+    /// for families without them.
+    fn gb_sidecars(&self) -> Option<(&SymbolTable, &CdlWindow)> {
+        None
+    }
 }
 
 /// The model-erased snapshot handed from the emulation thread to the UI.
@@ -593,10 +607,7 @@ impl InspectSnapshot for ConsoleSnapshot {
     fn frame(&self) -> u64 {
         self.frame
     }
-    fn symbols(&self) -> &SymbolTable {
-        &self.symbols
-    }
-    fn cdl(&self) -> &CdlWindow {
-        &self.cdl
+    fn gb_sidecars(&self) -> Option<(&SymbolTable, &CdlWindow)> {
+        Some((&self.symbols, &self.cdl))
     }
 }

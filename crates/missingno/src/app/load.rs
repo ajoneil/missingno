@@ -5,7 +5,6 @@ use jiff::Timestamp;
 use rfd::{AsyncFileDialog, FileHandle};
 
 use crate::app::{self, App, CurrentGame, Game, LoadedGame, Screen, library, system};
-use missingno_gb::cartridge::Cartridge;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -28,13 +27,14 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
             app.game = Game::Loading;
             // "All supported" first so it is the default filter, then one
             // per family for narrowing.
-            let mut all_extensions: Vec<&str> = system::gb::ROM_EXTENSIONS.to_vec();
-            for family in system::FAMILIES {
-                all_extensions.extend_from_slice(family.extensions);
-            }
-            let mut dialog = AsyncFileDialog::new()
-                .add_filter("All supported ROMs", &all_extensions)
-                .add_filter(system::gb::ROM_FILTER_NAME, system::gb::ROM_EXTENSIONS);
+            let mut all_extensions: Vec<&str> = system::FAMILIES
+                .iter()
+                .flat_map(|family| family.extensions.iter().copied())
+                .collect();
+            all_extensions.sort_unstable();
+            all_extensions.dedup();
+            let mut dialog =
+                AsyncFileDialog::new().add_filter("All supported ROMs", &all_extensions);
             for family in system::FAMILIES {
                 dialog = dialog.add_filter(family.platform_name, family.extensions);
             }
@@ -74,52 +74,26 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
     Task::none()
 }
 
-/// A cartridge from ROM + saved battery contents: any RTC tail in the save
-/// restores the clock and catches it up on the time since the save.
-fn build_cartridge(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Cartridge {
-    let (ram, rtc) = match save_data {
-        Some(blob) => {
-            let (ram, rtc) = crate::sram::split_blob(blob);
-            (Some(ram), rtc)
-        }
-        None => (None, None),
-    };
-    let mut cartridge = Cartridge::new(rom, ram);
-    if let Some((snapshot, saved_at)) = rtc {
-        let elapsed = crate::sram::now_unix().saturating_sub(saved_at);
-        cartridge.restore_rtc(snapshot, elapsed);
-    }
-    cartridge
-}
-
 /// Build the console for a ROM and wrap it for the active mode (debugger or
-/// emulator), storing it in `app.game`. Returns the game's title.
+/// emulator), storing it in `app.game`. Returns the game's title; `None`
+/// when no family claims the media or it fails to parse.
 fn start_console(
     app: &mut App,
     rom: Vec<u8>,
     save_data: Option<Vec<u8>>,
     rom_path: &std::path::Path,
     game_dir: &std::path::Path,
-) -> String {
-    for family in system::FAMILIES {
-        if (family.is_rom)(rom_path, &rom)
-            && let Some(console) = (family.create_console)(&rom, file_stem_title(rom_path))
-        {
-            return finish_start(app, console, rom_path);
-        }
-    }
-    let cartridge = build_cartridge(rom, save_data);
-    let cartridge_title = cartridge.title().to_string();
-    // A virtual printer sits on the link port by default; it stays inert
-    // unless a game prints, and prints land in the game's folder.
-    let link = app
-        .serial_link
-        .take()
-        .unwrap_or_else(|| Box::new(crate::printer::GbPrinter::new(game_dir.join("prints"))));
-    let console = system::gb::create_console(cartridge, None, Some(link));
-    let title = finish_start(app, console, rom_path);
-    let _ = cartridge_title;
-    title
+) -> Option<String> {
+    let family = system::family_for(rom_path, &rom)?;
+    let console = (family.create_console)(system::MediaLoad {
+        rom: &rom,
+        fallback_title: file_stem_title(rom_path),
+        save_data,
+        game_dir,
+        boot_rom: app.boot_rom.clone(),
+        serial_link: &mut app.serial_link,
+    })?;
+    Some(finish_start(app, console, rom_path))
 }
 
 pub(crate) fn file_stem_title(rom_path: &std::path::Path) -> String {
@@ -128,14 +102,6 @@ pub(crate) fn file_stem_title(rom_path: &std::path::Path) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or("Unknown")
         .to_string()
-}
-
-/// Families whose media carries no header title: it comes from the file
-/// stem instead. Only the Game Boy's media has one.
-pub(crate) fn headerless_family_rom(rom_path: &std::path::Path, rom: &[u8]) -> bool {
-    system::FAMILIES
-        .iter()
-        .any(|family| (family.is_rom)(rom_path, rom))
 }
 
 /// Wrap a built console for the active mode (debugger where the system
@@ -151,7 +117,7 @@ fn finish_start(
     let console = if app.debugger_enabled {
         match app::debugger::Debugger::new(console) {
             Ok(mut debugger) => {
-                debugger.load_symbols(rom_path);
+                debugger.load_sidecars(rom_path);
                 debugger.set_palette(palette);
                 debugger.set_frame_blending(app.settings.frame_blending);
                 app.game = Game::Loaded(LoadedGame::Debugger(debugger));
@@ -216,7 +182,11 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
 
     let save_data = library::activity::load_current_sram(&game_dir);
     let initial_sram = save_data.clone();
-    let cartridge_title = start_console(app, rom, save_data, &rom_path, &game_dir);
+    let Some(cartridge_title) = start_console(app, rom, save_data, &rom_path, &game_dir) else {
+        eprintln!("unsupported ROM: {}", rom_path.display());
+        app.game = Game::Unloaded;
+        return Task::none();
+    };
 
     // Start play session
     if let Some(current) = &mut app.current_game {
@@ -264,7 +234,11 @@ pub fn play_with_save(app: &mut App, activity_filename: &str) -> Task<app::Messa
 
     let save_data = library::activity::load_sram_from(&game_dir, activity_filename);
     let initial_sram = save_data.clone();
-    let cartridge_title = start_console(app, rom, save_data, &rom_path, &game_dir);
+    let Some(cartridge_title) = start_console(app, rom, save_data, &rom_path, &game_dir) else {
+        eprintln!("unsupported ROM: {}", rom_path.display());
+        app.game = Game::Unloaded;
+        return Task::none();
+    };
 
     if let Some(current) = &mut app.current_game {
         let session = library::activity::SessionFile::new(
@@ -295,6 +269,14 @@ pub fn play_with_save(app: &mut App, activity_filename: &str) -> Task<app::Messa
 
 /// Full pipeline for loading a ROM from a file path: create library entry + start emulation.
 pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::Message> {
+    // Classify before touching the library so unsupported files don't get
+    // library entries.
+    let Some(family) = system::family_for(&rom_path, &rom) else {
+        eprintln!("unsupported ROM: {}", rom_path.display());
+        app.game = Game::Unloaded;
+        return Task::none();
+    };
+
     let sha1 = library::hasheous::rom_sha1(&rom);
 
     // Check library for existing game
@@ -302,22 +284,13 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
         (dir, existing)
     } else {
         // New game — create entry with ROM header title
-        let header_title = if headerless_family_rom(&rom_path, &rom) {
-            file_stem_title(&rom_path)
-        } else {
-            Cartridge::peek_title(&rom)
-        };
-        let title = if header_title.is_empty() {
-            "Unknown".to_string()
-        } else {
-            header_title.clone()
-        };
+        let header_title = (family.title_from_rom)(&rom);
+        let title = header_title
+            .clone()
+            .unwrap_or_else(|| file_stem_title(&rom_path));
         let mut entry = library::GameEntry::new(sha1.clone(), title, rom_path.clone());
-        entry.header_title = if header_title.is_empty() {
-            None
-        } else {
-            Some(header_title)
-        };
+        entry.header_title = header_title;
+        entry.platform = Some(family.platform_name.to_string());
         let game_dir = library::game_dir_for(&entry.title, &entry.sha1)
             .expect("Could not determine library directory");
 
@@ -341,7 +314,11 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
     let cover = library::load_cover(&game_dir).map(iced::widget::image::Handle::from_bytes);
 
     // Create cartridge and start emulation
-    let cartridge_title = start_console(app, rom, save_data, &rom_path, &game_dir);
+    let Some(cartridge_title) = start_console(app, rom, save_data, &rom_path, &game_dir) else {
+        eprintln!("unsupported ROM: {}", rom_path.display());
+        app.game = Game::Unloaded;
+        return Task::none();
+    };
 
     let session = library::activity::SessionFile::new(Timestamp::now(), None);
     library::activity::write_session(&game_dir, &session);

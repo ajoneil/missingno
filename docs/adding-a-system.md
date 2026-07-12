@@ -79,14 +79,28 @@ consoles only through two object-safe traits in `app/system/mod.rs`:
   symbols, code/data logging, trace capture, and battery saves have default
   no-op implementations — a family implements only the backends it has.
 
-The Game Boy family implements both once, generically over its `Model` seam, in
-`app/system/gb.rs`. Non-GB families register in the `FAMILIES` descriptor
-table in `app/system/mod.rs` — platform name, extensions, control labels, a
-`detect` predicate, and a console factory. The file dialog, ROM loading,
-headerless title detection, the library scanner, and the bindings UI all
-iterate that table; the Game Boy stays the loader's explicit fallback (its
-media carries battery saves, boot ROMs, and the serial link, which attach in
-its own factory).
+Every family registers in the `FAMILIES` descriptor table in
+`app/system/mod.rs` — platform name, extensions, control labels, an `is_rom`
+predicate, an optional header-title hook (`title_from_rom`), a console
+factory, and an optional gbtrace entry point for the `trace` subcommand. The
+file dialog, ROM loading, title detection, the library scanner (which stamps
+`GameEntry.platform` from the descriptor), the bindings UI, and the trace CLI
+all iterate that table; `family_for` is the single classification point, and
+media no family claims is reported as unsupported rather than guessed at.
+Factories receive a `MediaLoad` — ROM bytes, file-stem fallback title,
+battery-save contents to restore, the game's library folder, and the two
+Game Boy peripheral fields (boot ROM, serial link) quarantined under the same
+generalize-when-a-second-family-needs-one rule as the seam's GB types.
+
+The Game Boy family implements the seam traits once, generically over its
+`Model` seam, in `app/system/gb.rs` — but registers **two** platforms:
+"Nintendo Game Boy" (DMG-only and dual-compatible media) and "Nintendo Game
+Boy Color" (CGB-required media, header flag `$C0`). Both descriptors share
+one factory; the execution core is picked by the header inside the family's
+`launch` visitor (`GbLaunch`, also the single selection point for the trace
+and headless CLIs), so a dual-compatible Game Boy game still boots the CGB
+core enhanced — platform identity and execution core are deliberately
+decoupled, like a GB cart slotted into a real GBC.
 
 For a core whose debugger is plain instruction stepping (PC breakpoints, one
 typed inspection state, indexed frames), don't implement the seam traits by
@@ -115,30 +129,37 @@ consumers, feature-gated):
 - **Audio**: the contract is 44.1 kHz stereo `f32`; families convert from
   their native rate on their own side.
 - **Debugger**: `Inspection` family-erases the inspection surface — the GB's
-  structured surface goes through `as_gb()`; every other family exposes one
-  typed state object through `family_state()` (a `&dyn Any`) that its own
-  panes downcast back out of the `PaneContext`. Pane registries, default
-  layouts, and layout sidecars are family-provided through `panes::Family`;
-  the paused sidebar for non-GB families renders the same `RunningStatus`
-  summary as the running view; `into_debugger` is fallible so a family
-  without a debugger backend falls back to plain emulation.
+  structured surface travels as one optional `GbPaneContext` bundle on the
+  shared `PaneContext`; every other family exposes one typed state object
+  through `family_state()` (a `&dyn Any`) that its own panes downcast back
+  out. Pane registries, default layouts, and layout sidecars are
+  family-provided through `panes::Family` (`pane_family()` is a required
+  seam method — there is no default family); debug sidecars load and save
+  through the path-only `load_sidecars`/`save_sidecars` hooks, no-ops for
+  families without any; the paused sidebar for non-GB families renders the
+  same `RunningStatus` summary as the running view; `into_debugger` is
+  fallible so a family without a debugger backend falls back to plain
+  emulation.
 
 ## Honest inventory: what is still Game Boy-shaped
 
-1. **GB types ride the seam signatures** — `WatchCondition`,
-   `SymbolTable`/`Symbol`, and `CdlWindow` are GB types in `SystemDebugger`
-   method signatures. The default implementations quarantine them (non-GB
-   families never mention them); generalize the payload types when a second
-   family grows real watchpoints/symbols — the natural moment is its
-   bus-observability work.
+1. **GB types ride a few seam signatures** — `WatchCondition` (watchpoint
+   methods), `SymbolTable`/`Symbol` (label editing), and `CdlWindow`
+   (`cdl_window()`) are GB types on `SystemDebugger`, quarantined by no-op
+   defaults, plus the boot-ROM and serial-link fields on `MediaLoad`.
+   Generalize each when a second family grows the equivalent backend — for
+   watchpoints/symbols the natural moment is its bus-observability work.
 2. **Presentation details** — `ScreenView` carries GB palette/SGB fields
-   beside the indexed path; the GB frame keeps the shell's square fit while
-   indexed frames aspect-fit; the screenshot gallery sizes thumbnails from
-   the GB frame dimensions (the captures themselves carry their own).
-   `capture_frame`'s SGB/palette parameters are likewise GB-shaped.
+   beside the indexed path (they exist so the palette choice and SGB toggle
+   re-apply at draw time on delivered frames), and the GB frame keeps the
+   shell's square fit while indexed frames aspect-fit. The GB frame formats
+   and resolvers live in `app/screen/gb.rs`; captures size themselves and
+   `capture_frame` takes the app-owned `CaptureOptions` display-settings
+   snapshot (currently only the GB family reads its knobs).
 3. **The library/gamedb** — game identification is SHA1-based and
-   platform-tagged (`GameEntry.platform` is already a string field);
-   the bundled catalogue is Game Boy titles. Mostly data, not code shape.
+   platform-tagged from the descriptor table; the bundled catalogue is Game
+   Boy titles, and the homebrew browser is a Game Boy (gbdev) flow. Mostly
+   data, not code shape.
 4. **16-bit addressing** — breakpoints, symbols, and `RunningStatus.pc/sp`
    assume `u16` addresses. Fine for every current family; widen when a
    32-bit-bus system arrives.
@@ -151,10 +172,13 @@ consumers, feature-gated):
    *Per-core methodology* table.
 2. `app/system/<family>.rs`: a `SteppingSystem` impl for a simple stepping
    core (or hand-written `SystemConsole` + `SystemDebugger` impls where the
-   core has its own debugger backend), media-metadata constants, factory —
-   plus one entry in the `FAMILIES` descriptor table in `app/system/mod.rs`
-   (including `control_labels` and `short_name`). Dialogs, loading, library
-   scanning, and the bindings UI follow from the table.
+   core has its own debugger backend), media-metadata constants, a
+   `MediaLoad`-taking factory — plus one entry in the `FAMILIES` descriptor
+   table in `app/system/mod.rs` (including `control_labels`, `short_name`,
+   `title_from_rom`, and the `trace` hook or `None`). Dialogs, loading,
+   library scanning, platform badges, the bindings UI, and the trace CLI
+   follow from the table. Keep `is_rom` predicates mutually exclusive across
+   the table.
 3. A palette table (or RGBA-producing path) and a pixel-aspect constant for
    `ScreenDisplay::Indexed`, and the family's reading of the shared control
    ids.

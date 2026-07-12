@@ -24,35 +24,26 @@ impl App {
                 self.pending_action = Some(PendingAction::ResetEmulator);
             }
             Message::TakeScreenshot => {
-                let palette = self.settings.palette.to_string();
-                let use_sgb_colors = self.settings.use_sgb_colors;
+                let options = self.settings.capture_options();
                 // While the game runs, the console is on the emu thread; ask
                 // it to capture and record on the resulting `Screenshot` event.
                 let capture = match &self.game {
                     Game::Loaded(LoadedGame::Emulator(emu)) if emu.running() => {
                         if let Some(handle) = &self.emu {
-                            handle.send(EmuCommand::RequestScreenshot {
-                                use_sgb_colors,
-                                palette,
-                            });
+                            handle.send(EmuCommand::RequestScreenshot { options });
                         }
                         None
                     }
-                    Game::Loaded(LoadedGame::Emulator(emu)) => emu
-                        .console()
-                        .map(|console| console.capture_frame(use_sgb_colors, &palette)),
+                    Game::Loaded(LoadedGame::Emulator(emu)) => {
+                        emu.console().map(|console| console.capture_frame(&options))
+                    }
                     Game::Loaded(LoadedGame::Debugger(dbg)) if dbg.is_detached() => {
                         if let Some(handle) = &self.emu {
-                            handle.send(EmuCommand::RequestScreenshot {
-                                use_sgb_colors,
-                                palette,
-                            });
+                            handle.send(EmuCommand::RequestScreenshot { options });
                         }
                         None
                     }
-                    Game::Loaded(LoadedGame::Debugger(dbg)) => {
-                        dbg.capture_screenshot(use_sgb_colors, &palette)
-                    }
+                    Game::Loaded(LoadedGame::Debugger(dbg)) => dbg.capture_screenshot(&options),
                     _ => None,
                 };
                 if let Some(capture) = capture {
@@ -96,7 +87,7 @@ impl App {
                                 match emulator.enable_debugger() {
                                     Ok(mut dbg) => {
                                         if let Some(rom_path) = &rom_path {
-                                            dbg.load_symbols(rom_path);
+                                            dbg.load_sidecars(rom_path);
                                         }
                                         dbg.set_palette(palette);
                                         LoadedGame::Debugger(dbg)

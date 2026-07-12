@@ -8,8 +8,6 @@ use crate::app;
 use crate::app::debugger::inspect::{InspectSnapshot, Inspection};
 use crate::app::debugger::panes::{self, DebuggerPane, Pane, PaneContext};
 use crate::app::ui::{fonts, sizes::s};
-use missingno_gb::debugger::cdl::CdlWindow;
-use missingno_gb::debugger::symbols::SymbolTable;
 
 #[derive(Clone, Default)]
 pub struct VcsInspectState {
@@ -43,21 +41,14 @@ impl Inspection for VcsInspectState {
     }
 }
 
-/// The per-frame snapshot for the running view; symbols and code/data logs
-/// have no VCS backend yet, so it carries empty ones.
+/// The per-frame snapshot for the running view.
 pub struct VcsSnapshot {
     pub state: VcsInspectState,
-    symbols: SymbolTable,
-    cdl: CdlWindow,
 }
 
 impl VcsSnapshot {
     pub fn new(state: VcsInspectState) -> Self {
-        VcsSnapshot {
-            state,
-            symbols: SymbolTable::default(),
-            cdl: CdlWindow::default(),
-        }
+        VcsSnapshot { state }
     }
 }
 
@@ -70,12 +61,6 @@ impl Inspection for VcsSnapshot {
 impl InspectSnapshot for VcsSnapshot {
     fn frame(&self) -> u64 {
         self.state.frame
-    }
-    fn symbols(&self) -> &SymbolTable {
-        &self.symbols
-    }
-    fn cdl(&self) -> &CdlWindow {
-        &self.cdl
     }
 }
 

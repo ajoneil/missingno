@@ -202,19 +202,33 @@ fn section_header(label: &'static str) -> Element<'static, app::Message> {
     .into()
 }
 
-/// The row label: the Game Boy's name for the control, plus any other
-/// enabled family's differing reading of it.
+/// The row label, derived from the descriptor table: the bare name where
+/// every family reads the control the same way, otherwise one line per
+/// distinct reading prefixed with the families that share it.
 fn control_label(action: Action) -> String {
-    let mut label = action.to_string();
-    if let Action::Control(id) = action {
-        for family in crate::app::system::FAMILIES {
-            let family_label = family.control_labels[id as usize];
-            if !family_label.is_empty() && family_label != label {
-                label.push_str(&format!("\n{} {}", family.short_name, family_label));
-            }
+    let Action::Control(id) = action else {
+        return action.to_string();
+    };
+    let mut readings: Vec<(Vec<&str>, &str)> = Vec::new();
+    for family in crate::app::system::FAMILIES {
+        let label = family.control_labels[id as usize];
+        if label.is_empty() {
+            continue;
+        }
+        match readings.iter_mut().find(|(_, l)| *l == label) {
+            Some((families, _)) => families.push(family.short_name),
+            None => readings.push((vec![family.short_name], label)),
         }
     }
-    label
+    match readings.as_slice() {
+        [] => action.to_string(),
+        [(_, label)] => label.to_string(),
+        _ => readings
+            .iter()
+            .map(|(families, label)| format!("{} {label}", families.join("/")))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
 }
 
 fn binding_row(

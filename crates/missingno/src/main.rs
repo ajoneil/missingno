@@ -26,7 +26,7 @@ struct Args {
     #[arg(long)]
     headless: bool,
 
-    /// Path to the DMG boot ROM (256 bytes).
+    /// Path to a boot ROM (DMG: 256 bytes, CGB: 2304 bytes).
     #[arg(long)]
     boot_rom: Option<PathBuf>,
 
@@ -70,15 +70,10 @@ fn load_boot_rom(path: Option<PathBuf>) -> Option<BootRom> {
             eprintln!("error: failed to read boot ROM {}: {e}", path.display());
             std::process::exit(1);
         });
-        let len = data.len();
-        match len {
-            0x100 => BootRom::Dmg(data.into_boxed_slice().try_into().unwrap()),
-            0x900 => BootRom::Cgb(data.into_boxed_slice().try_into().unwrap()),
-            _ => {
-                eprintln!("error: boot ROM must be 256 bytes (DMG) or 2304 bytes (CGB), got {len}");
-                std::process::exit(1);
-            }
-        }
+        BootRom::from_bytes(data).unwrap_or_else(|len| {
+            eprintln!("error: boot ROM must be 256 bytes (DMG) or 2304 bytes (CGB), got {len}");
+            std::process::exit(1);
+        })
     })
 }
 
@@ -109,7 +104,7 @@ fn main() -> iced::Result {
         return Ok(());
     }
 
-    app::run(args.rom_file, args.debugger, link)
+    app::run(args.rom_file, args.debugger, link, boot_rom)
 }
 
 fn create_link(

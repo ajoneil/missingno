@@ -15,7 +15,7 @@ use missingno_gb::debugger::WatchCondition;
 
 use super::audio_output::AudioOutput;
 use super::debugger::inspect::DebugView;
-use super::library::activity::FrameCapture;
+use super::library::activity::{CaptureOptions, FrameCapture};
 use super::screen::ScreenDisplay;
 use super::system::{ControlId, ControlInput, FrameOutcome, SystemConsole, SystemDebugger};
 
@@ -82,8 +82,7 @@ pub enum EmuCommand {
     AddWatchpoint(WatchCondition),
     RemoveWatchpoint(WatchCondition),
     RequestScreenshot {
-        use_sgb_colors: bool,
-        palette: String,
+        options: CaptureOptions,
     },
 }
 
@@ -316,12 +315,9 @@ impl EmuLoop {
                     payload.remove_watchpoint(&condition);
                 }
             }
-            EmuCommand::RequestScreenshot {
-                use_sgb_colors,
-                palette,
-            } => {
+            EmuCommand::RequestScreenshot { options } => {
                 if let Some(payload) = &self.payload {
-                    let capture = payload.capture_frame(use_sgb_colors, &palette);
+                    let capture = payload.capture_frame(&options);
                     let _ = self
                         .events
                         .unbounded_send(EmuEvent::Screenshot(Box::new(capture)));
@@ -464,10 +460,10 @@ impl Payload {
         }
     }
 
-    fn capture_frame(&self, use_sgb_colors: bool, palette: &str) -> FrameCapture {
+    fn capture_frame(&self, options: &CaptureOptions) -> FrameCapture {
         match self {
-            Self::Console(console) => console.capture_frame(use_sgb_colors, palette),
-            Self::Debugger(payload) => payload.core.capture_frame(use_sgb_colors, palette),
+            Self::Console(console) => console.capture_frame(options),
+            Self::Debugger(payload) => payload.core.capture_frame(options),
         }
     }
 

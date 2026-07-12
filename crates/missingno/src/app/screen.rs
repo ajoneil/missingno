@@ -2,14 +2,14 @@ use iced::widget::shader;
 use rgb::RGB8;
 
 use missingno_gb::{
-    ppu::{
-        screen::{self, Screen},
-        types::palette::{Palette, PaletteChoice, PaletteIndex},
-    },
+    ppu::{screen::Screen, types::palette::PaletteChoice},
     sgb::SgbRenderData,
 };
 
 use super::texture_renderer::TextureRenderer;
+
+pub mod gb;
+use gb::{CgbScreen, GameBoyScreen, SgbScreen, screen_to_pixels};
 
 // One frame per variant per frame tick; indirection would just add a hop.
 #[allow(clippy::large_enum_variant)]
@@ -67,37 +67,6 @@ impl IndexedFrame {
             rgba.extend_from_slice(&[color.r, color.g, color.b, 255]);
         }
         rgba
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum GameBoyScreen {
-    Display(Screen),
-    Off,
-}
-
-#[derive(Clone, Debug)]
-pub enum SgbScreen {
-    Display(Screen, SgbRenderData),
-    Freeze(SgbRenderData),
-}
-
-/// CGB output, pre-corrected to display RGBA — no user palette applies.
-#[derive(Clone, Debug)]
-pub enum CgbScreen {
-    Display(Vec<u8>),
-    Off,
-}
-
-impl From<GameBoyScreen> for ScreenDisplay {
-    fn from(screen: GameBoyScreen) -> Self {
-        ScreenDisplay::GameBoy(screen)
-    }
-}
-
-impl From<SgbScreen> for ScreenDisplay {
-    fn from(screen: SgbScreen) -> Self {
-        ScreenDisplay::Sgb(screen)
     }
 }
 
@@ -187,7 +156,7 @@ impl ScreenView {
             }
             ScreenDisplay::Cgb(CgbScreen::Off) => {
                 self.sgb_render_data = None;
-                self.cgb_rgba = Some(cgb_blank_rgba().into());
+                self.cgb_rgba = Some(gb::cgb_blank_rgba().into());
                 self.indexed = None;
             }
             ScreenDisplay::Indexed(frame) => {
@@ -198,11 +167,11 @@ impl ScreenView {
         }
     }
 
-    /// The active frame's pixel dimensions.
+    /// The active frame's pixel dimensions; the GB formats are fixed-size.
     fn dimensions(&self) -> (u32, u32) {
         match &self.indexed {
             Some(frame) => (frame.width, frame.height),
-            None => (screen::PIXELS_PER_LINE as u32, screen::NUM_SCANLINES as u32),
+            None => gb::NATIVE_SIZE,
         }
     }
 
@@ -221,11 +190,6 @@ impl ScreenView {
             }
         }
     }
-}
-
-/// A powered-but-blank CGB LCD: all white.
-pub fn cgb_blank_rgba() -> Vec<u8> {
-    vec![255; screen::PIXELS_PER_LINE as usize * screen::NUM_SCANLINES as usize * 4]
 }
 
 impl<Message> shader::Program<Message> for ScreenView {
@@ -253,59 +217,6 @@ impl<Message> shader::Program<Message> for ScreenView {
 
         <TextureRenderer as shader::Program<Message>>::draw(&renderer, &(), cursor, bounds)
     }
-}
-
-pub fn screen_to_pixels(
-    screen: &Screen,
-    palette: &Palette,
-    sgb: Option<&SgbRenderData>,
-    use_sgb_colors: bool,
-) -> Vec<u8> {
-    use missingno_gb::sgb::MaskMode;
-
-    let mut pixels =
-        Vec::with_capacity(screen::PIXELS_PER_LINE as usize * screen::NUM_SCANLINES as usize * 4);
-
-    for y in 0..screen::NUM_SCANLINES {
-        for x in 0..screen::PIXELS_PER_LINE {
-            let palette_index = screen.pixel(x, y);
-            let color = if let Some(sgb_data) = sgb {
-                if !sgb_data.video_enabled {
-                    if use_sgb_colors {
-                        RGB8::new(255, 255, 255)
-                    } else {
-                        palette.color(PaletteIndex(0))
-                    }
-                } else {
-                    match sgb_data.mask_mode {
-                        MaskMode::Black => RGB8::new(0, 0, 0),
-                        MaskMode::BackdropColor => {
-                            if use_sgb_colors {
-                                sgb_data.palettes[0].colors[0].to_rgb8()
-                            } else {
-                                palette.color(palette_index)
-                            }
-                        }
-                        MaskMode::Disabled | MaskMode::Freeze => {
-                            if use_sgb_colors {
-                                let cell_x = x as usize / 8;
-                                let cell_y = y as usize / 8;
-                                let pal_id = sgb_data.attribute_map.cells[cell_y][cell_x] as usize;
-                                sgb_data.palettes[pal_id].colors[palette_index.0 as usize].to_rgb8()
-                            } else {
-                                palette.color(palette_index)
-                            }
-                        }
-                    }
-                }
-            } else {
-                palette.color(palette_index)
-            };
-            pixels.extend_from_slice(&[color.r, color.g, color.b, 255]);
-        }
-    }
-
-    pixels
 }
 
 pub fn iced_color(color: RGB8) -> iced::Color {
