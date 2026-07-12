@@ -361,7 +361,7 @@ fn cart_subtitle(entry: Option<&library::GameEntry>, hardware: &str) -> String {
             parts.push(&publisher);
         }
         if let Some(y) = &e.year {
-            year = library::activity::format_date_string(y);
+            year = library::activity::release_year(y);
             parts.push(&year);
         }
     }

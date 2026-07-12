@@ -290,13 +290,14 @@ fn game_card(game: &GameSummary, hovered: bool) -> Element<'_, app::Message> {
     // Title — bold, readable size
     let mut info = column![text(game.entry.display_title()).font(fonts::bold()),].spacing(4);
 
-    // Publisher · Date
+    // Publisher · Date · Platform
     let subtitle_parts: Vec<String> = [
         game.entry.publisher.clone(),
         game.entry
             .year
             .as_ref()
-            .map(|y| library::activity::format_date_string(y)),
+            .map(|y| library::activity::release_year(y)),
+        game.entry.platform.map(|p| p.name().to_string()),
     ]
     .into_iter()
     .flatten()
@@ -347,7 +348,7 @@ fn cartridge_game_card<'a>(
         game.entry
             .year
             .as_ref()
-            .map(|y| library::activity::format_date_string(y)),
+            .map(|y| library::activity::release_year(y)),
     ]
     .into_iter()
     .flatten()

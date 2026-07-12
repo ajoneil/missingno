@@ -216,7 +216,7 @@ fn entry_card<'a>(
         subtitle_parts.push(dev.clone());
     }
     if let Some(date) = &entry.manifest.date {
-        subtitle_parts.push(activity::format_date_string(date));
+        subtitle_parts.push(activity::release_year(date));
     }
     if !subtitle_parts.is_empty() {
         info = info.push(app_text::detail(subtitle_parts.join(" · ")).color(MUTED));
@@ -297,7 +297,7 @@ fn entry_detail<'a>(
         subtitle_parts.push(format!("by {dev}"));
     }
     if let Some(date) = &entry.manifest.date {
-        subtitle_parts.push(activity::format_date_string(date));
+        subtitle_parts.push(activity::release_year(date));
     }
     if !subtitle_parts.is_empty() {
         info = info.push(text(subtitle_parts.join(" · ")).color(MUTED));

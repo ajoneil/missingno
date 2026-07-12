@@ -744,58 +744,35 @@ pub fn format_local(ts: &Timestamp) -> String {
     libc_strftime("%e %b %Y, %X", ts.as_second())
 }
 
-/// Format a timestamp as locale-aware date only (e.g. "3 Apr 2026").
-pub fn format_date(ts: &Timestamp) -> String {
-    libc_strftime("%e %b %Y", ts.as_second())
-}
-
-/// Parse a date string in various formats and display in the user's locale.
-/// Handles ISO dates, unix timestamps, MM-DD-YYYY, DD/MM/YYYY, and plain years.
-pub fn format_date_string(raw: &str) -> String {
-    // Try unix timestamp (must be > 1_000_000_000 to avoid matching plain years)
+/// The release year from a date string in any of the stored formats: plain
+/// years, ISO dates/timestamps, unix timestamps, MM-DD-YYYY, DD/MM/YYYY.
+pub fn release_year(raw: &str) -> String {
+    // Unix timestamp (must be > 1_000_000_000 to avoid matching plain years)
     if let Ok(ts) = raw.parse::<i64>()
         && ts > 1_000_000_000
         && let Ok(timestamp) = Timestamp::from_second(ts)
     {
-        return format_date(&timestamp);
+        return timestamp.strftime("%Y").to_string();
     }
 
-    // Try full ISO timestamp
-    if let Ok(timestamp) = raw.parse::<Timestamp>() {
-        return format_date(&timestamp);
-    }
-
-    // Try YYYY-MM-DD as a civil date
-    if raw.len() >= 10
-        && raw.as_bytes().get(4) == Some(&b'-')
-        && let Ok(date) = raw[..10].parse::<jiff::civil::Date>()
-        && let Ok(ts) = date.at(0, 0, 0, 0).to_zoned(jiff::tz::TimeZone::UTC)
+    // A leading 4-digit year: plain year, YYYY-MM-DD, full ISO timestamp
+    if raw.len() >= 4
+        && raw.as_bytes()[..4].iter().all(u8::is_ascii_digit)
+        && !raw.as_bytes().get(4).is_some_and(u8::is_ascii_digit)
     {
-        return format_date(&ts.timestamp());
+        return raw[..4].to_string();
     }
 
-    // Try MM-DD-YYYY or MM/DD/YYYY
+    // MM-DD-YYYY or DD/MM/YYYY — the trailing component is the year
     let parts: Vec<&str> = raw.splitn(3, ['-', '/']).collect();
     if parts.len() == 3
-        && let (Ok(a), Ok(b), Ok(c)) = (
-            parts[0].parse::<i16>(),
-            parts[1].parse::<i8>(),
-            parts[2].parse::<i16>(),
-        )
+        && let Ok(year) = parts[2].parse::<i16>()
+        && year > 31
     {
-        let (year, month, day) = if c > 31 {
-            (c, a as i8, b)
-        } else {
-            (a, b, c as i8)
-        };
-        if let Ok(date) = jiff::civil::Date::new(year, month, day)
-            && let Ok(ts) = date.at(0, 0, 0, 0).to_zoned(jiff::tz::TimeZone::UTC)
-        {
-            return format_date(&ts.timestamp());
-        }
+        return year.to_string();
     }
 
-    // Plain year or unrecognised — return as-is
+    // Unrecognised — show as stored
     raw.to_string()
 }
 
@@ -820,4 +797,22 @@ fn libc_strftime(fmt: &str, unix_secs: i64) -> String {
         )
     };
     String::from_utf8_lossy(&buf[..len]).trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::release_year;
+
+    #[test]
+    fn release_year_handles_the_stored_date_formats() {
+        assert_eq!(release_year("1998"), "1998");
+        assert_eq!(release_year("1998-10-21"), "1998");
+        assert_eq!(release_year("1998-10-21T00:00:00Z"), "1998");
+        assert_eq!(release_year("10-21-1998"), "1998");
+        assert_eq!(release_year("21/10/1998"), "1998");
+        // Unix timestamps are only recognised past the plain-year guard
+        // (> 1_000_000_000, i.e. from late 2001).
+        assert_eq!(release_year("1224547200"), "2008");
+        assert_eq!(release_year("unknown"), "unknown");
+    }
 }

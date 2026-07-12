@@ -118,10 +118,7 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
 
     let subtitle_parts: Vec<String> = [
         data.entry.publisher.clone(),
-        data.entry
-            .year
-            .as_ref()
-            .map(|y| activity::format_date_string(y)),
+        data.entry.year.as_ref().map(|y| activity::release_year(y)),
         data.entry.platform.map(|p| p.name().to_string()),
     ]
     .into_iter()

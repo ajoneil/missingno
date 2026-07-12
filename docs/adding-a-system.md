@@ -97,8 +97,8 @@ generalize-when-a-second-family-needs-one rule as the seam's GB types.
 
 The Game Boy family implements the seam traits once, generically over its
 `Model` seam, in `app/system/gb.rs` — but registers **two** platforms:
-"Nintendo Game Boy" (DMG-only and dual-compatible media) and "Nintendo Game
-Boy Color" (CGB-required media, header flag `$C0`). Both descriptors share
+"Game Boy" (DMG-only and dual-compatible media) and "Game Boy Color"
+(CGB-required media, header flag `$C0`). Both descriptors share
 one factory; the execution core is picked by the header inside the family's
 `launch` visitor (`GbLaunch`, also the single selection point for the trace
 and headless CLIs), so a dual-compatible Game Boy game still boots the CGB

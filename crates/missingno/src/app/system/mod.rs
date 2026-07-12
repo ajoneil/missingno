@@ -76,8 +76,8 @@ impl Platform {
     /// Display name; also the file-dialog filter label.
     pub fn name(self) -> &'static str {
         match self {
-            Platform::GameBoy => "Nintendo Game Boy",
-            Platform::GameBoyColor => "Nintendo Game Boy Color",
+            Platform::GameBoy => "Game Boy",
+            Platform::GameBoyColor => "Game Boy Color",
             Platform::AtariVcs => "Atari VCS",
             Platform::MasterSystem => "Sega Master System",
             Platform::Nes => "Nintendo Entertainment System",
