@@ -102,7 +102,7 @@ struct Pixels {
 
 /// One finished scanline: 160 TIA colour indices plus its VSYNC state.
 #[derive(Clone)]
-pub(crate) struct Scanline {
+pub struct Scanline {
     pub pixels: [u8; VISIBLE_CLOCKS],
     pub vsync: bool,
 }

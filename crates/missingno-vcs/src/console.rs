@@ -10,7 +10,8 @@ use crate::TvStandard;
 use crate::cartridge::{Cartridge, CartridgeError};
 use crate::cpu::{Bus, Cpu};
 use crate::riot::Riot;
-use crate::tia::{Scanline, Tia, VISIBLE_CLOCKS};
+pub use crate::tia::Scanline;
+use crate::tia::{Tia, VISIBLE_CLOCKS};
 
 /// One VSYNC-delimited frame. Height is whatever the kernel produced —
 /// there is no hardware frame, only the software's sync pattern.
@@ -37,6 +38,10 @@ pub struct Vcs {
     building: Vec<Scanline>,
     in_vsync: bool,
     finished_frame: Option<Frame>,
+    /// The most recently completed scanline, for the frontend's television:
+    /// it integrates VSYNC across scanlines to decide field boundaries, so it
+    /// consumes the raw per-line stream rather than the `Frame` the suite uses.
+    last_line: Option<Scanline>,
     sample_clock: f32,
     /// Colour clocks per 44.1 kHz sample, from the region's master clock.
     clocks_per_sample: f32,
@@ -176,6 +181,7 @@ impl Vcs {
             building: Vec::new(),
             in_vsync: false,
             finished_frame: None,
+            last_line: None,
             sample_clock: 0.0,
             clocks_per_sample: region.clocks_per_sample(),
             samples: Vec::new(),
@@ -224,6 +230,7 @@ impl Vcs {
         self.advance_pending_writes();
         self.tia.step_clock();
         if let Some(line) = self.tia.take_line() {
+            self.last_line = Some(line.clone());
             self.collect_line(line);
         }
 
@@ -396,6 +403,18 @@ impl Vcs {
         }
         while !self.cpu.at_instruction_boundary() && !self.cpu.halted() {
             self.step_clock();
+        }
+    }
+
+    /// Advance until the TIA completes a scanline, returning it with its raw
+    /// VSYNC state. The frontend's television integrates VSYNC across scanlines
+    /// to decide field boundaries — that lock is off-chip, in the set.
+    pub fn step_scanline(&mut self) -> Scanline {
+        loop {
+            self.step_clock();
+            if let Some(line) = self.last_line.take() {
+                return line;
+            }
         }
     }
 

@@ -11,7 +11,7 @@ use rgb::RGB8;
 
 use std::collections::BTreeSet;
 
-use missingno_vcs::console::Frame;
+use missingno_vcs::console::{Frame, Scanline};
 use missingno_vcs::cpu::disasm;
 
 use super::{ConsoleSwitch, ControlId, ControlInput, FrameOutcome, SystemConsole, SystemDebugger};
@@ -62,6 +62,12 @@ const FRAME_INTERVAL: Duration = Duration::from_micros(16_684);
 /// syncs cannot stall the emulation thread.
 const FRAME_BUDGET_LINES: usize = 1000;
 
+/// Scanlines of asserted VSYNC the television integrates before the field
+/// re-anchors. The console drives VSYNC as a plain latch; this lock lives in
+/// the set (off-chip) and is calibratable — reference emulators model 2 and the
+/// safe kernel convention is 3, so anything shorter is swallowed.
+const VSYNC_LOCK_LINES: usize = 2;
+
 /// A `.a26` is always ours; a `.bin` only at the family's bare ROM sizes
 /// (Game Boy ROMs start at 32 KiB, so the ranges cannot collide).
 pub fn is_vcs_rom(path: &std::path::Path, rom: &[u8]) -> bool {
@@ -83,6 +89,7 @@ pub fn create_console(rom: &[u8], title: String) -> Result<Box<dyn SystemConsole
         vcs: Vcs::new(rom, TvStandard::Ntsc)?,
         title,
         last_frame: blank_frame(),
+        tv: Television::new(),
     }))
 }
 
@@ -90,6 +97,7 @@ struct VcsConsole {
     vcs: Vcs,
     title: String,
     last_frame: IndexedFrame,
+    tv: Television,
 }
 
 /// The picture window shown from the full field the core emits: skip the
@@ -141,13 +149,120 @@ fn blank_frame() -> IndexedFrame {
     IndexedFrame::blank(VISIBLE_CLOCKS as u32, height, PIXEL_ASPECT, ntsc_palette())
 }
 
+/// The television's vertical-sync separator. A real set integrates the incoming
+/// composite sync and only retraces — re-anchoring the field — once VSYNC has
+/// been asserted across `VSYNC_LOCK_LINES` scanlines; a briefer pulse never
+/// charges the integrator and is swallowed, leaving the field timing unchanged.
+/// The console just drives the VSYNC pin (a plain latch); this lock is off-chip.
+struct Television {
+    building: Vec<[u8; VISIBLE_CLOCKS]>,
+    vsync_run: usize,
+}
+
+impl Television {
+    fn new() -> Self {
+        Television {
+            building: Vec::new(),
+            vsync_run: 0,
+        }
+    }
+
+    /// Feed one scanline. Returns the completed field when the integrator locks
+    /// on a VSYNC assertion that has persisted the threshold — that boundary is
+    /// the field's end; the VSYNC lines themselves are the sync interval, not
+    /// picture, so they are never part of the field.
+    fn feed(&mut self, line: Scanline) -> Option<Frame> {
+        if line.vsync {
+            self.vsync_run += 1;
+            if self.vsync_run == VSYNC_LOCK_LINES && !self.building.is_empty() {
+                return Some(Frame {
+                    lines: std::mem::take(&mut self.building),
+                });
+            }
+            None
+        } else {
+            self.vsync_run = 0;
+            self.building.push(line.pixels);
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn picture_line(marker: u8) -> Scanline {
+        Scanline {
+            pixels: [marker; VISIBLE_CLOCKS],
+            vsync: false,
+        }
+    }
+
+    fn vsync_line() -> Scanline {
+        Scanline {
+            pixels: [0; VISIBLE_CLOCKS],
+            vsync: true,
+        }
+    }
+
+    /// Drive 200 picture lines, a stray VSYNC pulse of `pulse` lines, 40 more
+    /// picture lines, then a full 3-line VSYNC. Return each completed field's
+    /// line count. A swallowed pulse yields one merged field before the final
+    /// VSYNC; a locking pulse splits the field there.
+    fn run(pulse: usize) -> Vec<usize> {
+        let mut lines = Vec::new();
+        lines.extend((0..200).map(|_| picture_line(1)));
+        lines.extend((0..pulse).map(|_| vsync_line()));
+        lines.extend((0..40).map(|_| picture_line(2)));
+        lines.extend((0..3).map(|_| vsync_line()));
+
+        let mut tv = Television::new();
+        let mut fields = Vec::new();
+        for line in lines {
+            if let Some(frame) = tv.feed(line) {
+                fields.push(frame.lines.len());
+            }
+        }
+        fields
+    }
+
+    #[test]
+    fn sub_threshold_vsync_is_swallowed() {
+        // A 1-line pulse never locks: the field spans across it and re-anchors
+        // only at the following 3-line VSYNC — one merged 240-line field.
+        assert_eq!(run(1), vec![240]);
+    }
+
+    #[test]
+    fn threshold_vsync_re_anchors() {
+        // A 3-line pulse locks: the field ends at the pulse (200 lines); the
+        // trailing 40 picture lines then form the next field at the final VSYNC.
+        assert_eq!(run(3), vec![200, 40]);
+    }
+
+    #[test]
+    fn exactly_two_lines_locks() {
+        // The threshold itself: a 2-line pulse locks and splits, same as three.
+        assert_eq!(run(2), vec![200, 40]);
+    }
+}
+
 impl SystemConsole for VcsConsole {
     fn step_frame(&mut self) -> FrameOutcome {
         let standard = self.vcs.tv_standard();
-        let display = self.vcs.step_frame(FRAME_BUDGET_LINES).map(|frame| {
-            self.last_frame = indexed_frame(&frame, standard);
-            ScreenDisplay::Indexed(self.last_frame.clone())
-        });
+        // Drive the console scanline by scanline through the television, which
+        // integrates VSYNC to decide the field. Bounded so a kernel that never
+        // syncs cannot stall the emulation thread.
+        let mut display = None;
+        for _ in 0..FRAME_BUDGET_LINES {
+            let line = self.vcs.step_scanline();
+            if let Some(frame) = self.tv.feed(line) {
+                self.last_frame = indexed_frame(&frame, standard);
+                display = Some(ScreenDisplay::Indexed(self.last_frame.clone()));
+                break;
+            }
+        }
         FrameOutcome {
             display,
             sram_dirty: false,
@@ -413,6 +528,7 @@ impl SystemDebugger for VcsDebugger {
             vcs: self.core.into_console(),
             title: self.title,
             last_frame: self.last_frame,
+            tv: Television::new(),
         })
     }
 }
