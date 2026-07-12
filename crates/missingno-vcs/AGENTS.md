@@ -32,6 +32,23 @@ below them and only corroborate.**
   specific wire and half-clock rather than running long from a dispatch — and
   don't spin one up for a question the schematics already answer.
 
+- **Sim2600 measurement conventions — read before porting any sim value.** The
+  probe frame anchored at a `BL_lowCtrl` 1→0 fall IS the screen frame (playfield
+  cells land at their exact programmed screen clocks in it), but the sim performs
+  no power-on alignment: its CPU-grid-vs-line phase is an arbitrary netlist
+  settle, and it measures 2 CLK left of the reference convention the emulator
+  models (`PHI0_GRID_PHASE` in `src/console.rs`). That phase is a machine
+  constant — RSYNC requantises the φ0 divider together with the horizontal
+  counter, so no program walks it — which means a capture's ABSOLUTE landings are
+  valid only at the sim's own phase. Measure and port RELATIVE to the triggering
+  write's beam position: its bus cycle sits at half-integer probe x, the φ2-fall
+  is the cycle's end, and a strobe's address-decoded level rises 1 CLK before
+  that fall and releases 0.5 CLK after it (SEC-like latches respond to the rise;
+  counter grounds to the release). Sample once per half-clock
+  (advance-then-sample), verify the 456-hc line period and the spin PC before
+  extracting, and report raw x alongside write-relative offsets so the caller can
+  re-phase.
+
 - **The RIOT has no gate-level oracle.** The 6532 (RAM + I/O + timer) was never
   fully reverse-engineered — visual6502's RIOT netlist is ~⅓ complete, so Sim2600
   *emulates* the PIA behaviourally (`emuPIA.py`) rather than simulating a netlist.
@@ -84,7 +101,19 @@ below them and only corroborate.**
 ## Core shape
 
 `missingno-vcs` is a standalone core crate (not a `Console<M>` model): 6507 + TIA +
-RIOT + cartridge on one colour-clock master, one CPU cycle = three colour clocks.
-See `src/console.rs` for the step loop and bus map, `src/tia/` for the pixel
-pipeline, `src/riot.rs` for the timer/ports. The frontend drives it through the
-`app/system/` seam described in `docs/adding-a-system.md`.
+RIOT + cartridge on one colour-clock master. `src/console.rs` steps each colour
+clock as two half-clocks — CPU φ2/bus access on the high half, TIA MOTCK and render
+on the low half — with one CPU cycle per three colour clocks on a grid phase-locked
+to the line (`PHI0_GRID_PHASE`: cycle boundaries where position ≡ 2 mod 3; RSYNC's
+divider requantisation is emergent because the grid derives from the position).
+TIA register writes defer through a two-slot pipe with die-measured per-class
+commit instants: colour registers are transparent, most registers latch at the φ2
+fall, playfield registers reach the serialiser's cell latch one clock later, HMOVE
+commits at the strobe's rise and the RESxx resets at its release — ground any new
+write-timing number the same way before adding it. `src/tia/` holds the pixel
+pipeline: per-object ÷4 divider rings with wrap-grid decode and a one-wrap pending
+START latch, the HSync counter spine, and the HMOVE engine (three-stage SEC
+two-phase shift; a live stuff absorbs into a firing MOTCK with a one-clock seam
+lookahead on the following render). `src/riot.rs` has the timer/ports. The
+frontend drives it through the `app/system/` seam described in
+`docs/adding-a-system.md`.
