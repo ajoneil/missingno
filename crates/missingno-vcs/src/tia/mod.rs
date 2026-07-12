@@ -145,7 +145,10 @@ enum SecDecode {
 /// H@2; each H@1 every latched object gets a stuffed motion clock, and each
 /// object's comparator clears its latch when the ripple reaches that object's
 /// HM nibble with D7 inverted (so the stuffed count is 0..15 = 8 − net move).
-/// The comparator reads the HM latches LIVE, so a mid-sequence rewrite that
+/// A live descending compare reads the HM value captured at the previous H@2
+/// edge — 2 CLK before the pulse — where the resting compare reads it live
+/// (die-measured: the m8_stuck/m8_stuck2/m8_stuck3 jam bracket, placed on
+/// this grid by the rewrite-instants run), so a mid-sequence rewrite that
 /// dodges every remaining ripple value never clears the latch — it stuffs a
 /// clock every line until the next HMOVE (the Cosmic Ark starfield). HMCLR
 /// zeroes the HM values only.
@@ -159,6 +162,9 @@ struct MotionSequencer {
     more_movement: [bool; 5],
     /// HM values, indexed in MOVABLES order: P0, P1, M0, M1, BL.
     values: [u8; 5],
+    /// HM values as of the last H@2 (decrement) edge; the live descending
+    /// compare reads this capture, the resting compare reads the register file.
+    captured_values: [u8; 5],
 }
 
 impl MotionSequencer {
@@ -169,6 +175,7 @@ impl MotionSequencer {
             ripple: None,
             more_movement: [false; 5],
             values: [0; 5],
+            captured_values: [0; 5],
         }
     }
 
@@ -184,6 +191,12 @@ impl MotionSequencer {
     /// Advance one colour clock; `Some(ticks)` on an H@1 stuff, where a set
     /// latch requests an extra motion clock for its object.
     fn step(&mut self, phase: u16) -> Option<[bool; 5]> {
+        // Every H@2 edge captures the register file, even when the SEC shift
+        // consumes the clock — the arm H@2 provides the first pulse's capture
+        // and quiet H@2s keep it tracking the resting value.
+        if phase == MOTION_DECREMENT_PHASE {
+            self.captured_values = self.values;
+        }
         // [SEC] shifts H@2 → H@1 → H@2; on the final H@2 the more-movement
         // latches arm for every object and the ripple counter loads to 15.
         let strobed_this_clock = self.just_strobed;
@@ -218,17 +231,23 @@ impl MotionSequencer {
         }
 
         // H@1: each latched object stuffs a clock, unless its comparator
-        // matches the ripple this step — then it clears instead (reading the
-        // HM value live; an exhausted ripple rests at %1111 so a late HM
-        // rewrite still clears). Clearing before the tick keeps the matching
-        // step from stuffing (HM $8x → 0 stuffs).
+        // matches the ripple this step — then it clears instead (a live
+        // descent reads the H@2 capture; an exhausted ripple rests at %1111
+        // and reads the register file, so a late HM rewrite still clears).
+        // Clearing before the tick keeps the matching step from stuffing
+        // (HM $8x → 0 stuffs).
         if phase != MOTION_STUFF_PHASE || !self.any_movement() {
             return None;
         }
         let ripple = self.ripple.unwrap_or(RESTING_RIPPLE);
+        let compare_values = if self.ripple.is_some() {
+            &self.captured_values
+        } else {
+            &self.values
+        };
         let mut ticks = [false; 5];
         for i in 0..self.more_movement.len() {
-            if self.more_movement[i] && ripple == (self.values[i] >> 4) ^ 0x07 {
+            if self.more_movement[i] && ripple == (compare_values[i] >> 4) ^ 0x07 {
                 self.more_movement[i] = false;
             }
             ticks[i] = self.more_movement[i];
