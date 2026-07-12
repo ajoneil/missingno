@@ -42,6 +42,16 @@ fn pa7_edge_pal() {
 }
 
 #[test]
+fn pa7_polarity_ntsc() {
+    common::run_self_test("riot/pa7-polarity_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn pa7_polarity_pal() {
+    common::run_self_test("riot/pa7-polarity_pal.a26", TvStandard::Pal);
+}
+
+#[test]
 fn ram_ntsc() {
     common::run_self_test("riot/ram_ntsc.a26", TvStandard::Ntsc);
 }
@@ -79,6 +89,16 @@ fn timer_divisors_ntsc() {
 #[test]
 fn timer_divisors_pal() {
     common::run_self_test("riot/timer-divisors_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn timer_underflow_read_ntsc() {
+    common::run_self_test("riot/timer-underflow-read_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn timer_underflow_read_pal() {
+    common::run_self_test("riot/timer-underflow-read_pal.a26", TvStandard::Pal);
 }
 
 #[test]
