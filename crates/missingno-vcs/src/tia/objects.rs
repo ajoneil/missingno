@@ -207,6 +207,9 @@ pub struct Missile {
     /// MOTCK edges until the width gate opens: the select-network tail.
     lead: u8,
     scan_clocks_left: u8,
+    /// The reset strobe's decoded level holds the wrap decode (no catch, no
+    /// delivery) from its rise until the counter plant re-phases the ring.
+    reset_decode_hold: bool,
 }
 
 impl Default for Missile {
@@ -226,7 +229,15 @@ impl Missile {
             start_pending: false,
             lead: 0,
             scan_clocks_left: 0,
+            reset_decode_hold: false,
         }
+    }
+
+    /// RESMx's address-decoded rise: the strobe level disturbs the START
+    /// decode a clock before the plant (die window: re-home dot for
+    /// alignments −2..+1, the m10_rrace runs).
+    pub fn reset_rise(&mut self) {
+        self.reset_decode_hold = true;
     }
 
     /// RESMx is level-active across the strobe: the scan-counter clear
@@ -244,6 +255,7 @@ impl Missile {
     pub fn reset_position(&mut self) {
         self.position = 0;
         self.div.ground();
+        self.reset_decode_hold = false;
         if self.lead > 0 {
             self.lead = 0;
             self.scan_clocks_left = 0;
@@ -281,7 +293,7 @@ impl Missile {
         } else {
             self.scan_clocks_left = self.scan_clocks_left.saturating_sub(1);
         }
-        if self.div.tick() {
+        if self.div.tick() && !self.reset_decode_hold {
             let deliver = self.start_pending;
             self.start_pending = copy_decodes(self.nusiz).contains(&self.position);
             self.position = (self.position + 1) % COUNTS;

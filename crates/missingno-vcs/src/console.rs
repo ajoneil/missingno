@@ -241,7 +241,15 @@ impl Vcs {
         for slot in &mut self.pending_tia_writes {
             if let Some(write) = slot {
                 write.hc_until_effective -= 1;
-                if write.hc_until_effective == 1 {
+                if write.hc_until_effective == 3 {
+                    // The strobe's decoded rise holds the missile START
+                    // decode until the plant (die window −2..+1, m10_rrace).
+                    match u16::from(write.register) {
+                        crate::tia::registers::RESM0 => self.tia.missile_reset_rise(0),
+                        crate::tia::registers::RESM1 => self.tia.missile_reset_rise(1),
+                        _ => {}
+                    }
+                } else if write.hc_until_effective == 1 {
                     // The missile reset's scan-kill leads its plant.
                     match u16::from(write.register) {
                         crate::tia::registers::RESM0 => self.tia.missile_reset_kill(0),
