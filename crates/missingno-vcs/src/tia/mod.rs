@@ -432,7 +432,10 @@ impl Tia {
         }
 
         match self.hsync.beam() {
-            Beam::Pixel(x) => self.render_clock(x, seam),
+            // A visible clock whose motion tick is N90-deferred past the wrap
+            // (the line's last pixel) previews it like the merge ghost — the
+            // die shows one serialiser tick per clock (m11 wrap runs).
+            Beam::Pixel(x) => self.render_clock(x, seam.map(|s| s || !motck)),
             // Inside the HMOVE comb: blanked output.
             Beam::Comb(x) => self.line[x as usize] = 0,
             Beam::Blank => {}
