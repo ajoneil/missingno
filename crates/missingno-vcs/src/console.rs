@@ -7,7 +7,7 @@
 //! RDY pin; the TIA raises it again as the beam wraps.
 
 use crate::TvStandard;
-use crate::cartridge::{Cartridge, CartridgeError};
+use crate::cartridge::{CartType, Cartridge, CartridgeError};
 use crate::cpu::{Bus, Cpu};
 use crate::riot::Riot;
 pub use crate::tia::Scanline;
@@ -163,8 +163,15 @@ impl Bus for BoardBus<'_> {
 }
 
 impl Vcs {
-    pub fn new(rom: &[u8], region: TvStandard) -> Result<Vcs, CartridgeError> {
-        Ok(Vcs::with_cartridge(Cartridge::load(rom)?, region))
+    pub fn new(
+        rom: &[u8],
+        region: TvStandard,
+        cart_type: Option<CartType>,
+    ) -> Result<Vcs, CartridgeError> {
+        Ok(Vcs::with_cartridge(
+            Cartridge::load(rom, cart_type)?,
+            region,
+        ))
     }
 
     fn with_cartridge(cartridge: Cartridge, region: TvStandard) -> Vcs {

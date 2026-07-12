@@ -46,7 +46,7 @@ fn load(relative: &str, standard: TvStandard) -> Vcs {
     let path = rom_path(relative);
     let rom = std::fs::read(&path)
         .unwrap_or_else(|e| panic!("failed to read ROM {}: {e}", path.display()));
-    Vcs::new(&rom, standard)
+    Vcs::new(&rom, standard, None)
         .unwrap_or_else(|e| panic!("failed to load ROM {}: {e:?}", path.display()))
 }
 

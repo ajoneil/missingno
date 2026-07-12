@@ -40,7 +40,7 @@ fn test_rom() -> Vec<u8> {
 #[test]
 fn captures_a_readable_trace_with_emergent_frames() {
     let rom = test_rom();
-    let mut vcs = Vcs::new(&rom, missingno_vcs::TvStandard::Ntsc).unwrap();
+    let mut vcs = Vcs::new(&rom, missingno_vcs::TvStandard::Ntsc, None).unwrap();
 
     let profile = Profile::parse(
         r#"

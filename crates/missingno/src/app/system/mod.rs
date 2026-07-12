@@ -115,6 +115,17 @@ impl Platform {
     }
 }
 
+/// The broadcast standard a game is authored for. Cross-family library
+/// metadata: the VCS consumes it (colour decode + frame timing) and future
+/// region-split families (NES, Master System) will too. Persisted on a
+/// library entry and mapped to each core's own runtime type at the seam.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+pub enum TvStandard {
+    Ntsc,
+    Pal,
+    Secam,
+}
+
 /// Everything the loader hands a family's console factory. The fields are
 /// family-agnostic except the two Game Boy peripheral ones, quarantined here
 /// under the same rule as the GB types on the seam traits: generalize when a
@@ -131,6 +142,10 @@ pub struct MediaLoad<'a> {
     pub game_dir: &'a Path,
     /// Boot ROM supplied on the CLI; the Game Boy family attaches it.
     pub boot_rom: Option<missingno_gb::BootRom>,
+    /// Broadcast standard from the library entry; the VCS uses it, else probes.
+    pub tv_standard: Option<TvStandard>,
+    /// Cartridge board code from the library entry (VCS), e.g. "F8".
+    pub cart_type: Option<String>,
     /// Link-cable connection, borrowed mutably so only the family that owns
     /// the concept takes it.
     pub serial_link: &'a mut Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
@@ -205,7 +220,15 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         control_labels: &vcs::CONTROL_LABELS,
         is_rom: vcs::is_vcs_rom,
         title_from_rom: |_| None,
-        create_console: |media| vcs::create_console(media.rom, media.fallback_title).ok(),
+        create_console: |media| {
+            vcs::create_console(
+                media.rom,
+                media.fallback_title,
+                media.tv_standard,
+                media.cart_type.as_deref(),
+            )
+            .ok()
+        },
         trace: Some(crate::trace::trace_vcs),
     },
     #[cfg(feature = "sms")]

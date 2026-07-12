@@ -1,7 +1,8 @@
 //! Bundled game catalogue — loaded from a tar.zst archive compiled into the binary.
 //!
-//! Provides identification (SHA1 → game info) and search (title, tags, source type)
-//! for all known Game Boy games: commercial (No-Intro) and homebrew (gbdev).
+//! Provides identification (SHA1 → game info) and search (title, tags, source
+//! type) across the console trees the archive ships (Game Boy / Game Boy Color
+//! from No-Intro + gbdev homebrew, Atari VCS from vcs_cart_db).
 
 use std::collections::HashMap;
 
@@ -27,6 +28,14 @@ pub struct GameManifest {
     pub publisher: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// Broadcast standard (VCS): carts have no region header, so the DB is
+    /// authoritative and the core only heuristically probes without it.
+    #[serde(default)]
+    pub tv_format: Option<crate::app::system::TvStandard>,
+    /// Cartridge board code (VCS), e.g. "F8", "F6SC" — resolves the bank
+    /// scheme the size heuristic can't tell apart (F8 vs F8SC, 8 KB E0 etc.).
+    #[serde(default)]
+    pub cart_type: Option<String>,
     #[serde(default)]
     pub hashes: Vec<String>,
     #[serde(default)]
@@ -271,28 +280,53 @@ impl Catalogue {
 mod tests {
     use super::*;
 
+    // The embedded archive stores manifests two levels deep as
+    // {console}/{slug}/manifest.ron; load() must still index them and carry the
+    // VCS-only fields through to lookup.
+    #[test]
+    fn embedded_catalogue_loads_vcs_fields() {
+        let catalogue = Catalogue::load();
+        if catalogue.entries.is_empty() {
+            return; // submodule not checked out
+        }
+        // "1 Adventure 2 Many" — a VCS entry with NTSC / 4K in the db.
+        let entry = catalogue
+            .lookup_hash("f64aaa03dcdfafde7ddda70c7d0c0e7d2f8f4f70")
+            .expect("known VCS sha1 resolves");
+        assert_eq!(
+            entry.manifest.tv_format,
+            Some(crate::app::system::TvStandard::Ntsc)
+        );
+        assert_eq!(entry.manifest.cart_type.as_deref(), Some("4K"));
+    }
+
     // Catalogue::load() silently drops manifests that fail to deserialize,
     // so parse the gamedb source tree directly to surface any bad files.
     #[test]
     fn all_gamedb_manifests_parse() {
-        let games =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../missingno-gamedb/games");
-        if !games.is_dir() {
+        let gamedb =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../missingno-gamedb");
+        if !gamedb.join("gb").is_dir() {
             return;
         }
 
         let mut checked = 0;
         let mut failures = Vec::new();
-        for dir in std::fs::read_dir(&games).unwrap().flatten() {
-            let manifest = dir.path().join("manifest.ron");
-            if !manifest.is_file() {
+        for console in ["gb", "gbc", "vcs"] {
+            let Ok(entries) = std::fs::read_dir(gamedb.join(console)) else {
                 continue;
+            };
+            for dir in entries.flatten() {
+                let manifest = dir.path().join("manifest.ron");
+                if !manifest.is_file() {
+                    continue;
+                }
+                let content = std::fs::read_to_string(&manifest).unwrap();
+                if let Err(e) = ron::from_str::<GameManifest>(&content) {
+                    failures.push(format!("{}: {e}", manifest.display()));
+                }
+                checked += 1;
             }
-            let content = std::fs::read_to_string(&manifest).unwrap();
-            if let Err(e) = ron::from_str::<GameManifest>(&content) {
-                failures.push(format!("{}: {e}", manifest.display()));
-            }
-            checked += 1;
         }
 
         assert!(checked > 0);

@@ -55,6 +55,8 @@ pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<l
                     .or(cat_entry.manifest.developer.clone());
                 e.year = cat_entry.manifest.date.clone();
                 e.description = cat_entry.manifest.description.clone();
+                e.tv_standard = cat_entry.manifest.tv_format;
+                e.cart_type = cat_entry.manifest.cart_type.clone();
                 e.enrichment_attempted = false; // still want Hasheous for covers
                 e
             } else {

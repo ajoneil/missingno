@@ -53,24 +53,79 @@ pub enum CartridgeError {
     UnsupportedSize(usize),
 }
 
+/// The board a ROM is wired for. The Atari codes (F8/F6/F4) name the hotspot
+/// ranges that page the 4 KB window; `*Sc` variants add Superchip (SARA) cart
+/// RAM, which a raw dump can't be told from a plain board by size alone.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CartType {
+    /// 2 KB, mirrored into the window.
+    Plain2K,
+    /// 4 KB, fills the window.
+    Plain4K,
+    /// 8 KB across two banks.
+    F8,
+    F8Sc,
+    /// 16 KB across four banks.
+    F6,
+    F6Sc,
+    /// 32 KB across eight banks.
+    F4,
+    F4Sc,
+}
+
+fn banked(rom: &[u8], banks: usize, hotspot_base: u16, superchip: bool) -> Cartridge {
+    Cartridge::Banked(Banked {
+        data: rom.to_vec(),
+        bank: 0,
+        hotspot_base,
+        banks,
+        superchip_ram: superchip.then(|| Box::new([0; SUPERCHIP_RAM_SIZE])),
+    })
+}
+
 impl Cartridge {
-    pub fn load(rom: &[u8]) -> Result<Cartridge, CartridgeError> {
-        let banked = |banks: usize, hotspot_base: u16| {
-            Cartridge::Banked(Banked {
-                data: rom.to_vec(),
-                bank: 0,
-                hotspot_base,
-                banks,
-                superchip_ram: has_superchip_signature(rom)
-                    .then(|| Box::new([0; SUPERCHIP_RAM_SIZE])),
-            })
+    /// Build a cartridge, honouring an explicit board type when the caller has
+    /// one and inferring a best-effort board from ROM size otherwise.
+    pub fn load(rom: &[u8], cart_type: Option<CartType>) -> Result<Cartridge, CartridgeError> {
+        match cart_type {
+            Some(cart_type) => Cartridge::build(rom, cart_type),
+            None => Cartridge::infer(rom),
+        }
+    }
+
+    fn build(rom: &[u8], cart_type: CartType) -> Result<Cartridge, CartridgeError> {
+        let sized = |size: usize| -> Result<(), CartridgeError> {
+            (rom.len() == size)
+                .then_some(())
+                .ok_or(CartridgeError::UnsupportedSize(rom.len()))
         };
+        match cart_type {
+            CartType::Plain2K => {
+                sized(0x800)?;
+                Ok(Cartridge::Rom2K(Box::new(rom.try_into().unwrap())))
+            }
+            CartType::Plain4K => {
+                sized(0x1000)?;
+                Ok(Cartridge::Rom4K(Box::new(rom.try_into().unwrap())))
+            }
+            CartType::F8 => sized(0x2000).map(|()| banked(rom, 2, 0x1FF8, false)),
+            CartType::F8Sc => sized(0x2000).map(|()| banked(rom, 2, 0x1FF8, true)),
+            CartType::F6 => sized(0x4000).map(|()| banked(rom, 4, 0x1FF6, false)),
+            CartType::F6Sc => sized(0x4000).map(|()| banked(rom, 4, 0x1FF6, true)),
+            CartType::F4 => sized(0x8000).map(|()| banked(rom, 8, 0x1FF4, false)),
+            CartType::F4Sc => sized(0x8000).map(|()| banked(rom, 8, 0x1FF4, true)),
+        }
+    }
+
+    fn infer(rom: &[u8]) -> Result<Cartridge, CartridgeError> {
+        let auto =
+            |banks, hotspot_base| banked(rom, banks, hotspot_base, has_superchip_signature(rom));
         match rom.len() {
             0x800 => Ok(Cartridge::Rom2K(Box::new(rom.try_into().unwrap()))),
             0x1000 => Ok(Cartridge::Rom4K(Box::new(rom.try_into().unwrap()))),
-            0x2000 => Ok(banked(2, 0x1FF8)),
-            0x4000 => Ok(banked(4, 0x1FF6)),
-            0x8000 => Ok(banked(8, 0x1FF4)),
+            0x2000 => Ok(auto(2, 0x1FF8)),
+            0x4000 => Ok(auto(4, 0x1FF6)),
+            0x8000 => Ok(auto(8, 0x1FF4)),
             size => Err(CartridgeError::UnsupportedSize(size)),
         }
     }

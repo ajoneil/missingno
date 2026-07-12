@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use missingno_vcs::CartType;
 use missingno_vcs::TvStandard;
 use missingno_vcs::cartridge::CartridgeError;
 use missingno_vcs::console::{JoystickDirection, Vcs};
@@ -53,9 +54,16 @@ pub const CONSOLE_SWITCHES: [ConsoleSwitch; 3] = [
     },
 ];
 
-/// Nominal NTSC frame: 262 lines × 228 clocks at the 3.579545 MHz colour
-/// clock. Kernels vary line counts; the pacing loop uses the convention.
-const FRAME_INTERVAL: Duration = Duration::from_micros(16_684);
+/// Nominal frame: a full field of 228-clock lines at the colour clock — 262
+/// lines (NTSC) or 312 (PAL). Kernels vary line counts; pacing uses the
+/// convention so the frame rate follows the broadcast standard.
+fn frame_interval(standard: TvStandard) -> Duration {
+    let lines = match standard {
+        TvStandard::Ntsc => 262.0,
+        TvStandard::Pal => 312.0,
+    };
+    Duration::from_secs_f32(lines * 228.0 / standard.master_clock_hz())
+}
 
 /// Frames are emergent from VSYNC; bound the search so a kernel that never
 /// syncs cannot stall the emulation thread.
@@ -81,15 +89,48 @@ pub fn is_vcs_rom(path: &std::path::Path, rom: &[u8]) -> bool {
     }
 }
 
-pub fn create_console(rom: &[u8], title: String) -> Result<Box<dyn SystemConsole>, CartridgeError> {
-    // Region detection (ROM-hash → standard) is a future game-db concern; the
-    // frontend runs NTSC until then. Pacing, aspect, and palette follow suit.
+pub fn create_console(
+    rom: &[u8],
+    title: String,
+    tv_standard: Option<super::TvStandard>,
+    cart_type: Option<&str>,
+) -> Result<Box<dyn SystemConsole>, CartridgeError> {
+    // The library's metadata is authoritative; carts carry no region header and
+    // the size heuristic can't always name the board, so fall back only when
+    // the game-db is silent. Pacing, aspect, and palette follow the standard.
+    let region = tv_standard.map_or(TvStandard::Ntsc, core_tv_standard);
     Ok(Box::new(VcsConsole {
-        vcs: Vcs::new(rom, TvStandard::Ntsc)?,
+        vcs: Vcs::new(rom, region, cart_type.and_then(core_cart_type))?,
         title,
         last_frame: blank_frame(),
         tv: Television::new(),
     }))
+}
+
+/// Map the library's broadcast standard onto the core's runtime standard. The
+/// core decodes NTSC and PAL; SECAM (50 Hz, PAL-like frame timing but a colour
+/// encoding the core doesn't decode) runs as PAL.
+fn core_tv_standard(standard: super::TvStandard) -> TvStandard {
+    match standard {
+        super::TvStandard::Ntsc => TvStandard::Ntsc,
+        super::TvStandard::Pal | super::TvStandard::Secam => TvStandard::Pal,
+    }
+}
+
+/// Parse a game-db board code into the core's board type; codes the core can't
+/// build yet return `None`, leaving `Cartridge::load` to size-detect.
+fn core_cart_type(code: &str) -> Option<CartType> {
+    match code {
+        "2K" => Some(CartType::Plain2K),
+        "4K" => Some(CartType::Plain4K),
+        "F8" => Some(CartType::F8),
+        "F8SC" => Some(CartType::F8Sc),
+        "F6" => Some(CartType::F6),
+        "F6SC" => Some(CartType::F6Sc),
+        "F4" => Some(CartType::F4),
+        "F4SC" => Some(CartType::F4Sc),
+        _ => None,
+    }
 }
 
 struct VcsConsole {
@@ -297,7 +338,7 @@ impl SystemConsole for VcsConsole {
     }
 
     fn frame_interval(&self) -> Duration {
-        FRAME_INTERVAL
+        frame_interval(self.vcs.tv_standard())
     }
 
     fn into_debugger(self: Box<Self>) -> Result<Box<dyn SystemDebugger>, Box<dyn SystemConsole>> {
@@ -515,7 +556,7 @@ impl SystemDebugger for VcsDebugger {
     }
 
     fn frame_interval(&self) -> Duration {
-        FRAME_INTERVAL
+        frame_interval(self.core.console().tv_standard())
     }
 
     fn capture_frame(&self, _options: &CaptureOptions) -> FrameCapture {

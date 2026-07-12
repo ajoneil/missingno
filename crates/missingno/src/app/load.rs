@@ -85,12 +85,15 @@ fn start_console(
     game_dir: &std::path::Path,
 ) -> Option<String> {
     let family = system::family_for(rom_path, &rom)?;
+    let entry = crate::app::library::load_entry(game_dir);
     let console = (family.create_console)(system::MediaLoad {
         rom: &rom,
         fallback_title: file_stem_title(rom_path),
         save_data,
         game_dir,
         boot_rom: app.boot_rom.clone(),
+        tv_standard: entry.as_ref().and_then(|e| e.tv_standard),
+        cart_type: entry.as_ref().and_then(|e| e.cart_type.clone()),
         serial_link: &mut app.serial_link,
     })?;
     Some(finish_start(app, console, rom_path))

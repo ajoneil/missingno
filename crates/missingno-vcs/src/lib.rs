@@ -9,4 +9,5 @@ pub mod tia;
 #[cfg(feature = "gbtrace")]
 pub mod trace;
 pub mod tv_standard;
+pub use cartridge::CartType;
 pub use tv_standard::TvStandard;

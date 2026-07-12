@@ -52,6 +52,12 @@ pub struct GameEntry {
     pub header_title: Option<String>,
     #[serde(default, deserialize_with = "compat_platform")]
     pub platform: Option<crate::app::system::Platform>,
+    /// Broadcast standard the game expects; VCS reads it at boot, else probes.
+    #[serde(default)]
+    pub tv_standard: Option<crate::app::system::TvStandard>,
+    /// Cartridge board code (VCS), e.g. "F8"; absent falls back to size-detect.
+    #[serde(default)]
+    pub cart_type: Option<String>,
     pub publisher: Option<String>,
     pub year: Option<String>,
     pub description: Option<String>,
@@ -72,6 +78,8 @@ impl GameEntry {
             title,
             header_title: None,
             platform: None,
+            tv_standard: None,
+            cart_type: None,
             publisher: None,
             year: None,
             description: None,
