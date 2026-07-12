@@ -11,6 +11,9 @@ pub struct Riot {
     interval: u16,
     prescaler: u16,
     timer_underflowed: bool,
+    /// Underflow landed at the last tick; an INTIM read this cycle coincides
+    /// with the interrupt and must not clear the flag (datasheet exception).
+    timer_just_underflowed: bool,
     /// Output registers hold what software wrote, whole, across DDR flips.
     ora: u8,
     orb: u8,
@@ -39,6 +42,7 @@ impl Riot {
             interval: 1024,
             prescaler: 0,
             timer_underflowed: false,
+            timer_just_underflowed: false,
             ora: 0,
             orb: 0,
             pins_a: 0xFF,
@@ -102,6 +106,7 @@ impl Riot {
 
     /// One CPU-clock tick.
     pub fn tick(&mut self) {
+        self.timer_just_underflowed = false;
         if self.timer_underflowed {
             self.timer = self.timer.wrapping_sub(1);
             return;
@@ -111,6 +116,7 @@ impl Riot {
             self.prescaler = 0;
             if self.timer == 0 {
                 self.timer_underflowed = true;
+                self.timer_just_underflowed = true;
                 self.timer = 0xFF;
             } else {
                 self.timer -= 1;
@@ -145,7 +151,7 @@ impl Riot {
             }
             _ => {
                 let value = self.timer;
-                if self.timer_underflowed {
+                if self.timer_underflowed && !self.timer_just_underflowed {
                     self.timer_underflowed = false;
                     self.prescaler = 0;
                 }
@@ -158,7 +164,15 @@ impl Riot {
         // A4=0, A2=1: PA7 edge-detect control — A0 picks the active edge
         // (the IRQ-enable bit gates a pin the 6507 package doesn't have).
         if register & 0x14 == 0x04 {
-            self.pa7_positive_edge = register & 0x01 != 0;
+            let selected_positive = register & 0x01 != 0;
+            // A polarity change acts as if the new active edge just landed:
+            // with PA7 already at its post-edge level, the flag sets
+            // (datasheet warning; the exact matrix is hardware-unconfirmed).
+            if selected_positive != self.pa7_positive_edge && self.pa7_level() == selected_positive
+            {
+                self.pa7_flag = true;
+            }
+            self.pa7_positive_edge = selected_positive;
             return;
         }
         if register & 0x14 == 0x14 {
