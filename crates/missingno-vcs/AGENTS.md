@@ -1,4 +1,4 @@
-# missingno-vcs — Atari 2600 (VCS) methodology
+# missingno-vcs — Atari VCS methodology
 
 Core-specific accuracy methodology for `missingno-vcs`. The shared skill-system
 rules, agent infrastructure, and workflow discipline live in the repository-root
@@ -8,7 +8,7 @@ VCS accuracy work.
 ## Ground-truth hierarchy
 
 The DMG methodology assumes **gate-level ground truth** — dmg-sim, the die
-netlist, and the DMG Timing Specification collated from them. The Atari 2600 has
+netlist, and the DMG Timing Specification collated from them. The Atari VCS has
 that footing for **two of its three chips and loses it for the third**, so the
 DMG discipline holds but the ground-truth tier is *split by chip*. **The netlist
 and the simulators are the primary resource for solving accuracy issues — they

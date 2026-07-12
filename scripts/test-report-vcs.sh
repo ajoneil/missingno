@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate a structured test report for missingno-vcs (Atari 2600 core).
+# Generate a structured test report for missingno-vcs (Atari VCS core).
 # Usage:
 #   ./scripts/test-report-vcs.sh                  # Run tests, print report
 #   ./scripts/test-report-vcs.sh --save-baseline  # Run tests and save as baseline

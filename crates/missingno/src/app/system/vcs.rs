@@ -1,4 +1,4 @@
-//! The Atari 2600's implementation of the system seam.
+//! The Atari VCS's implementation of the system seam.
 
 use std::time::Duration;
 
@@ -22,7 +22,7 @@ use crate::app::emu_thread::RunningStatus;
 use crate::app::library::activity::{CaptureOptions, FrameCapture};
 use crate::app::screen::{IndexedFrame, ScreenDisplay};
 
-pub const PLATFORM_NAME: &str = "Atari 2600";
+pub const PLATFORM_NAME: &str = "Atari VCS";
 pub const ROM_EXTENSIONS: &[&str] = &["a26", "bin"];
 
 /// The family's names for the shared control ids, indexed by id.

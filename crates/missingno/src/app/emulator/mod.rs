@@ -211,7 +211,7 @@ impl Emulator {
                     .padding(8)
                 ];
 
-                // The family's latching console switches (2600 difficulty /
+                // The family's latching console switches (VCS difficulty /
                 // TV type), top-left; each button flips its position.
                 if !self.switches.is_empty() {
                     let mut switch_row = row![].spacing(8);

@@ -8,7 +8,7 @@ These are the top-level rules governing how skills interact. They survive contex
 
 1. **Always use skills — never ad-hoc.** When asked to investigate, debug, research, or analyze, invoke the appropriate skill (`/investigate`, `/research`, `/compare-traces`, etc.). Never start ad-hoc analysis, use WebSearch directly, read reference emulator source yourself, or trace behavior in your head. The skill system exists to enforce scope discipline and produce durable receipts. Bypassing it produces unreliable, unreproducible results that don't survive context compaction.
 
-2. **Hardware is the source of truth.** The goal is always to understand what the real hardware does and model that behavior. Prioritize hardware documentation, decaps, test measurements, and direct hardware observations over any emulator implementation. Other emulators (SameBoy, Gambatte, DocBoy, etc.) are reference material — useful for confirming hardware behavior, but never the primary source and never a model to copy. The question is always "what does the hardware do?" not "what does emulator X do?" Each core's ground-truth hierarchy differs and lives beside its crate (see *Per-core methodology*). **CGB caveat**: the gate-level sources that operationalise this rule on DMG (dmg-sim, the DMG Timing Specification) have no Game Boy Color equivalent — before any `missingno-gbc` work read `crates/missingno-gbc/AGENTS.md`; the rule still holds, but its ground-truth hierarchy changes shape. **VCS caveat**: the Atari 2600 restores gate-level ground truth for the CPU and TIA (Sim2600, the decapped 6502/TIA netlists) but has none for the 6532/RIOT — before any `missingno-vcs` work read `crates/missingno-vcs/AGENTS.md`; the netlist and simulators are the primary "why" resource, above the behavioural VCS emulators.
+2. **Hardware is the source of truth.** The goal is always to understand what the real hardware does and model that behavior. Prioritize hardware documentation, decaps, test measurements, and direct hardware observations over any emulator implementation. Other emulators (SameBoy, Gambatte, DocBoy, etc.) are reference material — useful for confirming hardware behavior, but never the primary source and never a model to copy. The question is always "what does the hardware do?" not "what does emulator X do?" Each core's ground-truth hierarchy differs and lives beside its crate (see *Per-core methodology*). **CGB caveat**: the gate-level sources that operationalise this rule on DMG (dmg-sim, the DMG Timing Specification) have no Game Boy Color equivalent — before any `missingno-gbc` work read `crates/missingno-gbc/AGENTS.md`; the rule still holds, but its ground-truth hierarchy changes shape. **VCS caveat**: the Atari VCS restores gate-level ground truth for the CPU and TIA (Sim2600, the decapped 6502/TIA netlists) but has none for the 6532/RIOT — before any `missingno-vcs` work read `crates/missingno-vcs/AGENTS.md`; the netlist and simulators are the primary "why" resource, above the behavioural VCS emulators.
 
 3. **Skills are subroutine calls — never stopping points.** When a subagent skill returns, or an in-context skill exits, the caller MUST immediately read the receipt, update `summary.md`, and continue the investigation in the same turn. Never end your turn after a skill produces its receipt. Skill invocations are function calls, not async tasks you wait on.
 
@@ -69,7 +69,7 @@ In-context skills produce their own format per the skill file (designs use State
 
 ## Project Overview
 
-Missingno is a Rust emulator and debugger. Its mature core is the Game Boy family (DMG + Game Boy Color); additional console cores (Atari 2600/VCS, and early SMS and NES) share the frontend, debugger, and skill infrastructure. Each core's accuracy methodology lives beside its crate (see *Per-core methodology*).
+Missingno is a Rust emulator and debugger. Its mature core is the Game Boy family (DMG + Game Boy Color); additional console cores (Atari VCS, and early SMS and NES) share the frontend, debugger, and skill infrastructure. Each core's accuracy methodology lives beside its crate (see *Per-core methodology*).
 
 ## Build and Run Commands
 
@@ -90,7 +90,7 @@ cargo fmt                                    # Format
 
 ## Testing
 
-- Run tests against the core you're working on: `cargo test -p missingno-gb` (DMG), `-p missingno-gbc` (CGB), or `-p missingno-vcs` (Atari 2600). Do not run `cargo test` against the whole workspace unless specifically asked.
+- Run tests against the core you're working on: `cargo test -p missingno-gb` (DMG), `-p missingno-gbc` (CGB), or `-p missingno-vcs` (Atari VCS). Do not run `cargo test` against the whole workspace unless specifically asked.
 - **The GB and GBC suites fully pass** — the gate for any change to them is a fully-passing suite; ANY failure is a regression. **The VCS suite is an early core and fails most tests by design** (it's accuracy infrastructure, not a green suite — see `crates/missingno-vcs/AGENTS.md`); regression-check it against its saved baseline, never against green. The report scripts exist for accuracy investigations and regression triage; for ordinary GB/GBC changes against the green baseline, plain `cargo test` under `timeout` suffices.
 - For regression checking, use `./scripts/test-report-gb.sh --diff` instead of raw `cargo test`. It generates structured reports with baseline comparison and saves them to `receipts/test-reports/gb/`. Variants: `./scripts/test-report-gbc.sh` (reports under `receipts/test-reports/gbc/`) and `./scripts/test-report-vcs.sh` (`receipts/test-reports/vcs/`); use the one matching the core you're changing.
 - Wrap suite runs in a timeout after disruptive changes (e.g. `timeout 1500 ./scripts/test-report-gb.sh --diff`; normal full-suite runtime is ~6 min). Interrupt/halt-adjacent changes can hang the emulator — treat a large overrun as a hang: kill it, then bisect with single-test probes (build with `--no-run` first, then `timeout 60-90` on the run so the timeout does not catch the rebuild).
@@ -115,7 +115,7 @@ The shared skill-system rules above apply to every core. Each core's **ground-tr
 |------|-------|-----------------|
 | Game Boy (DMG) | `missingno-gb` | `crates/missingno-gb/AGENTS.md` — the shared-silicon base: DMG ground-truth hierarchy, clock model, instruction execution, core internals |
 | Game Boy Color | `missingno-gbc` | `crates/missingno-gbc/AGENTS.md` — no gate-level sim; hardware test-ROM values lead |
-| Atari 2600 (VCS) | `missingno-vcs` | `crates/missingno-vcs/AGENTS.md` — Sim2600 (CPU+TIA) + datasheet/schematics (RIOT); behavioural VCS emulators last |
+| Atari VCS | `missingno-vcs` | `crates/missingno-vcs/AGENTS.md` — Sim2600 (CPU+TIA) + datasheet/schematics (RIOT); behavioural VCS emulators last |
 
 CGB is a superset of DMG, so its doc builds on the DMG base; the VCS core shares no silicon with the Game Boy and stands alone. Adding a core = one row here plus an `AGENTS.md` beside its crate. The crate docs auto-load when you work in that subtree; read the relevant one before any accuracy work on that core.
 

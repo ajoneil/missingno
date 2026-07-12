@@ -28,7 +28,7 @@ pub enum ControlInput {
 }
 
 /// A latching console switch a family exposes for in-play toggling — the
-/// 2600's difficulty and colour switches. Unlike the momentary controls on
+/// VCS's difficulty and colour switches. Unlike the momentary controls on
 /// the key-binding path, these hold a position the user flips; toggling one
 /// sends its new level through `set_control` as `ControlInput::Digital`.
 #[derive(Clone, Copy, Debug)]
@@ -149,7 +149,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
     },
     FamilyDescriptor {
         platform_name: vcs::PLATFORM_NAME,
-        short_name: "2600",
+        short_name: "VCS",
         extensions: vcs::ROM_EXTENSIONS,
         control_labels: &vcs::CONTROL_LABELS,
         is_rom: vcs::is_vcs_rom,

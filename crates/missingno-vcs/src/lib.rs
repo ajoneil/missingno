@@ -1,4 +1,4 @@
-//! Atari 2600 (VCS) hardware model.
+//! Atari VCS hardware model.
 
 pub mod cartridge;
 pub mod console;
