@@ -8,18 +8,19 @@ use iced::{
     Alignment::Center,
     Element,
     Length::{Fill, Fixed},
-    widget::{button, column, container, row, scrollable, text, toggler},
+    widget::{button, column, container, image, row, scrollable, text, toggler},
 };
 use missingno_gb::ppu::types::palette::{PaletteChoice, PaletteIndex};
 
 use super::Message;
 use crate::app::{
     self,
+    library::activity,
     system::ConsoleSwitch,
     ui::{
         buttons, containers, fonts,
         icons::{self, Icon},
-        palette,
+        palette::{self, MUTED},
         sizes::{m, s, xs},
         text as app_text,
     },
@@ -31,6 +32,7 @@ const PANEL_WIDTH: f32 = 260.0;
 pub enum PlayPanel {
     Console,
     Display,
+    PlayLog,
 }
 
 impl PlayPanel {
@@ -38,6 +40,7 @@ impl PlayPanel {
         match self {
             Self::Console => Icon::Sliders,
             Self::Display => Icon::Monitor,
+            Self::PlayLog => Icon::Image,
         }
     }
 
@@ -45,8 +48,32 @@ impl PlayPanel {
         match self {
             Self::Console => "Console",
             Self::Display => "Display",
+            Self::PlayLog => "Play log",
         }
     }
+}
+
+/// A screenshot or print captured during the current session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureKind {
+    Screenshot,
+    Print,
+}
+
+impl CaptureKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Screenshot => "Screenshot",
+            Self::Print => "Print",
+        }
+    }
+}
+
+/// One entry in the live play log: a cached thumbnail plus when and what it is.
+pub struct PlayLogEntry<'a> {
+    pub kind: CaptureKind,
+    pub handle: &'a image::Handle,
+    pub at: jiff::Timestamp,
 }
 
 /// The vertical icon rail. Content-driven: an icon appears only for a section
@@ -56,10 +83,12 @@ pub fn rail(
     open: Option<PlayPanel>,
     has_console: bool,
     has_display: bool,
+    has_playlog: bool,
 ) -> Option<Element<'static, app::Message>> {
     let available = [
         (PlayPanel::Console, has_console),
         (PlayPanel::Display, has_display),
+        (PlayPanel::PlayLog, has_playlog),
     ];
     if available.iter().all(|(_, show)| !show) {
         return None;
@@ -86,10 +115,12 @@ pub fn body(
     switch_levels: &[bool],
     current_palette: PaletteChoice,
     use_sgb_colors: bool,
+    play_log: &[PlayLogEntry],
 ) -> Element<'static, app::Message> {
     let content = match panel {
         PlayPanel::Console => console_body(switches, switch_levels),
         PlayPanel::Display => display_body(current_palette, use_sgb_colors),
+        PlayPanel::PlayLog => playlog_body(play_log),
     };
     container(scrollable(container(content).padding(m())).height(Fill))
         .width(Fixed(PANEL_WIDTH))
@@ -148,6 +179,41 @@ fn display_body(current: PaletteChoice, use_sgb_colors: bool) -> Element<'static
                 .on_press(SettingsMessage::SelectPalette(choice).into())
         };
         col = col.push(tile.width(Fill));
+    }
+    col.into()
+}
+
+fn playlog_body(entries: &[PlayLogEntry]) -> Element<'static, app::Message> {
+    let mut col = column![
+        app_text::label("Play log"),
+        buttons::standard(
+            row![icons::m(Icon::Camera), text("Screenshot")]
+                .spacing(s())
+                .align_y(Center),
+        )
+        .on_press(app::Message::TakeScreenshot),
+    ]
+    .spacing(m());
+
+    if entries.is_empty() {
+        col = col.push(app_text::detail("No captures yet").color(MUTED));
+        return col.into();
+    }
+
+    // Newest first, so the most recent capture is at the top of the log.
+    for entry in entries.iter().rev() {
+        let caption = format!(
+            "{} · {}",
+            entry.kind.label(),
+            activity::format_local_time(&entry.at)
+        );
+        col = col.push(
+            column![
+                image(entry.handle.clone()).width(Fill),
+                app_text::detail(caption).color(MUTED),
+            ]
+            .spacing(xs()),
+        );
     }
     col.into()
 }

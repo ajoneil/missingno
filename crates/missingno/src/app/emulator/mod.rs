@@ -18,7 +18,7 @@ use crate::app::{
 use missingno_gb::ppu::types::palette::PaletteChoice;
 
 mod panels;
-pub use panels::PlayPanel;
+pub use panels::{CaptureKind, PlayLogEntry, PlayPanel};
 
 /// The UI-side shell for a plain (non-debugger) game. While the game runs the
 /// console lives on the emu thread (`console` is `None`); it is recovered here
@@ -178,7 +178,11 @@ impl Emulator {
         self.screen_view.palette = palette;
     }
 
-    pub fn view(&self, fullscreen: bool) -> Element<'_, app::Message> {
+    pub fn view(
+        &self,
+        fullscreen: bool,
+        play_log: &[panels::PlayLogEntry],
+    ) -> Element<'_, app::Message> {
         let screen: Element<'_, app::Message> = responsive(|size| {
             let (width, height) = self.screen_view.fitted_size(size);
 
@@ -247,12 +251,15 @@ impl Emulator {
 
         let has_console = !self.switches.is_empty();
         let has_display = self.monochrome_palette;
+        // Capturing is always available, so the Play log is too.
+        let has_playlog = true;
 
         let mut layout = row![screen_area];
         if let Some(panel) = self.open_panel {
             let available = match panel {
                 PlayPanel::Console => has_console,
                 PlayPanel::Display => has_display,
+                PlayPanel::PlayLog => has_playlog,
             };
             if available {
                 layout = layout.push(panels::body(
@@ -261,10 +268,11 @@ impl Emulator {
                     &self.switch_levels,
                     self.screen_view.palette,
                     self.use_sgb_colors,
+                    play_log,
                 ));
             }
         }
-        if let Some(rail) = panels::rail(self.open_panel, has_console, has_display) {
+        if let Some(rail) = panels::rail(self.open_panel, has_console, has_display, has_playlog) {
             layout = layout.push(rail);
         }
         layout.width(Fill).height(Fill).into()
