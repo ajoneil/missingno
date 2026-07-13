@@ -86,10 +86,10 @@ impl Tracer {
         profile: &Profile,
         rom: &[u8],
     ) -> Result<Tracer, morepork::Error> {
-        if profile.family != "nes" {
+        if profile.system != "nes" {
             return Err(morepork::Error::Profile(format!(
-                "profile '{}' targets family '{}', not nes",
-                profile.name, profile.family
+                "profile '{}' targets system '{}', not nes",
+                profile.name, profile.system
             )));
         }
 
@@ -107,7 +107,7 @@ impl Tracer {
             emulator: "missingno".into(),
             emulator_version: env!("CARGO_PKG_VERSION").into(),
             rom_sha256,
-            family: "nes".into(),
+            system: "nes".into(),
             model: "NTSC".into(),
             profile: profile.name.clone(),
             fields: profile.fields.clone(),

@@ -151,7 +151,7 @@ impl Registers {
     }
 
     #[cfg(feature = "morepork")]
-    pub fn from_snapshot(snap: &morepork::family::gb::snapshot::SerialSnapshot) -> Self {
+    pub fn from_snapshot(snap: &morepork::system::gb::snapshot::SerialSnapshot) -> Self {
         Registers {
             data: snap.sb,
             control: Control::from_bits_retain(snap.sc),
@@ -326,7 +326,7 @@ impl Serial {
     }
 
     #[cfg(feature = "morepork")]
-    pub fn from_snapshot(snap: &morepork::family::gb::snapshot::SerialSnapshot) -> Self {
+    pub fn from_snapshot(snap: &morepork::system::gb::snapshot::SerialSnapshot) -> Self {
         Self {
             registers: Registers::from_snapshot(snap),
             link: Box::new(Disconnected::new()),

@@ -92,10 +92,10 @@ impl Tracer {
         rom: &[u8],
         region: TvStandard,
     ) -> Result<Tracer, morepork::Error> {
-        if profile.family != "vcs" {
+        if profile.system != "vcs" {
             return Err(morepork::Error::Profile(format!(
-                "profile '{}' targets family '{}', not vcs",
-                profile.name, profile.family
+                "profile '{}' targets system '{}', not vcs",
+                profile.name, profile.system
             )));
         }
 
@@ -113,7 +113,7 @@ impl Tracer {
             emulator: "missingno".into(),
             emulator_version: env!("CARGO_PKG_VERSION").into(),
             rom_sha256,
-            family: "vcs".into(),
+            system: "vcs".into(),
             model: region.name().into(),
             profile: profile.name.clone(),
             fields: profile.fields.clone(),

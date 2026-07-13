@@ -473,7 +473,7 @@ impl<A: ApuSpec> Audio<A> {
     /// Construct an Audio instance from a morepork snapshot.
     #[cfg(feature = "morepork")]
     pub fn from_snapshot(
-        snap: &morepork::family::gb::snapshot::ApuSnapshot,
+        snap: &morepork::system::gb::snapshot::ApuSnapshot,
         wave_ram: [u8; 16],
     ) -> Self {
         use channels::noise::FrequencyAndRandomness;

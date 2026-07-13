@@ -465,7 +465,7 @@ impl Cpu {
     /// boundary. The state machine fields are reset to their boundary
     /// defaults (Fetch phase, step 0, no pending actions).
     #[cfg(feature = "morepork")]
-    pub fn from_snapshot(snap: &morepork::family::gb::snapshot::CpuSnapshot) -> Cpu {
+    pub fn from_snapshot(snap: &morepork::system::gb::snapshot::CpuSnapshot) -> Cpu {
         Cpu {
             a: snap.a,
             b: snap.b,

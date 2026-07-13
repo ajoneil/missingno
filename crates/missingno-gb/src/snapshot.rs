@@ -4,10 +4,10 @@
 //! Restore: each component has a `from_snapshot` constructor that builds
 //! it directly from the snapshot data (no mutation after construction).
 
-use morepork::family::gb::snapshot::{
+use morepork::system::gb::snapshot::{
     ApuSnapshot, CpuSnapshot, DmaSnapshot, MbcSnapshot, PpuSnapshot, SerialSnapshot, TimerSnapshot,
 };
-use morepork::family::gb::snapshot::{
+use morepork::system::gb::snapshot::{
     TAG_APU, TAG_CPU, TAG_DMA, TAG_MBC, TAG_PPU, TAG_SERIAL, TAG_TIMER,
 };
 use morepork::format::TAG_MEMORY;

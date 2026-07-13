@@ -460,11 +460,11 @@ impl Tracer {
 
         // CGB/AGB output is colour, so the pix field stores RGB555; DMG stays
         // 2-bit greyscale. `push_pixel` / `push_pixel_rgb555` must match this.
-        let pix_format = if model.starts_with("CGB") || model.starts_with("AGB") {
-            PixFormat::Rgb555
-        } else {
-            PixFormat::Shade2
-        };
+        let is_color = model.starts_with("CGB") || model.starts_with("AGB");
+        let pix_format = if is_color { PixFormat::Rgb555 } else { PixFormat::Shade2 };
+        // DMG and CGB are distinct morepork systems sharing the sm83 ISA;
+        // the writer derives `isa` from `system`.
+        let system = if is_color { "cgb" } else { "dmg" };
 
         let header = TraceHeader {
             _header: true,
@@ -477,6 +477,7 @@ impl Tracer {
             profile: profile.name.clone(),
             fields: all_fields,
             trigger: profile.trigger.clone(),
+            system: system.into(),
             pix_format,
             extension_fields,
             notes: String::new(),
@@ -539,7 +540,7 @@ impl Tracer {
 
     /// Write a typed snapshot record into the trace stream. `tag` is a
     /// format-level tag (`format::TAG_MEMORY`) or one of the GB family's
-    /// (`family::gb::snapshot::TAG_*`).
+    /// (`system::gb::snapshot::TAG_*`).
     pub fn write_snapshot(&mut self, tag: u8, payload: &[u8]) -> Result<(), morepork::Error> {
         self.writer.write_snapshot(tag, payload)
     }

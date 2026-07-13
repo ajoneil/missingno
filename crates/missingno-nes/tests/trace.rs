@@ -34,7 +34,7 @@ fn captures_a_readable_trace_with_frames() {
 name = "nes-test"
 description = "capture test"
 trigger = "instruction"
-family = "nes"
+system = "nes"
 
 [fields]
 cpu = ["registers", "timing"]
@@ -73,8 +73,8 @@ counter = "0200"
     std::fs::remove_file(&path).ok();
     let store = morepork::format::read::MoreporkStore::from_bytes(&data).unwrap();
     let header = store.header();
-    assert_eq!(header.family, "nes");
-    assert_eq!(header.family_def().id, "nes");
+    assert_eq!(header.system, "nes");
+    assert_eq!(header.system_def().id, "nes");
     assert_eq!(
         header.fields,
         [

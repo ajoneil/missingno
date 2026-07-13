@@ -48,7 +48,7 @@ fn captures_a_readable_trace_with_emergent_frames() {
 name = "vcs-test"
 description = "capture test"
 trigger = "instruction"
-family = "vcs"
+system = "vcs"
 
 [fields]
 cpu = ["registers", "timing"]
@@ -97,8 +97,8 @@ ram80 = "0080"
     std::fs::remove_file(&path).ok();
     let store = morepork::format::read::MoreporkStore::from_bytes(&data).unwrap();
     let header = store.header();
-    assert_eq!(header.family, "vcs");
-    assert_eq!(header.family_def().id, "vcs");
+    assert_eq!(header.system, "vcs");
+    assert_eq!(header.system_def().id, "vcs");
     assert_eq!(
         header.fields,
         [

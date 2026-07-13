@@ -222,7 +222,7 @@ impl Dma {
     }
 
     #[cfg(feature = "morepork")]
-    pub fn from_snapshot(snap: &morepork::family::gb::snapshot::DmaSnapshot) -> Dma {
+    pub fn from_snapshot(snap: &morepork::system::gb::snapshot::DmaSnapshot) -> Dma {
         let mut dma = Dma::new();
         if snap.active {
             dma.source_register = (snap.source >> 8) as u8;

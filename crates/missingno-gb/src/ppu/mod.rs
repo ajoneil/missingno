@@ -300,7 +300,7 @@ impl<P: PpuModel> Ppu<P> {
     }
 
     #[cfg(feature = "morepork")]
-    pub fn from_snapshot(snap: &morepork::family::gb::snapshot::PpuSnapshot, oam: Oam) -> Self {
+    pub fn from_snapshot(snap: &morepork::system::gb::snapshot::PpuSnapshot, oam: Oam) -> Self {
         let control = Control::new(ControlFlags::from_bits_retain(snap.lcdc));
         let lcd_on = control.video_enabled();
         let enables = InterruptFlags::from_bits_truncate(snap.stat);
