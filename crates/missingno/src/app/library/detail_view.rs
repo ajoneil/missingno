@@ -32,6 +32,7 @@ pub struct DetailData<'a> {
     pub activity_state: &'a ActivityState,
     pub live_session: Option<&'a SessionFile>,
     pub live_screenshots: &'a [image::Handle],
+    pub live_prints: &'a [image::Handle],
     pub hovered_log_entry: Option<usize>,
     pub header_hovered: bool,
     /// Whether this game is currently loaded and running.
@@ -49,6 +50,7 @@ pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
             &detail.sessions,
             data.live_session,
             data.live_screenshots,
+            data.live_prints,
             data.hovered_log_entry,
         ),
     };
@@ -261,6 +263,7 @@ fn activity_log<'a>(
     sessions: &'a [SessionSummary],
     live_session: Option<&SessionFile>,
     live_screenshots: &'a [image::Handle],
+    live_prints: &'a [image::Handle],
     hovered_log_entry: Option<usize>,
 ) -> Element<'a, app::Message> {
     let mut log = column![app_text::label("Activity")]
@@ -277,6 +280,7 @@ fn activity_log<'a>(
             save_count: live.save_count(),
             last_save_time: live.last_save_time(),
             screenshots: live_screenshots.to_vec(),
+            prints: live_prints.to_vec(),
             size_bytes: None,
             import_source: None,
         };
@@ -435,6 +439,27 @@ fn session_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, ap
             );
         }
         card = card.push(thumb_row);
+    }
+
+    if !entry.prints.is_empty() {
+        let max_visible = 4;
+        let total = entry.prints.len();
+        let mut print_row = row![].spacing(s()).align_y(iced::alignment::Vertical::Top);
+        for handle in entry.prints.iter().take(max_visible) {
+            print_row = print_row.push(
+                container(image(handle.clone()).width(120))
+                    .padding(s())
+                    .style(containers::card),
+            );
+        }
+        if total > max_visible {
+            print_row = print_row.push(
+                text(format!("+{}", total - max_visible))
+                    .size(20.0)
+                    .color(MUTED),
+            );
+        }
+        card = card.push(column![app_text::detail("Prints").color(MUTED), print_row].spacing(s()));
     }
 
     container(card)

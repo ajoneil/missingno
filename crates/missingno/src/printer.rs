@@ -1,11 +1,23 @@
 //! Game Boy Printer emulation, attached to the link port whenever no other
 //! link is in use. It stays inert until a game speaks the printer protocol
 //! (an idle printer answers like an unplugged cable), so it can always be
-//! connected. Completed prints render to PNG files in the game's folder.
+//! connected. Completed prints are handed to the frontend to log against the
+//! current play session.
 
-use std::path::PathBuf;
+use std::sync::mpsc::Sender;
 
 use missingno_gb::serial_transfer::SerialLink;
+
+/// A finished print handed up to the frontend: 160 wide, self-sized height,
+/// one grayscale byte per pixel (row-major).
+pub struct CompletedPrint {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
+}
+
+/// Where a [`GbPrinter`] sends finished prints for the play log to record.
+pub type PrintSink = Sender<CompletedPrint>;
 
 const MAGIC: [u8; 2] = [0x88, 0x33];
 
@@ -49,8 +61,7 @@ enum Field {
 }
 
 pub struct GbPrinter {
-    output_dir: PathBuf,
-    print_count: u32,
+    sink: PrintSink,
 
     field: Field,
     command: u8,
@@ -71,10 +82,9 @@ pub struct GbPrinter {
 }
 
 impl GbPrinter {
-    pub fn new(output_dir: PathBuf) -> Self {
+    pub fn new(sink: PrintSink) -> Self {
         Self {
-            output_dir,
-            print_count: 0,
+            sink,
             field: Field::Magic0,
             command: 0,
             compressed: false,
@@ -212,26 +222,16 @@ impl GbPrinter {
     }
 
     fn print(&mut self, palette: u8) {
-        let pixels = render(&self.buffer, palette);
-        let Some(pixels) = pixels else {
+        let Some(pixels) = render(&self.buffer, palette) else {
             return;
         };
-        let height = (pixels.len() / (TILES_PER_ROW * 8)) as u32;
-        let Some(image) = image::GrayImage::from_raw(TILES_PER_ROW as u32 * 8, height, pixels)
-        else {
-            return;
-        };
-        let _ = std::fs::create_dir_all(&self.output_dir);
-        loop {
-            self.print_count += 1;
-            let path = self
-                .output_dir
-                .join(format!("print-{:03}.png", self.print_count));
-            if !path.exists() {
-                let _ = image.save(path);
-                return;
-            }
-        }
+        let width = TILES_PER_ROW as u32 * 8;
+        let height = pixels.len() as u32 / width;
+        let _ = self.sink.send(CompletedPrint {
+            width,
+            height,
+            pixels,
+        });
     }
 }
 
@@ -328,6 +328,12 @@ impl SerialLink for GbPrinter {
 mod tests {
     use super::*;
 
+    /// A printer whose finished prints are discarded; these tests exercise the
+    /// packet protocol, not print output.
+    fn test_printer() -> GbPrinter {
+        GbPrinter::new(std::sync::mpsc::channel().0)
+    }
+
     fn send_packet(printer: &mut GbPrinter, command: u8, payload: &[u8]) -> (u8, u8) {
         let mut checksum = command as u16;
         checksum = checksum.wrapping_add(0); // compression flag
@@ -355,7 +361,7 @@ mod tests {
 
     #[test]
     fn packet_flow_reports_alive_data_and_printing() {
-        let mut printer = GbPrinter::new(std::env::temp_dir().join("missingno-printer-test-x"));
+        let mut printer = test_printer();
         let (alive, status) = send_packet(&mut printer, CMD_INIT, &[]);
         assert_eq!(alive, 0x81);
         assert_eq!(status, 0);
@@ -369,8 +375,25 @@ mod tests {
     }
 
     #[test]
+    fn print_command_emits_a_completed_print() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut printer = GbPrinter::new(tx);
+        send_packet(&mut printer, CMD_INIT, &[]);
+        // One full tile row of data, then a print with an identity palette
+        // (payload byte 2 selects it).
+        let band = vec![0x55; TILES_PER_ROW * TILE_BYTES];
+        send_packet(&mut printer, CMD_DATA, &band);
+        send_packet(&mut printer, CMD_PRINT, &[0x01, 0x00, 0xe4, 0x40]);
+
+        let print = rx.try_recv().expect("a print was emitted");
+        assert_eq!(print.width, 160);
+        assert_eq!(print.height, 8);
+        assert_eq!(print.pixels.len(), 160 * 8);
+    }
+
+    #[test]
     fn bad_checksum_flags_the_error_once() {
-        let mut printer = GbPrinter::new(std::env::temp_dir().join("missingno-printer-test-x"));
+        let mut printer = test_printer();
         printer.push_byte(0x88);
         printer.push_byte(0x33);
         printer.push_byte(CMD_STATUS);
@@ -411,7 +434,7 @@ mod tests {
 
     #[test]
     fn bits_assemble_into_bytes_msb_first() {
-        let mut printer = GbPrinter::new(std::env::temp_dir().join("missingno-printer-test-x"));
+        let mut printer = test_printer();
         // Shift in 0x88 then 0x33; the printer should now expect a command.
         for byte in [0x88u8, 0x33] {
             for bit in (0..8).rev() {

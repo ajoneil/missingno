@@ -99,6 +99,10 @@ struct App {
     screenshot_toast: Option<Instant>,
     /// Serial link cable connection (BGB link protocol), injected into GameBoy on load.
     serial_link: Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
+    /// Finished Game Boy Printer prints, sent from the printer (on the emu
+    /// thread) and drained on the UI thread to log against the play session.
+    print_tx: std::sync::mpsc::Sender<crate::printer::CompletedPrint>,
+    print_rx: std::sync::mpsc::Receiver<crate::printer::CompletedPrint>,
     /// Boot ROM supplied on the CLI, applied to every Game Boy family load.
     boot_rom: Option<missingno_gb::BootRom>,
     /// Homebrew Hub API client (shared, thread-safe).
@@ -371,6 +375,8 @@ impl App {
 
         let store = library::store::GameStore::new();
 
+        let (print_tx, print_rx) = std::sync::mpsc::channel();
+
         let mut app = Self {
             screen: Screen::Library { hovered_game: None },
             game: Game::Unloaded,
@@ -386,6 +392,8 @@ impl App {
             pending_action: None,
             screenshot_toast: None,
             serial_link,
+            print_tx,
+            print_rx,
             boot_rom,
             homebrew_client: std::sync::Arc::new(library::homebrew_hub::HomebrewHubClient::new()),
             catalogue: std::sync::Arc::new(library::catalogue::Catalogue::load()),

@@ -132,6 +132,7 @@ pub struct SessionSummary {
     pub save_count: usize,
     pub last_save_time: Option<Timestamp>,
     pub screenshots: Vec<image::Handle>,
+    pub prints: Vec<image::Handle>,
     /// For imports: the size in bytes.
     pub size_bytes: Option<u32>,
     /// For imports: where the save came from.
@@ -156,6 +157,7 @@ pub struct RawSessionSummary {
     pub save_count: usize,
     pub last_save_time: Option<Timestamp>,
     pub screenshots: Vec<activity::FrameCapture>,
+    pub prints: Vec<activity::PrintCapture>,
     pub size_bytes: Option<u32>,
     pub import_source: Option<activity::ImportSource>,
 }
@@ -179,6 +181,8 @@ pub struct GameStore {
     /// every frame). Only invalidated when a new screenshot is taken.
     live_screenshots: Vec<image::Handle>,
     live_screenshot_count: usize,
+    live_prints: Vec<image::Handle>,
+    live_print_count: usize,
 }
 
 impl GameStore {
@@ -191,6 +195,8 @@ impl GameStore {
             activity_state: None,
             live_screenshots: Vec::new(),
             live_screenshot_count: 0,
+            live_prints: Vec::new(),
+            live_print_count: 0,
         }
     }
 
@@ -201,6 +207,8 @@ impl GameStore {
             activity_state: None,
             live_screenshots: Vec::new(),
             live_screenshot_count: 0,
+            live_prints: Vec::new(),
+            live_print_count: 0,
         };
         store.rebuild_index();
         store
@@ -320,6 +328,14 @@ impl GameStore {
                                 _ => None,
                             })
                             .collect();
+                        let prints = session
+                            .events
+                            .iter()
+                            .filter_map(|e| match &e.kind {
+                                activity::EventKind::Print { print } => Some(print.clone()),
+                                _ => None,
+                            })
+                            .collect();
 
                         // If the session was never closed (crash/force quit),
                         // estimate end from the last event or fall back to start.
@@ -335,6 +351,7 @@ impl GameStore {
                             save_count: session.save_count(),
                             last_save_time: session.last_save_time(),
                             screenshots,
+                            prints,
                             size_bytes: None,
                             import_source: None,
                         })
@@ -351,6 +368,7 @@ impl GameStore {
                             save_count: 0,
                             last_save_time: None,
                             screenshots: Vec::new(),
+                            prints: Vec::new(),
                             size_bytes: Some(import.size_bytes),
                             import_source: Some(import.source),
                         })
@@ -367,6 +385,7 @@ impl GameStore {
                             save_count: 0,
                             last_save_time: None,
                             screenshots: Vec::new(),
+                            prints: Vec::new(),
                             size_bytes: Some(write.size_bytes),
                             import_source: None,
                         })
@@ -398,6 +417,7 @@ impl GameStore {
                 save_count: s.save_count,
                 last_save_time: s.last_save_time,
                 screenshots: s.screenshots.iter().map(|f| f.to_image_handle()).collect(),
+                prints: s.prints.iter().map(|p| p.to_image_handle()).collect(),
                 size_bytes: s.size_bytes,
                 import_source: s.import_source,
             })
@@ -448,10 +468,42 @@ impl GameStore {
         }
     }
 
-    /// Reset live screenshot cache (e.g., when starting a new session).
+    /// Get cached print handles for the live session.
+    pub fn live_prints(&self) -> &[image::Handle] {
+        &self.live_prints
+    }
+
+    /// Update the live print cache from the current session, rendering only
+    /// newly added prints.
+    pub fn update_live_prints(&mut self, session: &activity::SessionFile) {
+        let current_count = session
+            .events
+            .iter()
+            .filter(|e| matches!(e.kind, activity::EventKind::Print { .. }))
+            .count();
+
+        if current_count > self.live_print_count {
+            let new_handles: Vec<_> = session
+                .events
+                .iter()
+                .filter_map(|e| match &e.kind {
+                    activity::EventKind::Print { print } => Some(print.to_image_handle()),
+                    _ => None,
+                })
+                .skip(self.live_print_count)
+                .collect();
+
+            self.live_prints.extend(new_handles);
+            self.live_print_count = current_count;
+        }
+    }
+
+    /// Reset live screenshot and print caches (e.g., when starting a new session).
     pub fn reset_live_screenshots(&mut self) {
         self.live_screenshots.clear();
         self.live_screenshot_count = 0;
+        self.live_prints.clear();
+        self.live_print_count = 0;
     }
 
     // ── Invalidation ───────────────────────────────────────────────────

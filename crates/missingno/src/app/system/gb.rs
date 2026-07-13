@@ -174,16 +174,16 @@ pub fn create_console(media: MediaLoad) -> Option<Box<dyn SystemConsole>> {
             Box::new(console)
         }
     }
-    let link = media.serial_link.take().unwrap_or_else(|| {
-        Box::new(crate::printer::GbPrinter::new(
-            media.game_dir.join("prints"),
-        ))
+    let link = media.serial_link.take().or_else(|| {
+        media
+            .print_sink
+            .map(|sink| Box::new(crate::printer::GbPrinter::new(sink)) as Box<dyn SerialLink>)
     });
     Some(launch(
         media.rom.to_vec(),
         media.save_data,
         media.boot_rom,
-        Some(link),
+        link,
         Boxed,
     ))
 }

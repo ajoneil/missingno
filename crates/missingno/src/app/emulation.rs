@@ -117,6 +117,12 @@ impl App {
                 self.start_running();
             }
             EmuEvent::FrameReady => {
+                // The printer runs on the emu thread; drain any finished prints
+                // into the session log.
+                let prints: Vec<_> = self.print_rx.try_iter().collect();
+                for print in prints {
+                    self.record_print(print);
+                }
                 let display = self
                     .emu
                     .as_ref()
@@ -318,6 +324,25 @@ impl App {
             self.store.update_live_screenshots(session);
         }
         self.screenshot_toast = Some(Instant::now());
+    }
+
+    fn record_print(&mut self, print: crate::printer::CompletedPrint) {
+        if let Some(current) = &mut self.current_game
+            && let Some(session) = &mut current.session
+        {
+            session.events.push(library::activity::SessionEvent {
+                at: jiff::Timestamp::now(),
+                kind: library::activity::EventKind::Print {
+                    print: library::activity::PrintCapture {
+                        width: print.width,
+                        height: print.height,
+                        pixels: print.pixels,
+                    },
+                },
+            });
+            library::activity::write_session(&current.game_dir, session);
+            self.store.update_live_prints(session);
+        }
     }
 
     pub(super) fn save(&mut self) {

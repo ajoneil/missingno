@@ -90,6 +90,7 @@ impl App {
             activity_state,
             live_session,
             live_screenshots: self.store.live_screenshots(),
+            live_prints: self.store.live_prints(),
             hovered_log_entry,
             header_hovered,
             is_loaded,

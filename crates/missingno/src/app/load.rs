@@ -90,11 +90,11 @@ fn start_console(
         rom: &rom,
         fallback_title: file_stem_title(rom_path),
         save_data,
-        game_dir,
         boot_rom: app.boot_rom.clone(),
         tv_standard: entry.as_ref().and_then(|e| e.tv_standard),
         cart_type: entry.as_ref().and_then(|e| e.cart_type.clone()),
         serial_link: &mut app.serial_link,
+        print_sink: Some(app.print_tx.clone()),
     })?;
     Some(finish_start(app, console, rom_path))
 }

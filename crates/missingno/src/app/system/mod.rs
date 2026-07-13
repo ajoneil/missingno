@@ -138,8 +138,6 @@ pub struct MediaLoad<'a> {
     pub fallback_title: String,
     /// Battery-save contents to restore, if the library holds any.
     pub save_data: Option<Vec<u8>>,
-    /// The game's library folder, for peripherals that write artifacts.
-    pub game_dir: &'a Path,
     /// Boot ROM supplied on the CLI; the Game Boy family attaches it.
     pub boot_rom: Option<missingno_gb::BootRom>,
     /// Broadcast standard from the library entry; the VCS uses it, else probes.
@@ -149,6 +147,9 @@ pub struct MediaLoad<'a> {
     /// Link-cable connection, borrowed mutably so only the family that owns
     /// the concept takes it.
     pub serial_link: &'a mut Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
+    /// Where a default-attached Game Boy Printer sends finished prints for the
+    /// play log; the Game Boy family wires it into the printer it attaches.
+    pub print_sink: Option<crate::printer::PrintSink>,
 }
 
 /// Build a console from loaded media; `None` when the media fails to parse.

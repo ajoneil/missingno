@@ -95,6 +95,24 @@ pub enum EventKind {
     Save { sram: Vec<u8> },
     /// Player captured a screenshot.
     Screenshot { frame: FrameCapture },
+    /// The Game Boy Printer completed a print.
+    Print { print: PrintCapture },
+}
+
+/// A completed Game Boy Printer image: 160 wide, self-sized height, one
+/// grayscale byte per pixel (row-major).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PrintCapture {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
+}
+
+impl PrintCapture {
+    pub fn to_image_handle(&self) -> iced::widget::image::Handle {
+        let rgba: Vec<u8> = self.pixels.iter().flat_map(|&g| [g, g, g, 0xff]).collect();
+        iced::widget::image::Handle::from_rgba(self.width, self.height, rgba)
+    }
 }
 
 /// Display-presentation snapshot handed to a frame capture; each family
