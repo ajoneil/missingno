@@ -11,7 +11,7 @@ env:
 
 jobs:
   # The gate: the DMG suite fully green. Any failure is a regression.
-  gb-suite:
+  gb-core:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -22,7 +22,7 @@ jobs:
         run: cargo test -p missingno-gb
 
   # The gate: the CGB suite fully green. Any failure is a regression.
-  gbc-suite:
+  gbc-core:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
