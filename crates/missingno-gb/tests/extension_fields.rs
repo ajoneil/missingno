@@ -2,16 +2,16 @@
 //! Tracer captures it, the resulting trace round-trips with the extension
 //! metadata in the header.
 
-#![cfg(feature = "gbtrace")]
+#![cfg(feature = "morepork")]
 
 use std::collections::BTreeMap;
 
-use gbtrace::format::read::GbtraceStore;
-use gbtrace::header::Trigger;
-use gbtrace::profile::FieldType;
-use gbtrace::store::TraceStore;
 use missingno_gb::trace::{BootRom, Profile, Tracer};
 use missingno_gb::{GameBoy, cartridge::Cartridge};
+use morepork::format::read::MoreporkStore;
+use morepork::header::Trigger;
+use morepork::profile::FieldType;
+use morepork::store::TraceStore;
 
 struct TempDir(std::path::PathBuf);
 impl TempDir {
@@ -48,7 +48,7 @@ fn minimal_rom() -> Vec<u8> {
 #[test]
 fn missingno_extension_field_roundtrip() {
     let dir = TempDir::new();
-    let path = dir.path().join("ext.gbtrace");
+    let path = dir.path().join("ext.morepork");
 
     let mut extensions = BTreeMap::new();
     extensions.insert(
@@ -79,7 +79,7 @@ fn missingno_extension_field_roundtrip() {
     }
 
     let data = std::fs::read(&path).unwrap();
-    let store = GbtraceStore::from_bytes(&data).unwrap();
+    let store = MoreporkStore::from_bytes(&data).unwrap();
 
     let hdr = store.header();
     assert_eq!(hdr.emulator, "missingno");
@@ -117,7 +117,7 @@ fn missingno_extension_field_roundtrip() {
 #[test]
 fn unknown_extension_name_is_rejected() {
     let dir = TempDir::new();
-    let path = dir.path().join("bad.gbtrace");
+    let path = dir.path().join("bad.morepork");
 
     let mut extensions = BTreeMap::new();
     extensions.insert(

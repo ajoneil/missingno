@@ -1,6 +1,6 @@
-//! End-to-end gbtrace capture: run a tiny NROM program, write a trace,
-//! and read it back through gbtrace's own reader.
-#![cfg(feature = "gbtrace")]
+//! End-to-end morepork capture: run a tiny NROM program, write a trace,
+//! and read it back through morepork's own reader.
+#![cfg(feature = "morepork")]
 
 use missingno_nes::console::Nes;
 use missingno_nes::trace::{Profile, Tracer, step_instruction_counted};
@@ -47,7 +47,7 @@ counter = "0200"
     .unwrap();
 
     let path = std::env::temp_dir().join(format!(
-        "missingno-nes-trace-test-{}.gbtrace",
+        "missingno-nes-trace-test-{}.morepork",
         std::process::id()
     ));
     let mut tracer = Tracer::create(&path, &profile, &rom).unwrap();
@@ -68,10 +68,10 @@ counter = "0200"
     tracer.finish().unwrap();
     assert!(frames >= 2, "expected at least two frames, got {frames}");
 
-    // Read it back with gbtrace itself.
+    // Read it back with morepork itself.
     let data = std::fs::read(&path).unwrap();
     std::fs::remove_file(&path).ok();
-    let store = gbtrace::format::read::GbtraceStore::from_bytes(&data).unwrap();
+    let store = morepork::format::read::MoreporkStore::from_bytes(&data).unwrap();
     let header = store.header();
     assert_eq!(header.family, "nes");
     assert_eq!(header.family_def().id, "nes");
@@ -86,7 +86,7 @@ counter = "0200"
     assert_eq!(header.instruction_addr_field.as_deref(), Some("pc"));
     assert!(!header.field_groups.is_empty());
 
-    use gbtrace::store::TraceStore;
+    use morepork::store::TraceStore;
     assert!(store.entry_count() > 10_000);
     assert_eq!(store.frame_boundaries().len(), frames);
 
@@ -106,7 +106,7 @@ counter = "0200"
 
     // Frame snapshots decode as indexed frames with the master palette.
     let payload = store.framebuffer(0).expect("frame payload");
-    let frame = gbtrace::snapshot::IndexedFrame::from_bytes(&payload).expect("indexed frame");
+    let frame = morepork::snapshot::IndexedFrame::from_bytes(&payload).expect("indexed frame");
     assert_eq!((frame.width, frame.height), (256, 240));
     assert_eq!(frame.palette.len(), 64);
     assert!(frame.pixels.iter().all(|&p| p < 64));

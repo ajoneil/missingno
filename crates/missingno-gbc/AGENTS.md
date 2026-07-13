@@ -55,7 +55,7 @@ still hold in spirit ("hardware is the source of truth"), but their
   lead → **ask the user**. Do not substitute "SameBoy does X" for "the hardware does X"
   and move on.
 
-- **CGB reference traces** (gbtrace): the traced emulators are **SameBoy, DocBoy,
+- **CGB reference traces** (morepork): the traced emulators are **SameBoy, DocBoy,
   gambatte, missingno** — all behavioural. Preference order for CGB trace comparison:
   **SameBoy → DocBoy → gambatte**. The manifest schema is `systems.{dmg,cgb}.{emulator}`.
 

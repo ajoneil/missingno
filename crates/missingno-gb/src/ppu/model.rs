@@ -132,7 +132,7 @@ pub trait PpuModel: Default {
     /// Stage-7 Q output for the pixel mux: (lo, hi, palette, priority).
     fn obj_pixel(fifo: &Self::ObjFifo) -> (u8, u8, u8, u8);
 
-    /// gbtrace shift-register state: (lo, hi, palette, priority).
+    /// morepork shift-register state: (lo, hi, palette, priority).
     fn obj_trace(fifo: &Self::ObjFifo) -> (u8, u8, u8, u8);
 
     /// OPRI ($FF6C): object-priority mode. DMG has no such register.
@@ -152,7 +152,7 @@ pub trait PpuModel: Default {
     /// LCDC are read live from `regs`.
     fn resolve(&self, mux: &PixelMux<Self::BgCell>, regs: &PipelineRegisters) -> Self::Pixel;
 
-    /// This pixel as the gbtrace pixel stream records it — a shade on DMG, an
+    /// This pixel as the morepork pixel stream records it — a shade on DMG, an
     /// RGB555 colour on CGB (matching the trace's declared `pix_format`).
     fn trace_pixel(pixel: Self::Pixel) -> TracePixel;
 

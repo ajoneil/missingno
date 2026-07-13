@@ -7,7 +7,7 @@ license = "MIT"
 
 [features]
 test-support = ["missingno-gb/test-support"]
-gbtrace = ["missingno-gb/gbtrace"]
+morepork = ["missingno-gb/morepork"]
 
 [dependencies]
 missingno-gb = { path = "../missingno-gb" }

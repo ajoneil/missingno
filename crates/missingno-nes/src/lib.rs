@@ -5,5 +5,5 @@ pub mod cartridge;
 pub mod console;
 pub mod ppu;
 
-#[cfg(feature = "gbtrace")]
+#[cfg(feature = "morepork")]
 pub mod trace;

@@ -14,12 +14,12 @@ pub mod ppu;
 pub mod recording;
 pub mod serial_transfer;
 pub mod sgb;
-#[cfg(feature = "gbtrace")]
+#[cfg(feature = "morepork")]
 pub mod snapshot;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 pub mod timers;
-#[cfg(feature = "gbtrace")]
+#[cfg(feature = "morepork")]
 pub mod trace;
 
 use audio::Audio;
@@ -175,7 +175,7 @@ pub trait Model: Default {
     /// releases just ahead of that boundary set, reads it set.
     const IRQ_ACK_HOLDS_THROUGH_BOUNDARY_SET: bool = false;
 
-    /// Hardware revision name recorded in gbtrace captures.
+    /// Hardware revision name recorded in morepork captures.
     const TRACE_MODEL_NAME: &'static str = "DMG-B";
 
     /// End-of-frame / LCD-off hook. DMG mirrors the screen to the SGB.

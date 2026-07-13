@@ -85,7 +85,7 @@ its `name()`/`short_name()` are the only display strings, and external
 platform descriptions such as Hasheous's are mapped into the enum rather
 than shown raw), extensions, control labels, an `is_rom` predicate, an
 optional header-title hook (`title_from_rom`), a console factory, and an
-optional gbtrace entry point for the `trace` subcommand. The file dialog,
+optional morepork entry point for the `trace` subcommand. The file dialog,
 ROM loading, title detection, the library scanner (which stamps
 `GameEntry.platform` from the descriptor), the bindings UI, and the trace CLI
 all iterate that table; `family_for` is the single classification point, and

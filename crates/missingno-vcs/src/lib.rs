@@ -6,7 +6,7 @@ pub use missingno_6502 as cpu;
 pub mod debugger;
 pub mod riot;
 pub mod tia;
-#[cfg(feature = "gbtrace")]
+#[cfg(feature = "morepork")]
 pub mod trace;
 pub mod tv_standard;
 pub use cartridge::CartType;

@@ -17,7 +17,7 @@ use crate::{
     interrupts, ppu::screen::Screen,
 };
 
-#[cfg(feature = "gbtrace")]
+#[cfg(feature = "morepork")]
 use crate::trace::Tracer;
 
 /// Common interface for a Game Boy–family console runnable under the
@@ -99,12 +99,12 @@ pub fn rom_path(relative: &str) -> PathBuf {
 
 /// A test run wrapping a `GameBoy` and an optional trace writer.
 ///
-/// When the `gbtrace` feature is enabled and the `GBTRACE_PROFILE` env var
+/// When the `morepork` feature is enabled and the `MOREPORK_PROFILE` env var
 /// is set (to a profile name like `cpu_basic`), each `step()` captures state
 /// into a parquet trace file under `receipts/traces/`.
 pub struct TestRun<M: Model = crate::Dmg> {
     pub gb: Console<M>,
-    #[cfg(feature = "gbtrace")]
+    #[cfg(feature = "morepork")]
     tracer: Option<Tracer>,
 }
 
@@ -112,12 +112,12 @@ impl<M: Model> TestRun<M> {
     /// Wrap a console for a traced run. `model_label` is the hardware-model
     /// string written into the trace metadata (e.g. "DMG-B", "CGB-C").
     pub fn new(gb: Console<M>, _rom_relative: &str, _model_label: &str) -> Self {
-        #[cfg(feature = "gbtrace")]
+        #[cfg(feature = "morepork")]
         let tracer = try_create_tracer(&gb, _rom_relative, _model_label);
 
         Self {
             gb,
-            #[cfg(feature = "gbtrace")]
+            #[cfg(feature = "morepork")]
             tracer,
         }
     }
@@ -128,7 +128,7 @@ impl<M: Model> TestRun<M> {
     /// state at every T-cycle. For instruction-triggered profiles, it
     /// captures once before the instruction executes.
     pub fn step(&mut self) -> StepResult {
-        #[cfg(feature = "gbtrace")]
+        #[cfg(feature = "morepork")]
         {
             if let Some(tracer) = &mut self.tracer {
                 if tracer.trigger() == crate::trace::Trigger::Tcycle {
@@ -149,26 +149,26 @@ impl<M: Model> TestRun<M> {
             return result;
         }
 
-        #[cfg(not(feature = "gbtrace"))]
+        #[cfg(not(feature = "morepork"))]
         self.gb.step()
     }
 
     /// Step one instruction by advancing one dot at a time, capturing at each dot.
-    #[cfg(feature = "gbtrace")]
+    #[cfg(feature = "morepork")]
     fn step_traced_tcycle(&mut self) -> StepResult {
         crate::trace::step_instruction_tcycle(&mut self.gb, self.tracer.as_mut().unwrap())
     }
 
     #[allow(unused_mut)]
     pub fn finish(mut self) {
-        #[cfg(feature = "gbtrace")]
+        #[cfg(feature = "morepork")]
         if let Some(tracer) = self.tracer.take() {
             tracer.finish().unwrap();
         }
     }
 }
 
-#[cfg(feature = "gbtrace")]
+#[cfg(feature = "morepork")]
 impl<M: Model> Drop for TestRun<M> {
     fn drop(&mut self) {
         if let Some(tracer) = self.tracer.take() {
@@ -210,29 +210,29 @@ impl<M: Model> System for TestRun<M> {
     }
 }
 
-#[cfg(feature = "gbtrace")]
+#[cfg(feature = "morepork")]
 fn try_create_tracer<M: Model>(
     gb: &Console<M>,
     rom_relative: &str,
     model_label: &str,
 ) -> Option<Tracer> {
-    let profile_name = std::env::var("GBTRACE_PROFILE").ok()?;
+    let profile_name = std::env::var("MOREPORK_PROFILE").ok()?;
 
-    let gbtrace_root =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../receipts/resources/gbtrace");
+    let morepork_root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../receipts/resources/morepork");
     let profile_path = {
         let candidates = [
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/accuracy/profiles")
                 .join(format!("{profile_name}.toml")),
-            gbtrace_root
+            morepork_root
                 .join("profiles")
                 .join(format!("{profile_name}.toml")),
-            gbtrace_root
+            morepork_root
                 .join("test-suites")
                 .join(&profile_name)
                 .join("profile.toml"),
-            gbtrace_root
+            morepork_root
                 .join("docs/tests")
                 .join(&profile_name)
                 .join(format!("{profile_name}.toml")),
@@ -241,12 +241,12 @@ fn try_create_tracer<M: Model>(
             .into_iter()
             .find(|p| p.exists())
             .unwrap_or_else(|| {
-                panic!("gbtrace profile '{profile_name}' not found in any search path")
+                panic!("morepork profile '{profile_name}' not found in any search path")
             })
     };
-    let profile = gbtrace::Profile::load(&profile_path).unwrap_or_else(|e| {
+    let profile = morepork::Profile::load(&profile_path).unwrap_or_else(|e| {
         panic!(
-            "Failed to load gbtrace profile {}: {e}",
+            "Failed to load morepork profile {}: {e}",
             profile_path.display()
         )
     });
@@ -258,15 +258,15 @@ fn try_create_tracer<M: Model>(
         .file_stem()
         .unwrap()
         .to_string_lossy();
-    let output_path = output_dir.join(format!("{rom_stem}.gbtrace"));
+    let output_path = output_dir.join(format!("{rom_stem}.morepork"));
 
     let boot_rom = if gb.cpu().ir_address == 0x0000 {
-        gbtrace::BootRom::Skip
+        morepork::BootRom::Skip
     } else {
-        gbtrace::BootRom::Skip
+        morepork::BootRom::Skip
     };
 
-    eprintln!("gbtrace: writing {}", output_path.display());
+    eprintln!("morepork: writing {}", output_path.display());
 
     let mut tracer = Tracer::create(&output_path, &profile, gb, boot_rom, model_label)
         .unwrap_or_else(|e| panic!("Failed to create tracer: {e}"));

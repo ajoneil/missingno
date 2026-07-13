@@ -55,7 +55,7 @@ pub struct SpriteStoreEntrySnapshot {
     pub fetched: bool,
 }
 
-/// gbtrace `ppu_internal` snapshot. Field names match the gbtrace spec.
+/// morepork `ppu_internal` snapshot. Field names match the morepork spec.
 pub struct PpuTraceSnapshot {
     pub sprite_x: [u8; 10],
     pub sprite_id: [u8; 10],

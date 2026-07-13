@@ -13,15 +13,15 @@ path = "src/main.rs"
 # Sega Master System support; off until it is ready to be public.
 sms = ["dep:missingno-sms"]
 # NES / Famicom support; off until it is ready to be public.
-nes = ["dep:missingno-nes", "dep:missingno-6502", "missingno-nes/gbtrace"]
+nes = ["dep:missingno-nes", "dep:missingno-6502", "missingno-nes/morepork"]
 
 [dependencies]
-missingno-gb = { path = "../missingno-gb", features = ["gbtrace"] }
-missingno-gbc = { path = "../missingno-gbc", features = ["gbtrace"] }
+missingno-gb = { path = "../missingno-gb", features = ["morepork"] }
+missingno-gbc = { path = "../missingno-gbc", features = ["morepork"] }
 missingno-6502 = { path = "../missingno-6502", optional = true }
 missingno-nes = { path = "../missingno-nes", optional = true }
 missingno-sms = { path = "../missingno-sms", optional = true }
-missingno-vcs = { path = "../missingno-vcs", features = ["gbtrace"] }
+missingno-vcs = { path = "../missingno-vcs", features = ["morepork"] }
 cpal = "0.17"
 bytemuck = { version = "1.25", features = ["derive"] }
 clap = { version = "4.6.1", features = ["derive"] }

@@ -154,7 +154,7 @@ pub struct MediaLoad<'a> {
 /// Build a console from loaded media; `None` when the media fails to parse.
 pub type CreateConsole = fn(MediaLoad) -> Option<Box<dyn SystemConsole>>;
 
-/// A gbtrace capture request, dispatched through the family table by the
+/// A morepork capture request, dispatched through the family table by the
 /// `trace` subcommand.
 pub struct TraceRequest<'a> {
     pub rom: &'a [u8],
@@ -182,7 +182,7 @@ pub struct FamilyDescriptor {
     /// one; `None` falls back to the file stem.
     pub title_from_rom: fn(&[u8]) -> Option<String>,
     pub create_console: CreateConsole,
-    /// gbtrace capture entry point for the `trace` subcommand; `None` for
+    /// morepork capture entry point for the `trace` subcommand; `None` for
     /// families without a trace backend.
     pub trace: Option<fn(TraceRequest)>,
 }

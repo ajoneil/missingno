@@ -17,7 +17,7 @@ pub mod instructions;
 pub mod symbols;
 
 /// Embedded profile for full T-cycle frame capture with all PPU details.
-#[cfg(feature = "gbtrace")]
+#[cfg(feature = "morepork")]
 const FRAME_CAPTURE_PROFILE: &str = r#"
 [profile]
 name = "frame-capture"
@@ -440,8 +440,8 @@ impl<M: Model> Debugger<M> {
         self.watchpoints.clear();
     }
 
-    /// Capture a full T-cycle trace of one frame to a .gbtrace file.
-    #[cfg(feature = "gbtrace")]
+    /// Capture a full T-cycle trace of one frame to a .morepork file.
+    #[cfg(feature = "morepork")]
     pub fn capture_frame(&mut self, path: impl AsRef<Path>) -> Result<M::Screen, String> {
         use crate::trace::{BootRom, Profile, Tracer};
 

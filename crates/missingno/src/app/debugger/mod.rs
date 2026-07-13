@@ -420,11 +420,11 @@ impl Debugger {
                     return Task::none();
                 };
                 let title = core.game_title().to_lowercase().replace(' ', "_");
-                let default_name = format!("{title}_frame{}.gbtrace", self.frame);
+                let default_name = format!("{title}_frame{}.morepork", self.frame);
 
                 let dialog = rfd::AsyncFileDialog::new()
                     .set_file_name(&default_name)
-                    .add_filter("gbtrace", &["gbtrace"]);
+                    .add_filter("morepork", &["morepork"]);
 
                 Task::perform(dialog.save_file(), |handle| match handle {
                     Some(h) => Message::CaptureFrameTo(h.path().to_path_buf()).into(),

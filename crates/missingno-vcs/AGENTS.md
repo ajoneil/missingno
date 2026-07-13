@@ -72,7 +72,7 @@ below them and only corroborate.**
   equivalent of gb-ctr — reliable written hardware documentation, below the
   netlist/sim tier.
 
-- **Behavioural cross-emulator traces (gbtrace) — corroborate only.** VCS gbtrace
+- **Behavioural cross-emulator traces (morepork) — corroborate only.** VCS morepork
   adapters already exist for **Stella, Gopher2600, and MAME** (plus missingno), all
   behavioural. Preference order: **Stella → Gopher2600 → MAME**. They *localise* a
   divergence and *suggest* a mechanism; they never ground one. Never "Stella does

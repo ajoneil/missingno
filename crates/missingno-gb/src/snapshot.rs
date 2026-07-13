@@ -1,17 +1,17 @@
-//! Capture and restore gbtrace snapshot payloads from/to a GameBoy instance.
+//! Capture and restore morepork snapshot payloads from/to a GameBoy instance.
 //!
-//! Capture: reads emulator state into gbtrace snapshot structs.
+//! Capture: reads emulator state into morepork snapshot structs.
 //! Restore: each component has a `from_snapshot` constructor that builds
 //! it directly from the snapshot data (no mutation after construction).
 
-use gbtrace::family::gb::snapshot::{
+use morepork::family::gb::snapshot::{
     ApuSnapshot, CpuSnapshot, DmaSnapshot, MbcSnapshot, PpuSnapshot, SerialSnapshot, TimerSnapshot,
 };
-use gbtrace::family::gb::snapshot::{
+use morepork::family::gb::snapshot::{
     TAG_APU, TAG_CPU, TAG_DMA, TAG_MBC, TAG_PPU, TAG_SERIAL, TAG_TIMER,
 };
-use gbtrace::format::TAG_MEMORY;
-use gbtrace::snapshot::{MemoryRegion, build_memory_payload};
+use morepork::format::TAG_MEMORY;
+use morepork::snapshot::{MemoryRegion, build_memory_payload};
 
 use crate::audio::Audio;
 use crate::cartridge::Cartridge;
@@ -31,7 +31,7 @@ pub struct SnapshotRecord {
 /// Capture the full emulator state as a set of snapshot records.
 ///
 /// The returned records are independent and self-contained — each
-/// can be written into a gbtrace file or used for save state restore.
+/// can be written into a morepork file or used for save state restore.
 pub fn capture_snapshots(gb: &GameBoy) -> Vec<SnapshotRecord> {
     vec![
         SnapshotRecord {
@@ -91,7 +91,7 @@ pub fn capture_cpu(gb: &GameBoy) -> CpuSnapshot {
             HaltState::Halted | HaltState::Stopped => 2,
             HaltState::Locked => 3,
         },
-        // gbtrace's ei_delay column expects a "cycles until IME enables"
+        // morepork's ei_delay column expects a "cycles until IME enables"
         // counter; missingno's model is a single shadow flag, so report
         // 1 when EI's deferred enable is in flight (ime_delay set but
         // ime not yet reflecting it) and 0 otherwise.

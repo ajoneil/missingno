@@ -65,13 +65,13 @@ pub fn load_cgb_rom(relative: &str) -> GameBoyColor {
     new_cgb(rom)
 }
 
-#[cfg(feature = "gbtrace")]
+#[cfg(feature = "morepork")]
 pub use missingno_gb::test_support::TestRun;
 
 /// Wrap a CGB-only ROM in a [`TestRun`] for execution-trace capture. With the
-/// `gbtrace` feature and `GBTRACE_PROFILE` set, the run writes a `.gbtrace`
+/// `morepork` feature and `MOREPORK_PROFILE` set, the run writes a `.morepork`
 /// under `receipts/traces/`. Mirrors the gb crate's traced `load_rom`.
-#[cfg(feature = "gbtrace")]
+#[cfg(feature = "morepork")]
 pub fn load_cgb_rom_traced(relative: &str) -> TestRun<missingno_gbc::Cgb> {
     let path = cgb_rom_path(relative);
     let rom = std::fs::read(&path)

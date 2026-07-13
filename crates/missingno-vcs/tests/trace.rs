@@ -1,8 +1,8 @@
-//! End-to-end gbtrace capture: run a minimal kernel, write a trace, and
-//! read it back through gbtrace's own reader. The VCS has no hardware
+//! End-to-end morepork capture: run a minimal kernel, write a trace, and
+//! read it back through morepork's own reader. The VCS has no hardware
 //! frame — the kernel's sync pattern decides the height — so this also
 //! pins the per-frame-dimensions path.
-#![cfg(feature = "gbtrace")]
+#![cfg(feature = "morepork")]
 
 use missingno_vcs::console::Vcs;
 use missingno_vcs::trace::{Profile, Tracer, step_instruction_counted};
@@ -62,7 +62,7 @@ ram80 = "0080"
     .unwrap();
 
     let path = std::env::temp_dir().join(format!(
-        "missingno-vcs-trace-test-{}.gbtrace",
+        "missingno-vcs-trace-test-{}.morepork",
         std::process::id()
     ));
     let mut tracer = Tracer::create(&path, &profile, &rom, vcs.tv_standard()).unwrap();
@@ -92,10 +92,10 @@ ram80 = "0080"
         "expected 259-line frames, got {heights:?}"
     );
 
-    // Read it back with gbtrace itself.
+    // Read it back with morepork itself.
     let data = std::fs::read(&path).unwrap();
     std::fs::remove_file(&path).ok();
-    let store = gbtrace::format::read::GbtraceStore::from_bytes(&data).unwrap();
+    let store = morepork::format::read::MoreporkStore::from_bytes(&data).unwrap();
     let header = store.header();
     assert_eq!(header.family, "vcs");
     assert_eq!(header.family_def().id, "vcs");
@@ -108,14 +108,14 @@ ram80 = "0080"
         .map(String::from)
     );
 
-    use gbtrace::store::TraceStore;
+    use morepork::store::TraceStore;
     assert!(store.entry_count() > 1000);
     assert_eq!(store.frame_boundaries().len(), frames);
 
     // Frame snapshots decode as indexed frames with the emergent height
     // and carry the solid COLUBK background ($46 >> 1 = 0x23).
     let payload = store.frame_payload(1).expect("frame 1 has a payload");
-    let frame = gbtrace::snapshot::IndexedFrame::from_bytes(&payload).unwrap();
+    let frame = morepork::snapshot::IndexedFrame::from_bytes(&payload).unwrap();
     assert_eq!(frame.width, 160);
     assert_eq!(frame.height, 259);
     assert_eq!(frame.palette.len(), 128);

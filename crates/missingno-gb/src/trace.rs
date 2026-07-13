@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use gbtrace::format::write::GbtraceWriter;
-use gbtrace::header::{ExtensionField, PixFormat, TraceHeader};
-use gbtrace::profile::{FieldType, field_nullable, field_type};
-pub use gbtrace::{BootRom, Profile, Trigger};
+use morepork::format::write::MoreporkWriter;
+use morepork::header::{ExtensionField, PixFormat, TraceHeader};
+use morepork::profile::{FieldType, field_nullable, field_type};
+pub use morepork::{BootRom, Profile, Trigger};
 use sha2::{Digest, Sha256};
 
 use crate::audio::{ApuSpec, Audio};
@@ -233,9 +233,9 @@ struct ResolvedField {
     emitter: Emitter,
 }
 
-/// Captures gbtrace-format execution traces from a GameBoy.
+/// Captures morepork-format execution traces from a GameBoy.
 pub struct Tracer {
-    writer: GbtraceWriter,
+    writer: MoreporkWriter,
     emitters: Vec<ResolvedField>,
     tcycle_count: u64,
     trigger: Trigger,
@@ -414,7 +414,7 @@ impl Tracer {
         gb: &T,
         boot_rom: BootRom,
         model: &str,
-    ) -> Result<Self, gbtrace::Error> {
+    ) -> Result<Self, morepork::Error> {
         let rom_sha256 = {
             let mut hasher = Sha256::new();
             hasher.update(gb.cartridge().rom());
@@ -436,12 +436,12 @@ impl Tracer {
         if let Some(ext_names) = profile.extensions.get("missingno") {
             for name in ext_names {
                 let def = find_extension(name).ok_or_else(|| {
-                    gbtrace::Error::Profile(format!(
+                    morepork::Error::Profile(format!(
                         "unknown missingno extension field '{name}' (not in EXTENSION_DEFS)"
                     ))
                 })?;
                 if all_fields.iter().any(|f| f == name) {
-                    return Err(gbtrace::Error::Profile(format!(
+                    return Err(morepork::Error::Profile(format!(
                         "extension field '{name}' duplicates a built-in field"
                     )));
                 }
@@ -484,7 +484,7 @@ impl Tracer {
         };
 
         // Empty groups: the writer groups columns by the header's field defs.
-        let writer = GbtraceWriter::create(path, &header, &[])?;
+        let writer = MoreporkWriter::create(path, &header, &[])?;
 
         // Resolve all fields to emitters at creation time
         let mut emitters = Vec::with_capacity(header.fields.len());
@@ -540,11 +540,11 @@ impl Tracer {
     /// Write a typed snapshot record into the trace stream. `tag` is a
     /// format-level tag (`format::TAG_MEMORY`) or one of the GB family's
     /// (`family::gb::snapshot::TAG_*`).
-    pub fn write_snapshot(&mut self, tag: u8, payload: &[u8]) -> Result<(), gbtrace::Error> {
+    pub fn write_snapshot(&mut self, tag: u8, payload: &[u8]) -> Result<(), morepork::Error> {
         self.writer.write_snapshot(tag, payload)
     }
 
-    pub fn capture<T: Traceable>(&mut self, gb: &T) -> Result<(), gbtrace::Error> {
+    pub fn capture<T: Traceable>(&mut self, gb: &T) -> Result<(), morepork::Error> {
         let ppu_snap = if self.needs_ppu_snapshot {
             gb.ppu().trace_snapshot()
         } else {
@@ -706,7 +706,7 @@ impl Tracer {
         self.writer.finish_entry()
     }
 
-    pub fn mark_frame(&mut self) -> Result<(), gbtrace::Error> {
+    pub fn mark_frame(&mut self) -> Result<(), morepork::Error> {
         self.writer.mark_frame(None)
     }
 
@@ -722,7 +722,7 @@ impl Tracer {
         self.tcycle_count
     }
 
-    pub fn finish(self) -> Result<(), gbtrace::Error> {
+    pub fn finish(self) -> Result<(), morepork::Error> {
         self.writer.finish()
     }
 }
@@ -797,7 +797,7 @@ pub fn step_instruction_tcycle<M: Model>(
 }
 
 fn emit_ppu_field(
-    w: &mut GbtraceWriter,
+    w: &mut MoreporkWriter,
     col: usize,
     field: &PpuField,
     snap: &Option<PpuTraceSnapshot>,

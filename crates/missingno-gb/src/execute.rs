@@ -153,14 +153,14 @@ impl<M: Model> Console<M> {
     }
 
     /// Advance one CPU T-cycle — rise then fall — observing the machine after
-    /// each edge, the gbtrace capture hook. Drives the machine identically to
+    /// each edge, the morepork capture hook. Drives the machine identically to
     /// [`Console::execute_tcycle`]: the schedule is read once and both edges
     /// always run, with `after_phase` invoked after the rise then after the fall
     /// with that edge's [`PhaseResult`] so a tracer keeps its exact
     /// between-edges sample points. The observer never retires the instruction —
     /// the caller checks the boundary after the completed T-cycle, so both edges
     /// run inside the same instruction as on the plain path.
-    #[cfg(feature = "gbtrace")]
+    #[cfg(feature = "morepork")]
     pub fn execute_tcycle_observed(
         &mut self,
         mut after_phase: impl FnMut(&mut Self, &PhaseResult),

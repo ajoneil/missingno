@@ -51,7 +51,7 @@ pub struct DrawnPixel<Pix> {
     pub color: Pix,
 }
 
-/// A pixel as it enters the gbtrace pixel stream, in the trace's native
+/// A pixel as it enters the morepork pixel stream, in the trace's native
 /// format: a 2-bit shade on DMG, a 15-bit RGB555 colour on CGB/AGB.
 #[derive(Clone, Copy, Debug)]
 pub enum TracePixel {
@@ -59,7 +59,7 @@ pub enum TracePixel {
     Rgb555(u16),
 }
 
-/// A pixel pushed to the LCD, carrying its gbtrace pixel-stream representation.
+/// A pixel pushed to the LCD, carrying its morepork pixel-stream representation.
 #[derive(Clone, Copy, Debug)]
 pub struct PixelOutput {
     pub x: u8,
@@ -92,7 +92,7 @@ impl<Pix> Default for PpuTickResult<Pix> {
     }
 }
 
-/// Internal PPU DFF/latch signals exposed for gbtrace capture.
+/// Internal PPU DFF/latch signals exposed for morepork capture.
 #[derive(Clone, Copy, Debug)]
 pub struct TraceSignals {
     /// WUVU.Q — 2-dot divider.
@@ -299,8 +299,8 @@ impl<P: PpuModel> Ppu<P> {
         ppu
     }
 
-    #[cfg(feature = "gbtrace")]
-    pub fn from_snapshot(snap: &gbtrace::family::gb::snapshot::PpuSnapshot, oam: Oam) -> Self {
+    #[cfg(feature = "morepork")]
+    pub fn from_snapshot(snap: &morepork::family::gb::snapshot::PpuSnapshot, oam: Oam) -> Self {
         let control = Control::new(ControlFlags::from_bits_retain(snap.lcdc));
         let lcd_on = control.video_enabled();
         let enables = InterruptFlags::from_bits_truncate(snap.stat);

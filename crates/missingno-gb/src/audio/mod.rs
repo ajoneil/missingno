@@ -470,10 +470,10 @@ impl<A: ApuSpec> Audio<A> {
         std::mem::take(&mut self.sample_buffer)
     }
 
-    /// Construct an Audio instance from a gbtrace snapshot.
-    #[cfg(feature = "gbtrace")]
+    /// Construct an Audio instance from a morepork snapshot.
+    #[cfg(feature = "morepork")]
     pub fn from_snapshot(
-        snap: &gbtrace::family::gb::snapshot::ApuSnapshot,
+        snap: &morepork::family::gb::snapshot::ApuSnapshot,
         wave_ram: [u8; 16],
     ) -> Self {
         use channels::noise::FrequencyAndRandomness;

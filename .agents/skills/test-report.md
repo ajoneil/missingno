@@ -1,6 +1,6 @@
 # Test Report
 
-Run the suite, categorise the failures by root cause, and label each cluster with cross-emulator status from the gbtrace manifests. **The steady state is all-green**, so the typical run finds 0 failures — report all-green and stop. The machinery below is for when regressions appear: **effort scales to the size of the failure set** — a handful of DMG failures is a quick inline job; a large regression on the CGB core (which historically ran into the thousands) needs fan-out and the core-diff partition. Match the effort to the count; don't run the heavy machinery for six failures.
+Run the suite, categorise the failures by root cause, and label each cluster with cross-emulator status from the morepork manifests. **The steady state is all-green**, so the typical run finds 0 failures — report all-green and stop. The machinery below is for when regressions appear: **effort scales to the size of the failure set** — a handful of DMG failures is a quick inline job; a large regression on the CGB core (which historically ran into the thousands) needs fan-out and the core-diff partition. Match the effort to the count; don't run the heavy machinery for six failures.
 
 ## Two rules that always hold
 
@@ -45,7 +45,7 @@ You already have the failing list and `$tmp/raw.txt`. No subagent, no heavy clus
 2. **Detail** each failure from `$tmp/raw.txt`: got/expected for register suites; pixel-mismatch for screenshot suites (mealybug, dmg-acid2, scribbltests).
 3. **Manifest label** — fetch *only the suites that actually have failures*, into `$tmp`:
    ```bash
-   curl -s "https://ajoneil.github.io/gbtrace/tests/mealybug-tearoom/manifest.json" -o "$tmp/m.json"
+   curl -s "https://ajoneil.github.io/morepork/tests/mealybug-tearoom/manifest.json" -o "$tmp/m.json"
    ```
    Read the system matching the core (`dmg` for gb, `cgb` for gbc). See *Manifest reference* for schema + name-matching.
 4. **Write** a short report to `receipts/test-reports/<core>/latest-analysis.md` in the format below.
@@ -71,7 +71,7 @@ Schema — each entry carries per-*system* status:
 {"name":"…","systems":{"dmg":{"sameboy":"pass","docboy":"pass","gambatte":"fail","missingno":"fail"},
                        "cgb":{"sameboy":"pass","docboy":"fail","gambatte":"fail","missingno":"fail"}}}
 ```
-Pick the system matching the core — `t['systems'].get('dmg',{}).get('sameboy','N/A')` (gb) or `…get('cgb',{})…` (gbc). Tracked emulators: `sameboy`, `docboy`, `gambatte`, `missingno` (no gateboy). A suite may carry only one system (gbmicrotest→dmg, cgb-acid2→cgb). Suite manifest URL: `https://ajoneil.github.io/gbtrace/tests/<suite>/manifest.json`.
+Pick the system matching the core — `t['systems'].get('dmg',{}).get('sameboy','N/A')` (gb) or `…get('cgb',{})…` (gbc). Tracked emulators: `sameboy`, `docboy`, `gambatte`, `missingno` (no gateboy). A suite may carry only one system (gbmicrotest→dmg, cgb-acid2→cgb). Suite manifest URL: `https://ajoneil.github.io/morepork/tests/<suite>/manifest.json`.
 
 Module→suite: dashes for underscores, with exceptions `cgb_acid2`→`cgb-acid2`, `cgb_acid_hell`→`cgb-acid-hell`, `mbc3_tester`→`mbc3-tester`, `mealybug_tearoom`→`mealybug-tearoom`, `mooneye_wilbertpol`→`mooneye-wilbertpol`, `turtle_tests`→`turtle-tests`.
 

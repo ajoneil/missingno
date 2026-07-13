@@ -41,16 +41,16 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Dump a gbtrace file for a ROM.
+    /// Dump a morepork file for a ROM.
     Trace {
         /// Path to the ROM file.
         rom: PathBuf,
 
-        /// Path to the gbtrace profile TOML file.
+        /// Path to the morepork profile TOML file.
         #[arg(short, long)]
         profile: PathBuf,
 
-        /// Output file path. Defaults to <rom_stem>.gbtrace.
+        /// Output file path. Defaults to <rom_stem>.morepork.
         #[arg(short, long)]
         output: Option<PathBuf>,
 

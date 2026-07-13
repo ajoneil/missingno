@@ -1,14 +1,14 @@
-//! gbtrace capture: emit execution traces in gbtrace's native format
-//! (feature `gbtrace`). The NES is gbtrace's second console family; its
-//! field catalogue lives there (`gbtrace/src/family/nes`), and this module
+//! morepork capture: emit execution traces in morepork's native format
+//! (feature `morepork`). The NES is morepork's second console family; its
+//! field catalogue lives there (`morepork/src/family/nes`), and this module
 //! captures exactly those fields from a running [`Nes`].
 
 use std::path::Path;
 
-use gbtrace::format::write::GbtraceWriter;
-use gbtrace::header::{PixFormat, TraceHeader};
-use gbtrace::snapshot::IndexedFrame;
-pub use gbtrace::{Profile, Trigger};
+use morepork::format::write::MoreporkWriter;
+use morepork::header::{PixFormat, TraceHeader};
+use morepork::snapshot::IndexedFrame;
+pub use morepork::{Profile, Trigger};
 use sha2::{Digest, Sha256};
 
 use crate::console::Nes;
@@ -33,7 +33,7 @@ enum Emitter {
     Memory(u16),
 }
 
-fn resolve_emitter(name: &str, profile: &Profile) -> Result<Emitter, gbtrace::Error> {
+fn resolve_emitter(name: &str, profile: &Profile) -> Result<Emitter, morepork::Error> {
     Ok(match name {
         "pc" => Emitter::Pc,
         "a" => Emitter::A,
@@ -50,7 +50,7 @@ fn resolve_emitter(name: &str, profile: &Profile) -> Result<Emitter, gbtrace::Er
         _ => match profile.memory.get(name) {
             Some(&addr) => Emitter::Memory(addr),
             None => {
-                return Err(gbtrace::Error::Profile(format!(
+                return Err(morepork::Error::Profile(format!(
                     "field '{name}' has no NES emitter"
                 )));
             }
@@ -76,7 +76,7 @@ pub fn step_instruction_counted(nes: &mut Nes) -> u16 {
 /// Writes one trace entry per capture and an indexed frame snapshot per
 /// completed frame.
 pub struct Tracer {
-    writer: GbtraceWriter,
+    writer: MoreporkWriter,
     emitters: Vec<(usize, Emitter)>,
 }
 
@@ -85,9 +85,9 @@ impl Tracer {
         path: impl AsRef<Path>,
         profile: &Profile,
         rom: &[u8],
-    ) -> Result<Tracer, gbtrace::Error> {
+    ) -> Result<Tracer, morepork::Error> {
         if profile.family != "nes" {
-            return Err(gbtrace::Error::Profile(format!(
+            return Err(morepork::Error::Profile(format!(
                 "profile '{}' targets family '{}', not nes",
                 profile.name, profile.family
             )));
@@ -118,7 +118,7 @@ impl Tracer {
 
         // Empty groups: the writer groups columns by the catalogue's
         // subsystem/layer defs.
-        let writer = GbtraceWriter::create(path, &header, &[])?;
+        let writer = MoreporkWriter::create(path, &header, &[])?;
 
         let mut emitters = Vec::with_capacity(profile.fields.len());
         for (col, field) in profile.fields.iter().enumerate() {
@@ -131,7 +131,7 @@ impl Tracer {
     /// Write one entry from the console's current state. `cycles` is the
     /// CPU-cycle delta since the previous entry (u16: OAM DMA freezes the
     /// CPU for 513+ cycles inside one instruction).
-    pub fn capture(&mut self, nes: &Nes, cycles: u16) -> Result<(), gbtrace::Error> {
+    pub fn capture(&mut self, nes: &Nes, cycles: u16) -> Result<(), morepork::Error> {
         for (col, emitter) in &self.emitters {
             let col = *col;
             match emitter {
@@ -156,7 +156,7 @@ impl Tracer {
     /// Record a frame boundary, with the completed frame as an indexed
     /// snapshot (master-palette indices; the palette rides along so the
     /// payload is self-contained).
-    pub fn mark_frame(&mut self, frame: Option<&Frame>) -> Result<(), gbtrace::Error> {
+    pub fn mark_frame(&mut self, frame: Option<&Frame>) -> Result<(), morepork::Error> {
         let payload = frame.map(|frame| {
             IndexedFrame {
                 width: PIXELS_PER_LINE as u16,
@@ -173,7 +173,7 @@ impl Tracer {
         self.writer.mark_frame(payload.as_deref())
     }
 
-    pub fn finish(self) -> Result<(), gbtrace::Error> {
+    pub fn finish(self) -> Result<(), morepork::Error> {
         self.writer.finish()
     }
 }

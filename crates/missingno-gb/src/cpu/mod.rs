@@ -111,7 +111,7 @@ pub struct IrqContext {
     /// PC-push that writes FF0F cannot re-set this bit.
     pub(super) irq_ack_held: Option<Interrupt>,
     /// Combinational `(IF & IE) != 0`. Coarse signal kept for the
-    /// gbtrace adapter; dispatch reads the data-phase-gated
+    /// morepork adapter; dispatch reads the data-phase-gated
     /// `dispatch.latched()` instead.
     pub(super) irq_pending: bool,
     /// `irq_latched` (yoii) DFF. CLK9-cadence capture of the data-
@@ -461,11 +461,11 @@ impl Cpu {
         }
     }
 
-    /// Construct a CPU from a gbtrace snapshot at an instruction
+    /// Construct a CPU from a morepork snapshot at an instruction
     /// boundary. The state machine fields are reset to their boundary
     /// defaults (Fetch phase, step 0, no pending actions).
-    #[cfg(feature = "gbtrace")]
-    pub fn from_snapshot(snap: &gbtrace::family::gb::snapshot::CpuSnapshot) -> Cpu {
+    #[cfg(feature = "morepork")]
+    pub fn from_snapshot(snap: &morepork::family::gb::snapshot::CpuSnapshot) -> Cpu {
         Cpu {
             a: snap.a,
             b: snap.b,
@@ -648,13 +648,13 @@ impl Cpu {
         pending
     }
 
-    /// IE-push-bug flag (gbtrace extension). Set during dispatch's M3
+    /// IE-push-bug flag (morepork extension). Set during dispatch's M3
     /// vector-resolve window.
     pub fn pending_vector_resolve_flag(&self) -> bool {
         self.irq.pending_vector_resolve
     }
 
-    /// HALT-bug flag (gbtrace extension). See `HaltContext::bug`.
+    /// HALT-bug flag (morepork extension). See `HaltContext::bug`.
     pub fn halt_bug_flag(&self) -> bool {
         self.halt.bug
     }

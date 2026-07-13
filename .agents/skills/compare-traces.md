@@ -9,52 +9,52 @@ The reference emulators are all **behavioural** — none is die-derived, so none
 ## When to use
 
 Use this skill when investigating a test failure where:
-- A reference trace exists (check suite manifests at `https://ajoneil.github.io/gbtrace/tests/{suite}/manifest.json` or locally in `receipts/resources/gbtrace/test-suites/`)
+- A reference trace exists (check suite manifests at `https://ajoneil.github.io/morepork/tests/{suite}/manifest.json` or locally in `receipts/resources/morepork/test-suites/`)
 - You need to find **where** execution diverges, not just **that** it fails
 - The failure involves timing, register values, or execution path differences
 - You need to understand what the emulator did during a test (individual trace inspection)
 
 **Choose the right approach for the test:**
-- **Small, focused tests** (gbmicrotest, small mooneye tests): Direct `gbtrace diff` between missingno and a reference trace is usually productive. The divergence point is close to the root cause.
-- **Larger tests** (blargg, full mooneye suites, mealybug-tearoom): Direct diff becomes less useful — the first divergence may be far from the root cause, or initial state differences create noise. Use individual trace inspection (`gbtrace query`, `gbtrace render`, `gbtrace frames`) to understand what each emulator does, then compare specific regions of interest.
-- **Visual tests** (mealybug-tearoom, dmg-acid2, scribbltests): Use `gbtrace render` to produce frame images and compare visually. Then use `gbtrace query` to examine the trace around the scanline/dot where the visual difference occurs.
+- **Small, focused tests** (gbmicrotest, small mooneye tests): Direct `morepork diff` between missingno and a reference trace is usually productive. The divergence point is close to the root cause.
+- **Larger tests** (blargg, full mooneye suites, mealybug-tearoom): Direct diff becomes less useful — the first divergence may be far from the root cause, or initial state differences create noise. Use individual trace inspection (`morepork query`, `morepork render`, `morepork frames`) to understand what each emulator does, then compare specific regions of interest.
+- **Visual tests** (mealybug-tearoom, dmg-acid2, scribbltests): Use `morepork render` to produce frame images and compare visually. Then use `morepork query` to examine the trace around the scanline/dot where the visual difference occurs.
 
 Prefer this over `/inspect` (debugger) for initial diagnosis — traces show the full execution history and let you find the divergence without guessing where to set breakpoints. Use `/inspect` for follow-up once you know the area of interest.
 
 ## Prerequisites
 
-1. **gbtrace CLI** built: `cd receipts/resources/gbtrace && cargo build -p gbtrace --features cli`
-2. **gbtrace feature** on missingno: `cargo test -p missingno-gb --features gbtrace`
-3. **GBTRACE_PROFILE** env var set to the suite name (e.g. `gbmicrotest`, `blargg`, `mooneye`). Profiles are per-suite TOML files in `receipts/resources/gbtrace/test-suites/*/profile.toml`.
+1. **morepork CLI** built: `cd receipts/resources/morepork && cargo build -p morepork --features cli`
+2. **morepork feature** on missingno: `cargo test -p missingno-gb --features morepork`
+3. **MOREPORK_PROFILE** env var set to the suite name (e.g. `gbmicrotest`, `blargg`, `mooneye`). Profiles are per-suite TOML files in `receipts/resources/morepork/test-suites/*/profile.toml`.
 
 ## Generating traces
 
 ### Missingno trace
 ```bash
-GBTRACE_PROFILE=gbmicrotest cargo test -p missingno-gb --features gbtrace -- <test_name>
-# Writes to: receipts/traces/<rom_name>.gbtrace
+MOREPORK_PROFILE=gbmicrotest cargo test -p missingno-gb --features morepork -- <test_name>
+# Writes to: receipts/traces/<rom_name>.morepork
 ```
 
 The test runner captures state at every T-cycle (for tcycle profiles) or every instruction (for instruction profiles). Traces are written even when tests fail.
 
 ### Missingno CGB trace
-The CGB core has its own `gbtrace` feature (`missingno-gbc`), captured through a dedicated `gbtrace_capture` test driven by an env var rather than a test-name filter:
+The CGB core has its own `morepork` feature (`missingno-gbc`), captured through a dedicated `morepork_capture` test driven by an env var rather than a test-name filter:
 ```bash
-GBTRACE_PROFILE=<suite> GBTRACE_CAPTURE_ROM=<rom-relative-to-gbc-roms-dir> \
-  cargo test -p missingno-gbc --features gbtrace -- gbtrace_capture
-# Uses load_cgb_rom_traced; writes to receipts/traces/<rom_name>.gbtrace
+MOREPORK_PROFILE=<suite> MOREPORK_CAPTURE_ROM=<rom-relative-to-gbc-roms-dir> \
+  cargo test -p missingno-gbc --features morepork -- morepork_capture
+# Uses load_cgb_rom_traced; writes to receipts/traces/<rom_name>.morepork
 ```
 
 ### Reference traces from manifests
 **Manifests** are on GitHub Pages; **trace blobs** are on a DigitalOcean Spaces CDN (the full set exceeds the Pages 1 GB limit). Two different hosts:
-- Manifest: `https://ajoneil.github.io/gbtrace/tests/{suite}/manifest.json`
-- Trace blob: `https://gbtrace.syd1.cdn.digitaloceanspaces.com/tests/{suite}/{test}_{emulator}_{system}_{status}.gbtrace`
+- Manifest: `https://ajoneil.github.io/morepork/tests/{suite}/manifest.json`
+- Trace blob: `https://morepork.syd1.cdn.digitaloceanspaces.com/tests/{suite}/{test}_{emulator}_{system}_{status}.morepork`
 
-**Suite-name gotcha:** `{suite}` is the *web* suite name. It usually matches the local `test-suites/` folder, **except gambatte: the folder is `gambatte` but the web suite is `gambatte-tests`**. Authoritative list of web suite names: `receipts/resources/gbtrace/web/src/components/test-picker.js`.
+**Suite-name gotcha:** `{suite}` is the *web* suite name. It usually matches the local `test-suites/` folder, **except gambatte: the folder is `gambatte` but the web suite is `gambatte-tests`**. Authoritative list of web suite names: `receipts/resources/morepork/web/src/components/test-picker.js`.
 
 **Fetch a manifest to find available traces:**
 ```bash
-curl -s https://ajoneil.github.io/gbtrace/tests/gambatte-tests/manifest.json | jq '.[0]'
+curl -s https://ajoneil.github.io/morepork/tests/gambatte-tests/manifest.json | jq '.[0]'
 # → {"name": "...", "rom": "....gbc",
 #    "systems": {"cgb": {"sameboy": "pass", "docboy": "pass", "gambatte": "pass", "missingno": "fail"}}}
 ```
@@ -63,20 +63,20 @@ Status lives under `systems.{dmg,cgb}.{emulator}` — pick the system matching t
 
 **Download a reference trace** (note the `_{system}_` segment — `cgb` or `dmg`):
 ```bash
-curl -fLO https://gbtrace.syd1.cdn.digitaloceanspaces.com/tests/gambatte-tests/<test>_sameboy_cgb_pass.gbtrace
+curl -fLO https://morepork.syd1.cdn.digitaloceanspaces.com/tests/gambatte-tests/<test>_sameboy_cgb_pass.morepork
 ```
 
-URL pattern: blob `{TRACE_CDN}/tests/{suite}/{test}_{emulator}_{system}_{status}.gbtrace`, manifest `{PAGES}/tests/{suite}/manifest.json`.
+URL pattern: blob `{TRACE_CDN}/tests/{suite}/{test}_{emulator}_{system}_{status}.morepork`, manifest `{PAGES}/tests/{suite}/manifest.json`.
 
-Tracked emulators: **sameboy, docboy, gambatte, missingno** — all behavioural; prefer SameBoy, then DocBoy (T-cycle granularity, useful for sub-M-cycle visibility on non-PPU behaviour), then gambatte. 17 suites — see `receipts/resources/gbtrace/test-suites/` for the current set.
+Tracked emulators: **sameboy, docboy, gambatte, missingno** — all behavioural; prefer SameBoy, then DocBoy (T-cycle granularity, useful for sub-M-cycle visibility on non-PPU behaviour), then gambatte. 17 suites — see `receipts/resources/morepork/test-suites/` for the current set.
 
-Reference traces are also available locally in `receipts/resources/gbtrace/test-suites/` if the gbtrace repo has them built.
+Reference traces are also available locally in `receipts/resources/morepork/test-suites/` if the morepork repo has them built.
 
 ## Diffing traces
 
 ### Basic diff
 ```bash
-gbtrace diff <missingno.gbtrace> <reference.gbtrace>
+morepork diff <missingno.morepork> <reference.morepork>
 ```
 
 ### Alignment gotchas
@@ -135,10 +135,10 @@ Common noise fields: `div` (phase-dependent), `tac` (init differs), `if_` (upper
 
 For PPU tests, render frames from both traces and compare visually:
 ```bash
-gbtrace render <missingno.gbtrace> -o receipts/traces/renders/missingno/
-gbtrace render <reference.gbtrace> -o receipts/traces/renders/reference/
+morepork render <missingno.morepork> -o receipts/traces/renders/missingno/
+morepork render <reference.morepork> -o receipts/traces/renders/reference/
 # Render specific frames only:
-gbtrace render <trace> --frames 2,3
+morepork render <trace> --frames 2,3
 ```
 
 This is especially useful for mealybug-tearoom and dmg-acid2 tests where the failure is a visual difference in rendered output.
@@ -147,7 +147,7 @@ This is especially useful for mealybug-tearoom and dmg-acid2 tests where the fai
 
 Use `frames` to understand frame boundaries and identify which frame to focus on:
 ```bash
-gbtrace frames <trace>
+morepork frames <trace>
 ```
 
 ## Useful queries
@@ -155,33 +155,33 @@ gbtrace frames <trace>
 ### Check test results
 ```bash
 # What did the test produce?
-gbtrace query <trace> --where "test_pass=1" --max 1    # passing
-gbtrace query <trace> --where "test_pass=0xFF" --max 1  # failing
+morepork query <trace> --where "test_pass=1" --max 1    # passing
+morepork query <trace> --where "test_pass=0xFF" --max 1  # failing
 ```
 
 ### Find specific events
 ```bash
 # When does LY reach 144 (VBlank)?
-gbtrace query <trace> --where "ly=144" --max 1 --context 5
+morepork query <trace> --where "ly=144" --max 1 --context 5
 
 # When does the ISR fire?
-gbtrace query <trace> --where "pc=0x48" --max 1 --context 10
+morepork query <trace> --where "pc=0x48" --max 1 --context 10
 
 # When does a register change?
-gbtrace query <trace> --where "scx=1" --max 1 --context 3
+morepork query <trace> --where "scx=1" --max 1 --context 3
 
 # Multiple conditions — use separate --where arguments (NOT comma-separated):
-gbtrace query <trace> --where "ly=9" --where "stat&3=3" --max 5
+morepork query <trace> --where "ly=9" --where "stat&3=3" --max 5
 
 # Show the last 5 entries (no condition needed):
-gbtrace query <trace> --last 5
+morepork query <trace> --last 5
 ```
 
 ### Compare test results across SCX values
 ```bash
 for scx in 0 1 2 3 4 5 6 7; do
-  trace="receipts/traces/int_hblank_nops_scx${scx}.gbtrace"
-  result=$(gbtrace query "$trace" --where "test_pass=1" --max 1 2>&1 | grep -oP 'test_result=\K\S+')
+  trace="receipts/traces/int_hblank_nops_scx${scx}.morepork"
+  result=$(morepork query "$trace" --where "test_pass=1" --max 1 2>&1 | grep -oP 'test_result=\K\S+')
   echo "SCX=${scx}: ${result:-FAIL}"
 done
 ```
@@ -213,40 +213,40 @@ When direct diff is impractical or insufficient, inspect traces individually to 
 ### Understand the test structure
 ```bash
 # How many frames? Where are the frame boundaries?
-gbtrace frames <trace>
+morepork frames <trace>
 
 # What does the trace contain?
-gbtrace info <trace>
+morepork info <trace>
 ```
 
 ### Find specific events
 ```bash
 # When does a specific register value appear?
-gbtrace query <trace> --where "scx=3" --max 5 --context 3
+morepork query <trace> --where "scx=3" --max 5 --context 3
 
 # When does mode 3 start on a specific line?
-gbtrace query <trace> --where "ly=66" --fields ly,stat,pix_count --max 20
+morepork query <trace> --where "ly=66" --fields ly,stat,pix_count --max 20
 
 # What happens at the end of the test?
-gbtrace query <trace> --last 30
+morepork query <trace> --last 30
 
 # What's happening around a specific index?
-gbtrace query <trace> --range 50000..50100
+morepork query <trace> --range 50000..50100
 ```
 
 ### Visual inspection
 ```bash
 # Render all frames
-gbtrace render <trace> -o receipts/traces/renders/
+morepork render <trace> -o receipts/traces/renders/
 
 # Render specific frames for comparison
-gbtrace render <missingno.gbtrace> -o receipts/traces/renders/missingno/ --frames 2
-gbtrace render <reference.gbtrace> -o receipts/traces/renders/reference/ --frames 2
+morepork render <missingno.morepork> -o receipts/traces/renders/missingno/ --frames 2
+morepork render <reference.morepork> -o receipts/traces/renders/reference/ --frames 2
 ```
 
 ### Compare specific regions (not full diff)
 When the full diff is too noisy, narrow the comparison to a specific region:
-1. Use `gbtrace query` on both traces to find the same logical event (e.g., start of scanline 66)
+1. Use `morepork query` on both traces to find the same logical event (e.g., start of scanline 66)
 2. Extract the index ranges around that event
 3. Compare those ranges manually or use `--fields` to focus the diff on relevant fields
 
@@ -259,10 +259,10 @@ When interpreting trace data, cross-reference with:
 
 ## Limitations — suggest improvements
 
-If you cannot answer the investigation question with the current gbtrace tooling, **do not silently fall back to the debugger**. Instead, report:
+If you cannot answer the investigation question with the current morepork tooling, **do not silently fall back to the debugger**. Instead, report:
 
 1. What you tried (which sync/filter/query)
 2. What information was missing or ambiguous
-3. What gbtrace feature would have helped (e.g. "a `--sync` on field transitions rather than values", "negative context before sync point", "DIV internal counter in trace fields")
+3. What morepork feature would have helped (e.g. "a `--sync` on field transitions rather than values", "negative context before sync point", "DIV internal counter in trace fields")
 
-This feedback helps improve gbtrace for future investigations.
+This feedback helps improve morepork for future investigations.

@@ -170,4 +170,4 @@ External resources live in `receipts/resources/` (gitignored — clone or downlo
 
 | Directory | Repository | Description |
 |-----------|------------|-------------|
-| `gbtrace` | https://github.com/ajoneil/gbtrace | Execution trace capture, diff, and render across emulators and systems (DMG/CGB/VCS) |
+| `morepork` | https://github.com/ajoneil/morepork | Execution trace capture, diff, and render across emulators and systems (DMG/CGB/VCS) |

@@ -29,7 +29,7 @@ pub fn run(
 
     let output_path = output.unwrap_or_else(|| {
         let stem = rom_path.file_stem().unwrap().to_string_lossy();
-        PathBuf::from(format!("{stem}.gbtrace"))
+        PathBuf::from(format!("{stem}.morepork"))
     });
 
     eprintln!("profile: {}", profile_path.display());
