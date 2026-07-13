@@ -274,6 +274,12 @@ pub trait SystemConsole: Send {
     fn console_switches(&self) -> &'static [ConsoleSwitch] {
         &[]
     }
+    /// Whether this console renders through a user-selectable monochrome
+    /// palette (DMG). The play-mode Display panel shows its palette picker
+    /// only when true; colour and TV systems return false.
+    fn uses_monochrome_palette(&self) -> bool {
+        false
+    }
     /// Stereo samples at 44.1 kHz — the seam's fixed rate. Families
     /// convert from their native rate on their own side.
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)>;

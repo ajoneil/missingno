@@ -215,6 +215,10 @@ where
         Console::reset(self);
     }
 
+    fn uses_monochrome_palette(&self) -> bool {
+        M::MONOCHROME_PALETTE
+    }
+
     fn set_control(&mut self, control: ControlId, input: ControlInput) {
         let (Some(button), ControlInput::Digital(pressed)) = (button_for_control(control), input)
         else {

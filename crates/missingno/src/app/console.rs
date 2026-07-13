@@ -37,6 +37,10 @@ impl ConsoleColors {
 
 /// How the debugger UI renders each console model.
 pub trait ConsoleUi: Model {
+    /// DMG renders through a user-selectable monochrome palette; CGB is
+    /// colour. Gates the play-mode Display panel's palette picker.
+    const MONOCHROME_PALETTE: bool;
+
     /// The display for a step's screen result; `None` leaves the screen pane as-is.
     fn screen_display(
         console: &Console<Self>,
@@ -56,6 +60,8 @@ pub trait ConsoleUi: Model {
 }
 
 impl ConsoleUi for Dmg {
+    const MONOCHROME_PALETTE: bool = true;
+
     fn screen_display(
         console: &Console<Self>,
         new_screen: Option<Self::Screen>,
@@ -109,6 +115,8 @@ impl ConsoleUi for Dmg {
 }
 
 impl ConsoleUi for Cgb {
+    const MONOCHROME_PALETTE: bool = false;
+
     fn screen_display(
         console: &Console<Self>,
         new_screen: Option<Self::Screen>,

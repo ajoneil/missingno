@@ -2,7 +2,7 @@ use iced::{
     Element,
     Length::{self, Fill},
     Task,
-    widget::{button, container, mouse_area, responsive, row, shader, stack, svg, text},
+    widget::{button, container, mouse_area, responsive, row, shader, stack, svg},
 };
 
 use crate::app::system::{ConsoleSwitch, ControlId, ControlInput};
@@ -17,6 +17,9 @@ use crate::app::{
 };
 use missingno_gb::ppu::types::palette::PaletteChoice;
 
+mod panels;
+pub use panels::PlayPanel;
+
 /// The UI-side shell for a plain (non-debugger) game. While the game runs the
 /// console lives on the emu thread (`console` is `None`); it is recovered here
 /// synchronously on pause so all inspection paths keep working.
@@ -28,10 +31,15 @@ pub struct Emulator {
     use_sgb_colors: bool,
     frame_blending: bool,
     /// The family's latching console switches and their current levels,
-    /// captured at load so the overlay renders while the console is on the
-    /// emu thread. Empty for families with none.
+    /// captured at load so the Console panel renders while the console is on
+    /// the emu thread. Empty for families with none.
     switches: &'static [ConsoleSwitch],
     switch_levels: Vec<bool>,
+    /// Whether this console has a selectable monochrome palette (DMG),
+    /// captured at load; gates the Display panel.
+    monochrome_palette: bool,
+    /// The play-mode side panel currently open, if any.
+    open_panel: Option<PlayPanel>,
 }
 
 #[derive(Debug, Clone)]
@@ -39,6 +47,7 @@ pub enum Message {
     ScreenHovered,
     ScreenUnhovered,
     ToggleSwitch(usize),
+    TogglePanel(PlayPanel),
 }
 
 impl From<Message> for app::Message {
@@ -54,6 +63,7 @@ impl Emulator {
         frame_blending: bool,
     ) -> Self {
         let switches = console.console_switches();
+        let monochrome_palette = console.uses_monochrome_palette();
         Self {
             console: Some(console),
             screen_view: ScreenView::new(),
@@ -63,6 +73,8 @@ impl Emulator {
             frame_blending,
             switches,
             switch_levels: switches.iter().map(|s| s.default_high).collect(),
+            monochrome_palette,
+            open_panel: None,
         }
     }
 
@@ -73,6 +85,7 @@ impl Emulator {
         frame_blending: bool,
     ) -> Self {
         let switches = console.console_switches();
+        let monochrome_palette = console.uses_monochrome_palette();
         Self {
             console: Some(console),
             screen_view,
@@ -82,6 +95,8 @@ impl Emulator {
             frame_blending,
             switches,
             switch_levels: switches.iter().map(|s| s.default_high).collect(),
+            monochrome_palette,
+            open_panel: None,
         }
     }
 
@@ -148,6 +163,13 @@ impl Emulator {
                     return Task::done(app::Message::SetControl(switch.control.0, *level));
                 }
             }
+            Message::TogglePanel(panel) => {
+                self.open_panel = if self.open_panel == Some(panel) {
+                    None
+                } else {
+                    Some(panel)
+                };
+            }
         }
         Task::none()
     }
@@ -177,72 +199,75 @@ impl Emulator {
         .into();
 
         if fullscreen {
-            screen
+            return screen;
+        }
+
+        let screen_stack: Element<'_, app::Message> = if self.screen_hovered {
+            use iced::Border;
+
+            fn overlay_button_style(_theme: &iced::Theme, status: button::Status) -> button::Style {
+                let bg_alpha = match status {
+                    button::Status::Hovered => 0.6,
+                    _ => 0.4,
+                };
+                button::Style {
+                    background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, bg_alpha).into()),
+                    text_color: iced::Color::WHITE,
+                    border: Border::default().rounded(border_s()),
+                    ..Default::default()
+                }
+            }
+
+            stack![
+                screen,
+                container(
+                    button(icons::m(Icon::Expand).style(|_, _| svg::Style {
+                        color: Some(iced::Color::WHITE),
+                    }))
+                    .style(overlay_button_style)
+                    .on_press(app::Message::ToggleFullscreen)
+                )
+                .align_right(Fill)
+                .padding(8)
+            ]
+            .into()
         } else {
-            let screen_stack = if self.screen_hovered {
-                use iced::Border;
+            screen
+        };
 
-                fn overlay_button_style(
-                    _theme: &iced::Theme,
-                    status: button::Status,
-                ) -> button::Style {
-                    let bg_alpha = match status {
-                        button::Status::Hovered => 0.6,
-                        _ => 0.4,
-                    };
-                    button::Style {
-                        background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, bg_alpha).into()),
-                        text_color: iced::Color::WHITE,
-                        border: Border::default().rounded(border_s()),
-                        ..Default::default()
-                    }
-                }
-
-                let mut layers = stack![
-                    screen,
-                    container(
-                        button(icons::m(Icon::Expand).style(|_, _| svg::Style {
-                            color: Some(iced::Color::WHITE),
-                        }))
-                        .style(overlay_button_style)
-                        .on_press(app::Message::ToggleFullscreen)
-                    )
-                    .align_right(Fill)
-                    .padding(8)
-                ];
-
-                // The family's latching console switches (VCS difficulty /
-                // TV type), top-left; each button flips its position.
-                if !self.switches.is_empty() {
-                    let mut switch_row = row![].spacing(8);
-                    for (index, switch) in self.switches.iter().enumerate() {
-                        let level = self
-                            .switch_levels
-                            .get(index)
-                            .copied()
-                            .unwrap_or(switch.default_high);
-                        let label =
-                            format!("{}: {}", switch.label, switch.positions[level as usize]);
-                        switch_row = switch_row.push(
-                            button(text(label).size(12))
-                                .style(overlay_button_style)
-                                .on_press(Message::ToggleSwitch(index).into()),
-                        );
-                    }
-                    layers = layers.push(container(switch_row).width(Fill).padding(8));
-                }
-
-                layers.into()
-            } else {
-                screen
-            };
-
+        let screen_area: Element<'_, app::Message> = container(
             mouse_area(screen_stack)
                 .on_enter(Message::ScreenHovered.into())
                 .on_exit(Message::ScreenUnhovered.into())
-                .on_move(|_| Message::ScreenHovered.into())
-                .into()
+                .on_move(|_| Message::ScreenHovered.into()),
+        )
+        .width(Fill)
+        .height(Fill)
+        .into();
+
+        let has_console = !self.switches.is_empty();
+        let has_display = self.monochrome_palette;
+
+        let mut layout = row![screen_area];
+        if let Some(panel) = self.open_panel {
+            let available = match panel {
+                PlayPanel::Console => has_console,
+                PlayPanel::Display => has_display,
+            };
+            if available {
+                layout = layout.push(panels::body(
+                    panel,
+                    self.switches,
+                    &self.switch_levels,
+                    self.screen_view.palette,
+                    self.use_sgb_colors,
+                ));
+            }
         }
+        if let Some(rail) = panels::rail(self.open_panel, has_console, has_display) {
+            layout = layout.push(rail);
+        }
+        layout.width(Fill).height(Fill).into()
     }
 
     pub fn running(&self) -> bool {
