@@ -18,7 +18,7 @@ use crate::app::{
     library::activity,
     system::ConsoleSwitch,
     ui::{
-        buttons, containers, fonts,
+        buttons, fonts,
         icons::{self, Icon},
         palette::{self, MUTED},
         sizes::{m, s, xs},
@@ -78,19 +78,26 @@ pub struct PlayLogEntry<'a> {
     pub event_index: usize,
 }
 
+/// Everything the panels render from, plus which sections this console offers.
+pub struct PanelContext<'a> {
+    pub switches: &'a [ConsoleSwitch],
+    pub switch_levels: &'a [bool],
+    pub palette: PaletteChoice,
+    pub use_sgb_colors: bool,
+    pub play_log: &'a [PlayLogEntry<'a>],
+    pub has_console: bool,
+    pub has_display: bool,
+    pub has_playlog: bool,
+}
+
 /// The vertical icon rail. Content-driven: an icon appears only for a section
-/// that has something to show. Returns `None` when neither does, so the caller
+/// that has something to show. Returns `None` when none do, so the caller
 /// omits the rail entirely.
-pub fn rail(
-    open: Option<PlayPanel>,
-    has_console: bool,
-    has_display: bool,
-    has_playlog: bool,
-) -> Option<Element<'static, app::Message>> {
+pub fn rail(open: &[PlayPanel], ctx: &PanelContext) -> Option<Element<'static, app::Message>> {
     let available = [
-        (PlayPanel::Console, has_console),
-        (PlayPanel::Display, has_display),
-        (PlayPanel::PlayLog, has_playlog),
+        (PlayPanel::Console, ctx.has_console),
+        (PlayPanel::Display, ctx.has_display),
+        (PlayPanel::PlayLog, ctx.has_playlog),
     ];
     if available.iter().all(|(_, show)| !show) {
         return None;
@@ -102,7 +109,7 @@ pub fn rail(
             col = col.push(rail_icon(
                 panel.icon(),
                 panel.title(),
-                open == Some(panel),
+                open.contains(&panel),
                 Message::TogglePanel(panel).into(),
             ));
         }
@@ -110,29 +117,80 @@ pub fn rail(
     Some(container(col).padding([s(), xs()]).into())
 }
 
-/// The open panel's body, docked beside the screen.
-pub fn body(
-    panel: PlayPanel,
-    switches: &[ConsoleSwitch],
-    switch_levels: &[bool],
-    current_palette: PaletteChoice,
-    use_sgb_colors: bool,
-    play_log: &[PlayLogEntry],
+/// The open panels, stacked as titled cards that size to their content, in a
+/// fixed-width scrollable column docked beside the screen. Renders in a stable
+/// order regardless of the order they were toggled on.
+pub fn side_column(
+    open: &[PlayPanel],
+    ctx: &PanelContext,
+) -> Option<Element<'static, app::Message>> {
+    let order = [
+        (PlayPanel::Console, ctx.has_console),
+        (PlayPanel::Display, ctx.has_display),
+        (PlayPanel::PlayLog, ctx.has_playlog),
+    ];
+
+    let mut col = column![].spacing(s());
+    let mut any = false;
+    for (panel, available) in order {
+        if available && open.contains(&panel) {
+            any = true;
+            let body = match panel {
+                PlayPanel::Console => console_body(ctx.switches, ctx.switch_levels),
+                PlayPanel::Display => display_body(ctx.palette, ctx.use_sgb_colors),
+                PlayPanel::PlayLog => playlog_body(ctx.play_log),
+            };
+            col = col.push(section_card(panel.title(), body));
+        }
+    }
+    if !any {
+        return None;
+    }
+    Some(
+        container(scrollable(col.padding(s())).height(Fill))
+            .width(Fixed(PANEL_WIDTH))
+            .height(Fill)
+            .into(),
+    )
+}
+
+/// A titled, content-sized card, mirroring the debugger sidebar's section look.
+fn section_card(
+    title: &'static str,
+    body: Element<'static, app::Message>,
 ) -> Element<'static, app::Message> {
-    let content = match panel {
-        PlayPanel::Console => console_body(switches, switch_levels),
-        PlayPanel::Display => display_body(current_palette, use_sgb_colors),
-        PlayPanel::PlayLog => playlog_body(play_log),
-    };
-    container(scrollable(container(content).padding(m())).height(Fill))
-        .width(Fixed(PANEL_WIDTH))
-        .height(Fill)
-        .style(containers::sidebar)
+    let header = container(text(title).font(fonts::title()).size(13.0).color(MUTED))
+        .width(Fill)
+        .padding([xs(), s()])
+        .style(section_header_style);
+
+    container(column![header, container(body).padding(s())].width(Fill))
+        .width(Fill)
+        .style(section_style)
         .into()
 }
 
+fn section_style(theme: &iced::Theme) -> container::Style {
+    let pal = theme.extended_palette();
+    container::Style {
+        background: Some(pal.background.base.color.into()),
+        border: iced::Border::default()
+            .rounded(4.0)
+            .width(1.0)
+            .color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.06)),
+        ..Default::default()
+    }
+}
+
+fn section_header_style(_theme: &iced::Theme) -> container::Style {
+    container::Style {
+        background: Some(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.03).into()),
+        ..Default::default()
+    }
+}
+
 fn console_body(switches: &[ConsoleSwitch], levels: &[bool]) -> Element<'static, app::Message> {
-    let mut col = column![app_text::label("Console")].spacing(m());
+    let mut col = column![].spacing(m());
     for (index, switch) in switches.iter().enumerate() {
         let level = levels.get(index).copied().unwrap_or(switch.default_high);
         let position = switch.positions[level as usize];
@@ -154,7 +212,6 @@ fn display_body(current: PaletteChoice, use_sgb_colors: bool) -> Element<'static
     use crate::app::settings::view::Message as SettingsMessage;
 
     let mut col = column![
-        app_text::label("Display"),
         toggler(use_sgb_colors)
             .label("Super Game Boy colours")
             .on_toggle(|enabled| SettingsMessage::SetUseSgbColors(enabled).into())
@@ -187,7 +244,6 @@ fn display_body(current: PaletteChoice, use_sgb_colors: bool) -> Element<'static
 
 fn playlog_body(entries: &[PlayLogEntry]) -> Element<'static, app::Message> {
     let mut col = column![
-        app_text::label("Play log"),
         buttons::standard(
             row![icons::m(Icon::Camera), text("Screenshot")]
                 .spacing(s())

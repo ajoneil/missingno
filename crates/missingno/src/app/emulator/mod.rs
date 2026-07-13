@@ -38,8 +38,9 @@ pub struct Emulator {
     /// Whether this console has a selectable monochrome palette (DMG),
     /// captured at load; gates the Display panel.
     monochrome_palette: bool,
-    /// The play-mode side panel currently open, if any.
-    open_panel: Option<PlayPanel>,
+    /// The play-mode side panels currently open (rendered stacked, in a
+    /// stable order regardless of toggle order).
+    open_panels: Vec<PlayPanel>,
 }
 
 #[derive(Debug, Clone)]
@@ -74,7 +75,7 @@ impl Emulator {
             switches,
             switch_levels: switches.iter().map(|s| s.default_high).collect(),
             monochrome_palette,
-            open_panel: None,
+            open_panels: Vec::new(),
         }
     }
 
@@ -96,7 +97,7 @@ impl Emulator {
             switches,
             switch_levels: switches.iter().map(|s| s.default_high).collect(),
             monochrome_palette,
-            open_panel: None,
+            open_panels: Vec::new(),
         }
     }
 
@@ -164,11 +165,11 @@ impl Emulator {
                 }
             }
             Message::TogglePanel(panel) => {
-                self.open_panel = if self.open_panel == Some(panel) {
-                    None
+                if let Some(pos) = self.open_panels.iter().position(|&p| p == panel) {
+                    self.open_panels.remove(pos);
                 } else {
-                    Some(panel)
-                };
+                    self.open_panels.push(panel);
+                }
             }
         }
         Task::none()
@@ -249,30 +250,23 @@ impl Emulator {
         .height(Fill)
         .into();
 
-        let has_console = !self.switches.is_empty();
-        let has_display = self.monochrome_palette;
-        // Capturing is always available, so the Play log is too.
-        let has_playlog = true;
+        let ctx = panels::PanelContext {
+            switches: self.switches,
+            switch_levels: &self.switch_levels,
+            palette: self.screen_view.palette,
+            use_sgb_colors: self.use_sgb_colors,
+            play_log,
+            has_console: !self.switches.is_empty(),
+            has_display: self.monochrome_palette,
+            // Capturing is always available, so the Play log is too.
+            has_playlog: true,
+        };
 
         let mut layout = row![screen_area];
-        if let Some(panel) = self.open_panel {
-            let available = match panel {
-                PlayPanel::Console => has_console,
-                PlayPanel::Display => has_display,
-                PlayPanel::PlayLog => has_playlog,
-            };
-            if available {
-                layout = layout.push(panels::body(
-                    panel,
-                    self.switches,
-                    &self.switch_levels,
-                    self.screen_view.palette,
-                    self.use_sgb_colors,
-                    play_log,
-                ));
-            }
+        if let Some(side) = panels::side_column(&self.open_panels, &ctx) {
+            layout = layout.push(side);
         }
-        if let Some(rail) = panels::rail(self.open_panel, has_console, has_display, has_playlog) {
+        if let Some(rail) = panels::rail(&self.open_panels, &ctx) {
             layout = layout.push(rail);
         }
         layout.width(Fill).height(Fill).into()
