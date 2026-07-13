@@ -86,9 +86,12 @@ struct Scan {
 
 #[derive(Clone)]
 pub struct Player {
-    pub grp_new: u8,
-    pub grp_old: u8,
+    /// GRP double buffer: the live write and its VDEL-delayed copy.
+    pub graphics_new: u8,
+    pub graphics_old: u8,
+    /// VDELP: draw the delayed copy instead of the live write.
     pub vertical_delay: bool,
+    /// REFP: mirror the 8-bit pattern.
     pub reflect: bool,
     pub nusiz: u8,
     div: Divider,
@@ -108,8 +111,8 @@ impl Default for Player {
 impl Player {
     pub fn new() -> Self {
         Player {
-            grp_new: 0,
-            grp_old: 0,
+            graphics_new: 0,
+            graphics_old: 0,
             vertical_delay: false,
             reflect: false,
             nusiz: 0,
@@ -186,9 +189,9 @@ impl Player {
             return false;
         }
         let graphics = if self.vertical_delay {
-            self.grp_old
+            self.graphics_old
         } else {
-            self.grp_new
+            self.graphics_new
         };
         let bit = if self.reflect { scan.bit } else { 7 - scan.bit };
         graphics & (1 << bit) != 0

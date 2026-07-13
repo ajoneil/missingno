@@ -8,15 +8,16 @@
 pub struct Riot {
     pub ram: [u8; 128],
     timer: u8,
+    /// Prescaler divisor selected by TIM1T/TIM8T/TIM64T/TIM1024T (1/8/64/1024).
     interval: u16,
     prescaler: u16,
     timer_underflowed: bool,
     /// Underflow landed at the last tick; an INTIM read this cycle coincides
     /// with the interrupt and must not clear the flag (datasheet exception).
     timer_just_underflowed: bool,
-    /// Output registers hold what software wrote, whole, across DDR flips.
-    ora: u8,
-    orb: u8,
+    /// Output registers (ORA/ORB) hold what software wrote, whole, across DDR flips.
+    output_a: u8,
+    output_b: u8,
     /// External pin levels: joystick lines on A (active-low, port 1 in the
     /// high nibble), console switches on B (active-low momentaries).
     pins_a: u8,
@@ -43,8 +44,8 @@ impl Riot {
             prescaler: 0,
             timer_underflowed: false,
             timer_just_underflowed: false,
-            ora: 0,
-            orb: 0,
+            output_a: 0,
+            output_b: 0,
             pins_a: 0xFF,
             // Reset/Select released, Color mode, both difficulties Beginner.
             pins_b: 0x0B,
@@ -78,11 +79,11 @@ impl Riot {
     /// Reads return pin levels: output bits from the register, input bits
     /// from the outside world.
     fn port_a_pins(&self) -> u8 {
-        (self.ora & self.ddr_a) | (self.pins_a & !self.ddr_a)
+        (self.output_a & self.ddr_a) | (self.pins_a & !self.ddr_a)
     }
 
     fn port_b_pins(&self) -> u8 {
-        (self.orb & self.ddr_b) | (self.pins_b & !self.ddr_b)
+        (self.output_b & self.ddr_b) | (self.pins_b & !self.ddr_b)
     }
 
     /// The edge detect watches the PA7 pin — which follows ORA when the
@@ -193,13 +194,13 @@ impl Riot {
             0x00 | 0x01 => {
                 let before = self.pa7_level();
                 if register & 0x07 == 0x00 {
-                    self.ora = value;
+                    self.output_a = value;
                 } else {
                     self.ddr_a = value;
                 }
                 self.pa7_edge(before);
             }
-            0x02 => self.orb = value,
+            0x02 => self.output_b = value,
             0x03 => self.ddr_b = value,
             _ => {}
         }

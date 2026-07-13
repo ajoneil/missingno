@@ -4,6 +4,7 @@
 //! structure is unanalysed territory.
 
 pub struct Channel {
+    /// AUDC waveform select, AUDF frequency divisor, AUDV volume.
     pub control: u8,
     pub frequency: u8,
     pub volume: u8,

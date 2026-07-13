@@ -25,13 +25,13 @@ enum Emitter {
     Y,
     S,
     P,
-    Rdy,
+    Rdy, // 6502 RDY pin
     Cycles,
     Line,
-    Clock,
-    Timer,
-    PortA,
-    PortB,
+    Clock, // TIA horizontal beam position
+    Timer, // RIOT INTIM ($284)
+    PortA, // RIOT SWCHA ($280)
+    PortB, // RIOT SWCHB ($282)
     Memory(u16),
 }
 

@@ -129,7 +129,7 @@ const MOVABLES: [MovableIndex; 5] = [
 /// through the next H@1, then arms on the following H@2 — a three-stage
 /// two-phase shift, so the arm delay falls out of the grid per strobe parity.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum SecDecode {
+enum MotionArmDecode {
     Idle,
     /// Latched by the strobe; the next strict H@2 samples it.
     Set,
@@ -140,7 +140,7 @@ enum SecDecode {
 }
 
 /// The HMOVE motion engine. A strobe latches [SEC], which clocks through the
-/// two-phase clock ([`SecDecode`]) to arm every object's "more movement" latch
+/// two-phase clock ([`MotionArmDecode`]) to arm every object's "more movement" latch
 /// and load a 4-bit ripple counter to 15. The ripple counts down one step per
 /// H@2; each H@1 every latched object gets a stuffed motion clock, and each
 /// object's comparator clears its latch when the ripple reaches that object's
@@ -153,7 +153,8 @@ enum SecDecode {
 /// clock every line until the next HMOVE (the Cosmic Ark starfield). HMCLR
 /// zeroes the HM values only.
 struct MotionSequencer {
-    sec: SecDecode,
+    /// [SEC] shifting through the two-phase clock to arm the motion.
+    arm_stage: MotionArmDecode,
     /// Set for the strobe's own colour clock: its H@2 must not sample it.
     just_strobed: bool,
     /// The 4-bit ripple counter, 15 down to 0; `None` once exhausted (the
@@ -161,26 +162,26 @@ struct MotionSequencer {
     ripple: Option<u8>,
     more_movement: [bool; 5],
     /// HM values, indexed in MOVABLES order: P0, P1, M0, M1, BL.
-    values: [u8; 5],
+    hm_values: [u8; 5],
     /// HM values as of the last H@2 (decrement) edge; the live descending
     /// compare reads this capture, the resting compare reads the register file.
-    captured_values: [u8; 5],
+    captured_hm_values: [u8; 5],
 }
 
 impl MotionSequencer {
     fn new() -> Self {
         MotionSequencer {
-            sec: SecDecode::Idle,
+            arm_stage: MotionArmDecode::Idle,
             just_strobed: false,
             ripple: None,
             more_movement: [false; 5],
-            values: [0; 5],
-            captured_values: [0; 5],
+            hm_values: [0; 5],
+            captured_hm_values: [0; 5],
         }
     }
 
     fn strobe(&mut self) {
-        self.sec = SecDecode::Set;
+        self.arm_stage = MotionArmDecode::Set;
         self.just_strobed = true;
     }
 
@@ -195,23 +196,23 @@ impl MotionSequencer {
         // consumes the clock — the arm H@2 provides the first pulse's capture
         // and quiet H@2s keep it tracking the resting value.
         if phase == MOTION_DECREMENT_PHASE {
-            self.captured_values = self.values;
+            self.captured_hm_values = self.hm_values;
         }
         // [SEC] shifts H@2 → H@1 → H@2; on the final H@2 the more-movement
         // latches arm for every object and the ripple counter loads to 15.
         let strobed_this_clock = self.just_strobed;
         self.just_strobed = false;
-        match (self.sec, phase) {
-            (SecDecode::Set, MOTION_DECREMENT_PHASE) if !strobed_this_clock => {
-                self.sec = SecDecode::Sampled;
+        match (self.arm_stage, phase) {
+            (MotionArmDecode::Set, MOTION_DECREMENT_PHASE) if !strobed_this_clock => {
+                self.arm_stage = MotionArmDecode::Sampled;
                 return None;
             }
-            (SecDecode::Sampled, MOTION_STUFF_PHASE) => {
-                self.sec = SecDecode::Clocked;
+            (MotionArmDecode::Sampled, MOTION_STUFF_PHASE) => {
+                self.arm_stage = MotionArmDecode::Clocked;
                 return None;
             }
-            (SecDecode::Clocked, MOTION_DECREMENT_PHASE) => {
-                self.sec = SecDecode::Idle;
+            (MotionArmDecode::Clocked, MOTION_DECREMENT_PHASE) => {
+                self.arm_stage = MotionArmDecode::Idle;
                 self.more_movement = [true; 5];
                 self.ripple = Some(15);
                 // The load edge that arms the counter is not a count edge.
@@ -241,9 +242,9 @@ impl MotionSequencer {
         }
         let ripple = self.ripple.unwrap_or(RESTING_RIPPLE);
         let compare_values = if self.ripple.is_some() {
-            &self.captured_values
+            &self.captured_hm_values
         } else {
-            &self.values
+            &self.hm_values
         };
         let mut ticks = [false; 5];
         for i in 0..self.more_movement.len() {
@@ -412,11 +413,11 @@ impl Tia {
         // moves the object.
         let seam = self.seam_lookahead;
         self.seam_lookahead = [false; 5];
-        let motck = self.hsync.motck_fires();
+        let motion_clock = self.hsync.motck_fires();
         if let Some(ticks) = self.motion.step(self.hsync.phase()) {
             for (i, (movable, ticked)) in MOVABLES.into_iter().zip(ticks).enumerate() {
                 if ticked {
-                    if motck {
+                    if motion_clock {
                         self.seam_lookahead[i] = true;
                     } else {
                         self.tick_movable(movable);
@@ -425,7 +426,7 @@ impl Tia {
             }
         }
 
-        if motck {
+        if motion_clock {
             for which in MOVABLES {
                 self.tick_movable(which);
             }
@@ -435,7 +436,7 @@ impl Tia {
             // A visible clock whose motion tick is N90-deferred past the wrap
             // (the line's last pixel) previews it like the merge ghost — the
             // die shows one serialiser tick per clock (m11 wrap runs).
-            Beam::Pixel(x) => self.render_clock(x, seam.map(|s| s || !motck)),
+            Beam::Pixel(x) => self.render_clock(x, seam.map(|s| s || !motion_clock)),
             // Inside the HMOVE comb: blanked output.
             Beam::Comb(x) => self.line[x as usize] = 0,
             Beam::Blank => {}
@@ -696,22 +697,22 @@ impl Tia {
             // freezes player 1's old graphics, a GRP1 write freezes
             // player 0's and the ball's.
             GRP0 => {
-                self.player0.grp_new = value;
-                self.player1.grp_old = self.player1.grp_new;
+                self.player0.graphics_new = value;
+                self.player1.graphics_old = self.player1.graphics_new;
             }
             GRP1 => {
-                self.player1.grp_new = value;
-                self.player0.grp_old = self.player0.grp_new;
+                self.player1.graphics_new = value;
+                self.player0.graphics_old = self.player0.graphics_new;
                 self.ball.enabled_old = self.ball.enabled_new;
             }
             ENAM0 => self.missile0.enabled = value & 0x02 != 0,
             ENAM1 => self.missile1.enabled = value & 0x02 != 0,
             ENABL => self.ball.enabled_new = value & 0x02 != 0,
-            HMP0 => self.motion.values[0] = value,
-            HMP1 => self.motion.values[1] = value,
-            HMM0 => self.motion.values[2] = value,
-            HMM1 => self.motion.values[3] = value,
-            HMBL => self.motion.values[4] = value,
+            HMP0 => self.motion.hm_values[0] = value,
+            HMP1 => self.motion.hm_values[1] = value,
+            HMM0 => self.motion.hm_values[2] = value,
+            HMM1 => self.motion.hm_values[3] = value,
+            HMBL => self.motion.hm_values[4] = value,
             VDELP0 => self.player0.vertical_delay = value & 0x01 != 0,
             VDELP1 => self.player1.vertical_delay = value & 0x01 != 0,
             VDELBL => self.ball.vertical_delay = value & 0x01 != 0,
@@ -735,7 +736,7 @@ impl Tia {
                 self.motion.strobe();
                 self.hblank_extension_pending = Some(HBLANK_EXTENSION_DECODE_CLOCKS);
             }
-            HMCLR => self.motion.values = [0; 5],
+            HMCLR => self.motion.hm_values = [0; 5],
             CXCLR => self.collisions = [0; 8],
             _ => {}
         }
