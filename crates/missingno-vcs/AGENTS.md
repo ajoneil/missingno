@@ -96,7 +96,7 @@ below them and only corroborate.**
 | TIA_HW_Notes | https://www.atarihq.com/danb/files/TIA_HW_Notes.txt | Andrew Towers' TIA hardware timing notes — the static-analysis layer. |
 | MOS 6532 datasheet | https://6502.org/documents/datasheets/mos/mos_6532_riot.pdf | RIOT chip reference — the primary RIOT source (no gate-level sim exists). |
 | Local reference library | `receipts/resources/` | Additional core reference material — schematics, chip documentation, test cartridges. Inventory: `receipts/resources/vcs-library.md`. |
-| vcs-tests suite | `crates/missingno-vcs/tests/accuracy/` | The in-repo accuracy suite (RESULT RAM convention; NTSC + PAL). Baseline/diff via `scripts/test-report-vcs.sh`. |
+| vcs-tests suite | `crates/missingno-vcs/tests/accuracy/` | The in-repo accuracy suite (RESULT RAM convention; NTSC + PAL + SECAM). Baseline/diff via `scripts/test-report-vcs.sh`. |
 
 ## Core shape
 

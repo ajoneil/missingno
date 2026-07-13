@@ -12,6 +12,11 @@ fn hmove_apply_pal() {
 }
 
 #[test]
+fn hmove_apply_secam() {
+    common::run_self_test("tia-timing/hmove-apply_secam.a26", TvStandard::Secam);
+}
+
+#[test]
 fn hmove_comb_ntsc() {
     common::run_screenshot(
         "tia-timing/hmove-comb_ntsc.a26",
@@ -26,6 +31,15 @@ fn hmove_comb_pal() {
         "tia-timing/hmove-comb_pal.a26",
         "tia-timing/hmove-comb_pal.png",
         TvStandard::Pal,
+    );
+}
+
+#[test]
+fn hmove_comb_secam() {
+    common::run_screenshot(
+        "tia-timing/hmove-comb_secam.a26",
+        "tia-timing/hmove-comb_secam.png",
+        TvStandard::Secam,
     );
 }
 
@@ -48,6 +62,15 @@ fn hmove_late_pal() {
 }
 
 #[test]
+fn hmove_late_secam() {
+    common::run_screenshot(
+        "tia-timing/hmove-late_secam.a26",
+        "tia-timing/hmove-late_secam.png",
+        TvStandard::Secam,
+    );
+}
+
+#[test]
 fn hmove_line_aligned_ntsc() {
     common::run_self_test("tia-timing/hmove-line-aligned_ntsc.a26", TvStandard::Ntsc);
 }
@@ -55,6 +78,11 @@ fn hmove_line_aligned_ntsc() {
 #[test]
 fn hmove_line_aligned_pal() {
     common::run_self_test("tia-timing/hmove-line-aligned_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn hmove_line_aligned_secam() {
+    common::run_self_test("tia-timing/hmove-line-aligned_secam.a26", TvStandard::Secam);
 }
 
 #[test]
@@ -72,6 +100,15 @@ fn hmove_line_end_pal() {
         "tia-timing/hmove-line-end_pal.a26",
         "tia-timing/hmove-line-end_pal.png",
         TvStandard::Pal,
+    );
+}
+
+#[test]
+fn hmove_line_end_secam() {
+    common::run_screenshot(
+        "tia-timing/hmove-line-end_secam.a26",
+        "tia-timing/hmove-line-end_secam.png",
+        TvStandard::Secam,
     );
 }
 
@@ -94,6 +131,15 @@ fn hmove_live_seam_pal() {
 }
 
 #[test]
+fn hmove_live_seam_secam() {
+    common::run_screenshot(
+        "tia-timing/hmove-live-seam_secam.a26",
+        "tia-timing/hmove-live-seam_secam.png",
+        TvStandard::Secam,
+    );
+}
+
+#[test]
 fn hmove_live_reach_ntsc() {
     common::run_screenshot(
         "tia-timing/hmove-live-reach_ntsc.a26",
@@ -108,6 +154,15 @@ fn hmove_live_reach_pal() {
         "tia-timing/hmove-live-reach_pal.a26",
         "tia-timing/hmove-live-reach_pal.png",
         TvStandard::Pal,
+    );
+}
+
+#[test]
+fn hmove_live_reach_secam() {
+    common::run_screenshot(
+        "tia-timing/hmove-live-reach_secam.a26",
+        "tia-timing/hmove-live-reach_secam.png",
+        TvStandard::Secam,
     );
 }
 
@@ -130,6 +185,15 @@ fn hmove_strobe_line_pal() {
 }
 
 #[test]
+fn hmove_strobe_line_secam() {
+    common::run_screenshot(
+        "tia-timing/hmove-strobe-line_secam.a26",
+        "tia-timing/hmove-strobe-line_secam.png",
+        TvStandard::Secam,
+    );
+}
+
+#[test]
 fn hmove_rewrite_race_ntsc() {
     common::run_screenshot(
         "tia-timing/hmove-rewrite-race_ntsc.a26",
@@ -144,6 +208,15 @@ fn hmove_rewrite_race_pal() {
         "tia-timing/hmove-rewrite-race_pal.a26",
         "tia-timing/hmove-rewrite-race_pal.png",
         TvStandard::Pal,
+    );
+}
+
+#[test]
+fn hmove_rewrite_race_secam() {
+    common::run_screenshot(
+        "tia-timing/hmove-rewrite-race_secam.a26",
+        "tia-timing/hmove-rewrite-race_secam.png",
+        TvStandard::Secam,
     );
 }
 
@@ -166,6 +239,15 @@ fn hmove_stuck_grid_pal() {
 }
 
 #[test]
+fn hmove_stuck_grid_secam() {
+    common::run_screenshot(
+        "tia-timing/hmove-stuck-grid_secam.a26",
+        "tia-timing/hmove-stuck-grid_secam.png",
+        TvStandard::Secam,
+    );
+}
+
+#[test]
 fn hmove_stuck_latch_ntsc() {
     common::run_screenshot(
         "tia-timing/hmove-stuck-latch_ntsc.a26",
@@ -180,6 +262,15 @@ fn hmove_stuck_latch_pal() {
         "tia-timing/hmove-stuck-latch_pal.a26",
         "tia-timing/hmove-stuck-latch_pal.png",
         TvStandard::Pal,
+    );
+}
+
+#[test]
+fn hmove_stuck_latch_secam() {
+    common::run_screenshot(
+        "tia-timing/hmove-stuck-latch_secam.a26",
+        "tia-timing/hmove-stuck-latch_secam.png",
+        TvStandard::Secam,
     );
 }
 
@@ -202,6 +293,15 @@ fn hmove_stuck_player_pal() {
 }
 
 #[test]
+fn hmove_stuck_player_secam() {
+    common::run_screenshot(
+        "tia-timing/hmove-stuck-player_secam.a26",
+        "tia-timing/hmove-stuck-player_secam.png",
+        TvStandard::Secam,
+    );
+}
+
+#[test]
 fn hmove_stuck_release_ntsc() {
     common::run_screenshot(
         "tia-timing/hmove-stuck-release_ntsc.a26",
@@ -216,6 +316,15 @@ fn hmove_stuck_release_pal() {
         "tia-timing/hmove-stuck-release_pal.a26",
         "tia-timing/hmove-stuck-release_pal.png",
         TvStandard::Pal,
+    );
+}
+
+#[test]
+fn hmove_stuck_release_secam() {
+    common::run_screenshot(
+        "tia-timing/hmove-stuck-release_secam.a26",
+        "tia-timing/hmove-stuck-release_secam.png",
+        TvStandard::Secam,
     );
 }
 
@@ -238,6 +347,15 @@ fn hmove_stuck_widths_pal() {
 }
 
 #[test]
+fn hmove_stuck_widths_secam() {
+    common::run_screenshot(
+        "tia-timing/hmove-stuck-widths_secam.a26",
+        "tia-timing/hmove-stuck-widths_secam.png",
+        TvStandard::Secam,
+    );
+}
+
+#[test]
 fn hmove_stuck_stretch_ntsc() {
     common::run_screenshot(
         "tia-timing/hmove-stuck-stretch_ntsc.a26",
@@ -252,6 +370,15 @@ fn hmove_stuck_stretch_pal() {
         "tia-timing/hmove-stuck-stretch_pal.a26",
         "tia-timing/hmove-stuck-stretch_pal.png",
         TvStandard::Pal,
+    );
+}
+
+#[test]
+fn hmove_stuck_stretch_secam() {
+    common::run_screenshot(
+        "tia-timing/hmove-stuck-stretch_secam.a26",
+        "tia-timing/hmove-stuck-stretch_secam.png",
+        TvStandard::Secam,
     );
 }
 
@@ -274,6 +401,15 @@ fn hmove_values_pal() {
 }
 
 #[test]
+fn hmove_values_secam() {
+    common::run_screenshot(
+        "tia-timing/hmove-values_secam.a26",
+        "tia-timing/hmove-values_secam.png",
+        TvStandard::Secam,
+    );
+}
+
+#[test]
 fn hmove_walk_ntsc() {
     common::run_self_test("tia-timing/hmove-walk_ntsc.a26", TvStandard::Ntsc);
 }
@@ -281,6 +417,11 @@ fn hmove_walk_ntsc() {
 #[test]
 fn hmove_walk_pal() {
     common::run_self_test("tia-timing/hmove-walk_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn hmove_walk_secam() {
+    common::run_self_test("tia-timing/hmove-walk_secam.a26", TvStandard::Secam);
 }
 
 #[test]
@@ -298,6 +439,15 @@ fn midline_color_pal() {
         "tia-timing/midline-color_pal.a26",
         "tia-timing/midline-color_pal.png",
         TvStandard::Pal,
+    );
+}
+
+#[test]
+fn midline_color_secam() {
+    common::run_screenshot(
+        "tia-timing/midline-color_secam.a26",
+        "tia-timing/midline-color_secam.png",
+        TvStandard::Secam,
     );
 }
 
@@ -320,6 +470,15 @@ fn midline_grp_pal() {
 }
 
 #[test]
+fn midline_grp_secam() {
+    common::run_screenshot(
+        "tia-timing/midline-grp_secam.a26",
+        "tia-timing/midline-grp_secam.png",
+        TvStandard::Secam,
+    );
+}
+
+#[test]
 fn midline_pf_ntsc() {
     common::run_screenshot(
         "tia-timing/midline-pf_ntsc.a26",
@@ -334,6 +493,15 @@ fn midline_pf_pal() {
         "tia-timing/midline-pf_pal.a26",
         "tia-timing/midline-pf_pal.png",
         TvStandard::Pal,
+    );
+}
+
+#[test]
+fn midline_pf_secam() {
+    common::run_screenshot(
+        "tia-timing/midline-pf_secam.a26",
+        "tia-timing/midline-pf_secam.png",
+        TvStandard::Secam,
     );
 }
 
@@ -356,6 +524,15 @@ fn midline_resp_pal() {
 }
 
 #[test]
+fn midline_resp_secam() {
+    common::run_screenshot(
+        "tia-timing/midline-resp_secam.a26",
+        "tia-timing/midline-resp_secam.png",
+        TvStandard::Secam,
+    );
+}
+
+#[test]
 fn midline_vblank_ntsc() {
     common::run_screenshot(
         "tia-timing/midline-vblank_ntsc.a26",
@@ -370,6 +547,15 @@ fn midline_vblank_pal() {
         "tia-timing/midline-vblank_pal.a26",
         "tia-timing/midline-vblank_pal.png",
         TvStandard::Pal,
+    );
+}
+
+#[test]
+fn midline_vblank_secam() {
+    common::run_screenshot(
+        "tia-timing/midline-vblank_secam.a26",
+        "tia-timing/midline-vblank_secam.png",
+        TvStandard::Secam,
     );
 }
 
@@ -392,6 +578,15 @@ fn nusiz_draw_pal() {
 }
 
 #[test]
+fn nusiz_draw_secam() {
+    common::run_screenshot(
+        "tia-timing/nusiz-draw_secam.a26",
+        "tia-timing/nusiz-draw_secam.png",
+        TvStandard::Secam,
+    );
+}
+
+#[test]
 fn reset_same_line_ntsc() {
     common::run_self_test("tia-timing/reset-same-line_ntsc.a26", TvStandard::Ntsc);
 }
@@ -399,6 +594,11 @@ fn reset_same_line_ntsc() {
 #[test]
 fn reset_same_line_pal() {
     common::run_self_test("tia-timing/reset-same-line_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn reset_same_line_secam() {
+    common::run_self_test("tia-timing/reset-same-line_secam.a26", TvStandard::Secam);
 }
 
 #[test]
@@ -412,6 +612,11 @@ fn rsync_pal() {
 }
 
 #[test]
+fn rsync_secam() {
+    common::run_self_test("tia-timing/rsync_secam.a26", TvStandard::Secam);
+}
+
+#[test]
 fn wsync_line_end_ntsc() {
     common::run_self_test("tia-timing/wsync-line-end_ntsc.a26", TvStandard::Ntsc);
 }
@@ -422,6 +627,11 @@ fn wsync_line_end_pal() {
 }
 
 #[test]
+fn wsync_line_end_secam() {
+    common::run_self_test("tia-timing/wsync-line-end_secam.a26", TvStandard::Secam);
+}
+
+#[test]
 fn wsync_ntsc() {
     common::run_self_test("tia-timing/wsync_ntsc.a26", TvStandard::Ntsc);
 }
@@ -429,4 +639,9 @@ fn wsync_ntsc() {
 #[test]
 fn wsync_pal() {
     common::run_self_test("tia-timing/wsync_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn wsync_secam() {
+    common::run_self_test("tia-timing/wsync_secam.a26", TvStandard::Secam);
 }

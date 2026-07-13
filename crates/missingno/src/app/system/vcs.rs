@@ -60,7 +60,7 @@ pub const CONSOLE_SWITCHES: [ConsoleSwitch; 3] = [
 fn frame_interval(standard: TvStandard) -> Duration {
     let lines = match standard {
         TvStandard::Ntsc => 262.0,
-        TvStandard::Pal => 312.0,
+        TvStandard::Pal | TvStandard::Secam => 312.0,
     };
     Duration::from_secs_f32(lines * 228.0 / standard.master_clock_hz())
 }
@@ -157,13 +157,13 @@ fn classify_fields(fields: &[usize]) -> TvStandard {
     }
 }
 
-/// Map the library's broadcast standard onto the core's runtime standard. The
-/// core decodes NTSC and PAL; SECAM (50 Hz, PAL-like frame timing but a colour
-/// encoding the core doesn't decode) runs as PAL.
+/// Map the library's broadcast standard onto the core's runtime standard; the
+/// core decodes all three.
 fn core_tv_standard(standard: super::TvStandard) -> TvStandard {
     match standard {
         super::TvStandard::Ntsc => TvStandard::Ntsc,
-        super::TvStandard::Pal | super::TvStandard::Secam => TvStandard::Pal,
+        super::TvStandard::Pal => TvStandard::Pal,
+        super::TvStandard::Secam => TvStandard::Secam,
     }
 }
 
@@ -206,7 +206,8 @@ fn display_window(standard: TvStandard) -> DisplayWindow {
             skip: 23,
             height: 228,
         },
-        TvStandard::Pal => DisplayWindow {
+        // SECAM shares PAL's 50 Hz, 312-line field geometry.
+        TvStandard::Pal | TvStandard::Secam => DisplayWindow {
             skip: 32,
             height: 274,
         },
@@ -229,14 +230,19 @@ fn indexed_frame(frame: &Frame, standard: TvStandard) -> IndexedFrame {
         width: VISIBLE_CLOCKS as u32,
         height: window.height as u32,
         pixels: pixels.into(),
-        palette: ntsc_palette(),
+        palette: region_palette(standard),
         pixel_aspect: PIXEL_ASPECT,
     }
 }
 
 fn blank_frame() -> IndexedFrame {
     let height = display_window(TvStandard::Ntsc).height as u32;
-    IndexedFrame::blank(VISIBLE_CLOCKS as u32, height, PIXEL_ASPECT, ntsc_palette())
+    IndexedFrame::blank(
+        VISIBLE_CLOCKS as u32,
+        height,
+        PIXEL_ASPECT,
+        region_palette(TvStandard::Ntsc),
+    )
 }
 
 /// The television's vertical-sync separator. A real set integrates the incoming
@@ -456,19 +462,31 @@ fn apply_control(vcs: &mut Vcs, control: ControlId, input: ControlInput) {
     }
 }
 
-/// The core's NTSC TIA palette as the screen path's shared RGB8 slice.
-fn ntsc_palette() -> std::sync::Arc<[RGB8]> {
+/// The core's TIA palette for a standard as the screen path's shared RGB8 slice
+/// — NTSC/PAL hue decode, or SECAM's luma-only 8 colours.
+fn region_palette(standard: TvStandard) -> std::sync::Arc<[RGB8]> {
     use std::sync::OnceLock;
-    static PALETTE: OnceLock<std::sync::Arc<[RGB8]>> = OnceLock::new();
-    PALETTE
-        .get_or_init(|| {
-            missingno_vcs::tia::palette(TvStandard::Ntsc)
-                .iter()
-                .map(|&(r, g, b)| RGB8::new(r, g, b))
-                .collect::<Vec<_>>()
-                .into()
-        })
-        .clone()
+    static PALETTES: OnceLock<[std::sync::Arc<[RGB8]>; 3]> = OnceLock::new();
+    let build = |standard| -> std::sync::Arc<[RGB8]> {
+        missingno_vcs::tia::palette(standard)
+            .iter()
+            .map(|&(r, g, b)| RGB8::new(r, g, b))
+            .collect::<Vec<_>>()
+            .into()
+    };
+    let cache = PALETTES.get_or_init(|| {
+        [
+            build(TvStandard::Ntsc),
+            build(TvStandard::Pal),
+            build(TvStandard::Secam),
+        ]
+    });
+    let index = match standard {
+        TvStandard::Ntsc => 0,
+        TvStandard::Pal => 1,
+        TvStandard::Secam => 2,
+    };
+    cache[index].clone()
 }
 
 /// The VCS under its debugging backend, adapted to the seam. Symbols,

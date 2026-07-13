@@ -779,6 +779,7 @@ pub fn palette(standard: TvStandard) -> &'static [(u8, u8, u8); 128] {
     match standard {
         TvStandard::Ntsc => &NTSC_PALETTE,
         TvStandard::Pal => &PAL_PALETTE,
+        TvStandard::Secam => &SECAM_PALETTE,
     }
 }
 
@@ -1048,3 +1049,29 @@ const PAL_PALETTE: [(u8, u8, u8); 128] = [
     (207, 207, 207),
     (230, 230, 230),
 ];
+
+/// SECAM's 8 fixed colours, indexed by the colour byte's luma nibble (bits 3-1)
+/// alone; the hue nibble is ignored. Like the NTSC/PAL tables above, these RGB
+/// values are a display-side calibration, not a hardware claim.
+const SECAM_COLOURS: [(u8, u8, u8); 8] = [
+    (0, 0, 0),       // luma 0: black
+    (33, 33, 255),   // luma 1: blue
+    (240, 60, 121),  // luma 2: red
+    (255, 80, 255),  // luma 3: magenta
+    (127, 255, 0),   // luma 4: green
+    (127, 255, 255), // luma 5: cyan
+    (255, 255, 63),  // luma 6: yellow
+    (255, 255, 255), // luma 7: white
+];
+
+/// The SECAM decode as a 128-entry table matching the NTSC/PAL shape: every
+/// colour-byte index collapses to one of the 8 luma colours, so hue is dropped.
+const SECAM_PALETTE: [(u8, u8, u8); 128] = {
+    let mut table = [(0u8, 0u8, 0u8); 128];
+    let mut i = 0;
+    while i < 128 {
+        table[i] = SECAM_COLOURS[i & 0x07];
+        i += 1;
+    }
+    table
+};

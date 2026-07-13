@@ -12,6 +12,11 @@ fn all_pairs_pal() {
 }
 
 #[test]
+fn all_pairs_secam() {
+    common::run_self_test("collision/all-pairs_secam.a26", TvStandard::Secam);
+}
+
+#[test]
 fn hmove_edge_ntsc() {
     common::run_self_test("collision/hmove-edge_ntsc.a26", TvStandard::Ntsc);
 }
@@ -19,6 +24,11 @@ fn hmove_edge_ntsc() {
 #[test]
 fn hmove_edge_pal() {
     common::run_self_test("collision/hmove-edge_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn hmove_edge_secam() {
+    common::run_self_test("collision/hmove-edge_secam.a26", TvStandard::Secam);
 }
 
 #[test]
@@ -32,6 +42,11 @@ fn latches_pal() {
 }
 
 #[test]
+fn latches_secam() {
+    common::run_self_test("collision/latches_secam.a26", TvStandard::Secam);
+}
+
+#[test]
 fn latency_swallow_ntsc() {
     common::run_self_test("collision/latency-swallow_ntsc.a26", TvStandard::Ntsc);
 }
@@ -39,6 +54,11 @@ fn latency_swallow_ntsc() {
 #[test]
 fn latency_swallow_pal() {
     common::run_self_test("collision/latency-swallow_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn latency_swallow_secam() {
+    common::run_self_test("collision/latency-swallow_secam.a26", TvStandard::Secam);
 }
 
 #[test]
@@ -52,6 +72,11 @@ fn onset_sweep_pal() {
 }
 
 #[test]
+fn onset_sweep_secam() {
+    common::run_self_test("collision/onset-sweep_secam.a26", TvStandard::Secam);
+}
+
+#[test]
 fn per_pixel_ntsc() {
     common::run_self_test("collision/per-pixel_ntsc.a26", TvStandard::Ntsc);
 }
@@ -59,6 +84,11 @@ fn per_pixel_ntsc() {
 #[test]
 fn per_pixel_pal() {
     common::run_self_test("collision/per-pixel_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn per_pixel_secam() {
+    common::run_self_test("collision/per-pixel_secam.a26", TvStandard::Secam);
 }
 
 #[test]
@@ -72,6 +102,11 @@ fn reset_phase_pal() {
 }
 
 #[test]
+fn reset_phase_secam() {
+    common::run_self_test("collision/reset-phase_secam.a26", TvStandard::Secam);
+}
+
+#[test]
 fn stuck_drift_ntsc() {
     common::run_self_test("collision/stuck-drift_ntsc.a26", TvStandard::Ntsc);
 }
@@ -79,4 +114,9 @@ fn stuck_drift_ntsc() {
 #[test]
 fn stuck_drift_pal() {
     common::run_self_test("collision/stuck-drift_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn stuck_drift_secam() {
+    common::run_self_test("collision/stuck-drift_secam.a26", TvStandard::Secam);
 }

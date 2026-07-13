@@ -10,6 +10,10 @@ pub enum TvStandard {
     #[default]
     Ntsc,
     Pal,
+    /// French SECAM: PAL's 50 Hz, 312-line field timing, but the set ignores the
+    /// TIA colour byte's hue and drives 8 fixed colours from the luma nibble
+    /// alone — so it shares PAL's master clock and differs only in colour decode.
+    Secam,
 }
 
 impl TvStandard {
@@ -17,7 +21,7 @@ impl TvStandard {
     pub fn master_clock_hz(self) -> f32 {
         match self {
             TvStandard::Ntsc => 3_579_545.0,
-            TvStandard::Pal => 3_546_894.0,
+            TvStandard::Pal | TvStandard::Secam => 3_546_894.0,
         }
     }
 
@@ -30,6 +34,7 @@ impl TvStandard {
         match self {
             TvStandard::Ntsc => "NTSC",
             TvStandard::Pal => "PAL",
+            TvStandard::Secam => "SECAM",
         }
     }
 }

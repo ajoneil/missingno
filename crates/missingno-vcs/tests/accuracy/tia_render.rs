@@ -20,6 +20,15 @@ fn colors_pal() {
 }
 
 #[test]
+fn colors_secam() {
+    common::run_screenshot(
+        "tia-render/colors_secam.a26",
+        "tia-render/colors_secam.png",
+        TvStandard::Secam,
+    );
+}
+
+#[test]
 fn draw_delay_ntsc() {
     common::run_screenshot(
         "tia-render/draw-delay_ntsc.a26",
@@ -38,6 +47,15 @@ fn draw_delay_pal() {
 }
 
 #[test]
+fn draw_delay_secam() {
+    common::run_screenshot(
+        "tia-render/draw-delay_secam.a26",
+        "tia-render/draw-delay_secam.png",
+        TvStandard::Secam,
+    );
+}
+
+#[test]
 fn missile_reset_lock_ntsc() {
     common::run_self_test("tia-render/missile-reset-lock_ntsc.a26", TvStandard::Ntsc);
 }
@@ -45,6 +63,11 @@ fn missile_reset_lock_ntsc() {
 #[test]
 fn missile_reset_lock_pal() {
     common::run_self_test("tia-render/missile-reset-lock_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn missile_reset_lock_secam() {
+    common::run_self_test("tia-render/missile-reset-lock_secam.a26", TvStandard::Secam);
 }
 
 #[test]
@@ -58,6 +81,11 @@ fn missiles_ball_pal() {
 }
 
 #[test]
+fn missiles_ball_secam() {
+    common::run_self_test("tia-render/missiles-ball_secam.a26", TvStandard::Secam);
+}
+
+#[test]
 fn nusiz_ntsc() {
     common::run_self_test("tia-render/nusiz_ntsc.a26", TvStandard::Ntsc);
 }
@@ -65,6 +93,11 @@ fn nusiz_ntsc() {
 #[test]
 fn nusiz_pal() {
     common::run_self_test("tia-render/nusiz_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn nusiz_secam() {
+    common::run_self_test("tia-render/nusiz_secam.a26", TvStandard::Secam);
 }
 
 #[test]
@@ -82,6 +115,15 @@ fn object_priority_pal() {
         "tia-render/object-priority_pal.a26",
         "tia-render/object-priority_pal.png",
         TvStandard::Pal,
+    );
+}
+
+#[test]
+fn object_priority_secam() {
+    common::run_screenshot(
+        "tia-render/object-priority_secam.a26",
+        "tia-render/object-priority_secam.png",
+        TvStandard::Secam,
     );
 }
 
@@ -104,6 +146,15 @@ fn pf_priority_pal() {
 }
 
 #[test]
+fn pf_priority_secam() {
+    common::run_screenshot(
+        "tia-render/pf-priority_secam.a26",
+        "tia-render/pf-priority_secam.png",
+        TvStandard::Secam,
+    );
+}
+
+#[test]
 fn player_reflect_ntsc() {
     common::run_self_test("tia-render/player-reflect_ntsc.a26", TvStandard::Ntsc);
 }
@@ -111,6 +162,11 @@ fn player_reflect_ntsc() {
 #[test]
 fn player_reflect_pal() {
     common::run_self_test("tia-render/player-reflect_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn player_reflect_secam() {
+    common::run_self_test("tia-render/player-reflect_secam.a26", TvStandard::Secam);
 }
 
 #[test]
@@ -124,6 +180,11 @@ fn players_pal() {
 }
 
 #[test]
+fn players_secam() {
+    common::run_self_test("tia-render/players_secam.a26", TvStandard::Secam);
+}
+
+#[test]
 fn playfield_ntsc() {
     common::run_self_test("tia-render/playfield_ntsc.a26", TvStandard::Ntsc);
 }
@@ -131,6 +192,11 @@ fn playfield_ntsc() {
 #[test]
 fn playfield_pal() {
     common::run_self_test("tia-render/playfield_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn playfield_secam() {
+    common::run_self_test("tia-render/playfield_secam.a26", TvStandard::Secam);
 }
 
 #[test]
@@ -144,6 +210,11 @@ fn playfield_reflect_pal() {
 }
 
 #[test]
+fn playfield_reflect_secam() {
+    common::run_self_test("tia-render/playfield-reflect_secam.a26", TvStandard::Secam);
+}
+
+#[test]
 fn positioning_ntsc() {
     common::run_self_test("tia-render/positioning_ntsc.a26", TvStandard::Ntsc);
 }
@@ -151,6 +222,11 @@ fn positioning_ntsc() {
 #[test]
 fn positioning_pal() {
     common::run_self_test("tia-render/positioning_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn positioning_secam() {
+    common::run_self_test("tia-render/positioning_secam.a26", TvStandard::Secam);
 }
 
 #[test]
@@ -172,6 +248,15 @@ fn score_mode_pal() {
 }
 
 #[test]
+fn score_mode_secam() {
+    common::run_screenshot(
+        "tia-render/score-mode_secam.a26",
+        "tia-render/score-mode_secam.png",
+        TvStandard::Secam,
+    );
+}
+
+#[test]
 fn vertical_delay_ntsc() {
     common::run_self_test("tia-render/vertical-delay_ntsc.a26", TvStandard::Ntsc);
 }
@@ -179,4 +264,9 @@ fn vertical_delay_ntsc() {
 #[test]
 fn vertical_delay_pal() {
     common::run_self_test("tia-render/vertical-delay_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn vertical_delay_secam() {
+    common::run_self_test("tia-render/vertical-delay_secam.a26", TvStandard::Secam);
 }
