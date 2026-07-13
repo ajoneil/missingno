@@ -1,8 +1,9 @@
-//! Play-mode side panels and the icon rail that toggles them. Borrows the
-//! debugger's rail affordance (tooltip'd icon toggles, highlighted when
-//! active) without its pane machinery. Two sections: Console (the machine's
-//! own controls, e.g. VCS switches) and Display (the shared output surface,
-//! e.g. the DMG palette).
+//! Play-mode side panels and the icon rail that toggles them. Open panels
+//! stack as titled, content-sized cards (the debugger sidebar's section look,
+//! not its resizable pane grid); the rail is the single show/hide control.
+//! Sections: Console (the machine's own controls, e.g. VCS switches), Display
+//! (the shared output surface, e.g. the DMG palette), and the Play log
+//! (this session's screenshots and prints).
 
 use iced::{
     Alignment::Center,
