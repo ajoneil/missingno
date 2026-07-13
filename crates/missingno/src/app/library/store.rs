@@ -5,6 +5,7 @@ use std::{
 
 use iced::widget::image;
 use jiff::Timestamp;
+use serde::{Deserialize, Serialize};
 
 use super::{GameEntry, activity};
 
@@ -39,10 +40,9 @@ impl GameSummary {
     }
 }
 
-/// Library grid orderings. Every key falls back to title order so ties are
-/// stable and scannable. The non-default keys await the library toolbar.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-#[allow(dead_code)]
+/// Library orderings. Every key falls back to title order so ties are stable
+/// and scannable.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub enum SortKey {
     #[default]
     LastPlayed,
@@ -52,6 +52,23 @@ pub enum SortKey {
 }
 
 impl SortKey {
+    /// Selectable keys, in toolbar order.
+    pub const ALL: [SortKey; 4] = [
+        SortKey::LastPlayed,
+        SortKey::Title,
+        SortKey::Year,
+        SortKey::MostPlayed,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SortKey::LastPlayed => "Last played",
+            SortKey::Title => "Title",
+            SortKey::Year => "Year",
+            SortKey::MostPlayed => "Most played",
+        }
+    }
+
     fn compare(self, a: &GameSummary, b: &GameSummary) -> std::cmp::Ordering {
         let by_title = |a: &GameSummary, b: &GameSummary| {
             a.entry
@@ -78,6 +95,12 @@ impl SortKey {
                 .total_cmp(&a.play_time_secs)
                 .then_with(|| by_title(a, b)),
         }
+    }
+}
+
+impl std::fmt::Display for SortKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
     }
 }
 

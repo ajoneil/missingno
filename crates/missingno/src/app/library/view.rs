@@ -12,7 +12,7 @@ use crate::app::{
         buttons, containers, fonts,
         icons::{self, Icon},
         palette::MUTED,
-        sizes::{border_l, l, m, s},
+        sizes::{border_l, l, m, s, xs},
         text as app_text,
     },
 };
@@ -44,6 +44,14 @@ pub(crate) const COVER_HEIGHT: f32 = 160.0;
 const COVER_WIDTH: f32 = 120.0;
 const CARD_MIN_WIDTH: f32 = 340.0;
 
+/// Whether the library body renders as a cover grid or a compact list.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub enum LibraryLayout {
+    #[default]
+    Grid,
+    List,
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     SelectGame(String),
@@ -51,6 +59,9 @@ pub enum Message {
     HoverGame(String),
     UnhoverGame,
     DumpCartridge,
+    SearchChanged(String),
+    SortSelected(super::store::SortKey),
+    LayoutSelected(LibraryLayout),
 }
 
 impl From<Message> for app::Message {
@@ -59,49 +70,147 @@ impl From<Message> for app::Message {
     }
 }
 
-use super::store::{GameStore, GameSummary};
+use super::store::{GameStore, GameSummary, SortKey};
 use crate::cartridge_rw;
 
+/// Everything the library page needs to render its toolbar and body.
+pub(crate) struct LibraryView<'a> {
+    pub store: &'a GameStore,
+    pub hovered_sha1: Option<&'a str>,
+    pub inserted_cartridge: Option<&'a cartridge_rw::CartridgeHeader>,
+    pub dump_progress: Option<&'a cartridge_rw::DumpProgress>,
+    pub homebrew_enabled: bool,
+    pub sort: SortKey,
+    pub layout: LibraryLayout,
+    pub search: &'a str,
+}
+
 #[allow(private_interfaces)]
-pub(crate) fn view<'a>(
-    store: &'a GameStore,
-    hovered_sha1: Option<&'a str>,
-    inserted_cartridge: Option<&'a cartridge_rw::CartridgeHeader>,
-    dump_progress: Option<&'a cartridge_rw::DumpProgress>,
-    homebrew_enabled: bool,
-) -> Element<'a, app::Message> {
+pub(crate) fn view(data: LibraryView<'_>) -> Element<'_, app::Message> {
+    let LibraryView {
+        store,
+        hovered_sha1,
+        inserted_cartridge,
+        dump_progress,
+        homebrew_enabled,
+        sort,
+        layout,
+        search,
+    } = data;
+
     if store.is_empty() && inserted_cartridge.is_none() {
         return empty_view(homebrew_enabled);
     }
 
-    let games = store.all_summaries();
-
-    // Match inserted cartridge against library by raw header title
-    let matched_sha1 = inserted_cartridge.and_then(|cart| {
-        games
-            .iter()
-            .find(|g| {
-                g.entry
-                    .header_title
-                    .as_ref()
-                    .is_some_and(|ht| ht == &cart.title)
-            })
-            .map(|g| g.entry.sha1.clone())
+    // Resolve the inserted cartridge against the whole library by raw header
+    // title — a search filter shouldn't turn a known game into an "unmatched"
+    // cartridge card.
+    let matched_game = inserted_cartridge.and_then(|cart| {
+        store.all_summaries().into_iter().find(|g| {
+            g.entry
+                .header_title
+                .as_ref()
+                .is_some_and(|ht| ht == &cart.title)
+        })
     });
 
+    let games = store.summaries_sorted(sort, search);
     let hovered_sha1 = hovered_sha1.map(|s| s.to_string());
+
+    let body: Element<'_, app::Message> = if games.is_empty() && inserted_cartridge.is_none() {
+        no_results_view(search)
+    } else {
+        match layout {
+            LibraryLayout::Grid => grid_body(
+                games,
+                inserted_cartridge,
+                dump_progress,
+                matched_game,
+                hovered_sha1,
+            ),
+            LibraryLayout::List => list_body(
+                games,
+                inserted_cartridge,
+                dump_progress,
+                matched_game,
+                hovered_sha1,
+            ),
+        }
+    };
+
+    column![toolbar(sort, layout, search), body]
+        .spacing(m())
+        .height(Fill)
+        .into()
+}
+
+/// Search field, sort picker, and grid/list toggle above the library body.
+fn toolbar<'a>(sort: SortKey, layout: LibraryLayout, search: &'a str) -> Element<'a, app::Message> {
+    use iced::widget::{pick_list, text_input};
+
+    let search_field = text_input("Search library...", search)
+        .on_input(|value| Message::SearchChanged(value).into())
+        .width(Fill);
+
+    let sort_picker = pick_list(SortKey::ALL, Some(sort), |key| {
+        Message::SortSelected(key).into()
+    });
+
+    let layout_toggle = row![
+        layout_button(
+            Icon::Grid,
+            layout == LibraryLayout::Grid,
+            LibraryLayout::Grid
+        ),
+        layout_button(
+            Icon::Menu,
+            layout == LibraryLayout::List,
+            LibraryLayout::List
+        ),
+    ]
+    .spacing(xs());
+
+    container(
+        row![search_field, sort_picker, layout_toggle]
+            .spacing(m())
+            .align_y(Center),
+    )
+    .padding([s(), l()])
+    .into()
+}
+
+fn layout_button(
+    icon: Icon,
+    active: bool,
+    target: LibraryLayout,
+) -> Element<'static, app::Message> {
+    let content = icons::m(icon);
+    let button = if active {
+        buttons::selected(content)
+    } else {
+        buttons::subtle(content)
+    };
+    button
+        .on_press(Message::LayoutSelected(target).into())
+        .into()
+}
+
+/// Cartridge-first cover grid, wrapped by column count to the viewport width.
+fn grid_body<'a>(
+    games: Vec<&'a GameSummary>,
+    inserted_cartridge: Option<&'a cartridge_rw::CartridgeHeader>,
+    dump_progress: Option<&'a cartridge_rw::DumpProgress>,
+    matched_game: Option<&'a GameSummary>,
+    hovered_sha1: Option<String>,
+) -> Element<'a, app::Message> {
+    let matched_sha1 = matched_game.map(|g| g.entry.sha1.clone());
     iced::widget::responsive(move |size| {
         let usable = size.width - l() * 2.0;
         let cols = (usable / (CARD_MIN_WIDTH + m())).max(1.0) as usize;
 
-        // Build a flat list of cards — cartridge first, then library games
         let mut all_cards: Vec<Element<'_, app::Message>> = Vec::new();
 
         if let Some(cart) = inserted_cartridge {
-            let matched_game = matched_sha1
-                .as_deref()
-                .and_then(|sha1| games.iter().find(|g| g.entry.sha1 == sha1));
-
             if let Some(game) = matched_game {
                 all_cards.push(cartridge_game_card(game, cart));
             } else {
@@ -133,11 +242,60 @@ pub(crate) fn view<'a>(
         }
 
         scrollable(
-            container(Column::with_children(content).spacing(m()).padding(l())).center_x(Fill),
+            container(
+                Column::with_children(content)
+                    .spacing(m())
+                    .padding(body_padding()),
+            )
+            .center_x(Fill),
         )
         .height(Fill)
         .into()
     })
+    .into()
+}
+
+/// Grid/list body padding — the toolbar already supplies the top gap.
+fn body_padding() -> iced::Padding {
+    iced::Padding {
+        top: 0.0,
+        right: l(),
+        bottom: l(),
+        left: l(),
+    }
+}
+
+/// Compact one-line-per-game list — the scannable option for large libraries.
+fn list_body<'a>(
+    games: Vec<&'a GameSummary>,
+    inserted_cartridge: Option<&'a cartridge_rw::CartridgeHeader>,
+    dump_progress: Option<&'a cartridge_rw::DumpProgress>,
+    matched_game: Option<&'a GameSummary>,
+    hovered_sha1: Option<String>,
+) -> Element<'a, app::Message> {
+    let mut rows: Vec<Element<'_, app::Message>> = Vec::new();
+
+    // An unmatched cartridge gets its own row on top; a matched one just
+    // appears in the list below like any other game.
+    if let (Some(cart), None) = (inserted_cartridge, matched_game) {
+        rows.push(unmatched_cartridge_card(cart, dump_progress));
+    }
+
+    for game in &games {
+        let hovered = hovered_sha1.as_deref() == Some(game.entry.sha1.as_str());
+        rows.push(list_row(game, hovered));
+    }
+
+    scrollable(
+        container(
+            Column::with_children(rows)
+                .spacing(s())
+                .padding(body_padding())
+                .max_width(LIST_MAX_WIDTH),
+        )
+        .center_x(Fill),
+    )
+    .height(Fill)
     .into()
 }
 
@@ -185,6 +343,134 @@ fn empty_view(homebrew_enabled: bool) -> Element<'static, app::Message> {
     )
     .center(Fill)
     .into()
+}
+
+/// Shown when a search filter (or an as-yet-empty library) leaves no games.
+fn no_results_view(search: &str) -> Element<'static, app::Message> {
+    let message = if search.trim().is_empty() {
+        "No games in your library yet.".to_string()
+    } else {
+        format!("No games match “{}”.", search.trim())
+    };
+    container(text(message).color(MUTED)).center(Fill).into()
+}
+
+const LIST_COVER_HEIGHT: f32 = 48.0;
+const LIST_COVER_WIDTH: f32 = 36.0;
+/// Rows stay readable rather than stretching edge-to-edge on wide windows.
+const LIST_MAX_WIDTH: f32 = 900.0;
+
+/// One compact library row: thumbnail, title, metadata, play stats.
+fn list_row(game: &GameSummary, hovered: bool) -> Element<'_, app::Message> {
+    let has_rom = !game.entry.rom_paths.is_empty();
+    let sha1 = &game.entry.sha1;
+
+    let subtitle_parts: Vec<String> = [
+        game.entry.platform.map(|p| p.name().to_string()),
+        game.entry.publisher.clone(),
+        game.entry
+            .year
+            .as_ref()
+            .map(|y| library::activity::release_year(y)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    let mut info = column![text(game.entry.display_title()).font(fonts::bold())].spacing(2);
+    if !subtitle_parts.is_empty() {
+        info = info.push(app_text::detail(subtitle_parts.join(" · ")).color(MUTED));
+    }
+
+    let stats: Element<'_, app::Message> = if let Some(last_ts) = game.last_played {
+        let last = friendly_ago(last_ts);
+        let play_time = library::activity::format_play_time(game.play_time_secs);
+        column![
+            app_text::detail(format!("Played {last}")).color(MUTED),
+            app_text::detail(play_time).color(MUTED),
+        ]
+        .spacing(2)
+        .align_x(iced::Alignment::End)
+        .into()
+    } else if game.save_count > 0 {
+        let n = game.save_count;
+        app_text::detail(format!("{n} save{}", if n == 1 { "" } else { "s" }))
+            .color(MUTED)
+            .into()
+    } else {
+        iced::widget::Space::new().into()
+    };
+
+    let mut card_row = row![
+        list_cover(game),
+        container(info.width(Fill)).width(Fill),
+        stats,
+    ]
+    .spacing(m())
+    .align_y(Center)
+    .height(LIST_COVER_HEIGHT);
+
+    if hovered && has_rom {
+        card_row = card_row.push(
+            buttons::subtle(icons::m(Icon::Play)).on_press(Message::QuickPlay(sha1.clone()).into()),
+        );
+    }
+
+    let card = container(card_row)
+        .width(Fill)
+        .padding([xs(), s()])
+        .clip(true)
+        .style(containers::card);
+
+    mouse_area(card)
+        .on_press(Message::SelectGame(sha1.clone()).into())
+        .on_enter(Message::HoverGame(sha1.clone()).into())
+        .on_exit(Message::UnhoverGame.into())
+        .interaction(iced::mouse::Interaction::Pointer)
+        .into()
+}
+
+/// Small thumbnail (or initial-letter placeholder) for a list row.
+fn list_cover(game: &GameSummary) -> Element<'_, app::Message> {
+    let radius = iced::border::Radius::from(4.0);
+    if let Some(handle) = &game.thumbnail {
+        image(handle.clone())
+            .width(LIST_COVER_WIDTH)
+            .height(LIST_COVER_HEIGHT)
+            .content_fit(iced::ContentFit::Cover)
+            .border_radius(radius)
+            .into()
+    } else {
+        let initial = game
+            .entry
+            .display_title()
+            .chars()
+            .next()
+            .unwrap_or('?')
+            .to_uppercase()
+            .next()
+            .unwrap_or('?');
+        let bg = title_color(&game.entry.display_title());
+        container(
+            text(initial)
+                .size(LIST_COVER_HEIGHT * 0.45)
+                .font(fonts::heading())
+                .color(Color::WHITE),
+        )
+        .width(LIST_COVER_WIDTH)
+        .height(LIST_COVER_HEIGHT)
+        .align_x(Center)
+        .align_y(iced::alignment::Vertical::Center)
+        .style(move |_: &iced::Theme| container::Style {
+            background: Some(bg.into()),
+            border: iced::Border {
+                radius,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
+    }
 }
 
 fn game_card(game: &GameSummary, hovered: bool) -> Element<'_, app::Message> {

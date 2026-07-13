@@ -27,6 +27,17 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                         *hovered_game = None;
                     }
                 }
+                SearchChanged(text) => {
+                    app.library_search = text;
+                }
+                SortSelected(sort) => {
+                    app.settings.library_sort = sort;
+                    app.settings.save();
+                }
+                LayoutSelected(layout) => {
+                    app.settings.library_layout = layout;
+                    app.settings.save();
+                }
                 DumpCartridge => {
                     // Find the first device with a cartridge
                     if let Some(device) = app

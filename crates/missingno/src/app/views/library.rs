@@ -132,13 +132,16 @@ impl App {
             Screen::Library { hovered_game } => hovered_game.as_deref(),
             _ => None,
         };
-        library::view::view(
-            &self.store,
-            hovered_game,
-            self.inserted_cartridge(),
-            self.cartridge_rw.dump_progress.as_ref(),
-            self.homebrew_enabled(),
-        )
+        library::view::view(library::view::LibraryView {
+            store: &self.store,
+            hovered_sha1: hovered_game,
+            inserted_cartridge: self.inserted_cartridge(),
+            dump_progress: self.cartridge_rw.dump_progress.as_ref(),
+            homebrew_enabled: self.homebrew_enabled(),
+            sort: self.settings.library_sort,
+            layout: self.settings.library_layout,
+            search: &self.library_search,
+        })
     }
 
     fn empty_detail_view(&self) -> Element<'_, Message> {

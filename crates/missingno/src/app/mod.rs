@@ -109,6 +109,9 @@ struct App {
     cartridge_rw: CartridgeRwState,
     /// Whether the hamburger menu overlay is open.
     menu_open: bool,
+    /// Live library search text. Transient — not persisted, survives screen
+    /// transitions (unlike the per-screen hover state).
+    library_search: String,
 }
 
 /// Cartridge reader/writer polling state (device detection and active-dump progress).
@@ -388,6 +391,7 @@ impl App {
             catalogue: std::sync::Arc::new(library::catalogue::Catalogue::load()),
             cartridge_rw: CartridgeRwState::default(),
             menu_open: false,
+            library_search: String::new(),
         };
 
         controls::update_bindings(

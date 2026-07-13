@@ -6,6 +6,9 @@ use std::{collections::HashMap, fmt, fs, path::PathBuf};
 use missingno_gb::ppu::types::palette::PaletteChoice;
 use serde::{Deserialize, Serialize};
 
+use crate::app::library::store::SortKey;
+use crate::app::library::view::LibraryLayout;
+
 // ── Actions ───────────────────────────────────────────────────────────
 
 /// Every bindable action — game controls and emulator controls.
@@ -229,6 +232,10 @@ struct SettingsFile {
     #[serde(default = "default_true")]
     cartridge_rw_enabled: bool,
     #[serde(default)]
+    library_sort: crate::app::library::store::SortKey,
+    #[serde(default)]
+    library_layout: crate::app::library::view::LibraryLayout,
+    #[serde(default)]
     window_width: Option<f32>,
     #[serde(default)]
     window_height: Option<f32>,
@@ -279,6 +286,8 @@ impl Default for SettingsFile {
             use_sgb_colors: true,
             frame_blending: true,
             cartridge_rw_enabled: true,
+            library_sort: SortKey::default(),
+            library_layout: LibraryLayout::default(),
             window_width: None,
             window_height: None,
             keyboard_controls: Bindings::default_keyboard(),
@@ -303,6 +312,8 @@ pub struct Settings {
     pub use_sgb_colors: bool,
     pub frame_blending: bool,
     pub cartridge_rw_enabled: bool,
+    pub library_sort: SortKey,
+    pub library_layout: LibraryLayout,
     pub window_width: Option<f32>,
     pub window_height: Option<f32>,
     pub keyboard_bindings: Bindings,
@@ -321,6 +332,8 @@ impl Default for Settings {
             use_sgb_colors: true,
             frame_blending: true,
             cartridge_rw_enabled: true,
+            library_sort: SortKey::default(),
+            library_layout: LibraryLayout::default(),
             window_width: None,
             window_height: None,
             keyboard_bindings: Bindings::default_keyboard(),
@@ -371,6 +384,8 @@ impl Settings {
                 use_sgb_colors: file.use_sgb_colors,
                 frame_blending: file.frame_blending,
                 cartridge_rw_enabled: file.cartridge_rw_enabled,
+                library_sort: file.library_sort,
+                library_layout: file.library_layout,
                 window_width: file.window_width,
                 window_height: file.window_height,
                 keyboard_bindings: keyboard,
@@ -404,6 +419,8 @@ impl Settings {
                 use_sgb_colors: file.use_sgb_colors,
                 frame_blending: true,
                 cartridge_rw_enabled: true,
+                library_sort: SortKey::default(),
+                library_layout: LibraryLayout::default(),
                 window_width: file.window_width,
                 window_height: file.window_height,
                 keyboard_bindings: keyboard,
@@ -442,6 +459,8 @@ impl Settings {
             use_sgb_colors: self.use_sgb_colors,
             frame_blending: self.frame_blending,
             cartridge_rw_enabled: self.cartridge_rw_enabled,
+            library_sort: self.library_sort,
+            library_layout: self.library_layout,
             window_width: self.window_width,
             window_height: self.window_height,
             keyboard_controls: self.keyboard_bindings.clone(),
