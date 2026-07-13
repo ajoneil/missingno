@@ -50,6 +50,51 @@ impl App {
                     self.record_screenshot(capture);
                 }
             }
+            Message::ExportCapture(index) => {
+                let default_name = self
+                    .current_game
+                    .as_ref()
+                    .and_then(|g| g.session.as_ref())
+                    .and_then(|s| s.events.get(index))
+                    .map(|e| match e.kind {
+                        library::activity::EventKind::Print { .. } => "print.png",
+                        _ => "screenshot.png",
+                    })
+                    .unwrap_or("capture.png");
+                let dialog = rfd::AsyncFileDialog::new()
+                    .set_file_name(default_name)
+                    .add_filter("PNG Image", &["png"]);
+                return Task::perform(dialog.save_file(), move |handle| {
+                    Message::ExportCaptureSaved(index, handle)
+                });
+            }
+            Message::ExportCaptureSaved(index, Some(handle)) => {
+                if let Some(session) = self.current_game.as_ref().and_then(|g| g.session.as_ref())
+                    && let Some(event) = session.events.get(index)
+                {
+                    let image = match &event.kind {
+                        library::activity::EventKind::Screenshot { frame } => {
+                            let (width, height) = frame.dimensions();
+                            let rgba = frame
+                                .rgba
+                                .as_ref()
+                                .map(|r| r.data.clone())
+                                .unwrap_or_else(|| frame.to_rgba());
+                            image::RgbaImage::from_raw(width, height, rgba)
+                        }
+                        library::activity::EventKind::Print { print } => {
+                            let rgba: Vec<u8> =
+                                print.pixels.iter().flat_map(|&g| [g, g, g, 0xff]).collect();
+                            image::RgbaImage::from_raw(print.width, print.height, rgba)
+                        }
+                        _ => None,
+                    };
+                    if let Some(image) = image {
+                        let _ = image.save(handle.path());
+                    }
+                }
+            }
+            Message::ExportCaptureSaved(_, None) => {}
             Message::DismissScreenshotToast => {
                 self.screenshot_toast = None;
             }

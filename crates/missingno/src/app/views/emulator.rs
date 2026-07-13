@@ -47,7 +47,7 @@ impl App {
         let prints = self.store.live_prints();
         let (mut si, mut pi) = (0, 0);
         let mut log = Vec::new();
-        for event in &session.events {
+        for (event_index, event) in session.events.iter().enumerate() {
             match &event.kind {
                 EventKind::Screenshot { .. } => {
                     if let Some(handle) = screenshots.get(si) {
@@ -55,6 +55,7 @@ impl App {
                             kind: CaptureKind::Screenshot,
                             handle,
                             at: event.at,
+                            event_index,
                         });
                     }
                     si += 1;
@@ -65,6 +66,7 @@ impl App {
                             kind: CaptureKind::Print,
                             handle,
                             at: event.at,
+                            event_index,
                         });
                     }
                     pi += 1;

@@ -318,6 +318,11 @@ enum Message {
     TogglePause,
     Reset,
     TakeScreenshot,
+    /// Export the session capture at this event index to a PNG (opens a dialog).
+    ExportCapture(usize),
+    /// The dialog resolved; write the capture at this event index, if a path
+    /// was chosen.
+    ExportCaptureSaved(usize, Option<rfd::FileHandle>),
 
     /// A digital control (seam control id, pressed).
     SetControl(u8, bool),
@@ -457,6 +462,8 @@ impl App {
             | Message::TogglePause
             | Message::Reset
             | Message::TakeScreenshot
+            | Message::ExportCapture(_)
+            | Message::ExportCaptureSaved(..)
             | Message::DismissScreenshotToast
             | Message::SetControl(..)
             | Message::SetAxis(..)

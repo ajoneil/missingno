@@ -74,6 +74,8 @@ pub struct PlayLogEntry<'a> {
     pub kind: CaptureKind,
     pub handle: &'a image::Handle,
     pub at: jiff::Timestamp,
+    /// Index into the session's events, for export.
+    pub event_index: usize,
 }
 
 /// The vertical icon rail. Content-driven: an icon appears only for a section
@@ -210,7 +212,12 @@ fn playlog_body(entries: &[PlayLogEntry]) -> Element<'static, app::Message> {
         col = col.push(
             column![
                 image(entry.handle.clone()).width(Fill),
-                app_text::detail(caption).color(MUTED),
+                row![
+                    app_text::detail(caption).color(MUTED).width(Fill),
+                    buttons::subtle(icons::m(Icon::Download))
+                        .on_press(app::Message::ExportCapture(entry.event_index)),
+                ]
+                .align_y(Center),
             ]
             .spacing(xs()),
         );
