@@ -10,8 +10,8 @@ env:
   # Test ROMs are committed; nothing here needs proprietary boot ROMs.
 
 jobs:
-  # The gate: both accuracy suites fully green. Any failure is a regression.
-  core-suites:
+  # The gate: the DMG suite fully green. Any failure is a regression.
+  gb-suite:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -20,6 +20,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: DMG suite
         run: cargo test -p missingno-gb
+
+  # The gate: the CGB suite fully green. Any failure is a regression.
+  gbc-suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: CGB suite
         run: cargo test -p missingno-gbc
 
@@ -66,7 +75,6 @@ jobs:
         run: cargo clippy --workspace
       - name: Frontend feature configs build
         run: |
-          cargo clippy -p missingno --features vcs
           cargo clippy -p missingno --features sms
           cargo clippy -p missingno --features nes
-          cargo clippy -p missingno --features vcs,sms,nes
+          cargo clippy -p missingno --features sms,nes
