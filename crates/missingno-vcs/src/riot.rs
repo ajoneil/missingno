@@ -23,16 +23,23 @@ impl Port {
     }
 }
 
+/// The interval timer's state: counting down; the one-cycle underflow
+/// coincidence (an INTIM read here must not clear the flag — datasheet
+/// exception); then free-running one step per cycle until INTIM is read.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TimerPhase {
+    Counting,
+    UnderflowedThisCycle,
+    FreeRunning,
+}
+
 pub struct Riot {
     pub ram: [u8; 128],
     timer: u8,
     /// Prescaler divisor selected by TIM1T/TIM8T/TIM64T/TIM1024T (1/8/64/1024).
     interval: u16,
     prescaler: u16,
-    timer_underflowed: bool,
-    /// Underflow landed at the last tick; an INTIM read this cycle coincides
-    /// with the interrupt and must not clear the flag (datasheet exception).
-    timer_just_underflowed: bool,
+    timer_phase: TimerPhase,
     /// Port A = joystick lines (active-low, port 1 in the high nibble);
     /// port B = console switches (active-low momentaries).
     port_a: Port,
@@ -55,8 +62,7 @@ impl Riot {
             timer: 0,
             interval: 1024,
             prescaler: 0,
-            timer_underflowed: false,
-            timer_just_underflowed: false,
+            timer_phase: TimerPhase::Counting,
             port_a: Port {
                 output: 0,
                 pins: 0xFF,
@@ -107,15 +113,22 @@ impl Riot {
     }
 
     fn interrupt_flags(&self) -> u8 {
-        let timer = if self.timer_underflowed { 0x80 } else { 0x00 };
+        let timer = if self.timer_phase == TimerPhase::Counting {
+            0x00
+        } else {
+            0x80
+        };
         let pa7 = if self.pa7_flag { 0x40 } else { 0x00 };
         timer | pa7
     }
 
     /// One CPU-clock tick.
     pub fn tick(&mut self) {
-        self.timer_just_underflowed = false;
-        if self.timer_underflowed {
+        // The underflow coincidence lasts one cycle, then the timer free-runs.
+        if self.timer_phase == TimerPhase::UnderflowedThisCycle {
+            self.timer_phase = TimerPhase::FreeRunning;
+        }
+        if self.timer_phase == TimerPhase::FreeRunning {
             self.timer = self.timer.wrapping_sub(1);
             return;
         }
@@ -123,8 +136,7 @@ impl Riot {
         if self.prescaler >= self.interval {
             self.prescaler = 0;
             if self.timer == 0 {
-                self.timer_underflowed = true;
-                self.timer_just_underflowed = true;
+                self.timer_phase = TimerPhase::UnderflowedThisCycle;
                 self.timer = 0xFF;
             } else {
                 self.timer -= 1;
@@ -159,8 +171,8 @@ impl Riot {
             }
             _ => {
                 let value = self.timer;
-                if self.timer_underflowed && !self.timer_just_underflowed {
-                    self.timer_underflowed = false;
+                if self.timer_phase == TimerPhase::FreeRunning {
+                    self.timer_phase = TimerPhase::Counting;
                     self.prescaler = 0;
                 }
                 value
@@ -194,7 +206,7 @@ impl Riot {
             // First decrement one clock after the write: underflow lands
             // at (value x divisor) + 1 clocks.
             self.prescaler = self.interval - 1;
-            self.timer_underflowed = false;
+            self.timer_phase = TimerPhase::Counting;
             return;
         }
         match register & 0x07 {

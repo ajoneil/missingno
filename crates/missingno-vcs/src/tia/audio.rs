@@ -3,6 +3,43 @@
 //! are the community-documented behavioural model; their gate-level
 //! structure is unanalysed territory.
 
+/// The AUDCx waveform modes, named by mechanism in the community/Fries model
+/// this channel implements (the TIA's audio gate structure is unanalysed
+/// silicon; a few names follow implementation consensus over the Programmer's
+/// Guide's labels — noted per variant).
+#[derive(Clone, Copy)]
+enum Waveform {
+    Silence,    // 0x0, 0xB
+    Poly4,      // 0x1
+    Poly4Div31, // 0x2 — Fries model; the Programmer's Guide labels this div-15
+    Poly5Poly4, // 0x3
+    PureTone,   // 0x4, 0x5 — ÷2 square
+    Div31Tone,  // 0x6, 0xA
+    Poly5,      // 0x7, 0x9 — our model omits 0x7's Guide-documented extra ÷2
+    Poly9Noise, // 0x8 — 511-period white noise
+    Div6Tone,   // 0xC, 0xD — ÷3 prescale then ÷2
+    Div93Tone,  // 0xE — ÷3 prescale then ÷31
+    Poly5Div6,  // 0xF
+}
+
+impl Waveform {
+    fn from_control(control: u8) -> Self {
+        match control & 0x0F {
+            0x0 | 0xB => Self::Silence,
+            0x1 => Self::Poly4,
+            0x2 => Self::Poly4Div31,
+            0x3 => Self::Poly5Poly4,
+            0x4 | 0x5 => Self::PureTone,
+            0x6 | 0xA => Self::Div31Tone,
+            0x7 | 0x9 => Self::Poly5,
+            0x8 => Self::Poly9Noise,
+            0xC | 0xD => Self::Div6Tone,
+            0xE => Self::Div93Tone,
+            _ => Self::Poly5Div6,
+        }
+    }
+}
+
 pub struct Channel {
     /// AUDC waveform select, AUDF frequency divisor, AUDV volume.
     pub control: u8,
@@ -82,42 +119,42 @@ impl Channel {
     }
 
     fn clock_waveform(&mut self) {
-        self.output = match self.control & 0x0F {
-            0x0 | 0xB => true,
-            0x1 => self.poly4_clock(),
-            0x2 => {
+        self.output = match Waveform::from_control(self.control) {
+            Waveform::Silence => true,
+            Waveform::Poly4 => self.poly4_clock(),
+            Waveform::Poly4Div31 => {
                 let gate = self.div31_clock();
                 if gate {
                     self.poly4_clock();
                 }
                 self.poly4 & 1 != 0
             }
-            0x3 => {
+            Waveform::Poly5Poly4 => {
                 if self.poly5_clock() {
                     self.poly4_clock();
                 }
                 self.poly4 & 1 != 0
             }
-            0x4 | 0x5 => {
+            Waveform::PureTone => {
                 self.tone = !self.tone;
                 self.tone
             }
-            0x6 | 0xA => self.div31_clock(),
-            0x7 | 0x9 => self.poly5_clock(),
-            0x8 => self.poly9_clock(),
-            0xC | 0xD => {
+            Waveform::Div31Tone => self.div31_clock(),
+            Waveform::Poly5 => self.poly5_clock(),
+            Waveform::Poly9Noise => self.poly9_clock(),
+            Waveform::Div6Tone => {
                 if self.third_rate() {
                     self.tone = !self.tone;
                 }
                 self.tone
             }
-            0xE => {
+            Waveform::Div93Tone => {
                 if self.third_rate() {
                     self.tone = self.div31_clock();
                 }
                 self.tone
             }
-            _ => {
+            Waveform::Poly5Div6 => {
                 if self.third_rate() {
                     self.tone = self.poly5_clock();
                 }
