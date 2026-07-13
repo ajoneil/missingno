@@ -215,6 +215,15 @@ impl App {
         }
     }
 
+    /// Terminate the emu thread and wait (bounded) for it to tear down its
+    /// audio device. Run on every app-close path before `window::close` so the
+    /// cpal stream is destroyed on the emu thread, not left to a teardown race.
+    pub(super) fn shutdown_emu(&self) {
+        if let Some(handle) = &self.emu {
+            handle.shutdown();
+        }
+    }
+
     pub(super) fn pause(&mut self) {
         // Recover the payload from the emu thread so all inspection and saving
         // paths work synchronously while paused.

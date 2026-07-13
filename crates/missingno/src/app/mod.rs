@@ -530,6 +530,7 @@ impl App {
                         // Recover the console and flush SRAM before exiting.
                         self.pause();
                         self.end_current_session();
+                        self.shutdown_emu();
                         return window::latest().and_then(window::close);
                     }
                     None => {}
@@ -652,6 +653,7 @@ impl App {
                 if matches!(self.game, Game::Loaded(_)) {
                     self.pending_action = Some(PendingAction::CloseApp);
                 } else {
+                    self.shutdown_emu();
                     return window::latest().and_then(window::close);
                 }
             }

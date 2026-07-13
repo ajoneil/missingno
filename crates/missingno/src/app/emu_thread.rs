@@ -76,6 +76,10 @@ pub enum EmuCommand {
     /// persists any final SRAM from the recovered payload synchronously.
     Pause,
     Reset,
+    /// Drop the audio device and terminate the thread. The thread acknowledges
+    /// on the shutdown-ack channel once the cpal stream is destroyed, so the UI
+    /// can hold the process open until teardown completes.
+    Shutdown,
     SetControl(ControlId, ControlInput),
     SetBreakpoint(u16),
     ClearBreakpoint(u16),
@@ -111,6 +115,7 @@ pub struct EmuHandle {
     status: StatusSlot,
     snapshot: SnapshotSlot,
     returns: Arc<Mutex<Receiver<Payload>>>,
+    shutdown_ack: Arc<Mutex<Receiver<()>>>,
 }
 
 // The snapshot slot holds a `DebugView`, which isn't `Debug`; a hand-rolled
@@ -150,14 +155,25 @@ impl EmuHandle {
         self.recover()
     }
 
-    /// Recover the payload the thread returned in response to `Pause`,
-    /// `Shutdown`, or a breakpoint stop.
+    /// Recover the payload the thread returned in response to `Pause` or a
+    /// breakpoint stop.
     pub fn recover(&self) -> Option<Payload> {
         self.returns
             .lock()
             .ok()?
             .recv_timeout(Duration::from_millis(500))
             .ok()
+    }
+
+    /// Drop the thread's audio device and terminate it, blocking (bounded)
+    /// until it confirms teardown. Called on app close so the cpal stream is
+    /// destroyed on the emu thread before the process exits — otherwise the OS
+    /// audio backend can invoke the stream callback into freed memory.
+    pub fn shutdown(&self) {
+        self.send(EmuCommand::Shutdown);
+        if let Ok(ack) = self.shutdown_ack.lock() {
+            let _ = ack.recv_timeout(Duration::from_millis(500));
+        }
     }
 }
 
@@ -170,6 +186,7 @@ pub fn subscription_worker() -> impl iced::futures::Stream<Item = EmuEvent> {
     let (event_tx, event_rx) = unbounded::<EmuEvent>();
     let (command_tx, command_rx) = channel::<EmuCommand>();
     let (return_tx, return_rx) = channel::<Payload>();
+    let (shutdown_ack_tx, shutdown_ack_rx) = channel::<()>();
     let frames: FrameSlot = Arc::new(Mutex::new(None));
     let status: StatusSlot = Arc::new(Mutex::new(None));
     let snapshot: SnapshotSlot = Arc::new(Mutex::new(None));
@@ -180,6 +197,7 @@ pub fn subscription_worker() -> impl iced::futures::Stream<Item = EmuEvent> {
         status: status.clone(),
         snapshot: snapshot.clone(),
         returns: Arc::new(Mutex::new(return_rx)),
+        shutdown_ack: Arc::new(Mutex::new(shutdown_ack_rx)),
     };
     let _ = event_tx.unbounded_send(EmuEvent::Started(handle));
 
@@ -190,6 +208,7 @@ pub fn subscription_worker() -> impl iced::futures::Stream<Item = EmuEvent> {
             run_emu_thread(
                 command_rx,
                 return_tx,
+                shutdown_ack_tx,
                 frames,
                 status,
                 snapshot,
@@ -206,6 +225,7 @@ type EventSink = iced::futures::channel::mpsc::UnboundedSender<EmuEvent>;
 fn run_emu_thread(
     commands: Receiver<EmuCommand>,
     returns: Sender<Payload>,
+    shutdown_ack: Sender<()>,
     frames: FrameSlot,
     status: StatusSlot,
     snapshot: SnapshotSlot,
@@ -213,16 +233,21 @@ fn run_emu_thread(
 ) {
     // Audio device lives on this thread (cpal's Stream is `!Send`).
     let mut audio = AudioOutput::new();
-    let mut state = EmuLoop::new(frames, status, snapshot, events, returns);
+    let mut state = EmuLoop::new(frames, status, snapshot, events, returns, shutdown_ack);
 
-    loop {
+    'thread: loop {
         if state.running() {
             // Drain pending commands without blocking, then emulate one frame.
             loop {
                 match commands.try_recv() {
-                    Ok(command) => state.handle(command),
+                    Ok(command) => {
+                        state.handle(command);
+                        if state.shutdown_requested() {
+                            break 'thread;
+                        }
+                    }
                     Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => return,
+                    Err(TryRecvError::Disconnected) => break 'thread,
                 }
             }
             if state.running() {
@@ -234,12 +259,23 @@ fn run_emu_thread(
             // Idle: block until the next command (with a timeout so a paused
             // thread stays responsive if the UI drops the channel).
             match commands.recv_timeout(Duration::from_millis(200)) {
-                Ok(command) => state.handle(command),
+                Ok(command) => {
+                    state.handle(command);
+                    if state.shutdown_requested() {
+                        break 'thread;
+                    }
+                }
                 Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => return,
+                Err(RecvTimeoutError::Disconnected) => break 'thread,
             }
         }
     }
+
+    // Destroy the cpal stream on this thread before acknowledging, so the OS
+    // audio backend can't call the stream callback into freed memory once the
+    // process starts tearing down. The UI's `shutdown()` blocks on this ack.
+    drop(audio);
+    state.confirm_shutdown();
 }
 
 struct EmuLoop {
@@ -249,6 +285,8 @@ struct EmuLoop {
     snapshot: SnapshotSlot,
     events: EventSink,
     returns: Sender<Payload>,
+    shutdown_ack: Sender<()>,
+    shutdown_requested: bool,
     sram_countdown: Option<u32>,
     next_deadline: Instant,
 }
@@ -260,6 +298,7 @@ impl EmuLoop {
         snapshot: SnapshotSlot,
         events: EventSink,
         returns: Sender<Payload>,
+        shutdown_ack: Sender<()>,
     ) -> Self {
         Self {
             payload: None,
@@ -268,6 +307,8 @@ impl EmuLoop {
             snapshot,
             events,
             returns,
+            shutdown_ack,
+            shutdown_requested: false,
             sram_countdown: None,
             next_deadline: Instant::now(),
         }
@@ -275,6 +316,15 @@ impl EmuLoop {
 
     fn running(&self) -> bool {
         self.payload.is_some()
+    }
+
+    fn shutdown_requested(&self) -> bool {
+        self.shutdown_requested
+    }
+
+    /// Confirm to the UI that the thread has torn down and is exiting.
+    fn confirm_shutdown(&self) {
+        let _ = self.shutdown_ack.send(());
     }
 
     fn handle(&mut self, command: EmuCommand) {
@@ -285,6 +335,7 @@ impl EmuLoop {
                 self.next_deadline = Instant::now();
             }
             EmuCommand::Pause => self.return_payload(),
+            EmuCommand::Shutdown => self.shutdown_requested = true,
             EmuCommand::Reset => {
                 if let Some(payload) = &mut self.payload {
                     payload.reset();
