@@ -67,6 +67,11 @@ const TIA_PF_WRITE_HC: u8 = TIA_WRITE_HC + 2;
 const TIA_STROBE_RISE_HC: u8 = TIA_WRITE_HC - 2;
 /// RSYNC's counter reset lands the wrap 3.5 colour clocks after the write end.
 const TIA_RSYNC_HC: u8 = TIA_WRITE_HC + 7;
+/// Reset-strobe countdown milestones (half-clocks until the write commits): the
+/// decoded rise holds the missile START decode (m10_rrace window), then the
+/// scan-kill leads the counter plant by one half-clock.
+const RESET_RISE_HC: u8 = 3;
+const RESET_KILL_HC: u8 = 1;
 
 /// The TIA's φ0 (÷3) divider phase: CPU cycles begin where the line position
 /// ≡ this (mod 3). RSYNC requantises the divider with the counter, so the
@@ -255,7 +260,7 @@ impl Vcs {
         for slot in &mut self.pending_tia_writes {
             if let Some(write) = slot {
                 write.hc_until_effective -= 1;
-                if write.hc_until_effective == 3 {
+                if write.hc_until_effective == RESET_RISE_HC {
                     // The strobe's decoded rise holds the missile START
                     // decode until the plant (die window −2..+1, m10_rrace).
                     match u16::from(write.register) {
@@ -263,7 +268,7 @@ impl Vcs {
                         crate::tia::registers::RESM1 => self.tia.missile_reset_rise(1),
                         _ => {}
                     }
-                } else if write.hc_until_effective == 1 {
+                } else if write.hc_until_effective == RESET_KILL_HC {
                     // The missile reset's scan-kill leads its plant.
                     match u16::from(write.register) {
                         crate::tia::registers::RESM0 => self.tia.missile_reset_kill(0),

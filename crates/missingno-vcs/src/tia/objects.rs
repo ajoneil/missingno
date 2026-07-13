@@ -41,6 +41,16 @@ impl Divider {
         self.phase == 0
     }
 
+    /// The current sub-phase within the ÷4 cycle (0–3).
+    fn phase(&self) -> u8 {
+        self.phase
+    }
+
+    /// Re-phase the ring to an absolute MOTCK position (a RESxx landing).
+    fn rephase(&mut self, clk: u8) {
+        self.phase = clk & 3;
+    }
+
     /// RESxx async-grounds the ring to its pinned state — N868 high, N1480 low,
     /// two MOTCK edges short of the wrap: the release-coincident edge drops
     /// N868 and the next edge fires N1480.
@@ -49,25 +59,53 @@ impl Divider {
     }
 }
 
+/// The eight NUSIZ player/copy modes (bits 0–2); missile width is separate.
+#[derive(Clone, Copy)]
+enum NusizMode {
+    OneCopy,
+    TwoCopiesClose,
+    TwoCopiesMedium,
+    ThreeCopiesClose,
+    TwoCopiesWide,
+    DoubleSizePlayer,
+    ThreeCopiesMedium,
+    QuadSizePlayer,
+}
+
+impl NusizMode {
+    fn from_nusiz(nusiz: u8) -> Self {
+        match nusiz & 0x07 {
+            1 => Self::TwoCopiesClose,
+            2 => Self::TwoCopiesMedium,
+            3 => Self::ThreeCopiesClose,
+            4 => Self::TwoCopiesWide,
+            5 => Self::DoubleSizePlayer,
+            6 => Self::ThreeCopiesMedium,
+            7 => Self::QuadSizePlayer,
+            _ => Self::OneCopy,
+        }
+    }
+}
+
 /// START decode counts per NUSIZ player mode: the main copy (the wrap, count 39)
 /// plus the close (count 3), medium (count 7) and far (count 15) copies the mode
 /// enables — the LFSR decode counts (wired-NOR on the position counter).
 fn copy_decodes(mode: u8) -> &'static [u8] {
-    match mode & 0x07 {
-        1 => &[MAIN_DECODE, 3],
-        2 => &[MAIN_DECODE, 7],
-        3 => &[MAIN_DECODE, 3, 7],
-        4 => &[MAIN_DECODE, 15],
-        6 => &[MAIN_DECODE, 7, 15],
+    match NusizMode::from_nusiz(mode) {
+        NusizMode::TwoCopiesClose => &[MAIN_DECODE, 3],
+        NusizMode::TwoCopiesMedium => &[MAIN_DECODE, 7],
+        NusizMode::ThreeCopiesClose => &[MAIN_DECODE, 3, 7],
+        NusizMode::TwoCopiesWide => &[MAIN_DECODE, 15],
+        NusizMode::ThreeCopiesMedium => &[MAIN_DECODE, 7, 15],
         _ => &[MAIN_DECODE],
     }
 }
 
 /// Clocks per pixel for player modes (double/quad stretch).
 fn player_pixel_clocks(mode: u8) -> u8 {
-    match mode & 0x07 {
-        5 => 2,
-        7 => 4,
+    match NusizMode::from_nusiz(mode) {
+        NusizMode::DoubleSizePlayer => 2,
+        NusizMode::QuadSizePlayer => 4,
         _ => 1,
     }
 }
@@ -134,7 +172,7 @@ impl Player {
     /// Colour-clock position within the line (0..160) — position count × 4 plus
     /// the ÷4 divider phase.
     pub fn counter(&self) -> u8 {
-        self.position * 4 + self.div.phase
+        self.position * 4 + self.div.phase()
     }
 
     /// One motion clock (MOTCK edge).
@@ -269,15 +307,15 @@ impl Missile {
     /// RESMPx released: park at the re-centre landing — the missile's
     /// first pixel lands 4/6/10 clocks right of the player's per size.
     pub fn release_at(&mut self, player_counter: u8, player_mode: u8) {
-        let centre: u16 = match player_mode & 0x07 {
-            5 => 8,
-            7 => 12,
+        let centre: u16 = match NusizMode::from_nusiz(player_mode) {
+            NusizMode::DoubleSizePlayer => 8,
+            NusizMode::QuadSizePlayer => 12,
             _ => 5,
         };
         let clk = ((u16::from(player_counter) + u16::from(COUNTER_RANGE) - centre)
             % u16::from(COUNTER_RANGE)) as u8;
         self.position = clk / 4;
-        self.div.phase = clk & 3;
+        self.div.rephase(clk);
     }
 
     fn width(&self) -> u8 {

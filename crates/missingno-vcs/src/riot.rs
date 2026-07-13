@@ -5,6 +5,24 @@
 //! after underflow it free-runs at one step per CPU cycle until INTIM is
 //! read, which also clears the underflow flag and re-arms the interval.
 
+/// One RIOT I/O port: the output register software wrote (ORA/ORB), the
+/// external pin levels, and the data-direction register selecting per bit
+/// which side drives.
+#[derive(Clone, Copy)]
+struct Port {
+    output: u8,
+    pins: u8,
+    ddr: u8,
+}
+
+impl Port {
+    /// A read sees the output register where DDR selects output, the external
+    /// level where it selects input.
+    fn level(&self) -> u8 {
+        (self.output & self.ddr) | (self.pins & !self.ddr)
+    }
+}
+
 pub struct Riot {
     pub ram: [u8; 128],
     timer: u8,
@@ -15,15 +33,10 @@ pub struct Riot {
     /// Underflow landed at the last tick; an INTIM read this cycle coincides
     /// with the interrupt and must not clear the flag (datasheet exception).
     timer_just_underflowed: bool,
-    /// Output registers (ORA/ORB) hold what software wrote, whole, across DDR flips.
-    output_a: u8,
-    output_b: u8,
-    /// External pin levels: joystick lines on A (active-low, port 1 in the
-    /// high nibble), console switches on B (active-low momentaries).
-    pins_a: u8,
-    pins_b: u8,
-    ddr_a: u8,
-    ddr_b: u8,
+    /// Port A = joystick lines (active-low, port 1 in the high nibble);
+    /// port B = console switches (active-low momentaries).
+    port_a: Port,
+    port_b: Port,
     /// PA7 edge detect: flag set on the configured pin transition.
     pa7_flag: bool,
     pa7_positive_edge: bool,
@@ -44,13 +57,17 @@ impl Riot {
             prescaler: 0,
             timer_underflowed: false,
             timer_just_underflowed: false,
-            output_a: 0,
-            output_b: 0,
-            pins_a: 0xFF,
-            // Reset/Select released, Color mode, both difficulties Beginner.
-            pins_b: 0x0B,
-            ddr_a: 0,
-            ddr_b: 0,
+            port_a: Port {
+                output: 0,
+                pins: 0xFF,
+                ddr: 0,
+            },
+            port_b: Port {
+                output: 0,
+                // Reset/Select released, Color mode, both difficulties Beginner.
+                pins: 0x0B,
+                ddr: 0,
+            },
             pa7_flag: false,
             pa7_positive_edge: false,
         }
@@ -60,9 +77,9 @@ impl Riot {
     pub fn set_pin_a(&mut self, mask: u8, high: bool) {
         let before = self.pa7_level();
         if high {
-            self.pins_a |= mask;
+            self.port_a.pins |= mask;
         } else {
-            self.pins_a &= !mask;
+            self.port_a.pins &= !mask;
         }
         self.pa7_edge(before);
     }
@@ -70,26 +87,16 @@ impl Riot {
     /// A port-B pin driven from outside (console switches).
     pub fn set_pin_b(&mut self, mask: u8, high: bool) {
         if high {
-            self.pins_b |= mask;
+            self.port_b.pins |= mask;
         } else {
-            self.pins_b &= !mask;
+            self.port_b.pins &= !mask;
         }
-    }
-
-    /// Reads return pin levels: output bits from the register, input bits
-    /// from the outside world.
-    fn port_a_pins(&self) -> u8 {
-        (self.output_a & self.ddr_a) | (self.pins_a & !self.ddr_a)
-    }
-
-    fn port_b_pins(&self) -> u8 {
-        (self.output_b & self.ddr_b) | (self.pins_b & !self.ddr_b)
     }
 
     /// The edge detect watches the PA7 pin — which follows ORA when the
     /// line is an output, so software can raise the flag by itself.
     fn pa7_level(&self) -> bool {
-        self.port_a_pins() & 0x80 != 0
+        self.port_a.level() & 0x80 != 0
     }
 
     fn pa7_edge(&mut self, was_high: bool) {
@@ -128,10 +135,10 @@ impl Riot {
     /// Inspection read: no flag clearing, no re-arming.
     pub fn peek(&self, register: u16) -> u8 {
         match register & 0x07 {
-            0x00 => self.port_a_pins(),
-            0x01 => self.ddr_a,
-            0x02 => self.port_b_pins(),
-            0x03 => self.ddr_b,
+            0x00 => self.port_a.level(),
+            0x01 => self.port_a.ddr,
+            0x02 => self.port_b.level(),
+            0x03 => self.port_b.ddr,
             0x05 | 0x07 => self.interrupt_flags(),
             _ => self.timer,
         }
@@ -139,10 +146,10 @@ impl Riot {
 
     pub fn read(&mut self, register: u16) -> u8 {
         match register & 0x07 {
-            0x00 => self.port_a_pins(),
-            0x01 => self.ddr_a,
-            0x02 => self.port_b_pins(),
-            0x03 => self.ddr_b,
+            0x00 => self.port_a.level(),
+            0x01 => self.port_a.ddr,
+            0x02 => self.port_b.level(),
+            0x03 => self.port_b.ddr,
             // Reading the flag register clears the PA7 flag and leaves the
             // timer flag intact; only timer-register accesses clear that.
             0x05 | 0x07 => {
@@ -194,14 +201,14 @@ impl Riot {
             0x00 | 0x01 => {
                 let before = self.pa7_level();
                 if register & 0x07 == 0x00 {
-                    self.output_a = value;
+                    self.port_a.output = value;
                 } else {
-                    self.ddr_a = value;
+                    self.port_a.ddr = value;
                 }
                 self.pa7_edge(before);
             }
-            0x02 => self.output_b = value,
-            0x03 => self.ddr_b = value,
+            0x02 => self.port_b.output = value,
+            0x03 => self.port_b.ddr = value,
             _ => {}
         }
     }

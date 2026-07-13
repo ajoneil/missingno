@@ -20,6 +20,7 @@ use hsync::{Beam, HSyncCounter};
 use objects::{Ball, Missile, Player, Playfield};
 
 use crate::TvStandard;
+use std::ops::{Index, IndexMut};
 
 pub const CLOCKS_PER_LINE: u16 = 228;
 pub const HBLANK_CLOCKS: u16 = 68;
@@ -123,6 +124,68 @@ const MOVABLES: [MovableIndex; 5] = [
     MovableIndex::Bl,
 ];
 
+/// A value per movable object: named fields for a known object, `Index` by a
+/// runtime [`MovableIndex`] for the sequencer's loops, `iter` to visit all five.
+#[derive(Clone, Copy)]
+struct Movables<T> {
+    p0: T,
+    p1: T,
+    m0: T,
+    m1: T,
+    bl: T,
+}
+
+impl<T: Copy> Movables<T> {
+    fn splat(value: T) -> Self {
+        Movables {
+            p0: value,
+            p1: value,
+            m0: value,
+            m1: value,
+            bl: value,
+        }
+    }
+
+    fn map<U>(self, mut f: impl FnMut(T) -> U) -> Movables<U> {
+        Movables {
+            p0: f(self.p0),
+            p1: f(self.p1),
+            m0: f(self.m0),
+            m1: f(self.m1),
+            bl: f(self.bl),
+        }
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (MovableIndex, T)> + '_ {
+        MOVABLES.into_iter().map(|which| (which, self[which]))
+    }
+}
+
+impl<T> Index<MovableIndex> for Movables<T> {
+    type Output = T;
+    fn index(&self, which: MovableIndex) -> &T {
+        match which {
+            MovableIndex::P0 => &self.p0,
+            MovableIndex::P1 => &self.p1,
+            MovableIndex::M0 => &self.m0,
+            MovableIndex::M1 => &self.m1,
+            MovableIndex::Bl => &self.bl,
+        }
+    }
+}
+
+impl<T> IndexMut<MovableIndex> for Movables<T> {
+    fn index_mut(&mut self, which: MovableIndex) -> &mut T {
+        match which {
+            MovableIndex::P0 => &mut self.p0,
+            MovableIndex::P1 => &mut self.p1,
+            MovableIndex::M0 => &mut self.m0,
+            MovableIndex::M1 => &mut self.m1,
+            MovableIndex::Bl => &mut self.bl,
+        }
+    }
+}
+
 /// [SEC] propagating through the HSync two-phase clock after an HMOVE strobe.
 /// The strobe sets the latch transparently; it is sampled at the first H@2
 /// strictly after it set (a set coincident with the slot start misses), clocks
@@ -160,12 +223,11 @@ struct MotionSequencer {
     /// The 4-bit ripple counter, 15 down to 0; `None` once exhausted (the
     /// comparator then rests against %1111).
     ripple: Option<u8>,
-    more_movement: [bool; 5],
-    /// HM values, indexed in MOVABLES order: P0, P1, M0, M1, BL.
-    hm_values: [u8; 5],
+    more_movement: Movables<bool>,
+    hm_values: Movables<u8>,
     /// HM values as of the last H@2 (decrement) edge; the live descending
     /// compare reads this capture, the resting compare reads the register file.
-    captured_hm_values: [u8; 5],
+    captured_hm_values: Movables<u8>,
 }
 
 impl MotionSequencer {
@@ -174,9 +236,9 @@ impl MotionSequencer {
             arm_stage: MotionArmDecode::Idle,
             just_strobed: false,
             ripple: None,
-            more_movement: [false; 5],
-            hm_values: [0; 5],
-            captured_hm_values: [0; 5],
+            more_movement: Movables::splat(false),
+            hm_values: Movables::splat(0),
+            captured_hm_values: Movables::splat(0),
         }
     }
 
@@ -186,12 +248,12 @@ impl MotionSequencer {
     }
 
     fn any_movement(&self) -> bool {
-        self.more_movement.iter().any(|&m| m)
+        self.more_movement.iter().any(|(_, m)| m)
     }
 
     /// Advance one colour clock; `Some(ticks)` on an H@1 stuff, where a set
     /// latch requests an extra motion clock for its object.
-    fn step(&mut self, phase: u16) -> Option<[bool; 5]> {
+    fn step(&mut self, phase: u16) -> Option<Movables<bool>> {
         // Every H@2 edge captures the register file, even when the SEC shift
         // consumes the clock — the arm H@2 provides the first pulse's capture
         // and quiet H@2s keep it tracking the resting value.
@@ -213,7 +275,7 @@ impl MotionSequencer {
             }
             (MotionArmDecode::Clocked, MOTION_DECREMENT_PHASE) => {
                 self.arm_stage = MotionArmDecode::Idle;
-                self.more_movement = [true; 5];
+                self.more_movement = Movables::splat(true);
                 self.ripple = Some(15);
                 // The load edge that arms the counter is not a count edge.
                 return None;
@@ -246,15 +308,40 @@ impl MotionSequencer {
         } else {
             &self.hm_values
         };
-        let mut ticks = [false; 5];
-        for i in 0..self.more_movement.len() {
-            if self.more_movement[i] && ripple == (compare_values[i] >> 4) ^ 0x07 {
-                self.more_movement[i] = false;
+        let mut ticks = Movables::splat(false);
+        for which in MOVABLES {
+            if self.more_movement[which] && ripple == (compare_values[which] >> 4) ^ 0x07 {
+                self.more_movement[which] = false;
             }
-            ticks[i] = self.more_movement[i];
+            ticks[which] = self.more_movement[which];
         }
         Some(ticks)
     }
+}
+
+/// The two collision bits packed into each CXxx latch: D7 and D6.
+const COLLISION_HIGH: u8 = 0x80;
+const COLLISION_LOW: u8 = 0x40;
+
+/// The eight collision latches, ordered as the CXxx read registers ($00–$07).
+#[derive(Clone, Copy)]
+enum CollisionRegister {
+    M0P,  // CXM0P
+    M1P,  // CXM1P
+    P0FB, // CXP0FB
+    P1FB, // CXP1FB
+    M0FB, // CXM0FB
+    M1FB, // CXM1FB
+    BlPf, // CXBLPF
+    PpMm, // CXPPMM
+}
+
+/// One paddle's charge state: knob position (0.0–1.0) and the RC-charge
+/// countdown in scanlines that software times.
+#[derive(Clone, Copy)]
+struct Pot {
+    position: f32,
+    countdown: u16,
 }
 
 pub struct Tia {
@@ -289,7 +376,7 @@ pub struct Tia {
     /// the stuff slot; the serialiser shows the NEXT clock's output one clock
     /// early (measured: a dot two clocks after the slot swallows, three
     /// clocks after widens, and nothing persists to the next line).
-    seam_lookahead: [bool; 5],
+    seam_lookahead: Movables<bool>,
 
     collisions: [u8; 8],
 
@@ -301,9 +388,8 @@ pub struct Tia {
     trigger_latches: [bool; 2],
 
     /// Paddle knob positions, 0.0 (instant charge) to 1.0 (slowest).
-    pot_positions: [f32; 4],
+    pots: [Pot; 4],
     pot_dumped: bool,
-    pot_countdown: [u16; 4],
 
     line: [u8; VISIBLE_CLOCKS],
     finished_line: Option<Scanline>,
@@ -338,15 +424,17 @@ impl Tia {
             motion: MotionSequencer::new(),
             hblank_extension_pending: None,
             hblank_extension_armed: false,
-            seam_lookahead: [false; 5],
+            seam_lookahead: Movables::splat(false),
             collisions: [0; 8],
             audio: [Channel::new(), Channel::new()],
             triggers: [false; 2],
             trigger_latch_enabled: false,
             trigger_latches: [true; 2],
-            pot_positions: [0.5; 4],
+            pots: [Pot {
+                position: 0.5,
+                countdown: 0,
+            }; 4],
             pot_dumped: false,
-            pot_countdown: [0; 4],
             line: [0; VISIBLE_CLOCKS],
             finished_line: None,
         }
@@ -354,7 +442,7 @@ impl Tia {
 
     /// Point a paddle knob: 0.0 charges instantly, 1.0 slowest.
     pub fn set_paddle(&mut self, index: usize, position: f32) {
-        self.pot_positions[index] = position.clamp(0.0, 1.0);
+        self.pots[index].position = position.clamp(0.0, 1.0);
     }
 
     /// A trigger button's state into INPT4/5, true = pressed.
@@ -412,15 +500,15 @@ impl Tia {
         // one clock early); while MOTCK is gated the stuff is the pulse that
         // moves the object.
         let seam = self.seam_lookahead;
-        self.seam_lookahead = [false; 5];
+        self.seam_lookahead = Movables::splat(false);
         let motion_clock = self.hsync.motck_fires();
         if let Some(ticks) = self.motion.step(self.hsync.phase()) {
-            for (i, (movable, ticked)) in MOVABLES.into_iter().zip(ticks).enumerate() {
+            for (which, ticked) in ticks.iter() {
                 if ticked {
                     if motion_clock {
-                        self.seam_lookahead[i] = true;
+                        self.seam_lookahead[which] = true;
                     } else {
-                        self.tick_movable(movable);
+                        self.tick_movable(which);
                     }
                 }
             }
@@ -462,8 +550,8 @@ impl Tia {
         self.wsync_reset_hold = WSYNC_RESET_HOLD_CLOCKS;
         self.hblank_extension_armed = false;
         if !self.pot_dumped {
-            for countdown in &mut self.pot_countdown {
-                *countdown = countdown.saturating_sub(1);
+            for pot in &mut self.pots {
+                pot.countdown = pot.countdown.saturating_sub(1);
             }
         }
         self.finished_line = Some(Scanline {
@@ -503,8 +591,8 @@ impl Tia {
         }
     }
 
-    fn movable_pixel(&self, which: MovableIndex, seam: [bool; 5]) -> bool {
-        if seam[which as usize] {
+    fn movable_pixel(&self, which: MovableIndex, seam: Movables<bool>) -> bool {
+        if seam[which] {
             self.peek_movable(which)
         } else {
             match which {
@@ -517,7 +605,7 @@ impl Tia {
         }
     }
 
-    fn render_clock(&mut self, x: u8, seam: [bool; 5]) {
+    fn render_clock(&mut self, x: u8, seam: Movables<bool>) {
         if x.is_multiple_of(4) {
             self.playfield.latch_cell();
         }
@@ -545,22 +633,23 @@ impl Tia {
             bl,
             pf,
         } = px;
-        let pairs: [(usize, bool, bool); 8] = [
-            (0, m0 && p1, m0 && p0),
-            (1, m1 && p0, m1 && p1),
-            (2, p0 && pf, p0 && bl),
-            (3, p1 && pf, p1 && bl),
-            (4, m0 && pf, m0 && bl),
-            (5, m1 && pf, m1 && bl),
-            (6, bl && pf, false),
-            (7, p0 && p1, m0 && m1),
+        use CollisionRegister::*;
+        let pairs = [
+            (M0P, m0 && p1, m0 && p0),
+            (M1P, m1 && p0, m1 && p1),
+            (P0FB, p0 && pf, p0 && bl),
+            (P1FB, p1 && pf, p1 && bl),
+            (M0FB, m0 && pf, m0 && bl),
+            (M1FB, m1 && pf, m1 && bl),
+            (BlPf, bl && pf, false),
+            (PpMm, p0 && p1, m0 && m1),
         ];
-        for (index, high, low) in pairs {
+        for (register, high, low) in pairs {
             if high {
-                self.collisions[index] |= 0x80;
+                self.collisions[register as usize] |= COLLISION_HIGH;
             }
             if low {
-                self.collisions[index] |= 0x40;
+                self.collisions[register as usize] |= COLLISION_LOW;
             }
         }
     }
@@ -637,10 +726,8 @@ impl Tia {
                 // RC charge, measured by software in scanlines.
                 let dump = value & 0x80 != 0;
                 if self.pot_dumped && !dump {
-                    for (countdown, position) in
-                        self.pot_countdown.iter_mut().zip(self.pot_positions)
-                    {
-                        *countdown = (position.clamp(0.0, 1.0) * POT_CHARGE_LINES) as u16;
+                    for pot in &mut self.pots {
+                        pot.countdown = (pot.position.clamp(0.0, 1.0) * POT_CHARGE_LINES) as u16;
                     }
                 }
                 self.pot_dumped = dump;
@@ -708,11 +795,11 @@ impl Tia {
             ENAM0 => self.missile0.enabled = value & 0x02 != 0,
             ENAM1 => self.missile1.enabled = value & 0x02 != 0,
             ENABL => self.ball.enabled_new = value & 0x02 != 0,
-            HMP0 => self.motion.hm_values[0] = value,
-            HMP1 => self.motion.hm_values[1] = value,
-            HMM0 => self.motion.hm_values[2] = value,
-            HMM1 => self.motion.hm_values[3] = value,
-            HMBL => self.motion.hm_values[4] = value,
+            HMP0 => self.motion.hm_values.p0 = value,
+            HMP1 => self.motion.hm_values.p1 = value,
+            HMM0 => self.motion.hm_values.m0 = value,
+            HMM1 => self.motion.hm_values.m1 = value,
+            HMBL => self.motion.hm_values.bl = value,
             VDELP0 => self.player0.vertical_delay = value & 0x01 != 0,
             VDELP1 => self.player1.vertical_delay = value & 0x01 != 0,
             VDELBL => self.ball.vertical_delay = value & 0x01 != 0,
@@ -736,14 +823,14 @@ impl Tia {
                 self.motion.strobe();
                 self.hblank_extension_pending = Some(HBLANK_EXTENSION_DECODE_CLOCKS);
             }
-            HMCLR => self.motion.hm_values = [0; 5],
+            HMCLR => self.motion.hm_values = Movables::splat(0),
             CXCLR => self.collisions = [0; 8],
             _ => {}
         }
     }
 
     fn pot_level(&self, index: usize) -> u8 {
-        if !self.pot_dumped && self.pot_countdown[index] == 0 {
+        if !self.pot_dumped && self.pots[index].countdown == 0 {
             0x80
         } else {
             0x00
