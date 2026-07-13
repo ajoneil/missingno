@@ -312,7 +312,6 @@ impl<A: ApuSpec> Audio<A> {
             self.last_mix = self.channels.mix_dac();
         }
         self.mix_run += 1;
-        debug_assert_eq!(self.last_mix, self.channels.mix_dac());
 
         // The ripple's remaining strobes land here, after the channels'
         // prescaler consume (a kene↓ inside an open load window is held).

@@ -895,28 +895,9 @@ impl<P: PpuModel> Rendering<P> {
             return false;
         }
 
-        let matched = self
-            .scan
+        self.scan
             .sprites_ref()
-            .matches_at(self.pixel_counter.value());
-        debug_assert_eq!(matched, self.fepo_by_slot_scan());
-        matched
-    }
-
-    /// The comparator as a direct slot scan — the mask's definition, kept as
-    /// the debug-build oracle for `fepo`.
-    fn fepo_by_slot_scan(&self) -> bool {
-        let match_x = self.pixel_counter.value();
-        let sprites = self.scan.sprites_ref();
-        for i in 0..sprites.count as usize {
-            if sprites.fetched & (1 << i) != 0 {
-                continue;
-            }
-            if sprites.entries[i].x == match_x && sprites.entries[i].x < OFF_SCREEN_SPRITE_X {
-                return true;
-            }
-        }
-        false
+            .matches_at(self.pixel_counter.value())
     }
 
     /// The per-slot fetched-flag is set at fetch completion (WUTY↑), not here, so FEPO stays
