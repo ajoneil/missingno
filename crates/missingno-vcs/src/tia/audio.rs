@@ -1,11 +1,13 @@
 //! TIA audio: two independent channels, each the real hardware datapath — a
 //! 4-bit pulse counter and a 5-bit noise LFSR, both gated by an AUDF ÷(N+1)
-//! divider, with the AUDC register split into a pulse-feedback selector (high 2
-//! bits) and a pulse-hold/noise gate (low 2 bits). The waveforms emerge from
-//! the structure; there are no per-mode tables.
+//! divider, with the AUDC register split into a pulse-feedback selector (high
+//! 2 bits) and a pulse-hold/noise-chain gate (low 2 bits). Each audio tick is
+//! a two-phase pair: phase0 samples from pre-tick state, phase1 commits. The
+//! waveforms emerge from the structure; there are no per-mode tables.
 
-/// The 5-bit noise LFSR. Output recurrence s[i] = s[i-3] ⊕ s[i-5]
-/// (polynomial x⁵ + x³ + 1); `reg` bit j holds s[i-1-j].
+/// The 5-bit noise LFSR; bit j holds n_j — bit 4 the newest (shift-in) end,
+/// bit 0 the oldest. Feedback n2 ⊕ n0 gives the inserted-bit recurrence
+/// s[i] = s[i-3] ⊕ s[i-5] (period 31).
 #[derive(Clone, Copy)]
 struct NoiseCounter {
     reg: u8,
@@ -16,25 +18,33 @@ impl NoiseCounter {
         NoiseCounter { reg: 0x1F }
     }
 
-    /// One shift; the fed-back bit becomes the new output.
-    fn shift(&mut self) {
-        let feedback = ((self.reg >> 2) ^ (self.reg >> 4)) & 1;
-        self.reg = ((self.reg << 1) | feedback) & 0x1F;
-    }
-
-    /// The output tap (also the "follow-noise" feedback source).
-    fn output(&self) -> bool {
+    /// The oldest bit n0 — the shift-out end feeding the tap latch. (N1501)
+    fn oldest(&self) -> bool {
         self.reg & 1 != 0
     }
 
-    /// The once-per-period decode the low-2 = 2 gate uses (the ÷31 clock).
-    fn at_period_mark(&self) -> bool {
-        self.reg == 0x1F
+    /// The n2 feedback tap (the one the 9-bit chain swaps out). (N1039)
+    fn lfsr_tap(&self) -> bool {
+        (self.reg >> 2) & 1 != 0
+    }
+
+    fn all_zero(&self) -> bool {
+        self.reg == 0
+    }
+
+    /// The gated-÷31 advance window: (n4,n3,n2,n1) = (0,0,0,1), n0 ignored —
+    /// two states of the 31, so two pulse advances per noise period. (N2237)
+    fn div31_window(&self) -> bool {
+        self.reg & 0x1E == 0x02
+    }
+
+    fn commit(&mut self, feedback: bool) {
+        self.reg = (self.reg >> 1) | ((feedback as u8) << 4);
     }
 }
 
-/// The 4-bit pulse counter. Its LSB is the 1-bit waveform (the DAC gate).
-/// Poly-4 output recurrence s[i] = s[i-3] ⊕ s[i-4] (polynomial x⁴ + x³ + 1).
+/// The 4-bit pulse counter; bit j holds p_j — feedback enters at p3 and
+/// values shift through unchanged (static cells). The LSB p0 switches the DAC.
 #[derive(Clone, Copy)]
 struct PulseCounter {
     reg: u8,
@@ -45,16 +55,24 @@ impl PulseCounter {
         PulseCounter { reg: 0x0F }
     }
 
-    fn shift_in(&mut self, bit: bool) {
-        self.reg = ((self.reg << 1) | bit as u8) & 0x0F;
-    }
-
     fn lsb(&self) -> bool {
         self.reg & 1 != 0
     }
 
-    fn poly4_feedback(&self) -> bool {
-        ((self.reg >> 2) ^ (self.reg >> 3)) & 1 != 0
+    fn bit1(&self) -> bool {
+        (self.reg >> 1) & 1 != 0
+    }
+
+    fn bit2(&self) -> bool {
+        (self.reg >> 2) & 1 != 0
+    }
+
+    fn top(&self) -> bool {
+        (self.reg >> 3) & 1 != 0
+    }
+
+    fn commit(&mut self, feedback: bool) {
+        self.reg = (self.reg >> 1) | ((feedback as u8) << 3);
     }
 }
 
@@ -86,10 +104,15 @@ pub struct Channel {
     divider: AudfDivider,
     pulse: PulseCounter,
     noise: NoiseCounter,
-    /// ÷3 prescaler phase for the AUDC high-2 = 3 feedback.
-    prescale: u8,
     /// The divider's clock-enable, latched at phase0 for phase1.
     enable: bool,
+    /// The noise shift-in, sampled at phase0 from pre-tick state.
+    noise_feedback: bool,
+    /// The pre-shift oldest noise bit, latched at phase0 — the buffered tap
+    /// the pulse-side feedback and hold decodes read. (N2536 half-stage)
+    noise_tap: bool,
+    /// The pulse-hold decision, latched at phase0. (N1530)
+    advance: bool,
 }
 
 impl Default for Channel {
@@ -107,57 +130,76 @@ impl Channel {
             divider: AudfDivider::new(),
             pulse: PulseCounter::new(),
             noise: NoiseCounter::new(),
-            prescale: 0,
             enable: false,
+            noise_feedback: false,
+            noise_tap: false,
+            advance: false,
         }
     }
 
-    /// phase0: the AUDF divider advances and, when it enables, the noise
-    /// counter shifts (the shared timebase).
+    /// phase0 — the sample phase: the divider compares, and the noise
+    /// shift-in, the noise tap, and the pulse-hold decision all latch from
+    /// pre-tick state.
     pub fn phase0(&mut self) {
         self.enable = self.divider.tick(self.frequency);
-        if self.enable {
-            self.noise.shift();
+        if !self.enable {
+            return;
         }
+        self.noise_tap = self.noise.oldest();
+        self.advance = match self.control & 0x03 {
+            0 | 1 => true,
+            2 => self.noise.div31_window(),
+            _ => self.noise_tap,
+        };
+        // Low-2 = 0 swaps the n2 tap for ¬(pulse LSB), chaining the two
+        // counters into the 511-state loop. (tap mux N661)
+        let tap = if self.control & 0x03 == 0 {
+            !self.pulse.lsb()
+        } else {
+            self.noise.lfsr_tap()
+        };
+        // Grounding the feedback hub inserts a 1: the all-low escape (N781 —
+        // in low-2 = 0 it fires only at the chained lock state) and the
+        // AUDC=$00 silence decode (N1632).
+        let escape = self.noise.all_zero() && (self.control & 0x03 != 0 || self.pulse.reg == 0x0F);
+        let silence = self.control & 0x0F == 0;
+        self.noise_feedback = escape || silence || (tap ^ self.noise.oldest());
     }
 
-    /// phase1: on an enabled tick the pulse counter advances, gated by the
-    /// AUDC low-2 hold and loaded with the AUDC high-2 feedback.
+    /// phase1 — the commit phase: the noise shift lands, then the pulse
+    /// captures its AUDC-selected feedback from pre-advance values and the
+    /// latched tap.
     pub fn phase1(&mut self) {
         if !self.enable {
             return;
         }
-        let advance = match self.control & 0x03 {
-            0 | 1 => true,
-            2 => self.noise.at_period_mark(),
-            _ => self.noise.output(),
-        };
-        if !advance {
+        self.noise.commit(self.noise_feedback);
+        if !self.advance {
             return;
         }
-        let feedback = match (self.control >> 2) & 0x03 {
-            0 => self.pulse.poly4_feedback(),
-            1 => !self.pulse.lsb(),
-            2 => self.noise.output(),
-            _ => {
-                self.prescale = (self.prescale + 1) % 3;
-                if self.prescale != 0 {
-                    return;
-                }
-                !self.pulse.lsb()
-            }
-        };
-        self.pulse.shift_in(feedback);
+        // AUDC=$00 grounds the feedback mux (N1632 on N2203), parking the
+        // counter at zero — the output rests at the conducting level.
+        let feedback = self.control & 0x0F != 0
+            && match (self.control >> 2) & 0x03 {
+                // 4-bit poly ¬(p1 ⊕ p0), suppressed at the all-ones lock
+                // state (the pulse-decode escape, N820).
+                0 => !(self.pulse.bit1() ^ self.pulse.lsb()) && self.pulse.reg != 0x0F,
+                // ÷2 square: the inverted top bit re-enters. (N852 → ¬N2166)
+                1 => !self.pulse.top(),
+                // follow-noise: the complemented tap. (N1810)
+                2 => !self.noise_tap,
+                // ÷3: held low two of every three states — with the ÷2 toggle,
+                // the ÷6 family. (N1820)
+                _ => !self.pulse.bit1() && (!self.pulse.bit2() || self.pulse.top()),
+            };
+        self.pulse.commit(feedback);
     }
 
-    /// Current level, 0-15: the waveform bit gates the volume. AUDC=0 silences.
+    /// Current level, 0-15: the DAC legs conduct while the pulse LSB is low,
+    /// so the active level is ¬LSB × AUDV. AUDC=$00 parks the LSB low, making
+    /// AUDV a constant DC level (the sample-playback path).
     pub fn level(&self) -> u8 {
-        let silent = self.control & 0x0F == 0;
-        if !silent && self.pulse.lsb() {
-            self.volume
-        } else {
-            0
-        }
+        if self.pulse.lsb() { 0 } else { self.volume }
     }
 }
 
@@ -165,8 +207,8 @@ impl Channel {
 mod tests {
     use super::*;
 
-    /// Drive a channel at AUDF=0 (enable every tick) and collect the output
-    /// (pulse LSB) sampled after each phase1, for `n` audio ticks.
+    /// Drive a channel at AUDF=0 (enable every tick) and collect the pulse
+    /// LSB (the die output node) sampled after each phase1, for `n` ticks.
     fn run(control: u8, n: usize) -> Vec<u8> {
         let mut ch = Channel::new();
         ch.control = control;
@@ -185,24 +227,29 @@ mod tests {
         (1..s.len() / 2).find(|&p| (0..s.len() - p).all(|i| s[i] == s[i + p]))
     }
 
+    fn ones_per_period(seq: &[u8], p: usize) -> usize {
+        seq[40..40 + p].iter().map(|&b| b as usize).sum()
+    }
+
     #[test]
-    fn noise_lfsr_is_x5_x3_1() {
-        // AUDC=$09 (follow-noise): the output is the raw 5-bit noise m-sequence.
+    fn follow_noise_is_the_inverted_m_sequence() {
+        // AUDC=$09: the output is the complemented, delayed noise m-sequence —
+        // period 31, 15 ones, recurrence o[i] = ¬(o[i-3] ⊕ o[i-5]).
         let seq = run(0x09, 200);
         assert_eq!(period(&seq), Some(31));
-        // recurrence s[i] = s[i-3] ⊕ s[i-5]
-        for i in 5..seq.len() {
-            assert_eq!(seq[i], seq[i - 3] ^ seq[i - 5]);
+        assert_eq!(ones_per_period(&seq, 31), 15);
+        for i in 45..seq.len() {
+            assert_eq!(seq[i], 1 - (seq[i - 3] ^ seq[i - 5]));
         }
     }
 
     #[test]
-    fn poly4_is_x4_x3_1() {
-        // AUDC=$01 (4-bit poly, free-run).
+    fn poly4_is_the_inverted_recurrence() {
+        // AUDC=$01: period 15, recurrence o[i] = ¬(o[i-3] ⊕ o[i-4]).
         let seq = run(0x01, 200);
         assert_eq!(period(&seq), Some(15));
-        for i in 4..seq.len() {
-            assert_eq!(seq[i], seq[i - 3] ^ seq[i - 4]);
+        for i in 45..seq.len() {
+            assert_eq!(seq[i], 1 - (seq[i - 3] ^ seq[i - 4]));
         }
     }
 
@@ -213,15 +260,34 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "9-bit white noise: low2=0 must chain the pulse into the noise \
-                feedback to form the 9-bit LFSR (pending design refinement)"]
     fn nine_bit_noise_is_511() {
-        // AUDC=$08 (follow-noise gated by noise bit4): 4-bit + 5-bit chained.
-        assert_eq!(period(&run(0x08, 1200)), Some(511));
+        // AUDC=$08: the low-2 = 0 tap swap chains pulse ↔ noise into the
+        // 511-state loop; recurrence o[i] = ¬(o[i-5] ⊕ o[i-9]).
+        let seq = run(0x08, 1400);
+        assert_eq!(period(&seq), Some(511));
+        for i in 49..seq.len() {
+            assert_eq!(seq[i], 1 - (seq[i - 5] ^ seq[i - 9]));
+        }
+    }
+
+    #[test]
+    fn div6_tone_is_period_6() {
+        // AUDC=$0C (÷3 feedback, free-run): the ÷6 tone.
+        assert_eq!(period(&run(0x0C, 120)), Some(6));
+    }
+
+    #[test]
+    fn gated_div31_has_period_465() {
+        // AUDC=$02: the pulse advances twice per noise period (the masked
+        // window decode), giving the 465-tick output period.
+        assert_eq!(period(&run(0x02, 1400)), Some(465));
     }
 
     #[test]
     fn mode_07_differs_from_09_same_period() {
+        // ÷2-family orbits come in complementary pairs (feedback ¬p3 is
+        // complement-equivariant), so $07's output sense is power-on-dependent;
+        // only its period and shape-vs-$09 are absolute.
         let a = run(0x07, 200);
         let b = run(0x09, 200);
         assert_eq!(period(&a), Some(31));
@@ -230,18 +296,21 @@ mod tests {
     }
 
     #[test]
-    fn silence_is_constant() {
-        // AUDC=$00: the output level is held constant (silence decode).
+    fn silence_outputs_the_volume_as_dc() {
+        // AUDC=$00: the grounded feedback mux parks the LSB low within a few
+        // ticks; the DAC then conducts constantly — level = AUDV.
         let mut ch = Channel::new();
         ch.control = 0x00;
         ch.volume = 0x0F;
-        let mut out = Vec::new();
-        for _ in 0..60 {
+        for _ in 0..8 {
             ch.phase0();
             ch.phase1();
-            out.push(ch.level());
         }
-        assert!(out.iter().all(|&v| v == out[0]));
+        for _ in 0..50 {
+            ch.phase0();
+            ch.phase1();
+            assert_eq!(ch.level(), 0x0F);
+        }
     }
 
     #[test]
