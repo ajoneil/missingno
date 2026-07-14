@@ -38,7 +38,8 @@ const RESTING_RIPPLE: u8 = 15;
 /// SHB's latched reset absorbs a WSYNC set through the wrap's first CPU cycle.
 const WSYNC_RESET_HOLD_CLOCKS: u8 = 3;
 /// The audio two-phase tick positions (colour clock within the line): phase0
-/// advances the AUDF divider and the noise counter, phase1 the pulse counter.
+/// is the sample window (divider compare, feedback/tap/hold latches), phase1
+/// the commit window (noise shift lands, pulse captures, output updates).
 /// The 72/156 (phase0) and 112/116 (phase1) splits are the die-measured values.
 const AUDIO_PHASE0: [u16; 2] = [9, 81];
 const AUDIO_PHASE1: [u16; 2] = [37, 149];

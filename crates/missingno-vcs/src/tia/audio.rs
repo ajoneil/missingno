@@ -14,6 +14,8 @@ struct NoiseCounter {
 }
 
 impl NoiseCounter {
+    /// Power-on contents are indeterminate; seeded with the AUDC=$00 rest
+    /// state (all ones), which the silence decode drains any state to.
     fn new() -> Self {
         NoiseCounter { reg: 0x1F }
     }
@@ -23,8 +25,8 @@ impl NoiseCounter {
         self.reg & 1 != 0
     }
 
-    /// The n2 feedback tap (the one the 9-bit chain swaps out). (N1039)
-    fn lfsr_tap(&self) -> bool {
+    /// The middle feedback tap n2 (the one the 9-bit chain swaps out). (N1039)
+    fn mid_tap(&self) -> bool {
         (self.reg >> 2) & 1 != 0
     }
 
@@ -51,8 +53,15 @@ struct PulseCounter {
 }
 
 impl PulseCounter {
+    /// Power-on contents are indeterminate; seeded with the AUDC=$00 rest
+    /// state (all zeros), which the grounded feedback mux drains any state to.
     fn new() -> Self {
-        PulseCounter { reg: 0x0F }
+        PulseCounter { reg: 0x00 }
+    }
+
+    /// The all-ones state decode.
+    fn all_ones(&self) -> bool {
+        self.reg == 0x0F
     }
 
     fn lsb(&self) -> bool {
@@ -156,12 +165,12 @@ impl Channel {
         let tap = if self.control & 0x03 == 0 {
             !self.pulse.lsb()
         } else {
-            self.noise.lfsr_tap()
+            self.noise.mid_tap()
         };
-        // Grounding the feedback hub inserts a 1: the all-low escape (N781 —
-        // in low-2 = 0 it fires only at the chained lock state) and the
-        // AUDC=$00 silence decode (N1632).
-        let escape = self.noise.all_zero() && (self.control & 0x03 != 0 || self.pulse.reg == 0x0F);
+        // Grounding the feedback hub inserts a 1: the all-low escape (N781;
+        // the pulse all-ones decode N820 confines it to the chained lock
+        // state in low-2 = 0) and the AUDC=$00 silence decode (N1632).
+        let escape = self.noise.all_zero() && (self.control & 0x03 != 0 || self.pulse.all_ones());
         let silence = self.control & 0x0F == 0;
         self.noise_feedback = escape || silence || (tap ^ self.noise.oldest());
     }
@@ -181,15 +190,15 @@ impl Channel {
         // counter at zero — the output rests at the conducting level.
         let feedback = self.control & 0x0F != 0
             && match (self.control >> 2) & 0x03 {
-                // 4-bit poly ¬(p1 ⊕ p0), suppressed at the all-ones lock
-                // state (the pulse-decode escape, N820).
-                0 => !(self.pulse.bit1() ^ self.pulse.lsb()) && self.pulse.reg != 0x0F,
-                // ÷2 square: the inverted top bit re-enters. (N852 → ¬N2166)
+                // 4-bit poly ¬(p1 ⊕ p0) (N1462); the all-ones escape is
+                // decap-asserted (hardware-undecided analog corner).
+                0 => !(self.pulse.bit1() ^ self.pulse.lsb()) && !self.pulse.all_ones(),
+                // ÷2 square: the inverted top bit re-enters. (N544)
                 1 => !self.pulse.top(),
                 // follow-noise: the complemented tap. (N1810)
                 2 => !self.noise_tap,
-                // ÷3: held low two of every three states — with the ÷2 toggle,
-                // the ÷6 family. (N1820)
+                // ÷3 (N1820 gives ¬p1; the (¬p2 ∨ p3) basin-drain factor is
+                // decap-asserted, hardware-undecided analog corner).
                 _ => !self.pulse.bit1() && (!self.pulse.bit2() || self.pulse.top()),
             };
         self.pulse.commit(feedback);
