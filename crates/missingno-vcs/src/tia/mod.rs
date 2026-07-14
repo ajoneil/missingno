@@ -37,8 +37,11 @@ const MOTION_DECREMENT_PHASE: u16 = 3;
 const RESTING_RIPPLE: u8 = 15;
 /// SHB's latched reset absorbs a WSYNC set through the wrap's first CPU cycle.
 const WSYNC_RESET_HOLD_CLOCKS: u8 = 3;
-const AUDIO_CLOCK_A: u16 = 10;
-const AUDIO_CLOCK_B: u16 = 124;
+/// The audio two-phase tick positions (colour clock within the line): phase0
+/// advances the AUDF divider and the noise counter, phase1 the pulse counter.
+/// The 72/156 (phase0) and 112/116 (phase1) splits are the die-measured values.
+const AUDIO_PHASE0: [u16; 2] = [9, 81];
+const AUDIO_PHASE1: [u16; 2] = [37, 149];
 /// Full-scale paddle charge time; the readable range games sweep.
 const POT_CHARGE_LINES: f32 = 380.0;
 
@@ -530,11 +533,15 @@ impl Tia {
             Beam::Blank => {}
         }
 
-        // The audio circuits clock twice per scanline (~31.4 kHz).
+        // The audio circuits clock twice per scanline (~31.4 kHz), each tick a
+        // two-phase pair.
         let position = self.hsync.position();
-        if position == AUDIO_CLOCK_A || position == AUDIO_CLOCK_B {
-            self.audio[0].tick();
-            self.audio[1].tick();
+        if AUDIO_PHASE0.contains(&position) {
+            self.audio[0].phase0();
+            self.audio[1].phase0();
+        } else if AUDIO_PHASE1.contains(&position) {
+            self.audio[0].phase1();
+            self.audio[1].phase1();
         }
 
         if self.hsync.advance(self.hblank_extension_armed) {
