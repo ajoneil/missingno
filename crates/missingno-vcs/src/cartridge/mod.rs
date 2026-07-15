@@ -4,6 +4,7 @@
 //! board decides what answers there. A plain ROM mirrors up into it; the rest
 //! page it, shadow it with RAM, or both. One module per board.
 
+pub mod ar;
 pub mod atari;
 pub mod cv;
 pub mod dpc;
@@ -15,6 +16,7 @@ pub mod plain;
 pub mod three_f;
 pub mod ua;
 
+use ar::Ar;
 use atari::Atari;
 use cv::Cv;
 use dpc::Dpc;
@@ -28,9 +30,13 @@ use ua::Ua;
 
 /// The board in the slot. Bank state and cart RAM live inline, so one board
 /// exists per console and survives a power cycle exactly as the silicon does.
+/// The Supercharger's 6 KB dwarfs a plain board's state; one exists per
+/// console, so the spread costs nothing.
+#[allow(clippy::large_enum_variant)]
 pub enum Board {
     /// Nothing in the slot: no silicon drives the window, so it floats.
     Empty,
+    Ar(Ar),
     Plain(Plain),
     Atari(Atari),
     Fa(Fa),
@@ -95,6 +101,9 @@ pub enum CartType {
     /// An F8-banked 8 KB program ROM beside the Display Processor Chip and its
     /// own 2 KB display ROM (Pitfall II).
     Dpc,
+    /// 6 KB of tape-loaded RAM and a BIOS, driven entirely by reads (Starpath
+    /// Supercharger). The image is a fastload container, not a ROM.
+    Ar,
 }
 
 impl CartType {
@@ -115,6 +124,7 @@ impl CartType {
             CartType::Cv => 0x800,
             // 8 KB program + 2 KB display, and the dumper's trailing RNG stream.
             CartType::Dpc => 0x2900,
+            CartType::Ar => ar::IMAGE_SIZE,
         }
     }
 }
@@ -170,6 +180,7 @@ impl Cartridge {
             CartType::ThreeF => Board::ThreeF(ThreeF::new(rom)),
             CartType::Fe => Board::Fe(Fe::new(rom)),
             CartType::Dpc => Board::Dpc(Dpc::new(rom)),
+            CartType::Ar => Board::Ar(Ar::new(rom)),
         })
     }
 
@@ -209,8 +220,9 @@ impl Cartridge {
             Board::E7(board) if window => Some(board.read(address, residue)),
             Board::Cv(board) if window => Some(board.read(address, residue)),
             Board::Dpc(board) if window => Some(board.read(address, residue)),
-            // Boards whose hotspots live below the window watch every cycle,
-            // and answer only inside it.
+            // Boards that watch the whole address bus — for hotspots below the
+            // window, or to count its transitions — and answer only inside it.
+            Board::Ar(board) => board.read(address, residue),
             Board::Ua(board) => board.read(address),
             Board::ThreeF(board) => board.read(address, residue),
             Board::Fe(board) => board.read(address, residue),
@@ -229,6 +241,7 @@ impl Cartridge {
             Board::E7(board) if window => board.write_access(address, data),
             Board::Cv(board) if window => board.write_access(address, data),
             Board::Dpc(board) if window => board.write_access(address, data),
+            Board::Ar(board) => board.write_access(address),
             Board::Ua(board) => board.write_access(address),
             Board::ThreeF(board) => board.write_access(address, residue),
             Board::Fe(board) => board.write_access(address, residue),
@@ -247,6 +260,7 @@ impl Cartridge {
             Board::E7(board) => board.peek(address),
             Board::Cv(board) => board.peek(address),
             Board::Dpc(board) => board.peek(address),
+            Board::Ar(board) => board.peek(address).unwrap_or(0),
             Board::Ua(board) => board.peek(address),
             Board::ThreeF(board) => board.peek(address),
             Board::Fe(board) => board.peek(address),

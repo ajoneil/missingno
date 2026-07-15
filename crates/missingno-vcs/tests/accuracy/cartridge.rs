@@ -567,3 +567,76 @@ fn dpc_probes_secam() {
         CartType::Dpc,
     );
 }
+
+#[test]
+fn ar_config_ntsc() {
+    run_self_test_on(
+        "cartridge/ar-config_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Ar,
+    );
+}
+
+#[test]
+fn ar_config_pal() {
+    run_self_test_on("cartridge/ar-config_pal.a26", TvStandard::Pal, CartType::Ar);
+}
+
+#[test]
+fn ar_config_secam() {
+    run_self_test_on(
+        "cartridge/ar-config_secam.a26",
+        TvStandard::Secam,
+        CartType::Ar,
+    );
+}
+
+#[test]
+fn ar_write_ntsc() {
+    run_self_test_on(
+        "cartridge/ar-write_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Ar,
+    );
+}
+
+#[test]
+fn ar_write_pal() {
+    run_self_test_on("cartridge/ar-write_pal.a26", TvStandard::Pal, CartType::Ar);
+}
+
+#[test]
+fn ar_write_secam() {
+    run_self_test_on(
+        "cartridge/ar-write_secam.a26",
+        TvStandard::Secam,
+        CartType::Ar,
+    );
+}
+
+#[test]
+fn ar_hazards_ntsc() {
+    run_self_test_on(
+        "cartridge/ar-hazards_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Ar,
+    );
+}
+
+#[test]
+fn ar_hazards_pal() {
+    run_self_test_on(
+        "cartridge/ar-hazards_pal.a26",
+        TvStandard::Pal,
+        CartType::Ar,
+    );
+}
+
+#[test]
+fn ar_hazards_secam() {
+    run_self_test_on(
+        "cartridge/ar-hazards_secam.a26",
+        TvStandard::Secam,
+        CartType::Ar,
+    );
+}

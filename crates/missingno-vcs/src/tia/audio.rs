@@ -100,7 +100,12 @@ impl AudfDivider {
 
     fn tick(&mut self, audf: u8) -> bool {
         let enable = self.count == audf & 0x1F;
-        self.count = if enable { 0 } else { self.count + 1 };
+        // Five bits wide, so lowering AUDF under a running count wraps the
+        // counter round to meet it rather than stranding it.
+        self.count = match enable {
+            true => 0,
+            false => (self.count + 1) & 0x1F,
+        };
         enable
     }
 }
