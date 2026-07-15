@@ -251,15 +251,30 @@ fn has_superchip_signature(rom: &[u8]) -> bool {
 impl Cartridge {
     /// Build a cartridge, honouring an explicit board type when the caller has
     /// one and inferring a best-effort board from ROM size otherwise.
-    pub fn load(rom: &[u8], cart_type: Option<CartType>) -> Result<Cartridge, CartridgeError> {
+    ///
+    /// `clock_hz` is the rate the console will step the board at. A board with
+    /// a clock of its own — the DPC's oscillator — needs it to convert its own
+    /// free-running rate into those steps; every other board ignores it.
+    pub fn load(
+        rom: &[u8],
+        cart_type: Option<CartType>,
+        clock_hz: f32,
+    ) -> Result<Cartridge, CartridgeError> {
         let board = match cart_type {
-            Some(cart_type) => Cartridge::build(rom, cart_type)?,
+            Some(cart_type) => Cartridge::build(rom, cart_type, clock_hz)?,
             None => Cartridge::infer(rom)?,
         };
         Ok(Cartridge { board })
     }
 
-    fn build(rom: &[u8], cart_type: CartType) -> Result<Board, CartridgeError> {
+    /// One console clock, for a board that runs to a clock of its own.
+    pub fn tick(&mut self) {
+        if let Board::Dpc(board) = &mut self.board {
+            board.tick();
+        }
+    }
+
+    fn build(rom: &[u8], cart_type: CartType, clock_hz: f32) -> Result<Board, CartridgeError> {
         if !cart_type.accepts(rom.len()) {
             return Err(CartridgeError::WrongSizeForBoard {
                 cart_type,
@@ -288,7 +303,7 @@ impl Cartridge {
             CartType::Ua => Board::Ua(Ua::new(rom)),
             CartType::ThreeF => Board::ThreeF(ThreeF::new(rom)),
             CartType::Fe => Board::Fe(Fe::new(rom)),
-            CartType::Dpc => Board::Dpc(Dpc::new(rom)),
+            CartType::Dpc => Board::Dpc(Dpc::new(rom, clock_hz)),
             CartType::Ar => Board::Ar(Ar::new(rom)),
             CartType::F0 => Board::F0(F0::new(rom)),
             CartType::Jane => Board::Jane(Jane::new(rom)),

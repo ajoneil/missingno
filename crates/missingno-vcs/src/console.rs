@@ -184,8 +184,9 @@ impl Vcs {
         region: TvStandard,
         cart_type: Option<CartType>,
     ) -> Result<Vcs, CartridgeError> {
+        let clock_hz = crate::tv_standard::master_clock_hz(region);
         Ok(Vcs::with_cartridge(
-            Cartridge::load(rom, cart_type)?,
+            Cartridge::load(rom, cart_type, clock_hz)?,
             region,
         ))
     }
@@ -228,6 +229,9 @@ impl Vcs {
     pub fn step_clock(&mut self) {
         self.step_half_high();
         self.step_half_low();
+        // A board with a clock of its own runs whether or not the CPU is
+        // talking to it.
+        self.cartridge.tick();
     }
 
     /// The colour clock's high half: pending writes tick a half-clock (data

@@ -39,6 +39,16 @@ const BANKS: usize = 2;
 /// SIN5/SIN6/SIN7 sum through a fixed 4/5/6 weighting, indexed {DF7,DF6,DF5}.
 const AMPLITUDE: [u8; 8] = [0, 4, 5, 9, 6, 10, 11, 15];
 
+/// The music oscillator, an RC on the cart board: a 560K resistor against a cap
+/// on the die, free-running and owing nothing to the console's clock. Its pitch
+/// is therefore per-cart and drifts — kevtris likens a real one to a theremin —
+/// so no exact figure exists to model. The patent asks for 42 kHz and allows
+/// 15-80 kHz; every independent estimate of shipped silicon lands at about half
+/// the patent's figure, clustering near this one, and only the ratio
+/// OSC/(Top+1) is specified. Voices clocked from a fetcher's read strobe
+/// instead never consult it.
+const OSCILLATOR_HZ: f32 = 20_000.0;
+
 /// An 11-bit down-counter over the display ROM, with an equality-driven flag.
 /// In music mode the low stage instead free-runs as an 8-bit down-counter.
 struct Fetcher {
@@ -87,17 +97,24 @@ impl Fetcher {
             self.counter = self.counter.wrapping_sub(1) & 0x7FF;
             return;
         }
-        // The clock select hands this voice to the oscillator instead, so the
-        // read strobe moves nothing. The oscillator itself is not modelled:
-        // it is a free-running RC on the board, per-cart in pitch.
-        if self.oscillator_clocked {
-            return;
+        // The clock select hands this voice to the oscillator instead, and the
+        // read strobe then moves nothing.
+        if !self.oscillator_clocked {
+            self.clock_music();
         }
+    }
+
+    /// One clock of a music voice: the low stage counts down and reloads from
+    /// Top past zero, so the voice's period is Top+1 clocks. The comparators
+    /// watch it the whole way, which is what turns the flag into a square wave
+    /// — nothing need read the voice for its note to advance.
+    fn clock_music(&mut self) {
         let low = match self.low() {
             0 => self.top,
             low => low - 1,
         };
         self.counter = (self.counter & 0x700) | u16::from(low);
+        self.evaluate_flag();
     }
 
     /// The voice's square-wave output.
@@ -124,10 +141,14 @@ pub struct Dpc {
     fetchers: [Fetcher; FETCHERS],
     rng: u8,
     draw_line: DrawLine,
+    /// The oscillator's period, in the console clocks the board is stepped by,
+    /// and how far through one it is.
+    oscillator_period: f32,
+    oscillator_phase: f32,
 }
 
 impl Dpc {
-    pub fn new(rom: &[u8]) -> Dpc {
+    pub fn new(rom: &[u8], clock_hz: f32) -> Dpc {
         Dpc {
             program: rom[..PROGRAM_SIZE].to_vec(),
             display: rom[PROGRAM_SIZE..PROGRAM_SIZE + DISPLAY_SIZE].to_vec(),
@@ -140,6 +161,24 @@ impl Dpc {
                 carry: false,
                 movamt: 0,
             },
+            oscillator_period: clock_hz / OSCILLATOR_HZ,
+            oscillator_phase: 0.0,
+        }
+    }
+
+    /// One console clock. The oscillator free-runs against it, so a voice the
+    /// clock select handed to the oscillator advances here rather than on a
+    /// read — which is the only way a voice nothing reads can play at all.
+    pub fn tick(&mut self) {
+        self.oscillator_phase += 1.0;
+        if self.oscillator_phase < self.oscillator_period {
+            return;
+        }
+        self.oscillator_phase -= self.oscillator_period;
+        for voice in &mut self.fetchers[FIRST_MUSIC_FETCHER..] {
+            if voice.music && voice.oscillator_clocked {
+                voice.clock_music();
+            }
         }
     }
 
@@ -315,5 +354,49 @@ impl Dpc {
 
     pub fn peek(&self, address: u16) -> u8 {
         self.program[self.bank * BANK_SIZE + (address & 0x0FFF) as usize]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Four console clocks per oscillation, so a test need not count thousands.
+    fn voice_on(oscillator: bool) -> Dpc {
+        let mut dpc = Dpc::new(&vec![0; 0x2900], OSCILLATOR_HZ * 4.0);
+        dpc.write_access(0x1045, 1); // DF5 Top = 1, so the voice's period is 2
+        dpc.write_access(0x105D, if oscillator { 0x30 } else { 0x10 });
+        dpc.write_access(0x1055, 0); // counter low: in music mode this loads Top
+        dpc
+    }
+
+    /// The suite cannot reach this: its ROMs fix the clock select to the read
+    /// strobe, and the oscillator's pitch is ruled out of scope as a per-cart
+    /// RC value. So this is the only check that a voice handed to the
+    /// oscillator advances — a game whose music nothing reads depends on it.
+    #[test]
+    fn an_oscillator_clocked_voice_advances_unread() {
+        let mut dpc = voice_on(true);
+        // The counter loaded Top, so the comparator has set the flag and the
+        // voice is sounding.
+        assert_eq!(dpc.read(0xF006, 0), AMPLITUDE[1]);
+        for _ in 0..4 {
+            dpc.tick();
+        }
+        // One oscillation later it has counted down onto Bottom and gone quiet,
+        // with nothing having read the fetcher.
+        assert_eq!(dpc.read(0xF006, 0), AMPLITUDE[0]);
+    }
+
+    /// The other half of the select: a voice clocked from its read strobe must
+    /// ignore the oscillator, which free-runs regardless.
+    #[test]
+    fn a_strobe_clocked_voice_ignores_the_oscillator() {
+        let mut dpc = voice_on(false);
+        assert_eq!(dpc.read(0xF006, 0), AMPLITUDE[1]);
+        for _ in 0..64 {
+            dpc.tick();
+        }
+        assert_eq!(dpc.read(0xF006, 0), AMPLITUDE[1]);
     }
 }
