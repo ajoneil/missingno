@@ -282,3 +282,288 @@ fn ram_superchip_secam() {
         CartType::F8Sc,
     );
 }
+
+#[test]
+fn dpc_fetch_ntsc() {
+    run_self_test_on(
+        "cartridge/dpc-fetch_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_fetch_pal() {
+    run_self_test_on(
+        "cartridge/dpc-fetch_pal.a26",
+        TvStandard::Pal,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_fetch_secam() {
+    run_self_test_on(
+        "cartridge/dpc-fetch_secam.a26",
+        TvStandard::Secam,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_flag_ntsc() {
+    run_self_test_on(
+        "cartridge/dpc-flag_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_flag_pal() {
+    run_self_test_on("cartridge/dpc-flag_pal.a26", TvStandard::Pal, CartType::Dpc);
+}
+
+#[test]
+fn dpc_flag_secam() {
+    run_self_test_on(
+        "cartridge/dpc-flag_secam.a26",
+        TvStandard::Secam,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_bank_ntsc() {
+    run_self_test_on(
+        "cartridge/dpc-bank_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_bank_pal() {
+    run_self_test_on("cartridge/dpc-bank_pal.a26", TvStandard::Pal, CartType::Dpc);
+}
+
+#[test]
+fn dpc_bank_secam() {
+    run_self_test_on(
+        "cartridge/dpc-bank_secam.a26",
+        TvStandard::Secam,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_swizzle_ntsc() {
+    run_self_test_on(
+        "cartridge/dpc-swizzle_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_swizzle_pal() {
+    run_self_test_on(
+        "cartridge/dpc-swizzle_pal.a26",
+        TvStandard::Pal,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_swizzle_secam() {
+    run_self_test_on(
+        "cartridge/dpc-swizzle_secam.a26",
+        TvStandard::Secam,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_shift_ntsc() {
+    run_self_test_on(
+        "cartridge/dpc-shift_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_shift_pal() {
+    run_self_test_on(
+        "cartridge/dpc-shift_pal.a26",
+        TvStandard::Pal,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_shift_secam() {
+    run_self_test_on(
+        "cartridge/dpc-shift_secam.a26",
+        TvStandard::Secam,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_window_reads_ntsc() {
+    run_self_test_on(
+        "cartridge/dpc-window-reads_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_window_reads_pal() {
+    run_self_test_on(
+        "cartridge/dpc-window-reads_pal.a26",
+        TvStandard::Pal,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_window_reads_secam() {
+    run_self_test_on(
+        "cartridge/dpc-window-reads_secam.a26",
+        TvStandard::Secam,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_flag_edges_ntsc() {
+    run_self_test_on(
+        "cartridge/dpc-flag-edges_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_flag_edges_pal() {
+    run_self_test_on(
+        "cartridge/dpc-flag-edges_pal.a26",
+        TvStandard::Pal,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_flag_edges_secam() {
+    run_self_test_on(
+        "cartridge/dpc-flag-edges_secam.a26",
+        TvStandard::Secam,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_rng_ntsc() {
+    run_self_test_on(
+        "cartridge/dpc-rng_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_rng_pal() {
+    run_self_test_on("cartridge/dpc-rng_pal.a26", TvStandard::Pal, CartType::Dpc);
+}
+
+#[test]
+fn dpc_rng_secam() {
+    run_self_test_on(
+        "cartridge/dpc-rng_secam.a26",
+        TvStandard::Secam,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_music_ntsc() {
+    run_self_test_on(
+        "cartridge/dpc-music_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_music_pal() {
+    run_self_test_on(
+        "cartridge/dpc-music_pal.a26",
+        TvStandard::Pal,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_music_secam() {
+    run_self_test_on(
+        "cartridge/dpc-music_secam.a26",
+        TvStandard::Secam,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_drawline_ntsc() {
+    run_self_test_on(
+        "cartridge/dpc-drawline_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_drawline_pal() {
+    run_self_test_on(
+        "cartridge/dpc-drawline_pal.a26",
+        TvStandard::Pal,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_drawline_secam() {
+    run_self_test_on(
+        "cartridge/dpc-drawline_secam.a26",
+        TvStandard::Secam,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_probes_ntsc() {
+    run_self_test_on(
+        "cartridge/dpc-probes_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_probes_pal() {
+    run_self_test_on(
+        "cartridge/dpc-probes_pal.a26",
+        TvStandard::Pal,
+        CartType::Dpc,
+    );
+}
+
+#[test]
+fn dpc_probes_secam() {
+    run_self_test_on(
+        "cartridge/dpc-probes_secam.a26",
+        TvStandard::Secam,
+        CartType::Dpc,
+    );
+}

@@ -6,6 +6,7 @@
 
 pub mod atari;
 pub mod cv;
+pub mod dpc;
 pub mod e0;
 pub mod e7;
 pub mod fa;
@@ -16,6 +17,7 @@ pub mod ua;
 
 use atari::Atari;
 use cv::Cv;
+use dpc::Dpc;
 use e0::E0;
 use e7::E7;
 use fa::Fa;
@@ -35,6 +37,7 @@ pub enum Board {
     E0(E0),
     E7(E7),
     Cv(Cv),
+    Dpc(Dpc),
     Fe(Fe),
     Ua(Ua),
     ThreeF(ThreeF),
@@ -89,6 +92,9 @@ pub enum CartType {
     /// 8 KB across two banks, picked by an address comparator on $01FE and
     /// data line D5 (Activision).
     Fe,
+    /// An F8-banked 8 KB program ROM beside the Display Processor Chip and its
+    /// own 2 KB display ROM (Pitfall II).
+    Dpc,
 }
 
 impl CartType {
@@ -107,6 +113,8 @@ impl CartType {
             CartType::F4 | CartType::F4Sc => 0x8000,
             CartType::Fa => 0x3000,
             CartType::Cv => 0x800,
+            // 8 KB program + 2 KB display, and the dumper's trailing RNG stream.
+            CartType::Dpc => 0x2900,
         }
     }
 }
@@ -161,6 +169,7 @@ impl Cartridge {
             CartType::Ua => Board::Ua(Ua::new(rom)),
             CartType::ThreeF => Board::ThreeF(ThreeF::new(rom)),
             CartType::Fe => Board::Fe(Fe::new(rom)),
+            CartType::Dpc => Board::Dpc(Dpc::new(rom)),
         })
     }
 
@@ -199,6 +208,7 @@ impl Cartridge {
             Board::E0(board) if window => Some(board.read(address)),
             Board::E7(board) if window => Some(board.read(address, residue)),
             Board::Cv(board) if window => Some(board.read(address, residue)),
+            Board::Dpc(board) if window => Some(board.read(address, residue)),
             // Boards whose hotspots live below the window watch every cycle,
             // and answer only inside it.
             Board::Ua(board) => board.read(address),
@@ -218,6 +228,7 @@ impl Cartridge {
             Board::E0(board) if window => board.write_access(address),
             Board::E7(board) if window => board.write_access(address, data),
             Board::Cv(board) if window => board.write_access(address, data),
+            Board::Dpc(board) if window => board.write_access(address, data),
             Board::Ua(board) => board.write_access(address),
             Board::ThreeF(board) => board.write_access(address, residue),
             Board::Fe(board) => board.write_access(address, residue),
@@ -235,6 +246,7 @@ impl Cartridge {
             Board::E0(board) => board.peek(address),
             Board::E7(board) => board.peek(address),
             Board::Cv(board) => board.peek(address),
+            Board::Dpc(board) => board.peek(address),
             Board::Ua(board) => board.peek(address),
             Board::ThreeF(board) => board.peek(address),
             Board::Fe(board) => board.peek(address),
