@@ -16,6 +16,8 @@ pub mod fc;
 pub mod fe;
 pub mod jane;
 pub mod plain;
+pub mod three_e;
+pub mod three_e_plus;
 pub mod three_f;
 pub mod ua;
 pub mod wd;
@@ -35,6 +37,8 @@ use fc::Fc;
 use fe::Fe;
 use jane::Jane;
 use plain::Plain;
+use three_e::ThreeE;
+use three_e_plus::ThreeEPlus;
 use three_f::ThreeF;
 use ua::Ua;
 use wd::Wd;
@@ -68,6 +72,8 @@ pub enum Board {
     Fe(Fe),
     Ua(Ua),
     ThreeF(ThreeF),
+    ThreeE(ThreeE),
+    ThreeEPlus(ThreeEPlus),
 }
 
 pub struct Cartridge {
@@ -143,6 +149,10 @@ pub enum CartType {
     /// 8 KB as eight 1 KB slices in three segments, selected active-low from
     /// low memory (Brazilian Parker Bros).
     Zero3E0,
+    /// 3F with a cart-RAM path on its own hotspot (homebrew).
+    ThreeE,
+    /// Four independently banked 1 KB segments, each ROM or RAM (homebrew).
+    ThreeEPlus,
 }
 
 impl CartType {
@@ -166,7 +176,12 @@ impl CartType {
             CartType::Ar => ar::IMAGE_SIZE,
             CartType::F0 => 0x10000,
             CartType::Jane => 0x4000,
-            CartType::Wf8 | CartType::Wd | CartType::ZeroFa0 | CartType::Zero3E0 => 0x2000,
+            CartType::Wf8
+            | CartType::Wd
+            | CartType::ZeroFa0
+            | CartType::Zero3E0
+            | CartType::ThreeE
+            | CartType::ThreeEPlus => 0x2000,
             CartType::Fc => 0x8000,
         }
     }
@@ -231,6 +246,8 @@ impl Cartridge {
             CartType::Fc => Board::Fc(Fc::new(rom)),
             CartType::ZeroFa0 => Board::ZeroFa0(ZeroFa0::new(rom)),
             CartType::Zero3E0 => Board::Zero3E0(Zero3E0::new(rom)),
+            CartType::ThreeE => Board::ThreeE(ThreeE::new(rom)),
+            CartType::ThreeEPlus => Board::ThreeEPlus(ThreeEPlus::new(rom)),
         })
     }
 
@@ -282,6 +299,8 @@ impl Cartridge {
             Board::Zero3E0(board) => board.read(address),
             Board::Ua(board) => board.read(address),
             Board::ThreeF(board) => board.read(address, residue),
+            Board::ThreeE(board) => board.read(address, residue),
+            Board::ThreeEPlus(board) => board.read(address, residue),
             Board::Fe(board) => board.read(address, residue),
             _ => None,
         }
@@ -308,6 +327,8 @@ impl Cartridge {
             Board::Zero3E0(board) => board.write_access(address),
             Board::Ua(board) => board.write_access(address),
             Board::ThreeF(board) => board.write_access(address, residue),
+            Board::ThreeE(board) => board.write_access(address, residue, data),
+            Board::ThreeEPlus(board) => board.write_access(address, residue, data),
             Board::Fe(board) => board.write_access(address, residue),
             _ => {}
         }
@@ -334,6 +355,8 @@ impl Cartridge {
             Board::Ar(board) => board.peek(address).unwrap_or(0),
             Board::Ua(board) => board.peek(address),
             Board::ThreeF(board) => board.peek(address),
+            Board::ThreeE(board) => board.peek(address),
+            Board::ThreeEPlus(board) => board.peek(address),
             Board::Fe(board) => board.peek(address),
         }
     }

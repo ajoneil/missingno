@@ -828,3 +828,57 @@ fn power_on_bank_secam() {
         CartType::F8,
     );
 }
+
+#[test]
+fn bank_3e_ntsc() {
+    run_self_test_on(
+        "cartridge/bank-3e_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::ThreeE,
+    );
+}
+
+#[test]
+fn bank_3e_pal() {
+    run_self_test_on(
+        "cartridge/bank-3e_pal.a26",
+        TvStandard::Pal,
+        CartType::ThreeE,
+    );
+}
+
+#[test]
+fn bank_3e_secam() {
+    run_self_test_on(
+        "cartridge/bank-3e_secam.a26",
+        TvStandard::Secam,
+        CartType::ThreeE,
+    );
+}
+
+#[test]
+fn bank_3ep_ntsc() {
+    run_self_test_on(
+        "cartridge/bank-3ep_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::ThreeEPlus,
+    );
+}
+
+#[test]
+fn bank_3ep_pal() {
+    run_self_test_on(
+        "cartridge/bank-3ep_pal.a26",
+        TvStandard::Pal,
+        CartType::ThreeEPlus,
+    );
+}
+
+#[test]
+fn bank_3ep_secam() {
+    run_self_test_on(
+        "cartridge/bank-3ep_secam.a26",
+        TvStandard::Secam,
+        CartType::ThreeEPlus,
+    );
+}
