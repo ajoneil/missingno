@@ -5,16 +5,22 @@
 //! page it, shadow it with RAM, or both. One module per board.
 
 pub mod atari;
+pub mod cv;
 pub mod e0;
 pub mod e7;
 pub mod fa;
 pub mod plain;
+pub mod three_f;
+pub mod ua;
 
 use atari::Atari;
+use cv::Cv;
 use e0::E0;
 use e7::E7;
 use fa::Fa;
 use plain::Plain;
+use three_f::ThreeF;
+use ua::Ua;
 
 /// The board in the slot. Bank state and cart RAM live inline, so one board
 /// exists per console and survives a power cycle exactly as the silicon does.
@@ -26,6 +32,9 @@ pub enum Board {
     Fa(Fa),
     E0(E0),
     E7(E7),
+    Cv(Cv),
+    Ua(Ua),
+    ThreeF(ThreeF),
 }
 
 pub struct Cartridge {
@@ -67,6 +76,13 @@ pub enum CartType {
     E0,
     /// 16 KB as eight 2 KB banks, with 1 KB and 4×256 B cart RAMs (M-Network).
     E7,
+    /// 2 KB of ROM over 1 KB of read-low cart RAM (CommaVid).
+    Cv,
+    /// 8 KB across two banks, selected from loosely decoded hotspots below the
+    /// window (UA Ltd).
+    Ua,
+    /// A 2 KB fixed half over a bus-latched paged half (Tigervision).
+    ThreeF,
 }
 
 impl CartType {
@@ -75,12 +91,22 @@ impl CartType {
         match self {
             CartType::Plain2K => 0x800,
             CartType::Plain4K => 0x1000,
-            CartType::F8 | CartType::F8Sc | CartType::E0 => 0x2000,
+            CartType::F8 | CartType::F8Sc | CartType::E0 | CartType::Ua | CartType::ThreeF => {
+                0x2000
+            }
             CartType::F6 | CartType::F6Sc | CartType::E7 => 0x4000,
             CartType::F4 | CartType::F4Sc => 0x8000,
             CartType::Fa => 0x3000,
+            CartType::Cv => 0x800,
         }
     }
+}
+
+/// A12 hands the bus to the cart. The port has no chip select, so this is the
+/// board's own decode, not the console's — which is why a board is free to
+/// watch the address lines below it too.
+pub(crate) fn selects_window(address: u16) -> bool {
+    address & 0x1000 != 0
 }
 
 /// The RAM ports shadow the bottom 256 bytes of every bank, so a Superchip
@@ -122,6 +148,9 @@ impl Cartridge {
             CartType::Fa => Board::Fa(Fa::new(rom)),
             CartType::E0 => Board::E0(E0::new(rom)),
             CartType::E7 => Board::E7(E7::new(rom)),
+            CartType::Cv => Board::Cv(Cv::new(rom)),
+            CartType::Ua => Board::Ua(Ua::new(rom)),
+            CartType::ThreeF => Board::ThreeF(ThreeF::new(rom)),
         })
     }
 
@@ -146,29 +175,41 @@ impl Cartridge {
         }
     }
 
-    /// A read cycle on the cart bus. `bus` is the byte the data bus still
-    /// carries, which a board with a write port latches and an empty slot
-    /// leaves standing.
-    pub fn read(&mut self, address: u16, bus: u8) -> u8 {
+    /// A read cycle at the cart edge. `residue` is the byte the bus still
+    /// carries entering the cycle: a board with a write port latches it, and
+    /// the 3F latch samples it at an A12 rise. Returns the byte the board
+    /// drives, or `None` where it leaves the bus to the console — an empty
+    /// slot always does, and a board does outside its own window.
+    pub fn read(&mut self, address: u16, residue: u8) -> Option<u8> {
+        let window = selects_window(address);
         match &mut self.board {
-            Board::Empty => bus,
-            Board::Plain(board) => board.read(address),
-            Board::Atari(board) => board.read(address, bus),
-            Board::Fa(board) => board.read(address, bus),
-            Board::E0(board) => board.read(address),
-            Board::E7(board) => board.read(address, bus),
+            Board::Plain(board) if window => Some(board.read(address)),
+            Board::Atari(board) if window => Some(board.read(address, residue)),
+            Board::Fa(board) if window => Some(board.read(address, residue)),
+            Board::E0(board) if window => Some(board.read(address)),
+            Board::E7(board) if window => Some(board.read(address, residue)),
+            Board::Cv(board) if window => Some(board.read(address, residue)),
+            // Boards whose hotspots live below the window watch every cycle,
+            // and answer only inside it.
+            Board::Ua(board) => board.read(address),
+            Board::ThreeF(board) => board.read(address, residue),
+            _ => None,
         }
     }
 
-    /// A write cycle on the cart bus: no data lands in ROM, but the address
+    /// A write cycle at the cart edge: no data lands in ROM, but the address
     /// still drives the hotspot decode and any write port.
-    pub fn write_access(&mut self, address: u16, data: u8) {
+    pub fn write_access(&mut self, address: u16, data: u8, residue: u8) {
+        let window = selects_window(address);
         match &mut self.board {
-            Board::Empty | Board::Plain(_) => {}
-            Board::Atari(board) => board.write_access(address, data),
-            Board::Fa(board) => board.write_access(address, data),
-            Board::E0(board) => board.write_access(address),
-            Board::E7(board) => board.write_access(address, data),
+            Board::Atari(board) if window => board.write_access(address, data),
+            Board::Fa(board) if window => board.write_access(address, data),
+            Board::E0(board) if window => board.write_access(address),
+            Board::E7(board) if window => board.write_access(address, data),
+            Board::Cv(board) if window => board.write_access(address, data),
+            Board::Ua(board) => board.write_access(address),
+            Board::ThreeF(board) => board.write_access(address, residue),
+            _ => {}
         }
     }
 
@@ -181,6 +222,9 @@ impl Cartridge {
             Board::Fa(board) => board.peek(address),
             Board::E0(board) => board.peek(address),
             Board::E7(board) => board.peek(address),
+            Board::Cv(board) => board.peek(address),
+            Board::Ua(board) => board.peek(address),
+            Board::ThreeF(board) => board.peek(address),
         }
     }
 }

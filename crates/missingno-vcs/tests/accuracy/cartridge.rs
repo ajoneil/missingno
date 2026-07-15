@@ -146,6 +146,71 @@ fn bank_e7_secam() {
 }
 
 #[test]
+fn bank_3f_ntsc() {
+    run_self_test_on(
+        "cartridge/bank-3f_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::ThreeF,
+    );
+}
+
+#[test]
+fn bank_3f_pal() {
+    run_self_test_on(
+        "cartridge/bank-3f_pal.a26",
+        TvStandard::Pal,
+        CartType::ThreeF,
+    );
+}
+
+#[test]
+fn bank_3f_secam() {
+    run_self_test_on(
+        "cartridge/bank-3f_secam.a26",
+        TvStandard::Secam,
+        CartType::ThreeF,
+    );
+}
+
+#[test]
+fn bank_ua_ntsc() {
+    run_self_test_on("cartridge/bank-ua_ntsc.a26", TvStandard::Ntsc, CartType::Ua);
+}
+
+#[test]
+fn bank_ua_pal() {
+    run_self_test_on("cartridge/bank-ua_pal.a26", TvStandard::Pal, CartType::Ua);
+}
+
+#[test]
+fn bank_ua_secam() {
+    run_self_test_on(
+        "cartridge/bank-ua_secam.a26",
+        TvStandard::Secam,
+        CartType::Ua,
+    );
+}
+
+#[test]
+fn ram_cv_ntsc() {
+    run_self_test_on("cartridge/ram-cv_ntsc.a26", TvStandard::Ntsc, CartType::Cv);
+}
+
+#[test]
+fn ram_cv_pal() {
+    run_self_test_on("cartridge/ram-cv_pal.a26", TvStandard::Pal, CartType::Cv);
+}
+
+#[test]
+fn ram_cv_secam() {
+    run_self_test_on(
+        "cartridge/ram-cv_secam.a26",
+        TvStandard::Secam,
+        CartType::Cv,
+    );
+}
+
+#[test]
 fn bank_hotspot_window_ntsc() {
     run_self_test_on(
         "cartridge/bank-hotspot-window_ntsc.a26",

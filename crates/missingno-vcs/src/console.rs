@@ -119,8 +119,11 @@ pub(crate) struct TiaWrite {
 
 impl Bus for BoardBus<'_> {
     fn read(&mut self, address: u16) -> u8 {
-        let value = if selects_cartridge(address) {
-            self.cartridge.read(address, *self.last_bus_value)
+        // The cart port has no chip select: every cycle reaches the edge, and
+        // the board decides whether it answers. Boards whose hotspots live
+        // below the window fire here without driving the bus.
+        let value = if let Some(driven) = self.cartridge.read(address, *self.last_bus_value) {
+            driven
         } else if selects_tia(address) {
             // The TIA drives only D7-D6; the rest floats to the bus's byte.
             self.tia.read(address, *self.last_bus_value)
@@ -134,13 +137,17 @@ impl Bus for BoardBus<'_> {
     }
 
     fn write(&mut self, address: u16, data: u8) {
-        *self.last_bus_value = data;
         use crate::tia::registers::{
             COLUBK, COLUP0, COLUP1, COLUPF, HMOVE, PF0, PF1, PF2, RESBL, RESM0, RESM1, RESP0,
             RESP1, RSYNC,
         };
+        // The residue is what the bus carries entering the cycle, before the
+        // CPU drives its byte — what a latch clocked by an address edge sees.
+        self.cartridge
+            .write_access(address, data, *self.last_bus_value);
+        *self.last_bus_value = data;
         if selects_cartridge(address) {
-            self.cartridge.write_access(address, data);
+            // ROM takes no data; the address has already driven the board.
         } else if selects_tia(address) {
             let register = (address & 0x3F) as u8;
             // Data commits at φ2 (the high half); a reset strobe re-phases the
