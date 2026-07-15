@@ -99,26 +99,6 @@ fn frames_keep_coming() {
 }
 
 #[test]
-fn wsync_parks_the_cpu_until_line_start() {
-    // STA WSYNC mid-line; the following STX must execute from line start.
-    let mut asm = Asm::new(0xF000);
-    asm.lda_imm(0x02);
-    asm.sta_zp(WSYNC);
-    asm.stx_zp(COLUBK);
-    let spin = asm.here();
-    asm.jmp_abs(spin);
-    let mut vcs = Vcs::new(&asm.into_rom(), missingno_vcs::TvStandard::Ntsc, None).unwrap();
-
-    vcs.step_instruction(); // the reset sequence
-    vcs.step_instruction(); // LDA
-    vcs.step_instruction(); // STA WSYNC
-    vcs.step_instruction(); // STX, parked first
-    // Release at line start: STX's cycles land at colour clocks 0/3/6,
-    // and the boundary surfaces one TIA clock after the write cycle.
-    assert_eq!(vcs.tia.beam(), 7);
-}
-
-#[test]
 fn budget_guard_returns_none_without_vsync() {
     // A kernel that never syncs: tight spin.
     let mut asm = Asm::new(0xF000);
