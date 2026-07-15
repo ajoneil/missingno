@@ -22,8 +22,36 @@ impl RcHighPass {
         1.0 / (TAU * self.resistance_ohms * self.capacitance_farads)
     }
 
+    pub fn high_pass(self) -> HighPass {
+        HighPass {
+            cutoff_hz: self.cutoff_hz(),
+        }
+    }
+
     pub fn at_sample_rate(self, sample_rate_hz: f32) -> OnePoleHighPass {
-        OnePoleHighPass::from_cutoff(self.cutoff_hz(), sample_rate_hz)
+        self.high_pass().at_sample_rate(sample_rate_hz)
+    }
+}
+
+/// A coupling's corner, however it was arrived at. Boards whose components are
+/// known state them as an [`RcHighPass`] and derive this; boards known only by
+/// a fitted decay say so directly, rather than inventing components to match.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct HighPass {
+    pub cutoff_hz: f32,
+}
+
+impl HighPass {
+    /// From a per-cycle charge factor: the form a coupling takes when it was
+    /// fitted against a running console rather than read off a schematic.
+    pub fn from_decay_per_cycle(decay: f32, cycle_rate_hz: f32) -> Self {
+        HighPass {
+            cutoff_hz: -decay.ln() * cycle_rate_hz / TAU,
+        }
+    }
+
+    pub fn at_sample_rate(self, sample_rate_hz: f32) -> OnePoleHighPass {
+        OnePoleHighPass::from_cutoff(self.cutoff_hz, sample_rate_hz)
     }
 }
 
@@ -96,6 +124,20 @@ mod tests {
             peak = peak.max(filter.process(phase.sin()).abs());
         }
         assert!(peak > 0.99, "band-pass attenuated to {peak}");
+    }
+
+    #[test]
+    fn a_fitted_decay_reaches_the_same_filter_as_its_corner() {
+        // A per-cycle charge factor and the corner it implies are the same
+        // coupling: stating either must land on the same pole.
+        let decay = 0.999958f32;
+        let coupling = HighPass::from_decay_per_cycle(decay, 4_194_304.0);
+        let mut from_corner = coupling.at_sample_rate(44_100.0);
+        let mut from_decay = OnePoleHighPass::from_pole(decay.powf(4_194_304.0 / 44_100.0));
+        for n in 0..256 {
+            let x = (n as f32 * 0.05).sin();
+            assert!((from_corner.process(x) - from_decay.process(x)).abs() < 1e-5);
+        }
     }
 
     #[test]

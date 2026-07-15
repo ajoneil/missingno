@@ -235,6 +235,10 @@ where
         Console::drain_audio_samples(self)
     }
 
+    fn audio_coupling(&self) -> Option<missingno_hw::HighPass> {
+        Some(missingno_gb::board::audio_coupling())
+    }
+
     fn screen_display(&self) -> ScreenDisplay {
         M::screen_display(self, Some(self.screen().clone()))
             .expect("screen_display is always Some when given a screen")
@@ -351,6 +355,10 @@ where
 
     fn platform(&self) -> super::Platform {
         M::PLATFORM
+    }
+
+    fn audio_coupling(&self) -> Option<missingno_hw::HighPass> {
+        Some(missingno_gb::board::audio_coupling())
     }
 
     fn symbols(&self) -> Arc<SymbolTable> {

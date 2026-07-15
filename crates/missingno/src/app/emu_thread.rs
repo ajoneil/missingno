@@ -409,7 +409,7 @@ impl EmuLoop {
             let _ = self.events.unbounded_send(EmuEvent::FrameReady);
         }
         if let Some(audio) = audio {
-            audio.push_samples(&payload.drain_audio_samples());
+            audio.push_samples(&payload.drain_audio_samples(), payload.audio_coupling());
         }
 
         // Debounce SRAM: reset countdown on a dirty frame, flush after quiet.
@@ -508,6 +508,13 @@ impl Payload {
         match self {
             Self::Console(console) => console.drain_audio_samples(),
             Self::Debugger(payload) => payload.core.drain_audio_samples(),
+        }
+    }
+
+    fn audio_coupling(&self) -> Option<missingno_hw::HighPass> {
+        match self {
+            Self::Console(console) => console.audio_coupling(),
+            Self::Debugger(payload) => payload.core.audio_coupling(),
         }
     }
 

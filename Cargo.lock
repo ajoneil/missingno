@@ -3011,6 +3011,7 @@ dependencies = [
  "bitflags 2.11.1",
  "missingno-debug",
  "missingno-gb",
+ "missingno-hw",
  "morepork",
  "png 0.18.1",
  "rgb",

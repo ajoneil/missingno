@@ -14,6 +14,7 @@ use missingno_debug::{
     symbols::{Symbol, SymbolTable},
 };
 use missingno_gb::debugger::WatchCondition;
+use missingno_hw::HighPass;
 /// A family-interpreted control identifier. Ids 0-7 mirror the Game Boy
 /// button order so the existing bindings pipeline translates numerically;
 /// analog and family-specific controls take ids from 8 up.
@@ -277,6 +278,12 @@ pub trait SystemConsole: Send {
     /// Stereo samples at 44.1 kHz — the seam's fixed rate. Families
     /// convert from their native rate on their own side.
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)>;
+    /// The coupling the console's board puts between its audio pads and the
+    /// jack. `None` for a family whose board has not been modelled — its
+    /// samples reach the device as the chip drove them.
+    fn audio_coupling(&self) -> Option<HighPass> {
+        None
+    }
     fn screen_display(&self) -> ScreenDisplay;
     fn capture_frame(&self, options: &CaptureOptions) -> FrameCapture;
     /// The game's title for filenames and session records.
@@ -309,6 +316,11 @@ pub trait SystemDebugger: Send {
     fn reset(&mut self);
     fn set_control(&mut self, control: ControlId, input: ControlInput);
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)>;
+    /// The coupling the console's board puts between its audio pads and the
+    /// jack; `None` for a family whose board has not been modelled.
+    fn audio_coupling(&self) -> Option<HighPass> {
+        None
+    }
 
     fn set_breakpoint(&mut self, address: u16);
     fn clear_breakpoint(&mut self, address: u16);

@@ -1,22 +1,21 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use missingno_hw::OnePoleHighPass;
+use missingno_hw::{HighPass, OnePoleHighPass};
 
-// Charge factor of the board's output coupling caps per 4 MiHz T-cycle
-// (SameBoy's model constant; ~28 Hz cutoff). The console emits SO1/SO2
-// unfiltered — the DC block is board-level, between chip pad and jack.
-// Applied to every family, which only suits the Game Boy it was measured on.
-const DC_BLOCK_CHARGE_PER_TCYCLE: f64 = 0.999958;
-const TCYCLES_PER_SAMPLE: f64 = 4_194_304.0 / 44_100.0;
+const SAMPLE_RATE: u32 = 44_100;
 
-fn dc_blocker() -> OnePoleHighPass {
-    OnePoleHighPass::from_pole(DC_BLOCK_CHARGE_PER_TCYCLE.powf(TCYCLES_PER_SAMPLE) as f32)
-}
-
+/// The device end of the audio path. It plays what a console's board delivers
+/// to the jack, so the only stage here is that board's coupling — which the
+/// console states and this retunes to whenever the machine changes.
 pub struct AudioOutput {
     _stream: cpal::Stream,
     producer: rtrb::Producer<(f32, f32)>,
-    dc_block_left: OnePoleHighPass,
-    dc_block_right: OnePoleHighPass,
+    coupling: Option<Coupling>,
+}
+
+struct Coupling {
+    spec: HighPass,
+    left: OnePoleHighPass,
+    right: OnePoleHighPass,
 }
 
 impl AudioOutput {
@@ -26,7 +25,7 @@ impl AudioOutput {
 
         let config = cpal::StreamConfig {
             channels: 2,
-            sample_rate: 44100,
+            sample_rate: SAMPLE_RATE,
             buffer_size: cpal::BufferSize::Default,
         };
 
@@ -52,30 +51,49 @@ impl AudioOutput {
         Some(Self {
             _stream: stream,
             producer,
-            dc_block_left: dc_blocker(),
-            dc_block_right: dc_blocker(),
+            coupling: None,
         })
     }
 
-    pub fn push_samples(&mut self, samples: &[(f32, f32)]) {
+    /// Play a console's samples through the coupling its board provides. A
+    /// board the console does not describe leaves the samples untouched.
+    pub fn push_samples(&mut self, samples: &[(f32, f32)], coupling: Option<HighPass>) {
+        self.tune(coupling);
         for &(left, right) in samples {
-            let filtered = (
-                self.dc_block_left.process(left),
-                self.dc_block_right.process(right),
-            );
-            let _ = self.producer.push(filtered);
+            let played = match &mut self.coupling {
+                Some(coupling) => (coupling.left.process(left), coupling.right.process(right)),
+                None => (left, right),
+            };
+            let _ = self.producer.push(played);
         }
+    }
+
+    /// Rebuild the filters when the machine on the other end changes; holding
+    /// them steady otherwise keeps each one's charge across the stream.
+    fn tune(&mut self, spec: Option<HighPass>) {
+        if self.coupling.as_ref().map(|coupling| coupling.spec) == spec {
+            return;
+        }
+        self.coupling = spec.map(|spec| Coupling {
+            spec,
+            left: spec.at_sample_rate(SAMPLE_RATE as f32),
+            right: spec.at_sample_rate(SAMPLE_RATE as f32),
+        });
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::dc_blocker;
+    use super::*;
+
+    fn game_boy_coupling() -> OnePoleHighPass {
+        missingno_gb::board::audio_coupling().at_sample_rate(SAMPLE_RATE as f32)
+    }
 
     #[test]
-    fn dc_blocker_removes_constant_offset() {
-        let mut f = dc_blocker();
-        let mut y = 0.0;
+    fn a_coupling_removes_a_constant_offset() {
+        let mut f = game_boy_coupling();
+        let mut y = 0.0f32;
         for _ in 0..44_100 {
             y = f.process(0.5);
         }
@@ -86,15 +104,24 @@ mod tests {
     }
 
     #[test]
-    fn dc_blocker_passes_step_transient() {
-        let mut f = dc_blocker();
+    fn a_coupling_passes_a_step_transient() {
+        let mut f = game_boy_coupling();
         for _ in 0..1_000 {
             f.process(0.0);
         }
-        let y = f.process(0.25);
+        let y: f32 = f.process(0.25);
         assert!(
             (y - 0.25).abs() < 0.002,
             "step edge should pass at full height, got {y}"
         );
+    }
+
+    #[test]
+    fn the_consoles_do_not_share_a_coupling() {
+        // The Atari's board is drawn: 0.1 µF into 18K. The Game Boy's is a
+        // fitted decay. They are different boards and must not sound alike.
+        let atari = missingno_vcs::board::AUDIO_COUPLING.high_pass();
+        let game_boy = missingno_gb::board::audio_coupling();
+        assert!(atari.cutoff_hz > game_boy.cutoff_hz * 2.0);
     }
 }

@@ -12,5 +12,5 @@
 pub mod analog;
 pub mod tv;
 
-pub use analog::{OnePoleHighPass, RcHighPass};
+pub use analog::{HighPass, OnePoleHighPass, RcHighPass};
 pub use tv::TvStandard;

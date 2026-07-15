@@ -418,12 +418,14 @@ impl App {
     /// Drain audio from the on-thread debugger to the UI-side output device.
     /// The plain emulator pushes audio directly from the emu thread instead.
     pub(super) fn drain_audio(&mut self) {
-        let samples = match &mut self.game {
-            Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.drain_audio_samples(),
+        let (samples, coupling) = match &mut self.game {
+            Game::Loaded(LoadedGame::Debugger(debugger)) => {
+                (debugger.drain_audio_samples(), debugger.audio_coupling())
+            }
             _ => return,
         };
         if let Some(audio) = &mut self.audio_output {
-            audio.push_samples(&samples);
+            audio.push_samples(&samples, coupling);
         }
     }
 

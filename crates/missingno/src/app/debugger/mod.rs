@@ -306,6 +306,12 @@ impl Debugger {
         self.last_snapshot = Some(view);
     }
 
+    pub fn audio_coupling(&self) -> Option<missingno_hw::HighPass> {
+        self.debugger
+            .as_ref()
+            .and_then(|core| core.audio_coupling())
+    }
+
     pub fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
         match &mut self.debugger {
             Some(core) => core.drain_audio_samples(),

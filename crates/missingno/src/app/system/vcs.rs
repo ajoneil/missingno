@@ -393,6 +393,10 @@ impl SystemConsole for VcsConsole {
         self.vcs.drain_audio_samples()
     }
 
+    fn audio_coupling(&self) -> Option<missingno_hw::HighPass> {
+        Some(missingno_vcs::board::AUDIO_COUPLING.high_pass())
+    }
+
     fn screen_display(&self) -> ScreenDisplay {
         ScreenDisplay::Indexed(self.last_frame.clone())
     }
@@ -590,6 +594,10 @@ impl SystemDebugger for VcsDebugger {
 
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
         self.core.console_mut().drain_audio_samples()
+    }
+
+    fn audio_coupling(&self) -> Option<missingno_hw::HighPass> {
+        Some(missingno_vcs::board::AUDIO_COUPLING.high_pass())
     }
 
     fn set_breakpoint(&mut self, address: u16) {

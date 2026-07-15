@@ -11,6 +11,7 @@ test-support = ["dep:png"]
 
 [dependencies]
 missingno-debug = { path = "../missingno-debug" }
+missingno-hw = { path = "../missingno-hw" }
 bitflags = { workspace = true }
 rgb = { workspace = true }
 morepork = { git = "https://github.com/ajoneil/morepork", optional = true }

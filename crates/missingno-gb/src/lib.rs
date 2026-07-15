@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod board;
 pub mod cartridge;
 pub mod clock;
 pub mod cpu;
