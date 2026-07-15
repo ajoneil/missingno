@@ -10,11 +10,15 @@ pub mod cv;
 pub mod dpc;
 pub mod e0;
 pub mod e7;
+pub mod f0;
 pub mod fa;
 pub mod fe;
+pub mod jane;
 pub mod plain;
 pub mod three_f;
 pub mod ua;
+pub mod wd;
+pub mod wf8;
 
 use ar::Ar;
 use atari::Atari;
@@ -22,11 +26,15 @@ use cv::Cv;
 use dpc::Dpc;
 use e0::E0;
 use e7::E7;
+use f0::F0;
 use fa::Fa;
 use fe::Fe;
+use jane::Jane;
 use plain::Plain;
 use three_f::ThreeF;
 use ua::Ua;
+use wd::Wd;
+use wf8::Wf8;
 
 /// The board in the slot. Bank state and cart RAM live inline, so one board
 /// exists per console and survives a power cycle exactly as the silicon does.
@@ -44,6 +52,10 @@ pub enum Board {
     E7(E7),
     Cv(Cv),
     Dpc(Dpc),
+    F0(F0),
+    Jane(Jane),
+    Wf8(Wf8),
+    Wd(Wd),
     Fe(Fe),
     Ua(Ua),
     ThreeF(ThreeF),
@@ -104,6 +116,15 @@ pub enum CartType {
     /// 6 KB of tape-loaded RAM and a BIOS, driven entirely by reads (Starpath
     /// Supercharger). The image is a fastload container, not a ROM.
     Ar,
+    /// 64 KB across sixteen banks, stepped one at a time (Dynacom Megaboy).
+    F0,
+    /// 16 KB across four banks on scattered hotspots (Tarzan prototype).
+    Jane,
+    /// 8 KB across two banks, chosen by the written data (Coleco white label).
+    Wf8,
+    /// 8 KB as eight 1 KB banks filling four segments at once, on a delayed
+    /// switch (Wickstead Design prototype).
+    Wd,
 }
 
 impl CartType {
@@ -125,6 +146,9 @@ impl CartType {
             // 8 KB program + 2 KB display, and the dumper's trailing RNG stream.
             CartType::Dpc => 0x2900,
             CartType::Ar => ar::IMAGE_SIZE,
+            CartType::F0 => 0x10000,
+            CartType::Jane => 0x4000,
+            CartType::Wf8 | CartType::Wd => 0x2000,
         }
     }
 }
@@ -181,6 +205,10 @@ impl Cartridge {
             CartType::Fe => Board::Fe(Fe::new(rom)),
             CartType::Dpc => Board::Dpc(Dpc::new(rom)),
             CartType::Ar => Board::Ar(Ar::new(rom)),
+            CartType::F0 => Board::F0(F0::new(rom)),
+            CartType::Jane => Board::Jane(Jane::new(rom)),
+            CartType::Wf8 => Board::Wf8(Wf8::new(rom)),
+            CartType::Wd => Board::Wd(Wd::new(rom)),
         })
     }
 
@@ -220,9 +248,13 @@ impl Cartridge {
             Board::E7(board) if window => Some(board.read(address, residue)),
             Board::Cv(board) if window => Some(board.read(address, residue)),
             Board::Dpc(board) if window => Some(board.read(address, residue)),
+            Board::F0(board) if window => Some(board.read(address)),
+            Board::Jane(board) if window => Some(board.read(address)),
+            Board::Wf8(board) if window => Some(board.peek(address)),
             // Boards that watch the whole address bus — for hotspots below the
             // window, or to count its transitions — and answer only inside it.
             Board::Ar(board) => board.read(address, residue),
+            Board::Wd(board) => board.read(address, residue),
             Board::Ua(board) => board.read(address),
             Board::ThreeF(board) => board.read(address, residue),
             Board::Fe(board) => board.read(address, residue),
@@ -241,7 +273,11 @@ impl Cartridge {
             Board::E7(board) if window => board.write_access(address, data),
             Board::Cv(board) if window => board.write_access(address, data),
             Board::Dpc(board) if window => board.write_access(address, data),
+            Board::F0(board) if window => board.write_access(address),
+            Board::Jane(board) if window => board.write_access(address),
+            Board::Wf8(board) if window => board.write_access(address, data),
             Board::Ar(board) => board.write_access(address),
+            Board::Wd(board) => board.write_access(address, data),
             Board::Ua(board) => board.write_access(address),
             Board::ThreeF(board) => board.write_access(address, residue),
             Board::Fe(board) => board.write_access(address, residue),
@@ -260,6 +296,10 @@ impl Cartridge {
             Board::E7(board) => board.peek(address),
             Board::Cv(board) => board.peek(address),
             Board::Dpc(board) => board.peek(address),
+            Board::F0(board) => board.peek(address),
+            Board::Jane(board) => board.peek(address),
+            Board::Wf8(board) => board.peek(address),
+            Board::Wd(board) => board.peek(address),
             Board::Ar(board) => board.peek(address).unwrap_or(0),
             Board::Ua(board) => board.peek(address),
             Board::ThreeF(board) => board.peek(address),

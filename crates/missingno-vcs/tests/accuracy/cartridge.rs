@@ -640,3 +640,91 @@ fn ar_hazards_secam() {
         CartType::Ar,
     );
 }
+
+#[test]
+fn bank_f0_ntsc() {
+    run_self_test_on("cartridge/bank-f0_ntsc.a26", TvStandard::Ntsc, CartType::F0);
+}
+
+#[test]
+fn bank_f0_pal() {
+    run_self_test_on("cartridge/bank-f0_pal.a26", TvStandard::Pal, CartType::F0);
+}
+
+#[test]
+fn bank_f0_secam() {
+    run_self_test_on(
+        "cartridge/bank-f0_secam.a26",
+        TvStandard::Secam,
+        CartType::F0,
+    );
+}
+
+#[test]
+fn bank_wd_ntsc() {
+    run_self_test_on("cartridge/bank-wd_ntsc.a26", TvStandard::Ntsc, CartType::Wd);
+}
+
+#[test]
+fn bank_wd_pal() {
+    run_self_test_on("cartridge/bank-wd_pal.a26", TvStandard::Pal, CartType::Wd);
+}
+
+#[test]
+fn bank_wd_secam() {
+    run_self_test_on(
+        "cartridge/bank-wd_secam.a26",
+        TvStandard::Secam,
+        CartType::Wd,
+    );
+}
+
+#[test]
+fn bank_jane_ntsc() {
+    run_self_test_on(
+        "cartridge/bank-jane_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Jane,
+    );
+}
+
+#[test]
+fn bank_jane_pal() {
+    run_self_test_on(
+        "cartridge/bank-jane_pal.a26",
+        TvStandard::Pal,
+        CartType::Jane,
+    );
+}
+
+#[test]
+fn bank_jane_secam() {
+    run_self_test_on(
+        "cartridge/bank-jane_secam.a26",
+        TvStandard::Secam,
+        CartType::Jane,
+    );
+}
+
+#[test]
+fn bank_wf8_ntsc() {
+    run_self_test_on(
+        "cartridge/bank-wf8_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Wf8,
+    );
+}
+
+#[test]
+fn bank_wf8_pal() {
+    run_self_test_on("cartridge/bank-wf8_pal.a26", TvStandard::Pal, CartType::Wf8);
+}
+
+#[test]
+fn bank_wf8_secam() {
+    run_self_test_on(
+        "cartridge/bank-wf8_secam.a26",
+        TvStandard::Secam,
+        CartType::Wf8,
+    );
+}
