@@ -16,6 +16,7 @@ pub mod fc;
 pub mod fe;
 pub mod jane;
 pub mod plain;
+pub mod sb;
 pub mod three_e;
 pub mod three_e_plus;
 pub mod three_f;
@@ -37,6 +38,7 @@ use fc::Fc;
 use fe::Fe;
 use jane::Jane;
 use plain::Plain;
+use sb::Sb;
 use three_e::ThreeE;
 use three_e_plus::ThreeEPlus;
 use three_f::ThreeF;
@@ -74,6 +76,7 @@ pub enum Board {
     ThreeF(ThreeF),
     ThreeE(ThreeE),
     ThreeEPlus(ThreeEPlus),
+    Sb(Sb),
 }
 
 pub struct Cartridge {
@@ -153,6 +156,15 @@ pub enum CartType {
     ThreeE,
     /// Four independently banked 1 KB segments, each ROM or RAM (homebrew).
     ThreeEPlus,
+    /// 64 KB across sixteen banks, on the hotspot family's wider run (homebrew).
+    Ef,
+    /// 128 KB across thirty-two banks (homebrew).
+    Df,
+    /// 256 KB across sixty-four banks (homebrew).
+    Bf,
+    /// 128 KB across thirty-two banks selected from low memory, waking in the
+    /// last of them (SuperBanking).
+    Sb,
 }
 
 impl CartType {
@@ -169,6 +181,9 @@ impl CartType {
             | CartType::Fe => 0x2000,
             CartType::F6 | CartType::F6Sc | CartType::E7 => 0x4000,
             CartType::F4 | CartType::F4Sc => 0x8000,
+            CartType::Ef => 0x10000,
+            CartType::Df | CartType::Sb => 0x20000,
+            CartType::Bf => 0x40000,
             CartType::Fa => 0x3000,
             CartType::Cv => 0x800,
             // 8 KB program + 2 KB display, and the dumper's trailing RNG stream.
@@ -230,6 +245,11 @@ impl Cartridge {
             CartType::F6Sc => atari(atari::F6_HOTSPOT_BASE, true),
             CartType::F4 => atari(atari::F4_HOTSPOT_BASE, false),
             CartType::F4Sc => atari(atari::F4_HOTSPOT_BASE, true),
+            CartType::Ef => atari(atari::EF_HOTSPOT_BASE, false),
+            CartType::Df => Board::Atari(
+                Atari::new(rom, atari::DF_HOTSPOT_BASE, false).waking_in(atari::DF_START_BANK),
+            ),
+            CartType::Bf => atari(atari::BF_HOTSPOT_BASE, false),
             CartType::Fa => Board::Fa(Fa::new(rom)),
             CartType::E0 => Board::E0(E0::new(rom)),
             CartType::E7 => Board::E7(E7::new(rom)),
@@ -248,6 +268,7 @@ impl Cartridge {
             CartType::Zero3E0 => Board::Zero3E0(Zero3E0::new(rom)),
             CartType::ThreeE => Board::ThreeE(ThreeE::new(rom)),
             CartType::ThreeEPlus => Board::ThreeEPlus(ThreeEPlus::new(rom)),
+            CartType::Sb => Board::Sb(Sb::new(rom)),
         })
     }
 
@@ -297,6 +318,7 @@ impl Cartridge {
             Board::Wd(board) => board.read(address, residue),
             Board::ZeroFa0(board) => board.read(address),
             Board::Zero3E0(board) => board.read(address),
+            Board::Sb(board) => board.read(address),
             Board::Ua(board) => board.read(address),
             Board::ThreeF(board) => board.read(address, residue),
             Board::ThreeE(board) => board.read(address, residue),
@@ -325,6 +347,7 @@ impl Cartridge {
             Board::Wd(board) => board.write_access(address, data),
             Board::ZeroFa0(board) => board.write_access(address),
             Board::Zero3E0(board) => board.write_access(address),
+            Board::Sb(board) => board.write_access(address),
             Board::Ua(board) => board.write_access(address),
             Board::ThreeF(board) => board.write_access(address, residue),
             Board::ThreeE(board) => board.write_access(address, residue, data),
@@ -352,6 +375,7 @@ impl Cartridge {
             Board::Fc(board) => board.peek(address),
             Board::ZeroFa0(board) => board.peek(address),
             Board::Zero3E0(board) => board.peek(address),
+            Board::Sb(board) => board.peek(address),
             Board::Ar(board) => board.peek(address).unwrap_or(0),
             Board::Ua(board) => board.peek(address),
             Board::ThreeF(board) => board.peek(address),

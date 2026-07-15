@@ -882,3 +882,79 @@ fn bank_3ep_secam() {
         CartType::ThreeEPlus,
     );
 }
+
+#[test]
+fn bank_ef_ntsc() {
+    run_self_test_on("cartridge/bank-ef_ntsc.a26", TvStandard::Ntsc, CartType::Ef);
+}
+
+#[test]
+fn bank_ef_pal() {
+    run_self_test_on("cartridge/bank-ef_pal.a26", TvStandard::Pal, CartType::Ef);
+}
+
+#[test]
+fn bank_ef_secam() {
+    run_self_test_on(
+        "cartridge/bank-ef_secam.a26",
+        TvStandard::Secam,
+        CartType::Ef,
+    );
+}
+
+#[test]
+fn bank_df_ntsc() {
+    run_self_test_on("cartridge/bank-df_ntsc.a26", TvStandard::Ntsc, CartType::Df);
+}
+
+#[test]
+fn bank_df_pal() {
+    run_self_test_on("cartridge/bank-df_pal.a26", TvStandard::Pal, CartType::Df);
+}
+
+#[test]
+fn bank_df_secam() {
+    run_self_test_on(
+        "cartridge/bank-df_secam.a26",
+        TvStandard::Secam,
+        CartType::Df,
+    );
+}
+
+#[test]
+fn bank_bf_ntsc() {
+    run_self_test_on("cartridge/bank-bf_ntsc.a26", TvStandard::Ntsc, CartType::Bf);
+}
+
+#[test]
+fn bank_bf_pal() {
+    run_self_test_on("cartridge/bank-bf_pal.a26", TvStandard::Pal, CartType::Bf);
+}
+
+#[test]
+fn bank_bf_secam() {
+    run_self_test_on(
+        "cartridge/bank-bf_secam.a26",
+        TvStandard::Secam,
+        CartType::Bf,
+    );
+}
+
+#[test]
+fn bank_sb_ntsc() {
+    run_self_test_on("cartridge/bank-sb_ntsc.a26", TvStandard::Ntsc, CartType::Sb);
+}
+
+#[test]
+fn bank_sb_pal() {
+    run_self_test_on("cartridge/bank-sb_pal.a26", TvStandard::Pal, CartType::Sb);
+}
+
+#[test]
+fn bank_sb_secam() {
+    run_self_test_on(
+        "cartridge/bank-sb_secam.a26",
+        TvStandard::Secam,
+        CartType::Sb,
+    );
+}

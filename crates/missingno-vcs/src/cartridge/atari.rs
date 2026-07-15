@@ -1,9 +1,12 @@
-//! The Atari hotspot boards (F8/F6/F4), optionally with Superchip cart RAM.
+//! The hotspot-select family (F8/F6/F4, and the homebrew EF/DF/BF that scale it
+//! up), optionally with Superchip cart RAM.
 //!
-//! A run of fixed addresses at the top of the window are hotspots: any bus
+//! A run of fixed addresses near the top of the window are hotspots: any bus
 //! access landing on one selects its 4 KB bank, and the data bus is irrelevant.
-//! The cart decodes 13 lines, so the CPU reaches them through their $FFFx
-//! mirror. Bank count is what separates the boards; the mechanism does not.
+//! The cart decodes 13 lines, so the CPU reaches them through their $FFxx
+//! mirror. What separates the boards is only where the run starts and how many
+//! banks it covers — F8 spends two hotspots, BF sixty-four — never the
+//! mechanism, so they share it.
 //!
 //! Superchip (SARA) adds 128 bytes of static RAM under the bottom of the
 //! window. The cart edge has no read/write strobe, so the RAM splits into two
@@ -14,6 +17,15 @@
 pub const F8_HOTSPOT_BASE: u16 = 0x1FF8;
 pub const F6_HOTSPOT_BASE: u16 = 0x1FF6;
 pub const F4_HOTSPOT_BASE: u16 = 0x1FF4;
+/// The homebrew boards need a wider run, so theirs starts lower.
+pub const EF_HOTSPOT_BASE: u16 = 0x1FE0;
+pub const DF_HOTSPOT_BASE: u16 = 0x1FC0;
+pub const BF_HOTSPOT_BASE: u16 = 0x1F80;
+
+/// Nothing on a board latches a bank at reset, so the bank it wakes in is
+/// undefined state and most images force one before looking. DF images instead
+/// expect the bank both references settle on.
+pub const DF_START_BANK: usize = 15;
 
 pub const SUPERCHIP_RAM_SIZE: usize = 0x80;
 
@@ -36,6 +48,12 @@ impl Atari {
             hotspot_base,
             ram: superchip.then(|| Box::new([0; SUPERCHIP_RAM_SIZE])),
         }
+    }
+
+    /// Wake in a bank other than the first.
+    pub fn waking_in(mut self, bank: usize) -> Atari {
+        self.bank = bank;
+        self
     }
 
     /// The board decodes 13 lines; one hotspot per bank, counting up from the
