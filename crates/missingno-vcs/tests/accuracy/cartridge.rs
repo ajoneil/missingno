@@ -5,6 +5,33 @@ use crate::common::run_self_test_on;
 use missingno_vcs::{CartType, TvStandard};
 
 #[test]
+fn mirror_2k_ntsc() {
+    run_self_test_on(
+        "cartridge/mirror-2k_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Plain2K,
+    );
+}
+
+#[test]
+fn mirror_2k_pal() {
+    run_self_test_on(
+        "cartridge/mirror-2k_pal.a26",
+        TvStandard::Pal,
+        CartType::Plain2K,
+    );
+}
+
+#[test]
+fn mirror_2k_secam() {
+    run_self_test_on(
+        "cartridge/mirror-2k_secam.a26",
+        TvStandard::Secam,
+        CartType::Plain2K,
+    );
+}
+
+#[test]
 fn bank_f4_ntsc() {
     run_self_test_on("cartridge/bank-f4_ntsc.a26", TvStandard::Ntsc, CartType::F4);
 }
@@ -58,5 +85,59 @@ fn bank_f8_secam() {
         "cartridge/bank-f8_secam.a26",
         TvStandard::Secam,
         CartType::F8,
+    );
+}
+
+#[test]
+fn bank_hotspot_window_ntsc() {
+    run_self_test_on(
+        "cartridge/bank-hotspot-window_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::F8,
+    );
+}
+
+#[test]
+fn bank_hotspot_window_pal() {
+    run_self_test_on(
+        "cartridge/bank-hotspot-window_pal.a26",
+        TvStandard::Pal,
+        CartType::F8,
+    );
+}
+
+#[test]
+fn bank_hotspot_window_secam() {
+    run_self_test_on(
+        "cartridge/bank-hotspot-window_secam.a26",
+        TvStandard::Secam,
+        CartType::F8,
+    );
+}
+
+#[test]
+fn ram_superchip_ntsc() {
+    run_self_test_on(
+        "cartridge/ram-superchip_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::F8Sc,
+    );
+}
+
+#[test]
+fn ram_superchip_pal() {
+    run_self_test_on(
+        "cartridge/ram-superchip_pal.a26",
+        TvStandard::Pal,
+        CartType::F8Sc,
+    );
+}
+
+#[test]
+fn ram_superchip_secam() {
+    run_self_test_on(
+        "cartridge/ram-superchip_secam.a26",
+        TvStandard::Secam,
+        CartType::F8Sc,
     );
 }
