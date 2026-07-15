@@ -7,14 +7,9 @@
 
 use std::path::Path;
 
-pub const CODE: u8 = 0x01;
-pub const DATA: u8 = 0x02;
-/// missingno extension (a bit the Mesen GB set leaves unused): set on the
-/// opcode byte only, so exact backward disassembly can anchor on real
-/// instruction starts rather than operand bytes.
-pub const INSTRUCTION_START: u8 = 0x04;
-pub const JUMP_TARGET: u8 = 0x10;
-pub const SUB_ENTRY_POINT: u8 = 0x80;
+pub use missingno_debug::cdl::{
+    CODE, CdlWindow, DATA, INSTRUCTION_START, JUMP_TARGET, SUB_ENTRY_POINT,
+};
 
 /// The size of the CPU-address window captured for the running view.
 const WINDOW: usize = 512;
@@ -98,37 +93,12 @@ impl CodeDataLog {
     /// can't reach the log itself (the emu-thread snapshot).
     pub fn window(&self, center: u16, bank: Option<u16>) -> CdlWindow {
         let base = center.wrapping_sub((WINDOW / 4) as u16);
-        CdlWindow {
+        CdlWindow::new(
             base,
-            flags: (0..WINDOW as u16)
+            (0..WINDOW as u16)
                 .map(|i| self.flags(base.wrapping_add(i), bank))
                 .collect(),
-        }
-    }
-}
-
-/// A copied span of CDL flags by CPU address; zero flags outside the span.
-#[derive(Clone, Default)]
-pub struct CdlWindow {
-    base: u16,
-    flags: Vec<u8>,
-}
-
-impl CdlWindow {
-    pub fn flags_at(&self, address: u16) -> u8 {
-        let offset = address.wrapping_sub(self.base) as usize;
-        self.flags.get(offset).copied().unwrap_or(0)
-    }
-
-    /// A data byte that was never executed — the disassembly shows these as
-    /// bytes instead of decoding garbage instructions through them.
-    pub fn is_data(&self, address: u16) -> bool {
-        let flags = self.flags_at(address);
-        flags & DATA != 0 && flags & CODE == 0
-    }
-
-    pub fn is_instruction_start(&self, address: u16) -> bool {
-        self.flags_at(address) & INSTRUCTION_START != 0
+        )
     }
 }
 

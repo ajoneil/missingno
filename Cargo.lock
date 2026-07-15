@@ -2968,6 +2968,7 @@ dependencies = [
  "jiff",
  "libc",
  "missingno-6502",
+ "missingno-debug",
  "missingno-gb",
  "missingno-gbc",
  "missingno-hw",
@@ -3000,10 +3001,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "missingno-debug"
+version = "0.1.0"
+
+[[package]]
 name = "missingno-gb"
 version = "0.0.1"
 dependencies = [
  "bitflags 2.11.1",
+ "missingno-debug",
  "missingno-gb",
  "morepork",
  "png 0.18.1",

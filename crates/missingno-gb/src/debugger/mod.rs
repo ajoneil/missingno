@@ -14,7 +14,7 @@ use symbols::SymbolTable;
 
 pub mod cdl;
 pub mod instructions;
-pub mod symbols;
+use missingno_debug::symbols;
 
 /// Embedded profile for full T-cycle frame capture with all PPU details.
 #[cfg(feature = "morepork")]

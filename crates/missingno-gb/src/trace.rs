@@ -461,7 +461,11 @@ impl Tracer {
         // CGB/AGB output is colour, so the pix field stores RGB555; DMG stays
         // 2-bit greyscale. `push_pixel` / `push_pixel_rgb555` must match this.
         let is_color = model.starts_with("CGB") || model.starts_with("AGB");
-        let pix_format = if is_color { PixFormat::Rgb555 } else { PixFormat::Shade2 };
+        let pix_format = if is_color {
+            PixFormat::Rgb555
+        } else {
+            PixFormat::Shade2
+        };
         // DMG and CGB are distinct morepork systems sharing the sm83 ISA;
         // the writer derives `isa` from `system`.
         let system = if is_color { "cgb" } else { "dmg" };

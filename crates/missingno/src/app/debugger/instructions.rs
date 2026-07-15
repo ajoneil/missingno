@@ -18,12 +18,12 @@ use crate::app::{
     },
     ui::{fonts, palette, sizes::s},
 };
+use missingno_debug::cdl::CdlWindow;
+use missingno_debug::symbols::SymbolTable;
 use missingno_gb::cpu::instructions::{Instruction, instruction_length};
-use missingno_gb::debugger::cdl::CdlWindow;
 use missingno_gb::debugger::instructions::{
     InstructionsIterator, ReadInstructionMemory, addresses_before,
 };
-use missingno_gb::debugger::symbols::SymbolTable;
 
 // Syntax highlighting — mapped from palette colors.
 use palette::{

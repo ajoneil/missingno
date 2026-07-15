@@ -9,11 +9,11 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 
-use missingno_gb::debugger::{
-    WatchCondition,
+use missingno_debug::{
     cdl::CdlWindow,
     symbols::{Symbol, SymbolTable},
 };
+use missingno_gb::debugger::WatchCondition;
 /// A family-interpreted control identifier. Ids 0-7 mirror the Game Boy
 /// button order so the existing bindings pipeline translates numerically;
 /// analog and family-specific controls take ids from 8 up.

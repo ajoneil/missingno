@@ -20,10 +20,8 @@ use crate::app::{
         sizes::{s, xs},
     },
 };
-use missingno_gb::{
-    debugger::{WatchCondition, symbols::Symbol},
-    ppu::types::palette::PaletteChoice,
-};
+use missingno_debug::symbols::Symbol;
+use missingno_gb::{debugger::WatchCondition, ppu::types::palette::PaletteChoice};
 
 use inspect::{DebugView, GbPaneContext};
 use panes::{DebuggerPanes, PaneContext};

@@ -6,13 +6,13 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use missingno_debug::symbols::{Symbol, SymbolTable};
 use missingno_gb::{
     BootRom, Console, GameBoy,
     cartridge::Cartridge,
     debugger::{
         WatchCondition,
         cdl::{CdlWindow, CodeDataLog},
-        symbols::{Symbol, SymbolTable},
     },
     joypad::Button,
     ppu::model::PpuModel,
