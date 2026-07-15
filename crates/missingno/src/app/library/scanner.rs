@@ -35,6 +35,14 @@ pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<l
             // platform classification, so stamp it while the ROM is at hand.
             if let Some((game_dir, mut existing)) = library::find_by_sha1(&sha1) {
                 existing.platform.get_or_insert(family.platform);
+                // What cartridge this is comes from the catalogue and nowhere
+                // else, so re-read it rather than trusting what an older scan
+                // recorded — a correction upstream reaches the library only if
+                // a rescan can revise these.
+                if let Some(cat_entry) = catalogue.lookup_hash(&sha1) {
+                    existing.tv_standard = cat_entry.manifest.tv_format;
+                    existing.cart_type = cat_entry.manifest.cart_type.clone();
+                }
                 existing.add_rom_path(path);
                 library::save_entry(&game_dir, &existing);
                 continue;

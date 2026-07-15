@@ -300,6 +300,33 @@ mod tests {
         assert_eq!(entry.manifest.cart_type.as_deref(), Some("4K"));
     }
 
+    // A broadcast standard belongs to the cartridge, not the game: two dumps
+    // can share a title and differ in region, and each must resolve to its own.
+    #[test]
+    fn same_title_cartridges_keep_their_own_region() {
+        let catalogue = Catalogue::load();
+        if catalogue.entries.is_empty() {
+            return; // submodule not checked out
+        }
+        // Both are "Pitfall II - Lost Caverns"; only the part number and the
+        // region tell them apart.
+        let usa = catalogue
+            .lookup_hash("920cfbd517764ad3fa6a7425c031bd72dc7d927c")
+            .expect("USA Pitfall II resolves");
+        let pal = catalogue
+            .lookup_hash("3ee18a1be7155900c2a01a104563657254d3a9a9")
+            .expect("PAL Pitfall II resolves");
+        assert_eq!(usa.manifest.title, pal.manifest.title);
+        assert_eq!(
+            usa.manifest.tv_format,
+            Some(crate::app::system::TvStandard::Ntsc)
+        );
+        assert_eq!(
+            pal.manifest.tv_format,
+            Some(crate::app::system::TvStandard::Pal)
+        );
+    }
+
     // Catalogue::load() silently drops manifests that fail to deserialize,
     // so parse the gamedb source tree directly to surface any bad files.
     #[test]
