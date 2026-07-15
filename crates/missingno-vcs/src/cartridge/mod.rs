@@ -15,6 +15,7 @@ pub mod fa;
 pub mod fc;
 pub mod fe;
 pub mod jane;
+pub mod mdm;
 pub mod plain;
 pub mod sb;
 pub mod three_e;
@@ -23,7 +24,9 @@ pub mod three_f;
 pub mod ua;
 pub mod wd;
 pub mod wf8;
+pub mod x07;
 pub mod zero_3e0;
+pub mod zero_840;
 pub mod zero_fa0;
 
 use ar::Ar;
@@ -37,6 +40,7 @@ use fa::Fa;
 use fc::Fc;
 use fe::Fe;
 use jane::Jane;
+use mdm::Mdm;
 use plain::Plain;
 use sb::Sb;
 use three_e::ThreeE;
@@ -45,7 +49,9 @@ use three_f::ThreeF;
 use ua::Ua;
 use wd::Wd;
 use wf8::Wf8;
+use x07::X07;
 use zero_3e0::Zero3E0;
+use zero_840::Zero840;
 use zero_fa0::ZeroFa0;
 
 /// The board in the slot. Bank state and cart RAM live inline, so one board
@@ -77,6 +83,9 @@ pub enum Board {
     ThreeE(ThreeE),
     ThreeEPlus(ThreeEPlus),
     Sb(Sb),
+    Zero840(Zero840),
+    X07(X07),
+    Mdm(Mdm),
 }
 
 pub struct Cartridge {
@@ -165,6 +174,14 @@ pub enum CartType {
     /// 128 KB across thirty-two banks selected from low memory, waking in the
     /// last of them (SuperBanking).
     Sb,
+    /// 8 KB across two banks, selected by one address line (EconoBanking).
+    Zero840,
+    /// 64 KB across sixteen banks, with a second switch riding on TIA writes
+    /// (Stocking).
+    X07,
+    /// 32 KB across eight banks named by an address's low byte, with a one-way
+    /// lock (Menu Driven Megacart).
+    Mdm,
 }
 
 impl CartType {
@@ -181,7 +198,9 @@ impl CartType {
             | CartType::Fe => 0x2000,
             CartType::F6 | CartType::F6Sc | CartType::E7 => 0x4000,
             CartType::F4 | CartType::F4Sc => 0x8000,
-            CartType::Ef => 0x10000,
+            CartType::Ef | CartType::X07 => 0x10000,
+            CartType::Zero840 => 0x2000,
+            CartType::Mdm => 0x8000,
             CartType::Df | CartType::Sb => 0x20000,
             CartType::Bf => 0x40000,
             CartType::Fa => 0x3000,
@@ -269,6 +288,9 @@ impl Cartridge {
             CartType::ThreeE => Board::ThreeE(ThreeE::new(rom)),
             CartType::ThreeEPlus => Board::ThreeEPlus(ThreeEPlus::new(rom)),
             CartType::Sb => Board::Sb(Sb::new(rom)),
+            CartType::Zero840 => Board::Zero840(Zero840::new(rom)),
+            CartType::X07 => Board::X07(X07::new(rom)),
+            CartType::Mdm => Board::Mdm(Mdm::new(rom)),
         })
     }
 
@@ -319,6 +341,9 @@ impl Cartridge {
             Board::ZeroFa0(board) => board.read(address),
             Board::Zero3E0(board) => board.read(address),
             Board::Sb(board) => board.read(address),
+            Board::Zero840(board) => board.read(address),
+            Board::X07(board) => board.read(address),
+            Board::Mdm(board) => board.read(address),
             Board::Ua(board) => board.read(address),
             Board::ThreeF(board) => board.read(address, residue),
             Board::ThreeE(board) => board.read(address, residue),
@@ -348,6 +373,9 @@ impl Cartridge {
             Board::ZeroFa0(board) => board.write_access(address),
             Board::Zero3E0(board) => board.write_access(address),
             Board::Sb(board) => board.write_access(address),
+            Board::Zero840(board) => board.write_access(address),
+            Board::X07(board) => board.write_access(address),
+            Board::Mdm(board) => board.write_access(address),
             Board::Ua(board) => board.write_access(address),
             Board::ThreeF(board) => board.write_access(address, residue),
             Board::ThreeE(board) => board.write_access(address, residue, data),
@@ -376,6 +404,9 @@ impl Cartridge {
             Board::ZeroFa0(board) => board.peek(address),
             Board::Zero3E0(board) => board.peek(address),
             Board::Sb(board) => board.peek(address),
+            Board::Zero840(board) => board.peek(address),
+            Board::X07(board) => board.peek(address),
+            Board::Mdm(board) => board.peek(address),
             Board::Ar(board) => board.peek(address).unwrap_or(0),
             Board::Ua(board) => board.peek(address),
             Board::ThreeF(board) => board.peek(address),
