@@ -204,12 +204,39 @@ impl Channel {
         self.pulse.commit(feedback);
     }
 
-    /// Current level, 0-15: the DAC legs conduct while the pulse LSB is low,
-    /// so the active level is ¬LSB × AUDV. AUDC=$00 parks the LSB low, making
-    /// AUDV a constant DC level (the sample-playback path).
-    pub fn level(&self) -> u8 {
+    /// The conducting DAC legs in units of the smallest, 0-15: the legs
+    /// conduct while the pulse LSB is low, so AUDV's binary weights sum to
+    /// ¬LSB × AUDV. AUDC=$00 parks the LSB low, making AUDV a constant DC
+    /// level (the sample-playback path).
+    pub fn conductance(&self) -> u8 {
         if self.pulse.lsb() { 0 } else { self.volume }
     }
+}
+
+/// D0's leg; D1, D2 and D3 are 15K, 7.5K and 3.75K, so a channel's legs sum
+/// to its AUDV value in units of this one's conductance.
+const LSB_LEG_OHMS: f32 = 30_000.0;
+/// The board ties both audio pads together and to this single pull-up — the
+/// die has none, so the two channels share one summing node.
+const PULLUP_OHMS: f32 = 1_000.0;
+/// Both channels conducting every leg.
+const FULL_SCALE_CONDUCTANCE: f32 = 30.0;
+
+/// The shared node's excursion from its resting level, as a fraction of the
+/// supply. Conducting pulls the node down against the pull-up, so the
+/// excursion saturates: each leg switched on wins a smaller share of the
+/// divider than the last.
+fn node_excursion(conductance: f32) -> f32 {
+    let legs = conductance * PULLUP_OHMS / LSB_LEG_OHMS;
+    legs / (1.0 + legs)
+}
+
+/// The summing node's level, 0.0-1.0, for the two channels' combined
+/// conductance. Because they share the node, a second channel adds less than
+/// the first, and only the total matters — equal AUDV sums sound alike.
+/// Full scale is taken at both channels wide open, which is a convention.
+pub(crate) fn summing_node_level(conductance: u8) -> f32 {
+    node_excursion(f32::from(conductance)) / node_excursion(FULL_SCALE_CONDUCTANCE)
 }
 
 #[cfg(test)]
@@ -318,8 +345,25 @@ mod tests {
         for _ in 0..50 {
             ch.phase0();
             ch.phase1();
-            assert_eq!(ch.level(), 0x0F);
+            assert_eq!(ch.conductance(), 0x0F);
         }
+    }
+
+    #[test]
+    fn only_the_combined_conductance_reaches_the_node() {
+        // The pads share one node, so equal AUDV sums are indistinguishable.
+        let both_wide = summing_node_level(8 + 8);
+        assert_eq!(summing_node_level(15 + 1), both_wide);
+        assert_eq!(summing_node_level(10 + 6), both_wide);
+    }
+
+    #[test]
+    fn a_second_channel_adds_less_than_the_first() {
+        // Conducting divides against the pull-up, so the node saturates: one
+        // channel wide open already reaches two thirds of full scale.
+        assert!((summing_node_level(15) - 2.0 / 3.0).abs() < 1e-6);
+        assert_eq!(summing_node_level(0), 0.0);
+        assert_eq!(summing_node_level(30), 1.0);
     }
 
     #[test]

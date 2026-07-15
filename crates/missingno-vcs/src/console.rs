@@ -45,6 +45,10 @@ pub struct Vcs {
     sample_clock: f32,
     /// Colour clocks per 44.1 kHz sample, from the region's master clock.
     clocks_per_sample: f32,
+    /// The audio level integrated across the sample window so far, and the
+    /// clocks it spans — the window is fractional, so its width alternates.
+    sample_accum: f32,
+    sample_accum_clocks: u32,
     samples: Vec<(f32, f32)>,
 }
 
@@ -196,6 +200,8 @@ impl Vcs {
             last_line: None,
             sample_clock: 0.0,
             clocks_per_sample: region.clocks_per_sample(),
+            sample_accum: 0.0,
+            sample_accum_clocks: 0,
             samples: Vec::new(),
         }
     }
@@ -246,11 +252,18 @@ impl Vcs {
             self.collect_line(line);
         }
 
+        // The coupling network integrates the node's level, so the window's
+        // average is taken over the level itself — averaging the channels'
+        // conductances first would run the saturating divider off its mean.
+        self.sample_accum += self.tia.audio_level();
+        self.sample_accum_clocks += 1;
         self.sample_clock += 1.0;
         if self.sample_clock >= self.clocks_per_sample {
             self.sample_clock -= self.clocks_per_sample;
-            let level = self.tia.audio_level();
+            let level = self.sample_accum / self.sample_accum_clocks as f32;
             self.samples.push((level, level));
+            self.sample_accum = 0.0;
+            self.sample_accum_clocks = 0;
         }
     }
 

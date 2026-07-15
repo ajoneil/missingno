@@ -175,6 +175,34 @@ fn disassembles_the_basics() {
 }
 
 #[test]
+fn silent_waveform_holds_audv_as_a_steady_level() {
+    // AUDC=$00 parks the DAC conducting, so AUDV alone sets the level — the
+    // path sample-playback software drives. A held level must survive the
+    // window average unchanged.
+    let mut asm = Asm::new(0xF000);
+    asm.lda_imm(0x00);
+    asm.sta_zp(0x15); // AUDC0: silence decode
+    asm.lda_imm(0x0F);
+    asm.sta_zp(0x19); // AUDV0: full volume
+    let spin = asm.here();
+    asm.jmp_abs(spin);
+
+    let mut vcs = Vcs::new(&asm.into_rom(), missingno_vcs::TvStandard::Ntsc, None).unwrap();
+    for _ in 0..262 * 228 {
+        vcs.step_clock();
+    }
+    let samples = vcs.drain_audio_samples();
+    // One channel wide open sits two thirds of the way to full scale.
+    let expected = 2.0 / 3.0;
+    let settled = &samples[16..];
+    assert!(
+        settled.iter().all(|&(l, _)| (l - expected).abs() < 1e-5),
+        "expected a steady {expected}, got {:?}",
+        &settled[..8]
+    );
+}
+
+#[test]
 fn audio_produces_samples_at_the_seam_rate() {
     // Pure tone on channel 0 at moderate pitch, full volume.
     let mut asm = Asm::new(0xF000);

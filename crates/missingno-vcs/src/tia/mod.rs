@@ -459,9 +459,11 @@ impl Tia {
         }
     }
 
-    /// The two channels' summed output, 0.0-1.0.
+    /// The two channels' mixed output, 0.0-1.0. Their pads tie together at
+    /// the pins, so the level follows the combined conductance of both DACs'
+    /// legs rather than either channel alone.
     pub fn audio_level(&self) -> f32 {
-        (self.audio[0].level() + self.audio[1].level()) as f32 / 30.0
+        audio::summing_node_level(self.audio[0].conductance() + self.audio[1].conductance())
     }
 
     /// Current colour clock within the line (0..228) — inspection only.
