@@ -343,8 +343,7 @@ impl Vcs {
 
     /// Power-cycle: fresh chip state, same cartridge (bank state included).
     pub fn power_cycle(&mut self) {
-        let placeholder = Cartridge::Rom2K(Box::new([0; 0x800]));
-        let cartridge = std::mem::replace(&mut self.cartridge, placeholder);
+        let cartridge = std::mem::replace(&mut self.cartridge, Cartridge::unplugged());
         *self = Vcs::with_cartridge(cartridge, self.region);
     }
 

@@ -13,9 +13,9 @@
 
 use std::path::{Path, PathBuf};
 
-use missingno_vcs::TvStandard;
 use missingno_vcs::console::{Frame, Vcs};
 use missingno_vcs::tia::{VISIBLE_CLOCKS, palette, palette_index};
+use missingno_vcs::{CartType, TvStandard};
 
 /// RESULT convention (see `missingno-vcs-tests/include/result.h`).
 const RESULT: u16 = 0x0080;
@@ -42,19 +42,29 @@ pub fn rom_path(relative: &str) -> PathBuf {
         .join(relative)
 }
 
-fn load(relative: &str, standard: TvStandard) -> Vcs {
+/// The board a test ROM is loaded on is always stated, never inferred from the
+/// image: a size heuristic would silently decide the very thing the cartridge
+/// tests exist to check. This mirrors the suite's own `; mapper:` convention,
+/// where an unmarked source is a plain 4K board.
+fn load(relative: &str, standard: TvStandard, cart_type: CartType) -> Vcs {
     let path = rom_path(relative);
     let rom = std::fs::read(&path)
         .unwrap_or_else(|e| panic!("failed to read ROM {}: {e}", path.display()));
-    Vcs::new(&rom, standard, None)
+    Vcs::new(&rom, standard, Some(cart_type))
         .unwrap_or_else(|e| panic!("failed to load ROM {}: {e:?}", path.display()))
 }
 
-/// Run a self-checking ROM to its verdict and assert PASS. Panics with the
-/// failing sub-check code and observed/expected bytes on FAIL, or after the
-/// instruction budget if the ROM never reports a verdict.
+/// Run a self-checking ROM on a plain 4K board — the suite's unmarked default,
+/// for tests whose subject is not the cartridge.
 pub fn run_self_test(relative: &str, standard: TvStandard) {
-    let mut vcs = load(relative, standard);
+    run_self_test_on(relative, standard, CartType::Plain4K);
+}
+
+/// Run a self-checking ROM to its verdict on a stated board and assert PASS.
+/// Panics with the failing sub-check code and observed/expected bytes on FAIL,
+/// or after the instruction budget if the ROM never reports a verdict.
+pub fn run_self_test_on(relative: &str, standard: TvStandard, cart_type: CartType) {
+    let mut vcs = load(relative, standard, cart_type);
 
     for _ in 0..MAX_INSTRUCTIONS {
         vcs.step_instruction();
@@ -89,7 +99,7 @@ pub fn run_self_test(relative: &str, standard: TvStandard) {
 /// no pixel mismatches. The frame is rendered through the standard's palette,
 /// so PAL ROMs decode through the PAL colour table.
 pub fn run_screenshot(rom_relative: &str, png_relative: &str, standard: TvStandard) {
-    let mut vcs = load(rom_relative, standard);
+    let mut vcs = load(rom_relative, standard, CartType::Plain4K);
 
     // Let the picture settle; keep the last frame produced within the budget.
     let mut frame = None;
