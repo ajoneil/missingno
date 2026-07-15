@@ -728,3 +728,103 @@ fn bank_wf8_secam() {
         CartType::Wf8,
     );
 }
+
+#[test]
+fn bank_fc_ntsc() {
+    run_self_test_on("cartridge/bank-fc_ntsc.a26", TvStandard::Ntsc, CartType::Fc);
+}
+
+#[test]
+fn bank_fc_pal() {
+    run_self_test_on("cartridge/bank-fc_pal.a26", TvStandard::Pal, CartType::Fc);
+}
+
+#[test]
+fn bank_fc_secam() {
+    run_self_test_on(
+        "cartridge/bank-fc_secam.a26",
+        TvStandard::Secam,
+        CartType::Fc,
+    );
+}
+
+#[test]
+fn bank_0fa0_ntsc() {
+    run_self_test_on(
+        "cartridge/bank-0fa0_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::ZeroFa0,
+    );
+}
+
+#[test]
+fn bank_0fa0_pal() {
+    run_self_test_on(
+        "cartridge/bank-0fa0_pal.a26",
+        TvStandard::Pal,
+        CartType::ZeroFa0,
+    );
+}
+
+#[test]
+fn bank_0fa0_secam() {
+    run_self_test_on(
+        "cartridge/bank-0fa0_secam.a26",
+        TvStandard::Secam,
+        CartType::ZeroFa0,
+    );
+}
+
+#[test]
+fn bank_03e0_ntsc() {
+    run_self_test_on(
+        "cartridge/bank-03e0_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Zero3E0,
+    );
+}
+
+#[test]
+fn bank_03e0_pal() {
+    run_self_test_on(
+        "cartridge/bank-03e0_pal.a26",
+        TvStandard::Pal,
+        CartType::Zero3E0,
+    );
+}
+
+#[test]
+fn bank_03e0_secam() {
+    run_self_test_on(
+        "cartridge/bank-03e0_secam.a26",
+        TvStandard::Secam,
+        CartType::Zero3E0,
+    );
+}
+
+#[test]
+fn power_on_bank_ntsc() {
+    run_self_test_on(
+        "cartridge/power-on-bank_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::F8,
+    );
+}
+
+#[test]
+fn power_on_bank_pal() {
+    run_self_test_on(
+        "cartridge/power-on-bank_pal.a26",
+        TvStandard::Pal,
+        CartType::F8,
+    );
+}
+
+#[test]
+fn power_on_bank_secam() {
+    run_self_test_on(
+        "cartridge/power-on-bank_secam.a26",
+        TvStandard::Secam,
+        CartType::F8,
+    );
+}

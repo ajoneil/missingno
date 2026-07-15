@@ -90,3 +90,18 @@ fn stack_aliases_tia_pal() {
 fn stack_aliases_tia_secam() {
     common::run_self_test("cpu/stack-aliases-tia_secam.a26", TvStandard::Secam);
 }
+
+#[test]
+fn open_bus_ntsc() {
+    common::run_self_test("cpu/open-bus_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn open_bus_pal() {
+    common::run_self_test("cpu/open-bus_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn open_bus_secam() {
+    common::run_self_test("cpu/open-bus_secam.a26", TvStandard::Secam);
+}

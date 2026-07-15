@@ -12,6 +12,7 @@ pub mod e0;
 pub mod e7;
 pub mod f0;
 pub mod fa;
+pub mod fc;
 pub mod fe;
 pub mod jane;
 pub mod plain;
@@ -19,6 +20,8 @@ pub mod three_f;
 pub mod ua;
 pub mod wd;
 pub mod wf8;
+pub mod zero_3e0;
+pub mod zero_fa0;
 
 use ar::Ar;
 use atari::Atari;
@@ -28,6 +31,7 @@ use e0::E0;
 use e7::E7;
 use f0::F0;
 use fa::Fa;
+use fc::Fc;
 use fe::Fe;
 use jane::Jane;
 use plain::Plain;
@@ -35,6 +39,8 @@ use three_f::ThreeF;
 use ua::Ua;
 use wd::Wd;
 use wf8::Wf8;
+use zero_3e0::Zero3E0;
+use zero_fa0::ZeroFa0;
 
 /// The board in the slot. Bank state and cart RAM live inline, so one board
 /// exists per console and survives a power cycle exactly as the silicon does.
@@ -56,6 +62,9 @@ pub enum Board {
     Jane(Jane),
     Wf8(Wf8),
     Wd(Wd),
+    Fc(Fc),
+    ZeroFa0(ZeroFa0),
+    Zero3E0(Zero3E0),
     Fe(Fe),
     Ua(Ua),
     ThreeF(ThreeF),
@@ -125,6 +134,15 @@ pub enum CartType {
     /// 8 KB as eight 1 KB banks filling four segments at once, on a delayed
     /// switch (Wickstead Design prototype).
     Wd,
+    /// 32 KB across eight banks, latched in two halves and committed
+    /// separately (Amiga Power Play Arcade).
+    Fc,
+    /// 8 KB across two banks, selected from loosely decoded low-memory
+    /// hotspots (Fotomania).
+    ZeroFa0,
+    /// 8 KB as eight 1 KB slices in three segments, selected active-low from
+    /// low memory (Brazilian Parker Bros).
+    Zero3E0,
 }
 
 impl CartType {
@@ -148,7 +166,8 @@ impl CartType {
             CartType::Ar => ar::IMAGE_SIZE,
             CartType::F0 => 0x10000,
             CartType::Jane => 0x4000,
-            CartType::Wf8 | CartType::Wd => 0x2000,
+            CartType::Wf8 | CartType::Wd | CartType::ZeroFa0 | CartType::Zero3E0 => 0x2000,
+            CartType::Fc => 0x8000,
         }
     }
 }
@@ -209,6 +228,9 @@ impl Cartridge {
             CartType::Jane => Board::Jane(Jane::new(rom)),
             CartType::Wf8 => Board::Wf8(Wf8::new(rom)),
             CartType::Wd => Board::Wd(Wd::new(rom)),
+            CartType::Fc => Board::Fc(Fc::new(rom)),
+            CartType::ZeroFa0 => Board::ZeroFa0(ZeroFa0::new(rom)),
+            CartType::Zero3E0 => Board::Zero3E0(Zero3E0::new(rom)),
         })
     }
 
@@ -251,10 +273,13 @@ impl Cartridge {
             Board::F0(board) if window => Some(board.read(address)),
             Board::Jane(board) if window => Some(board.read(address)),
             Board::Wf8(board) if window => Some(board.peek(address)),
+            Board::Fc(board) if window => Some(board.read(address)),
             // Boards that watch the whole address bus — for hotspots below the
             // window, or to count its transitions — and answer only inside it.
             Board::Ar(board) => board.read(address, residue),
             Board::Wd(board) => board.read(address, residue),
+            Board::ZeroFa0(board) => board.read(address),
+            Board::Zero3E0(board) => board.read(address),
             Board::Ua(board) => board.read(address),
             Board::ThreeF(board) => board.read(address, residue),
             Board::Fe(board) => board.read(address, residue),
@@ -276,8 +301,11 @@ impl Cartridge {
             Board::F0(board) if window => board.write_access(address),
             Board::Jane(board) if window => board.write_access(address),
             Board::Wf8(board) if window => board.write_access(address, data),
+            Board::Fc(board) if window => board.write_access(address, data),
             Board::Ar(board) => board.write_access(address),
             Board::Wd(board) => board.write_access(address, data),
+            Board::ZeroFa0(board) => board.write_access(address),
+            Board::Zero3E0(board) => board.write_access(address),
             Board::Ua(board) => board.write_access(address),
             Board::ThreeF(board) => board.write_access(address, residue),
             Board::Fe(board) => board.write_access(address, residue),
@@ -300,6 +328,9 @@ impl Cartridge {
             Board::Jane(board) => board.peek(address),
             Board::Wf8(board) => board.peek(address),
             Board::Wd(board) => board.peek(address),
+            Board::Fc(board) => board.peek(address),
+            Board::ZeroFa0(board) => board.peek(address),
+            Board::Zero3E0(board) => board.peek(address),
             Board::Ar(board) => board.peek(address).unwrap_or(0),
             Board::Ua(board) => board.peek(address),
             Board::ThreeF(board) => board.peek(address),
