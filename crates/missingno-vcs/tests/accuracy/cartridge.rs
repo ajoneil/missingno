@@ -146,6 +146,25 @@ fn bank_e7_secam() {
 }
 
 #[test]
+fn bank_fe_ntsc() {
+    run_self_test_on("cartridge/bank-fe_ntsc.a26", TvStandard::Ntsc, CartType::Fe);
+}
+
+#[test]
+fn bank_fe_pal() {
+    run_self_test_on("cartridge/bank-fe_pal.a26", TvStandard::Pal, CartType::Fe);
+}
+
+#[test]
+fn bank_fe_secam() {
+    run_self_test_on(
+        "cartridge/bank-fe_secam.a26",
+        TvStandard::Secam,
+        CartType::Fe,
+    );
+}
+
+#[test]
 fn bank_3f_ntsc() {
     run_self_test_on(
         "cartridge/bank-3f_ntsc.a26",

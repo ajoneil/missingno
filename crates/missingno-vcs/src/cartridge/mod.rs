@@ -9,6 +9,7 @@ pub mod cv;
 pub mod e0;
 pub mod e7;
 pub mod fa;
+pub mod fe;
 pub mod plain;
 pub mod three_f;
 pub mod ua;
@@ -18,6 +19,7 @@ use cv::Cv;
 use e0::E0;
 use e7::E7;
 use fa::Fa;
+use fe::Fe;
 use plain::Plain;
 use three_f::ThreeF;
 use ua::Ua;
@@ -33,6 +35,7 @@ pub enum Board {
     E0(E0),
     E7(E7),
     Cv(Cv),
+    Fe(Fe),
     Ua(Ua),
     ThreeF(ThreeF),
 }
@@ -83,6 +86,9 @@ pub enum CartType {
     Ua,
     /// A 2 KB fixed half over a bus-latched paged half (Tigervision).
     ThreeF,
+    /// 8 KB across two banks, picked by an address comparator on $01FE and
+    /// data line D5 (Activision).
+    Fe,
 }
 
 impl CartType {
@@ -91,9 +97,12 @@ impl CartType {
         match self {
             CartType::Plain2K => 0x800,
             CartType::Plain4K => 0x1000,
-            CartType::F8 | CartType::F8Sc | CartType::E0 | CartType::Ua | CartType::ThreeF => {
-                0x2000
-            }
+            CartType::F8
+            | CartType::F8Sc
+            | CartType::E0
+            | CartType::Ua
+            | CartType::ThreeF
+            | CartType::Fe => 0x2000,
             CartType::F6 | CartType::F6Sc | CartType::E7 => 0x4000,
             CartType::F4 | CartType::F4Sc => 0x8000,
             CartType::Fa => 0x3000,
@@ -151,6 +160,7 @@ impl Cartridge {
             CartType::Cv => Board::Cv(Cv::new(rom)),
             CartType::Ua => Board::Ua(Ua::new(rom)),
             CartType::ThreeF => Board::ThreeF(ThreeF::new(rom)),
+            CartType::Fe => Board::Fe(Fe::new(rom)),
         })
     }
 
@@ -193,6 +203,7 @@ impl Cartridge {
             // and answer only inside it.
             Board::Ua(board) => board.read(address),
             Board::ThreeF(board) => board.read(address, residue),
+            Board::Fe(board) => board.read(address, residue),
             _ => None,
         }
     }
@@ -209,6 +220,7 @@ impl Cartridge {
             Board::Cv(board) if window => board.write_access(address, data),
             Board::Ua(board) => board.write_access(address),
             Board::ThreeF(board) => board.write_access(address, residue),
+            Board::Fe(board) => board.write_access(address, residue),
             _ => {}
         }
     }
@@ -225,6 +237,7 @@ impl Cartridge {
             Board::Cv(board) => board.peek(address),
             Board::Ua(board) => board.peek(address),
             Board::ThreeF(board) => board.peek(address),
+            Board::Fe(board) => board.peek(address),
         }
     }
 }
