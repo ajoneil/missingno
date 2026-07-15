@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared core for test-report-{gb,gbc}.sh.
+# Shared core for test-report-{gb,gbc,vcs}.sh.
 #
 # Callers (the wrapper scripts) set the following before sourcing:
 #   CRATE          — cargo package name (e.g. missingno-gb, missingno-gbc)
@@ -18,8 +18,10 @@ MODE="${MODE:-}"
 
 mkdir -p "$REPORT_DIR"
 
-# Run tests and capture output
-RAW_OUTPUT=$(cargo test -p "$CRATE" 2>&1 || true)
+# Run tests and capture output. --no-fail-fast is load-bearing: without it
+# cargo stops at the first test target that fails, so a crate with standing
+# failures (vcs) never runs its later binaries and they go unreported.
+RAW_OUTPUT=$(cargo test -p "$CRATE" --no-fail-fast 2>&1 || true)
 
 # Optional: expose the raw cargo output for callers (the /test-report skill) that
 # need per-test got/expected detail without re-running the whole suite.
