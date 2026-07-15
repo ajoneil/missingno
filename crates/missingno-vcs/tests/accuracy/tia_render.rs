@@ -56,6 +56,21 @@ fn draw_delay_secam() {
 }
 
 #[test]
+fn missile_copies_ntsc() {
+    common::run_self_test("tia-render/missile-copies_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn missile_copies_pal() {
+    common::run_self_test("tia-render/missile-copies_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn missile_copies_secam() {
+    common::run_self_test("tia-render/missile-copies_secam.a26", TvStandard::Secam);
+}
+
+#[test]
 fn missile_reset_lock_ntsc() {
     common::run_self_test("tia-render/missile-reset-lock_ntsc.a26", TvStandard::Ntsc);
 }
