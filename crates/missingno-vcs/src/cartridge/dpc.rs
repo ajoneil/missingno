@@ -18,6 +18,8 @@
 const BANK_SIZE: usize = 0x1000;
 const PROGRAM_SIZE: usize = 0x2000;
 const DISPLAY_SIZE: usize = 0x800;
+/// The program and display ROMs; anything past them is the dumper's tail.
+pub const IMAGE_SIZE: usize = PROGRAM_SIZE + DISPLAY_SIZE;
 const FETCHERS: usize = 8;
 /// The first fetcher with a music voice; DF5-DF7 have one.
 const FIRST_MUSIC_FETCHER: usize = 5;

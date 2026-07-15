@@ -185,6 +185,18 @@ pub enum CartType {
 }
 
 impl CartType {
+    /// Whether an image is sized for the board. Most boards are exact — a dump
+    /// is the silicon's contents and nothing else.
+    fn accepts(self, len: usize) -> bool {
+        match self {
+            // A DPC dump ends with however much of the RNG stream the dumper
+            // happened to catch, so the tail's length varies; the common dump
+            // is one byte short of a full page of it.
+            CartType::Dpc => (dpc::IMAGE_SIZE..=self.image_size()).contains(&len),
+            _ => len == self.image_size(),
+        }
+    }
+
     /// The image size the board is wired for.
     fn image_size(self) -> usize {
         match self {
@@ -248,7 +260,7 @@ impl Cartridge {
     }
 
     fn build(rom: &[u8], cart_type: CartType) -> Result<Board, CartridgeError> {
-        if rom.len() != cart_type.image_size() {
+        if !cart_type.accepts(rom.len()) {
             return Err(CartridgeError::WrongSizeForBoard {
                 cart_type,
                 size: rom.len(),
