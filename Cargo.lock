@@ -2970,6 +2970,7 @@ dependencies = [
  "missingno-6502",
  "missingno-gb",
  "missingno-gbc",
+ "missingno-hw",
  "missingno-nes",
  "missingno-sms",
  "missingno-vcs",
@@ -3021,6 +3022,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "missingno-hw"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "missingno-nes"
 version = "0.1.0"
 dependencies = [
@@ -3042,6 +3050,7 @@ name = "missingno-vcs"
 version = "0.1.0"
 dependencies = [
  "missingno-6502",
+ "missingno-hw",
  "morepork",
  "png 0.18.1",
  "serde",

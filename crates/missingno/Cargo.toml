@@ -16,6 +16,7 @@ sms = ["dep:missingno-sms"]
 nes = ["dep:missingno-nes", "dep:missingno-6502", "missingno-nes/morepork"]
 
 [dependencies]
+missingno-hw = { path = "../missingno-hw" }
 missingno-gb = { path = "../missingno-gb", features = ["morepork"] }
 missingno-gbc = { path = "../missingno-gbc", features = ["morepork"] }
 missingno-6502 = { path = "../missingno-6502", optional = true }

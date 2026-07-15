@@ -62,7 +62,7 @@ fn frame_interval(standard: TvStandard) -> Duration {
         TvStandard::Ntsc => 262.0,
         TvStandard::Pal | TvStandard::Secam => 312.0,
     };
-    Duration::from_secs_f32(lines * 228.0 / standard.master_clock_hz())
+    Duration::from_secs_f32(lines * 228.0 / missingno_vcs::tv_standard::master_clock_hz(standard))
 }
 
 /// Frames are emergent from VSYNC; bound the search so a kernel that never
@@ -101,7 +101,7 @@ pub fn create_console(
     // length. Pacing, aspect, and palette follow the standard.
     let cart = cart_type.and_then(core_cart_type);
     let region = match tv_standard {
-        Some(standard) => core_tv_standard(standard),
+        Some(standard) => standard,
         None => probe_tv_standard(rom, cart),
     };
     Ok(Box::new(VcsConsole {
@@ -154,16 +154,6 @@ fn classify_fields(fields: &[usize]) -> TvStandard {
         TvStandard::Pal
     } else {
         TvStandard::Ntsc
-    }
-}
-
-/// Map the library's broadcast standard onto the core's runtime standard; the
-/// core decodes all three.
-fn core_tv_standard(standard: super::TvStandard) -> TvStandard {
-    match standard {
-        super::TvStandard::Ntsc => TvStandard::Ntsc,
-        super::TvStandard::Pal => TvStandard::Pal,
-        super::TvStandard::Secam => TvStandard::Secam,
     }
 }
 

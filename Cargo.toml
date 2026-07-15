@@ -4,6 +4,7 @@ members = [
     "crates/missingno",
     "crates/missingno-gb",
     "crates/missingno-gbc",
+    "crates/missingno-hw",
     "crates/missingno-6502",
     "crates/missingno-nes",
     "crates/missingno-sms",
@@ -14,6 +15,7 @@ default-members = [
     "crates/missingno",
     "crates/missingno-gb",
     "crates/missingno-gbc",
+    "crates/missingno-hw",
     "crates/missingno-6502",
     "crates/missingno-vcs",
 ]

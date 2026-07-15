@@ -199,7 +199,7 @@ impl Vcs {
             finished_frame: None,
             last_line: None,
             sample_clock: 0.0,
-            clocks_per_sample: region.clocks_per_sample(),
+            clocks_per_sample: crate::tv_standard::clocks_per_sample(region),
             sample_accum: 0.0,
             sample_accum_clocks: 0,
             samples: Vec::new(),

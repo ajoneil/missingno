@@ -118,13 +118,8 @@ impl Platform {
 /// The broadcast standard a game is authored for. Cross-family library
 /// metadata: the VCS consumes it (colour decode + frame timing) and future
 /// region-split families (NES, Master System) will too. Persisted on a
-/// library entry and mapped to each core's own runtime type at the seam.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
-pub enum TvStandard {
-    Ntsc,
-    Pal,
-    Secam,
-}
+/// library entry.
+pub use missingno_hw::TvStandard;
 
 /// Everything the loader hands a family's console factory. The fields are
 /// family-agnostic except the two Game Boy peripheral ones, quarantined here

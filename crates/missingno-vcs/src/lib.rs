@@ -1,5 +1,6 @@
 //! Atari VCS hardware model.
 
+pub mod board;
 pub mod cartridge;
 pub mod console;
 pub use missingno_6502 as cpu;
