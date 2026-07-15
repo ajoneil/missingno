@@ -349,8 +349,8 @@ where
         self.core.game_boy()
     }
 
-    fn pane_family(&self) -> &'static crate::app::debugger::panes::Family {
-        &crate::app::debugger::panes::GB_FAMILY
+    fn platform(&self) -> super::Platform {
+        M::PLATFORM
     }
 
     fn symbols(&self) -> Arc<SymbolTable> {

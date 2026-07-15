@@ -44,7 +44,6 @@ pub struct ConsoleSwitch {
 use std::sync::Arc;
 
 use crate::app::debugger::inspect::{DebugView, Inspection};
-use crate::app::debugger::panes;
 use crate::app::emu_thread::RunningStatus;
 use crate::app::library::activity::{CaptureOptions, FrameCapture};
 use crate::app::screen::ScreenDisplay;
@@ -326,7 +325,8 @@ pub trait SystemDebugger: Send {
     /// The live inspection surface the debugger panes render from while paused.
     fn inspect(&self) -> &dyn Inspection;
     /// The family's debugger pane set and layout identity.
-    fn pane_family(&self) -> &'static panes::Family;
+    /// Which platform's debugger surface this system presents.
+    fn platform(&self) -> Platform;
     /// Labels from the ROM's debug-symbol sidecar, if one was loaded.
     fn symbols(&self) -> Arc<SymbolTable> {
         empty_symbols()

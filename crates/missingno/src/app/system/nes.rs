@@ -14,7 +14,6 @@ use super::stepping::{SteppingConsole, SteppingSystem};
 use super::{ControlId, ControlInput, SystemConsole};
 use crate::app::debugger::inspect::DebugView;
 use crate::app::debugger::nes::{DisasmRow, NesInspectState, NesSnapshot};
-use crate::app::debugger::panes;
 use crate::app::emu_thread::RunningStatus;
 use crate::app::screen::IndexedFrame;
 
@@ -54,10 +53,7 @@ impl SteppingSystem for NesSystem {
     /// One NTSC frame: 262 lines × 341 dots ÷ 3 CPU cycles ≈ 29780 cycles.
     const FRAME_INTERVAL: Duration = Duration::from_micros(16_639);
     const RUN_BUDGET: u32 = 400_000;
-
-    fn pane_family() -> &'static panes::Family {
-        &panes::NES_FAMILY
-    }
+    const PLATFORM: super::Platform = super::Platform::Nes;
 
     fn pc(nes: &Nes) -> u16 {
         nes.cpu.pc

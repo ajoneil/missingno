@@ -17,7 +17,6 @@ use missingno_vcs::cpu::disasm;
 
 use super::{ConsoleSwitch, ControlId, ControlInput, FrameOutcome, SystemConsole, SystemDebugger};
 use crate::app::debugger::inspect::{DebugView, Inspection};
-use crate::app::debugger::panes;
 use crate::app::debugger::vcs::{DisasmRow, VcsInspectState, VcsSnapshot};
 use crate::app::emu_thread::RunningStatus;
 use crate::app::library::activity::{CaptureOptions, FrameCapture};
@@ -609,8 +608,8 @@ impl SystemDebugger for VcsDebugger {
         &self.inspect
     }
 
-    fn pane_family(&self) -> &'static panes::Family {
-        &panes::VCS_FAMILY
+    fn platform(&self) -> super::Platform {
+        super::Platform::AtariVcs
     }
 
     fn snapshot(&self, frame: u64) -> DebugView {

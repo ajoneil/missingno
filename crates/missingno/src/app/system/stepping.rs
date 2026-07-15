@@ -9,7 +9,6 @@ use std::time::Duration;
 
 use super::{ControlId, ControlInput, FrameOutcome, SystemConsole, SystemDebugger};
 use crate::app::debugger::inspect::{DebugView, Inspection};
-use crate::app::debugger::panes;
 use crate::app::emu_thread::RunningStatus;
 use crate::app::library::activity::{CaptureOptions, FrameCapture};
 use crate::app::screen::{IndexedFrame, ScreenDisplay};
@@ -25,7 +24,7 @@ pub trait SteppingSystem: 'static {
     /// core that never completes a frame cannot stall the UI.
     const RUN_BUDGET: u32;
 
-    fn pane_family() -> &'static panes::Family;
+    const PLATFORM: super::Platform;
     fn pc(core: &Self::Core) -> u16;
     fn step_instruction(core: &mut Self::Core);
     /// The frame completed since the last take, if any.
@@ -227,8 +226,8 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
         &self.inspect
     }
 
-    fn pane_family(&self) -> &'static panes::Family {
-        S::pane_family()
+    fn platform(&self) -> super::Platform {
+        S::PLATFORM
     }
 
     fn snapshot(&self, frame: u64) -> DebugView {

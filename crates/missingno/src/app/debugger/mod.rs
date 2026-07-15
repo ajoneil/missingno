@@ -160,10 +160,16 @@ pub struct Debugger {
 /// screen view that was to be carried over.
 pub type ReturnedConsole = Box<(Box<dyn SystemConsole>, ScreenView)>;
 
+/// The panes a debugger presents. Every platform whose debugger this build can
+/// construct registers a family behind the same feature gate.
+fn pane_family(core: &dyn SystemDebugger) -> &'static panes::Family {
+    panes::family_for(core.platform()).expect("a debugger's platform registers panes")
+}
+
 impl Debugger {
     pub fn new(console: Box<dyn SystemConsole>) -> Result<Self, Box<dyn SystemConsole>> {
         console.into_debugger().map(|core| {
-            let panes = DebuggerPanes::new(core.pane_family());
+            let panes = DebuggerPanes::new(pane_family(core.as_ref()));
             Self::build(core, panes)
         })
     }
@@ -174,7 +180,7 @@ impl Debugger {
     ) -> Result<Self, ReturnedConsole> {
         match console.into_debugger() {
             Ok(core) => {
-                let panes = DebuggerPanes::with_screen(core.pane_family(), screen_view);
+                let panes = DebuggerPanes::with_screen(pane_family(core.as_ref()), screen_view);
                 Ok(Self::build(core, panes))
             }
             Err(console) => Err(Box::new((console, screen_view))),

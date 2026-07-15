@@ -26,6 +26,7 @@ use crate::app::{
         screen::{self, ScreenPane},
     },
     screen::ScreenView,
+    system::Platform,
     ui::{
         fonts,
         icons::Icon,
@@ -110,15 +111,18 @@ pub struct PaneDescriptor {
     pub(super) construct: fn() -> Box<dyn Pane>,
 }
 
-/// Everything a family brings to the pane grid: its pane set, the key its
-/// layout persists under, and its out-of-the-box arrangement.
+/// Everything a family brings to the pane grid: the platforms it serves, its
+/// pane set, the key its layout persists under, and its out-of-the-box
+/// arrangement.
 pub struct Family {
+    pub platforms: &'static [Platform],
     pub registry: &'static [PaneDescriptor],
     pub layout_key: &'static str,
     default_layout: fn() -> Option<pane_grid::State<Box<dyn Pane>>>,
 }
 
 pub static GB_FAMILY: Family = Family {
+    platforms: &[Platform::GameBoy, Platform::GameBoyColor],
     registry: PANE_REGISTRY,
     // The empty key keeps the Game Boy's pre-family layout filename.
     layout_key: "",
@@ -126,10 +130,20 @@ pub static GB_FAMILY: Family = Family {
 };
 
 pub static VCS_FAMILY: Family = Family {
+    platforms: &[Platform::AtariVcs],
     registry: VCS_PANE_REGISTRY,
     layout_key: "vcs",
     default_layout: vcs_default_layout,
 };
+
+/// The panes a platform presents. `None` only for a platform this build left
+/// out, which cannot reach here — the same feature gates its debugger.
+pub fn family_for(platform: Platform) -> Option<&'static Family> {
+    PANE_FAMILIES
+        .iter()
+        .copied()
+        .find(|family| family.platforms.contains(&platform))
+}
 
 /// Every family's pane set, for label and kind lookups across saved layouts.
 static PANE_FAMILIES: &[&Family] = &[
@@ -150,6 +164,7 @@ pub fn all_descriptors() -> impl Iterator<Item = &'static PaneDescriptor> {
 
 #[cfg(feature = "nes")]
 pub static NES_FAMILY: Family = Family {
+    platforms: &[Platform::Nes],
     registry: NES_PANE_REGISTRY,
     layout_key: "nes",
     default_layout: nes_default_layout,
@@ -179,6 +194,7 @@ pub static NES_PANE_REGISTRY: &[PaneDescriptor] = &[
 
 #[cfg(feature = "sms")]
 pub static SMS_FAMILY: Family = Family {
+    platforms: &[Platform::MasterSystem],
     registry: SMS_PANE_REGISTRY,
     layout_key: "sms",
     default_layout: sms_default_layout,
