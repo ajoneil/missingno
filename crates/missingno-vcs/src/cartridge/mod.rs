@@ -5,9 +5,15 @@
 //! page it, shadow it with RAM, or both. One module per board.
 
 pub mod atari;
+pub mod e0;
+pub mod e7;
+pub mod fa;
 pub mod plain;
 
 use atari::Atari;
+use e0::E0;
+use e7::E7;
+use fa::Fa;
 use plain::Plain;
 
 /// The board in the slot. Bank state and cart RAM live inline, so one board
@@ -17,6 +23,9 @@ pub enum Board {
     Empty,
     Plain(Plain),
     Atari(Atari),
+    Fa(Fa),
+    E0(E0),
+    E7(E7),
 }
 
 pub struct Cartridge {
@@ -51,6 +60,13 @@ pub enum CartType {
     /// 32 KB across eight banks.
     F4,
     F4Sc,
+    /// 12 KB across three banks, with 256 bytes of cart RAM and a
+    /// data-bus-gated switch (CBS RAM Plus).
+    Fa,
+    /// 8 KB as eight 1 KB slices in three pageable windows (Parker Bros).
+    E0,
+    /// 16 KB as eight 2 KB banks, with 1 KB and 4×256 B cart RAMs (M-Network).
+    E7,
 }
 
 impl CartType {
@@ -59,9 +75,10 @@ impl CartType {
         match self {
             CartType::Plain2K => 0x800,
             CartType::Plain4K => 0x1000,
-            CartType::F8 | CartType::F8Sc => 0x2000,
-            CartType::F6 | CartType::F6Sc => 0x4000,
+            CartType::F8 | CartType::F8Sc | CartType::E0 => 0x2000,
+            CartType::F6 | CartType::F6Sc | CartType::E7 => 0x4000,
             CartType::F4 | CartType::F4Sc => 0x8000,
+            CartType::Fa => 0x3000,
         }
     }
 }
@@ -102,6 +119,9 @@ impl Cartridge {
             CartType::F6Sc => atari(atari::F6_HOTSPOT_BASE, true),
             CartType::F4 => atari(atari::F4_HOTSPOT_BASE, false),
             CartType::F4Sc => atari(atari::F4_HOTSPOT_BASE, true),
+            CartType::Fa => Board::Fa(Fa::new(rom)),
+            CartType::E0 => Board::E0(E0::new(rom)),
+            CartType::E7 => Board::E7(E7::new(rom)),
         })
     }
 
@@ -134,6 +154,9 @@ impl Cartridge {
             Board::Empty => bus,
             Board::Plain(board) => board.read(address),
             Board::Atari(board) => board.read(address, bus),
+            Board::Fa(board) => board.read(address, bus),
+            Board::E0(board) => board.read(address),
+            Board::E7(board) => board.read(address, bus),
         }
     }
 
@@ -143,6 +166,9 @@ impl Cartridge {
         match &mut self.board {
             Board::Empty | Board::Plain(_) => {}
             Board::Atari(board) => board.write_access(address, data),
+            Board::Fa(board) => board.write_access(address, data),
+            Board::E0(board) => board.write_access(address),
+            Board::E7(board) => board.write_access(address, data),
         }
     }
 
@@ -152,6 +178,9 @@ impl Cartridge {
             Board::Empty => 0,
             Board::Plain(board) => board.read(address),
             Board::Atari(board) => board.peek(address),
+            Board::Fa(board) => board.peek(address),
+            Board::E0(board) => board.peek(address),
+            Board::E7(board) => board.peek(address),
         }
     }
 }

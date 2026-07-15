@@ -89,6 +89,63 @@ fn bank_f8_secam() {
 }
 
 #[test]
+fn bank_fa_ntsc() {
+    run_self_test_on("cartridge/bank-fa_ntsc.a26", TvStandard::Ntsc, CartType::Fa);
+}
+
+#[test]
+fn bank_fa_pal() {
+    run_self_test_on("cartridge/bank-fa_pal.a26", TvStandard::Pal, CartType::Fa);
+}
+
+#[test]
+fn bank_fa_secam() {
+    run_self_test_on(
+        "cartridge/bank-fa_secam.a26",
+        TvStandard::Secam,
+        CartType::Fa,
+    );
+}
+
+#[test]
+fn bank_e0_ntsc() {
+    run_self_test_on("cartridge/bank-e0_ntsc.a26", TvStandard::Ntsc, CartType::E0);
+}
+
+#[test]
+fn bank_e0_pal() {
+    run_self_test_on("cartridge/bank-e0_pal.a26", TvStandard::Pal, CartType::E0);
+}
+
+#[test]
+fn bank_e0_secam() {
+    run_self_test_on(
+        "cartridge/bank-e0_secam.a26",
+        TvStandard::Secam,
+        CartType::E0,
+    );
+}
+
+#[test]
+fn bank_e7_ntsc() {
+    run_self_test_on("cartridge/bank-e7_ntsc.a26", TvStandard::Ntsc, CartType::E7);
+}
+
+#[test]
+fn bank_e7_pal() {
+    run_self_test_on("cartridge/bank-e7_pal.a26", TvStandard::Pal, CartType::E7);
+}
+
+#[test]
+fn bank_e7_secam() {
+    run_self_test_on(
+        "cartridge/bank-e7_secam.a26",
+        TvStandard::Secam,
+        CartType::E7,
+    );
+}
+
+#[test]
 fn bank_hotspot_window_ntsc() {
     run_self_test_on(
         "cartridge/bank-hotspot-window_ntsc.a26",
