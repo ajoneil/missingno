@@ -184,15 +184,11 @@ impl Riot {
         // A4=0, A2=1: PA7 edge-detect control — A0 picks the active edge
         // (the IRQ-enable bit gates a pin the 6507 package doesn't have).
         if register & 0x14 == 0x04 {
-            let selected_positive = register & 0x01 != 0;
-            // A polarity change acts as if the new active edge just landed:
-            // with PA7 already at its post-edge level, the flag sets
-            // (datasheet warning; the exact matrix is hardware-unconfirmed).
-            if selected_positive != self.pa7_positive_edge && self.pa7_level() == selected_positive
-            {
-                self.pa7_flag = true;
-            }
-            self.pa7_positive_edge = selected_positive;
+            // Only a genuine pin edge sets the flag — no polarity-select
+            // write does, at any level or polarity (hardware-measured full
+            // matrix; the datasheet's write-induced-edge warning does not
+            // exist on silicon).
+            self.pa7_positive_edge = register & 0x01 != 0;
             return;
         }
         if register & 0x14 == 0x14 {
