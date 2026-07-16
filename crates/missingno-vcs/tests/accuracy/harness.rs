@@ -15,3 +15,24 @@ fn sanity_pal() {
 fn sanity_secam() {
     common::run_self_test("harness/sanity_secam.a26", TvStandard::Secam);
 }
+
+// The capture-rig target: not a behaviour test upstream, but every oracle
+// renders it identically, so the blessed render doubles as a consensus
+// screenshot reference. No SECAM reference exists (its hue ramp is all-green).
+#[test]
+fn calibration_ntsc() {
+    common::run_screenshot(
+        "harness/calibration_ntsc.a26",
+        "harness/calibration_ntsc.png",
+        TvStandard::Ntsc,
+    );
+}
+
+#[test]
+fn calibration_pal() {
+    common::run_screenshot(
+        "harness/calibration_pal.a26",
+        "harness/calibration_pal.png",
+        TvStandard::Pal,
+    );
+}
