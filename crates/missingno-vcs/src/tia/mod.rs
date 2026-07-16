@@ -4,7 +4,7 @@
 //! Motion is modelled as the hardware does it: HMOVE arms per-object
 //! "more movement" latches; stuffed pulses ride the HSync counter's
 //! line-fixed H@1 grid, each comparing a descending ripple against the
-//! D7-inverted HM values captured at the H@1 edge until the latch clears;
+//! D7-inverted HM values captured at the H@2 edge until the latch clears;
 //! the strobe also latches an 8-clock hblank extension (the HMOVE comb).
 //! A stuffed pulse rides the object's own motion-clock node: while MOTCK
 //! is gated it moves the object; coincident with a firing MOTCK it merges
@@ -29,7 +29,7 @@ const LATE_HBLANK_CLOCKS: u16 = HBLANK_CLOCKS + 8;
 /// Colour clocks from an HMOVE write reaching the TIA to its SEC decode.
 const HBLANK_EXTENSION_DECODE_CLOCKS: u8 = 3;
 /// H@1 (visible x ≡ 1 mod 4): each latched object stuffs a clock and its
-/// comparator samples the live HM value.
+/// comparator applies the H@2-captured HM value.
 const MOTION_STUFF_PHASE: u16 = 1;
 /// H@2 (x ≡ 3 = H@1 + 2): the ripple counter decrements.
 const MOTION_DECREMENT_PHASE: u16 = 3;
@@ -212,13 +212,12 @@ enum MotionArmDecode {
 /// H@2; each H@1 every latched object gets a stuffed motion clock, and each
 /// object's comparator clears its latch when the ripple reaches that object's
 /// HM nibble with D7 inverted (so the stuffed count is 0..15 = 8 − net move).
-/// A live descending compare reads the HM value captured at the previous H@2
-/// edge — 2 CLK before the pulse — where the resting compare reads it live
-/// (die-measured: the m8_stuck/m8_stuck2/m8_stuck3 jam bracket, placed on
-/// this grid by the rewrite-instants run), so a mid-sequence rewrite that
-/// dodges every remaining ripple value never clears the latch — it stuffs a
-/// clock every line until the next HMOVE (the Cosmic Ark starfield). HMCLR
-/// zeroes the HM values only.
+/// The compare reads the HM value captured at the previous H@2 edge — 2 CLK
+/// before the pulse — during descent and at rest alike, so a mid-sequence
+/// rewrite that dodges every remaining ripple value never clears the latch —
+/// it stuffs a clock every line until the next HMOVE (the Cosmic Ark
+/// starfield) — and a resting rewrite to $8x clears only from the capture
+/// after its write. HMCLR zeroes the HM values only.
 struct MotionSequencer {
     /// [SEC] shifting through the two-phase clock to arm the motion.
     arm_stage: MotionArmDecode,
@@ -229,8 +228,8 @@ struct MotionSequencer {
     ripple: Option<u8>,
     more_movement: Movables<bool>,
     hm_values: Movables<u8>,
-    /// HM values as of the last H@2 (decrement) edge; the live descending
-    /// compare reads this capture, the resting compare reads the register file.
+    /// HM values as of the last H@2 (decrement) edge; the comparator reads
+    /// this capture, never the register file directly.
     captured_hm_values: Movables<u8>,
 }
 
@@ -298,23 +297,18 @@ impl MotionSequencer {
         }
 
         // H@1: each latched object stuffs a clock, unless its comparator
-        // matches the ripple this step — then it clears instead (a live
-        // descent reads the H@2 capture; an exhausted ripple rests at %1111
-        // and reads the register file, so a late HM rewrite still clears).
-        // Clearing before the tick keeps the matching step from stuffing
-        // (HM $8x → 0 stuffs).
+        // matches the ripple this step — then it clears instead. The
+        // comparator's input is the H@2 capture for descent and rest alike:
+        // a rewrite landing after that capture edge is honoured one H@ cycle
+        // later. Clearing before the tick keeps the matching step from
+        // stuffing (HM $8x → 0 stuffs).
         if phase != MOTION_STUFF_PHASE || !self.any_movement() {
             return None;
         }
         let ripple = self.ripple.unwrap_or(RESTING_RIPPLE);
-        let compare_values = if self.ripple.is_some() {
-            &self.captured_hm_values
-        } else {
-            &self.hm_values
-        };
         let mut ticks = Movables::splat(false);
         for which in MOVABLES {
-            if self.more_movement[which] && ripple == (compare_values[which] >> 4) ^ 0x07 {
+            if self.more_movement[which] && ripple == (self.captured_hm_values[which] >> 4) ^ 0x07 {
                 self.more_movement[which] = false;
             }
             ticks[which] = self.more_movement[which];
