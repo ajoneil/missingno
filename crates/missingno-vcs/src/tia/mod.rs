@@ -372,8 +372,9 @@ pub struct Tia {
     hblank_extension_armed: bool,
     /// A merged live stuff stretches the object's motion-clock high through
     /// the stuff slot; the serialiser shows the NEXT clock's output one clock
-    /// early (measured: a dot two clocks after the slot swallows, three
-    /// clocks after widens, and nothing persists to the next line).
+    /// early, at the ring phase classes each object's clocking derives from
+    /// (console-measured: the w1 dot swallows on a final-leading-slot merge
+    /// and widens on a wrap-slot merge; nothing persists to the next line).
     seam_lookahead: Movables<bool>,
 
     collisions: [u8; 8],
@@ -506,13 +507,16 @@ impl Tia {
             for (which, ticked) in ticks.iter() {
                 if ticked {
                     if motion_clock {
-                        // A player's merged stuff previews only at the ring
-                        // phase its scan clock derives from; missiles and the
-                        // ball preview at every class.
+                        // A merged stuff previews the serialiser only at
+                        // phase classes its clocking derives from: the player
+                        // at its scan clock's class, the missile at every
+                        // class but the pulse class, the ball at every class.
                         self.seam_lookahead[which] = match which {
                             MovableIndex::P0 => self.player0.seam_preview_fires(),
                             MovableIndex::P1 => self.player1.seam_preview_fires(),
-                            _ => true,
+                            MovableIndex::M0 => self.missile0.seam_preview_fires(),
+                            MovableIndex::M1 => self.missile1.seam_preview_fires(),
+                            MovableIndex::Bl => true,
                         };
                     } else {
                         self.tick_movable(which);

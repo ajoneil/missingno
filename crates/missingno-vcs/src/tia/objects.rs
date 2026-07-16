@@ -228,6 +228,11 @@ fn player_pixel_clocks(mode: u8) -> u8 {
 /// 2× reshapes its own single row, 4× shows nothing).
 const SEAM_PREVIEW_PHASE_1X: u8 = 1;
 const SEAM_PREVIEW_PHASE_STRETCHED: u8 = 3;
+/// The one pre-tick ring phase where the MISSILE's merged stuff previews
+/// nothing — the ring's pulse class, the complement of the 1× player's gate
+/// (console-measured: the missile's w2 dash stays full there; the ball's
+/// truncates, so the ball previews at every class).
+const MISSILE_SEAM_INERT_PHASE: u8 = 1;
 
 #[derive(Clone)]
 struct Scan {
@@ -442,6 +447,12 @@ impl Missile {
         {
             self.gate.start(self.width());
         }
+    }
+
+    /// Whether a stuffed pulse merging into this MOTCK visibly previews the
+    /// width gate (pre-tick phase, read at the merge instant).
+    pub fn seam_preview_fires(&self) -> bool {
+        self.counter.ring_phase() != MISSILE_SEAM_INERT_PHASE
     }
 }
 
