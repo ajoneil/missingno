@@ -71,10 +71,11 @@ const TIA_PF_WRITE_HC: u8 = TIA_WRITE_HC + 2;
 const TIA_STROBE_RISE_HC: u8 = TIA_WRITE_HC - 2;
 /// RSYNC's counter reset lands the wrap 3.5 colour clocks after the write end.
 const TIA_RSYNC_HC: u8 = TIA_WRITE_HC + 7;
-/// Reset-strobe countdown milestones (half-clocks until the write commits): the
-/// decoded rise holds the missile START decode (m10_rrace window), then the
-/// scan-kill leads the counter plant by one half-clock.
-const RESET_RISE_HC: u8 = 3;
+/// Reset-strobe countdown milestone: the scan-kill leads the counter plant by
+/// one half-clock. The START-decode hold engages at the write's enqueue — the
+/// decoded strobe level grips the divider wrap preceding the plant
+/// (PAL-console-measured draw-at-NEW window −3..0; the decap sim resolves
+/// this sub-clock race one clock later).
 const RESET_KILL_HC: u8 = 1;
 
 /// The TIA's φ0 (÷3) divider phase: CPU cycles begin where the line position
@@ -170,6 +171,14 @@ impl Bus for BoardBus<'_> {
                 data,
                 hc_until_effective: hc,
             });
+            // The missile reset's decoded strobe level holds the START decode
+            // from the bus cycle's tail through the plant, gripping the
+            // divider wrap before it (PAL-console-measured window −3..0).
+            match u16::from(register) {
+                RESM0 => self.tia.missile_reset_rise(0),
+                RESM1 => self.tia.missile_reset_rise(1),
+                _ => {}
+            }
         } else if selects_riot_ram(address) {
             self.riot.ram[(address & 0x7F) as usize] = data;
         } else {
@@ -284,15 +293,7 @@ impl Vcs {
         for slot in &mut self.pending_tia_writes {
             if let Some(write) = slot {
                 write.hc_until_effective -= 1;
-                if write.hc_until_effective == RESET_RISE_HC {
-                    // The strobe's decoded rise holds the missile START
-                    // decode until the plant (die window −2..+1, m10_rrace).
-                    match u16::from(write.register) {
-                        crate::tia::registers::RESM0 => self.tia.missile_reset_rise(0),
-                        crate::tia::registers::RESM1 => self.tia.missile_reset_rise(1),
-                        _ => {}
-                    }
-                } else if write.hc_until_effective == RESET_KILL_HC {
+                if write.hc_until_effective == RESET_KILL_HC {
                     // The missile reset's scan-kill leads its plant.
                     match u16::from(write.register) {
                         crate::tia::registers::RESM0 => self.tia.missile_reset_kill(0),
