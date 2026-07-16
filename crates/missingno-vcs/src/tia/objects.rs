@@ -98,6 +98,11 @@ impl PositionCounter {
         self.position * 4 + self.div.phase()
     }
 
+    /// The ÷4 ring's sub-phase (0–3).
+    fn ring_phase(&self) -> u8 {
+        self.div.phase()
+    }
+
     /// RESxx: plant the count at zero and ground the ring to the strobe.
     fn plant(&mut self) {
         self.position = 0;
@@ -218,6 +223,12 @@ fn player_pixel_clocks(mode: u8) -> u8 {
     }
 }
 
+/// Pre-tick ring phase classes whose merged stuff previews the player
+/// serialiser (console-measured: 1× collapses one row per movement cycle,
+/// 2× reshapes its own single row, 4× shows nothing).
+const SEAM_PREVIEW_PHASE_1X: u8 = 1;
+const SEAM_PREVIEW_PHASE_STRETCHED: u8 = 3;
+
 #[derive(Clone)]
 struct Scan {
     /// MOTCK edges until the serialiser presents bit 0: the player START
@@ -273,6 +284,21 @@ impl Player {
     /// Colour-clock position within the line (0..160).
     pub fn counter(&self) -> u8 {
         self.counter.position_clk()
+    }
+
+    /// Whether a stuffed pulse merging into this MOTCK visibly previews the
+    /// serialiser. Fires at one ring phase class per stretch mode — the class
+    /// the scan clock derives from (console-measured stuck-train schedules;
+    /// the stretched scan clock's source phase per TIA_HW_Notes). The decap
+    /// sim previews at every class, refuted on silicon. Phases are pre-tick,
+    /// read at the merge instant before this clock's ring advance.
+    pub fn seam_preview_fires(&self) -> bool {
+        let class = if player_pixel_clocks(self.nusiz) == 1 {
+            SEAM_PREVIEW_PHASE_1X
+        } else {
+            SEAM_PREVIEW_PHASE_STRETCHED
+        };
+        self.counter.ring_phase() == class
     }
 
     /// One motion clock (MOTCK edge).

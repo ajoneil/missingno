@@ -506,7 +506,14 @@ impl Tia {
             for (which, ticked) in ticks.iter() {
                 if ticked {
                     if motion_clock {
-                        self.seam_lookahead[which] = true;
+                        // A player's merged stuff previews only at the ring
+                        // phase its scan clock derives from; missiles and the
+                        // ball preview at every class.
+                        self.seam_lookahead[which] = match which {
+                            MovableIndex::P0 => self.player0.seam_preview_fires(),
+                            MovableIndex::P1 => self.player1.seam_preview_fires(),
+                            _ => true,
+                        };
                     } else {
                         self.tick_movable(which);
                     }
