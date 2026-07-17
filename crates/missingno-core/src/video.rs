@@ -120,3 +120,119 @@ pub enum VideoOut {
         pixel_aspect: f32,
     },
 }
+
+/// One raw scanline handed to the television: the visible pixels and the
+/// line's VSYNC state.
+pub struct Scanline<const WIDTH: usize> {
+    pub pixels: [u8; WIDTH],
+    pub vsync: bool,
+}
+
+/// A completed field: the picture scanlines between two VSYNC locks. Height is
+/// whatever the source produced — sync is emergent, not a fixed frame.
+pub struct Field<const WIDTH: usize> {
+    pub lines: Vec<[u8; WIDTH]>,
+}
+
+/// The television's vertical-sync separator. A real set integrates the incoming
+/// composite sync and only retraces — re-anchoring the field — once VSYNC has
+/// been asserted across the lock threshold of scanlines; a briefer pulse never
+/// charges the integrator and is swallowed, leaving the field timing unchanged.
+/// The console just drives the VSYNC pin (a plain latch); this lock is off-chip.
+pub struct Television<const WIDTH: usize> {
+    building: Vec<[u8; WIDTH]>,
+    vsync_run: usize,
+    /// Scanlines of asserted VSYNC integrated before the field re-anchors — a
+    /// calibratable off-chip lock the source console does not model.
+    lock_lines: usize,
+}
+
+impl<const WIDTH: usize> Television<WIDTH> {
+    pub fn new(lock_lines: usize) -> Self {
+        Television {
+            building: Vec::new(),
+            vsync_run: 0,
+            lock_lines,
+        }
+    }
+
+    /// Feed one scanline. Returns the completed field when the integrator locks
+    /// on a VSYNC assertion that has persisted the threshold — that boundary is
+    /// the field's end; the VSYNC lines themselves are the sync interval, not
+    /// picture, so they are never part of the field.
+    pub fn feed(&mut self, line: Scanline<WIDTH>) -> Option<Field<WIDTH>> {
+        if line.vsync {
+            self.vsync_run += 1;
+            if self.vsync_run == self.lock_lines && !self.building.is_empty() {
+                return Some(Field {
+                    lines: std::mem::take(&mut self.building),
+                });
+            }
+            None
+        } else {
+            self.vsync_run = 0;
+            self.building.push(line.pixels);
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod television_tests {
+    use super::{Field, Scanline, Television};
+
+    fn picture_line(marker: u8) -> Scanline<4> {
+        Scanline {
+            pixels: [marker; 4],
+            vsync: false,
+        }
+    }
+
+    fn vsync_line() -> Scanline<4> {
+        Scanline {
+            pixels: [0; 4],
+            vsync: true,
+        }
+    }
+
+    /// Drive 200 picture lines, a stray VSYNC pulse of `pulse` lines, 40 more
+    /// picture lines, then a full 3-line VSYNC. Return each completed field's
+    /// line count. A swallowed pulse yields one merged field before the final
+    /// VSYNC; a locking pulse splits the field there.
+    fn run(pulse: usize) -> Vec<usize> {
+        let mut lines = Vec::new();
+        lines.extend((0..200).map(|_| picture_line(1)));
+        lines.extend((0..pulse).map(|_| vsync_line()));
+        lines.extend((0..40).map(|_| picture_line(2)));
+        lines.extend((0..3).map(|_| vsync_line()));
+
+        let mut tv = Television::<4>::new(2);
+        let mut fields = Vec::new();
+        for line in lines {
+            if let Some(Field { lines }) = tv.feed(line) {
+                fields.push(lines.len());
+            }
+        }
+        fields
+    }
+
+    #[test]
+    fn sub_threshold_vsync_is_swallowed() {
+        // A 1-line pulse never locks: the field spans across it and re-anchors
+        // only at the following 3-line VSYNC — one merged 240-line field.
+        assert_eq!(run(1), vec![240]);
+    }
+
+    #[test]
+    fn threshold_vsync_re_anchors() {
+        // A 3-line pulse locks: the field ends at the pulse (200 lines); the
+        // trailing 40 picture lines then form the next field at the final VSYNC.
+        assert_eq!(run(3), vec![200, 40]);
+    }
+
+    #[test]
+    fn exactly_two_lines_locks() {
+        // The threshold itself: a 2-line pulse locks and splits, same as three.
+        assert_eq!(run(2), vec![200, 40]);
+    }
+}

@@ -12,7 +12,7 @@ use rgb::RGB8;
 
 use std::collections::BTreeSet;
 
-use missingno_vcs::console::{Frame, Scanline};
+use missingno_vcs::console::Frame;
 use missingno_vcs::cpu::disasm;
 
 use super::{ConsoleSwitch, ControlId, ControlInput, FrameOutcome, SystemConsole, SystemDebugger};
@@ -21,7 +21,7 @@ use crate::app::debugger::vcs::{DisasmRow, VcsInspectState, VcsSnapshot};
 use crate::app::emu_thread::RunningStatus;
 use crate::app::library::activity::{CaptureOptions, FrameCapture};
 use crate::app::screen::IndexedFrame;
-use missingno_core::video::Frame as VideoFrame;
+use missingno_core::video::{self, Frame as VideoFrame, Television};
 
 pub const ROM_EXTENSIONS: &[&str] = &["a26", "bin"];
 
@@ -108,7 +108,7 @@ pub fn create_console(
         vcs: Vcs::new(rom, region, cart)?,
         title,
         last_frame: blank_frame(),
-        tv: Television::new(),
+        tv: Television::new(VSYNC_LOCK_LINES),
     }))
 }
 
@@ -124,14 +124,20 @@ fn probe_tv_standard(rom: &[u8], cart_type: Option<CartType>) -> TvStandard {
     let Ok(mut vcs) = Vcs::new(rom, TvStandard::Ntsc, cart_type) else {
         return TvStandard::Ntsc;
     };
-    let mut tv = Television::new();
+    let mut tv = Television::<VISIBLE_CLOCKS>::new(VSYNC_LOCK_LINES);
     let mut fields = Vec::new();
     let mut lines_this_field = 0usize;
     // A few fields, bounded so a kernel that never syncs can't spin.
     for _ in 0..(FRAME_BUDGET_LINES * 8) {
         let line = vcs.step_scanline();
         lines_this_field += 1;
-        if tv.feed(line).is_some() {
+        if tv
+            .feed(video::Scanline {
+                pixels: line.pixels,
+                vsync: line.vsync,
+            })
+            .is_some()
+        {
             fields.push(lines_this_field);
             lines_this_field = 0;
             if fields.len() >= 6 {
@@ -202,7 +208,7 @@ struct VcsConsole {
     vcs: Vcs,
     title: String,
     last_frame: IndexedFrame,
-    tv: Television,
+    tv: Television<VISIBLE_CLOCKS>,
 }
 
 /// The picture window shown from the full field the core emits: skip the
@@ -229,12 +235,12 @@ fn display_window(standard: TvStandard) -> DisplayWindow {
     }
 }
 
-fn indexed_frame(frame: &Frame, standard: TvStandard) -> IndexedFrame {
+fn indexed_frame(lines: &[[u8; VISIBLE_CLOCKS]], standard: TvStandard) -> IndexedFrame {
     let window = display_window(standard);
     let black = palette_index(0) as u8;
     let mut pixels = vec![black; window.height * VISIBLE_CLOCKS];
     for row in 0..window.height {
-        if let Some(line) = frame.lines.get(window.skip + row) {
+        if let Some(line) = lines.get(window.skip + row) {
             let dst = row * VISIBLE_CLOCKS;
             for (i, &p) in line.iter().enumerate() {
                 pixels[dst + i] = palette_index(p) as u8;
@@ -260,103 +266,9 @@ fn blank_frame() -> IndexedFrame {
     )
 }
 
-/// The television's vertical-sync separator. A real set integrates the incoming
-/// composite sync and only retraces — re-anchoring the field — once VSYNC has
-/// been asserted across `VSYNC_LOCK_LINES` scanlines; a briefer pulse never
-/// charges the integrator and is swallowed, leaving the field timing unchanged.
-/// The console just drives the VSYNC pin (a plain latch); this lock is off-chip.
-struct Television {
-    building: Vec<[u8; VISIBLE_CLOCKS]>,
-    vsync_run: usize,
-}
-
-impl Television {
-    fn new() -> Self {
-        Television {
-            building: Vec::new(),
-            vsync_run: 0,
-        }
-    }
-
-    /// Feed one scanline. Returns the completed field when the integrator locks
-    /// on a VSYNC assertion that has persisted the threshold — that boundary is
-    /// the field's end; the VSYNC lines themselves are the sync interval, not
-    /// picture, so they are never part of the field.
-    fn feed(&mut self, line: Scanline) -> Option<Frame> {
-        if line.vsync {
-            self.vsync_run += 1;
-            if self.vsync_run == VSYNC_LOCK_LINES && !self.building.is_empty() {
-                return Some(Frame {
-                    lines: std::mem::take(&mut self.building),
-                });
-            }
-            None
-        } else {
-            self.vsync_run = 0;
-            self.building.push(line.pixels);
-            None
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn picture_line(marker: u8) -> Scanline {
-        Scanline {
-            pixels: [marker; VISIBLE_CLOCKS],
-            vsync: false,
-        }
-    }
-
-    fn vsync_line() -> Scanline {
-        Scanline {
-            pixels: [0; VISIBLE_CLOCKS],
-            vsync: true,
-        }
-    }
-
-    /// Drive 200 picture lines, a stray VSYNC pulse of `pulse` lines, 40 more
-    /// picture lines, then a full 3-line VSYNC. Return each completed field's
-    /// line count. A swallowed pulse yields one merged field before the final
-    /// VSYNC; a locking pulse splits the field there.
-    fn run(pulse: usize) -> Vec<usize> {
-        let mut lines = Vec::new();
-        lines.extend((0..200).map(|_| picture_line(1)));
-        lines.extend((0..pulse).map(|_| vsync_line()));
-        lines.extend((0..40).map(|_| picture_line(2)));
-        lines.extend((0..3).map(|_| vsync_line()));
-
-        let mut tv = Television::new();
-        let mut fields = Vec::new();
-        for line in lines {
-            if let Some(frame) = tv.feed(line) {
-                fields.push(frame.lines.len());
-            }
-        }
-        fields
-    }
-
-    #[test]
-    fn sub_threshold_vsync_is_swallowed() {
-        // A 1-line pulse never locks: the field spans across it and re-anchors
-        // only at the following 3-line VSYNC — one merged 240-line field.
-        assert_eq!(run(1), vec![240]);
-    }
-
-    #[test]
-    fn threshold_vsync_re_anchors() {
-        // A 3-line pulse locks: the field ends at the pulse (200 lines); the
-        // trailing 40 picture lines then form the next field at the final VSYNC.
-        assert_eq!(run(3), vec![200, 40]);
-    }
-
-    #[test]
-    fn exactly_two_lines_locks() {
-        // The threshold itself: a 2-line pulse locks and splits, same as three.
-        assert_eq!(run(2), vec![200, 40]);
-    }
 
     #[test]
     fn classify_fields_splits_ntsc_from_pal() {
@@ -391,8 +303,11 @@ impl SystemConsole for VcsConsole {
         let mut display = None;
         for _ in 0..FRAME_BUDGET_LINES {
             let line = self.vcs.step_scanline();
-            if let Some(frame) = self.tv.feed(line) {
-                self.last_frame = indexed_frame(&frame, standard);
+            if let Some(field) = self.tv.feed(video::Scanline {
+                pixels: line.pixels,
+                vsync: line.vsync,
+            }) {
+                self.last_frame = indexed_frame(&field.lines, standard);
                 display = Some(VideoFrame::Indexed(self.last_frame.clone()));
                 break;
             }
@@ -582,7 +497,7 @@ impl VcsDebugger {
         let frame = frame?;
         self.frame_count += 1;
         let standard = self.core.console().tv_standard();
-        self.last_frame = indexed_frame(&frame, standard);
+        self.last_frame = indexed_frame(&frame.lines, standard);
         Some(VideoFrame::Indexed(self.last_frame.clone()))
     }
 }
@@ -682,7 +597,7 @@ impl SystemDebugger for VcsDebugger {
             vcs: self.core.into_console(),
             title: self.title,
             last_frame: self.last_frame,
-            tv: Television::new(),
+            tv: Television::new(VSYNC_LOCK_LINES),
         })
     }
 }
