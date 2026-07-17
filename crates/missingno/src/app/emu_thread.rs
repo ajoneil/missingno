@@ -511,7 +511,7 @@ impl Payload {
         }
     }
 
-    fn audio_coupling(&self) -> Option<missingno_hw::HighPass> {
+    fn audio_coupling(&self) -> Option<missingno_core::HighPass> {
         match self {
             Self::Console(console) => console.audio_coupling(),
             Self::Debugger(payload) => payload.core.audio_coupling(),

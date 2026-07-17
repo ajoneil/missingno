@@ -10,8 +10,7 @@ morepork = ["dep:morepork", "dep:sha2"]
 test-support = ["dep:png"]
 
 [dependencies]
-missingno-debug = { path = "../missingno-debug" }
-missingno-hw = { path = "../missingno-hw" }
+missingno-core = { path = "../missingno-core" }
 bitflags = { workspace = true }
 rgb = { workspace = true }
 morepork = { git = "https://github.com/ajoneil/morepork", optional = true }

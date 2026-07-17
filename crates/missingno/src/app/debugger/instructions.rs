@@ -18,8 +18,8 @@ use crate::app::{
     },
     ui::{fonts, palette, sizes::s},
 };
-use missingno_debug::cdl::CdlWindow;
-use missingno_debug::symbols::SymbolTable;
+use missingno_core::cdl::CdlWindow;
+use missingno_core::symbols::SymbolTable;
 use missingno_gb::cpu::instructions::{Instruction, instruction_length};
 use missingno_gb::debugger::instructions::{
     InstructionsIterator, ReadInstructionMemory, addresses_before,

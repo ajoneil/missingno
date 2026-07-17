@@ -5,7 +5,7 @@
 //! assembles the console into a working machine — nothing here is applied to
 //! the core's own output.
 
-use missingno_hw::HighPass;
+use missingno_core::HighPass;
 
 /// Charge factor of the output coupling per T-cycle. The board couples each pad
 /// through 1 µF into 510 Ω and the volume pot, which leaves the corner to the

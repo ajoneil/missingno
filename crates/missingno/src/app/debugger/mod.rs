@@ -20,7 +20,7 @@ use crate::app::{
         sizes::{s, xs},
     },
 };
-use missingno_debug::symbols::Symbol;
+use missingno_core::symbols::Symbol;
 use missingno_gb::{debugger::WatchCondition, ppu::types::palette::PaletteChoice};
 
 use inspect::{DebugView, GbPaneContext};
@@ -306,7 +306,7 @@ impl Debugger {
         self.last_snapshot = Some(view);
     }
 
-    pub fn audio_coupling(&self) -> Option<missingno_hw::HighPass> {
+    pub fn audio_coupling(&self) -> Option<missingno_core::HighPass> {
         self.debugger
             .as_ref()
             .and_then(|core| core.audio_coupling())

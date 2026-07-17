@@ -4,7 +4,7 @@
 //! wires to them, for whatever assembles the console into a working machine —
 //! nothing here is applied to the core's own output.
 
-use missingno_hw::RcHighPass;
+use missingno_core::RcHighPass;
 
 /// The audio pads' coupling into the RF modulator's amplifier: both channels'
 /// shared summing node feeds a 0.1 µF series capacitor into 18K. It blocks the

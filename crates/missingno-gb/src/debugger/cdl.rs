@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-pub use missingno_debug::cdl::{
+pub use missingno_core::cdl::{
     CODE, CdlWindow, DATA, INSTRUCTION_START, JUMP_TARGET, SUB_ENTRY_POINT,
 };
 

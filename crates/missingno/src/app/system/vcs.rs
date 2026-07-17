@@ -418,7 +418,7 @@ impl SystemConsole for VcsConsole {
         self.vcs.drain_audio_samples()
     }
 
-    fn audio_coupling(&self) -> Option<missingno_hw::HighPass> {
+    fn audio_coupling(&self) -> Option<missingno_core::HighPass> {
         Some(missingno_vcs::board::AUDIO_COUPLING.high_pass())
     }
 
@@ -621,7 +621,7 @@ impl SystemDebugger for VcsDebugger {
         self.core.console_mut().drain_audio_samples()
     }
 
-    fn audio_coupling(&self) -> Option<missingno_hw::HighPass> {
+    fn audio_coupling(&self) -> Option<missingno_core::HighPass> {
         Some(missingno_vcs::board::AUDIO_COUPLING.high_pass())
     }
 

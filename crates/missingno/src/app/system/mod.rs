@@ -9,12 +9,12 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 
-use missingno_debug::{
+use missingno_core::HighPass;
+use missingno_core::{
     cdl::CdlWindow,
     symbols::{Symbol, SymbolTable},
 };
 use missingno_gb::debugger::WatchCondition;
-use missingno_hw::HighPass;
 /// A family-interpreted control identifier. Ids 0-7 mirror the Game Boy
 /// button order so the existing bindings pipeline translates numerically;
 /// analog and family-specific controls take ids from 8 up.
@@ -119,7 +119,7 @@ impl Platform {
 /// metadata: the VCS consumes it (colour decode + frame timing) and future
 /// region-split families (NES, Master System) will too. Persisted on a
 /// library entry.
-pub use missingno_hw::TvStandard;
+pub use missingno_core::TvStandard;
 
 /// Everything the loader hands a family's console factory. The fields are
 /// family-agnostic except the two Game Boy peripheral ones, quarantined here

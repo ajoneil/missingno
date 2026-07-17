@@ -2968,10 +2968,9 @@ dependencies = [
  "jiff",
  "libc",
  "missingno-6502",
- "missingno-debug",
+ "missingno-core",
  "missingno-gb",
  "missingno-gbc",
- "missingno-hw",
  "missingno-nes",
  "missingno-sms",
  "missingno-vcs",
@@ -3001,17 +3000,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "missingno-debug"
+name = "missingno-core"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "missingno-gb"
 version = "0.0.1"
 dependencies = [
  "bitflags 2.11.1",
- "missingno-debug",
+ "missingno-core",
  "missingno-gb",
- "missingno-hw",
  "morepork",
  "png 0.18.1",
  "rgb",
@@ -3026,13 +3027,6 @@ dependencies = [
  "missingno-gbc",
  "png 0.18.1",
  "rgb",
-]
-
-[[package]]
-name = "missingno-hw"
-version = "0.1.0"
-dependencies = [
- "serde",
 ]
 
 [[package]]
@@ -3057,7 +3051,7 @@ name = "missingno-vcs"
 version = "0.1.0"
 dependencies = [
  "missingno-6502",
- "missingno-hw",
+ "missingno-core",
  "morepork",
  "png 0.18.1",
  "serde",

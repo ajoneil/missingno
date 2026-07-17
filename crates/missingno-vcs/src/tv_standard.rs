@@ -2,7 +2,7 @@
 //! region header, so the standard is supplied by the caller, not detected —
 //! it selects the colour decode and the master-clock-derived audio rate.
 
-pub use missingno_hw::TvStandard;
+pub use missingno_core::TvStandard;
 
 /// Display aspect of a TIA pixel (12/7).
 pub const PIXEL_ASPECT: f32 = 12.0 / 7.0;

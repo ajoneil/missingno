@@ -7,8 +7,8 @@
 //! core's `ReadInstructionMemory`), so one pane body serves both a live source
 //! (`Cpu`, `Ppu`, `Console`) and its snapshot counterpart.
 
-use missingno_debug::cdl::CdlWindow;
-use missingno_debug::symbols::SymbolTable;
+use missingno_core::cdl::CdlWindow;
+use missingno_core::symbols::SymbolTable;
 use missingno_gb::audio::{
     ApuSpec, Audio,
     channels::{Enabled, registers::VolumeAndEnvelope},

@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use missingno_debug::symbols::{Symbol, SymbolTable};
+use missingno_core::symbols::{Symbol, SymbolTable};
 use missingno_gb::{
     BootRom, Console, GameBoy,
     cartridge::Cartridge,
@@ -235,7 +235,7 @@ where
         Console::drain_audio_samples(self)
     }
 
-    fn audio_coupling(&self) -> Option<missingno_hw::HighPass> {
+    fn audio_coupling(&self) -> Option<missingno_core::HighPass> {
         Some(missingno_gb::board::audio_coupling())
     }
 
@@ -357,7 +357,7 @@ where
         M::PLATFORM
     }
 
-    fn audio_coupling(&self) -> Option<missingno_hw::HighPass> {
+    fn audio_coupling(&self) -> Option<missingno_core::HighPass> {
         Some(missingno_gb::board::audio_coupling())
     }
 

@@ -1,5 +1,5 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use missingno_hw::{HighPass, OnePoleHighPass};
+use missingno_core::{HighPass, OnePoleHighPass};
 
 const SAMPLE_RATE: u32 = 44_100;
 
