@@ -296,14 +296,26 @@ impl Player {
     /// the scan clock derives from (console-measured stuck-train schedules;
     /// the stretched scan clock's source phase per TIA_HW_Notes). The decap
     /// sim previews at every class, refuted on silicon. Phases are pre-tick,
-    /// read at the merge instant before this clock's ring advance.
-    pub fn seam_preview_fires(&self) -> bool {
-        let class = if player_pixel_clocks(self.nusiz) == 1 {
+    /// read at the merge instant before this clock's ring advance. At the
+    /// line's final stuff slot a merge catching a 1× scan still in its lead
+    /// does NOT preview — no committing MOTCK edge remains, so the stretched
+    /// pulse reads back the undelivered load (console-measured wrap-seam
+    /// straddle; mid-line lead merges still advance, e.g. the deform drop).
+    pub fn seam_preview_fires(&self, final_stuff_slot: bool) -> bool {
+        let one_x = player_pixel_clocks(self.nusiz) == 1;
+        if final_stuff_slot && one_x && self.scan_in_lead() {
+            return false;
+        }
+        let class = if one_x {
             SEAM_PREVIEW_PHASE_1X
         } else {
             SEAM_PREVIEW_PHASE_STRETCHED
         };
         self.counter.ring_phase() == class
+    }
+
+    fn scan_in_lead(&self) -> bool {
+        self.scan.as_ref().is_some_and(|scan| scan.lead > 0)
     }
 
     /// One motion clock (MOTCK edge).

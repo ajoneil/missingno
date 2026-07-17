@@ -511,9 +511,10 @@ impl Tia {
                         // phase classes its clocking derives from: the player
                         // at its scan clock's class, the missile at every
                         // class but the pulse class, the ball at every class.
+                        let final_slot = self.hsync.final_stuff_slot();
                         self.seam_lookahead[which] = match which {
-                            MovableIndex::P0 => self.player0.seam_preview_fires(),
-                            MovableIndex::P1 => self.player1.seam_preview_fires(),
+                            MovableIndex::P0 => self.player0.seam_preview_fires(final_slot),
+                            MovableIndex::P1 => self.player1.seam_preview_fires(final_slot),
                             MovableIndex::M0 => self.missile0.seam_preview_fires(),
                             MovableIndex::M1 => self.missile1.seam_preview_fires(),
                             MovableIndex::Bl => true,
