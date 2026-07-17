@@ -8,6 +8,7 @@ pub mod debugger;
 pub mod dma;
 pub mod dmg_sram;
 pub mod execute;
+pub mod frame;
 pub mod interrupts;
 pub mod joypad;
 pub mod memory;

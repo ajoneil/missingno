@@ -1,18 +1,15 @@
 //! The Game Boy family's frame formats and CPU-side colour resolvers. They
-//! stay parallel to the generic indexed path so the user's palette choice
-//! and the SGB-colours toggle re-apply at draw time on delivered frames.
+//! stay parallel to a generic indexed path so the user's palette choice and
+//! the SGB-colours toggle re-apply at draw time on delivered frames.
 
+use missingno_core::video::{ConsoleFrame, RgbaFrame};
 use rgb::RGB8;
 
-use missingno_gb::{
-    ppu::{
-        screen::{self, Screen},
-        types::palette::{Palette, PaletteIndex},
-    },
-    sgb::SgbRenderData,
+use crate::ppu::{
+    screen::{self, Screen},
+    types::palette::{Palette, PaletteChoice, PaletteIndex},
 };
-
-use super::ScreenDisplay;
+use crate::sgb::{MaskMode, SgbRenderData};
 
 /// The fixed 160×144 LCD.
 pub const NATIVE_SIZE: (u32, u32) = (screen::PIXELS_PER_LINE as u32, screen::NUM_SCANLINES as u32);
@@ -29,28 +26,48 @@ pub enum SgbScreen {
     Freeze(SgbRenderData),
 }
 
-/// CGB output, pre-corrected to display RGBA — no user palette applies.
+/// A Game Boy frame awaiting CPU-side colour resolution.
+// One frame per variant per frame tick; indirection would just add a hop.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
-pub enum CgbScreen {
-    Display(Vec<u8>),
-    Off,
+pub enum GbFrame {
+    GameBoy(GameBoyScreen),
+    Sgb(SgbScreen),
 }
 
-impl From<GameBoyScreen> for ScreenDisplay {
-    fn from(screen: GameBoyScreen) -> Self {
-        ScreenDisplay::GameBoy(screen)
+impl GbFrame {
+    fn to_pixels(&self, palette: &Palette, use_sgb_colors: bool) -> Vec<u8> {
+        match self {
+            GbFrame::GameBoy(GameBoyScreen::Display(screen)) => {
+                screen_to_pixels(screen, palette, None, use_sgb_colors)
+            }
+            GbFrame::GameBoy(GameBoyScreen::Off) => {
+                screen_to_pixels(&Screen::default(), palette, None, use_sgb_colors)
+            }
+            GbFrame::Sgb(SgbScreen::Display(screen, sgb)) => {
+                screen_to_pixels(screen, palette, Some(sgb), use_sgb_colors)
+            }
+            GbFrame::Sgb(SgbScreen::Freeze(sgb)) => {
+                screen_to_pixels(&Screen::default(), palette, Some(sgb), use_sgb_colors)
+            }
+        }
     }
 }
 
-impl From<SgbScreen> for ScreenDisplay {
-    fn from(screen: SgbScreen) -> Self {
-        ScreenDisplay::Sgb(screen)
+impl ConsoleFrame for GbFrame {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
-}
 
-/// A powered-but-blank CGB LCD: all white.
-pub fn cgb_blank_rgba() -> Vec<u8> {
-    vec![255; screen::PIXELS_PER_LINE as usize * screen::NUM_SCANLINES as usize * 4]
+    fn resolve_rgba(&self) -> RgbaFrame {
+        let pixels = self.to_pixels(PaletteChoice::default().palette(), true);
+        RgbaFrame {
+            width: NATIVE_SIZE.0,
+            height: NATIVE_SIZE.1,
+            pixels: pixels.into(),
+            pixel_aspect: 1.0,
+        }
+    }
 }
 
 pub fn screen_to_pixels(
@@ -59,8 +76,6 @@ pub fn screen_to_pixels(
     sgb: Option<&SgbRenderData>,
     use_sgb_colors: bool,
 ) -> Vec<u8> {
-    use missingno_gb::sgb::MaskMode;
-
     let mut pixels =
         Vec::with_capacity(screen::PIXELS_PER_LINE as usize * screen::NUM_SCANLINES as usize * 4);
 

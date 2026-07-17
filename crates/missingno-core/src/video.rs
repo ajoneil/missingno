@@ -85,6 +85,16 @@ pub enum Frame {
     Console(Box<dyn ConsoleFrame>),
 }
 
+impl std::fmt::Debug for Frame {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Frame::Indexed(frame) => f.debug_tuple("Indexed").field(frame).finish(),
+            Frame::Rgba(frame) => f.debug_tuple("Rgba").field(frame).finish(),
+            Frame::Console(_) => f.write_str("Console(..)"),
+        }
+    }
+}
+
 impl Frame {
     pub fn resolve_rgba(&self) -> RgbaFrame {
         match self {

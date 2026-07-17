@@ -1,12 +1,10 @@
+use missingno_core::video::{Frame, RgbaFrame};
+use missingno_gb::frame::{GameBoyScreen, GbFrame, NATIVE_SIZE, SgbScreen};
 use missingno_gb::{Console, Dmg, Model, ppu::types::palette::Palette, sgb::MaskMode};
 use missingno_gbc::Cgb;
 
 use crate::app::debugger::inspect::{CgbView, ColorSnapshot};
 use crate::app::library::activity::{CaptureOptions, FrameCapture};
-use crate::app::screen::{
-    ScreenDisplay,
-    gb::{CgbScreen, GameBoyScreen, SgbScreen},
-};
 use crate::render::cram_palettes;
 
 /// The colours the debugger panes draw with: the user-selected palette on
@@ -45,10 +43,7 @@ pub trait ConsoleUi: Model {
     const MONOCHROME_PALETTE: bool;
 
     /// The display for a step's screen result; `None` leaves the screen pane as-is.
-    fn screen_display(
-        console: &Console<Self>,
-        new_screen: Option<Self::Screen>,
-    ) -> Option<ScreenDisplay>;
+    fn screen_display(console: &Console<Self>, new_screen: Option<Self::Screen>) -> Option<Frame>;
 
     fn colors(console: &Console<Self>, user_palette: &Palette) -> ConsoleColors;
 
@@ -66,22 +61,30 @@ impl ConsoleUi for Dmg {
     const PLATFORM: crate::app::system::Platform = crate::app::system::Platform::GameBoy;
     const MONOCHROME_PALETTE: bool = true;
 
-    fn screen_display(
-        console: &Console<Self>,
-        new_screen: Option<Self::Screen>,
-    ) -> Option<ScreenDisplay> {
+    fn screen_display(console: &Console<Self>, new_screen: Option<Self::Screen>) -> Option<Frame> {
         let video_enabled = console.ppu().control().video_enabled();
         if let Some(sgb) = console.sgb() {
             let render_data = sgb.render_data(video_enabled);
             if sgb.mask_mode == MaskMode::Freeze {
-                Some(ScreenDisplay::Sgb(SgbScreen::Freeze(render_data)))
+                Some(Frame::Console(Box::new(GbFrame::Sgb(SgbScreen::Freeze(
+                    render_data,
+                )))))
             } else {
-                new_screen.map(|screen| ScreenDisplay::Sgb(SgbScreen::Display(screen, render_data)))
+                new_screen.map(|screen| {
+                    Frame::Console(Box::new(GbFrame::Sgb(SgbScreen::Display(
+                        screen,
+                        render_data,
+                    ))))
+                })
             }
         } else if !video_enabled {
-            Some(ScreenDisplay::GameBoy(GameBoyScreen::Off))
+            Some(Frame::Console(Box::new(GbFrame::GameBoy(
+                GameBoyScreen::Off,
+            ))))
         } else {
-            new_screen.map(|screen| ScreenDisplay::GameBoy(GameBoyScreen::Display(screen)))
+            new_screen.map(|screen| {
+                Frame::Console(Box::new(GbFrame::GameBoy(GameBoyScreen::Display(screen))))
+            })
         }
     }
 
@@ -122,15 +125,18 @@ impl ConsoleUi for Cgb {
     const PLATFORM: crate::app::system::Platform = crate::app::system::Platform::GameBoyColor;
     const MONOCHROME_PALETTE: bool = false;
 
-    fn screen_display(
-        console: &Console<Self>,
-        new_screen: Option<Self::Screen>,
-    ) -> Option<ScreenDisplay> {
+    fn screen_display(console: &Console<Self>, new_screen: Option<Self::Screen>) -> Option<Frame> {
         if !console.ppu().control().video_enabled() {
-            Some(ScreenDisplay::Cgb(CgbScreen::Off))
+            Some(Frame::Rgba(RgbaFrame::blank(NATIVE_SIZE.0, NATIVE_SIZE.1)))
         } else {
-            new_screen
-                .map(|screen| ScreenDisplay::Cgb(CgbScreen::Display(screen.to_corrected_rgba())))
+            new_screen.map(|screen| {
+                Frame::Rgba(RgbaFrame {
+                    width: NATIVE_SIZE.0,
+                    height: NATIVE_SIZE.1,
+                    pixels: screen.to_corrected_rgba().into(),
+                    pixel_aspect: 1.0,
+                })
+            })
         }
     }
 

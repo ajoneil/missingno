@@ -252,10 +252,15 @@ impl FrameCapture {
                 self.to_rgba_with_palette_choice(choice)
             }
             DisplayMode::Sgb => self.to_rgba_sgb(),
-            DisplayMode::Cgb => self
-                .cgb_rgba
-                .clone()
-                .unwrap_or_else(crate::app::screen::gb::cgb_blank_rgba),
+            DisplayMode::Cgb => self.cgb_rgba.clone().unwrap_or_else(|| {
+                use missingno_gb::ppu::screen::{NUM_SCANLINES, PIXELS_PER_LINE};
+                missingno_core::video::RgbaFrame::blank(
+                    PIXELS_PER_LINE as u32,
+                    NUM_SCANLINES as u32,
+                )
+                .pixels
+                .to_vec()
+            }),
         }
     }
 

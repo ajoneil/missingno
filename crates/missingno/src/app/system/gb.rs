@@ -41,7 +41,7 @@ use crate::app::console::ConsoleUi;
 use crate::app::debugger::inspect::{ConsoleSnapshot, DebugView, Inspection};
 use crate::app::emu_thread::RunningStatus;
 use crate::app::library::activity::{CaptureOptions, FrameCapture};
-use crate::app::screen::ScreenDisplay;
+use crate::app::screen::Frame;
 
 /// Dual-mode media ships as `.gbc` files, so the Game Boy platform's dialog
 /// filter must include that extension too.
@@ -239,7 +239,7 @@ where
         Some(missingno_gb::board::audio_coupling())
     }
 
-    fn screen_display(&self) -> ScreenDisplay {
+    fn screen_display(&self) -> Frame {
         M::screen_display(self, Some(self.screen().clone()))
             .expect("screen_display is always Some when given a screen")
     }
@@ -275,7 +275,7 @@ pub struct GbDebugger<M: ConsoleUi> {
 impl<M: ConsoleUi> GbDebugger<M> {
     /// A step result mapped for display: the system may show something (LCD
     /// off, SGB freeze) even when no new frame completed.
-    fn display(&self, screen: Option<M::Screen>) -> Option<ScreenDisplay> {
+    fn display(&self, screen: Option<M::Screen>) -> Option<Frame> {
         M::screen_display(self.core.game_boy(), screen)
     }
 }
@@ -285,17 +285,17 @@ where
     Console<M>: Send,
     <M::Ppu as PpuModel>::Vram: Clone + Send + 'static,
 {
-    fn step(&mut self) -> Option<ScreenDisplay> {
+    fn step(&mut self) -> Option<Frame> {
         let screen = self.core.step();
         self.display(screen)
     }
 
-    fn step_over(&mut self) -> Option<ScreenDisplay> {
+    fn step_over(&mut self) -> Option<Frame> {
         let screen = self.core.step_over();
         self.display(screen)
     }
 
-    fn step_frame(&mut self) -> (Option<ScreenDisplay>, bool) {
+    fn step_frame(&mut self) -> (Option<Frame>, bool) {
         let screen = self.core.step_frame();
         let breakpoint_hit = screen.is_none();
         (self.display(screen), breakpoint_hit)
@@ -446,7 +446,7 @@ where
         M::capture_frame(self.core.game_boy(), options)
     }
 
-    fn capture_trace(&mut self, path: &Path) -> Option<ScreenDisplay> {
+    fn capture_trace(&mut self, path: &Path) -> Option<Frame> {
         let screen = self.core.capture_frame(path).ok()?;
         self.display(Some(screen))
     }

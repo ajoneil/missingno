@@ -20,7 +20,8 @@ use crate::app::debugger::inspect::{DebugView, Inspection};
 use crate::app::debugger::vcs::{DisasmRow, VcsInspectState, VcsSnapshot};
 use crate::app::emu_thread::RunningStatus;
 use crate::app::library::activity::{CaptureOptions, FrameCapture};
-use crate::app::screen::{IndexedFrame, ScreenDisplay};
+use crate::app::screen::IndexedFrame;
+use missingno_core::video::Frame as VideoFrame;
 
 pub const ROM_EXTENSIONS: &[&str] = &["a26", "bin"];
 
@@ -392,7 +393,7 @@ impl SystemConsole for VcsConsole {
             let line = self.vcs.step_scanline();
             if let Some(frame) = self.tv.feed(line) {
                 self.last_frame = indexed_frame(&frame, standard);
-                display = Some(ScreenDisplay::Indexed(self.last_frame.clone()));
+                display = Some(VideoFrame::Indexed(self.last_frame.clone()));
                 break;
             }
         }
@@ -422,8 +423,8 @@ impl SystemConsole for VcsConsole {
         Some(missingno_vcs::board::AUDIO_COUPLING.high_pass())
     }
 
-    fn screen_display(&self) -> ScreenDisplay {
-        ScreenDisplay::Indexed(self.last_frame.clone())
+    fn screen_display(&self) -> VideoFrame {
+        VideoFrame::Indexed(self.last_frame.clone())
     }
 
     fn capture_frame(&self, _options: &CaptureOptions) -> FrameCapture {
@@ -577,31 +578,31 @@ impl VcsDebugger {
         };
     }
 
-    fn display(&mut self, frame: Option<Frame>) -> Option<ScreenDisplay> {
+    fn display(&mut self, frame: Option<Frame>) -> Option<VideoFrame> {
         let frame = frame?;
         self.frame_count += 1;
         let standard = self.core.console().tv_standard();
         self.last_frame = indexed_frame(&frame, standard);
-        Some(ScreenDisplay::Indexed(self.last_frame.clone()))
+        Some(VideoFrame::Indexed(self.last_frame.clone()))
     }
 }
 
 impl SystemDebugger for VcsDebugger {
-    fn step(&mut self) -> Option<ScreenDisplay> {
+    fn step(&mut self) -> Option<VideoFrame> {
         let frame = self.core.step();
         let display = self.display(frame);
         self.refresh();
         display
     }
 
-    fn step_over(&mut self) -> Option<ScreenDisplay> {
+    fn step_over(&mut self) -> Option<VideoFrame> {
         let (frame, _) = self.core.step_over();
         let display = self.display(frame);
         self.refresh();
         display
     }
 
-    fn step_frame(&mut self) -> (Option<ScreenDisplay>, bool) {
+    fn step_frame(&mut self) -> (Option<VideoFrame>, bool) {
         let (frame, stop) = self.core.step_frame();
         let display = self.display(frame);
         self.refresh();

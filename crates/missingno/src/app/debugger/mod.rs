@@ -13,7 +13,7 @@ use crate::app::{
     emu_thread::{DebuggerPayload, EmuCommand, EmuHandle, RunningStatus},
     emulator::Emulator,
     library::activity::{CaptureOptions, FrameCapture},
-    screen::{ScreenDisplay, ScreenView},
+    screen::{Frame, ScreenView},
     system::{SystemConsole, SystemDebugger},
     ui::{
         fonts, icons, palette,
@@ -287,10 +287,10 @@ impl Debugger {
     }
 
     /// Update the screen pane from the emu thread's latest-frame slot.
-    pub fn apply_frame(&mut self, display: ScreenDisplay) {
+    pub fn apply_frame(&mut self, display: Frame) {
         self.panes
             .update(panes::Message::Pane(panes::PaneMessage::Screen(
-                screen::Message::Update(display),
+                screen::Message::Update(std::sync::Arc::new(display)),
             )));
     }
 
@@ -393,9 +393,11 @@ impl Debugger {
             .and_then(|core| core.last_watchpoint_hit())
     }
 
-    fn display_task(display: Option<ScreenDisplay>) -> Task<app::Message> {
+    fn display_task(display: Option<Frame>) -> Task<app::Message> {
         match display {
-            Some(display) => Task::done(screen::Message::Update(display).into()),
+            Some(display) => {
+                Task::done(screen::Message::Update(std::sync::Arc::new(display)).into())
+            }
             None => Task::none(),
         }
     }

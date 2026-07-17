@@ -9,9 +9,10 @@ use crate::app::{
         self,
         panes::{self, DebuggerPane, PaneContext, PaneMessage, pane, title_bar},
     },
-    screen::{ScreenDisplay, ScreenView},
+    screen::{Frame, ScreenView},
 };
 use missingno_gb::ppu::types::palette::PaletteChoice;
+use std::sync::Arc;
 
 pub struct ScreenPane {
     screen_view: ScreenView,
@@ -19,7 +20,7 @@ pub struct ScreenPane {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Update(ScreenDisplay),
+    Update(Arc<Frame>),
 }
 
 impl From<Message> for app::Message {
@@ -40,7 +41,7 @@ impl ScreenPane {
     pub fn update(&mut self, message: Message) {
         match message {
             Message::Update(display) => {
-                self.screen_view.apply(display);
+                self.screen_view.apply(&display);
             }
         }
     }

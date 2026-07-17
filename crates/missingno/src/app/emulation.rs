@@ -171,7 +171,7 @@ impl App {
                 let display = self
                     .emu
                     .as_ref()
-                    .and_then(|handle| handle.frames().lock().ok()?.clone());
+                    .and_then(|handle| handle.frames().lock().ok()?.take());
                 let status = self
                     .emu
                     .as_ref()

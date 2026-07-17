@@ -16,7 +16,7 @@ use missingno_gb::debugger::WatchCondition;
 use super::audio_output::AudioOutput;
 use super::debugger::inspect::DebugView;
 use super::library::activity::{CaptureOptions, FrameCapture};
-use super::screen::ScreenDisplay;
+use super::screen::Frame;
 use super::system::{ControlId, ControlInput, FrameOutcome, SystemConsole, SystemDebugger};
 
 /// Backlog cap, in frames: falling further behind schedule than this drops
@@ -29,7 +29,7 @@ const SRAM_DEBOUNCE_FRAMES: u32 = 30;
 
 /// The latest fully-rendered frame, overwritten each `new_screen`. A latest-value
 /// handoff, not a queue: the UI reads whatever is current on redraw.
-pub type FrameSlot = Arc<Mutex<Option<ScreenDisplay>>>;
+pub type FrameSlot = Arc<Mutex<Option<Frame>>>;
 
 /// The emulatable payload the emu thread owns while running: the plain
 /// console, or the debugger's core (console + breakpoints) in debugger mode.

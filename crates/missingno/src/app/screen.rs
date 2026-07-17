@@ -2,33 +2,14 @@ use iced::widget::shader;
 use rgb::RGB8;
 
 use missingno_gb::{
+    frame::{GameBoyScreen, GbFrame, NATIVE_SIZE, SgbScreen, screen_to_pixels},
     ppu::{screen::Screen, types::palette::PaletteChoice},
     sgb::SgbRenderData,
 };
 
 use super::texture_renderer::TextureRenderer;
 
-pub mod gb;
-use gb::{screen_to_pixels, CgbScreen, GameBoyScreen, SgbScreen};
-
-// One frame per variant per frame tick; indirection would just add a hop.
-#[allow(clippy::large_enum_variant)]
-#[derive(Clone, Debug)]
-pub enum ScreenDisplay {
-    GameBoy(GameBoyScreen),
-    Sgb(SgbScreen),
-    Cgb(CgbScreen),
-    /// System-agnostic palette-indexed frame, any dimensions.
-    Indexed(IndexedFrame),
-}
-
-pub use missingno_core::video::IndexedFrame;
-
-impl From<IndexedFrame> for ScreenDisplay {
-    fn from(frame: IndexedFrame) -> Self {
-        ScreenDisplay::Indexed(frame)
-    }
-}
+pub use missingno_core::video::{Frame, IndexedFrame};
 
 #[derive(Clone)]
 pub struct ScreenView {
@@ -75,48 +56,47 @@ impl ScreenView {
         }
     }
 
-    pub fn apply(&mut self, display: ScreenDisplay) {
+    pub fn apply(&mut self, frame: &Frame) {
         self.prev_rgba = Some(self.resolve_rgba());
-        match display {
-            ScreenDisplay::GameBoy(GameBoyScreen::Display(screen)) => {
-                self.screen = screen;
+        match frame {
+            Frame::Console(console_frame) => match console_frame.as_any().downcast_ref::<GbFrame>()
+            {
+                Some(GbFrame::GameBoy(GameBoyScreen::Display(screen))) => {
+                    self.screen = screen.clone();
+                    self.sgb_render_data = None;
+                    self.cgb_rgba = None;
+                    self.indexed = None;
+                }
+                Some(GbFrame::GameBoy(GameBoyScreen::Off)) => {
+                    // NOTE: On real hardware, LCD off produces a different shade than
+                    // palette index 0. We currently render both the same way.
+                    self.screen = Screen::default();
+                    self.sgb_render_data = None;
+                    self.cgb_rgba = None;
+                    self.indexed = None;
+                }
+                Some(GbFrame::Sgb(SgbScreen::Display(screen, sgb_data))) => {
+                    self.screen = screen.clone();
+                    self.sgb_render_data = Some(*sgb_data);
+                    self.cgb_rgba = None;
+                    self.indexed = None;
+                }
+                Some(GbFrame::Sgb(SgbScreen::Freeze(sgb_data))) => {
+                    self.sgb_render_data = Some(*sgb_data);
+                    self.cgb_rgba = None;
+                    self.indexed = None;
+                }
+                None => {}
+            },
+            Frame::Rgba(rgba) => {
+                self.sgb_render_data = None;
+                self.cgb_rgba = Some(rgba.pixels.clone());
+                self.indexed = None;
+            }
+            Frame::Indexed(indexed) => {
                 self.sgb_render_data = None;
                 self.cgb_rgba = None;
-                self.indexed = None;
-            }
-            ScreenDisplay::GameBoy(GameBoyScreen::Off) => {
-                // NOTE: On real hardware, LCD off produces a different shade than
-                // palette index 0. We currently render both the same way.
-                self.screen = Screen::default();
-                self.sgb_render_data = None;
-                self.cgb_rgba = None;
-                self.indexed = None;
-            }
-            ScreenDisplay::Sgb(SgbScreen::Display(screen, sgb_data)) => {
-                self.screen = screen;
-                self.sgb_render_data = Some(sgb_data);
-                self.cgb_rgba = None;
-                self.indexed = None;
-            }
-            ScreenDisplay::Sgb(SgbScreen::Freeze(sgb_data)) => {
-                self.sgb_render_data = Some(sgb_data);
-                self.cgb_rgba = None;
-                self.indexed = None;
-            }
-            ScreenDisplay::Cgb(CgbScreen::Display(rgba)) => {
-                self.sgb_render_data = None;
-                self.cgb_rgba = Some(rgba.into());
-                self.indexed = None;
-            }
-            ScreenDisplay::Cgb(CgbScreen::Off) => {
-                self.sgb_render_data = None;
-                self.cgb_rgba = Some(gb::cgb_blank_rgba().into());
-                self.indexed = None;
-            }
-            ScreenDisplay::Indexed(frame) => {
-                self.sgb_render_data = None;
-                self.cgb_rgba = None;
-                self.indexed = Some(frame);
+                self.indexed = Some(indexed.clone());
             }
         }
     }
@@ -125,7 +105,7 @@ impl ScreenView {
     fn dimensions(&self) -> (u32, u32) {
         match &self.indexed {
             Some(frame) => (frame.width, frame.height),
-            None => gb::NATIVE_SIZE,
+            None => NATIVE_SIZE,
         }
     }
 

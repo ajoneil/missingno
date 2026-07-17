@@ -8,7 +8,7 @@ use iced::{
 use crate::app::system::{ConsoleSwitch, ControlId, ControlInput};
 use crate::app::{
     self,
-    screen::{ScreenDisplay, ScreenView},
+    screen::{Frame, ScreenView},
     system::SystemConsole,
     ui::{
         icons::{self, Icon},
@@ -125,10 +125,10 @@ impl Emulator {
     }
 
     /// Update the displayed frame from the emu thread's latest-frame slot.
-    pub fn apply_frame(&mut self, display: ScreenDisplay) {
+    pub fn apply_frame(&mut self, display: Frame) {
         self.screen_view.use_sgb_colors = self.use_sgb_colors;
         self.screen_view.blend = self.frame_blending;
-        self.screen_view.apply(display);
+        self.screen_view.apply(&display);
     }
 
     /// Switch to debugger mode; systems without a debugger backend come

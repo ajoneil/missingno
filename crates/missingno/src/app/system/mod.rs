@@ -47,7 +47,7 @@ use std::sync::Arc;
 use crate::app::debugger::inspect::{DebugView, Inspection};
 use crate::app::emu_thread::RunningStatus;
 use crate::app::library::activity::{CaptureOptions, FrameCapture};
-use crate::app::screen::ScreenDisplay;
+use crate::app::screen::Frame;
 
 pub mod gb;
 #[cfg(feature = "nes")]
@@ -251,7 +251,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
 
 /// One emulated frame's outcome, as seen by the emu-thread loop.
 pub struct FrameOutcome {
-    pub display: Option<ScreenDisplay>,
+    pub display: Option<Frame>,
     pub sram_dirty: bool,
 }
 
@@ -284,7 +284,7 @@ pub trait SystemConsole: Send {
     fn audio_coupling(&self) -> Option<HighPass> {
         None
     }
-    fn screen_display(&self) -> ScreenDisplay;
+    fn screen_display(&self) -> Frame;
     fn capture_frame(&self, options: &CaptureOptions) -> FrameCapture;
     /// The game's title for filenames and session records.
     fn game_title(&self) -> String;
@@ -301,18 +301,18 @@ pub trait SystemConsole: Send {
 
 /// A console under a debugger: stepping, breakpoints, and inspection.
 ///
-/// Step results come back as ready-to-show [`ScreenDisplay`]s — the system
+/// Step results come back as ready-to-show [`Frame`]s — the system
 /// decides what a step with no completed frame looks like (e.g. an LCD-off
 /// screen still displays).
 ///
 /// Watchpoints, symbols, code/data logging, and trace capture default to
 /// absent — a family implements only the backends it has.
 pub trait SystemDebugger: Send {
-    fn step(&mut self) -> Option<ScreenDisplay>;
-    fn step_over(&mut self) -> Option<ScreenDisplay>;
+    fn step(&mut self) -> Option<Frame>;
+    fn step_over(&mut self) -> Option<Frame>;
     /// Step until the next frame or breakpoint. The flag reports a breakpoint
     /// stop.
-    fn step_frame(&mut self) -> (Option<ScreenDisplay>, bool);
+    fn step_frame(&mut self) -> (Option<Frame>, bool);
     fn reset(&mut self);
     fn set_control(&mut self, control: ControlId, input: ControlInput);
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)>;
@@ -369,7 +369,7 @@ pub trait SystemDebugger: Send {
     fn capture_frame(&self, options: &CaptureOptions) -> FrameCapture;
     /// Step one frame while writing an execution trace to `path`; `None` when
     /// the system has no capture backend or capture fails.
-    fn capture_trace(&mut self, _path: &Path) -> Option<ScreenDisplay> {
+    fn capture_trace(&mut self, _path: &Path) -> Option<Frame> {
         None
     }
 

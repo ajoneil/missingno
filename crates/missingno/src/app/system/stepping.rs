@@ -11,7 +11,7 @@ use super::{ControlId, ControlInput, FrameOutcome, SystemConsole, SystemDebugger
 use crate::app::debugger::inspect::{DebugView, Inspection};
 use crate::app::emu_thread::RunningStatus;
 use crate::app::library::activity::{CaptureOptions, FrameCapture};
-use crate::app::screen::{IndexedFrame, ScreenDisplay};
+use crate::app::screen::{Frame, IndexedFrame};
 
 pub trait SteppingSystem: 'static {
     type Core: Send + 'static;
@@ -67,7 +67,7 @@ impl<S: SteppingSystem> SystemConsole for SteppingConsole<S> {
     fn step_frame(&mut self) -> FrameOutcome {
         let display = S::step_frame(&mut self.core).map(|frame| {
             self.last_frame = S::indexed_frame(&frame);
-            ScreenDisplay::Indexed(self.last_frame.clone())
+            Frame::Indexed(self.last_frame.clone())
         });
         FrameOutcome {
             display,
@@ -87,8 +87,8 @@ impl<S: SteppingSystem> SystemConsole for SteppingConsole<S> {
         S::drain_audio_samples(&mut self.core)
     }
 
-    fn screen_display(&self) -> ScreenDisplay {
-        ScreenDisplay::Indexed(self.last_frame.clone())
+    fn screen_display(&self) -> Frame {
+        Frame::Indexed(self.last_frame.clone())
     }
 
     fn capture_frame(&self, _options: &CaptureOptions) -> FrameCapture {
@@ -140,11 +140,11 @@ impl<S: SteppingSystem> SteppingDebugger<S> {
         self.inspect = S::inspect(&self.core, self.frame_count);
     }
 
-    fn display(&mut self, frame: Option<S::Frame>) -> Option<ScreenDisplay> {
+    fn display(&mut self, frame: Option<S::Frame>) -> Option<Frame> {
         let frame = frame?;
         self.frame_count += 1;
         self.last_frame = S::indexed_frame(&frame);
-        Some(ScreenDisplay::Indexed(self.last_frame.clone()))
+        Some(Frame::Indexed(self.last_frame.clone()))
     }
 
     fn at_breakpoint(&self) -> bool {
@@ -153,7 +153,7 @@ impl<S: SteppingSystem> SteppingDebugger<S> {
 }
 
 impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
-    fn step(&mut self) -> Option<ScreenDisplay> {
+    fn step(&mut self) -> Option<Frame> {
         S::step_instruction(&mut self.core);
         let frame = S::take_frame(&mut self.core);
         let display = self.display(frame);
@@ -161,7 +161,7 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
         display
     }
 
-    fn step_over(&mut self) -> Option<ScreenDisplay> {
+    fn step_over(&mut self) -> Option<Frame> {
         let Some(return_address) = S::step_over_target(&self.core) else {
             return self.step();
         };
@@ -178,7 +178,7 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
         display
     }
 
-    fn step_frame(&mut self) -> (Option<ScreenDisplay>, bool) {
+    fn step_frame(&mut self) -> (Option<Frame>, bool) {
         let mut breakpoint_hit = false;
         let mut frame = None;
         for _ in 0..S::RUN_BUDGET {
