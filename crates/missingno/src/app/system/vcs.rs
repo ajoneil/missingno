@@ -19,7 +19,6 @@ use super::{ConsoleSwitch, ControlId, ControlInput, FrameOutcome, SystemConsole,
 use crate::app::debugger::inspect::{DebugView, Inspection};
 use crate::app::debugger::vcs::{DisasmRow, VcsInspectState, VcsSnapshot};
 use crate::app::emu_thread::RunningStatus;
-use crate::app::library::activity::{CaptureOptions, FrameCapture};
 use crate::app::screen::IndexedFrame;
 use missingno_core::video::{self, Frame as VideoFrame, Television, VideoOut};
 
@@ -349,10 +348,6 @@ impl SystemConsole for VcsConsole {
         }
     }
 
-    fn capture_frame(&self, _options: &CaptureOptions) -> FrameCapture {
-        FrameCapture::from_indexed(&self.last_frame)
-    }
-
     fn game_title(&self) -> String {
         self.title.clone()
     }
@@ -531,6 +526,10 @@ impl SystemDebugger for VcsDebugger {
         (display, stop == missingno_vcs::debugger::Stop::Breakpoint)
     }
 
+    fn screen_display(&self) -> VideoFrame {
+        VideoFrame::Indexed(self.last_frame.clone())
+    }
+
     fn reset(&mut self) {
         self.core.console_mut().power_cycle();
         self.refresh();
@@ -600,10 +599,6 @@ impl SystemDebugger for VcsDebugger {
 
     fn frame_interval(&self) -> Duration {
         frame_interval(self.core.console().tv_standard())
-    }
-
-    fn capture_frame(&self, _options: &CaptureOptions) -> FrameCapture {
-        FrameCapture::from_indexed(&self.last_frame)
     }
 
     fn into_console(self: Box<Self>) -> Box<dyn SystemConsole> {

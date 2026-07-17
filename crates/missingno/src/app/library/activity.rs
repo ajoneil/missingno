@@ -219,13 +219,38 @@ impl FrameCapture {
         }
     }
 
-    pub fn capture_cgb(screen: &missingno_gbc::screen::Screen) -> Self {
-        Self {
-            pixels: Vec::new(),
-            sgb: None,
-            display_mode: DisplayMode::Cgb,
-            cgb_rgba: Some(screen.to_corrected_rgba()),
-            rgba: None,
+    /// Resolve a delivered frame into a capture. The Game Boy family's frame
+    /// carries the screen and any SGB data; the display mode the options select
+    /// (`Sgb` when SGB colours are on and present, else the named palette) is
+    /// baked in here just as a live capture would.
+    pub fn from_frame(frame: &crate::app::screen::Frame, options: &CaptureOptions) -> Self {
+        use crate::app::screen::Frame;
+        use missingno_gb::frame::{GameBoyScreen, GbFrame, SgbScreen};
+        use missingno_gb::ppu::screen::Screen;
+
+        match frame {
+            Frame::Console(frame) => {
+                let default_screen = Screen::default();
+                let (screen, sgb) = match frame.as_any().downcast_ref::<GbFrame>() {
+                    Some(GbFrame::GameBoy(GameBoyScreen::Display(screen))) => (Some(screen), None),
+                    Some(GbFrame::GameBoy(GameBoyScreen::Off)) => (None, None),
+                    Some(GbFrame::Sgb(SgbScreen::Display(screen, sgb))) => {
+                        (Some(screen), Some(sgb))
+                    }
+                    Some(GbFrame::Sgb(SgbScreen::Freeze(sgb))) => (None, Some(sgb)),
+                    None => (None, None),
+                };
+                let fb = screen.unwrap_or(&default_screen).front();
+                Self::capture(fb, sgb, options.use_sgb_colors, &options.palette_name)
+            }
+            Frame::Rgba(frame) => Self {
+                pixels: Vec::new(),
+                sgb: None,
+                display_mode: DisplayMode::Cgb,
+                cgb_rgba: Some(frame.pixels.to_vec()),
+                rgba: None,
+            },
+            Frame::Indexed(frame) => Self::from_indexed(frame),
         }
     }
 

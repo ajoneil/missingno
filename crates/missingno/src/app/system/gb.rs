@@ -41,7 +41,6 @@ fn button_for_control(control: ControlId) -> Option<Button> {
 use crate::app::console::ConsoleUi;
 use crate::app::debugger::inspect::{ConsoleSnapshot, DebugView, Inspection};
 use crate::app::emu_thread::RunningStatus;
-use crate::app::library::activity::{CaptureOptions, FrameCapture};
 use crate::app::screen::Frame;
 
 /// Dual-mode media ships as `.gbc` files, so the Game Boy platform's dialog
@@ -251,10 +250,6 @@ where
         }
     }
 
-    fn capture_frame(&self, options: &CaptureOptions) -> FrameCapture {
-        M::capture_frame(self, options)
-    }
-
     fn game_title(&self) -> String {
         Console::cartridge(self).title().to_string()
     }
@@ -306,6 +301,11 @@ where
         let screen = self.core.step_frame();
         let breakpoint_hit = screen.is_none();
         (self.display(screen), breakpoint_hit)
+    }
+
+    fn screen_display(&self) -> Frame {
+        self.display(Some(self.core.game_boy().screen().clone()))
+            .expect("screen_display is always Some when given a screen")
     }
 
     fn reset(&mut self) {
@@ -453,10 +453,6 @@ where
 
     fn frame_interval(&self) -> Duration {
         FRAME_INTERVAL
-    }
-
-    fn capture_frame(&self, options: &CaptureOptions) -> FrameCapture {
-        M::capture_frame(self.core.game_boy(), options)
     }
 
     fn capture_trace(&mut self, path: &Path) -> Option<Frame> {

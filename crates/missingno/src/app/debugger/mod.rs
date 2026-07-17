@@ -236,7 +236,7 @@ impl Debugger {
     pub fn capture_screenshot(&self, options: &CaptureOptions) -> Option<FrameCapture> {
         self.debugger
             .as_ref()
-            .map(|core| core.capture_frame(options))
+            .map(|core| FrameCapture::from_frame(&core.screen_display(), options))
     }
 
     /// Take the core to hand it to the emu thread for running.

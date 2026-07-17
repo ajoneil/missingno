@@ -25,7 +25,6 @@ use std::sync::Arc;
 
 use crate::app::debugger::inspect::{DebugView, Inspection};
 use crate::app::emu_thread::RunningStatus;
-use crate::app::library::activity::{CaptureOptions, FrameCapture};
 use crate::app::screen::Frame;
 
 pub mod gb;
@@ -261,7 +260,6 @@ pub trait SystemConsole: Send {
     /// How this console presents its video: a fixed-size LCD, or a TV raster.
     #[allow(dead_code)]
     fn video_out(&self) -> VideoOut;
-    fn capture_frame(&self, options: &CaptureOptions) -> FrameCapture;
     /// The game's title for filenames and session records.
     fn game_title(&self) -> String;
     /// Serialized battery-backed save contents, if the media persists any.
@@ -299,6 +297,9 @@ pub trait SystemDebugger: Send {
     /// Step until the next frame or breakpoint. The flag reports a breakpoint
     /// stop.
     fn step_frame(&mut self) -> (Option<Frame>, bool);
+    /// The current screen as it stands, without stepping — for screenshots
+    /// taken while paused.
+    fn screen_display(&self) -> Frame;
     fn reset(&mut self);
     fn set_control(&mut self, control: ControlId, input: ControlInput);
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)>;
@@ -355,7 +356,6 @@ pub trait SystemDebugger: Send {
         None
     }
     fn frame_interval(&self) -> Duration;
-    fn capture_frame(&self, options: &CaptureOptions) -> FrameCapture;
     /// Step one frame while writing an execution trace to `path`; `None` when
     /// the system has no capture backend or capture fails.
     fn capture_trace(&mut self, _path: &Path) -> Option<Frame> {

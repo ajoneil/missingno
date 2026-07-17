@@ -13,7 +13,6 @@ use missingno_core::video::VideoOut;
 use super::{ControlId, ControlInput, FrameOutcome, SystemConsole, SystemDebugger};
 use crate::app::debugger::inspect::{DebugView, Inspection};
 use crate::app::emu_thread::RunningStatus;
-use crate::app::library::activity::{CaptureOptions, FrameCapture};
 use crate::app::screen::{Frame, IndexedFrame};
 
 pub trait SteppingSystem: 'static {
@@ -102,10 +101,6 @@ impl<S: SteppingSystem> SystemConsole for SteppingConsole<S> {
             standard: TvStandard::Ntsc,
             pixel_aspect: S::PIXEL_ASPECT,
         }
-    }
-
-    fn capture_frame(&self, _options: &CaptureOptions) -> FrameCapture {
-        FrameCapture::from_indexed(&self.last_frame)
     }
 
     fn game_title(&self) -> String {
@@ -210,6 +205,10 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
         (display, breakpoint_hit)
     }
 
+    fn screen_display(&self) -> Frame {
+        Frame::Indexed(self.last_frame.clone())
+    }
+
     fn reset(&mut self) {
         S::power_cycle(&mut self.core);
         self.refresh();
@@ -264,10 +263,6 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
 
     fn frame_interval(&self) -> Duration {
         S::FRAME_INTERVAL
-    }
-
-    fn capture_frame(&self, _options: &CaptureOptions) -> FrameCapture {
-        FrameCapture::from_indexed(&self.last_frame)
     }
 
     fn into_console(self: Box<Self>) -> Box<dyn SystemConsole> {

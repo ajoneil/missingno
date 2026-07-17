@@ -34,9 +34,9 @@ impl App {
                         }
                         None
                     }
-                    Game::Loaded(LoadedGame::Emulator(emu)) => {
-                        emu.console().map(|console| console.capture_frame(&options))
-                    }
+                    Game::Loaded(LoadedGame::Emulator(emu)) => emu.console().map(|console| {
+                        FrameCapture::from_frame(&console.screen_display(), &options)
+                    }),
                     Game::Loaded(LoadedGame::Debugger(dbg)) if dbg.is_detached() => {
                         if let Some(handle) = &self.emu {
                             handle.send(EmuCommand::RequestScreenshot { options });

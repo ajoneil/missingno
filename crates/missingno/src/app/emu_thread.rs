@@ -357,7 +357,7 @@ impl EmuLoop {
             }
             EmuCommand::RequestScreenshot { options } => {
                 if let Some(payload) = &self.payload {
-                    let capture = payload.capture_frame(&options);
+                    let capture = FrameCapture::from_frame(&payload.screen_display(), &options);
                     let _ = self
                         .events
                         .unbounded_send(EmuEvent::Screenshot(Box::new(capture)));
@@ -507,10 +507,10 @@ impl Payload {
         }
     }
 
-    fn capture_frame(&self, options: &CaptureOptions) -> FrameCapture {
+    fn screen_display(&self) -> Frame {
         match self {
-            Self::Console(console) => console.capture_frame(options),
-            Self::Debugger(payload) => payload.core.capture_frame(options),
+            Self::Console(console) => console.screen_display(),
+            Self::Debugger(payload) => payload.core.screen_display(),
         }
     }
 
