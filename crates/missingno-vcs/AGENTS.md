@@ -10,18 +10,37 @@ VCS accuracy work.
 The DMG methodology assumes **gate-level ground truth** — dmg-sim, the die
 netlist, and the DMG Timing Specification collated from them. The Atari VCS has
 that footing for **two of its three chips and loses it for the third**, so the
-DMG discipline holds but the ground-truth tier is *split by chip*. **The netlist
-and the simulators are the primary resource for solving accuracy issues — they
-explain *why* the hardware behaves as it does. The behavioural VCS emulators sit
-below them and only corroborate.**
+DMG discipline holds but the ground-truth tier is *split by chip* — and topped
+by real-console captures. **Hardware captures are the arbiter of WHAT; the
+netlist and the simulators are the primary resource for WHY. The behavioural
+VCS emulators sit below both and only corroborate.**
+
+- **Real-console captures: the arbiter of observable behaviour.** The test-suite
+  repo (see the vcs-tests row below) holds calibrated 1080p captures of every
+  screenshot test from a real PAL console (multiple boots), a calibration-rig
+  profile, and `scripts/hwcompare.py` to register captures onto the TIA grid
+  and score them. The committed suite references are endorsed by these captures
+  cell-by-cell, so a screenshot regression is a divergence from measured
+  silicon. When a reference and a sim run disagree, the capture wins — never
+  refute a capture with a sim run. Sub-pixel capture reads have conventions
+  (plateau-centre scanlines, local dx bias correction against agreed-content
+  controls, PSF predictions per hypothesis; a lit far-right dash peaks ~1 px
+  left of nominal); tooling-level verdicts (region NCC, window centroids) have
+  known artifact modes — arbitrate contested cells with a raw bias-corrected
+  read, not a tool verdict alone.
 
 - **Gate-level truth for the CPU and TIA: Sim2600.** `receipts/resources/Sim2600/`
   is a transistor-level simulation of the 6507 and TIA, built from the visual6502
   decapped netlists (`chips/net_6502.pkl`, `chips/net_TIA.pkl`) and run against
   real cartridge ROMs. It is the VCS analog of dmg-sim: the runnable oracle for
   *why* the CPU and the beam do what they do — undocumented opcodes, RESP/HMOVE
-  landing, RSYNC, WSYNC release, mid-line register races. For any CPU or TIA
-  gate-level question it is authoritative. Run it headless with
+  landing, RSYNC, WSYNC release, mid-line register races. For CPU and TIA
+  mechanism questions it is authoritative, **with one measured limit: it can
+  mis-resolve ±1-CLK sub-clock races that real silicon settles the other way**
+  (its edges are sharp and it has no analog propagation delays; confirmed on
+  the reset-vs-redraw window edge and stuck-train serialiser edge cells). For
+  any behaviour that hinges on such a race, ground the WHAT in a hardware
+  capture and use the sim for the mechanism skeleton. Run it headless with
   `scripts/sim2600-observe.sh <rom> [half_clocks] [output_dir] [extra_wires]`
   (the `dmg-sim-observe.sh` analog) — it clones + Py3-ports Sim2600 on first use,
   runs the ROM, and dumps a VCD of the CPU/TIA wires per half-clock for GTKWave
@@ -47,7 +66,14 @@ below them and only corroborate.**
   counter grounds to the release). Sample once per half-clock
   (advance-then-sample), verify the 456-hc line period and the spin PC before
   extracting, and report raw x alongside write-relative offsets so the caller can
-  re-phase.
+  re-phase. Two probe hazards: `tia_lum` is inverted (`get3BitLuminance` = 7 −
+  the `L*_lowCtrl` bits, so on a dark field the object is raw `== 0`, the
+  background `== 7`); and the netlist settles registers to ARBITRARY power-on
+  state — `CLEAN_START` clears only RAM, so a probe ROM must write every TIA
+  register it depends on (an unwritten NUSIZ settled to double-size in one run
+  and silently invalidated it). Prefer running the actual suite test ROMs over
+  hand-built minimal repros; a hand repro's jam/park state can differ
+  sub-phase-for-sub-phase from the shipped construction.
 
 - **The RIOT has no gate-level oracle.** The 6532 (RAM + I/O + timer) was never
   fully reverse-engineered — visual6502's RIOT netlist is ~⅓ complete, so Sim2600
@@ -96,7 +122,8 @@ below them and only corroborate.**
 | TIA_HW_Notes | https://www.atarihq.com/danb/files/TIA_HW_Notes.txt | Andrew Towers' TIA hardware timing notes — the static-analysis layer. |
 | MOS 6532 datasheet | https://6502.org/documents/datasheets/mos/mos_6532_riot.pdf | RIOT chip reference — the primary RIOT source (no gate-level sim exists). |
 | Local reference library | `receipts/resources/` | Additional core reference material — schematics, chip documentation, test cartridges. Inventory: `receipts/resources/vcs-library.md`. |
-| vcs-tests suite | `crates/missingno-vcs/tests/accuracy/` | The in-repo accuracy suite (RESULT RAM convention; NTSC + PAL + SECAM). Baseline/diff via `scripts/test-report-vcs.sh`. |
+| vcs-tests suite | `crates/missingno-vcs/tests/accuracy/` | The in-repo accuracy suite (RESULT RAM convention; NTSC + PAL + SECAM), fully green — the gate for any change. Baseline/diff via `scripts/test-report-vcs.sh`. |
+| vcs-tests source repo | `~/Projects/missingno-vcs-tests` | The suite's source: test .asm + Makefile, the blessed references, the real-console captures (`*_pal_capture.png` + 16-bit `_luma`/`_std` sidecars), the calibration rig profile, and `scripts/hwcompare.py`. Rebuild ROMs there and re-import on suite updates; treat it read-only otherwise. |
 
 ## Core shape
 
@@ -114,6 +141,10 @@ write-timing number the same way before adding it. `src/tia/` holds the pixel
 pipeline: per-object ÷4 divider rings with wrap-grid decode and a one-wrap pending
 START latch, the HSync counter spine, and the HMOVE engine (three-stage SEC
 two-phase shift; a live stuff absorbs into a firing MOTCK with a one-clock seam
-lookahead on the following render). `src/riot.rs` has the timer/ports. The
+lookahead on the following render, phase-gated per object — the player previews
+only at its scan clock's source class, the missile at every class but the ring's
+pulse class, the ball at every class; all console-measured, and the missile and
+ball genuinely differ despite sharing the width gate). `src/riot.rs` has the
+timer/ports. The
 frontend drives it through the `app/system/` seam described in
 `docs/adding-a-system.md`.
