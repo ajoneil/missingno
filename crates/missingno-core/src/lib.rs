@@ -17,11 +17,13 @@
 
 pub mod analog;
 pub mod cdl;
+pub mod isa;
 pub mod symbols;
 pub mod system;
 pub mod tv;
 pub mod video;
 
 pub use analog::{HighPass, OnePoleHighPass, RcHighPass};
+pub use isa::{Flow, Instruction, InstructionSet};
 pub use tv::TvStandard;
 pub use video::{ConsoleFrame, Frame, IndexedFrame, RgbaFrame, VideoOut};
