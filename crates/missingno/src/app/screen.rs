@@ -9,6 +9,7 @@ use missingno_gb::{
 
 use super::texture_renderer::TextureRenderer;
 
+use missingno_core::video::RgbaFrame;
 pub use missingno_core::video::{Frame, IndexedFrame};
 
 #[derive(Clone)]
@@ -17,8 +18,8 @@ pub struct ScreenView {
     pub palette: PaletteChoice,
     pub sgb_render_data: Option<SgbRenderData>,
     pub use_sgb_colors: bool,
-    /// Pre-corrected CGB RGBA frame; bypasses the palette paths when set.
-    pub cgb_rgba: Option<std::sync::Arc<[u8]>>,
+    /// Pre-resolved RGBA frame; bypasses the palette paths when set.
+    pub rgba: Option<RgbaFrame>,
     /// Palette-indexed frame from a non-GB system; carries its own size.
     pub indexed: Option<IndexedFrame>,
     /// Average each frame with the previous one, like the LCD's slow response.
@@ -33,7 +34,7 @@ impl ScreenView {
             palette: PaletteChoice::default(),
             sgb_render_data: None,
             use_sgb_colors: true,
-            cgb_rgba: None,
+            rgba: None,
             indexed: None,
             blend: true,
             prev_rgba: None,
@@ -44,8 +45,8 @@ impl ScreenView {
         if let Some(frame) = &self.indexed {
             return frame.to_rgba().into();
         }
-        match &self.cgb_rgba {
-            Some(rgba) => rgba.clone(),
+        match &self.rgba {
+            Some(frame) => frame.pixels.clone(),
             None => screen_to_pixels(
                 &self.screen,
                 self.palette.palette(),
@@ -64,7 +65,7 @@ impl ScreenView {
                 Some(GbFrame::GameBoy(GameBoyScreen::Display(screen))) => {
                     self.screen = screen.clone();
                     self.sgb_render_data = None;
-                    self.cgb_rgba = None;
+                    self.rgba = None;
                     self.indexed = None;
                 }
                 Some(GbFrame::GameBoy(GameBoyScreen::Off)) => {
@@ -72,40 +73,43 @@ impl ScreenView {
                     // palette index 0. We currently render both the same way.
                     self.screen = Screen::default();
                     self.sgb_render_data = None;
-                    self.cgb_rgba = None;
+                    self.rgba = None;
                     self.indexed = None;
                 }
                 Some(GbFrame::Sgb(SgbScreen::Display(screen, sgb_data))) => {
                     self.screen = screen.clone();
                     self.sgb_render_data = Some(*sgb_data);
-                    self.cgb_rgba = None;
+                    self.rgba = None;
                     self.indexed = None;
                 }
                 Some(GbFrame::Sgb(SgbScreen::Freeze(sgb_data))) => {
                     self.sgb_render_data = Some(*sgb_data);
-                    self.cgb_rgba = None;
+                    self.rgba = None;
                     self.indexed = None;
                 }
                 None => {}
             },
             Frame::Rgba(rgba) => {
                 self.sgb_render_data = None;
-                self.cgb_rgba = Some(rgba.pixels.clone());
+                self.rgba = Some(rgba.clone());
                 self.indexed = None;
             }
             Frame::Indexed(indexed) => {
                 self.sgb_render_data = None;
-                self.cgb_rgba = None;
+                self.rgba = None;
                 self.indexed = Some(indexed.clone());
             }
         }
     }
 
-    /// The active frame's pixel dimensions; the GB formats are fixed-size.
+    /// The active frame's pixel dimensions; the GB screen path is fixed-size.
     fn dimensions(&self) -> (u32, u32) {
-        match &self.indexed {
-            Some(frame) => (frame.width, frame.height),
-            None => NATIVE_SIZE,
+        if let Some(frame) = &self.indexed {
+            (frame.width, frame.height)
+        } else if let Some(frame) = &self.rgba {
+            (frame.width, frame.height)
+        } else {
+            NATIVE_SIZE
         }
     }
 

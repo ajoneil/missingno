@@ -54,6 +54,7 @@ impl SteppingSystem for NesSystem {
     const FRAME_INTERVAL: Duration = Duration::from_micros(16_639);
     const RUN_BUDGET: u32 = 400_000;
     const PLATFORM: super::Platform = super::Platform::Nes;
+    const PIXEL_ASPECT: f32 = PIXEL_ASPECT;
 
     fn pc(nes: &Nes) -> u16 {
         nes.cpu.pc

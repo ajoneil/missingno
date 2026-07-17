@@ -10,6 +10,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use missingno_core::HighPass;
+use missingno_core::video::VideoOut;
 use missingno_core::{
     cdl::CdlWindow,
     symbols::{Symbol, SymbolTable},
@@ -257,6 +258,9 @@ pub trait SystemConsole: Send {
         None
     }
     fn screen_display(&self) -> Frame;
+    /// How this console presents its video: a fixed-size LCD, or a TV raster.
+    #[allow(dead_code)]
+    fn video_out(&self) -> VideoOut;
     fn capture_frame(&self, options: &CaptureOptions) -> FrameCapture;
     /// The game's title for filenames and session records.
     fn game_title(&self) -> String;
@@ -321,6 +325,9 @@ pub trait SystemDebugger: Send {
     /// The family's debugger pane set and layout identity.
     /// Which platform's debugger surface this system presents.
     fn platform(&self) -> Platform;
+    /// How this console presents its video: a fixed-size LCD, or a TV raster.
+    #[allow(dead_code)]
+    fn video_out(&self) -> VideoOut;
     /// Labels from the ROM's debug-symbol sidecar, if one was loaded.
     fn symbols(&self) -> Arc<SymbolTable> {
         empty_symbols()

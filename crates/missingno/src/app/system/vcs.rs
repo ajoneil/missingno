@@ -21,7 +21,7 @@ use crate::app::debugger::vcs::{DisasmRow, VcsInspectState, VcsSnapshot};
 use crate::app::emu_thread::RunningStatus;
 use crate::app::library::activity::{CaptureOptions, FrameCapture};
 use crate::app::screen::IndexedFrame;
-use missingno_core::video::{self, Frame as VideoFrame, Television};
+use missingno_core::video::{self, Frame as VideoFrame, Television, VideoOut};
 
 pub const ROM_EXTENSIONS: &[&str] = &["a26", "bin"];
 
@@ -342,6 +342,13 @@ impl SystemConsole for VcsConsole {
         VideoFrame::Indexed(self.last_frame.clone())
     }
 
+    fn video_out(&self) -> VideoOut {
+        VideoOut::Tv {
+            standard: self.vcs.tv_standard(),
+            pixel_aspect: PIXEL_ASPECT,
+        }
+    }
+
     fn capture_frame(&self, _options: &CaptureOptions) -> FrameCapture {
         FrameCapture::from_indexed(&self.last_frame)
     }
@@ -559,6 +566,13 @@ impl SystemDebugger for VcsDebugger {
 
     fn platform(&self) -> super::Platform {
         super::Platform::AtariVcs
+    }
+
+    fn video_out(&self) -> VideoOut {
+        VideoOut::Tv {
+            standard: self.core.console().tv_standard(),
+            pixel_aspect: PIXEL_ASPECT,
+        }
     }
 
     fn snapshot(&self, frame: u64) -> DebugView {

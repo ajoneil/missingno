@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use missingno_core::symbols::{Symbol, SymbolTable};
+use missingno_core::video::VideoOut;
 use missingno_gb::{
     BootRom, Console, GameBoy,
     cartridge::Cartridge,
@@ -244,6 +245,12 @@ where
             .expect("screen_display is always Some when given a screen")
     }
 
+    fn video_out(&self) -> VideoOut {
+        VideoOut::Lcd {
+            native: missingno_gb::frame::NATIVE_SIZE,
+        }
+    }
+
     fn capture_frame(&self, options: &CaptureOptions) -> FrameCapture {
         M::capture_frame(self, options)
     }
@@ -355,6 +362,12 @@ where
 
     fn platform(&self) -> super::Platform {
         M::PLATFORM
+    }
+
+    fn video_out(&self) -> VideoOut {
+        VideoOut::Lcd {
+            native: missingno_gb::frame::NATIVE_SIZE,
+        }
     }
 
     fn audio_coupling(&self) -> Option<missingno_core::HighPass> {

@@ -7,6 +7,9 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
+use missingno_core::TvStandard;
+use missingno_core::video::VideoOut;
+
 use super::{ControlId, ControlInput, FrameOutcome, SystemConsole, SystemDebugger};
 use crate::app::debugger::inspect::{DebugView, Inspection};
 use crate::app::emu_thread::RunningStatus;
@@ -25,6 +28,9 @@ pub trait SteppingSystem: 'static {
     const RUN_BUDGET: u32;
 
     const PLATFORM: super::Platform;
+    /// Display aspect of one pixel — the constant this system's indexed frames
+    /// carry. These families raster NTSC-timed frames.
+    const PIXEL_ASPECT: f32;
     fn pc(core: &Self::Core) -> u16;
     fn step_instruction(core: &mut Self::Core);
     /// The frame completed since the last take, if any.
@@ -89,6 +95,13 @@ impl<S: SteppingSystem> SystemConsole for SteppingConsole<S> {
 
     fn screen_display(&self) -> Frame {
         Frame::Indexed(self.last_frame.clone())
+    }
+
+    fn video_out(&self) -> VideoOut {
+        VideoOut::Tv {
+            standard: TvStandard::Ntsc,
+            pixel_aspect: S::PIXEL_ASPECT,
+        }
     }
 
     fn capture_frame(&self, _options: &CaptureOptions) -> FrameCapture {
@@ -228,6 +241,13 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
 
     fn platform(&self) -> super::Platform {
         S::PLATFORM
+    }
+
+    fn video_out(&self) -> VideoOut {
+        VideoOut::Tv {
+            standard: TvStandard::Ntsc,
+            pixel_aspect: S::PIXEL_ASPECT,
+        }
     }
 
     fn snapshot(&self, frame: u64) -> DebugView {
