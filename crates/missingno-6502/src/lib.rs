@@ -14,6 +14,9 @@
 mod apply;
 pub mod decode;
 pub mod disasm;
+pub mod isa;
+
+pub use isa::Mos6502;
 
 use decode::{Access, DECODE, Instr, Mode, Op};
 

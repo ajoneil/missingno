@@ -10,6 +10,7 @@ pub mod dmg_sram;
 pub mod execute;
 pub mod frame;
 pub mod interrupts;
+pub mod isa;
 pub mod joypad;
 pub mod memory;
 pub mod ppu;
@@ -38,6 +39,7 @@ use ppu::model::PpuModel;
 pub use audio::channels::wave::WaveRamCoupling;
 pub use audio::{ApuSpec, DmgApu};
 pub use clock::{CpuDivider, CpuGate, Edge, MasterClock, Tick};
+pub use isa::Sm83;
 pub use memory::BootRom;
 pub use ppu::PixelOutput;
 

@@ -1,0 +1,54 @@
+//! The 6502 as a debugger instruction set: mnemonics and lengths come from the
+//! disassembler, flow is classified from the decode table.
+
+use missingno_core::isa::{Flow, Instruction, InstructionSet};
+
+use crate::decode::{DECODE, Mode, Op};
+use crate::disasm;
+
+/// The NMOS 6502 decode-for-display front end.
+pub struct Mos6502;
+
+impl InstructionSet for Mos6502 {
+    fn id(&self) -> &'static str {
+        "6502"
+    }
+
+    fn max_len(&self) -> usize {
+        3
+    }
+
+    fn decode(&self, address: u32, bytes: &[u8]) -> Instruction {
+        let mut operands = [0u8; 3];
+        for (slot, byte) in operands.iter_mut().zip(bytes) {
+            *slot = *byte;
+        }
+        let disassembly = disasm::disassemble(address as u16, operands);
+        Instruction {
+            mnemonic: disassembly.mnemonic,
+            length: disassembly.length,
+            flow: flow(address as u16, operands),
+        }
+    }
+}
+
+/// Control-flow class, deliberately conservative: only the transfers today's
+/// step-over and disassembler recognise. Everything else — BRK included — is
+/// treated as fall-through.
+fn flow(address: u16, bytes: [u8; 3]) -> Flow {
+    let instr = DECODE[bytes[0] as usize];
+    let word = u16::from_le_bytes([bytes[1], bytes[2]]) as u32;
+    match (instr.op, instr.mode) {
+        (Op::Jsr, _) => Flow::Call { target: Some(word) },
+        (Op::Jmp, Mode::Absolute) => Flow::Jump { target: Some(word) },
+        (Op::Jmp, Mode::Indirect) => Flow::Jump { target: None },
+        (Op::Branch(..), _) => {
+            let target = address.wrapping_add(2).wrapping_add(bytes[1] as i8 as u16);
+            Flow::Branch {
+                target: Some(target as u32),
+            }
+        }
+        (Op::Rts, _) | (Op::Rti, _) => Flow::Return,
+        _ => Flow::Sequential,
+    }
+}
