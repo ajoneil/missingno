@@ -322,13 +322,23 @@ impl FrameCapture {
     }
 }
 
+/// Accepts both the display names captures store ("Original", "Greyscale")
+/// and the variant names older records carry.
 fn parse_palette_choice(name: &str) -> missingno_gb::ppu::types::palette::PaletteChoice {
     use missingno_gb::ppu::types::palette::PaletteChoice;
-    match name {
-        "Green" => PaletteChoice::Green,
-        "Pocket" => PaletteChoice::Pocket,
-        "Classic" => PaletteChoice::Classic,
-        _ => PaletteChoice::default(),
+    PaletteChoice::ALL
+        .iter()
+        .copied()
+        .find(|choice| choice.to_string() == name || variant_name(*choice) == name)
+        .unwrap_or_default()
+}
+
+fn variant_name(choice: missingno_gb::ppu::types::palette::PaletteChoice) -> &'static str {
+    use missingno_gb::ppu::types::palette::PaletteChoice;
+    match choice {
+        PaletteChoice::Green => "Green",
+        PaletteChoice::Pocket => "Pocket",
+        PaletteChoice::Classic => "Classic",
     }
 }
 
@@ -820,6 +830,16 @@ fn libc_strftime(fmt: &str, unix_secs: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::release_year;
+    use super::{parse_palette_choice, variant_name};
+    use missingno_gb::ppu::types::palette::PaletteChoice;
+
+    #[test]
+    fn capture_palette_names_round_trip() {
+        for &choice in PaletteChoice::ALL {
+            assert_eq!(parse_palette_choice(&choice.to_string()), choice);
+            assert_eq!(parse_palette_choice(variant_name(choice)), choice);
+        }
+    }
 
     #[test]
     fn release_year_handles_the_stored_date_formats() {
