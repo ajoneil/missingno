@@ -158,8 +158,8 @@ impl SteppingSystem for SmsSystem {
 
     fn running_status(state: &SmsInspectState, frame: u64) -> RunningStatus {
         RunningStatus {
-            pc: state.pc,
-            sp: state.sp,
+            pc: state.pc.into(),
+            sp: state.sp.into(),
             video_label: "VDP",
             video_summary: format!("line {} · dot {}", state.line, state.dot),
             frame,

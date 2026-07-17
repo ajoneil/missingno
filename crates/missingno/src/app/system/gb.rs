@@ -418,8 +418,8 @@ where
     fn running_status(&self, frame: u64) -> RunningStatus {
         let console = self.core.game_boy();
         RunningStatus {
-            pc: console.cpu().ir_address,
-            sp: console.cpu().stack_pointer,
+            pc: console.cpu().ir_address.into(),
+            sp: console.cpu().stack_pointer.into(),
             video_label: "PPU",
             video_summary: format!(
                 "{} · ly {}",

@@ -151,8 +151,8 @@ impl SteppingSystem for NesSystem {
 
     fn running_status(state: &NesInspectState, frame: u64) -> RunningStatus {
         RunningStatus {
-            pc: state.pc,
-            sp: state.s as u16 | 0x0100,
+            pc: state.pc.into(),
+            sp: (state.s as u16 | 0x0100).into(),
             video_label: "PPU",
             video_summary: format!("scanline {} · dot {}", state.scanline, state.dot),
             frame,

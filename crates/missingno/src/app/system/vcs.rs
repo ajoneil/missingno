@@ -569,8 +569,8 @@ impl SystemDebugger for VcsDebugger {
 
     fn running_status(&self, frame: u64) -> RunningStatus {
         RunningStatus {
-            pc: self.inspect.pc,
-            sp: self.inspect.s as u16 | 0x0100,
+            pc: self.inspect.pc.into(),
+            sp: (self.inspect.s as u16 | 0x0100).into(),
             video_label: "TIA",
             video_summary: format!(
                 "beam {} · line {}",

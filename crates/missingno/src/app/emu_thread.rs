@@ -47,18 +47,7 @@ pub struct DebuggerPayload {
     pub frame: u64,
 }
 
-/// Live console state published each frame while the debugger runs, so the UI
-/// can render its running view without owning the console.
-#[derive(Clone, Debug)]
-pub struct RunningStatus {
-    pub pc: u16,
-    pub sp: u16,
-    /// The video section's sidebar heading ("PPU", "TIA", ...).
-    pub video_label: &'static str,
-    /// One-line video position summary in that section.
-    pub video_summary: String,
-    pub frame: u64,
-}
+pub use missingno_core::system::RunningStatus;
 
 /// Latest-value handoff for [`RunningStatus`], written alongside the frame slot.
 pub type StatusSlot = Arc<Mutex<Option<RunningStatus>>>;

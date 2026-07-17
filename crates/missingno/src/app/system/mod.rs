@@ -15,32 +15,10 @@ use missingno_core::{
     symbols::{Symbol, SymbolTable},
 };
 use missingno_gb::debugger::WatchCondition;
-/// A family-interpreted control identifier. Ids 0-7 mirror the Game Boy
-/// button order so the existing bindings pipeline translates numerically;
-/// analog and family-specific controls take ids from 8 up.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ControlId(pub u8);
 
-#[derive(Clone, Copy, Debug)]
-pub enum ControlInput {
-    Digital(bool),
-    /// Normalised 0.0-1.0 (paddle knobs, pots).
-    Axis(f32),
-}
-
-/// A latching console switch a family exposes for in-play toggling — the
-/// VCS's difficulty and colour switches. Unlike the momentary controls on
-/// the key-binding path, these hold a position the user flips; toggling one
-/// sends its new level through `set_control` as `ControlInput::Digital`.
-#[derive(Clone, Copy, Debug)]
-pub struct ConsoleSwitch {
-    pub control: ControlId,
-    pub label: &'static str,
-    /// Position names for the two levels, `[low, high]`.
-    pub positions: [&'static str; 2],
-    /// The power-on level, matching the core's default switch state.
-    pub default_high: bool,
-}
+pub use missingno_core::system::{
+    ConsoleSwitch, ControlId, ControlInput, FrameOutcome, StateError,
+};
 
 use std::sync::Arc;
 
@@ -249,12 +227,6 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
     },
 ];
 
-/// One emulated frame's outcome, as seen by the emu-thread loop.
-pub struct FrameOutcome {
-    pub display: Option<Frame>,
-    pub sram_dirty: bool,
-}
-
 /// A running console: everything the plain emulator shell and the emulation
 /// thread need from a system.
 pub trait SystemConsole: Send {
@@ -294,6 +266,16 @@ pub trait SystemConsole: Send {
     }
     /// Wall-clock duration of one emulated frame, for the pacing loop.
     fn frame_interval(&self) -> Duration;
+    /// A serialized machine state, if the system has a save-state backend.
+    #[allow(dead_code)]
+    fn save_state(&self) -> Option<Vec<u8>> {
+        None
+    }
+    /// Restore a previously serialized machine state.
+    #[allow(dead_code)]
+    fn load_state(&mut self, _bytes: &[u8]) -> Result<(), StateError> {
+        Err(StateError::Unsupported)
+    }
     /// Convert to the debugger-backed form. Systems without a debugger
     /// backend hand the console back; callers fall back to plain emulation.
     fn into_debugger(self: Box<Self>) -> Result<Box<dyn SystemDebugger>, Box<dyn SystemConsole>>;
@@ -371,6 +353,16 @@ pub trait SystemDebugger: Send {
     /// the system has no capture backend or capture fails.
     fn capture_trace(&mut self, _path: &Path) -> Option<Frame> {
         None
+    }
+    /// A serialized machine state, if the system has a save-state backend.
+    #[allow(dead_code)]
+    fn save_state(&self) -> Option<Vec<u8>> {
+        None
+    }
+    /// Restore a previously serialized machine state.
+    #[allow(dead_code)]
+    fn load_state(&mut self, _bytes: &[u8]) -> Result<(), StateError> {
+        Err(StateError::Unsupported)
     }
 
     fn into_console(self: Box<Self>) -> Box<dyn SystemConsole>;
