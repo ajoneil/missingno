@@ -9,7 +9,7 @@ use missingno_gb::{
 use super::texture_renderer::TextureRenderer;
 
 pub mod gb;
-use gb::{CgbScreen, GameBoyScreen, SgbScreen, screen_to_pixels};
+use gb::{screen_to_pixels, CgbScreen, GameBoyScreen, SgbScreen};
 
 // One frame per variant per frame tick; indirection would just add a hop.
 #[allow(clippy::large_enum_variant)]
@@ -22,53 +22,7 @@ pub enum ScreenDisplay {
     Indexed(IndexedFrame),
 }
 
-/// A frame of palette indices plus the palette to resolve them with,
-/// converted to RGBA at draw time. Height is per-frame: systems without a
-/// hardware frame (emergent sync) legitimately vary line counts. The
-/// palette is shared, not static — systems with programmable colour RAM
-/// send the palette as it stood when the frame completed.
-#[derive(Clone, Debug)]
-pub struct IndexedFrame {
-    pub width: u32,
-    pub height: u32,
-    /// Row-major palette indices, `width * height` entries.
-    pub pixels: std::sync::Arc<[u8]>,
-    pub palette: std::sync::Arc<[RGB8]>,
-    /// How wide one pixel displays relative to its height — a display-side
-    /// calibratable stage, derived from the system's dot clock on an NTSC
-    /// 4:3 screen.
-    pub pixel_aspect: f32,
-}
-
-impl IndexedFrame {
-    pub fn blank(
-        width: u32,
-        height: u32,
-        pixel_aspect: f32,
-        palette: std::sync::Arc<[RGB8]>,
-    ) -> Self {
-        IndexedFrame {
-            width,
-            height,
-            pixels: vec![0; (width * height) as usize].into(),
-            palette,
-            pixel_aspect,
-        }
-    }
-
-    pub fn to_rgba(&self) -> Vec<u8> {
-        let mut rgba = Vec::with_capacity(self.pixels.len() * 4);
-        for &index in self.pixels.iter() {
-            let color = self
-                .palette
-                .get(index as usize)
-                .copied()
-                .unwrap_or(RGB8::new(0, 0, 0));
-            rgba.extend_from_slice(&[color.r, color.g, color.b, 255]);
-        }
-        rgba
-    }
-}
+pub use missingno_core::video::IndexedFrame;
 
 impl From<IndexedFrame> for ScreenDisplay {
     fn from(frame: IndexedFrame) -> Self {

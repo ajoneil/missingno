@@ -19,6 +19,8 @@ pub mod analog;
 pub mod cdl;
 pub mod symbols;
 pub mod tv;
+pub mod video;
 
 pub use analog::{HighPass, OnePoleHighPass, RcHighPass};
 pub use tv::TvStandard;
+pub use video::{ConsoleFrame, Frame, IndexedFrame, RgbaFrame, VideoOut};
