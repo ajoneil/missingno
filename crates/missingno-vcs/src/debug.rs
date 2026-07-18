@@ -390,6 +390,45 @@ fn region_palette(standard: TvStandard) -> std::sync::Arc<[RGB8]> {
     cache[index].clone()
 }
 
+/// The TIA graphics registers driving the pixel strips, resolved to their
+/// object colours (COLUPx is a hue the core owns). Captured both live (the
+/// paused view, refreshed every step) and as the per-field mid-picture latch
+/// (the running view).
+#[derive(Clone, Default)]
+pub struct TiaStrips {
+    pub grp0: u8,
+    pub grp0_reflect: bool,
+    pub grp1: u8,
+    pub grp1_reflect: bool,
+    pub pf0: u8,
+    pub pf1: u8,
+    pub pf2: u8,
+    pub pf_mirrored: bool,
+    pub missile0: bool,
+    pub missile1: bool,
+    pub ball: bool,
+    pub color_p0: RGB8,
+    pub color_p1: RGB8,
+    pub color_pf: RGB8,
+}
+
+/// The mid-picture graphics latch and the field scanline it was taken at.
+#[derive(Clone)]
+pub struct SampledStrips {
+    pub line: usize,
+    pub strips: TiaStrips,
+}
+
+/// Which register set the TIA strips present: the live copy refreshed every
+/// step (paused, so single-stepping a kernel shows writes as they land) or the
+/// per-field mid-picture latch (running, so the strips aren't read at the
+/// blanked field boundary where kernels have zeroed GRPx).
+#[derive(Clone, Copy)]
+pub enum StripSource {
+    Live,
+    Sample,
+}
+
 #[derive(Clone, Default)]
 pub struct VcsInspectState {
     pub a: u8,
@@ -405,22 +444,11 @@ pub struct VcsInspectState {
     pub swcha: u8,
     pub swchb: u8,
     pub collisions: [u8; 8],
-    /// TIA graphics registers, resolved to their object colours for the pixel
-    /// strips (COLUPx is a hue the core owns).
-    pub grp0: u8,
-    pub grp0_reflect: bool,
-    pub grp1: u8,
-    pub grp1_reflect: bool,
-    pub pf0: u8,
-    pub pf1: u8,
-    pub pf2: u8,
-    pub pf_mirrored: bool,
-    pub missile0: bool,
-    pub missile1: bool,
-    pub ball: bool,
-    pub color_p0: RGB8,
-    pub color_p1: RGB8,
-    pub color_pf: RGB8,
+    /// The live/boundary graphics copy, refreshed every step.
+    pub strips: TiaStrips,
+    /// The per-field mid-picture latch, once a field has reached the sample
+    /// line; the running view prefers this over the boundary copy.
+    pub sample: Option<SampledStrips>,
     pub disassembly: Vec<DisasmRow>,
     pub frame: u64,
 }
@@ -435,8 +463,12 @@ pub struct DisasmRow {
 /// The VCS sidebar sections, shared by the live debugger (paused) and the
 /// per-frame snapshot so the two agree by construction: the 6507 register file
 /// and the TIA/RIOT state the inspection struct already carries.
-pub fn vcs_sidebar_sections(state: &VcsInspectState) -> Vec<inspect::Section> {
-    vec![cpu_section(state), tia_section(state), riot_section(state)]
+pub fn vcs_sidebar_sections(state: &VcsInspectState, source: StripSource) -> Vec<inspect::Section> {
+    vec![
+        cpu_section(state),
+        tia_section(state, source),
+        riot_section(state),
+    ]
 }
 
 fn cpu_section(state: &VcsInspectState) -> inspect::Section {
@@ -520,10 +552,31 @@ fn playfield_cells(pf0: u8, pf1: u8, pf2: u8) -> [bool; 20] {
     })
 }
 
+/// Resolve the TIA's write-only graphics registers into the strip inputs,
+/// mapping each object colour byte through the region palette.
+fn tia_strips(gfx: &crate::tia::GraphicsRegisters, color: impl Fn(u8) -> RGB8) -> TiaStrips {
+    TiaStrips {
+        grp0: gfx.grp0,
+        grp0_reflect: gfx.reflect_p0,
+        grp1: gfx.grp1,
+        grp1_reflect: gfx.reflect_p1,
+        pf0: gfx.pf0,
+        pf1: gfx.pf1,
+        pf2: gfx.pf2,
+        pf_mirrored: gfx.pf_mirrored,
+        missile0: gfx.missile0,
+        missile1: gfx.missile1,
+        ball: gfx.ball,
+        color_p0: color(gfx.color_p0),
+        color_p1: color(gfx.color_p1),
+        color_pf: color(gfx.color_pf),
+    }
+}
+
 /// The TIA graphics strips: the two players in their COLUP0/COLUP1 hue, the
 /// playfield in COLUPF, and the missile/ball enables as single cells in the
 /// object's hue (empty when off). An unlit pattern bit is an empty cell.
-fn tia_graphics_block(state: &VcsInspectState) -> inspect::SectionBlock {
+fn tia_graphics_block(strips: &TiaStrips) -> inspect::SectionBlock {
     use inspect::PixelStrip;
 
     let lit = |bits: &[bool], color: RGB8| -> Vec<Option<RGB8>> {
@@ -534,47 +587,71 @@ fn tia_graphics_block(state: &VcsInspectState) -> inspect::SectionBlock {
         PixelStrip::Colors {
             label: "grp0".to_owned(),
             cells: lit(
-                &player_pattern_bits(state.grp0, state.grp0_reflect),
-                state.color_p0,
+                &player_pattern_bits(strips.grp0, strips.grp0_reflect),
+                strips.color_p0,
             ),
             help: Some("player 0 graphics (GRP0) in COLUP0; bit 7 at left, REFP0 mirrors"),
         },
         PixelStrip::Colors {
             label: "grp1".to_owned(),
             cells: lit(
-                &player_pattern_bits(state.grp1, state.grp1_reflect),
-                state.color_p1,
+                &player_pattern_bits(strips.grp1, strips.grp1_reflect),
+                strips.color_p1,
             ),
             help: Some("player 1 graphics (GRP1) in COLUP1; bit 7 at left, REFP1 mirrors"),
         },
         PixelStrip::Colors {
             label: "pf".to_owned(),
             cells: lit(
-                &playfield_cells(state.pf0, state.pf1, state.pf2),
-                state.color_pf,
+                &playfield_cells(strips.pf0, strips.pf1, strips.pf2),
+                strips.color_pf,
             ),
             help: Some("playfield left half (PF0/PF1/PF2) in COLUPF; right half per mirror"),
         },
         PixelStrip::Colors {
             label: "m0".to_owned(),
-            cells: vec![state.missile0.then_some(state.color_p0)],
+            cells: vec![strips.missile0.then_some(strips.color_p0)],
             help: Some("missile 0 enable (ENAM0) in COLUP0"),
         },
         PixelStrip::Colors {
             label: "m1".to_owned(),
-            cells: vec![state.missile1.then_some(state.color_p1)],
+            cells: vec![strips.missile1.then_some(strips.color_p1)],
             help: Some("missile 1 enable (ENAM1) in COLUP1"),
         },
         PixelStrip::Colors {
             label: "bl".to_owned(),
-            cells: vec![state.ball.then_some(state.color_pf)],
+            cells: vec![strips.ball.then_some(strips.color_pf)],
             help: Some("ball enable (ENABL) in COLUPF"),
         },
     ])
 }
 
-fn tia_section(state: &VcsInspectState) -> inspect::Section {
+fn tia_section(state: &VcsInspectState, source: StripSource) -> inspect::Section {
     use inspect::{Row, SectionBlock, Sweep, SweepZone, Tone};
+
+    // The strips draw the live copy while paused; running, they draw the
+    // per-field mid-picture latch (falling back to the live copy before any
+    // field has reached the sample line).
+    let (strips, sampled_at) = match source {
+        StripSource::Live => (&state.strips, None),
+        StripSource::Sample => match &state.sample {
+            Some(sample) => (&sample.strips, Some(sample.line)),
+            None => (&state.strips, None),
+        },
+    };
+
+    let mut rows = vec![
+        Row::value("line", state.scanline.to_string()).help("scanline within the field"),
+        Row::flag("mirror", strips.pf_mirrored)
+            .help("playfield reflected on the right half (CTRLPF bit 0)"),
+    ];
+    if let Some(line) = sampled_at {
+        rows.push(
+            Row::value("strips", format!("field line {line}")).help(
+                "graphics latched mid-picture for the running view; pause to see live writes",
+            ),
+        );
+    }
 
     // The colour clock runs 0..228: HBLANK then the 160 visible columns. The
     // field's line count is emergent from VSYNC and varies by kernel and TV
@@ -605,13 +682,9 @@ fn tia_section(state: &VcsInspectState) -> inspect::Section {
         detail: None,
         blocks: vec![
             SectionBlock::Sweeps(vec![beam]),
-            SectionBlock::Rows(vec![
-                Row::value("line", state.scanline.to_string()).help("scanline within the field"),
-                Row::flag("mirror", state.pf_mirrored)
-                    .help("playfield reflected on the right half (CTRLPF bit 0)"),
-            ]),
+            SectionBlock::Rows(rows),
             SectionBlock::Rule,
-            tia_graphics_block(state),
+            tia_graphics_block(strips),
         ],
     }
 }
@@ -671,7 +744,7 @@ impl InspectSnapshot for VcsSnapshot {
         crate::debugger::cpu_register_groups(s.pc, s.a, s.x, s.y, s.s, s.p)
     }
     fn sidebar_sections(&self) -> Vec<inspect::Section> {
-        vcs_sidebar_sections(&self.state)
+        vcs_sidebar_sections(&self.state, StripSource::Sample)
     }
     fn memory_window(&self) -> Option<&inspect::MemoryWindow> {
         Some(&self.memory)
@@ -736,7 +809,11 @@ impl VcsDebugger {
             let (r, g, b) = crate::tia::palette(standard)[palette_index(byte)];
             RGB8::new(r, g, b)
         };
-        let gfx = vcs.tia.graphics_registers();
+        let strips = tia_strips(&vcs.tia.graphics_registers(), color);
+        let sample = vcs.graphics_sample().map(|sample| SampledStrips {
+            line: sample.line,
+            strips: tia_strips(&sample.registers, color),
+        });
         self.inspect = VcsInspectState {
             a: cpu.a,
             x: cpu.x,
@@ -751,20 +828,8 @@ impl VcsDebugger {
             swcha: vcs.peek(0x0280),
             swchb: vcs.peek(0x0282),
             collisions: std::array::from_fn(|i| vcs.peek(i as u16)),
-            grp0: gfx.grp0,
-            grp0_reflect: gfx.reflect_p0,
-            grp1: gfx.grp1,
-            grp1_reflect: gfx.reflect_p1,
-            pf0: gfx.pf0,
-            pf1: gfx.pf1,
-            pf2: gfx.pf2,
-            pf_mirrored: gfx.pf_mirrored,
-            missile0: gfx.missile0,
-            missile1: gfx.missile1,
-            ball: gfx.ball,
-            color_p0: color(gfx.color_p0),
-            color_p1: color(gfx.color_p1),
-            color_pf: color(gfx.color_pf),
+            strips,
+            sample,
             disassembly,
             frame: self.frame_count,
         };
@@ -844,7 +909,7 @@ impl SystemDebugger for VcsDebugger {
     }
 
     fn sidebar_sections(&self) -> Vec<inspect::Section> {
-        vcs_sidebar_sections(&self.inspect)
+        vcs_sidebar_sections(&self.inspect, StripSource::Live)
     }
 
     fn memory_regions(&self) -> &'static [inspect::MemoryRegion] {
@@ -1002,7 +1067,11 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_sidebar_sections_match_live() {
+    fn snapshot_and_live_sidebars_share_one_builder() {
+        // The strips differ by mode by design (paused shows live registers,
+        // running the mid-picture latch), but one builder serves both: given
+        // the same source, the live inspect state and the per-frame snapshot
+        // produce identical sections.
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/accuracy/roms/cartridge/bank-f8_ntsc.a26");
         let rom = std::fs::read(&path).unwrap();
@@ -1015,12 +1084,49 @@ mod tests {
         for _ in 0..64 {
             debugger.step();
         }
-        let live = SystemDebugger::sidebar_sections(&debugger);
         let snapshot = debugger.snapshot(0);
-        assert_eq!(
-            format!("{live:?}"),
-            format!("{:?}", snapshot.sidebar_sections())
+        let snap_state = snapshot
+            .family_state()
+            .downcast_ref::<VcsInspectState>()
+            .unwrap();
+        for source in [StripSource::Live, StripSource::Sample] {
+            assert_eq!(
+                format!("{:?}", vcs_sidebar_sections(&debugger.inspect, source)),
+                format!("{:?}", vcs_sidebar_sections(snap_state, source)),
+            );
+        }
+    }
+
+    #[test]
+    fn running_strips_use_the_mid_picture_latch() {
+        // Once a field crosses the sample line, the running (Sample) sidebar
+        // advertises the latched scanline while the paused (Live) one does not.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/accuracy/roms/cartridge/bank-f8_ntsc.a26");
+        let rom = std::fs::read(&path).unwrap();
+        let vcs = Vcs::new(&rom, TvStandard::Ntsc, None).unwrap();
+        let mut debugger = VcsDebugger::new(
+            crate::debugger::Debugger::new(vcs),
+            "test".to_string(),
+            blank_frame(),
         );
+        for _ in 0..5 {
+            debugger.step_frame();
+        }
+        assert!(
+            debugger.inspect.sample.is_some(),
+            "a field should have reached the sample line"
+        );
+        let live = format!(
+            "{:?}",
+            vcs_sidebar_sections(&debugger.inspect, StripSource::Live)
+        );
+        let running = format!(
+            "{:?}",
+            vcs_sidebar_sections(&debugger.inspect, StripSource::Sample)
+        );
+        assert!(running.contains("field line"));
+        assert!(!live.contains("field line"));
     }
 
     #[test]

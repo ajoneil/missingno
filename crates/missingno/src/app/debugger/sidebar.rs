@@ -893,8 +893,9 @@ fn pixel_strip_row(
     with_help(line, help)
 }
 
-/// One pixel-strip cell: a filled square for a lit pixel, a dim hollow outline
-/// for an empty or transparent slot.
+/// One pixel-strip cell: a filled square with a bright border for a lit pixel —
+/// so a dark hue still reads as lit against the sidebar — and a dim hollow
+/// outline for an empty or transparent slot.
 fn pixel_cell(color: Option<Color>) -> Element<'static, app::Message> {
     container(Space::new())
         .width(PIXEL_CELL)
@@ -905,7 +906,7 @@ fn pixel_cell(color: Option<Color>) -> Element<'static, app::Message> {
                 border: Border::default()
                     .rounded(1.0)
                     .width(1.0)
-                    .color(Color::from_rgba(1.0, 1.0, 1.0, 0.1)),
+                    .color(Color::from_rgba(1.0, 1.0, 1.0, 0.5)),
                 ..Default::default()
             },
             None => container::Style {

@@ -74,12 +74,12 @@ impl CgbView {
     }
 }
 
-/// The CGB sidebar: CPU and PPU sections composed from the shared Game Boy
-/// part-builders plus the colour console's own state, folded into the hardware
-/// each field describes — KEY1 speed and WRAM banking in the CPU section;
-/// VRAM banking, palette registers, HDMA, and CRAM swatches in the PPU section
-/// — rather than a standalone section. Shared by the live console (paused) and
-/// the running snapshot so the two agree by construction.
+/// The CGB sidebar: CPU, PPU, and CRAM sections composed from the shared Game
+/// Boy part-builders plus the colour console's own state, folded into the
+/// hardware each field describes — KEY1 speed and WRAM banking in the CPU
+/// section; VRAM banking, palette registers, and HDMA in the PPU section; the
+/// resolved BG/OBJ palette RAM in its own CRAM section. Shared by the live
+/// console (paused) and the running snapshot so the two agree by construction.
 pub fn cgb_sidebar_sections(
     cpu: &impl CpuSource,
     ppu: &impl PpuSource,
@@ -113,10 +113,13 @@ pub fn cgb_sidebar_sections(
             Row::value("ocps", format!("{:02X}", view.ocps)).help("object palette index (OCPS)"),
             Row::value("hdma", hdma_status(view.vram_dma)).help("VRAM DMA (HDMA/GDMA) status"),
         ]),
-        SectionBlock::Swatches(cram_swatches("bg", background)),
-        SectionBlock::Swatches(cram_swatches("obj", objects)),
         SectionBlock::Rule,
         cgb_fifo_block(ppu, background, objects, view),
+    ];
+
+    let cram_content = vec![
+        SectionBlock::Swatches(cram_swatches("bg", background)),
+        SectionBlock::Swatches(cram_swatches("obj", objects)),
     ];
 
     vec![
@@ -133,6 +136,13 @@ pub fn cgb_sidebar_sections(
             active: Some(ppu.control().video_enabled()),
             detail: Some(parts::ppu_detail(ppu)),
             blocks: ppu_content,
+        },
+        Section {
+            name: "CRAM",
+            summary: format!("bcps {:02X} · ocps {:02X}", view.bcps, view.ocps),
+            active: None,
+            detail: None,
+            blocks: cram_content,
         },
     ]
 }
