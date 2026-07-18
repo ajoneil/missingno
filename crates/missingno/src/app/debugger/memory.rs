@@ -7,10 +7,11 @@
 //! the published window doesn't yet cover the selection. A family with no
 //! region map falls back to the PC-anchored snapshot window.
 
+use iced::widget::text::Span;
 use iced::widget::{
-    Column, button, column, container, pane_grid, pick_list, row, text, text_input,
+    Column, button, column, container, pane_grid, pick_list, rich_text, row, text, text_input,
 };
-use iced::{Element, Length};
+use iced::{Color, Element, Length};
 
 use missingno_core::inspect::{MemoryRegion, MemoryWindow};
 
@@ -206,33 +207,77 @@ pub fn build_readout(core: &dyn SystemDebugger, selection: MemorySelection) -> M
     }
 }
 
-fn ascii_dump(cells: &[Option<u8>]) -> String {
-    cells
-        .iter()
-        .map(|cell| match cell {
-            Some(b) if (0x20..=0x7E).contains(b) => *b as char,
-            Some(_) => '.',
-            None => ' ',
-        })
-        .collect()
+/// Hue span in degrees a byte value is mapped across — short of a full wheel so
+/// 0x00 and 0xFF land on distinct hues rather than colliding at red.
+const HUE_SPAN: f32 = 300.0;
+/// Fixed saturation/lightness keeping the tints soft on the dark theme, so the
+/// colouring reads as data-tinting rather than rainbow noise.
+const CELL_SATURATION: f32 = 0.55;
+const CELL_LIGHTNESS: f32 = 0.70;
+
+/// The hue in degrees a byte maps to: a monotonic ramp across `HUE_SPAN`.
+fn byte_hue(value: u8) -> f32 {
+    value as f32 / u8::MAX as f32 * HUE_SPAN
 }
 
-/// One grid line: `$ADDR  XX XX .. XX  |ascii|`. A `None` cell is a byte the
-/// running window hasn't published yet — shown as `--` so scrolling reads as
-/// updating rather than as zeroes. Short final rows pad the hex columns.
-fn hex_row(address: u32, cells: &[Option<u8>]) -> String {
-    let mut hex = String::new();
+/// The tint a byte's hex pair and its ASCII glyph share — equal bytes tint alike.
+fn byte_color(value: u8) -> Color {
+    let (r, g, b) = hsl_to_rgb(byte_hue(value), CELL_SATURATION, CELL_LIGHTNESS);
+    Color::from_rgb(r, g, b)
+}
+
+/// HSL→RGB with hue in degrees and saturation/lightness in `0.0..=1.0`.
+fn hsl_to_rgb(hue: f32, saturation: f32, lightness: f32) -> (f32, f32, f32) {
+    let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
+    let sector = hue / 60.0;
+    let secondary = chroma * (1.0 - (sector.rem_euclid(2.0) - 1.0).abs());
+    let (r, g, b) = match sector as u32 {
+        0 => (chroma, secondary, 0.0),
+        1 => (secondary, chroma, 0.0),
+        2 => (0.0, chroma, secondary),
+        3 => (0.0, secondary, chroma),
+        4 => (secondary, 0.0, chroma),
+        _ => (chroma, 0.0, secondary),
+    };
+    let base = lightness - chroma / 2.0;
+    (r + base, g + base, b + base)
+}
+
+/// The ASCII glyph for a cell and the colour it carries: a printable byte as
+/// itself, any other published byte as `.`, both tinted by the byte's value; an
+/// unpublished cell blanks with no tint.
+fn ascii_cell(cell: Option<u8>) -> (char, Option<Color>) {
+    match cell {
+        Some(b) if (0x20..=0x7E).contains(&b) => (b as char, Some(byte_color(b))),
+        Some(b) => ('.', Some(byte_color(b))),
+        None => (' ', None),
+    }
+}
+
+/// The coloured runs of one grid line: `$ADDR  XX XX .. XX  |ascii|`, with the
+/// address and separators muted, each hex pair and its ASCII glyph tinted by the
+/// byte's value. A `None` cell is a byte the running window hasn't published yet
+/// — a muted `--` and a blank ASCII column so scrolling reads as updating rather
+/// than as zeroes. Short final rows pad the hex columns.
+fn row_spans(address: u32, cells: &[Option<u8>]) -> Vec<(String, Option<Color>)> {
+    let mut spans = vec![(format!("${address:04X}  "), Some(palette::OVERLAY0))];
     for i in 0..BYTES_PER_ROW as usize {
         if i > 0 {
-            hex.push(' ');
+            spans.push((" ".to_owned(), None));
         }
         match cells.get(i) {
-            Some(Some(byte)) => hex.push_str(&format!("{byte:02X}")),
-            Some(None) => hex.push_str("--"),
-            None => hex.push_str("  "),
+            Some(Some(byte)) => spans.push((format!("{byte:02X}"), Some(byte_color(*byte)))),
+            Some(None) => spans.push(("--".to_owned(), Some(palette::MUTED))),
+            None => spans.push(("  ".to_owned(), None)),
         }
     }
-    format!("${address:04X}  {hex}  |{}|", ascii_dump(cells))
+    spans.push(("  |".to_owned(), Some(palette::MUTED)));
+    for &cell in cells {
+        let (glyph, color) = ascii_cell(cell);
+        spans.push((glyph.to_string(), color));
+    }
+    spans.push(("|".to_owned(), Some(palette::MUTED)));
+    spans
 }
 
 /// Where the browser grid reads a byte from: contiguous paused bytes, or the
@@ -297,11 +342,16 @@ impl MemoryPane {
             .chunks(BYTES_PER_ROW as usize)
             .enumerate()
             .map(|(i, row)| {
-                text(hex_row(base + i as u32 * BYTES_PER_ROW, row))
-                    .font(fonts::monospace())
-                    .size(13.0)
-                    .color(palette::TEXT)
-                    .into()
+                let spans: Vec<Span<'static, &'static str>> =
+                    row_spans(base + i as u32 * BYTES_PER_ROW, row)
+                        .into_iter()
+                        .map(|(text, color)| Span {
+                            text: text.into(),
+                            color,
+                            ..Default::default()
+                        })
+                        .collect();
+                rich_text(spans).font(fonts::monospace()).size(13.0).into()
             });
         Column::from_iter(rows).into()
     }
@@ -508,27 +558,69 @@ mod tests {
         bytes.iter().map(|&b| Some(b)).collect()
     }
 
-    #[test]
-    fn ascii_dump_maps_printable_dots_the_rest_and_blanks_gaps() {
-        assert_eq!(ascii_dump(&cells(&[0x41, 0x42, 0x43])), "ABC");
-        assert_eq!(ascii_dump(&cells(&[0x00, 0x1F, 0x7F, 0x80, 0xFF])), ".....");
-        assert_eq!(ascii_dump(&cells(&[0x20, 0x7E])), " ~");
-        // A gap (unpublished running byte) blanks its ASCII column.
-        assert_eq!(ascii_dump(&[Some(0x41), None, Some(0x43)]), "A C");
+    /// The plain text of a row, concatenating its span runs — the same string
+    /// the pane used to build before it was split into coloured spans.
+    fn row_text(address: u32, cells: &[Option<u8>]) -> String {
+        row_spans(address, cells)
+            .into_iter()
+            .map(|(text, _)| text)
+            .collect()
     }
 
     #[test]
-    fn hex_row_full_line() {
+    fn ascii_cell_maps_printable_dots_the_rest_and_blanks_gaps() {
+        assert_eq!(ascii_cell(Some(0x41)).0, 'A');
+        assert_eq!(ascii_cell(Some(0x20)).0, ' ');
+        assert_eq!(ascii_cell(Some(0x7E)).0, '~');
+        // Non-printable published bytes render as a dot, still tinted.
+        assert_eq!(ascii_cell(Some(0x00)).0, '.');
+        assert_eq!(ascii_cell(Some(0xFF)).0, '.');
+        assert_eq!(ascii_cell(Some(0x00)).1, Some(byte_color(0x00)));
+        // A gap (unpublished running byte) blanks its ASCII column, untinted.
+        assert_eq!(ascii_cell(None), (' ', None));
+    }
+
+    #[test]
+    fn byte_hue_spans_the_range_monotonically() {
+        // Endpoints land at the intended bounds — no wheel wraparound.
+        assert_eq!(byte_hue(0x00), 0.0);
+        assert_eq!(byte_hue(0xFF), HUE_SPAN);
+        // Strictly increasing across the whole byte range.
+        for value in 0..0xFFu8 {
+            assert!(byte_hue(value) < byte_hue(value + 1));
+        }
+    }
+
+    #[test]
+    fn byte_color_endpoints_are_distinct() {
+        // 0x00 and 0xFF must not collide on the same hue.
+        assert_ne!(byte_hue(0x00), byte_hue(0xFF));
+        assert_ne!(byte_color(0x00), byte_color(0xFF));
+    }
+
+    #[test]
+    fn row_spans_tint_hex_and_ascii_with_the_byte_colour() {
+        let spans = row_spans(0xC100, &cells(&[0x41, 0x7F]));
+        // 'A' (printable): its hex pair and glyph share the byte's colour.
+        assert!(spans.contains(&("41".to_owned(), Some(byte_color(0x41)))));
+        assert!(spans.contains(&("A".to_owned(), Some(byte_color(0x41)))));
+        // 0x7F (non-printable): hex pair and the fallback dot share the colour.
+        assert!(spans.contains(&("7F".to_owned(), Some(byte_color(0x7F)))));
+        assert!(spans.contains(&(".".to_owned(), Some(byte_color(0x7F)))));
+    }
+
+    #[test]
+    fn row_text_full_line() {
         let bytes: Vec<u8> = (0..16).collect();
         assert_eq!(
-            hex_row(0xC100, &cells(&bytes)),
+            row_text(0xC100, &cells(&bytes)),
             "$C100  00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F  |................|"
         );
     }
 
     #[test]
-    fn hex_row_short_line_pads_hex_columns() {
-        let row = hex_row(0xFF80, &cells(&[0x48, 0x49]));
+    fn row_text_short_line_pads_hex_columns() {
+        let row = row_text(0xFF80, &cells(&[0x48, 0x49]));
         // Two bytes rendered, the remaining fourteen columns blanked, ASCII
         // gutter only as wide as the bytes present.
         assert_eq!(
@@ -538,10 +630,14 @@ mod tests {
     }
 
     #[test]
-    fn hex_row_unpublished_cell_reads_as_dashes() {
-        let row = hex_row(0xC100, &[Some(0x10), None, Some(0x30)]);
+    fn row_unpublished_cell_reads_as_dashes() {
+        let row = row_text(0xC100, &[Some(0x10), None, Some(0x30)]);
         assert!(row.starts_with("$C100  10 -- 30"));
         assert!(row.ends_with("|. 0|"));
+        // The `--` placeholder and its blank ASCII column stay muted, untinted.
+        let spans = row_spans(0xC100, &[Some(0x10), None, Some(0x30)]);
+        assert!(spans.contains(&("--".to_owned(), Some(palette::MUTED))));
+        assert!(spans.contains(&(" ".to_owned(), None)));
     }
 
     #[test]
