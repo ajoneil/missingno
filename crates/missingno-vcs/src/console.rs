@@ -11,21 +11,12 @@ use crate::cartridge::{CartType, Cartridge, CartridgeError};
 use crate::cpu::{Bus, Cpu};
 use crate::riot::Riot;
 pub use crate::tia::Scanline;
-use crate::tia::{GraphicsRegisters, Tia, VISIBLE_CLOCKS};
+use crate::tia::{Tia, VISIBLE_CLOCKS};
 
 /// One VSYNC-delimited frame. Height is whatever the kernel produced —
 /// there is no hardware frame, only the software's sync pattern.
 pub struct Frame {
     pub lines: Vec<[u8; VISIBLE_CLOCKS]>,
-}
-
-/// A per-field capture of the TIA graphics registers for the debugger's
-/// running view. Kernels rewrite GRPx per visible line and clear them once the
-/// picture ends, so the field boundary the running snapshot lands on reads
-/// zeros; this captures a mid-picture moment instead. Inspection only.
-pub struct GraphicsSample {
-    pub registers: GraphicsRegisters,
-    pub line: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -51,9 +42,6 @@ pub struct Vcs {
     /// it integrates VSYNC across scanlines to decide field boundaries, so it
     /// consumes the raw per-line stream rather than the `Frame` the suite uses.
     last_line: Option<Scanline>,
-    /// The most recent mid-picture TIA graphics-register capture (see
-    /// [`GRAPHICS_SAMPLE_LINE`]); read only by the debugger.
-    graphics_sample: Option<GraphicsSample>,
     sample_clock: f32,
     /// Colour clocks per 44.1 kHz sample, from the region's master clock.
     clocks_per_sample: f32,
@@ -99,14 +87,6 @@ const PHI0_GRID_PHASE: u16 = 2;
 /// A write and the next can overlap; ≤6-clock delays never make three (BRK's
 /// mirror-push triple is the binding case).
 const MAX_TIA_WRITES_IN_FLIGHT: usize = 2;
-
-/// Scanlines past a field's VSYNC at which the debugger latches the TIA
-/// graphics registers ([`GraphicsSample`]). Not a hardware timing value — a
-/// display sampling choice: it lands well inside the picture region of both the
-/// ~262-line NTSC and ~312-line PAL fields (each begins with a few dozen blanked
-/// lines), so the running snapshot reflects the kernel drawing rather than the
-/// zeroed field boundary.
-const GRAPHICS_SAMPLE_LINE: usize = 130;
 
 // The 6507's 13-line board decode: A12 selects the cartridge; below it,
 // A7 splits TIA from RIOT and A9 splits RIOT RAM from its I/O registers.
@@ -235,7 +215,6 @@ impl Vcs {
             in_vsync: false,
             finished_frame: None,
             last_line: None,
-            graphics_sample: None,
             sample_clock: 0.0,
             clocks_per_sample: crate::tv_standard::clocks_per_sample(region),
             sample_accum: 0.0,
@@ -347,19 +326,7 @@ impl Vcs {
         self.in_vsync = line.vsync;
         if !line.vsync {
             self.building.push(line);
-            if self.building.len() == GRAPHICS_SAMPLE_LINE {
-                self.graphics_sample = Some(GraphicsSample {
-                    registers: self.tia.graphics_registers(),
-                    line: GRAPHICS_SAMPLE_LINE,
-                });
-            }
         }
-    }
-
-    /// The most recent mid-picture graphics-register capture, once a field has
-    /// reached the sample line. Inspection only.
-    pub fn graphics_sample(&self) -> Option<&GraphicsSample> {
-        self.graphics_sample.as_ref()
     }
 
     /// Side-effect-free bus read for inspection: the debugger's view of

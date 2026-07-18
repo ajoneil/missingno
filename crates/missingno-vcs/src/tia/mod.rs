@@ -344,7 +344,6 @@ struct Pot {
 
 /// The TIA graphics registers driving the picture, copied for the debugger's
 /// pixel strips. Write-only on the bus, so the debugger reads them here.
-#[derive(Clone, Copy)]
 pub struct GraphicsRegisters {
     /// Effective player patterns (the VDELP-selected GRP copy) and their REFP.
     pub grp0: u8,
