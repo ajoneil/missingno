@@ -643,15 +643,12 @@ fn sweep_bar(sweep: &inspect::Sweep) -> Element<'static, app::Message> {
         }
     }
 
-    // A triangle glyph on its own line, centred in a fixed-width cell that is
-    // left-padded so the cell's centre — and thus the glyph's — sits on the
-    // position, clamped to keep the glyph on the bar at either edge.
+    // The marker line overhangs the bar by half a glyph on each side, so the
+    // glyph's centre can sit exactly on the position even at the ends; the bar
+    // is inset by that margin to share the same coordinate line.
+    let margin = SWEEP_MARKER_GLYPH_W / 2.0;
     let marker = iced::widget::row![
-        Space::new().width(Length::Fixed(marker_pad(
-            position,
-            SWEEP_MARKER_GLYPH_W,
-            SWEEP_BAR_WIDTH,
-        ))),
+        Space::new().width(Length::Fixed(position)),
         container(
             text("\u{25B2}") // ▲
                 .font(fonts::monospace())
@@ -662,12 +659,15 @@ fn sweep_bar(sweep: &inspect::Sweep) -> Element<'static, app::Message> {
     ];
 
     column![
-        container(segments)
-            .width(Length::Fixed(SWEEP_BAR_WIDTH))
-            .height(Length::Fixed(SWEEP_BAR_HEIGHT)),
+        iced::widget::row![
+            Space::new().width(Length::Fixed(margin)),
+            container(segments)
+                .width(Length::Fixed(SWEEP_BAR_WIDTH))
+                .height(Length::Fixed(SWEEP_BAR_HEIGHT)),
+        ],
         marker,
     ]
-    .width(Length::Fixed(SWEEP_BAR_WIDTH))
+    .width(Length::Fixed(SWEEP_BAR_WIDTH + SWEEP_MARKER_GLYPH_W))
     .spacing(1.0)
     .into()
 }
@@ -687,12 +687,6 @@ fn bar_segment(width: f32, color: Color) -> Element<'static, app::Message> {
 fn marker_x(value: u32, end: u32, bar_width: f32) -> f32 {
     let span = end.max(1) as f32;
     (value.min(end) as f32 / span) * bar_width
-}
-
-/// Left padding that centres the fixed-width marker cell on `position`, clamped
-/// so the glyph never spills past either bar edge.
-fn marker_pad(position: f32, glyph_width: f32, bar_width: f32) -> f32 {
-    (position - glyph_width / 2.0).clamp(0.0, bar_width - glyph_width)
 }
 
 // --- Bit table ---------------------------------------------------------------
@@ -1145,26 +1139,23 @@ mod tests {
         let end = 8;
         let bar = SWEEP_BAR_WIDTH;
         let g = SWEEP_MARKER_GLYPH_W;
-        let centre = |value| {
-            let pad = marker_pad(marker_x(value, end, bar), g, bar);
-            pad + g / 2.0
-        };
+        // The bar is inset by g/2 on the marker line, so the bar's left edge
+        // sits at g/2; a left pad of marker_x centres the glyph cell at
+        // marker_x + g/2 — the value's position in bar coordinates.
+        let bar_left = g / 2.0;
+        let centre = |value| marker_x(value, end, bar) + g / 2.0;
 
-        // Mid-bar (value = end/2): the glyph centre lands exactly on the value.
-        assert!((centre(4) - bar / 2.0).abs() < 1e-4);
-        assert!((centre(4) - marker_x(4, end, bar)).abs() < 1e-4);
+        // value = 0: the tip sits exactly on the bar's left edge.
+        assert!((centre(0) - bar_left).abs() < 1e-4);
 
-        // value = end - 1: still unclamped, centre on the value.
-        assert!((centre(7) - marker_x(7, end, bar)).abs() < 1e-4);
+        // Mid-bar: exactly on the value's position.
+        assert!((centre(4) - (bar_left + bar / 2.0)).abs() < 1e-4);
 
-        // value = 0: clamped to the left edge, glyph stays fully on the bar.
-        let left = marker_pad(marker_x(0, end, bar), g, bar);
-        assert_eq!(left, 0.0);
-        assert!(left + g <= bar);
+        // value = end: exactly on the bar's right edge.
+        assert!((centre(end) - (bar_left + bar)).abs() < 1e-4);
 
-        // value = end: clamped to the right edge, glyph stays fully on the bar.
-        let right = marker_pad(marker_x(end, end, bar), g, bar);
-        assert!((right - (bar - g)).abs() < 1e-4);
-        assert!(right + g <= bar + 1e-4);
+        // The glyph never needs to leave the margined line.
+        assert!(centre(0) - g / 2.0 >= 0.0);
+        assert!(centre(end) + g / 2.0 <= bar + g + 1e-4);
     }
 }
