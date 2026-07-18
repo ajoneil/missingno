@@ -5,7 +5,7 @@ use iced::{
     widget::{button, container, mouse_area, responsive, row, shader, stack, svg},
 };
 
-use crate::app::system::{ConsoleSwitch, ControlId, ControlInput};
+use crate::app::system::{ConsoleSwitch, ControlId, ControlInput, Platform};
 use crate::app::{
     self,
     screen::{Frame, ScreenView},
@@ -25,6 +25,9 @@ pub use panels::{CaptureKind, PlayLogEntry, PlayPanel};
 /// synchronously on pause so all inspection paths keep working.
 pub struct Emulator {
     console: Option<Box<dyn SystemConsole>>,
+    /// The platform this game presents, captured at load; carried so a
+    /// debugger toggle can key its panes without the console at hand.
+    platform: Platform,
     screen_view: ScreenView,
     running: bool,
     screen_hovered: bool,
@@ -60,6 +63,7 @@ impl From<Message> for app::Message {
 impl Emulator {
     pub fn new(
         console: Box<dyn SystemConsole>,
+        platform: Platform,
         use_sgb_colors: bool,
         frame_blending: bool,
     ) -> Self {
@@ -67,6 +71,7 @@ impl Emulator {
         let monochrome_palette = console.uses_monochrome_palette();
         Self {
             console: Some(console),
+            platform,
             screen_view: ScreenView::new(),
             running: false,
             screen_hovered: false,
@@ -82,6 +87,7 @@ impl Emulator {
     pub fn from_debugger(
         console: Box<dyn SystemConsole>,
         screen_view: ScreenView,
+        platform: Platform,
         use_sgb_colors: bool,
         frame_blending: bool,
     ) -> Self {
@@ -89,6 +95,7 @@ impl Emulator {
         let monochrome_palette = console.uses_monochrome_palette();
         Self {
             console: Some(console),
+            platform,
             screen_view,
             running: false,
             screen_hovered: false,
@@ -136,18 +143,22 @@ impl Emulator {
     pub fn enable_debugger(self) -> Result<app::debugger::Debugger, Box<Emulator>> {
         let use_sgb_colors = self.use_sgb_colors;
         let frame_blending = self.frame_blending;
+        let platform = self.platform;
         let console = self
             .console
             .expect("console present when enabling the debugger");
-        app::debugger::Debugger::from_console(console, self.screen_view).map_err(|returned| {
-            let (console, screen_view) = *returned;
-            Box::new(Emulator::from_debugger(
-                console,
-                screen_view,
-                use_sgb_colors,
-                frame_blending,
-            ))
-        })
+        app::debugger::Debugger::from_console(console, self.screen_view, platform).map_err(
+            |returned| {
+                let (console, screen_view) = *returned;
+                Box::new(Emulator::from_debugger(
+                    console,
+                    screen_view,
+                    platform,
+                    use_sgb_colors,
+                    frame_blending,
+                ))
+            },
+        )
     }
 
     pub fn update(&mut self, message: Message) -> Task<app::Message> {

@@ -6,7 +6,7 @@ use iced::{
     widget::{Column, button, column, container, pane_grid, pick_list, row, text, text_input},
 };
 
-use crate::app::system::{ControlId, ControlInput};
+use crate::app::system::{ControlId, ControlInput, Platform, StepOutcome};
 use crate::app::{
     self,
     console::ConsoleColors,
@@ -20,8 +20,9 @@ use crate::app::{
         sizes::{s, xs},
     },
 };
+use missingno_core::inspect::{Watch, WatchTerm};
 use missingno_core::symbols::Symbol;
-use missingno_gb::{debugger::WatchCondition, ppu::types::palette::PaletteChoice};
+use missingno_gb::ppu::types::palette::PaletteChoice;
 
 use inspect::{DebugView, GbPaneContext};
 use panes::{DebuggerPanes, PaneContext};
@@ -101,7 +102,7 @@ pub enum Message {
     BreakpointInputChanged(String),
     AddBreakpoint,
 
-    RemoveWatchpoint(WatchCondition),
+    RemoveWatchpoint(Watch),
     WatchpointInputChanged(String),
     WatchpointKindChanged(AccessKind),
     AddWatchpoint,
@@ -129,10 +130,13 @@ pub struct Debugger {
     debugger: Option<Box<dyn SystemDebugger>>,
     /// Where the ROM's debug sidecars (.sym, .cdl) live; set on load.
     rom_path: Option<std::path::PathBuf>,
+    /// The platform this debugger presents, captured at load; keys the pane
+    /// registry and layout persistence.
+    platform: Platform,
     /// UI copy of the breakpoint set, kept editable while the core is away.
     breakpoints: BTreeSet<u16>,
     /// UI copy of the watchpoint list, kept editable while the core is away.
-    watchpoints: Vec<WatchCondition>,
+    watchpoints: Vec<Watch>,
     /// Lightweight status published every frame while the core is away; feeds
     /// the sidebar summary until the first full snapshot lands.
     last_status: Option<RunningStatus>,
@@ -158,37 +162,42 @@ pub struct Debugger {
 /// screen view that was to be carried over.
 pub type ReturnedConsole = Box<(Box<dyn SystemConsole>, ScreenView)>;
 
-/// The panes a debugger presents. Every platform whose debugger this build can
+/// The panes a platform presents. Every platform whose debugger this build can
 /// construct registers a family behind the same feature gate.
-fn pane_family(core: &dyn SystemDebugger) -> &'static panes::Family {
-    panes::family_for(core.platform()).expect("a debugger's platform registers panes")
+fn pane_family(platform: Platform) -> &'static panes::Family {
+    panes::family_for(platform).expect("a debugger's platform registers panes")
 }
 
 impl Debugger {
-    pub fn new(console: Box<dyn SystemConsole>) -> Result<Self, Box<dyn SystemConsole>> {
+    pub fn new(
+        console: Box<dyn SystemConsole>,
+        platform: Platform,
+    ) -> Result<Self, Box<dyn SystemConsole>> {
         console.into_debugger().map(|core| {
-            let panes = DebuggerPanes::new(pane_family(core.as_ref()));
-            Self::build(core, panes)
+            let panes = DebuggerPanes::new(pane_family(platform));
+            Self::build(core, panes, platform)
         })
     }
 
     pub fn from_console(
         console: Box<dyn SystemConsole>,
         screen_view: ScreenView,
+        platform: Platform,
     ) -> Result<Self, ReturnedConsole> {
         match console.into_debugger() {
             Ok(core) => {
-                let panes = DebuggerPanes::with_screen(pane_family(core.as_ref()), screen_view);
-                Ok(Self::build(core, panes))
+                let panes = DebuggerPanes::with_screen(pane_family(platform), screen_view);
+                Ok(Self::build(core, panes, platform))
             }
             Err(console) => Err(Box::new((console, screen_view))),
         }
     }
 
-    fn build(core: Box<dyn SystemDebugger>, panes: DebuggerPanes) -> Self {
+    fn build(core: Box<dyn SystemDebugger>, panes: DebuggerPanes, platform: Platform) -> Self {
         Self {
             debugger: Some(core),
             rom_path: None,
+            platform,
             breakpoints: BTreeSet::new(),
             watchpoints: Vec::new(),
             last_status: None,
@@ -252,28 +261,28 @@ impl Debugger {
         let mut core = payload.core;
         // Resync from the UI's set: a breakpoint edit can race the payload's
         // return and get dropped by the idle emu thread.
-        let stale: Vec<u16> = core
+        let ui_breakpoints: BTreeSet<u32> = self.breakpoints.iter().map(|&a| a as u32).collect();
+        let stale: Vec<u32> = core
             .breakpoints()
-            .difference(&self.breakpoints)
+            .difference(&ui_breakpoints)
             .copied()
             .collect();
         for address in stale {
             core.clear_breakpoint(address);
         }
         for &address in &self.breakpoints {
-            core.set_breakpoint(address);
+            core.set_breakpoint(address as u32);
         }
-        let stale: Vec<WatchCondition> = core
-            .watchpoints()
-            .iter()
+        let stale: Vec<Watch> = core
+            .watches()
+            .into_iter()
             .filter(|w| !self.watchpoints.contains(w))
-            .cloned()
             .collect();
-        for condition in &stale {
-            core.remove_watchpoint(condition);
+        for watch in &stale {
+            core.remove_watch(watch);
         }
-        for condition in &self.watchpoints {
-            core.add_watchpoint(condition.clone());
+        for watch in &self.watchpoints {
+            core.add_watch(watch.clone());
         }
         self.debugger = Some(core);
         self.frame = payload.frame;
@@ -329,6 +338,7 @@ impl Debugger {
         Emulator::from_debugger(
             core.into_console(),
             screen_view,
+            self.platform,
             use_sgb_colors,
             frame_blending,
         )
@@ -337,7 +347,7 @@ impl Debugger {
     fn set_breakpoint(&mut self, address: u16, emu: Option<&EmuHandle>) {
         self.breakpoints.insert(address);
         match &mut self.debugger {
-            Some(core) => core.set_breakpoint(address),
+            Some(core) => core.set_breakpoint(address as u32),
             None => {
                 if let Some(emu) = emu {
                     emu.send(EmuCommand::SetBreakpoint(address));
@@ -349,7 +359,7 @@ impl Debugger {
     fn clear_breakpoint(&mut self, address: u16, emu: Option<&EmuHandle>) {
         self.breakpoints.remove(&address);
         match &mut self.debugger {
-            Some(core) => core.clear_breakpoint(address),
+            Some(core) => core.clear_breakpoint(address as u32),
             None => {
                 if let Some(emu) = emu {
                     emu.send(EmuCommand::ClearBreakpoint(address));
@@ -358,39 +368,39 @@ impl Debugger {
         }
     }
 
-    fn add_watchpoint(&mut self, condition: WatchCondition, emu: Option<&EmuHandle>) {
-        if self.watchpoints.contains(&condition) {
+    fn add_watchpoint(&mut self, watch: Watch, emu: Option<&EmuHandle>) {
+        if self.watchpoints.contains(&watch) {
             return;
         }
-        self.watchpoints.push(condition.clone());
+        self.watchpoints.push(watch.clone());
         match &mut self.debugger {
-            Some(core) => core.add_watchpoint(condition),
+            Some(core) => core.add_watch(watch),
             None => {
                 if let Some(emu) = emu {
-                    emu.send(EmuCommand::AddWatchpoint(condition));
+                    emu.send(EmuCommand::AddWatchpoint(watch));
                 }
             }
         }
     }
 
-    fn remove_watchpoint(&mut self, condition: &WatchCondition, emu: Option<&EmuHandle>) {
-        self.watchpoints.retain(|w| w != condition);
+    fn remove_watchpoint(&mut self, watch: &Watch, emu: Option<&EmuHandle>) {
+        self.watchpoints.retain(|w| w != watch);
         match &mut self.debugger {
-            Some(core) => core.remove_watchpoint(condition),
+            Some(core) => core.remove_watch(watch),
             None => {
                 if let Some(emu) = emu {
-                    emu.send(EmuCommand::RemoveWatchpoint(condition.clone()));
+                    emu.send(EmuCommand::RemoveWatchpoint(watch.clone()));
                 }
             }
         }
     }
 
-    /// The most recent watchpoint the core stopped on, present only while the
+    /// The most recent watch the core stopped on, present only while the
     /// core is on the UI thread (paused after a hit).
-    fn last_watchpoint_hit(&self) -> Option<WatchCondition> {
+    fn last_watchpoint_hit(&self) -> Option<Watch> {
         self.debugger
             .as_ref()
-            .and_then(|core| core.last_watchpoint_hit())
+            .and_then(|core| core.last_watch_hit())
     }
 
     fn display_task(display: Option<Frame>) -> Task<app::Message> {
@@ -408,24 +418,27 @@ impl Debugger {
                 let Some(core) = &mut self.debugger else {
                     return Task::none();
                 };
-                Self::display_task(core.step())
+                Self::display_task(core.step().into_frame())
             }
             Message::StepOver => {
                 let Some(core) = &mut self.debugger else {
                     return Task::none();
                 };
-                Self::display_task(core.step_over())
+                Self::display_task(core.step_over().into_frame())
             }
             Message::StepFrame => {
                 let Some(core) = &mut self.debugger else {
                     return Task::none();
                 };
-                let (display, breakpoint_hit) = core.step_frame();
+                let outcome = core.step_frame();
                 self.frame += 1;
-                if breakpoint_hit {
+                if matches!(
+                    outcome,
+                    StepOutcome::Breakpoint { .. } | StepOutcome::WatchHit(_)
+                ) {
                     self.running = false;
                 }
-                Self::display_task(display)
+                Self::display_task(outcome.into_frame())
             }
             Message::CaptureFrame => {
                 let Some(core) = &self.debugger else {
@@ -481,8 +494,8 @@ impl Debugger {
                 Task::none()
             }
 
-            Message::RemoveWatchpoint(condition) => {
-                self.remove_watchpoint(&condition, emu);
+            Message::RemoveWatchpoint(watch) => {
+                self.remove_watchpoint(&watch, emu);
                 Task::none()
             }
             Message::WatchpointInputChanged(input) => {
@@ -500,11 +513,11 @@ impl Debugger {
             Message::AddWatchpoint => {
                 if self.watchpoint_input.len() == 4 {
                     let address = u16::from_str_radix(&self.watchpoint_input, 16).unwrap();
-                    let condition = match self.watchpoint_kind {
-                        AccessKind::Read => WatchCondition::BusRead { address },
-                        AccessKind::Write => WatchCondition::BusWrite { address },
+                    let key = match self.watchpoint_kind {
+                        AccessKind::Read => "bus-read",
+                        AccessKind::Write => "bus-write",
                     };
-                    self.add_watchpoint(condition, emu);
+                    self.add_watchpoint(Watch::single(key, Some(address as u32), None), emu);
                     self.watchpoint_input.clear();
                 }
                 Task::none()
@@ -533,7 +546,7 @@ impl Debugger {
                 if self.label_address_input.len() == 4 && !self.label_name_input.is_empty() {
                     let address = u16::from_str_radix(&self.label_address_input, 16).unwrap();
                     if let Some(core) = &mut self.debugger {
-                        core.add_symbol(address, std::mem::take(&mut self.label_name_input));
+                        core.add_symbol(address as u32, std::mem::take(&mut self.label_name_input));
                         self.label_address_input.clear();
                     }
                     self.save_sidecars();
@@ -618,8 +631,8 @@ impl Debugger {
         let Some(core) = &self.debugger else {
             return self.running_view();
         };
-        let inspection = core.inspect();
-        let gb_source = inspection.as_gb();
+        let family_any = core.family_state();
+        let gb_source = inspect::as_inspect_source(family_any);
         let colors = gb_source.map(|source| source.colors(self.panes.palette()));
         let symbols = core.symbols();
         let cdl = core.cdl_window();
@@ -634,8 +647,8 @@ impl Debugger {
         };
         let ctx = PaneContext {
             gb,
-            family: inspection.family_state(),
-            breakpoints: core.breakpoints(),
+            family: family_any,
+            breakpoints: &self.breakpoints,
         };
 
         let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
@@ -681,7 +694,7 @@ impl Debugger {
         let colors = self
             .last_snapshot
             .as_deref()
-            .and_then(|snapshot| snapshot.as_gb())
+            .and_then(|snapshot| inspect::as_inspect_source(snapshot.family_state()))
             .map(|source| source.colors(self.panes.palette()));
 
         let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
@@ -704,7 +717,9 @@ impl Debugger {
         };
 
         let sidebar = match (
-            self.last_snapshot.as_deref().and_then(|s| s.as_gb()),
+            self.last_snapshot
+                .as_deref()
+                .and_then(|s| inspect::as_inspect_source(s.family_state())),
             &colors,
         ) {
             (Some(source), Some(colors)) => self.sidebar.view(source, colors),
@@ -724,18 +739,22 @@ impl Debugger {
         let Some(snapshot) = self.last_snapshot.as_deref() else {
             return self.panes.view(None);
         };
-        let gb = match (snapshot.as_gb(), colors, snapshot.gb_sidecars()) {
-            (Some(source), Some(colors), Some((symbols, cdl))) => Some(GbPaneContext {
-                source,
+        let family_any = snapshot.family_state();
+        let gb = match (
+            family_any.downcast_ref::<inspect::ConsoleSnapshot>(),
+            colors,
+        ) {
+            (Some(snap), Some(colors)) => Some(GbPaneContext {
+                source: snap,
                 colors,
-                symbols,
-                cdl,
+                symbols: &snap.symbols,
+                cdl: &snap.cdl,
             }),
             _ => None,
         };
         self.panes.view(Some(PaneContext {
             gb,
-            family: snapshot.family_state(),
+            family: family_any,
             breakpoints: &self.breakpoints,
         }))
     }
@@ -795,7 +814,7 @@ impl Debugger {
 
         let panel = match self.last_watchpoint_hit() {
             Some(hit) => column![
-                text(format!("hit: {hit}")).font(fonts::monospace()),
+                text(format!("hit: {}", watch_summary(&hit))).font(fonts::monospace()),
                 watchpoint_list,
                 add_row,
             ],
@@ -979,17 +998,42 @@ fn label_row(symbol: &Symbol) -> Element<'static, app::Message> {
     .into()
 }
 
-fn watchpoint_row(condition: &WatchCondition) -> Element<'static, app::Message> {
+fn watchpoint_row(watch: &Watch) -> Element<'static, app::Message> {
     container(
         row![
             button(icons::m(icons::Icon::Close))
-                .on_press(Message::RemoveWatchpoint(condition.clone()).into())
+                .on_press(Message::RemoveWatchpoint(watch.clone()).into())
                 .style(button::text),
-            text(condition.to_string()).font(fonts::monospace())
+            text(watch_summary(watch)).font(fonts::monospace())
         ]
         .align_y(Vertical::Center),
     )
     .into()
+}
+
+/// The address-watch summary the panel shows for a watch. The add row only
+/// builds bus reads and writes, so those are the terms that reach here.
+fn watch_summary(watch: &Watch) -> String {
+    watch
+        .terms
+        .iter()
+        .map(term_summary)
+        .collect::<Vec<_>>()
+        .join(" & ")
+}
+
+fn term_summary(term: &WatchTerm) -> String {
+    let address = term.address.unwrap_or(0);
+    match term.key.as_str() {
+        "bus-read" => format!("read {address:#06X}"),
+        "bus-write" => format!("write {address:#06X}"),
+        "dma-read" => format!("dma read {address:#06X}"),
+        "dma-write" => format!("dma write {address:#06X}"),
+        other => match term.value {
+            Some(value) => format!("{other} {value:#04X}"),
+            None => format!("{other} {address:#06X}"),
+        },
+    }
 }
 
 fn breakpoint_row(address: u16) -> Element<'static, app::Message> {

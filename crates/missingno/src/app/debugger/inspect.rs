@@ -31,8 +31,8 @@ use missingno_gb::ppu::{
         sprites::{Sprite, SpriteId},
     },
 };
-use missingno_gb::{Console, Model};
-use missingno_gbc::VramDmaStatus;
+use missingno_gb::{Console, GameBoy, Model};
+use missingno_gbc::{GameBoyColor, VramDmaStatus};
 use std::sync::Arc;
 
 use crate::app::console::{ConsoleColors, ConsoleUi};
@@ -456,46 +456,22 @@ pub struct GbPaneContext<'b> {
     pub cdl: &'b CdlWindow,
 }
 
-/// A system's inspection surface, family-erased at the seam. The Game Boy's
-/// structured surface goes through [`Inspection::as_gb`]; every other family
-/// exposes one typed state object that its own panes downcast back out of
-/// [`Inspection::family_state`] — the shell never names the family.
-pub trait Inspection {
-    fn as_gb(&self) -> Option<&dyn InspectSource> {
-        None
-    }
-    /// The family's typed inspection state, for its own panes to downcast.
-    fn family_state(&self) -> &dyn std::any::Any {
-        &()
+pub use missingno_core::system::{DebugView, InspectSnapshot};
+
+/// Recover the Game Boy inspection surface from a family-erased state — the
+/// live [`Console`] while paused, or its [`ConsoleSnapshot`] while running.
+/// `None` for any other family, whose own panes downcast their typed state.
+pub fn as_inspect_source(state: &dyn std::any::Any) -> Option<&dyn InspectSource> {
+    if let Some(console) = state.downcast_ref::<GameBoy>() {
+        Some(console)
+    } else if let Some(console) = state.downcast_ref::<GameBoyColor>() {
+        Some(console)
+    } else {
+        state
+            .downcast_ref::<ConsoleSnapshot>()
+            .map(|snapshot| snapshot as &dyn InspectSource)
     }
 }
-
-impl<M: ConsoleUi> Inspection for Console<M>
-where
-    Console<M>: InspectSource,
-{
-    fn as_gb(&self) -> Option<&dyn InspectSource> {
-        Some(self)
-    }
-}
-
-impl Inspection for ConsoleSnapshot {
-    fn as_gb(&self) -> Option<&dyn InspectSource> {
-        Some(self)
-    }
-}
-
-pub trait InspectSnapshot: Inspection + Send {
-    fn frame(&self) -> u64;
-    /// The Game Boy family's sidecar state (symbols, code/data log); `None`
-    /// for families without them.
-    fn gb_sidecars(&self) -> Option<(&SymbolTable, &CdlWindow)> {
-        None
-    }
-}
-
-/// The model-erased snapshot handed from the emulation thread to the UI.
-pub type DebugView = Box<dyn InspectSnapshot>;
 
 impl<M: ConsoleUi> InspectSource for Console<M> {
     fn cpu(&self) -> &dyn CpuSource {
@@ -607,7 +583,7 @@ impl InspectSnapshot for ConsoleSnapshot {
     fn frame(&self) -> u64 {
         self.frame
     }
-    fn gb_sidecars(&self) -> Option<(&SymbolTable, &CdlWindow)> {
-        Some((&self.symbols, &self.cdl))
+    fn family_state(&self) -> &dyn std::any::Any {
+        self
     }
 }

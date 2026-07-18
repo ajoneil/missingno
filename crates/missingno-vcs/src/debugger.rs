@@ -150,14 +150,17 @@ impl Debugger {
     }
 
     /// The 6507's 13-line address map, named for what the board decodes.
-    pub fn memory_regions(&self) -> Vec<inspect::MemoryRegion> {
-        let region = |name, start, len| inspect::MemoryRegion { name, start, len };
-        vec![
+    pub fn memory_regions(&self) -> &'static [inspect::MemoryRegion] {
+        const fn region(name: &'static str, start: u32, len: u32) -> inspect::MemoryRegion {
+            inspect::MemoryRegion { name, start, len }
+        }
+        static REGIONS: &[inspect::MemoryRegion] = &[
             region("tia", 0x0000, 0x40),
             region("riot-ram", 0x0080, 0x80),
             region("riot-io", 0x0280, 0x20),
             region("cartridge", 0x1000, 0x1000),
-        ]
+        ];
+        REGIONS
     }
 
     /// Side-effect-free read of the 13-bit address space.

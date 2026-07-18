@@ -56,7 +56,6 @@ impl SteppingSystem for SmsSystem {
     /// One NTSC frame: 262 lines × 228 T-states at 3.579545 MHz.
     const FRAME_INTERVAL: Duration = Duration::from_micros(16_688);
     const RUN_BUDGET: u32 = 400_000;
-    const PLATFORM: super::Platform = super::Platform::MasterSystem;
     const PIXEL_ASPECT: f32 = PIXEL_ASPECT;
 
     fn pc(sms: &Sms) -> u16 {

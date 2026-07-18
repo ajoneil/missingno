@@ -5,7 +5,7 @@
 use iced::widget::{column, pane_grid, text};
 
 use crate::app;
-use crate::app::debugger::inspect::{InspectSnapshot, Inspection};
+use crate::app::debugger::inspect::InspectSnapshot;
 use crate::app::debugger::panes::{self, DebuggerPane, Pane, PaneContext};
 use crate::app::ui::{fonts, sizes::s};
 
@@ -31,12 +31,6 @@ pub struct SmsInspectState {
     pub frame: u64,
 }
 
-impl Inspection for SmsInspectState {
-    fn family_state(&self) -> &dyn std::any::Any {
-        self
-    }
-}
-
 /// The per-frame snapshot for the running view.
 pub struct SmsSnapshot {
     pub state: SmsInspectState,
@@ -48,15 +42,12 @@ impl SmsSnapshot {
     }
 }
 
-impl Inspection for SmsSnapshot {
-    fn family_state(&self) -> &dyn std::any::Any {
-        &self.state
-    }
-}
-
 impl InspectSnapshot for SmsSnapshot {
     fn frame(&self) -> u64 {
         self.state.frame
+    }
+    fn family_state(&self) -> &dyn std::any::Any {
+        &self.state
     }
 }
 

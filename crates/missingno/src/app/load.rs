@@ -96,7 +96,7 @@ fn start_console(
         serial_link: &mut app.serial_link,
         print_sink: Some(app.print_tx.clone()),
     })?;
-    Some(finish_start(app, console, rom_path))
+    Some(finish_start(app, console, rom_path, family.platform))
 }
 
 pub(crate) fn file_stem_title(rom_path: &std::path::Path) -> String {
@@ -113,12 +113,13 @@ fn finish_start(
     app: &mut App,
     console: Box<dyn system::SystemConsole>,
     rom_path: &std::path::Path,
+    platform: system::Platform,
 ) -> String {
     let title = console.game_title();
     let palette = app.settings.palette;
 
     let console = if app.debugger_enabled {
-        match app::debugger::Debugger::new(console) {
+        match app::debugger::Debugger::new(console, platform) {
             Ok(mut debugger) => {
                 debugger.load_sidecars(rom_path);
                 debugger.set_palette(palette);
@@ -134,6 +135,7 @@ fn finish_start(
     };
     let mut emu = app::emulator::Emulator::new(
         console,
+        platform,
         app.settings.use_sgb_colors,
         app.settings.frame_blending,
     );

@@ -34,9 +34,6 @@ impl ConsoleColors {
 
 /// How the debugger UI renders each console model.
 pub trait ConsoleUi: Model {
-    /// The platform this model presents as.
-    const PLATFORM: crate::app::system::Platform;
-
     /// DMG renders through a user-selectable monochrome palette; CGB is
     /// colour. Gates the play-mode Display panel's palette picker.
     const MONOCHROME_PALETTE: bool;
@@ -55,7 +52,6 @@ pub trait ConsoleUi: Model {
 }
 
 impl ConsoleUi for Dmg {
-    const PLATFORM: crate::app::system::Platform = crate::app::system::Platform::GameBoy;
     const MONOCHROME_PALETTE: bool = true;
 
     fn screen_display(console: &Console<Self>, new_screen: Option<Self::Screen>) -> Option<Frame> {
@@ -107,7 +103,6 @@ impl ConsoleUi for Dmg {
 }
 
 impl ConsoleUi for Cgb {
-    const PLATFORM: crate::app::system::Platform = crate::app::system::Platform::GameBoyColor;
     const MONOCHROME_PALETTE: bool = false;
 
     fn screen_display(console: &Console<Self>, new_screen: Option<Self::Screen>) -> Option<Frame> {

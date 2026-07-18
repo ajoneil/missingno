@@ -11,17 +11,16 @@ use missingno_core::video::VideoOut;
 use missingno_gb::{
     BootRom, Console, GameBoy,
     cartridge::Cartridge,
-    debugger::{
-        WatchCondition,
-        cdl::{CdlWindow, CodeDataLog},
-    },
+    debugger::cdl::{CdlWindow, CodeDataLog},
     joypad::Button,
     ppu::model::PpuModel,
     serial_transfer::SerialLink,
 };
 use missingno_gbc::GameBoyColor;
 
-use super::{ControlId, ControlInput, FrameOutcome, MediaLoad, SystemConsole, SystemDebugger};
+use super::{
+    ControlId, ControlInput, FrameOutcome, MediaLoad, StepOutcome, SystemConsole, SystemDebugger,
+};
 
 /// The inverse of the seam's numeric convention; ids 8+ are not GB controls.
 fn button_for_control(control: ControlId) -> Option<Button> {
@@ -38,8 +37,11 @@ fn button_for_control(control: ControlId) -> Option<Button> {
         _ => return None,
     })
 }
+use missingno_core::inspect;
+use missingno_core::isa::InstructionSet;
+
 use crate::app::console::ConsoleUi;
-use crate::app::debugger::inspect::{ConsoleSnapshot, DebugView, Inspection};
+use crate::app::debugger::inspect::{ConsoleSnapshot, DebugView};
 use crate::app::emu_thread::RunningStatus;
 use crate::app::screen::Frame;
 
@@ -168,10 +170,10 @@ pub fn create_console(media: MediaLoad) -> Option<Box<dyn SystemConsole>> {
     impl GbLaunch for Boxed {
         type Output = Box<dyn SystemConsole>;
         fn dmg(self, console: GameBoy) -> Self::Output {
-            Box::new(console)
+            Box::new(GbConsole(console))
         }
         fn cgb(self, console: GameBoyColor) -> Self::Output {
-            Box::new(console)
+            Box::new(GbConsole(console))
         }
     }
     let link = media.serial_link.take().or_else(|| {
@@ -188,17 +190,23 @@ pub fn create_console(media: MediaLoad) -> Option<Box<dyn SystemConsole>> {
     ))
 }
 
-impl<M: ConsoleUi + 'static> SystemConsole for Console<M>
+/// A Game Boy core adapted to the seam. A newtype so the app can implement the
+/// core seam trait for it — the console itself belongs to another crate. One
+/// generic wrapper serves both models; [`ConsoleUi`] carries the divergences.
+pub struct GbConsole<M: ConsoleUi>(Console<M>);
+
+impl<M: ConsoleUi + 'static> SystemConsole for GbConsole<M>
 where
     Console<M>: Send,
     <M::Ppu as PpuModel>::Vram: Clone + Send + 'static,
 {
     fn step_frame(&mut self) -> FrameOutcome {
-        let max = 70224 * 2 * self.cpu_steps_per_dot() as u32;
+        let console = &mut self.0;
+        let max = 70224 * 2 * console.cpu_steps_per_dot() as u32;
         let mut tcycles = 0;
         let mut sram_dirty = false;
         loop {
-            let result = self.step();
+            let result = console.step();
             tcycles += result.tcycles;
             sram_dirty |= result.sram_dirty;
             if result.new_screen || tcycles >= max {
@@ -212,7 +220,7 @@ where
     }
 
     fn reset(&mut self) {
-        Console::reset(self);
+        Console::reset(&mut self.0);
     }
 
     fn uses_monochrome_palette(&self) -> bool {
@@ -225,14 +233,14 @@ where
             return;
         };
         if pressed {
-            Console::press_button(self, button);
+            Console::press_button(&mut self.0, button);
         } else {
-            Console::release_button(self, button);
+            Console::release_button(&mut self.0, button);
         }
     }
 
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
-        Console::drain_audio_samples(self)
+        Console::drain_audio_samples(&mut self.0)
     }
 
     fn audio_coupling(&self) -> Option<missingno_core::HighPass> {
@@ -240,7 +248,7 @@ where
     }
 
     fn screen_display(&self) -> Frame {
-        M::screen_display(self, Some(self.screen().clone()))
+        M::screen_display(&self.0, Some(self.0.screen().clone()))
             .expect("screen_display is always Some when given a screen")
     }
 
@@ -251,11 +259,11 @@ where
     }
 
     fn game_title(&self) -> String {
-        Console::cartridge(self).title().to_string()
+        Console::cartridge(&self.0).title().to_string()
     }
 
     fn battery_save(&self) -> Option<Vec<u8>> {
-        battery_save(Console::cartridge(self))
+        battery_save(Console::cartridge(&self.0))
     }
 
     fn frame_interval(&self) -> Duration {
@@ -264,7 +272,7 @@ where
 
     fn into_debugger(self: Box<Self>) -> Result<Box<dyn SystemDebugger>, Box<dyn SystemConsole>> {
         Ok(Box::new(GbDebugger {
-            core: missingno_gb::debugger::Debugger::new(*self),
+            core: missingno_gb::debugger::Debugger::new(self.0),
         }))
     }
 }
@@ -287,20 +295,34 @@ where
     Console<M>: Send,
     <M::Ppu as PpuModel>::Vram: Clone + Send + 'static,
 {
-    fn step(&mut self) -> Option<Frame> {
+    fn step(&mut self) -> StepOutcome {
         let screen = self.core.step();
-        self.display(screen)
+        StepOutcome::Completed {
+            frame: self.display(screen),
+        }
     }
 
-    fn step_over(&mut self) -> Option<Frame> {
+    fn step_over(&mut self) -> StepOutcome {
         let screen = self.core.step_over();
-        self.display(screen)
+        StepOutcome::Completed {
+            frame: self.display(screen),
+        }
     }
 
-    fn step_frame(&mut self) -> (Option<Frame>, bool) {
+    fn step_frame(&mut self) -> StepOutcome {
         let screen = self.core.step_frame();
-        let breakpoint_hit = screen.is_none();
-        (self.display(screen), breakpoint_hit)
+        // The core stops early (no completed frame) on a breakpoint or watch;
+        // `last_watch_hit` names which, without changing the stop condition.
+        let stopped_early = screen.is_none();
+        let frame = self.display(screen);
+        if stopped_early {
+            match self.core.last_watch_hit() {
+                Some(watch) => StepOutcome::WatchHit(watch),
+                None => StepOutcome::Breakpoint { frame },
+            }
+        } else {
+            StepOutcome::Completed { frame }
+        }
     }
 
     fn screen_display(&self) -> Frame {
@@ -328,40 +350,60 @@ where
         self.core.game_boy_mut().drain_audio_samples()
     }
 
-    fn set_breakpoint(&mut self, address: u16) {
-        self.core.set_breakpoint(address);
+    fn set_breakpoint(&mut self, address: u32) {
+        self.core.set_breakpoint(address as u16);
     }
 
-    fn clear_breakpoint(&mut self, address: u16) {
-        self.core.clear_breakpoint(address);
+    fn clear_breakpoint(&mut self, address: u32) {
+        self.core.clear_breakpoint(address as u16);
     }
 
-    fn breakpoints(&self) -> &BTreeSet<u16> {
-        self.core.breakpoints()
+    fn breakpoints(&self) -> BTreeSet<u32> {
+        self.core.breakpoints().iter().map(|&a| a as u32).collect()
     }
 
-    fn add_watchpoint(&mut self, condition: WatchCondition) {
-        self.core.add_watchpoint(condition);
+    fn register_groups(&self) -> Vec<inspect::RegisterGroup> {
+        self.core.register_groups()
     }
 
-    fn remove_watchpoint(&mut self, condition: &WatchCondition) {
-        self.core.remove_watchpoint(condition);
+    fn memory_regions(&self) -> &'static [inspect::MemoryRegion] {
+        self.core.memory_regions()
     }
 
-    fn watchpoints(&self) -> &[WatchCondition] {
-        self.core.watchpoints()
+    fn peek(&self, address: u32) -> u8 {
+        self.core.peek(address)
     }
 
-    fn last_watchpoint_hit(&self) -> Option<WatchCondition> {
-        self.core.last_watchpoint_hit().cloned()
+    fn pc(&self) -> u32 {
+        self.core.pc()
     }
 
-    fn inspect(&self) -> &dyn Inspection {
+    fn instruction_set(&self) -> Option<&dyn InstructionSet> {
+        Some(self.core.instruction_set())
+    }
+
+    fn watchables(&self) -> &'static [inspect::Watchable] {
+        self.core.watchables()
+    }
+
+    fn add_watch(&mut self, watch: inspect::Watch) {
+        self.core.add_watch(watch);
+    }
+
+    fn remove_watch(&mut self, watch: &inspect::Watch) {
+        self.core.remove_watch(watch.clone());
+    }
+
+    fn watches(&self) -> Vec<inspect::Watch> {
+        self.core.watches()
+    }
+
+    fn last_watch_hit(&self) -> Option<inspect::Watch> {
+        self.core.last_watch_hit()
+    }
+
+    fn family_state(&self) -> &dyn std::any::Any {
         self.core.game_boy()
-    }
-
-    fn platform(&self) -> super::Platform {
-        M::PLATFORM
     }
 
     fn video_out(&self) -> VideoOut {
@@ -378,7 +420,8 @@ where
         self.core.symbols().clone()
     }
 
-    fn add_symbol(&mut self, address: u16, name: String) {
+    fn add_symbol(&mut self, address: u32, name: String) {
+        let address = address as u16;
         let bank = match address {
             0x4000..=0x7fff => self
                 .core
@@ -461,6 +504,6 @@ where
     }
 
     fn into_console(self: Box<Self>) -> Box<dyn SystemConsole> {
-        Box::new(self.core.game_boy_take())
+        Box::new(GbConsole(self.core.game_boy_take()))
     }
 }

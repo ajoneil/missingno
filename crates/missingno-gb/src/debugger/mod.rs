@@ -741,9 +741,11 @@ impl<M: Model> Debugger<M> {
     }
 
     /// The CPU-visible flat address map, named by role.
-    pub fn memory_regions(&self) -> Vec<inspect::MemoryRegion> {
-        let region = |name, start, len| inspect::MemoryRegion { name, start, len };
-        vec![
+    pub fn memory_regions(&self) -> &'static [inspect::MemoryRegion] {
+        const fn region(name: &'static str, start: u32, len: u32) -> inspect::MemoryRegion {
+            inspect::MemoryRegion { name, start, len }
+        }
+        static REGIONS: &[inspect::MemoryRegion] = &[
             region("rom0", 0x0000, 0x4000),
             region("romx", 0x4000, 0x4000),
             region("vram", 0x8000, 0x2000),
@@ -752,7 +754,8 @@ impl<M: Model> Debugger<M> {
             region("oam", 0xFE00, 0xA0),
             region("io", 0xFF00, 0x80),
             region("hram", 0xFF80, 0x7F),
-        ]
+        ];
+        REGIONS
     }
 
     /// Side-effect-free read of the CPU address space.
@@ -770,15 +773,19 @@ impl<M: Model> Debugger<M> {
         &Sm83
     }
 
-    pub fn watchables(&self) -> Vec<inspect::Watchable> {
-        WATCHABLES
-            .iter()
-            .map(|spec| inspect::Watchable {
-                key: spec.key,
-                label: spec.label,
-                param: spec.param,
-            })
-            .collect()
+    pub fn watchables(&self) -> &'static [inspect::Watchable] {
+        use std::sync::OnceLock;
+        static PUBLIC: OnceLock<Vec<inspect::Watchable>> = OnceLock::new();
+        PUBLIC.get_or_init(|| {
+            WATCHABLES
+                .iter()
+                .map(|spec| inspect::Watchable {
+                    key: spec.key,
+                    label: spec.label,
+                    param: spec.param,
+                })
+                .collect()
+        })
     }
 
     pub fn add_watch(&mut self, watch: inspect::Watch) {

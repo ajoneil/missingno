@@ -11,13 +11,15 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-use missingno_gb::debugger::WatchCondition;
+use missingno_core::inspect::Watch;
 
 use super::audio_output::AudioOutput;
 use super::debugger::inspect::DebugView;
 use super::library::activity::{CaptureOptions, FrameCapture};
 use super::screen::Frame;
-use super::system::{ControlId, ControlInput, FrameOutcome, SystemConsole, SystemDebugger};
+use super::system::{
+    ControlId, ControlInput, FrameOutcome, StepOutcome, SystemConsole, SystemDebugger,
+};
 
 /// Backlog cap, in frames: falling further behind schedule than this drops
 /// the deficit — degrades to slow-but-steady instead of spiralling.
@@ -72,8 +74,8 @@ pub enum EmuCommand {
     SetControl(ControlId, ControlInput),
     SetBreakpoint(u16),
     ClearBreakpoint(u16),
-    AddWatchpoint(WatchCondition),
-    RemoveWatchpoint(WatchCondition),
+    AddWatchpoint(Watch),
+    RemoveWatchpoint(Watch),
     RequestScreenshot {
         options: CaptureOptions,
     },
@@ -345,14 +347,14 @@ impl EmuLoop {
                     payload.clear_breakpoint(address);
                 }
             }
-            EmuCommand::AddWatchpoint(condition) => {
+            EmuCommand::AddWatchpoint(watch) => {
                 if let Some(payload) = &mut self.payload {
-                    payload.add_watchpoint(condition);
+                    payload.add_watch(watch);
                 }
             }
-            EmuCommand::RemoveWatchpoint(condition) => {
+            EmuCommand::RemoveWatchpoint(watch) => {
                 if let Some(payload) = &mut self.payload {
-                    payload.remove_watchpoint(&condition);
+                    payload.remove_watch(&watch);
                 }
             }
             EmuCommand::RequestScreenshot { options } => {
@@ -468,28 +470,28 @@ impl Payload {
     fn set_breakpoint(&mut self, address: u16) {
         match self {
             Self::Console(_) => {}
-            Self::Debugger(payload) => payload.core.set_breakpoint(address),
+            Self::Debugger(payload) => payload.core.set_breakpoint(address as u32),
         }
     }
 
     fn clear_breakpoint(&mut self, address: u16) {
         match self {
             Self::Console(_) => {}
-            Self::Debugger(payload) => payload.core.clear_breakpoint(address),
+            Self::Debugger(payload) => payload.core.clear_breakpoint(address as u32),
         }
     }
 
-    fn add_watchpoint(&mut self, condition: WatchCondition) {
+    fn add_watch(&mut self, watch: Watch) {
         match self {
             Self::Console(_) => {}
-            Self::Debugger(payload) => payload.core.add_watchpoint(condition),
+            Self::Debugger(payload) => payload.core.add_watch(watch),
         }
     }
 
-    fn remove_watchpoint(&mut self, condition: &WatchCondition) {
+    fn remove_watch(&mut self, watch: &Watch) {
         match self {
             Self::Console(_) => {}
-            Self::Debugger(payload) => payload.core.remove_watchpoint(condition),
+            Self::Debugger(payload) => payload.core.remove_watch(watch),
         }
     }
 
@@ -543,13 +545,17 @@ impl Payload {
             Self::Console(console) => (console.step_frame(), false),
             Self::Debugger(payload) => {
                 payload.frame += 1;
-                let (display, breakpoint_hit) = payload.core.step_frame();
+                let outcome = payload.core.step_frame();
+                let stopped = matches!(
+                    outcome,
+                    StepOutcome::Breakpoint { .. } | StepOutcome::WatchHit(_)
+                );
                 (
                     FrameOutcome {
-                        display,
+                        display: outcome.into_frame(),
                         sram_dirty: false,
                     },
-                    breakpoint_hit,
+                    stopped,
                 )
             }
         }

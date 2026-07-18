@@ -10,15 +10,15 @@ use std::time::Duration;
 use missingno_core::TvStandard;
 use missingno_core::video::VideoOut;
 
-use super::{ControlId, ControlInput, FrameOutcome, SystemConsole, SystemDebugger};
-use crate::app::debugger::inspect::{DebugView, Inspection};
+use super::{ControlId, ControlInput, FrameOutcome, StepOutcome, SystemConsole, SystemDebugger};
+use crate::app::debugger::inspect::DebugView;
 use crate::app::emu_thread::RunningStatus;
 use crate::app::screen::{Frame, IndexedFrame};
 
 pub trait SteppingSystem: 'static {
     type Core: Send + 'static;
     type Frame;
-    type InspectState: Inspection + Clone + Send + 'static;
+    type InspectState: Clone + Send + 'static;
 
     /// Wall-clock duration of one emulated frame, for the pacing loop.
     const FRAME_INTERVAL: Duration;
@@ -26,7 +26,6 @@ pub trait SteppingSystem: 'static {
     /// core that never completes a frame cannot stall the UI.
     const RUN_BUDGET: u32;
 
-    const PLATFORM: super::Platform;
     /// Display aspect of one pixel — the constant this system's indexed frames
     /// carry. These families raster NTSC-timed frames.
     const PIXEL_ASPECT: f32;
@@ -161,15 +160,15 @@ impl<S: SteppingSystem> SteppingDebugger<S> {
 }
 
 impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
-    fn step(&mut self) -> Option<Frame> {
+    fn step(&mut self) -> StepOutcome {
         S::step_instruction(&mut self.core);
         let frame = S::take_frame(&mut self.core);
         let display = self.display(frame);
         self.refresh();
-        display
+        StepOutcome::Completed { frame: display }
     }
 
-    fn step_over(&mut self) -> Option<Frame> {
+    fn step_over(&mut self) -> StepOutcome {
         let Some(return_address) = S::step_over_target(&self.core) else {
             return self.step();
         };
@@ -183,10 +182,10 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
         }
         let display = self.display(frame);
         self.refresh();
-        display
+        StepOutcome::Completed { frame: display }
     }
 
-    fn step_frame(&mut self) -> (Option<Frame>, bool) {
+    fn step_frame(&mut self) -> StepOutcome {
         let mut breakpoint_hit = false;
         let mut frame = None;
         for _ in 0..S::RUN_BUDGET {
@@ -202,7 +201,11 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
         }
         let display = self.display(frame);
         self.refresh();
-        (display, breakpoint_hit)
+        if breakpoint_hit {
+            StepOutcome::Breakpoint { frame: display }
+        } else {
+            StepOutcome::Completed { frame: display }
+        }
     }
 
     fn screen_display(&self) -> Frame {
@@ -222,24 +225,20 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
         S::drain_audio_samples(&mut self.core)
     }
 
-    fn set_breakpoint(&mut self, address: u16) {
-        self.breakpoints.insert(address);
+    fn set_breakpoint(&mut self, address: u32) {
+        self.breakpoints.insert(address as u16);
     }
 
-    fn clear_breakpoint(&mut self, address: u16) {
-        self.breakpoints.remove(&address);
+    fn clear_breakpoint(&mut self, address: u32) {
+        self.breakpoints.remove(&(address as u16));
     }
 
-    fn breakpoints(&self) -> &BTreeSet<u16> {
-        &self.breakpoints
+    fn breakpoints(&self) -> BTreeSet<u32> {
+        self.breakpoints.iter().map(|&a| a as u32).collect()
     }
 
-    fn inspect(&self) -> &dyn Inspection {
+    fn family_state(&self) -> &dyn std::any::Any {
         &self.inspect
-    }
-
-    fn platform(&self) -> super::Platform {
-        S::PLATFORM
     }
 
     fn video_out(&self) -> VideoOut {

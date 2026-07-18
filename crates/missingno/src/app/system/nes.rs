@@ -53,7 +53,6 @@ impl SteppingSystem for NesSystem {
     /// One NTSC frame: 262 lines × 341 dots ÷ 3 CPU cycles ≈ 29780 cycles.
     const FRAME_INTERVAL: Duration = Duration::from_micros(16_639);
     const RUN_BUDGET: u32 = 400_000;
-    const PLATFORM: super::Platform = super::Platform::Nes;
     const PIXEL_ASPECT: f32 = PIXEL_ASPECT;
 
     fn pc(nes: &Nes) -> u16 {

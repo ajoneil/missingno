@@ -15,11 +15,16 @@ use std::collections::BTreeSet;
 use missingno_vcs::console::Frame;
 use missingno_vcs::cpu::disasm;
 
-use super::{ConsoleSwitch, ControlId, ControlInput, FrameOutcome, SystemConsole, SystemDebugger};
-use crate::app::debugger::inspect::{DebugView, Inspection};
+use super::{
+    ConsoleSwitch, ControlId, ControlInput, FrameOutcome, StepOutcome, SystemConsole,
+    SystemDebugger,
+};
+use crate::app::debugger::inspect::DebugView;
 use crate::app::debugger::vcs::{DisasmRow, VcsInspectState, VcsSnapshot};
 use crate::app::emu_thread::RunningStatus;
 use crate::app::screen::IndexedFrame;
+use missingno_core::inspect;
+use missingno_core::isa::InstructionSet;
 use missingno_core::video::{self, Frame as VideoFrame, Television, VideoOut};
 
 pub const ROM_EXTENSIONS: &[&str] = &["a26", "bin"];
@@ -505,25 +510,30 @@ impl VcsDebugger {
 }
 
 impl SystemDebugger for VcsDebugger {
-    fn step(&mut self) -> Option<VideoFrame> {
+    fn step(&mut self) -> StepOutcome {
         let frame = self.core.step();
         let display = self.display(frame);
         self.refresh();
-        display
+        StepOutcome::Completed { frame: display }
     }
 
-    fn step_over(&mut self) -> Option<VideoFrame> {
+    fn step_over(&mut self) -> StepOutcome {
         let (frame, _) = self.core.step_over();
         let display = self.display(frame);
         self.refresh();
-        display
+        StepOutcome::Completed { frame: display }
     }
 
-    fn step_frame(&mut self) -> (Option<VideoFrame>, bool) {
+    fn step_frame(&mut self) -> StepOutcome {
+        use missingno_vcs::debugger::Stop;
         let (frame, stop) = self.core.step_frame();
         let display = self.display(frame);
         self.refresh();
-        (display, stop == missingno_vcs::debugger::Stop::Breakpoint)
+        match stop {
+            Stop::Breakpoint => StepOutcome::Breakpoint { frame: display },
+            Stop::BudgetExhausted => StepOutcome::BudgetExhausted,
+            Stop::Completed => StepOutcome::Completed { frame: display },
+        }
     }
 
     fn screen_display(&self) -> VideoFrame {
@@ -547,24 +557,40 @@ impl SystemDebugger for VcsDebugger {
         Some(missingno_vcs::board::AUDIO_COUPLING.high_pass())
     }
 
-    fn set_breakpoint(&mut self, address: u16) {
-        self.core.set_breakpoint(address);
+    fn set_breakpoint(&mut self, address: u32) {
+        self.core.set_breakpoint(address as u16);
     }
 
-    fn clear_breakpoint(&mut self, address: u16) {
-        self.core.clear_breakpoint(address);
+    fn clear_breakpoint(&mut self, address: u32) {
+        self.core.clear_breakpoint(address as u16);
     }
 
-    fn breakpoints(&self) -> &BTreeSet<u16> {
-        self.core.breakpoints()
+    fn breakpoints(&self) -> BTreeSet<u32> {
+        self.core.breakpoints().iter().map(|&a| a as u32).collect()
     }
 
-    fn inspect(&self) -> &dyn Inspection {
+    fn register_groups(&self) -> Vec<inspect::RegisterGroup> {
+        self.core.register_groups()
+    }
+
+    fn memory_regions(&self) -> &'static [inspect::MemoryRegion] {
+        self.core.memory_regions()
+    }
+
+    fn peek(&self, address: u32) -> u8 {
+        self.core.peek(address)
+    }
+
+    fn pc(&self) -> u32 {
+        self.core.pc()
+    }
+
+    fn instruction_set(&self) -> Option<&dyn InstructionSet> {
+        Some(self.core.instruction_set())
+    }
+
+    fn family_state(&self) -> &dyn std::any::Any {
         &self.inspect
-    }
-
-    fn platform(&self) -> super::Platform {
-        super::Platform::AtariVcs
     }
 
     fn video_out(&self) -> VideoOut {

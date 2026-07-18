@@ -5,7 +5,7 @@
 use iced::widget::{column, pane_grid, text};
 
 use crate::app;
-use crate::app::debugger::inspect::{InspectSnapshot, Inspection};
+use crate::app::debugger::inspect::InspectSnapshot;
 use crate::app::debugger::panes::{self, DebuggerPane, Pane, PaneContext};
 use crate::app::ui::{fonts, sizes::s};
 
@@ -34,12 +34,6 @@ pub struct DisasmRow {
     pub current: bool,
 }
 
-impl Inspection for NesInspectState {
-    fn family_state(&self) -> &dyn std::any::Any {
-        self
-    }
-}
-
 /// The per-frame snapshot for the running view.
 pub struct NesSnapshot {
     pub state: NesInspectState,
@@ -51,15 +45,12 @@ impl NesSnapshot {
     }
 }
 
-impl Inspection for NesSnapshot {
-    fn family_state(&self) -> &dyn std::any::Any {
-        &self.state
-    }
-}
-
 impl InspectSnapshot for NesSnapshot {
     fn frame(&self) -> u64 {
         self.state.frame
+    }
+    fn family_state(&self) -> &dyn std::any::Any {
+        &self.state
     }
 }
 
