@@ -39,18 +39,18 @@ const SIDEBAR_WIDTH: f32 = 260.0;
 const REG8_WIDTH: f32 = 48.0;
 /// Fixed width for a swatch row's label, so swatches line up.
 const SWATCH_LABEL_WIDTH: f32 = 40.0;
-/// A pixel-strip cell's width and height. Width is capped so the widest strip
-/// (the playfield's 20 contiguous cells) still fits the sidebar beside its
-/// label; height runs taller so the strip reads as a bold pixel row.
+/// A pixel-strip cell's width and height; height runs taller so the strip reads
+/// as a bold pixel row. A strip too wide to sit beside its label (the
+/// playfield's 20 cells) stacks beneath it instead.
 const PIXEL_CELL_W: f32 = 9.0;
 const PIXEL_CELL_H: f32 = 13.0;
-/// An unlit strip cell is drawn as a recessed dark socket — a dark ring around a
-/// near-black core. The inset texture, not luminance alone, is what separates an
-/// unlit cell from a solid lit near-black pixel.
+/// An unlit strip cell is drawn as a recessed dark socket — a near-black core
+/// inset in a quiet surround. The inset texture, not luminance alone, is what
+/// separates an unlit cell from a solid lit near-black pixel.
 const UNLIT_RING: Color = Color::from_rgb(
-    0x31 as f32 / 255.0,
-    0x32 as f32 / 255.0,
-    0x44 as f32 / 255.0,
+    0x1e as f32 / 255.0,
+    0x1e as f32 / 255.0,
+    0x2e as f32 / 255.0,
 );
 const UNLIT_CORE: Color = Color::from_rgb(
     0x11 as f32 / 255.0,
@@ -816,43 +816,44 @@ fn flag_badge(name: &str, active: bool) -> Element<'static, app::Message> {
 /// as blank space.
 fn pair_matrix(matrix: &inspect::PairMatrix) -> Element<'static, app::Message> {
     let n = matrix.entities.len();
-    let mut grid = iced::widget::row![].spacing(xs()).align_y(Vertical::Top);
+    let mut grid = column![];
 
-    // Left column: a blank corner over the row labels (each entity past the
-    // first, since the first is never a row).
-    let mut labels = column![cell(Space::new().into())].spacing(s());
-    for &name in &matrix.entities[1..] {
-        labels = labels.push(cell(
+    // Header line: a blank corner over the label column, then one header per
+    // entity that can be the lower member of a pair.
+    let mut header = iced::widget::row![pair_slot(Space::new().into()), pair_rule_v()];
+    for &name in &matrix.entities[..n.saturating_sub(1)] {
+        header = header.push(pair_slot(
             text(name.to_owned())
-                .font(fonts::monospace())
-                .size(LABEL)
-                .color(palette::MUTED)
-                .into(),
-        ));
-    }
-    grid = grid.push(labels);
-
-    // One column per entity that can be the lower member of a pair (every
-    // entity before the last).
-    for col in 0..n.saturating_sub(1) {
-        let mut cells = column![pair_slot(
-            text(matrix.entities[col].to_owned())
                 .font(fonts::monospace())
                 .size(HEADER)
                 .color(palette::MUTED)
                 .into(),
-        )]
-        .spacing(s());
-        for row in 1..n {
-            let content: Element<'static, app::Message> = if col < row {
-                let cell = matrix.cell(col, row);
-                with_help(pip(cell.set, palette::GREEN), cell.help)
-            } else {
-                Space::new().into()
-            };
-            cells = cells.push(pair_slot(content));
+        ));
+    }
+    grid = grid.push(header);
+
+    // One line per row entity, its pips under the headers, with a faint rule
+    // above each line stepping wider as the triangle grows.
+    for row in 1..n {
+        grid = grid.push(pair_rule_h(1 + row));
+        let mut line = iced::widget::row![
+            pair_slot(
+                text(matrix.entities[row].to_owned())
+                    .font(fonts::monospace())
+                    .size(LABEL)
+                    .color(palette::MUTED)
+                    .into(),
+            ),
+            pair_rule_v(),
+        ];
+        for col in 0..row {
+            let cell = matrix.cell(col, row);
+            line = line.push(pair_slot(with_help(
+                pip(cell.set, palette::GREEN),
+                cell.help,
+            )));
         }
-        grid = grid.push(cells);
+        grid = grid.push(line);
     }
 
     grid.into()
@@ -865,6 +866,37 @@ fn pair_slot(content: Element<'static, app::Message>) -> Element<'static, app::M
         .height(Length::Fixed(CELL_HEIGHT))
         .center_x(Length::Fixed(PAIR_CELL_W))
         .center_y(Length::Fixed(CELL_HEIGHT))
+        .into()
+}
+
+/// A faint horizontal rule spanning `slots` matrix columns, guiding the eye
+/// along each triangle row.
+fn pair_rule_h(slots: usize) -> Element<'static, app::Message> {
+    container(Space::new())
+        .width(Length::Fixed(slots as f32 * PAIR_CELL_W + 1.0))
+        .height(Length::Fixed(1.0))
+        .style(|_: &iced::Theme| container::Style {
+            background: Some(Background::Color(Color {
+                a: 0.35,
+                ..palette::SURFACE2
+            })),
+            ..Default::default()
+        })
+        .into()
+}
+
+/// A faint vertical rule separating the row labels from the pip triangle.
+fn pair_rule_v() -> Element<'static, app::Message> {
+    container(Space::new())
+        .width(Length::Fixed(1.0))
+        .height(Length::Fixed(CELL_HEIGHT))
+        .style(|_: &iced::Theme| container::Style {
+            background: Some(Background::Color(Color {
+                a: 0.35,
+                ..palette::SURFACE2
+            })),
+            ..Default::default()
+        })
         .into()
 }
 
@@ -978,6 +1010,7 @@ fn pixel_strip_row(
         }
     };
 
+    let cell_count = cells.len();
     let mut strip_cells = iced::widget::row![].spacing(1.0);
     for cell in cells {
         strip_cells = strip_cells.push(pixel_cell(cell));
@@ -995,21 +1028,35 @@ fn pixel_strip_row(
             ..Default::default()
         });
 
-    let line: Element<'static, app::Message> = iced::widget::row![
-        container(
-            text(label)
-                .font(fonts::monospace())
-                .size(LABEL)
-                .color(palette::MUTED),
-        )
-        .width(Length::Fixed(SWATCH_LABEL_WIDTH)),
-        strip,
-    ]
-    .spacing(s())
-    .align_y(Vertical::Center)
-    .into();
+    let label_text = text(label)
+        .font(fonts::monospace())
+        .size(LABEL)
+        .color(palette::MUTED);
+
+    // A strip too wide to sit beside its label stacks beneath it, using the
+    // full row budget.
+    let line: Element<'static, app::Message> = if strip_width(cell_count) > STRIP_BESIDE_BUDGET {
+        column![label_text, strip].spacing(2.0).into()
+    } else {
+        iced::widget::row![
+            container(label_text).width(Length::Fixed(SWATCH_LABEL_WIDTH)),
+            strip,
+        ]
+        .spacing(s())
+        .align_y(Vertical::Center)
+        .into()
+    };
 
     with_help(line, help)
+}
+
+/// Content width left for a strip sitting beside its fixed-width label.
+const STRIP_BESIDE_BUDGET: f32 = ROW_BUDGET - SWATCH_LABEL_WIDTH - 8.0;
+
+/// A strip's rendered width: its cells, the 1px separators between them, and
+/// the 1px frame + 1px padding on each side.
+fn strip_width(cells: usize) -> f32 {
+    cells as f32 * PIXEL_CELL_W + cells.saturating_sub(1) as f32 + 4.0
 }
 
 /// One pixel-strip cell, separated from its neighbours by the strip frame's 1px
