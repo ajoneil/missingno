@@ -35,7 +35,6 @@ use crate::app::{
         sizes::{self as sizes, s, xs},
     },
 };
-use missingno_core::inspect::RegisterGroup;
 use missingno_gb::ppu::types::{
     palette::{Palette, PaletteChoice},
     tiles::TileMapId,
@@ -80,9 +79,6 @@ pub struct PaneContext<'b> {
     /// back out with [`PaneContext::family_state`].
     pub family: &'b dyn std::any::Any,
     pub breakpoints: &'b BTreeSet<u16>,
-    /// The seam's register schema, copied at context-build time so the generic
-    /// registers pane never borrows the core.
-    pub registers: &'b [RegisterGroup],
     /// The memory viewer's visible bytes for its current selection, copied at
     /// context-build time; `None` when no memory pane is shown.
     pub memory: Option<MemoryPaneData<'b>>,
@@ -192,7 +188,6 @@ pub static NES_PANE_REGISTRY: &[PaneDescriptor] = &[
         label: "Screen",
         construct: || Box::new(ScreenPane::new()),
     },
-    REGISTERS_DESCRIPTOR,
     MEMORY_DESCRIPTOR,
     PaneDescriptor {
         kind: DebuggerPane::NesCpu,
@@ -224,7 +219,6 @@ pub static SMS_PANE_REGISTRY: &[PaneDescriptor] = &[
         label: "Screen",
         construct: || Box::new(ScreenPane::new()),
     },
-    REGISTERS_DESCRIPTOR,
     MEMORY_DESCRIPTOR,
     PaneDescriptor {
         kind: DebuggerPane::SmsCpu,
@@ -247,7 +241,6 @@ pub static VCS_PANE_REGISTRY: &[PaneDescriptor] = &[
         label: "Screen",
         construct: || Box::new(ScreenPane::new()),
     },
-    REGISTERS_DESCRIPTOR,
     MEMORY_DESCRIPTOR,
     PaneDescriptor {
         kind: DebuggerPane::VcsCpu,
@@ -262,15 +255,6 @@ pub static VCS_PANE_REGISTRY: &[PaneDescriptor] = &[
         construct: || Box::new(crate::app::debugger::vcs::TiaPane),
     },
 ];
-
-/// The generic registers pane, registered for every family — its content comes
-/// entirely from the seam's [`RegisterGroup`] schema.
-const REGISTERS_DESCRIPTOR: PaneDescriptor = PaneDescriptor {
-    kind: DebuggerPane::Registers,
-    icon: Icon::Menu,
-    label: "Registers",
-    construct: || Box::new(crate::app::debugger::registers::RegistersPane),
-};
 
 /// The generic memory viewer, registered for every family — it reads the
 /// seam's named regions and side-effect-free peeks while paused.
@@ -288,7 +272,6 @@ pub static PANE_REGISTRY: &[PaneDescriptor] = &[
         label: "Screen",
         construct: || Box::new(ScreenPane::new()),
     },
-    REGISTERS_DESCRIPTOR,
     MEMORY_DESCRIPTOR,
     PaneDescriptor {
         kind: DebuggerPane::Instructions,
@@ -338,7 +321,6 @@ pub struct DebuggerPanes {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DebuggerPane {
     Screen,
-    Registers,
     Memory,
     Instructions,
     Tiles,

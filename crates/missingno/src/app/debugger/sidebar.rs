@@ -1,64 +1,61 @@
+use std::collections::HashSet;
+
 use iced::{
-    Border, Color, Element,
+    Background, Border, Color, Element,
     Length::{self, Fill},
     alignment::Vertical,
-    widget::{Space, button, column, container, row, rule, text, tooltip},
+    widget::{Space, button, column, container, rule, text},
 };
 
 use crate::app::{
     self,
     console::ConsoleColors,
-    debugger::{
-        self,
-        inspect::{CgbView, CpuSource, InspectSource, PpuSource},
-    },
+    debugger::{self},
     emu_thread::RunningStatus,
+    screen::iced_color,
     ui::{
         fonts, palette,
         sizes::{s, xs},
     },
 };
-use missingno_gb::cpu::{
-    flags::Flags,
-    registers::{Register8, Register16},
-};
-use missingno_gb::interrupts::Registers;
-use missingno_gbc::VramDmaStatus;
+use missingno_core::inspect;
+use missingno_gb::ppu::types::palette::{Palette, PaletteIndex, PaletteMap};
 
-use super::interrupts::interrupts;
-use super::ppu::ppu_sidebar;
-
-/// Monospace text size for all register labels and values.
+/// Monospace text size for register labels and values.
 const REG: f32 = 14.0;
-/// Detail text size for collapsed summaries.
+/// Small label size for annotations and the packed video rows.
+const LABEL: f32 = 11.0;
+/// Detail text size for collapsed summaries and mode accents.
 const DETAIL: f32 = 11.0;
+/// Column-header text in a bit table — smaller so the wide interrupt table's
+/// named columns fit the fixed sidebar width.
+const HEADER: f32 = 10.0;
 
 const SIDEBAR_WIDTH: f32 = 260.0;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Section {
-    Cpu,
-    Ppu,
-    Cgb,
-}
+/// Fixed width for one 8-bit register display ("b 04"), so columns align.
+const REG8_WIDTH: f32 = 48.0;
+/// Fixed width for a swatch row's label, so swatches line up.
+const SWATCH_LABEL_WIDTH: f32 = 40.0;
+/// A bit table cell's height, so its header, rows, and pips align across
+/// columns.
+const CELL_HEIGHT: f32 = 16.0;
 
+/// Content width available to a packed row block, inside the section body's
+/// padding. Adjacent short rows coalesce onto one line up to this budget.
+const ROW_BUDGET: f32 = 236.0;
+
+/// The sidebar over a core's [`inspect::Section`] schema: a stack of
+/// collapsible sections, each rendering its typed blocks. Every family renders
+/// through the same path — the Game Boy has no bespoke sidebar.
 pub struct Sidebar {
-    collapsed: [bool; 3], // indexed by Section
-}
-
-impl Section {
-    fn index(self) -> usize {
-        match self {
-            Section::Cpu => 0,
-            Section::Ppu => 1,
-            Section::Cgb => 2,
-        }
-    }
+    /// Sections the user has collapsed, keyed by section name.
+    collapsed: HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    ToggleSection(Section),
+    ToggleSection(String),
 }
 
 impl From<Message> for app::Message {
@@ -70,51 +67,66 @@ impl From<Message> for app::Message {
 impl Sidebar {
     pub fn new() -> Self {
         Self {
-            collapsed: [false, false, false], // all sections expanded by default
+            collapsed: HashSet::new(),
         }
     }
 
-    fn is_collapsed(&self, section: Section) -> bool {
-        self.collapsed[section.index()]
+    fn is_collapsed(&self, name: &str) -> bool {
+        self.collapsed.contains(name)
     }
 
     pub fn update(&mut self, message: &Message) {
         match message {
-            Message::ToggleSection(section) => {
-                let idx = section.index();
-                self.collapsed[idx] = !self.collapsed[idx];
+            Message::ToggleSection(name) => {
+                if !self.collapsed.remove(name) {
+                    self.collapsed.insert(name.clone());
+                }
             }
         }
     }
 
-    /// The full CPU/PPU sections, fed from the live console while paused or
-    /// the per-vblank snapshot while the core runs on the emu thread.
-    pub fn view<'a>(
-        &'a self,
-        source: &'a dyn InspectSource,
-        colors: &ConsoleColors,
-    ) -> Element<'a, app::Message> {
-        let cpu = source.cpu();
-        let interrupts = source.interrupts();
-
-        let mut sections = column![
-            self.cpu_section(cpu, &interrupts, cpu.interrupts_enabled()),
-            self.ppu_section(source.ppu(), colors),
-        ];
-        if let Some(cgb) = source.cgb() {
-            sections = sections.push(self.cgb_section(cgb));
-        }
-        sections
+    /// The schema sidebar, fed from the live console while paused or the
+    /// per-vblank snapshot while the core runs. `colors` resolves the DMG
+    /// shade swatches through the user palette; families that emit none may
+    /// pass `None`.
+    pub fn view(
+        &self,
+        sections: Vec<inspect::Section>,
+        colors: Option<&ConsoleColors>,
+    ) -> Element<'static, app::Message> {
+        let mut stack = column![]
             .width(Length::Fixed(SIDEBAR_WIDTH))
             .height(Fill)
-            .spacing(s())
-            .into()
+            .spacing(s());
+        for section in sections {
+            stack = stack.push(self.render_section(section, colors));
+        }
+        stack.into()
     }
 
-    /// The collapsed CPU/video summary shown while the core runs and, for
-    /// families without a structured sidebar, while paused too — their panes
-    /// carry the detail. Fed by the lightweight [`RunningStatus`].
-    pub fn running_summary(&self, status: Option<&RunningStatus>) -> Element<'_, app::Message> {
+    fn render_section(
+        &self,
+        section: inspect::Section,
+        colors: Option<&ConsoleColors>,
+    ) -> Element<'static, app::Message> {
+        let collapsed = self.is_collapsed(section.name);
+        let body = (!collapsed).then(|| render_blocks(section.blocks, colors));
+        section_chrome(
+            section.name,
+            &section.summary,
+            section.active,
+            section.detail,
+            collapsed,
+            body,
+        )
+    }
+
+    /// The collapsed CPU/video summary shown while the core runs before the
+    /// first snapshot lands. Fed by the lightweight [`RunningStatus`].
+    pub fn running_summary(
+        &self,
+        status: Option<&RunningStatus>,
+    ) -> Element<'static, app::Message> {
         let (cpu_summary, video_label, video_summary) = match status {
             Some(status) => (
                 format!("pc {:04X} · sp {:04X}", status.pc, status.sp),
@@ -125,204 +137,60 @@ impl Sidebar {
         };
 
         column![
-            section(
-                "CPU",
-                &cpu_summary,
-                true,
-                Section::Cpu,
-                Some((true, palette::GREEN)),
-                None,
-                Space::new().into(),
-            ),
-            section(
-                video_label,
-                &video_summary,
-                true,
-                Section::Ppu,
-                Some((true, palette::GREEN)),
-                None,
-                Space::new().into(),
-            ),
+            section_chrome("CPU", &cpu_summary, Some(true), None, true, None),
+            section_chrome(video_label, &video_summary, Some(true), None, true, None),
         ]
         .width(Length::Fixed(SIDEBAR_WIDTH))
         .height(Fill)
         .spacing(s())
         .into()
     }
-
-    fn cpu_section<'a>(
-        &self,
-        cpu: &'a dyn CpuSource,
-        ints: &Registers,
-        ime: bool,
-    ) -> Element<'a, app::Message> {
-        let summary = format!(
-            "pc {:04X} · sp {:04X}",
-            cpu.ir_address(),
-            cpu.stack_pointer(),
-        );
-        let collapsed = self.is_collapsed(Section::Cpu);
-
-        let body = column![
-            pointers(cpu),
-            rule::horizontal(1),
-            register_a_row(cpu),
-            register_pair_row(cpu, Register8::B, Register8::C, Register16::Bc),
-            register_pair_row(cpu, Register8::D, Register8::E, Register16::De),
-            register_pair_row(cpu, Register8::H, Register8::L, Register16::Hl),
-            rule::horizontal(1),
-            interrupts(ints, ime),
-        ]
-        .padding(s())
-        .spacing(s())
-        .into();
-
-        let running = !cpu.halted();
-        section(
-            "CPU",
-            &summary,
-            collapsed,
-            Section::Cpu,
-            Some((running, palette::GREEN)),
-            None,
-            body,
-        )
-    }
-
-    fn ppu_section<'a>(
-        &self,
-        ppu: &'a dyn PpuSource,
-        pal: &ConsoleColors,
-    ) -> Element<'a, app::Message> {
-        let mode = ppu.mode();
-        let (mode_text, mode_color) = mode_display(mode);
-        let summary = format!("{} · ly {}", mode_text, ppu.ly());
-        let collapsed = self.is_collapsed(Section::Ppu);
-
-        let mode_detail: Element<'_, app::Message> = text(mode_text)
-            .font(fonts::monospace())
-            .size(DETAIL)
-            .color(mode_color)
-            .into();
-
-        section(
-            "PPU",
-            &summary,
-            collapsed,
-            Section::Ppu,
-            Some((ppu.control().video_enabled(), palette::GREEN)),
-            Some(mode_detail),
-            ppu_sidebar(ppu, pal),
-        )
-    }
-
-    fn cgb_section<'a>(&self, cgb: CgbView) -> Element<'a, app::Message> {
-        let speed = if cgb.double_speed { "2x" } else { "1x" };
-        let summary = format!("{} · svbk {}", speed, cgb.wram_bank);
-        let collapsed = self.is_collapsed(Section::Cgb);
-
-        let body = column![
-            cgb_row("speed", speed.to_owned()),
-            cgb_row("vbk", cgb.vram_bank.to_string()),
-            cgb_row("svbk", cgb.wram_bank.to_string()),
-            cgb_row("opri", format!("{:02X}", cgb.opri)),
-            cgb_row("bcps", format!("{:02X}", cgb.bcps)),
-            cgb_row("ocps", format!("{:02X}", cgb.ocps)),
-            rule::horizontal(1),
-            cgb_row("hdma", hdma_status(cgb.vram_dma)),
-        ]
-        .padding(s())
-        .spacing(s())
-        .into();
-
-        section(
-            "CGB",
-            &summary,
-            collapsed,
-            Section::Cgb,
-            Some((cgb.double_speed, palette::GREEN)),
-            None,
-            body,
-        )
-    }
 }
 
-// --- CGB rows ---
+// --- Section chrome ----------------------------------------------------------
 
-fn cgb_row(label: &str, value: String) -> Element<'static, app::Message> {
-    row![
-        container(
-            text(label.to_owned())
-                .font(fonts::monospace())
-                .size(REG)
-                .color(palette::MUTED),
-        )
-        .width(Length::Fixed(56.0)),
-        text(value)
-            .font(fonts::monospace())
-            .size(REG)
-            .color(palette::TEXT),
-    ]
-    .spacing(s())
-    .align_y(Vertical::Center)
-    .into()
-}
-
-fn hdma_status(status: VramDmaStatus) -> String {
-    match status {
-        VramDmaStatus::Idle => "idle".to_owned(),
-        VramDmaStatus::General { remaining } => format!("gdma {remaining}B"),
-        VramDmaStatus::HBlank {
-            remaining,
-            source,
-            dest,
-        } => format!("hdma {remaining}B {source:04X}\u{2192}{dest:04X}"),
-    }
-}
-
-// --- Collapsible section ---
-
-fn section<'a>(
-    label: &'a str,
+fn section_chrome(
+    name: &'static str,
     summary: &str,
+    active: Option<bool>,
+    detail: Option<inspect::Detail>,
     collapsed: bool,
-    section_id: Section,
-    pip_state: Option<(bool, Color)>,
-    detail: Option<Element<'a, app::Message>>,
-    body: Element<'a, app::Message>,
-) -> Element<'a, app::Message> {
-    use super::interrupts::pip;
-
+    body: Option<Element<'static, app::Message>>,
+) -> Element<'static, app::Message> {
     let mut header_left = Vec::new();
 
-    if let Some((active, color)) = pip_state {
-        header_left.push(pip(active, color));
+    if let Some(active) = active {
+        header_left.push(pip(active, palette::GREEN));
     }
 
     header_left.push(
-        text(label)
+        text(name)
             .font(fonts::title())
             .size(13.0)
             .color(palette::MUTED)
             .into(),
     );
 
-    // Right side: collapsed summary, or expanded detail if provided
-    let header_right: Element<'_, app::Message> = if collapsed {
+    // Right side: collapsed summary, or an expanded accent detail if present.
+    let header_right: Element<'static, app::Message> = if collapsed {
         text(summary.to_owned())
             .font(fonts::monospace())
             .size(DETAIL)
             .color(palette::OVERLAY0)
             .into()
     } else if let Some(detail) = detail {
-        detail
+        text(detail.text)
+            .font(fonts::monospace())
+            .size(DETAIL)
+            .color(tone_color(detail.tone))
+            .into()
     } else {
         Space::new().into()
     };
 
     let header = button(
         container(
-            row(header_left)
+            iced::widget::row(header_left)
                 .push(Space::new().width(Length::Fill))
                 .push(header_right)
                 .spacing(xs())
@@ -332,13 +200,13 @@ fn section<'a>(
         .padding([xs(), s()])
         .style(section_header_style),
     )
-    .on_press(Message::ToggleSection(section_id).into())
+    .on_press(Message::ToggleSection(name.to_string()).into())
     .padding(0)
     .style(|_, _| button::Style::default())
     .width(Length::Fill);
 
     let mut content = column![header].width(Length::Fill);
-    if !collapsed {
+    if let Some(body) = body {
         content = content.push(body);
     }
 
@@ -347,6 +215,475 @@ fn section<'a>(
         .style(section_style)
         .into()
 }
+
+/// The palette accent for a detail's semantic tone — the Game Boy PPU mode
+/// colours, now serving every core's coloured section detail.
+fn tone_color(tone: inspect::Tone) -> Color {
+    match tone {
+        inspect::Tone::Neutral => palette::MUTED,
+        inspect::Tone::Idle => palette::BLUE,
+        inspect::Tone::Active => palette::GREEN,
+        inspect::Tone::Scanning => palette::YELLOW,
+        inspect::Tone::Rendering => palette::PEACH,
+    }
+}
+
+// --- Blocks ------------------------------------------------------------------
+
+fn render_blocks(
+    blocks: Vec<inspect::SectionBlock>,
+    colors: Option<&ConsoleColors>,
+) -> Element<'static, app::Message> {
+    let mut body = column![].padding(s()).spacing(s());
+    for block in blocks {
+        body = body.push(render_block(block, colors));
+    }
+    body.into()
+}
+
+fn render_block(
+    block: inspect::SectionBlock,
+    colors: Option<&ConsoleColors>,
+) -> Element<'static, app::Message> {
+    use inspect::SectionBlock::*;
+    match block {
+        Registers(group) => registers_block(&group),
+        Pairs(pairs) => pairs_block(&pairs),
+        Pointers(pointers) => pointers_block(&pointers),
+        Table(table) => bit_table(&table),
+        Rows(rows) => rows_block(&rows),
+        Swatches(rows) => swatches_block(&rows, colors),
+        Rule => rule::horizontal(1).into(),
+    }
+}
+
+// --- Pointers ----------------------------------------------------------------
+
+fn pointers_block(pointers: &[inspect::Register]) -> Element<'static, app::Message> {
+    let mut line = iced::widget::row![].spacing(s()).align_y(Vertical::Center);
+    for register in pointers {
+        line = line.push(pointer(register));
+    }
+    line.into()
+}
+
+fn pointer(register: &inspect::Register) -> Element<'static, app::Message> {
+    iced::widget::row![
+        text(register.name.to_owned())
+            .font(fonts::monospace())
+            .size(REG)
+            .color(palette::MUTED),
+        text(hex(register.value, register.bits))
+            .font(fonts::monospace())
+            .size(20.0)
+            .color(palette::PURPLE),
+    ]
+    .spacing(s())
+    .align_y(Vertical::Center)
+    .into()
+}
+
+// --- Register pairs ----------------------------------------------------------
+
+fn pairs_block(pairs: &[inspect::RegisterPair]) -> Element<'static, app::Message> {
+    let mut stack = column![].spacing(s());
+    for pair in pairs {
+        stack = stack.push(pair_row(pair));
+    }
+    stack.into()
+}
+
+fn pair_row(pair: &inspect::RegisterPair) -> Element<'static, app::Message> {
+    let combined = compound(pair);
+    let line = if let inspect::ValueStyle::Flags(names) = pair.low.style {
+        // The low half is a flags register (SM83 `f`): its slot stays empty and
+        // the flags render as chips beside the combined value.
+        iced::widget::row![
+            container(register8(&pair.high)).width(Length::Fixed(REG8_WIDTH)),
+            container("").width(Length::Fixed(REG8_WIDTH)),
+            combined,
+            flag_chips(pair.low.value, names),
+        ]
+    } else {
+        iced::widget::row![
+            container(register8(&pair.high)).width(Length::Fixed(REG8_WIDTH)),
+            container(register8(&pair.low)).width(Length::Fixed(REG8_WIDTH)),
+            combined,
+        ]
+    };
+    line.spacing(s()).align_y(Vertical::Center).into()
+}
+
+fn register8(register: &inspect::Register) -> Element<'static, app::Message> {
+    iced::widget::row![
+        text(register.name.to_owned())
+            .font(fonts::monospace())
+            .size(REG)
+            .color(palette::MUTED),
+        text(hex(register.value, register.bits))
+            .font(fonts::monospace())
+            .size(REG)
+            .color(palette::TEXT),
+    ]
+    .spacing(s())
+    .into()
+}
+
+fn compound(pair: &inspect::RegisterPair) -> Element<'static, app::Message> {
+    let name = format!("{}{}", pair.high.name, pair.low.name);
+    let bits = pair.high.bits + pair.low.bits;
+    iced::widget::row![
+        text(name)
+            .font(fonts::monospace())
+            .size(REG)
+            .color(palette::OVERLAY0),
+        text(hex(pair.combined(), bits))
+            .font(fonts::monospace())
+            .size(REG)
+            .color(palette::OVERLAY0),
+    ]
+    .spacing(s())
+    .into()
+}
+
+// --- Flat register file ------------------------------------------------------
+
+fn registers_block(group: &inspect::RegisterGroup) -> Element<'static, app::Message> {
+    let mut stack = column![].spacing(s());
+    for register in &group.registers {
+        stack = stack.push(register_row(register));
+    }
+    stack.into()
+}
+
+fn register_row(register: &inspect::Register) -> Element<'static, app::Message> {
+    let value: Element<'static, app::Message> = match register.style {
+        inspect::ValueStyle::Flags(names) => flag_chips(register.value, names),
+        _ => text(scalar(register))
+            .font(fonts::monospace())
+            .size(REG)
+            .color(palette::TEXT)
+            .into(),
+    };
+    iced::widget::row![
+        container(
+            text(register.name.to_owned())
+                .font(fonts::monospace())
+                .size(REG)
+                .color(palette::MUTED),
+        )
+        .width(Length::Fixed(REG8_WIDTH)),
+        value,
+    ]
+    .spacing(s())
+    .align_y(Vertical::Center)
+    .into()
+}
+
+// --- Flags -------------------------------------------------------------------
+
+fn flag_chips(value: u32, names: &'static [inspect::FlagName]) -> Element<'static, app::Message> {
+    let mut chips = iced::widget::row![].spacing(2.0);
+    for flag in names {
+        chips = chips.push(flag_char(flag.name, value & (1 << flag.bit) != 0));
+    }
+    chips.into()
+}
+
+fn flag_char(name: &str, set: bool) -> Element<'static, app::Message> {
+    let (display, color) = if set {
+        (name.to_uppercase(), palette::TEXT)
+    } else {
+        ("\u{00B7}".to_owned(), palette::SURFACE2) // middle dot
+    };
+    text(display)
+        .font(fonts::monospace())
+        .size(REG)
+        .color(color)
+        .into()
+}
+
+// --- Label/value rows --------------------------------------------------------
+
+/// Adjacent short rows coalesce onto one line to keep the video block as dense
+/// as the hand-built sidebar was; a long value takes its own line.
+fn rows_block(rows: &[inspect::Row]) -> Element<'static, app::Message> {
+    let mut lines = column![].spacing(xs());
+    for line in pack_rows(rows) {
+        let mut packed = iced::widget::row![].spacing(s()).align_y(Vertical::Center);
+        for row in line {
+            packed = packed.push(row_item(row));
+        }
+        lines = lines.push(packed);
+    }
+    lines.into()
+}
+
+fn pack_rows(rows: &[inspect::Row]) -> Vec<Vec<&inspect::Row>> {
+    let mut lines = Vec::new();
+    let mut line: Vec<&inspect::Row> = Vec::new();
+    let mut width = 0.0;
+    for row in rows {
+        let item = estimated_width(row);
+        let added = if line.is_empty() { item } else { item + s() };
+        if !line.is_empty() && width + added > ROW_BUDGET {
+            lines.push(std::mem::take(&mut line));
+            width = item;
+        } else {
+            width += added;
+        }
+        line.push(row);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
+fn estimated_width(row: &inspect::Row) -> f32 {
+    let text = 8.0 * (row.label.len() + row.value.len()) as f32;
+    let pip = if row.active.is_some() { 16.0 } else { 0.0 };
+    20.0 + text + pip
+}
+
+fn row_item(row: &inspect::Row) -> Element<'static, app::Message> {
+    match row.active {
+        Some(active) => iced::widget::row![
+            pip(active, palette::GREEN),
+            text(row.label.clone())
+                .font(fonts::monospace())
+                .size(LABEL)
+                .color(if active {
+                    palette::TEXT
+                } else {
+                    palette::SURFACE2
+                }),
+        ]
+        .spacing(xs())
+        .align_y(Vertical::Center)
+        .into(),
+        None => iced::widget::row![
+            text(row.label.clone())
+                .font(fonts::monospace())
+                .size(LABEL)
+                .color(palette::MUTED),
+            text(row.value.clone())
+                .font(fonts::monospace())
+                .size(REG)
+                .color(palette::TEXT),
+        ]
+        .spacing(xs())
+        .align_y(Vertical::Center)
+        .into(),
+    }
+}
+
+// --- Bit table ---------------------------------------------------------------
+
+fn bit_table(table: &inspect::BitTable) -> Element<'static, app::Message> {
+    let mut columns = iced::widget::row![].spacing(xs()).align_y(Vertical::Top);
+
+    // Leftmost column: the corner flag over each row's name.
+    let corner: Element<'static, app::Message> = match &table.corner {
+        Some(flag) => flag_badge(flag.name, flag.active),
+        None => cell(Space::new().into()),
+    };
+    let mut labels = column![corner].spacing(s());
+    for row in &table.rows {
+        labels = labels.push(cell(
+            text(row.name.to_owned())
+                .font(fonts::monospace())
+                .size(LABEL)
+                .color(palette::MUTED)
+                .into(),
+        ));
+    }
+    columns = columns.push(labels);
+
+    for (index, name) in table.columns.iter().enumerate() {
+        let mut col = column![cell(
+            text((*name).to_owned())
+                .font(fonts::monospace())
+                .size(HEADER)
+                .color(palette::MUTED)
+                .into(),
+        )]
+        .spacing(s())
+        .align_x(iced::alignment::Horizontal::Center);
+        for row in &table.rows {
+            let lit = row.bits.get(index).copied().unwrap_or(false);
+            col = col.push(cell(pip(lit, palette::GREEN)));
+        }
+        columns = columns.push(col);
+    }
+
+    columns.into()
+}
+
+/// A fixed-height table cell so headers, names, and pips align across columns.
+fn cell(content: Element<'static, app::Message>) -> Element<'static, app::Message> {
+    container(content)
+        .height(Length::Fixed(CELL_HEIGHT))
+        .center_y(Length::Fixed(CELL_HEIGHT))
+        .into()
+}
+
+fn flag_badge(name: &str, active: bool) -> Element<'static, app::Message> {
+    let text_color = if active {
+        palette::GREEN
+    } else {
+        palette::SURFACE2
+    };
+    let bg = active.then(|| {
+        Background::Color(Color::from_rgba(
+            0xa6 as f32 / 255.0,
+            0xe3 as f32 / 255.0,
+            0xa1 as f32 / 255.0,
+            0.12,
+        ))
+    });
+
+    container(
+        text(name.to_owned())
+            .font(fonts::monospace())
+            .size(LABEL)
+            .color(text_color),
+    )
+    .padding([2.0, 4.0])
+    .center_y(Length::Fixed(CELL_HEIGHT))
+    .style(move |_: &iced::Theme| container::Style {
+        background: bg,
+        border: Border::default().rounded(4.0),
+        ..Default::default()
+    })
+    .into()
+}
+
+// --- Palette swatches --------------------------------------------------------
+
+fn swatches_block(
+    rows: &[inspect::SwatchRow],
+    colors: Option<&ConsoleColors>,
+) -> Element<'static, app::Message> {
+    let mut stack = column![].spacing(xs());
+    for row in rows {
+        stack = stack.push(swatch_row(row, colors));
+    }
+    stack.into()
+}
+
+fn swatch_row(
+    row: &inspect::SwatchRow,
+    colors: Option<&ConsoleColors>,
+) -> Element<'static, app::Message> {
+    match row {
+        inspect::SwatchRow::Shades { label, packed } => {
+            let palette = match colors {
+                Some(ConsoleColors::Dmg { palette }) => *palette,
+                _ => Palette::CLASSIC,
+            };
+            let map = PaletteMap(*packed);
+            let swatches: Vec<Color> = (0..4)
+                .map(|i| iced_color(map.color(PaletteIndex(i), &palette)))
+                .collect();
+            swatch_line(label, swatches, Some(format!("{:02X}", packed)))
+        }
+        inspect::SwatchRow::Colors { label, colors } => {
+            let swatches: Vec<Color> = colors.iter().map(|c| iced_color(*c)).collect();
+            swatch_line(label, swatches, None)
+        }
+    }
+}
+
+fn swatch_line(
+    label: &str,
+    swatches: Vec<Color>,
+    trailing: Option<String>,
+) -> Element<'static, app::Message> {
+    let mut cells = iced::widget::row![].spacing(2.0);
+    for color in swatches {
+        cells = cells.push(color_swatch(color));
+    }
+
+    let mut line = iced::widget::row![
+        container(
+            text(label.to_owned())
+                .font(fonts::monospace())
+                .size(LABEL)
+                .color(palette::MUTED),
+        )
+        .width(Length::Fixed(SWATCH_LABEL_WIDTH)),
+        cells,
+    ]
+    .spacing(s())
+    .align_y(Vertical::Center);
+
+    if let Some(trailing) = trailing {
+        line = line.push(
+            text(trailing)
+                .font(fonts::monospace())
+                .size(LABEL)
+                .color(palette::OVERLAY0),
+        );
+    }
+
+    line.into()
+}
+
+fn color_swatch(color: Color) -> Element<'static, app::Message> {
+    container(Space::new())
+        .width(14.0)
+        .height(14.0)
+        .style(move |_: &iced::Theme| container::Style {
+            background: Some(Background::Color(color)),
+            border: Border::default()
+                .rounded(2.0)
+                .width(1.0)
+                .color(Color::from_rgba(1.0, 1.0, 1.0, 0.1)),
+            ..Default::default()
+        })
+        .into()
+}
+
+// --- Shared widgets ----------------------------------------------------------
+
+/// A small round activity indicator: filled when active, hollow when not.
+pub fn pip(active: bool, active_color: Color) -> Element<'static, app::Message> {
+    let (bg, border_color) = if active {
+        (Some(Background::Color(active_color)), active_color)
+    } else {
+        (None, palette::SURFACE2)
+    };
+
+    container(Space::new())
+        .width(10.0)
+        .height(10.0)
+        .style(move |_: &iced::Theme| container::Style {
+            background: bg,
+            border: Border::default()
+                .rounded(5.0)
+                .width(1.5)
+                .color(border_color),
+            ..Default::default()
+        })
+        .into()
+}
+
+fn hex(value: u32, bits: u8) -> String {
+    let width = (bits as usize).div_ceil(4).max(1);
+    format!("{value:0width$X}")
+}
+
+fn scalar(register: &inspect::Register) -> String {
+    match register.style {
+        inspect::ValueStyle::Hex => hex(register.value, register.bits),
+        inspect::ValueStyle::Dec => register.value.to_string(),
+        inspect::ValueStyle::Bool => if register.value != 0 { "true" } else { "false" }.to_owned(),
+        inspect::ValueStyle::Flags(_) => String::new(),
+    }
+}
+
+// --- Styles ------------------------------------------------------------------
 
 fn section_style(theme: &iced::Theme) -> container::Style {
     let pal = theme.extended_palette();
@@ -367,16 +704,6 @@ fn section_header_style(_theme: &iced::Theme) -> container::Style {
     }
 }
 
-pub(crate) fn mode_display(mode: missingno_gb::ppu::rendering::Mode) -> (&'static str, Color) {
-    use missingno_gb::ppu::rendering::Mode;
-    match mode {
-        Mode::HorizontalBlank => ("HBlank", palette::BLUE),
-        Mode::VerticalBlank => ("VBlank", palette::GREEN),
-        Mode::OamScan => ("OAM Scan", palette::YELLOW),
-        Mode::Drawing => ("Drawing", palette::PEACH),
-    }
-}
-
 pub fn tooltip_style(theme: &iced::Theme) -> container::Style {
     let palette = theme.extended_palette();
     container::Style {
@@ -387,152 +714,4 @@ pub fn tooltip_style(theme: &iced::Theme) -> container::Style {
             .color(palette.background.strong.color),
         ..Default::default()
     }
-}
-
-// --- Pointers + halt ---
-
-fn pointers(cpu: &dyn CpuSource) -> Element<'_, app::Message> {
-    let halted = cpu.halted();
-    let pc_color = if halted {
-        palette::OVERLAY0
-    } else {
-        palette::PURPLE
-    };
-
-    let pc_display: Element<'_, app::Message> = row![
-        text("pc")
-            .font(fonts::monospace())
-            .size(REG)
-            .color(palette::MUTED),
-        text(format!("{:04X}", cpu.ir_address()))
-            .font(fonts::monospace())
-            .size(20.0)
-            .color(pc_color),
-    ]
-    .spacing(s())
-    .align_y(Vertical::Center)
-    .into();
-
-    let pc_element: Element<'_, app::Message> = if halted {
-        tooltip(
-            pc_display,
-            container(text("halted").font(fonts::monospace()).size(REG)).padding([2.0, s()]),
-            tooltip::Position::Bottom,
-        )
-        .style(tooltip_style)
-        .into()
-    } else {
-        pc_display
-    };
-
-    row![
-        pc_element,
-        pointer("sp", format!("{:04X}", cpu.stack_pointer())),
-    ]
-    .spacing(s())
-    .align_y(Vertical::Center)
-    .into()
-}
-
-fn pointer(label: &str, value: String) -> Element<'_, app::Message> {
-    row![
-        text(label)
-            .font(fonts::monospace())
-            .size(REG)
-            .color(palette::MUTED),
-        text(value)
-            .font(fonts::monospace())
-            .size(20.0)
-            .color(palette::PURPLE),
-    ]
-    .spacing(s())
-    .align_y(Vertical::Center)
-    .into()
-}
-
-// --- Registers ---
-
-/// Fixed width for one 8-bit register display ("b 04"), so columns align.
-const REG8_WIDTH: f32 = 48.0;
-
-fn register_a_row(cpu: &dyn CpuSource) -> Element<'_, app::Message> {
-    row![
-        container(register8(cpu, Register8::A)).width(Length::Fixed(REG8_WIDTH)),
-        container("").width(Length::Fixed(REG8_WIDTH)),
-        compound_register(cpu, Register16::Af),
-        flags_display(cpu.flags()),
-    ]
-    .spacing(s())
-    .align_y(Vertical::Center)
-    .into()
-}
-
-fn flags_display(flags: Flags) -> Element<'static, app::Message> {
-    row![
-        flag_char("Z", flags.contains(Flags::ZERO)),
-        flag_char("N", flags.contains(Flags::NEGATIVE)),
-        flag_char("H", flags.contains(Flags::HALF_CARRY)),
-        flag_char("C", flags.contains(Flags::CARRY)),
-    ]
-    .spacing(2.0)
-    .into()
-}
-
-fn flag_char(label: &str, set: bool) -> Element<'_, app::Message> {
-    let (display, color) = if set {
-        (label, palette::TEXT)
-    } else {
-        ("\u{00B7}", palette::SURFACE2) // middle dot
-    };
-    text(display)
-        .font(fonts::monospace())
-        .size(REG)
-        .color(color)
-        .into()
-}
-
-fn register_pair_row(
-    cpu: &dyn CpuSource,
-    reg1: Register8,
-    reg2: Register8,
-    pair: Register16,
-) -> Element<'_, app::Message> {
-    row![
-        container(register8(cpu, reg1)).width(Length::Fixed(REG8_WIDTH)),
-        container(register8(cpu, reg2)).width(Length::Fixed(REG8_WIDTH)),
-        compound_register(cpu, pair),
-    ]
-    .spacing(s())
-    .align_y(Vertical::Center)
-    .into()
-}
-
-fn register8(cpu: &dyn CpuSource, register: Register8) -> Element<'_, app::Message> {
-    row![
-        text(register.to_string())
-            .font(fonts::monospace())
-            .size(REG)
-            .color(palette::MUTED),
-        text(format!("{:02X}", cpu.get_register8(register)))
-            .font(fonts::monospace())
-            .size(REG)
-            .color(palette::TEXT),
-    ]
-    .spacing(s())
-    .into()
-}
-
-fn compound_register(cpu: &dyn CpuSource, register: Register16) -> Element<'_, app::Message> {
-    row![
-        text(register.to_string())
-            .font(fonts::monospace())
-            .size(REG)
-            .color(palette::OVERLAY0),
-        text(format!("{:04X}", cpu.get_register16(register)))
-            .font(fonts::monospace())
-            .size(REG)
-            .color(palette::OVERLAY0),
-    ]
-    .spacing(s())
-    .into()
 }

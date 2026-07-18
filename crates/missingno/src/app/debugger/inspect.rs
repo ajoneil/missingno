@@ -7,7 +7,6 @@
 use std::any::Any;
 
 use missingno_gb::debugger::instructions::ReadInstructionMemory;
-use missingno_gb::interrupts;
 use missingno_gb::ppu::{memory::VramView, types::palette::Palette};
 use missingno_gb::{Console, Dmg, GameBoy, Model};
 use missingno_gbc::{Cgb, GameBoyColor, cram_palettes};
@@ -20,7 +19,7 @@ pub use missingno_core::system::DebugView;
 pub use missingno_gb::debugger::inspection::{
     AudioView, CpuSource, EnvelopeChannelView, GbSnapshot, PpuSource, WaveChannelView,
 };
-pub use missingno_gbc::{CgbSnapshot, CgbView};
+pub use missingno_gbc::CgbSnapshot;
 
 // --- Model colour hooks ------------------------------------------------------
 
@@ -29,7 +28,6 @@ pub use missingno_gbc::{CgbSnapshot, CgbView};
 /// stays frontend-side.
 pub trait GbColors: Model {
     fn colors(console: &Console<Self>, user_palette: &Palette) -> ConsoleColors;
-    fn cgb(console: &Console<Self>) -> Option<CgbView>;
 }
 
 impl GbColors for Dmg {
@@ -42,10 +40,6 @@ impl GbColors for Dmg {
             },
         }
     }
-
-    fn cgb(_console: &Console<Self>) -> Option<CgbView> {
-        None
-    }
 }
 
 impl GbColors for Cgb {
@@ -55,10 +49,6 @@ impl GbColors for Cgb {
             background: cram_palettes(|palette, index| ppu.bg_color(palette, index)),
             objects: cram_palettes(|palette, index| ppu.obj_color(palette, index)),
         }
-    }
-
-    fn cgb(console: &Console<Self>) -> Option<CgbView> {
-        Some(CgbView::capture(console))
     }
 }
 
@@ -72,11 +62,8 @@ pub trait InspectSource {
     fn ppu(&self) -> &dyn PpuSource;
     fn vram(&self) -> &dyn VramView;
     fn audio(&self) -> AudioView;
-    fn interrupts(&self) -> interrupts::Registers;
     fn instruction_memory(&self) -> &dyn ReadInstructionMemory;
     fn colors(&self, user_palette: &Palette) -> ConsoleColors;
-    /// CGB register state for the sidebar; `None` on DMG.
-    fn cgb(&self) -> Option<CgbView>;
     /// The 16KB ROM bank mapped at 0x4000–0x7FFF, for symbol resolution.
     fn switchable_rom_bank(&self) -> Option<u16>;
 }
@@ -94,17 +81,11 @@ impl<M: GbColors> InspectSource for Console<M> {
     fn audio(&self) -> AudioView {
         AudioView::capture(Console::audio(self))
     }
-    fn interrupts(&self) -> interrupts::Registers {
-        Console::interrupts(self).clone()
-    }
     fn instruction_memory(&self) -> &dyn ReadInstructionMemory {
         self
     }
     fn colors(&self, user_palette: &Palette) -> ConsoleColors {
         M::colors(self, user_palette)
-    }
-    fn cgb(&self) -> Option<CgbView> {
-        M::cgb(self)
     }
     fn switchable_rom_bank(&self) -> Option<u16> {
         self.cartridge().switchable_rom_bank()
@@ -124,17 +105,11 @@ impl InspectSource for GbSnapshot {
     fn audio(&self) -> AudioView {
         self.audio.clone()
     }
-    fn interrupts(&self) -> interrupts::Registers {
-        self.interrupts.clone()
-    }
     fn instruction_memory(&self) -> &dyn ReadInstructionMemory {
         &self.memory
     }
     fn colors(&self, user_palette: &Palette) -> ConsoleColors {
         colors_from_snapshot(&self.colors, user_palette)
-    }
-    fn cgb(&self) -> Option<CgbView> {
-        None
     }
     fn switchable_rom_bank(&self) -> Option<u16> {
         self.switchable_rom_bank
@@ -154,17 +129,11 @@ impl InspectSource for CgbSnapshot {
     fn audio(&self) -> AudioView {
         self.base.audio()
     }
-    fn interrupts(&self) -> interrupts::Registers {
-        self.base.interrupts()
-    }
     fn instruction_memory(&self) -> &dyn ReadInstructionMemory {
         self.base.instruction_memory()
     }
     fn colors(&self, user_palette: &Palette) -> ConsoleColors {
         self.base.colors(user_palette)
-    }
-    fn cgb(&self) -> Option<CgbView> {
-        Some(self.cgb.clone())
     }
     fn switchable_rom_bank(&self) -> Option<u16> {
         self.base.switchable_rom_bank()

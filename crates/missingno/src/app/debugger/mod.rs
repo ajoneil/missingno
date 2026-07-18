@@ -31,14 +31,12 @@ use sidebar::Sidebar;
 mod audio;
 pub mod inspect;
 mod instructions;
-mod interrupts;
 mod layout;
 mod memory;
 #[cfg(feature = "nes")]
 pub(crate) mod nes;
 pub mod panes;
 mod ppu;
-mod registers;
 mod screen;
 pub(crate) mod sidebar;
 #[cfg(feature = "sms")]
@@ -647,7 +645,6 @@ impl Debugger {
             }),
             _ => None,
         };
-        let registers = core.register_groups();
         let readout = self
             .panes
             .memory_selection()
@@ -656,7 +653,6 @@ impl Debugger {
             gb,
             family: family_any,
             breakpoints: &self.breakpoints,
-            registers: &registers,
             memory: readout.as_ref().map(memory::MemoryPaneData::paused),
         };
 
@@ -679,16 +675,7 @@ impl Debugger {
             self.panes.view(Some(ctx))
         };
 
-        // Non-GB families summarise through the same CPU/video status the
-        // running view uses; their panes carry the detail.
-        let status;
-        let sidebar = match (gb_source, &colors) {
-            (Some(source), Some(colors)) => self.sidebar.view(source, colors),
-            _ => {
-                status = core.running_status(self.frame);
-                self.sidebar.running_summary(Some(&status))
-            }
-        };
+        let sidebar = self.sidebar.view(core.sidebar_sections(), colors.as_ref());
         row![sidebar, center, self.icon_rail(),]
             .spacing(s())
             .padding(s())
@@ -725,15 +712,12 @@ impl Debugger {
             self.running_center(colors.as_ref())
         };
 
-        let sidebar = match (
-            self.last_snapshot
-                .as_deref()
-                .and_then(|s| inspect::as_inspect_source(s.family_state())),
-            &colors,
-        ) {
-            (Some(source), Some(colors)) => self.sidebar.view(source, colors),
-            // Non-GB families summarise from the per-frame status.
-            _ => self.sidebar.running_summary(self.last_status.as_ref()),
+        let sidebar = match self.last_snapshot.as_deref() {
+            Some(snapshot) => self
+                .sidebar
+                .view(snapshot.sidebar_sections(), colors.as_ref()),
+            // Before the first snapshot lands, summarise from the per-frame status.
+            None => self.sidebar.running_summary(self.last_status.as_ref()),
         };
 
         row![sidebar, center, self.icon_rail(),]
@@ -768,12 +752,10 @@ impl Debugger {
                     })
             }
         });
-        let registers = snapshot.register_groups();
         self.panes.view(Some(PaneContext {
             gb,
             family: family_any,
             breakpoints: &self.breakpoints,
-            registers: &registers,
             memory: snapshot
                 .memory_window()
                 .map(memory::MemoryPaneData::running),
