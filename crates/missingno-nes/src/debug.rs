@@ -245,6 +245,14 @@ impl SteppingSystem for NesSystem {
         nes.cpu.pc
     }
 
+    fn peek(nes: &Nes, address: u16) -> u8 {
+        nes.peek(address)
+    }
+
+    fn instruction_set() -> Option<&'static dyn missingno_core::isa::InstructionSet> {
+        Some(&missingno_6502::isa::Mos6502)
+    }
+
     fn step_instruction(nes: &mut Nes) {
         nes.step_instruction();
     }

@@ -193,6 +193,10 @@ impl SteppingSystem for SmsSystem {
         sms.cpu.pc
     }
 
+    fn peek(sms: &Sms, address: u16) -> u8 {
+        sms.peek(address)
+    }
+
     fn step_instruction(sms: &mut Sms) {
         sms.step_instruction();
     }

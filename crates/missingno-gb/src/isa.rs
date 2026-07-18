@@ -1,7 +1,7 @@
 //! SM83 as a debugger instruction set: mnemonics and lengths come from the
 //! structural decoder, flow is read off the decoded jump category.
 
-use missingno_core::isa::{Flow, Instruction as IsaInstruction, InstructionSet};
+use missingno_core::isa::{Flow, Instruction as IsaInstruction, InstructionSet, OperandClass};
 
 use crate::cpu::instructions::jump::{Jump, Location};
 use crate::cpu::instructions::{Address, Instruction, instruction_length};
@@ -38,6 +38,29 @@ impl InstructionSet for Sm83 {
             flow,
         }
     }
+
+    fn classify_operand(&self, operand: &str) -> OperandClass {
+        let operand = operand.trim();
+        if operand.starts_with('[') || operand.starts_with('(') {
+            return OperandClass::Memory;
+        }
+        // "c" is both the carry register and the carry condition; a conditional
+        // jump's condition always lands as the first operand, so a standalone
+        // "c" reads as a condition here.
+        if matches!(operand, "nz" | "z" | "nc" | "c") {
+            return OperandClass::Condition;
+        }
+        if matches!(
+            operand,
+            "a" | "b" | "d" | "e" | "h" | "l" | "af" | "bc" | "de" | "hl" | "sp"
+        ) {
+            return OperandClass::Register;
+        }
+        if operand.starts_with('$') || operand.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            return OperandClass::Immediate;
+        }
+        OperandClass::Plain
+    }
 }
 
 fn jump_flow(address: u16, jump: &Jump) -> Flow {
@@ -67,5 +90,27 @@ fn location_target(address: u16, location: &Location) -> Option<u32> {
             Some(address.wrapping_add(2).wrapping_add(*offset as u16) as u32)
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn class(operand: &str) -> OperandClass {
+        Sm83.classify_operand(operand)
+    }
+
+    #[test]
+    fn classifies_the_sm83_lexicon() {
+        assert_eq!(class("hl"), OperandClass::Register);
+        assert_eq!(class("a"), OperandClass::Register);
+        assert_eq!(class("sp"), OperandClass::Register);
+        // "c" resolves as a condition, matching the disassembly tokenizer.
+        assert_eq!(class("c"), OperandClass::Condition);
+        assert_eq!(class("nz"), OperandClass::Condition);
+        assert_eq!(class("[hl]"), OperandClass::Memory);
+        assert_eq!(class("$3F"), OperandClass::Immediate);
+        assert_eq!(class("42"), OperandClass::Immediate);
     }
 }

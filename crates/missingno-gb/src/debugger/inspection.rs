@@ -888,6 +888,24 @@ impl InspectSnapshot for GbSnapshot {
     fn memory_window(&self) -> Option<&inspect::MemoryWindow> {
         Some(&self.memory)
     }
+    fn pc(&self) -> Option<u32> {
+        Some(self.cpu.ir_address as u32)
+    }
+    fn symbols(&self) -> Option<&SymbolTable> {
+        Some(&self.symbols)
+    }
+    fn cdl_window(&self) -> Option<&CdlWindow> {
+        Some(&self.cdl)
+    }
+    fn bank_for(&self, address: u32) -> Option<u16> {
+        match address {
+            0x4000..=0x7FFF => self.switchable_rom_bank,
+            _ => None,
+        }
+    }
+    fn instruction_set(&self) -> Option<&dyn missingno_core::isa::InstructionSet> {
+        Some(&crate::isa::Sm83)
+    }
 }
 
 #[cfg(test)]

@@ -72,8 +72,8 @@ pub enum EmuCommand {
     /// can hold the process open until teardown completes.
     Shutdown,
     SetControl(ControlId, ControlInput),
-    SetBreakpoint(u16),
-    ClearBreakpoint(u16),
+    SetBreakpoint(u32),
+    ClearBreakpoint(u32),
     AddWatchpoint(Watch),
     RemoveWatchpoint(Watch),
     RequestScreenshot {
@@ -467,17 +467,17 @@ impl Payload {
         }
     }
 
-    fn set_breakpoint(&mut self, address: u16) {
+    fn set_breakpoint(&mut self, address: u32) {
         match self {
             Self::Console(_) => {}
-            Self::Debugger(payload) => payload.core.set_breakpoint(address as u32),
+            Self::Debugger(payload) => payload.core.set_breakpoint(address),
         }
     }
 
-    fn clear_breakpoint(&mut self, address: u16) {
+    fn clear_breakpoint(&mut self, address: u32) {
         match self {
             Self::Console(_) => {}
-            Self::Debugger(payload) => payload.core.clear_breakpoint(address as u32),
+            Self::Debugger(payload) => payload.core.clear_breakpoint(address),
         }
     }
 

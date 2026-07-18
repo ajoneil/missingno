@@ -15,6 +15,7 @@ use crate::app::{
     debugger::{
         self,
         audio::AudioPane,
+        disassembly::{DisasmPaneData, DisassemblyPane},
         inspect::GbPaneContext,
         instructions::InstructionsPane,
         layout,
@@ -78,10 +79,13 @@ pub struct PaneContext<'b> {
     /// The active family's typed inspection state; family panes downcast it
     /// back out with [`PaneContext::family_state`].
     pub family: &'b dyn std::any::Any,
-    pub breakpoints: &'b BTreeSet<u16>,
+    pub breakpoints: &'b BTreeSet<u32>,
     /// The memory viewer's visible bytes for its current selection, copied at
     /// context-build time; `None` when no memory pane is shown.
     pub memory: Option<MemoryPaneData<'b>>,
+    /// The disassembly rows built for the current PC; `None` when no
+    /// disassembly pane is shown or the running snapshot can't fuel the walk.
+    pub disasm: Option<DisasmPaneData<'b>>,
 }
 
 impl<'b> PaneContext<'b> {
@@ -189,6 +193,7 @@ pub static NES_PANE_REGISTRY: &[PaneDescriptor] = &[
         construct: || Box::new(ScreenPane::new()),
     },
     MEMORY_DESCRIPTOR,
+    DISASSEMBLY_DESCRIPTOR,
     PaneDescriptor {
         kind: DebuggerPane::NesCpu,
         icon: Icon::FileText,
@@ -220,6 +225,7 @@ pub static SMS_PANE_REGISTRY: &[PaneDescriptor] = &[
         construct: || Box::new(ScreenPane::new()),
     },
     MEMORY_DESCRIPTOR,
+    DISASSEMBLY_DESCRIPTOR,
     PaneDescriptor {
         kind: DebuggerPane::SmsCpu,
         icon: Icon::FileText,
@@ -242,6 +248,7 @@ pub static VCS_PANE_REGISTRY: &[PaneDescriptor] = &[
         construct: || Box::new(ScreenPane::new()),
     },
     MEMORY_DESCRIPTOR,
+    DISASSEMBLY_DESCRIPTOR,
     PaneDescriptor {
         kind: DebuggerPane::VcsCpu,
         icon: Icon::FileText,
@@ -265,6 +272,15 @@ const MEMORY_DESCRIPTOR: PaneDescriptor = PaneDescriptor {
     construct: || Box::new(MemoryPane::new()),
 };
 
+/// The generic disassembly, registered for every family — it walks and decodes
+/// through the seam's instruction set, or shows raw bytes where there is none.
+const DISASSEMBLY_DESCRIPTOR: PaneDescriptor = PaneDescriptor {
+    kind: DebuggerPane::Disassembly,
+    icon: Icon::FileText,
+    label: "Disassembly",
+    construct: || Box::new(DisassemblyPane::new()),
+};
+
 pub static PANE_REGISTRY: &[PaneDescriptor] = &[
     PaneDescriptor {
         kind: DebuggerPane::Screen,
@@ -273,12 +289,15 @@ pub static PANE_REGISTRY: &[PaneDescriptor] = &[
         construct: || Box::new(ScreenPane::new()),
     },
     MEMORY_DESCRIPTOR,
+    // The Game Boy keeps its hand-built Instructions pane and the generic
+    // Disassembly side by side until the two are confirmed at parity.
     PaneDescriptor {
         kind: DebuggerPane::Instructions,
         icon: Icon::FileText,
         label: "Instructions",
         construct: || Box::new(InstructionsPane::new()),
     },
+    DISASSEMBLY_DESCRIPTOR,
     PaneDescriptor {
         kind: DebuggerPane::Tiles,
         icon: Icon::Grid,
@@ -322,6 +341,7 @@ pub struct DebuggerPanes {
 pub enum DebuggerPane {
     Screen,
     Memory,
+    Disassembly,
     Instructions,
     Tiles,
     TileMap(TileMapId),

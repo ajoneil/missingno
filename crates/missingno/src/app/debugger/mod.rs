@@ -29,6 +29,8 @@ use panes::{DebuggerPanes, PaneContext};
 use sidebar::Sidebar;
 
 mod audio;
+mod disasm_rows;
+mod disassembly;
 pub mod inspect;
 mod instructions;
 mod layout;
@@ -97,8 +99,8 @@ pub enum Message {
     CaptureFrame,
     CaptureFrameTo(std::path::PathBuf),
 
-    SetBreakpoint(u16),
-    ClearBreakpoint(u16),
+    SetBreakpoint(u32),
+    ClearBreakpoint(u32),
     BreakpointInputChanged(String),
     AddBreakpoint,
 
@@ -134,7 +136,8 @@ pub struct Debugger {
     /// registry and layout persistence.
     platform: Platform,
     /// UI copy of the breakpoint set, kept editable while the core is away.
-    breakpoints: BTreeSet<u16>,
+    /// Held as bus addresses; a core masks to its own width.
+    breakpoints: BTreeSet<u32>,
     /// UI copy of the watchpoint list, kept editable while the core is away.
     watchpoints: Vec<Watch>,
     /// Lightweight status published every frame while the core is away; feeds
@@ -261,17 +264,16 @@ impl Debugger {
         let mut core = payload.core;
         // Resync from the UI's set: a breakpoint edit can race the payload's
         // return and get dropped by the idle emu thread.
-        let ui_breakpoints: BTreeSet<u32> = self.breakpoints.iter().map(|&a| a as u32).collect();
         let stale: Vec<u32> = core
             .breakpoints()
-            .difference(&ui_breakpoints)
+            .difference(&self.breakpoints)
             .copied()
             .collect();
         for address in stale {
             core.clear_breakpoint(address);
         }
         for &address in &self.breakpoints {
-            core.set_breakpoint(address as u32);
+            core.set_breakpoint(address);
         }
         let stale: Vec<Watch> = core
             .watches()
@@ -344,10 +346,10 @@ impl Debugger {
         )
     }
 
-    fn set_breakpoint(&mut self, address: u16, emu: Option<&EmuHandle>) {
+    fn set_breakpoint(&mut self, address: u32, emu: Option<&EmuHandle>) {
         self.breakpoints.insert(address);
         match &mut self.debugger {
-            Some(core) => core.set_breakpoint(address as u32),
+            Some(core) => core.set_breakpoint(address),
             None => {
                 if let Some(emu) = emu {
                     emu.send(EmuCommand::SetBreakpoint(address));
@@ -356,10 +358,10 @@ impl Debugger {
         }
     }
 
-    fn clear_breakpoint(&mut self, address: u16, emu: Option<&EmuHandle>) {
+    fn clear_breakpoint(&mut self, address: u32, emu: Option<&EmuHandle>) {
         self.breakpoints.remove(&address);
         match &mut self.debugger {
-            Some(core) => core.clear_breakpoint(address as u32),
+            Some(core) => core.clear_breakpoint(address),
             None => {
                 if let Some(emu) = emu {
                     emu.send(EmuCommand::ClearBreakpoint(address));
@@ -488,7 +490,7 @@ impl Debugger {
             Message::AddBreakpoint => {
                 if self.breakpoint_input.len() == 4 {
                     let address = u16::from_str_radix(&self.breakpoint_input, 16).unwrap();
-                    self.set_breakpoint(address, emu);
+                    self.set_breakpoint(address as u32, emu);
                     self.breakpoint_input.clear();
                 }
                 Task::none()
@@ -649,11 +651,18 @@ impl Debugger {
             .panes
             .memory_selection()
             .map(|selection| memory::build_readout(core.as_ref(), selection));
+        let disasm_readout = self
+            .panes
+            .plane_shown(panes::DebuggerPane::Disassembly)
+            .then(|| disassembly::paused_readout(core.as_ref()));
         let ctx = PaneContext {
             gb,
             family: family_any,
             breakpoints: &self.breakpoints,
             memory: readout.as_ref().map(memory::MemoryPaneData::paused),
+            disasm: disasm_readout
+                .as_ref()
+                .map(disassembly::DisasmPaneData::new),
         };
 
         let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
@@ -752,6 +761,11 @@ impl Debugger {
                     })
             }
         });
+        let disasm_readout = self
+            .panes
+            .plane_shown(panes::DebuggerPane::Disassembly)
+            .then(|| disassembly::running_readout(snapshot))
+            .flatten();
         self.panes.view(Some(PaneContext {
             gb,
             family: family_any,
@@ -759,6 +773,9 @@ impl Debugger {
             memory: snapshot
                 .memory_window()
                 .map(memory::MemoryPaneData::running),
+            disasm: disasm_readout
+                .as_ref()
+                .map(disassembly::DisasmPaneData::new),
         }))
     }
 
@@ -1039,7 +1056,7 @@ fn term_summary(term: &WatchTerm) -> String {
     }
 }
 
-fn breakpoint_row(address: u16) -> Element<'static, app::Message> {
+fn breakpoint_row(address: u32) -> Element<'static, app::Message> {
     container(
         row![
             button(icons::breakpoint_enabled())

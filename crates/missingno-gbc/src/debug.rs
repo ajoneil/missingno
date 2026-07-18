@@ -266,6 +266,21 @@ impl InspectSnapshot for CgbSnapshot {
     fn memory_window(&self) -> Option<&inspect::MemoryWindow> {
         self.base.memory_window()
     }
+    fn pc(&self) -> Option<u32> {
+        self.base.pc()
+    }
+    fn symbols(&self) -> Option<&missingno_core::symbols::SymbolTable> {
+        self.base.symbols()
+    }
+    fn cdl_window(&self) -> Option<&missingno_core::cdl::CdlWindow> {
+        self.base.cdl_window()
+    }
+    fn bank_for(&self, address: u32) -> Option<u16> {
+        self.base.bank_for(address)
+    }
+    fn instruction_set(&self) -> Option<&dyn missingno_core::isa::InstructionSet> {
+        self.base.instruction_set()
+    }
 }
 
 impl ConsoleUi for Cgb {

@@ -376,6 +376,13 @@ where
         Some(self.core.instruction_set())
     }
 
+    fn bank_for(&self, address: u32) -> Option<u16> {
+        match address {
+            0x4000..=0x7FFF => self.core.game_boy().cartridge().switchable_rom_bank(),
+            _ => None,
+        }
+    }
+
     fn watchables(&self) -> &'static [inspect::Watchable] {
         self.core.watchables()
     }

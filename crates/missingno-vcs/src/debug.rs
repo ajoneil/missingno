@@ -634,14 +634,28 @@ fn riot_section(state: &VcsInspectState) -> inspect::Section {
     }
 }
 
+/// Bytes captured before the program counter, and the total span; the
+/// remainder ahead covers the forward disassembly. The 6507 sees a 13-bit bus,
+/// but the program counter and these reads wrap in the 16-bit space the peek
+/// mirrors into.
+const WINDOW_BEHIND: u16 = 128;
+const WINDOW_LEN: u16 = 512;
+
 /// The per-frame snapshot for the running view.
 pub struct VcsSnapshot {
     pub state: VcsInspectState,
+    memory: inspect::MemoryWindow,
 }
 
 impl VcsSnapshot {
     pub fn new(state: VcsInspectState) -> Self {
-        VcsSnapshot { state }
+        VcsSnapshot {
+            state,
+            memory: inspect::MemoryWindow {
+                base: 0,
+                bytes: Vec::new(),
+            },
+        }
     }
 }
 
@@ -658,6 +672,15 @@ impl InspectSnapshot for VcsSnapshot {
     }
     fn sidebar_sections(&self) -> Vec<inspect::Section> {
         vcs_sidebar_sections(&self.state)
+    }
+    fn memory_window(&self) -> Option<&inspect::MemoryWindow> {
+        Some(&self.memory)
+    }
+    fn pc(&self) -> Option<u32> {
+        Some(self.state.pc as u32)
+    }
+    fn instruction_set(&self) -> Option<&dyn InstructionSet> {
+        Some(&missingno_6502::Mos6502)
     }
 }
 
@@ -858,7 +881,17 @@ impl SystemDebugger for VcsDebugger {
     fn snapshot(&self, frame: u64) -> DebugView {
         let mut state = self.inspect.clone();
         state.frame = frame;
-        Box::new(VcsSnapshot::new(state))
+        let base = state.pc.wrapping_sub(WINDOW_BEHIND);
+        let bytes = (0..WINDOW_LEN)
+            .map(|i| self.core.peek(base.wrapping_add(i) as u32))
+            .collect();
+        Box::new(VcsSnapshot {
+            state,
+            memory: inspect::MemoryWindow {
+                base: base as u32,
+                bytes,
+            },
+        })
     }
 
     fn running_status(&self, frame: u64) -> RunningStatus {

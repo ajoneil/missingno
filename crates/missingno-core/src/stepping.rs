@@ -4,16 +4,24 @@
 //! [`SteppingSystem`] as a flat list of hooks; [`SteppingConsole`] and
 //! [`SteppingDebugger`] carry the seam's control flow once.
 
+use std::any::Any;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
 use crate::TvStandard;
-use crate::inspect::{RegisterGroup, Section};
+use crate::inspect::{MemoryWindow, RegisterGroup, Section};
+use crate::isa::InstructionSet;
 use crate::system::{
-    ControlId, ControlInput, DebugView, FrameOutcome, RunningStatus, StepOutcome, SystemConsole,
-    SystemDebugger,
+    ControlId, ControlInput, DebugView, FrameOutcome, InspectSnapshot, RunningStatus, StepOutcome,
+    SystemConsole, SystemDebugger,
 };
 use crate::video::{Frame, IndexedFrame, VideoOut};
+
+/// Bytes captured before the program counter — enough for the disassembly's
+/// backward sweep — and the total span, its remainder covering the forward
+/// window. Both fit inside the 16-bit address space these families wrap in.
+const WINDOW_BEHIND: u16 = 128;
+const WINDOW_LEN: u16 = 512;
 
 pub trait SteppingSystem: 'static {
     type Core: Send + 'static;
@@ -30,6 +38,14 @@ pub trait SteppingSystem: 'static {
     /// carry. These families raster NTSC-timed frames.
     const PIXEL_ASPECT: f32;
     fn pc(core: &Self::Core) -> u16;
+    /// Side-effect-free read of the CPU address space, for the memory viewer
+    /// and the disassembly.
+    fn peek(core: &Self::Core, address: u16) -> u8;
+    /// The decode-for-display front end, when the family has one. `None`
+    /// leaves the disassembly to fall back to raw bytes.
+    fn instruction_set() -> Option<&'static dyn InstructionSet> {
+        None
+    }
     fn step_instruction(core: &mut Self::Core);
     /// The frame completed since the last take, if any.
     fn take_frame(core: &mut Self::Core) -> Option<Self::Frame>;
@@ -248,6 +264,18 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
         self.breakpoints.iter().map(|&a| a as u32).collect()
     }
 
+    fn peek(&self, address: u32) -> u8 {
+        S::peek(&self.core, address as u16)
+    }
+
+    fn pc(&self) -> u32 {
+        S::pc(&self.core) as u32
+    }
+
+    fn instruction_set(&self) -> Option<&dyn InstructionSet> {
+        S::instruction_set()
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
@@ -272,7 +300,20 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
     }
 
     fn snapshot(&self, frame: u64) -> DebugView {
-        S::snapshot(&self.inspect, frame)
+        let pc = S::pc(&self.core);
+        let base = pc.wrapping_sub(WINDOW_BEHIND);
+        let bytes = (0..WINDOW_LEN)
+            .map(|i| S::peek(&self.core, base.wrapping_add(i)))
+            .collect();
+        Box::new(SteppingSnapshot {
+            inner: S::snapshot(&self.inspect, frame),
+            pc,
+            memory: MemoryWindow {
+                base: base as u32,
+                bytes,
+            },
+            instruction_set: S::instruction_set(),
+        })
     }
 
     fn running_status(&self, frame: u64) -> RunningStatus {
@@ -293,5 +334,40 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
             title: self.title,
             last_frame: self.last_frame,
         })
+    }
+}
+
+/// Wraps a family's per-frame snapshot with the shared running-view fuel the
+/// stepping seam captures generically: the program counter, a PC-anchored
+/// memory window, and the instruction set. The family's own state stays
+/// reachable through `family_state` for its typed panes.
+struct SteppingSnapshot {
+    inner: DebugView,
+    pc: u16,
+    memory: MemoryWindow,
+    instruction_set: Option<&'static dyn InstructionSet>,
+}
+
+impl InspectSnapshot for SteppingSnapshot {
+    fn frame(&self) -> u64 {
+        self.inner.frame()
+    }
+    fn family_state(&self) -> &dyn Any {
+        self.inner.family_state()
+    }
+    fn register_groups(&self) -> Vec<RegisterGroup> {
+        self.inner.register_groups()
+    }
+    fn sidebar_sections(&self) -> Vec<Section> {
+        self.inner.sidebar_sections()
+    }
+    fn memory_window(&self) -> Option<&MemoryWindow> {
+        Some(&self.memory)
+    }
+    fn pc(&self) -> Option<u32> {
+        Some(self.pc as u32)
+    }
+    fn instruction_set(&self) -> Option<&dyn InstructionSet> {
+        self.instruction_set
     }
 }

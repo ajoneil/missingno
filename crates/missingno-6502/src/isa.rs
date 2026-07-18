@@ -1,7 +1,7 @@
 //! The 6502 as a debugger instruction set: mnemonics and lengths come from the
 //! disassembler, flow is classified from the decode table.
 
-use missingno_core::isa::{Flow, Instruction, InstructionSet};
+use missingno_core::isa::{Flow, Instruction, InstructionSet, OperandClass};
 
 use crate::decode::{DECODE, Mode, Op};
 use crate::disasm;
@@ -29,6 +29,44 @@ impl InstructionSet for Mos6502 {
             length: disassembly.length,
             flow: flow(address as u16, operands),
         }
+    }
+
+    fn classify_operand(&self, operand: &str) -> OperandClass {
+        let operand = operand.trim();
+        // `#$44` is a literal; `($44,x)` and friends are indirect memory; a bare
+        // `$1234` is a direct address, unlike the SM83 where `$` reads immediate.
+        if operand.starts_with('#') {
+            OperandClass::Immediate
+        } else if operand.starts_with('(') || operand.starts_with('[') {
+            OperandClass::Memory
+        } else if matches!(operand, "a" | "x" | "y") {
+            OperandClass::Register
+        } else if operand.starts_with('$') {
+            OperandClass::Memory
+        } else {
+            OperandClass::Plain
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn class(operand: &str) -> OperandClass {
+        Mos6502.classify_operand(operand)
+    }
+
+    #[test]
+    fn classifies_the_6502_lexicon() {
+        assert_eq!(class("a"), OperandClass::Register);
+        assert_eq!(class("x"), OperandClass::Register);
+        assert_eq!(class("y"), OperandClass::Register);
+        assert_eq!(class("#$44"), OperandClass::Immediate);
+        assert_eq!(class("$44"), OperandClass::Memory);
+        assert_eq!(class("$1234,x"), OperandClass::Memory);
+        assert_eq!(class("($44,x)"), OperandClass::Memory);
+        assert_eq!(class("($1234)"), OperandClass::Memory);
     }
 }
 

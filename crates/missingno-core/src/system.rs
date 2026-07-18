@@ -110,6 +110,33 @@ pub trait InspectSnapshot: Send {
     fn memory_window(&self) -> Option<&MemoryWindow> {
         None
     }
+    /// Where the program counter stood when this snapshot was taken, so the
+    /// running disassembly can anchor on it. `None` when the family keeps no
+    /// program counter.
+    fn pc(&self) -> Option<u32> {
+        None
+    }
+    /// The debug-symbol table as captured, for the running disassembly's label
+    /// rows. `None` when the family loads no symbols.
+    fn symbols(&self) -> Option<&SymbolTable> {
+        None
+    }
+    /// The code/data-log flags around the captured program counter, for the
+    /// running disassembly's data-byte rows. `None` when the family logs none.
+    fn cdl_window(&self) -> Option<&CdlWindow> {
+        None
+    }
+    /// The bank mapped at `address`, for a bank-prefixed running-disassembly
+    /// row. `None` outside any switchable region, or for a family without one.
+    fn bank_for(&self, _address: u32) -> Option<u16> {
+        None
+    }
+    /// The decode-for-display front end for the running disassembly. `None`
+    /// when the family has no instruction set (its disassembly falls back to
+    /// raw bytes).
+    fn instruction_set(&self) -> Option<&dyn InstructionSet> {
+        None
+    }
 }
 
 /// The model-erased snapshot handed from the emulation thread to the UI.
@@ -240,6 +267,11 @@ pub trait SystemDebugger: Send {
     }
     /// The core's decode-for-display front end, if it has one.
     fn instruction_set(&self) -> Option<&dyn InstructionSet> {
+        None
+    }
+    /// The bank currently mapped at `address`, for a bank-prefixed disassembly
+    /// row. `None` outside any switchable region, or for a core without one.
+    fn bank_for(&self, _address: u32) -> Option<u16> {
         None
     }
 

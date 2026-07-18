@@ -27,8 +27,26 @@ pub enum Flow {
     Return,
 }
 
-/// A CPU family's decode-for-display front end.
-pub trait InstructionSet {
+/// The role a disassembly operand plays, for syntax highlighting. The opcode
+/// is implicit — it is always the mnemonic's first word. A renderer maps each
+/// class to a colour; the class itself names no colour.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum OperandClass {
+    /// A CPU register name (`a`, `hl`, `x`).
+    Register,
+    /// A branch condition (`nz`, `c` after a jump).
+    Condition,
+    /// A literal value (`$3F`, `#$44`, a decimal count).
+    Immediate,
+    /// A memory reference (`[hl]`, `($1234)`, a 6502 address).
+    Memory,
+    /// Anything the ISA does not classify.
+    Plain,
+}
+
+/// A CPU family's decode-for-display front end. Stateless, so a `&'static`
+/// reference can ride a per-vblank snapshot onto the UI thread.
+pub trait InstructionSet: Send + Sync {
     /// Trace-format tag identifying this ISA.
     fn id(&self) -> &'static str;
 
@@ -47,4 +65,21 @@ pub trait InstructionSet {
     /// first. This is decode-for-display — execution decoders are separate by
     /// design.
     fn decode(&self, address: u32, bytes: &[u8]) -> Instruction;
+
+    /// The role one operand plays, for syntax highlighting. The default is a
+    /// lexical guess: bracketed or parenthesised operands are memory, a `$` or
+    /// leading digit is an immediate, anything else is plain. A family with a
+    /// register/condition lexicon overrides this.
+    fn classify_operand(&self, operand: &str) -> OperandClass {
+        let operand = operand.trim();
+        if operand.starts_with('[') || operand.starts_with('(') {
+            OperandClass::Memory
+        } else if operand.starts_with('$')
+            || operand.chars().next().is_some_and(|c| c.is_ascii_digit())
+        {
+            OperandClass::Immediate
+        } else {
+            OperandClass::Plain
+        }
+    }
 }
