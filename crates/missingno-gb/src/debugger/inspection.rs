@@ -386,32 +386,30 @@ impl AudioView {
 
 // --- Memory window -----------------------------------------------------------
 
+/// Bytes captured before PC — covers `addresses_before`'s 128-byte sweep.
+const WINDOW_BEHIND: u16 = 128;
+/// Total span; the remainder ahead of PC covers the forward disassembly.
+const WINDOW_LEN: u16 = 512;
+
 /// A copied span of address space around PC, big enough for the instructions
-/// pane's backward sweep and forward disassembly. Reads outside the span
-/// return open-bus `0xFF` (the pane never sweeps past it).
-pub struct MemoryWindow {
-    base: u16,
-    bytes: Vec<u8>,
-}
-
-impl MemoryWindow {
-    /// Bytes captured before PC — covers `addresses_before`'s 128-byte sweep.
-    const BEHIND: u16 = 128;
-    /// Total span; the remainder ahead of PC covers the forward disassembly.
-    const LEN: u16 = 512;
-
-    fn capture<M: Model>(console: &Console<M>, pc: u16) -> Self {
-        let base = pc.wrapping_sub(Self::BEHIND);
-        let bytes = (0..Self::LEN)
-            .map(|i| console.read(base.wrapping_add(i)))
-            .collect();
-        Self { base, bytes }
+/// pane's backward sweep and forward disassembly, captured with the CPU's
+/// 16-bit address wrap.
+fn capture_memory_window<M: Model>(console: &Console<M>, pc: u16) -> inspect::MemoryWindow {
+    let base = pc.wrapping_sub(WINDOW_BEHIND);
+    let bytes = (0..WINDOW_LEN)
+        .map(|i| console.read(base.wrapping_add(i)))
+        .collect();
+    inspect::MemoryWindow {
+        base: base as u32,
+        bytes,
     }
 }
 
-impl ReadInstructionMemory for MemoryWindow {
+/// Reads through the captured window with the CPU's 16-bit wrap; addresses
+/// outside the span return open-bus `0xFF` (the pane never sweeps past it).
+impl ReadInstructionMemory for inspect::MemoryWindow {
     fn read(&self, address: u16) -> u8 {
-        let offset = address.wrapping_sub(self.base) as usize;
+        let offset = address.wrapping_sub(self.base as u16) as usize;
         self.bytes.get(offset).copied().unwrap_or(0xFF)
     }
 }
@@ -445,7 +443,7 @@ pub struct GbSnapshot {
     pub interrupts: interrupts::Registers,
     pub colors: ColorSnapshot,
     pub switchable_rom_bank: Option<u16>,
-    pub memory: MemoryWindow,
+    pub memory: inspect::MemoryWindow,
     pub symbols: Arc<SymbolTable>,
     pub cdl: CdlWindow,
     pub frame: u64,
@@ -470,7 +468,7 @@ impl GbSnapshot {
             interrupts: console.interrupts().clone(),
             colors,
             switchable_rom_bank: console.cartridge().switchable_rom_bank(),
-            memory: MemoryWindow::capture(console, console.cpu().ir_address),
+            memory: capture_memory_window(console, console.cpu().ir_address),
             symbols,
             cdl,
             frame,
@@ -487,6 +485,9 @@ impl InspectSnapshot for GbSnapshot {
     }
     fn register_groups(&self) -> Vec<inspect::RegisterGroup> {
         cpu_register_groups(&self.cpu)
+    }
+    fn memory_window(&self) -> Option<&inspect::MemoryWindow> {
+        Some(&self.memory)
     }
 }
 

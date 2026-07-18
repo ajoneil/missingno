@@ -45,6 +45,64 @@ pub struct MemoryRegion {
     pub len: u32,
 }
 
+/// A copied span of address space: a base address and the bytes read upward
+/// from it. Backs the memory viewer's running-mode window (what a per-vblank
+/// snapshot could capture) and the Game Boy's PC-anchored disassembly capture.
+#[derive(Clone, Debug)]
+pub struct MemoryWindow {
+    pub base: u32,
+    pub bytes: Vec<u8>,
+}
+
+impl MemoryWindow {
+    /// One past the last captured address.
+    pub fn end(&self) -> u32 {
+        self.base.saturating_add(self.bytes.len() as u32)
+    }
+
+    /// Whether `address` falls within the captured span.
+    pub fn contains(&self, address: u32) -> bool {
+        address >= self.base && address < self.end()
+    }
+
+    /// The captured byte at `address`, or `None` outside the span.
+    pub fn read(&self, address: u32) -> Option<u8> {
+        address
+            .checked_sub(self.base)
+            .and_then(|offset| self.bytes.get(offset as usize).copied())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MemoryWindow;
+
+    fn window() -> MemoryWindow {
+        MemoryWindow {
+            base: 0xC100,
+            bytes: vec![0x10, 0x20, 0x30, 0x40],
+        }
+    }
+
+    #[test]
+    fn contains_spans_base_to_end() {
+        let w = window();
+        assert!(!w.contains(0xC0FF));
+        assert!(w.contains(0xC100));
+        assert!(w.contains(0xC103));
+        assert!(!w.contains(0xC104));
+    }
+
+    #[test]
+    fn read_returns_byte_in_span_and_none_outside() {
+        let w = window();
+        assert_eq!(w.read(0xC100), Some(0x10));
+        assert_eq!(w.read(0xC103), Some(0x40));
+        assert_eq!(w.read(0xC104), None);
+        assert_eq!(w.read(0xC0FF), None);
+    }
+}
+
 /// A watchable quantity a core exposes, with the parameter its watch takes.
 #[derive(Clone, Copy, Debug)]
 pub struct Watchable {

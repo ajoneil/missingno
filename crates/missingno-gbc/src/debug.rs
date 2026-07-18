@@ -81,6 +81,9 @@ impl InspectSnapshot for CgbSnapshot {
     fn register_groups(&self) -> Vec<missingno_core::inspect::RegisterGroup> {
         self.base.register_groups()
     }
+    fn memory_window(&self) -> Option<&missingno_core::inspect::MemoryWindow> {
+        self.base.memory_window()
+    }
 }
 
 impl ConsoleUi for Cgb {

@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use crate::HighPass;
 use crate::cdl::CdlWindow;
-use crate::inspect::{MemoryRegion, RegisterGroup, Watch, Watchable};
+use crate::inspect::{MemoryRegion, MemoryWindow, RegisterGroup, Watch, Watchable};
 use crate::isa::InstructionSet;
 use crate::symbols::{Symbol, SymbolTable};
 use crate::video::{Frame, VideoOut};
@@ -97,6 +97,12 @@ pub trait InspectSnapshot: Send {
     /// runs on the emulation thread.
     fn register_groups(&self) -> Vec<RegisterGroup> {
         Vec::new()
+    }
+    /// A span of memory captured this vblank, for the memory viewer while the
+    /// core runs. `None` when the family captures no such window — the viewer
+    /// then shows only that full memory needs a pause.
+    fn memory_window(&self) -> Option<&MemoryWindow> {
+        None
     }
 }
 

@@ -18,6 +18,7 @@ use crate::app::{
         inspect::GbPaneContext,
         instructions::InstructionsPane,
         layout,
+        memory::{self, MemoryPane, MemoryPaneData, MemorySelection},
         ppu::{
             sprites::{self, SpritesPane},
             tile_maps::TileMapPane,
@@ -59,6 +60,7 @@ pub enum PaneMessage {
     Screen(screen::Message),
     Sprites(sprites::Message),
     Tiles(tiles::Message),
+    Memory(memory::Message),
 }
 
 impl From<Message> for app::Message {
@@ -81,6 +83,9 @@ pub struct PaneContext<'b> {
     /// The seam's register schema, copied at context-build time so the generic
     /// registers pane never borrows the core.
     pub registers: &'b [RegisterGroup],
+    /// The memory viewer's visible bytes for its current selection, copied at
+    /// context-build time; `None` when no memory pane is shown.
+    pub memory: Option<MemoryPaneData<'b>>,
 }
 
 impl<'b> PaneContext<'b> {
@@ -97,6 +102,11 @@ pub trait Pane {
     fn kind(&self) -> DebuggerPane;
     fn view<'a>(&'a self, ctx: Option<&PaneContext<'_>>) -> pane_grid::Content<'a, app::Message>;
     fn on_message(&mut self, _message: &PaneMessage) {}
+    /// The memory viewer's current region/offset selection, so the context
+    /// builder can copy the right bytes. Only the memory pane has one.
+    fn memory_selection(&self) -> Option<MemorySelection> {
+        None
+    }
     fn set_palette(&mut self, _palette: PaletteChoice) {}
     fn set_frame_blending(&mut self, _blend: bool) {}
     /// The live screen state, so it can carry across a debugger↔emulator
@@ -183,6 +193,7 @@ pub static NES_PANE_REGISTRY: &[PaneDescriptor] = &[
         construct: || Box::new(ScreenPane::new()),
     },
     REGISTERS_DESCRIPTOR,
+    MEMORY_DESCRIPTOR,
     PaneDescriptor {
         kind: DebuggerPane::NesCpu,
         icon: Icon::FileText,
@@ -214,6 +225,7 @@ pub static SMS_PANE_REGISTRY: &[PaneDescriptor] = &[
         construct: || Box::new(ScreenPane::new()),
     },
     REGISTERS_DESCRIPTOR,
+    MEMORY_DESCRIPTOR,
     PaneDescriptor {
         kind: DebuggerPane::SmsCpu,
         icon: Icon::FileText,
@@ -236,6 +248,7 @@ pub static VCS_PANE_REGISTRY: &[PaneDescriptor] = &[
         construct: || Box::new(ScreenPane::new()),
     },
     REGISTERS_DESCRIPTOR,
+    MEMORY_DESCRIPTOR,
     PaneDescriptor {
         kind: DebuggerPane::VcsCpu,
         icon: Icon::FileText,
@@ -259,6 +272,15 @@ const REGISTERS_DESCRIPTOR: PaneDescriptor = PaneDescriptor {
     construct: || Box::new(crate::app::debugger::registers::RegistersPane),
 };
 
+/// The generic memory viewer, registered for every family — it reads the
+/// seam's named regions and side-effect-free peeks while paused.
+const MEMORY_DESCRIPTOR: PaneDescriptor = PaneDescriptor {
+    kind: DebuggerPane::Memory,
+    icon: Icon::CircuitBoard,
+    label: "Memory",
+    construct: || Box::new(MemoryPane::new()),
+};
+
 pub static PANE_REGISTRY: &[PaneDescriptor] = &[
     PaneDescriptor {
         kind: DebuggerPane::Screen,
@@ -267,6 +289,7 @@ pub static PANE_REGISTRY: &[PaneDescriptor] = &[
         construct: || Box::new(ScreenPane::new()),
     },
     REGISTERS_DESCRIPTOR,
+    MEMORY_DESCRIPTOR,
     PaneDescriptor {
         kind: DebuggerPane::Instructions,
         icon: Icon::FileText,
@@ -316,6 +339,7 @@ pub struct DebuggerPanes {
 pub enum DebuggerPane {
     Screen,
     Registers,
+    Memory,
     Instructions,
     Tiles,
     TileMap(TileMapId),
@@ -581,6 +605,15 @@ impl DebuggerPanes {
             .registry
             .iter()
             .map(|descriptor| descriptor.kind)
+    }
+
+    /// The memory pane's current selection, if that pane is shown, so the
+    /// context builder knows which region and offset to copy.
+    pub fn memory_selection(&self) -> Option<MemorySelection> {
+        self.panes
+            .as_ref()?
+            .iter()
+            .find_map(|(_, pane)| pane.memory_selection())
     }
 }
 

@@ -33,6 +33,7 @@ pub mod inspect;
 mod instructions;
 mod interrupts;
 mod layout;
+mod memory;
 #[cfg(feature = "nes")]
 pub(crate) mod nes;
 pub mod panes;
@@ -647,11 +648,16 @@ impl Debugger {
             _ => None,
         };
         let registers = core.register_groups();
+        let readout = self
+            .panes
+            .memory_selection()
+            .map(|selection| memory::build_readout(core.as_ref(), selection));
         let ctx = PaneContext {
             gb,
             family: family_any,
             breakpoints: &self.breakpoints,
             registers: &registers,
+            memory: readout.as_ref().map(memory::MemoryPaneData::paused),
         };
 
         let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
@@ -768,6 +774,9 @@ impl Debugger {
             family: family_any,
             breakpoints: &self.breakpoints,
             registers: &registers,
+            memory: snapshot
+                .memory_window()
+                .map(memory::MemoryPaneData::running),
         }))
     }
 
