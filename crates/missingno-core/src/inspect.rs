@@ -84,6 +84,9 @@ pub enum Tone {
     Scanning,
     /// Producing output (PPU drawing).
     Rendering,
+    /// Requested but not yet serviced (an interrupt-flag bit that is set while
+    /// the corresponding enable may not be).
+    Pending,
 }
 
 /// One typed block within a [`Section`].
@@ -94,7 +97,7 @@ pub enum SectionBlock {
     /// 8-bit register halves with their combined 16-bit value.
     Pairs(Vec<RegisterPair>),
     /// Pointer-style rows (pc/sp).
-    Pointers(Vec<Register>),
+    Pointers(Vec<Pointer>),
     /// The interrupt-table shape: named bit columns, one row per source
     /// register, an optional corner master flag (IME).
     Table(BitTable),
@@ -104,6 +107,16 @@ pub enum SectionBlock {
     Swatches(Vec<SwatchRow>),
     /// A horizontal divider.
     Rule,
+}
+
+/// A pointer-style register row (a pc or sp), optionally carrying whether the
+/// pointer is currently advancing. `active: Some(false)` marks a stalled
+/// pointer — a halted CPU's program counter is not moving; `active: None` means
+/// the pointer has no advancing/stalled concept (the stack pointer).
+#[derive(Clone, Debug)]
+pub struct Pointer {
+    pub register: Register,
+    pub active: Option<bool>,
 }
 
 /// A register split into its two 8-bit halves, with the combined value derived
@@ -126,17 +139,62 @@ impl RegisterPair {
 /// decoded into its named bits.
 #[derive(Clone, Debug)]
 pub struct BitTable {
-    pub columns: &'static [&'static str],
+    pub columns: Vec<BitColumn>,
     /// A master flag shown in the table's corner (IME), if any.
     pub corner: Option<Flag>,
     pub rows: Vec<BitRow>,
 }
 
-/// One row of a [`BitTable`]: a name and one bool per column.
+/// One column of a [`BitTable`]: its header name and, when the column stands
+/// for a hardware concept other consoles also expose, that [`Concept`] so the
+/// renderer can show a shared symbol for it.
+#[derive(Clone, Copy, Debug)]
+pub struct BitColumn {
+    pub name: &'static str,
+    pub concept: Option<Concept>,
+}
+
+impl BitColumn {
+    /// A column with no shared hardware concept — rendered by its name alone.
+    pub fn plain(name: &'static str) -> Self {
+        BitColumn {
+            name,
+            concept: None,
+        }
+    }
+
+    /// A column standing for a shared hardware [`Concept`].
+    pub fn concept(name: &'static str, concept: Concept) -> Self {
+        BitColumn {
+            name,
+            concept: Some(concept),
+        }
+    }
+}
+
+/// A hardware concept a [`BitColumn`] stands for, drawn from the interrupt
+/// sources several consoles share so a renderer can give each a common symbol.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Concept {
+    /// The vertical-blanking interval.
+    VBlank,
+    /// A video/display status condition (the Game Boy STAT sources).
+    VideoStatus,
+    /// A hardware timer.
+    Timer,
+    /// A serial-link transfer.
+    Serial,
+    /// A player-input event (the Game Boy joypad).
+    Input,
+}
+
+/// One row of a [`BitTable`]: a name, one bool per column, and a [`Tone`]
+/// classing the row's meaning (an enabled mask versus a pending-flag mask).
 #[derive(Clone, Debug)]
 pub struct BitRow {
     pub name: &'static str,
     pub bits: Vec<bool>,
+    pub tone: Tone,
 }
 
 /// A named boolean shown as a lit/dim badge.

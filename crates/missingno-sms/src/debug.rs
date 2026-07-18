@@ -7,7 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use missingno_core::inspect::{
-    BitRow, BitTable, Register, RegisterGroup, Row, Section, SectionBlock, ValueStyle,
+    BitColumn, BitRow, BitTable, Register, RegisterGroup, Row, Section, SectionBlock, Tone,
+    ValueStyle,
 };
 use missingno_core::stepping::SteppingSystem;
 use missingno_core::system::{ControlId, ControlInput, DebugView, InspectSnapshot, RunningStatus};
@@ -137,11 +138,16 @@ fn vdp_section(state: &SmsInspectState) -> Section {
 /// the fifth-sprite number.
 fn status_table(status: u8) -> BitTable {
     BitTable {
-        columns: &["int", "ovr", "col"],
+        columns: vec![
+            BitColumn::plain("int"),
+            BitColumn::plain("ovr"),
+            BitColumn::plain("col"),
+        ],
         corner: None,
         rows: vec![BitRow {
             name: "status",
             bits: vec![status & 0x80 != 0, status & 0x40 != 0, status & 0x20 != 0],
+            tone: Tone::Neutral,
         }],
     }
 }

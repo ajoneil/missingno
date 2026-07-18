@@ -4,7 +4,7 @@ use iced::{
     Background, Border, Color, Element,
     Length::{self, Fill},
     alignment::Vertical,
-    widget::{Space, button, column, container, rule, text},
+    widget::{Space, button, column, container, rule, text, tooltip},
 };
 
 use crate::app::{
@@ -14,7 +14,9 @@ use crate::app::{
     emu_thread::RunningStatus,
     screen::iced_color,
     ui::{
-        fonts, palette,
+        fonts,
+        icons::{self, Icon},
+        palette,
         sizes::{s, xs},
     },
 };
@@ -225,6 +227,7 @@ fn tone_color(tone: inspect::Tone) -> Color {
         inspect::Tone::Active => palette::GREEN,
         inspect::Tone::Scanning => palette::YELLOW,
         inspect::Tone::Rendering => palette::PEACH,
+        inspect::Tone::Pending => palette::YELLOW,
     }
 }
 
@@ -259,16 +262,25 @@ fn render_block(
 
 // --- Pointers ----------------------------------------------------------------
 
-fn pointers_block(pointers: &[inspect::Register]) -> Element<'static, app::Message> {
+fn pointers_block(pointers: &[inspect::Pointer]) -> Element<'static, app::Message> {
     let mut line = iced::widget::row![].spacing(s()).align_y(Vertical::Center);
-    for register in pointers {
-        line = line.push(pointer(register));
+    for pointer in pointers {
+        line = line.push(pointer_item(pointer));
     }
     line.into()
 }
 
-fn pointer(register: &inspect::Register) -> Element<'static, app::Message> {
-    iced::widget::row![
+fn pointer_item(pointer: &inspect::Pointer) -> Element<'static, app::Message> {
+    let register = &pointer.register;
+    // An inactive pointer (a halted CPU's pc) is dimmed and annotated.
+    let inactive = pointer.active == Some(false);
+    let value_color = if inactive {
+        palette::OVERLAY0
+    } else {
+        palette::PURPLE
+    };
+
+    let display: Element<'static, app::Message> = iced::widget::row![
         text(register.name.to_owned())
             .font(fonts::monospace())
             .size(REG)
@@ -276,11 +288,23 @@ fn pointer(register: &inspect::Register) -> Element<'static, app::Message> {
         text(hex(register.value, register.bits))
             .font(fonts::monospace())
             .size(20.0)
-            .color(palette::PURPLE),
+            .color(value_color),
     ]
     .spacing(s())
     .align_y(Vertical::Center)
-    .into()
+    .into();
+
+    if inactive {
+        tooltip(
+            display,
+            container(text("halted").font(fonts::monospace()).size(REG)).padding([2.0, s()]),
+            tooltip::Position::Bottom,
+        )
+        .style(tooltip_style)
+        .into()
+    } else {
+        display
+    }
 }
 
 // --- Register pairs ----------------------------------------------------------
@@ -500,24 +524,61 @@ fn bit_table(table: &inspect::BitTable) -> Element<'static, app::Message> {
     }
     columns = columns.push(labels);
 
-    for (index, name) in table.columns.iter().enumerate() {
-        let mut col = column![cell(
-            text((*name).to_owned())
-                .font(fonts::monospace())
-                .size(HEADER)
-                .color(palette::MUTED)
-                .into(),
-        )]
-        .spacing(s())
-        .align_x(iced::alignment::Horizontal::Center);
+    for (index, column) in table.columns.iter().enumerate() {
+        let mut col = column![cell(column_header(column))]
+            .spacing(s())
+            .align_x(iced::alignment::Horizontal::Center);
         for row in &table.rows {
             let lit = row.bits.get(index).copied().unwrap_or(false);
-            col = col.push(cell(pip(lit, palette::GREEN)));
+            col = col.push(cell(pip(lit, pip_tone_color(row.tone))));
         }
         columns = columns.push(col);
     }
 
     columns.into()
+}
+
+/// A column heading: the concept's shared icon when the column names one (with
+/// its name as a tooltip), else the column name as text.
+fn column_header(column: &inspect::BitColumn) -> Element<'static, app::Message> {
+    match column.concept.map(concept_icon) {
+        Some(icon) => tooltip(
+            icons::m_muted(icon),
+            container(
+                text(column.name.to_owned())
+                    .font(fonts::monospace())
+                    .size(HEADER),
+            )
+            .padding([2.0, s()]),
+            tooltip::Position::Top,
+        )
+        .style(tooltip_style)
+        .into(),
+        None => text(column.name.to_owned())
+            .font(fonts::monospace())
+            .size(HEADER)
+            .color(palette::MUTED)
+            .into(),
+    }
+}
+
+fn concept_icon(concept: inspect::Concept) -> Icon {
+    match concept {
+        inspect::Concept::VBlank => Icon::Monitor,
+        inspect::Concept::VideoStatus => Icon::Eye,
+        inspect::Concept::Timer => Icon::Clock,
+        inspect::Concept::Serial => Icon::Wifi,
+        inspect::Concept::Input => Icon::Gamepad,
+    }
+}
+
+/// The pip colour for a bit-table row: a pending mask (interrupt-flag bits)
+/// reads yellow, an ordinary enabled/status mask green.
+fn pip_tone_color(tone: inspect::Tone) -> Color {
+    match tone {
+        inspect::Tone::Pending => palette::YELLOW,
+        _ => palette::GREEN,
+    }
 }
 
 /// A fixed-height table cell so headers, names, and pips align across columns.

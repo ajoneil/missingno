@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use missingno_6502::disasm;
 use missingno_core::inspect::{
-    BitRow, BitTable, FlagName, Register, RegisterGroup, Row, Section, SectionBlock, ValueStyle,
+    BitColumn, BitRow, BitTable, FlagName, Register, RegisterGroup, Row, Section, SectionBlock,
+    Tone, ValueStyle,
 };
 use missingno_core::stepping::SteppingSystem;
 use missingno_core::system::{ControlId, ControlInput, DebugView, InspectSnapshot, RunningStatus};
@@ -155,11 +156,12 @@ fn ppu_section(state: &NesInspectState) -> Section {
 /// A one-row bit table decoding `value`'s bits, high to low, under `columns`.
 fn bit_table(name: &'static str, columns: &'static [&'static str], value: u8) -> BitTable {
     BitTable {
-        columns,
+        columns: columns.iter().map(|&name| BitColumn::plain(name)).collect(),
         corner: None,
         rows: vec![BitRow {
             name,
             bits: (0..8).rev().map(|bit| value & (1 << bit) != 0).collect(),
+            tone: Tone::Neutral,
         }],
     }
 }

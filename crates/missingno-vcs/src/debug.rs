@@ -454,17 +454,23 @@ fn cpu_section(state: &VcsInspectState) -> inspect::Section {
         detail: None,
         blocks: vec![
             SectionBlock::Pointers(vec![
-                Register {
-                    name: "pc",
-                    value: state.pc as u32,
-                    bits: 16,
-                    style: ValueStyle::Hex,
+                inspect::Pointer {
+                    register: Register {
+                        name: "pc",
+                        value: state.pc as u32,
+                        bits: 16,
+                        style: ValueStyle::Hex,
+                    },
+                    active: None,
                 },
-                Register {
-                    name: "sp",
-                    value: stack_pointer as u32,
-                    bits: 16,
-                    style: ValueStyle::Hex,
+                inspect::Pointer {
+                    register: Register {
+                        name: "sp",
+                        value: stack_pointer as u32,
+                        bits: 16,
+                        style: ValueStyle::Hex,
+                    },
+                    active: None,
                 },
             ]),
             SectionBlock::Rule,

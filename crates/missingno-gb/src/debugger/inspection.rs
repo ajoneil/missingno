@@ -514,17 +514,20 @@ pub fn cpu_blocks(
             low: hex8("l", Register8::L),
         },
     ];
-    let pointer = |name, value: u16| inspect::Register {
-        name,
-        value: value as u32,
-        bits: 16,
-        style: inspect::ValueStyle::Hex,
+    let pointer = |name, value: u16, active| inspect::Pointer {
+        register: inspect::Register {
+            name,
+            value: value as u32,
+            bits: 16,
+            style: inspect::ValueStyle::Hex,
+        },
+        active,
     };
 
     vec![
         inspect::SectionBlock::Pointers(vec![
-            pointer("pc", cpu.ir_address()),
-            pointer("sp", cpu.stack_pointer()),
+            pointer("pc", cpu.ir_address(), Some(!cpu.halted())),
+            pointer("sp", cpu.stack_pointer(), None),
         ]),
         inspect::SectionBlock::Rule,
         inspect::SectionBlock::Pairs(pairs),
@@ -534,8 +537,15 @@ pub fn cpu_blocks(
 }
 
 fn interrupt_table(ints: &interrupts::Registers, ime: bool) -> inspect::BitTable {
+    use inspect::Concept;
     inspect::BitTable {
-        columns: &["VBlank", "Stat", "Timer", "Serial", "Joypad"],
+        columns: vec![
+            inspect::BitColumn::concept("VBlank", Concept::VBlank),
+            inspect::BitColumn::concept("Stat", Concept::VideoStatus),
+            inspect::BitColumn::concept("Timer", Concept::Timer),
+            inspect::BitColumn::concept("Serial", Concept::Serial),
+            inspect::BitColumn::concept("Joypad", Concept::Input),
+        ],
         corner: Some(inspect::Flag {
             name: "IME",
             active: ime,
@@ -544,6 +554,7 @@ fn interrupt_table(ints: &interrupts::Registers, ime: bool) -> inspect::BitTable
             inspect::BitRow {
                 name: "IE",
                 bits: INTERRUPT_SOURCES.iter().map(|&i| ints.enabled(i)).collect(),
+                tone: inspect::Tone::Neutral,
             },
             inspect::BitRow {
                 name: "IF",
@@ -551,6 +562,7 @@ fn interrupt_table(ints: &interrupts::Registers, ime: bool) -> inspect::BitTable
                     .iter()
                     .map(|&i| ints.requested(i))
                     .collect(),
+                tone: inspect::Tone::Pending,
             },
         ],
     }
@@ -813,9 +825,18 @@ mod tests {
         ints.request(Interrupt::VideoBetweenFrames);
 
         let table = interrupt_table(&ints, true);
+        let names: Vec<_> = table.columns.iter().map(|column| column.name).collect();
+        assert_eq!(names, ["VBlank", "Stat", "Timer", "Serial", "Joypad"]);
+        let concepts: Vec<_> = table.columns.iter().map(|column| column.concept).collect();
         assert_eq!(
-            table.columns,
-            &["VBlank", "Stat", "Timer", "Serial", "Joypad"]
+            concepts,
+            [
+                Some(inspect::Concept::VBlank),
+                Some(inspect::Concept::VideoStatus),
+                Some(inspect::Concept::Timer),
+                Some(inspect::Concept::Serial),
+                Some(inspect::Concept::Input),
+            ]
         );
         assert_eq!(
             table.corner.map(|flag| (flag.name, flag.active)),
@@ -823,8 +844,10 @@ mod tests {
         );
         assert_eq!(table.rows[0].name, "IE");
         assert_eq!(table.rows[0].bits, vec![false, false, true, false, true]);
+        assert_eq!(table.rows[0].tone, inspect::Tone::Neutral);
         assert_eq!(table.rows[1].name, "IF");
         assert_eq!(table.rows[1].bits, vec![true, false, false, false, false]);
+        assert_eq!(table.rows[1].tone, inspect::Tone::Pending);
     }
 
     #[test]
