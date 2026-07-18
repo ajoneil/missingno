@@ -3019,6 +3019,7 @@ dependencies = [
  "missingno-nes",
  "missingno-sms",
  "missingno-vcs",
+ "png 0.18.1",
  "serde",
  "serde_json",
  "tiny_http",

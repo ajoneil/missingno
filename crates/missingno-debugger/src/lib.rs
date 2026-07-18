@@ -11,6 +11,8 @@ pub mod factory;
 #[cfg(feature = "gb")]
 pub mod gb;
 pub mod http;
+#[cfg(feature = "mcp")]
+pub mod mcp;
 pub mod session;
 
 pub use session::{DisasmLine, Session, StopReason, validate_watch};
@@ -24,5 +26,16 @@ pub fn extensions() -> Vec<http::Extension> {
     let mut extensions: Vec<http::Extension> = Vec::new();
     #[cfg(feature = "gb")]
     extensions.push(gb::extension);
+    extensions
+}
+
+/// The family MCP tool extensions compiled into this build, offered ahead of
+/// the generic tools. Each declines any tool it does not own.
+#[cfg(feature = "mcp")]
+#[allow(unused_mut, clippy::vec_init_then_push)]
+pub fn mcp_extensions() -> Vec<mcp::McpExtension> {
+    let mut extensions: Vec<mcp::McpExtension> = Vec::new();
+    #[cfg(feature = "gb")]
+    extensions.push(gb::mcp::extension());
     extensions
 }

@@ -10,10 +10,10 @@ use std::sync::Arc;
 use missingno_core::cdl::CdlWindow;
 use missingno_core::disasm::{ReadMemory, Row, window_after};
 use missingno_core::inspect::{
-    MemoryRegion, RegisterGroup, Watch, WatchParam, WatchTerm, Watchable,
+    MemoryRegion, RegisterGroup, Section, Watch, WatchParam, WatchTerm, Watchable,
 };
 use missingno_core::symbols::SymbolTable;
-use missingno_core::system::{StepOutcome, SystemDebugger};
+use missingno_core::system::{ControlId, ControlInput, StepOutcome, SystemDebugger};
 use missingno_core::video::{RgbaFrame, VideoOut};
 
 /// Why the last stepping call returned. The transport-carried form of
@@ -144,6 +144,18 @@ impl Session {
 
     pub fn register_groups(&self) -> Vec<RegisterGroup> {
         self.debugger.register_groups()
+    }
+
+    /// The structured machine-state sidebar this core exposes — the semantic
+    /// description a transport renders as its "describe machine" view.
+    pub fn sidebar_sections(&self) -> Vec<Section> {
+        self.debugger.sidebar_sections()
+    }
+
+    /// Apply an input to a family-interpreted control (the GUI's control path,
+    /// for a headless transport).
+    pub fn set_control(&mut self, control: ControlId, input: ControlInput) {
+        self.debugger.set_control(control, input);
     }
 
     pub fn memory_regions(&self) -> &'static [MemoryRegion] {

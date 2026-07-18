@@ -19,6 +19,8 @@ gb = ["dep:missingno-gb", "dep:missingno-gbc"]
 vcs = ["dep:missingno-vcs"]
 nes = ["dep:missingno-nes"]
 sms = ["dep:missingno-sms"]
+# The MCP-over-stdio transport. Pulls a PNG encoder for the frame tool.
+mcp = ["dep:png"]
 
 [dependencies]
 missingno-core = { path = "../missingno-core" }
@@ -30,3 +32,4 @@ missingno-sms = { path = "../missingno-sms", optional = true }
 tiny_http = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+png = { version = "0.18", optional = true }

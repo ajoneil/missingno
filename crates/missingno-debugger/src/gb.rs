@@ -502,6 +502,117 @@ fn serve_gb<M: HeadlessUi>(
     Dispatch::Handled
 }
 
+// --- MCP extension ------------------------------------------------------------
+
+/// The Game Boy family's MCP tools: the two model-specific views worth a text
+/// tool of their own. The HTTP routes remain the full model-specific surface.
+#[cfg(feature = "mcp")]
+pub mod mcp {
+    use super::*;
+    use crate::mcp::{McpExtension, Tool, ToolOutcome, text};
+    use crate::session::Session;
+    use serde_json::json;
+
+    /// Cap on dots advanced by a single `gb_step_dot`.
+    const MAX_DOT_COUNT: usize = 1_000_000;
+
+    enum GbWhich {
+        Dmg,
+        Cgb,
+    }
+
+    fn which(session: &mut Session) -> Option<GbWhich> {
+        let any = session.debugger_mut().as_any_mut();
+        if any.is::<GbDebugger<Dmg>>() {
+            Some(GbWhich::Dmg)
+        } else if any.is::<GbDebugger<Cgb>>() {
+            Some(GbWhich::Cgb)
+        } else {
+            None
+        }
+    }
+
+    pub fn extension() -> McpExtension {
+        McpExtension { tools, call }
+    }
+
+    fn tools(session: &mut Session) -> Vec<Tool> {
+        if which(session).is_none() {
+            return Vec::new();
+        }
+        vec![
+            Tool {
+                name: "gb_ppu_state",
+                description: "Game Boy PPU state: LCDC and STAT decoded, LY/LX/LYC, scroll, \
+                              window, and the three palettes."
+                    .into(),
+                input_schema: json!({
+                    "type": "object", "properties": {}, "additionalProperties": false
+                }),
+            },
+            Tool {
+                name: "gb_step_dot",
+                description: format!(
+                    "Advance the console by dots (T-cycles); count default 1, max \
+                     {MAX_DOT_COUNT}. Reports the pixel-pipeline state."
+                ),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "count": { "type": "integer", "minimum": 1, "maximum": MAX_DOT_COUNT }
+                    },
+                }),
+            },
+        ]
+    }
+
+    fn call(session: &mut Session, name: &str, args: &Value) -> Option<ToolOutcome> {
+        match name {
+            "gb_ppu_state" => Some(ppu_state_tool(session)),
+            "gb_step_dot" => Some(step_dot_tool(session, args)),
+            _ => None,
+        }
+    }
+
+    fn ppu_state_tool(session: &mut Session) -> ToolOutcome {
+        let value = match which(session) {
+            Some(GbWhich::Dmg) => serde_json::to_value(ppu_state(dmg(session).console())),
+            Some(GbWhich::Cgb) => serde_json::to_value(ppu_state(cgb(session).console())),
+            None => return Err("not a Game Boy session".into()),
+        }
+        .map_err(|error| error.to_string())?;
+        text(serde_json::to_string_pretty(&value).unwrap())
+    }
+
+    fn step_dot_tool(session: &mut Session, args: &Value) -> ToolOutcome {
+        let count = match args.get("count") {
+            None | Some(Value::Null) => 1,
+            Some(value) => value
+                .as_u64()
+                .map(|n| (n as usize).clamp(1, MAX_DOT_COUNT))
+                .ok_or("count must be an integer")?,
+        };
+        let value = match which(session) {
+            Some(GbWhich::Dmg) => {
+                let gbdbg = dmg(session);
+                for _ in 0..count {
+                    gbdbg.step_tcycle();
+                }
+                pipeline_state(gbdbg.console())
+            }
+            Some(GbWhich::Cgb) => {
+                let gbdbg = cgb(session);
+                for _ in 0..count {
+                    gbdbg.step_tcycle();
+                }
+                pipeline_state(gbdbg.console())
+            }
+            None => return Err("not a Game Boy session".into()),
+        };
+        text(serde_json::to_string_pretty(&value).unwrap())
+    }
+}
+
 fn watchpoint_address<M: ConsoleUi>(
     gbdbg: &mut GbDebugger<M>,
     request: Request,
