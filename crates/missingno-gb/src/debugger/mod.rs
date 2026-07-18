@@ -5,6 +5,7 @@ use crate::{
     Console, Dmg, Model,
     cpu::instructions::Instruction,
     cpu_bus::{BusAccess, BusAccessKind},
+    isa::Sm83,
     ppu::{self, rendering::Mode},
 };
 use cdl::CodeDataLog;
@@ -14,6 +15,8 @@ use symbols::SymbolTable;
 
 pub mod cdl;
 pub mod instructions;
+use missingno_core::inspect;
+use missingno_core::isa::InstructionSet;
 use missingno_core::symbols;
 
 /// Embedded profile for full T-cycle frame capture with all PPU details.
@@ -110,6 +113,301 @@ impl WatchCondition {
             WatchCondition::All(conditions) => conditions.iter().any(|c| c.needs_bus_trace()),
             _ => false,
         }
+    }
+}
+
+/// Named bits of the SM83 flags register `f`.
+const SM83_FLAGS: &[inspect::FlagName] = &[
+    inspect::FlagName { name: "z", bit: 7 },
+    inspect::FlagName { name: "n", bit: 6 },
+    inspect::FlagName { name: "h", bit: 5 },
+    inspect::FlagName { name: "c", bit: 4 },
+];
+
+/// The parameterised quantity behind one watchable key.
+#[derive(Clone, PartialEq)]
+enum WatchKind {
+    BusRead,
+    BusWrite,
+    DmaRead,
+    DmaWrite,
+    Scanline,
+    PixelCounter,
+    PpuMode,
+    PpuReg(ppu::Register),
+    CpuReg(CpuRegister),
+}
+
+/// A watchable key, its label and parameter shape, and the condition it maps
+/// onto. The table is the single source for both directions so the exposed
+/// keys and the `WatchCondition` mapping cannot drift apart.
+struct WatchableSpec {
+    key: &'static str,
+    label: &'static str,
+    param: inspect::WatchParam,
+    kind: WatchKind,
+}
+
+const V8: inspect::WatchParam = inspect::WatchParam::Value { bits: 8 };
+
+static WATCHABLES: &[WatchableSpec] = &[
+    WatchableSpec {
+        key: "bus-read",
+        label: "Bus read",
+        param: inspect::WatchParam::Address,
+        kind: WatchKind::BusRead,
+    },
+    WatchableSpec {
+        key: "bus-write",
+        label: "Bus write",
+        param: inspect::WatchParam::Address,
+        kind: WatchKind::BusWrite,
+    },
+    WatchableSpec {
+        key: "dma-read",
+        label: "DMA read",
+        param: inspect::WatchParam::Address,
+        kind: WatchKind::DmaRead,
+    },
+    WatchableSpec {
+        key: "dma-write",
+        label: "DMA write",
+        param: inspect::WatchParam::Address,
+        kind: WatchKind::DmaWrite,
+    },
+    WatchableSpec {
+        key: "scanline",
+        label: "Scanline",
+        param: V8,
+        kind: WatchKind::Scanline,
+    },
+    WatchableSpec {
+        key: "pixel-counter",
+        label: "Pixel counter",
+        param: V8,
+        kind: WatchKind::PixelCounter,
+    },
+    WatchableSpec {
+        key: "ppu-mode",
+        label: "PPU mode",
+        param: inspect::WatchParam::Value { bits: 2 },
+        kind: WatchKind::PpuMode,
+    },
+    WatchableSpec {
+        key: "ppu-lcdc",
+        label: "LCDC",
+        param: V8,
+        kind: WatchKind::PpuReg(ppu::Register::Control),
+    },
+    WatchableSpec {
+        key: "ppu-stat",
+        label: "STAT",
+        param: V8,
+        kind: WatchKind::PpuReg(ppu::Register::Status),
+    },
+    WatchableSpec {
+        key: "ppu-scy",
+        label: "SCY",
+        param: V8,
+        kind: WatchKind::PpuReg(ppu::Register::BackgroundViewportY),
+    },
+    WatchableSpec {
+        key: "ppu-scx",
+        label: "SCX",
+        param: V8,
+        kind: WatchKind::PpuReg(ppu::Register::BackgroundViewportX),
+    },
+    WatchableSpec {
+        key: "ppu-wy",
+        label: "WY",
+        param: V8,
+        kind: WatchKind::PpuReg(ppu::Register::WindowY),
+    },
+    WatchableSpec {
+        key: "ppu-wx",
+        label: "WX",
+        param: V8,
+        kind: WatchKind::PpuReg(ppu::Register::WindowX),
+    },
+    WatchableSpec {
+        key: "ppu-ly",
+        label: "LY",
+        param: V8,
+        kind: WatchKind::PpuReg(ppu::Register::CurrentScanline),
+    },
+    WatchableSpec {
+        key: "ppu-lyc",
+        label: "LYC",
+        param: V8,
+        kind: WatchKind::PpuReg(ppu::Register::InterruptOnScanline),
+    },
+    WatchableSpec {
+        key: "ppu-bgp",
+        label: "BGP",
+        param: V8,
+        kind: WatchKind::PpuReg(ppu::Register::BackgroundPalette),
+    },
+    WatchableSpec {
+        key: "ppu-obp0",
+        label: "OBP0",
+        param: V8,
+        kind: WatchKind::PpuReg(ppu::Register::Sprite0Palette),
+    },
+    WatchableSpec {
+        key: "ppu-obp1",
+        label: "OBP1",
+        param: V8,
+        kind: WatchKind::PpuReg(ppu::Register::Sprite1Palette),
+    },
+    WatchableSpec {
+        key: "cpu-a",
+        label: "A",
+        param: V8,
+        kind: WatchKind::CpuReg(CpuRegister::A),
+    },
+    WatchableSpec {
+        key: "cpu-b",
+        label: "B",
+        param: V8,
+        kind: WatchKind::CpuReg(CpuRegister::B),
+    },
+    WatchableSpec {
+        key: "cpu-c",
+        label: "C",
+        param: V8,
+        kind: WatchKind::CpuReg(CpuRegister::C),
+    },
+    WatchableSpec {
+        key: "cpu-d",
+        label: "D",
+        param: V8,
+        kind: WatchKind::CpuReg(CpuRegister::D),
+    },
+    WatchableSpec {
+        key: "cpu-e",
+        label: "E",
+        param: V8,
+        kind: WatchKind::CpuReg(CpuRegister::E),
+    },
+    WatchableSpec {
+        key: "cpu-h",
+        label: "H",
+        param: V8,
+        kind: WatchKind::CpuReg(CpuRegister::H),
+    },
+    WatchableSpec {
+        key: "cpu-l",
+        label: "L",
+        param: V8,
+        kind: WatchKind::CpuReg(CpuRegister::L),
+    },
+];
+
+fn mode_from_bits(value: u32) -> Option<Mode> {
+    match value {
+        0 => Some(Mode::HorizontalBlank),
+        1 => Some(Mode::VerticalBlank),
+        2 => Some(Mode::OamScan),
+        3 => Some(Mode::Drawing),
+        _ => None,
+    }
+}
+
+/// Build the `WatchCondition` for one term, or `None` if the key is unknown or
+/// a required parameter is missing.
+fn condition_from_term(term: &inspect::WatchTerm) -> Option<WatchCondition> {
+    let spec = WATCHABLES.iter().find(|s| s.key == term.key)?;
+    let address = || term.address.map(|a| a as u16);
+    let value = || term.value.map(|v| v as u8);
+    Some(match &spec.kind {
+        WatchKind::BusRead => WatchCondition::BusRead {
+            address: address()?,
+        },
+        WatchKind::BusWrite => WatchCondition::BusWrite {
+            address: address()?,
+        },
+        WatchKind::DmaRead => WatchCondition::DmaRead {
+            address: address()?,
+        },
+        WatchKind::DmaWrite => WatchCondition::DmaWrite {
+            address: address()?,
+        },
+        WatchKind::Scanline => WatchCondition::Scanline(value()?),
+        WatchKind::PixelCounter => WatchCondition::PixelCounter(value()?),
+        WatchKind::PpuMode => WatchCondition::PpuMode(mode_from_bits(term.value?)?),
+        WatchKind::PpuReg(register) => WatchCondition::PpuRegister {
+            register: *register,
+            value: value()?,
+        },
+        WatchKind::CpuReg(register) => WatchCondition::CpuRegister {
+            register: register.clone(),
+            value: value()?,
+        },
+    })
+}
+
+/// The one term describing a non-compound condition; the key comes from the
+/// same table `condition_from_term` reads.
+fn term_from_condition(condition: &WatchCondition) -> inspect::WatchTerm {
+    let (kind, address, value) = match condition {
+        WatchCondition::BusRead { address } => (WatchKind::BusRead, Some(*address as u32), None),
+        WatchCondition::BusWrite { address } => (WatchKind::BusWrite, Some(*address as u32), None),
+        WatchCondition::DmaRead { address } => (WatchKind::DmaRead, Some(*address as u32), None),
+        WatchCondition::DmaWrite { address } => (WatchKind::DmaWrite, Some(*address as u32), None),
+        WatchCondition::Scanline(v) => (WatchKind::Scanline, None, Some(*v as u32)),
+        WatchCondition::PixelCounter(v) => (WatchKind::PixelCounter, None, Some(*v as u32)),
+        WatchCondition::PpuMode(m) => (WatchKind::PpuMode, None, Some(*m as u32)),
+        WatchCondition::PpuRegister { register, value } => {
+            (WatchKind::PpuReg(*register), None, Some(*value as u32))
+        }
+        WatchCondition::CpuRegister { register, value } => (
+            WatchKind::CpuReg(register.clone()),
+            None,
+            Some(*value as u32),
+        ),
+        WatchCondition::All(_) => unreachable!("compounds are flattened before term conversion"),
+    };
+    let key = WATCHABLES
+        .iter()
+        .find(|s| s.kind == kind)
+        .expect("every non-compound condition has a table entry")
+        .key;
+    inspect::WatchTerm {
+        key: key.to_string(),
+        address,
+        value,
+    }
+}
+
+/// Flatten a condition into terms, recursing through nested `All` compounds —
+/// conjunction is associative, so a nested compound is the same set of terms.
+fn flatten_terms(condition: &WatchCondition, out: &mut Vec<inspect::WatchTerm>) {
+    match condition {
+        WatchCondition::All(conditions) => {
+            for condition in conditions {
+                flatten_terms(condition, out);
+            }
+        }
+        leaf => out.push(term_from_condition(leaf)),
+    }
+}
+
+fn watch_from_condition(condition: &WatchCondition) -> inspect::Watch {
+    let mut terms = Vec::new();
+    flatten_terms(condition, &mut terms);
+    inspect::Watch { terms }
+}
+
+/// A single term is its condition; several terms are their conjunction.
+fn watch_to_condition(watch: &inspect::Watch) -> Option<WatchCondition> {
+    let mut conditions = Vec::with_capacity(watch.terms.len());
+    for term in &watch.terms {
+        conditions.push(condition_from_term(term)?);
+    }
+    match conditions.len() {
+        0 => None,
+        1 => conditions.pop(),
+        _ => Some(WatchCondition::All(conditions)),
     }
 }
 
@@ -405,6 +703,104 @@ impl<M: Model> Debugger<M> {
         self.last_watchpoint_hit.as_ref()
     }
 
+    /// The SM83 register file as one inspection group.
+    pub fn register_groups(&self) -> Vec<inspect::RegisterGroup> {
+        let cpu = self.game_boy.cpu();
+        let hex8 = |name, value: u8| inspect::Register {
+            name,
+            value: value as u32,
+            bits: 8,
+            style: inspect::ValueStyle::Hex,
+        };
+        let hex16 = |name, value: u16| inspect::Register {
+            name,
+            value: value as u32,
+            bits: 16,
+            style: inspect::ValueStyle::Hex,
+        };
+        vec![inspect::RegisterGroup {
+            name: "cpu",
+            registers: vec![
+                hex8("a", cpu.a),
+                inspect::Register {
+                    name: "f",
+                    value: cpu.flags.bits() as u32,
+                    bits: 8,
+                    style: inspect::ValueStyle::Flags(SM83_FLAGS),
+                },
+                hex8("b", cpu.b),
+                hex8("c", cpu.c),
+                hex8("d", cpu.d),
+                hex8("e", cpu.e),
+                hex8("h", cpu.h),
+                hex8("l", cpu.l),
+                hex16("sp", cpu.stack_pointer),
+                hex16("pc", cpu.pc),
+            ],
+        }]
+    }
+
+    /// The CPU-visible flat address map, named by role.
+    pub fn memory_regions(&self) -> Vec<inspect::MemoryRegion> {
+        let region = |name, start, len| inspect::MemoryRegion { name, start, len };
+        vec![
+            region("rom0", 0x0000, 0x4000),
+            region("romx", 0x4000, 0x4000),
+            region("vram", 0x8000, 0x2000),
+            region("extram", 0xA000, 0x2000),
+            region("wram", 0xC000, 0x2000),
+            region("oam", 0xFE00, 0xA0),
+            region("io", 0xFF00, 0x80),
+            region("hram", 0xFF80, 0x7F),
+        ]
+    }
+
+    /// Side-effect-free read of the CPU address space.
+    pub fn peek(&self, address: u32) -> u8 {
+        self.game_boy.peek(address as u16)
+    }
+
+    /// The address the debugger keys instructions on — the current opcode's
+    /// fetch address, held for the whole instruction.
+    pub fn pc(&self) -> u32 {
+        self.game_boy.cpu().ir_address as u32
+    }
+
+    pub fn instruction_set(&self) -> &'static dyn InstructionSet {
+        &Sm83
+    }
+
+    pub fn watchables(&self) -> Vec<inspect::Watchable> {
+        WATCHABLES
+            .iter()
+            .map(|spec| inspect::Watchable {
+                key: spec.key,
+                label: spec.label,
+                param: spec.param,
+            })
+            .collect()
+    }
+
+    pub fn add_watch(&mut self, watch: inspect::Watch) {
+        if let Some(condition) = watch_to_condition(&watch) {
+            self.add_watchpoint(condition);
+        }
+    }
+
+    pub fn remove_watch(&mut self, watch: inspect::Watch) {
+        if let Some(condition) = watch_to_condition(&watch) {
+            self.remove_watchpoint(&condition);
+        }
+    }
+
+    pub fn watches(&self) -> Vec<inspect::Watch> {
+        self.watchpoints.iter().map(watch_from_condition).collect()
+    }
+
+    pub fn last_watch_hit(&self) -> Option<inspect::Watch> {
+        self.last_watchpoint_hit.as_ref().map(watch_from_condition)
+    }
+
     pub fn reset(&mut self) {
         self.game_boy.reset();
         self.tcycle_count = 0;
@@ -541,6 +937,44 @@ mod tests {
         );
         assert_eq!(flags(0x0200), cdl::DATA);
         assert_eq!(flags(0x0300), 0);
+    }
+
+    #[test]
+    fn every_watchable_key_round_trips() {
+        for spec in WATCHABLES {
+            let (address, value) = match spec.param {
+                inspect::WatchParam::Address => (Some(0x1234u32), None),
+                inspect::WatchParam::Value { bits } => {
+                    (None, Some(if bits >= 8 { 0x42 } else { 1 }))
+                }
+                inspect::WatchParam::AddressValue => (Some(0x1234), Some(0x42)),
+                inspect::WatchParam::None => (None, None),
+            };
+            let watch = inspect::Watch::single(spec.key, address, value);
+            let condition = watch_to_condition(&watch).expect("maps to a condition");
+            let back = watch_from_condition(&condition);
+            assert_eq!(watch, back, "key {} did not round-trip", spec.key);
+        }
+    }
+
+    #[test]
+    fn nested_all_flattens_to_terms() {
+        let condition = WatchCondition::All(vec![
+            WatchCondition::BusRead { address: 0x0100 },
+            WatchCondition::All(vec![
+                WatchCondition::CpuRegister {
+                    register: CpuRegister::A,
+                    value: 0x42,
+                },
+                WatchCondition::Scanline(0x10),
+            ]),
+        ]);
+        let watch = watch_from_condition(&condition);
+        assert_eq!(watch.terms.len(), 3);
+        match watch_to_condition(&watch).expect("rebuilds") {
+            WatchCondition::All(conditions) => assert_eq!(conditions.len(), 3),
+            other => panic!("expected a compound, got {other}"),
+        }
     }
 
     #[test]

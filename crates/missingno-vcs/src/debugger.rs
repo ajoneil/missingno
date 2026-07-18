@@ -4,10 +4,24 @@
 
 use std::collections::BTreeSet;
 
+use missingno_6502::Mos6502;
+use missingno_core::inspect;
+use missingno_core::isa::InstructionSet;
+
 use crate::console::{Frame, Vcs};
 
 /// A JSR opcode, for step-over.
 const JSR: u8 = 0x20;
+
+/// Named bits of the 6502 status register `p`; the B flag is not architectural.
+const MOS6502_FLAGS: &[inspect::FlagName] = &[
+    inspect::FlagName { name: "n", bit: 7 },
+    inspect::FlagName { name: "v", bit: 6 },
+    inspect::FlagName { name: "d", bit: 3 },
+    inspect::FlagName { name: "i", bit: 2 },
+    inspect::FlagName { name: "z", bit: 1 },
+    inspect::FlagName { name: "c", bit: 0 },
+];
 
 /// Bounds a syncless kernel: ~20 NTSC frames of minimum-length instructions.
 const FRAME_INSTRUCTION_BUDGET: u32 = 200_000;
@@ -106,6 +120,57 @@ impl Debugger {
             }
         }
         (None, Stop::BudgetExhausted)
+    }
+
+    /// The 6502 register file as one inspection group.
+    pub fn register_groups(&self) -> Vec<inspect::RegisterGroup> {
+        let cpu = &self.vcs.cpu;
+        let hex = |name, value: u32, bits| inspect::Register {
+            name,
+            value,
+            bits,
+            style: inspect::ValueStyle::Hex,
+        };
+        vec![inspect::RegisterGroup {
+            name: "cpu",
+            registers: vec![
+                hex("pc", cpu.pc as u32, 16),
+                hex("a", cpu.a as u32, 8),
+                hex("x", cpu.x as u32, 8),
+                hex("y", cpu.y as u32, 8),
+                hex("s", cpu.s as u32, 8),
+                inspect::Register {
+                    name: "p",
+                    value: cpu.p as u32,
+                    bits: 8,
+                    style: inspect::ValueStyle::Flags(MOS6502_FLAGS),
+                },
+            ],
+        }]
+    }
+
+    /// The 6507's 13-line address map, named for what the board decodes.
+    pub fn memory_regions(&self) -> Vec<inspect::MemoryRegion> {
+        let region = |name, start, len| inspect::MemoryRegion { name, start, len };
+        vec![
+            region("tia", 0x0000, 0x40),
+            region("riot-ram", 0x0080, 0x80),
+            region("riot-io", 0x0280, 0x20),
+            region("cartridge", 0x1000, 0x1000),
+        ]
+    }
+
+    /// Side-effect-free read of the 13-bit address space.
+    pub fn peek(&self, address: u32) -> u8 {
+        self.vcs.peek(address as u16)
+    }
+
+    pub fn pc(&self) -> u32 {
+        self.vcs.cpu.pc as u32
+    }
+
+    pub fn instruction_set(&self) -> &'static dyn InstructionSet {
+        &Mos6502
     }
 
     /// Run until a breakpoint (or budget); frames surface as they complete.
