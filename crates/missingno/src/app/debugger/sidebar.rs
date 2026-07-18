@@ -55,11 +55,14 @@ const CELL_HEIGHT: f32 = 16.0;
 /// padding. Adjacent short rows coalesce onto one line up to this budget.
 const ROW_BUDGET: f32 = 236.0;
 
-/// The number-line width for a period sweep, and its bar height and marker
-/// width — sized to sit on one sidebar row beside a label and a value.
+/// The number-line width for a period sweep and its bar height — sized to sit on
+/// one sidebar row beside a label and a value. A small triangle glyph sits below
+/// the bar pointing up at the value; its size and nominal advance width place its
+/// tip under the position.
 const SWEEP_BAR_WIDTH: f32 = 96.0;
 const SWEEP_BAR_HEIGHT: f32 = 6.0;
-const SWEEP_MARKER_WIDTH: f32 = 3.0;
+const SWEEP_MARKER_SIZE: f32 = 9.0;
+const SWEEP_MARKER_WIDTH: f32 = 6.0;
 
 /// The sidebar over a core's [`inspect::Section`] schema: a stack of
 /// collapsible sections, each rendering its typed blocks. Every family renders
@@ -605,8 +608,8 @@ fn sweep_row(sweep: &inspect::Sweep) -> Element<'static, app::Message> {
     }
 }
 
-/// The number line: proportional zone segments with a position marker overlaid
-/// at the value.
+/// The number line: proportional zone segments, with a small triangle below the
+/// bar pointing up at the value.
 fn sweep_bar(sweep: &inspect::Sweep) -> Element<'static, app::Message> {
     let end = sweep.end.max(1) as f32;
     let marker_x = (sweep.value.min(sweep.end) as f32 / end) * SWEEP_BAR_WIDTH;
@@ -623,29 +626,25 @@ fn sweep_bar(sweep: &inspect::Sweep) -> Element<'static, app::Message> {
         }
     }
 
+    // A left-padded triangle glyph on its own line, its tip under the position.
     let marker = iced::widget::row![
         Space::new().width(Length::Fixed(
             (marker_x - SWEEP_MARKER_WIDTH / 2.0).max(0.0)
         )),
-        // A dark core under a light 1px outline: the two tones keep the marker
-        // legible on every bright zone colour and on the empty bar alike.
-        container(Space::new())
-            .width(Length::Fixed(SWEEP_MARKER_WIDTH))
-            .height(Length::Fixed(SWEEP_BAR_HEIGHT))
-            .style(|_: &iced::Theme| container::Style {
-                background: Some(Background::Color(Color::from_rgb(0.12, 0.12, 0.18))),
-                border: Border::default().width(1.0).color(palette::TEXT),
-                ..Default::default()
-            }),
+        text("\u{25B2}") // ▲
+            .font(fonts::monospace())
+            .size(SWEEP_MARKER_SIZE)
+            .color(palette::TEXT),
     ];
 
-    iced::widget::stack![
+    column![
         container(segments)
             .width(Length::Fixed(SWEEP_BAR_WIDTH))
             .height(Length::Fixed(SWEEP_BAR_HEIGHT)),
         marker,
     ]
     .width(Length::Fixed(SWEEP_BAR_WIDTH))
+    .spacing(1.0)
     .into()
 }
 
@@ -888,12 +887,12 @@ fn pixel_strip_row(
         }
     };
 
-    let mut strip_cells = iced::widget::row![];
+    let mut strip_cells = iced::widget::row![].spacing(1.0);
     for cell in cells {
         strip_cells = strip_cells.push(pixel_cell(cell));
     }
-    // One 1px frame around the whole strip; cells butt directly inside it, so
-    // neighbours share the frame rather than each drawing its own border.
+    // One 1px frame around the whole strip, its fill also showing through the
+    // 1px inter-cell gaps as shared separators between neighbouring cells.
     let strip = container(strip_cells)
         .padding(1.0)
         .style(|_: &iced::Theme| container::Style {
@@ -923,8 +922,8 @@ fn pixel_strip_row(
 }
 
 /// One pixel-strip cell: a borderless fill — the pixel's colour when lit, a dim
-/// grey slot when empty — that butts against its neighbours inside the strip's
-/// shared frame. The empty grey stays lighter than any lit dark hue, so a
+/// grey slot when empty — separated from its neighbours by the strip frame's 1px
+/// grid lines. The empty grey stays lighter than any lit dark hue, so a
 /// near-black lit pixel still reads as lit against an empty slot.
 fn pixel_cell(color: Option<Color>) -> Element<'static, app::Message> {
     let fill = color.unwrap_or(EMPTY_CELL);

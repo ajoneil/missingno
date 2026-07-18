@@ -76,7 +76,9 @@ pub struct PaneContext<'b> {
     /// The Game Boy family's typed pane surface, when that family is live.
     pub gb: Option<GbPaneContext<'b>>,
     /// The active family's typed inspection state; family panes downcast it
-    /// back out with [`PaneContext::family_state`].
+    /// back out with [`PaneContext::family_state`]. Read only by the feature-gated
+    /// family panes — the shipping families render their state through the sidebar.
+    #[cfg_attr(not(any(feature = "sms", feature = "nes")), allow(dead_code))]
     pub family: &'b dyn std::any::Any,
     pub breakpoints: &'b BTreeSet<u32>,
     /// The memory viewer's visible bytes for its current selection, copied at
@@ -89,6 +91,7 @@ pub struct PaneContext<'b> {
 
 impl<'b> PaneContext<'b> {
     /// The family state, if the active family's is of type `T`.
+    #[cfg_attr(not(any(feature = "sms", feature = "nes")), allow(dead_code))]
     pub fn family_state<T: 'static>(&self) -> Option<&'b T> {
         self.family.downcast_ref()
     }
@@ -248,18 +251,6 @@ pub static VCS_PANE_REGISTRY: &[PaneDescriptor] = &[
     },
     MEMORY_DESCRIPTOR,
     DISASSEMBLY_DESCRIPTOR,
-    PaneDescriptor {
-        kind: DebuggerPane::VcsCpu,
-        icon: Icon::FileText,
-        label: "6507",
-        construct: || Box::new(crate::app::debugger::vcs::CpuPane),
-    },
-    PaneDescriptor {
-        kind: DebuggerPane::VcsTia,
-        icon: Icon::Sliders,
-        label: "TIA",
-        construct: || Box::new(crate::app::debugger::vcs::TiaPane),
-    },
 ];
 
 /// The generic memory viewer, registered for every family — it reads the
@@ -337,8 +328,6 @@ pub enum DebuggerPane {
     TileMap(TileMapId),
     Sprites,
     Audio,
-    VcsCpu,
-    VcsTia,
     #[cfg(feature = "sms")]
     SmsCpu,
     #[cfg(feature = "sms")]
@@ -449,15 +438,21 @@ fn sms_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
     Some(panes)
 }
 
-/// The VCS starts with the 6507 beside the screen, the TIA below.
+/// The VCS starts with the disassembly beside the screen, memory below — its
+/// CPU/TIA/RIOT state lives in the sidebar.
 fn vcs_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
-    let (mut panes, cpu_handle) = pane_grid::State::new(DebuggerPane::VcsCpu.construct());
+    let (mut panes, disassembly_handle) =
+        pane_grid::State::new(DebuggerPane::Disassembly.construct());
     let (screen_handle, split) = panes
-        .split(Vertical, cpu_handle, DebuggerPane::Screen.construct())
+        .split(
+            Vertical,
+            disassembly_handle,
+            DebuggerPane::Screen.construct(),
+        )
         .unwrap();
     panes.resize(split, 1.0 / 3.0);
     panes
-        .split(Horizontal, screen_handle, DebuggerPane::VcsTia.construct())
+        .split(Horizontal, screen_handle, DebuggerPane::Memory.construct())
         .unwrap();
     Some(panes)
 }

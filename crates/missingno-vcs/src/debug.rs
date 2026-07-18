@@ -18,7 +18,6 @@ use missingno_core::video::{self, Frame as VideoFrame, IndexedFrame, Television,
 
 use crate::cartridge::CartridgeError;
 use crate::console::{Frame, JoystickDirection, Vcs};
-use crate::cpu::disasm;
 use crate::tia::{VISIBLE_CLOCKS, palette_index};
 use crate::tv_standard::PIXEL_ASPECT;
 use crate::{CartType, TvStandard};
@@ -421,15 +420,7 @@ pub struct VcsInspectState {
     pub color_p0: RGB8,
     pub color_p1: RGB8,
     pub color_pf: RGB8,
-    pub disassembly: Vec<DisasmRow>,
     pub frame: u64,
-}
-
-#[derive(Clone)]
-pub struct DisasmRow {
-    pub address: u16,
-    pub text: String,
-    pub current: bool,
 }
 
 /// The VCS sidebar sections, shared by the live debugger (paused) and the
@@ -573,6 +564,41 @@ fn tia_graphics_block(state: &VcsInspectState) -> inspect::SectionBlock {
     ])
 }
 
+/// The 15 TIA collision latches, one per object pair among the six drawn
+/// objects (two players, two missiles, ball, playfield). Each latch sets when
+/// its pair overlaps a pixel and holds until CXCLR; the pip lights while set.
+/// Named `a-b` for the pair, with the source register and bit in the help.
+fn tia_collision_block(state: &VcsInspectState) -> inspect::SectionBlock {
+    use inspect::{Row, SectionBlock};
+
+    // (label, CXxx register index, D7/D6 bit, help) in CollisionRegister order.
+    const PAIRS: [(&str, usize, u8, &str); 15] = [
+        ("m0-p1", 0, 0x80, "missile 0 vs player 1 (CXM0P D7)"),
+        ("m0-p0", 0, 0x40, "missile 0 vs player 0 (CXM0P D6)"),
+        ("m1-p0", 1, 0x80, "missile 1 vs player 0 (CXM1P D7)"),
+        ("m1-p1", 1, 0x40, "missile 1 vs player 1 (CXM1P D6)"),
+        ("p0-pf", 2, 0x80, "player 0 vs playfield (CXP0FB D7)"),
+        ("p0-bl", 2, 0x40, "player 0 vs ball (CXP0FB D6)"),
+        ("p1-pf", 3, 0x80, "player 1 vs playfield (CXP1FB D7)"),
+        ("p1-bl", 3, 0x40, "player 1 vs ball (CXP1FB D6)"),
+        ("m0-pf", 4, 0x80, "missile 0 vs playfield (CXM0FB D7)"),
+        ("m0-bl", 4, 0x40, "missile 0 vs ball (CXM0FB D6)"),
+        ("m1-pf", 5, 0x80, "missile 1 vs playfield (CXM1FB D7)"),
+        ("m1-bl", 5, 0x40, "missile 1 vs ball (CXM1FB D6)"),
+        ("bl-pf", 6, 0x80, "ball vs playfield (CXBLPF D7)"),
+        ("p0-p1", 7, 0x80, "player 0 vs player 1 (CXPPMM D7)"),
+        ("m0-m1", 7, 0x40, "missile 0 vs missile 1 (CXPPMM D6)"),
+    ];
+
+    let rows = PAIRS
+        .iter()
+        .map(|&(label, register, bit, help)| {
+            Row::flag(label, state.collisions[register] & bit != 0).help(help)
+        })
+        .collect();
+    SectionBlock::Rows(rows)
+}
+
 fn tia_section(state: &VcsInspectState) -> inspect::Section {
     use inspect::{Row, SectionBlock, Sweep, SweepZone, Tone};
 
@@ -612,6 +638,8 @@ fn tia_section(state: &VcsInspectState) -> inspect::Section {
             ]),
             SectionBlock::Rule,
             tia_graphics_block(state),
+            SectionBlock::Rule,
+            tia_collision_block(state),
         ],
     }
 }
@@ -695,9 +723,6 @@ struct VcsDebugger {
     frame_count: u64,
 }
 
-/// Disassembly rows shown from the current instruction forward.
-const DISASSEMBLY_ROWS: usize = 12;
-
 impl VcsDebugger {
     fn new(core: crate::debugger::Debugger, title: String, last_frame: IndexedFrame) -> Self {
         let mut this = VcsDebugger {
@@ -715,22 +740,6 @@ impl VcsDebugger {
     fn refresh(&mut self) {
         let vcs = self.core.console();
         let cpu = &vcs.cpu;
-        let mut disassembly = Vec::with_capacity(DISASSEMBLY_ROWS);
-        let mut address = cpu.pc;
-        for i in 0..DISASSEMBLY_ROWS {
-            let bytes = [
-                vcs.peek(address),
-                vcs.peek(address.wrapping_add(1)),
-                vcs.peek(address.wrapping_add(2)),
-            ];
-            let row = disasm::disassemble(address, bytes);
-            disassembly.push(DisasmRow {
-                address,
-                text: row.mnemonic,
-                current: i == 0,
-            });
-            address = address.wrapping_add(row.length as u16);
-        }
         let standard = vcs.tv_standard();
         let color = |byte: u8| {
             let (r, g, b) = crate::tia::palette(standard)[palette_index(byte)];
@@ -765,7 +774,6 @@ impl VcsDebugger {
             color_p0: color(gfx.color_p0),
             color_p1: color(gfx.color_p1),
             color_pf: color(gfx.color_pf),
-            disassembly,
             frame: self.frame_count,
         };
     }
