@@ -34,6 +34,7 @@ use crate::app::{
         sizes::{self as sizes, s, xs},
     },
 };
+use missingno_core::inspect::RegisterGroup;
 use missingno_gb::ppu::types::{
     palette::{Palette, PaletteChoice},
     tiles::TileMapId,
@@ -77,6 +78,9 @@ pub struct PaneContext<'b> {
     /// back out with [`PaneContext::family_state`].
     pub family: &'b dyn std::any::Any,
     pub breakpoints: &'b BTreeSet<u16>,
+    /// The seam's register schema, copied at context-build time so the generic
+    /// registers pane never borrows the core.
+    pub registers: &'b [RegisterGroup],
 }
 
 impl<'b> PaneContext<'b> {
@@ -178,6 +182,7 @@ pub static NES_PANE_REGISTRY: &[PaneDescriptor] = &[
         label: "Screen",
         construct: || Box::new(ScreenPane::new()),
     },
+    REGISTERS_DESCRIPTOR,
     PaneDescriptor {
         kind: DebuggerPane::NesCpu,
         icon: Icon::FileText,
@@ -208,6 +213,7 @@ pub static SMS_PANE_REGISTRY: &[PaneDescriptor] = &[
         label: "Screen",
         construct: || Box::new(ScreenPane::new()),
     },
+    REGISTERS_DESCRIPTOR,
     PaneDescriptor {
         kind: DebuggerPane::SmsCpu,
         icon: Icon::FileText,
@@ -229,6 +235,7 @@ pub static VCS_PANE_REGISTRY: &[PaneDescriptor] = &[
         label: "Screen",
         construct: || Box::new(ScreenPane::new()),
     },
+    REGISTERS_DESCRIPTOR,
     PaneDescriptor {
         kind: DebuggerPane::VcsCpu,
         icon: Icon::FileText,
@@ -243,6 +250,15 @@ pub static VCS_PANE_REGISTRY: &[PaneDescriptor] = &[
     },
 ];
 
+/// The generic registers pane, registered for every family — its content comes
+/// entirely from the seam's [`RegisterGroup`] schema.
+const REGISTERS_DESCRIPTOR: PaneDescriptor = PaneDescriptor {
+    kind: DebuggerPane::Registers,
+    icon: Icon::Menu,
+    label: "Registers",
+    construct: || Box::new(crate::app::debugger::registers::RegistersPane),
+};
+
 pub static PANE_REGISTRY: &[PaneDescriptor] = &[
     PaneDescriptor {
         kind: DebuggerPane::Screen,
@@ -250,6 +266,7 @@ pub static PANE_REGISTRY: &[PaneDescriptor] = &[
         label: "Screen",
         construct: || Box::new(ScreenPane::new()),
     },
+    REGISTERS_DESCRIPTOR,
     PaneDescriptor {
         kind: DebuggerPane::Instructions,
         icon: Icon::FileText,
@@ -298,6 +315,7 @@ pub struct DebuggerPanes {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DebuggerPane {
     Screen,
+    Registers,
     Instructions,
     Tiles,
     TileMap(TileMapId),

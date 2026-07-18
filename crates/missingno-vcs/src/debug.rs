@@ -434,6 +434,10 @@ impl InspectSnapshot for VcsSnapshot {
     fn family_state(&self) -> &dyn std::any::Any {
         &self.state
     }
+    fn register_groups(&self) -> Vec<inspect::RegisterGroup> {
+        let s = &self.state;
+        crate::debugger::cpu_register_groups(s.pc, s.a, s.x, s.y, s.s, s.p)
+    }
 }
 
 /// The VCS under its debugging backend, adapted to the seam. Symbols,
@@ -656,6 +660,33 @@ mod tests {
         assert_eq!(
             classify_fields(&[45, 285, 282, 262, 262, 262]),
             TvStandard::Ntsc
+        );
+    }
+
+    #[test]
+    fn snapshot_register_groups_match_live() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/accuracy/roms/cartridge/bank-f8_ntsc.a26");
+        let rom = std::fs::read(&path).unwrap();
+        let mut vcs = Vcs::new(&rom, TvStandard::Ntsc, None).unwrap();
+        for _ in 0..64 {
+            vcs.step_instruction();
+        }
+        let live = crate::debugger::Debugger::new(vcs);
+        let cpu = &live.console().cpu;
+        let state = VcsInspectState {
+            a: cpu.a,
+            x: cpu.x,
+            y: cpu.y,
+            s: cpu.s,
+            p: cpu.p,
+            pc: cpu.pc,
+            ..Default::default()
+        };
+        let snapshot = VcsSnapshot::new(state);
+        assert_eq!(
+            format!("{:?}", live.register_groups()),
+            format!("{:?}", snapshot.register_groups())
         );
     }
 

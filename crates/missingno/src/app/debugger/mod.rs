@@ -37,6 +37,7 @@ mod layout;
 pub(crate) mod nes;
 pub mod panes;
 mod ppu;
+mod registers;
 mod screen;
 pub(crate) mod sidebar;
 #[cfg(feature = "sms")]
@@ -645,10 +646,12 @@ impl Debugger {
             }),
             _ => None,
         };
+        let registers = core.register_groups();
         let ctx = PaneContext {
             gb,
             family: family_any,
             breakpoints: &self.breakpoints,
+            registers: &registers,
         };
 
         let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
@@ -759,10 +762,12 @@ impl Debugger {
                     })
             }
         });
+        let registers = snapshot.register_groups();
         self.panes.view(Some(PaneContext {
             gb,
             family: family_any,
             breakpoints: &self.breakpoints,
+            registers: &registers,
         }))
     }
 

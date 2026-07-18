@@ -93,6 +93,11 @@ impl std::error::Error for StateError {}
 pub trait InspectSnapshot: Send {
     fn frame(&self) -> u64;
     fn family_state(&self) -> &dyn Any;
+    /// The register groups as captured, for schema-driven panes while the core
+    /// runs on the emulation thread.
+    fn register_groups(&self) -> Vec<RegisterGroup> {
+        Vec::new()
+    }
 }
 
 /// The model-erased snapshot handed from the emulation thread to the UI.

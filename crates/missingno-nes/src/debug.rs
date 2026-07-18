@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use missingno_6502::disasm;
+use missingno_core::inspect::{FlagName, Register, RegisterGroup, ValueStyle};
 use missingno_core::stepping::SteppingSystem;
 use missingno_core::system::{ControlId, ControlInput, DebugView, InspectSnapshot, RunningStatus};
 use missingno_core::video::IndexedFrame;
@@ -24,6 +25,17 @@ const PIXEL_ASPECT: f32 = 8.0 / 7.0;
 
 const DISASSEMBLY_ROWS: usize = 12;
 const JSR: u8 = 0x20;
+
+/// Named bits of the 2A03's 6502 status register `p`; the B flag is not
+/// architectural.
+const MOS6502_FLAGS: &[FlagName] = &[
+    FlagName { name: "n", bit: 7 },
+    FlagName { name: "v", bit: 6 },
+    FlagName { name: "d", bit: 3 },
+    FlagName { name: "i", bit: 2 },
+    FlagName { name: "z", bit: 1 },
+    FlagName { name: "c", bit: 0 },
+];
 
 #[derive(Clone, Default)]
 pub struct NesInspectState {
@@ -68,6 +80,36 @@ impl InspectSnapshot for NesSnapshot {
     fn family_state(&self) -> &dyn std::any::Any {
         &self.state
     }
+    fn register_groups(&self) -> Vec<RegisterGroup> {
+        cpu_register_groups(&self.state)
+    }
+}
+
+/// The 2A03 register file as one inspection group, shared by the live view and
+/// the running snapshot.
+fn cpu_register_groups(state: &NesInspectState) -> Vec<RegisterGroup> {
+    let hex = |name, value: u32, bits| Register {
+        name,
+        value,
+        bits,
+        style: ValueStyle::Hex,
+    };
+    vec![RegisterGroup {
+        name: "cpu",
+        registers: vec![
+            hex("a", state.a as u32, 8),
+            hex("x", state.x as u32, 8),
+            hex("y", state.y as u32, 8),
+            hex("s", state.s as u32, 8),
+            Register {
+                name: "p",
+                value: state.p as u32,
+                bits: 8,
+                style: ValueStyle::Flags(MOS6502_FLAGS),
+            },
+            hex("pc", state.pc as u32, 16),
+        ],
+    }]
 }
 
 /// iNES media carries the `NES\x1A` magic in its first four bytes.
@@ -173,6 +215,10 @@ impl SteppingSystem for NesSystem {
             disassembly,
             frame: frame_count,
         }
+    }
+
+    fn register_groups(state: &NesInspectState) -> Vec<RegisterGroup> {
+        cpu_register_groups(state)
     }
 
     fn snapshot(state: &NesInspectState, frame: u64) -> DebugView {

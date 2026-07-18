@@ -8,6 +8,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use crate::TvStandard;
+use crate::inspect::RegisterGroup;
 use crate::system::{
     ControlId, ControlInput, DebugView, FrameOutcome, RunningStatus, StepOutcome, SystemConsole,
     SystemDebugger,
@@ -45,6 +46,10 @@ pub trait SteppingSystem: 'static {
     fn step_over_target(core: &Self::Core) -> Option<u16>;
     /// Rebuild the typed inspection state from the core (peek-only).
     fn inspect(core: &Self::Core, frame_count: u64) -> Self::InspectState;
+    /// The register groups this system exposes for the schema-driven view.
+    fn register_groups(_state: &Self::InspectState) -> Vec<RegisterGroup> {
+        Vec::new()
+    }
     /// An owned snapshot of the state, stamped with the UI's frame counter.
     fn snapshot(state: &Self::InspectState, frame: u64) -> DebugView;
     fn running_status(state: &Self::InspectState, frame: u64) -> RunningStatus;
@@ -242,6 +247,10 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
 
     fn family_state(&self) -> &dyn std::any::Any {
         &self.inspect
+    }
+
+    fn register_groups(&self) -> Vec<RegisterGroup> {
+        S::register_groups(&self.inspect)
     }
 
     fn video_out(&self) -> VideoOut {

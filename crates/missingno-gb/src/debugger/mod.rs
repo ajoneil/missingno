@@ -117,14 +117,6 @@ impl WatchCondition {
     }
 }
 
-/// Named bits of the SM83 flags register `f`.
-const SM83_FLAGS: &[inspect::FlagName] = &[
-    inspect::FlagName { name: "z", bit: 7 },
-    inspect::FlagName { name: "n", bit: 6 },
-    inspect::FlagName { name: "h", bit: 5 },
-    inspect::FlagName { name: "c", bit: 4 },
-];
-
 /// The parameterised quantity behind one watchable key.
 #[derive(Clone, PartialEq)]
 enum WatchKind {
@@ -706,39 +698,7 @@ impl<M: Model> Debugger<M> {
 
     /// The SM83 register file as one inspection group.
     pub fn register_groups(&self) -> Vec<inspect::RegisterGroup> {
-        let cpu = self.game_boy.cpu();
-        let hex8 = |name, value: u8| inspect::Register {
-            name,
-            value: value as u32,
-            bits: 8,
-            style: inspect::ValueStyle::Hex,
-        };
-        let hex16 = |name, value: u16| inspect::Register {
-            name,
-            value: value as u32,
-            bits: 16,
-            style: inspect::ValueStyle::Hex,
-        };
-        vec![inspect::RegisterGroup {
-            name: "cpu",
-            registers: vec![
-                hex8("a", cpu.a),
-                inspect::Register {
-                    name: "f",
-                    value: cpu.flags.bits() as u32,
-                    bits: 8,
-                    style: inspect::ValueStyle::Flags(SM83_FLAGS),
-                },
-                hex8("b", cpu.b),
-                hex8("c", cpu.c),
-                hex8("d", cpu.d),
-                hex8("e", cpu.e),
-                hex8("h", cpu.h),
-                hex8("l", cpu.l),
-                hex16("sp", cpu.stack_pointer),
-                hex16("pc", cpu.pc),
-            ],
-        }]
+        inspection::cpu_register_groups(self.game_boy.cpu())
     }
 
     /// The CPU-visible flat address map, named by role.

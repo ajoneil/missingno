@@ -78,6 +78,9 @@ impl InspectSnapshot for CgbSnapshot {
     fn family_state(&self) -> &dyn Any {
         self
     }
+    fn register_groups(&self) -> Vec<missingno_core::inspect::RegisterGroup> {
+        self.base.register_groups()
+    }
 }
 
 impl ConsoleUi for Cgb {

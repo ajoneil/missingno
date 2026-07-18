@@ -6,6 +6,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use missingno_core::inspect::{Register, RegisterGroup, ValueStyle};
 use missingno_core::stepping::SteppingSystem;
 use missingno_core::system::{ControlId, ControlInput, DebugView, InspectSnapshot, RunningStatus};
 use missingno_core::video::IndexedFrame;
@@ -63,6 +64,35 @@ impl InspectSnapshot for SmsSnapshot {
     fn family_state(&self) -> &dyn std::any::Any {
         &self.state
     }
+    fn register_groups(&self) -> Vec<RegisterGroup> {
+        cpu_register_groups(&self.state)
+    }
+}
+
+/// The Z80 register file as one inspection group, shared by the live view and
+/// the running snapshot. `f` renders as a plain byte — no validated Z80 flag
+/// table exists yet.
+fn cpu_register_groups(state: &SmsInspectState) -> Vec<RegisterGroup> {
+    let hex = |name, value: u32, bits| Register {
+        name,
+        value,
+        bits,
+        style: ValueStyle::Hex,
+    };
+    vec![RegisterGroup {
+        name: "cpu",
+        registers: vec![
+            hex("a", state.a as u32, 8),
+            hex("f", state.f as u32, 8),
+            hex("bc", state.bc as u32, 16),
+            hex("de", state.de as u32, 16),
+            hex("hl", state.hl as u32, 16),
+            hex("ix", state.ix as u32, 16),
+            hex("iy", state.iy as u32, 16),
+            hex("sp", state.sp as u32, 16),
+            hex("pc", state.pc as u32, 16),
+        ],
+    }]
 }
 
 /// Master System media is recognised by its `.sms` file extension.
@@ -174,6 +204,10 @@ impl SteppingSystem for SmsSystem {
             code_window,
             frame: frame_count,
         }
+    }
+
+    fn register_groups(state: &SmsInspectState) -> Vec<RegisterGroup> {
+        cpu_register_groups(state)
     }
 
     fn snapshot(state: &SmsInspectState, frame: u64) -> DebugView {

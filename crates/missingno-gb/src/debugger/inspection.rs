@@ -10,6 +10,7 @@
 use std::sync::Arc;
 
 use missingno_core::cdl::CdlWindow;
+use missingno_core::inspect;
 use missingno_core::symbols::SymbolTable;
 use missingno_core::system::InspectSnapshot;
 
@@ -148,6 +149,53 @@ impl CpuSource for CpuView {
     fn interrupts_enabled(&self) -> bool {
         self.ime
     }
+}
+
+/// Named bits of the SM83 flags register `f`.
+const SM83_FLAGS: &[inspect::FlagName] = &[
+    inspect::FlagName { name: "z", bit: 7 },
+    inspect::FlagName { name: "n", bit: 6 },
+    inspect::FlagName { name: "h", bit: 5 },
+    inspect::FlagName { name: "c", bit: 4 },
+];
+
+/// The SM83 register file as one inspection group. Shared by the live debugger
+/// (over the console's CPU) and the running snapshot (over its captured view),
+/// so both produce identical groups. `pc` follows the debugger's convention of
+/// the current instruction's fetch address.
+pub fn cpu_register_groups(cpu: &impl CpuSource) -> Vec<inspect::RegisterGroup> {
+    let hex8 = |name, register| inspect::Register {
+        name,
+        value: cpu.get_register8(register) as u32,
+        bits: 8,
+        style: inspect::ValueStyle::Hex,
+    };
+    let hex16 = |name, value: u16| inspect::Register {
+        name,
+        value: value as u32,
+        bits: 16,
+        style: inspect::ValueStyle::Hex,
+    };
+    vec![inspect::RegisterGroup {
+        name: "cpu",
+        registers: vec![
+            hex8("a", Register8::A),
+            inspect::Register {
+                name: "f",
+                value: cpu.flags().bits() as u32,
+                bits: 8,
+                style: inspect::ValueStyle::Flags(SM83_FLAGS),
+            },
+            hex8("b", Register8::B),
+            hex8("c", Register8::C),
+            hex8("d", Register8::D),
+            hex8("e", Register8::E),
+            hex8("h", Register8::H),
+            hex8("l", Register8::L),
+            hex16("sp", cpu.stack_pointer()),
+            hex16("pc", cpu.ir_address()),
+        ],
+    }]
 }
 
 // --- PPU ---------------------------------------------------------------------
@@ -436,5 +484,39 @@ impl InspectSnapshot for GbSnapshot {
     }
     fn family_state(&self) -> &dyn std::any::Any {
         self
+    }
+    fn register_groups(&self) -> Vec<inspect::RegisterGroup> {
+        cpu_register_groups(&self.cpu)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cartridge::Cartridge;
+    use crate::debugger::Debugger;
+
+    #[test]
+    fn snapshot_register_groups_match_live() {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x100] = 0x00;
+        rom[0x101..0x104].copy_from_slice(&[0xc3, 0x50, 0x01]);
+        let mut debugger =
+            Debugger::new(Console::<crate::Dmg>::new(Cartridge::new(rom, None), None));
+        for _ in 0..4 {
+            debugger.step();
+        }
+        let live = debugger.register_groups();
+        let snapshot = GbSnapshot::capture(
+            debugger.game_boy(),
+            ColorSnapshot::Dmg { sgb: false },
+            0,
+            Arc::new(SymbolTable::default()),
+            CdlWindow::default(),
+        );
+        assert_eq!(
+            format!("{live:?}"),
+            format!("{:?}", snapshot.register_groups())
+        );
     }
 }

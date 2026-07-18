@@ -26,6 +26,40 @@ const MOS6502_FLAGS: &[inspect::FlagName] = &[
 /// Bounds a syncless kernel: ~20 NTSC frames of minimum-length instructions.
 const FRAME_INSTRUCTION_BUDGET: u32 = 200_000;
 
+/// The 6507 register file as one inspection group. Shared by the live debugger
+/// and the running snapshot so both produce identical groups.
+pub fn cpu_register_groups(
+    pc: u16,
+    a: u8,
+    x: u8,
+    y: u8,
+    s: u8,
+    p: u8,
+) -> Vec<inspect::RegisterGroup> {
+    let hex = |name, value: u32, bits| inspect::Register {
+        name,
+        value,
+        bits,
+        style: inspect::ValueStyle::Hex,
+    };
+    vec![inspect::RegisterGroup {
+        name: "cpu",
+        registers: vec![
+            hex("pc", pc as u32, 16),
+            hex("a", a as u32, 8),
+            hex("x", x as u32, 8),
+            hex("y", y as u32, 8),
+            hex("s", s as u32, 8),
+            inspect::Register {
+                name: "p",
+                value: p as u32,
+                bits: 8,
+                style: inspect::ValueStyle::Flags(MOS6502_FLAGS),
+            },
+        ],
+    }]
+}
+
 pub struct Debugger {
     vcs: Vcs,
     breakpoints: BTreeSet<u16>,
@@ -125,28 +159,7 @@ impl Debugger {
     /// The 6502 register file as one inspection group.
     pub fn register_groups(&self) -> Vec<inspect::RegisterGroup> {
         let cpu = &self.vcs.cpu;
-        let hex = |name, value: u32, bits| inspect::Register {
-            name,
-            value,
-            bits,
-            style: inspect::ValueStyle::Hex,
-        };
-        vec![inspect::RegisterGroup {
-            name: "cpu",
-            registers: vec![
-                hex("pc", cpu.pc as u32, 16),
-                hex("a", cpu.a as u32, 8),
-                hex("x", cpu.x as u32, 8),
-                hex("y", cpu.y as u32, 8),
-                hex("s", cpu.s as u32, 8),
-                inspect::Register {
-                    name: "p",
-                    value: cpu.p as u32,
-                    bits: 8,
-                    style: inspect::ValueStyle::Flags(MOS6502_FLAGS),
-                },
-            ],
-        }]
+        cpu_register_groups(cpu.pc, cpu.a, cpu.x, cpu.y, cpu.s, cpu.p)
     }
 
     /// The 6507's 13-line address map, named for what the board decodes.
