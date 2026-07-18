@@ -4,6 +4,7 @@ pub mod board;
 pub mod cartridge;
 pub mod console;
 pub use missingno_6502 as cpu;
+pub mod debug;
 pub mod debugger;
 pub mod riot;
 pub mod tia;

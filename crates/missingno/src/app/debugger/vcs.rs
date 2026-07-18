@@ -1,59 +1,14 @@
-//! The VCS family's inspection state and debugger panes. One owned state
-//! struct serves both the paused view (refreshed after every step) and the
-//! per-frame snapshot the running view renders from.
+//! The VCS family's debugger panes. Both render from the crate-owned
+//! [`VcsInspectState`], downcast from the family-erased inspection surface —
+//! the live console while paused, or its snapshot while running.
 
 use iced::widget::{column, pane_grid, text};
 
+use missingno_vcs::debug::VcsInspectState;
+
 use crate::app;
-use crate::app::debugger::inspect::InspectSnapshot;
 use crate::app::debugger::panes::{self, DebuggerPane, Pane, PaneContext};
 use crate::app::ui::{fonts, sizes::s};
-
-#[derive(Clone, Default)]
-pub struct VcsInspectState {
-    pub a: u8,
-    pub x: u8,
-    pub y: u8,
-    pub s: u8,
-    pub p: u8,
-    pub pc: u16,
-    pub beam: u16,
-    pub scanline: usize,
-    pub timer: u8,
-    pub timer_underflowed: bool,
-    pub swcha: u8,
-    pub swchb: u8,
-    pub collisions: [u8; 8],
-    pub disassembly: Vec<DisasmRow>,
-    pub frame: u64,
-}
-
-#[derive(Clone)]
-pub struct DisasmRow {
-    pub address: u16,
-    pub text: String,
-    pub current: bool,
-}
-
-/// The per-frame snapshot for the running view.
-pub struct VcsSnapshot {
-    pub state: VcsInspectState,
-}
-
-impl VcsSnapshot {
-    pub fn new(state: VcsInspectState) -> Self {
-        VcsSnapshot { state }
-    }
-}
-
-impl InspectSnapshot for VcsSnapshot {
-    fn frame(&self) -> u64 {
-        self.state.frame
-    }
-    fn family_state(&self) -> &dyn std::any::Any {
-        &self.state
-    }
-}
 
 fn flag_string(p: u8) -> String {
     "nv-bdizc"
