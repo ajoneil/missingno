@@ -62,8 +62,10 @@ const UNLIT_INSET: f32 = 2.0;
 /// A bit table cell's height, so its header, rows, and pips align across
 /// columns.
 const CELL_HEIGHT: f32 = 16.0;
-/// A pair-matrix cell's width, so its column headers and triangular pips align.
-const PAIR_CELL_W: f32 = 16.0;
+/// A pair-matrix cell's width and height, so its column headers and triangular
+/// pips align with room to breathe.
+const PAIR_CELL_W: f32 = 20.0;
+const PAIR_CELL_H: f32 = 18.0;
 
 /// Content width available to a packed row block, inside the section body's
 /// padding. Adjacent short rows coalesce onto one line up to this budget.
@@ -820,8 +822,9 @@ fn pair_matrix(matrix: &inspect::PairMatrix) -> Element<'static, app::Message> {
 
     // Header line: a blank corner over the label column, then one header per
     // entity that can be the lower member of a pair.
-    let mut header = iced::widget::row![pair_slot(Space::new().into()), pair_rule_v()];
+    let mut header = iced::widget::row![pair_slot(Space::new().into())];
     for &name in &matrix.entities[..n.saturating_sub(1)] {
+        header = header.push(pair_rule_v());
         header = header.push(pair_slot(
             text(name.to_owned())
                 .font(fonts::monospace())
@@ -832,22 +835,21 @@ fn pair_matrix(matrix: &inspect::PairMatrix) -> Element<'static, app::Message> {
     }
     grid = grid.push(header);
 
-    // One line per row entity, its pips under the headers, with a faint rule
-    // above each line stepping wider as the triangle grows.
-    for row in 1..n {
+    // One line per row entity, widest first so each column's pips sit close
+    // under their header, with a faint rule above each line stepping narrower
+    // as the triangle tapers, and a vertical rule between every column.
+    for row in (1..n).rev() {
         grid = grid.push(pair_rule_h(1 + row));
-        let mut line = iced::widget::row![
-            pair_slot(
-                text(matrix.entities[row].to_owned())
-                    .font(fonts::monospace())
-                    .size(LABEL)
-                    .color(palette::MUTED)
-                    .into(),
-            ),
-            pair_rule_v(),
-        ];
+        let mut line = iced::widget::row![pair_slot(
+            text(matrix.entities[row].to_owned())
+                .font(fonts::monospace())
+                .size(LABEL)
+                .color(palette::MUTED)
+                .into(),
+        )];
         for col in 0..row {
             let cell = matrix.cell(col, row);
+            line = line.push(pair_rule_v());
             line = line.push(pair_slot(with_help(
                 pip(cell.set, palette::GREEN),
                 cell.help,
@@ -856,48 +858,50 @@ fn pair_matrix(matrix: &inspect::PairMatrix) -> Element<'static, app::Message> {
         grid = grid.push(line);
     }
 
-    grid.into()
+    container(grid).padding([xs(), 0.0]).into()
 }
 
 /// A fixed-size pair-matrix cell, so headers and pips align across the triangle.
 fn pair_slot(content: Element<'static, app::Message>) -> Element<'static, app::Message> {
     container(content)
         .width(Length::Fixed(PAIR_CELL_W))
-        .height(Length::Fixed(CELL_HEIGHT))
+        .height(Length::Fixed(PAIR_CELL_H))
         .center_x(Length::Fixed(PAIR_CELL_W))
-        .center_y(Length::Fixed(CELL_HEIGHT))
+        .center_y(Length::Fixed(PAIR_CELL_H))
         .into()
 }
 
-/// A faint horizontal rule spanning `slots` matrix columns, guiding the eye
-/// along each triangle row.
+/// A faint horizontal rule spanning `slots` matrix columns and the vertical
+/// rules between them, guiding the eye along each triangle row.
 fn pair_rule_h(slots: usize) -> Element<'static, app::Message> {
+    let width = slots as f32 * PAIR_CELL_W + slots.saturating_sub(1) as f32;
     container(Space::new())
-        .width(Length::Fixed(slots as f32 * PAIR_CELL_W + 1.0))
+        .width(Length::Fixed(width))
         .height(Length::Fixed(1.0))
         .style(|_: &iced::Theme| container::Style {
-            background: Some(Background::Color(Color {
-                a: 0.35,
-                ..palette::SURFACE2
-            })),
+            background: Some(Background::Color(pair_rule_color())),
             ..Default::default()
         })
         .into()
 }
 
-/// A faint vertical rule separating the row labels from the pip triangle.
+/// A faint vertical rule between matrix columns.
 fn pair_rule_v() -> Element<'static, app::Message> {
     container(Space::new())
         .width(Length::Fixed(1.0))
-        .height(Length::Fixed(CELL_HEIGHT))
+        .height(Length::Fixed(PAIR_CELL_H))
         .style(|_: &iced::Theme| container::Style {
-            background: Some(Background::Color(Color {
-                a: 0.35,
-                ..palette::SURFACE2
-            })),
+            background: Some(Background::Color(pair_rule_color())),
             ..Default::default()
         })
         .into()
+}
+
+fn pair_rule_color() -> Color {
+    Color {
+        a: 0.35,
+        ..palette::SURFACE2
+    }
 }
 
 // --- Palette swatches --------------------------------------------------------

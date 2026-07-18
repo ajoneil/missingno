@@ -991,8 +991,9 @@ fn render_relations(matrix: &PairMatrix, out: &mut String) {
     // Column headers: every entity before the last, each above its own column.
     let header = matrix.entities[..n - 1].join(" ");
     out.push_str(&format!("  {: <10}{header}\n", ""));
-    // One ragged row per entity past the first — cells only up to the diagonal.
-    for row in 1..n {
+    // One ragged row per entity past the first, widest first so each column's
+    // cells sit close under their header.
+    for row in (1..n).rev() {
         let cells: Vec<String> = (0..row)
             .map(|col| {
                 let width = matrix.entities[col].len().max(1);
