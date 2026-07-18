@@ -44,21 +44,6 @@ const SWATCH_LABEL_WIDTH: f32 = 40.0;
 /// playfield's 20 cells) stacks beneath it instead.
 const PIXEL_CELL_W: f32 = 9.0;
 const PIXEL_CELL_H: f32 = 13.0;
-/// An unlit strip cell is drawn as a recessed dark socket — a near-black core
-/// inset in a quiet surround. The inset texture, not luminance alone, is what
-/// separates an unlit cell from a solid lit near-black pixel.
-const UNLIT_RING: Color = Color::from_rgb(
-    0x1e as f32 / 255.0,
-    0x1e as f32 / 255.0,
-    0x2e as f32 / 255.0,
-);
-const UNLIT_CORE: Color = Color::from_rgb(
-    0x11 as f32 / 255.0,
-    0x11 as f32 / 255.0,
-    0x1b as f32 / 255.0,
-);
-/// The inset framing the unlit core inside its cell.
-const UNLIT_INSET: f32 = 2.0;
 /// A bit table cell's height, so its header, rows, and pips align across
 /// columns.
 const CELL_HEIGHT: f32 = 16.0;
@@ -1064,35 +1049,21 @@ fn strip_width(cells: usize) -> f32 {
 }
 
 /// One pixel-strip cell, separated from its neighbours by the strip frame's 1px
-/// grid lines: a solid fill when lit, or — when the pixel is off (a 0 pattern
-/// bit, or a hardware-transparent object colour 0) — a recessed dark socket, an
-/// inset near-black core inside a dark ring. The inset reads as "present but
-/// off" and its texture keeps it distinct from a solid lit near-black pixel.
+/// grid lines: a solid fill when lit, or the page background when the pixel is
+/// off (a 0 pattern bit, or a hardware-transparent object colour 0) — an off
+/// cell reads as absence, while a lit black pixel fills darker than the page.
 fn pixel_cell(color: Option<Color>) -> Element<'static, app::Message> {
-    match color {
-        Some(fill) => container(Space::new())
-            .width(PIXEL_CELL_W)
-            .height(PIXEL_CELL_H)
-            .style(move |_: &iced::Theme| container::Style {
-                background: Some(Background::Color(fill)),
-                ..Default::default()
-            })
-            .into(),
-        None => container(container(Space::new()).width(Fill).height(Fill).style(
-            |_: &iced::Theme| container::Style {
-                background: Some(Background::Color(UNLIT_CORE)),
-                ..Default::default()
-            },
-        ))
+    container(Space::new())
         .width(PIXEL_CELL_W)
         .height(PIXEL_CELL_H)
-        .padding(UNLIT_INSET)
-        .style(|_: &iced::Theme| container::Style {
-            background: Some(Background::Color(UNLIT_RING)),
+        .style(move |theme: &iced::Theme| container::Style {
+            background: Some(Background::Color(match color {
+                Some(fill) => fill,
+                None => theme.extended_palette().background.base.color,
+            })),
             ..Default::default()
         })
-        .into(),
-    }
+        .into()
 }
 
 fn color_swatch(color: Color) -> Element<'static, app::Message> {
