@@ -11,10 +11,11 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-use missingno_core::inspect::Watch;
+use missingno_core::inspect::{MemoryWindow, Watch};
 
 use super::audio_output::AudioOutput;
 use super::debugger::inspect::DebugView;
+use super::debugger::memory::MemoryInterest;
 use super::library::activity::{CaptureOptions, FrameCapture};
 use super::screen::Frame;
 use super::system::{
@@ -58,6 +59,20 @@ pub type StatusSlot = Arc<Mutex<Option<RunningStatus>>>;
 /// written while a debugger payload runs; `None` for plain-console payloads.
 pub type SnapshotSlot = Arc<Mutex<Option<DebugView>>>;
 
+/// Latest-value handoff for the memory viewer's interest window: the bytes the
+/// emu thread peeked at the vblank boundary for the pane's current view. Only
+/// written while a debugger payload runs with an interest set.
+pub type MemoryWindowSlot = Arc<Mutex<Option<MemoryWindow>>>;
+
+/// The latest-value publish slots the emu thread writes each frame, grouped so
+/// they thread through construction as one handle.
+struct PublishSlots {
+    frames: FrameSlot,
+    status: StatusSlot,
+    snapshot: SnapshotSlot,
+    memory_window: MemoryWindowSlot,
+}
+
 /// Commands the UI sends to the emu thread. The thread terminates when the
 /// command channel is dropped (the UI holds the only sender).
 pub enum EmuCommand {
@@ -76,6 +91,9 @@ pub enum EmuCommand {
     ClearBreakpoint(u32),
     AddWatchpoint(Watch),
     RemoveWatchpoint(Watch),
+    /// The memory viewer's current view span, peeked each vblank and published
+    /// to the memory-window slot. `None` clears it (the pane closed).
+    SetMemoryInterest(Option<MemoryInterest>),
     RequestScreenshot {
         options: CaptureOptions,
     },
@@ -105,6 +123,7 @@ pub struct EmuHandle {
     frames: FrameSlot,
     status: StatusSlot,
     snapshot: SnapshotSlot,
+    memory_window: MemoryWindowSlot,
     returns: Arc<Mutex<Receiver<Payload>>>,
     shutdown_ack: Arc<Mutex<Receiver<()>>>,
 }
@@ -128,6 +147,10 @@ impl EmuHandle {
 
     pub fn snapshot(&self) -> &SnapshotSlot {
         &self.snapshot
+    }
+
+    pub fn memory_window(&self) -> &MemoryWindowSlot {
+        &self.memory_window
     }
 
     pub fn send(&self, command: EmuCommand) {
@@ -178,15 +201,19 @@ pub fn subscription_worker() -> impl iced::futures::Stream<Item = EmuEvent> {
     let (command_tx, command_rx) = channel::<EmuCommand>();
     let (return_tx, return_rx) = channel::<Payload>();
     let (shutdown_ack_tx, shutdown_ack_rx) = channel::<()>();
-    let frames: FrameSlot = Arc::new(Mutex::new(None));
-    let status: StatusSlot = Arc::new(Mutex::new(None));
-    let snapshot: SnapshotSlot = Arc::new(Mutex::new(None));
+    let slots = PublishSlots {
+        frames: Arc::new(Mutex::new(None)),
+        status: Arc::new(Mutex::new(None)),
+        snapshot: Arc::new(Mutex::new(None)),
+        memory_window: Arc::new(Mutex::new(None)),
+    };
 
     let handle = EmuHandle {
         commands: command_tx,
-        frames: frames.clone(),
-        status: status.clone(),
-        snapshot: snapshot.clone(),
+        frames: slots.frames.clone(),
+        status: slots.status.clone(),
+        snapshot: slots.snapshot.clone(),
+        memory_window: slots.memory_window.clone(),
         returns: Arc::new(Mutex::new(return_rx)),
         shutdown_ack: Arc::new(Mutex::new(shutdown_ack_rx)),
     };
@@ -195,17 +222,7 @@ pub fn subscription_worker() -> impl iced::futures::Stream<Item = EmuEvent> {
     let worker_events = event_tx;
     std::thread::Builder::new()
         .name("emu".into())
-        .spawn(move || {
-            run_emu_thread(
-                command_rx,
-                return_tx,
-                shutdown_ack_tx,
-                frames,
-                status,
-                snapshot,
-                worker_events,
-            )
-        })
+        .spawn(move || run_emu_thread(command_rx, return_tx, shutdown_ack_tx, slots, worker_events))
         .expect("spawn emu thread");
 
     event_rx
@@ -217,14 +234,12 @@ fn run_emu_thread(
     commands: Receiver<EmuCommand>,
     returns: Sender<Payload>,
     shutdown_ack: Sender<()>,
-    frames: FrameSlot,
-    status: StatusSlot,
-    snapshot: SnapshotSlot,
+    slots: PublishSlots,
     events: EventSink,
 ) {
     // Audio device lives on this thread (cpal's Stream is `!Send`).
     let mut audio = AudioOutput::new();
-    let mut state = EmuLoop::new(frames, status, snapshot, events, returns, shutdown_ack);
+    let mut state = EmuLoop::new(slots, events, returns, shutdown_ack);
 
     'thread: loop {
         if state.running() {
@@ -274,6 +289,10 @@ struct EmuLoop {
     frames: FrameSlot,
     status: StatusSlot,
     snapshot: SnapshotSlot,
+    memory_window: MemoryWindowSlot,
+    /// The memory viewer's current view span, peeked each vblank into the
+    /// memory-window slot. `None` when no memory pane is browsing.
+    memory_interest: Option<MemoryInterest>,
     events: EventSink,
     returns: Sender<Payload>,
     shutdown_ack: Sender<()>,
@@ -284,18 +303,18 @@ struct EmuLoop {
 
 impl EmuLoop {
     fn new(
-        frames: FrameSlot,
-        status: StatusSlot,
-        snapshot: SnapshotSlot,
+        slots: PublishSlots,
         events: EventSink,
         returns: Sender<Payload>,
         shutdown_ack: Sender<()>,
     ) -> Self {
         Self {
             payload: None,
-            frames,
-            status,
-            snapshot,
+            frames: slots.frames,
+            status: slots.status,
+            snapshot: slots.snapshot,
+            memory_window: slots.memory_window,
+            memory_interest: None,
             events,
             returns,
             shutdown_ack,
@@ -357,6 +376,7 @@ impl EmuLoop {
                     payload.remove_watch(&watch);
                 }
             }
+            EmuCommand::SetMemoryInterest(interest) => self.memory_interest = interest,
             EmuCommand::RequestScreenshot { options } => {
                 if let Some(payload) = &self.payload {
                     let capture = FrameCapture::from_frame(&payload.screen_display(), &options);
@@ -395,6 +415,15 @@ impl EmuLoop {
             && let Ok(mut slot) = self.snapshot.lock()
         {
             *slot = Some(view);
+        }
+        // Peek the memory viewer's current view span at this vblank boundary, so
+        // the running pane shows the bytes as of the frame it publishes.
+        if new_frame
+            && let Some(interest) = self.memory_interest
+            && let Some(window) = payload.peek_window(interest)
+            && let Ok(mut slot) = self.memory_window.lock()
+        {
+            *slot = Some(window);
         }
         if new_frame {
             let _ = self.events.unbounded_send(EmuEvent::FrameReady);
@@ -534,6 +563,15 @@ impl Payload {
         match self {
             Self::Console(_) => None,
             Self::Debugger(payload) => Some(payload.core.snapshot(payload.frame)),
+        }
+    }
+
+    /// Peek the memory viewer's interest span through the seam. `None` for a
+    /// plain console (no debugger, nothing to inspect).
+    fn peek_window(&self, interest: MemoryInterest) -> Option<MemoryWindow> {
+        match self {
+            Self::Console(_) => None,
+            Self::Debugger(payload) => Some(interest.read_through(payload.core.as_ref())),
         }
     }
 

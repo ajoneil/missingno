@@ -20,7 +20,7 @@ use crate::app::{
         sizes::{s, xs},
     },
 };
-use missingno_core::inspect::{Watch, WatchTerm};
+use missingno_core::inspect::{MemoryRegion, MemoryWindow, Watch, WatchTerm};
 use missingno_core::symbols::Symbol;
 use missingno_gb::ppu::types::palette::PaletteChoice;
 
@@ -33,7 +33,7 @@ mod disasm_rows;
 mod disassembly;
 pub mod inspect;
 mod layout;
-mod memory;
+pub(crate) mod memory;
 #[cfg(feature = "nes")]
 pub(crate) mod nes;
 pub mod panes;
@@ -146,6 +146,12 @@ pub struct Debugger {
     /// Boxed — a snapshot carries a full VRAM copy and shouldn't inflate the
     /// paused-path `Debugger` (and the `Game` enum) by that much.
     last_snapshot: Option<DebugView>,
+    /// The memory viewer's interest window as of the last vblank, fed by the
+    /// emu thread while the core runs; drives the running memory browser.
+    last_memory_window: Option<MemoryWindow>,
+    /// The core's static region map, cached at build so the memory pane's
+    /// running browser and jump-to-address work while the core is away.
+    memory_regions: &'static [MemoryRegion],
     sidebar: Sidebar,
     panes: DebuggerPanes,
     running: bool,
@@ -196,6 +202,7 @@ impl Debugger {
     }
 
     fn build(core: Box<dyn SystemDebugger>, panes: DebuggerPanes, platform: Platform) -> Self {
+        let memory_regions = core.memory_regions();
         Self {
             debugger: Some(core),
             rom_path: None,
@@ -204,6 +211,8 @@ impl Debugger {
             watchpoints: Vec::new(),
             last_status: None,
             last_snapshot: None,
+            last_memory_window: None,
+            memory_regions,
             sidebar: Sidebar::new(),
             panes,
             running: false,
@@ -289,6 +298,7 @@ impl Debugger {
         self.frame = payload.frame;
         self.last_status = None;
         self.last_snapshot = None;
+        self.last_memory_window = None;
     }
 
     /// Whether the core is away on the emu thread.
@@ -314,6 +324,18 @@ impl Debugger {
     pub fn apply_snapshot(&mut self, view: DebugView) {
         self.frame = view.frame();
         self.last_snapshot = Some(view);
+    }
+
+    /// Update the memory viewer's interest window from the emu thread's slot.
+    pub fn apply_memory_window(&mut self, window: MemoryWindow) {
+        self.last_memory_window = Some(window);
+    }
+
+    /// The span the memory pane wants peeked while running: its current view,
+    /// resolved against the cached region map. `None` when no memory pane is
+    /// shown or the family has no region map.
+    pub fn memory_interest(&self) -> Option<memory::MemoryInterest> {
+        memory::interest_for(self.memory_regions, self.panes.memory_selection()?)
     }
 
     pub fn audio_coupling(&self) -> Option<missingno_core::HighPass> {
@@ -614,7 +636,21 @@ impl Debugger {
             }
 
             Message::Pane(message) => {
+                // Keep the memory pane's region cache fresh so its
+                // jump-to-address resolves while the core runs on the emu
+                // thread; harmless no-op for every other pane.
+                self.panes
+                    .update(panes::Message::Pane(panes::PaneMessage::Memory(
+                        memory::Message::SetRegions(self.memory_regions),
+                    )));
                 self.panes.update(message);
+                // A memory selection change while running must re-aim the emu
+                // thread's vblank peek at the new view.
+                if self.is_detached()
+                    && let Some(emu) = emu
+                {
+                    emu.send(EmuCommand::SetMemoryInterest(self.memory_interest()));
+                }
                 Task::none()
             }
         }
@@ -758,13 +794,30 @@ impl Debugger {
             gb,
             family: family_any,
             breakpoints: &self.breakpoints,
-            memory: snapshot
-                .memory_window()
-                .map(memory::MemoryPaneData::running),
+            memory: self.running_memory(snapshot),
             disasm: disasm_readout
                 .as_ref()
                 .map(disassembly::DisasmPaneData::new),
         }))
+    }
+
+    /// The memory pane's running data: the region browser fed by the vblank
+    /// interest window when the family has a region map, else the PC-anchored
+    /// snapshot window as a fallback.
+    fn running_memory<'a>(
+        &'a self,
+        snapshot: &'a dyn missingno_core::system::InspectSnapshot,
+    ) -> Option<memory::MemoryPaneData<'a>> {
+        if self.memory_regions.is_empty() {
+            snapshot
+                .memory_window()
+                .map(memory::MemoryPaneData::running_window)
+        } else {
+            Some(memory::MemoryPaneData::running_browse(
+                self.memory_regions,
+                self.last_memory_window.as_ref(),
+            ))
+        }
     }
 
     fn bottom_pane_grid<'a>(

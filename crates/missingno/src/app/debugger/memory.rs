@@ -1,10 +1,15 @@
 //! A generic memory viewer pane, registered for every family. While paused it
 //! reads live through the seam's `memory_regions()` + `peek()`, showing a
 //! region picker and a scrollable hex/ASCII grid. While the core runs on the
-//! emulation thread it can only show what the per-vblank snapshot captured — a
-//! bounded, PC-anchored window — with a note that full memory needs a pause.
+//! emulation thread the same browser renders from the interest window the emu
+//! thread peeks each vblank for the pane's current view: scrolling emits a new
+//! interest and the bytes catch up next vblank, with a placeholder row where
+//! the published window doesn't yet cover the selection. A family with no
+//! region map falls back to the PC-anchored snapshot window.
 
-use iced::widget::{Column, button, column, container, pane_grid, pick_list, row, text};
+use iced::widget::{
+    Column, button, column, container, pane_grid, pick_list, row, text, text_input,
+};
 use iced::{Element, Length};
 
 use missingno_core::inspect::{MemoryRegion, MemoryWindow};
@@ -20,6 +25,9 @@ const BYTES_PER_ROW: u32 = 16;
 const VISIBLE_ROWS: u32 = 16;
 /// One screen's worth of bytes — the bounded span copied per render.
 const VISIBLE_BYTES: u32 = BYTES_PER_ROW * VISIBLE_ROWS;
+/// Server-side ceiling on an interest span the emu thread peeks each vblank —
+/// the pane never asks for more than one screen, but the thread caps anyway.
+const MAX_INTEREST_LEN: u32 = 512;
 
 /// The memory pane's current view, owned by the pane and consulted by the
 /// context builder to copy the right bytes.
@@ -31,22 +39,59 @@ pub struct MemorySelection {
     pub offset: u32,
 }
 
-/// The eagerly-copied data the pane renders from, built afresh each frame so
-/// the pane never borrows the core. `regions` is empty and `running` is true
-/// when the bytes come from a running snapshot window.
+/// The span the running pane wants peeked each vblank: a base address and a
+/// length. The emu thread caps the length before reading through the seam.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemoryInterest {
+    pub start: u32,
+    pub len: u32,
+}
+
+impl MemoryInterest {
+    /// The length actually read, bounded server-side.
+    fn capped_len(self) -> u32 {
+        self.len.min(MAX_INTEREST_LEN)
+    }
+
+    /// Peek the capped span through the seam, side-effect-free.
+    pub fn read_through(self, core: &dyn SystemDebugger) -> MemoryWindow {
+        let bytes = (0..self.capped_len())
+            .map(|i| core.peek(self.start.wrapping_add(i)))
+            .collect();
+        MemoryWindow {
+            base: self.start,
+            bytes,
+        }
+    }
+}
+
+/// What the pane renders from this frame: a paused live readout, the running
+/// region browser fed by the interest window, or the PC-anchored fallback for
+/// a family with no region map. Copied into the pane context each frame so the
+/// pane never borrows the core.
 #[derive(Clone, Copy)]
-pub struct MemoryPaneData<'b> {
-    pub regions: &'b [MemoryRegion],
-    pub selected: usize,
-    pub base: u32,
-    pub bytes: &'b [u8],
-    pub running: bool,
+pub enum MemoryPaneData<'b> {
+    /// Paused: the browser over a live peek readout of the current window.
+    Paused {
+        regions: &'b [MemoryRegion],
+        base: u32,
+        bytes: &'b [u8],
+    },
+    /// Running: the same browser, fed by the vblank interest window. `window`
+    /// is `None` until the first one is published; the grid shows placeholders
+    /// where the window doesn't cover the current selection.
+    RunningBrowse {
+        regions: &'b [MemoryRegion],
+        window: Option<&'b MemoryWindow>,
+    },
+    /// Running fallback for a family without a region map: the PC-anchored
+    /// snapshot window, unscrollable.
+    RunningWindow { base: u32, bytes: &'b [u8] },
 }
 
 /// An owned readout the context builder holds so the pane can borrow its bytes.
 pub struct MemoryReadout {
     pub regions: &'static [MemoryRegion],
-    pub selected: usize,
     pub base: u32,
     pub bytes: Vec<u8>,
 }
@@ -54,31 +99,36 @@ pub struct MemoryReadout {
 impl<'b> MemoryPaneData<'b> {
     /// The paused view over a live peek readout.
     pub fn paused(readout: &'b MemoryReadout) -> Self {
-        Self {
+        Self::Paused {
             regions: readout.regions,
-            selected: readout.selected,
             base: readout.base,
             bytes: &readout.bytes,
-            running: false,
         }
     }
 
-    /// The running view over the snapshot's PC-anchored window.
-    pub fn running(window: &'b MemoryWindow) -> Self {
-        Self {
-            regions: &[],
-            selected: 0,
+    /// The running browser fed by the vblank interest window.
+    pub fn running_browse(regions: &'b [MemoryRegion], window: Option<&'b MemoryWindow>) -> Self {
+        Self::RunningBrowse { regions, window }
+    }
+
+    /// The running PC-anchored fallback for a family with no region map.
+    pub fn running_window(window: &'b MemoryWindow) -> Self {
+        Self::RunningWindow {
             base: window.base,
             bytes: &window.bytes,
-            running: true,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Debug)]
 pub enum Message {
     SelectRegion(usize),
     SetOffset(u32),
+    JumpInput(String),
+    Jump,
+    /// The core's static region map, pushed in so the pane's jump-to-address
+    /// can resolve while the core runs on the emu thread.
+    SetRegions(&'static [MemoryRegion]),
 }
 
 impl From<Message> for app::Message {
@@ -102,6 +152,38 @@ fn window_range(region_start: u32, region_len: u32, offset: u32) -> (u32, u32, u
     (offset, base, visible)
 }
 
+/// The interest span for a selection over a region list — the exact window the
+/// pane shows, so the emu thread peeks the same bytes. `None` with no regions.
+pub fn interest_for(
+    regions: &[MemoryRegion],
+    selection: MemorySelection,
+) -> Option<MemoryInterest> {
+    let selected = selection.region.min(regions.len().checked_sub(1)?);
+    let region = regions[selected];
+    let (_, base, visible) = window_range(region.start, region.len, selection.offset);
+    Some(MemoryInterest {
+        start: base,
+        len: visible,
+    })
+}
+
+/// Resolve a typed hex address to the region containing it and a row-snapped,
+/// clamped offset within it. `None` for unparseable input or an address in no
+/// region.
+fn resolve_jump(regions: &[MemoryRegion], input: &str) -> Option<(usize, u32)> {
+    let trimmed = input
+        .trim()
+        .trim_start_matches("0x")
+        .trim_start_matches('$');
+    let address = u32::from_str_radix(trimmed, 16).ok()?;
+    let (index, region) = regions
+        .iter()
+        .enumerate()
+        .find(|(_, r)| address >= r.start && address < r.start.saturating_add(r.len))?;
+    let offset = (address - region.start) / BYTES_PER_ROW * BYTES_PER_ROW;
+    Some((index, offset.min(max_offset(region.len))))
+}
+
 /// Copy the bytes the paused memory pane should show for `selection`, reading
 /// side-effect-free through the seam. Bounded to one screen's worth.
 pub fn build_readout(core: &dyn SystemDebugger, selection: MemorySelection) -> MemoryReadout {
@@ -109,7 +191,6 @@ pub fn build_readout(core: &dyn SystemDebugger, selection: MemorySelection) -> M
     if regions.is_empty() {
         return MemoryReadout {
             regions,
-            selected: 0,
             base: 0,
             bytes: Vec::new(),
         };
@@ -120,43 +201,64 @@ pub fn build_readout(core: &dyn SystemDebugger, selection: MemorySelection) -> M
     let bytes = (0..visible).map(|i| core.peek(base + i)).collect();
     MemoryReadout {
         regions,
-        selected,
         base,
         bytes,
     }
 }
 
-fn ascii_dump(bytes: &[u8]) -> String {
-    bytes
+fn ascii_dump(cells: &[Option<u8>]) -> String {
+    cells
         .iter()
-        .map(|&b| {
-            if (0x20..=0x7E).contains(&b) {
-                b as char
-            } else {
-                '.'
-            }
+        .map(|cell| match cell {
+            Some(b) if (0x20..=0x7E).contains(b) => *b as char,
+            Some(_) => '.',
+            None => ' ',
         })
         .collect()
 }
 
-/// One grid line: `$ADDR  XX XX .. XX  |ascii|`, with short final rows padded so
-/// the ASCII gutter stays aligned in the monospace font.
-fn hex_row(address: u32, bytes: &[u8]) -> String {
+/// One grid line: `$ADDR  XX XX .. XX  |ascii|`. A `None` cell is a byte the
+/// running window hasn't published yet — shown as `--` so scrolling reads as
+/// updating rather than as zeroes. Short final rows pad the hex columns.
+fn hex_row(address: u32, cells: &[Option<u8>]) -> String {
     let mut hex = String::new();
     for i in 0..BYTES_PER_ROW as usize {
         if i > 0 {
             hex.push(' ');
         }
-        match bytes.get(i) {
-            Some(byte) => hex.push_str(&format!("{byte:02X}")),
+        match cells.get(i) {
+            Some(Some(byte)) => hex.push_str(&format!("{byte:02X}")),
+            Some(None) => hex.push_str("--"),
             None => hex.push_str("  "),
         }
     }
-    format!("${address:04X}  {hex}  |{}|", ascii_dump(bytes))
+    format!("${address:04X}  {hex}  |{}|", ascii_dump(cells))
+}
+
+/// Where the browser grid reads a byte from: contiguous paused bytes, or the
+/// running interest window (a miss renders as a placeholder cell).
+#[derive(Clone, Copy)]
+enum GridSource<'b> {
+    Contiguous { base: u32, bytes: &'b [u8] },
+    Windowed(Option<&'b MemoryWindow>),
+}
+
+impl GridSource<'_> {
+    fn cell(&self, address: u32) -> Option<u8> {
+        match self {
+            GridSource::Contiguous { base, bytes } => address
+                .checked_sub(*base)
+                .and_then(|i| bytes.get(i as usize).copied()),
+            GridSource::Windowed(window) => window.and_then(|w| w.read(address)),
+        }
+    }
 }
 
 pub struct MemoryPane {
     selection: MemorySelection,
+    jump_input: String,
+    /// Cached region map so jump-to-address resolves while the core is away.
+    regions: &'static [MemoryRegion],
 }
 
 impl MemoryPane {
@@ -166,6 +268,8 @@ impl MemoryPane {
                 region: 0,
                 offset: 0,
             },
+            jump_input: String::new(),
+            regions: &[],
         }
     }
 
@@ -176,11 +280,20 @@ impl MemoryPane {
                 self.selection.offset = 0;
             }
             Message::SetOffset(offset) => self.selection.offset = offset,
+            Message::JumpInput(input) => self.jump_input = input,
+            Message::Jump => {
+                if let Some((region, offset)) = resolve_jump(self.regions, &self.jump_input) {
+                    self.selection.region = region;
+                    self.selection.offset = offset;
+                    self.jump_input.clear();
+                }
+            }
+            Message::SetRegions(regions) => self.regions = regions,
         }
     }
 
-    fn grid(base: u32, bytes: &[u8]) -> Element<'static, app::Message> {
-        let rows = bytes
+    fn grid(base: u32, cells: &[Option<u8>]) -> Element<'static, app::Message> {
+        let rows = cells
             .chunks(BYTES_PER_ROW as usize)
             .enumerate()
             .map(|(i, row)| {
@@ -193,23 +306,39 @@ impl MemoryPane {
         Column::from_iter(rows).into()
     }
 
-    fn paused_view(&self, data: &MemoryPaneData<'_>) -> Element<'static, app::Message> {
-        let region = data.regions[data.selected];
-        let choices: Vec<RegionChoice> = data
-            .regions
+    /// The region browser shared by the paused and running views: a picker,
+    /// scroll controls, a jump-to-address field, and the hex/ASCII grid — the
+    /// grid fed from `source` so paused live bytes and the running interest
+    /// window render identically.
+    fn browser_view(
+        &self,
+        regions: &[MemoryRegion],
+        source: GridSource<'_>,
+    ) -> Element<'static, app::Message> {
+        let selected = self.selection.region.min(regions.len() - 1);
+        let region = regions[selected];
+        let (offset, base, visible) = window_range(region.start, region.len, self.selection.offset);
+        let cells: Vec<Option<u8>> = (0..visible).map(|i| source.cell(base + i)).collect();
+
+        let choices: Vec<RegionChoice> = regions
             .iter()
             .enumerate()
             .map(|(index, region)| RegionChoice::new(index, region))
             .collect();
-        let selected = RegionChoice::new(data.selected, &region);
-        let picker = pick_list(choices, Some(selected), |choice| {
-            Message::SelectRegion(choice.index).into()
-        })
+        let picker = pick_list(
+            choices,
+            Some(RegionChoice::new(selected, &region)),
+            |choice| Message::SelectRegion(choice.index).into(),
+        )
         .font(fonts::monospace())
         .text_size(13.0);
 
-        let offset = self.selection.offset / BYTES_PER_ROW * BYTES_PER_ROW;
         let ceiling = max_offset(region.len);
+        let page_up = scroll_button(
+            "\u{21C8}",
+            offset > 0,
+            Message::SetOffset(offset.saturating_sub(VISIBLE_BYTES)),
+        );
         let up = scroll_button(
             "\u{2191}",
             offset > 0,
@@ -220,35 +349,56 @@ impl MemoryPane {
             offset < ceiling,
             Message::SetOffset((offset + BYTES_PER_ROW).min(ceiling)),
         );
-        let page_up = scroll_button(
-            "\u{21C8}",
-            offset > 0,
-            Message::SetOffset(offset.saturating_sub(VISIBLE_BYTES)),
-        );
         let page_down = scroll_button(
             "\u{21CA}",
             offset < ceiling,
             Message::SetOffset((offset + VISIBLE_BYTES).min(ceiling)),
         );
-        let controls = row![picker, page_up, up, down, page_down]
+
+        let jump = text_input("$addr", &self.jump_input)
+            .font(fonts::monospace())
+            .size(13.0)
+            .width(Length::Fixed(96.0))
+            .on_input(|value| Message::JumpInput(value).into())
+            .on_submit(Message::Jump.into());
+
+        let controls = row![picker, page_up, up, down, page_down, jump]
             .spacing(s())
             .align_y(iced::alignment::Vertical::Center);
 
-        column![controls, Self::grid(data.base, data.bytes)]
+        column![controls, Self::grid(base, &cells)]
             .spacing(s())
             .padding(s())
             .into()
     }
 
-    fn running_view(data: &MemoryPaneData<'_>) -> Element<'static, app::Message> {
+    /// The running fallback for a family with no region map: the PC-anchored
+    /// snapshot window, with a note that browsing needs a pause.
+    fn window_view(base: u32, bytes: &[u8]) -> Element<'static, app::Message> {
         let hint = text("Pause to browse full memory")
             .font(fonts::monospace())
             .size(11.0)
             .color(palette::MUTED);
-        column![hint, Self::grid(data.base, data.bytes)]
+        let cells: Vec<Option<u8>> = bytes.iter().map(|&b| Some(b)).collect();
+        column![hint, Self::grid(base, &cells)]
             .spacing(s())
             .padding(s())
             .into()
+    }
+
+    /// The title-bar detail: the selected region and its visible range.
+    fn detail(&self, regions: &[MemoryRegion]) -> Option<Element<'static, app::Message>> {
+        let selected = self.selection.region.min(regions.len().checked_sub(1)?);
+        let region = regions[selected];
+        let (_, base, visible) = window_range(region.start, region.len, self.selection.offset);
+        let end = base + visible.saturating_sub(1);
+        Some(
+            text(format!("{} ${base:04X}-${end:04X}", region.name))
+                .font(fonts::monospace())
+                .size(11.0)
+                .color(palette::MUTED)
+                .into(),
+        )
     }
 }
 
@@ -297,25 +447,37 @@ impl Pane for MemoryPane {
         let Some(data) = ctx.and_then(|ctx| ctx.memory) else {
             return panes::running_placeholder("Memory");
         };
-        let body = if data.running {
-            MemoryPane::running_view(&data)
-        } else if data.regions.is_empty() {
-            container(
-                text("No memory map")
-                    .font(fonts::monospace())
-                    .color(palette::MUTED),
-            )
-            .center(Length::Fill)
-            .into()
-        } else {
-            self.paused_view(&data)
+        let (body, detail) = match data {
+            MemoryPaneData::Paused {
+                regions,
+                base,
+                bytes,
+            } => {
+                if regions.is_empty() {
+                    (no_map_body(), None)
+                } else {
+                    (
+                        self.browser_view(regions, GridSource::Contiguous { base, bytes }),
+                        self.detail(regions),
+                    )
+                }
+            }
+            MemoryPaneData::RunningBrowse { regions, window } => (
+                self.browser_view(regions, GridSource::Windowed(window)),
+                self.detail(regions),
+            ),
+            MemoryPaneData::RunningWindow { base, bytes } => (Self::window_view(base, bytes), None),
         };
-        panes::pane(panes::title_bar("Memory"), body)
+        let title = match detail {
+            Some(detail) => panes::title_bar_with_detail("Memory", detail),
+            None => panes::title_bar("Memory"),
+        };
+        panes::pane(title, body)
     }
 
     fn on_message(&mut self, message: &PaneMessage) {
         if let PaneMessage::Memory(message) = message {
-            self.update(*message);
+            self.update(message.clone());
         }
     }
 
@@ -324,35 +486,62 @@ impl Pane for MemoryPane {
     }
 }
 
+fn no_map_body() -> Element<'static, app::Message> {
+    container(
+        text("No memory map")
+            .font(fonts::monospace())
+            .color(palette::MUTED),
+    )
+    .center(Length::Fill)
+    .into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn region(name: &'static str, start: u32, len: u32) -> MemoryRegion {
+        MemoryRegion { name, start, len }
+    }
+
+    fn cells(bytes: &[u8]) -> Vec<Option<u8>> {
+        bytes.iter().map(|&b| Some(b)).collect()
+    }
+
     #[test]
-    fn ascii_dump_maps_printable_and_dots_the_rest() {
-        assert_eq!(ascii_dump(&[0x41, 0x42, 0x43]), "ABC");
-        assert_eq!(ascii_dump(&[0x00, 0x1F, 0x7F, 0x80, 0xFF]), ".....");
-        assert_eq!(ascii_dump(&[0x20, 0x7E]), " ~");
+    fn ascii_dump_maps_printable_dots_the_rest_and_blanks_gaps() {
+        assert_eq!(ascii_dump(&cells(&[0x41, 0x42, 0x43])), "ABC");
+        assert_eq!(ascii_dump(&cells(&[0x00, 0x1F, 0x7F, 0x80, 0xFF])), ".....");
+        assert_eq!(ascii_dump(&cells(&[0x20, 0x7E])), " ~");
+        // A gap (unpublished running byte) blanks its ASCII column.
+        assert_eq!(ascii_dump(&[Some(0x41), None, Some(0x43)]), "A C");
     }
 
     #[test]
     fn hex_row_full_line() {
         let bytes: Vec<u8> = (0..16).collect();
         assert_eq!(
-            hex_row(0xC100, &bytes),
+            hex_row(0xC100, &cells(&bytes)),
             "$C100  00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F  |................|"
         );
     }
 
     #[test]
     fn hex_row_short_line_pads_hex_columns() {
-        let row = hex_row(0xFF80, &[0x48, 0x49]);
+        let row = hex_row(0xFF80, &cells(&[0x48, 0x49]));
         // Two bytes rendered, the remaining fourteen columns blanked, ASCII
         // gutter only as wide as the bytes present.
         assert_eq!(
             row,
             "$FF80  48 49                                            |HI|"
         );
+    }
+
+    #[test]
+    fn hex_row_unpublished_cell_reads_as_dashes() {
+        let row = hex_row(0xC100, &[Some(0x10), None, Some(0x30)]);
+        assert!(row.starts_with("$C100  10 -- 30"));
+        assert!(row.ends_with("|. 0|"));
     }
 
     #[test]
@@ -383,5 +572,118 @@ mod tests {
         assert_eq!(max_offset(VISIBLE_BYTES), 0);
         assert_eq!(max_offset(VISIBLE_BYTES - 1), 0);
         assert_eq!(max_offset(VISIBLE_BYTES + 1), BYTES_PER_ROW);
+    }
+
+    #[test]
+    fn interest_matches_the_visible_window() {
+        let regions = [
+            region("rom", 0x0000, 0x4000),
+            region("wram", 0xC000, 0x2000),
+        ];
+        // Region 1 at offset 0x100 → base 0xC100, one full screen.
+        let interest = interest_for(
+            &regions,
+            MemorySelection {
+                region: 1,
+                offset: 0x105,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            interest,
+            MemoryInterest {
+                start: 0xC100,
+                len: VISIBLE_BYTES,
+            }
+        );
+        // No regions → no interest.
+        assert_eq!(
+            interest_for(
+                &[],
+                MemorySelection {
+                    region: 0,
+                    offset: 0
+                }
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn interest_len_is_capped_server_side() {
+        // The pane never asks for more than a screen, but an oversized request
+        // is bounded before the peek.
+        assert_eq!(
+            MemoryInterest {
+                start: 0xC000,
+                len: 4096,
+            }
+            .capped_len(),
+            MAX_INTEREST_LEN
+        );
+        assert_eq!(
+            MemoryInterest {
+                start: 0xC000,
+                len: 64,
+            }
+            .capped_len(),
+            64
+        );
+    }
+
+    #[test]
+    fn interest_short_region_shrinks_to_fit() {
+        let regions = [region("oam", 0xFE00, 0xA0)];
+        let interest = interest_for(
+            &regions,
+            MemorySelection {
+                region: 0,
+                offset: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(interest.len, 0xA0);
+    }
+
+    #[test]
+    fn resolve_jump_finds_region_and_snaps_offset() {
+        let regions = [
+            region("rom", 0x0000, 0x4000),
+            region("wram", 0xC000, 0x2000),
+        ];
+        // An address inside wram resolves to that region, row-snapped.
+        assert_eq!(resolve_jump(&regions, "C123"), Some((1, 0x120)));
+        // Leading $ and 0x are accepted.
+        assert_eq!(resolve_jump(&regions, "$C000"), Some((1, 0x000)));
+        assert_eq!(resolve_jump(&regions, "0x0040"), Some((0, 0x40)));
+        // An address in no region, and unparseable input, both reject.
+        assert_eq!(resolve_jump(&regions, "E000"), None);
+        assert_eq!(resolve_jump(&regions, "wram"), None);
+        assert_eq!(resolve_jump(&regions, ""), None);
+    }
+
+    #[test]
+    fn resolve_jump_clamps_to_the_last_page() {
+        let regions = [region("wram", 0xC000, 0x2000)];
+        // The final byte of a large region clamps to its last full page.
+        let ceiling = max_offset(0x2000);
+        assert_eq!(resolve_jump(&regions, "DFFF"), Some((0, ceiling)));
+    }
+
+    #[test]
+    fn windowed_source_reads_covered_bytes_and_misses_the_rest() {
+        let window = MemoryWindow {
+            base: 0xC100,
+            bytes: vec![0x10, 0x20, 0x30, 0x40],
+        };
+        let source = GridSource::Windowed(Some(&window));
+        // Covered addresses read through.
+        assert_eq!(source.cell(0xC100), Some(0x10));
+        assert_eq!(source.cell(0xC103), Some(0x40));
+        // Just outside the published span → an unpublished cell.
+        assert_eq!(source.cell(0xC104), None);
+        assert_eq!(source.cell(0xC0FF), None);
+        // No window published yet → every cell is a miss.
+        assert_eq!(GridSource::Windowed(None).cell(0xC100), None);
     }
 }
