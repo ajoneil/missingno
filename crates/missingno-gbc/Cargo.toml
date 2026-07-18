@@ -11,6 +11,7 @@ morepork = ["missingno-gb/morepork"]
 
 [dependencies]
 missingno-gb = { path = "../missingno-gb" }
+missingno-core = { path = "../missingno-core" }
 rgb = { workspace = true }
 
 [dev-dependencies]

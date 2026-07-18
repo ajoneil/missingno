@@ -1,10 +1,5 @@
-use missingno_core::video::{Frame, RgbaFrame};
-use missingno_gb::frame::{GameBoyScreen, GbFrame, NATIVE_SIZE, SgbScreen};
-use missingno_gb::{Console, Dmg, Model, ppu::types::palette::Palette, sgb::MaskMode};
-use missingno_gbc::Cgb;
-
-use crate::app::debugger::inspect::{CgbView, ColorSnapshot};
-use crate::render::cram_palettes;
+use missingno_gb::debugger::inspection::ColorSnapshot;
+use missingno_gb::ppu::types::palette::Palette;
 
 /// The colours the debugger panes draw with: the user-selected palette on
 /// DMG, the corrected CRAM palettes on CGB.
@@ -32,122 +27,23 @@ impl ConsoleColors {
     }
 }
 
-/// How the debugger UI renders each console model.
-pub trait ConsoleUi: Model {
-    /// DMG renders through a user-selectable monochrome palette; CGB is
-    /// colour. Gates the play-mode Display panel's palette picker.
-    const MONOCHROME_PALETTE: bool;
-
-    /// The display for a step's screen result; `None` leaves the screen pane as-is.
-    fn screen_display(console: &Console<Self>, new_screen: Option<Self::Screen>) -> Option<Frame>;
-
-    fn colors(console: &Console<Self>, user_palette: &Palette) -> ConsoleColors;
-
-    /// The palette-independent colour data to publish while the core runs, so
-    /// the running panes rebuild [`ConsoleColors`] with the live user palette.
-    fn color_snapshot(console: &Console<Self>) -> ColorSnapshot;
-
-    /// The CGB-only register state for the debugger sidebar; `None` on DMG.
-    fn cgb_view(console: &Console<Self>) -> Option<CgbView>;
-}
-
-impl ConsoleUi for Dmg {
-    const MONOCHROME_PALETTE: bool = true;
-
-    fn screen_display(console: &Console<Self>, new_screen: Option<Self::Screen>) -> Option<Frame> {
-        let video_enabled = console.ppu().control().video_enabled();
-        if let Some(sgb) = console.sgb() {
-            let render_data = sgb.render_data(video_enabled);
-            if sgb.mask_mode == MaskMode::Freeze {
-                Some(Frame::Console(Box::new(GbFrame::Sgb(SgbScreen::Freeze(
-                    render_data,
-                )))))
-            } else {
-                new_screen.map(|screen| {
-                    Frame::Console(Box::new(GbFrame::Sgb(SgbScreen::Display(
-                        screen,
-                        render_data,
-                    ))))
-                })
-            }
-        } else if !video_enabled {
-            Some(Frame::Console(Box::new(GbFrame::GameBoy(
-                GameBoyScreen::Off,
-            ))))
-        } else {
-            new_screen.map(|screen| {
-                Frame::Console(Box::new(GbFrame::GameBoy(GameBoyScreen::Display(screen))))
-            })
-        }
-    }
-
-    fn colors(console: &Console<Self>, user_palette: &Palette) -> ConsoleColors {
-        ConsoleColors::Dmg {
-            palette: if console.sgb().is_some() {
+/// Rebuild the render palettes from a running snapshot's colour data, applying
+/// the live user palette (which can change mid-run on DMG).
+pub fn colors_from_snapshot(colors: &ColorSnapshot, user_palette: &Palette) -> ConsoleColors {
+    match colors {
+        ColorSnapshot::Dmg { sgb } => ConsoleColors::Dmg {
+            palette: if *sgb {
                 Palette::CLASSIC
             } else {
                 *user_palette
             },
-        }
-    }
-
-    fn color_snapshot(console: &Console<Self>) -> ColorSnapshot {
-        ColorSnapshot::Dmg {
-            sgb: console.sgb().is_some(),
-        }
-    }
-
-    fn cgb_view(_console: &Console<Self>) -> Option<CgbView> {
-        None
-    }
-}
-
-impl ConsoleUi for Cgb {
-    const MONOCHROME_PALETTE: bool = false;
-
-    fn screen_display(console: &Console<Self>, new_screen: Option<Self::Screen>) -> Option<Frame> {
-        if !console.ppu().control().video_enabled() {
-            Some(Frame::Rgba(RgbaFrame::blank(NATIVE_SIZE.0, NATIVE_SIZE.1)))
-        } else {
-            new_screen.map(|screen| {
-                Frame::Rgba(RgbaFrame {
-                    width: NATIVE_SIZE.0,
-                    height: NATIVE_SIZE.1,
-                    pixels: screen.to_corrected_rgba().into(),
-                    pixel_aspect: 1.0,
-                })
-            })
-        }
-    }
-
-    fn colors(console: &Console<Self>, _user_palette: &Palette) -> ConsoleColors {
-        let ppu = console.ppu().model();
-        ConsoleColors::Cgb {
-            background: cram_palettes(|palette, index| ppu.bg_color(palette, index)),
-            objects: cram_palettes(|palette, index| ppu.obj_color(palette, index)),
-        }
-    }
-
-    fn color_snapshot(console: &Console<Self>) -> ColorSnapshot {
-        let ppu = console.ppu().model();
+        },
         ColorSnapshot::Cgb {
-            background: cram_palettes(|palette, index| ppu.bg_color(palette, index)),
-            objects: cram_palettes(|palette, index| ppu.obj_color(palette, index)),
-        }
-    }
-
-    fn cgb_view(console: &Console<Self>) -> Option<CgbView> {
-        let model = console.model();
-        let ppu = console.ppu();
-        let (bcps, ocps) = ppu.model().palette_index_registers();
-        Some(CgbView {
-            double_speed: model.double_speed(),
-            vram_bank: console.vram().selected_bank(),
-            wram_bank: model.wram_bank(),
-            opri: ppu.read_object_priority(),
-            bcps,
-            ocps,
-            vram_dma: model.vram_dma_status(),
-        })
+            background,
+            objects,
+        } => ConsoleColors::Cgb {
+            background: *background,
+            objects: *objects,
+        },
     }
 }

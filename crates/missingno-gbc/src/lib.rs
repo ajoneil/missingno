@@ -22,6 +22,7 @@
 //! Test suites filter their ROM selection accordingly — CGB-E-only or
 //! CGB-B-only ROMs are excluded from the CGB-C-passing set.
 
+pub mod debug;
 pub mod screen;
 pub mod timing;
 
@@ -41,6 +42,7 @@ pub use apu::CgbApu;
 pub use compat_palette::{DMG_COMPAT_BG, DMG_COMPAT_OBJ, dmg_compat_shade};
 pub use console_state::CgbConsoleState;
 pub use cram::{ColorRam, ColorRegister};
+pub use debug::{CgbSnapshot, CgbView, cram_palettes};
 pub use obj_fifo::CgbObjShifter;
 pub use ppu_model::{CgbPpu, SyncedStatCells, TileSelResetGlitch};
 pub use vram::{BgAttribute, CgbVram};

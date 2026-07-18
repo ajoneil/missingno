@@ -81,12 +81,3 @@ pub fn tile_map_rgba_cgb(
 
     pixels
 }
-
-/// The 8 corrected display palettes of one CGB palette RAM.
-pub fn cram_palettes(color: impl Fn(u8, u8) -> missingno_gbc::screen::Color555) -> [Palette; 8] {
-    std::array::from_fn(|palette| {
-        Palette::new(std::array::from_fn(|index| {
-            color(palette as u8, index as u8).to_corrected_rgb8()
-        }))
-    })
-}

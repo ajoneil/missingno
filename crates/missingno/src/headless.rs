@@ -149,7 +149,8 @@ impl HeadlessUi for Cgb {
 
     fn tilemap_rgb(console: &Console<Self>, map_id: ppu::types::tiles::TileMapId) -> Vec<u8> {
         let cgb_ppu = console.ppu().model();
-        let bg_palettes = render::cram_palettes(|palette, index| cgb_ppu.bg_color(palette, index));
+        let bg_palettes =
+            missingno_gbc::cram_palettes(|palette, index| cgb_ppu.bg_color(palette, index));
         rgba_to_rgb(&render::tile_map_rgba_cgb(
             console.vram(),
             map_id,

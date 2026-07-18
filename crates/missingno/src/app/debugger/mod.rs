@@ -688,7 +688,7 @@ impl Debugger {
 
     /// The view while the core runs on the emu thread. The screen pane stays
     /// live from the frame slot; every other pane and the sidebar render from
-    /// the per-vblank [`ConsoleSnapshot`], falling back to titled placeholders
+    /// the per-vblank inspection snapshot, falling back to titled placeholders
     /// and the [`RunningStatus`] summary until the first snapshot arrives.
     fn running_view(&self) -> Element<'_, app::Message> {
         let colors = self
@@ -740,18 +740,25 @@ impl Debugger {
             return self.panes.view(None);
         };
         let family_any = snapshot.family_state();
-        let gb = match (
-            family_any.downcast_ref::<inspect::ConsoleSnapshot>(),
-            colors,
-        ) {
-            (Some(snap), Some(colors)) => Some(GbPaneContext {
-                source: snap,
-                colors,
-                symbols: &snap.symbols,
-                cdl: &snap.cdl,
-            }),
-            _ => None,
-        };
+        let gb = colors.and_then(|colors| {
+            if let Some(snap) = family_any.downcast_ref::<inspect::GbSnapshot>() {
+                Some(GbPaneContext {
+                    source: snap,
+                    colors,
+                    symbols: &snap.symbols,
+                    cdl: &snap.cdl,
+                })
+            } else {
+                family_any
+                    .downcast_ref::<inspect::CgbSnapshot>()
+                    .map(|snap| GbPaneContext {
+                        source: snap,
+                        colors,
+                        symbols: &snap.base.symbols,
+                        cdl: &snap.base.cdl,
+                    })
+            }
+        });
         self.panes.view(Some(PaneContext {
             gb,
             family: family_any,
