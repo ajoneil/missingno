@@ -9,12 +9,12 @@ use missingno_sms::console::Sms;
 use missingno_sms::vdp::{self, Frame};
 use rgb::RGB8;
 
-use super::stepping::{SteppingConsole, SteppingSystem};
 use super::{ControlId, ControlInput, SystemConsole};
 use crate::app::debugger::inspect::DebugView;
 use crate::app::debugger::sms::{SmsInspectState, SmsSnapshot};
 use crate::app::emu_thread::RunningStatus;
 use crate::app::screen::IndexedFrame;
+use missingno_core::stepping::{SteppingConsole, SteppingSystem};
 
 pub const ROM_EXTENSIONS: &[&str] = &["sms"];
 

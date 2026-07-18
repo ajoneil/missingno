@@ -17,8 +17,6 @@ pub mod gb;
 pub mod nes;
 #[cfg(feature = "sms")]
 pub mod sms;
-#[cfg(any(feature = "nes", feature = "sms"))]
-pub mod stepping;
 pub mod vcs;
 
 /// The platforms the frontend knows, one per family descriptor. The

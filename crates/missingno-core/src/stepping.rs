@@ -7,13 +7,12 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use missingno_core::TvStandard;
-use missingno_core::video::VideoOut;
-
-use super::{ControlId, ControlInput, FrameOutcome, StepOutcome, SystemConsole, SystemDebugger};
-use crate::app::debugger::inspect::DebugView;
-use crate::app::emu_thread::RunningStatus;
-use crate::app::screen::{Frame, IndexedFrame};
+use crate::TvStandard;
+use crate::system::{
+    ControlId, ControlInput, DebugView, FrameOutcome, RunningStatus, StepOutcome, SystemConsole,
+    SystemDebugger,
+};
+use crate::video::{Frame, IndexedFrame, VideoOut};
 
 pub trait SteppingSystem: 'static {
     type Core: Send + 'static;

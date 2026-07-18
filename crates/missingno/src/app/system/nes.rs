@@ -10,12 +10,12 @@ use missingno_nes::console::Nes;
 use missingno_nes::ppu::{self, Frame};
 use rgb::RGB8;
 
-use super::stepping::{SteppingConsole, SteppingSystem};
 use super::{ControlId, ControlInput, SystemConsole};
 use crate::app::debugger::inspect::DebugView;
 use crate::app::debugger::nes::{DisasmRow, NesInspectState, NesSnapshot};
 use crate::app::emu_thread::RunningStatus;
 use crate::app::screen::IndexedFrame;
+use missingno_core::stepping::{SteppingConsole, SteppingSystem};
 
 pub const ROM_EXTENSIONS: &[&str] = &["nes"];
 

@@ -20,6 +20,7 @@ pub mod cdl;
 pub mod disasm;
 pub mod inspect;
 pub mod isa;
+pub mod stepping;
 pub mod symbols;
 pub mod system;
 pub mod tv;

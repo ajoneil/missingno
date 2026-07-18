@@ -129,7 +129,6 @@ pub trait SystemConsole: Send {
     }
     fn screen_display(&self) -> Frame;
     /// How this console presents its video: a fixed-size LCD, or a TV raster.
-    #[allow(dead_code)]
     fn video_out(&self) -> VideoOut;
     /// The game's title for filenames and session records.
     fn game_title(&self) -> String;
@@ -140,12 +139,10 @@ pub trait SystemConsole: Send {
     /// Wall-clock duration of one emulated frame, for the pacing loop.
     fn frame_interval(&self) -> Duration;
     /// A serialized machine state, if the system has a save-state backend.
-    #[allow(dead_code)]
     fn save_state(&self) -> Option<Vec<u8>> {
         None
     }
     /// Restore a previously serialized machine state.
-    #[allow(dead_code)]
     fn load_state(&mut self, _bytes: &[u8]) -> Result<(), StateError> {
         Err(StateError::Unsupported)
     }
@@ -267,7 +264,6 @@ pub trait SystemDebugger: Send {
     }
     fn frame_interval(&self) -> Duration;
     /// How this console presents its video: a fixed-size LCD, or a TV raster.
-    #[allow(dead_code)]
     fn video_out(&self) -> VideoOut;
     /// Step one frame while writing an execution trace to `path`; `None` when
     /// the system has no capture backend or capture fails.
@@ -275,12 +271,10 @@ pub trait SystemDebugger: Send {
         None
     }
     /// A serialized machine state, if the system has a save-state backend.
-    #[allow(dead_code)]
     fn save_state(&self) -> Option<Vec<u8>> {
         None
     }
     /// Restore a previously serialized machine state.
-    #[allow(dead_code)]
     fn load_state(&mut self, _bytes: &[u8]) -> Result<(), StateError> {
         Err(StateError::Unsupported)
     }
