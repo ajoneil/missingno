@@ -87,8 +87,8 @@ pub fn cgb_sidebar_sections(
     let speed = if view.double_speed { "2x" } else { "1x" };
     let mut cpu_content = parts::cpu_blocks(cpu, ints);
     cpu_content.push(SectionBlock::Rows(vec![
-        Row::value("speed", speed),
-        Row::value("svbk", view.wram_bank.to_string()),
+        Row::value("speed", speed).help("CPU speed (KEY1) — 1x or 2x double speed"),
+        Row::value("svbk", view.wram_bank.to_string()).help("work-RAM bank (SVBK)"),
     ]));
 
     let ppu_content = vec![
@@ -100,11 +100,12 @@ pub fn cgb_sidebar_sections(
         SectionBlock::Rule,
         parts::ppu_sprites_block(ppu),
         SectionBlock::Rows(vec![
-            Row::value("vbk", view.vram_bank.to_string()),
-            Row::value("opri", format!("{:02X}", view.opri)),
-            Row::value("bcps", format!("{:02X}", view.bcps)),
-            Row::value("ocps", format!("{:02X}", view.ocps)),
-            Row::value("hdma", hdma_status(view.vram_dma)),
+            Row::value("vbk", view.vram_bank.to_string()).help("VRAM bank (VBK)"),
+            Row::value("opri", format!("{:02X}", view.opri)).help("object priority mode (OPRI)"),
+            Row::value("bcps", format!("{:02X}", view.bcps))
+                .help("background palette index (BCPS)"),
+            Row::value("ocps", format!("{:02X}", view.ocps)).help("object palette index (OCPS)"),
+            Row::value("hdma", hdma_status(view.vram_dma)).help("VRAM DMA (HDMA/GDMA) status"),
         ]),
         SectionBlock::Swatches(cram_swatches("bg", background)),
         SectionBlock::Swatches(cram_swatches("obj", objects)),

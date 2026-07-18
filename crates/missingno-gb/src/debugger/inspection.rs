@@ -154,10 +154,26 @@ impl CpuSource for CpuView {
 
 /// Named bits of the SM83 flags register `f`.
 const SM83_FLAGS: &[inspect::FlagName] = &[
-    inspect::FlagName { name: "z", bit: 7 },
-    inspect::FlagName { name: "n", bit: 6 },
-    inspect::FlagName { name: "h", bit: 5 },
-    inspect::FlagName { name: "c", bit: 4 },
+    inspect::FlagName {
+        name: "z",
+        bit: 7,
+        help: Some("zero flag — set when a result is zero"),
+    },
+    inspect::FlagName {
+        name: "n",
+        bit: 6,
+        help: Some("subtract flag — set by a subtraction (used by DAA)"),
+    },
+    inspect::FlagName {
+        name: "h",
+        bit: 5,
+        help: Some("half-carry flag — carry out of bit 3 (used by DAA)"),
+    },
+    inspect::FlagName {
+        name: "c",
+        bit: 4,
+        help: Some("carry flag — set on carry or borrow"),
+    },
 ];
 
 /// The SM83 register file as one inspection group. Shared by the live debugger
@@ -170,31 +186,34 @@ pub fn cpu_register_groups(cpu: &impl CpuSource) -> Vec<inspect::RegisterGroup> 
         value: cpu.get_register8(register) as u32,
         bits: 8,
         style: inspect::ValueStyle::Hex,
+        help: None,
     };
     let hex16 = |name, value: u16| inspect::Register {
         name,
         value: value as u32,
         bits: 16,
         style: inspect::ValueStyle::Hex,
+        help: None,
     };
     vec![inspect::RegisterGroup {
         name: "cpu",
         registers: vec![
-            hex8("a", Register8::A),
+            hex8("a", Register8::A).help("accumulator"),
             inspect::Register {
                 name: "f",
                 value: cpu.flags().bits() as u32,
                 bits: 8,
                 style: inspect::ValueStyle::Flags(SM83_FLAGS),
+                help: Some("flags register"),
             },
-            hex8("b", Register8::B),
-            hex8("c", Register8::C),
-            hex8("d", Register8::D),
-            hex8("e", Register8::E),
-            hex8("h", Register8::H),
-            hex8("l", Register8::L),
-            hex16("sp", cpu.stack_pointer()),
-            hex16("pc", cpu.ir_address()),
+            hex8("b", Register8::B).help("general register B (high byte of BC)"),
+            hex8("c", Register8::C).help("general register C (low byte of BC)"),
+            hex8("d", Register8::D).help("general register D (high byte of DE)"),
+            hex8("e", Register8::E).help("general register E (low byte of DE)"),
+            hex8("h", Register8::H).help("general register H (high byte of HL)"),
+            hex8("l", Register8::L).help("general register L (low byte of HL)"),
+            hex16("sp", cpu.stack_pointer()).help("stack pointer"),
+            hex16("pc", cpu.ir_address()).help("program counter"),
         ],
     }]
 }
@@ -489,45 +508,53 @@ pub fn cpu_blocks(
         value: cpu.get_register8(register) as u32,
         bits: 8,
         style: inspect::ValueStyle::Hex,
+        help: None,
     };
     let f = inspect::Register {
         name: "f",
         value: cpu.flags().bits() as u32,
         bits: 8,
         style: inspect::ValueStyle::Flags(SM83_FLAGS),
+        help: Some("flags register"),
     };
     let pairs = vec![
         inspect::RegisterPair {
-            high: hex8("a", Register8::A),
+            high: hex8("a", Register8::A).help("accumulator"),
             low: f,
         },
         inspect::RegisterPair {
-            high: hex8("b", Register8::B),
-            low: hex8("c", Register8::C),
+            high: hex8("b", Register8::B).help("general register B (high byte of BC)"),
+            low: hex8("c", Register8::C).help("general register C (low byte of BC)"),
         },
         inspect::RegisterPair {
-            high: hex8("d", Register8::D),
-            low: hex8("e", Register8::E),
+            high: hex8("d", Register8::D).help("general register D (high byte of DE)"),
+            low: hex8("e", Register8::E).help("general register E (low byte of DE)"),
         },
         inspect::RegisterPair {
-            high: hex8("h", Register8::H),
-            low: hex8("l", Register8::L),
+            high: hex8("h", Register8::H).help("general register H (high byte of HL)"),
+            low: hex8("l", Register8::L).help("general register L (low byte of HL)"),
         },
     ];
-    let pointer = |name, value: u16, active| inspect::Pointer {
+    let pointer = |name, value: u16, active, help| inspect::Pointer {
         register: inspect::Register {
             name,
             value: value as u32,
             bits: 16,
             style: inspect::ValueStyle::Hex,
+            help: Some(help),
         },
         active,
     };
 
     vec![
         inspect::SectionBlock::Pointers(vec![
-            pointer("pc", cpu.ir_address(), Some(!cpu.halted())),
-            pointer("sp", cpu.stack_pointer(), None),
+            pointer(
+                "pc",
+                cpu.ir_address(),
+                Some(!cpu.halted()),
+                "program counter",
+            ),
+            pointer("sp", cpu.stack_pointer(), None, "stack pointer"),
         ]),
         inspect::SectionBlock::Rule,
         inspect::SectionBlock::Pairs(pairs),
@@ -582,23 +609,46 @@ pub fn ppu_detail(ppu: &impl PpuSource) -> inspect::Detail {
     }
 }
 
-/// The ly/lx position row.
+/// The ly/lx position sweeps: LY across the 154-line frame (144 visible lines
+/// then 10 vblank lines), LX across the internal line counter (0 up to the SANU
+/// line-end decode); mode boundaries within the line vary, so LX carries no
+/// zones.
 pub fn ppu_position_block(ppu: &impl PpuSource) -> inspect::SectionBlock {
-    inspect::SectionBlock::Rows(vec![
-        inspect::Row::value("ly", ppu.ly().to_string()),
-        inspect::Row::value("lx", ppu.lx().to_string()),
-    ])
+    use inspect::{Sweep, SweepZone, Tone};
+
+    let ly = Sweep::new("ly", ppu.ly() as u32, 154)
+        .zones(vec![
+            SweepZone {
+                name: "visible",
+                end: 144,
+                tone: Tone::Rendering,
+            },
+            SweepZone {
+                name: "vblank",
+                end: 154,
+                tone: Tone::Active,
+            },
+        ])
+        .help("current scanline (LY) — 0..143 visible, 144..153 vblank");
+    // The LX counter resets at the SANU line-end decode (value 113).
+    let lx = Sweep::new("lx", ppu.lx() as u32, 114)
+        .help("dot position within the scanline (LX counter)");
+
+    inspect::SectionBlock::Sweeps(vec![ly, lx])
 }
 
 /// The background enable/map/tile and scroll rows.
 pub fn ppu_background_block(ppu: &impl PpuSource) -> inspect::SectionBlock {
     let control = ppu.control();
     inspect::SectionBlock::Rows(vec![
-        inspect::Row::flag("bg", control.background_and_window_enabled()),
-        inspect::Row::value("map", tile_map_addr(control.background_tile_map().0)),
-        inspect::Row::value("tile", tile_addr(control.tile_address_mode())),
-        inspect::Row::value("scx", format!("{:02X}", ppu.scx())),
-        inspect::Row::value("scy", format!("{:02X}", ppu.scy())),
+        inspect::Row::flag("bg", control.background_and_window_enabled())
+            .help("background & window enable (LCDC bit 0)"),
+        inspect::Row::value("map", tile_map_addr(control.background_tile_map().0))
+            .help("background tile-map base address"),
+        inspect::Row::value("tile", tile_addr(control.tile_address_mode()))
+            .help("tile-data addressing mode (LCDC bit 4)"),
+        inspect::Row::value("scx", format!("{:02X}", ppu.scx())).help("background scroll X (SCX)"),
+        inspect::Row::value("scy", format!("{:02X}", ppu.scy())).help("background scroll Y (SCY)"),
     ])
 }
 
@@ -606,10 +656,11 @@ pub fn ppu_background_block(ppu: &impl PpuSource) -> inspect::SectionBlock {
 pub fn ppu_window_block(ppu: &impl PpuSource) -> inspect::SectionBlock {
     let control = ppu.control();
     inspect::SectionBlock::Rows(vec![
-        inspect::Row::flag("win", control.window_enabled()),
-        inspect::Row::value("map", tile_map_addr(control.window_tile_map().0)),
-        inspect::Row::value("wx", format!("{:02X}", ppu.wx())),
-        inspect::Row::value("wy", format!("{:02X}", ppu.wy())),
+        inspect::Row::flag("win", control.window_enabled()).help("window enable (LCDC bit 5)"),
+        inspect::Row::value("map", tile_map_addr(control.window_tile_map().0))
+            .help("window tile-map base address"),
+        inspect::Row::value("wx", format!("{:02X}", ppu.wx())).help("window X position (WX)"),
+        inspect::Row::value("wy", format!("{:02X}", ppu.wy())).help("window Y position (WY)"),
     ])
 }
 
@@ -617,14 +668,16 @@ pub fn ppu_window_block(ppu: &impl PpuSource) -> inspect::SectionBlock {
 pub fn ppu_sprites_block(ppu: &impl PpuSource) -> inspect::SectionBlock {
     let control = ppu.control();
     inspect::SectionBlock::Rows(vec![
-        inspect::Row::flag("sprites", control.sprites_enabled()),
+        inspect::Row::flag("sprites", control.sprites_enabled())
+            .help("object (sprite) enable (LCDC bit 1)"),
         inspect::Row::value(
             "size",
             match control.sprite_size() {
                 SpriteSize::Single => "8×8",
                 SpriteSize::Double => "8×16",
             },
-        ),
+        )
+        .help("object size (LCDC bit 2)"),
     ])
 }
 

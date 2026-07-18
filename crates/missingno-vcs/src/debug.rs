@@ -431,19 +431,21 @@ fn cpu_section(state: &VcsInspectState) -> inspect::Section {
         value: value as u32,
         bits: 8,
         style: ValueStyle::Hex,
+        help: None,
     };
     let stack_pointer = 0x0100 | state.s as u16;
     let group = RegisterGroup {
         name: "cpu",
         registers: vec![
-            hex8("a", state.a),
-            hex8("x", state.x),
-            hex8("y", state.y),
+            hex8("a", state.a).help("accumulator"),
+            hex8("x", state.x).help("X index register"),
+            hex8("y", state.y).help("Y index register"),
             Register {
                 name: "p",
                 value: state.p as u32,
                 bits: 8,
                 style: ValueStyle::Flags(crate::debugger::MOS6502_FLAGS),
+                help: Some("processor status flags"),
             },
         ],
     };
@@ -460,6 +462,7 @@ fn cpu_section(state: &VcsInspectState) -> inspect::Section {
                         value: state.pc as u32,
                         bits: 16,
                         style: ValueStyle::Hex,
+                        help: Some("program counter"),
                     },
                     active: None,
                 },
@@ -469,6 +472,7 @@ fn cpu_section(state: &VcsInspectState) -> inspect::Section {
                         value: stack_pointer as u32,
                         bits: 16,
                         style: ValueStyle::Hex,
+                        help: Some("stack pointer (offset into page 1)"),
                     },
                     active: None,
                 },
@@ -480,17 +484,41 @@ fn cpu_section(state: &VcsInspectState) -> inspect::Section {
 }
 
 fn tia_section(state: &VcsInspectState) -> inspect::Section {
-    use inspect::{Row, SectionBlock};
+    use inspect::{Row, SectionBlock, Sweep, SweepZone, Tone};
+
+    // The colour clock runs 0..228: HBLANK then the 160 visible columns. The
+    // field's line count is emergent from VSYNC and varies by kernel and TV
+    // standard, so `line` stays a plain value rather than a fixed-period sweep.
+    let beam = Sweep::new(
+        "beam",
+        state.beam as u32,
+        crate::tia::CLOCKS_PER_LINE as u32,
+    )
+    .zones(vec![
+        SweepZone {
+            name: "hblank",
+            end: crate::tia::HBLANK_CLOCKS as u32,
+            tone: Tone::Idle,
+        },
+        SweepZone {
+            name: "visible",
+            end: crate::tia::CLOCKS_PER_LINE as u32,
+            tone: Tone::Rendering,
+        },
+    ])
+    .help("colour clock within the line — 0..67 hblank, 68..227 visible");
 
     inspect::Section {
         name: "TIA",
         summary: format!("beam {} · line {}", state.beam, state.scanline),
         active: None,
         detail: None,
-        blocks: vec![SectionBlock::Rows(vec![
-            Row::value("beam", state.beam.to_string()),
-            Row::value("line", state.scanline.to_string()),
-        ])],
+        blocks: vec![
+            SectionBlock::Sweeps(vec![beam]),
+            SectionBlock::Rows(vec![
+                Row::value("line", state.scanline.to_string()).help("scanline within the field"),
+            ]),
+        ],
     }
 }
 
@@ -503,10 +531,11 @@ fn riot_section(state: &VcsInspectState) -> inspect::Section {
         active: None,
         detail: None,
         blocks: vec![SectionBlock::Rows(vec![
-            Row::value("timer", format!("{:02X}", state.timer)),
-            Row::flag("underflow", state.timer_underflowed),
-            Row::value("swcha", format!("{:02X}", state.swcha)),
-            Row::value("swchb", format!("{:02X}", state.swchb)),
+            Row::value("timer", format!("{:02X}", state.timer)).help("RIOT interval timer (INTIM)"),
+            Row::flag("underflow", state.timer_underflowed)
+                .help("timer underflowed since last read"),
+            Row::value("swcha", format!("{:02X}", state.swcha)).help("controller port A (SWCHA)"),
+            Row::value("swchb", format!("{:02X}", state.swchb)).help("console switches (SWCHB)"),
         ])],
     }
 }

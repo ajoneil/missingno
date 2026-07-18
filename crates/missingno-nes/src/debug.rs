@@ -9,7 +9,7 @@ use std::time::Duration;
 use missingno_6502::disasm;
 use missingno_core::inspect::{
     BitColumn, BitRow, BitTable, FlagName, Register, RegisterGroup, Row, Section, SectionBlock,
-    Tone, ValueStyle,
+    Sweep, SweepZone, Tone, ValueStyle,
 };
 use missingno_core::stepping::SteppingSystem;
 use missingno_core::system::{ControlId, ControlInput, DebugView, InspectSnapshot, RunningStatus};
@@ -32,12 +32,36 @@ const JSR: u8 = 0x20;
 /// Named bits of the 2A03's 6502 status register `p`; the B flag is not
 /// architectural.
 const MOS6502_FLAGS: &[FlagName] = &[
-    FlagName { name: "n", bit: 7 },
-    FlagName { name: "v", bit: 6 },
-    FlagName { name: "d", bit: 3 },
-    FlagName { name: "i", bit: 2 },
-    FlagName { name: "z", bit: 1 },
-    FlagName { name: "c", bit: 0 },
+    FlagName {
+        name: "n",
+        bit: 7,
+        help: Some("negative flag — bit 7 of the result"),
+    },
+    FlagName {
+        name: "v",
+        bit: 6,
+        help: Some("overflow flag — signed overflow"),
+    },
+    FlagName {
+        name: "d",
+        bit: 3,
+        help: Some("decimal-mode flag (ignored by the 2A03)"),
+    },
+    FlagName {
+        name: "i",
+        bit: 2,
+        help: Some("interrupt-disable flag"),
+    },
+    FlagName {
+        name: "z",
+        bit: 1,
+        help: Some("zero flag — set when a result is zero"),
+    },
+    FlagName {
+        name: "c",
+        bit: 0,
+        help: Some("carry flag — set on carry or borrow"),
+    },
 ];
 
 #[derive(Clone, Default)]
@@ -99,21 +123,23 @@ fn cpu_register_groups(state: &NesInspectState) -> Vec<RegisterGroup> {
         value,
         bits,
         style: ValueStyle::Hex,
+        help: None,
     };
     vec![RegisterGroup {
         name: "cpu",
         registers: vec![
-            hex("a", state.a as u32, 8),
-            hex("x", state.x as u32, 8),
-            hex("y", state.y as u32, 8),
-            hex("s", state.s as u32, 8),
+            hex("a", state.a as u32, 8).help("accumulator"),
+            hex("x", state.x as u32, 8).help("X index register"),
+            hex("y", state.y as u32, 8).help("Y index register"),
+            hex("s", state.s as u32, 8).help("stack pointer (offset into page 1)"),
             Register {
                 name: "p",
                 value: state.p as u32,
                 bits: 8,
                 style: ValueStyle::Flags(MOS6502_FLAGS),
+                help: Some("processor status flags"),
             },
-            hex("pc", state.pc as u32, 16),
+            hex("pc", state.pc as u32, 16).help("program counter"),
         ],
     }]
 }
@@ -134,16 +160,48 @@ fn nes_sidebar_sections(state: &NesInspectState) -> Vec<Section> {
 }
 
 fn ppu_section(state: &NesInspectState) -> Section {
+    use crate::ppu::{DOTS_PER_LINE, LINES_PER_FRAME, PRERENDER_LINE, VBLANK_LINE, VISIBLE_LINES};
+
+    // The 2C02 frame: visible lines, one post-render idle line, the vblank
+    // lines, then the pre-render line. The dot cycle within a line has fine
+    // structure that varies with rendering, so `dot` carries no zones.
+    let scanline = Sweep::new("scanline", state.scanline as u32, LINES_PER_FRAME as u32)
+        .zones(vec![
+            SweepZone {
+                name: "visible",
+                end: VISIBLE_LINES as u32,
+                tone: Tone::Rendering,
+            },
+            SweepZone {
+                name: "post",
+                end: VBLANK_LINE as u32,
+                tone: Tone::Idle,
+            },
+            SweepZone {
+                name: "vblank",
+                end: PRERENDER_LINE as u32,
+                tone: Tone::Active,
+            },
+            SweepZone {
+                name: "pre-render",
+                end: LINES_PER_FRAME as u32,
+                tone: Tone::Scanning,
+            },
+        ])
+        .help("PPU scanline — visible, post-render, vblank, then pre-render");
+    let dot = Sweep::new("dot", state.dot as u32, DOTS_PER_LINE as u32)
+        .help("PPU dot (cycle) within the scanline");
+
     Section {
         name: "PPU",
         summary: format!("scanline {} · dot {}", state.scanline, state.dot),
         active: None,
         detail: None,
         blocks: vec![
+            SectionBlock::Sweeps(vec![scanline, dot]),
             SectionBlock::Rows(vec![
-                Row::value("scanline", state.scanline.to_string()),
-                Row::value("dot", state.dot.to_string()),
-                Row::value("scroll", format!("{:04X}", state.scroll_v)),
+                Row::value("scroll", format!("{:04X}", state.scroll_v))
+                    .help("PPU scroll/address (v)"),
             ]),
             SectionBlock::Rule,
             SectionBlock::Table(bit_table("2000", PPUCTRL_BITS, state.ppu_control)),

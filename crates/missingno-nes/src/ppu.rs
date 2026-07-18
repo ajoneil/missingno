@@ -13,8 +13,8 @@ pub const DOTS_PER_LINE: u16 = 341;
 pub const LINES_PER_FRAME: u16 = 262;
 pub const VISIBLE_LINES: u16 = 240;
 pub const PIXELS_PER_LINE: usize = 256;
-const VBLANK_LINE: u16 = 241;
-const PRERENDER_LINE: u16 = 261;
+pub const VBLANK_LINE: u16 = 241;
+pub const PRERENDER_LINE: u16 = 261;
 
 /// One finished frame of 6-bit NES colour values (palette-RAM resolved).
 pub struct Frame {

@@ -15,12 +15,36 @@ const JSR: u8 = 0x20;
 
 /// Named bits of the 6502 status register `p`; the B flag is not architectural.
 pub(crate) const MOS6502_FLAGS: &[inspect::FlagName] = &[
-    inspect::FlagName { name: "n", bit: 7 },
-    inspect::FlagName { name: "v", bit: 6 },
-    inspect::FlagName { name: "d", bit: 3 },
-    inspect::FlagName { name: "i", bit: 2 },
-    inspect::FlagName { name: "z", bit: 1 },
-    inspect::FlagName { name: "c", bit: 0 },
+    inspect::FlagName {
+        name: "n",
+        bit: 7,
+        help: Some("negative flag — bit 7 of the result"),
+    },
+    inspect::FlagName {
+        name: "v",
+        bit: 6,
+        help: Some("overflow flag — signed overflow"),
+    },
+    inspect::FlagName {
+        name: "d",
+        bit: 3,
+        help: Some("decimal-mode flag"),
+    },
+    inspect::FlagName {
+        name: "i",
+        bit: 2,
+        help: Some("interrupt-disable flag"),
+    },
+    inspect::FlagName {
+        name: "z",
+        bit: 1,
+        help: Some("zero flag — set when a result is zero"),
+    },
+    inspect::FlagName {
+        name: "c",
+        bit: 0,
+        help: Some("carry flag — set on carry or borrow"),
+    },
 ];
 
 /// Bounds a syncless kernel: ~20 NTSC frames of minimum-length instructions.
@@ -41,20 +65,22 @@ pub fn cpu_register_groups(
         value,
         bits,
         style: inspect::ValueStyle::Hex,
+        help: None,
     };
     vec![inspect::RegisterGroup {
         name: "cpu",
         registers: vec![
-            hex("pc", pc as u32, 16),
-            hex("a", a as u32, 8),
-            hex("x", x as u32, 8),
-            hex("y", y as u32, 8),
-            hex("s", s as u32, 8),
+            hex("pc", pc as u32, 16).help("program counter"),
+            hex("a", a as u32, 8).help("accumulator"),
+            hex("x", x as u32, 8).help("X index register"),
+            hex("y", y as u32, 8).help("Y index register"),
+            hex("s", s as u32, 8).help("stack pointer (offset into page 1)"),
             inspect::Register {
                 name: "p",
                 value: p as u32,
                 bits: 8,
                 style: inspect::ValueStyle::Flags(MOS6502_FLAGS),
+                help: Some("processor status flags"),
             },
         ],
     }]

@@ -13,12 +13,22 @@ pub struct RegisterGroup {
 }
 
 /// One register's current value with the width and presentation to render it.
+/// `help` is a one-line description of what the register holds, shown on hover.
 #[derive(Clone, Debug)]
 pub struct Register {
     pub name: &'static str,
     pub value: u32,
     pub bits: u8,
     pub style: ValueStyle,
+    pub help: Option<&'static str>,
+}
+
+impl Register {
+    /// Attach a one-line description shown when the value is hovered.
+    pub fn help(mut self, help: &'static str) -> Self {
+        self.help = Some(help);
+        self
+    }
 }
 
 /// How a register value reads to a human.
@@ -30,11 +40,13 @@ pub enum ValueStyle {
     Flags(&'static [FlagName]),
 }
 
-/// A named bit within a flags register.
+/// A named bit within a flags register. `help` is a one-line description of the
+/// bit's meaning, shown on hover.
 #[derive(Clone, Copy, Debug)]
 pub struct FlagName {
     pub name: &'static str,
     pub bit: u8,
+    pub help: Option<&'static str>,
 }
 
 // --- Sidebar schema ----------------------------------------------------------
@@ -103,10 +115,73 @@ pub enum SectionBlock {
     Table(BitTable),
     /// Label/value rows, each optionally gated by an activity pip.
     Rows(Vec<Row>),
+    /// Values that count up across a hardware period (a scanline, a beam
+    /// position), each shown against the period's structure.
+    Sweeps(Vec<Sweep>),
     /// Palette swatch rows.
     Swatches(Vec<SwatchRow>),
     /// A horizontal divider.
     Rule,
+}
+
+/// A value sweeping a hardware period — a scanline counter over a frame, a beam
+/// over a line. `value` sits in `[0, end)`; `zones` partition that period into
+/// the named regions the hardware passes through (each zone runs from the
+/// previous zone's end to its own `end`, the last ending at `end`). A CLI
+/// renders it as `ly 91/154 (visible)`; a GUI as a number line.
+#[derive(Clone, Debug)]
+pub struct Sweep {
+    pub label: &'static str,
+    pub value: u32,
+    /// Exclusive period end (e.g. 154 lines).
+    pub end: u32,
+    /// The period's hardware structure; empty when the period has no fixed
+    /// internal boundaries to name.
+    pub zones: Vec<SweepZone>,
+    pub help: Option<&'static str>,
+}
+
+/// One region of a [`Sweep`]'s period, running from the previous zone's end (or
+/// zero) up to `end`.
+#[derive(Clone, Debug)]
+pub struct SweepZone {
+    pub name: &'static str,
+    pub end: u32,
+    pub tone: Tone,
+}
+
+impl Sweep {
+    /// A sweep with no named internal structure.
+    pub fn new(label: &'static str, value: u32, end: u32) -> Self {
+        Sweep {
+            label,
+            value,
+            end,
+            zones: Vec::new(),
+            help: None,
+        }
+    }
+
+    /// Partition the period into named zones.
+    pub fn zones(mut self, zones: Vec<SweepZone>) -> Self {
+        self.zones = zones;
+        self
+    }
+
+    /// Attach a one-line description shown when the sweep is hovered.
+    pub fn help(mut self, help: &'static str) -> Self {
+        self.help = Some(help);
+        self
+    }
+
+    /// The zone the value currently sits in, or `None` when the period has no
+    /// zones or the value is outside `[0, end)`.
+    pub fn zone_at(&self, value: u32) -> Option<&SweepZone> {
+        if value >= self.end {
+            return None;
+        }
+        self.zones.iter().find(|zone| value < zone.end)
+    }
 }
 
 /// A pointer-style register row (a pc or sp), optionally carrying whether the
@@ -205,12 +280,14 @@ pub struct Flag {
 }
 
 /// One label/value row. `active` adds an activity pip (the PPU enable rows);
-/// `None` is a plain label/value row.
+/// `None` is a plain label/value row. `help` is a one-line description shown on
+/// hover.
 #[derive(Clone, Debug)]
 pub struct Row {
     pub label: String,
     pub value: String,
     pub active: Option<bool>,
+    pub help: Option<&'static str>,
 }
 
 impl Row {
@@ -220,6 +297,7 @@ impl Row {
             label: label.into(),
             value: value.into(),
             active: None,
+            help: None,
         }
     }
 
@@ -229,7 +307,14 @@ impl Row {
             label: label.into(),
             value: String::new(),
             active: Some(active),
+            help: None,
         }
+    }
+
+    /// Attach a one-line description shown when the row is hovered.
+    pub fn help(mut self, help: &'static str) -> Self {
+        self.help = Some(help);
+        self
     }
 }
 
@@ -307,7 +392,52 @@ impl MemoryWindow {
 
 #[cfg(test)]
 mod tests {
-    use super::MemoryWindow;
+    use super::{MemoryWindow, Sweep, SweepZone, Tone};
+
+    fn ly_sweep(value: u32) -> Sweep {
+        Sweep::new("ly", value, 154).zones(vec![
+            SweepZone {
+                name: "visible",
+                end: 144,
+                tone: Tone::Rendering,
+            },
+            SweepZone {
+                name: "vblank",
+                end: 154,
+                tone: Tone::Active,
+            },
+        ])
+    }
+
+    #[test]
+    fn zones_partition_the_period() {
+        let sweep = ly_sweep(0);
+        // Zones cover [0, end) contiguously with no gap or overlap.
+        let mut prev_end = 0;
+        for zone in &sweep.zones {
+            assert!(zone.end > prev_end);
+            prev_end = zone.end;
+        }
+        assert_eq!(prev_end, sweep.end);
+    }
+
+    #[test]
+    fn zone_at_maps_value_to_its_region() {
+        let sweep = ly_sweep(0);
+        assert_eq!(sweep.zone_at(0).map(|z| z.name), Some("visible"));
+        assert_eq!(sweep.zone_at(143).map(|z| z.name), Some("visible"));
+        assert_eq!(sweep.zone_at(144).map(|z| z.name), Some("vblank"));
+        assert_eq!(sweep.zone_at(153).map(|z| z.name), Some("vblank"));
+        // Boundary is exclusive: the period end and beyond fall in no zone.
+        assert_eq!(sweep.zone_at(154).map(|z| z.name), None);
+        assert_eq!(sweep.zone_at(200).map(|z| z.name), None);
+    }
+
+    #[test]
+    fn zoneless_sweep_has_no_region() {
+        let sweep = Sweep::new("lx", 42, 114);
+        assert_eq!(sweep.zone_at(42).map(|z| z.name), None);
+    }
 
     fn window() -> MemoryWindow {
         MemoryWindow {

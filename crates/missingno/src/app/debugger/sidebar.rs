@@ -47,6 +47,12 @@ const CELL_HEIGHT: f32 = 16.0;
 /// padding. Adjacent short rows coalesce onto one line up to this budget.
 const ROW_BUDGET: f32 = 236.0;
 
+/// The number-line width for a period sweep, and its bar height and marker
+/// width — sized to sit on one sidebar row beside a label and a value.
+const SWEEP_BAR_WIDTH: f32 = 96.0;
+const SWEEP_BAR_HEIGHT: f32 = 6.0;
+const SWEEP_MARKER_WIDTH: f32 = 2.0;
+
 /// The sidebar over a core's [`inspect::Section`] schema: a stack of
 /// collapsible sections, each rendering its typed blocks. Every family renders
 /// through the same path — the Game Boy has no bespoke sidebar.
@@ -255,8 +261,27 @@ fn render_block(
         Pointers(pointers) => pointers_block(&pointers),
         Table(table) => bit_table(&table),
         Rows(rows) => rows_block(&rows),
+        Sweeps(sweeps) => sweeps_block(&sweeps),
         Swatches(rows) => swatches_block(&rows, colors),
         Rule => rule::horizontal(1).into(),
+    }
+}
+
+/// Wrap an element in a hover tooltip carrying its one-line help, if any. The
+/// tooltip is an overlay, so it never disturbs the sidebar's layout.
+fn with_help(
+    element: Element<'static, app::Message>,
+    help: Option<&'static str>,
+) -> Element<'static, app::Message> {
+    match help {
+        Some(text_help) => tooltip(
+            element,
+            container(text(text_help).font(fonts::monospace()).size(LABEL)).padding([2.0, s()]),
+            tooltip::Position::Bottom,
+        )
+        .style(tooltip_style)
+        .into(),
+        None => element,
     }
 }
 
@@ -303,7 +328,7 @@ fn pointer_item(pointer: &inspect::Pointer) -> Element<'static, app::Message> {
         .style(tooltip_style)
         .into()
     } else {
-        display
+        with_help(display, register.help)
     }
 }
 
@@ -339,7 +364,7 @@ fn pair_row(pair: &inspect::RegisterPair) -> Element<'static, app::Message> {
 }
 
 fn register8(register: &inspect::Register) -> Element<'static, app::Message> {
-    iced::widget::row![
+    let display = iced::widget::row![
         text(register.name.to_owned())
             .font(fonts::monospace())
             .size(REG)
@@ -350,7 +375,8 @@ fn register8(register: &inspect::Register) -> Element<'static, app::Message> {
             .color(palette::TEXT),
     ]
     .spacing(s())
-    .into()
+    .into();
+    with_help(display, register.help)
 }
 
 fn compound(pair: &inspect::RegisterPair) -> Element<'static, app::Message> {
@@ -383,11 +409,14 @@ fn registers_block(group: &inspect::RegisterGroup) -> Element<'static, app::Mess
 fn register_row(register: &inspect::Register) -> Element<'static, app::Message> {
     let value: Element<'static, app::Message> = match register.style {
         inspect::ValueStyle::Flags(names) => flag_chips(register.value, names),
-        _ => text(scalar(register))
-            .font(fonts::monospace())
-            .size(REG)
-            .color(palette::TEXT)
-            .into(),
+        _ => with_help(
+            text(scalar(register))
+                .font(fonts::monospace())
+                .size(REG)
+                .color(palette::TEXT)
+                .into(),
+            register.help,
+        ),
     };
     iced::widget::row![
         container(
@@ -409,22 +438,27 @@ fn register_row(register: &inspect::Register) -> Element<'static, app::Message> 
 fn flag_chips(value: u32, names: &'static [inspect::FlagName]) -> Element<'static, app::Message> {
     let mut chips = iced::widget::row![].spacing(2.0);
     for flag in names {
-        chips = chips.push(flag_char(flag.name, value & (1 << flag.bit) != 0));
+        chips = chips.push(flag_char(
+            flag.name,
+            value & (1 << flag.bit) != 0,
+            flag.help,
+        ));
     }
     chips.into()
 }
 
-fn flag_char(name: &str, set: bool) -> Element<'static, app::Message> {
+fn flag_char(name: &str, set: bool, help: Option<&'static str>) -> Element<'static, app::Message> {
     let (display, color) = if set {
         (name.to_uppercase(), palette::TEXT)
     } else {
         ("\u{00B7}".to_owned(), palette::SURFACE2) // middle dot
     };
-    text(display)
+    let chip = text(display)
         .font(fonts::monospace())
         .size(REG)
         .color(color)
-        .into()
+        .into();
+    with_help(chip, help)
 }
 
 // --- Label/value rows --------------------------------------------------------
@@ -471,7 +505,7 @@ fn estimated_width(row: &inspect::Row) -> f32 {
 }
 
 fn row_item(row: &inspect::Row) -> Element<'static, app::Message> {
-    match row.active {
+    let display: Element<'static, app::Message> = match row.active {
         Some(active) => iced::widget::row![
             pip(active, palette::GREEN),
             text(row.label.clone())
@@ -499,7 +533,109 @@ fn row_item(row: &inspect::Row) -> Element<'static, app::Message> {
         .spacing(xs())
         .align_y(Vertical::Center)
         .into(),
+    };
+    with_help(display, row.help)
+}
+
+// --- Period sweeps -----------------------------------------------------------
+
+fn sweeps_block(sweeps: &[inspect::Sweep]) -> Element<'static, app::Message> {
+    let mut stack = column![].spacing(xs());
+    for sweep in sweeps {
+        stack = stack.push(sweep_row(sweep));
     }
+    stack.into()
+}
+
+fn sweep_row(sweep: &inspect::Sweep) -> Element<'static, app::Message> {
+    let label = container(
+        text(sweep.label)
+            .font(fonts::monospace())
+            .size(LABEL)
+            .color(palette::MUTED),
+    )
+    .width(Length::Fixed(SWATCH_LABEL_WIDTH));
+
+    let value = text(format!("{}/{}", sweep.value, sweep.end))
+        .font(fonts::monospace())
+        .size(LABEL)
+        .color(palette::TEXT);
+
+    let line: Element<'static, app::Message> = iced::widget::row![label, sweep_bar(sweep), value]
+        .spacing(s())
+        .align_y(Vertical::Center)
+        .into();
+
+    // The current zone name joins the help text in the hover tooltip.
+    let zone = sweep.zone_at(sweep.value).map(|z| z.name);
+    let tip = match (zone, sweep.help) {
+        (Some(zone), Some(help)) => Some(format!("{zone} — {help}")),
+        (Some(zone), None) => Some(zone.to_owned()),
+        (None, Some(help)) => Some(help.to_owned()),
+        (None, None) => None,
+    };
+    match tip {
+        Some(tip) => tooltip(
+            line,
+            container(text(tip).font(fonts::monospace()).size(LABEL)).padding([2.0, s()]),
+            tooltip::Position::Bottom,
+        )
+        .style(tooltip_style)
+        .into(),
+        None => line,
+    }
+}
+
+/// The number line: proportional zone segments with a position marker overlaid
+/// at the value.
+fn sweep_bar(sweep: &inspect::Sweep) -> Element<'static, app::Message> {
+    let end = sweep.end.max(1) as f32;
+    let marker_x = (sweep.value.min(sweep.end) as f32 / end) * SWEEP_BAR_WIDTH;
+
+    let mut segments = iced::widget::row![];
+    if sweep.zones.is_empty() {
+        segments = segments.push(bar_segment(SWEEP_BAR_WIDTH, palette::SURFACE2));
+    } else {
+        let mut prev_end = 0u32;
+        for zone in &sweep.zones {
+            let width = (zone.end.saturating_sub(prev_end) as f32 / end) * SWEEP_BAR_WIDTH;
+            segments = segments.push(bar_segment(width, tone_color(zone.tone)));
+            prev_end = zone.end;
+        }
+    }
+
+    let marker = iced::widget::row![
+        Space::new().width(Length::Fixed(
+            (marker_x - SWEEP_MARKER_WIDTH / 2.0).max(0.0)
+        )),
+        container(Space::new())
+            .width(Length::Fixed(SWEEP_MARKER_WIDTH))
+            .height(Length::Fixed(SWEEP_BAR_HEIGHT))
+            .style(|_: &iced::Theme| container::Style {
+                background: Some(Background::Color(palette::TEXT)),
+                ..Default::default()
+            }),
+    ];
+
+    iced::widget::stack![
+        container(segments)
+            .width(Length::Fixed(SWEEP_BAR_WIDTH))
+            .height(Length::Fixed(SWEEP_BAR_HEIGHT)),
+        marker,
+    ]
+    .width(Length::Fixed(SWEEP_BAR_WIDTH))
+    .into()
+}
+
+fn bar_segment(width: f32, color: Color) -> Element<'static, app::Message> {
+    container(Space::new())
+        .width(Length::Fixed(width))
+        .height(Length::Fixed(SWEEP_BAR_HEIGHT))
+        .style(move |_: &iced::Theme| container::Style {
+            background: Some(Background::Color(color)),
+            ..Default::default()
+        })
+        .into()
 }
 
 // --- Bit table ---------------------------------------------------------------

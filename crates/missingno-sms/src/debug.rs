@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use missingno_core::inspect::{
-    BitColumn, BitRow, BitTable, Register, RegisterGroup, Row, Section, SectionBlock, Tone,
-    ValueStyle,
+    BitColumn, BitRow, BitTable, Register, RegisterGroup, Row, Section, SectionBlock, Sweep,
+    SweepZone, Tone, ValueStyle,
 };
 use missingno_core::stepping::SteppingSystem;
 use missingno_core::system::{ControlId, ControlInput, DebugView, InspectSnapshot, RunningStatus};
@@ -84,19 +84,20 @@ fn cpu_register_groups(state: &SmsInspectState) -> Vec<RegisterGroup> {
         value,
         bits,
         style: ValueStyle::Hex,
+        help: None,
     };
     vec![RegisterGroup {
         name: "cpu",
         registers: vec![
-            hex("a", state.a as u32, 8),
-            hex("f", state.f as u32, 8),
-            hex("bc", state.bc as u32, 16),
-            hex("de", state.de as u32, 16),
-            hex("hl", state.hl as u32, 16),
-            hex("ix", state.ix as u32, 16),
-            hex("iy", state.iy as u32, 16),
-            hex("sp", state.sp as u32, 16),
-            hex("pc", state.pc as u32, 16),
+            hex("a", state.a as u32, 8).help("accumulator"),
+            hex("f", state.f as u32, 8).help("flags register"),
+            hex("bc", state.bc as u32, 16).help("general-purpose register pair BC"),
+            hex("de", state.de as u32, 16).help("general-purpose register pair DE"),
+            hex("hl", state.hl as u32, 16).help("general-purpose register pair HL"),
+            hex("ix", state.ix as u32, 16).help("index register IX"),
+            hex("iy", state.iy as u32, 16).help("index register IY"),
+            hex("sp", state.sp as u32, 16).help("stack pointer"),
+            hex("pc", state.pc as u32, 16).help("program counter"),
         ],
     }]
 }
@@ -110,22 +111,39 @@ fn sms_sidebar_sections(state: &SmsInspectState) -> Vec<Section> {
 }
 
 fn vdp_section(state: &SmsInspectState) -> Section {
+    use crate::vdp::{ACTIVE_LINES, DOTS_PER_LINE, LINES_PER_FRAME};
+
     let registers = state
         .vdp_registers
         .iter()
         .enumerate()
         .map(|(index, &value)| Row::value(format!("r{index}"), format!("{value:02X}")))
         .collect();
+    // The active display occupies the first 192 lines; the border and vblank
+    // share the rest. The dot cycle within a line carries no named zones.
+    let line = Sweep::new("line", state.line as u32, LINES_PER_FRAME as u32)
+        .zones(vec![
+            SweepZone {
+                name: "active",
+                end: ACTIVE_LINES as u32,
+                tone: Tone::Rendering,
+            },
+            SweepZone {
+                name: "blank",
+                end: LINES_PER_FRAME as u32,
+                tone: Tone::Idle,
+            },
+        ])
+        .help("VDP scanline — 0..191 active display, then border and vblank");
+    let dot = Sweep::new("dot", state.dot as u32, DOTS_PER_LINE as u32)
+        .help("VDP dot within the scanline");
     Section {
         name: "VDP",
         summary: format!("line {} · dot {}", state.line, state.dot),
         active: None,
         detail: None,
         blocks: vec![
-            SectionBlock::Rows(vec![
-                Row::value("line", state.line.to_string()),
-                Row::value("dot", state.dot.to_string()),
-            ]),
+            SectionBlock::Sweeps(vec![line, dot]),
             SectionBlock::Rule,
             SectionBlock::Table(status_table(state.vdp_status)),
             SectionBlock::Rule,
