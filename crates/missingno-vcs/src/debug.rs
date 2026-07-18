@@ -524,6 +524,16 @@ fn tia_graphics_block(state: &VcsInspectState) -> inspect::SectionBlock {
 
     inspect::SectionBlock::Pixels(vec![
         PixelStrip::Colors {
+            label: "pf".to_owned(),
+            cells: lit(
+                &playfield_cells(state.pf0, state.pf1, state.pf2),
+                state.color_pf,
+            ),
+            help: Some(
+                "playfield left half (PF0/PF1/PF2) in COLUPF; right half per mirror; clear bits draw nothing",
+            ),
+        },
+        PixelStrip::Colors {
             label: "grp0".to_owned(),
             cells: lit(
                 &player_pattern_bits(state.grp0, state.grp0_reflect),
@@ -541,16 +551,6 @@ fn tia_graphics_block(state: &VcsInspectState) -> inspect::SectionBlock {
             ),
             help: Some(
                 "player 1 graphics (GRP1) in COLUP1; bit 7 at left, REFP1 mirrors; clear bits draw nothing",
-            ),
-        },
-        PixelStrip::Colors {
-            label: "pf".to_owned(),
-            cells: lit(
-                &playfield_cells(state.pf0, state.pf1, state.pf2),
-                state.color_pf,
-            ),
-            help: Some(
-                "playfield left half (PF0/PF1/PF2) in COLUPF; right half per mirror; clear bits draw nothing",
             ),
         },
         PixelStrip::Colors {
