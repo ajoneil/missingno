@@ -4,7 +4,7 @@ use iced::{
     Background, Border, Color, Element,
     Length::{self, Fill},
     alignment::Vertical,
-    widget::{Space, button, column, container, rule, text, tooltip},
+    widget::{Space, button, column, container, rule, scrollable, text, tooltip},
 };
 
 use crate::app::{
@@ -39,10 +39,14 @@ const SIDEBAR_WIDTH: f32 = 260.0;
 const REG8_WIDTH: f32 = 48.0;
 /// Fixed width for a swatch row's label, so swatches line up.
 const SWATCH_LABEL_WIDTH: f32 = 40.0;
-/// A pixel-strip cell's size and gap — small enough that the playfield's 20
-/// cells fit the sidebar width beside their label.
-const PIXEL_CELL: f32 = 8.0;
-const PIXEL_GAP: f32 = 1.0;
+/// A pixel-strip cell's width and height. Width is capped so the widest strip
+/// (the playfield's 20 contiguous cells) still fits the sidebar beside its
+/// label; height runs taller so the strip reads as a bold pixel row.
+const PIXEL_CELL_W: f32 = 9.0;
+const PIXEL_CELL_H: f32 = 13.0;
+/// The dim fill for an empty strip cell — a mid grey, lighter than any near-black
+/// lit hue, so an unlit cell never reads as a lit dark pixel.
+const EMPTY_CELL: Color = Color::from_rgba(0.345, 0.357, 0.439, 0.55);
 /// A bit table cell's height, so its header, rows, and pips align across
 /// columns.
 const CELL_HEIGHT: f32 = 16.0;
@@ -55,7 +59,7 @@ const ROW_BUDGET: f32 = 236.0;
 /// width — sized to sit on one sidebar row beside a label and a value.
 const SWEEP_BAR_WIDTH: f32 = 96.0;
 const SWEEP_BAR_HEIGHT: f32 = 6.0;
-const SWEEP_MARKER_WIDTH: f32 = 2.0;
+const SWEEP_MARKER_WIDTH: f32 = 3.0;
 
 /// The sidebar over a core's [`inspect::Section`] schema: a stack of
 /// collapsible sections, each rendering its typed blocks. Every family renders
@@ -106,14 +110,11 @@ impl Sidebar {
         sections: Vec<inspect::Section>,
         colors: Option<&ConsoleColors>,
     ) -> Element<'static, app::Message> {
-        let mut stack = column![]
-            .width(Length::Fixed(SIDEBAR_WIDTH))
-            .height(Fill)
-            .spacing(s());
+        let mut stack = column![].width(Length::Fixed(SIDEBAR_WIDTH)).spacing(s());
         for section in sections {
             stack = stack.push(self.render_section(section, colors));
         }
-        stack.into()
+        scroll_sidebar(stack.into())
     }
 
     fn render_section(
@@ -148,15 +149,28 @@ impl Sidebar {
             None => (String::from("running"), "PPU", String::from("running")),
         };
 
-        column![
+        let summary = column![
             section_chrome("CPU", &cpu_summary, Some(true), None, true, None),
             section_chrome(video_label, &video_summary, Some(true), None, true, None),
         ]
         .width(Length::Fixed(SIDEBAR_WIDTH))
-        .height(Fill)
-        .spacing(s())
-        .into()
+        .spacing(s());
+        scroll_sidebar(summary.into())
     }
+}
+
+/// Wrap the sidebar sections in a vertical scrollable so they scroll on
+/// overflow, with a hidden scrollbar so no gutter eats the fixed width.
+fn scroll_sidebar(content: Element<'static, app::Message>) -> Element<'static, app::Message> {
+    scrollable(content)
+        .direction(iced::widget::scrollable::Direction::Vertical(
+            iced::widget::scrollable::Scrollbar::new()
+                .width(0)
+                .scroller_width(0),
+        ))
+        .width(Length::Fixed(SIDEBAR_WIDTH))
+        .height(Fill)
+        .into()
 }
 
 // --- Section chrome ----------------------------------------------------------
@@ -613,11 +627,14 @@ fn sweep_bar(sweep: &inspect::Sweep) -> Element<'static, app::Message> {
         Space::new().width(Length::Fixed(
             (marker_x - SWEEP_MARKER_WIDTH / 2.0).max(0.0)
         )),
+        // A dark core under a light 1px outline: the two tones keep the marker
+        // legible on every bright zone colour and on the empty bar alike.
         container(Space::new())
             .width(Length::Fixed(SWEEP_MARKER_WIDTH))
             .height(Length::Fixed(SWEEP_BAR_HEIGHT))
             .style(|_: &iced::Theme| container::Style {
-                background: Some(Background::Color(palette::TEXT)),
+                background: Some(Background::Color(Color::from_rgb(0.12, 0.12, 0.18))),
+                border: Border::default().width(1.0).color(palette::TEXT),
                 ..Default::default()
             }),
     ];
@@ -871,10 +888,22 @@ fn pixel_strip_row(
         }
     };
 
-    let mut strip_cells = iced::widget::row![].spacing(PIXEL_GAP);
+    let mut strip_cells = iced::widget::row![];
     for cell in cells {
         strip_cells = strip_cells.push(pixel_cell(cell));
     }
+    // One 1px frame around the whole strip; cells butt directly inside it, so
+    // neighbours share the frame rather than each drawing its own border.
+    let strip = container(strip_cells)
+        .padding(1.0)
+        .style(|_: &iced::Theme| container::Style {
+            background: Some(Background::Color(palette::SURFACE2)),
+            border: Border::default()
+                .rounded(2.0)
+                .width(1.0)
+                .color(palette::SURFACE2),
+            ..Default::default()
+        });
 
     let line: Element<'static, app::Message> = iced::widget::row![
         container(
@@ -884,7 +913,7 @@ fn pixel_strip_row(
                 .color(palette::MUTED),
         )
         .width(Length::Fixed(SWATCH_LABEL_WIDTH)),
-        strip_cells,
+        strip,
     ]
     .spacing(s())
     .align_y(Vertical::Center)
@@ -893,30 +922,18 @@ fn pixel_strip_row(
     with_help(line, help)
 }
 
-/// One pixel-strip cell: a filled square with a bright border for a lit pixel —
-/// so a dark hue still reads as lit against the sidebar — and a dim hollow
-/// outline for an empty or transparent slot.
+/// One pixel-strip cell: a borderless fill — the pixel's colour when lit, a dim
+/// grey slot when empty — that butts against its neighbours inside the strip's
+/// shared frame. The empty grey stays lighter than any lit dark hue, so a
+/// near-black lit pixel still reads as lit against an empty slot.
 fn pixel_cell(color: Option<Color>) -> Element<'static, app::Message> {
+    let fill = color.unwrap_or(EMPTY_CELL);
     container(Space::new())
-        .width(PIXEL_CELL)
-        .height(PIXEL_CELL)
-        .style(move |_: &iced::Theme| match color {
-            Some(color) => container::Style {
-                background: Some(Background::Color(color)),
-                border: Border::default()
-                    .rounded(1.0)
-                    .width(1.0)
-                    .color(Color::from_rgba(1.0, 1.0, 1.0, 0.5)),
-                ..Default::default()
-            },
-            None => container::Style {
-                background: None,
-                border: Border::default()
-                    .rounded(1.0)
-                    .width(1.0)
-                    .color(palette::SURFACE2),
-                ..Default::default()
-            },
+        .width(PIXEL_CELL_W)
+        .height(PIXEL_CELL_H)
+        .style(move |_: &iced::Theme| container::Style {
+            background: Some(Background::Color(fill)),
+            ..Default::default()
         })
         .into()
 }
