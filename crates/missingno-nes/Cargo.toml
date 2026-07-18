@@ -8,6 +8,8 @@ morepork = ["dep:morepork", "dep:sha2"]
 
 [dependencies]
 missingno-6502 = { path = "../missingno-6502" }
+missingno-core = { path = "../missingno-core" }
+rgb = { workspace = true }
 morepork = { git = "https://github.com/ajoneil/morepork", optional = true }
 sha2 = { version = "0.11", optional = true }
 

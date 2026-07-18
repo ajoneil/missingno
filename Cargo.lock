@@ -3036,7 +3036,9 @@ name = "missingno-nes"
 version = "0.1.0"
 dependencies = [
  "missingno-6502",
+ "missingno-core",
  "morepork",
+ "rgb",
  "sha2 0.11.0",
 ]
 

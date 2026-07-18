@@ -1,58 +1,12 @@
-//! The NES family's inspection state and debugger panes. One owned state
-//! struct serves both the paused view (refreshed after every step) and the
-//! per-frame snapshot the running view renders from.
+//! The NES family's debugger panes, rendering the crate-owned inspection
+//! state the running and paused views share.
 
 use iced::widget::{column, pane_grid, text};
+use missingno_nes::debug::NesInspectState;
 
 use crate::app;
-use crate::app::debugger::inspect::InspectSnapshot;
 use crate::app::debugger::panes::{self, DebuggerPane, Pane, PaneContext};
 use crate::app::ui::{fonts, sizes::s};
-
-#[derive(Clone, Default)]
-pub struct NesInspectState {
-    pub a: u8,
-    pub x: u8,
-    pub y: u8,
-    pub s: u8,
-    pub p: u8,
-    pub pc: u16,
-    pub scanline: u16,
-    pub dot: u16,
-    pub ppu_control: u8,
-    pub ppu_mask: u8,
-    pub ppu_status: u8,
-    pub scroll_v: u16,
-    pub disassembly: Vec<DisasmRow>,
-    pub frame: u64,
-}
-
-#[derive(Clone)]
-pub struct DisasmRow {
-    pub address: u16,
-    pub text: String,
-    pub current: bool,
-}
-
-/// The per-frame snapshot for the running view.
-pub struct NesSnapshot {
-    pub state: NesInspectState,
-}
-
-impl NesSnapshot {
-    pub fn new(state: NesInspectState) -> Self {
-        NesSnapshot { state }
-    }
-}
-
-impl InspectSnapshot for NesSnapshot {
-    fn frame(&self) -> u64 {
-        self.state.frame
-    }
-    fn family_state(&self) -> &dyn std::any::Any {
-        &self.state
-    }
-}
 
 fn flag_string(p: u8) -> String {
     "nv-bdizc"
