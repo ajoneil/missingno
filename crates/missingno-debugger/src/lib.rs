@@ -8,7 +8,21 @@
 //! watch conditions, the disassembly walkers), so it works over any core.
 
 pub mod factory;
+#[cfg(feature = "gb")]
+pub mod gb;
 pub mod http;
 pub mod session;
 
 pub use session::{DisasmLine, Session, StopReason, validate_watch};
+
+/// The family route extensions compiled into this build, mounted ahead of the
+/// generic routes. Each declines any request it does not own.
+// Each family pushes under its own feature gate, so the vec is built
+// incrementally rather than from a literal.
+#[allow(unused_mut, clippy::vec_init_then_push)]
+pub fn extensions() -> Vec<http::Extension> {
+    let mut extensions: Vec<http::Extension> = Vec::new();
+    #[cfg(feature = "gb")]
+    extensions.push(gb::extension);
+    extensions
+}

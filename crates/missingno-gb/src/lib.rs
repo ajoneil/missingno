@@ -16,6 +16,7 @@ pub mod media;
 pub mod memory;
 pub mod ppu;
 pub mod recording;
+pub mod render;
 pub mod serial_transfer;
 pub mod sgb;
 #[cfg(feature = "morepork")]

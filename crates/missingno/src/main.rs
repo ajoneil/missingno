@@ -5,11 +5,9 @@ use missingno_gb::BootRom;
 
 mod app;
 mod cartridge_rw;
-mod headless;
 mod link_cable;
 mod patch;
 mod printer;
-mod render;
 mod sram;
 mod trace;
 
@@ -100,11 +98,43 @@ fn main() -> iced::Result {
     let link = create_link(args.link_listen, args.link_connect);
 
     if args.headless {
-        headless::run(args.rom_file, boot_rom, link);
+        run_headless(args.rom_file, boot_rom, link);
         return Ok(());
     }
 
     app::run(args.rom_file, args.debugger, link, boot_rom)
+}
+
+/// The `--headless` server: build the Game Boy console through the GUI's own
+/// seam factory (boot ROM, serial link, battery-save format), then serve it
+/// over the shared `missingno-debugger` library with the Game Boy extension
+/// routes mounted.
+fn run_headless(
+    rom_file: Option<PathBuf>,
+    boot_rom: Option<BootRom>,
+    link: Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
+) {
+    /// The headless server's fixed port, unchanged from the original server.
+    const HEADLESS_PORT: u16 = 3333;
+
+    let rom_path = rom_file.unwrap_or_else(|| {
+        eprintln!("error: --headless requires a ROM file");
+        std::process::exit(1);
+    });
+    let rom_data = std::fs::read(&rom_path).unwrap_or_else(|e| {
+        eprintln!("error: failed to read {}: {e}", rom_path.display());
+        std::process::exit(1);
+    });
+    let save_data = std::fs::read(rom_path.with_extension("sav")).ok();
+
+    let debugger = app::system::gb::headless_debugger(rom_data, save_data, boot_rom, link);
+    let session = missingno_debugger::Session::new(debugger);
+    if let Err(e) =
+        missingno_debugger::http::serve(session, HEADLESS_PORT, missingno_debugger::extensions())
+    {
+        eprintln!("error: {e}");
+        std::process::exit(1);
+    }
 }
 
 fn create_link(

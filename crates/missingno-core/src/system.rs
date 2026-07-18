@@ -257,6 +257,9 @@ pub trait SystemDebugger: Send {
     /// The family's typed inspection state, for its own panes to downcast —
     /// the live console while paused.
     fn family_state(&self) -> &dyn Any;
+    /// The concrete debugger, for its family's own extension surfaces
+    /// (e.g. headless extension routes) to downcast.
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 
     fn game_title(&self) -> String;
     fn battery_save(&self) -> Option<Vec<u8>> {

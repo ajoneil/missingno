@@ -7,7 +7,7 @@ use missingno_gb::system::GbConsole;
 use missingno_gb::{BootRom, GameBoy, cartridge::Cartridge, serial_transfer::SerialLink};
 use missingno_gbc::GameBoyColor;
 
-use super::{MediaLoad, SystemConsole};
+use super::{MediaLoad, SystemConsole, SystemDebugger};
 
 pub use missingno_gb::media::{is_gb_rom, is_gbc_rom, title_from_rom};
 
@@ -124,4 +124,29 @@ pub fn create_console(media: MediaLoad) -> Option<Box<dyn SystemConsole>> {
         link,
         Boxed,
     ))
+}
+
+/// Build a headless debugger over the same seam the GUI uses, wiring the boot
+/// ROM, an optional serial link, and the battery-save format. The headless
+/// server never persists, so the battery-save hook stays inert.
+pub fn headless_debugger(
+    rom: Vec<u8>,
+    save_data: Option<Vec<u8>>,
+    boot_rom: Option<BootRom>,
+    link: Option<Box<dyn SerialLink>>,
+) -> Box<dyn SystemDebugger> {
+    struct Build;
+    impl GbLaunch for Build {
+        type Output = Box<dyn SystemConsole>;
+        fn dmg(self, console: GameBoy) -> Self::Output {
+            Box::new(GbConsole::new(console, battery_save))
+        }
+        fn cgb(self, console: GameBoyColor) -> Self::Output {
+            Box::new(GbConsole::new(console, battery_save))
+        }
+    }
+    match launch(rom, save_data, boot_rom, link, Build).into_debugger() {
+        Ok(debugger) => debugger,
+        Err(_) => unreachable!("the Game Boy console always has a debugger backend"),
+    }
 }

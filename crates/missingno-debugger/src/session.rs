@@ -74,6 +74,15 @@ impl Session {
         self.debugger.pc()
     }
 
+    /// The boxed debugger, for a family's extension routes to downcast through
+    /// [`SystemDebugger::as_any_mut`]. Extensions use this; the generic HTTP
+    /// routes must not.
+    ///
+    /// [`SystemDebugger::as_any_mut`]: missingno_core::system::SystemDebugger::as_any_mut
+    pub fn debugger_mut(&mut self) -> &mut dyn SystemDebugger {
+        self.debugger.as_mut()
+    }
+
     pub fn game_title(&self) -> String {
         self.debugger.game_title()
     }

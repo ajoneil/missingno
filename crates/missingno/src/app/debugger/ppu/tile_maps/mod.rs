@@ -13,8 +13,9 @@ use crate::app::{
     },
     texture_renderer::TextureRenderer,
 };
-use crate::render::{tile_map_rgba, tile_map_rgba_cgb};
 use missingno_gb::ppu::{memory::VramView, types::tiles::TileMapId};
+use missingno_gb::render::tile_map_rgba;
+use missingno_gbc::render::tile_map_rgba_cgb;
 
 mod viewport_overlay;
 

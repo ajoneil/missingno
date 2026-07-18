@@ -15,26 +15,49 @@ const MAX_MEMORY_LEN: u32 = 0x1000;
 const DEFAULT_DISASM_COUNT: usize = 16;
 const MAX_DISASM_COUNT: usize = 256;
 
-/// Serve `session` on `127.0.0.1:<port>` until the process is killed.
-pub fn serve(mut session: Session, port: u16) -> std::io::Result<()> {
+/// The outcome of offering a request to a family extension handler: the
+/// handler either served it, or declined and handed the request back for the
+/// next handler (and finally the generic routes) to try.
+pub enum Dispatch {
+    Handled,
+    Declined(Request),
+}
+
+/// A family-specific route handler mounted ahead of the generic routes. It
+/// owns the routes its core exposes (register/memory shapes a generic client
+/// cannot express) and declines everything else. `path` is the request path
+/// with any query string already split off.
+pub type Extension = fn(&mut Session, Request, &Method, &str) -> Dispatch;
+
+/// Serve `session` on `127.0.0.1:<port>` until the process is killed. Each
+/// request is offered to `extensions` in order before the generic routes.
+pub fn serve(mut session: Session, port: u16, extensions: Vec<Extension>) -> std::io::Result<()> {
     let address = format!("127.0.0.1:{port}");
     let server = Server::http(&address)
         .map_err(|e| std::io::Error::other(format!("failed to bind {address}: {e}")))?;
     eprintln!("headless debugger ready: {}", session.game_title());
     eprintln!("listening on http://{address}");
     for request in server.incoming_requests() {
-        handle(request, &mut session);
+        handle(request, &mut session, &extensions);
     }
     Ok(())
 }
 
-fn handle(request: Request, session: &mut Session) {
+fn handle(request: Request, session: &mut Session, extensions: &[Extension]) {
     let method = request.method().clone();
     let url = request.url().to_string();
     let (path, query) = match url.split_once('?') {
         Some((path, query)) => (path.to_string(), query.to_string()),
         None => (url, String::new()),
     };
+
+    let mut request = request;
+    for extension in extensions {
+        match extension(session, request, &method, &path) {
+            Dispatch::Handled => return,
+            Dispatch::Declined(returned) => request = returned,
+        }
+    }
 
     match (&method, path.as_str()) {
         (Method::Get, "/status") => respond_json(request, status_json(session)),

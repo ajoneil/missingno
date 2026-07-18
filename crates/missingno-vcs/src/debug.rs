@@ -591,6 +591,10 @@ impl SystemDebugger for VcsDebugger {
         Some(self.core.instruction_set())
     }
 
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+
     fn family_state(&self) -> &dyn std::any::Any {
         &self.inspect
     }

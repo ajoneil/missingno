@@ -236,6 +236,10 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
         self.breakpoints.iter().map(|&a| a as u32).collect()
     }
 
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+
     fn family_state(&self) -> &dyn std::any::Any {
         &self.inspect
     }

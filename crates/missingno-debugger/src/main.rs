@@ -52,7 +52,12 @@ fn run() -> Result<(), String> {
     let debugger = console
         .into_debugger()
         .map_err(|_| "this system has no debugger backend".to_string())?;
-    http::serve(Session::new(debugger), args.port).map_err(|e| e.to_string())
+    http::serve(
+        Session::new(debugger),
+        args.port,
+        missingno_debugger::extensions(),
+    )
+    .map_err(|e| e.to_string())
 }
 
 fn main() -> ExitCode {

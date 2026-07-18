@@ -18,9 +18,9 @@ use missingno_core::system::{
 use missingno_core::video::{Frame, VideoOut};
 
 use crate::cartridge::Cartridge;
-use crate::debugger::Debugger;
 use crate::debugger::cdl::{CdlWindow, CodeDataLog};
 use crate::debugger::inspection::{ColorSnapshot, GbSnapshot};
+use crate::debugger::{Debugger, WatchCondition};
 use crate::frame::{GameBoyScreen, GbFrame, SgbScreen};
 use crate::joypad::Button;
 use crate::ppu::model::PpuModel;
@@ -244,6 +244,38 @@ impl<M: ConsoleUi> GbDebugger<M> {
             console.cartridge().switchable_rom_bank(),
         )
     }
+
+    /// The live console, for a family extension surface to read model-specific
+    /// state the object-safe seam does not expose.
+    pub fn console(&self) -> &Console<M> {
+        self.core.game_boy()
+    }
+
+    /// Advance one dot (T-cycle) — the finest step the seam's instruction- and
+    /// frame-granularity stepping cannot express.
+    pub fn step_tcycle(&mut self) {
+        self.core.step_tcycle();
+    }
+
+    pub fn watchpoints(&self) -> &[WatchCondition] {
+        self.core.watchpoints()
+    }
+
+    pub fn add_watchpoint(&mut self, condition: WatchCondition) {
+        self.core.add_watchpoint(condition);
+    }
+
+    pub fn remove_watchpoint(&mut self, condition: &WatchCondition) {
+        self.core.remove_watchpoint(condition);
+    }
+
+    pub fn clear_watchpoints(&mut self) {
+        self.core.clear_watchpoints();
+    }
+
+    pub fn last_watchpoint_hit(&self) -> Option<&WatchCondition> {
+        self.core.last_watchpoint_hit()
+    }
 }
 
 impl<M: ConsoleUi + 'static> SystemDebugger for GbDebugger<M>
@@ -360,6 +392,10 @@ where
 
     fn family_state(&self) -> &dyn std::any::Any {
         self.core.game_boy()
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 
     fn video_out(&self) -> VideoOut {
