@@ -35,6 +35,13 @@ pub trait InstructionSet {
     /// The longest instruction this ISA decodes, in bytes.
     fn max_len(&self) -> usize;
 
+    /// The address bus wrapped to a bit width — a disassembler walking off
+    /// either end of memory rolls over here. Defaults to the 16-bit space
+    /// every current core uses.
+    fn address_mask(&self) -> u32 {
+        0xFFFF
+    }
+
     /// Decode the instruction at `address`. Callers supply up to `max_len`
     /// bytes starting at `address`, fewer only when the address space ends
     /// first. This is decode-for-display — execution decoders are separate by

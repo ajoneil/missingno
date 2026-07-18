@@ -20,9 +20,9 @@ use crate::app::{
 };
 use missingno_core::cdl::CdlWindow;
 use missingno_core::symbols::SymbolTable;
-use missingno_gb::cpu::instructions::{Instruction, instruction_length};
+use missingno_gb::cpu::instructions::Instruction;
 use missingno_gb::debugger::instructions::{
-    InstructionsIterator, ReadInstructionMemory, addresses_before,
+    InstructionsIterator, ReadInstructionMemory, Row, addresses_before, rows_from,
 };
 
 // Syntax highlighting — mapped from palette colors.
@@ -64,8 +64,7 @@ impl InstructionsPane {
 
         // Instructions before PC: exact where the code/data log has seen
         // execution, falling back to the heuristic sweep where it hasn't.
-        let before = addresses_before_logged(pc, CONTEXT_BEFORE, memory, cdl)
-            .unwrap_or_else(|| addresses_before(pc, CONTEXT_BEFORE, memory));
+        let before = addresses_before(pc, CONTEXT_BEFORE, memory, Some(cdl));
         for &addr in &before {
             let mut iter = InstructionsIterator::new(addr, memory);
             if let Some(decoded) = Instruction::decode(&mut iter) {
@@ -82,26 +81,26 @@ impl InstructionsPane {
 
         // Instructions from PC onwards; bytes the code/data log knows were
         // never executed render as data instead of decoding through them.
-        let mut iterator = InstructionsIterator::new(pc, memory);
-        for _ in 0..CONTEXT_AFTER {
-            if let Some(address) = iterator.address {
-                if cdl.is_data(address) {
+        for row in rows_from(pc, CONTEXT_AFTER, memory, Some(cdl)) {
+            match row {
+                Row::Data(address) => {
+                    let address = address as u16;
                     push_label(&mut instructions, address);
                     instructions.push(data_row(address, rom_bank, memory.read(address)));
-                    iterator.address = Some(address.wrapping_add(1));
-                    continue;
                 }
-                if let Some(decoded) = Instruction::decode(&mut iterator) {
-                    push_label(&mut instructions, address);
-                    instructions.push(instruction_row(
-                        address,
-                        rom_bank,
-                        decoded,
-                        address == pc,
-                        breakpoints.contains(&address),
-                    ));
-                } else {
-                    break;
+                Row::Instruction(address) => {
+                    let address = address as u16;
+                    let mut iter = InstructionsIterator::new(address, memory);
+                    if let Some(decoded) = Instruction::decode(&mut iter) {
+                        push_label(&mut instructions, address);
+                        instructions.push(instruction_row(
+                            address,
+                            rom_bank,
+                            decoded,
+                            address == pc,
+                            breakpoints.contains(&address),
+                        ));
+                    }
                 }
             }
         }
@@ -131,39 +130,6 @@ impl InstructionsPane {
                 .into(),
         )
     }
-}
-
-/// Walk backward through bytes the log knows were executed: the previous
-/// instruction is the code-flagged byte whose length lands exactly on the
-/// current one. `None` when the log hasn't seen this neighbourhood.
-fn addresses_before_logged(
-    pc: u16,
-    count: usize,
-    memory: &dyn ReadInstructionMemory,
-    cdl: &CdlWindow,
-) -> Option<Vec<u16>> {
-    let mut chain = Vec::new();
-    let mut current = pc;
-    for _ in 0..count {
-        let previous = (1..=3u16)
-            .map(|back| current.wrapping_sub(back))
-            .find(|&address| {
-                cdl.is_instruction_start(address)
-                    && address.wrapping_add(instruction_length(memory.read(address))) == current
-            });
-        match previous {
-            Some(address) => {
-                chain.push(address);
-                current = address;
-            }
-            None => break,
-        }
-    }
-    if chain.is_empty() {
-        return None;
-    }
-    chain.reverse();
-    Some(chain)
 }
 
 fn data_row(address: u16, rom_bank: Option<u16>, byte: u8) -> Element<'static, app::Message> {
