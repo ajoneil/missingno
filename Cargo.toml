@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/missingno",
+    "crates/missingno-debugger",
     "crates/missingno-gb",
     "crates/missingno-gbc",
     "crates/missingno-core",
@@ -13,6 +14,7 @@ members = [
 # The shipping set; the immature cores build only via -p.
 default-members = [
     "crates/missingno",
+    "crates/missingno-debugger",
     "crates/missingno-gb",
     "crates/missingno-gbc",
     "crates/missingno-core",

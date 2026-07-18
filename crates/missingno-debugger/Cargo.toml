@@ -1,0 +1,32 @@
+[package]
+name = "missingno-debugger"
+version = "0.0.1"
+authors = ["Andrew O'Neil <andy@andyofniall.net>"]
+edition = "2024"
+license = "MIT"
+
+[[bin]]
+name = "missingno-debugger"
+path = "src/main.rs"
+
+[features]
+# The shipping cores. The Game Boy family ships both models — the cartridge
+# header picks the core at construction — so `gb` pulls the shared base (gb)
+# and the colour superset (gbc) together; there is no meaningful gb-without-gbc
+# split for a build that must still run dual-mode media.
+default = ["gb", "vcs"]
+gb = ["dep:missingno-gb", "dep:missingno-gbc"]
+vcs = ["dep:missingno-vcs"]
+nes = ["dep:missingno-nes"]
+sms = ["dep:missingno-sms"]
+
+[dependencies]
+missingno-core = { path = "../missingno-core" }
+missingno-gb = { path = "../missingno-gb", optional = true }
+missingno-gbc = { path = "../missingno-gbc", optional = true }
+missingno-vcs = { path = "../missingno-vcs", optional = true }
+missingno-nes = { path = "../missingno-nes", optional = true }
+missingno-sms = { path = "../missingno-sms", optional = true }
+tiny_http = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

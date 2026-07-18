@@ -70,6 +70,11 @@ impl InspectSnapshot for NesSnapshot {
     }
 }
 
+/// iNES media carries the `NES\x1A` magic in its first four bytes.
+pub fn is_nes_rom(rom: &[u8]) -> bool {
+    rom.len() >= 4 && &rom[0..4] == b"NES\x1A"
+}
+
 pub struct NesSystem;
 
 impl SteppingSystem for NesSystem {

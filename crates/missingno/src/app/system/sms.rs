@@ -9,6 +9,8 @@ use missingno_sms::debug::SmsSystem;
 
 use super::SystemConsole;
 
+pub use missingno_sms::debug::is_sms_rom;
+
 pub const ROM_EXTENSIONS: &[&str] = &["sms"];
 
 /// The family's names for the shared control ids, indexed by id.
@@ -16,12 +18,6 @@ pub const ROM_EXTENSIONS: &[&str] = &["sms"];
 pub const CONTROL_LABELS: [&str; 8] = [
     "Pause", "", "Button 1", "Button 2", "Up", "Down", "Left", "Right",
 ];
-
-pub fn is_sms_rom(path: &std::path::Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("sms"))
-}
 
 pub fn create_console(rom: &[u8], title: String) -> Result<Box<dyn SystemConsole>, CartridgeError> {
     Ok(Box::new(SteppingConsole::<SmsSystem>::new(

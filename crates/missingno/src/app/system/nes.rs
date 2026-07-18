@@ -8,14 +8,12 @@ use missingno_nes::debug::NesSystem;
 
 use super::SystemConsole;
 
+pub use missingno_nes::debug::is_nes_rom;
+
 pub const ROM_EXTENSIONS: &[&str] = &["nes"];
 
 /// The family's names for the shared control ids, indexed by id.
 pub const CONTROL_LABELS: [&str; 8] = ["Start", "Select", "A", "B", "Up", "Down", "Left", "Right"];
-
-pub fn is_nes_rom(rom: &[u8]) -> bool {
-    rom.len() >= 4 && &rom[0..4] == b"NES\x1A"
-}
 
 pub fn create_console(rom: &[u8], title: String) -> Result<Box<dyn SystemConsole>, CartridgeError> {
     Ok(Box::new(SteppingConsole::<NesSystem>::new(

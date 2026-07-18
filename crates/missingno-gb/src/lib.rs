@@ -12,6 +12,7 @@ pub mod frame;
 pub mod interrupts;
 pub mod isa;
 pub mod joypad;
+pub mod media;
 pub mod memory;
 pub mod ppu;
 pub mod recording;

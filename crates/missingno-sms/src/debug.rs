@@ -65,6 +65,13 @@ impl InspectSnapshot for SmsSnapshot {
     }
 }
 
+/// Master System media is recognised by its `.sms` file extension.
+pub fn is_sms_rom(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("sms"))
+}
+
 pub struct SmsSystem;
 
 impl SteppingSystem for SmsSystem {

@@ -1,0 +1,172 @@
+//! The per-core ROM→console registry: the one point that knows concrete
+//! cores. Each entry pairs a media-recognition predicate with a constructor
+//! that builds a `Box<dyn SystemConsole>`; everything downstream is generic.
+//!
+//! Entries are feature-gated, so a build carries only the cores it selected.
+//! Off-chip Game Boy peripherals (serial link, printer, boot ROM, battery
+//! save) are frontend policy — the headless factory constructs without them.
+
+use std::path::Path;
+
+use missingno_core::system::SystemConsole;
+
+/// Whether a path and its contents are this core's media.
+pub type IsRom = fn(&Path, &[u8]) -> bool;
+/// Build this core's console from a ROM's path and contents.
+pub type Create = fn(&Path, &[u8]) -> Option<Box<dyn SystemConsole>>;
+
+/// A registered core: how its media is recognised, and how a console is built.
+pub struct CoreFactory {
+    pub name: &'static str,
+    pub is_rom: IsRom,
+    pub create: Create,
+}
+
+/// The file stem as a display title, falling back to a generic name. The
+/// Game Boy family reads its title from the cartridge header, so only the
+/// stem-titled cores use this.
+#[cfg(any(feature = "vcs", feature = "nes", feature = "sms"))]
+fn title_for(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "ROM".to_string())
+}
+
+#[cfg(feature = "gb")]
+mod gb {
+    use super::*;
+    use missingno_core::system::SystemConsole;
+    use missingno_gb::cartridge::Cartridge;
+    use missingno_gb::system::GbConsole;
+    use missingno_gb::{GameBoy, media};
+    use missingno_gbc::GameBoyColor;
+
+    /// The headless build persists no battery save; the format is frontend
+    /// policy the GUI owns.
+    fn no_battery(_: &Cartridge) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// The one DMG-vs-CGB selection point: CGB-aware media boots the CGB core,
+    /// like a cartridge slotted into a real GBC; DMG media boots the DMG core.
+    pub fn create(_path: &Path, rom: &[u8]) -> Option<Box<dyn SystemConsole>> {
+        let cartridge = Cartridge::new(rom.to_vec(), None);
+        Some(if cartridge.is_cgb() {
+            Box::new(GbConsole::new(
+                GameBoyColor::new(cartridge, None),
+                no_battery,
+            ))
+        } else {
+            Box::new(GbConsole::new(GameBoy::new(cartridge, None), no_battery))
+        })
+    }
+
+    pub fn is_rom(path: &Path, rom: &[u8]) -> bool {
+        media::is_family_rom(path, rom)
+    }
+}
+
+#[cfg(feature = "vcs")]
+mod vcs {
+    use super::*;
+    use missingno_core::system::SystemConsole;
+
+    pub fn create(path: &Path, rom: &[u8]) -> Option<Box<dyn SystemConsole>> {
+        missingno_vcs::debug::create_console(rom, title_for(path), None, None).ok()
+    }
+
+    pub fn is_rom(path: &Path, rom: &[u8]) -> bool {
+        missingno_vcs::debug::is_vcs_rom(path, rom)
+    }
+}
+
+#[cfg(feature = "nes")]
+mod nes {
+    use super::*;
+    use missingno_core::stepping::SteppingConsole;
+    use missingno_core::system::SystemConsole;
+    use missingno_nes::console::Nes;
+    use missingno_nes::debug::NesSystem;
+
+    pub fn create(path: &Path, rom: &[u8]) -> Option<Box<dyn SystemConsole>> {
+        let nes = Nes::new(rom).ok()?;
+        Some(Box::new(SteppingConsole::<NesSystem>::new(
+            nes,
+            title_for(path),
+        )))
+    }
+
+    pub fn is_rom(_path: &Path, rom: &[u8]) -> bool {
+        missingno_nes::debug::is_nes_rom(rom)
+    }
+}
+
+#[cfg(feature = "sms")]
+mod sms {
+    use super::*;
+    use missingno_core::stepping::SteppingConsole;
+    use missingno_core::system::SystemConsole;
+    use missingno_sms::console::Sms;
+    use missingno_sms::debug::SmsSystem;
+
+    pub fn create(path: &Path, rom: &[u8]) -> Option<Box<dyn SystemConsole>> {
+        let sms = Sms::new(rom).ok()?;
+        Some(Box::new(SteppingConsole::<SmsSystem>::new(
+            sms,
+            title_for(path),
+        )))
+    }
+
+    pub fn is_rom(path: &Path, _rom: &[u8]) -> bool {
+        missingno_sms::debug::is_sms_rom(path)
+    }
+}
+
+/// Every registered core, in claim order.
+pub static FACTORIES: &[CoreFactory] = &[
+    #[cfg(feature = "gb")]
+    CoreFactory {
+        name: "Game Boy",
+        is_rom: gb::is_rom,
+        create: gb::create,
+    },
+    #[cfg(feature = "vcs")]
+    CoreFactory {
+        name: "Atari VCS",
+        is_rom: vcs::is_rom,
+        create: vcs::create,
+    },
+    #[cfg(feature = "nes")]
+    CoreFactory {
+        name: "NES",
+        is_rom: nes::is_rom,
+        create: nes::create,
+    },
+    #[cfg(feature = "sms")]
+    CoreFactory {
+        name: "Master System",
+        is_rom: sms::is_rom,
+        create: sms::create,
+    },
+];
+
+/// The factory whose media this is, if any core in this build claims it.
+pub fn factory_for(path: &Path, rom: &[u8]) -> Option<&'static CoreFactory> {
+    FACTORIES.iter().find(|factory| (factory.is_rom)(path, rom))
+}
+
+/// Build a console from a ROM's path and contents. `Ok(None)` when no core
+/// recognises the media; `Err` when a core claimed it but construction failed.
+pub fn create_console(path: &Path, rom: &[u8]) -> Result<Option<Box<dyn SystemConsole>>, String> {
+    let Some(factory) = factory_for(path, rom) else {
+        return Ok(None);
+    };
+    match (factory.create)(path, rom) {
+        Some(console) => Ok(Some(console)),
+        None => Err(format!(
+            "{}: failed to construct console from media",
+            factory.name
+        )),
+    }
+}
