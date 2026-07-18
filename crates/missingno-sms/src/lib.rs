@@ -3,5 +3,6 @@
 pub mod cartridge;
 pub mod console;
 pub mod cpu;
+pub mod debug;
 pub mod psg;
 pub mod vdp;

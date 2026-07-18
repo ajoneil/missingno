@@ -1,55 +1,12 @@
-//! The SMS family's inspection state and debugger panes. One owned state
-//! struct serves both the paused view (refreshed after every step) and the
-//! per-frame snapshot the running view renders from.
+//! The SMS family's debugger panes, rendering the crate-owned inspection
+//! state the running and paused views share.
 
 use iced::widget::{column, pane_grid, text};
+use missingno_sms::debug::SmsInspectState;
 
 use crate::app;
-use crate::app::debugger::inspect::InspectSnapshot;
 use crate::app::debugger::panes::{self, DebuggerPane, Pane, PaneContext};
 use crate::app::ui::{fonts, sizes::s};
-
-#[derive(Clone, Default)]
-pub struct SmsInspectState {
-    pub a: u8,
-    pub f: u8,
-    pub bc: u16,
-    pub de: u16,
-    pub hl: u16,
-    pub ix: u16,
-    pub iy: u16,
-    pub sp: u16,
-    pub pc: u16,
-    pub line: u16,
-    pub dot: u16,
-    pub vdp_status: u8,
-    pub vdp_registers: [u8; 11],
-    pub banks: [u8; 3],
-    /// Raw bytes at the program counter, hex-dumped until a Z80
-    /// disassembler lands.
-    pub code_window: Vec<(u16, [u8; 4])>,
-    pub frame: u64,
-}
-
-/// The per-frame snapshot for the running view.
-pub struct SmsSnapshot {
-    pub state: SmsInspectState,
-}
-
-impl SmsSnapshot {
-    pub fn new(state: SmsInspectState) -> Self {
-        SmsSnapshot { state }
-    }
-}
-
-impl InspectSnapshot for SmsSnapshot {
-    fn frame(&self) -> u64 {
-        self.state.frame
-    }
-    fn family_state(&self) -> &dyn std::any::Any {
-        &self.state
-    }
-}
 
 pub struct CpuPane;
 

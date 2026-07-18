@@ -3046,6 +3046,8 @@ dependencies = [
 name = "missingno-sms"
 version = "0.1.0"
 dependencies = [
+ "missingno-core",
+ "rgb",
  "serde",
  "serde_json",
 ]
