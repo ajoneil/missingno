@@ -18,6 +18,7 @@
 pub mod analog;
 pub mod cdl;
 pub mod disasm;
+pub mod inspect;
 pub mod isa;
 pub mod symbols;
 pub mod system;
@@ -26,6 +27,10 @@ pub mod video;
 
 pub use analog::{HighPass, OnePoleHighPass, RcHighPass};
 pub use disasm::{ReadMemory, Row};
+pub use inspect::{
+    FlagName, MemoryRegion, Register, RegisterGroup, ValueStyle, Watch, WatchParam, WatchTerm,
+    Watchable,
+};
 pub use isa::{Flow, Instruction, InstructionSet};
 pub use tv::TvStandard;
 pub use video::{ConsoleFrame, Frame, IndexedFrame, RgbaFrame, VideoOut};
