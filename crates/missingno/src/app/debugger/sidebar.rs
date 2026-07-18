@@ -44,9 +44,21 @@ const SWATCH_LABEL_WIDTH: f32 = 40.0;
 /// label; height runs taller so the strip reads as a bold pixel row.
 const PIXEL_CELL_W: f32 = 9.0;
 const PIXEL_CELL_H: f32 = 13.0;
-/// The dim fill for an empty strip cell — a mid grey, lighter than any near-black
-/// lit hue, so an unlit cell never reads as a lit dark pixel.
-const EMPTY_CELL: Color = Color::from_rgba(0.345, 0.357, 0.439, 0.55);
+/// An unlit strip cell is drawn as a recessed dark socket — a dark ring around a
+/// near-black core. The inset texture, not luminance alone, is what separates an
+/// unlit cell from a solid lit near-black pixel.
+const UNLIT_RING: Color = Color::from_rgb(
+    0x31 as f32 / 255.0,
+    0x32 as f32 / 255.0,
+    0x44 as f32 / 255.0,
+);
+const UNLIT_CORE: Color = Color::from_rgb(
+    0x11 as f32 / 255.0,
+    0x11 as f32 / 255.0,
+    0x1b as f32 / 255.0,
+);
+/// The inset framing the unlit core inside its cell.
+const UNLIT_INSET: f32 = 2.0;
 /// A bit table cell's height, so its header, rows, and pips align across
 /// columns.
 const CELL_HEIGHT: f32 = 16.0;
@@ -57,12 +69,14 @@ const ROW_BUDGET: f32 = 236.0;
 
 /// The number-line width for a period sweep and its bar height — sized to sit on
 /// one sidebar row beside a label and a value. A small triangle glyph sits below
-/// the bar pointing up at the value; its size and nominal advance width place its
-/// tip under the position.
+/// the bar pointing up at the value; it rides in a fixed-width centred cell so
+/// its own horizontal centre — not its glyph advance — lands on the position.
 const SWEEP_BAR_WIDTH: f32 = 96.0;
 const SWEEP_BAR_HEIGHT: f32 = 6.0;
 const SWEEP_MARKER_SIZE: f32 = 9.0;
-const SWEEP_MARKER_WIDTH: f32 = 6.0;
+/// The marker glyph's fixed cell width; the glyph is centred inside it, so the
+/// cell centre is the alignment anchor regardless of the glyph's true advance.
+const SWEEP_MARKER_GLYPH_W: f32 = 7.0;
 
 /// The sidebar over a core's [`inspect::Section`] schema: a stack of
 /// collapsible sections, each rendering its typed blocks. Every family renders
@@ -612,7 +626,7 @@ fn sweep_row(sweep: &inspect::Sweep) -> Element<'static, app::Message> {
 /// bar pointing up at the value.
 fn sweep_bar(sweep: &inspect::Sweep) -> Element<'static, app::Message> {
     let end = sweep.end.max(1) as f32;
-    let marker_x = (sweep.value.min(sweep.end) as f32 / end) * SWEEP_BAR_WIDTH;
+    let position = marker_x(sweep.value, sweep.end, SWEEP_BAR_WIDTH);
 
     let mut segments = iced::widget::row![];
     if sweep.zones.is_empty() {
@@ -626,15 +640,22 @@ fn sweep_bar(sweep: &inspect::Sweep) -> Element<'static, app::Message> {
         }
     }
 
-    // A left-padded triangle glyph on its own line, its tip under the position.
+    // A triangle glyph on its own line, centred in a fixed-width cell that is
+    // left-padded so the cell's centre — and thus the glyph's — sits on the
+    // position, clamped to keep the glyph on the bar at either edge.
     let marker = iced::widget::row![
-        Space::new().width(Length::Fixed(
-            (marker_x - SWEEP_MARKER_WIDTH / 2.0).max(0.0)
-        )),
-        text("\u{25B2}") // ▲
-            .font(fonts::monospace())
-            .size(SWEEP_MARKER_SIZE)
-            .color(palette::TEXT),
+        Space::new().width(Length::Fixed(marker_pad(
+            position,
+            SWEEP_MARKER_GLYPH_W,
+            SWEEP_BAR_WIDTH,
+        ))),
+        container(
+            text("\u{25B2}") // ▲
+                .font(fonts::monospace())
+                .size(SWEEP_MARKER_SIZE)
+                .color(palette::TEXT),
+        )
+        .center_x(Length::Fixed(SWEEP_MARKER_GLYPH_W)),
     ];
 
     column![
@@ -657,6 +678,18 @@ fn bar_segment(width: f32, color: Color) -> Element<'static, app::Message> {
             ..Default::default()
         })
         .into()
+}
+
+/// The value's proportional position along the bar, in pixels from the left.
+fn marker_x(value: u32, end: u32, bar_width: f32) -> f32 {
+    let span = end.max(1) as f32;
+    (value.min(end) as f32 / span) * bar_width
+}
+
+/// Left padding that centres the fixed-width marker cell on `position`, clamped
+/// so the glyph never spills past either bar edge.
+fn marker_pad(position: f32, glyph_width: f32, bar_width: f32) -> f32 {
+    (position - glyph_width / 2.0).clamp(0.0, bar_width - glyph_width)
 }
 
 // --- Bit table ---------------------------------------------------------------
@@ -921,20 +954,36 @@ fn pixel_strip_row(
     with_help(line, help)
 }
 
-/// One pixel-strip cell: a borderless fill — the pixel's colour when lit, a dim
-/// grey slot when empty — separated from its neighbours by the strip frame's 1px
-/// grid lines. The empty grey stays lighter than any lit dark hue, so a
-/// near-black lit pixel still reads as lit against an empty slot.
+/// One pixel-strip cell, separated from its neighbours by the strip frame's 1px
+/// grid lines: a solid fill when lit, or — when the pixel is off (a 0 pattern
+/// bit, or a hardware-transparent object colour 0) — a recessed dark socket, an
+/// inset near-black core inside a dark ring. The inset reads as "present but
+/// off" and its texture keeps it distinct from a solid lit near-black pixel.
 fn pixel_cell(color: Option<Color>) -> Element<'static, app::Message> {
-    let fill = color.unwrap_or(EMPTY_CELL);
-    container(Space::new())
+    match color {
+        Some(fill) => container(Space::new())
+            .width(PIXEL_CELL_W)
+            .height(PIXEL_CELL_H)
+            .style(move |_: &iced::Theme| container::Style {
+                background: Some(Background::Color(fill)),
+                ..Default::default()
+            })
+            .into(),
+        None => container(container(Space::new()).width(Fill).height(Fill).style(
+            |_: &iced::Theme| container::Style {
+                background: Some(Background::Color(UNLIT_CORE)),
+                ..Default::default()
+            },
+        ))
         .width(PIXEL_CELL_W)
         .height(PIXEL_CELL_H)
-        .style(move |_: &iced::Theme| container::Style {
-            background: Some(Background::Color(fill)),
+        .padding(UNLIT_INSET)
+        .style(|_: &iced::Theme| container::Style {
+            background: Some(Background::Color(UNLIT_RING)),
             ..Default::default()
         })
-        .into()
+        .into(),
+    }
 }
 
 fn color_swatch(color: Color) -> Element<'static, app::Message> {
@@ -1020,5 +1069,38 @@ pub fn tooltip_style(theme: &iced::Theme) -> container::Style {
             .width(1.0)
             .color(palette.background.strong.color),
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn marker_glyph_centres_on_value() {
+        let end = 8;
+        let bar = SWEEP_BAR_WIDTH;
+        let g = SWEEP_MARKER_GLYPH_W;
+        let centre = |value| {
+            let pad = marker_pad(marker_x(value, end, bar), g, bar);
+            pad + g / 2.0
+        };
+
+        // Mid-bar (value = end/2): the glyph centre lands exactly on the value.
+        assert!((centre(4) - bar / 2.0).abs() < 1e-4);
+        assert!((centre(4) - marker_x(4, end, bar)).abs() < 1e-4);
+
+        // value = end - 1: still unclamped, centre on the value.
+        assert!((centre(7) - marker_x(7, end, bar)).abs() < 1e-4);
+
+        // value = 0: clamped to the left edge, glyph stays fully on the bar.
+        let left = marker_pad(marker_x(0, end, bar), g, bar);
+        assert_eq!(left, 0.0);
+        assert!(left + g <= bar);
+
+        // value = end: clamped to the right edge, glyph stays fully on the bar.
+        let right = marker_pad(marker_x(end, end, bar), g, bar);
+        assert!((right - (bar - g)).abs() < 1e-4);
+        assert!(right + g <= bar + 1e-4);
     }
 }

@@ -513,7 +513,8 @@ fn playfield_cells(pf0: u8, pf1: u8, pf2: u8) -> [bool; 20] {
 
 /// The TIA graphics strips: the two players in their COLUP0/COLUP1 hue, the
 /// playfield in COLUPF, and the missile/ball enables as single cells in the
-/// object's hue (empty when off). An unlit pattern bit is an empty cell.
+/// object's hue. A clear pattern bit draws nothing — the object drives no pixel
+/// there and the priority mux falls through — and renders as an unlit cell.
 fn tia_graphics_block(state: &VcsInspectState) -> inspect::SectionBlock {
     use inspect::PixelStrip;
 
@@ -528,7 +529,9 @@ fn tia_graphics_block(state: &VcsInspectState) -> inspect::SectionBlock {
                 &player_pattern_bits(state.grp0, state.grp0_reflect),
                 state.color_p0,
             ),
-            help: Some("player 0 graphics (GRP0) in COLUP0; bit 7 at left, REFP0 mirrors"),
+            help: Some(
+                "player 0 graphics (GRP0) in COLUP0; bit 7 at left, REFP0 mirrors; clear bits draw nothing",
+            ),
         },
         PixelStrip::Colors {
             label: "grp1".to_owned(),
@@ -536,7 +539,9 @@ fn tia_graphics_block(state: &VcsInspectState) -> inspect::SectionBlock {
                 &player_pattern_bits(state.grp1, state.grp1_reflect),
                 state.color_p1,
             ),
-            help: Some("player 1 graphics (GRP1) in COLUP1; bit 7 at left, REFP1 mirrors"),
+            help: Some(
+                "player 1 graphics (GRP1) in COLUP1; bit 7 at left, REFP1 mirrors; clear bits draw nothing",
+            ),
         },
         PixelStrip::Colors {
             label: "pf".to_owned(),
@@ -544,7 +549,9 @@ fn tia_graphics_block(state: &VcsInspectState) -> inspect::SectionBlock {
                 &playfield_cells(state.pf0, state.pf1, state.pf2),
                 state.color_pf,
             ),
-            help: Some("playfield left half (PF0/PF1/PF2) in COLUPF; right half per mirror"),
+            help: Some(
+                "playfield left half (PF0/PF1/PF2) in COLUPF; right half per mirror; clear bits draw nothing",
+            ),
         },
         PixelStrip::Colors {
             label: "m0".to_owned(),

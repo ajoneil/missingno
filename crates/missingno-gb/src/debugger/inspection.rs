@@ -713,7 +713,7 @@ pub fn dmg_background_swatches(ppu: &impl PpuSource) -> inspect::SectionBlock {
 /// mapped through its palette register (BGP for background, the pixel's
 /// OBP0/OBP1 select for objects) to a shade the frontend then resolves through
 /// the user palette. A transparent object pixel (colour 0) and an off pipeline
-/// render as empty cells. Snapshots taken at vblank catch the FIFOs empty; the
+/// render as unlit cells. Snapshots taken at vblank catch the FIFOs empty; the
 /// strips fill when paused mid-scanline.
 pub fn dmg_fifo_block(ppu: &impl PpuSource) -> inspect::SectionBlock {
     use inspect::PixelStrip;
@@ -727,13 +727,16 @@ pub fn dmg_fifo_block(ppu: &impl PpuSource) -> inspect::SectionBlock {
         PixelStrip::Shades {
             label: "obj fifo",
             cells: dmg_obj_strip(ppu.obj_fifo(), ppu.obp0(), ppu.obp1()),
-            help: Some("object pixel FIFO — colour through OBP0/OBP1; transparent = empty"),
+            help: Some(
+                "object pixel FIFO — colour through OBP0/OBP1; colour 0 transparent, discarded before palette",
+            ),
         },
     ])
 }
 
-/// Each background cell's colour mapped through BGP to a shade; an off pipeline
-/// is eight empty cells.
+/// Each background cell's colour mapped through BGP to a shade — every cell is a
+/// real colour (colour 0 is an opaque BG shade); an off pipeline is eight unlit
+/// cells.
 fn dmg_bg_strip(fifo: Option<[BgFifoCell; 8]>, bgp: u8) -> Vec<Option<u8>> {
     match fifo {
         Some(cells) => cells

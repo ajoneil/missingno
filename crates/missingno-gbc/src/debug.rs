@@ -150,7 +150,7 @@ pub fn cgb_sidebar_sections(
 /// The two pixel FIFOs as CGB colour strips: each cell resolves through palette
 /// RAM the core owns. In full-CGB mode a background cell indexes its tile's BG
 /// palette by the raw 2-bit colour, an object cell its OBP0-7 palette; a
-/// transparent object pixel (colour 0) and an off pipeline render as empty
+/// transparent object pixel (colour 0) and an off pipeline render as unlit
 /// cells. In DMG-compatibility mode the colour first maps through BGP/OBP to a
 /// shade that indexes the boot palette. Snapshots taken at vblank catch the
 /// FIFOs empty; the strips fill when paused mid-scanline.
@@ -209,7 +209,9 @@ fn cgb_fifo_block(
         PixelStrip::Colors {
             label: "obj fifo".to_owned(),
             cells: obj_cells,
-            help: Some("object pixel FIFO — colour through OBJ palette RAM; transparent = empty"),
+            help: Some(
+                "object pixel FIFO — colour through OBJ palette RAM; colour 0 transparent, discarded before palette",
+            ),
         },
     ])
 }
