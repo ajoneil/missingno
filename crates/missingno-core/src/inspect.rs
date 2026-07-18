@@ -120,8 +120,40 @@ pub enum SectionBlock {
     Sweeps(Vec<Sweep>),
     /// Palette swatch rows.
     Swatches(Vec<SwatchRow>),
+    /// Pixel-buffer strips — a hardware pattern drawn cell-by-cell (a pixel
+    /// FIFO, the TIA graphics registers). A CLI renders one as `▓░▓▓····`.
+    Pixels(Vec<PixelStrip>),
     /// A horizontal divider.
     Rule,
+}
+
+/// One row of pixel-buffer cells: a labelled strip whose cells carry the
+/// hardware's pattern at whatever colour the core can honestly resolve it to.
+/// A CLI renders each strip as a run of filled/empty glyphs.
+#[derive(Clone, Debug)]
+pub enum PixelStrip {
+    /// Cells as shade indices the frontend resolves through its user-selectable
+    /// palette (DMG FIFO pixels, like the BGP/OBP swatches); `None` = an empty
+    /// or transparent slot.
+    Shades {
+        label: &'static str,
+        cells: Vec<Option<u8>>,
+        help: Option<&'static str>,
+    },
+    /// Cells as resolved colours the core owns (CGB CRAM, TIA COLUPx); `None` =
+    /// an empty or transparent slot.
+    Colors {
+        label: String,
+        cells: Vec<Option<rgb::RGB8>>,
+        help: Option<&'static str>,
+    },
+    /// Cells as raw on/off bits with no owned hue — the fallback where the
+    /// hardware names no colour. Prefer the coloured forms otherwise.
+    Bits {
+        label: &'static str,
+        cells: Vec<bool>,
+        help: Option<&'static str>,
+    },
 }
 
 /// A value sweeping a hardware period — a scanline counter over a frame, a beam

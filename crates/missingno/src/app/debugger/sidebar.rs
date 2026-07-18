@@ -39,6 +39,10 @@ const SIDEBAR_WIDTH: f32 = 260.0;
 const REG8_WIDTH: f32 = 48.0;
 /// Fixed width for a swatch row's label, so swatches line up.
 const SWATCH_LABEL_WIDTH: f32 = 40.0;
+/// A pixel-strip cell's size and gap — small enough that the playfield's 20
+/// cells fit the sidebar width beside their label.
+const PIXEL_CELL: f32 = 8.0;
+const PIXEL_GAP: f32 = 1.0;
 /// A bit table cell's height, so its header, rows, and pips align across
 /// columns.
 const CELL_HEIGHT: f32 = 16.0;
@@ -263,6 +267,7 @@ fn render_block(
         Rows(rows) => rows_block(&rows),
         Sweeps(sweeps) => sweeps_block(&sweeps),
         Swatches(rows) => swatches_block(&rows, colors),
+        Pixels(strips) => pixels_block(&strips, colors),
         Rule => rule::horizontal(1).into(),
     }
 }
@@ -825,6 +830,94 @@ fn swatch_line(
     }
 
     line.into()
+}
+
+// --- Pixel strips ------------------------------------------------------------
+
+fn pixels_block(
+    strips: &[inspect::PixelStrip],
+    colors: Option<&ConsoleColors>,
+) -> Element<'static, app::Message> {
+    let mut stack = column![].spacing(xs());
+    for strip in strips {
+        stack = stack.push(pixel_strip_row(strip, colors));
+    }
+    stack.into()
+}
+
+fn pixel_strip_row(
+    strip: &inspect::PixelStrip,
+    colors: Option<&ConsoleColors>,
+) -> Element<'static, app::Message> {
+    let (label, help, cells): (String, Option<&'static str>, Vec<Option<Color>>) = match strip {
+        inspect::PixelStrip::Shades { label, cells, help } => {
+            let palette = match colors {
+                Some(ConsoleColors::Dmg { palette }) => *palette,
+                _ => Palette::CLASSIC,
+            };
+            let cells = cells
+                .iter()
+                .map(|c| c.map(|shade| iced_color(palette.color(PaletteIndex(shade)))))
+                .collect();
+            (label.to_string(), *help, cells)
+        }
+        inspect::PixelStrip::Colors { label, cells, help } => {
+            let cells = cells.iter().map(|c| c.map(iced_color)).collect();
+            (label.clone(), *help, cells)
+        }
+        inspect::PixelStrip::Bits { label, cells, help } => {
+            let cells = cells.iter().map(|&b| b.then_some(palette::TEXT)).collect();
+            (label.to_string(), *help, cells)
+        }
+    };
+
+    let mut strip_cells = iced::widget::row![].spacing(PIXEL_GAP);
+    for cell in cells {
+        strip_cells = strip_cells.push(pixel_cell(cell));
+    }
+
+    let line: Element<'static, app::Message> = iced::widget::row![
+        container(
+            text(label)
+                .font(fonts::monospace())
+                .size(LABEL)
+                .color(palette::MUTED),
+        )
+        .width(Length::Fixed(SWATCH_LABEL_WIDTH)),
+        strip_cells,
+    ]
+    .spacing(s())
+    .align_y(Vertical::Center)
+    .into();
+
+    with_help(line, help)
+}
+
+/// One pixel-strip cell: a filled square for a lit pixel, a dim hollow outline
+/// for an empty or transparent slot.
+fn pixel_cell(color: Option<Color>) -> Element<'static, app::Message> {
+    container(Space::new())
+        .width(PIXEL_CELL)
+        .height(PIXEL_CELL)
+        .style(move |_: &iced::Theme| match color {
+            Some(color) => container::Style {
+                background: Some(Background::Color(color)),
+                border: Border::default()
+                    .rounded(1.0)
+                    .width(1.0)
+                    .color(Color::from_rgba(1.0, 1.0, 1.0, 0.1)),
+                ..Default::default()
+            },
+            None => container::Style {
+                background: None,
+                border: Border::default()
+                    .rounded(1.0)
+                    .width(1.0)
+                    .color(palette::SURFACE2),
+                ..Default::default()
+            },
+        })
+        .into()
 }
 
 fn color_swatch(color: Color) -> Element<'static, app::Message> {

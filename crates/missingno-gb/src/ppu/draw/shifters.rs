@@ -40,6 +40,11 @@ impl<C: Copy + Default> BgShifter<C> {
     pub(in crate::ppu) fn registers(&self) -> (u8, u8) {
         (self.low, self.high)
     }
+
+    /// The per-tile attribute riding the shifter (CGB); `()` on DMG.
+    pub(in crate::ppu) fn cell(&self) -> C {
+        self.cell
+    }
 }
 
 /// The DMG object FIFO: four parallel 8-bit dffsr chains (plane A, plane B, the

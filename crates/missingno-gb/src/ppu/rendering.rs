@@ -4,8 +4,8 @@ use core::fmt;
 
 use crate::dma::OamBusOwner;
 use crate::ppu::{
-    DrawnPixel, PipelineRegisters, PpuModel, TileSelGlitch, VideoControl, memory::Oam,
-    types::sprites::SpriteId,
+    BgFifoCell, DrawnPixel, ObjFifoCell, PipelineRegisters, PpuModel, TileSelGlitch, VideoControl,
+    memory::Oam, types::sprites::SpriteId,
 };
 
 use super::draw::fetch_cascade::FetchCascade;
@@ -345,6 +345,25 @@ impl<P: PpuModel> Rendering<P> {
             win_mode: self.window.window_rendered(),
             frame_num: 0,
         }
+    }
+
+    /// The background shifter's 8 stages, MSB-first (cell 0 = the next pixel to
+    /// pop): the 2-bit colour and the tile's BG palette (CGB) riding all 8.
+    pub(super) fn bg_fifo_cells(&self) -> [BgFifoCell; 8] {
+        let (low, high) = self.bg_shifter.registers();
+        let palette = P::bg_cell_palette(self.bg_shifter.cell());
+        std::array::from_fn(|i| {
+            let bit = 7 - i as u8;
+            BgFifoCell {
+                color: (((high >> bit) & 1) << 1) | ((low >> bit) & 1),
+                palette,
+            }
+        })
+    }
+
+    /// The object FIFO decoded into its 8 stages, MSB-first.
+    pub(super) fn obj_fifo_cells(&self) -> [ObjFifoCell; 8] {
+        P::obj_fifo_cells(&self.obj_fifo)
     }
 
     pub fn pipeline_state(

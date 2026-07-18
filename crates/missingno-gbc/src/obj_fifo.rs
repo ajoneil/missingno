@@ -35,6 +35,10 @@ impl CgbObjShifter {
         (self.low, self.high, self.palette[0], self.priority)
     }
 
+    pub(crate) fn cells(&self) -> [missingno_gb::ppu::ObjFifoCell; 8] {
+        missingno_gb::ppu::obj_fifo_cells_from(self.low, self.high, self.palette, self.priority)
+    }
+
     pub(crate) fn merge(
         &mut self,
         low: u8,

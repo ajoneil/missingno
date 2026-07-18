@@ -519,6 +519,11 @@ impl Ball {
         }
     }
 
+    /// The ENABL bit the beam draws (VDELBL-selected) — inspection only.
+    pub fn effective_enabled(&self) -> bool {
+        self.enabled()
+    }
+
     /// Combinational serialiser output for the current scan state.
     pub fn output(&self) -> bool {
         self.enabled() && self.gate.lit()

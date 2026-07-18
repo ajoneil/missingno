@@ -26,13 +26,13 @@ use crate::cpu::{
 use crate::debugger::instructions::ReadInstructionMemory;
 use crate::interrupts;
 use crate::ppu::{
-    Ppu, Register,
+    BgFifoCell, ObjFifoCell, Ppu, Register,
     memory::VramView,
     model::PpuModel,
     rendering::Mode,
     types::{
         control::Control,
-        palette::Palette,
+        palette::{Palette, PaletteIndex, PaletteMap},
         sprites::{Sprite, SpriteId, SpriteSize},
         tiles::TileAddressMode,
     },
@@ -234,6 +234,10 @@ pub trait PpuSource {
     fn obp0(&self) -> u8;
     fn obp1(&self) -> u8;
     fn sprite(&self, id: SpriteId) -> Sprite;
+    /// The background pixel-shifter's 8 stages, or `None` with the LCD off.
+    fn bg_fifo(&self) -> Option<[BgFifoCell; 8]>;
+    /// The object FIFO's 8 stages, or `None` with the LCD off.
+    fn obj_fifo(&self) -> Option<[ObjFifoCell; 8]>;
 }
 
 impl<P: PpuModel> PpuSource for Ppu<P> {
@@ -273,6 +277,12 @@ impl<P: PpuModel> PpuSource for Ppu<P> {
     fn sprite(&self, id: SpriteId) -> Sprite {
         *Ppu::sprite(self, id)
     }
+    fn bg_fifo(&self) -> Option<[BgFifoCell; 8]> {
+        Ppu::bg_fifo(self)
+    }
+    fn obj_fifo(&self) -> Option<[ObjFifoCell; 8]> {
+        Ppu::obj_fifo(self)
+    }
 }
 
 #[derive(Clone)]
@@ -289,6 +299,8 @@ pub struct PpuView {
     obp0: u8,
     obp1: u8,
     sprites: [Sprite; SPRITE_COUNT],
+    bg_fifo: Option<[BgFifoCell; 8]>,
+    obj_fifo: Option<[ObjFifoCell; 8]>,
 }
 
 impl PpuView {
@@ -306,6 +318,8 @@ impl PpuView {
             obp0: ppu.palettes().sprite0.output(),
             obp1: ppu.palettes().sprite1.output(),
             sprites: std::array::from_fn(|i| *ppu.sprite(SpriteId(i as u8))),
+            bg_fifo: ppu.bg_fifo(),
+            obj_fifo: ppu.obj_fifo(),
         }
     }
 }
@@ -346,6 +360,12 @@ impl PpuSource for PpuView {
     }
     fn sprite(&self, id: SpriteId) -> Sprite {
         self.sprites[id.0 as usize]
+    }
+    fn bg_fifo(&self) -> Option<[BgFifoCell; 8]> {
+        self.bg_fifo
+    }
+    fn obj_fifo(&self) -> Option<[ObjFifoCell; 8]> {
+        self.obj_fifo
     }
 }
 
@@ -689,6 +709,58 @@ pub fn dmg_background_swatches(ppu: &impl PpuSource) -> inspect::SectionBlock {
     }])
 }
 
+/// The two pixel FIFOs as DMG shade strips: each cell is the 2-bit colour
+/// mapped through its palette register (BGP for background, the pixel's
+/// OBP0/OBP1 select for objects) to a shade the frontend then resolves through
+/// the user palette. A transparent object pixel (colour 0) and an off pipeline
+/// render as empty cells. Snapshots taken at vblank catch the FIFOs empty; the
+/// strips fill when paused mid-scanline.
+pub fn dmg_fifo_block(ppu: &impl PpuSource) -> inspect::SectionBlock {
+    use inspect::PixelStrip;
+
+    inspect::SectionBlock::Pixels(vec![
+        PixelStrip::Shades {
+            label: "bg fifo",
+            cells: dmg_bg_strip(ppu.bg_fifo(), ppu.bgp()),
+            help: Some("background pixel FIFO — colour through BGP; next pixel at left"),
+        },
+        PixelStrip::Shades {
+            label: "obj fifo",
+            cells: dmg_obj_strip(ppu.obj_fifo(), ppu.obp0(), ppu.obp1()),
+            help: Some("object pixel FIFO — colour through OBP0/OBP1; transparent = empty"),
+        },
+    ])
+}
+
+/// Each background cell's colour mapped through BGP to a shade; an off pipeline
+/// is eight empty cells.
+fn dmg_bg_strip(fifo: Option<[BgFifoCell; 8]>, bgp: u8) -> Vec<Option<u8>> {
+    match fifo {
+        Some(cells) => cells
+            .iter()
+            .map(|c| Some(PaletteMap(bgp).map(PaletteIndex(c.color)).0))
+            .collect(),
+        None => vec![None; 8],
+    }
+}
+
+/// Each object cell's colour mapped through its OBP0/OBP1 select to a shade;
+/// colour 0 (transparent) and an off pipeline render as empty cells.
+fn dmg_obj_strip(fifo: Option<[ObjFifoCell; 8]>, obp0: u8, obp1: u8) -> Vec<Option<u8>> {
+    match fifo {
+        Some(cells) => cells
+            .iter()
+            .map(|c| {
+                (c.color != 0).then(|| {
+                    let obp = if c.palette == 0 { obp0 } else { obp1 };
+                    PaletteMap(obp).map(PaletteIndex(c.color)).0
+                })
+            })
+            .collect(),
+        None => vec![None; 8],
+    }
+}
+
 /// The DMG object palettes (OBP0/OBP1) as packed shade-swatch rows.
 pub fn dmg_object_swatches(ppu: &impl PpuSource) -> inspect::SectionBlock {
     inspect::SectionBlock::Swatches(vec![
@@ -747,6 +819,8 @@ pub fn dmg_sidebar_sections(
                 Rule,
                 ppu_sprites_block(ppu),
                 dmg_object_swatches(ppu),
+                Rule,
+                dmg_fifo_block(ppu),
             ],
         },
     ]
@@ -867,6 +941,50 @@ mod tests {
             format!("{live:?}"),
             format!("{:?}", snapshot.sidebar_sections())
         );
+    }
+
+    #[test]
+    fn dmg_bg_strip_maps_colour_through_bgp() {
+        // BGP 0b11_10_01_00: colour 0→0, 1→1, 2→2, 3→3 (identity).
+        let cells = std::array::from_fn(|i| BgFifoCell {
+            color: (i % 4) as u8,
+            palette: 0,
+        });
+        let strip = dmg_bg_strip(Some(cells), 0b11_10_01_00);
+        assert_eq!(strip[0], Some(0));
+        assert_eq!(strip[1], Some(1));
+        assert_eq!(strip[2], Some(2));
+        assert_eq!(strip[3], Some(3));
+        // An off pipeline is eight empty cells.
+        assert_eq!(dmg_bg_strip(None, 0xE4), vec![None; 8]);
+    }
+
+    #[test]
+    fn dmg_obj_strip_transparency_and_palette_select() {
+        let cell = |color, palette| ObjFifoCell {
+            color,
+            palette,
+            priority: 0,
+        };
+        // OBP0 identity; OBP1 = 0b00_01_10_11 maps colour 1→2, 3→0.
+        let cells = [
+            cell(0, 0), // transparent → empty
+            cell(1, 0), // OBP0: shade 1
+            cell(1, 1), // OBP1: shade 2
+            cell(0, 1), // transparent → empty
+            cell(2, 0), // OBP0: shade 2
+            cell(3, 1), // OBP1: shade 0
+            cell(0, 0),
+            cell(0, 0),
+        ];
+        let strip = dmg_obj_strip(Some(cells), 0b11_10_01_00, 0b00_01_10_11);
+        assert_eq!(strip[0], None);
+        assert_eq!(strip[1], Some(1));
+        assert_eq!(strip[2], Some(2));
+        assert_eq!(strip[3], None);
+        assert_eq!(strip[4], Some(2));
+        assert_eq!(strip[5], Some(0));
+        assert_eq!(dmg_obj_strip(None, 0xE4, 0xE4), vec![None; 8]);
     }
 
     #[test]

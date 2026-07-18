@@ -1,8 +1,8 @@
 use missingno_gb::ppu::memory::Vram;
 use missingno_gb::ppu::types::sprites::{Attributes, ObjAttr};
 use missingno_gb::ppu::{
-    CaptureSpec, CartridgeBootHeader, DmgPixel, InterruptFlags, PipelineRegisters, PixelMux,
-    PpuModel, StatShadow, TileSelGlitch, TracePixel, resolve_dmg_pixel,
+    CaptureSpec, CartridgeBootHeader, DmgPixel, InterruptFlags, ObjFifoCell, PipelineRegisters,
+    PixelMux, PpuModel, StatShadow, TileSelGlitch, TracePixel, resolve_dmg_pixel,
 };
 
 use crate::compat_palette::dmg_compat_palettes;
@@ -184,6 +184,14 @@ impl PpuModel for CgbPpu {
         fifo.registers()
     }
 
+    fn obj_fifo_cells(fifo: &CgbObjShifter) -> [ObjFifoCell; 8] {
+        fifo.cells()
+    }
+
+    fn bg_cell_palette(cell: BgAttribute) -> u8 {
+        cell.palette()
+    }
+
     fn object_priority_register(&self) -> u8 {
         0xFE | self.opri as u8
     }
@@ -295,6 +303,12 @@ impl CgbPpu {
     /// Debug view of OBJ palette RAM: the RGB555 colour at (palette 0-7, index 0-3).
     pub fn obj_color(&self, palette: u8, index: u8) -> Color555 {
         self.obj_cram.color(palette, index)
+    }
+
+    /// Whether a DMG cartridge is running in CGB DMG-compatibility mode: the FIFO
+    /// colours index the boot palette through BGP/OBP rather than directly.
+    pub fn dmg_compat(&self) -> bool {
+        self.dmg_compat
     }
 
     /// DMG-compatibility resolve: DMG-style BG-vs-OBJ priority picks the winning

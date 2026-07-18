@@ -342,6 +342,29 @@ struct Pot {
     countdown: u16,
 }
 
+/// The TIA graphics registers driving the picture, copied for the debugger's
+/// pixel strips. Write-only on the bus, so the debugger reads them here.
+pub struct GraphicsRegisters {
+    /// Effective player patterns (the VDELP-selected GRP copy) and their REFP.
+    pub grp0: u8,
+    pub reflect_p0: bool,
+    pub grp1: u8,
+    pub reflect_p1: bool,
+    /// The playfield's three pattern registers and its CTRLPF reflect bit.
+    pub pf0: u8,
+    pub pf1: u8,
+    pub pf2: u8,
+    pub pf_mirrored: bool,
+    /// Whether each missile / the ball currently draws.
+    pub missile0: bool,
+    pub missile1: bool,
+    pub ball: bool,
+    /// The object colour bytes (COLUP0/COLUP1/COLUPF), TIA-palette indices.
+    pub color_p0: u8,
+    pub color_p1: u8,
+    pub color_pf: u8,
+}
+
 pub struct Tia {
     hsync: HSyncCounter,
     vsync: bool,
@@ -464,6 +487,41 @@ impl Tia {
     /// Current colour clock within the line (0..228) — inspection only.
     pub fn beam(&self) -> u16 {
         self.hsync.position()
+    }
+
+    /// The graphics registers driving the picture, for the debugger's pixel
+    /// strips: the two player patterns (effective GRP after VDELP, plus REFP),
+    /// the playfield's three pattern registers and its reflect bit, the
+    /// missile/ball enables, and each object's colour byte. Inspection only.
+    pub fn graphics_registers(&self) -> GraphicsRegisters {
+        let player = |p: &Player| {
+            (
+                if p.vertical_delay {
+                    p.graphics_old
+                } else {
+                    p.graphics_new
+                },
+                p.reflect,
+            )
+        };
+        let (grp0, reflect_p0) = player(&self.player0);
+        let (grp1, reflect_p1) = player(&self.player1);
+        GraphicsRegisters {
+            grp0,
+            reflect_p0,
+            grp1,
+            reflect_p1,
+            pf0: self.playfield.pf0,
+            pf1: self.playfield.pf1,
+            pf2: self.playfield.pf2,
+            pf_mirrored: self.playfield.mirrored,
+            missile0: self.missile0.enabled && !self.missile0.locked_to_player,
+            missile1: self.missile1.enabled && !self.missile1.locked_to_player,
+            ball: self.ball.effective_enabled(),
+            color_p0: self.color_p0,
+            color_p1: self.color_p1,
+            color_pf: self.color_pf,
+        }
     }
 
     pub(crate) fn take_line(&mut self) -> Option<Scanline> {

@@ -405,6 +405,22 @@ pub struct VcsInspectState {
     pub swcha: u8,
     pub swchb: u8,
     pub collisions: [u8; 8],
+    /// TIA graphics registers, resolved to their object colours for the pixel
+    /// strips (COLUPx is a hue the core owns).
+    pub grp0: u8,
+    pub grp0_reflect: bool,
+    pub grp1: u8,
+    pub grp1_reflect: bool,
+    pub pf0: u8,
+    pub pf1: u8,
+    pub pf2: u8,
+    pub pf_mirrored: bool,
+    pub missile0: bool,
+    pub missile1: bool,
+    pub ball: bool,
+    pub color_p0: RGB8,
+    pub color_p1: RGB8,
+    pub color_pf: RGB8,
     pub disassembly: Vec<DisasmRow>,
     pub frame: u64,
 }
@@ -483,6 +499,80 @@ fn cpu_section(state: &VcsInspectState) -> inspect::Section {
     }
 }
 
+/// A player's GRP as 8 screen-ordered cells: bit 7 draws leftmost, unless REFP
+/// mirrors the pattern and bit 0 leads. Mirrors [`Player::output`]'s bit select.
+fn player_pattern_bits(graphics: u8, reflect: bool) -> [bool; 8] {
+    std::array::from_fn(|i| {
+        let bit = if reflect { i as u8 } else { 7 - i as u8 };
+        graphics & (1 << bit) != 0
+    })
+}
+
+/// The playfield's 20-cell left-half pattern, left to right: PF0's high nibble
+/// (bit 4 first), PF1 (bit 7 first), PF2 (bit 0 first). Mirrors the
+/// `Playfield::pixel` cell decode. The right half repeats or reflects this per
+/// CTRLPF, shown as the `mirror` flag rather than a second 20 cells.
+fn playfield_cells(pf0: u8, pf1: u8, pf2: u8) -> [bool; 20] {
+    std::array::from_fn(|cell| match cell {
+        0..=3 => pf0 & (0x10 << cell) != 0,
+        4..=11 => pf1 & (0x80 >> (cell - 4)) != 0,
+        _ => pf2 & (0x01 << (cell - 12)) != 0,
+    })
+}
+
+/// The TIA graphics strips: the two players in their COLUP0/COLUP1 hue, the
+/// playfield in COLUPF, and the missile/ball enables as single cells in the
+/// object's hue (empty when off). An unlit pattern bit is an empty cell.
+fn tia_graphics_block(state: &VcsInspectState) -> inspect::SectionBlock {
+    use inspect::PixelStrip;
+
+    let lit = |bits: &[bool], color: RGB8| -> Vec<Option<RGB8>> {
+        bits.iter().map(|&b| b.then_some(color)).collect()
+    };
+
+    inspect::SectionBlock::Pixels(vec![
+        PixelStrip::Colors {
+            label: "grp0".to_owned(),
+            cells: lit(
+                &player_pattern_bits(state.grp0, state.grp0_reflect),
+                state.color_p0,
+            ),
+            help: Some("player 0 graphics (GRP0) in COLUP0; bit 7 at left, REFP0 mirrors"),
+        },
+        PixelStrip::Colors {
+            label: "grp1".to_owned(),
+            cells: lit(
+                &player_pattern_bits(state.grp1, state.grp1_reflect),
+                state.color_p1,
+            ),
+            help: Some("player 1 graphics (GRP1) in COLUP1; bit 7 at left, REFP1 mirrors"),
+        },
+        PixelStrip::Colors {
+            label: "pf".to_owned(),
+            cells: lit(
+                &playfield_cells(state.pf0, state.pf1, state.pf2),
+                state.color_pf,
+            ),
+            help: Some("playfield left half (PF0/PF1/PF2) in COLUPF; right half per mirror"),
+        },
+        PixelStrip::Colors {
+            label: "m0".to_owned(),
+            cells: vec![state.missile0.then_some(state.color_p0)],
+            help: Some("missile 0 enable (ENAM0) in COLUP0"),
+        },
+        PixelStrip::Colors {
+            label: "m1".to_owned(),
+            cells: vec![state.missile1.then_some(state.color_p1)],
+            help: Some("missile 1 enable (ENAM1) in COLUP1"),
+        },
+        PixelStrip::Colors {
+            label: "bl".to_owned(),
+            cells: vec![state.ball.then_some(state.color_pf)],
+            help: Some("ball enable (ENABL) in COLUPF"),
+        },
+    ])
+}
+
 fn tia_section(state: &VcsInspectState) -> inspect::Section {
     use inspect::{Row, SectionBlock, Sweep, SweepZone, Tone};
 
@@ -517,7 +607,11 @@ fn tia_section(state: &VcsInspectState) -> inspect::Section {
             SectionBlock::Sweeps(vec![beam]),
             SectionBlock::Rows(vec![
                 Row::value("line", state.scanline.to_string()).help("scanline within the field"),
+                Row::flag("mirror", state.pf_mirrored)
+                    .help("playfield reflected on the right half (CTRLPF bit 0)"),
             ]),
+            SectionBlock::Rule,
+            tia_graphics_block(state),
         ],
     }
 }
@@ -614,6 +708,12 @@ impl VcsDebugger {
             });
             address = address.wrapping_add(row.length as u16);
         }
+        let standard = vcs.tv_standard();
+        let color = |byte: u8| {
+            let (r, g, b) = crate::tia::palette(standard)[palette_index(byte)];
+            RGB8::new(r, g, b)
+        };
+        let gfx = vcs.tia.graphics_registers();
         self.inspect = VcsInspectState {
             a: cpu.a,
             x: cpu.x,
@@ -628,6 +728,20 @@ impl VcsDebugger {
             swcha: vcs.peek(0x0280),
             swchb: vcs.peek(0x0282),
             collisions: std::array::from_fn(|i| vcs.peek(i as u16)),
+            grp0: gfx.grp0,
+            grp0_reflect: gfx.reflect_p0,
+            grp1: gfx.grp1,
+            grp1_reflect: gfx.reflect_p1,
+            pf0: gfx.pf0,
+            pf1: gfx.pf1,
+            pf2: gfx.pf2,
+            pf_mirrored: gfx.pf_mirrored,
+            missile0: gfx.missile0,
+            missile1: gfx.missile1,
+            ball: gfx.ball,
+            color_p0: color(gfx.color_p0),
+            color_p1: color(gfx.color_p1),
+            color_pf: color(gfx.color_pf),
             disassembly,
             frame: self.frame_count,
         };
@@ -781,6 +895,39 @@ impl SystemDebugger for VcsDebugger {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn player_pattern_bit_order() {
+        // Bit 7 draws leftmost with no reflect; bit 0 leads when reflected.
+        assert_eq!(
+            player_pattern_bits(0b1000_0001, false),
+            [true, false, false, false, false, false, false, true],
+        );
+        assert_eq!(
+            player_pattern_bits(0b1000_0001, true),
+            [true, false, false, false, false, false, false, true],
+        );
+        assert_eq!(
+            player_pattern_bits(0b1100_0000, false),
+            [true, true, false, false, false, false, false, false],
+        );
+        assert_eq!(
+            player_pattern_bits(0b1100_0000, true),
+            [false, false, false, false, false, false, true, true],
+        );
+    }
+
+    #[test]
+    fn playfield_20_cell_pattern() {
+        // PF0 bit 4 is cell 0; PF1 bit 7 is cell 4; PF2 bit 0 is cell 12.
+        let cells = playfield_cells(0x10, 0x80, 0x01);
+        assert!(cells[0]);
+        assert!(cells[4]);
+        assert!(cells[12]);
+        assert_eq!(cells.iter().filter(|&&b| b).count(), 3);
+        // All-clear is 20 empty cells; PF0's low nibble never contributes.
+        assert_eq!(playfield_cells(0x0F, 0, 0), [false; 20]);
+    }
 
     #[test]
     fn classify_fields_splits_ntsc_from_pal() {

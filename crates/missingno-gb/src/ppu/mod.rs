@@ -13,7 +13,8 @@ use types::sprites::{Sprite, SpriteId};
 pub use crossing::{CaptureEdge, CaptureSpec};
 pub use dff::{DffBit, DffLatch, NorLatch};
 pub use model::{
-    CartridgeBootHeader, DmgPixel, PixelMux, PpuModel, resolve_dmg_pixel, resolve_shade,
+    BgFifoCell, CartridgeBootHeader, DmgPixel, ObjFifoCell, PixelMux, PpuModel,
+    obj_fifo_cells_from, resolve_dmg_pixel, resolve_shade,
 };
 pub use registers::{PipelineRegisters, TileSelGlitch};
 pub use rendering::{
@@ -802,6 +803,18 @@ impl<P: PpuModel> Ppu<P> {
             }
             _ => None,
         }
+    }
+
+    /// The background pixel-shifter's 8 stages for the debugger, or `None` when
+    /// the LCD is off and no pixel pipeline exists.
+    pub fn bg_fifo(&self) -> Option<[BgFifoCell; 8]> {
+        self.pixel_pipeline.as_ref().map(|r| r.bg_fifo_cells())
+    }
+
+    /// The object FIFO's 8 stages for the debugger, or `None` when the LCD is
+    /// off and no pixel pipeline exists.
+    pub fn obj_fifo(&self) -> Option<[ObjFifoCell; 8]> {
+        self.pixel_pipeline.as_ref().map(|r| r.obj_fifo_cells())
     }
 
     pub fn trace_snapshot(&self) -> Option<PpuTraceSnapshot> {

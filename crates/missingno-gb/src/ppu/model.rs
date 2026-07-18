@@ -29,6 +29,40 @@ pub struct PixelMux<C> {
     pub spr_pri: u8,
 }
 
+/// One decoded background-shifter stage for inspection: the 2-bit colour number
+/// and, on the CGB, the tile's BG palette index (0-7); DMG leaves the palette 0.
+#[derive(Clone, Copy, Debug)]
+pub struct BgFifoCell {
+    pub color: u8,
+    pub palette: u8,
+}
+
+/// One decoded object-FIFO stage for inspection: the 2-bit colour (0 =
+/// transparent), the palette selector (DMG OBP0/OBP1 = 0/1; CGB OBP0-7), and the
+/// BG-over-OBJ priority bit.
+#[derive(Clone, Copy, Debug)]
+pub struct ObjFifoCell {
+    pub color: u8,
+    pub palette: u8,
+    pub priority: u8,
+}
+
+/// Decode a packed object-FIFO into its 8 stages, MSB-first (cell 0 = the next
+/// pixel to pop). The palette planes differ per console, so each model supplies
+/// its own; the colour and priority packing is shared.
+pub fn obj_fifo_cells_from(low: u8, high: u8, palette: [u8; 3], priority: u8) -> [ObjFifoCell; 8] {
+    std::array::from_fn(|i| {
+        let bit = 7 - i as u8;
+        let color = (((high >> bit) & 1) << 1) | ((low >> bit) & 1);
+        let pal = (0..3).fold(0, |acc, p| acc | (((palette[p] >> bit) & 1) << p));
+        ObjFifoCell {
+            color,
+            palette: pal,
+            priority: (priority >> bit) & 1,
+        }
+    })
+}
+
 /// Cartridge header bytes the boot-ROM handoff HLE consults: the CGB flag, and
 /// the title + licensee a CGB hashes to pick a DMG-compatibility palette.
 pub struct CartridgeBootHeader {
@@ -134,6 +168,17 @@ pub trait PpuModel: Default {
 
     /// morepork shift-register state: (lo, hi, palette, priority).
     fn obj_trace(fifo: &Self::ObjFifo) -> (u8, u8, u8, u8);
+
+    /// The object FIFO decoded into its 8 stages for the debugger, MSB-first
+    /// (cell 0 = the next pixel to pop). DMG carries a 1-bit OBP select; the CGB
+    /// a 3-bit OBP index.
+    fn obj_fifo_cells(fifo: &Self::ObjFifo) -> [ObjFifoCell; 8];
+
+    /// The BG tile's palette index riding the shifter (CGB attribute, 0-7); the
+    /// DMG BG has no palette selector.
+    fn bg_cell_palette(_cell: Self::BgCell) -> u8 {
+        0
+    }
 
     /// OPRI ($FF6C): object-priority mode. DMG has no such register.
     fn object_priority_register(&self) -> u8 {
@@ -408,11 +453,43 @@ impl PpuModel for DmgPpu {
         fifo.registers()
     }
 
+    fn obj_fifo_cells(fifo: &ObjShifter) -> [ObjFifoCell; 8] {
+        let (low, high, palette, priority) = fifo.registers();
+        obj_fifo_cells_from(low, high, [palette, 0, 0], priority)
+    }
+
     fn resolve(&self, mux: &PixelMux<()>, regs: &PipelineRegisters) -> PaletteIndex {
         PaletteIndex(resolve_shade(mux, regs))
     }
 
     fn trace_pixel(pixel: PaletteIndex) -> TracePixel {
         TracePixel::Shade(pixel.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::obj_fifo_cells_from;
+
+    #[test]
+    fn obj_fifo_decode_is_msb_first() {
+        // low = 0b1000_0000, high = 0 → the MSB stage (cell 0) has colour 1.
+        let cells = obj_fifo_cells_from(0b1000_0000, 0, [0, 0, 0], 0);
+        assert_eq!(cells[0].color, 1);
+        assert!(cells[1..].iter().all(|c| c.color == 0));
+    }
+
+    #[test]
+    fn obj_fifo_decode_packs_colour_palette_priority() {
+        // Stage 0 (bit 7): colour 3 (both planes), palette 0b101 = 5, priority 1.
+        let cells = obj_fifo_cells_from(
+            0b1000_0000,
+            0b1000_0000,
+            [0b1000_0000, 0, 0b1000_0000],
+            0b1000_0000,
+        );
+        assert_eq!(cells[0].color, 3);
+        assert_eq!(cells[0].palette, 5);
+        assert_eq!(cells[0].priority, 1);
     }
 }

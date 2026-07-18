@@ -5,6 +5,8 @@
 use std::any::Any;
 use std::sync::Arc;
 
+use rgb::RGB8;
+
 use missingno_core::cdl::CdlWindow;
 use missingno_core::inspect;
 use missingno_core::symbols::SymbolTable;
@@ -16,7 +18,7 @@ use missingno_gb::debugger::inspection::{
     self as parts, ColorSnapshot, CpuSource, GbSnapshot, PpuSource,
 };
 use missingno_gb::frame::NATIVE_SIZE;
-use missingno_gb::ppu::types::palette::Palette;
+use missingno_gb::ppu::types::palette::{Palette, PaletteIndex, PaletteMap};
 use missingno_gb::system::ConsoleUi;
 
 use crate::screen::Color555;
@@ -49,6 +51,9 @@ pub struct CgbView {
     pub ocps: u8,
     /// VRAM-DMA (HDMA/GDMA) engine state.
     pub vram_dma: VramDmaStatus,
+    /// DMG cartridge in CGB DMG-compatibility mode: the pixel FIFOs index the
+    /// boot palette through BGP/OBP rather than directly.
+    pub dmg_compat: bool,
 }
 
 impl CgbView {
@@ -64,6 +69,7 @@ impl CgbView {
             bcps,
             ocps,
             vram_dma: model.vram_dma_status(),
+            dmg_compat: ppu.model().dmg_compat(),
         }
     }
 }
@@ -109,6 +115,8 @@ pub fn cgb_sidebar_sections(
         ]),
         SectionBlock::Swatches(cram_swatches("bg", background)),
         SectionBlock::Swatches(cram_swatches("obj", objects)),
+        SectionBlock::Rule,
+        cgb_fifo_block(ppu, background, objects, view),
     ];
 
     vec![
@@ -127,6 +135,73 @@ pub fn cgb_sidebar_sections(
             blocks: ppu_content,
         },
     ]
+}
+
+/// The two pixel FIFOs as CGB colour strips: each cell resolves through palette
+/// RAM the core owns. In full-CGB mode a background cell indexes its tile's BG
+/// palette by the raw 2-bit colour, an object cell its OBP0-7 palette; a
+/// transparent object pixel (colour 0) and an off pipeline render as empty
+/// cells. In DMG-compatibility mode the colour first maps through BGP/OBP to a
+/// shade that indexes the boot palette. Snapshots taken at vblank catch the
+/// FIFOs empty; the strips fill when paused mid-scanline.
+fn cgb_fifo_block(
+    ppu: &impl PpuSource,
+    background: &[Palette; 8],
+    objects: &[Palette; 8],
+    view: &CgbView,
+) -> inspect::SectionBlock {
+    use inspect::PixelStrip;
+
+    let bg_cells: Vec<Option<RGB8>> = match ppu.bg_fifo() {
+        Some(cells) => cells
+            .iter()
+            .map(|c| {
+                let (palette, index) = if view.dmg_compat {
+                    (0, PaletteMap(ppu.bgp()).map(PaletteIndex(c.color)).0)
+                } else {
+                    (c.palette, c.color)
+                };
+                Some(background[palette as usize].color(PaletteIndex(index)))
+            })
+            .collect(),
+        None => vec![None; 8],
+    };
+
+    let obj_cells: Vec<Option<RGB8>> = match ppu.obj_fifo() {
+        Some(cells) => cells
+            .iter()
+            .map(|c| {
+                if c.color == 0 {
+                    return None;
+                }
+                let index = if view.dmg_compat {
+                    let obp = if c.palette == 0 {
+                        ppu.obp0()
+                    } else {
+                        ppu.obp1()
+                    };
+                    PaletteMap(obp).map(PaletteIndex(c.color)).0
+                } else {
+                    c.color
+                };
+                Some(objects[c.palette as usize].color(PaletteIndex(index)))
+            })
+            .collect(),
+        None => vec![None; 8],
+    };
+
+    inspect::SectionBlock::Pixels(vec![
+        PixelStrip::Colors {
+            label: "bg fifo".to_owned(),
+            cells: bg_cells,
+            help: Some("background pixel FIFO — colour through BG palette RAM; next pixel at left"),
+        },
+        PixelStrip::Colors {
+            label: "obj fifo".to_owned(),
+            cells: obj_cells,
+            help: Some("object pixel FIFO — colour through OBJ palette RAM; transparent = empty"),
+        },
+    ])
 }
 
 /// The eight resolved palettes of one CRAM bank as swatch rows.
