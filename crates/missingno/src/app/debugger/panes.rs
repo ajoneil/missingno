@@ -17,7 +17,6 @@ use crate::app::{
         audio::AudioPane,
         disassembly::{DisasmPaneData, DisassemblyPane},
         inspect::GbPaneContext,
-        instructions::InstructionsPane,
         layout,
         memory::{self, MemoryPane, MemoryPaneData, MemorySelection},
         ppu::{
@@ -289,14 +288,6 @@ pub static PANE_REGISTRY: &[PaneDescriptor] = &[
         construct: || Box::new(ScreenPane::new()),
     },
     MEMORY_DESCRIPTOR,
-    // The Game Boy keeps its hand-built Instructions pane and the generic
-    // Disassembly side by side until the two are confirmed at parity.
-    PaneDescriptor {
-        kind: DebuggerPane::Instructions,
-        icon: Icon::FileText,
-        label: "Instructions",
-        construct: || Box::new(InstructionsPane::new()),
-    },
     DISASSEMBLY_DESCRIPTOR,
     PaneDescriptor {
         kind: DebuggerPane::Tiles,
@@ -342,7 +333,6 @@ pub enum DebuggerPane {
     Screen,
     Memory,
     Disassembly,
-    Instructions,
     Tiles,
     TileMap(TileMapId),
     Sprites,
@@ -416,14 +406,14 @@ impl DebuggerPanes {
     }
 }
 
-/// The Game Boy's out-of-the-box arrangement: instructions beside the screen.
+/// The Game Boy's out-of-the-box arrangement: disassembly beside the screen.
 fn gb_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
-    let (mut panes, instructions_handle) =
-        pane_grid::State::new(DebuggerPane::Instructions.construct());
+    let (mut panes, disassembly_handle) =
+        pane_grid::State::new(DebuggerPane::Disassembly.construct());
     let (_, split) = panes
         .split(
             Vertical,
-            instructions_handle,
+            disassembly_handle,
             DebuggerPane::Screen.construct(),
         )
         .unwrap();
@@ -578,9 +568,7 @@ impl DebuggerPanes {
     /// The pane grid, rendered from the live console while paused or the
     /// per-vblank snapshot while the core runs on the emu thread. Without a
     /// context (core away, no snapshot yet) panes show placeholders — except
-    /// the screen, which always renders its own live frame. While running,
-    /// breakpoint-gutter clicks in the instructions pane still emit their
-    /// messages, but the run doesn't stop until the core does.
+    /// the screen, which always renders its own live frame.
     pub fn view<'a>(&'a self, ctx: Option<PaneContext<'_>>) -> Element<'a, app::Message> {
         if let Some(panes) = &self.panes {
             pane_grid(panes, move |_handle, instance, _is_maximized| {

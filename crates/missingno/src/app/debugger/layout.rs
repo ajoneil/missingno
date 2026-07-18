@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn layout_round_trips_through_ron() {
-        let (mut state, first) = pane_grid::State::new(construct(DebuggerPane::Instructions));
+        let (mut state, first) = pane_grid::State::new(construct(DebuggerPane::Disassembly));
         let (screen, split) = state
             .split(
                 pane_grid::Axis::Vertical,

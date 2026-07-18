@@ -6,18 +6,15 @@
 
 use std::any::Any;
 
-use missingno_gb::debugger::instructions::ReadInstructionMemory;
 use missingno_gb::ppu::{memory::VramView, types::palette::Palette};
 use missingno_gb::{Console, Dmg, GameBoy, Model};
 use missingno_gbc::{Cgb, GameBoyColor, cram_palettes};
 
 use crate::app::console::{ConsoleColors, colors_from_snapshot};
 
-pub use missingno_core::cdl::CdlWindow;
-pub use missingno_core::symbols::SymbolTable;
 pub use missingno_core::system::DebugView;
 pub use missingno_gb::debugger::inspection::{
-    AudioView, CpuSource, EnvelopeChannelView, GbSnapshot, PpuSource, WaveChannelView,
+    AudioView, EnvelopeChannelView, GbSnapshot, PpuSource, WaveChannelView,
 };
 pub use missingno_gbc::CgbSnapshot;
 
@@ -58,20 +55,13 @@ impl GbColors for Cgb {
 /// model-erased surface: the live console while paused, or the per-vblank
 /// snapshot while the core runs on the emulation thread.
 pub trait InspectSource {
-    fn cpu(&self) -> &dyn CpuSource;
     fn ppu(&self) -> &dyn PpuSource;
     fn vram(&self) -> &dyn VramView;
     fn audio(&self) -> AudioView;
-    fn instruction_memory(&self) -> &dyn ReadInstructionMemory;
     fn colors(&self, user_palette: &Palette) -> ConsoleColors;
-    /// The 16KB ROM bank mapped at 0x4000–0x7FFF, for symbol resolution.
-    fn switchable_rom_bank(&self) -> Option<u16>;
 }
 
 impl<M: GbColors> InspectSource for Console<M> {
-    fn cpu(&self) -> &dyn CpuSource {
-        Console::cpu(self)
-    }
     fn ppu(&self) -> &dyn PpuSource {
         Console::ppu(self)
     }
@@ -81,21 +71,12 @@ impl<M: GbColors> InspectSource for Console<M> {
     fn audio(&self) -> AudioView {
         AudioView::capture(Console::audio(self))
     }
-    fn instruction_memory(&self) -> &dyn ReadInstructionMemory {
-        self
-    }
     fn colors(&self, user_palette: &Palette) -> ConsoleColors {
         M::colors(self, user_palette)
-    }
-    fn switchable_rom_bank(&self) -> Option<u16> {
-        self.cartridge().switchable_rom_bank()
     }
 }
 
 impl InspectSource for GbSnapshot {
-    fn cpu(&self) -> &dyn CpuSource {
-        &self.cpu
-    }
     fn ppu(&self) -> &dyn PpuSource {
         &self.ppu
     }
@@ -105,21 +86,12 @@ impl InspectSource for GbSnapshot {
     fn audio(&self) -> AudioView {
         self.audio.clone()
     }
-    fn instruction_memory(&self) -> &dyn ReadInstructionMemory {
-        &self.memory
-    }
     fn colors(&self, user_palette: &Palette) -> ConsoleColors {
         colors_from_snapshot(&self.colors, user_palette)
-    }
-    fn switchable_rom_bank(&self) -> Option<u16> {
-        self.switchable_rom_bank
     }
 }
 
 impl InspectSource for CgbSnapshot {
-    fn cpu(&self) -> &dyn CpuSource {
-        self.base.cpu()
-    }
     fn ppu(&self) -> &dyn PpuSource {
         self.base.ppu()
     }
@@ -129,26 +101,18 @@ impl InspectSource for CgbSnapshot {
     fn audio(&self) -> AudioView {
         self.base.audio()
     }
-    fn instruction_memory(&self) -> &dyn ReadInstructionMemory {
-        self.base.instruction_memory()
-    }
     fn colors(&self, user_palette: &Palette) -> ConsoleColors {
         self.base.colors(user_palette)
-    }
-    fn switchable_rom_bank(&self) -> Option<u16> {
-        self.base.switchable_rom_bank()
     }
 }
 
 /// The Game Boy family's typed pane surface: its trait-erased inspection
-/// source plus the GB-typed sidecar and colour context its panes render
-/// with. Bundled so shared pane plumbing carries one optional GB field.
+/// source plus the colour context its panes render with. Bundled so shared
+/// pane plumbing carries one optional GB field.
 #[derive(Clone, Copy)]
 pub struct GbPaneContext<'b> {
     pub source: &'b dyn InspectSource,
     pub colors: &'b ConsoleColors,
-    pub symbols: &'b SymbolTable,
-    pub cdl: &'b CdlWindow,
 }
 
 /// Recover the Game Boy inspection surface from a family-erased state — the

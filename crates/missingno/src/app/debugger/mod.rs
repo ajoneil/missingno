@@ -32,7 +32,6 @@ mod audio;
 mod disasm_rows;
 mod disassembly;
 pub mod inspect;
-mod instructions;
 mod layout;
 mod memory;
 #[cfg(feature = "nes")]
@@ -636,15 +635,8 @@ impl Debugger {
         let family_any = core.family_state();
         let gb_source = inspect::as_inspect_source(family_any);
         let colors = gb_source.map(|source| source.colors(self.panes.palette()));
-        let symbols = core.symbols();
-        let cdl = core.cdl_window();
         let gb = match (gb_source, &colors) {
-            (Some(source), Some(colors)) => Some(GbPaneContext {
-                source,
-                colors,
-                symbols: &symbols,
-                cdl: &cdl,
-            }),
+            (Some(source), Some(colors)) => Some(GbPaneContext { source, colors }),
             _ => None,
         };
         let readout = self
@@ -747,8 +739,6 @@ impl Debugger {
                 Some(GbPaneContext {
                     source: snap,
                     colors,
-                    symbols: &snap.symbols,
-                    cdl: &snap.cdl,
                 })
             } else {
                 family_any
@@ -756,8 +746,6 @@ impl Debugger {
                     .map(|snap| GbPaneContext {
                         source: snap,
                         colors,
-                        symbols: &snap.base.symbols,
-                        cdl: &snap.base.cdl,
                     })
             }
         });
