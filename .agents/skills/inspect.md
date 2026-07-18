@@ -2,6 +2,15 @@
 
 Query the headless debugger HTTP API to inspect emulator state without modifying code.
 
+The server is the `missingno-debugger` crate, generic over every core (GB, GBC, VCS; NES/SMS behind features). Two ways to run it:
+
+- `cargo run -- <rom> --headless` — via the frontend binary (wires boot ROM / serial-link flags; GB family only needs this for those peripherals).
+- `cargo run -p missingno-debugger -- <rom>` — the standalone server; add `--no-default-features --features gb` (or `vcs`) for a fast single-core build when iterating on one core. Same port and routes.
+
+**Generic endpoints (every core)**: GET `/status`, `/registers`, `/regions`, `/memory/<hex>[/<len>]`, `/disassembly?at=<hex>&count=N`, `/breakpoints`, `/watchables` (this core's watch keys), `/watches`, `/symbols`, `/frame/bitmap`; POST `/step`, `/step-over`, `/step-frame`, `/reset`; PUT/DELETE `/breakpoints/<hex>`; PUT/DELETE `/watches` (JSON body `{"terms":[{"key":..,"address":..}]}`). Use these for **VCS** (and NES/SMS) inspection — the `gb_*` helpers and the GB-specific routes below only exist on Game Boy sessions.
+
+**MCP**: the server also speaks MCP over stdio (`--mcp`, feature `mcp`) with the same capabilities as tools (including `describe_machine`, a text rendering of the full sidebar schema). Useful when an MCP client is configured; this skill's scripted workflow uses the HTTP API.
+
 ## When to use this instead of `/instrument`
 
 Use this skill when the question can be answered by inspecting state at instruction, dot, or frame boundaries:
