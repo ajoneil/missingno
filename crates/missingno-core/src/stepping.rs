@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use crate::TvStandard;
-use crate::inspect::RegisterGroup;
+use crate::inspect::{RegisterGroup, Section};
 use crate::system::{
     ControlId, ControlInput, DebugView, FrameOutcome, RunningStatus, StepOutcome, SystemConsole,
     SystemDebugger,
@@ -49,6 +49,13 @@ pub trait SteppingSystem: 'static {
     /// The register groups this system exposes for the schema-driven view.
     fn register_groups(_state: &Self::InspectState) -> Vec<RegisterGroup> {
         Vec::new()
+    }
+    /// The structured sidebar sections this system exposes, built from the
+    /// typed state so the live and running views agree. Defaults to a single
+    /// CPU section from the register groups; a system overrides to add its
+    /// video section.
+    fn sidebar_sections(state: &Self::InspectState) -> Vec<Section> {
+        crate::inspect::default_sections(Self::register_groups(state))
     }
     /// An owned snapshot of the state, stamped with the UI's frame counter.
     fn snapshot(state: &Self::InspectState, frame: u64) -> DebugView;
@@ -251,6 +258,10 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
 
     fn register_groups(&self) -> Vec<RegisterGroup> {
         S::register_groups(&self.inspect)
+    }
+
+    fn sidebar_sections(&self) -> Vec<Section> {
+        S::sidebar_sections(&self.inspect)
     }
 
     fn video_out(&self) -> VideoOut {

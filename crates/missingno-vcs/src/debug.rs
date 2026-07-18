@@ -416,6 +416,95 @@ pub struct DisasmRow {
     pub current: bool,
 }
 
+/// The VCS sidebar sections, shared by the live debugger (paused) and the
+/// per-frame snapshot so the two agree by construction: the 6507 register file
+/// and the TIA/RIOT state the inspection struct already carries.
+pub fn vcs_sidebar_sections(state: &VcsInspectState) -> Vec<inspect::Section> {
+    vec![cpu_section(state), tia_section(state), riot_section(state)]
+}
+
+fn cpu_section(state: &VcsInspectState) -> inspect::Section {
+    use inspect::{Register, RegisterGroup, SectionBlock, ValueStyle};
+
+    let hex8 = |name, value: u8| Register {
+        name,
+        value: value as u32,
+        bits: 8,
+        style: ValueStyle::Hex,
+    };
+    let stack_pointer = 0x0100 | state.s as u16;
+    let group = RegisterGroup {
+        name: "cpu",
+        registers: vec![
+            hex8("a", state.a),
+            hex8("x", state.x),
+            hex8("y", state.y),
+            Register {
+                name: "p",
+                value: state.p as u32,
+                bits: 8,
+                style: ValueStyle::Flags(crate::debugger::MOS6502_FLAGS),
+            },
+        ],
+    };
+    inspect::Section {
+        name: "CPU",
+        summary: format!("pc {:04X} · sp {:04X}", state.pc, stack_pointer),
+        active: None,
+        detail: None,
+        blocks: vec![
+            SectionBlock::Pointers(vec![
+                Register {
+                    name: "pc",
+                    value: state.pc as u32,
+                    bits: 16,
+                    style: ValueStyle::Hex,
+                },
+                Register {
+                    name: "sp",
+                    value: stack_pointer as u32,
+                    bits: 16,
+                    style: ValueStyle::Hex,
+                },
+            ]),
+            SectionBlock::Rule,
+            SectionBlock::Registers(group),
+        ],
+    }
+}
+
+fn tia_section(state: &VcsInspectState) -> inspect::Section {
+    use inspect::{Row, SectionBlock};
+
+    inspect::Section {
+        name: "TIA",
+        summary: format!("beam {} · line {}", state.beam, state.scanline),
+        active: None,
+        detail: None,
+        blocks: vec![SectionBlock::Rows(vec![
+            Row::value("beam", state.beam.to_string()),
+            Row::value("line", state.scanline.to_string()),
+        ])],
+    }
+}
+
+fn riot_section(state: &VcsInspectState) -> inspect::Section {
+    use inspect::{Row, SectionBlock};
+
+    inspect::Section {
+        name: "RIOT",
+        summary: format!("timer {:02X}", state.timer),
+        active: None,
+        detail: None,
+        blocks: vec![SectionBlock::Rows(vec![
+            Row::value("timer", format!("{:02X}", state.timer)),
+            Row::flag("underflow", state.timer_underflowed),
+            Row::value("swcha", format!("{:02X}", state.swcha)),
+            Row::value("swchb", format!("{:02X}", state.swchb)),
+        ])],
+    }
+}
+
 /// The per-frame snapshot for the running view.
 pub struct VcsSnapshot {
     pub state: VcsInspectState,
@@ -437,6 +526,9 @@ impl InspectSnapshot for VcsSnapshot {
     fn register_groups(&self) -> Vec<inspect::RegisterGroup> {
         let s = &self.state;
         crate::debugger::cpu_register_groups(s.pc, s.a, s.x, s.y, s.s, s.p)
+    }
+    fn sidebar_sections(&self) -> Vec<inspect::Section> {
+        vcs_sidebar_sections(&self.state)
     }
 }
 
@@ -579,6 +671,10 @@ impl SystemDebugger for VcsDebugger {
         self.core.register_groups()
     }
 
+    fn sidebar_sections(&self) -> Vec<inspect::Section> {
+        vcs_sidebar_sections(&self.inspect)
+    }
+
     fn memory_regions(&self) -> &'static [inspect::MemoryRegion] {
         self.core.memory_regions()
     }
@@ -687,6 +783,28 @@ mod tests {
         assert_eq!(
             format!("{:?}", live.register_groups()),
             format!("{:?}", snapshot.register_groups())
+        );
+    }
+
+    #[test]
+    fn snapshot_sidebar_sections_match_live() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/accuracy/roms/cartridge/bank-f8_ntsc.a26");
+        let rom = std::fs::read(&path).unwrap();
+        let vcs = Vcs::new(&rom, TvStandard::Ntsc, None).unwrap();
+        let mut debugger = VcsDebugger::new(
+            crate::debugger::Debugger::new(vcs),
+            "test".to_string(),
+            blank_frame(),
+        );
+        for _ in 0..64 {
+            debugger.step();
+        }
+        let live = SystemDebugger::sidebar_sections(&debugger);
+        let snapshot = debugger.snapshot(0);
+        assert_eq!(
+            format!("{live:?}"),
+            format!("{:?}", snapshot.sidebar_sections())
         );
     }
 

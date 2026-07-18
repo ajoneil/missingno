@@ -37,6 +37,180 @@ pub struct FlagName {
     pub bit: u8,
 }
 
+// --- Sidebar schema ----------------------------------------------------------
+//
+// A console-agnostic description of the debugger's left-column sidebar: a stack
+// of collapsible sections, each carrying typed blocks (register files, pointer
+// rows, a bit table, palette swatches). A family builds these from one shared
+// builder serving both the live console (paused) and the per-vblank snapshot
+// (running), so the two agree by construction. The frontend renders them; the
+// core names no colours.
+
+/// One collapsible sidebar section — a heading, a one-line summary for the
+/// collapsed state, an optional activity indicator, an optional inline detail,
+/// and the typed content blocks shown when expanded.
+#[derive(Clone, Debug)]
+pub struct Section {
+    pub name: &'static str,
+    pub summary: String,
+    /// Drives the header activity pip: `Some(true)` lit, `Some(false)` dim,
+    /// `None` no pip.
+    pub active: Option<bool>,
+    /// An accented detail shown beside the heading (the PPU mode).
+    pub detail: Option<Detail>,
+    pub blocks: Vec<SectionBlock>,
+}
+
+/// An accented one-line detail beside a section heading.
+#[derive(Clone, Debug)]
+pub struct Detail {
+    pub text: String,
+    pub tone: Tone,
+}
+
+/// A semantic accent class for a [`Detail`]. The frontend maps each to a
+/// palette colour — the core never names colours. Derived from the only
+/// coloured detail the Game Boy sidebar shows, the PPU mode: its four modes
+/// map onto `Idle`/`Active`/`Scanning`/`Rendering`, with `Neutral` for an
+/// unaccented detail.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tone {
+    Neutral,
+    /// Between-work (PPU HBlank).
+    Idle,
+    /// At a frame/field boundary (PPU VBlank).
+    Active,
+    /// Scanning inputs (PPU OAM scan).
+    Scanning,
+    /// Producing output (PPU drawing).
+    Rendering,
+}
+
+/// One typed block within a [`Section`].
+#[derive(Clone, Debug)]
+pub enum SectionBlock {
+    /// A flat register file; a `Flags`-styled register renders as bit chips.
+    Registers(RegisterGroup),
+    /// 8-bit register halves with their combined 16-bit value.
+    Pairs(Vec<RegisterPair>),
+    /// Pointer-style rows (pc/sp).
+    Pointers(Vec<Register>),
+    /// The interrupt-table shape: named bit columns, one row per source
+    /// register, an optional corner master flag (IME).
+    Table(BitTable),
+    /// Label/value rows, each optionally gated by an activity pip.
+    Rows(Vec<Row>),
+    /// Palette swatch rows.
+    Swatches(Vec<SwatchRow>),
+    /// A horizontal divider.
+    Rule,
+}
+
+/// A register split into its two 8-bit halves, with the combined value derived
+/// from them. The low half may carry a `Flags` style (the SM83 `f`).
+#[derive(Clone, Debug)]
+pub struct RegisterPair {
+    pub high: Register,
+    pub low: Register,
+}
+
+impl RegisterPair {
+    /// The combined value: the high half shifted above the low half's width.
+    pub fn combined(&self) -> u32 {
+        (self.high.value << self.low.bits) | self.low.value
+    }
+}
+
+/// A table of named bit columns with one row per source register — the
+/// interrupt table (IE/IF over the five sources), or a PPU control register
+/// decoded into its named bits.
+#[derive(Clone, Debug)]
+pub struct BitTable {
+    pub columns: &'static [&'static str],
+    /// A master flag shown in the table's corner (IME), if any.
+    pub corner: Option<Flag>,
+    pub rows: Vec<BitRow>,
+}
+
+/// One row of a [`BitTable`]: a name and one bool per column.
+#[derive(Clone, Debug)]
+pub struct BitRow {
+    pub name: &'static str,
+    pub bits: Vec<bool>,
+}
+
+/// A named boolean shown as a lit/dim badge.
+#[derive(Clone, Copy, Debug)]
+pub struct Flag {
+    pub name: &'static str,
+    pub active: bool,
+}
+
+/// One label/value row. `active` adds an activity pip (the PPU enable rows);
+/// `None` is a plain label/value row.
+#[derive(Clone, Debug)]
+pub struct Row {
+    pub label: String,
+    pub value: String,
+    pub active: Option<bool>,
+}
+
+impl Row {
+    /// A plain label/value row.
+    pub fn value(label: impl Into<String>, value: impl Into<String>) -> Self {
+        Row {
+            label: label.into(),
+            value: value.into(),
+            active: None,
+        }
+    }
+
+    /// A row whose label is gated by an activity pip.
+    pub fn flag(label: impl Into<String>, active: bool) -> Self {
+        Row {
+            label: label.into(),
+            value: String::new(),
+            active: Some(active),
+        }
+    }
+}
+
+/// A palette swatch row.
+#[derive(Clone, Debug)]
+pub enum SwatchRow {
+    /// A packed shade byte the frontend resolves through its user-selectable
+    /// palette (the DMG BGP/OBP registers); the core never picks the display
+    /// colours.
+    Shades { label: &'static str, packed: u8 },
+    /// Resolved colours the core genuinely owns (CGB palette RAM).
+    Colors {
+        label: String,
+        colors: Vec<rgb::RGB8>,
+    },
+}
+
+/// The fallback sidebar for a core that has not built family-specific sections:
+/// its register groups as one CPU section, summarised by the program counter.
+pub fn default_sections(groups: Vec<RegisterGroup>) -> Vec<Section> {
+    let summary = groups
+        .iter()
+        .flat_map(|group| &group.registers)
+        .find(|register| register.name == "pc")
+        .map(|pc| {
+            let digits = (pc.bits as usize).div_ceil(4);
+            format!("pc {:0width$X}", pc.value, width = digits)
+        })
+        .unwrap_or_default();
+    let blocks = groups.into_iter().map(SectionBlock::Registers).collect();
+    vec![Section {
+        name: "CPU",
+        summary,
+        active: None,
+        detail: None,
+        blocks,
+    }]
+}
+
 /// A contiguous span of the CPU-visible address space, named by its role.
 #[derive(Clone, Copy, Debug)]
 pub struct MemoryRegion {

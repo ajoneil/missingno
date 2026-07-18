@@ -7,7 +7,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use missingno_6502::disasm;
-use missingno_core::inspect::{FlagName, Register, RegisterGroup, ValueStyle};
+use missingno_core::inspect::{
+    BitRow, BitTable, FlagName, Register, RegisterGroup, Row, Section, SectionBlock, ValueStyle,
+};
 use missingno_core::stepping::SteppingSystem;
 use missingno_core::system::{ControlId, ControlInput, DebugView, InspectSnapshot, RunningStatus};
 use missingno_core::video::IndexedFrame;
@@ -83,6 +85,9 @@ impl InspectSnapshot for NesSnapshot {
     fn register_groups(&self) -> Vec<RegisterGroup> {
         cpu_register_groups(&self.state)
     }
+    fn sidebar_sections(&self) -> Vec<Section> {
+        nes_sidebar_sections(&self.state)
+    }
 }
 
 /// The 2A03 register file as one inspection group, shared by the live view and
@@ -110,6 +115,53 @@ fn cpu_register_groups(state: &NesInspectState) -> Vec<RegisterGroup> {
             hex("pc", state.pc as u32, 16),
         ],
     }]
+}
+
+/// PPUCTRL ($2000) bits, high to low.
+const PPUCTRL_BITS: &[&str] = &["nmi", "slave", "spr16", "bg", "spr", "inc", "nt1", "nt0"];
+/// PPUMASK ($2001) bits, high to low.
+const PPUMASK_BITS: &[&str] = &["blue", "green", "red", "spr", "bg", "sprL", "bgL", "gray"];
+/// PPUSTATUS ($2002) bits, high to low; the low five are open bus.
+const PPUSTATUS_BITS: &[&str] = &["vbl", "s0", "ovf", "-", "-", "-", "-", "-"];
+
+/// The NES sidebar sections, shared by the live view and the running snapshot:
+/// the 2A03 register file plus the 2C02's position and control registers.
+fn nes_sidebar_sections(state: &NesInspectState) -> Vec<Section> {
+    let mut sections = missingno_core::inspect::default_sections(cpu_register_groups(state));
+    sections.push(ppu_section(state));
+    sections
+}
+
+fn ppu_section(state: &NesInspectState) -> Section {
+    Section {
+        name: "PPU",
+        summary: format!("scanline {} · dot {}", state.scanline, state.dot),
+        active: None,
+        detail: None,
+        blocks: vec![
+            SectionBlock::Rows(vec![
+                Row::value("scanline", state.scanline.to_string()),
+                Row::value("dot", state.dot.to_string()),
+                Row::value("scroll", format!("{:04X}", state.scroll_v)),
+            ]),
+            SectionBlock::Rule,
+            SectionBlock::Table(bit_table("2000", PPUCTRL_BITS, state.ppu_control)),
+            SectionBlock::Table(bit_table("2001", PPUMASK_BITS, state.ppu_mask)),
+            SectionBlock::Table(bit_table("2002", PPUSTATUS_BITS, state.ppu_status)),
+        ],
+    }
+}
+
+/// A one-row bit table decoding `value`'s bits, high to low, under `columns`.
+fn bit_table(name: &'static str, columns: &'static [&'static str], value: u8) -> BitTable {
+    BitTable {
+        columns,
+        corner: None,
+        rows: vec![BitRow {
+            name,
+            bits: (0..8).rev().map(|bit| value & (1 << bit) != 0).collect(),
+        }],
+    }
 }
 
 /// iNES media carries the `NES\x1A` magic in its first four bytes.
@@ -219,6 +271,10 @@ impl SteppingSystem for NesSystem {
 
     fn register_groups(state: &NesInspectState) -> Vec<RegisterGroup> {
         cpu_register_groups(state)
+    }
+
+    fn sidebar_sections(state: &NesInspectState) -> Vec<Section> {
+        nes_sidebar_sections(state)
     }
 
     fn snapshot(state: &NesInspectState, frame: u64) -> DebugView {

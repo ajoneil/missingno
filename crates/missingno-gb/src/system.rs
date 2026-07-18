@@ -24,7 +24,6 @@ use crate::debugger::{Debugger, WatchCondition};
 use crate::frame::{GameBoyScreen, GbFrame, SgbScreen};
 use crate::joypad::Button;
 use crate::ppu::model::PpuModel;
-use crate::ppu::rendering::Mode;
 use crate::sgb::MaskMode;
 use crate::{Console, Dmg, Model};
 
@@ -54,6 +53,11 @@ pub trait ConsoleUi: Model {
         symbols: Arc<SymbolTable>,
         cdl: CdlWindow,
     ) -> DebugView;
+
+    /// The whole left-column sidebar for this console, composed from the shared
+    /// section part-builders — each system decides its own sections and where
+    /// its console-specific state sits.
+    fn sidebar_sections(console: &Console<Self>) -> Vec<inspect::Section>;
 }
 
 impl ConsoleUi for Dmg {
@@ -97,6 +101,14 @@ impl ConsoleUi for Dmg {
         };
         Box::new(GbSnapshot::capture(console, colors, frame, symbols, cdl))
     }
+
+    fn sidebar_sections(console: &Console<Self>) -> Vec<inspect::Section> {
+        crate::debugger::inspection::dmg_sidebar_sections(
+            console.cpu(),
+            console.ppu(),
+            console.interrupts(),
+        )
+    }
 }
 
 /// The inverse of the seam's numeric convention; ids 8+ are not GB controls.
@@ -113,16 +125,6 @@ fn button_for_control(control: ControlId) -> Option<Button> {
         7 => Button::DirectionalPad(Right),
         _ => return None,
     })
-}
-
-/// The sidebar's one-line PPU-mode label.
-fn mode_label(mode: Mode) -> &'static str {
-    match mode {
-        Mode::HorizontalBlank => "HBlank",
-        Mode::VerticalBlank => "VBlank",
-        Mode::OamScan => "OAM Scan",
-        Mode::Drawing => "Drawing",
-    }
 }
 
 /// A Game Boy core adapted to the seam. One generic wrapper serves both models;
@@ -354,6 +356,10 @@ where
         self.core.register_groups()
     }
 
+    fn sidebar_sections(&self) -> Vec<inspect::Section> {
+        M::sidebar_sections(self.core.game_boy())
+    }
+
     fn memory_regions(&self) -> &'static [inspect::MemoryRegion] {
         self.core.memory_regions()
     }
@@ -467,7 +473,7 @@ where
             video_label: "PPU",
             video_summary: format!(
                 "{} · ly {}",
-                mode_label(console.ppu().mode()),
+                crate::debugger::inspection::mode_label(console.ppu().mode()),
                 console.ppu().video.ly()
             ),
             frame,

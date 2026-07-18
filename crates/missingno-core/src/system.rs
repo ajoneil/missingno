@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use crate::HighPass;
 use crate::cdl::CdlWindow;
-use crate::inspect::{MemoryRegion, MemoryWindow, RegisterGroup, Watch, Watchable};
+use crate::inspect::{MemoryRegion, MemoryWindow, RegisterGroup, Section, Watch, Watchable};
 use crate::isa::InstructionSet;
 use crate::symbols::{Symbol, SymbolTable};
 use crate::video::{Frame, VideoOut};
@@ -97,6 +97,12 @@ pub trait InspectSnapshot: Send {
     /// runs on the emulation thread.
     fn register_groups(&self) -> Vec<RegisterGroup> {
         Vec::new()
+    }
+    /// The sidebar sections as captured, so the schema-driven sidebar renders
+    /// the same content while the core runs as it does paused. Defaults to a
+    /// single CPU section from the captured register groups.
+    fn sidebar_sections(&self) -> Vec<Section> {
+        crate::inspect::default_sections(self.register_groups())
     }
     /// A span of memory captured this vblank, for the memory viewer while the
     /// core runs. `None` when the family captures no such window — the viewer
@@ -213,6 +219,12 @@ pub trait SystemDebugger: Send {
     /// The register groups this core exposes for the registers view.
     fn register_groups(&self) -> Vec<RegisterGroup> {
         Vec::new()
+    }
+    /// The structured left-column sidebar this core exposes. Defaults to a
+    /// single CPU section from [`register_groups`](Self::register_groups); a
+    /// family overrides to add its video and system sections.
+    fn sidebar_sections(&self) -> Vec<Section> {
+        crate::inspect::default_sections(self.register_groups())
     }
     /// The CPU-visible address map, named by role.
     fn memory_regions(&self) -> &'static [MemoryRegion] {

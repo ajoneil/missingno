@@ -33,7 +33,8 @@ use crate::ppu::{
     types::{
         control::Control,
         palette::Palette,
-        sprites::{Sprite, SpriteId},
+        sprites::{Sprite, SpriteId, SpriteSize},
+        tiles::TileAddressMode,
     },
 };
 use crate::{Console, Model};
@@ -430,6 +431,262 @@ pub enum ColorSnapshot {
     },
 }
 
+// --- Sidebar sections --------------------------------------------------------
+
+/// The sidebar heading for a PPU mode.
+pub fn mode_label(mode: Mode) -> &'static str {
+    match mode {
+        Mode::HorizontalBlank => "HBlank",
+        Mode::VerticalBlank => "VBlank",
+        Mode::OamScan => "OAM Scan",
+        Mode::Drawing => "Drawing",
+    }
+}
+
+/// The accent class for a PPU mode's inline detail.
+fn mode_tone(mode: Mode) -> inspect::Tone {
+    match mode {
+        Mode::HorizontalBlank => inspect::Tone::Idle,
+        Mode::VerticalBlank => inspect::Tone::Active,
+        Mode::OamScan => inspect::Tone::Scanning,
+        Mode::Drawing => inspect::Tone::Rendering,
+    }
+}
+
+/// The five interrupt sources, in the order the interrupt table's columns show
+/// them.
+const INTERRUPT_SOURCES: [interrupts::Interrupt; 5] = [
+    interrupts::Interrupt::VideoBetweenFrames,
+    interrupts::Interrupt::VideoStatus,
+    interrupts::Interrupt::Timer,
+    interrupts::Interrupt::Serial,
+    interrupts::Interrupt::Joypad,
+];
+
+// A system composes its own `Vec<Section>` from these shared part-builders
+// over the CpuSource/PpuSource surfaces, deciding its own section summaries,
+// activity, and where its console-specific content sits. DMG composes with
+// `dmg_sidebar_sections`; CGB composes in `missingno-gbc` from the same parts
+// plus its colour state.
+
+/// The CPU section's collapsed summary.
+pub fn cpu_summary(cpu: &impl CpuSource) -> String {
+    format!(
+        "pc {:04X} · sp {:04X}",
+        cpu.ir_address(),
+        cpu.stack_pointer()
+    )
+}
+
+/// The shared CPU block list: the pc/sp pointers, the `af`/`bc`/`de`/`hl`
+/// register pairs, and the interrupt table.
+pub fn cpu_blocks(
+    cpu: &impl CpuSource,
+    ints: &interrupts::Registers,
+) -> Vec<inspect::SectionBlock> {
+    let hex8 = |name, register| inspect::Register {
+        name,
+        value: cpu.get_register8(register) as u32,
+        bits: 8,
+        style: inspect::ValueStyle::Hex,
+    };
+    let f = inspect::Register {
+        name: "f",
+        value: cpu.flags().bits() as u32,
+        bits: 8,
+        style: inspect::ValueStyle::Flags(SM83_FLAGS),
+    };
+    let pairs = vec![
+        inspect::RegisterPair {
+            high: hex8("a", Register8::A),
+            low: f,
+        },
+        inspect::RegisterPair {
+            high: hex8("b", Register8::B),
+            low: hex8("c", Register8::C),
+        },
+        inspect::RegisterPair {
+            high: hex8("d", Register8::D),
+            low: hex8("e", Register8::E),
+        },
+        inspect::RegisterPair {
+            high: hex8("h", Register8::H),
+            low: hex8("l", Register8::L),
+        },
+    ];
+    let pointer = |name, value: u16| inspect::Register {
+        name,
+        value: value as u32,
+        bits: 16,
+        style: inspect::ValueStyle::Hex,
+    };
+
+    vec![
+        inspect::SectionBlock::Pointers(vec![
+            pointer("pc", cpu.ir_address()),
+            pointer("sp", cpu.stack_pointer()),
+        ]),
+        inspect::SectionBlock::Rule,
+        inspect::SectionBlock::Pairs(pairs),
+        inspect::SectionBlock::Rule,
+        inspect::SectionBlock::Table(interrupt_table(ints, cpu.interrupts_enabled())),
+    ]
+}
+
+fn interrupt_table(ints: &interrupts::Registers, ime: bool) -> inspect::BitTable {
+    inspect::BitTable {
+        columns: &["VBlank", "Stat", "Timer", "Serial", "Joypad"],
+        corner: Some(inspect::Flag {
+            name: "IME",
+            active: ime,
+        }),
+        rows: vec![
+            inspect::BitRow {
+                name: "IE",
+                bits: INTERRUPT_SOURCES.iter().map(|&i| ints.enabled(i)).collect(),
+            },
+            inspect::BitRow {
+                name: "IF",
+                bits: INTERRUPT_SOURCES
+                    .iter()
+                    .map(|&i| ints.requested(i))
+                    .collect(),
+            },
+        ],
+    }
+}
+
+/// The PPU section's collapsed summary.
+pub fn ppu_summary(ppu: &impl PpuSource) -> String {
+    format!("{} · ly {}", mode_label(ppu.mode()), ppu.ly())
+}
+
+/// The accented PPU-mode detail beside the section heading.
+pub fn ppu_detail(ppu: &impl PpuSource) -> inspect::Detail {
+    let mode = ppu.mode();
+    inspect::Detail {
+        text: mode_label(mode).to_string(),
+        tone: mode_tone(mode),
+    }
+}
+
+/// The ly/lx position row.
+pub fn ppu_position_block(ppu: &impl PpuSource) -> inspect::SectionBlock {
+    inspect::SectionBlock::Rows(vec![
+        inspect::Row::value("ly", ppu.ly().to_string()),
+        inspect::Row::value("lx", ppu.lx().to_string()),
+    ])
+}
+
+/// The background enable/map/tile and scroll rows.
+pub fn ppu_background_block(ppu: &impl PpuSource) -> inspect::SectionBlock {
+    let control = ppu.control();
+    inspect::SectionBlock::Rows(vec![
+        inspect::Row::flag("bg", control.background_and_window_enabled()),
+        inspect::Row::value("map", tile_map_addr(control.background_tile_map().0)),
+        inspect::Row::value("tile", tile_addr(control.tile_address_mode())),
+        inspect::Row::value("scx", format!("{:02X}", ppu.scx())),
+        inspect::Row::value("scy", format!("{:02X}", ppu.scy())),
+    ])
+}
+
+/// The window enable/map and position rows.
+pub fn ppu_window_block(ppu: &impl PpuSource) -> inspect::SectionBlock {
+    let control = ppu.control();
+    inspect::SectionBlock::Rows(vec![
+        inspect::Row::flag("win", control.window_enabled()),
+        inspect::Row::value("map", tile_map_addr(control.window_tile_map().0)),
+        inspect::Row::value("wx", format!("{:02X}", ppu.wx())),
+        inspect::Row::value("wy", format!("{:02X}", ppu.wy())),
+    ])
+}
+
+/// The sprite enable and size rows.
+pub fn ppu_sprites_block(ppu: &impl PpuSource) -> inspect::SectionBlock {
+    let control = ppu.control();
+    inspect::SectionBlock::Rows(vec![
+        inspect::Row::flag("sprites", control.sprites_enabled()),
+        inspect::Row::value(
+            "size",
+            match control.sprite_size() {
+                SpriteSize::Single => "8×8",
+                SpriteSize::Double => "8×16",
+            },
+        ),
+    ])
+}
+
+/// The DMG background palette (BGP) as a packed shade-swatch row.
+pub fn dmg_background_swatches(ppu: &impl PpuSource) -> inspect::SectionBlock {
+    inspect::SectionBlock::Swatches(vec![inspect::SwatchRow::Shades {
+        label: "bgp",
+        packed: ppu.bgp(),
+    }])
+}
+
+/// The DMG object palettes (OBP0/OBP1) as packed shade-swatch rows.
+pub fn dmg_object_swatches(ppu: &impl PpuSource) -> inspect::SectionBlock {
+    inspect::SectionBlock::Swatches(vec![
+        inspect::SwatchRow::Shades {
+            label: "obp0",
+            packed: ppu.obp0(),
+        },
+        inspect::SwatchRow::Shades {
+            label: "obp1",
+            packed: ppu.obp1(),
+        },
+    ])
+}
+
+fn tile_map_addr(id: u8) -> &'static str {
+    if id == 0 { "9800" } else { "9C00" }
+}
+
+fn tile_addr(mode: TileAddressMode) -> &'static str {
+    match mode {
+        TileAddressMode::Block0Block1 => "8000",
+        TileAddressMode::Block2Block1 => "8800",
+    }
+}
+
+/// The DMG sidebar: CPU and PPU sections composed from the shared parts, with
+/// the DMG shade swatches sat with the registers they describe. Shared by the
+/// live console (paused) and the running snapshot so the two agree.
+pub fn dmg_sidebar_sections(
+    cpu: &impl CpuSource,
+    ppu: &impl PpuSource,
+    ints: &interrupts::Registers,
+) -> Vec<inspect::Section> {
+    use inspect::SectionBlock::Rule;
+
+    vec![
+        inspect::Section {
+            name: "CPU",
+            summary: cpu_summary(cpu),
+            active: Some(!cpu.halted()),
+            detail: None,
+            blocks: cpu_blocks(cpu, ints),
+        },
+        inspect::Section {
+            name: "PPU",
+            summary: ppu_summary(ppu),
+            active: Some(ppu.control().video_enabled()),
+            detail: Some(ppu_detail(ppu)),
+            blocks: vec![
+                ppu_position_block(ppu),
+                Rule,
+                ppu_background_block(ppu),
+                dmg_background_swatches(ppu),
+                Rule,
+                ppu_window_block(ppu),
+                Rule,
+                ppu_sprites_block(ppu),
+                dmg_object_swatches(ppu),
+            ],
+        },
+    ]
+}
+
 // --- Console snapshot --------------------------------------------------------
 
 /// A per-vblank copy of the model-shared debugger state, taken on the
@@ -486,6 +743,9 @@ impl InspectSnapshot for GbSnapshot {
     fn register_groups(&self) -> Vec<inspect::RegisterGroup> {
         cpu_register_groups(&self.cpu)
     }
+    fn sidebar_sections(&self) -> Vec<inspect::Section> {
+        dmg_sidebar_sections(&self.cpu, &self.ppu, &self.interrupts)
+    }
     fn memory_window(&self) -> Option<&inspect::MemoryWindow> {
         Some(&self.memory)
     }
@@ -497,8 +757,7 @@ mod tests {
     use crate::cartridge::Cartridge;
     use crate::debugger::Debugger;
 
-    #[test]
-    fn snapshot_register_groups_match_live() {
+    fn stepped_dmg() -> Debugger<crate::Dmg> {
         let mut rom = vec![0u8; 0x8000];
         rom[0x100] = 0x00;
         rom[0x101..0x104].copy_from_slice(&[0xc3, 0x50, 0x01]);
@@ -507,6 +766,12 @@ mod tests {
         for _ in 0..4 {
             debugger.step();
         }
+        debugger
+    }
+
+    #[test]
+    fn snapshot_register_groups_match_live() {
+        let debugger = stepped_dmg();
         let live = debugger.register_groups();
         let snapshot = GbSnapshot::capture(
             debugger.game_boy(),
@@ -519,5 +784,88 @@ mod tests {
             format!("{live:?}"),
             format!("{:?}", snapshot.register_groups())
         );
+    }
+
+    #[test]
+    fn snapshot_sidebar_sections_match_live() {
+        let debugger = stepped_dmg();
+        let console = debugger.game_boy();
+        let live = dmg_sidebar_sections(console.cpu(), console.ppu(), console.interrupts());
+        let snapshot = GbSnapshot::capture(
+            console,
+            ColorSnapshot::Dmg { sgb: false },
+            0,
+            Arc::new(SymbolTable::default()),
+            CdlWindow::default(),
+        );
+        assert_eq!(
+            format!("{live:?}"),
+            format!("{:?}", snapshot.sidebar_sections())
+        );
+    }
+
+    #[test]
+    fn interrupt_table_tracks_enabled_and_requested() {
+        use crate::interrupts::{Interrupt, InterruptFlags, Registers};
+
+        let mut ints = Registers::new();
+        ints.enabled = InterruptFlags::TIMER | InterruptFlags::JOYPAD;
+        ints.request(Interrupt::VideoBetweenFrames);
+
+        let table = interrupt_table(&ints, true);
+        assert_eq!(
+            table.columns,
+            &["VBlank", "Stat", "Timer", "Serial", "Joypad"]
+        );
+        assert_eq!(
+            table.corner.map(|flag| (flag.name, flag.active)),
+            Some(("IME", true))
+        );
+        assert_eq!(table.rows[0].name, "IE");
+        assert_eq!(table.rows[0].bits, vec![false, false, true, false, true]);
+        assert_eq!(table.rows[1].name, "IF");
+        assert_eq!(table.rows[1].bits, vec![true, false, false, false, false]);
+    }
+
+    #[test]
+    fn dmg_swatch_blocks_carry_packed_registers() {
+        let debugger = stepped_dmg();
+        let ppu = PpuView::capture(debugger.game_boy().ppu());
+
+        let rows: Vec<_> = [dmg_background_swatches(&ppu), dmg_object_swatches(&ppu)]
+            .into_iter()
+            .flat_map(|block| match block {
+                inspect::SectionBlock::Swatches(rows) => rows,
+                _ => panic!("expected swatches"),
+            })
+            .collect();
+        let expected = [
+            ("bgp", ppu.bgp()),
+            ("obp0", ppu.obp0()),
+            ("obp1", ppu.obp1()),
+        ];
+        assert_eq!(rows.len(), expected.len());
+        for (row, (label, packed)) in rows.iter().zip(expected) {
+            match row {
+                inspect::SwatchRow::Shades {
+                    label: got_label,
+                    packed: got_packed,
+                } => {
+                    assert_eq!(*got_label, label);
+                    assert_eq!(*got_packed, packed);
+                }
+                _ => panic!("expected packed shades"),
+            }
+        }
+
+        // The DMG PPU section places both swatch blocks with its registers.
+        let console = debugger.game_boy();
+        let sections = dmg_sidebar_sections(console.cpu(), console.ppu(), console.interrupts());
+        let swatch_blocks = sections[1]
+            .blocks
+            .iter()
+            .filter(|block| matches!(block, inspect::SectionBlock::Swatches(_)))
+            .count();
+        assert_eq!(swatch_blocks, 2);
     }
 }

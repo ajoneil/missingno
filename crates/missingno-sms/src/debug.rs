@@ -6,7 +6,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use missingno_core::inspect::{Register, RegisterGroup, ValueStyle};
+use missingno_core::inspect::{
+    BitRow, BitTable, Register, RegisterGroup, Row, Section, SectionBlock, ValueStyle,
+};
 use missingno_core::stepping::SteppingSystem;
 use missingno_core::system::{ControlId, ControlInput, DebugView, InspectSnapshot, RunningStatus};
 use missingno_core::video::IndexedFrame;
@@ -67,6 +69,9 @@ impl InspectSnapshot for SmsSnapshot {
     fn register_groups(&self) -> Vec<RegisterGroup> {
         cpu_register_groups(&self.state)
     }
+    fn sidebar_sections(&self) -> Vec<Section> {
+        sms_sidebar_sections(&self.state)
+    }
 }
 
 /// The Z80 register file as one inspection group, shared by the live view and
@@ -93,6 +98,52 @@ fn cpu_register_groups(state: &SmsInspectState) -> Vec<RegisterGroup> {
             hex("pc", state.pc as u32, 16),
         ],
     }]
+}
+
+/// The SMS sidebar sections, shared by the live view and the running snapshot:
+/// the Z80 register file plus the VDP's position, status, and registers.
+fn sms_sidebar_sections(state: &SmsInspectState) -> Vec<Section> {
+    let mut sections = missingno_core::inspect::default_sections(cpu_register_groups(state));
+    sections.push(vdp_section(state));
+    sections
+}
+
+fn vdp_section(state: &SmsInspectState) -> Section {
+    let registers = state
+        .vdp_registers
+        .iter()
+        .enumerate()
+        .map(|(index, &value)| Row::value(format!("r{index}"), format!("{value:02X}")))
+        .collect();
+    Section {
+        name: "VDP",
+        summary: format!("line {} · dot {}", state.line, state.dot),
+        active: None,
+        detail: None,
+        blocks: vec![
+            SectionBlock::Rows(vec![
+                Row::value("line", state.line.to_string()),
+                Row::value("dot", state.dot.to_string()),
+            ]),
+            SectionBlock::Rule,
+            SectionBlock::Table(status_table(state.vdp_status)),
+            SectionBlock::Rule,
+            SectionBlock::Rows(registers),
+        ],
+    }
+}
+
+/// The VDP status register's three documented flags; the low five bits carry
+/// the fifth-sprite number.
+fn status_table(status: u8) -> BitTable {
+    BitTable {
+        columns: &["int", "ovr", "col"],
+        corner: None,
+        rows: vec![BitRow {
+            name: "status",
+            bits: vec![status & 0x80 != 0, status & 0x40 != 0, status & 0x20 != 0],
+        }],
+    }
 }
 
 /// Master System media is recognised by its `.sms` file extension.
@@ -208,6 +259,10 @@ impl SteppingSystem for SmsSystem {
 
     fn register_groups(state: &SmsInspectState) -> Vec<RegisterGroup> {
         cpu_register_groups(state)
+    }
+
+    fn sidebar_sections(state: &SmsInspectState) -> Vec<Section> {
+        sms_sidebar_sections(state)
     }
 
     fn snapshot(state: &SmsInspectState, frame: u64) -> DebugView {

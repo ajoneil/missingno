@@ -14,7 +14,7 @@ use crate::console::{Frame, Vcs};
 const JSR: u8 = 0x20;
 
 /// Named bits of the 6502 status register `p`; the B flag is not architectural.
-const MOS6502_FLAGS: &[inspect::FlagName] = &[
+pub(crate) const MOS6502_FLAGS: &[inspect::FlagName] = &[
     inspect::FlagName { name: "n", bit: 7 },
     inspect::FlagName { name: "v", bit: 6 },
     inspect::FlagName { name: "d", bit: 3 },
