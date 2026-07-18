@@ -62,6 +62,8 @@ const UNLIT_INSET: f32 = 2.0;
 /// A bit table cell's height, so its header, rows, and pips align across
 /// columns.
 const CELL_HEIGHT: f32 = 16.0;
+/// A pair-matrix cell's width, so its column headers and triangular pips align.
+const PAIR_CELL_W: f32 = 16.0;
 
 /// Content width available to a packed row block, inside the section body's
 /// padding. Adjacent short rows coalesce onto one line up to this budget.
@@ -295,6 +297,7 @@ fn render_block(
         Pairs(pairs) => pairs_block(&pairs),
         Pointers(pointers) => pointers_block(&pointers),
         Table(table) => bit_table(&table),
+        Relations(matrix) => pair_matrix(&matrix),
         Rows(rows) => rows_block(&rows),
         Sweeps(sweeps) => sweeps_block(&sweeps),
         Swatches(rows) => swatches_block(&rows, colors),
@@ -808,6 +811,67 @@ fn flag_badge(name: &str, active: bool) -> Element<'static, app::Message> {
         ..Default::default()
     })
     .into()
+}
+
+// --- Pair matrix -------------------------------------------------------------
+
+/// A symmetric relation as a lower-triangular pip grid: object labels down the
+/// left (every entity past the first), object headers across the top (every
+/// entity before the last), and a pip where a row meets a column below its
+/// diagonal — the cell for that unordered pair. The empty upper triangle is left
+/// as blank space.
+fn pair_matrix(matrix: &inspect::PairMatrix) -> Element<'static, app::Message> {
+    let n = matrix.entities.len();
+    let mut grid = iced::widget::row![].spacing(xs()).align_y(Vertical::Top);
+
+    // Left column: a blank corner over the row labels (each entity past the
+    // first, since the first is never a row).
+    let mut labels = column![cell(Space::new().into())].spacing(s());
+    for &name in &matrix.entities[1..] {
+        labels = labels.push(cell(
+            text(name.to_owned())
+                .font(fonts::monospace())
+                .size(LABEL)
+                .color(palette::MUTED)
+                .into(),
+        ));
+    }
+    grid = grid.push(labels);
+
+    // One column per entity that can be the lower member of a pair (every
+    // entity before the last).
+    for col in 0..n.saturating_sub(1) {
+        let mut cells = column![pair_slot(
+            text(matrix.entities[col].to_owned())
+                .font(fonts::monospace())
+                .size(HEADER)
+                .color(palette::MUTED)
+                .into(),
+        )]
+        .spacing(s());
+        for row in 1..n {
+            let content: Element<'static, app::Message> = if col < row {
+                let cell = matrix.cell(col, row);
+                with_help(pip(cell.set, palette::GREEN), cell.help)
+            } else {
+                Space::new().into()
+            };
+            cells = cells.push(pair_slot(content));
+        }
+        grid = grid.push(cells);
+    }
+
+    grid.into()
+}
+
+/// A fixed-size pair-matrix cell, so headers and pips align across the triangle.
+fn pair_slot(content: Element<'static, app::Message>) -> Element<'static, app::Message> {
+    container(content)
+        .width(Length::Fixed(PAIR_CELL_W))
+        .height(Length::Fixed(CELL_HEIGHT))
+        .center_x(Length::Fixed(PAIR_CELL_W))
+        .center_y(Length::Fixed(CELL_HEIGHT))
+        .into()
 }
 
 // --- Palette swatches --------------------------------------------------------

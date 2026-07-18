@@ -113,6 +113,10 @@ pub enum SectionBlock {
     /// The interrupt-table shape: named bit columns, one row per source
     /// register, an optional corner master flag (IME).
     Table(BitTable),
+    /// A symmetric relation over a small set of entities, one boolean per
+    /// unordered pair (the TIA collision latches over the six drawn objects). A
+    /// CLI renders it as a triangular table.
+    Relations(PairMatrix),
     /// Label/value rows, each optionally gated by an activity pip.
     Rows(Vec<Row>),
     /// Values that count up across a hardware period (a scanline, a beam
@@ -311,6 +315,52 @@ pub struct Flag {
     pub active: bool,
 }
 
+/// A symmetric pairwise relation over a small set of entities: one boolean per
+/// unordered pair. The TIA's fifteen collision latches are one such relation
+/// over its six drawn objects. Rendered as a lower-triangular table.
+#[derive(Clone, Debug)]
+pub struct PairMatrix {
+    /// The related entities, in display order.
+    pub entities: &'static [&'static str],
+    /// One cell per unordered pair, in canonical order: for `j` in `1..n`, for
+    /// `i` in `0..j` — the pair `(i, j)`. Length is [`PairMatrix::pair_count`].
+    pub cells: Vec<PairCell>,
+}
+
+/// One cell of a [`PairMatrix`]: whether the pair's relation currently holds,
+/// with an optional one-line description shown on hover.
+#[derive(Clone, Debug)]
+pub struct PairCell {
+    pub set: bool,
+    pub help: Option<&'static str>,
+}
+
+/// The canonical cell index for the unordered pair of entity positions `a` and
+/// `b` (with `a != b`): `j·(j−1)/2 + i` where `i < j`. Packs the lower triangle
+/// row by row, so it agrees with the `for j { for i in 0..j }` build order.
+pub fn pair_index(a: usize, b: usize) -> usize {
+    let (i, j) = if a < b { (a, b) } else { (b, a) };
+    j * (j - 1) / 2 + i
+}
+
+impl PairMatrix {
+    /// The number of unordered pairs among `n` entities: `n·(n−1)/2`.
+    pub fn pair_count(n: usize) -> usize {
+        n * n.saturating_sub(1) / 2
+    }
+
+    /// Build a matrix, checking the cell count matches the entity count.
+    pub fn new(entities: &'static [&'static str], cells: Vec<PairCell>) -> Self {
+        debug_assert_eq!(cells.len(), Self::pair_count(entities.len()));
+        PairMatrix { entities, cells }
+    }
+
+    /// The cell for the unordered pair of entity positions `a` and `b`.
+    pub fn cell(&self, a: usize, b: usize) -> &PairCell {
+        &self.cells[pair_index(a, b)]
+    }
+}
+
 /// One label/value row. `active` adds an activity pip (the PPU enable rows);
 /// `None` is a plain label/value row. `help` is a one-line description shown on
 /// hover.
@@ -424,7 +474,47 @@ impl MemoryWindow {
 
 #[cfg(test)]
 mod tests {
-    use super::{MemoryWindow, Sweep, SweepZone, Tone};
+    use super::{MemoryWindow, PairMatrix, Sweep, SweepZone, Tone, pair_index};
+
+    #[test]
+    fn pair_index_packs_the_lower_triangle() {
+        // Canonical order for six entities: for j in 1..6, for i in 0..j.
+        let mut expected = 0;
+        for j in 1..6 {
+            for i in 0..j {
+                assert_eq!(pair_index(i, j), expected);
+                expected += 1;
+            }
+        }
+        assert_eq!(expected, PairMatrix::pair_count(6));
+    }
+
+    #[test]
+    fn pair_index_is_symmetric_and_covers_every_pair() {
+        let n = 6;
+        let mut seen = std::collections::HashSet::new();
+        for a in 0..n {
+            for b in 0..n {
+                if a == b {
+                    continue;
+                }
+                // Order-independent: (a,b) and (b,a) name the same cell.
+                assert_eq!(pair_index(a, b), pair_index(b, a));
+                seen.insert(pair_index(a, b));
+            }
+        }
+        // Every index in 0..pair_count is hit exactly once.
+        assert_eq!(seen.len(), PairMatrix::pair_count(n));
+        assert!(seen.iter().all(|&i| i < PairMatrix::pair_count(n)));
+    }
+
+    #[test]
+    fn pair_count_is_n_choose_2() {
+        assert_eq!(PairMatrix::pair_count(0), 0);
+        assert_eq!(PairMatrix::pair_count(1), 0);
+        assert_eq!(PairMatrix::pair_count(2), 1);
+        assert_eq!(PairMatrix::pair_count(6), 15);
+    }
 
     fn ly_sweep(value: u32) -> Sweep {
         Sweep::new("ly", value, 154).zones(vec![

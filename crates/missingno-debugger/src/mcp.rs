@@ -12,7 +12,8 @@
 use std::io::{self, BufRead, Write};
 
 use missingno_core::inspect::{
-    BitTable, PixelStrip, Register, Section, SectionBlock, SwatchRow, ValueStyle, WatchTerm,
+    BitTable, PairMatrix, PixelStrip, Register, Section, SectionBlock, SwatchRow, ValueStyle,
+    WatchTerm,
 };
 use missingno_core::system::{ControlId, ControlInput};
 use serde_json::{Value, json};
@@ -909,6 +910,7 @@ fn render_block(block: &SectionBlock, out: &mut String) {
             }
         }
         SectionBlock::Table(table) => render_table(table, out),
+        SectionBlock::Relations(matrix) => render_relations(matrix, out),
         SectionBlock::Rows(rows) => {
             for row in rows {
                 let pip = match row.active {
@@ -978,6 +980,35 @@ fn render_table(table: &BitTable, out: &mut String) {
             })
             .collect();
         out.push_str(&format!("  {: <10}{}\n", row.name, bits.join(" ")));
+    }
+}
+
+fn render_relations(matrix: &PairMatrix, out: &mut String) {
+    let n = matrix.entities.len();
+    if n < 2 {
+        return;
+    }
+    // Column headers: every entity before the last, each above its own column.
+    let header = matrix.entities[..n - 1].join(" ");
+    out.push_str(&format!("  {: <10}{header}\n", ""));
+    // One ragged row per entity past the first — cells only up to the diagonal.
+    for row in 1..n {
+        let cells: Vec<String> = (0..row)
+            .map(|col| {
+                let width = matrix.entities[col].len().max(1);
+                let glyph = if matrix.cell(col, row).set {
+                    "●"
+                } else {
+                    "·"
+                };
+                format!("{glyph:^width$}")
+            })
+            .collect();
+        out.push_str(&format!(
+            "  {: <10}{}\n",
+            matrix.entities[row],
+            cells.join(" ")
+        ));
     }
 }
 
@@ -1088,7 +1119,8 @@ fn base64_encode(data: &[u8]) -> String {
 mod tests {
     use super::*;
     use missingno_core::inspect::{
-        BitColumn, BitRow, FlagName, Register, RegisterGroup, Row, Sweep, SweepZone, Tone,
+        BitColumn, BitRow, FlagName, PairCell, PairMatrix, Register, RegisterGroup, Row, Sweep,
+        SweepZone, Tone,
     };
 
     #[test]
@@ -1192,6 +1224,23 @@ mod tests {
                         tone: Tone::Neutral,
                     }],
                 }),
+                SectionBlock::Relations(PairMatrix::new(
+                    &["a", "b", "c"],
+                    vec![
+                        PairCell {
+                            set: true,
+                            help: None,
+                        },
+                        PairCell {
+                            set: false,
+                            help: None,
+                        },
+                        PairCell {
+                            set: false,
+                            help: None,
+                        },
+                    ],
+                )),
             ],
         }]
     }
@@ -1211,5 +1260,8 @@ mod tests {
         assert!(out.contains("ly 100/154 (visible)"));
         assert!(out.contains(&format!("fifo: {CELL_FILLED}{CELL_EMPTY}{CELL_FILLED}")));
         assert!(out.contains("ie"));
+        // The pair matrix: headers a/b, a set (a,b) pair pip on row b.
+        assert!(out.contains("a b"));
+        assert!(out.contains("●"));
     }
 }

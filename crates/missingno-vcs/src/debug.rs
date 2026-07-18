@@ -571,39 +571,51 @@ fn tia_graphics_block(state: &VcsInspectState) -> inspect::SectionBlock {
     ])
 }
 
-/// The 15 TIA collision latches, one per object pair among the six drawn
-/// objects (two players, two missiles, ball, playfield). Each latch sets when
-/// its pair overlaps a pixel and holds until CXCLR; the pip lights while set.
-/// Named `a-b` for the pair, with the source register and bit in the help.
-fn tia_collision_block(state: &VcsInspectState) -> inspect::SectionBlock {
-    use inspect::{Row, SectionBlock};
+/// The six objects the TIA draws and tests for collision, in the matrix's
+/// display order. Positions index the collision pairs below.
+const COLLISION_OBJECTS: [&str; 6] = ["p0", "p1", "m0", "m1", "bl", "pf"];
 
-    // (label, CXxx register index, D7/D6 bit, help) in CollisionRegister order.
-    const PAIRS: [(&str, usize, u8, &str); 15] = [
-        ("m0-p1", 0, 0x80, "missile 0 vs player 1 (CXM0P D7)"),
-        ("m0-p0", 0, 0x40, "missile 0 vs player 0 (CXM0P D6)"),
-        ("m1-p0", 1, 0x80, "missile 1 vs player 0 (CXM1P D7)"),
-        ("m1-p1", 1, 0x40, "missile 1 vs player 1 (CXM1P D6)"),
-        ("p0-pf", 2, 0x80, "player 0 vs playfield (CXP0FB D7)"),
-        ("p0-bl", 2, 0x40, "player 0 vs ball (CXP0FB D6)"),
-        ("p1-pf", 3, 0x80, "player 1 vs playfield (CXP1FB D7)"),
-        ("p1-bl", 3, 0x40, "player 1 vs ball (CXP1FB D6)"),
-        ("m0-pf", 4, 0x80, "missile 0 vs playfield (CXM0FB D7)"),
-        ("m0-bl", 4, 0x40, "missile 0 vs ball (CXM0FB D6)"),
-        ("m1-pf", 5, 0x80, "missile 1 vs playfield (CXM1FB D7)"),
-        ("m1-bl", 5, 0x40, "missile 1 vs ball (CXM1FB D6)"),
-        ("bl-pf", 6, 0x80, "ball vs playfield (CXBLPF D7)"),
-        ("p0-p1", 7, 0x80, "player 0 vs player 1 (CXPPMM D7)"),
-        ("m0-m1", 7, 0x40, "missile 0 vs missile 1 (CXPPMM D6)"),
+/// The 15 TIA collision latches as one symmetric relation over the six drawn
+/// objects: each unordered pair holds when the two overlap a pixel, and stays
+/// latched until CXCLR. Each entry maps a pair of [`COLLISION_OBJECTS`] positions
+/// to its CXxx latch register and D7/D6 bit (per the TIA's `latch_collisions`),
+/// with the source register and bit in the help.
+fn tia_collision_block(state: &VcsInspectState) -> inspect::SectionBlock {
+    use inspect::{PairCell, PairMatrix, SectionBlock};
+
+    // (object a, object b, CXxx register index, D7/D6 bit, help). Object indices
+    // are into COLLISION_OBJECTS: p0=0 p1=1 m0=2 m1=3 bl=4 pf=5.
+    const PAIRS: [(usize, usize, usize, u8, &str); 15] = [
+        (2, 1, 0, 0x80, "missile 0 vs player 1 (CXM0P D7)"),
+        (2, 0, 0, 0x40, "missile 0 vs player 0 (CXM0P D6)"),
+        (3, 0, 1, 0x80, "missile 1 vs player 0 (CXM1P D7)"),
+        (3, 1, 1, 0x40, "missile 1 vs player 1 (CXM1P D6)"),
+        (0, 5, 2, 0x80, "player 0 vs playfield (CXP0FB D7)"),
+        (0, 4, 2, 0x40, "player 0 vs ball (CXP0FB D6)"),
+        (1, 5, 3, 0x80, "player 1 vs playfield (CXP1FB D7)"),
+        (1, 4, 3, 0x40, "player 1 vs ball (CXP1FB D6)"),
+        (2, 5, 4, 0x80, "missile 0 vs playfield (CXM0FB D7)"),
+        (2, 4, 4, 0x40, "missile 0 vs ball (CXM0FB D6)"),
+        (3, 5, 5, 0x80, "missile 1 vs playfield (CXM1FB D7)"),
+        (3, 4, 5, 0x40, "missile 1 vs ball (CXM1FB D6)"),
+        (4, 5, 6, 0x80, "ball vs playfield (CXBLPF D7)"),
+        (0, 1, 7, 0x80, "player 0 vs player 1 (CXPPMM D7)"),
+        (2, 3, 7, 0x40, "missile 0 vs missile 1 (CXPPMM D6)"),
     ];
 
-    let rows = PAIRS
-        .iter()
-        .map(|&(label, register, bit, help)| {
-            Row::flag(label, state.collisions[register] & bit != 0).help(help)
+    let mut cells: Vec<PairCell> = (0..PairMatrix::pair_count(COLLISION_OBJECTS.len()))
+        .map(|_| PairCell {
+            set: false,
+            help: None,
         })
         .collect();
-    SectionBlock::Rows(rows)
+    for &(a, b, register, bit, help) in &PAIRS {
+        cells[inspect::pair_index(a, b)] = PairCell {
+            set: state.collisions[register] & bit != 0,
+            help: Some(help),
+        };
+    }
+    SectionBlock::Relations(PairMatrix::new(&COLLISION_OBJECTS, cells))
 }
 
 fn tia_section(state: &VcsInspectState) -> inspect::Section {
@@ -975,6 +987,26 @@ mod tests {
         assert_eq!(cells.iter().filter(|&&b| b).count(), 3);
         // All-clear is 20 empty cells; PF0's low nibble never contributes.
         assert_eq!(playfield_cells(0x0F, 0, 0), [false; 20]);
+    }
+
+    #[test]
+    fn collision_matrix_shape_and_bit_mapping() {
+        use inspect::{PairMatrix, SectionBlock};
+
+        let mut state = VcsInspectState::default();
+        // CXP0FB D7 is player 0 vs playfield: register index 2, bit 0x80.
+        state.collisions[2] = 0x80;
+        let SectionBlock::Relations(matrix) = tia_collision_block(&state) else {
+            panic!("expected a Relations block");
+        };
+
+        assert_eq!(matrix.entities, COLLISION_OBJECTS);
+        assert_eq!(matrix.cells.len(), PairMatrix::pair_count(6));
+        // Every latch carries its source register/bit as help.
+        assert!(matrix.cells.iter().all(|cell| cell.help.is_some()));
+        // Only the p0 (0) / pf (5) pair is set.
+        assert!(matrix.cell(0, 5).set);
+        assert_eq!(matrix.cells.iter().filter(|cell| cell.set).count(), 1);
     }
 
     #[test]
