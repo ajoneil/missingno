@@ -107,8 +107,7 @@ fn main() -> iced::Result {
 
 /// The `--headless` server: build the Game Boy console through the GUI's own
 /// seam factory (boot ROM, serial link, battery-save format), then serve it
-/// over the shared `missingno-debugger` library with the Game Boy extension
-/// routes mounted.
+/// over the shared `missingno-debugger` library's generic Session routes.
 fn run_headless(
     rom_file: Option<PathBuf>,
     boot_rom: Option<BootRom>,
@@ -129,9 +128,7 @@ fn run_headless(
 
     let debugger = app::system::gb::headless_debugger(rom_data, save_data, boot_rom, link);
     let session = missingno_debugger::Session::new(debugger);
-    if let Err(e) =
-        missingno_debugger::http::serve(session, HEADLESS_PORT, missingno_debugger::extensions())
-    {
+    if let Err(e) = missingno_debugger::http::serve(session, HEADLESS_PORT) {
         eprintln!("error: {e}");
         std::process::exit(1);
     }

@@ -1,51 +1,58 @@
 #!/usr/bin/env bash
 # Debugger API helper library for the headless emulator.
-# Source this file to get gb_* functions:  . scripts/debugger.sh
+# Source this file to get dbg_* functions:  . scripts/debugger.sh
+#
+# These are core-agnostic: they drive the generic missingno-debugger HTTP
+# transport (any Game Boy, Atari VCS, NES or Master System ROM), reading the
+# console only through the Session seam routes (/status, /sections, /registers,
+# /memory, /disassembly, /step*, /waveforms, /graphics, /watches).
 #
 # Requires: jq, curl
 
-GB_URL="http://127.0.0.1:3333"
-GB_PID=""
+DBG_URL="http://127.0.0.1:3333"
+DBG_PID=""
+# Back-compat for callers that referenced the old variable name.
+GB_URL="$DBG_URL"
 
 # ── Server lifecycle ──────────────────────────────────────────────
 
-gb_start() {
-  local rom_path="${1:?usage: gb_start <rom_path>}"
+dbg_start() {
+  local rom_path="${1:?usage: dbg_start <rom_path>}"
   if [[ ! -f "$rom_path" ]]; then
     echo "error: ROM not found: $rom_path" >&2
     return 1
   fi
 
-  gb_stop 2>/dev/null
+  dbg_stop 2>/dev/null
 
-  cargo run -- "$rom_path" --headless &>/dev/null &
-  GB_PID=$!
+  cargo run -p missingno-debugger -- "$rom_path" &>/dev/null &
+  DBG_PID=$!
 
-  # Wait for server to be ready (up to 30 seconds)
+  # Wait for the server to answer /status (up to ~60s, covering a cold build).
   local attempts=0
-  while ! curl -sf "$GB_URL/cpu" >/dev/null 2>&1; do
-    if ! kill -0 "$GB_PID" 2>/dev/null; then
+  while ! curl -sf "$DBG_URL/status" >/dev/null 2>&1; do
+    if ! kill -0 "$DBG_PID" 2>/dev/null; then
       echo "error: server process died during startup" >&2
       return 1
     fi
     attempts=$((attempts + 1))
-    if [[ $attempts -ge 60 ]]; then
-      echo "error: server did not become ready in 30s" >&2
-      kill "$GB_PID" 2>/dev/null
+    if [[ $attempts -ge 120 ]]; then
+      echo "error: server did not become ready in 60s" >&2
+      kill "$DBG_PID" 2>/dev/null
       return 1
     fi
     sleep 0.5
   done
-  echo "ready (pid $GB_PID)"
+  echo "ready (pid $DBG_PID)"
 }
 
-gb_stop() {
-  if [[ -n "$GB_PID" ]] && kill -0 "$GB_PID" 2>/dev/null; then
-    kill "$GB_PID" 2>/dev/null
-    wait "$GB_PID" 2>/dev/null
-    GB_PID=""
+dbg_stop() {
+  if [[ -n "$DBG_PID" ]] && kill -0 "$DBG_PID" 2>/dev/null; then
+    kill "$DBG_PID" 2>/dev/null
+    wait "$DBG_PID" 2>/dev/null
+    DBG_PID=""
   fi
-  # Also kill any orphaned headless servers on the port
+  # Also kill any orphaned server holding the port.
   local pid
   pid=$(lsof -ti tcp:3333 2>/dev/null) || true
   if [[ -n "$pid" ]]; then
@@ -54,184 +61,173 @@ gb_stop() {
   fi
 }
 
-gb_ensure() {
-  curl -sf "$GB_URL/cpu" >/dev/null 2>&1
-}
-
-# ── Navigation ────────────────────────────────────────────────────
-
-gb_reset() {
-  curl -s -X POST "$GB_URL/reset" >/dev/null
-  curl -s -X DELETE "$GB_URL/watchpoints" >/dev/null
-  echo "reset"
-}
-
-gb_run_frames() {
-  local n="${1:?usage: gb_run_frames <count>}"
-  for _ in $(seq 1 "$n"); do
-    curl -s -X POST "$GB_URL/step-frame" >/dev/null
-  done
-}
-
-gb_goto() {
-  local scanline="${1:?usage: gb_goto <scanline> <mode>}"
-  local mode="${2:?usage: gb_goto <scanline> <mode>}"
-  curl -s -X DELETE "$GB_URL/watchpoints" >/dev/null
-  curl -s -X POST "$GB_URL/watchpoints" \
-    -d "{\"type\":\"all\",\"conditions\":[{\"type\":\"scanline\",\"value\":$scanline},{\"type\":\"ppu_mode\",\"mode\":\"$mode\"}]}" >/dev/null
-  curl -s -X POST "$GB_URL/step-frame" >/dev/null
-  curl -s -X DELETE "$GB_URL/watchpoints" >/dev/null
-  gb_ppu
-}
-
-gb_step_to_px() {
-  local target="${1:?usage: gb_step_to_px <pixel_counter_value>}"
-  local ly
-  ly=$(curl -s "$GB_URL/ppu" | jq '.ly')
-  curl -s -X DELETE "$GB_URL/watchpoints" >/dev/null
-  curl -s -X POST "$GB_URL/watchpoints" \
-    -d "{\"type\":\"all\",\"conditions\":[{\"type\":\"scanline\",\"value\":$ly},{\"type\":\"ppu_mode\",\"mode\":\"drawing\"},{\"type\":\"pixel_counter\",\"value\":$target}]}" >/dev/null
-  curl -s -X POST "$GB_URL/step-frame" >/dev/null
-  curl -s -X DELETE "$GB_URL/watchpoints" >/dev/null
-  gb_pipeline
-}
-
-gb_step_dots() {
-  local n="${1:?usage: gb_step_dots <count>}"
-  printf "%-4s  %-4s  %-3s  %-4s  %-5s  %-5s  %s\n" \
-    "step" "lx" "pc" "ready" "lo" "hi" "sprite"
-  for i in $(seq 1 "$n"); do
-    local pipe dot
-    pipe=$(curl -s -X POST "$GB_URL/step-dot")
-    dot=$(curl -s "$GB_URL/ppu" | jq -r '.lx')
-    echo "$pipe" | jq -r --arg i "$i" --arg dot "$dot" \
-      '"\($i | " " * (4 - ($i|length))) \($i)  \($dot | " " * (4 - ($dot|length)))\($dot)  \(.pixel_counter | tostring | " " * (3 - length))\(.pixel_counter)  \(if .fetcher_ready then "T   " else "F   " end)  \(.bg_shifter.low | tostring | " " * (5 - length))\(.bg_shifter.low)  \(.bg_shifter.high | tostring | " " * (5 - length))\(.bg_shifter.high)  \(.sprite_fetch // "none")"'
-  done
-}
-
-# Step N T-cycles via /step-phase (half-phase stepping was removed; the endpoint
-# now advances one T-cycle, a dot at single speed).
-gb_step_phases() {
-  local n="${1:?usage: gb_step_phases <count>}"
-  printf "%-4s  %-3s  %-4s  %-4s  %-3s  %s\n" \
-    "step" "lx" "scan" "mode" "pc" "ready"
-  for i in $(seq 1 "$n"); do
-    local result ppu
-    result=$(curl -s -X POST "$GB_URL/step-phase")
-    ppu=$(curl -s "$GB_URL/ppu")
-    printf "%-4s  %-3s  %-4s  %-4s  %-3s  %s\n" \
-      "$i" \
-      "$(echo "$ppu" | jq -r '.lx')" \
-      "$(echo "$ppu" | jq -r '.scan_counter // "-"')" \
-      "$(echo "$ppu" | jq -r '.stat.mode_number')" \
-      "$(echo "$result" | jq -r '.pixel_counter')" \
-      "$(echo "$result" | jq -r 'if .fetcher_ready then "T" else "F" end')"
-  done
+dbg_ensure() {
+  curl -sf "$DBG_URL/status" >/dev/null 2>&1
 }
 
 # ── State reading ─────────────────────────────────────────────────
 
-gb_ppu() {
-  curl -s "$GB_URL/ppu" | jq -r \
-    '"LY=\(.ly) lx=\(.lx) mode=\(.stat.mode_number) scan=\(.scan_counter // "n/a") SCX=\(.scx) SCY=\(.scy) WX=\(.wx) WY=\(.wy) BGP=\(.bgp.colors)"'
+# Program counter, frame, title, sub-instruction tick name, last stop reason.
+dbg_status() {
+  curl -s "$DBG_URL/status" | jq -r \
+    '"pc=\(.pc) frame=\(.frame) title=\"\(.title)\" tick=\(.tick // "none") stop=\(.stop.reason)"'
 }
 
-gb_pipeline() {
-  curl -s "$GB_URL/ppu/pipeline" | jq -r \
-    '"pc=\(.pixel_counter) ready=\(.fetcher_ready) lo=\(.bg_shifter.low) hi=\(.bg_shifter.high) lcd_x=\(.lcd_x) sprite=\(.sprite_fetch // "none")"'
+# The whole machine-state sidebar as JSON (sections with typed blocks).
+dbg_sections() {
+  curl -s "$DBG_URL/sections" | jq '.'
 }
 
-gb_cpu() {
-  curl -s "$GB_URL/cpu" | jq -r \
-    '"A=\(.a) B=\(.b) C=\(.c) D=\(.d) E=\(.e) H=\(.h) L=\(.l) PC=\(.pc) SP=\(.sp) IME=\(.ime) halted=\(.halted)"'
+# One named section's JSON, e.g. dbg_section CPU / dbg_section PPU.
+dbg_section() {
+  local name="${1:?usage: dbg_section <name>}"
+  curl -s "$DBG_URL/sections" | jq --arg n "$name" '.sections[] | select(.name == $n)'
 }
 
-gb_timers() {
-  curl -s "$GB_URL/timers" | jq -r \
-    '"DIV=\(.div) TIMA=\(.tima) TMA=\(.tma) TAC=\(.tac) enabled=\(.timer_enabled) freq=\(.frequency) internal=\(.internal_counter)"'
+# Every register group, each register with its rendered value, raw value and bits.
+dbg_registers() {
+  curl -s "$DBG_URL/registers" | jq -r \
+    '.groups[] | "\(.name): " + ([.registers[] | "\(.name)=\(.value)"] | join(" "))'
 }
 
-# gb_audio [channel]  — dump APU state. Without arg: master + all four channels.
-# With arg (ch1|ch2|ch3|ch4): just that channel. Returns raw JSON via jq.
-gb_audio() {
-  local ch="${1:-}"
-  if [ -z "$ch" ]; then
-    curl -s "$GB_URL/audio" | jq '.'
-  else
-    curl -s "$GB_URL/audio" | jq ".$ch"
-  fi
+# dbg_memory <hex-addr> [len]  — hex dump of console memory.
+dbg_memory() {
+  local addr="${1:?usage: dbg_memory <hex-addr> [len]}"
+  local len="${2:-1}"
+  curl -s "$DBG_URL/memory/$addr/$len" | jq -r '"\(.address): \(.hex | join(" "))"'
 }
 
-gb_screenshot() {
-  local path="${1:?usage: gb_screenshot <path>}"
-  curl -s "$GB_URL/screen/bitmap" -o "$path"
-  echo "saved $path"
+# Disassembly window from the current PC (or ?at=<hex>&count=<n> passthrough).
+dbg_disasm() {
+  local query="${1:-}"
+  curl -s "$DBG_URL/disassembly${query:+?$query}" | jq -r \
+    '.lines[] | "\(.address)  \(.bytes | join(" "))  \(if .kind == "data" then "db" else .text end)"'
 }
 
-gb_screen_row() {
-  local row="${1:?usage: gb_screen_row <row>}"
-  curl -s "$GB_URL/screen" | jq -r ".pixels[$row] | map(tostring) | join(\" \")"
+# ── Stepping ──────────────────────────────────────────────────────
+
+# dbg_step [n]  — execute n instructions (default 1), reporting the last stop.
+dbg_step() {
+  local n="${1:-1}"
+  local out
+  for _ in $(seq 1 "$n"); do
+    out=$(curl -s -X POST "$DBG_URL/step")
+  done
+  echo "$out" | jq -r '"pc=\(.pc) frame=\(.frame) stop=\(.stop.reason)"'
 }
 
-gb_sprites_on() {
-  local scanline="${1:?usage: gb_sprites_on <scanline>}"
-  curl -s "$GB_URL/sprites" | jq -r \
-    --argjson ly "$scanline" \
-    '[.[] | select(.visible and .y <= $ly and $ly < .y + 8)] |
-     if length == 0 then "no sprites on scanline \($ly)"
-     else .[] | "id=\(.id) x=\(.x) y=\(.y) tile=\(.tile) prio=\(.priority)"
-     end'
+# dbg_step_frame [n]  — run n whole frames (default 1).
+dbg_step_frame() {
+  local n="${1:-1}"
+  local out
+  for _ in $(seq 1 "$n"); do
+    out=$(curl -s -X POST "$DBG_URL/step-frame")
+  done
+  echo "$out" | jq -r '"pc=\(.pc) frame=\(.frame) stop=\(.stop.reason)"'
 }
 
-gb_tile_data() {
-  local tile_id="${1:?usage: gb_tile_data <tile_id> [row]}"
-  local row="${2:-}"
-  local addr
-  addr=$(printf "%X" $((0x8000 + tile_id * 16)))
-  if [[ -n "$row" ]]; then
-    # Single row: 2 bytes at offset row*2
-    local row_addr
-    row_addr=$(printf "%X" $((0x8000 + tile_id * 16 + row * 2)))
-    curl -s "$GB_URL/memory/$row_addr/2" | jq -r '
-      .bytes as $b | ($b[0]) as $lo | ($b[1]) as $hi |
-      [range(7;-1;-1)] | map(
-        . as $bit |
-        ((($hi / pow(2;.)) | floor) % 2 * 2) + ((($lo / pow(2;.)) | floor) % 2)
-      ) | map(tostring) | join(" ")'
-  else
-    # All 8 rows
-    curl -s "$GB_URL/memory/$addr/16" | jq -r '
-      .bytes as $b |
-      [range(8)] | map(
-        . as $r | ($b[$r*2]) as $lo | ($b[$r*2+1]) as $hi |
-        "row \($r): " + ([range(7;-1;-1)] | map(
-          . as $bit |
-          ((($hi / pow(2;.)) | floor) % 2 * 2) + ((($lo / pow(2;.)) | floor) % 2)
-        ) | map(tostring) | join(" "))
-      )[]'
-  fi
+# dbg_step_ticks [n]  — advance n sub-instruction ticks (dots / colour clocks).
+# 404s on a core whose finest step is a whole instruction.
+dbg_step_ticks() {
+  local n="${1:-1}"
+  curl -s -X POST "$DBG_URL/step-tick?count=$n" | jq -r \
+    'if .error then "error: \(.error)" else "ran=\(.ran) \(.tick) pc=\(.pc) \(.video.label): \(.video.summary)" end'
 }
 
-gb_tile_map_row() {
-  local row="${1:?usage: gb_tile_map_row <row>}"
-  local addr
-  addr=$(printf "%X" $((0x9800 + row * 32)))
-  curl -s "$GB_URL/memory/$addr/32" | jq -r \
-    '.bytes | to_entries | map("\(.key):\(.value)") | join("  ")'
+# ── Breakpoints & watches ─────────────────────────────────────────
+
+# dbg_break <hex-addr>  — set a PC breakpoint.
+dbg_break() {
+  local addr="${1:?usage: dbg_break <hex-addr>}"
+  curl -s -X PUT "$DBG_URL/breakpoints/$addr" | jq -rc '.'
 }
 
-gb_screenshot() {
-  local out="${1:?usage: gb_screenshot <output.bmp>}"
-  curl -s "$GB_URL/screen/bitmap" -o "$out"
+# dbg_breaks  — list set PC breakpoints.
+dbg_breaks() {
+  curl -s "$DBG_URL/breakpoints" | jq -c '.breakpoints'
 }
 
-gb_tiles_screenshot() {
-  local out="${1:?usage: gb_tiles_screenshot <output.bmp>}"
-  curl -s "$GB_URL/tiles/bitmap" -o "$out"
+# The watch keys this core exposes, with their parameter shapes.
+dbg_watchables() {
+  curl -s "$DBG_URL/watchables" | jq -r \
+    '.watchables[] | "\(.key) [\(.param.kind)]  \(.label)"'
 }
 
-gb_tilemap_screenshot() {
-  local map="${1:?usage: gb_tilemap_screenshot <0|1> <output.bmp>}"
-  local out="${2:?usage: gb_tilemap_screenshot <0|1> <output.bmp>}"
-  curl -s "$GB_URL/tilemap/$map/bitmap" -o "$out"
+# dbg_watch <terms-json>  — add a watch. The JSON is a single term
+#   {"key":"...","address":"ff40","value":3}
+# or a conjunction {"terms":[ ... ]}.
+dbg_watch() {
+  local body="${1:?usage: dbg_watch <terms-json>}"
+  curl -s -X PUT "$DBG_URL/watches" -d "$body" | jq -rc '.'
+}
+
+# dbg_watches  — list active watches.
+dbg_watches() {
+  curl -s "$DBG_URL/watches" | jq -c '.watches'
+}
+
+# dbg_run_until_watch [max-frames]  — step whole frames until a watch or
+# breakpoint fires, or the frame budget (default 600) is exhausted.
+dbg_run_until_watch() {
+  local budget="${1:-600}"
+  local out reason
+  for _ in $(seq 1 "$budget"); do
+    out=$(curl -s -X POST "$DBG_URL/step-frame")
+    reason=$(echo "$out" | jq -r '.stop.reason')
+    if [[ "$reason" == "watch" || "$reason" == "breakpoint" ]]; then
+      echo "$out" | jq -rc '{pc, frame, stop}'
+      return 0
+    fi
+  done
+  echo "no watch/breakpoint within $budget frames" >&2
+  return 1
+}
+
+# ── Media surfaces ────────────────────────────────────────────────
+
+# Per-channel captured DAC waveforms (label, rate, depth, active, sample count).
+# The first read auto-enables capture, so call again after stepping a frame.
+dbg_waveforms() {
+  curl -s "$DBG_URL/waveforms" | jq -r \
+    'if .waveforms == null then "(this core captures no waveforms)"
+     else .waveforms[] | "\(.label) @ \(.rate)Hz \(if .active then "driving" else "idle" end) — \(.levels | length) samples" end'
+}
+
+# Decoded graphics surfaces: atlas/map/object counts. The first read auto-enables
+# capture; call again after stepping a frame to see it fill.
+dbg_graphics() {
+  curl -s "$DBG_URL/graphics" | jq -r \
+    'if .graphics == null then "(this core exposes no graphics surfaces)"
+     else "atlases: \([.graphics.atlases[] | "\(.label)(\(.tiles | length))"] | join(", "))\n"
+        + "maps: \(.graphics.maps | length)  objects: \(if .graphics.objects then .graphics.objects.objects | length else 0 end)" end'
+}
+
+# dbg_screen <outfile.rgba>  — save the current resolved frame as raw RGBA and
+# report its dimensions. Image encoding is a transport concern (the MCP
+# get_frame tool hands back a PNG); the HTTP transport exposes raw pixels.
+dbg_screen() {
+  local out="${1:?usage: dbg_screen <outfile.rgba>}"
+  local headers
+  headers=$(curl -s -D - "$DBG_URL/frame/bitmap" -o "$out")
+  local w h
+  w=$(echo "$headers" | awk 'tolower($1) == "x-frame-width:" { print $2 }' | tr -d '\r')
+  h=$(echo "$headers" | awk 'tolower($1) == "x-frame-height:" { print $2 }' | tr -d '\r')
+  echo "saved $out (${w}x${h} RGBA)"
+}
+
+# ── Deprecated gb_* aliases (semantics that map 1:1 to a dbg_* helper) ─────────
+
+gb_start() {
+  echo "gb_start is deprecated; use dbg_start" >&2
+  dbg_start "$@"
+}
+
+gb_stop() {
+  echo "gb_stop is deprecated; use dbg_stop" >&2
+  dbg_stop "$@"
+}
+
+gb_run_frames() {
+  echo "gb_run_frames is deprecated; use dbg_step_frame" >&2
+  dbg_step_frame "$@"
 }

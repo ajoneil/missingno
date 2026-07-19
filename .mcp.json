@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "missingno-debugger": {
+      "command": "cargo",
+      "args": [
+        "run",
+        "-p",
+        "missingno-debugger",
+        "--features",
+        "mcp",
+        "--",
+        "--mcp"
+      ]
+    }
+  }
+}

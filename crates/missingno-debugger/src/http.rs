@@ -3,7 +3,15 @@
 //! are all generic: they render whatever the seam schema reports, so the same
 //! routes serve any core.
 
-use missingno_core::inspect::{Register, ValueStyle, Watch, WatchTerm};
+use missingno_core::graphics::{
+    GraphicsView, MapEntry, NamedPalette, Object, ObjectTable, PaletteSet, Tile, TileAtlas,
+    TileMap, Viewport,
+};
+use missingno_core::inspect::{
+    BitTable, PairMatrix, PixelStrip, Pointer, Register, RegisterPair, Row, Section, SectionBlock,
+    SwatchRow, Sweep, Tone, ValueStyle, Watch, WatchTerm,
+};
+use missingno_core::waveform::ChannelWave;
 use serde_json::{Value, json};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
@@ -14,36 +22,25 @@ const MAX_MEMORY_LEN: u32 = 0x1000;
 /// Default and cap for a `/disassembly` window.
 const DEFAULT_DISASM_COUNT: usize = 16;
 const MAX_DISASM_COUNT: usize = 256;
+/// Cap on sub-instruction ticks run by a single `/step-tick`.
+const MAX_TICK_COUNT: usize = 1_000_000;
 
-/// The outcome of offering a request to a family extension handler: the
-/// handler either served it, or declined and handed the request back for the
-/// next handler (and finally the generic routes) to try.
-pub enum Dispatch {
-    Handled,
-    Declined(Request),
-}
-
-/// A family-specific route handler mounted ahead of the generic routes. It
-/// owns the routes its core exposes (register/memory shapes a generic client
-/// cannot express) and declines everything else. `path` is the request path
-/// with any query string already split off.
-pub type Extension = fn(&mut Session, Request, &Method, &str) -> Dispatch;
-
-/// Serve `session` on `127.0.0.1:<port>` until the process is killed. Each
-/// request is offered to `extensions` in order before the generic routes.
-pub fn serve(mut session: Session, port: u16, extensions: Vec<Extension>) -> std::io::Result<()> {
+/// Serve `session` on `127.0.0.1:<port>` until the process is killed. Every
+/// route reads the console through the [`Session`] seam, so the same routes
+/// serve any core.
+pub fn serve(mut session: Session, port: u16) -> std::io::Result<()> {
     let address = format!("127.0.0.1:{port}");
     let server = Server::http(&address)
         .map_err(|e| std::io::Error::other(format!("failed to bind {address}: {e}")))?;
     eprintln!("headless debugger ready: {}", session.game_title());
     eprintln!("listening on http://{address}");
     for request in server.incoming_requests() {
-        handle(request, &mut session, &extensions);
+        handle(request, &mut session);
     }
     Ok(())
 }
 
-fn handle(request: Request, session: &mut Session, extensions: &[Extension]) {
+fn handle(request: Request, session: &mut Session) {
     let method = request.method().clone();
     let url = request.url().to_string();
     let (path, query) = match url.split_once('?') {
@@ -51,17 +48,10 @@ fn handle(request: Request, session: &mut Session, extensions: &[Extension]) {
         None => (url, String::new()),
     };
 
-    let mut request = request;
-    for extension in extensions {
-        match extension(session, request, &method, &path) {
-            Dispatch::Handled => return,
-            Dispatch::Declined(returned) => request = returned,
-        }
-    }
-
     match (&method, path.as_str()) {
         (Method::Get, "/status") => respond_json(request, status_json(session)),
         (Method::Get, "/registers") => respond_json(request, registers_json(session)),
+        (Method::Get, "/sections") => respond_json(request, sections_json(session)),
         (Method::Get, "/regions") => respond_json(request, regions_json(session)),
         (Method::Get, "/breakpoints") => respond_json(request, breakpoints_json(session)),
         (Method::Get, "/watchables") => respond_json(request, watchables_json(session)),
@@ -69,6 +59,8 @@ fn handle(request: Request, session: &mut Session, extensions: &[Extension]) {
         (Method::Get, "/symbols") => respond_json(request, symbols_json(session)),
         (Method::Get, "/disassembly") => disassembly(request, session, &query),
         (Method::Get, "/frame/bitmap") => frame_bitmap(request, session),
+        (Method::Get, "/waveforms") => respond_json(request, waveforms_json(session)),
+        (Method::Get, "/graphics") => respond_json(request, graphics_json(session)),
 
         (Method::Post, "/step") => {
             let stop = session.step();
@@ -82,10 +74,13 @@ fn handle(request: Request, session: &mut Session, extensions: &[Extension]) {
             let stop = session.step_frame();
             respond_step(request, session, &stop);
         }
+        (Method::Post, "/step-tick") => step_tick(request, session, &query),
         (Method::Post, "/reset") => {
             session.reset();
             respond_json(request, status_json(session));
         }
+        (Method::Post, "/waveforms/capture") => capture_edit(request, session, Capture::Waves),
+        (Method::Post, "/graphics/capture") => capture_edit(request, session, Capture::Graphics),
 
         (Method::Put, "/watches") | (Method::Delete, "/watches") => {
             watch_edit(request, session, method)
@@ -103,6 +98,7 @@ fn status_json(session: &Session) -> Value {
         "pc": format!("{:x}", session.pc()),
         "frame": session.frame(),
         "title": session.game_title(),
+        "tick": session.tick_name(),
         "stop": stop_json(session.last_stop()),
     })
 }
@@ -250,6 +246,402 @@ fn symbols_json(session: &Session) -> Value {
         })
         .collect();
     json!({ "symbols": entries })
+}
+
+// --- sidebar sections ---------------------------------------------------------
+
+fn sections_json(session: &Session) -> Value {
+    let sections: Vec<Value> = session
+        .sidebar_sections()
+        .iter()
+        .map(section_json)
+        .collect();
+    json!({ "sections": sections })
+}
+
+fn section_json(section: &Section) -> Value {
+    let blocks: Vec<Value> = section.blocks.iter().map(block_json).collect();
+    json!({
+        "name": section.name,
+        "summary": section.summary,
+        "active": section.active,
+        "detail": section.detail.as_ref().map(|detail| json!({
+            "text": detail.text,
+            "tone": tone_name(detail.tone),
+        })),
+        "blocks": blocks,
+    })
+}
+
+fn tone_name(tone: Tone) -> &'static str {
+    match tone {
+        Tone::Neutral => "neutral",
+        Tone::Idle => "idle",
+        Tone::Active => "active",
+        Tone::Scanning => "scanning",
+        Tone::Rendering => "rendering",
+        Tone::Pending => "pending",
+    }
+}
+
+fn block_json(block: &SectionBlock) -> Value {
+    match block {
+        SectionBlock::Registers(group) => json!({
+            "kind": "registers",
+            "name": group.name,
+            "registers": group.registers.iter().map(render_register).collect::<Vec<_>>(),
+        }),
+        SectionBlock::Pairs(pairs) => json!({
+            "kind": "pairs",
+            "pairs": pairs.iter().map(pair_json).collect::<Vec<_>>(),
+        }),
+        SectionBlock::Pointers(pointers) => json!({
+            "kind": "pointers",
+            "pointers": pointers.iter().map(pointer_json).collect::<Vec<_>>(),
+        }),
+        SectionBlock::Table(table) => json!({ "kind": "table", "table": table_json(table) }),
+        SectionBlock::Relations(matrix) => {
+            json!({ "kind": "relations", "relations": relations_json(matrix) })
+        }
+        SectionBlock::Rows(rows) => json!({
+            "kind": "rows",
+            "rows": rows.iter().map(row_json).collect::<Vec<_>>(),
+        }),
+        SectionBlock::Sweeps(sweeps) => json!({
+            "kind": "sweeps",
+            "sweeps": sweeps.iter().map(sweep_json).collect::<Vec<_>>(),
+        }),
+        SectionBlock::Swatches(swatches) => json!({
+            "kind": "swatches",
+            "swatches": swatches.iter().map(swatch_json).collect::<Vec<_>>(),
+        }),
+        SectionBlock::Pixels(strips) => json!({
+            "kind": "pixels",
+            "strips": strips.iter().map(pixel_strip_json).collect::<Vec<_>>(),
+        }),
+        SectionBlock::Rule => json!({ "kind": "rule" }),
+    }
+}
+
+fn pair_json(pair: &RegisterPair) -> Value {
+    json!({
+        "high": render_register(&pair.high),
+        "low": render_register(&pair.low),
+        "combined": pair.combined(),
+    })
+}
+
+fn pointer_json(pointer: &Pointer) -> Value {
+    let mut object = render_register(&pointer.register);
+    object["active"] = json!(pointer.active);
+    object
+}
+
+fn table_json(table: &BitTable) -> Value {
+    let columns: Vec<Value> = table
+        .columns
+        .iter()
+        .map(|column| json!({ "name": column.name }))
+        .collect();
+    let rows: Vec<Value> = table
+        .rows
+        .iter()
+        .map(|row| {
+            json!({
+                "name": row.name,
+                "bits": row.bits,
+                "tone": tone_name(row.tone),
+            })
+        })
+        .collect();
+    json!({
+        "columns": columns,
+        "corner": table.corner.map(|flag| json!({ "name": flag.name, "active": flag.active })),
+        "rows": rows,
+    })
+}
+
+fn relations_json(matrix: &PairMatrix) -> Value {
+    let n = matrix.entities.len();
+    let mut pairs = Vec::new();
+    for j in 1..n {
+        for i in 0..j {
+            pairs.push(json!({
+                "a": matrix.entities[i],
+                "b": matrix.entities[j],
+                "set": matrix.cell(i, j).set,
+            }));
+        }
+    }
+    json!({ "entities": matrix.entities, "pairs": pairs })
+}
+
+fn row_json(row: &Row) -> Value {
+    json!({
+        "label": row.label,
+        "value": row.value,
+        "active": row.active,
+    })
+}
+
+fn sweep_json(sweep: &Sweep) -> Value {
+    let zones: Vec<Value> = sweep
+        .zones
+        .iter()
+        .map(|zone| json!({ "name": zone.name, "end": zone.end, "tone": tone_name(zone.tone) }))
+        .collect();
+    json!({
+        "label": sweep.label,
+        "value": sweep.value,
+        "end": sweep.end,
+        "zone": sweep.zone_at(sweep.value).map(|zone| zone.name),
+        "zones": zones,
+    })
+}
+
+fn swatch_json(swatch: &SwatchRow) -> Value {
+    match swatch {
+        SwatchRow::Shades { label, packed } => json!({
+            "label": label,
+            "kind": "shades",
+            "packed": packed,
+        }),
+        SwatchRow::Colors { label, colors } => json!({
+            "label": label,
+            "kind": "colors",
+            "colors": colors.iter().map(rgb_hex).collect::<Vec<_>>(),
+        }),
+    }
+}
+
+fn pixel_strip_json(strip: &PixelStrip) -> Value {
+    match strip {
+        PixelStrip::Shades { label, cells, .. } => json!({
+            "label": label,
+            "kind": "shades",
+            "cells": cells,
+        }),
+        PixelStrip::Colors { label, cells, .. } => json!({
+            "label": label,
+            "kind": "colors",
+            "cells": cells.iter().map(|cell| cell.map(|c| rgb_hex(&c))).collect::<Vec<_>>(),
+        }),
+        PixelStrip::Bits { label, cells, .. } => json!({
+            "label": label,
+            "kind": "bits",
+            "cells": cells,
+        }),
+    }
+}
+
+fn rgb_hex(color: &rgb::RGB8) -> String {
+    format!("#{:02x}{:02x}{:02x}", color.r, color.g, color.b)
+}
+
+// --- sub-instruction stepping -------------------------------------------------
+
+fn step_tick(request: Request, session: &mut Session, query: &str) {
+    let count = match query_param(query, "count") {
+        Some(text) => match text.parse::<usize>() {
+            Ok(count) => count.clamp(1, MAX_TICK_COUNT),
+            Err(_) => return respond_error(request, 400, "invalid count"),
+        },
+        None => 1,
+    };
+    match step_tick_json(session, count) {
+        Some(body) => respond_json(request, body),
+        // A core whose finest step is a whole instruction advertises no tick, so
+        // the route reports 404 — the transport's "this endpoint is unsupported"
+        // signal, distinct from a 400 on a malformed request.
+        None => respond_error(request, 404, "this core has no sub-instruction stepping"),
+    }
+}
+
+/// Advance `count` sub-instruction ticks and report the result, or `None` when
+/// the core exposes no sub-instruction tick (the 404 case).
+fn step_tick_json(session: &mut Session, count: usize) -> Option<Value> {
+    let tick = session.tick_name()?;
+    for _ in 0..count {
+        session.step_tick();
+    }
+    let status = session.running_status();
+    Some(json!({
+        "pc": format!("{:x}", session.pc()),
+        "tick": tick,
+        "ran": count,
+        "video": { "label": status.video_label, "summary": status.video_summary },
+    }))
+}
+
+// --- waveforms ----------------------------------------------------------------
+
+/// Auto-enables capture when it was off, matching the MCP `get_waveforms` tool:
+/// the first read turns capture on, so the window fills from the next frame.
+fn waveforms_json(session: &mut Session) -> Value {
+    if session.channel_waves().is_none() {
+        session.set_wave_capture(true);
+    }
+    match session.channel_waves() {
+        Some(waves) => json!({
+            "waveforms": waves.iter().map(wave_json).collect::<Vec<_>>(),
+        }),
+        None => json!({ "waveforms": Value::Null }),
+    }
+}
+
+fn wave_json(wave: &ChannelWave) -> Value {
+    json!({
+        "label": wave.label,
+        "rate": wave.rate,
+        "depth_bits": wave.depth_bits,
+        "active": wave.active,
+        "levels": wave.levels,
+    })
+}
+
+// --- graphics -----------------------------------------------------------------
+
+/// Auto-enables capture when it was off, like `/waveforms`.
+fn graphics_json(session: &mut Session) -> Value {
+    if session.graphics().is_none() {
+        session.set_graphics_capture(true);
+    }
+    match session.graphics() {
+        Some(graphics) => json!({ "graphics": graphics_view_json(&graphics) }),
+        None => json!({ "graphics": Value::Null }),
+    }
+}
+
+fn graphics_view_json(graphics: &GraphicsView) -> Value {
+    json!({
+        "atlases": graphics.atlases.iter().map(atlas_json).collect::<Vec<_>>(),
+        "maps": graphics.maps.iter().map(map_json).collect::<Vec<_>>(),
+        "objects": graphics.objects.as_ref().map(object_table_json),
+    })
+}
+
+fn atlas_json(atlas: &TileAtlas) -> Value {
+    let regions: Vec<Value> = atlas
+        .regions
+        .iter()
+        .map(|region| {
+            json!({
+                "label": region.label,
+                "start": region.start,
+                "len": region.len,
+                "help": region.help,
+            })
+        })
+        .collect();
+    json!({
+        "label": atlas.label,
+        "tile_width": atlas.tile_width,
+        "tile_height": atlas.tile_height,
+        "depth_bits": atlas.depth_bits,
+        "palettes": palette_set_json(&atlas.palettes),
+        "regions": regions,
+        "tiles": atlas.tiles.iter().map(|tile: &Tile| json!(tile.indices)).collect::<Vec<_>>(),
+    })
+}
+
+fn palette_set_json(set: &PaletteSet) -> Value {
+    match set {
+        PaletteSet::FrontendShades => json!({ "kind": "frontend-shades" }),
+        PaletteSet::Owned(palettes) => json!({
+            "kind": "owned",
+            "palettes": palettes.iter().map(named_palette_json).collect::<Vec<_>>(),
+        }),
+    }
+}
+
+fn named_palette_json(palette: &NamedPalette) -> Value {
+    json!({
+        "label": palette.label,
+        "colors": palette.colors.iter().map(rgb_hex).collect::<Vec<_>>(),
+    })
+}
+
+fn map_json(map: &TileMap) -> Value {
+    json!({
+        "label": map.label,
+        "columns": map.columns,
+        "rows": map.rows,
+        "atlas": map.atlas,
+        "entries": map.entries.iter().map(map_entry_json).collect::<Vec<_>>(),
+        "viewports": map.viewports.iter().map(viewport_json).collect::<Vec<_>>(),
+    })
+}
+
+fn map_entry_json(entry: &MapEntry) -> Value {
+    json!({
+        "tile": entry.tile,
+        "palette": entry.palette,
+        "atlas": entry.atlas,
+        "flip_x": entry.flip_x,
+        "flip_y": entry.flip_y,
+        "priority": entry.priority,
+    })
+}
+
+fn viewport_json(viewport: &Viewport) -> Value {
+    json!({
+        "label": viewport.label,
+        "x": viewport.x,
+        "y": viewport.y,
+        "width": viewport.width,
+        "height": viewport.height,
+        "wraps": viewport.wraps,
+        "tone": tone_name(viewport.tone),
+    })
+}
+
+fn object_table_json(table: &ObjectTable) -> Value {
+    json!({
+        "label": table.label,
+        "atlas": table.atlas,
+        "object_height": table.object_height,
+        "objects": table.objects.iter().map(object_json).collect::<Vec<_>>(),
+    })
+}
+
+fn object_json(object: &Object) -> Value {
+    json!({
+        "index": object.index,
+        "x": object.x,
+        "y": object.y,
+        "tile": object.tile,
+        "on_screen": object.on_screen,
+        "palette": object.palette,
+        "bank": object.bank,
+        "flip_x": object.flip_x,
+        "flip_y": object.flip_y,
+        "priority": object.priority,
+    })
+}
+
+/// Which capture gate a `/…/capture` request toggles.
+enum Capture {
+    Waves,
+    Graphics,
+}
+
+fn capture_edit(mut request: Request, session: &mut Session, capture: Capture) {
+    let mut body = String::new();
+    if request.as_reader().read_to_string(&mut body).is_err() {
+        return respond_error(request, 400, "could not read request body");
+    }
+    let value: Value = match serde_json::from_str(&body) {
+        Ok(value) => value,
+        Err(error) => return respond_error(request, 400, &format!("invalid JSON: {error}")),
+    };
+    let Some(on) = value.get("on").and_then(Value::as_bool) else {
+        return respond_error(request, 400, "expected { \"on\": bool }");
+    };
+    match capture {
+        Capture::Waves => session.set_wave_capture(on),
+        Capture::Graphics => session.set_graphics_capture(on),
+    }
+    respond_json(request, json!({ "capture": on }));
 }
 
 fn disassembly(request: Request, session: &Session, query: &str) {
@@ -448,4 +840,86 @@ fn respond_error(request: Request, code: u16, message: &str) {
 
 fn header(text: &str) -> Header {
     text.parse::<Header>().expect("valid header literal")
+}
+
+/// The JSON these endpoints emit is exercised over a real Game Boy session
+/// built through the factory — the same path the server drives — so the shapes
+/// stay pinned without standing up a socket.
+#[cfg(all(test, feature = "gb"))]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    use crate::Session;
+
+    /// A 32 KiB all-NOP `.gb` ROM: the extension makes the registry claim it,
+    /// and the DMG core boots to PC 0x0100.
+    fn gb_session() -> Session {
+        let rom = vec![0x00u8; 0x8000];
+        let console = crate::factory::create_console(Path::new("test.gb"), &rom)
+            .expect("factory should not error")
+            .expect("gb factory claims a .gb ROM");
+        Session::new(console.into_debugger().ok().expect("gb has a debugger"))
+    }
+
+    #[test]
+    fn status_reports_the_tick_name() {
+        let session = gb_session();
+        let status = status_json(&session);
+        assert_eq!(status["tick"], json!("dot"));
+    }
+
+    #[test]
+    fn sections_carry_named_sections_with_typed_blocks() {
+        let session = gb_session();
+        let value = sections_json(&session);
+        let sections = value["sections"].as_array().expect("a sections array");
+        assert!(!sections.is_empty());
+        // Every section names itself and carries typed blocks (each tagged).
+        for section in sections {
+            assert!(section["name"].is_string());
+            for block in section["blocks"].as_array().expect("blocks array") {
+                assert!(block["kind"].is_string(), "every block carries a kind tag");
+            }
+        }
+    }
+
+    #[test]
+    fn step_tick_advances_and_names_the_tick() {
+        let mut session = gb_session();
+        let pc0 = session.pc();
+        // Four dots complete exactly one NOP, advancing the PC by one.
+        let body = step_tick_json(&mut session, 4).expect("gb names a tick");
+        assert_eq!(body["tick"], json!("dot"));
+        assert_eq!(body["ran"], json!(4));
+        assert_eq!(body["pc"], json!(format!("{:x}", pc0 + 1)));
+    }
+
+    #[test]
+    fn waveforms_auto_enable_on_first_read() {
+        let mut session = gb_session();
+        // The first read turns capture on, so the Game Boy's four channels appear
+        // (their windows fill from the next frame — empty-until-stepped is fine).
+        let value = waveforms_json(&mut session);
+        let waves = value["waveforms"]
+            .as_array()
+            .expect("gb captures waveforms");
+        assert_eq!(waves.len(), 4);
+        assert!(waves[0]["label"].is_string());
+        assert!(waves[0]["levels"].is_array());
+    }
+
+    #[test]
+    fn graphics_auto_enable_and_decode_atlases() {
+        let mut session = gb_session();
+        session.step_frame();
+        let value = graphics_json(&mut session);
+        let graphics = &value["graphics"];
+        assert!(graphics.is_object(), "gb exposes graphics surfaces");
+        let atlases = graphics["atlases"].as_array().expect("atlases array");
+        assert!(!atlases.is_empty());
+        // A tile is a flat index array; a Game Boy tile is 8×8 = 64 indices.
+        let tiles = atlases[0]["tiles"].as_array().expect("tiles array");
+        assert_eq!(tiles[0].as_array().expect("index array").len(), 64);
+    }
 }

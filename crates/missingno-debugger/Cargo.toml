@@ -30,6 +30,7 @@ missingno-vcs = { path = "../missingno-vcs", optional = true }
 missingno-nes = { path = "../missingno-nes", optional = true }
 missingno-sms = { path = "../missingno-sms", optional = true }
 tiny_http = "0.12"
+rgb = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 png = { version = "0.18", optional = true }

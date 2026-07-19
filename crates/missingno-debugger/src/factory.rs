@@ -12,8 +12,19 @@ use missingno_core::system::SystemConsole;
 
 /// Whether a path and its contents are this core's media.
 pub type IsRom = fn(&Path, &[u8]) -> bool;
-/// Build this core's console from a ROM's path and contents.
-pub type Create = fn(&Path, &[u8]) -> Option<Box<dyn SystemConsole>>;
+/// Build this core's console from a ROM's path and contents, honouring any
+/// construction options a core recognises.
+pub type Create = fn(&Path, &[u8], &LoadOptions) -> Option<Box<dyn SystemConsole>>;
+
+/// Optional construction overrides a core may honour. Generic by design: a core
+/// that does not recognise an option ignores it. The one option so far is the
+/// broadcast standard, which only the Atari VCS core reads.
+#[derive(Clone, Default)]
+pub struct LoadOptions {
+    /// A broadcast-standard override ("ntsc"/"pal"/"secam", case-insensitive);
+    /// `None` lets the core auto-detect.
+    pub tv_standard: Option<String>,
+}
 
 /// A registered core: how its media is recognised, and how a console is built.
 pub struct CoreFactory {
@@ -50,7 +61,11 @@ mod gb {
 
     /// The one DMG-vs-CGB selection point: CGB-aware media boots the CGB core,
     /// like a cartridge slotted into a real GBC; DMG media boots the DMG core.
-    pub fn create(_path: &Path, rom: &[u8]) -> Option<Box<dyn SystemConsole>> {
+    pub fn create(
+        _path: &Path,
+        rom: &[u8],
+        _options: &LoadOptions,
+    ) -> Option<Box<dyn SystemConsole>> {
         let cartridge = Cartridge::new(rom.to_vec(), None);
         Some(if cartridge.is_cgb() {
             Box::new(GbConsole::new(
@@ -72,12 +87,27 @@ mod vcs {
     use super::*;
     use missingno_core::system::SystemConsole;
 
-    pub fn create(path: &Path, rom: &[u8]) -> Option<Box<dyn SystemConsole>> {
-        missingno_vcs::debug::create_console(rom, title_for(path), None, None).ok()
+    pub fn create(
+        path: &Path,
+        rom: &[u8],
+        options: &LoadOptions,
+    ) -> Option<Box<dyn SystemConsole>> {
+        let standard = options.tv_standard.as_deref().and_then(parse_tv_standard);
+        missingno_vcs::debug::create_console(rom, title_for(path), standard, None).ok()
     }
 
     pub fn is_rom(path: &Path, rom: &[u8]) -> bool {
         missingno_vcs::debug::is_vcs_rom(path, rom)
+    }
+
+    fn parse_tv_standard(name: &str) -> Option<missingno_vcs::TvStandard> {
+        use missingno_vcs::TvStandard;
+        match name.trim().to_ascii_lowercase().as_str() {
+            "ntsc" => Some(TvStandard::Ntsc),
+            "pal" => Some(TvStandard::Pal),
+            "secam" => Some(TvStandard::Secam),
+            _ => None,
+        }
     }
 }
 
@@ -89,7 +119,11 @@ mod nes {
     use missingno_nes::console::Nes;
     use missingno_nes::debug::NesSystem;
 
-    pub fn create(path: &Path, rom: &[u8]) -> Option<Box<dyn SystemConsole>> {
+    pub fn create(
+        path: &Path,
+        rom: &[u8],
+        _options: &LoadOptions,
+    ) -> Option<Box<dyn SystemConsole>> {
         let nes = Nes::new(rom).ok()?;
         Some(Box::new(SteppingConsole::<NesSystem>::new(
             nes,
@@ -110,7 +144,11 @@ mod sms {
     use missingno_sms::console::Sms;
     use missingno_sms::debug::SmsSystem;
 
-    pub fn create(path: &Path, rom: &[u8]) -> Option<Box<dyn SystemConsole>> {
+    pub fn create(
+        path: &Path,
+        rom: &[u8],
+        _options: &LoadOptions,
+    ) -> Option<Box<dyn SystemConsole>> {
         let sms = Sms::new(rom).ok()?;
         Some(Box::new(SteppingConsole::<SmsSystem>::new(
             sms,
@@ -159,10 +197,20 @@ pub fn factory_for(path: &Path, rom: &[u8]) -> Option<&'static CoreFactory> {
 /// Build a console from a ROM's path and contents. `Ok(None)` when no core
 /// recognises the media; `Err` when a core claimed it but construction failed.
 pub fn create_console(path: &Path, rom: &[u8]) -> Result<Option<Box<dyn SystemConsole>>, String> {
+    create_console_with(path, rom, &LoadOptions::default())
+}
+
+/// Build a console, passing construction options a core may honour (the
+/// broadcast standard, for the VCS). Recognition is unaffected by the options.
+pub fn create_console_with(
+    path: &Path,
+    rom: &[u8],
+    options: &LoadOptions,
+) -> Result<Option<Box<dyn SystemConsole>>, String> {
     let Some(factory) = factory_for(path, rom) else {
         return Ok(None);
     };
-    match (factory.create)(path, rom) {
+    match (factory.create)(path, rom, options) {
         Some(console) => Ok(Some(console)),
         None => Err(format!(
             "{}: failed to construct console from media",

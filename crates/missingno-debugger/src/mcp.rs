@@ -10,6 +10,7 @@
 //! way [`crate::gb`] does.
 
 use std::io::{self, BufRead, Write};
+use std::path::Path;
 
 use missingno_core::graphics::{GraphicsView, Object, ObjectTable, PaletteSet, TileAtlas};
 use missingno_core::inspect::{
@@ -19,7 +20,15 @@ use missingno_core::inspect::{
 use missingno_core::system::{ControlId, ControlInput};
 use serde_json::{Value, json};
 
+use crate::factory::{self, LoadOptions};
 use crate::session::{Session, StopReason};
+
+/// The server's currently loaded ROM: its session and the name of the core the
+/// factory recognised it as. `None` when the server is idle.
+struct LoadedSession {
+    session: Session,
+    core_name: &'static str,
+}
 
 /// The MCP protocol version whose message shapes this server targets.
 const PROTOCOL_VERSION: &str = "2024-11-05";
@@ -76,12 +85,32 @@ impl Tool {
     }
 }
 
-/// Serve `session` as an MCP tool server over stdio until stdin reaches EOF or
-/// a `shutdown` request arrives. `core_name` names the core in `status` and the
-/// server handshake. Every tool is a [`Session`] call: the transport is
-/// Session-only by construction, with no family-specific escape hatch.
-pub fn serve(mut session: Session, core_name: &'static str) -> io::Result<()> {
-    eprintln!("mcp: {} ({core_name}) ready on stdio", session.game_title());
+/// Serve a preloaded `session` as an MCP tool server over stdio. `core_name`
+/// names the core in `status` and the server handshake.
+pub fn serve(session: Session, core_name: &'static str) -> io::Result<()> {
+    run(Some(LoadedSession { session, core_name }))
+}
+
+/// Serve an idle MCP tool server: it starts with no ROM, advertising only
+/// `load_rom`/`eject`/`status`, and gains the full tool set once `load_rom`
+/// recognises a ROM through the factory. One idle server serves any ROM.
+pub fn serve_idle() -> io::Result<()> {
+    run(None)
+}
+
+/// The stdio serve loop, over an optional loaded session, until stdin reaches
+/// EOF or a `shutdown` request arrives. Every tool is a [`Session`] call: the
+/// transport is Session-only by construction, with no family-specific escape
+/// hatch.
+fn run(mut loaded: Option<LoadedSession>) -> io::Result<()> {
+    match &loaded {
+        Some(loaded) => eprintln!(
+            "mcp: {} ({}) ready on stdio",
+            loaded.session.game_title(),
+            loaded.core_name
+        ),
+        None => eprintln!("mcp: idle (no ROM loaded) ready on stdio"),
+    }
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     for line in stdin.lock().lines() {
@@ -89,7 +118,7 @@ pub fn serve(mut session: Session, core_name: &'static str) -> io::Result<()> {
         if line.trim().is_empty() {
             continue;
         }
-        let (response, exit) = handle_message(&line, &mut session, core_name);
+        let (response, exit) = handle_message(&line, &mut loaded);
         if let Some(response) = response {
             writeln!(stdout, "{}", serde_json::to_string(&response).unwrap())?;
             stdout.flush()?;
@@ -103,11 +132,7 @@ pub fn serve(mut session: Session, core_name: &'static str) -> io::Result<()> {
 
 /// Dispatch one JSON-RPC message. Returns the response to emit (if any) and
 /// whether the loop should exit afterwards.
-fn handle_message(
-    line: &str,
-    session: &mut Session,
-    core_name: &'static str,
-) -> (Option<Value>, bool) {
+fn handle_message(line: &str, loaded: &mut Option<LoadedSession>) -> (Option<Value>, bool) {
     let message: Value = match serde_json::from_str(line) {
         Ok(message) => message,
         Err(error) => {
@@ -133,13 +158,10 @@ fn handle_message(
     };
 
     match method {
-        "initialize" => (Some(success(id, initialize_result(core_name))), false),
+        "initialize" => (Some(success(id, initialize_result(loaded))), false),
         "ping" => (Some(success(id, json!({}))), false),
-        "tools/list" => (Some(success(id, tools_list(session))), false),
-        "tools/call" => (
-            Some(success(id, tools_call(session, core_name, &params))),
-            false,
-        ),
+        "tools/list" => (Some(success(id, tools_list(loaded))), false),
+        "tools/call" => (Some(success(id, tools_call(loaded, &params))), false),
         "shutdown" => (Some(success(id, Value::Null)), true),
         other => (
             Some(error_response(
@@ -152,12 +174,16 @@ fn handle_message(
     }
 }
 
-fn initialize_result(core_name: &str) -> Value {
+fn initialize_result(loaded: &Option<LoadedSession>) -> Value {
+    let name = match loaded {
+        Some(loaded) => format!("missingno-debugger ({})", loaded.core_name),
+        None => "missingno-debugger (idle)".to_string(),
+    };
     json!({
         "protocolVersion": PROTOCOL_VERSION,
         "capabilities": { "tools": {} },
         "serverInfo": {
-            "name": format!("missingno-debugger ({core_name})"),
+            "name": name,
             "version": env!("CARGO_PKG_VERSION"),
         },
     })
@@ -173,9 +199,65 @@ fn error_response(id: Value, code: i64, message: &str) -> Value {
 
 // --- tools/list ---------------------------------------------------------------
 
-fn tools_list(session: &mut Session) -> Value {
-    let tools: Vec<Value> = generic_tools(session).iter().map(Tool::to_json).collect();
+fn tools_list(loaded: &Option<LoadedSession>) -> Value {
+    let tools: Vec<Value> = match loaded {
+        // Idle: only the tools that get a ROM loaded, plus an idle-aware status.
+        None => [load_rom_tool(), eject_tool(), status_tool()]
+            .iter()
+            .map(Tool::to_json)
+            .collect(),
+        // Loaded: the full generic surface, plus the session-management tools so
+        // the ROM can be swapped or ejected without restarting the server.
+        Some(loaded) => generic_tools(&loaded.session)
+            .into_iter()
+            .chain([load_rom_tool(), eject_tool()])
+            .map(|tool| tool.to_json())
+            .collect(),
+    };
     json!({ "tools": tools })
+}
+
+/// The idle-server tool that recognises and loads a ROM.
+fn load_rom_tool() -> Tool {
+    Tool {
+        name: "load_rom",
+        description: "Load a ROM by filesystem path and begin debugging it. The core is \
+                      recognised from the file across all enabled cores. Optional `tv_standard` \
+                      (ntsc/pal/secam) overrides the Atari VCS broadcast-standard auto-detection."
+            .into(),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "filesystem path to the ROM" },
+                "tv_standard": {
+                    "type": "string",
+                    "enum": ["ntsc", "pal", "secam"],
+                    "description": "VCS broadcast-standard override",
+                },
+            },
+            "required": ["path"],
+        }),
+    }
+}
+
+/// The tool that unloads the current ROM and returns the server to idle.
+fn eject_tool() -> Tool {
+    Tool {
+        name: "eject",
+        description: "Unload the current ROM and return the server to idle.".into(),
+        input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+    }
+}
+
+/// The idle-aware status tool (the loaded tool set carries its own `status`).
+fn status_tool() -> Tool {
+    Tool {
+        name: "status",
+        description: "The loaded ROM's core, title, program counter, frame count, and last stop \
+                      reason — or idle when no ROM is loaded."
+            .into(),
+        input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+    }
 }
 
 fn generic_tools(session: &Session) -> Vec<Tool> {
@@ -430,17 +512,68 @@ fn watch_description(session: &Session, verb: &str) -> String {
 
 // --- tools/call ---------------------------------------------------------------
 
-fn tools_call(session: &mut Session, core_name: &str, params: &Value) -> Value {
+fn tools_call(loaded: &mut Option<LoadedSession>, params: &Value) -> Value {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
     let args = params
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
 
-    match call_generic(session, core_name, name, &args) {
-        Some(outcome) => outcome_json(outcome),
-        None => outcome_json(Err(format!("unknown tool: {name}"))),
+    let outcome = match name {
+        "load_rom" => load_rom(loaded, &args),
+        "eject" => eject(loaded),
+        _ => match loaded {
+            Some(loaded) => {
+                match call_generic(&mut loaded.session, loaded.core_name, name, &args) {
+                    Some(outcome) => outcome,
+                    None => Err(format!("unknown tool: {name}")),
+                }
+            }
+            None if name == "status" => text(idle_status_text()),
+            None => Err(format!("no ROM loaded; call load_rom first (tool: {name})")),
+        },
+    };
+    outcome_json(outcome)
+}
+
+/// Load a ROM through the factory and make it the server's active session.
+fn load_rom(loaded: &mut Option<LoadedSession>, args: &Value) -> ToolOutcome {
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or("'path' (string) is required")?;
+    let bytes = std::fs::read(path).map_err(|error| format!("failed to read {path}: {error}"))?;
+    let options = LoadOptions {
+        tv_standard: args
+            .get("tv_standard")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    };
+    let path_ref = Path::new(path);
+    let console = factory::create_console_with(path_ref, &bytes, &options)?
+        .ok_or_else(|| format!("no core recognises {path}"))?;
+    let debugger = console
+        .into_debugger()
+        .map_err(|_| "this system has no debugger backend".to_string())?;
+    let core_name = factory::factory_for(path_ref, &bytes)
+        .map(|factory| factory.name)
+        .unwrap_or("unknown");
+    let session = Session::new(debugger);
+    let title = session.game_title();
+    *loaded = Some(LoadedSession { session, core_name });
+    text(format!("loaded {core_name}: {title}"))
+}
+
+/// Unload the active ROM, returning the server to idle.
+fn eject(loaded: &mut Option<LoadedSession>) -> ToolOutcome {
+    match loaded.take() {
+        Some(loaded) => text(format!("ejected {}", loaded.core_name)),
+        None => Err("no ROM loaded".into()),
     }
+}
+
+fn idle_status_text() -> String {
+    "idle: no ROM loaded. Call load_rom with a ROM path to begin.".into()
 }
 
 fn outcome_json(outcome: ToolOutcome) -> Value {
