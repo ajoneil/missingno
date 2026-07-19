@@ -14,7 +14,7 @@ use crate::app::{
     debugger::{
         self,
         audio_scope::AudioScopePane,
-        disassembly::{DisasmPaneData, DisassemblyPane},
+        disassembly::{self, DisasmPaneData, DisassemblyPane},
         graphics::{
             atlas::{self, TileAtlasPane},
             map::TileMapPane,
@@ -61,6 +61,7 @@ pub enum PaneMessage {
     Sprites(objects::Message),
     Tiles(atlas::Message),
     Memory(memory::Message),
+    Disassembly(disassembly::Message),
 }
 
 impl From<Message> for app::Message {
@@ -103,6 +104,11 @@ pub trait Pane {
     /// The memory viewer's current region/offset selection, so the context
     /// builder can copy the right bytes. Only the memory pane has one.
     fn memory_selection(&self) -> Option<MemorySelection> {
+        None
+    }
+    /// The disassembly pane's user-set walk anchor, so the context builder walks
+    /// from there instead of the PC. Only the disassembly pane has one.
+    fn disasm_anchor(&self) -> Option<u32> {
         None
     }
     fn set_palette(&mut self, _palette: PaletteChoice) {}
@@ -564,6 +570,15 @@ impl DebuggerPanes {
             .as_ref()?
             .iter()
             .find_map(|(_, pane)| pane.memory_selection())
+    }
+
+    /// The disassembly pane's walk anchor, if that pane is shown and jumped
+    /// somewhere; `None` follows the PC.
+    pub fn disasm_anchor(&self) -> Option<u32> {
+        self.panes
+            .as_ref()?
+            .iter()
+            .find_map(|(_, pane)| pane.disasm_anchor())
     }
 }
 

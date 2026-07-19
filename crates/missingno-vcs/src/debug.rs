@@ -1042,6 +1042,14 @@ impl SystemDebugger for VcsDebugger {
         Some(self.core.instruction_set())
     }
 
+    fn present_address(&self, address: u32) -> inspect::AddressDisplay {
+        self.core.present_address(address)
+    }
+
+    fn locate_bank_window(&self, bank: u16, window: u32) -> Option<u32> {
+        self.core.locate_bank_window(bank, window)
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }

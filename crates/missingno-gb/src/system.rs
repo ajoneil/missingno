@@ -429,6 +429,14 @@ where
         }
     }
 
+    fn present_address(&self, address: u32) -> inspect::AddressDisplay {
+        self.core.present_address(address)
+    }
+
+    fn locate_bank_window(&self, bank: u16, window: u32) -> Option<u32> {
+        self.core.locate_bank_window(bank, window)
+    }
+
     fn watchables(&self) -> &'static [inspect::Watchable] {
         self.core.watchables()
     }

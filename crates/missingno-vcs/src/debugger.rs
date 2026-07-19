@@ -245,6 +245,44 @@ impl Debugger {
         &Mos6502
     }
 
+    /// How `address` presents in the disassembly's address column: a synthetic
+    /// bank-complete ROM address as its 4 KB bank and the `$F000` cart window it
+    /// pages into, a plain bus address as itself. Banked boards page every bank
+    /// through the same window, so a synthetic-row breakpoint would fire for
+    /// whichever bank is selected — none is offered.
+    pub fn present_address(&self, address: u32) -> inspect::AddressDisplay {
+        use inspect::AddressDisplay;
+        if address >= CART_ROM_BASE {
+            let linear = address - CART_ROM_BASE;
+            AddressDisplay {
+                window: 0xF000 + (linear % 0x1000),
+                bank: Some((linear / 0x1000) as u16),
+                breakpoint: None,
+            }
+        } else if address >= CART_RAM_BASE {
+            let linear = address - CART_RAM_BASE;
+            AddressDisplay {
+                window: 0xF000 + (linear & 0x0FFF),
+                bank: None,
+                breakpoint: None,
+            }
+        } else {
+            AddressDisplay::bus(address, None)
+        }
+    }
+
+    /// The synthetic ROM address whose row presents as `bank:window`, for
+    /// jump-to-address — the inverse of [`present_address`](Self::present_address).
+    /// The offset is the window's low 12 bits (the cart is mirrored wherever A12
+    /// is set). `None` when the pairing lands past the image.
+    pub fn locate_bank_window(&self, bank: u16, window: u32) -> Option<u32> {
+        if window & 0x1000 == 0 {
+            return None;
+        }
+        let linear = bank as u32 * 0x1000 + (window & 0x0FFF);
+        (linear < self.vcs.cartridge().rom_len() as u32).then_some(CART_ROM_BASE + linear)
+    }
+
     /// Run until a breakpoint (or budget); frames surface as they complete.
     pub fn run(&mut self) -> (Option<Frame>, Stop) {
         let mut frame = None;
@@ -317,5 +355,26 @@ mod tests {
         // File order, independent of the currently paged bank.
         assert_eq!(banked.peek(CART_ROM_BASE), 0);
         assert_eq!(banked.peek(CART_ROM_BASE + 0x1000), 1);
+    }
+
+    #[test]
+    fn present_and_locate_round_trip_rom() {
+        let banked = debugger(&bank_stamped(0x2000), CartType::F8);
+        let display = |a: u32| {
+            let d = banked.present_address(a);
+            (d.bank, d.window, d.breakpoint)
+        };
+        // Each 4 KB bank presents through the $F000 cart window; banked boards
+        // page every bank there, so no synthetic-row breakpoint is offered.
+        assert_eq!(display(CART_ROM_BASE + 0x1123), (Some(1), 0xF123, None));
+        assert_eq!(
+            banked.locate_bank_window(1, 0xF123),
+            Some(CART_ROM_BASE + 0x1123)
+        );
+        assert_eq!(display(CART_ROM_BASE + 0x0055), (Some(0), 0xF055, None));
+        // A window without A12 set is not a cart address; a bank past the image
+        // rejects.
+        assert_eq!(banked.locate_bank_window(0, 0x0055), None);
+        assert_eq!(banked.locate_bank_window(9, 0xF000), None);
     }
 }

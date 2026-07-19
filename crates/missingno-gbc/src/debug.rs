@@ -507,6 +507,42 @@ mod tests {
     }
 
     #[test]
+    fn cgb_exposes_a_linear_wram_region() {
+        let debugger = Debugger::new(GameBoyColor::new(
+            Cartridge::new(vec![0u8; 0x8000], None),
+            None,
+        ));
+        let wram = debugger
+            .memory_regions()
+            .into_iter()
+            .find(|r| r.name == "wram-all")
+            .expect("cgb wram synthetic region");
+        // Eight 4 KB banks, linear.
+        assert_eq!(wram.len, 0x8000);
+
+        let display = |a: u32| {
+            let d = debugger.present_address(a);
+            (d.bank, d.window, d.breakpoint)
+        };
+        // Bank 0 pages into the fixed $C000 window — an unambiguous breakpoint.
+        assert_eq!(
+            display(wram.start + 0x0012),
+            (Some(0), 0xC012, Some(0xC012))
+        );
+        assert_eq!(
+            debugger.locate_bank_window(0, 0xC012),
+            Some(wram.start + 0x0012)
+        );
+        // Banks ≥1 page into the switchable $D000 window — no breakpoint.
+        let bank3 = 3 * 0x1000 + 0x0034;
+        assert_eq!(display(wram.start + bank3), (Some(3), 0xD034, None));
+        assert_eq!(
+            debugger.locate_bank_window(3, 0xD034),
+            Some(wram.start + bank3)
+        );
+    }
+
+    #[test]
     fn sidebar_carries_the_shared_apu_section() {
         let mut rom = vec![0u8; 0x8000];
         rom[0x100] = 0x00;

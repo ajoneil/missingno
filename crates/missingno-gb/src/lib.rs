@@ -185,6 +185,13 @@ pub trait Model: Default {
     /// Hardware revision name recorded in morepork captures.
     const TRACE_MODEL_NAME: &'static str = "DMG-B";
 
+    /// Bank-complete work RAM the debugger exposes linearly above the bus, when
+    /// the console banks WRAM (CGB's eight 4 KB banks). `None` for a flat-WRAM
+    /// console (DMG): its 8 KB is fully visible through the `$C000` bus window.
+    fn wram_image(&self) -> Option<&[u8]> {
+        None
+    }
+
     /// End-of-frame / LCD-off hook. DMG mirrors the screen to the SGB.
     fn on_present(&mut self, _screen: &Self::Screen) {}
 

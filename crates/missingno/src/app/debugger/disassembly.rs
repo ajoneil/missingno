@@ -8,13 +8,14 @@
 
 use iced::{
     Length,
-    widget::{Column, pane_grid, text},
+    widget::{Column, button, pane_grid, row, text, text_input},
 };
 
 use missingno_core::cdl::CdlWindow;
 use missingno_core::disasm::{
     ReadMemory, Row, addresses_before, logged_addresses_before, window_after,
 };
+use missingno_core::inspect::AddressDisplay;
 use missingno_core::isa::InstructionSet;
 use missingno_core::symbols::SymbolTable;
 use missingno_core::system::{InspectSnapshot, SystemDebugger};
@@ -22,10 +23,10 @@ use missingno_core::system::{InspectSnapshot, SystemDebugger};
 use crate::app::{
     self,
     debugger::{
-        disasm_rows,
-        panes::{self, DebuggerPane, Pane, PaneContext, pane, running_placeholder},
+        self, disasm_rows,
+        panes::{self, DebuggerPane, Pane, PaneContext, PaneMessage, pane, running_placeholder},
     },
-    ui::{fonts, palette},
+    ui::{fonts, palette, sizes::s},
 };
 
 /// Instructions of backward context shown above the current PC.
@@ -38,20 +39,17 @@ const CONTEXT_AFTER: usize = 80;
 pub enum DisasmRow {
     Label(String),
     Data {
-        address: u32,
-        bank: Option<u16>,
+        display: AddressDisplay,
         byte: u8,
     },
     Instruction {
-        address: u32,
-        bank: Option<u16>,
+        display: AddressDisplay,
         tokens: Vec<disasm_rows::Token>,
         is_current: bool,
     },
     /// A raw byte for a core with no instruction set.
     Byte {
-        address: u32,
-        bank: Option<u16>,
+        display: AddressDisplay,
         byte: u8,
         is_current: bool,
     },
@@ -95,84 +93,87 @@ impl ReadMemory for WindowMemory<'_> {
     }
 }
 
-/// Build the paused readout from the live core.
-pub fn paused_readout(core: &dyn SystemDebugger) -> DisasmReadout {
+/// Build the paused readout from the live core, walking from `anchor` when the
+/// pane has jumped somewhere, else from the program counter.
+pub fn paused_readout(core: &dyn SystemDebugger, anchor: Option<u32>) -> DisasmReadout {
     let cdl = core.cdl_window();
     let symbols = core.symbols();
     build(
         core.instruction_set(),
+        anchor.unwrap_or_else(|| core.pc()),
         core.pc(),
         &PeekMemory(core),
         Some(&cdl),
         Some(&symbols),
-        &|address| core.bank_for(address),
+        &|address| core.present_address(address),
     )
 }
 
 /// Build the running readout from a per-vblank snapshot; `None` when the
-/// snapshot carries no program counter or memory window to walk.
+/// snapshot carries no program counter or memory window to walk. Always
+/// PC-anchored — the snapshot's window only covers the program counter.
 pub fn running_readout(snapshot: &dyn InspectSnapshot) -> Option<DisasmReadout> {
     let pc = snapshot.pc()?;
     let window = snapshot.memory_window()?;
     Some(build(
         snapshot.instruction_set(),
         pc,
+        pc,
         &WindowMemory(window),
         snapshot.cdl_window(),
         snapshot.symbols(),
-        &|address| snapshot.bank_for(address),
+        &|address| snapshot.present_address(address),
     ))
 }
 
+/// Walk `count` context around `anchor`, marking `pc` as the current row when
+/// the walk crosses it (the anchor is the PC unless the pane jumped elsewhere).
 fn build(
     isa: Option<&dyn InstructionSet>,
+    anchor: u32,
     pc: u32,
     memory: &dyn ReadMemory,
     cdl: Option<&CdlWindow>,
     symbols: Option<&SymbolTable>,
-    bank_of: &dyn Fn(u32) -> Option<u16>,
+    present: &dyn Fn(u32) -> AddressDisplay,
 ) -> DisasmReadout {
     let Some(isa) = isa else {
-        return byte_fallback(pc, memory, bank_of);
+        return byte_fallback(anchor, pc, memory, present);
     };
 
     let mut rows = Vec::new();
-    let push_label = |rows: &mut Vec<DisasmRow>, address: u32| {
-        if let Some(label) = symbols.and_then(|s| s.label_at(address as u16, bank_of(address))) {
+    let push_label = |rows: &mut Vec<DisasmRow>, display: AddressDisplay| {
+        if let Some(label) = symbols.and_then(|s| s.label_at(display.window as u16, display.bank)) {
             rows.push(DisasmRow::Label(label.to_owned()));
         }
     };
 
     // Backward context: exact where the log has coverage, heuristic otherwise.
     let before = match cdl {
-        Some(cdl) => logged_addresses_before(pc, CONTEXT_BEFORE, isa, memory, cdl)
-            .unwrap_or_else(|| addresses_before(pc, CONTEXT_BEFORE, isa, memory)),
-        None => addresses_before(pc, CONTEXT_BEFORE, isa, memory),
+        Some(cdl) => logged_addresses_before(anchor, CONTEXT_BEFORE, isa, memory, cdl)
+            .unwrap_or_else(|| addresses_before(anchor, CONTEXT_BEFORE, isa, memory)),
+        None => addresses_before(anchor, CONTEXT_BEFORE, isa, memory),
     };
     for address in before {
-        push_label(&mut rows, address);
-        rows.push(decode_row(isa, memory, address, bank_of(address), false));
+        let display = present(address);
+        push_label(&mut rows, display);
+        rows.push(decode_row(isa, memory, address, display, address == pc));
     }
 
-    for row in window_after(pc, CONTEXT_AFTER, isa, memory, cdl) {
+    for row in window_after(anchor, CONTEXT_AFTER, isa, memory, cdl) {
         match row {
             Row::Data(address) => {
-                push_label(&mut rows, address);
+                let display = present(address);
+                push_label(&mut rows, display);
                 rows.push(DisasmRow::Data {
-                    address,
-                    bank: bank_of(address),
+                    display,
                     byte: memory.read(address),
                 });
             }
             Row::Instruction(address) => {
-                push_label(&mut rows, address);
-                rows.push(decode_row(
-                    isa,
-                    memory,
-                    address,
-                    bank_of(address),
-                    address == pc,
-                ));
+                let display = present(address);
+                push_label(&mut rows, display);
+                rows.push(decode_row(isa, memory, address, display, address == pc));
             }
         }
     }
@@ -184,7 +185,7 @@ fn decode_row(
     isa: &dyn InstructionSet,
     memory: &dyn ReadMemory,
     address: u32,
-    bank: Option<u16>,
+    display: AddressDisplay,
     is_current: bool,
 ) -> DisasmRow {
     let mask = isa.address_mask();
@@ -193,30 +194,29 @@ fn decode_row(
         .collect();
     let decoded = isa.decode(address, &bytes);
     DisasmRow::Instruction {
-        address,
-        bank,
+        display,
         tokens: disasm_rows::tokenize(isa, &decoded.mnemonic),
         is_current,
     }
 }
 
-/// Raw byte rows around the program counter, for a core with no instruction
-/// set. Wraps in the 16-bit space these cores address.
+/// Raw byte rows around the anchor, for a core with no instruction set. Wraps in
+/// the 16-bit space these cores address.
 fn byte_fallback(
+    anchor: u32,
     pc: u32,
     memory: &dyn ReadMemory,
-    bank_of: &dyn Fn(u32) -> Option<u16>,
+    present: &dyn Fn(u32) -> AddressDisplay,
 ) -> DisasmReadout {
     const MASK: u32 = 0xFFFF;
     let rows = (0..(CONTEXT_BEFORE + CONTEXT_AFTER))
         .map(|i| {
-            let address = pc
+            let address = anchor
                 .wrapping_add(i as u32)
                 .wrapping_sub(CONTEXT_BEFORE as u32)
                 & MASK;
             DisasmRow::Byte {
-                address,
-                bank: bank_of(address),
+                display: present(address),
                 byte: memory.read(address),
                 is_current: address == pc,
             }
@@ -225,17 +225,90 @@ fn byte_fallback(
     DisasmReadout { rows }
 }
 
-pub struct DisassemblyPane;
+/// A jump-to-address the pane emits for the debugger to resolve against the
+/// live core (it owns the region/bank mapping); the resolved anchor comes back
+/// as [`Message::SetAnchor`].
+#[derive(Clone, Debug)]
+pub enum Message {
+    /// Text typed into the jump field.
+    JumpInput(String),
+    /// The resolved walk anchor: `Some` to jump there, `None` to follow the PC.
+    SetAnchor(Option<u32>),
+}
+
+impl From<Message> for app::Message {
+    fn from(val: Message) -> Self {
+        panes::Message::Pane(PaneMessage::Disassembly(val)).into()
+    }
+}
+
+pub struct DisassemblyPane {
+    jump_input: String,
+    /// A user-set walk anchor overriding the PC-follow default; `None` follows
+    /// the program counter. Effective while paused — the running view is always
+    /// PC-anchored (its snapshot window covers only the PC).
+    anchor: Option<u32>,
+}
 
 impl DisassemblyPane {
     pub fn new() -> Self {
-        Self
+        Self {
+            jump_input: String::new(),
+            anchor: None,
+        }
+    }
+
+    fn update(&mut self, message: Message) {
+        match message {
+            Message::JumpInput(input) => self.jump_input = input,
+            Message::SetAnchor(anchor) => {
+                self.anchor = anchor;
+                self.jump_input.clear();
+            }
+        }
+    }
+
+    /// The jump field and the button that returns to following the PC.
+    fn controls(&self) -> iced::Element<'static, app::Message> {
+        let jump = text_input("bank:addr", &self.jump_input)
+            .font(fonts::monospace())
+            .size(13.0)
+            .width(Length::Fixed(110.0))
+            .on_input(|value| Message::JumpInput(value).into())
+            .on_submit(app::Message::Debugger(
+                debugger::Message::ResolveDisasmJump(self.jump_input.clone()),
+            ));
+
+        let follow = {
+            let label = text("PC").font(fonts::monospace()).size(13.0);
+            let mut btn = button(label).style(button::text);
+            if self.anchor.is_some() {
+                btn = btn.on_press(Message::SetAnchor(None).into());
+            }
+            btn
+        };
+
+        row![jump, follow]
+            .spacing(s())
+            .padding([0.0, s()])
+            .align_y(iced::alignment::Vertical::Center)
+            .into()
     }
 }
 
 impl Pane for DisassemblyPane {
     fn kind(&self) -> DebuggerPane {
         DebuggerPane::Disassembly
+    }
+
+    fn on_message(&mut self, message: &PaneMessage) {
+        if let PaneMessage::Disassembly(message) = message {
+            self.update(message.clone());
+        }
+    }
+
+    fn disasm_anchor(&self) -> Option<u32> {
+        self.anchor
     }
 
     fn view<'a>(&'a self, ctx: Option<&PaneContext<'_>>) -> pane_grid::Content<'a, app::Message> {
@@ -247,63 +320,65 @@ impl Pane for DisassemblyPane {
         };
 
         let breakpoints = ctx.breakpoints;
+        let is_breakpoint = |display: &AddressDisplay| {
+            display
+                .breakpoint
+                .is_some_and(|bp| breakpoints.contains(&bp))
+        };
         let rows: Vec<_> = data
             .rows
             .iter()
             .map(|row| match row {
                 DisasmRow::Label(label) => disasm_rows::label_row(label),
-                DisasmRow::Data {
-                    address,
-                    bank,
-                    byte,
-                } => disasm_rows::data_row(*address, *bank, *byte),
+                DisasmRow::Data { display, byte } => disasm_rows::data_row(*display, *byte),
                 DisasmRow::Instruction {
-                    address,
-                    bank,
+                    display,
                     tokens,
                     is_current,
                 } => disasm_rows::instruction_row(
-                    *address,
-                    *bank,
+                    *display,
                     tokens,
                     *is_current,
-                    breakpoints.contains(address),
+                    is_breakpoint(display),
                 ),
                 DisasmRow::Byte {
-                    address,
-                    bank,
+                    display,
                     byte,
                     is_current,
-                } => disasm_rows::byte_row(
-                    *address,
-                    *bank,
-                    *byte,
-                    *is_current,
-                    breakpoints.contains(address),
-                ),
+                } => disasm_rows::byte_row(*display, *byte, *is_current, is_breakpoint(display)),
             })
             .collect();
 
-        let header = if breakpoints.is_empty() {
-            panes::title_bar("Disassembly")
-        } else {
-            panes::title_bar_with_detail(
-                "Disassembly",
-                text(format!("{} bp", breakpoints.len()))
-                    .font(fonts::monospace())
-                    .size(11.0)
-                    .color(palette::MUTED),
-            )
+        // The anchor detail names where the walk starts when it isn't the PC.
+        let detail = match self.anchor {
+            Some(_) => Some(text("jumped").color(palette::YELLOW)),
+            None if !breakpoints.is_empty() => {
+                Some(text(format!("{} bp", breakpoints.len())).color(palette::MUTED))
+            }
+            None => None,
+        }
+        .map(|t| t.font(fonts::monospace()).size(11.0));
+
+        let header = match detail {
+            Some(detail) => panes::title_bar_with_detail("Disassembly", detail),
+            None => panes::title_bar("Disassembly"),
         };
+
+        let listing = iced::widget::scrollable(Column::from_vec(rows).width(Length::Fill))
+            .direction(iced::widget::scrollable::Direction::Vertical(
+                iced::widget::scrollable::Scrollbar::new()
+                    .width(0)
+                    .scroller_width(0),
+            ))
+            .width(Length::Fill)
+            .height(Length::Fill);
 
         pane(
             header,
-            iced::widget::scrollable(Column::from_vec(rows).width(Length::Fill))
-                .direction(iced::widget::scrollable::Direction::Vertical(
-                    iced::widget::scrollable::Scrollbar::new()
-                        .width(0)
-                        .scroller_width(0),
-                ))
+            Column::new()
+                .push(self.controls())
+                .push(listing)
+                .spacing(s())
                 .width(Length::Fill)
                 .into(),
         )
@@ -342,22 +417,23 @@ mod tests {
         }
     }
 
-    fn no_bank(_: u32) -> Option<u16> {
-        None
+    /// A bus presentation: every address shows as itself, no bank prefix.
+    fn bus(address: u32) -> AddressDisplay {
+        AddressDisplay::bus(address, None)
     }
 
     #[test]
     fn marks_exactly_the_current_instruction() {
         let memory = Bytes(vec![0x00; 32]);
-        let current: Vec<u32> = build(Some(&Toy), 8, &memory, None, None, &no_bank)
+        let current: Vec<u32> = build(Some(&Toy), 8, 8, &memory, None, None, &bus)
             .rows
             .iter()
             .filter_map(|row| match row {
                 DisasmRow::Instruction {
-                    address,
+                    display,
                     is_current: true,
                     ..
-                } => Some(*address),
+                } => Some(display.window),
                 _ => None,
             })
             .collect();
@@ -368,7 +444,7 @@ mod tests {
     fn inserts_a_label_above_its_address() {
         let memory = Bytes(vec![0x00; 32]);
         let symbols = SymbolTable::parse("[labels]\n00:0008 Target\n");
-        let readout = build(Some(&Toy), 8, &memory, None, Some(&symbols), &no_bank);
+        let readout = build(Some(&Toy), 8, 8, &memory, None, Some(&symbols), &bus);
         let current = readout
             .rows
             .iter()
@@ -389,24 +465,25 @@ mod tests {
     fn logged_data_becomes_a_data_row() {
         let memory = Bytes(vec![0x00; 8]);
         let cdl = CdlWindow::new(0, vec![CODE, DATA, CODE, CODE, CODE, CODE, CODE, CODE]);
-        let readout = build(Some(&Toy), 0, &memory, Some(&cdl), None, &no_bank);
-        assert!(
-            readout
-                .rows
-                .iter()
-                .any(|row| matches!(row, DisasmRow::Data { address: 1, .. }))
-        );
+        let readout = build(Some(&Toy), 0, 0, &memory, Some(&cdl), None, &bus);
+        assert!(readout.rows.iter().any(|row| matches!(
+            row,
+            DisasmRow::Data {
+                display: AddressDisplay { window: 1, .. },
+                ..
+            }
+        )));
     }
 
     #[test]
     fn backward_context_clamps_at_the_low_edge() {
         // From PC 0 there is nothing before it: the walk must not wrap or panic.
         let memory = Bytes(vec![0x00; 8]);
-        let readout = build(Some(&Toy), 0, &memory, None, None, &no_bank);
+        let readout = build(Some(&Toy), 0, 0, &memory, None, None, &bus);
         assert!(matches!(
             readout.rows.first(),
             Some(DisasmRow::Instruction {
-                address: 0,
+                display: AddressDisplay { window: 0, .. },
                 is_current: true,
                 ..
             })
@@ -416,7 +493,7 @@ mod tests {
     #[test]
     fn byte_fallback_without_an_instruction_set() {
         let memory = Bytes((0..=255).collect());
-        let readout = build(None, 10, &memory, None, None, &no_bank);
+        let readout = build(None, 10, 10, &memory, None, None, &bus);
         assert!(
             readout
                 .rows
@@ -428,10 +505,10 @@ mod tests {
             .iter()
             .filter_map(|row| match row {
                 DisasmRow::Byte {
-                    address,
+                    display,
                     is_current: true,
                     ..
-                } => Some(*address),
+                } => Some(display.window),
                 _ => None,
             })
             .collect();
@@ -439,21 +516,52 @@ mod tests {
     }
 
     #[test]
-    fn applies_the_bank_prefix_in_the_switchable_region() {
+    fn presentation_supplies_the_bank_prefix_and_window() {
+        // A synthetic ROM-style presentation: the walk address maps to a banked
+        // window with a bank prefix.
         let memory = Bytes(vec![0x00; 0x8000]);
-        let bank_of = |address: u32| (0x4000..0x8000).contains(&address).then_some(3);
-        let bank = build(Some(&Toy), 0x4010, &memory, None, None, &bank_of)
+        let present = |address: u32| AddressDisplay {
+            window: 0x4000 + (address & 0x3FFF),
+            bank: Some(3),
+            breakpoint: None,
+        };
+        let display = build(Some(&Toy), 0x0010, 0x0010, &memory, None, None, &present)
             .rows
             .iter()
             .find_map(|row| match row {
                 DisasmRow::Instruction {
                     is_current: true,
-                    bank,
+                    display,
                     ..
-                } => Some(*bank),
+                } => Some(*display),
                 _ => None,
             })
             .unwrap();
-        assert_eq!(bank, Some(3));
+        assert_eq!(display.bank, Some(3));
+        assert_eq!(display.window, 0x4010);
+        // A switchable-window row offers no breakpoint.
+        assert_eq!(display.breakpoint, None);
+    }
+
+    #[test]
+    fn anchor_walks_away_from_the_pc_without_marking_current() {
+        // Anchored above the PC: the PC is not in the walked window, so no row is
+        // marked current.
+        let memory = Bytes(vec![0x00; 64]);
+        let readout = build(Some(&Toy), 40, 8, &memory, None, None, &bus);
+        assert!(readout.rows.iter().any(|row| matches!(
+            row,
+            DisasmRow::Instruction {
+                display: AddressDisplay { window: 40, .. },
+                ..
+            }
+        )));
+        assert!(!readout.rows.iter().any(|row| matches!(
+            row,
+            DisasmRow::Instruction {
+                is_current: true,
+                ..
+            }
+        )));
     }
 }

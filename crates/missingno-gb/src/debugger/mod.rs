@@ -29,6 +29,8 @@ use missingno_core::symbols;
 const RAM_BASE: u32 = 0x0100_0000;
 /// The full ROM image, all banks in file order.
 const ROM_BASE: u32 = 0x0200_0000;
+/// Bank-complete work RAM, all banks linear (CGB's eight banks; DMG has none).
+const WRAM_BASE: u32 = 0x0300_0000;
 
 /// Embedded profile for full T-cycle frame capture with all PPU details.
 #[cfg(feature = "morepork")]
@@ -735,20 +737,123 @@ impl<M: Model> Debugger<M> {
         if ram_len > 0 {
             regions.push(region("sram", RAM_BASE, ram_len as u32));
         }
+        // A console that banks WRAM (CGB) exposes its full image linearly; the
+        // DMG's flat 8 KB is already covered by the `wram` bus window.
+        if let Some(wram) = self.game_boy.model().wram_image() {
+            regions.push(region("wram-all", WRAM_BASE, wram.len() as u32));
+        }
         regions
     }
 
     /// Side-effect-free read of the CPU address space. Addresses in the
-    /// synthetic bank-complete space read the cart's raw ROM or RAM linearly,
-    /// independent of the current bank; below it, the CPU bus.
+    /// synthetic bank-complete space read the cart's raw ROM or RAM, or the
+    /// banked work RAM, linearly — independent of the current bank; below it,
+    /// the CPU bus.
     pub fn peek(&self, address: u32) -> u8 {
         let cartridge = self.game_boy.cartridge();
-        if address >= ROM_BASE {
+        if address >= WRAM_BASE {
+            self.game_boy
+                .model()
+                .wram_image()
+                .and_then(|wram| wram.get((address - WRAM_BASE) as usize).copied())
+                .unwrap_or(0xFF)
+        } else if address >= ROM_BASE {
             cartridge.peek_rom((address - ROM_BASE) as usize)
         } else if address >= RAM_BASE {
             cartridge.peek_ram((address - RAM_BASE) as usize)
         } else {
             self.game_boy.peek(address as u16)
+        }
+    }
+
+    /// How `address` presents in the disassembly's address column: a synthetic
+    /// bank-complete address as its bank and the CPU window it pages into (ROM
+    /// bank 0 at `$0000`, banks ≥1 at `$4000`; SRAM at `$A000`; WRAM bank 0 at
+    /// `$C000`, banks ≥1 at `$D000`), a plain bus address as itself. A
+    /// breakpoint from a switchable-window row would fire for whichever bank is
+    /// paged in, so only fixed-bank windows carry one.
+    pub fn present_address(&self, address: u32) -> inspect::AddressDisplay {
+        use inspect::AddressDisplay;
+        if address >= WRAM_BASE {
+            let linear = address - WRAM_BASE;
+            let bank = (linear / 0x1000) as u16;
+            if bank == 0 {
+                let window = 0xC000 + linear;
+                AddressDisplay {
+                    window,
+                    bank: Some(0),
+                    breakpoint: Some(window),
+                }
+            } else {
+                AddressDisplay {
+                    window: 0xD000 + (linear % 0x1000),
+                    bank: Some(bank),
+                    breakpoint: None,
+                }
+            }
+        } else if address >= ROM_BASE {
+            let linear = address - ROM_BASE;
+            let bank = (linear / 0x4000) as u16;
+            if bank == 0 {
+                AddressDisplay {
+                    window: linear,
+                    bank: Some(0),
+                    breakpoint: Some(linear),
+                }
+            } else {
+                AddressDisplay {
+                    window: 0x4000 + (linear % 0x4000),
+                    bank: Some(bank),
+                    breakpoint: None,
+                }
+            }
+        } else if address >= RAM_BASE {
+            let linear = address - RAM_BASE;
+            AddressDisplay {
+                window: 0xA000 + (linear % 0x2000),
+                bank: Some((linear / 0x2000) as u16),
+                breakpoint: None,
+            }
+        } else {
+            let bank = match address as u16 {
+                0x4000..=0x7FFF => self.game_boy.cartridge().switchable_rom_bank(),
+                _ => None,
+            };
+            AddressDisplay::bus(address, bank)
+        }
+    }
+
+    /// The synthetic bank-complete address whose row presents as `bank:window`,
+    /// for jump-to-address — the inverse of [`present_address`](Self::present_address)
+    /// over the synthetic space. `None` when no region carries that pairing.
+    pub fn locate_bank_window(&self, bank: u16, window: u32) -> Option<u32> {
+        let cartridge = self.game_boy.cartridge();
+        let wram_len = self.game_boy.model().wram_image().map(<[u8]>::len);
+        match window {
+            0x0000..=0x3FFF if bank == 0 => {
+                (window < cartridge.rom_len() as u32).then_some(ROM_BASE + window)
+            }
+            0x4000..=0x7FFF => {
+                let linear = bank as u32 * 0x4000 + (window - 0x4000);
+                (linear < cartridge.rom_len() as u32).then_some(ROM_BASE + linear)
+            }
+            0xA000..=0xBFFF => {
+                let linear = bank as u32 * 0x2000 + (window - 0xA000);
+                (linear < cartridge.ram_len() as u32).then_some(RAM_BASE + linear)
+            }
+            0xC000..=0xCFFF if bank == 0 => {
+                let linear = window - 0xC000;
+                wram_len
+                    .filter(|&len| (linear as usize) < len)
+                    .map(|_| WRAM_BASE + linear)
+            }
+            0xD000..=0xDFFF => {
+                let linear = bank as u32 * 0x1000 + (window - 0xD000);
+                wram_len
+                    .filter(|&len| (linear as usize) < len)
+                    .map(|_| WRAM_BASE + linear)
+            }
+            _ => None,
         }
     }
 
@@ -993,6 +1098,106 @@ mod tests {
         // File order, independent of what the mapper currently pages in.
         assert_eq!(debugger.peek(ROM_BASE), 0);
         assert_eq!(debugger.peek(ROM_BASE + 3 * 0x4000), 3);
+    }
+
+    #[test]
+    fn present_and_locate_round_trip_over_synthetic_space() {
+        let debugger = Debugger::new(Console::<Dmg>::new(mbc5_ram_cart(), None));
+        let display = |a: u32| {
+            let d = debugger.present_address(a);
+            (d.bank, d.window, d.breakpoint)
+        };
+        // ROM bank 0 maps to the fixed $0000 window — an unambiguous breakpoint.
+        assert_eq!(display(ROM_BASE + 0x0123), (Some(0), 0x0123, Some(0x0123)));
+        assert_eq!(
+            debugger.locate_bank_window(0, 0x0123),
+            Some(ROM_BASE + 0x0123)
+        );
+        // ROM bank 3 maps to the switchable $4000 window — no breakpoint.
+        let rom3 = 3 * 0x4000 + 0x0123;
+        assert_eq!(display(ROM_BASE + rom3), (Some(3), 0x4123, None));
+        assert_eq!(
+            debugger.locate_bank_window(3, 0x4123),
+            Some(ROM_BASE + rom3)
+        );
+        // SRAM bank 2 maps to the $A000 window.
+        let sram2 = 2 * 0x2000 + 0x0055;
+        assert_eq!(display(RAM_BASE + sram2), (Some(2), 0xA055, None));
+        assert_eq!(
+            debugger.locate_bank_window(2, 0xA055),
+            Some(RAM_BASE + sram2)
+        );
+        // A pairing past the image, and a window in no synthetic region, reject.
+        assert_eq!(debugger.locate_bank_window(99, 0x4000), None);
+        assert_eq!(debugger.locate_bank_window(0, 0x8000), None);
+    }
+
+    #[test]
+    fn dmg_has_no_linear_wram_region() {
+        let debugger = Debugger::new(traced_program_console());
+        assert!(
+            debugger
+                .memory_regions()
+                .iter()
+                .all(|r| r.name != "wram-all")
+        );
+        // DMG's model exposes no bank-complete WRAM image.
+        assert!(debugger.game_boy().model().wram_image().is_none());
+    }
+
+    /// Code uploaded to work RAM and executed there disassembles live: the walk
+    /// reads through peek and, since the code/data log never covers RAM, the
+    /// backward context falls back to the heuristic sweep.
+    #[test]
+    fn disassembles_code_running_in_work_ram() {
+        use missingno_core::disasm::{ReadMemory, Row, window_after};
+
+        // Store a three-byte routine to $C000 (NOP; JR -3 → self-loop) then jump
+        // to it, so the program counter ends up executing from WRAM.
+        let mut rom = vec![0u8; 0x8000];
+        let program = [
+            0x3E, 0x00, // LD A,$00
+            0xEA, 0x00, 0xC0, // LD ($C000),A
+            0x3E, 0x18, // LD A,$18
+            0xEA, 0x01, 0xC0, // LD ($C001),A
+            0x3E, 0xFD, // LD A,$FD
+            0xEA, 0x02, 0xC0, // LD ($C002),A
+            0xC3, 0x00, 0xC0, // JP $C000
+        ];
+        rom[0x100..0x100 + program.len()].copy_from_slice(&program);
+        let mut debugger = Debugger::new(Console::<Dmg>::new(
+            crate::cartridge::Cartridge::new(rom, None),
+            None,
+        ));
+
+        for _ in 0..64 {
+            if debugger.pc() == 0xC000 {
+                break;
+            }
+            debugger.step();
+        }
+        assert_eq!(debugger.pc(), 0xC000, "did not reach the WRAM routine");
+
+        // The routine bytes are live in WRAM.
+        assert_eq!(debugger.peek(0xC000), 0x00);
+        assert_eq!(debugger.peek(0xC001), 0x18);
+        assert_eq!(debugger.peek(0xC002), 0xFD);
+        // The log records nothing for RAM addresses, so the disassembly's
+        // backward context has no coverage and uses the heuristic.
+        assert_eq!(debugger.cdl().flags(0xC000, None), 0);
+
+        struct Peek<'a>(&'a Debugger<Dmg>);
+        impl ReadMemory for Peek<'_> {
+            fn read(&self, address: u32) -> u8 {
+                self.0.peek(address)
+            }
+        }
+        let cdl = debugger.cdl().window(0xC000, None);
+        let rows = window_after(0xC000, 2, &Sm83, &Peek(&debugger), Some(&cdl));
+        assert_eq!(
+            rows,
+            vec![Row::Instruction(0xC000), Row::Instruction(0xC001)]
+        );
     }
 
     #[test]

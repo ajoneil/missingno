@@ -109,6 +109,10 @@ pub enum Message {
     LabelNameChanged(String),
     AddLabel,
 
+    /// Resolve a jump-to-address typed in the disassembly pane against the live
+    /// core, which owns the region/bank mapping, then anchor the walk there.
+    ResolveDisasmJump(String),
+
     BottomPane(BottomPaneMessage),
     MainSplitResize(pane_grid::ResizeEvent),
 
@@ -171,6 +175,34 @@ pub type ReturnedConsole = Box<(Box<dyn SystemConsole>, ScreenView)>;
 /// construct registers a family behind the same feature gate.
 fn pane_family(platform: Platform) -> &'static panes::Family {
     panes::family_for(platform).expect("a debugger's platform registers panes")
+}
+
+/// A parsed disassembly jump-to-address: a plain bus address, or a bank:window
+/// pairing the live core maps to a synthetic bank-complete address.
+#[derive(Debug, PartialEq, Eq)]
+enum DisasmJump {
+    Bus(u32),
+    BankWindow { bank: u16, window: u32 },
+}
+
+/// Parse a jump-to-address field: `NN:AAAA` as a bank:window pairing, a plain
+/// hex string (with optional `0x`/`$`) as a bus address. `None` when either
+/// part fails to parse.
+fn parse_disasm_jump(input: &str) -> Option<DisasmJump> {
+    fn hex(text: &str) -> Option<u32> {
+        let text = text.trim().trim_start_matches("0x").trim_start_matches('$');
+        (!text.is_empty())
+            .then(|| u32::from_str_radix(text, 16).ok())
+            .flatten()
+    }
+    let input = input.trim();
+    match input.split_once(':') {
+        Some((bank, window)) => Some(DisasmJump::BankWindow {
+            bank: u16::from_str_radix(bank.trim(), 16).ok()?,
+            window: hex(window)?,
+        }),
+        None => hex(input).map(DisasmJump::Bus),
+    }
 }
 
 impl Debugger {
@@ -333,6 +365,19 @@ impl Debugger {
     /// shown or the family has no region map.
     pub fn memory_interest(&self) -> Option<memory::MemoryInterest> {
         memory::interest_for(&self.memory_regions, self.panes.memory_selection()?)
+    }
+
+    /// Resolve a disassembly jump-to-address to a walk anchor. A `bank:addr`
+    /// jump resolves through the live core's region/bank mapping to a synthetic
+    /// bank-complete address (so it needs a paused core); a plain hex address
+    /// anchors directly in bus space. `None` for unparseable or unmapped input.
+    fn resolve_disasm_jump(&self, input: &str) -> Option<u32> {
+        match parse_disasm_jump(input)? {
+            DisasmJump::Bus(address) => Some(address),
+            DisasmJump::BankWindow { bank, window } => {
+                self.debugger.as_ref()?.locate_bank_window(bank, window)
+            }
+        }
     }
 
     /// Whether any consumer wants per-channel waveform capture on — currently
@@ -652,6 +697,16 @@ impl Debugger {
                 Task::none()
             }
 
+            Message::ResolveDisasmJump(input) => {
+                if let Some(anchor) = self.resolve_disasm_jump(&input) {
+                    self.panes
+                        .update(panes::Message::Pane(panes::PaneMessage::Disassembly(
+                            disassembly::Message::SetAnchor(Some(anchor)),
+                        )));
+                }
+                Task::none()
+            }
+
             Message::Pane(message) => {
                 // Keep the memory pane's region cache fresh so its
                 // jump-to-address resolves while the core runs on the emu
@@ -706,7 +761,7 @@ impl Debugger {
         let disasm_readout = self
             .panes
             .plane_shown(panes::DebuggerPane::Disassembly)
-            .then(|| disassembly::paused_readout(core.as_ref()));
+            .then(|| disassembly::paused_readout(core.as_ref(), self.panes.disasm_anchor()));
         // The frozen tail the core still holds while paused; `None` unless the
         // audio scope has capture on.
         let waves = core.channel_waves();
@@ -1136,4 +1191,30 @@ fn breakpoint_row(address: u32) -> Element<'static, app::Message> {
         .align_y(Vertical::Center),
     )
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DisasmJump, parse_disasm_jump};
+
+    #[test]
+    fn parses_bank_window_plain_hex_and_rejects_garbage() {
+        // A bank:window pairing.
+        assert_eq!(
+            parse_disasm_jump("03:4123"),
+            Some(DisasmJump::BankWindow {
+                bank: 3,
+                window: 0x4123
+            })
+        );
+        // Plain hex, with and without sigils, is a bus address.
+        assert_eq!(parse_disasm_jump("C000"), Some(DisasmJump::Bus(0xC000)));
+        assert_eq!(parse_disasm_jump("$FF80"), Some(DisasmJump::Bus(0xFF80)));
+        assert_eq!(parse_disasm_jump("0x0150"), Some(DisasmJump::Bus(0x0150)));
+        // Unparseable input, on either side of the colon, rejects.
+        assert_eq!(parse_disasm_jump("wram"), None);
+        assert_eq!(parse_disasm_jump(""), None);
+        assert_eq!(parse_disasm_jump("zz:4000"), None);
+        assert_eq!(parse_disasm_jump("03:xy"), None);
+    }
 }

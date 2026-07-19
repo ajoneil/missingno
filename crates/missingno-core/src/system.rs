@@ -133,6 +133,12 @@ pub trait InspectSnapshot: Send {
     fn bank_for(&self, _address: u32) -> Option<u16> {
         None
     }
+    /// How `address` presents in the disassembly's address column. Defaults to a
+    /// plain bus row carrying [`bank_for`](Self::bank_for); a family with a
+    /// synthetic bank-complete space overrides to present its rows as bank:window.
+    fn present_address(&self, address: u32) -> crate::inspect::AddressDisplay {
+        crate::inspect::AddressDisplay::bus(address, self.bank_for(address))
+    }
     /// The decode-for-display front end for the running disassembly. `None`
     /// when the family has no instruction set (its disassembly falls back to
     /// raw bytes).
@@ -318,6 +324,19 @@ pub trait SystemDebugger: Send {
     /// The bank currently mapped at `address`, for a bank-prefixed disassembly
     /// row. `None` outside any switchable region, or for a core without one.
     fn bank_for(&self, _address: u32) -> Option<u16> {
+        None
+    }
+    /// How `address` presents in the disassembly's address column. Defaults to a
+    /// plain bus row carrying [`bank_for`](Self::bank_for); a core with a
+    /// synthetic bank-complete space overrides to present its rows as bank:window.
+    fn present_address(&self, address: u32) -> crate::inspect::AddressDisplay {
+        crate::inspect::AddressDisplay::bus(address, self.bank_for(address))
+    }
+    /// The walk address whose disassembly row presents as `bank:window` — the
+    /// synthetic bank-complete address for a banked region, for jump-to-address.
+    /// `None` when no region presents that pairing. Inverse of
+    /// [`present_address`](Self::present_address) over the synthetic space.
+    fn locate_bank_window(&self, _bank: u16, _window: u32) -> Option<u32> {
         None
     }
 

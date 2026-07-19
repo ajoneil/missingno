@@ -216,6 +216,12 @@ impl Model for Cgb {
         &mut self.console_state
     }
 
+    /// The eight 4 KB WRAM banks, in bank order — the bank-complete image the
+    /// debugger walks above the bus.
+    fn wram_image(&self) -> Option<&[u8]> {
+        Some(&self.wram[..])
+    }
+
     fn oam_dma_bus_conflict(&self, cpu_addr: u16, dma_source: u16) -> bool {
         cgb_bus(cpu_addr) == Some(cgb_dma_source_bus(dma_source))
     }

@@ -8,14 +8,15 @@ use iced::{
     Background, Border, Color, Element, Length,
     alignment::Vertical,
     widget::text::Span,
-    widget::{button, container, rich_text, row, text},
+    widget::{button, container, rich_text, row, text, tooltip},
 };
 
 use crate::app::{
     self,
-    debugger::{self},
+    debugger::{self, sidebar::tooltip_style},
     ui::{fonts, palette, sizes::s},
 };
+use missingno_core::inspect::AddressDisplay;
 use missingno_core::isa::{InstructionSet, OperandClass};
 
 // Operand roles mapped to palette colours — the class is semantic, the colour
@@ -80,11 +81,11 @@ fn operand_color(class: OperandClass) -> Color {
     }
 }
 
-/// A bank-prefixed address when a bank is mapped, plain otherwise.
-fn address_text(address: u32, bank: Option<u16>) -> String {
-    match bank {
-        Some(bank) => format!("{bank:02X}:{address:04X}"),
-        None => format!("{address:04X}"),
+/// A bank-prefixed window address when a bank is mapped, plain otherwise.
+fn address_text(display: AddressDisplay) -> String {
+    match display.bank {
+        Some(bank) => format!("{bank:02X}:{:04X}", display.window),
+        None => format!("{:04X}", display.window),
     }
 }
 
@@ -100,10 +101,10 @@ pub fn label_row(label: &str) -> Element<'static, app::Message> {
 
 /// A logged data byte within a disassembly — an empty gutter (data can't hold a
 /// breakpoint), the address, and its byte as `db $XX`.
-pub fn data_row(address: u32, bank: Option<u16>, byte: u8) -> Element<'static, app::Message> {
+pub fn data_row(display: AddressDisplay, byte: u8) -> Element<'static, app::Message> {
     row![
         container("").width(Length::Fixed(24.0)),
-        text(address_text(address, bank))
+        text(address_text(display))
             .font(fonts::monospace())
             .size(13.0)
             .color(palette::OVERLAY0),
@@ -121,15 +122,14 @@ pub fn data_row(address: u32, bank: Option<u16>, byte: u8) -> Element<'static, a
 /// A raw byte row for a core with no instruction set: the same chrome as an
 /// instruction row — breakpoint gutter and current highlight — carrying `db $XX`.
 pub fn byte_row(
-    address: u32,
-    bank: Option<u16>,
+    display: AddressDisplay,
     byte: u8,
     is_current: bool,
     is_breakpoint: bool,
 ) -> Element<'static, app::Message> {
     let the_row = row![
-        gutter(address, is_breakpoint),
-        text(address_text(address, bank))
+        gutter(display.breakpoint, is_breakpoint),
+        text(address_text(display))
             .font(fonts::monospace())
             .size(13.0)
             .color(palette::OVERLAY0),
@@ -147,8 +147,7 @@ pub fn byte_row(
 /// A decoded instruction row: breakpoint gutter, address, and the coloured
 /// tokens, wrapped in the current-instruction highlight when it holds the PC.
 pub fn instruction_row(
-    address: u32,
-    bank: Option<u16>,
+    display: AddressDisplay,
     tokens: &[Token],
     is_current: bool,
     is_breakpoint: bool,
@@ -163,8 +162,8 @@ pub fn instruction_row(
         .collect();
 
     let the_row = row![
-        gutter(address, is_breakpoint),
-        text(address_text(address, bank))
+        gutter(display.breakpoint, is_breakpoint),
+        text(address_text(display))
             .font(fonts::monospace())
             .size(13.0)
             .color(palette::OVERLAY0),
@@ -177,30 +176,30 @@ pub fn instruction_row(
 }
 
 /// The breakpoint gutter: a filled dot when set, a hollow ring otherwise,
-/// toggling the breakpoint at `address` when clicked.
-fn gutter(address: u32, is_breakpoint: bool) -> Element<'static, app::Message> {
-    let bp_icon: Element<'static, app::Message> = if is_breakpoint {
-        container("")
-            .width(Length::Fixed(8.0))
-            .height(Length::Fixed(8.0))
-            .style(|_: &iced::Theme| container::Style {
-                background: Some(Background::Color(palette::RED)),
-                border: Border::default().rounded(4.0),
-                ..Default::default()
-            })
-            .into()
+/// toggling the breakpoint at the row's bus address when clicked. A synthetic
+/// row that maps to no single bus address (a switchable window shared across
+/// banks) has `breakpoint == None`: the gutter shows a dimmed dot with a
+/// tooltip and takes no click.
+fn gutter(breakpoint: Option<u32>, is_breakpoint: bool) -> Element<'static, app::Message> {
+    let Some(address) = breakpoint else {
+        return tooltip(
+            dot(palette::SURFACE2, false),
+            container(
+                text("no breakpoint — bank-shared window")
+                    .font(fonts::monospace())
+                    .size(11.0),
+            )
+            .padding([2.0, s()]),
+            tooltip::Position::Right,
+        )
+        .style(tooltip_style)
+        .into();
+    };
+
+    let bp_icon = if is_breakpoint {
+        dot(palette::RED, true)
     } else {
-        container("")
-            .width(Length::Fixed(8.0))
-            .height(Length::Fixed(8.0))
-            .style(|_: &iced::Theme| container::Style {
-                border: Border::default()
-                    .rounded(4.0)
-                    .width(1.0)
-                    .color(palette::SURFACE2),
-                ..Default::default()
-            })
-            .into()
+        dot(palette::SURFACE2, false)
     };
 
     button(bp_icon)
@@ -213,6 +212,29 @@ fn gutter(address: u32, is_breakpoint: bool) -> Element<'static, app::Message> {
             }
             .into(),
         )
+        .into()
+}
+
+/// The 8px gutter marker: a filled disc (`filled`) or a hollow ring outlined in
+/// `color`.
+fn dot(color: Color, filled: bool) -> Element<'static, app::Message> {
+    container("")
+        .width(Length::Fixed(8.0))
+        .height(Length::Fixed(8.0))
+        .style(move |_: &iced::Theme| {
+            if filled {
+                container::Style {
+                    background: Some(Background::Color(color)),
+                    border: Border::default().rounded(4.0),
+                    ..Default::default()
+                }
+            } else {
+                container::Style {
+                    border: Border::default().rounded(4.0).width(1.0).color(color),
+                    ..Default::default()
+                }
+            }
+        })
         .into()
 }
 

@@ -452,6 +452,36 @@ pub struct MemoryRegion {
     pub len: u32,
 }
 
+/// How a debugger address presents in the disassembly's address column, and
+/// where a breakpoint set from its row lands. A plain bus address presents as
+/// itself; a synthetic bank-complete address (the full ROM/RAM image walked
+/// above the bus) presents as its bank and the CPU-window address that bank
+/// pages into, with the breakpoint mapped to that window when the mapping is
+/// unambiguous.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AddressDisplay {
+    /// The address shown in the column — the CPU-window address for a synthetic
+    /// row, the address itself for a bus row.
+    pub window: u32,
+    /// The bank prefix, when the address sits in (or maps to) a banked window.
+    pub bank: Option<u16>,
+    /// Where a breakpoint from this row lands: the bus window address when a
+    /// synthetic row maps unambiguously to one, `None` when it cannot (a
+    /// switchable window shared across banks — the gutter disables).
+    pub breakpoint: Option<u32>,
+}
+
+impl AddressDisplay {
+    /// A plain bus address: shown as itself, breakpoint at itself.
+    pub fn bus(address: u32, bank: Option<u16>) -> Self {
+        Self {
+            window: address,
+            bank,
+            breakpoint: Some(address),
+        }
+    }
+}
+
 /// A copied span of address space: a base address and the bytes read upward
 /// from it. Backs the memory viewer's running-mode window (what a per-vblank
 /// snapshot could capture) and the Game Boy's PC-anchored disassembly capture.
