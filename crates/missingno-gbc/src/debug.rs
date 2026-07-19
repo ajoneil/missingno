@@ -182,6 +182,7 @@ pub fn cgb_sidebar_sections(
 
     let ppu_content = vec![
         parts::ppu_position_block(ppu),
+        parts::ppu_status_block(ppu),
         SectionBlock::Rule,
         parts::ppu_background_block(ppu),
         SectionBlock::Rule,

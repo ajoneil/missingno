@@ -33,6 +33,8 @@ const MAX_DISASM_COUNT: usize = 256;
 const MAX_STEP_COUNT: usize = 1_000_000;
 /// Cap on frames run by a single `step_frame`.
 const MAX_FRAME_COUNT: usize = 3600;
+/// Cap on sub-instruction ticks run by a single `step_tick`.
+const MAX_TICK_COUNT: usize = 1_000_000;
 
 /// One item of a tool result's content: agent-readable text, or an embedded
 /// image (the resolved frame as a PNG).
@@ -74,27 +76,11 @@ impl Tool {
     }
 }
 
-/// A family MCP extension, mounted ahead of the generic tools: it advertises
-/// the tools its core exposes for the current session, and handles calls it
-/// owns, declining the rest. Mirrors the HTTP [`Extension`] seam.
-///
-/// [`Extension`]: crate::http::Extension
-pub struct McpExtension {
-    /// The extension's tools applicable to this session (empty when the
-    /// session is not this family's core).
-    pub tools: fn(&mut Session) -> Vec<Tool>,
-    /// Handle a tool call, or return `None` to decline it.
-    pub call: fn(&mut Session, &str, &Value) -> Option<ToolOutcome>,
-}
-
 /// Serve `session` as an MCP tool server over stdio until stdin reaches EOF or
 /// a `shutdown` request arrives. `core_name` names the core in `status` and the
-/// server handshake.
-pub fn serve(
-    mut session: Session,
-    core_name: &'static str,
-    extensions: Vec<McpExtension>,
-) -> io::Result<()> {
+/// server handshake. Every tool is a [`Session`] call: the transport is
+/// Session-only by construction, with no family-specific escape hatch.
+pub fn serve(mut session: Session, core_name: &'static str) -> io::Result<()> {
     eprintln!("mcp: {} ({core_name}) ready on stdio", session.game_title());
     let stdin = io::stdin();
     let mut stdout = io::stdout();
@@ -103,7 +89,7 @@ pub fn serve(
         if line.trim().is_empty() {
             continue;
         }
-        let (response, exit) = handle_message(&line, &mut session, core_name, &extensions);
+        let (response, exit) = handle_message(&line, &mut session, core_name);
         if let Some(response) = response {
             writeln!(stdout, "{}", serde_json::to_string(&response).unwrap())?;
             stdout.flush()?;
@@ -121,7 +107,6 @@ fn handle_message(
     line: &str,
     session: &mut Session,
     core_name: &'static str,
-    extensions: &[McpExtension],
 ) -> (Option<Value>, bool) {
     let message: Value = match serde_json::from_str(line) {
         Ok(message) => message,
@@ -150,12 +135,9 @@ fn handle_message(
     match method {
         "initialize" => (Some(success(id, initialize_result(core_name))), false),
         "ping" => (Some(success(id, json!({}))), false),
-        "tools/list" => (Some(success(id, tools_list(session, extensions))), false),
+        "tools/list" => (Some(success(id, tools_list(session))), false),
         "tools/call" => (
-            Some(success(
-                id,
-                tools_call(session, core_name, extensions, &params),
-            )),
+            Some(success(id, tools_call(session, core_name, &params))),
             false,
         ),
         "shutdown" => (Some(success(id, Value::Null)), true),
@@ -191,13 +173,8 @@ fn error_response(id: Value, code: i64, message: &str) -> Value {
 
 // --- tools/list ---------------------------------------------------------------
 
-fn tools_list(session: &mut Session, extensions: &[McpExtension]) -> Value {
-    let mut tools: Vec<Value> = generic_tools(session).iter().map(Tool::to_json).collect();
-    for extension in extensions {
-        for tool in (extension.tools)(session) {
-            tools.push(tool.to_json());
-        }
-    }
+fn tools_list(session: &mut Session) -> Value {
+    let tools: Vec<Value> = generic_tools(session).iter().map(Tool::to_json).collect();
     json!({ "tools": tools })
 }
 
@@ -205,7 +182,7 @@ fn generic_tools(session: &Session) -> Vec<Tool> {
     let hex = || json!({ "type": "string", "description": "hex address, e.g. \"ff40\"" });
     let empty = || json!({ "type": "object", "properties": {}, "additionalProperties": false });
 
-    vec![
+    let mut tools = vec![
         Tool {
             name: "status",
             description: "Program counter, frame count, last stop reason, game title, and core."
@@ -384,7 +361,26 @@ fn generic_tools(session: &Session) -> Vec<Tool> {
                 "required": ["control"],
             }),
         },
-    ]
+    ];
+
+    // Sub-instruction stepping is advertised only when the core names a tick
+    // finer than an instruction (a Game Boy dot, a VCS colour clock).
+    tools.extend(step_tick_tool(session.tick_name()));
+
+    tools
+}
+
+/// The sub-instruction stepping tool, present only when the core names a tick.
+fn step_tick_tool(tick_name: Option<&str>) -> Option<Tool> {
+    let tick = tick_name?;
+    Some(Tool {
+        name: "step_tick",
+        description: format!(
+            "Advance the console by sub-instruction ticks (one {tick} each); count \
+             default 1, max {MAX_TICK_COUNT}. Reports the resulting pc and video position."
+        ),
+        input_schema: count_schema(MAX_TICK_COUNT),
+    })
 }
 
 fn count_schema(max: usize) -> Value {
@@ -434,23 +430,12 @@ fn watch_description(session: &Session, verb: &str) -> String {
 
 // --- tools/call ---------------------------------------------------------------
 
-fn tools_call(
-    session: &mut Session,
-    core_name: &str,
-    extensions: &[McpExtension],
-    params: &Value,
-) -> Value {
+fn tools_call(session: &mut Session, core_name: &str, params: &Value) -> Value {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
     let args = params
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
-
-    for extension in extensions {
-        if let Some(outcome) = (extension.call)(session, name, &args) {
-            return outcome_json(outcome);
-        }
-    }
 
     match call_generic(session, core_name, name, &args) {
         Some(outcome) => outcome_json(outcome),
@@ -499,6 +484,7 @@ fn call_generic(
             text(step_report(session, &stop, 1))
         }
         "step_frame" => stepping(session, args, Stepping::Frame),
+        "step_tick" => step_tick(session, args),
         "reset" => {
             session.reset();
             text(status_text(session, core_name))
@@ -754,6 +740,32 @@ fn step_report(session: &Session, stop: &StopReason, ran: usize) -> String {
         session.pc(),
         session.frame(),
         stop_text(stop)
+    )
+}
+
+fn step_tick(session: &mut Session, args: &Value) -> ToolOutcome {
+    let Some(tick) = session.tick_name() else {
+        return Err("this core has no sub-instruction stepping".into());
+    };
+    let count = match args.get("count") {
+        None | Some(Value::Null) => 1,
+        Some(value) => value
+            .as_u64()
+            .map(|n| (n as usize).clamp(1, MAX_TICK_COUNT))
+            .ok_or("count must be an integer")?,
+    };
+    for _ in 0..count {
+        session.step_tick();
+    }
+    text(tick_report(session, tick, count))
+}
+
+fn tick_report(session: &Session, tick: &str, ran: usize) -> String {
+    let status = session.running_status();
+    let plural = if ran == 1 { "" } else { "s" };
+    format!(
+        "ran: {ran} {tick}{plural}\npc: {:04x}\n{}: {}",
+        status.pc, status.video_label, status.video_summary,
     )
 }
 
@@ -1480,6 +1492,17 @@ mod tests {
         BitColumn, BitRow, FlagName, PairCell, PairMatrix, Register, RegisterGroup, Row, Sweep,
         SweepZone, Tone,
     };
+
+    #[test]
+    fn step_tick_tool_gated_on_tick_name() {
+        // The default `SystemDebugger::tick_name` (a core with no tick finer
+        // than an instruction) declines the tool.
+        assert!(step_tick_tool(None).is_none());
+        // A core that names a tick advertises it, naming the unit.
+        let tool = step_tick_tool(Some("dot")).expect("a named tick advertises step_tick");
+        assert_eq!(tool.name, "step_tick");
+        assert!(tool.description.contains("dot"));
+    }
 
     #[test]
     fn base64_matches_known_vectors() {

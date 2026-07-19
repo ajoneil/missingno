@@ -14,7 +14,7 @@ use missingno_core::inspect::{
     MemoryRegion, RegisterGroup, Section, Watch, WatchParam, WatchTerm, Watchable,
 };
 use missingno_core::symbols::SymbolTable;
-use missingno_core::system::{ControlId, ControlInput, StepOutcome, SystemDebugger};
+use missingno_core::system::{ControlId, ControlInput, RunningStatus, StepOutcome, SystemDebugger};
 use missingno_core::video::{RgbaFrame, VideoOut};
 use missingno_core::waveform::ChannelWave;
 
@@ -124,6 +124,25 @@ impl Session {
     pub fn step_frame(&mut self) -> StopReason {
         let outcome = self.debugger.step_frame();
         self.record(outcome)
+    }
+
+    /// The name of this core's sub-instruction step unit, or `None` when the
+    /// core's finest step is a whole instruction.
+    pub fn tick_name(&self) -> Option<&'static str> {
+        self.debugger.tick_name()
+    }
+
+    /// Advance one sub-instruction tick. Steps nothing on a core without
+    /// sub-instruction granularity; the run bookkeeping is untouched, matching
+    /// the finest-grained stepping path.
+    pub fn step_tick(&mut self) {
+        self.debugger.step_tick();
+    }
+
+    /// The compact running-status summary (pc, sp, and the one-line video
+    /// position) for the current machine state.
+    pub fn running_status(&self) -> RunningStatus {
+        self.debugger.running_status(self.frame)
     }
 
     pub fn reset(&mut self) {

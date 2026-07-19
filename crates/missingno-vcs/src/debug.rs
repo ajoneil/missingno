@@ -906,6 +906,15 @@ impl SystemDebugger for VcsDebugger {
         }
     }
 
+    fn tick_name(&self) -> Option<&'static str> {
+        Some("colour clock")
+    }
+
+    fn step_tick(&mut self) {
+        self.core.console_mut().step_clock();
+        self.refresh();
+    }
+
     fn screen_display(&self) -> VideoFrame {
         VideoFrame::Indexed(self.last_frame.clone())
     }

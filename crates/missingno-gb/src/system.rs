@@ -333,6 +333,14 @@ where
         }
     }
 
+    fn tick_name(&self) -> Option<&'static str> {
+        Some("dot")
+    }
+
+    fn step_tick(&mut self) {
+        self.core.step_tcycle();
+    }
+
     fn screen_display(&self) -> Frame {
         self.display(Some(self.core.game_boy().screen().clone()))
             .expect("screen_display is always Some when given a screen")

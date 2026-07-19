@@ -55,6 +55,47 @@ fn breakpoints_round_trip() {
     assert!(!session.breakpoints().contains(&0x0150));
 }
 
+/// The value of a named PPU-section row, if present.
+fn ppu_row(session: &Session, label: &str) -> Option<String> {
+    use missingno_core::inspect::SectionBlock;
+    let sections = session.sidebar_sections();
+    let ppu = sections.iter().find(|section| section.name == "PPU")?;
+    for block in &ppu.blocks {
+        if let SectionBlock::Rows(rows) = block {
+            if let Some(row) = rows.iter().find(|row| row.label == label) {
+                return Some(row.value.clone());
+            }
+        }
+    }
+    None
+}
+
+#[test]
+fn gb_advertises_a_dot_tick_finer_than_an_instruction() {
+    let mut session = session();
+    // The Game Boy's sub-instruction tick is the dot (T-cycle).
+    assert_eq!(session.tick_name(), Some("dot"));
+
+    // A NOP is four dots: a single dot does not complete it, and the fourth
+    // advances the PC by one — the tick is genuinely sub-instruction.
+    let pc0 = session.pc();
+    session.step_tick();
+    assert_eq!(session.pc(), pc0, "one dot must not finish a four-dot NOP");
+    for _ in 0..3 {
+        session.step_tick();
+    }
+    assert_eq!(session.pc(), pc0 + 1, "four dots complete exactly one NOP");
+}
+
+#[test]
+fn ppu_section_carries_folded_stat_and_lyc() {
+    let session = session();
+    // The former `gb_ppu_state` STAT and LYC fields now live in the PPU
+    // sidebar section the generic `describe_machine` renders.
+    assert!(ppu_row(&session, "stat").is_some());
+    assert!(ppu_row(&session, "lyc").is_some());
+}
+
 #[test]
 fn disassembly_window_decodes_from_pc() {
     let session = session();

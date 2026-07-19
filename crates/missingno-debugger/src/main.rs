@@ -66,12 +66,8 @@ fn run() -> Result<(), String> {
             let core_name = factory::factory_for(&args.rom, &rom)
                 .map(|factory| factory.name)
                 .unwrap_or("unknown");
-            return missingno_debugger::mcp::serve(
-                Session::new(debugger),
-                core_name,
-                missingno_debugger::mcp_extensions(),
-            )
-            .map_err(|e| e.to_string());
+            return missingno_debugger::mcp::serve(Session::new(debugger), core_name)
+                .map_err(|e| e.to_string());
         }
         #[cfg(not(feature = "mcp"))]
         return Err("this build has no MCP transport (enable the `mcp` feature)".to_string());

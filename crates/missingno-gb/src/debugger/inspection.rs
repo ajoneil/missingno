@@ -226,8 +226,13 @@ pub fn cpu_register_groups(cpu: &impl CpuSource) -> Vec<inspect::RegisterGroup> 
 pub trait PpuSource {
     fn control(&self) -> Control;
     fn mode(&self) -> Mode;
+    /// The raw STAT byte — its mode bits plus the LYC-coincidence flag and the
+    /// mode/LYC interrupt-enable bits the decoded rows don't otherwise carry.
+    fn stat(&self) -> u8;
     fn ly(&self) -> u8;
     fn lx(&self) -> u8;
+    /// The LY-compare register (LYC) driving the STAT coincidence flag.
+    fn lyc(&self) -> u8;
     fn scx(&self) -> u8;
     fn scy(&self) -> u8;
     fn wx(&self) -> u8;
@@ -249,11 +254,17 @@ impl<P: PpuModel> PpuSource for Ppu<P> {
     fn mode(&self) -> Mode {
         Ppu::mode(self)
     }
+    fn stat(&self) -> u8 {
+        self.read_register(Register::Status)
+    }
     fn ly(&self) -> u8 {
         self.video.ly()
     }
     fn lx(&self) -> u8 {
         Ppu::lx(self)
+    }
+    fn lyc(&self) -> u8 {
+        self.read_register(Register::InterruptOnScanline)
     }
     fn scx(&self) -> u8 {
         self.read_register(Register::BackgroundViewportX)
@@ -291,8 +302,10 @@ impl<P: PpuModel> PpuSource for Ppu<P> {
 pub struct PpuView {
     control: Control,
     mode: Mode,
+    stat: u8,
     ly: u8,
     lx: u8,
+    lyc: u8,
     scx: u8,
     scy: u8,
     wx: u8,
@@ -310,8 +323,10 @@ impl PpuView {
         Self {
             control: ppu.control(),
             mode: ppu.mode(),
+            stat: ppu.read_register(Register::Status),
             ly: ppu.video.ly(),
             lx: ppu.lx(),
+            lyc: ppu.read_register(Register::InterruptOnScanline),
             scx: ppu.read_register(Register::BackgroundViewportX),
             scy: ppu.read_register(Register::BackgroundViewportY),
             wx: ppu.read_register(Register::WindowX),
@@ -333,11 +348,17 @@ impl PpuSource for PpuView {
     fn mode(&self) -> Mode {
         self.mode
     }
+    fn stat(&self) -> u8 {
+        self.stat
+    }
     fn ly(&self) -> u8 {
         self.ly
     }
     fn lx(&self) -> u8 {
         self.lx
+    }
+    fn lyc(&self) -> u8 {
+        self.lyc
     }
     fn scx(&self) -> u8 {
         self.scx
@@ -726,6 +747,18 @@ pub fn ppu_position_block(ppu: &impl PpuSource) -> inspect::SectionBlock {
     inspect::SectionBlock::Sweeps(vec![ly, lx])
 }
 
+/// The raw STAT and LYC registers: STAT carries the LYC-coincidence flag and
+/// the mode/LYC interrupt-enable bits the decoded rows don't otherwise show,
+/// and LYC is the compare value that drives the coincidence flag.
+pub fn ppu_status_block(ppu: &impl PpuSource) -> inspect::SectionBlock {
+    inspect::SectionBlock::Rows(vec![
+        inspect::Row::value("stat", format!("{:02X}", ppu.stat()))
+            .help("LCD status (STAT) — mode, LYC coincidence, and mode/LYC interrupt enables"),
+        inspect::Row::value("lyc", format!("{:02X}", ppu.lyc()))
+            .help("LY compare (LYC) — matches LY to raise the STAT coincidence flag"),
+    ])
+}
+
 /// The background enable/map/tile and scroll rows.
 pub fn ppu_background_block(ppu: &impl PpuSource) -> inspect::SectionBlock {
     let control = ppu.control();
@@ -1042,6 +1075,7 @@ pub fn dmg_sidebar_sections(
             detail: Some(ppu_detail(ppu)),
             blocks: vec![
                 ppu_position_block(ppu),
+                ppu_status_block(ppu),
                 Rule,
                 ppu_background_block(ppu),
                 dmg_background_swatches(ppu),

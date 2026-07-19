@@ -241,6 +241,16 @@ pub trait SystemDebugger: Send {
     fn step_over(&mut self) -> StepOutcome;
     /// Step until the next frame or a stop.
     fn step_frame(&mut self) -> StepOutcome;
+    /// The name of this core's sub-instruction step unit — a "dot" (T-cycle) on
+    /// the Game Boy, a "colour clock" on the VCS — or `None` when the finest
+    /// step the core exposes is a whole instruction. A transport offers
+    /// sub-instruction stepping only when this is `Some`.
+    fn tick_name(&self) -> Option<&'static str> {
+        None
+    }
+    /// Advance one sub-instruction tick (see [`tick_name`](Self::tick_name)).
+    /// A core without sub-instruction granularity does nothing.
+    fn step_tick(&mut self) {}
     /// The current screen as it stands, without stepping — for screenshots
     /// taken while paused.
     fn screen_display(&self) -> Frame;
