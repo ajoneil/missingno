@@ -342,6 +342,14 @@ where
         self.core.game_boy_mut().drain_audio_samples()
     }
 
+    fn set_wave_capture(&mut self, on: bool) {
+        self.core.game_boy_mut().set_wave_capture(on);
+    }
+
+    fn channel_waves(&self) -> Option<Vec<missingno_core::waveform::ChannelWave>> {
+        self.core.game_boy().channel_waves()
+    }
+
     fn set_breakpoint(&mut self, address: u32) {
         self.core.set_breakpoint(address as u16);
     }

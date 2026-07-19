@@ -13,6 +13,7 @@ use missingno_core::cdl::CdlWindow;
 use missingno_core::inspect;
 use missingno_core::symbols::SymbolTable;
 use missingno_core::system::InspectSnapshot;
+use missingno_core::waveform::ChannelWave;
 
 use crate::audio::{
     ApuSpec, Audio,
@@ -1073,6 +1074,9 @@ pub struct GbSnapshot {
     pub symbols: Arc<SymbolTable>,
     pub cdl: CdlWindow,
     pub frame: u64,
+    /// The per-channel waveform windows, captured when the APU's wave capture
+    /// is enabled. `None` otherwise.
+    pub channel_waves: Option<Vec<ChannelWave>>,
 }
 
 impl GbSnapshot {
@@ -1098,6 +1102,7 @@ impl GbSnapshot {
             symbols,
             cdl,
             frame,
+            channel_waves: console.channel_waves(),
         }
     }
 }
@@ -1136,6 +1141,9 @@ impl InspectSnapshot for GbSnapshot {
     fn instruction_set(&self) -> Option<&dyn missingno_core::isa::InstructionSet> {
         Some(&crate::isa::Sm83)
     }
+    fn channel_waves(&self) -> Option<Vec<ChannelWave>> {
+        self.channel_waves.clone()
+    }
 }
 
 #[cfg(test)]
@@ -1154,6 +1162,50 @@ mod tests {
             debugger.step();
         }
         debugger
+    }
+
+    fn ran_console(capture: bool) -> Console<crate::Dmg> {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x100] = 0x00;
+        rom[0x101..0x104].copy_from_slice(&[0xc3, 0x50, 0x01]);
+        let mut console = Console::<crate::Dmg>::new(Cartridge::new(rom, None), None);
+        console.set_wave_capture(capture);
+        // One frame's worth of steps fills the capture window.
+        for _ in 0..20_000 {
+            console.step();
+        }
+        console
+    }
+
+    #[test]
+    fn snapshot_carries_capture_windows_when_enabled() {
+        let console = ran_console(true);
+        let snapshot = GbSnapshot::capture(
+            &console,
+            ColorSnapshot::Dmg { sgb: false },
+            0,
+            Arc::new(SymbolTable::default()),
+            CdlWindow::default(),
+        );
+        let waves = snapshot.channel_waves().expect("capture enabled");
+        assert_eq!(waves.len(), 4);
+        for wave in &waves {
+            assert_eq!(wave.rate, 44100);
+            assert!(!wave.levels.is_empty());
+        }
+    }
+
+    #[test]
+    fn snapshot_has_no_windows_when_capture_disabled() {
+        let console = ran_console(false);
+        let snapshot = GbSnapshot::capture(
+            &console,
+            ColorSnapshot::Dmg { sgb: false },
+            0,
+            Arc::new(SymbolTable::default()),
+            CdlWindow::default(),
+        );
+        assert!(snapshot.channel_waves().is_none());
     }
 
     #[test]

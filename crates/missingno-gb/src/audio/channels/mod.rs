@@ -102,6 +102,28 @@ impl Channels {
         );
         (left, right)
     }
+
+    /// Each channel's DAC input code (0-15), or 0 when its DAC is unpowered —
+    /// the code the silicon hands the DAC, for the debugger's waveform capture.
+    pub fn dac_codes(&self) -> [u8; 4] {
+        let code = |dac_on: bool, sample: u8| if dac_on { sample } else { 0 };
+        [
+            code(self.ch1.dac_enabled(), self.ch1.digital_sample()),
+            code(self.ch2.dac_enabled(), self.ch2.digital_sample()),
+            code(self.ch3.dac_enabled(), self.ch3.digital_sample()),
+            code(self.ch4.dac_enabled(), self.ch4.digital_sample()),
+        ]
+    }
+
+    /// Whether each channel's DAC is currently powered.
+    pub fn dac_active(&self) -> [bool; 4] {
+        [
+            self.ch1.dac_enabled(),
+            self.ch2.dac_enabled(),
+            self.ch3.dac_enabled(),
+            self.ch4.dac_enabled(),
+        ]
+    }
 }
 
 #[derive(Copy, Clone)]

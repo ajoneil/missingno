@@ -756,6 +756,7 @@ const WINDOW_LEN: u16 = 512;
 pub struct VcsSnapshot {
     pub state: VcsInspectState,
     memory: inspect::MemoryWindow,
+    channel_waves: Option<Vec<missingno_core::waveform::ChannelWave>>,
 }
 
 impl VcsSnapshot {
@@ -766,6 +767,7 @@ impl VcsSnapshot {
                 base: 0,
                 bytes: Vec::new(),
             },
+            channel_waves: None,
         }
     }
 }
@@ -792,6 +794,9 @@ impl InspectSnapshot for VcsSnapshot {
     }
     fn instruction_set(&self) -> Option<&dyn InstructionSet> {
         Some(&missingno_6502::Mos6502)
+    }
+    fn channel_waves(&self) -> Option<Vec<missingno_core::waveform::ChannelWave>> {
+        self.channel_waves.clone()
     }
 }
 
@@ -922,6 +927,14 @@ impl SystemDebugger for VcsDebugger {
         Some(crate::board::AUDIO_COUPLING.high_pass())
     }
 
+    fn set_wave_capture(&mut self, on: bool) {
+        self.core.console_mut().set_wave_capture(on);
+    }
+
+    fn channel_waves(&self) -> Option<Vec<missingno_core::waveform::ChannelWave>> {
+        self.core.console().channel_waves()
+    }
+
     fn set_breakpoint(&mut self, address: u32) {
         self.core.set_breakpoint(address as u16);
     }
@@ -986,6 +999,7 @@ impl SystemDebugger for VcsDebugger {
                 base: base as u32,
                 bytes,
             },
+            channel_waves: self.core.console().channel_waves(),
         })
     }
 

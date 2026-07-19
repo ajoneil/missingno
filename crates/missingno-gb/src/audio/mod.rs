@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 use channels::registers::Prescaler;
 use channels::wave::WaveRamCoupling;
 use channels::{Channels, noise, pulse, pulse_sweep, wave};
+use missingno_core::waveform::{ChannelWave, WaveRing};
 use volume::Volume;
 
 pub mod channels;
@@ -46,6 +47,14 @@ pub enum Register {
 const SAMPLE_RATE: f32 = 44100.0;
 const T_CYCLES_PER_SECOND: f32 = 4_194_304.0;
 const T_CYCLES_PER_SAMPLE: f32 = T_CYCLES_PER_SECOND / SAMPLE_RATE;
+
+/// Waveform-capture ring depth: one frame-window of output samples. A DMG frame
+/// is ~738 samples at 44.1 kHz (70224 T-cycles ÷ ~95.1 T/sample); 800 holds one
+/// with headroom, drained per vblank.
+const WAVE_CAPTURE_SAMPLES: usize = 800;
+
+/// The four channels' display labels, in capture order.
+const WAVE_LABELS: [&str; 4] = ["CH1", "CH2", "CH3", "CH4"];
 const DIV_APU_BIT: u16 = 1 << 10; // Bit 10 of M-cycle counter drives frame sequencer
 // In double speed the M-cycle counter runs at 2× the dot clock, so the tap
 // shifts up one bit to hold the frame sequencer at 512 Hz (DIV bit 6 vs bit 5).
@@ -90,6 +99,10 @@ pub struct Audio<A: ApuSpec> {
     sample_accum_right: f32,
     sample_accum_count: u32,
     sample_buffer: Vec<(f32, f32)>,
+    // Per-channel DAC-code capture for the debugger's waveform scope. `None`
+    // when no consumer wants it: the per-sample tap is then one branch with no
+    // allocation. `Some` allocates the four rings once, at enable.
+    wave_capture: Option<[WaveRing; 4]>,
     _spec: PhantomData<A>,
 }
 
@@ -141,6 +154,7 @@ impl<A: ApuSpec> Audio<A> {
             sample_accum_right: 0.0,
             sample_accum_count: 0,
             sample_buffer: Vec::new(),
+            wave_capture: None,
             _spec: PhantomData,
         }
     }
@@ -181,6 +195,7 @@ impl<A: ApuSpec> Audio<A> {
             sample_accum_right: 0.0,
             sample_accum_count: 0,
             sample_buffer: Vec::new(),
+            wave_capture: None,
             _spec: PhantomData,
         }
     }
@@ -332,6 +347,14 @@ impl<A: ApuSpec> Audio<A> {
             self.sample_accum_left = 0.0;
             self.sample_accum_right = 0.0;
             self.sample_accum_count = 0;
+            // Tap the per-channel DAC codes at the same output cadence. Inert
+            // (one branch, no allocation) unless a consumer enabled capture.
+            if let Some(rings) = &mut self.wave_capture {
+                let codes = self.channels.dac_codes();
+                for (ring, code) in rings.iter_mut().zip(codes) {
+                    ring.push(code);
+                }
+            }
         }
     }
 
@@ -467,6 +490,37 @@ impl<A: ApuSpec> Audio<A> {
 
     pub fn drain_samples(&mut self) -> Vec<(f32, f32)> {
         std::mem::take(&mut self.sample_buffer)
+    }
+
+    /// Enable or disable per-channel waveform capture. Enabling allocates the
+    /// four rings once and starts each fresh; disabling frees them, leaving the
+    /// per-sample tap inert.
+    pub fn set_wave_capture(&mut self, on: bool) {
+        match (on, self.wave_capture.is_some()) {
+            (true, false) => {
+                self.wave_capture =
+                    Some(std::array::from_fn(|_| WaveRing::new(WAVE_CAPTURE_SAMPLES)));
+            }
+            (false, true) => self.wave_capture = None,
+            _ => {}
+        }
+    }
+
+    /// The four channels' captured waveforms, or `None` when capture is off.
+    pub fn channel_waves(&self) -> Option<Vec<ChannelWave>> {
+        let rings = self.wave_capture.as_ref()?;
+        let active = self.channels.dac_active();
+        Some(
+            (0..4)
+                .map(|i| ChannelWave {
+                    label: WAVE_LABELS[i],
+                    levels: rings[i].to_vec(),
+                    depth_bits: 4,
+                    rate: SAMPLE_RATE as u32,
+                    active: active[i],
+                })
+                .collect(),
+        )
     }
 
     /// Construct an Audio instance from a morepork snapshot.
@@ -630,7 +684,67 @@ impl<A: ApuSpec> Audio<A> {
             sample_accum_right: 0.0,
             sample_accum_count: 0,
             sample_buffer: Vec::new(),
+            wave_capture: None,
             _spec: PhantomData,
         }
+    }
+}
+
+#[cfg(test)]
+mod wave_capture_tests {
+    use super::*;
+
+    /// Drive a pulse tone on CH2 and run enough T-cycles to fill the ring.
+    fn sounding_audio(capture: bool) -> Audio<DmgApu> {
+        let mut audio = Audio::<DmgApu>::post_boot(0);
+        // CH2: mid duty, full envelope (DAC powered), a period, then trigger.
+        let write = |a: &mut Audio<DmgApu>, r, v| {
+            a.write_register(Register::Channel2(r), v, 0, false);
+        };
+        write(&mut audio, pulse::Register::WaveformAndInitialLength, 0x80);
+        write(&mut audio, pulse::Register::VolumeAndEnvelope, 0xF0);
+        write(&mut audio, pulse::Register::PeriodLow, 0x00);
+        write(&mut audio, pulse::Register::PeriodHighAndControl, 0x87);
+        if capture {
+            audio.set_wave_capture(true);
+        }
+        let mut counter: u16 = 0;
+        for _ in 0..90_000 {
+            audio.tcycle(counter, (counter & 3) as u8, false);
+            counter = counter.wrapping_add(1);
+        }
+        audio
+    }
+
+    #[test]
+    fn capture_fills_four_windows_with_a_sounding_channel() {
+        let audio = sounding_audio(true);
+        let waves = audio.channel_waves().expect("capture enabled");
+        assert_eq!(waves.len(), 4);
+        for wave in &waves {
+            assert_eq!(wave.depth_bits, 4);
+            assert_eq!(wave.rate, 44100);
+            // A frame-window's worth accumulated, bounded by the ring depth.
+            assert!(wave.levels.len() > 100);
+            assert!(wave.levels.len() <= WAVE_CAPTURE_SAMPLES);
+            assert!(wave.levels.iter().all(|&code| code <= 15));
+        }
+        // The triggered pulse (CH2) drove a nonzero DAC code somewhere.
+        assert!(waves[1].levels.iter().any(|&code| code != 0));
+        assert!(waves[1].active);
+    }
+
+    #[test]
+    fn disabled_capture_reports_no_waves() {
+        let audio = sounding_audio(false);
+        assert!(audio.channel_waves().is_none());
+    }
+
+    #[test]
+    fn toggling_capture_off_frees_the_window() {
+        let mut audio = sounding_audio(true);
+        assert!(audio.channel_waves().is_some());
+        audio.set_wave_capture(false);
+        assert!(audio.channel_waves().is_none());
     }
 }

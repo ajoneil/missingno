@@ -792,6 +792,16 @@ impl<M: Model> Console<M> {
         self.chassis.audio.drain_samples()
     }
 
+    /// Enable or disable the debugger's per-channel waveform capture.
+    pub fn set_wave_capture(&mut self, on: bool) {
+        self.chassis.audio.set_wave_capture(on);
+    }
+
+    /// The captured per-channel waveforms, or `None` when capture is off.
+    pub fn channel_waves(&self) -> Option<Vec<missingno_core::waveform::ChannelWave>> {
+        self.chassis.audio.channel_waves()
+    }
+
     pub fn press_button(&mut self, button: Button) {
         let before = self.chassis.joypad.input_lines();
         self.chassis.joypad.press_button(button);

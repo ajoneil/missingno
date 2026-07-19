@@ -15,6 +15,7 @@ use missingno_core::inspect::{
 use missingno_core::symbols::SymbolTable;
 use missingno_core::system::{ControlId, ControlInput, StepOutcome, SystemDebugger};
 use missingno_core::video::{RgbaFrame, VideoOut};
+use missingno_core::waveform::ChannelWave;
 
 /// Why the last stepping call returned. The transport-carried form of
 /// [`StepOutcome`], dropping the displayable frame.
@@ -196,6 +197,17 @@ impl Session {
 
     pub fn symbols(&self) -> Arc<SymbolTable> {
         self.debugger.symbols()
+    }
+
+    /// Enable or disable the debugger's per-channel waveform capture.
+    pub fn set_wave_capture(&mut self, on: bool) {
+        self.debugger.set_wave_capture(on);
+    }
+
+    /// The current per-channel waveform windows, or `None` when the core
+    /// captures none or capture is disabled.
+    pub fn channel_waves(&self) -> Option<Vec<ChannelWave>> {
+        self.debugger.channel_waves()
     }
 
     /// A resolved RGBA frame of the current screen, as it stands (paused).

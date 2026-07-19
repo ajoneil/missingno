@@ -17,10 +17,16 @@ pub(crate) mod objects;
 
 use audio::Channel;
 use hsync::{Beam, HSyncCounter};
+use missingno_core::waveform::WaveRing;
 use objects::{Ball, Missile, Player, Playfield};
 
 use crate::TvStandard;
 use std::ops::{Index, IndexMut};
+
+/// Waveform-capture ring depth: one field-window of audio ticks. The AUDx
+/// circuits commit twice per line, so a field is ~524 ticks (NTSC, 262 lines)
+/// or ~624 (PAL/SECAM, 312); 640 holds one with headroom, drained per frame.
+const WAVE_CAPTURE_SAMPLES: usize = 640;
 
 pub const CLOCKS_PER_LINE: u16 = 228;
 pub const HBLANK_CLOCKS: u16 = 68;
@@ -414,6 +420,10 @@ pub struct Tia {
     collisions: [u8; 8],
 
     audio: [Channel; 2],
+    /// Per-channel DAC-code capture for the debugger's waveform scope. `None`
+    /// when no consumer wants it: the phase1 tap is then one branch with no
+    /// allocation.
+    wave_capture: Option<[WaveRing; 2]>,
 
     /// Trigger buttons, true = pressed (the pin reads low).
     triggers: [bool; 2],
@@ -460,6 +470,7 @@ impl Tia {
             seam_lookahead: Movables::splat(false),
             collisions: [0; 8],
             audio: [Channel::new(), Channel::new()],
+            wave_capture: None,
             triggers: [false; 2],
             trigger_latch_enabled: false,
             trigger_latches: [true; 2],
@@ -493,6 +504,28 @@ impl Tia {
     /// legs rather than either channel alone.
     pub fn audio_level(&self) -> f32 {
         audio::summing_node_level(self.audio[0].conductance() + self.audio[1].conductance())
+    }
+
+    /// Enable or disable per-channel waveform capture. Enabling allocates the
+    /// two rings once and starts each fresh; disabling frees them.
+    pub fn set_wave_capture(&mut self, on: bool) {
+        match (on, self.wave_capture.is_some()) {
+            (true, false) => {
+                self.wave_capture =
+                    Some(std::array::from_fn(|_| WaveRing::new(WAVE_CAPTURE_SAMPLES)));
+            }
+            (false, true) => self.wave_capture = None,
+            _ => {}
+        }
+    }
+
+    /// The two channels' captured DAC-code windows (oldest first) and whether
+    /// each channel's DAC is driving, or `None` when capture is off.
+    pub fn wave_windows(&self) -> Option<([Vec<u8>; 2], [bool; 2])> {
+        let rings = self.wave_capture.as_ref()?;
+        let levels = [rings[0].to_vec(), rings[1].to_vec()];
+        let active = [self.audio[0].volume > 0, self.audio[1].volume > 0];
+        Some((levels, active))
     }
 
     /// Current colour clock within the line (0..228) — inspection only.
@@ -630,6 +663,12 @@ impl Tia {
         } else if AUDIO_PHASE1.contains(&position) {
             self.audio[0].phase1();
             self.audio[1].phase1();
+            // Tap each channel's DAC conductance once the commit settles. Inert
+            // (one branch, no allocation) unless a consumer enabled capture.
+            if let Some(rings) = &mut self.wave_capture {
+                rings[0].push(self.audio[0].conductance());
+                rings[1].push(self.audio[1].conductance());
+            }
         }
 
         if self.hsync.advance(self.hblank_extension_armed) {

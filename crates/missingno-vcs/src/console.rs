@@ -314,6 +314,33 @@ impl Vcs {
         std::mem::take(&mut self.samples)
     }
 
+    /// Enable or disable the debugger's per-channel waveform capture.
+    pub fn set_wave_capture(&mut self, on: bool) {
+        self.tia.set_wave_capture(on);
+    }
+
+    /// The captured per-channel waveforms, or `None` when capture is off. The
+    /// AUDx circuits commit twice per line, so the capture rate is twice the
+    /// region's line rate (master clock ÷ 228 clocks/line).
+    pub fn channel_waves(&self) -> Option<Vec<missingno_core::waveform::ChannelWave>> {
+        let (levels, active) = self.tia.wave_windows()?;
+        let line_rate =
+            crate::tv_standard::master_clock_hz(self.region) / crate::tia::CLOCKS_PER_LINE as f32;
+        let rate = (2.0 * line_rate).round() as u32;
+        let labels = ["CH0", "CH1"];
+        Some(
+            (0..2)
+                .map(|i| missingno_core::waveform::ChannelWave {
+                    label: labels[i],
+                    levels: levels[i].clone(),
+                    depth_bits: 4,
+                    rate,
+                    active: active[i],
+                })
+                .collect(),
+        )
+    }
+
     fn collect_line(&mut self, line: Scanline) {
         if line.vsync && !self.in_vsync {
             let lines = std::mem::take(&mut self.building);

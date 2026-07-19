@@ -94,6 +94,9 @@ pub enum EmuCommand {
     /// The memory viewer's current view span, peeked each vblank and published
     /// to the memory-window slot. `None` clears it (the pane closed).
     SetMemoryInterest(Option<MemoryInterest>),
+    /// Enable or disable the debugger's per-channel waveform capture. Stored on
+    /// the loop and re-applied to each payload it runs.
+    SetWaveCapture(bool),
     RequestScreenshot {
         options: CaptureOptions,
     },
@@ -160,6 +163,14 @@ impl EmuHandle {
     /// Send a payload to the thread and start running it.
     pub fn run(&self, payload: Payload) {
         self.send(EmuCommand::Run(payload));
+    }
+
+    /// Enable or disable the debugger's per-channel waveform capture. The audio
+    /// scope pane (A3) is the caller once it lands; until then nothing in the
+    /// GUI sends this.
+    #[allow(dead_code)]
+    pub fn set_wave_capture(&self, on: bool) {
+        self.send(EmuCommand::SetWaveCapture(on));
     }
 
     /// Pause and recover the payload synchronously (bounded wait). Returns
@@ -293,6 +304,9 @@ struct EmuLoop {
     /// The memory viewer's current view span, peeked each vblank into the
     /// memory-window slot. `None` when no memory pane is browsing.
     memory_interest: Option<MemoryInterest>,
+    /// Whether the audio scope wants per-channel waveform capture. Re-applied
+    /// to each payload the loop starts running.
+    wave_capture: bool,
     events: EventSink,
     returns: Sender<Payload>,
     shutdown_ack: Sender<()>,
@@ -315,6 +329,7 @@ impl EmuLoop {
             snapshot: slots.snapshot,
             memory_window: slots.memory_window,
             memory_interest: None,
+            wave_capture: false,
             events,
             returns,
             shutdown_ack,
@@ -339,7 +354,8 @@ impl EmuLoop {
 
     fn handle(&mut self, command: EmuCommand) {
         match command {
-            EmuCommand::Run(payload) => {
+            EmuCommand::Run(mut payload) => {
+                payload.set_wave_capture(self.wave_capture);
                 self.payload = Some(payload);
                 self.sram_countdown = None;
                 self.next_deadline = Instant::now();
@@ -377,6 +393,12 @@ impl EmuLoop {
                 }
             }
             EmuCommand::SetMemoryInterest(interest) => self.memory_interest = interest,
+            EmuCommand::SetWaveCapture(on) => {
+                self.wave_capture = on;
+                if let Some(payload) = &mut self.payload {
+                    payload.set_wave_capture(on);
+                }
+            }
             EmuCommand::RequestScreenshot { options } => {
                 if let Some(payload) = &self.payload {
                     let capture = FrameCapture::from_frame(&payload.screen_display(), &options);
@@ -478,6 +500,36 @@ impl EmuLoop {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_loop() -> EmuLoop {
+        let slots = PublishSlots {
+            frames: Arc::new(Mutex::new(None)),
+            status: Arc::new(Mutex::new(None)),
+            snapshot: Arc::new(Mutex::new(None)),
+            memory_window: Arc::new(Mutex::new(None)),
+        };
+        let (events, _events_rx) = iced::futures::channel::mpsc::unbounded();
+        let (returns, _returns_rx) = channel();
+        let (ack, _ack_rx) = channel();
+        EmuLoop::new(slots, events, returns, ack)
+    }
+
+    // The GUI sender lands in A3; until then this stands in for it, driving the
+    // stored-flag path the emu loop applies to each payload it runs.
+    #[test]
+    fn set_wave_capture_stores_the_flag() {
+        let mut state = test_loop();
+        assert!(!state.wave_capture);
+        state.handle(EmuCommand::SetWaveCapture(true));
+        assert!(state.wave_capture);
+        state.handle(EmuCommand::SetWaveCapture(false));
+        assert!(!state.wave_capture);
+    }
+}
+
 impl Payload {
     fn reset(&mut self) {
         match self {
@@ -528,6 +580,14 @@ impl Payload {
         match self {
             Self::Console(console) => console.drain_audio_samples(),
             Self::Debugger(payload) => payload.core.drain_audio_samples(),
+        }
+    }
+
+    /// Toggle waveform capture. Only the debugger core captures; a plain
+    /// console has no debugger surface, so the toggle is a no-op there.
+    fn set_wave_capture(&mut self, on: bool) {
+        if let Self::Debugger(payload) = self {
+            payload.core.set_wave_capture(on);
         }
     }
 

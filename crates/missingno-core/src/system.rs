@@ -15,6 +15,7 @@ use crate::inspect::{MemoryRegion, MemoryWindow, RegisterGroup, Section, Watch, 
 use crate::isa::InstructionSet;
 use crate::symbols::{Symbol, SymbolTable};
 use crate::video::{Frame, VideoOut};
+use crate::waveform::ChannelWave;
 
 /// A family-interpreted control identifier. Ids 0-7 mirror the Game Boy
 /// button order so the existing bindings pipeline translates numerically;
@@ -137,6 +138,12 @@ pub trait InspectSnapshot: Send {
     fn instruction_set(&self) -> Option<&dyn InstructionSet> {
         None
     }
+    /// The per-channel waveform windows captured this vblank, for the audio
+    /// scope while the core runs. `None` when the family captures no waveforms,
+    /// or capture is disabled.
+    fn channel_waves(&self) -> Option<Vec<ChannelWave>> {
+        None
+    }
 }
 
 /// The model-erased snapshot handed from the emulation thread to the UI.
@@ -236,6 +243,16 @@ pub trait SystemDebugger: Send {
     /// The coupling the console's board puts between its audio pads and the
     /// jack; `None` for a family whose board has not been modelled.
     fn audio_coupling(&self) -> Option<HighPass> {
+        None
+    }
+    /// Enable or disable per-channel waveform capture. Interest-gated: capture
+    /// stays off — and costs nothing — until a consumer turns it on. A family
+    /// without a capture backend does nothing.
+    fn set_wave_capture(&mut self, _on: bool) {}
+    /// The current per-channel waveform windows, for the audio scope while
+    /// paused. `None` when the family captures no waveforms, or capture is
+    /// disabled.
+    fn channel_waves(&self) -> Option<Vec<ChannelWave>> {
         None
     }
 

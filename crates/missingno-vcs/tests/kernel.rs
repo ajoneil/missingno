@@ -215,3 +215,45 @@ fn audio_produces_samples_at_the_seam_rate() {
         "square wave should also swing low"
     );
 }
+
+#[test]
+fn wave_capture_records_per_channel_dac_codes() {
+    // Pure tone on channel 0 at full volume; channel 1 stays silent.
+    let mut asm = Asm::new(0xF000);
+    asm.lda_imm(0x04);
+    asm.sta_zp(0x15); // AUDC0: pure tone
+    asm.lda_imm(0x10);
+    asm.sta_zp(0x17); // AUDF0
+    asm.lda_imm(0x0F);
+    asm.sta_zp(0x19); // AUDV0: full volume
+    let spin = asm.here();
+    asm.jmp_abs(spin);
+
+    let mut vcs = Vcs::new(&asm.into_rom(), missingno_vcs::TvStandard::Ntsc, None).unwrap();
+    // Disabled by default: no windows.
+    assert!(vcs.channel_waves().is_none());
+
+    vcs.set_wave_capture(true);
+    for _ in 0..262 * 228 {
+        vcs.step_clock();
+    }
+    let waves = vcs.channel_waves().expect("capture enabled");
+    assert_eq!(waves.len(), 2);
+    for wave in &waves {
+        assert_eq!(wave.depth_bits, 4);
+        // Two commits per line × ~262 lines, bounded by the ring depth.
+        assert!(wave.levels.len() > 100);
+        assert!(wave.levels.iter().all(|&code| code <= 15));
+    }
+    // Channel 0's square-wave DAC swings between 0 and full volume (15).
+    assert!(waves[0].levels.iter().any(|&code| code == 0));
+    assert!(waves[0].levels.iter().any(|&code| code == 15));
+    assert!(waves[0].active);
+    // Channel 1 never got a volume, so its DAC rests at 0 and reads inactive.
+    assert!(waves[1].levels.iter().all(|&code| code == 0));
+    assert!(!waves[1].active);
+
+    // Turning capture off frees the windows.
+    vcs.set_wave_capture(false);
+    assert!(vcs.channel_waves().is_none());
+}

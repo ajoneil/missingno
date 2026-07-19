@@ -25,6 +25,7 @@ pub mod symbols;
 pub mod system;
 pub mod tv;
 pub mod video;
+pub mod waveform;
 
 pub use analog::{HighPass, OnePoleHighPass, RcHighPass};
 pub use disasm::{ReadMemory, Row};
@@ -35,3 +36,4 @@ pub use inspect::{
 pub use isa::{Flow, Instruction, InstructionSet};
 pub use tv::TvStandard;
 pub use video::{ConsoleFrame, Frame, IndexedFrame, RgbaFrame, VideoOut};
+pub use waveform::{ChannelWave, WaveRing};

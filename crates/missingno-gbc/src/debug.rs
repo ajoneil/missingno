@@ -296,6 +296,9 @@ impl InspectSnapshot for CgbSnapshot {
     fn instruction_set(&self) -> Option<&dyn missingno_core::isa::InstructionSet> {
         self.base.instruction_set()
     }
+    fn channel_waves(&self) -> Option<Vec<missingno_core::waveform::ChannelWave>> {
+        self.base.channel_waves()
+    }
 }
 
 impl ConsoleUi for Cgb {
