@@ -34,13 +34,25 @@ impl AudioPane {
                 ]
                 .spacing(l()),
                 row![
-                    channels::envelope_channel("Channel 1", &audio.ch1),
+                    channels::envelope_channel(
+                        "Channel 1",
+                        audio.ch1.enabled,
+                        audio.ch1.volume_and_envelope
+                    ),
                     rule::vertical(1),
-                    channels::envelope_channel("Channel 2", &audio.ch2),
+                    channels::envelope_channel(
+                        "Channel 2",
+                        audio.ch2.enabled,
+                        audio.ch2.volume_and_envelope
+                    ),
                     rule::vertical(1),
                     channels::wave_channel("Channel 3", &audio.ch3),
                     rule::vertical(1),
-                    channels::envelope_channel("Channel 4", &audio.ch4),
+                    channels::envelope_channel(
+                        "Channel 4",
+                        audio.ch4.enabled,
+                        audio.ch4.volume_and_envelope
+                    ),
                 ]
                 .spacing(s())
             ]

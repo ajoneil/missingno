@@ -15,7 +15,7 @@ use missingno_core::video::{Frame, RgbaFrame};
 
 use missingno_gb::Console;
 use missingno_gb::debugger::inspection::{
-    self as parts, ColorSnapshot, CpuSource, GbSnapshot, PpuSource,
+    self as parts, AudioView, ColorSnapshot, CpuSource, GbSnapshot, PpuSource,
 };
 use missingno_gb::frame::NATIVE_SIZE;
 use missingno_gb::ppu::types::palette::{Palette, PaletteIndex, PaletteMap};
@@ -84,6 +84,7 @@ pub fn cgb_sidebar_sections(
     cpu: &impl CpuSource,
     ppu: &impl PpuSource,
     ints: &missingno_gb::interrupts::Registers,
+    audio: &AudioView,
     view: &CgbView,
     background: &[Palette; 8],
     objects: &[Palette; 8],
@@ -144,6 +145,7 @@ pub fn cgb_sidebar_sections(
             detail: None,
             blocks: cram_content,
         },
+        parts::apu_section(audio),
     ]
 }
 
@@ -270,6 +272,7 @@ impl InspectSnapshot for CgbSnapshot {
             &self.base.cpu,
             &self.base.ppu,
             &self.base.interrupts,
+            &self.base.audio,
             &self.cgb,
             background,
             objects,
@@ -339,6 +342,7 @@ impl ConsoleUi for Cgb {
             console.cpu(),
             console.ppu(),
             console.interrupts(),
+            &AudioView::capture(console.audio()),
             &CgbView::capture(console),
             &background,
             &objects,
@@ -374,5 +378,18 @@ mod tests {
             format!("{live:?}"),
             format!("{:?}", snapshot.sidebar_sections())
         );
+    }
+
+    #[test]
+    fn sidebar_carries_the_shared_apu_section() {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x100] = 0x00;
+        rom[0x101..0x104].copy_from_slice(&[0xc3, 0x50, 0x01]);
+        let mut debugger = Debugger::new(GameBoyColor::new(Cartridge::new(rom, None), None));
+        for _ in 0..4 {
+            debugger.step();
+        }
+        let sections = Cgb::sidebar_sections(debugger.game_boy());
+        assert!(sections.iter().any(|section| section.name == "APU"));
     }
 }

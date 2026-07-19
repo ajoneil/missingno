@@ -371,54 +371,121 @@ impl PpuSource for PpuView {
 
 // --- Audio -------------------------------------------------------------------
 
-/// The APU state the audio pane draws, captured as plain data so the pane
-/// serves both a live [`Audio`] and its snapshot copy.
+/// The APU state the audio pane and the sidebar's APU section draw, captured as
+/// plain data so both serve a live [`Audio`] and its snapshot copy. Each view
+/// carries the channel's register bytes plus the honest runtime summaries the
+/// core already tracks (envelope volume, length counter, wave position).
 #[derive(Clone)]
 pub struct AudioView {
+    /// NR52 power bit.
     pub enabled: bool,
     pub volume_left: u8,
     pub volume_right: u8,
-    pub ch1: EnvelopeChannelView,
-    pub ch2: EnvelopeChannelView,
+    /// NR50 master volume / VIN byte.
+    pub nr50: u8,
+    pub ch1: PulseChannelView,
+    pub ch2: PulseChannelView,
     pub ch3: WaveChannelView,
-    pub ch4: EnvelopeChannelView,
+    pub ch4: NoiseChannelView,
 }
 
+/// A pulse channel (CH1 with its sweep, CH2 without).
 #[derive(Clone, Copy)]
-pub struct EnvelopeChannelView {
+pub struct PulseChannelView {
     pub enabled: Enabled,
+    /// NR10 sweep byte — present on CH1 only.
+    pub sweep: Option<u8>,
+    /// NR11/NR21 wave-duty and initial-length byte.
+    pub duty_and_length: u8,
+    /// NR12/NR22 volume-and-envelope byte.
     pub volume_and_envelope: VolumeAndEnvelope,
+    /// 11-bit period (NR13 low, NR14 high three bits).
+    pub period: u16,
+    /// NRx4 length-enable bit.
+    pub length_enabled: bool,
+    pub length_counter: u16,
+    /// Current envelope output volume (0-15).
+    pub envelope_volume: u8,
 }
 
 #[derive(Clone, Copy)]
 pub struct WaveChannelView {
     pub enabled: Enabled,
-    /// Output volume as a fraction of full scale.
+    /// NR30 DAC power bit.
+    pub dac_enabled: bool,
+    /// NR32 output-level byte.
+    pub level: u8,
+    /// Output volume as a fraction of full scale (the audio pane's readout).
     pub volume: f32,
+    pub period: u16,
+    pub length_enabled: bool,
+    pub length_counter: u16,
+    /// Wave-RAM sample position (0-31).
+    pub wave_position: u8,
+}
+
+#[derive(Clone, Copy)]
+pub struct NoiseChannelView {
+    pub enabled: Enabled,
+    /// NR42 volume-and-envelope byte.
+    pub volume_and_envelope: VolumeAndEnvelope,
+    /// NR43 clock-shift, LFSR width and divisor byte.
+    pub frequency: u8,
+    /// NR44 length-enable bit.
+    pub length_enabled: bool,
+    pub length_counter: u16,
+    pub envelope_volume: u8,
 }
 
 impl AudioView {
     pub fn capture<A: ApuSpec>(audio: &Audio<A>) -> Self {
         let channels = audio.channels();
+        let ch1 = &channels.ch1;
+        let ch2 = &channels.ch2;
+        let ch3 = &channels.ch3;
+        let ch4 = &channels.ch4;
         Self {
             enabled: audio.enabled(),
             volume_left: audio.volume_left().0,
             volume_right: audio.volume_right().0,
-            ch1: EnvelopeChannelView {
-                enabled: channels.ch1.enabled,
-                volume_and_envelope: channels.ch1.volume_and_envelope,
+            nr50: audio.nr50(),
+            ch1: PulseChannelView {
+                enabled: ch1.enabled,
+                sweep: Some(ch1.sweep.0),
+                duty_and_length: ch1.waveform_and_initial_length.0,
+                volume_and_envelope: ch1.volume_and_envelope,
+                period: ch1.period.0 & 0x7FF,
+                length_enabled: ch1.length.enabled,
+                length_counter: ch1.length.counter,
+                envelope_volume: ch1.envelope.volume,
             },
-            ch2: EnvelopeChannelView {
-                enabled: channels.ch2.enabled,
-                volume_and_envelope: channels.ch2.volume_and_envelope,
+            ch2: PulseChannelView {
+                enabled: ch2.enabled,
+                sweep: None,
+                duty_and_length: ch2.waveform_and_initial_length.0,
+                volume_and_envelope: ch2.volume_and_envelope,
+                period: ch2.period.0 & 0x7FF,
+                length_enabled: ch2.length.enabled,
+                length_counter: ch2.length.counter,
+                envelope_volume: ch2.envelope.volume,
             },
             ch3: WaveChannelView {
-                enabled: channels.ch3.enabled,
-                volume: channels.ch3.volume.volume(),
+                enabled: ch3.enabled,
+                dac_enabled: ch3.dac_enabled,
+                level: ch3.volume.0,
+                volume: ch3.volume.volume(),
+                period: ch3.period.0 & 0x7FF,
+                length_enabled: ch3.length.enabled,
+                length_counter: ch3.length.counter,
+                wave_position: ch3.wave_position,
             },
-            ch4: EnvelopeChannelView {
-                enabled: channels.ch4.enabled,
-                volume_and_envelope: channels.ch4.volume_and_envelope,
+            ch4: NoiseChannelView {
+                enabled: ch4.enabled,
+                volume_and_envelope: ch4.volume_and_envelope,
+                frequency: ch4.frequency_and_randomness.0,
+                length_enabled: ch4.length.enabled,
+                length_counter: ch4.length.counter,
+                envelope_volume: ch4.envelope.volume,
             },
         }
     }
@@ -789,13 +856,172 @@ fn tile_addr(mode: TileAddressMode) -> &'static str {
     }
 }
 
-/// The DMG sidebar: CPU and PPU sections composed from the shared parts, with
-/// the DMG shade swatches sat with the registers they describe. Shared by the
-/// live console (paused) and the running snapshot so the two agree.
+// --- APU ----------------------------------------------------------------------
+
+/// The NR14/NR24/NR34-style high byte reconstructed from the tracked period and
+/// length-enable bit; the trigger bit is write-only and never held.
+fn period_high_byte(period: u16, length_enabled: bool) -> u8 {
+    (((period >> 8) & 0x07) as u8) | if length_enabled { 0x40 } else { 0x00 }
+}
+
+fn pulse_channel_block(
+    label: &'static str,
+    on_help: &'static str,
+    ch: &PulseChannelView,
+    nr1: &'static str,
+    nr2: &'static str,
+    nr3: &'static str,
+    nr4: &'static str,
+) -> inspect::SectionBlock {
+    let mut rows = vec![inspect::Row::flag(label, ch.enabled.enabled).help(on_help)];
+    if let Some(sweep) = ch.sweep {
+        rows.push(
+            inspect::Row::value("nr10", format!("{sweep:02X}"))
+                .help("sweep pace / direction / step (NR10)"),
+        );
+    }
+    rows.extend([
+        inspect::Row::value(nr1, format!("{:02X}", ch.duty_and_length))
+            .help("wave duty & initial length"),
+        inspect::Row::value(nr2, format!("{:02X}", ch.volume_and_envelope.0))
+            .help("initial volume & envelope"),
+        inspect::Row::value(nr3, format!("{:02X}", ch.period & 0xFF)).help("period low byte"),
+        inspect::Row::value(
+            nr4,
+            format!("{:02X}", period_high_byte(ch.period, ch.length_enabled)),
+        )
+        .help("period high & length-enable (trigger is write-only)"),
+        inspect::Row::value("vol", ch.envelope_volume.to_string())
+            .help("current envelope volume (0-15)"),
+        inspect::Row::value("len", ch.length_counter.to_string()).help("length counter (0-64)"),
+    ]);
+    inspect::SectionBlock::Rows(rows)
+}
+
+fn wave_channel_block(ch: &WaveChannelView) -> inspect::SectionBlock {
+    inspect::SectionBlock::Rows(vec![
+        inspect::Row::flag("ch3", ch.enabled.enabled).help("channel 3 on (NR52 bit 2)"),
+        inspect::Row::value("nr30", if ch.dac_enabled { "80" } else { "00" })
+            .help("DAC power (NR30 bit 7)"),
+        inspect::Row::value("nr32", format!("{:02X}", ch.level)).help("output level (NR32)"),
+        inspect::Row::value("nr33", format!("{:02X}", ch.period & 0xFF)).help("period low byte"),
+        inspect::Row::value(
+            "nr34",
+            format!("{:02X}", period_high_byte(ch.period, ch.length_enabled)),
+        )
+        .help("period high & length-enable (trigger is write-only)"),
+        inspect::Row::value("len", ch.length_counter.to_string()).help("length counter (0-256)"),
+        inspect::Row::value("pos", ch.wave_position.to_string())
+            .help("wave-RAM sample position (0-31)"),
+    ])
+}
+
+fn noise_channel_block(ch: &NoiseChannelView) -> inspect::SectionBlock {
+    inspect::SectionBlock::Rows(vec![
+        inspect::Row::flag("ch4", ch.enabled.enabled).help("channel 4 on (NR52 bit 3)"),
+        inspect::Row::value("nr42", format!("{:02X}", ch.volume_and_envelope.0))
+            .help("initial volume & envelope"),
+        inspect::Row::value("nr43", format!("{:02X}", ch.frequency))
+            .help("clock shift, LFSR width & divisor (NR43)"),
+        inspect::Row::value("vol", ch.envelope_volume.to_string())
+            .help("current envelope volume (0-15)"),
+        inspect::Row::value("len", ch.length_counter.to_string()).help("length counter (0-64)"),
+    ])
+}
+
+/// NR51 sound-panning byte reconstructed from each channel's per-side output
+/// enables: high nibble left (ch4..ch1), low nibble right (ch4..ch1).
+fn panning_byte(audio: &AudioView) -> u8 {
+    let sides = [
+        audio.ch1.enabled,
+        audio.ch2.enabled,
+        audio.ch3.enabled,
+        audio.ch4.enabled,
+    ];
+    let mut nr51 = 0u8;
+    for (channel, enabled) in sides.iter().enumerate() {
+        if enabled.output_right {
+            nr51 |= 1 << channel;
+        }
+        if enabled.output_left {
+            nr51 |= 1 << (channel + 4);
+        }
+    }
+    nr51
+}
+
+/// The APU section, shared by DMG and CGB (the sound block is the same silicon):
+/// the four channels' NRxx register bytes with the runtime summaries the core
+/// tracks, plus the master NR50/NR51 registers. The header pip is the NR52 power
+/// bit; the summary lists the powered-on channels.
+pub fn apu_section(audio: &AudioView) -> inspect::Section {
+    use inspect::SectionBlock::{Rows, Rule};
+
+    let on: Vec<&str> = [
+        (audio.ch1.enabled.enabled, "ch1"),
+        (audio.ch2.enabled.enabled, "ch2"),
+        (audio.ch3.enabled.enabled, "ch3"),
+        (audio.ch4.enabled.enabled, "ch4"),
+    ]
+    .into_iter()
+    .filter_map(|(on, name)| on.then_some(name))
+    .collect();
+    let summary = if !audio.enabled {
+        "off".to_string()
+    } else if on.is_empty() {
+        "on".to_string()
+    } else {
+        on.join(" ")
+    };
+
+    inspect::Section {
+        name: "APU",
+        summary,
+        active: Some(audio.enabled),
+        detail: None,
+        blocks: vec![
+            Rows(vec![
+                inspect::Row::value("nr50", format!("{:02X}", audio.nr50))
+                    .help("master volume L/R & VIN (NR50)"),
+                inspect::Row::value("nr51", format!("{:02X}", panning_byte(audio)))
+                    .help("sound panning — per-channel L/R (NR51)"),
+            ]),
+            Rule,
+            pulse_channel_block(
+                "ch1",
+                "channel 1 on (NR52 bit 0)",
+                &audio.ch1,
+                "nr11",
+                "nr12",
+                "nr13",
+                "nr14",
+            ),
+            Rule,
+            pulse_channel_block(
+                "ch2",
+                "channel 2 on (NR52 bit 1)",
+                &audio.ch2,
+                "nr21",
+                "nr22",
+                "nr23",
+                "nr24",
+            ),
+            Rule,
+            wave_channel_block(&audio.ch3),
+            Rule,
+            noise_channel_block(&audio.ch4),
+        ],
+    }
+}
+
+/// The DMG sidebar: CPU, PPU and APU sections composed from the shared parts,
+/// with the DMG shade swatches sat with the registers they describe. Shared by
+/// the live console (paused) and the running snapshot so the two agree.
 pub fn dmg_sidebar_sections(
     cpu: &impl CpuSource,
     ppu: &impl PpuSource,
     ints: &interrupts::Registers,
+    audio: &AudioView,
 ) -> Vec<inspect::Section> {
     use inspect::SectionBlock::Rule;
 
@@ -826,6 +1052,7 @@ pub fn dmg_sidebar_sections(
                 dmg_fifo_block(ppu),
             ],
         },
+        apu_section(audio),
     ]
 }
 
@@ -886,7 +1113,7 @@ impl InspectSnapshot for GbSnapshot {
         cpu_register_groups(&self.cpu)
     }
     fn sidebar_sections(&self) -> Vec<inspect::Section> {
-        dmg_sidebar_sections(&self.cpu, &self.ppu, &self.interrupts)
+        dmg_sidebar_sections(&self.cpu, &self.ppu, &self.interrupts, &self.audio)
     }
     fn memory_window(&self) -> Option<&inspect::MemoryWindow> {
         Some(&self.memory)
@@ -950,7 +1177,8 @@ mod tests {
     fn snapshot_sidebar_sections_match_live() {
         let debugger = stepped_dmg();
         let console = debugger.game_boy();
-        let live = dmg_sidebar_sections(console.cpu(), console.ppu(), console.interrupts());
+        let audio = AudioView::capture(console.audio());
+        let live = dmg_sidebar_sections(console.cpu(), console.ppu(), console.interrupts(), &audio);
         let snapshot = GbSnapshot::capture(
             console,
             ColorSnapshot::Dmg { sgb: false },
@@ -1006,6 +1234,39 @@ mod tests {
         assert_eq!(strip[4], Some(2));
         assert_eq!(strip[5], Some(0));
         assert_eq!(dmg_obj_strip(None, 0xE4, 0xE4), vec![None; 8]);
+    }
+
+    #[test]
+    fn apu_section_reports_power_and_channel_registers() {
+        let audio = AudioView::capture(&Audio::<crate::audio::DmgApu>::post_boot(0));
+        let section = apu_section(&audio);
+        assert_eq!(section.name, "APU");
+        // Post-boot: APU powered and CH1 running.
+        assert_eq!(section.active, Some(true));
+        assert!(section.summary.contains("ch1"));
+
+        // CH1's NR12 register byte reads back the post-boot envelope value 0xF3.
+        let nr12 = section
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                inspect::SectionBlock::Rows(rows) => rows
+                    .iter()
+                    .find(|row| row.label == "nr12")
+                    .map(|row| row.value.clone()),
+                _ => None,
+            })
+            .expect("a CH1 NR12 row");
+        assert_eq!(nr12, "F3");
+
+        // The CH1 pip tracks the channel-on state.
+        let ch1_on = section.blocks.iter().any(|block| match block {
+            inspect::SectionBlock::Rows(rows) => rows
+                .iter()
+                .any(|row| row.label == "ch1" && row.active == Some(true)),
+            _ => false,
+        });
+        assert!(ch1_on);
     }
 
     #[test]
@@ -1075,7 +1336,9 @@ mod tests {
 
         // The DMG PPU section places both swatch blocks with its registers.
         let console = debugger.game_boy();
-        let sections = dmg_sidebar_sections(console.cpu(), console.ppu(), console.interrupts());
+        let audio = AudioView::capture(console.audio());
+        let sections =
+            dmg_sidebar_sections(console.cpu(), console.ppu(), console.interrupts(), &audio);
         let swatch_blocks = sections[1]
             .blocks
             .iter()

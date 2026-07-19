@@ -365,6 +365,17 @@ pub struct GraphicsRegisters {
     pub color_pf: u8,
 }
 
+/// One audio channel's AUDC/AUDF/AUDV register bytes, copied for the debugger.
+/// Write-only on the bus, so the debugger reads them here.
+pub struct AudioRegisters {
+    /// AUDC waveform/tone class (low 4 bits).
+    pub control: u8,
+    /// AUDF frequency divider (5 bits).
+    pub frequency: u8,
+    /// AUDV volume (4 bits).
+    pub volume: u8,
+}
+
 pub struct Tia {
     hsync: HSyncCounter,
     vsync: bool,
@@ -522,6 +533,16 @@ impl Tia {
             color_p1: self.color_p1,
             color_pf: self.color_pf,
         }
+    }
+
+    /// The two audio channels' AUDC/AUDF/AUDV register bytes. Write-only on the
+    /// bus, so the debugger reads them here. Inspection only.
+    pub fn audio_registers(&self) -> [AudioRegisters; 2] {
+        std::array::from_fn(|i| AudioRegisters {
+            control: self.audio[i].control,
+            frequency: self.audio[i].frequency,
+            volume: self.audio[i].volume,
+        })
     }
 
     pub(crate) fn take_line(&mut self) -> Option<Scanline> {

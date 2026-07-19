@@ -4,7 +4,7 @@ use iced::{
 };
 
 use crate::app::Message;
-use crate::app::debugger::inspect::{EnvelopeChannelView, WaveChannelView};
+use crate::app::debugger::inspect::WaveChannelView;
 use missingno_gb::audio::channels::{
     Enabled,
     registers::{EnvelopeDirection, VolumeAndEnvelope},
@@ -12,13 +12,10 @@ use missingno_gb::audio::channels::{
 
 pub fn envelope_channel(
     label: &'static str,
-    channel: &EnvelopeChannelView,
+    enabled_state: Enabled,
+    register: VolumeAndEnvelope,
 ) -> Element<'static, Message> {
-    column![
-        enabled(label, channel.enabled),
-        volume_and_envelope(channel.volume_and_envelope)
-    ]
-    .into()
+    column![enabled(label, enabled_state), volume_and_envelope(register)].into()
 }
 
 pub fn wave_channel(label: &'static str, channel: &WaveChannelView) -> Element<'static, Message> {

@@ -43,6 +43,11 @@ pub struct SmsInspectState {
     pub vdp_status: u8,
     pub vdp_registers: [u8; 11],
     pub banks: [u8; 3],
+    /// SN76489 PSG: three tone periods + the noise seed, the four 4-bit
+    /// attenuations, and the noise-control byte.
+    pub psg_periods: [u16; 4],
+    pub psg_volumes: [u8; 4],
+    pub psg_noise: u8,
     /// Raw bytes at the program counter, hex-dumped until a Z80
     /// disassembler lands.
     pub code_window: Vec<(u16, [u8; 4])>,
@@ -107,7 +112,65 @@ fn cpu_register_groups(state: &SmsInspectState) -> Vec<RegisterGroup> {
 fn sms_sidebar_sections(state: &SmsInspectState) -> Vec<Section> {
     let mut sections = missingno_core::inspect::default_sections(cpu_register_groups(state));
     sections.push(vdp_section(state));
+    sections.push(psg_section(state));
     sections
+}
+
+/// The SN76489 PSG: three tone channels and one noise channel. Each channel
+/// shows its period (or the noise-control byte) and 4-bit attenuation, with an
+/// audibility pip — attenuation $F fully mutes, so anything below it is audible.
+fn psg_section(state: &SmsInspectState) -> Section {
+    let tone = |i: usize, label: &'static str, per_label, per_help, att_label, att_help| {
+        SectionBlock::Rows(vec![
+            Row::flag(label, state.psg_volumes[i] != 0x0F).help("tone audible — attenuation < $F"),
+            Row::value(per_label, format!("{:03X}", state.psg_periods[i])).help(per_help),
+            Row::value(att_label, format!("{:X}", state.psg_volumes[i])).help(att_help),
+        ])
+    };
+    let audible = (0..4).filter(|&i| state.psg_volumes[i] != 0x0F).count();
+    Section {
+        name: "PSG",
+        summary: format!("{audible}/4 audible"),
+        active: None,
+        detail: None,
+        blocks: vec![
+            tone(
+                0,
+                "t0",
+                "per0",
+                "tone 0 period (10-bit)",
+                "att0",
+                "tone 0 attenuation ($F = mute)",
+            ),
+            SectionBlock::Rule,
+            tone(
+                1,
+                "t1",
+                "per1",
+                "tone 1 period (10-bit)",
+                "att1",
+                "tone 1 attenuation ($F = mute)",
+            ),
+            SectionBlock::Rule,
+            tone(
+                2,
+                "t2",
+                "per2",
+                "tone 2 period (10-bit)",
+                "att2",
+                "tone 2 attenuation ($F = mute)",
+            ),
+            SectionBlock::Rule,
+            SectionBlock::Rows(vec![
+                Row::flag("noise", state.psg_volumes[3] != 0x0F)
+                    .help("noise audible — attenuation < $F"),
+                Row::value("nctl", format!("{:X}", state.psg_noise))
+                    .help("noise feedback mode & shift rate"),
+                Row::value("att3", format!("{:X}", state.psg_volumes[3]))
+                    .help("noise attenuation ($F = mute)"),
+            ]),
+        ],
+    }
 }
 
 fn vdp_section(state: &SmsInspectState) -> Section {
@@ -280,6 +343,9 @@ impl SteppingSystem for SmsSystem {
             vdp_status: sms.vdp.peek_status(),
             vdp_registers: sms.vdp.registers,
             banks,
+            psg_periods: sms.psg.periods,
+            psg_volumes: sms.psg.volumes,
+            psg_noise: sms.psg.noise_control,
             code_window,
             frame: frame_count,
         }
@@ -345,5 +411,44 @@ fn apply_control(sms: &mut Sms, control: ControlId, input: ControlInput) {
         sms.port_dc &= !line;
     } else {
         sms.port_dc |= line;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn psg_section_reports_registers_and_audibility() {
+        let mut state = SmsInspectState::default();
+        state.psg_periods = [0x1FE, 0, 0, 0];
+        // Tone 0 audible (attenuation 0), the rest muted at $F.
+        state.psg_volumes = [0x00, 0x0F, 0x0F, 0x0F];
+        state.psg_noise = 0x05;
+        let section = psg_section(&state);
+        assert_eq!(section.name, "PSG");
+
+        let rows: Vec<&Row> = section
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                SectionBlock::Rows(rows) => Some(rows),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(
+            rows.iter().find(|r| r.label == "per0").map(|r| &r.value),
+            Some(&"1FE".to_string())
+        );
+        // Tone 0's pip is lit (attenuation below $F); tone 1's is dim.
+        assert_eq!(
+            rows.iter().find(|r| r.label == "t0").and_then(|r| r.active),
+            Some(true)
+        );
+        assert_eq!(
+            rows.iter().find(|r| r.label == "t1").and_then(|r| r.active),
+            Some(false)
+        );
     }
 }

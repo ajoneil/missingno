@@ -13,9 +13,7 @@ use missingno_gbc::{Cgb, GameBoyColor, cram_palettes};
 use crate::app::console::{ConsoleColors, colors_from_snapshot};
 
 pub use missingno_core::system::DebugView;
-pub use missingno_gb::debugger::inspection::{
-    AudioView, EnvelopeChannelView, GbSnapshot, PpuSource, WaveChannelView,
-};
+pub use missingno_gb::debugger::inspection::{AudioView, GbSnapshot, PpuSource, WaveChannelView};
 pub use missingno_gbc::CgbSnapshot;
 
 // --- Model colour hooks ------------------------------------------------------

@@ -420,6 +420,10 @@ pub struct VcsInspectState {
     pub color_p0: RGB8,
     pub color_p1: RGB8,
     pub color_pf: RGB8,
+    /// TIA audio: each channel's AUDC/AUDF/AUDV register bytes.
+    pub audc: [u8; 2],
+    pub audf: [u8; 2],
+    pub audv: [u8; 2],
     pub frame: u64,
 }
 
@@ -427,7 +431,12 @@ pub struct VcsInspectState {
 /// per-frame snapshot so the two agree by construction: the 6507 register file
 /// and the TIA/RIOT state the inspection struct already carries.
 pub fn vcs_sidebar_sections(state: &VcsInspectState) -> Vec<inspect::Section> {
-    vec![cpu_section(state), tia_section(state), riot_section(state)]
+    vec![
+        cpu_section(state),
+        tia_section(state),
+        audio_section(state),
+        riot_section(state),
+    ]
 }
 
 fn cpu_section(state: &VcsInspectState) -> inspect::Section {
@@ -663,6 +672,61 @@ fn tia_section(state: &VcsInspectState) -> inspect::Section {
     }
 }
 
+/// The TIA integrates audio, but its two AUDx channels are a distinct
+/// functional block, so they read clearer in their own section than appended to
+/// the already-dense TIA section (beam sweep, graphics strips, collision
+/// matrix). Each channel shows AUDC/AUDF/AUDV with an audibility pip.
+fn audio_section(state: &VcsInspectState) -> inspect::Section {
+    use inspect::{Row, SectionBlock};
+
+    let channel = |i: usize, on_help, audc_help, audf_help, audv_help| {
+        SectionBlock::Rows(vec![
+            // A channel is audible only while its volume is non-zero; AUDC/AUDF
+            // still divide, but the DAC drives nothing at zero AUDV.
+            Row::flag(if i == 0 { "ch0" } else { "ch1" }, state.audv[i] > 0).help(on_help),
+            Row::value(
+                if i == 0 { "audc0" } else { "audc1" },
+                format!("{:02X}", state.audc[i]),
+            )
+            .help(audc_help),
+            Row::value(
+                if i == 0 { "audf0" } else { "audf1" },
+                format!("{:02X}", state.audf[i]),
+            )
+            .help(audf_help),
+            Row::value(
+                if i == 0 { "audv0" } else { "audv1" },
+                format!("{:02X}", state.audv[i]),
+            )
+            .help(audv_help),
+        ])
+    };
+
+    inspect::Section {
+        name: "Audio",
+        summary: format!("v{:X} v{:X}", state.audv[0], state.audv[1]),
+        active: None,
+        detail: None,
+        blocks: vec![
+            channel(
+                0,
+                "channel 0 audible — AUDV0 > 0",
+                "waveform / tone class (AUDC0)",
+                "frequency divider (AUDF0)",
+                "volume (AUDV0)",
+            ),
+            SectionBlock::Rule,
+            channel(
+                1,
+                "channel 1 audible — AUDV1 > 0",
+                "waveform / tone class (AUDC1)",
+                "frequency divider (AUDF1)",
+                "volume (AUDV1)",
+            ),
+        ],
+    }
+}
+
 fn riot_section(state: &VcsInspectState) -> inspect::Section {
     use inspect::{Row, SectionBlock};
 
@@ -765,6 +829,7 @@ impl VcsDebugger {
             RGB8::new(r, g, b)
         };
         let gfx = vcs.tia.graphics_registers();
+        let audio = vcs.tia.audio_registers();
         self.inspect = VcsInspectState {
             a: cpu.a,
             x: cpu.x,
@@ -793,6 +858,9 @@ impl VcsDebugger {
             color_p0: color(gfx.color_p0),
             color_p1: color(gfx.color_p1),
             color_pf: color(gfx.color_pf),
+            audc: [audio[0].control, audio[1].control],
+            audf: [audio[0].frequency, audio[1].frequency],
+            audv: [audio[0].volume, audio[1].volume],
             frame: self.frame_count,
         };
     }
@@ -1007,6 +1075,44 @@ mod tests {
         // Only the p0 (0) / pf (5) pair is set.
         assert!(matrix.cell(0, 5).set);
         assert_eq!(matrix.cells.iter().filter(|cell| cell.set).count(), 1);
+    }
+
+    #[test]
+    fn audio_section_reports_registers_and_audibility() {
+        let mut state = VcsInspectState::default();
+        state.audc = [0x0C, 0x00];
+        state.audf = [0x1F, 0x00];
+        state.audv = [0x0A, 0x00];
+        let section = audio_section(&state);
+        assert_eq!(section.name, "Audio");
+
+        let rows: Vec<&inspect::Row> = section
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                inspect::SectionBlock::Rows(rows) => Some(rows),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        // Channel 0's AUDC/AUDV bytes render as hex.
+        assert_eq!(
+            rows.iter().find(|r| r.label == "audc0").map(|r| &r.value),
+            Some(&"0C".to_string())
+        );
+        // The pip tracks volume > 0: channel 0 audible, channel 1 silent.
+        assert_eq!(
+            rows.iter()
+                .find(|r| r.label == "ch0")
+                .and_then(|r| r.active),
+            Some(true)
+        );
+        assert_eq!(
+            rows.iter()
+                .find(|r| r.label == "ch1")
+                .and_then(|r| r.active),
+            Some(false)
+        );
     }
 
     #[test]

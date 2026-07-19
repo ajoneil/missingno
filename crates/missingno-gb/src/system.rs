@@ -103,10 +103,12 @@ impl ConsoleUi for Dmg {
     }
 
     fn sidebar_sections(console: &Console<Self>) -> Vec<inspect::Section> {
-        crate::debugger::inspection::dmg_sidebar_sections(
+        use crate::debugger::inspection::{AudioView, dmg_sidebar_sections};
+        dmg_sidebar_sections(
             console.cpu(),
             console.ppu(),
             console.interrupts(),
+            &AudioView::capture(console.audio()),
         )
     }
 }
