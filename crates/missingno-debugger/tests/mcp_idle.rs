@@ -132,3 +132,32 @@ fn idle_server_loads_a_rom_and_ejects() {
 
     let _ = std::fs::remove_file(rom);
 }
+
+#[test]
+fn set_breakpoint_rejects_a_synthetic_address() {
+    let rom = write_minimal_rom();
+    let rom = rom.to_str().unwrap();
+
+    let responses = exchange(&[
+        json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
+        json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": { "name": "load_rom", "arguments": { "path": rom } } }),
+        // A bus breakpoint is accepted.
+        json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                "params": { "name": "set_breakpoint", "arguments": { "address": "0x0150" } } }),
+        // A synthetic bank-complete address is not a bus address: rejected.
+        json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+                "params": { "name": "set_breakpoint", "arguments": { "address": "0x02008123" } } }),
+        json!({ "jsonrpc": "2.0", "id": 5, "method": "shutdown" }),
+    ]);
+
+    assert_eq!(responses[2]["result"]["isError"], json!(false));
+    assert_eq!(
+        responses[3]["result"]["isError"],
+        json!(true),
+        "synthetic breakpoint should error: {:?}",
+        responses[3]
+    );
+
+    let _ = std::fs::remove_file(rom);
+}

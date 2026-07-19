@@ -742,10 +742,10 @@ fn breakpoint_edit(request: Request, session: &mut Session, method: &Method, pat
         Err(message) => return respond_error(request, 400, &message),
     };
     match *method {
-        Method::Put => {
-            session.set_breakpoint(address);
-            respond_json(request, json!({ "set": format!("{address:x}") }));
-        }
+        Method::Put => match session.set_breakpoint(address) {
+            Ok(()) => respond_json(request, json!({ "set": format!("{address:x}") })),
+            Err(message) => respond_error(request, 400, &message),
+        },
         Method::Delete => {
             session.clear_breakpoint(address);
             respond_json(request, json!({ "cleared": format!("{address:x}") }));

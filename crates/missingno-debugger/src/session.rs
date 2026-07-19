@@ -142,8 +142,19 @@ impl Session {
         self.last_stop = StopReason::Completed;
     }
 
-    pub fn set_breakpoint(&mut self, address: u32) {
+    /// Set a breakpoint at a bus address. Breakpoints are bus-space by
+    /// contract; the seam keys them as a 16-bit bus address, so a synthetic
+    /// bank-complete address (the disassembly's above-the-bus rows) is rejected
+    /// rather than truncated into a phantom bus stop — banked stops are the
+    /// watch system's job.
+    pub fn set_breakpoint(&mut self, address: u32) -> Result<(), String> {
+        if address > u16::MAX as u32 {
+            return Err(format!(
+                "breakpoint address {address:#x} is outside the bus space"
+            ));
+        }
         self.debugger.set_breakpoint(address);
+        Ok(())
     }
 
     pub fn clear_breakpoint(&mut self, address: u32) {
@@ -252,8 +263,14 @@ impl Session {
             .into_iter()
             .map(|row| match row {
                 Row::Instruction(address) => {
+                    // Keep any synthetic high bits above the ISA space so the
+                    // decode reads the bank-complete store the row addresses,
+                    // not the bus the low bits alias onto.
+                    let base = address & !mask;
                     let raw: Vec<u8> = (0..isa.max_len())
-                        .map(|offset| memory.read(address.wrapping_add(offset as u32) & mask))
+                        .map(|offset| {
+                            memory.read(base | (address.wrapping_add(offset as u32) & mask))
+                        })
                         .collect();
                     let decoded = isa.decode(address, &raw);
                     let length = decoded.length.max(1);

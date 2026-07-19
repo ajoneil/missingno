@@ -36,16 +36,21 @@ pub fn window_after(
     cdl: Option<&CdlWindow>,
 ) -> Vec<Row> {
     let mask = isa.address_mask();
-    let mut address = pc & mask;
+    // A synthetic bank-complete anchor carries high bits above the ISA space;
+    // step the window with wrapping and keep the base so the walk stays inside
+    // the same store instead of aliasing back onto the bus.
+    let base = pc & !mask;
+    let mut window = pc & mask;
     let mut rows = Vec::with_capacity(count);
     for _ in 0..count {
-        if cdl.is_some_and(|log| log.is_data(address as u16)) {
+        let address = base | window;
+        if cdl.is_some_and(|log| log.is_data(window as u16)) {
             rows.push(Row::Data(address));
-            address = address.wrapping_add(1) & mask;
+            window = window.wrapping_add(1) & mask;
         } else {
             rows.push(Row::Instruction(address));
             let length = decoded_length(isa, memory, address, mask);
-            address = address.wrapping_add(length) & mask;
+            window = window.wrapping_add(length) & mask;
         }
     }
     rows
@@ -62,20 +67,21 @@ pub fn addresses_before(
     memory: &dyn ReadMemory,
 ) -> Vec<u32> {
     let mask = isa.address_mask();
+    let base = pc & !mask;
     let pc = pc & mask;
     let search_distance = (count * isa.max_len()).min(128) as u32;
     let start = pc.saturating_sub(search_distance);
 
     let mut best: Vec<u32> = Vec::new();
     for candidate in start..pc {
-        let mut addr = candidate;
+        let mut window = candidate;
         let mut chain = Vec::new();
-        while addr < pc {
-            chain.push(addr);
-            let length = decoded_length(isa, memory, addr, mask);
-            addr = addr.wrapping_add(length) & mask;
+        while window < pc {
+            chain.push(base | window);
+            let length = decoded_length(isa, memory, base | window, mask);
+            window = window.wrapping_add(length) & mask;
         }
-        if addr == pc && chain.len() >= best.len() {
+        if window == pc && chain.len() >= best.len() {
             best = chain;
         }
     }
@@ -99,20 +105,21 @@ pub fn logged_addresses_before(
     cdl: &CdlWindow,
 ) -> Option<Vec<u32>> {
     let mask = isa.address_mask();
+    let base = pc & !mask;
     let mut chain = Vec::new();
     let mut current = pc & mask;
     for _ in 0..count {
         let previous = (1..=isa.max_len() as u32)
             .map(|back| current.wrapping_sub(back) & mask)
-            .find(|&address| {
-                cdl.is_instruction_start(address as u16)
-                    && address.wrapping_add(decoded_length(isa, memory, address, mask)) & mask
+            .find(|&window| {
+                cdl.is_instruction_start(window as u16)
+                    && window.wrapping_add(decoded_length(isa, memory, base | window, mask)) & mask
                         == current
             });
         match previous {
-            Some(address) => {
-                chain.push(address);
-                current = address;
+            Some(window) => {
+                chain.push(base | window);
+                current = window;
             }
             None => break,
         }
@@ -132,8 +139,10 @@ fn decoded_length(
     address: u32,
     mask: u32,
 ) -> u32 {
+    let base = address & !mask;
+    let window = address & mask;
     let bytes: Vec<u8> = (0..isa.max_len())
-        .map(|offset| memory.read(address.wrapping_add(offset as u32) & mask))
+        .map(|offset| memory.read(base | (window.wrapping_add(offset as u32) & mask)))
         .collect();
     (isa.decode(address, &bytes).length as u32).max(1)
 }
@@ -241,6 +250,58 @@ mod tests {
         let cdl = CdlWindow::new(0, flags);
         let before = logged_addresses_before(6, 4, &Toy, &memory, &cdl);
         assert_eq!(before, Some(vec![0, 3, 5]));
+    }
+
+    // A store addressed by the low 16-bit window; the synthetic high bits
+    // above the ISA space select which store, and the walk must preserve them.
+    struct Windowed(Vec<u8>);
+    impl ReadMemory for Windowed {
+        fn read(&self, address: u32) -> u8 {
+            self.0
+                .get((address & 0xFFFF) as usize)
+                .copied()
+                .unwrap_or(0)
+        }
+    }
+
+    #[test]
+    fn forward_window_preserves_synthetic_base() {
+        const BASE: u32 = 0x0200_0000;
+        let memory = Windowed(vec![0x02, 0xff, 0xff, 0x01, 0xff, 0x00]);
+        let rows = window_after(BASE, 3, &Toy, &memory, None);
+        assert_eq!(
+            rows,
+            vec![
+                Row::Instruction(BASE),
+                Row::Instruction(BASE | 3),
+                Row::Instruction(BASE | 5),
+            ]
+        );
+    }
+
+    #[test]
+    fn heuristic_backward_preserves_synthetic_base() {
+        const BASE: u32 = 0x0300_0000;
+        let memory = Windowed(vec![0x02, 0xff, 0xff, 0x01, 0xff, 0x00, 0x00, 0x00, 0x00]);
+        let before = addresses_before(BASE | 8, 4, &Toy, &memory);
+        assert_eq!(before, vec![BASE | 3, BASE | 5, BASE | 6, BASE | 7]);
+    }
+
+    #[test]
+    fn logged_backward_preserves_synthetic_base() {
+        const BASE: u32 = 0x0200_0000;
+        let memory = Windowed(vec![0x02, 0xff, 0xff, 0x01, 0xff, 0x00]);
+        let flags = vec![
+            CODE | INSTRUCTION_START,
+            CODE,
+            CODE,
+            CODE | INSTRUCTION_START,
+            CODE,
+            CODE | INSTRUCTION_START,
+        ];
+        let cdl = CdlWindow::new(0, flags);
+        let before = logged_addresses_before(BASE | 6, 4, &Toy, &memory, &cdl);
+        assert_eq!(before, Some(vec![BASE, BASE | 3, BASE | 5]));
     }
 
     #[test]

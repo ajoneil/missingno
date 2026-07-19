@@ -408,17 +408,18 @@ impl Cartridge {
     pub fn read(&mut self, address: u16, residue: u8) -> Option<u8> {
         let window = selects_window(address);
         match &mut self.board {
-            Board::Plain(board) if window => Some(board.read(address)),
-            Board::Atari(board) if window => Some(board.read(address, residue)),
-            Board::Fa(board) if window => Some(board.read(address, residue)),
-            Board::E0(board) if window => Some(board.read(address)),
-            Board::E7(board) if window => Some(board.read(address, residue)),
-            Board::Cv(board) if window => Some(board.read(address, residue)),
-            Board::Dpc(board) if window => Some(board.read(address, residue)),
-            Board::F0(board) if window => Some(board.read(address)),
-            Board::Jane(board) if window => Some(board.read(address)),
-            Board::Wf8(board) if window => Some(board.peek(address)),
-            Board::Fc(board) if window => Some(board.read(address)),
+            // Boards that answer only inside the cart window.
+            Board::Plain(board) => window.then(|| board.read(address)),
+            Board::Atari(board) => window.then(|| board.read(address, residue)),
+            Board::Fa(board) => window.then(|| board.read(address, residue)),
+            Board::E0(board) => window.then(|| board.read(address)),
+            Board::E7(board) => window.then(|| board.read(address, residue)),
+            Board::Cv(board) => window.then(|| board.read(address, residue)),
+            Board::Dpc(board) => window.then(|| board.read(address, residue)),
+            Board::F0(board) => window.then(|| board.read(address)),
+            Board::Jane(board) => window.then(|| board.read(address)),
+            Board::Wf8(board) => window.then(|| board.peek(address)),
+            Board::Fc(board) => window.then(|| board.read(address)),
             // Boards that watch the whole address bus — for hotspots below the
             // window, or to count its transitions — and answer only inside it.
             Board::Ar(board) => board.read(address, residue),
@@ -434,7 +435,8 @@ impl Cartridge {
             Board::ThreeE(board) => board.read(address, residue),
             Board::ThreeEPlus(board) => board.read(address, residue),
             Board::Fe(board) => board.read(address, residue),
-            _ => None,
+            // No plugged board drives the bus.
+            Board::Empty => None,
         }
     }
 
@@ -443,6 +445,7 @@ impl Cartridge {
     pub fn write_access(&mut self, address: u16, data: u8, residue: u8) {
         let window = selects_window(address);
         match &mut self.board {
+            // Boards whose write port and hotspots sit inside the cart window.
             Board::Atari(board) if window => board.write_access(address, data),
             Board::Fa(board) if window => board.write_access(address, data),
             Board::E0(board) if window => board.write_access(address),
@@ -453,6 +456,18 @@ impl Cartridge {
             Board::Jane(board) if window => board.write_access(address),
             Board::Wf8(board) if window => board.write_access(address, data),
             Board::Fc(board) if window => board.write_access(address, data),
+            // Windowed boards ignore a write cycle outside the window.
+            Board::Atari(_)
+            | Board::Fa(_)
+            | Board::E0(_)
+            | Board::E7(_)
+            | Board::Cv(_)
+            | Board::Dpc(_)
+            | Board::F0(_)
+            | Board::Jane(_)
+            | Board::Wf8(_)
+            | Board::Fc(_) => {}
+            // Boards that watch the whole address bus for hotspots.
             Board::Ar(board) => board.write_access(address),
             Board::Wd(board) => board.write_access(address, data),
             Board::ZeroFa0(board) => board.write_access(address),
@@ -466,7 +481,8 @@ impl Cartridge {
             Board::ThreeE(board) => board.write_access(address, residue, data),
             Board::ThreeEPlus(board) => board.write_access(address, residue, data),
             Board::Fe(board) => board.write_access(address, residue),
-            _ => {}
+            // A plain board and an empty slot latch nothing on a write.
+            Board::Empty | Board::Plain(_) => {}
         }
     }
 
@@ -481,7 +497,28 @@ impl Cartridge {
             Board::ThreeE(board) => board.ram(),
             Board::ThreeEPlus(board) => board.ram(),
             Board::Ar(board) => board.ram(),
-            _ => &[],
+            Board::Wd(board) => board.ram(),
+            // E7's two RAM stores (the 1 KB low bank and the 256-byte high bank)
+            // don't linearise into one slice, so it stays out of this region.
+            Board::E7(_) => &[],
+            // Boards with no core-stored cart RAM.
+            Board::Empty
+            | Board::Plain(_)
+            | Board::E0(_)
+            | Board::Dpc(_)
+            | Board::F0(_)
+            | Board::Jane(_)
+            | Board::Wf8(_)
+            | Board::Fc(_)
+            | Board::ZeroFa0(_)
+            | Board::Zero3E0(_)
+            | Board::Fe(_)
+            | Board::Ua(_)
+            | Board::ThreeF(_)
+            | Board::Sb(_)
+            | Board::Zero840(_)
+            | Board::X07(_)
+            | Board::Mdm(_) => &[],
         }
     }
 
@@ -522,7 +559,10 @@ impl Cartridge {
             Board::Zero840(board) => board.rom(),
             Board::X07(board) => board.rom(),
             Board::Mdm(board) => board.rom(),
-            _ => &[],
+            // Boards with no retained image: an empty slot, a plain board that
+            // is already fully visible through the window, the Supercharger
+            // (tape RAM only), and CommaVid (its 2 KB is RAM, not banked ROM).
+            Board::Empty | Board::Plain(_) | Board::Ar(_) | Board::Cv(_) => &[],
         }
     }
 
@@ -616,6 +656,15 @@ mod tests {
         cart.write_access(0x1000, 0x77, 0);
         assert_eq!(cart.peek_ram(0), 0x77);
         assert_eq!(cart.peek_ram(0x80), 0xff); // past the end
+    }
+
+    #[test]
+    fn wd_board_exposes_its_scratch_ram() {
+        let cart = Cartridge::load(&vec![0u8; 0x2000], Some(CartType::Wd), CLOCK).unwrap();
+        // The Wickstead board's 64-byte scratch RAM is a plainly accessible
+        // store, so it contributes a bank-complete `cart ram` region.
+        assert_eq!(cart.ram_len(), 0x40);
+        assert_eq!(cart.peek_ram(0x40), 0xff); // past the end
     }
 
     #[test]

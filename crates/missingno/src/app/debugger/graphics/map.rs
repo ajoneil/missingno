@@ -49,15 +49,24 @@ impl TileMapPane {
         }
     }
 
+    /// The map index actually shown: the stored selection clamped to a live map.
+    /// Callers must have checked `graphics.maps` is non-empty.
+    fn displayed_map(&self, graphics: &GraphicsView) -> usize {
+        (self.tile_map.0 as usize).min(graphics.maps.len() - 1)
+    }
+
     fn content<'a>(
         &'a self,
         graphics: &GraphicsView,
         colors: &ConsoleColors,
         close: pane_grid::Pane,
     ) -> pane_grid::Content<'a, app::Message> {
-        let Some(map) = graphics.maps.get(self.tile_map.0 as usize) else {
+        if graphics.maps.is_empty() {
             return running_placeholder("Tile Map", close);
-        };
+        }
+        // Clamp a stale stored selection to a live map so the pane always renders
+        // with its picker, rather than stranding on a bare placeholder.
+        let map = &graphics.maps[self.displayed_map(graphics)];
 
         let (width, height, pixels) = compose(map, graphics, colors);
         let map_size = width.max(height) as f32;
@@ -105,7 +114,8 @@ impl TileMapPane {
         let choices: Vec<MapChoice> = (0..graphics.maps.len())
             .map(|index| MapChoice(TileMapId(index as u8)))
             .collect();
-        let picker = pick_list(choices, Some(MapChoice(self.tile_map)), move |choice| {
+        let shown = MapChoice(TileMapId(self.displayed_map(graphics) as u8));
+        let picker = pick_list(choices, Some(shown), move |choice| {
             panes::PaneMessage::TileMap(Message::SelectMap(choice.0)).to(close)
         })
         .font(fonts::monospace())

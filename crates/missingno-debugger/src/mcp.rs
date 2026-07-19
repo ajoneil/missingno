@@ -905,7 +905,7 @@ fn tick_report(session: &Session, tick: &str, ran: usize) -> String {
 fn breakpoint(session: &mut Session, args: &Value, set: bool) -> ToolOutcome {
     let address = parse_hex_arg(args, "address")?;
     if set {
-        session.set_breakpoint(address);
+        session.set_breakpoint(address)?;
         text(format!("set breakpoint at {address:04x}"))
     } else {
         session.clear_breakpoint(address);

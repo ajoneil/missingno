@@ -452,6 +452,15 @@ pub struct MemoryRegion {
     pub len: u32,
 }
 
+impl MemoryRegion {
+    /// Whether `address` falls in this region's half-open `[start, start+len)`
+    /// span. Bounds the debugger's address routing so a walk past a store's end
+    /// is not mis-attributed to it.
+    pub fn contains(&self, address: u32) -> bool {
+        address >= self.start && address - self.start < self.len
+    }
+}
+
 /// How a debugger address presents in the disassembly's address column, and
 /// where a breakpoint set from its row lands. A plain bus address presents as
 /// itself; a synthetic bank-complete address (the full ROM/RAM image walked

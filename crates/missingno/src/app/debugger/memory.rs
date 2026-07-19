@@ -565,11 +565,19 @@ impl Pane for MemoryPane {
     }
 
     fn source_index(&self) -> Option<usize> {
-        Some(self.selection.region)
+        // Report the effective selection so a stale stored region — clamped at
+        // render time — is not re-persisted into the saved layout.
+        Some(self.effective_region())
     }
 
     fn set_source_index(&mut self, index: usize) {
-        self.selection.region = index;
+        // Clamp against the known region map when we have one, so a restore or
+        // instance-open past the end lands on a real region.
+        self.selection.region = if self.regions.is_empty() {
+            index
+        } else {
+            index.min(self.regions.len() - 1)
+        };
         self.selection.offset = 0;
     }
 
@@ -583,6 +591,17 @@ impl Pane for MemoryPane {
 
     fn memory_selection(&self) -> Option<MemorySelection> {
         Some(self.selection)
+    }
+}
+
+impl MemoryPane {
+    /// The region actually shown: the stored selection clamped to the cached
+    /// region map, or the stored value verbatim before any map has arrived.
+    fn effective_region(&self) -> usize {
+        match self.regions.len().checked_sub(1) {
+            Some(last) => self.selection.region.min(last),
+            None => self.selection.region,
+        }
     }
 }
 

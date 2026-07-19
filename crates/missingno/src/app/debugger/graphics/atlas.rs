@@ -80,9 +80,12 @@ impl TileAtlasPane {
         colors: &ConsoleColors,
         close: iced::widget::pane_grid::Pane,
     ) -> iced::widget::pane_grid::Content<'a, app::Message> {
-        let Some(atlas) = graphics.atlases.get(self.selected_atlas) else {
+        if graphics.atlases.is_empty() {
             return running_placeholder("Tiles", close);
-        };
+        }
+        // Clamp a stale stored selection to a live atlas so the pane always
+        // renders with its picker, rather than stranding on a bare placeholder.
+        let atlas = &graphics.atlases[self.displayed_atlas(graphics)];
 
         let resolve = self.tile_resolver(atlas, colors);
         let body = region_layout(atlas, resolve.as_ref());
@@ -91,6 +94,12 @@ impl TileAtlasPane {
             self.title_bar(graphics, atlas.palettes.clone(), close),
             body,
         )
+    }
+
+    /// The atlas index actually shown: the stored selection clamped to a live
+    /// atlas. Callers must have checked `graphics.atlases` is non-empty.
+    fn displayed_atlas(&self, graphics: &GraphicsView) -> usize {
+        self.selected_atlas.min(graphics.atlases.len() - 1)
     }
 
     /// The palette index → colour map for `atlas`: the user's DMG shades for a
@@ -136,7 +145,7 @@ impl TileAtlasPane {
                     label: atlas.label.clone(),
                 })
                 .collect();
-            let selected = choices.get(self.selected_atlas).cloned();
+            let selected = choices.get(self.displayed_atlas(graphics)).cloned();
             picker(choices, selected, close, |choice| {
                 Message::SelectAtlas(choice.index)
             })

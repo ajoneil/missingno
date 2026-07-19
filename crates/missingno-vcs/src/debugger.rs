@@ -22,6 +22,13 @@ const CART_RAM_BASE: u32 = 0x0100_0000;
 /// The full ROM image, all banks in file order.
 const CART_ROM_BASE: u32 = 0x0200_0000;
 
+/// Which bank-complete store a synthetic address resolves to.
+#[derive(Clone, Copy)]
+enum SyntheticStore {
+    Rom,
+    Ram,
+}
+
 /// Named bits of the 6502 status register `p`; the B flag is not architectural.
 pub(crate) const MOS6502_FLAGS: &[inspect::FlagName] = &[
     inspect::FlagName {
@@ -335,20 +342,25 @@ impl Debugger {
         (frame, Stop::BudgetExhausted)
     }
 
-    /// Run until the next frame completes, a breakpoint, or a watch.
+    /// Run until the next frame completes, a breakpoint, or a watch. A stop takes
+    /// precedence: when the frame-completing instruction also lands on a
+    /// breakpoint or watch, the completed frame is carried out with the stop the
+    /// way `run` keeps frames, so the pending pc is reported now rather than
+    /// stepped past on the next call.
     pub fn step_frame(&mut self) -> (Option<Frame>, Stop) {
         self.last_watchpoint_hit = None;
         for _ in 0..FRAME_INSTRUCTION_BUDGET {
             self.vcs.step_instruction();
-            if let Some(frame) = self.vcs.take_frame() {
-                return (Some(frame), Stop::Completed);
-            }
+            let frame = self.vcs.take_frame();
             if self.at_breakpoint() {
-                return (None, Stop::Breakpoint);
+                return (frame, Stop::Breakpoint);
             }
             if let Some(hit) = self.check_watchpoints() {
                 self.last_watchpoint_hit = Some(hit);
-                return (None, Stop::Watch);
+                return (frame, Stop::Watch);
+            }
+            if let Some(frame) = frame {
+                return (Some(frame), Stop::Completed);
             }
         }
         (None, Stop::BudgetExhausted)
@@ -368,35 +380,62 @@ impl Debugger {
         const fn region(name: &'static str, start: u32, len: u32) -> inspect::MemoryRegion {
             inspect::MemoryRegion { name, start, len }
         }
-        let cartridge = self.vcs.cartridge();
         let mut regions = vec![
             region("tia", 0x0000, 0x40),
             region("riot-ram", 0x0080, 0x80),
             region("riot-io", 0x0280, 0x20),
             region("cartridge", 0x1000, 0x1000),
         ];
-        let rom_len = cartridge.rom_len();
-        if rom_len > 0x1000 {
-            regions.push(region("rom", CART_ROM_BASE, rom_len as u32));
+        let (rom, ram) = self.synthetic_regions();
+        // A 4 KB board is fully visible through the window already; the ROM
+        // image is advertised only when the board banks past it.
+        if rom.len > 0x1000 {
+            regions.push(rom);
         }
-        let ram_len = cartridge.ram_len();
-        if ram_len > 0 {
-            regions.push(region("cart ram", CART_RAM_BASE, ram_len as u32));
+        if ram.len > 0 {
+            regions.push(ram);
         }
         regions
     }
 
+    /// The board's bank-complete stores in the synthetic space above the bus,
+    /// each bounded by its image length: the full ROM image and the cart RAM.
+    /// Shared with the routing so the published bounds and the routing cannot
+    /// drift.
+    fn synthetic_regions(&self) -> (inspect::MemoryRegion, inspect::MemoryRegion) {
+        let cartridge = self.vcs.cartridge();
+        let region = |name, start, len| inspect::MemoryRegion { name, start, len };
+        (
+            region("rom", CART_ROM_BASE, cartridge.rom_len() as u32),
+            region("cart ram", CART_RAM_BASE, cartridge.ram_len() as u32),
+        )
+    }
+
+    /// The synthetic store `address` falls in and its linear offset within it,
+    /// bounded by the region table — `None` for a bus address or one past every
+    /// store.
+    fn synthetic_route(&self, address: u32) -> Option<(SyntheticStore, u32)> {
+        let (rom, ram) = self.synthetic_regions();
+        if rom.contains(address) {
+            Some((SyntheticStore::Rom, address - rom.start))
+        } else if ram.contains(address) {
+            Some((SyntheticStore::Ram, address - ram.start))
+        } else {
+            None
+        }
+    }
+
     /// Side-effect-free read of the 13-bit address space. Addresses in the
     /// synthetic bank-complete space read the board's raw ROM or RAM linearly,
-    /// independent of the current bank; below it, the console bus.
+    /// independent of the current bank; below it, the console bus. An address
+    /// above the bus but past every store reads open bus.
     pub fn peek(&self, address: u32) -> u8 {
         let cartridge = self.vcs.cartridge();
-        if address >= CART_ROM_BASE {
-            cartridge.peek_rom((address - CART_ROM_BASE) as usize)
-        } else if address >= CART_RAM_BASE {
-            cartridge.peek_ram((address - CART_RAM_BASE) as usize)
-        } else {
-            self.vcs.peek(address as u16)
+        match self.synthetic_route(address) {
+            Some((SyntheticStore::Rom, offset)) => cartridge.peek_rom(offset as usize),
+            Some((SyntheticStore::Ram, offset)) => cartridge.peek_ram(offset as usize),
+            None if address <= u16::MAX as u32 => self.vcs.peek(address as u16),
+            None => 0xFF,
         }
     }
 
@@ -415,18 +454,16 @@ impl Debugger {
     /// whichever bank is selected — none is offered.
     pub fn present_address(&self, address: u32) -> inspect::AddressDisplay {
         use inspect::AddressDisplay;
-        if address >= CART_ROM_BASE {
-            let linear = address - CART_ROM_BASE;
-            AddressDisplay::banked(
-                0xF000 + (linear % 0x1000),
-                (linear / 0x1000) as u16,
+        match self.synthetic_route(address) {
+            Some((SyntheticStore::Rom, offset)) => AddressDisplay::banked(
+                0xF000 + (offset % 0x1000),
+                (offset / 0x1000) as u16,
                 CART_BANK_KEY,
-            )
-        } else if address >= CART_RAM_BASE {
-            let linear = address - CART_RAM_BASE;
-            AddressDisplay::unmarked(0xF000 + (linear & 0x0FFF))
-        } else {
-            AddressDisplay::bus(address, None)
+            ),
+            Some((SyntheticStore::Ram, offset)) => {
+                AddressDisplay::unmarked(0xF000 + (offset & 0x0FFF))
+            }
+            None => AddressDisplay::bus(address, None),
         }
     }
 
@@ -508,6 +545,42 @@ mod tests {
                 },
             ],
         }
+    }
+
+    /// A kernel that lands the frame-completing instruction on the loop's first
+    /// instruction: two WSYNCs build visible lines, VSYNC is asserted, and a
+    /// third WSYNC halts through the vsync line so the frame completes exactly as
+    /// the CPU resumes into the loop. The NOP at `$F00A` completes the frame and
+    /// leaves the pc at the `JMP` at `$F00B` — reached for the first time here.
+    fn frame_completes_at_loop_rom() -> Vec<u8> {
+        let mut bank = vec![0u8; 0x1000];
+        bank[0x000..0x00E].copy_from_slice(&[
+            0x85, 0x02, // STA WSYNC
+            0x85, 0x02, // STA WSYNC
+            0xA9, 0x02, // LDA #2
+            0x85, 0x00, // STA VSYNC
+            0x85, 0x02, // STA WSYNC
+            0xEA, // NOP        ($F00A)
+            0x4C, 0x0B, 0xF0, // JMP $F00B  ($F00B)
+        ]);
+        reset_to_f000(&mut bank);
+        bank
+    }
+
+    #[test]
+    fn step_frame_reports_a_stop_coincident_with_frame_completion() {
+        // A breakpoint on the pc the frame-completing instruction lands on must
+        // be reported on the first call, carrying the completed frame — not
+        // masked by the frame and stepped past on the next call.
+        let mut dbg = debugger(&frame_completes_at_loop_rom(), CartType::Plain4K);
+        dbg.set_breakpoint(0xF00B);
+        let (frame, stop) = dbg.step_frame();
+        assert_eq!(stop, Stop::Breakpoint);
+        assert!(
+            frame.is_some(),
+            "the completed frame rides out with the stop"
+        );
+        assert_eq!(dbg.pc() & 0x1FFF, 0xF00B & 0x1FFF);
     }
 
     #[test]

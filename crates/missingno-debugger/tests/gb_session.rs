@@ -58,10 +58,19 @@ fn steps_and_reads_state() {
 #[test]
 fn breakpoints_round_trip() {
     let mut session = session();
-    session.set_breakpoint(0x0150);
+    session.set_breakpoint(0x0150).unwrap();
     assert!(session.breakpoints().contains(&0x0150));
     session.clear_breakpoint(0x0150);
     assert!(!session.breakpoints().contains(&0x0150));
+}
+
+#[test]
+fn synthetic_breakpoint_rejected() {
+    let mut session = session();
+    // A synthetic bank-complete address is not a bus address; setting a
+    // breakpoint there must be rejected, not truncated into a phantom stop.
+    assert!(session.set_breakpoint(0x0200_8123).is_err());
+    assert!(session.breakpoints().is_empty());
 }
 
 /// The value of a named PPU-section row, if present.
@@ -140,4 +149,47 @@ fn disassembly_window_decodes_from_pc() {
     // NOP decodes to a one-byte instruction row.
     assert!(!lines[0].is_data);
     assert_eq!(lines[0].length, 1);
+}
+
+/// A four-bank MBC5 ROM, each 16 KiB bank stamped with its index.
+fn banked_rom() -> Vec<u8> {
+    let mut rom = vec![0u8; 4 * 0x4000];
+    for (i, bank) in rom.chunks_mut(0x4000).enumerate() {
+        bank.fill(i as u8);
+    }
+    rom[0x147] = 0x19; // MBC5
+    rom[0x148] = 0x01; // 64 KiB
+    rom
+}
+
+fn banked_session() -> Session {
+    let rom = banked_rom();
+    let console = factory::create_console(Path::new("test.gb"), &rom)
+        .expect("factory should not error")
+        .expect("gb factory should claim a .gb ROM");
+    Session::new(console.into_debugger().ok().expect("gb has a debugger"))
+}
+
+#[test]
+fn disassembly_at_synthetic_anchor_decodes_unmapped_bank() {
+    // The synthetic ROM base mirrors the debugger's bank-complete space.
+    const ROM_BASE: u32 = 0x0200_0000;
+    let session = banked_session();
+
+    // The CPU bus pages bank 1 (all 0x01) into $4000; bank 3 (all 0x03) is
+    // reachable only through the synthetic space. 0x01 is LD BC,d16 (3 bytes),
+    // 0x03 is INC BC (1 byte), so the decode proves which bank was read.
+    let anchor = ROM_BASE + 3 * 0x4000;
+    let lines = session
+        .disassembly(anchor, 3)
+        .expect("gb core has a disassembler");
+    assert_eq!(
+        lines[0].address, anchor,
+        "the anchor keeps its synthetic base"
+    );
+    assert_eq!(lines[0].bytes, vec![0x03]);
+    assert_eq!(lines[0].length, 1);
+    // Successive rows step by one and stay in the synthetic ROM decade.
+    assert_eq!(lines[1].address, anchor + 1);
+    assert_eq!(lines[2].address, anchor + 2);
 }

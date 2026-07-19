@@ -233,12 +233,12 @@ impl Ar {
         }
     }
 
-    /// `None` where the powered-down BIOS leaves the window floating.
     /// The Supercharger's tape-loaded RAM banks as one linear space.
     pub(super) fn ram(&self) -> &[u8] {
         self.ram.as_flattened()
     }
 
+    /// `None` where the powered-down BIOS leaves the window floating.
     pub fn peek(&self, address: u16) -> Option<u8> {
         match self.cell(address) {
             Some((bank, offset)) => Some(self.ram[bank][offset]),

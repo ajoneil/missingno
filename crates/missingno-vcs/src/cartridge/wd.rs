@@ -116,6 +116,12 @@ impl Wd {
         &self.image
     }
 
+    /// The board's 64-byte scratch RAM, for the debugger's bank-complete
+    /// `cart ram` region.
+    pub(super) fn ram(&self) -> &[u8] {
+        &self.ram
+    }
+
     pub fn peek(&self, address: u16) -> u8 {
         let offset = usize::from(address & 0x0FFF);
         if offset < RAM_SIZE {

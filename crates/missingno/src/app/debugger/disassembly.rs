@@ -188,9 +188,12 @@ fn decode_row(
     display: AddressDisplay,
     is_current: bool,
 ) -> DisasmRow {
+    // Keep any synthetic high bits above the ISA space so the decode reads the
+    // bank-complete store the row addresses, not the bus the low bits alias onto.
     let mask = isa.address_mask();
+    let base = address & !mask;
     let bytes: Vec<u8> = (0..isa.max_len())
-        .map(|i| memory.read(address.wrapping_add(i as u32) & mask))
+        .map(|i| memory.read(base | (address.wrapping_add(i as u32) & mask)))
         .collect();
     let decoded = isa.decode(address, &bytes);
     DisasmRow::Instruction {

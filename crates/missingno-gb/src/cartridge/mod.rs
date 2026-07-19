@@ -117,6 +117,18 @@ impl Cartridge {
         }
     }
 
+    /// The RAM bank a `$A000` access currently targets, for matching a synthetic
+    /// SRAM row's bank watch. A single-RAM-bank mapper (NoMbc/MBC2/MBC7) has no
+    /// bank register but always targets bank 0, so a bank-0 watch should match;
+    /// MBC3 in clock mode maps no RAM, so `None` — and a bank watch correctly
+    /// does not match there.
+    pub fn mapped_ram_bank(&self) -> Option<u8> {
+        match &self.mbc {
+            Mbc::NoMbc(_) | Mbc::Mbc2(_) | Mbc::Mbc7(_) => (self.ram_len() > 0).then_some(0),
+            _ => self.ram_bank(),
+        }
+    }
+
     /// The real-time clock's register state, on carts that have one.
     pub fn rtc(&self) -> Option<RtcSnapshot> {
         match &self.mbc {
