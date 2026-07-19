@@ -119,10 +119,8 @@ impl App {
                             if debugger_enabled {
                                 LoadedGame::Debugger(debugger)
                             } else {
-                                let mut emu = debugger.disable_debugger(
-                                    self.settings.use_sgb_colors,
-                                    self.settings.persistence,
-                                );
+                                let mut emu =
+                                    debugger.disable_debugger(self.settings.presentation());
                                 emu.set_palette(palette);
                                 LoadedGame::Emulator(emu)
                             }

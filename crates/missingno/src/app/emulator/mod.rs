@@ -20,6 +20,17 @@ use missingno_gb::ppu::types::palette::PaletteChoice;
 mod panels;
 pub use panels::{CaptureKind, PlayLogEntry, PlayPanel};
 
+/// The frontend's display-presentation choices, keyed to the console's stated
+/// technology by the renderer. Grid and scanlines are mutually exclusive there,
+/// so both can be carried unconditionally.
+#[derive(Clone, Copy)]
+pub struct Presentation {
+    pub use_sgb_colors: bool,
+    pub persistence: bool,
+    pub pixel_grid: bool,
+    pub scanlines: bool,
+}
+
 /// The UI-side shell for a plain (non-debugger) game. While the game runs the
 /// console lives on the emu thread (`console` is `None`); it is recovered here
 /// synchronously on pause so all inspection paths keep working.
@@ -36,6 +47,8 @@ pub struct Emulator {
     palette: PaletteChoice,
     use_sgb_colors: bool,
     persistence: bool,
+    pixel_grid: bool,
+    scanlines: bool,
     /// The family's latching console switches and their current levels,
     /// captured at load so the Console panel renders while the console is on
     /// the emu thread. Empty for families with none.
@@ -67,8 +80,7 @@ impl Emulator {
     pub fn new(
         console: Box<dyn SystemConsole>,
         platform: Platform,
-        use_sgb_colors: bool,
-        persistence: bool,
+        presentation: Presentation,
     ) -> Self {
         let switches = console.console_switches();
         let monochrome_palette = console.uses_monochrome_palette();
@@ -81,14 +93,16 @@ impl Emulator {
             running: false,
             screen_hovered: false,
             palette: PaletteChoice::default(),
-            use_sgb_colors,
-            persistence,
+            use_sgb_colors: presentation.use_sgb_colors,
+            persistence: presentation.persistence,
+            pixel_grid: presentation.pixel_grid,
+            scanlines: presentation.scanlines,
             switches,
             switch_levels: switches.iter().map(|s| s.default_high).collect(),
             monochrome_palette,
             open_panels: Vec::new(),
         };
-        this.screen_view.set_persistence(persistence);
+        this.apply_presentation();
         this.refresh_palette_policy();
         this
     }
@@ -97,8 +111,7 @@ impl Emulator {
         console: Box<dyn SystemConsole>,
         screen_view: ScreenView,
         platform: Platform,
-        use_sgb_colors: bool,
-        persistence: bool,
+        presentation: Presentation,
     ) -> Self {
         let switches = console.console_switches();
         let monochrome_palette = console.uses_monochrome_palette();
@@ -109,16 +122,25 @@ impl Emulator {
             running: false,
             screen_hovered: false,
             palette: PaletteChoice::default(),
-            use_sgb_colors,
-            persistence,
+            use_sgb_colors: presentation.use_sgb_colors,
+            persistence: presentation.persistence,
+            pixel_grid: presentation.pixel_grid,
+            scanlines: presentation.scanlines,
             switches,
             switch_levels: switches.iter().map(|s| s.default_high).collect(),
             monochrome_palette,
             open_panels: Vec::new(),
         };
-        this.screen_view.set_persistence(persistence);
+        this.apply_presentation();
         this.refresh_palette_policy();
         this
+    }
+
+    /// Push the frontend's presentation choices onto the renderer.
+    fn apply_presentation(&mut self) {
+        self.screen_view.set_persistence(self.persistence);
+        self.screen_view.set_pixel_grid(self.pixel_grid);
+        self.screen_view.set_scanlines(self.scanlines);
     }
 
     /// Rebuild the renderer's colour policy from the current palette and SGB
@@ -136,6 +158,21 @@ impl Emulator {
     pub fn set_persistence(&mut self, persistence: bool) {
         self.persistence = persistence;
         self.screen_view.set_persistence(persistence);
+    }
+
+    pub fn set_pixel_grid(&mut self, pixel_grid: bool) {
+        self.pixel_grid = pixel_grid;
+        self.screen_view.set_pixel_grid(pixel_grid);
+    }
+
+    pub fn set_scanlines(&mut self, scanlines: bool) {
+        self.scanlines = scanlines;
+        self.screen_view.set_scanlines(scanlines);
+    }
+
+    /// The display technology the loaded console states.
+    pub fn technology(&self) -> missingno_core::video::DisplayTechnology {
+        self.screen_view.technology()
     }
 
     /// The console, present only while paused/idle (not while running).
@@ -161,8 +198,12 @@ impl Emulator {
     /// Switch to debugger mode; systems without a debugger backend come
     /// back unchanged.
     pub fn enable_debugger(self) -> Result<app::debugger::Debugger, Box<Emulator>> {
-        let use_sgb_colors = self.use_sgb_colors;
-        let persistence = self.persistence;
+        let presentation = Presentation {
+            use_sgb_colors: self.use_sgb_colors,
+            persistence: self.persistence,
+            pixel_grid: self.pixel_grid,
+            scanlines: self.scanlines,
+        };
         let platform = self.platform;
         let console = self
             .console
@@ -174,8 +215,7 @@ impl Emulator {
                     console,
                     screen_view,
                     platform,
-                    use_sgb_colors,
-                    persistence,
+                    presentation,
                 ))
             },
         )

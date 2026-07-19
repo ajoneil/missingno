@@ -13,7 +13,9 @@ use super::ui::{
     sizes::{l, s},
     text,
 };
-use super::{App, DetailSubScreen, Fullscreen, Message, Screen, controls, settings};
+use super::{
+    App, DetailSubScreen, Fullscreen, Game, LoadedGame, Message, Screen, controls, settings,
+};
 
 mod cartridge;
 mod emulator;
@@ -21,6 +23,16 @@ mod library;
 mod shell;
 
 impl App {
+    /// The display technology of the currently loaded console, if any — used to
+    /// show only the matching cosmetic overlay option in settings.
+    fn current_technology(&self) -> Option<missingno_core::video::DisplayTechnology> {
+        match &self.game {
+            Game::Loaded(LoadedGame::Emulator(emu)) => Some(emu.technology()),
+            Game::Loaded(LoadedGame::Debugger(dbg)) => Some(dbg.technology()),
+            _ => None,
+        }
+    }
+
     pub fn view(&self) -> Element<'_, Message> {
         // First-boot setup
         if !self.settings.setup_complete {
@@ -48,6 +60,7 @@ impl App {
                 *section,
                 *listening_for,
                 &self.cartridge_rw.detected_devices,
+                self.current_technology(),
             ),
             (
                 Screen::ViewingGame {

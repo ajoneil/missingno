@@ -5,7 +5,7 @@ use rgb::RGB8;
 
 use missingno_core::video::{ConsoleFrame, DisplayTechnology, LcdPanel};
 
-use super::texture_renderer::TextureRenderer;
+use super::texture_renderer::{ScreenOverlay, TextureRenderer};
 
 pub use missingno_core::video::{Frame, IndexedFrame, RgbaFrame};
 
@@ -29,6 +29,17 @@ fn persistence_weight(technology: &DisplayTechnology) -> f32 {
             ..
         } => TFT_PERSISTENCE,
         DisplayTechnology::Crt { .. } => CRT_PERSISTENCE,
+    }
+}
+
+/// The cosmetic overlay a technology draws when its option is enabled: an LCD's
+/// pixel grid or a CRT's scanlines. Grid and scanlines are mutually exclusive by
+/// technology, so a display can never show both.
+fn overlay_for(technology: &DisplayTechnology, pixel_grid: bool, scanlines: bool) -> ScreenOverlay {
+    match technology {
+        DisplayTechnology::Lcd { .. } if pixel_grid => ScreenOverlay::PixelGrid,
+        DisplayTechnology::Crt { .. } if scanlines => ScreenOverlay::Scanlines,
+        _ => ScreenOverlay::None,
     }
 }
 
@@ -65,6 +76,10 @@ pub struct ScreenView {
     palette_policy: Option<Box<dyn PalettePolicy>>,
     /// Whether the display's slow-response persistence blend is applied.
     persistence: bool,
+    /// LCD-only: draw the inter-pixel grid.
+    pixel_grid: bool,
+    /// CRT-only: draw scanlines at the native line pitch.
+    scanlines: bool,
     prev_rgba: Option<Arc<[u8]>>,
 }
 
@@ -80,6 +95,8 @@ impl Clone for ScreenView {
                 .as_ref()
                 .map(|policy| policy.clone_box()),
             persistence: self.persistence,
+            pixel_grid: self.pixel_grid,
+            scanlines: self.scanlines,
             prev_rgba: self.prev_rgba.clone(),
         }
     }
@@ -94,6 +111,8 @@ impl ScreenView {
             indexed: None,
             palette_policy: None,
             persistence: true,
+            pixel_grid: false,
+            scanlines: false,
             prev_rgba: None,
         }
     }
@@ -112,6 +131,19 @@ impl ScreenView {
 
     pub fn set_persistence(&mut self, persistence: bool) {
         self.persistence = persistence;
+    }
+
+    pub fn set_pixel_grid(&mut self, pixel_grid: bool) {
+        self.pixel_grid = pixel_grid;
+    }
+
+    pub fn set_scanlines(&mut self, scanlines: bool) {
+        self.scanlines = scanlines;
+    }
+
+    /// The overlay this screen draws — its technology's option, if enabled.
+    fn overlay(&self) -> ScreenOverlay {
+        overlay_for(&self.technology, self.pixel_grid, self.scanlines)
     }
 
     /// The current frame resolved to RGBA under the active colour policy.
@@ -230,7 +262,7 @@ impl<Message> shader::Program<Message> for ScreenView {
             }
             _ => current.pixels,
         };
-        let renderer = TextureRenderer::with_pixels(width, height, pixels);
+        let renderer = TextureRenderer::with_pixels(width, height, pixels).overlay(self.overlay());
 
         <TextureRenderer as shader::Program<Message>>::draw(&renderer, &(), cursor, bounds)
     }
@@ -298,6 +330,35 @@ mod tests {
         );
         // STN keeps a true 50/50 average, unchanged from the old global blend.
         assert_eq!(STN_PERSISTENCE, 0.5);
+    }
+
+    #[test]
+    fn overlay_keys_off_technology_and_opt_in() {
+        let crt = DisplayTechnology::Crt {
+            standard: missingno_core::TvStandard::Ntsc,
+            pixel_aspect: 12.0 / 7.0,
+        };
+
+        // Off by default whatever the technology.
+        assert_eq!(
+            overlay_for(&lcd(LcdPanel::PassiveStn), false, false),
+            ScreenOverlay::None
+        );
+        assert_eq!(overlay_for(&crt, false, false), ScreenOverlay::None);
+
+        // The grid opt-in shows only on an LCD; scanlines only on a CRT.
+        assert_eq!(
+            overlay_for(&lcd(LcdPanel::ActiveTft), true, true),
+            ScreenOverlay::PixelGrid
+        );
+        assert_eq!(overlay_for(&crt, true, true), ScreenOverlay::Scanlines);
+
+        // A grid opt-in never leaks onto a CRT, nor scanlines onto an LCD.
+        assert_eq!(overlay_for(&crt, true, false), ScreenOverlay::None);
+        assert_eq!(
+            overlay_for(&lcd(LcdPanel::PassiveStn), false, true),
+            ScreenOverlay::None
+        );
     }
 
     #[test]

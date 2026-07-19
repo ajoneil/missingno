@@ -132,12 +132,7 @@ fn finish_start(
     } else {
         console
     };
-    let mut emu = app::emulator::Emulator::new(
-        console,
-        platform,
-        app.settings.use_sgb_colors,
-        app.settings.persistence,
-    );
+    let mut emu = app::emulator::Emulator::new(console, platform, app.settings.presentation());
     emu.set_palette(palette);
     emu.set_running(true);
     app.game = Game::Loaded(LoadedGame::Emulator(emu));

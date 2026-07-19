@@ -5,12 +5,46 @@ use std::sync::{Arc, Mutex};
 
 static NEXT_TEXTURE_ID: AtomicU64 = AtomicU64::new(0);
 
+/// Screen pixels per source pixel below which an overlay's darkening lines would
+/// merge into flat dimming rather than separate pixels, so they fade out; full
+/// strength by [`OVERLAY_FULL_PX`]. Shared with the fragment shader, which reads
+/// the same ramp.
+pub const OVERLAY_ONSET_PX: f32 = 3.0;
+pub const OVERLAY_FULL_PX: f32 = 6.0;
+/// Peak darkening of a grid or scanline line, as a fraction of pixel brightness.
+const GRID_DARKEN: f32 = 0.15;
+const SCANLINE_DARKEN: f32 = 0.22;
+
+/// A cosmetic device-simulation overlay drawn over the sampled picture, keyed to
+/// the display technology and toggleable in settings.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ScreenOverlay {
+    #[default]
+    None,
+    /// An LCD's inter-pixel grid: a subtle line at every source-pixel boundary.
+    PixelGrid,
+    /// A CRT's scanlines: subtle darkening at the native line pitch.
+    Scanlines,
+}
+
+impl ScreenOverlay {
+    /// The mode value the fragment shader switches on.
+    fn shader_mode(self) -> f32 {
+        match self {
+            ScreenOverlay::None => 0.0,
+            ScreenOverlay::PixelGrid => 1.0,
+            ScreenOverlay::Scanlines => 2.0,
+        }
+    }
+}
+
 /// Reusable GPU texture renderer for pixel-based graphics
 pub struct TextureRenderer {
     id: u64,
     width: u32,
     height: u32,
     pixels: Arc<[u8]>,
+    overlay: ScreenOverlay,
 }
 
 impl TextureRenderer {
@@ -22,7 +56,14 @@ impl TextureRenderer {
             width,
             height,
             pixels,
+            overlay: ScreenOverlay::None,
         }
+    }
+
+    /// Draw the given cosmetic overlay over the picture.
+    pub fn overlay(mut self, overlay: ScreenOverlay) -> Self {
+        self.overlay = overlay;
+        self
     }
 }
 
@@ -38,6 +79,7 @@ impl<Message> shader::Program<Message> for TextureRenderer {
     ) -> Self::Primitive {
         TexturePrimitive {
             id: self.id,
+            overlay: self.overlay.shader_mode(),
             state: Mutex::new(PrimitiveState::Pending {
                 width: self.width,
                 height: self.height,
@@ -50,6 +92,7 @@ impl<Message> shader::Program<Message> for TextureRenderer {
 #[derive(Debug)]
 pub struct TexturePrimitive {
     id: u64,
+    overlay: f32,
     state: Mutex<PrimitiveState>,
 }
 
@@ -122,7 +165,7 @@ impl shader::Primitive for TexturePrimitive {
                 // Use prepare()'s bounds (screen-space) not draw()'s bounds
                 // (content-space), so the texture renders at the correct
                 // position when inside a scrollable.
-                pipeline.update_vertices(queue, self.id, *bounds, viewport);
+                pipeline.update_vertices(queue, self.id, *bounds, viewport, self.overlay);
 
                 *state = PrimitiveState::Prepared {
                     width,
@@ -138,7 +181,7 @@ impl shader::Primitive for TexturePrimitive {
                 pipeline.ensure_texture(device, self.id, width, height);
 
                 if &old_bounds != bounds {
-                    pipeline.update_vertices(queue, self.id, *bounds, viewport);
+                    pipeline.update_vertices(queue, self.id, *bounds, viewport, self.overlay);
                 }
                 *state = PrimitiveState::Prepared {
                     width,
@@ -237,7 +280,7 @@ impl shader::Pipeline for TexturePipeline {
 
         let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("texture_renderer_shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(SHADER_SOURCE)),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(shader_source())),
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -258,6 +301,7 @@ impl shader::Pipeline for TexturePipeline {
                     attributes: &wgpu::vertex_attr_array![
                         0 => Float32x2,
                         1 => Float32x2,
+                        2 => Float32,
                     ],
                 }],
                 compilation_options: Default::default(),
@@ -358,6 +402,7 @@ impl TexturePipeline {
         id: u64,
         bounds: Rectangle,
         viewport: &shader::Viewport,
+        overlay: f32,
     ) {
         // Transform bounds to NDC space based on viewport
         let scale = viewport.scale_factor();
@@ -376,26 +421,32 @@ impl TexturePipeline {
             Vertex {
                 position: [left, top],
                 tex_coords: [0.0, 0.0],
+                overlay,
             },
             Vertex {
                 position: [right, top],
                 tex_coords: [1.0, 0.0],
+                overlay,
             },
             Vertex {
                 position: [left, bottom],
                 tex_coords: [0.0, 1.0],
+                overlay,
             },
             Vertex {
                 position: [left, bottom],
                 tex_coords: [0.0, 1.0],
+                overlay,
             },
             Vertex {
                 position: [right, top],
                 tex_coords: [1.0, 0.0],
+                overlay,
             },
             Vertex {
                 position: [right, bottom],
                 tex_coords: [1.0, 1.0],
+                overlay,
             },
         ];
 
@@ -415,24 +466,54 @@ impl TexturePipeline {
 struct Vertex {
     position: [f32; 2],
     tex_coords: [f32; 2],
+    overlay: f32,
 }
 
-const SHADER_SOURCE: &str = r#"
+/// A WGSL float literal for `value` — always carrying a decimal point so it
+/// types as `f32` in the shader.
+fn wgsl_f32(value: f32) -> String {
+    let text = value.to_string();
+    if text.contains('.') {
+        text
+    } else {
+        format!("{text}.0")
+    }
+}
+
+/// The fragment shader, with the overlay thresholds and strengths shared from
+/// the Rust constants so the CPU-side ramp and the GPU-side ramp never drift.
+fn shader_source() -> String {
+    SHADER_TEMPLATE
+        .replace("__OVERLAY_ONSET_PX__", &wgsl_f32(OVERLAY_ONSET_PX))
+        .replace("__OVERLAY_FULL_PX__", &wgsl_f32(OVERLAY_FULL_PX))
+        .replace("__GRID_DARKEN__", &wgsl_f32(GRID_DARKEN))
+        .replace("__SCANLINE_DARKEN__", &wgsl_f32(SCANLINE_DARKEN))
+}
+
+const SHADER_TEMPLATE: &str = r#"
 struct VertexInput {
     @location(0) position: vec2<f32>,
     @location(1) tex_coords: vec2<f32>,
+    @location(2) overlay: f32,
 }
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) tex_coords: vec2<f32>,
+    @location(1) @interpolate(flat) overlay: f32,
 }
+
+const OVERLAY_ONSET_PX: f32 = __OVERLAY_ONSET_PX__;
+const OVERLAY_FULL_PX: f32 = __OVERLAY_FULL_PX__;
+const GRID_DARKEN: f32 = __GRID_DARKEN__;
+const SCANLINE_DARKEN: f32 = __SCANLINE_DARKEN__;
 
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
     output.position = vec4<f32>(input.position, 0.0, 1.0);
     output.tex_coords = input.tex_coords;
+    output.overlay = input.overlay;
     return output;
 }
 
@@ -453,7 +534,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let texel_floor = floor(texel);
     let frac = texel - texel_floor;
 
-    // Screen pixels per texel in each axis
+    // Source texels spanned by one screen pixel in each axis.
     let scale = tex_size * fwidth(input.tex_coords);
 
     // Remap the fractional part: hold at 0 for most of the texel,
@@ -461,6 +542,72 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let sharp = clamp((frac - (vec2(1.0) - scale)) / scale, vec2(0.0), vec2(1.0));
 
     let snapped = (texel_floor + vec2(0.5) + sharp) / tex_size;
-    return textureSample(texture, texture_sampler, snapped);
+    var color = textureSample(texture, texture_sampler, snapped);
+
+    // Cosmetic device-simulation overlay: 1 = LCD pixel grid, 2 = CRT
+    // scanlines. Both darken a ~1-screen-pixel line at the source-pixel
+    // boundary, fading out below OVERLAY_ONSET_PX screen pixels per source
+    // pixel where the lines would merge into flat dimming.
+    let mode = input.overlay;
+    if (mode > 0.5) {
+        let screen_px_per_source = vec2(1.0) / max(scale, vec2(0.0001));
+        let vis = smoothstep(
+            vec2(OVERLAY_ONSET_PX), vec2(OVERLAY_FULL_PX), screen_px_per_source);
+
+        let source_pos = input.tex_coords * tex_size;
+        let dist = min(fract(source_pos), vec2(1.0) - fract(source_pos));
+        let line = vec2(1.0) - smoothstep(vec2(0.0), scale, dist);
+
+        var darken = 0.0;
+        if (mode < 1.5) {
+            darken = GRID_DARKEN * max(line.x * vis.x, line.y * vis.y);
+        } else {
+            darken = SCANLINE_DARKEN * line.y * vis.y;
+        }
+        color = vec4<f32>(color.rgb * (1.0 - darken), color.a);
+    }
+
+    return color;
 }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The CPU mirror of the shader's visibility ramp, exercising the shared
+    /// overlay thresholds.
+    fn overlay_visibility(screen_px_per_source: f32) -> f32 {
+        let t = ((screen_px_per_source - OVERLAY_ONSET_PX) / (OVERLAY_FULL_PX - OVERLAY_ONSET_PX))
+            .clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    }
+
+    #[test]
+    fn overlay_hidden_below_onset() {
+        // Below ~3 screen pixels per source pixel the overlay is fully faded out.
+        assert_eq!(overlay_visibility(1.0), 0.0);
+        assert_eq!(overlay_visibility(OVERLAY_ONSET_PX), 0.0);
+        assert_eq!(overlay_visibility(2.9), 0.0);
+    }
+
+    #[test]
+    fn overlay_full_above_full_threshold() {
+        assert_eq!(overlay_visibility(OVERLAY_FULL_PX), 1.0);
+        assert_eq!(overlay_visibility(10.0), 1.0);
+    }
+
+    #[test]
+    fn overlay_ramps_between_thresholds() {
+        let mid = overlay_visibility((OVERLAY_ONSET_PX + OVERLAY_FULL_PX) / 2.0);
+        assert!(mid > 0.0 && mid < 1.0);
+    }
+
+    #[test]
+    fn shader_source_resolves_all_placeholders() {
+        let source = shader_source();
+        assert!(!source.contains("__"));
+        assert!(source.contains("const OVERLAY_ONSET_PX: f32 = 3.0;"));
+        assert!(source.contains("const OVERLAY_FULL_PX: f32 = 6.0;"));
+    }
+}

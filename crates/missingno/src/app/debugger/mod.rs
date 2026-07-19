@@ -11,7 +11,7 @@ use crate::app::{
     self,
     console::ConsoleColors,
     emu_thread::{DebuggerPayload, EmuCommand, EmuHandle, RunningStatus},
-    emulator::Emulator,
+    emulator::{Emulator, Presentation},
     library::activity::{CaptureOptions, FrameCapture},
     screen::{Frame, ScreenView},
     system::{SystemConsole, SystemDebugger},
@@ -430,7 +430,12 @@ impl Debugger {
         }
     }
 
-    pub fn disable_debugger(mut self, use_sgb_colors: bool, persistence: bool) -> Emulator {
+    /// The display technology the debugged console states.
+    pub fn technology(&self) -> missingno_core::video::DisplayTechnology {
+        self.panes.screen_technology()
+    }
+
+    pub fn disable_debugger(mut self, presentation: Presentation) -> Emulator {
         self.save_sidecars();
         let core = self
             .debugger
@@ -441,8 +446,7 @@ impl Debugger {
             core.into_console(),
             screen_view,
             self.platform,
-            use_sgb_colors,
-            persistence,
+            presentation,
         )
     }
 

@@ -40,12 +40,12 @@ impl From<Message> for app::Message {
 
 impl ScreenPane {
     pub fn new() -> Self {
-        let mut screen_view = ScreenView::new();
-        screen_view.set_persistence(true);
-        Self {
-            screen_view,
+        let mut pane = Self {
+            screen_view: ScreenView::new(),
             device_simulation: true,
-        }
+        };
+        pane.set_device_simulation(true);
+        pane
     }
 
     pub fn update(&mut self, message: Message) {
@@ -61,7 +61,11 @@ impl ScreenPane {
 
     fn set_device_simulation(&mut self, on: bool) {
         self.device_simulation = on;
+        // Device mode simulates the whole panel/CRT: persistence plus the
+        // technology's cosmetic overlay. Raw shows the resolved frame alone.
         self.screen_view.set_persistence(on);
+        self.screen_view.set_pixel_grid(on);
+        self.screen_view.set_scanlines(on);
     }
 
     pub fn set_technology(&mut self, technology: DisplayTechnology) {
@@ -146,6 +150,8 @@ impl panes::Pane for ScreenPane {
         // The pane's own device/raw mode wins over whatever the incoming view
         // carried from the other surface.
         view.set_persistence(self.device_simulation);
+        view.set_pixel_grid(self.device_simulation);
+        view.set_scanlines(self.device_simulation);
         self.screen_view = view;
     }
 }

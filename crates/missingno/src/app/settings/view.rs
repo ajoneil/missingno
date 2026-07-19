@@ -47,6 +47,8 @@ pub enum Message {
     SelectPalette(missingno_gb::ppu::types::palette::PaletteChoice),
     SetUseSgbColors(bool),
     SetPersistence(bool),
+    SetPixelGrid(bool),
+    SetScanlines(bool),
     SetHasheousEnabled(bool),
     SetHomebrewHubEnabled(bool),
     SetCartridgeRwEnabled(bool),
@@ -69,10 +71,11 @@ pub(in crate::app) fn view<'a>(
     section: Section,
     listening_for: Option<ListeningFor>,
     detected_cartridge_devices: &'a [crate::cartridge_rw::DetectedDevice],
+    technology: Option<missingno_core::video::DisplayTechnology>,
 ) -> Element<'a, app::Message> {
     let sidebar = sidebar_view(section);
     let content = match section {
-        Section::Display => display_section(settings),
+        Section::Display => display_section(settings, technology),
         Section::General => general_section(settings),
         Section::Controls => controls_section(settings, listening_for),
         Section::Hardware => hardware_section(settings, detected_cartridge_devices),
@@ -258,7 +261,11 @@ fn binding_row(
     row![label, binding_btn].spacing(s()).align_y(Center).into()
 }
 
-fn display_section(settings: &super::Settings) -> Element<'_, app::Message> {
+fn display_section(
+    settings: &super::Settings,
+    technology: Option<missingno_core::video::DisplayTechnology>,
+) -> Element<'_, app::Message> {
+    use missingno_core::video::DisplayTechnology;
     use missingno_gb::ppu::types::palette::{PaletteChoice, PaletteIndex};
 
     let mut content = column![
@@ -274,10 +281,37 @@ fn display_section(settings: &super::Settings) -> Element<'_, app::Message> {
             .size(m()),
         text("Simulates the display's slow pixel response, blending consecutive frames — flicker effects some games rely on. Off shows each frame crisply, so those games strobe.")
             .color(MUTED),
-        horizontal_rule(),
-        app_text::label("Palette"),
     ]
     .spacing(m());
+
+    // The two cosmetic overlays are shown only for the loaded console's
+    // technology — a pixel grid for an LCD, scanlines for a CRT.
+    if matches!(technology, Some(DisplayTechnology::Lcd { .. })) {
+        content = content.push(horizontal_rule());
+        content = content.push(
+            toggler(settings.pixel_grid)
+                .label("LCD pixel grid")
+                .on_toggle(|enabled| Message::SetPixelGrid(enabled).into())
+                .size(m()),
+        );
+        content = content
+            .push(text("Separates the LCD's pixels with a faint grid at high zoom.").color(MUTED));
+    }
+    if matches!(technology, Some(DisplayTechnology::Crt { .. })) {
+        content = content.push(horizontal_rule());
+        content = content.push(
+            toggler(settings.scanlines)
+                .label("CRT scanlines")
+                .on_toggle(|enabled| Message::SetScanlines(enabled).into())
+                .size(m()),
+        );
+        content = content.push(
+            text("Darkens between scanlines at the CRT's line pitch at high zoom.").color(MUTED),
+        );
+    }
+
+    content = content.push(horizontal_rule());
+    content = content.push(app_text::label("Palette"));
 
     // Palette selector as color tiles
     let mut palette_row = row![].spacing(m());

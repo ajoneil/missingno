@@ -97,6 +97,22 @@ pub(in crate::app) fn handle(
                 emu.set_persistence(enabled);
             }
         }
+        super::view::Message::SetPixelGrid(enabled) => {
+            app.settings.pixel_grid = enabled;
+            app.settings.save();
+            // Like persistence, this is the main display's control; the
+            // debugger pane bundles the overlay into its device/raw toggle.
+            if let Game::Loaded(LoadedGame::Emulator(emu)) = &mut app.game {
+                emu.set_pixel_grid(enabled);
+            }
+        }
+        super::view::Message::SetScanlines(enabled) => {
+            app.settings.scanlines = enabled;
+            app.settings.save();
+            if let Game::Loaded(LoadedGame::Emulator(emu)) = &mut app.game {
+                emu.set_scanlines(enabled);
+            }
+        }
         super::view::Message::SetCartridgeRwEnabled(enabled) => {
             app.settings.cartridge_rw_enabled = enabled;
             app.settings.save();

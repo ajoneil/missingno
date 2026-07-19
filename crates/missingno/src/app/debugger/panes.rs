@@ -427,6 +427,10 @@ impl DebuggerPanes {
         }
         this
     }
+
+    pub fn screen_technology(&self) -> DisplayTechnology {
+        self.screen_technology
+    }
 }
 
 /// The Game Boy's out-of-the-box arrangement: disassembly beside the screen.

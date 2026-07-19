@@ -232,6 +232,12 @@ struct SettingsFile {
     // defaults on.
     #[serde(default = "default_true")]
     persistence: bool,
+    // Cosmetic device-simulation options, keyed per display technology when
+    // applied; default on for the authentic look, toggleable off.
+    #[serde(default = "default_true")]
+    pixel_grid: bool,
+    #[serde(default = "default_true")]
+    scanlines: bool,
     #[serde(default = "default_true")]
     cartridge_rw_enabled: bool,
     #[serde(default)]
@@ -288,6 +294,8 @@ impl Default for SettingsFile {
             rom_directories: Vec::new(),
             use_sgb_colors: true,
             persistence: true,
+            pixel_grid: true,
+            scanlines: true,
             cartridge_rw_enabled: true,
             library_sort: SortKey::default(),
             library_layout: LibraryLayout::default(),
@@ -314,6 +322,8 @@ pub struct Settings {
     pub rom_directories: Vec<PathBuf>,
     pub use_sgb_colors: bool,
     pub persistence: bool,
+    pub pixel_grid: bool,
+    pub scanlines: bool,
     pub cartridge_rw_enabled: bool,
     pub library_sort: SortKey,
     pub library_layout: LibraryLayout,
@@ -334,6 +344,8 @@ impl Default for Settings {
             rom_directories: Vec::new(),
             use_sgb_colors: true,
             persistence: true,
+            pixel_grid: true,
+            scanlines: true,
             cartridge_rw_enabled: true,
             library_sort: SortKey::default(),
             library_layout: LibraryLayout::default(),
@@ -351,6 +363,16 @@ impl Settings {
         crate::app::library::activity::CaptureOptions {
             use_sgb_colors: self.use_sgb_colors,
             palette_name: self.palette.to_string(),
+        }
+    }
+
+    /// The renderer's presentation choices, from the display settings.
+    pub fn presentation(&self) -> crate::app::emulator::Presentation {
+        crate::app::emulator::Presentation {
+            use_sgb_colors: self.use_sgb_colors,
+            persistence: self.persistence,
+            pixel_grid: self.pixel_grid,
+            scanlines: self.scanlines,
         }
     }
 
@@ -386,6 +408,8 @@ impl Settings {
                 rom_directories: file.rom_directories,
                 use_sgb_colors: file.use_sgb_colors,
                 persistence: file.persistence,
+                pixel_grid: file.pixel_grid,
+                scanlines: file.scanlines,
                 cartridge_rw_enabled: file.cartridge_rw_enabled,
                 library_sort: file.library_sort,
                 library_layout: file.library_layout,
@@ -421,6 +445,8 @@ impl Settings {
                 rom_directories: file.rom_directories,
                 use_sgb_colors: file.use_sgb_colors,
                 persistence: true,
+                pixel_grid: true,
+                scanlines: true,
                 cartridge_rw_enabled: true,
                 library_sort: SortKey::default(),
                 library_layout: LibraryLayout::default(),
@@ -461,6 +487,8 @@ impl Settings {
             rom_directories: self.rom_directories.clone(),
             use_sgb_colors: self.use_sgb_colors,
             persistence: self.persistence,
+            pixel_grid: self.pixel_grid,
+            scanlines: self.scanlines,
             cartridge_rw_enabled: self.cartridge_rw_enabled,
             library_sort: self.library_sort,
             library_layout: self.library_layout,
@@ -602,6 +630,21 @@ mod tests {
         let current = r#"(setup_complete: true, persistence: false)"#;
         let file: SettingsFile = ron::from_str(current).unwrap();
         assert!(!file.persistence);
+    }
+
+    #[test]
+    fn overlay_options_default_on() {
+        // A file predating the cosmetic overlays gets both on — the authentic
+        // look is the default.
+        let old = r#"(setup_complete: true)"#;
+        let file: SettingsFile = ron::from_str(old).unwrap();
+        assert!(file.pixel_grid);
+        assert!(file.scanlines);
+        // An explicit off round-trips.
+        let set = r#"(setup_complete: true, pixel_grid: false, scanlines: false)"#;
+        let file: SettingsFile = ron::from_str(set).unwrap();
+        assert!(!file.pixel_grid);
+        assert!(!file.scanlines);
     }
 
     #[test]
