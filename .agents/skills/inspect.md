@@ -1,43 +1,41 @@
 # Inspect
 
-Query the headless debugger HTTP API to inspect emulator state without modifying code.
+Query the headless debugger to inspect emulator state without modifying code.
 
-The server is the `missingno-debugger` crate, generic over every core (GB, GBC, VCS; NES/SMS behind features). Two ways to run it:
+The server is the `missingno-debugger` crate, generic over every core (GB, GBC, VCS; NES/SMS behind features). Two surfaces, one API underneath (the `Session`):
 
-- `cargo run -- <rom> --headless` — via the frontend binary (wires boot ROM / serial-link flags; GB family only needs this for those peripherals).
-- `cargo run -p missingno-debugger -- <rom>` — the standalone server; add `--no-default-features --features gb` (or `vcs`) for a fast single-core build when iterating on one core. Same port and routes.
+- **HTTP + the `dbg_*` helpers (`scripts/debugger.sh`)** — the SCRIPTED surface: measurement loops, data collection into receipt files, watch-driven navigation. This skill's workflow runs on it.
+- **MCP (`--mcp`)** — the INTERACTIVE surface for agent sessions: the same capabilities as tools (`describe_machine`, `step_tick`, `get_frame` PNG, `get_tiles`, `get_waveforms` sparklines). Registered in the repo's `.mcp.json` as an idle server — `load_rom {path}` starts a session, `eject` ends it. Prefer MCP tools for one-off exploratory questions when they are available in your session; use the helpers for anything scripted or bulk (a per-call round trip through the model is the wrong shape for step-1000-ticks loops).
 
-**Generic endpoints (every core)**: GET `/status`, `/registers`, `/regions`, `/memory/<hex>[/<len>]`, `/disassembly?at=<hex>&count=N`, `/breakpoints`, `/watchables` (this core's watch keys), `/watches`, `/symbols`, `/frame/bitmap`; POST `/step`, `/step-over`, `/step-frame`, `/reset`; PUT/DELETE `/breakpoints/<hex>`; PUT/DELETE `/watches` (JSON body `{"terms":[{"key":..,"address":..}]}`). Use these for **VCS** (and NES/SMS) inspection — the `gb_*` helpers and the GB-specific routes below only exist on Game Boy sessions.
-
-**MCP**: the server also speaks MCP over stdio (`--mcp`, feature `mcp`) with the same capabilities as tools (including `describe_machine`, a text rendering of the full sidebar schema). Useful when an MCP client is configured; this skill's scripted workflow uses the HTTP API.
+There are no family-specific routes: every endpoint works on every core, and per-core detail (PPU/TIA/APU state) arrives through `/sections` — the same semantic schema the GUI sidebar renders.
 
 ## When to use this instead of `/instrument`
 
-Use this skill when the question can be answered by inspecting state at instruction, dot, or frame boundaries:
+Use this skill when the question can be answered by inspecting state at instruction, tick (dot / colour clock), or frame boundaries:
 
-- **What are the CPU registers at a given point?** Step to a breakpoint, read `/cpu`.
-- **What does the screen look like after N frames?** Step N frames, read `/screen/ascii`.
-- **What is the PPU mode/scanline/scroll position at a given PC?** Set a breakpoint, step, read `/ppu`.
-- **What is the pixel pipeline state at a specific scanline and mode?** Set a compound watchpoint (e.g. scanline=N AND mode=drawing), step-frame, read `/ppu/pipeline`.
-- **What is the pixel pipeline state at a specific dot within a scanline?** Navigate to Mode 3, then use `step-dot` to advance one dot at a time, reading `/ppu/pipeline` after each.
-- **When does a mid-scanline register write occur?** Set a bus-write watchpoint, step-frame to catch it, then read `/ppu` for the exact dot/LY/mode at that instruction.
-- **Which interrupts are enabled/pending?** Read `/interrupts` at any point.
-- **What sprites are active?** Read `/sprites`.
-- **What instructions execute from a given address?** Read `/instructions`.
-- **What does a ROM do at startup?** Step through instructions and observe state changes.
+- **What are the CPU registers at a given point?** Step to a breakpoint, read `dbg_registers` or the CPU section.
+- **What is the PPU/TIA state at a given PC or beam position?** Navigate with a watch, read `dbg_section PPU` (or `TIA`).
+- **What does the screen look like after N frames?** `dbg_step_frame N`, then `dbg_screen`.
+- **When does a mid-scanline register write occur?** Set a `bus-write` watch, `dbg_run_until_watch`, then read the section state at the stop.
+- **What is in VRAM tiles / tile maps / OAM?** `dbg_graphics` — decoded atlases (with region annotations), maps with per-entry attributes, the object table.
+- **What is each audio channel's DAC output doing?** `dbg_waveforms` — per-channel capture windows.
+- **What instructions execute from a given address?** `dbg_disasm`.
+- **How does state change tick by tick?** Navigate first, then `dbg_step_ticks N` for a small window.
 
 ## When this is NOT enough — stop and tell the user
 
-This API operates at T-cycle (dot) and instruction granularity. With `step-dot`, bus watchpoints, `/ppu` (including scan counter), `/ppu/pipeline`, and `/audio`, most mid-scanline / mid-M-cycle observations are possible. It **cannot** observe:
+The generic API observes at register/section granularity, per tick. It **cannot** observe:
 
-- **Sub-dot timing** (what happens within a single dot tick — e.g., the order of operations inside one PPU clock)
+- **Sub-tick timing** (ordering within a single dot/colour clock)
 - **Memory bus conflicts** (DMA bus contention, OAM/VRAM locking during specific modes)
+- **Pixel-pipeline internals** (GB fetcher stages, shifter contents mid-line, pixel_counter reads, sprite-fetch phases — the FIFO pixel strips in the PPU section show composed pixels while paused mid-Drawing, but the machinery around them has no read surface)
+- **Deep APU internals** (prescaler/divider counters, trigger-synchroniser DFF chains, wave-latch pipelines — `/waveforms` shows each channel's DAC output, not the machinery driving it)
 
-If the question you've been asked requires observing any of the above, you **must** stop immediately and report this to the user — do not attempt a partial answer, do not substitute a coarser measurement and hope it's "close enough", and do not silently return results that don't actually answer the question. The report must be specific:
+If the question requires any of the above, **stop immediately and report** — do not substitute a coarser measurement and hope it's "close enough". The report must be specific:
 
 - **What you were asked**: restate the question.
-- **What you can't observe**: name the specific limitation.
-- **What would be needed**: either a new debugger endpoint or `/instrument` with code instrumentation.
+- **What you can't observe**: name the specific limitation from the list above.
+- **What would be needed**: a new seam surface (the deferred Pipeline surface design in `receipts/multisystem-core/DESIGN-generic-ui.md` covers the pixel-pipeline case) or `/instrument` with code instrumentation.
 
 The user will decide whether to extend the debugger or fall back to `/instrument`. Do not make that decision yourself.
 
@@ -53,10 +51,10 @@ The user will decide whether to extend the debugger or fall back to `/instrument
 
 ### Strategy
 <What navigation steps will answer it? Be specific:>
-- Start server with: gb_start <rom_path>
-- Navigate to: gb_goto <scanline> <mode> (or gb_run_frames <n>, etc.)
-- Read state with: gb_ppu, gb_pipeline, gb_sprites_on <scanline>, etc.
-- If stepping dots: how many dots, and what data to capture at each?
+- Start server with: dbg_start <rom_path>
+- Navigate to: dbg_watch <terms> + dbg_run_until_watch (or dbg_step_frame N)
+- Read state with: dbg_section PPU, dbg_registers, dbg_graphics, etc.
+- If stepping ticks: how many, and what data to capture at each?
 
 ### Expected data shape
 <What fields from which endpoints? What values would confirm vs refute?>
@@ -70,356 +68,165 @@ The user will decide whether to extend the debugger or fall back to `/instrument
 - SCX/SCY shifting tiles away from expected positions?
 ```
 
-**Write this plan to the receipt file first, then execute it.** The plan prevents wasted round-trips — you catch problems (like sprite overlays, wrong scanline, missing tile data) before burning API calls on them.
-
-If the plan reveals a confound (e.g. sprites cover the area of interest), adjust the strategy in the plan before proceeding. If no clean observation is possible, report that in the receipt — do not collect data that can't answer the question.
+**Write this plan to the receipt file first, then execute it.** If the plan reveals a confound, adjust the strategy before proceeding. If no clean observation is possible, report that in the receipt — do not collect data that can't answer the question.
 
 ## Server management
 
-**Always use the helper library** for server lifecycle. Source it at the start of every inspect session:
+**Always use the helper library.** Source it at the start of every inspect session:
 
 ```bash
 . scripts/debugger.sh
 ```
 
-### Starting a server
+### Starting and stopping
 
 ```bash
-gb_start crates/missingno-gb/tests/accuracy/roms/dmg-acid2/dmg-acid2.gb
+dbg_start crates/missingno-gb/tests/accuracy/roms/dmg-acid2/dmg-acid2.gb
 # Prints: ready (pid 12345)
+dbg_ensure          # Returns 0 if server is running, 1 if not
+dbg_stop            # Kills the server cleanly
 ```
 
-`gb_start` handles everything: kills any existing server on the port, starts a new headless server, waits for it to be ready (polls `/cpu` with retries), and prints "ready" or fails with an error. **Never manage the server process manually** — no `cargo run &`, no `pkill`, no `lsof`.
+`dbg_start` works for ANY core's ROM (the factory recognises it), launches `missingno-debugger` on port 3333, polls `/status` for readiness, and prints "ready" or fails. **Never manage the server process manually** — no `cargo run &`, no `pkill`, no `lsof`.
 
-**Boot ROM.** If the investigation needs to observe boot state, ask the user for a DMG boot ROM path (boot ROMs are proprietary and cannot be in the repo), then pass `--boot-rom <path>` to the headless server. Since `gb_start` doesn't accept extra flags, start the server manually in this case:
+**Boot ROM.** If the investigation needs boot state, ask the user for a DMG boot ROM path (proprietary — never in the repo), then start the server through the frontend binary, which wires the flag:
 ```bash
-gb_stop 2>/dev/null
+dbg_stop 2>/dev/null
 cargo run -- "$rom_path" --headless --boot-rom "$boot_rom_path" &>/dev/null &
-GB_PID=$!
-# Then poll for readiness as gb_start does
-```
-Only use this when boot state is suspected to play a role — the boot ROM adds significant startup time.
-
-### Checking and stopping
-
-```bash
-gb_ensure          # Returns 0 if server is running, 1 if not
-gb_stop            # Kills the server cleanly
+DBG_PID=$!
+# Then poll /status for readiness as dbg_start does
 ```
 
 ### ROM paths
 
-Test ROMs live under `crates/missingno-gb/tests/accuracy/roms/` (e.g. `crates/missingno-gb/tests/accuracy/roms/dmg-acid2/dmg-acid2.gb`). Always verify the path exists before starting the server.
+Test ROMs live under `crates/missingno-gb/tests/accuracy/roms/` and `crates/missingno-vcs/tests/accuracy/roms/`. Always verify the path exists before starting the server.
 
-**CGB ROMs.** The headless server auto-detects the cartridge type from the ROM header — a CGB ROM is served on the CGB core, so all the endpoints above work against `missingno-gbc`. On CGB, `/vram/1` exposes the second VRAM bank (tile attributes) and `/cram` returns the BG/OBJ palette RAM; both return DMG-appropriate values (null CRAM) on a DMG ROM.
+**CGB ROMs** auto-detect from the header and serve on the CGB core; its sections/graphics carry the CGB extras (VRAM bank 1 atlas, CRAM palettes, KEY1/VBK/HDMA rows).
 
 ## Helper functions reference
 
-The helper library (`scripts/debugger.sh`) provides functions for all common operations. **Always use these instead of raw curl commands.** They handle JSON parsing with `jq` — no inline Python.
+**Always use these instead of raw curl.** They jq-parse tested response shapes — no inline Python. When collecting data in a loop, use the helpers (`dbg_step_ticks`, `dbg_section`, …); if a helper's output misses a field you need, supplement with one raw curl per step, but keep the stepping and primary collection on helpers.
 
-**CRITICAL: Use helpers for data collection, not raw curl.** When collecting data in a loop (stepping phases, stepping dots, reading state), use `gb_step_phases`, `gb_step_dots`, `gb_ppu`, `gb_pipeline`, etc. Do NOT write your own curl loops that duplicate what the helpers already do. If a helper's output format doesn't include a field you need, you may supplement with a single raw curl call per step — but the stepping and primary data collection should go through the helpers. This prevents fragile hand-rolled jq filters and keeps measurements consistent across inspections.
+### Navigation and stepping
 
-### Navigation
+**`dbg_step [n]`** — step N instructions (default 1). POST `/step`.
 
-**`gb_reset`** — Reset the Game Boy and clear all watchpoints. No output.
+**`dbg_step_frame [n]`** — run to frame completion N times (stops early at a breakpoint/watch — check `stop.reason`). POST `/step-frame`.
 
-**`gb_run_frames <n>`** — Step N frames silently. No output. Uses POST `/step-frame` in a loop.
+**`dbg_step_ticks [n]`** — step N sub-instruction ticks (GB: dots; VCS: colour clocks), printing pc + the video status line per tick. POST `/step-tick`. 404s on a core with no tick.
 
-**`gb_goto <scanline> <mode>`** — Jump to a specific scanline and mode. Sets a compound watchpoint (scanline + ppu_mode), runs step-frame, clears the watchpoint, then prints PPU state via `gb_ppu`. Mode values: `oam_scan`, `drawing`, `hblank`, `vblank`. Output: same as `gb_ppu` (one line).
+**`dbg_break <hex>`** / **`dbg_breaks`** — set / list breakpoints. PUT `/breakpoints/{hex}`.
 
-**`gb_step_to_px <value>`** — Jump to a specific pixel_counter value on the current scanline. Reads current LY, sets a compound watchpoint (scanline + drawing + pixel_counter), runs step-frame, clears the watchpoint, then prints pipeline state via `gb_pipeline`. Output: same as `gb_pipeline` (one line).
+**`dbg_watchables`** — list this core's watchable keys with their param kinds. GET `/watchables`.
 
-**`gb_step_dots <n>`** — Step N dots, printing a table. Each row calls POST `/step-dot` then GET `/ppu`. Output columns:
-```
-step  lx    pc   ready  lo     hi     sprite
-1     20    0    T      255    0      none
-2     20    1    T      255    0      none
-```
-- `step`: 1-based index
-- `lx`: M-cycle counter from `/ppu`
-- `pc`: pixel_counter from `/step-dot` response
-- `ready`: fetcher_ready (T/F)
-- `lo`/`hi`: bg_shifter.low/high
-- `sprite`: sprite_fetch phase ("fetching_data") or "none"
+**`dbg_watch <terms-json>`** — add a watch: a single term `{"key":"bus-write","address":"ff40"}` or a conjunction `{"terms":[{"key":"scanline","value":58},{"key":"ppu-mode","value":3}]}`. PUT `/watches`.
 
-**`gb_step_phases <n>`** — Step N T-cycles, printing a table. Half-phase stepping was removed; `/step-phase` now advances one T-cycle (a dot at single speed), like `/step-dot`. Each row calls POST `/step-phase` then GET `/ppu`. Output columns:
-```
-step  lx   scan  mode  pc   ready
-1     0    5     0     0    F
-2     0    5     0     0    F
-```
-- `step`: 1-based index
-- `lx`: M-cycle counter from `/ppu`
-- `scan`: scan_counter from `/ppu` (OAM scan counter 0-39, or "-" when null)
-- `mode`: stat.mode_number from `/ppu` (0-3)
-- `pc`: pixel_counter from `/step-phase` response
-- `ready`: fetcher_ready (T/F)
+**`dbg_watches`** — list; **`dbg_run_until_watch`** — step-frame until `stop.reason == "watch"`, printing the hit terms.
 
 ### State reading
 
-**`gb_ppu`** — Read PPU registers. Calls GET `/ppu`. Output:
-```
-LY=0 lx=20 mode=3 scan=39 SCX=0 SCY=0 WX=0 WY=0 BGP=[0,3,3,3]
-```
-`scan` shows "n/a" when scan_counter is null (not rendering).
+**`dbg_status`** — pc, frame, title, tick name, last stop. GET `/status`.
 
-**`gb_pipeline`** — Read pixel pipeline state. Calls GET `/ppu/pipeline`. Output:
-```
-pc=5 ready=true lo=255 hi=0 lcd_x=0 sprite=none
-```
+**`dbg_sections`** — every section (name, summary, active). **`dbg_section <name>`** — one section's full JSON (blocks with typed `kind`s and raw values). GET `/sections`. This is where per-chip state lives: `CPU`, `PPU`/`TIA`/`VDP`, `APU`/`Audio`/`PSG`, `RIOT`, `CRAM`, `Mapper`.
 
-**`gb_cpu`** — Read CPU registers. Calls GET `/cpu`. Output:
-```
-A=145 B=0 C=19 D=0 E=216 H=1 L=77 PC=352 SP=65534 IME=false halted=false
-```
+**`dbg_registers`** — register groups with raw + rendered values. GET `/registers`.
 
-**`gb_timers`** — Read timer registers. Calls GET `/timers`. Output:
-```
-DIV=44 TIMA=0 TMA=0 TAC=0 enabled=false freq=4096 internal=00b0
-```
+**`dbg_memory <hex> [len]`** — byte range (len decimal, ≤4096). GET `/memory/{hex}/{len}`.
 
-**`gb_audio [channel]`** — Read APU state. Calls GET `/audio`. Without args, returns master + all four channels as JSON. With `ch1`/`ch2`/`ch3`/`ch4`, returns just that channel. Use this to observe per-channel internals: divider/prescaler state, wave-position counter, trigger synchroniser DFFs, wave_data_latch chain. Example:
-```bash
-gb_audio ch3   # full CH3 state including ch3_2mhz, ch3_restart, wave_data_latch chain
-```
+**`dbg_disasm`** — disassembly from pc. GET `/disassembly?at=&count=`.
 
-**`gb_screenshot <path>`** — Save the screen as a BMP file. Calls GET `/screen/bitmap` and writes to the given path. Use this to visually compare test output. Example: `gb_screenshot /tmp/lcdon_test.bmp`. The file can then be read with the Read tool (which can display images).
+**`dbg_graphics`** — decoded tile atlases (with named regions), tile maps (per-entry attributes + viewports), object table. GET `/graphics`; auto-enables capture (fills from the next frame — an immediate read after enabling can be empty; step a frame first).
 
-**`gb_screen_row <row>`** — Read one screen row. Calls GET `/screen`. Output: space-separated color indices (0-3), 160 values.
+**`dbg_waveforms`** — per-channel DAC capture windows (label, rate, depth_bits, levels). GET `/waveforms`; same auto-enable semantics.
 
-**`gb_sprites_on <scanline>`** — List sprites visible on a scanline. Calls GET `/sprites`, filters by Y range. Output: one line per sprite, or "no sprites on scanline N".
-```
-id=0 x=8 y=16 tile=0 prio=above_bg
-```
+**`dbg_screen <path>`** — save the resolved frame as raw RGBA (prints WxH). GET `/frame/bitmap`. For a viewable image use the MCP `get_frame` tool (PNG) or convert the RGBA yourself.
 
-**`gb_tile_data <tile_id> [row]`** — Decode tile pixels from VRAM (2bpp → color indices 0-3). Calls GET `/memory`. Without row arg: all 8 rows. With row arg: single row. Output:
-```
-row 0: 0 0 0 0 0 0 0 0
-row 1: 3 3 3 3 3 3 3 3
-```
+### Deprecated aliases
 
-**`gb_tile_map_row <row>`** — Read one row of the BG tile map (32 entries). Calls GET `/memory`. Output: `col:tile_id` pairs.
-```
-0:0  1:0  2:1  3:1  ...
-```
-
-### Raw API access
-
-For operations not covered by helpers (breakpoints, bus watchpoints, memory reads), use curl directly with `$GB_URL`:
-
-```bash
-# Set a breakpoint
-curl -s -X PUT "$GB_URL/breakpoints/0150"
-
-# Read a memory range
-curl -s "$GB_URL/memory/9800/32" | jq '.bytes'
-
-# Set a bus-write watchpoint
-curl -s -X PUT "$GB_URL/watchpoints/bus-write/FF4B"
-
-# Clear all watchpoints
-curl -s -X DELETE "$GB_URL/watchpoints"
-
-# Step one instruction
-curl -s -X POST "$GB_URL/step"
-
-# Step one frame (or to next breakpoint/watchpoint)
-curl -s -X POST "$GB_URL/step-frame"
-```
-
-**Always use `jq` for JSON parsing**, not Python. The `jq` filters are tested against the actual response shapes and won't break on field name mismatches.
+`gb_start`/`gb_stop`/`gb_run_frames` forward to `dbg_start`/`dbg_stop`/`dbg_step_frame` with a stderr deprecation note. All other `gb_*` helpers are gone — their GB-specific routes no longer exist.
 
 ## API reference
-
-### JSON field names
-
-These are the exact field names in API responses. Use these in `jq` filters — do not guess.
-
-**`/cpu`**: `a`, `b`, `c`, `d`, `e`, `h`, `l`, `sp`, `pc`, `zero`, `negative`, `half_carry`, `carry`, `ime`, `halted`
-
-**`/ppu`**: `lcdc` (object with `lcd_enable`, `window_tile_map`, `window_enable`, `bg_tile_data`, `bg_tile_map`, `obj_size`, `obj_enable`, `bg_window_enable`), `stat` (object with `mode` (string), `mode_number` (int 0-3)), `ly`, `lx` (M-cycle counter, increments every 4 dots, 0-113 per scanline), `lyc`, `scan_counter` (int 0-39 or null when not rendering — OAM scan counter, XUPY-clocked, triggers AVAP at 39), `scx`, `scy`, `wx`, `wy`, `bgp` (object with `colors` array), `obp0`, `obp1`
-
-**`/ppu/pipeline`**: `pixel_counter`, `rendering_active` (bool), `bg_shifter` (object with `low`, `high`), `obj_shifter` (object with `low`, `high`, `palette`, `priority`), `sprite_fetch` (`"fetching_data"` or null), `sprite_tile_data` (object with `low`/`high`, or null), `lcd_x`, `fetcher_step` (string, e.g. `"fetch_counter=3"`), `window_hit`, `pixel_gate`, `fine_scroll_match`, `fetcher_idle_stage_3`, `fetcher_ready` (bool), `wx_triggered`, `video_clock`, `scan_done`, `scan_done_prev`
-
-**`/sprites`**: Bare JSON array (not `{"sprites": [...]}`). Each entry: `id`, `x`, `y`, `tile`, `priority` (`"above_bg"` or `"behind_bg"`), `flip_x`, `flip_y`, `palette` (`"obp0"` or `"obp1"`), `visible`
-
-**`/screen`**: `pixels` (144-element array of 160-element arrays of ints 0-3)
-
-**`/screen/ascii`**: `lines` (144-element array of 160-char strings)
-
-**`/memory/{addr}/{len}`**: `bytes` (array of ints), `hex` (array of hex strings). Length parameter is **decimal** (e.g. `/memory/8000/16` for 16 bytes, not `/memory/8000/10`).
-
-**`/step-dot`**: Same shape as `/ppu/pipeline` — returns pipeline state after the dot.
-
-**`/step-phase`**: Same shape as `/ppu/pipeline`. Half-phase stepping was removed; this now advances one T-cycle (a dot at single speed), equivalent to `/step-dot`. Kept for API stability.
-
-**`/timers`**: `div`, `tima`, `tma`, `tac`, `timer_enabled` (bool), `clock_select` (int 0-3), `frequency` (int Hz), `internal_counter` (hex string), `internal_counter_decimal` (int)
-
-**`/audio`**: `master_enabled` (bool, NR52 bit 7), `nr50`, `frame_sequencer_step` (0-7), `prev_div_apu_bit` (bool), and four channel objects:
-- `ch1`: `enabled` (`{enabled, output_left, output_right}`), `sweep` / `waveform_and_initial_length` / `volume_and_envelope` (NR10..NR12 raw bytes), `length_enabled`, `length_counter`, `period` (11-bit), `prescaler_counter` (2-bit AJER+CALO), `divider_counter` (11-bit GAXE..COPU), `wave_duty_position` (0-7), `pwm_latch` (DUWO), `pending_trigger_sync`, `divider_load_settle`, `current_volume`, `envelope_timer`, `shadow_frequency`, `sweep_timer`, `sweep_enabled`, `sweep_negate_used`
-- `ch2`: same as ch1 minus sweep fields
-- `ch3`: `enabled`, `dac_enabled`, `volume`, `length_enabled`, `length_counter`, `period`, `frequency_timer`, `wave_position` (0-31), `ch3_2mhz` (CERY), `trigger_bit_latch` / `trigger_armed` / `ch3_restart` / `trigger_self_clear` (trigger synchroniser chain), `ch3_frst` (overflow capture), `data_latch_sync_1` / `data_latch_sync_2` / `wave_data_latch` / `wave_data_latch_extended` (wave_data_latch chain), `ch3_fdis` (NAND-latch gate), `ram` (16 hex strings)
-- `ch4`: `enabled`, `volume_and_envelope`, `length_enabled`, `length_counter`, `frequency_and_randomness`, `frequency_timer`, `lfsr` (hex string), `current_volume`, `envelope_timer`
 
 ### Endpoints
 
 | Endpoint | Method | Returns |
 |----------|--------|---------|
-| `/cpu` | GET | Registers, flags, IME, halted |
-| `/ppu` | GET | LCDC, STAT, LY, lx, LYC, scan_counter, scroll/window regs, palettes |
-| `/ppu/pipeline` | GET | Pixel pipeline: shifters, pixel_counter, fetcher state, sprite_fetch |
-| `/screen` | GET | 144x160 color index array (0-3) — large, prefer `/screen/ascii` or `/screen/bitmap` |
-| `/screen/ascii` | GET | 144 strings of 160 chars: ` `=lightest `.`=light `o`=dark `#`=darkest |
-| `/screen/bitmap` | GET | 160x144 greyscale BMP image (`Content-Type: image/bmp`). Save to file and view. |
-| `/tiles/bitmap` | GET | All 384 tiles (3 blocks × 128) in a 16×24 grid, 128×192 greyscale BMP. |
-| `/tilemap/0/bitmap` | GET | Tile map 0 as 256×256 greyscale BMP (32×32 tiles). |
-| `/tilemap/1/bitmap` | GET | Tile map 1 as 256×256 greyscale BMP (32×32 tiles). |
-| `/sprites` | GET | All 40 OAM entries (bare array) |
-| `/timers` | GET | Timer registers (DIV, TIMA, TMA, TAC) and internal counter |
-| `/audio` | GET | APU master + per-channel internal state (divider/prescaler/sync DFFs/etc.) |
-| `/interrupts` | GET | IE and IF values + per-interrupt enabled/requested flags |
-| `/instructions` | GET | 20 disassembled instructions from current PC |
-| `/memory/{hex_addr}` | GET | Single byte: value + hex |
-| `/memory/{hex_addr}/{length}` | GET | Byte range (length is decimal, 1-4096) |
-| `/vram` | GET | Full VRAM: 3 tile blocks (decoded) + 2 tile maps (bank 0) |
-| `/vram/0` | GET | VRAM bank 0 (same as `/vram`) |
-| `/vram/1` | GET | VRAM bank 1 (CGB tile attributes / second tile bank) |
-| `/cram` | GET | CGB palette RAM: background + object palettes (null on DMG) |
-| `/breakpoints` | GET | List of breakpoint addresses |
-| `/step` | POST | Execute one instruction, return CPU state |
-| `/step-dot` | POST | Execute one PPU dot, return pipeline state |
-| `/step-phase` | POST | Execute one T-cycle (a dot at single speed), return pipeline state |
-| `/step-frame` | POST | Run to frame/breakpoint/watchpoint, return CPU state + `watchpoint_hit` |
-| `/step-over` | POST | Step over current instruction |
-| `/reset` | POST | Reset the Game Boy |
-| `/breakpoints/{hex_addr}` | PUT/DELETE | Set/clear breakpoint |
-| `/watchpoints` | GET/POST/DELETE | List/add/clear watchpoints |
-| `/watchpoints/bus-read/{hex_addr}` | PUT/DELETE | Bus read watchpoint |
-| `/watchpoints/bus-write/{hex_addr}` | PUT/DELETE | Bus write watchpoint |
-| `/watchpoints/dma-read/{hex_addr}` | PUT/DELETE | DMA source read watchpoint |
-| `/watchpoints/dma-write/{hex_addr}` | PUT/DELETE | DMA destination write watchpoint |
-| `/watchpoints/scanline/{n}` | PUT/Delete | Scanline watchpoint |
-| `/watchpoints/pixel-counter/{n}` | PUT/DELETE | Pixel counter watchpoint (matches during Mode 3 only) |
-| `/watchpoints/ppu-mode/{mode}` | PUT/DELETE | PPU mode watchpoint |
+| `/status` | GET | `pc` (hex string), `frame`, `title`, `tick` (name or null), `stop` |
+| `/sections` | GET | `{sections:[{name, summary, active, detail, blocks:[...]}]}` — every block tagged `kind`: `registers·pairs·pointers·table·relations·rows·sweeps·swatches·pixels·rule` |
+| `/registers` | GET | `{groups:[{name, registers:[{name, bits, raw, value}]}]}` (flag registers render `value` as a flag object) |
+| `/memory/{hex}/{len}` | GET | `{address, length, bytes:[int], hex:["00"]}` — len decimal, ≤4096 |
+| `/disassembly?at=&count=` | GET | `{at, lines:[{address, bytes, kind, length, text}]}` |
+| `/graphics` | GET | `{graphics:{atlases:[{label, tile_width, tile_height, depth_bits, palettes, regions, tiles}], maps, objects}}` or `{graphics:null}`; auto-enables capture |
+| `/graphics/capture` | POST | `{on}` — explicit capture gate |
+| `/waveforms` | GET | `{waveforms:[{label, rate, depth_bits, active, levels}]}` or null; auto-enables |
+| `/waveforms/capture` | POST | `{on}` |
+| `/frame/bitmap` | GET | raw RGBA of the resolved frame |
+| `/step` | POST | `{pc, frame, stop}` after one instruction |
+| `/step-over` | POST | likewise, stepping over |
+| `/step-frame` | POST | `{pc, frame, stop}` — `stop.reason`: `completed·breakpoint·watch` (+ `stop.watch.terms` on a watch hit) |
+| `/step-tick?count=` | POST | `{pc, ran, tick, video:{label, summary}}`; **404 when the core has no sub-instruction tick** |
+| `/reset` | POST | reset the console |
+| `/breakpoints` (+`/{hex}`) | GET, PUT/DELETE | list / set / clear |
+| `/watchables` | GET | this core's watch keys + param shapes |
+| `/watches` | GET, PUT, DELETE | list / add (term or `{terms:[…]}`) / clear |
+| `/symbols` | GET | loaded symbol table |
 
-### Compound watchpoints
+### Watches
 
-All conditions must match simultaneously:
+All terms of a conjunction must match simultaneously:
 ```bash
-curl -s -X POST "$GB_URL/watchpoints" \
-  -d '{"type":"all","conditions":[{"type":"scanline","value":58},{"type":"ppu_mode","mode":"drawing"}]}'
+dbg_watch '{"terms":[{"key":"scanline","value":58},{"key":"ppu-mode","value":3}]}'
+dbg_run_until_watch
 ```
 
-**Note on LY timing**: LY increments a few dots before OAM scan begins. A scanline-only watchpoint stops at the first dot where LY matches, which is in the previous scanline's hblank. To stop at the start of actual rendering, use a compound watchpoint: `scanline=N AND mode=oam_scan` or `scanline=N AND mode=drawing`.
+GB watchable keys include `bus-read`/`bus-write`/`dma-read`/`dma-write` (address param), `scanline`, `pixel-counter` (matches during Mode 3 only), `ppu-mode`, and value watches on the PPU registers and CPU registers (`ppu-lcdc`, `ppu-stat`, `cpu-a`, …). Run `dbg_watchables` for the live list — it is per-core.
 
-## Understanding screen color values
+**Note on LY timing** (GB): LY increments a few dots before OAM scan begins, so a scanline-only watch stops in the previous line's hblank. To stop at rendering, use a compound watch: `scanline=N` AND `ppu-mode=2` (OAM scan) or `=3` (drawing).
 
-The `/screen` endpoint returns **post-palette color indices** (0-3), not raw tile data. The PPU applies the palette register (BGP/OBP0/OBP1) before writing to the screen buffer.
+## Understanding pixel values
 
-The color index scale is: **0 = lightest (white), 3 = darkest (black).**
-
-The test harness (`screen_to_greyscale`) converts these to 8-bit greyscale: `0 → 0xFF, 1 → 0xAA, 2 → 0x55, 3 → 0x00`. So a screen value of 3 corresponds to test greyscale `0x00` (black), not `0xFF`.
+Sections and graphics carry the hardware's own values: GB shade/palette indices run **0 = lightest to 3 = darkest**; the test harness maps them to greyscale as `0→0xFF … 3→0x00`. `/frame/bitmap` is post-palette resolved RGBA (the frontend's palette choice applied on GB; hardware palettes on CGB/VCS).
 
 ## Scope discipline
 
-**You are an observation tool, not a problem-solver.** Follow the same reporting contract as `/instrument`. Your report must contain measurements, not interpretation. If you catch yourself writing "this means..." or "the fix should be..." — stop, delete it, and return to reporting observations.
+**You are an observation tool, not a problem-solver.** Follow the same reporting contract as `/instrument`: measurements, not interpretation. If you catch yourself writing "this means..." or "the fix should be..." — stop, delete it, and return to reporting observations.
 
-**Never read source code.** You have the complete API reference above — endpoint names, JSON field names, helper functions. Do not read `.rs` files, `grep` through the codebase, or explore the code structure. If you catch yourself opening a source file to understand how an endpoint works, stop. The API reference in this skill file is your single source of truth. If an endpoint doesn't exist in the reference, it doesn't exist.
+**Never read source code.** This API reference is complete — endpoints, field names, helpers. Do not read `.rs` files or grep the codebase; if an endpoint isn't in the reference, it doesn't exist.
 
-## Debugging strategy: use watchpoints, not step loops
+## Debugging strategy: use watches, not step loops
 
-**Prefer targeted watchpoints over stepping.** The debugger has powerful watchpoint support — use it to jump directly to the state you need to observe rather than stepping through hundreds of dots or instructions manually.
+**Prefer targeted watches over stepping.** Jump directly to the state you need rather than stepping through hundreds of ticks.
 
 ### Anti-pattern: step loops and guess-stepping
-Do NOT write loops that step dot-by-dot looking for a condition, and do NOT step an estimated number of dots hoping to land near a target:
 ```bash
-# BAD — step loop looking for a condition
-for i in $(seq 1 200); do
-  result=$(curl -s -X POST "$GB_URL/step-dot")
-  pc=$(echo "$result" | jq '.pixel_counter')
-  if [ "$pc" -ge 112 ]; then break; fi
-done
+# BAD — stepping in a loop looking for a condition
+for i in $(seq 1 200); do dbg_step_ticks 1 | grep -q "ly 60" && break; done
 
-# BAD — guess-stepping: estimating dot count to reach a pixel_counter value
-for i in $(seq 1 60); do curl -s -X POST "$GB_URL/step-dot" > /dev/null; done
-# "should be near PX=85..." — no, use a watchpoint
+# BAD — guess-stepping a estimated tick count toward a beam position
+dbg_step_ticks 60   # "should be near the sprite..." — no, use a watch
 ```
 
-### Correct pattern: use helpers and watchpoints
+### Correct pattern
 ```bash
 . scripts/debugger.sh
-gb_start crates/missingno-gb/tests/accuracy/roms/dmg-acid2/dmg-acid2.gb
-gb_run_frames 10
-gb_goto 60 drawing        # Jump directly to scanline 60, Mode 3
-gb_step_to_px 85           # Jump directly to pixel_counter=85
-gb_step_dots 5             # Step 5 dots from here for fine observation
-gb_sprites_on 60           # Check for sprite confounds
+dbg_start crates/missingno-gb/tests/accuracy/roms/dmg-acid2/dmg-acid2.gb
+dbg_step_frame 10
+dbg_watch '{"terms":[{"key":"scanline","value":60},{"key":"ppu-mode","value":3}]}'
+dbg_run_until_watch          # lands at scanline 60, Mode 3
+dbg_section PPU              # read the state there
+dbg_step_ticks 5             # fine observation from that point
 ```
 
-### Navigating to a specific pixel_counter value
-Use `gb_step_to_px` to jump directly to a pixel_counter value. It sets a compound watchpoint (scanline + drawing + pixel_counter) and uses step-frame. **Never estimate dot counts to reach a pixel_counter value** — sprite fetches, window stalls, and fine scroll all affect the mapping between dots and pixel_counter, making estimates unreliable.
-
+To land on a specific `pixel-counter` value, add it to the conjunction — never estimate dot counts (sprite fetches, window stalls, and fine scroll break the mapping):
 ```bash
-gb_goto 40 drawing        # Navigate to scanline 40, start of Mode 3
-gb_step_to_px 88          # Jump to pixel_counter=88
-gb_pipeline               # Read pipeline state at that point
-gb_step_dots 3            # Step 3 more dots for fine observation
+dbg_watch '{"terms":[{"key":"scanline","value":40},{"key":"ppu-mode","value":3},{"key":"pixel-counter","value":88}]}'
+dbg_run_until_watch
 ```
 
-You can also use pixel_counter in compound watchpoints directly:
-```bash
-curl -s -X POST "$GB_URL/watchpoints" \
-  -d '{"type":"all","conditions":[{"type":"scanline","value":40},{"type":"ppu_mode","mode":"drawing"},{"type":"pixel_counter","value":88}]}'
-curl -s -X POST "$GB_URL/step-frame"
-```
+### When to use bus watches
+The most powerful "when does X happen" tool:
+- **When is a register written?** `{"key":"bus-write","address":"ff4b"}` — catches the writing instruction; read the section state at the stop.
+- **When is VRAM read?** `bus-read`. **When does DMA touch an address?** `dma-read`/`dma-write`.
 
-### When to use bus watchpoints
-Bus watchpoints are the most powerful tool for answering "when does X happen":
-- **When is a register written?** `bus-write/{addr}` — catches the exact instruction that writes to a PPU register, VRAM address, or I/O port. Read `gb_ppu` immediately after.
-- **When is VRAM read?** `bus-read/{addr}` — catches tile data fetches.
-- **When does a DMA transfer touch an address?** `dma-read` / `dma-write`.
-
-### When to use step-dot
-`step-dot` (via `gb_step_dots`) is for observing how the pipeline state changes dot-by-dot within a small window. Always navigate to the area of interest first with `gb_goto` or `gb_step_to_px`, then use `gb_step_dots` for the final few dots of fine observation.
-
-**Before stepping dots**, the observation plan must state:
-1. Exactly how many dots to step
-2. What pipeline fields to watch at each dot
-3. What transition or value would confirm/refute the hypothesis
-
-## Reporting results
-
-Write a measurement receipt to the investigation's `measurements/` folder:
-
-```markdown
-# Measurement: <short title>
-
-## Observation plan
-
-### Question
-<What specific question is this measurement answering?>
-
-### Strategy
-<Navigation and data collection steps>
-
-### Expected data shape
-<What fields, what values would confirm vs refute>
-
-### Confounds to check
-<Potential interference — sprites, window, scroll — and results of checking>
-
-## Test result
-<what was observed>
-
-## Measurements
-<specific values from the debugger API responses>
-
-## Also observed
-<unexpected findings — optional>
-```
-
-## After measurement is complete
-
-1. Write the measurement receipt.
-2. **Do not update `summary.md`.** The caller owns summary.md.
-3. **Stop.** Your job is done. The caller reads the receipt file and decides what to do next.
+### When to step ticks
+`dbg_step_ticks` is for observing how visible state changes across a small window AFTER navigating to it with watches. Before stepping, the observation plan must state: exactly how many ticks, which fields to record at each, and what transition would confirm/refute the hypothesis.
