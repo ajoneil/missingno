@@ -75,15 +75,38 @@ impl std::fmt::Display for CpuRegister {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WatchCondition {
-    BusRead { address: u16 },
-    BusWrite { address: u16 },
-    DmaRead { address: u16 },
-    DmaWrite { address: u16 },
+    BusRead {
+        address: u16,
+    },
+    BusWrite {
+        address: u16,
+    },
+    DmaRead {
+        address: u16,
+    },
+    DmaWrite {
+        address: u16,
+    },
     Scanline(u8),
     PpuMode(Mode),
     PixelCounter(u8),
-    PpuRegister { register: ppu::Register, value: u8 },
-    CpuRegister { register: CpuRegister, value: u8 },
+    PpuRegister {
+        register: ppu::Register,
+        value: u8,
+    },
+    CpuRegister {
+        register: CpuRegister,
+        value: u8,
+    },
+    /// The CPU reaches an instruction whose opcode fetch address is this — the
+    /// same instruction-boundary point a plain breakpoint fires on.
+    Pc(u16),
+    /// The mapper pages this 16 KB bank into the `$4000` ROM window.
+    RomBank(u16),
+    /// The mapper pages this bank into the `$A000` cartridge-RAM window.
+    SramBank(u8),
+    /// The console pages this bank into the `$D000` work-RAM window (CGB).
+    WramBank(u8),
     All(Vec<WatchCondition>),
 }
 
@@ -103,6 +126,10 @@ impl std::fmt::Display for WatchCondition {
             WatchCondition::CpuRegister { register, value } => {
                 write!(f, "{register}={value:#04X}")
             }
+            WatchCondition::Pc(address) => write!(f, "pc {address:#06X}"),
+            WatchCondition::RomBank(bank) => write!(f, "rom-bank {bank}"),
+            WatchCondition::SramBank(bank) => write!(f, "sram-bank {bank}"),
+            WatchCondition::WramBank(bank) => write!(f, "wram-bank {bank}"),
             WatchCondition::All(conditions) => {
                 for (i, condition) in conditions.iter().enumerate() {
                     if i > 0 {
@@ -141,6 +168,10 @@ enum WatchKind {
     PpuMode,
     PpuReg(ppu::Register),
     CpuReg(CpuRegister),
+    Pc,
+    RomBank,
+    SramBank,
+    WramBank,
 }
 
 /// A watchable key, its label and parameter shape, and the condition it maps
@@ -154,8 +185,40 @@ struct WatchableSpec {
 }
 
 const V8: inspect::WatchParam = inspect::WatchParam::Value { bits: 8 };
+const V16: inspect::WatchParam = inspect::WatchParam::Value { bits: 16 };
+
+/// Watchable keys the disassembly gutter composes into `{pc, bank}` watches on a
+/// switchable-window row. Shared with `present_address` so a row's bank watch
+/// and the exposed key cannot drift.
+pub(crate) const ROM_BANK_KEY: &str = "rom-bank";
+pub(crate) const SRAM_BANK_KEY: &str = "sram-bank";
+pub(crate) const WRAM_BANK_KEY: &str = "wram-bank";
 
 static WATCHABLES: &[WatchableSpec] = &[
+    WatchableSpec {
+        key: "pc",
+        label: "PC",
+        param: V16,
+        kind: WatchKind::Pc,
+    },
+    WatchableSpec {
+        key: ROM_BANK_KEY,
+        label: "ROM bank",
+        param: V16,
+        kind: WatchKind::RomBank,
+    },
+    WatchableSpec {
+        key: SRAM_BANK_KEY,
+        label: "SRAM bank",
+        param: V8,
+        kind: WatchKind::SramBank,
+    },
+    WatchableSpec {
+        key: WRAM_BANK_KEY,
+        label: "WRAM bank",
+        param: V8,
+        kind: WatchKind::WramBank,
+    },
     WatchableSpec {
         key: "bus-read",
         label: "Bus read",
@@ -324,6 +387,7 @@ fn condition_from_term(term: &inspect::WatchTerm) -> Option<WatchCondition> {
     let spec = WATCHABLES.iter().find(|s| s.key == term.key)?;
     let address = || term.address.map(|a| a as u16);
     let value = || term.value.map(|v| v as u8);
+    let value16 = || term.value.map(|v| v as u16);
     Some(match &spec.kind {
         WatchKind::BusRead => WatchCondition::BusRead {
             address: address()?,
@@ -348,6 +412,10 @@ fn condition_from_term(term: &inspect::WatchTerm) -> Option<WatchCondition> {
             register: register.clone(),
             value: value()?,
         },
+        WatchKind::Pc => WatchCondition::Pc(value16()?),
+        WatchKind::RomBank => WatchCondition::RomBank(value16()?),
+        WatchKind::SramBank => WatchCondition::SramBank(value()?),
+        WatchKind::WramBank => WatchCondition::WramBank(value()?),
     })
 }
 
@@ -370,6 +438,10 @@ fn term_from_condition(condition: &WatchCondition) -> inspect::WatchTerm {
             None,
             Some(*value as u32),
         ),
+        WatchCondition::Pc(address) => (WatchKind::Pc, None, Some(*address as u32)),
+        WatchCondition::RomBank(bank) => (WatchKind::RomBank, None, Some(*bank as u32)),
+        WatchCondition::SramBank(bank) => (WatchKind::SramBank, None, Some(*bank as u32)),
+        WatchCondition::WramBank(bank) => (WatchKind::WramBank, None, Some(*bank as u32)),
         WatchCondition::All(_) => unreachable!("compounds are flattened before term conversion"),
     };
     let key = WATCHABLES
@@ -698,6 +770,16 @@ impl<M: Model> Debugger<M> {
                 };
                 actual == *value
             }
+            WatchCondition::Pc(target) => cpu.ir_address == *target,
+            WatchCondition::RomBank(target) => {
+                self.game_boy.cartridge().switchable_rom_bank() == Some(*target)
+            }
+            WatchCondition::SramBank(target) => {
+                self.game_boy.cartridge().ram_bank() == Some(*target)
+            }
+            WatchCondition::WramBank(target) => {
+                self.game_boy.model().selected_wram_bank() == Some(*target)
+            }
             WatchCondition::All(conditions) => {
                 conditions.iter().all(|c| self.condition_matches(c, trace))
             }
@@ -778,42 +860,25 @@ impl<M: Model> Debugger<M> {
             let linear = address - WRAM_BASE;
             let bank = (linear / 0x1000) as u16;
             if bank == 0 {
-                let window = 0xC000 + linear;
-                AddressDisplay {
-                    window,
-                    bank: Some(0),
-                    breakpoint: Some(window),
-                }
+                AddressDisplay::fixed(0xC000 + linear, 0)
             } else {
-                AddressDisplay {
-                    window: 0xD000 + (linear % 0x1000),
-                    bank: Some(bank),
-                    breakpoint: None,
-                }
+                AddressDisplay::banked(0xD000 + (linear % 0x1000), bank, WRAM_BANK_KEY)
             }
         } else if address >= ROM_BASE {
             let linear = address - ROM_BASE;
             let bank = (linear / 0x4000) as u16;
             if bank == 0 {
-                AddressDisplay {
-                    window: linear,
-                    bank: Some(0),
-                    breakpoint: Some(linear),
-                }
+                AddressDisplay::fixed(linear, 0)
             } else {
-                AddressDisplay {
-                    window: 0x4000 + (linear % 0x4000),
-                    bank: Some(bank),
-                    breakpoint: None,
-                }
+                AddressDisplay::banked(0x4000 + (linear % 0x4000), bank, ROM_BANK_KEY)
             }
         } else if address >= RAM_BASE {
             let linear = address - RAM_BASE;
-            AddressDisplay {
-                window: 0xA000 + (linear % 0x2000),
-                bank: Some((linear / 0x2000) as u16),
-                breakpoint: None,
-            }
+            AddressDisplay::banked(
+                0xA000 + (linear % 0x2000),
+                (linear / 0x2000) as u16,
+                SRAM_BANK_KEY,
+            )
         } else {
             let bank = match address as u16 {
                 0x4000..=0x7FFF => self.game_boy.cartridge().switchable_rom_bank(),
@@ -869,17 +934,29 @@ impl<M: Model> Debugger<M> {
 
     pub fn watchables(&self) -> &'static [inspect::Watchable] {
         use std::sync::OnceLock;
-        static PUBLIC: OnceLock<Vec<inspect::Watchable>> = OnceLock::new();
-        PUBLIC.get_or_init(|| {
+        // `wram-bank` is meaningful only on a console that banks work RAM (CGB);
+        // a flat-WRAM console (DMG) never pages it, so it is dropped from the
+        // list there. The two buckets are keyed by that capability, not by the
+        // model type — a plain generic-fn static would be shared across all
+        // monomorphizations.
+        fn build(banks_wram: bool) -> Vec<inspect::Watchable> {
             WATCHABLES
                 .iter()
+                .filter(|spec| banks_wram || spec.key != WRAM_BANK_KEY)
                 .map(|spec| inspect::Watchable {
                     key: spec.key,
                     label: spec.label,
                     param: spec.param,
                 })
                 .collect()
-        })
+        }
+        static WITH_WRAM: OnceLock<Vec<inspect::Watchable>> = OnceLock::new();
+        static WITHOUT_WRAM: OnceLock<Vec<inspect::Watchable>> = OnceLock::new();
+        if self.game_boy.model().wram_image().is_some() {
+            WITH_WRAM.get_or_init(|| build(true))
+        } else {
+            WITHOUT_WRAM.get_or_init(|| build(false))
+        }
     }
 
     pub fn add_watch(&mut self, watch: inspect::Watch) {
@@ -1236,6 +1313,83 @@ mod tests {
             WatchCondition::All(conditions) => assert_eq!(conditions.len(), 3),
             other => panic!("expected a compound, got {other}"),
         }
+    }
+
+    /// An MBC1 cart of eight 16 KB banks whose program selects `bank` into the
+    /// `$4000` window and jumps there, where a self-loop parks the PC at `$4000`.
+    fn mbc1_bank_jump(bank: u8) -> Console<Dmg> {
+        let mut rom = vec![0u8; 8 * 0x4000];
+        rom[0x147] = 0x01; // MBC1
+        rom[0x148] = 0x04; // 128 KB
+        rom[0x100..0x108].copy_from_slice(&[
+            0x3e, bank, // LD A, bank
+            0xea, 0x00, 0x20, // LD ($2000), A  — select ROM bank
+            0xc3, 0x00, 0x40, // JP $4000
+        ]);
+        // Park the PC at $4000 in every bank so the jump lands on a self-loop.
+        for b in 1..8 {
+            rom[b * 0x4000..b * 0x4000 + 2].copy_from_slice(&[0x18, 0xfe]); // JR -2
+        }
+        Console::new(crate::cartridge::Cartridge::new(rom, None), None)
+    }
+
+    #[test]
+    fn pc_watch_fires_at_the_breakpoint_instant() {
+        // A pc watch stops where a plain breakpoint at the same address would:
+        // both read the instruction-fetch address, so they land on the same row.
+        let mut watched = Debugger::new(traced_program_console());
+        watched.add_watch(inspect::Watch::single("pc", None, Some(0x0150)));
+        watched.step_frame();
+        assert_eq!(watched.pc(), 0x0150);
+        assert!(watched.last_watch_hit().is_some());
+
+        let mut broken = Debugger::new(traced_program_console());
+        broken.set_breakpoint(0x0150);
+        broken.step_frame();
+        assert_eq!(broken.pc(), watched.pc());
+    }
+
+    #[test]
+    fn compound_pc_bank_watch_gates_on_the_mapped_bank() {
+        let compound = inspect::Watch {
+            terms: vec![
+                inspect::WatchTerm {
+                    key: "pc".into(),
+                    address: None,
+                    value: Some(0x4000),
+                },
+                inspect::WatchTerm {
+                    key: "rom-bank".into(),
+                    address: None,
+                    value: Some(3),
+                },
+            ],
+        };
+
+        // Bank 3 mapped: the PC reaches $4000 with the watched bank — it fires.
+        let mut right = Debugger::new(mbc1_bank_jump(3));
+        right.add_watch(compound.clone());
+        right.step_frame();
+        assert_eq!(right.pc(), 0x4000);
+        assert!(right.last_watch_hit().is_some());
+
+        // Bank 2 mapped: the PC still reaches $4000, but the bank term rejects,
+        // so the watch never fires and the frame runs to completion.
+        let mut wrong = Debugger::new(mbc1_bank_jump(2));
+        wrong.add_watch(compound);
+        wrong.step_frame();
+        assert!(wrong.last_watch_hit().is_none());
+    }
+
+    #[test]
+    fn watchables_expose_pc_and_bank_keys() {
+        let debugger = Debugger::new(traced_program_console());
+        let keys: Vec<&str> = debugger.watchables().iter().map(|w| w.key).collect();
+        assert!(keys.contains(&"pc"));
+        assert!(keys.contains(&"rom-bank"));
+        assert!(keys.contains(&"sram-bank"));
+        // A flat-WRAM console (DMG) does not page work RAM, so it hides the key.
+        assert!(!keys.contains(&"wram-bank"));
     }
 
     #[test]

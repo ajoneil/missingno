@@ -35,6 +35,7 @@ use crate::app::{
     },
 };
 use missingno_core::graphics::GraphicsView;
+use missingno_core::inspect::Watch;
 use missingno_core::waveform::ChannelWave;
 use missingno_gb::ppu::types::{
     palette::{Palette, PaletteChoice},
@@ -94,6 +95,9 @@ pub struct PaneContext<'b> {
     /// The Game Boy family's typed pane surface, when that family is live.
     pub gb: Option<GbPaneContext<'b>>,
     pub breakpoints: &'b BTreeSet<u32>,
+    /// The active watches, so a disassembly row can mark itself when it composes
+    /// one (a switchable-bank gutter watch).
+    pub watches: &'b [Watch],
     /// The memory viewer's visible bytes for its current selection, copied at
     /// context-build time; `None` when no memory pane is shown.
     pub memory: Option<MemoryPaneData<'b>>,

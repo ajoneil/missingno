@@ -222,6 +222,10 @@ impl Model for Cgb {
         Some(&self.wram[..])
     }
 
+    fn selected_wram_bank(&self) -> Option<u8> {
+        Some(self.wram_bank())
+    }
+
     fn oam_dma_bus_conflict(&self, cpu_addr: u16, dma_source: u16) -> bool {
         cgb_bus(cpu_addr) == Some(cgb_dma_source_bus(dma_source))
     }

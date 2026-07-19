@@ -963,6 +963,10 @@ impl SystemDebugger for VcsDebugger {
         self.refresh();
         match stop {
             Stop::Breakpoint => StepOutcome::Breakpoint { frame: display },
+            Stop::Watch => match self.core.last_watch_hit() {
+                Some(watch) => StepOutcome::WatchHit(watch),
+                None => StepOutcome::Breakpoint { frame: display },
+            },
             Stop::BudgetExhausted => StepOutcome::BudgetExhausted,
             Stop::Completed => StepOutcome::Completed { frame: display },
         }
@@ -1048,6 +1052,26 @@ impl SystemDebugger for VcsDebugger {
 
     fn locate_bank_window(&self, bank: u16, window: u32) -> Option<u32> {
         self.core.locate_bank_window(bank, window)
+    }
+
+    fn watchables(&self) -> &'static [inspect::Watchable] {
+        self.core.watchables()
+    }
+
+    fn add_watch(&mut self, watch: inspect::Watch) {
+        self.core.add_watch(watch);
+    }
+
+    fn remove_watch(&mut self, watch: &inspect::Watch) {
+        self.core.remove_watch(watch);
+    }
+
+    fn watches(&self) -> Vec<inspect::Watch> {
+        self.core.watches()
+    }
+
+    fn last_watch_hit(&self) -> Option<inspect::Watch> {
+        self.core.last_watch_hit()
     }
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {

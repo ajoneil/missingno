@@ -467,8 +467,14 @@ pub struct AddressDisplay {
     pub bank: Option<u16>,
     /// Where a breakpoint from this row lands: the bus window address when a
     /// synthetic row maps unambiguously to one, `None` when it cannot (a
-    /// switchable window shared across banks — the gutter disables).
+    /// switchable window shared across banks — the gutter offers a bank watch
+    /// instead).
     pub breakpoint: Option<u32>,
+    /// The bank watch a switchable-window row composes: the watchable key naming
+    /// the bank register (`rom-bank`, `sram-bank`, …) and this row's bank, so a
+    /// `{pc: window, key: bank}` watch reaches exactly this bank. `None` on a row
+    /// that already carries a plain breakpoint, or has no bank to pin.
+    pub bank_watch: Option<(&'static str, u16)>,
 }
 
 impl AddressDisplay {
@@ -478,6 +484,41 @@ impl AddressDisplay {
             window: address,
             bank,
             breakpoint: Some(address),
+            bank_watch: None,
+        }
+    }
+
+    /// A synthetic row that maps unambiguously to one bus window (ROM bank 0,
+    /// WRAM bank 0): a plain breakpoint lands at that window.
+    pub fn fixed(window: u32, bank: u16) -> Self {
+        Self {
+            window,
+            bank: Some(bank),
+            breakpoint: Some(window),
+            bank_watch: None,
+        }
+    }
+
+    /// A synthetic switchable-bank row (ROM bank ≥1, SRAM, WRAM bank ≥1, a VCS
+    /// cart bank): no single-window breakpoint, but a compound `{pc, bank}` watch
+    /// keyed by `bank_key` reaches exactly this bank at this window.
+    pub fn banked(window: u32, bank: u16, bank_key: &'static str) -> Self {
+        Self {
+            window,
+            bank: Some(bank),
+            breakpoint: None,
+            bank_watch: Some((bank_key, bank)),
+        }
+    }
+
+    /// A synthetic row with no bus window and no bank to pin (a VCS cart-RAM
+    /// mirror): neither a breakpoint nor a bank watch.
+    pub fn unmarked(window: u32) -> Self {
+        Self {
+            window,
+            bank: None,
+            breakpoint: None,
+            bank_watch: None,
         }
     }
 }

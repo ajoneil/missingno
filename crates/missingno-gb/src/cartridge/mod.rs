@@ -99,6 +99,24 @@ impl Cartridge {
         self.rom.len()
     }
 
+    /// The RAM bank currently mapped at 0xA000–0xBFFF, where the mapper banks
+    /// RAM; `None` for a mapper with no banked RAM.
+    pub fn ram_bank(&self) -> Option<u8> {
+        match &self.mbc {
+            Mbc::Mbc1(m) => Some(m.ram_bank),
+            Mbc::Mbc3(m) => match m.mapped {
+                Mapped::Ram(bank) => Some(bank),
+                Mapped::Clock(_) => None,
+            },
+            Mbc::Mbc5(m) => Some(m.ram_bank),
+            Mbc::Mbc6(m) => Some(m.ram_bank_a),
+            Mbc::Huc1(m) => Some(m.ram_bank),
+            Mbc::Huc3(m) => Some(m.ram_bank),
+            Mbc::DbzTrans(m) => Some(m.ram_bank),
+            Mbc::NoMbc(_) | Mbc::Mbc2(_) | Mbc::Mbc7(_) => None,
+        }
+    }
+
     /// The real-time clock's register state, on carts that have one.
     pub fn rtc(&self) -> Option<RtcSnapshot> {
         match &self.mbc {

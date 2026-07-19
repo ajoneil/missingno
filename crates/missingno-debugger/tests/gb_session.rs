@@ -5,7 +5,16 @@
 
 use std::path::Path;
 
+use missingno_core::inspect::WatchTerm;
 use missingno_debugger::{Session, factory};
+
+fn value_term(key: &str, value: u32) -> WatchTerm {
+    WatchTerm {
+        key: key.to_string(),
+        address: None,
+        value: Some(value),
+    }
+}
 
 /// A 32 KiB all-NOP ROM. It carries no boot logo, so the `.gb` extension is
 /// what makes the registry claim it; the DMG core boots to PC 0x0100.
@@ -94,6 +103,31 @@ fn ppu_section_carries_folded_stat_and_lyc() {
     // sidebar section the generic `describe_machine` renders.
     assert!(ppu_row(&session, "stat").is_some());
     assert!(ppu_row(&session, "lyc").is_some());
+}
+
+#[test]
+fn watchables_list_the_pc_and_bank_keys() {
+    // The dynamic listing /watchables and the MCP watch tool description render.
+    let session = session();
+    let keys: Vec<&str> = session.watchables().iter().map(|w| w.key).collect();
+    assert!(keys.contains(&"pc"));
+    assert!(keys.contains(&"rom-bank"));
+    assert!(keys.contains(&"sram-bank"));
+}
+
+#[test]
+fn compound_pc_bank_watch_round_trips() {
+    // The gutter's `{pc, bank}` compound validates and survives the watch list.
+    let mut session = session();
+    let compound = vec![value_term("pc", 0x4000), value_term("rom-bank", 3)];
+    let added = session
+        .add_watch(compound.clone())
+        .expect("compound validates against the watchables");
+    assert!(session.watches().contains(&added));
+    session
+        .remove_watch(compound)
+        .expect("removes the compound");
+    assert!(session.watches().is_empty());
 }
 
 #[test]

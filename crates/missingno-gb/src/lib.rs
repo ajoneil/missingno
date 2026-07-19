@@ -192,6 +192,12 @@ pub trait Model: Default {
         None
     }
 
+    /// The work-RAM bank currently paged into the `$D000` window, on a console
+    /// that banks WRAM (CGB). `None` for a flat-WRAM console (DMG).
+    fn selected_wram_bank(&self) -> Option<u8> {
+        None
+    }
+
     /// End-of-frame / LCD-off hook. DMG mirrors the screen to the SGB.
     fn on_present(&mut self, _screen: &Self::Screen) {}
 

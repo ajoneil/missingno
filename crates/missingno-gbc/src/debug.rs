@@ -543,6 +543,47 @@ mod tests {
     }
 
     #[test]
+    fn cgb_watchables_expose_the_wram_bank_key() {
+        let debugger = Debugger::new(GameBoyColor::new(
+            Cartridge::new(vec![0u8; 0x8000], None),
+            None,
+        ));
+        let keys: Vec<&str> = debugger.watchables().iter().map(|w| w.key).collect();
+        assert!(keys.contains(&"pc"));
+        assert!(keys.contains(&"rom-bank"));
+        // A console that banks work RAM exposes the CGB-only key.
+        assert!(keys.contains(&"wram-bank"));
+
+        // A `{pc, wram-bank}` compound fires once the program selects the bank.
+        // The CGB header flag keeps SVBK out of the DMG-compat lockout.
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x143] = 0xC0;
+        rom[0x100..0x107].copy_from_slice(&[
+            0x3e, 0x03, // LD A,3
+            0xea, 0x70, 0xff, // LD ($FF70),A — SVBK = 3
+            0x18, 0xfe, // JR -2 self-loop at $0105
+        ]);
+        let mut debugger = Debugger::new(GameBoyColor::new(Cartridge::new(rom, None), None));
+        debugger.add_watch(inspect::Watch {
+            terms: vec![
+                inspect::WatchTerm {
+                    key: "pc".into(),
+                    address: None,
+                    value: Some(0x0105),
+                },
+                inspect::WatchTerm {
+                    key: "wram-bank".into(),
+                    address: None,
+                    value: Some(3),
+                },
+            ],
+        });
+        debugger.step_frame();
+        assert_eq!(debugger.pc(), 0x0105);
+        assert!(debugger.last_watch_hit().is_some());
+    }
+
+    #[test]
     fn sidebar_carries_the_shared_apu_section() {
         let mut rom = vec![0u8; 0x8000];
         rom[0x100] = 0x00;

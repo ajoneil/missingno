@@ -16,7 +16,7 @@ use crate::app::{
     debugger::{self, sidebar::tooltip_style},
     ui::{fonts, palette, sizes::s},
 };
-use missingno_core::inspect::AddressDisplay;
+use missingno_core::inspect::{AddressDisplay, Watch, WatchTerm};
 use missingno_core::isa::{InstructionSet, OperandClass};
 
 // Operand roles mapped to palette colours — the class is semantic, the colour
@@ -126,9 +126,10 @@ pub fn byte_row(
     byte: u8,
     is_current: bool,
     is_breakpoint: bool,
+    is_watched: bool,
 ) -> Element<'static, app::Message> {
     let the_row = row![
-        gutter(display.breakpoint, is_breakpoint),
+        gutter(display, is_breakpoint, is_watched),
         text(address_text(display))
             .font(fonts::monospace())
             .size(13.0)
@@ -151,6 +152,7 @@ pub fn instruction_row(
     tokens: &[Token],
     is_current: bool,
     is_breakpoint: bool,
+    is_watched: bool,
 ) -> Element<'static, app::Message> {
     let spans: Vec<Span<'static, &'static str>> = tokens
         .iter()
@@ -162,7 +164,7 @@ pub fn instruction_row(
         .collect();
 
     let the_row = row![
-        gutter(display.breakpoint, is_breakpoint),
+        gutter(display, is_breakpoint, is_watched),
         text(address_text(display))
             .font(fonts::monospace())
             .size(13.0)
@@ -175,44 +177,100 @@ pub fn instruction_row(
     highlight_if_current(the_row.into(), is_current)
 }
 
-/// The breakpoint gutter: a filled dot when set, a hollow ring otherwise,
-/// toggling the breakpoint at the row's bus address when clicked. A synthetic
-/// row that maps to no single bus address (a switchable window shared across
-/// banks) has `breakpoint == None`: the gutter shows a dimmed dot with a
-/// tooltip and takes no click.
-fn gutter(breakpoint: Option<u32>, is_breakpoint: bool) -> Element<'static, app::Message> {
-    let Some(address) = breakpoint else {
-        return tooltip(
-            dot(palette::SURFACE2, false),
-            container(
-                text("no breakpoint — bank-shared window")
-                    .font(fonts::monospace())
-                    .size(11.0),
+/// The compound `{pc: window, bank-key: bank}` watch a switchable-window row
+/// composes, or `None` on a row with no bank to pin. Set and matched from the
+/// one place so a gutter click and a row's watch-backed mark cannot drift.
+pub fn bank_watch(display: &AddressDisplay) -> Option<Watch> {
+    let (key, bank) = display.bank_watch?;
+    Some(Watch {
+        terms: vec![
+            WatchTerm {
+                key: "pc".to_owned(),
+                address: None,
+                value: Some(display.window),
+            },
+            WatchTerm {
+                key: key.to_owned(),
+                address: None,
+                value: Some(bank as u32),
+            },
+        ],
+    })
+}
+
+/// Whether one of the active watches is this row's bank watch — order- and
+/// duplicate-insensitive so a watch added elsewhere still marks its row.
+pub fn row_watched(active: &[Watch], display: &AddressDisplay) -> bool {
+    let Some(target) = bank_watch(display) else {
+        return false;
+    };
+    active.iter().any(|watch| same_terms(watch, &target))
+}
+
+fn same_terms(a: &Watch, b: &Watch) -> bool {
+    a.terms.len() == b.terms.len() && b.terms.iter().all(|term| a.terms.contains(term))
+}
+
+/// The gutter marker. A row that carries a plain breakpoint (a bus address or a
+/// fixed-bank window) shows the breakpoint dot, toggling it on click. A
+/// switchable-window row instead composes a `{pc, bank}` watch: it shows a
+/// watch-tinted dot, toggling that watch on click. A synthetic row with no bank
+/// to pin shows a dimmed, unclickable dot with a tooltip.
+fn gutter(
+    display: AddressDisplay,
+    is_breakpoint: bool,
+    is_watched: bool,
+) -> Element<'static, app::Message> {
+    if let Some(address) = display.breakpoint {
+        let icon = if is_breakpoint {
+            dot(palette::RED, true)
+        } else {
+            dot(palette::SURFACE2, false)
+        };
+        return button(icon)
+            .style(button::text)
+            .on_press(
+                if is_breakpoint {
+                    debugger::Message::ClearBreakpoint(address)
+                } else {
+                    debugger::Message::SetBreakpoint(address)
+                }
+                .into(),
             )
-            .padding([2.0, s()]),
-            tooltip::Position::Right,
-        )
-        .style(tooltip_style)
-        .into();
-    };
+            .into();
+    }
 
-    let bp_icon = if is_breakpoint {
-        dot(palette::RED, true)
-    } else {
-        dot(palette::SURFACE2, false)
-    };
+    if let Some(watch) = bank_watch(&display) {
+        let icon = if is_watched {
+            dot(palette::TEAL, true)
+        } else {
+            dot(palette::SURFACE2, false)
+        };
+        return button(icon)
+            .style(button::text)
+            .on_press(
+                if is_watched {
+                    debugger::Message::RemoveWatchpoint(watch)
+                } else {
+                    debugger::Message::AddWatch(watch)
+                }
+                .into(),
+            )
+            .into();
+    }
 
-    button(bp_icon)
-        .style(button::text)
-        .on_press(
-            if is_breakpoint {
-                debugger::Message::ClearBreakpoint(address)
-            } else {
-                debugger::Message::SetBreakpoint(address)
-            }
-            .into(),
+    tooltip(
+        dot(palette::SURFACE2, false),
+        container(
+            text("no breakpoint — bank-shared window")
+                .font(fonts::monospace())
+                .size(11.0),
         )
-        .into()
+        .padding([2.0, s()]),
+        tooltip::Position::Right,
+    )
+    .style(tooltip_style)
+    .into()
 }
 
 /// The 8px gutter marker: a filled disc (`filled`) or a hollow ring outlined in
@@ -265,4 +323,52 @@ fn highlight_if_current(
         .width(Length::Fill)
         .height(Length::Fixed(ROW_HEIGHT))
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{bank_watch, row_watched};
+    use missingno_core::inspect::{AddressDisplay, Watch, WatchTerm};
+
+    fn term(key: &str, value: u32) -> WatchTerm {
+        WatchTerm {
+            key: key.to_owned(),
+            address: None,
+            value: Some(value),
+        }
+    }
+
+    #[test]
+    fn bank_watch_composes_pc_and_bank_terms() {
+        let display = AddressDisplay::banked(0x4123, 3, "rom-bank");
+        let watch = bank_watch(&display).expect("a switchable row composes a watch");
+        assert_eq!(watch.terms, vec![term("pc", 0x4123), term("rom-bank", 3)]);
+
+        // A plain bus row (or a fixed-bank row) has no bank watch.
+        assert!(bank_watch(&AddressDisplay::bus(0x0150, None)).is_none());
+        assert!(bank_watch(&AddressDisplay::fixed(0x0150, 0)).is_none());
+    }
+
+    #[test]
+    fn row_watched_matches_its_compound_order_insensitively() {
+        let display = AddressDisplay::banked(0x4123, 3, "rom-bank");
+        // Same terms, reversed order — still this row's watch.
+        let active = vec![Watch {
+            terms: vec![term("rom-bank", 3), term("pc", 0x4123)],
+        }];
+        assert!(row_watched(&active, &display));
+
+        // Wrong bank, wrong window, and an unrelated watch do not mark the row.
+        let others = vec![
+            Watch {
+                terms: vec![term("pc", 0x4123), term("rom-bank", 2)],
+            },
+            Watch {
+                terms: vec![term("pc", 0x4000), term("rom-bank", 3)],
+            },
+            Watch::single("bus-read", Some(0x4123), None),
+        ];
+        assert!(!row_watched(&others, &display));
+        assert!(!row_watched(&[], &display));
+    }
 }

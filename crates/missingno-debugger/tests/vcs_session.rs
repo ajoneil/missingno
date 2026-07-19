@@ -5,7 +5,16 @@
 
 use std::path::Path;
 
+use missingno_core::inspect::WatchTerm;
 use missingno_debugger::{Session, factory};
+
+fn value_term(key: &str, value: u32) -> WatchTerm {
+    WatchTerm {
+        key: key.to_string(),
+        address: None,
+        value: Some(value),
+    }
+}
 
 /// A 4 KiB ROM whose reset vector points at its origin ($F000). The bytes
 /// there decode to whatever; the beam advances per colour clock regardless of
@@ -37,6 +46,28 @@ fn beam(session: &Session) -> u32 {
         .expect("summary starts with the beam position");
     let number = rest.split(' ').next().expect("a beam number");
     number.parse().expect("beam is numeric")
+}
+
+#[test]
+fn watchables_list_the_pc_and_cart_bank_keys() {
+    let session = session();
+    let keys: Vec<&str> = session.watchables().iter().map(|w| w.key).collect();
+    assert!(keys.contains(&"pc"));
+    assert!(keys.contains(&"cart-bank"));
+}
+
+#[test]
+fn compound_pc_bank_watch_round_trips() {
+    let mut session = session();
+    let compound = vec![value_term("pc", 0xF006), value_term("cart-bank", 1)];
+    let added = session
+        .add_watch(compound.clone())
+        .expect("compound validates against the watchables");
+    assert!(session.watches().contains(&added));
+    session
+        .remove_watch(compound)
+        .expect("removes the compound");
+    assert!(session.watches().is_empty());
 }
 
 #[test]

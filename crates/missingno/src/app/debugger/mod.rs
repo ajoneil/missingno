@@ -102,6 +102,8 @@ pub enum Message {
     WatchpointInputChanged(String),
     WatchpointKindChanged(AccessKind),
     AddWatchpoint,
+    /// Add a pre-built watch — the disassembly gutter's `{pc, bank}` compound.
+    AddWatch(Watch),
 
     RemoveLabel(Symbol),
     LabelAddressChanged(String),
@@ -578,6 +580,10 @@ impl Debugger {
                 self.remove_watchpoint(&watch, emu);
                 Task::none()
             }
+            Message::AddWatch(watch) => {
+                self.add_watchpoint(watch, emu);
+                Task::none()
+            }
             Message::WatchpointInputChanged(input) => {
                 self.watchpoint_input = input
                     .chars()
@@ -769,6 +775,7 @@ impl Debugger {
         let ctx = PaneContext {
             gb,
             breakpoints: &self.breakpoints,
+            watches: &self.watchpoints,
             memory: (!memory_selections.is_empty())
                 .then(|| memory::MemoryPaneData::paused(&memory_regions, &readouts)),
             disasm: disasm_readout
@@ -874,6 +881,7 @@ impl Debugger {
         self.panes.view(Some(PaneContext {
             gb,
             breakpoints: &self.breakpoints,
+            watches: &self.watchpoints,
             memory: self.running_memory(snapshot),
             disasm: disasm_readout
                 .as_ref()

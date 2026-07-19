@@ -329,6 +329,8 @@ impl Pane for DisassemblyPane {
                 .breakpoint
                 .is_some_and(|bp| breakpoints.contains(&bp))
         };
+        let watches = ctx.watches;
+        let is_watched = |display: &AddressDisplay| disasm_rows::row_watched(watches, display);
         let rows: Vec<_> = data
             .rows
             .iter()
@@ -344,12 +346,19 @@ impl Pane for DisassemblyPane {
                     tokens,
                     *is_current,
                     is_breakpoint(display),
+                    is_watched(display),
                 ),
                 DisasmRow::Byte {
                     display,
                     byte,
                     is_current,
-                } => disasm_rows::byte_row(*display, *byte, *is_current, is_breakpoint(display)),
+                } => disasm_rows::byte_row(
+                    *display,
+                    *byte,
+                    *is_current,
+                    is_breakpoint(display),
+                    is_watched(display),
+                ),
             })
             .collect();
 
@@ -524,11 +533,8 @@ mod tests {
         // A synthetic ROM-style presentation: the walk address maps to a banked
         // window with a bank prefix.
         let memory = Bytes(vec![0x00; 0x8000]);
-        let present = |address: u32| AddressDisplay {
-            window: 0x4000 + (address & 0x3FFF),
-            bank: Some(3),
-            breakpoint: None,
-        };
+        let present =
+            |address: u32| AddressDisplay::banked(0x4000 + (address & 0x3FFF), 3, "rom-bank");
         let display = build(Some(&Toy), 0x0010, 0x0010, &memory, None, None, &present)
             .rows
             .iter()

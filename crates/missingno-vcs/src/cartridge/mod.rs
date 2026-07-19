@@ -538,6 +538,12 @@ impl Cartridge {
         }
     }
 
+    /// The 4 KB bank paged into the cart window, on boards that keep one; `None`
+    /// for an unbanked board.
+    pub fn selected_bank(&self) -> Option<usize> {
+        self.board.selected_bank()
+    }
+
     /// The board's ROM image size in bytes; zero when it retains none.
     pub fn rom_len(&self) -> usize {
         self.rom_slice().len()
