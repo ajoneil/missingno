@@ -25,8 +25,8 @@ use crate::app::{
         memory::{self, MemoryPane, MemoryPaneData, MemorySelection},
         screen::{self, ScreenPane},
     },
-    screen::ScreenView,
-    system::Platform,
+    screen::{PalettePolicy, ScreenView},
+    system::{Platform, gb},
     ui::{
         fonts,
         icons::Icon,
@@ -36,6 +36,7 @@ use crate::app::{
 };
 use missingno_core::graphics::GraphicsView;
 use missingno_core::inspect::Watch;
+use missingno_core::video::DisplayTechnology;
 use missingno_core::waveform::ChannelWave;
 use missingno_gb::ppu::types::{
     palette::{Palette, PaletteChoice},
@@ -156,7 +157,11 @@ pub trait Pane {
         None
     }
     fn set_palette(&mut self, _palette: PaletteChoice) {}
-    fn set_frame_blending(&mut self, _blend: bool) {}
+    /// Point the screen pane at the technology the core states, so a freshly
+    /// opened screen renders at the right aspect and persistence.
+    fn set_technology(&mut self, _technology: DisplayTechnology) {}
+    /// Install the frontend colour policy on the screen pane's renderer.
+    fn set_palette_policy(&mut self, _policy: Option<Box<dyn PalettePolicy>>) {}
     /// The live screen state, so it can carry across a debugger↔emulator
     /// toggle. Only the screen pane has one.
     fn screen_view(&self) -> Option<ScreenView> {
@@ -354,6 +359,9 @@ pub struct DebuggerPanes {
     family: &'static Family,
     panes: Option<pane_grid::State<Box<dyn Pane>>>,
     palette: PaletteChoice,
+    /// The technology the core states, applied to any screen pane the grid
+    /// builds — including one reopened from the rail after being closed.
+    screen_technology: DisplayTechnology,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -394,10 +402,6 @@ impl fmt::Display for DebuggerPane {
 }
 
 impl DebuggerPanes {
-    pub fn new(family: &'static Family) -> Self {
-        Self::build(family, None)
-    }
-
     pub fn with_screen(family: &'static Family, screen_view: ScreenView) -> Self {
         Self::build(family, Some(screen_view))
     }
@@ -407,10 +411,16 @@ impl DebuggerPanes {
             .and_then(|saved| saved.into_state())
             .unwrap_or_else(family.default_layout);
 
+        let screen_technology = screen_view
+            .as_ref()
+            .map(|view| view.technology())
+            .unwrap_or_else(|| ScreenView::new().technology());
+
         let mut this = Self {
             family,
             panes,
             palette: PaletteChoice::default(),
+            screen_technology,
         };
         if let Some(view) = screen_view {
             this.adopt_screen_view(view);
@@ -531,6 +541,14 @@ impl DebuggerPanes {
                         .iter_mut()
                         .for_each(|(_, pane)| pane.on_message(&pane_message));
                 }
+                // The screen pane's device/raw toggle rides a broadcast and
+                // changes per-pane state the layout persists.
+                if matches!(
+                    pane_message,
+                    PaneMessage::Screen(screen::Message::ToggleDeviceSimulation)
+                ) {
+                    self.persist();
+                }
             }
             Message::Targeted(handle, pane_message) => {
                 if let Some(panes) = &mut self.panes
@@ -550,6 +568,10 @@ impl DebuggerPanes {
         if kind.instanceable() {
             let default = first_unshown_source(self.source_indices(kind));
             pane.set_source_index(default);
+        }
+        if kind == DebuggerPane::Screen {
+            pane.set_technology(self.screen_technology);
+            pane.set_palette_policy(self.screen_palette_policy());
         }
 
         if let Some(panes) = &mut self.panes {
@@ -609,20 +631,35 @@ impl DebuggerPanes {
         self.palette.palette()
     }
 
-    pub fn set_frame_blending(&mut self, blend: bool) {
-        if let Some(panes) = &mut self.panes {
-            panes
-                .iter_mut()
-                .for_each(|(_, pane)| pane.set_frame_blending(blend));
-        }
-    }
-
     pub fn set_palette(&mut self, palette: PaletteChoice) {
         self.palette = palette;
         if let Some(panes) = &mut self.panes {
             panes
                 .iter_mut()
                 .for_each(|(_, pane)| pane.set_palette(palette));
+        }
+        let policy = self.screen_palette_policy();
+        self.install_screen_policy(policy);
+    }
+
+    /// The colour policy the screen pane needs for this family and palette;
+    /// `None` where the core resolves its own colour.
+    fn screen_palette_policy(&self) -> Option<Box<dyn PalettePolicy>> {
+        self.family
+            .platforms
+            .iter()
+            .any(|platform| matches!(platform, Platform::GameBoy | Platform::GameBoyColor))
+            .then(|| gb::dmg_palette_policy(self.palette, true))
+    }
+
+    fn install_screen_policy(&mut self, policy: Option<Box<dyn PalettePolicy>>) {
+        if let Some(panes) = &mut self.panes {
+            for (_, pane) in panes.iter_mut() {
+                if pane.kind() == DebuggerPane::Screen {
+                    pane.set_palette_policy(policy);
+                    return;
+                }
+            }
         }
     }
 
@@ -882,6 +919,7 @@ mod tests {
             family: &GB_FAMILY,
             panes: None,
             palette: PaletteChoice::default(),
+            screen_technology: ScreenView::new().technology(),
         }
     }
 

@@ -36,6 +36,16 @@ pub enum GbFrame {
 }
 
 impl GbFrame {
+    /// Resolve to RGBA under a chosen monochrome palette and the SGB-colours
+    /// choice — the frontend's colour policy applied to a delivered frame.
+    pub fn resolve_with(&self, palette: &Palette, use_sgb_colors: bool) -> RgbaFrame {
+        RgbaFrame {
+            width: NATIVE_SIZE.0,
+            height: NATIVE_SIZE.1,
+            pixels: self.to_pixels(palette, use_sgb_colors).into(),
+        }
+    }
+
     fn to_pixels(&self, palette: &Palette, use_sgb_colors: bool) -> Vec<u8> {
         match self {
             GbFrame::GameBoy(GameBoyScreen::Display(screen)) => {
@@ -60,12 +70,11 @@ impl ConsoleFrame for GbFrame {
     }
 
     fn resolve_rgba(&self) -> RgbaFrame {
-        let pixels = self.to_pixels(PaletteChoice::default().palette(), true);
-        RgbaFrame {
-            width: NATIVE_SIZE.0,
-            height: NATIVE_SIZE.1,
-            pixels: pixels.into(),
-        }
+        self.resolve_with(PaletteChoice::default().palette(), true)
+    }
+
+    fn clone_box(&self) -> Box<dyn ConsoleFrame> {
+        Box::new(self.clone())
     }
 }
 

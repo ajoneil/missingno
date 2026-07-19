@@ -121,7 +121,7 @@ impl App {
                             } else {
                                 let mut emu = debugger.disable_debugger(
                                     self.settings.use_sgb_colors,
-                                    self.settings.frame_blending,
+                                    self.settings.persistence,
                                 );
                                 emu.set_palette(palette);
                                 LoadedGame::Emulator(emu)

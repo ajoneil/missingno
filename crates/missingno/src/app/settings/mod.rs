@@ -227,8 +227,11 @@ struct SettingsFile {
     rom_directories: Vec<PathBuf>,
     #[serde(default = "default_true")]
     use_sgb_colors: bool,
+    // Renamed from the old `frame_blending` bool: a legacy file's value is
+    // ignored (that global 50/50 was a different concept) and persistence
+    // defaults on.
     #[serde(default = "default_true")]
-    frame_blending: bool,
+    persistence: bool,
     #[serde(default = "default_true")]
     cartridge_rw_enabled: bool,
     #[serde(default)]
@@ -284,7 +287,7 @@ impl Default for SettingsFile {
             palette: palette_to_string(PaletteChoice::default()),
             rom_directories: Vec::new(),
             use_sgb_colors: true,
-            frame_blending: true,
+            persistence: true,
             cartridge_rw_enabled: true,
             library_sort: SortKey::default(),
             library_layout: LibraryLayout::default(),
@@ -310,7 +313,7 @@ pub struct Settings {
     pub palette: PaletteChoice,
     pub rom_directories: Vec<PathBuf>,
     pub use_sgb_colors: bool,
-    pub frame_blending: bool,
+    pub persistence: bool,
     pub cartridge_rw_enabled: bool,
     pub library_sort: SortKey,
     pub library_layout: LibraryLayout,
@@ -330,7 +333,7 @@ impl Default for Settings {
             palette: PaletteChoice::default(),
             rom_directories: Vec::new(),
             use_sgb_colors: true,
-            frame_blending: true,
+            persistence: true,
             cartridge_rw_enabled: true,
             library_sort: SortKey::default(),
             library_layout: LibraryLayout::default(),
@@ -382,7 +385,7 @@ impl Settings {
                 palette: parse_palette(&file.palette),
                 rom_directories: file.rom_directories,
                 use_sgb_colors: file.use_sgb_colors,
-                frame_blending: file.frame_blending,
+                persistence: file.persistence,
                 cartridge_rw_enabled: file.cartridge_rw_enabled,
                 library_sort: file.library_sort,
                 library_layout: file.library_layout,
@@ -417,7 +420,7 @@ impl Settings {
                 palette: parse_palette(&file.palette),
                 rom_directories: file.rom_directories,
                 use_sgb_colors: file.use_sgb_colors,
-                frame_blending: true,
+                persistence: true,
                 cartridge_rw_enabled: true,
                 library_sort: SortKey::default(),
                 library_layout: LibraryLayout::default(),
@@ -457,7 +460,7 @@ impl Settings {
             palette: palette_to_string(self.palette),
             rom_directories: self.rom_directories.clone(),
             use_sgb_colors: self.use_sgb_colors,
-            frame_blending: self.frame_blending,
+            persistence: self.persistence,
             cartridge_rw_enabled: self.cartridge_rw_enabled,
             library_sort: self.library_sort,
             library_layout: self.library_layout,
@@ -585,6 +588,20 @@ mod tests {
         assert_eq!(keyboard.get(Action::Screenshot), Some("F12"));
         let gamepad: Bindings = file.gamepad_bindings.into();
         assert_eq!(gamepad.get(Action::Control(3)), Some("West"));
+    }
+
+    #[test]
+    fn legacy_frame_blending_maps_to_persistence_on() {
+        // The old global 50/50 `frame_blending` bool is a different concept from
+        // the new persistence switch: whatever value a file carries, persistence
+        // migrates on (its default).
+        let old = r#"(setup_complete: true, frame_blending: false)"#;
+        let file: SettingsFile = ron::from_str(old).unwrap();
+        assert!(file.persistence);
+        // A file already carrying the new key is respected.
+        let current = r#"(setup_complete: true, persistence: false)"#;
+        let file: SettingsFile = ron::from_str(current).unwrap();
+        assert!(!file.persistence);
     }
 
     #[test]

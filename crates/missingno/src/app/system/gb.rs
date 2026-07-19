@@ -3,11 +3,60 @@
 //! header picks the core; the serial link, printer, boot ROM, and battery-save
 //! format are frontend policy wired in here.
 
+use missingno_gb::frame::GbFrame;
+use missingno_gb::ppu::types::palette::PaletteChoice;
 use missingno_gb::system::GbConsole;
 use missingno_gb::{BootRom, GameBoy, cartridge::Cartridge, serial_transfer::SerialLink};
 use missingno_gbc::GameBoyColor;
 
-use super::{MediaLoad, SystemConsole, SystemDebugger};
+use missingno_core::video::{ConsoleFrame, RgbaFrame};
+
+use super::{MediaLoad, Platform, SystemConsole, SystemDebugger};
+use crate::app::screen::PalettePolicy;
+
+/// The Game Boy family's colour policy: the user's monochrome palette plus the
+/// Super Game Boy borders, re-applied to a delivered frame at draw time. This is
+/// the one place a delivered Game Boy frame is coloured — the renderer holds it
+/// as an opaque [`PalettePolicy`]. Only the DMG core emits index frames that
+/// reach it; the CGB core delivers resolved RGBA, which the renderer draws
+/// directly.
+#[derive(Clone)]
+struct GbPalettePolicy {
+    palette: PaletteChoice,
+    use_sgb_colors: bool,
+}
+
+impl PalettePolicy for GbPalettePolicy {
+    fn resolve(&self, frame: &dyn ConsoleFrame) -> RgbaFrame {
+        match frame.as_any().downcast_ref::<GbFrame>() {
+            Some(gb) => gb.resolve_with(self.palette.palette(), self.use_sgb_colors),
+            None => frame.resolve_rgba(),
+        }
+    }
+
+    fn clone_box(&self) -> Box<dyn PalettePolicy> {
+        Box::new(self.clone())
+    }
+}
+
+/// The Game Boy colour policy for a chosen palette and SGB-colours setting.
+pub fn dmg_palette_policy(palette: PaletteChoice, use_sgb_colors: bool) -> Box<dyn PalettePolicy> {
+    Box::new(GbPalettePolicy {
+        palette,
+        use_sgb_colors,
+    })
+}
+
+/// The colour policy a platform's delivered frames need, or `None` where the
+/// core resolves its own colour (every family but the Game Boy).
+pub fn palette_policy(
+    platform: Platform,
+    palette: PaletteChoice,
+    use_sgb_colors: bool,
+) -> Option<Box<dyn PalettePolicy>> {
+    matches!(platform, Platform::GameBoy | Platform::GameBoyColor)
+        .then(|| dmg_palette_policy(palette, use_sgb_colors))
+}
 
 pub use missingno_gb::media::{is_gb_rom, is_gbc_rom, title_from_rom};
 

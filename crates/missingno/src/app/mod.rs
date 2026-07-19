@@ -271,6 +271,8 @@ enum Game {
     Loaded(LoadedGame),
 }
 
+// One long-lived value swapped in place; the debugger arm is the larger.
+#[allow(clippy::large_enum_variant)]
 enum LoadedGame {
     Debugger(debugger::Debugger),
     Emulator(emulator::Emulator),

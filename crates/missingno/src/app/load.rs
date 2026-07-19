@@ -123,7 +123,6 @@ fn finish_start(
             Ok(mut debugger) => {
                 debugger.load_sidecars(rom_path);
                 debugger.set_palette(palette);
-                debugger.set_frame_blending(app.settings.frame_blending);
                 app.game = Game::Loaded(LoadedGame::Debugger(debugger));
                 return title;
             }
@@ -137,7 +136,7 @@ fn finish_start(
         console,
         platform,
         app.settings.use_sgb_colors,
-        app.settings.frame_blending,
+        app.settings.persistence,
     );
     emu.set_palette(palette);
     emu.set_running(true);

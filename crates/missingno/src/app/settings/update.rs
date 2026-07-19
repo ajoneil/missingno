@@ -88,15 +88,13 @@ pub(in crate::app) fn handle(
                 emu.set_use_sgb_colors(enabled);
             }
         }
-        super::view::Message::SetFrameBlending(enabled) => {
-            app.settings.frame_blending = enabled;
+        super::view::Message::SetPersistence(enabled) => {
+            app.settings.persistence = enabled;
             app.settings.save();
-            match &mut app.game {
-                Game::Loaded(LoadedGame::Emulator(emu)) => emu.set_frame_blending(enabled),
-                Game::Loaded(LoadedGame::Debugger(debugger)) => {
-                    debugger.set_frame_blending(enabled)
-                }
-                _ => {}
+            // Persistence is the main display's control; the debugger screen
+            // pane has its own per-pane device/raw toggle instead.
+            if let Game::Loaded(LoadedGame::Emulator(emu)) = &mut app.game {
+                emu.set_persistence(enabled);
             }
         }
         super::view::Message::SetCartridgeRwEnabled(enabled) => {

@@ -5,7 +5,7 @@ use iced::{
     widget::{button, container, mouse_area, responsive, row, shader, stack, svg},
 };
 
-use crate::app::system::{ConsoleSwitch, ControlId, ControlInput, Platform};
+use crate::app::system::{ConsoleSwitch, ControlId, ControlInput, Platform, gb};
 use crate::app::{
     self,
     screen::{Frame, ScreenView},
@@ -31,8 +31,11 @@ pub struct Emulator {
     screen_view: ScreenView,
     running: bool,
     screen_hovered: bool,
+    /// The user's monochrome palette choice, held so a palette change can rebuild
+    /// the renderer's colour policy and the Display panel can show the selection.
+    palette: PaletteChoice,
     use_sgb_colors: bool,
-    frame_blending: bool,
+    persistence: bool,
     /// The family's latching console switches and their current levels,
     /// captured at load so the Console panel renders while the console is on
     /// the emu thread. Empty for families with none.
@@ -65,25 +68,29 @@ impl Emulator {
         console: Box<dyn SystemConsole>,
         platform: Platform,
         use_sgb_colors: bool,
-        frame_blending: bool,
+        persistence: bool,
     ) -> Self {
         let switches = console.console_switches();
         let monochrome_palette = console.uses_monochrome_palette();
         let mut screen_view = ScreenView::new();
-        screen_view.pixel_aspect = console.video_out().pixel_aspect();
-        Self {
+        screen_view.set_technology(console.video_out());
+        let mut this = Self {
             console: Some(console),
             platform,
             screen_view,
             running: false,
             screen_hovered: false,
+            palette: PaletteChoice::default(),
             use_sgb_colors,
-            frame_blending,
+            persistence,
             switches,
             switch_levels: switches.iter().map(|s| s.default_high).collect(),
             monochrome_palette,
             open_panels: Vec::new(),
-        }
+        };
+        this.screen_view.set_persistence(persistence);
+        this.refresh_palette_policy();
+        this
     }
 
     pub fn from_debugger(
@@ -91,31 +98,44 @@ impl Emulator {
         screen_view: ScreenView,
         platform: Platform,
         use_sgb_colors: bool,
-        frame_blending: bool,
+        persistence: bool,
     ) -> Self {
         let switches = console.console_switches();
         let monochrome_palette = console.uses_monochrome_palette();
-        Self {
+        let mut this = Self {
             console: Some(console),
             platform,
             screen_view,
             running: false,
             screen_hovered: false,
+            palette: PaletteChoice::default(),
             use_sgb_colors,
-            frame_blending,
+            persistence,
             switches,
             switch_levels: switches.iter().map(|s| s.default_high).collect(),
             monochrome_palette,
             open_panels: Vec::new(),
-        }
+        };
+        this.screen_view.set_persistence(persistence);
+        this.refresh_palette_policy();
+        this
+    }
+
+    /// Rebuild the renderer's colour policy from the current palette and SGB
+    /// choice; a no-op for families whose frames arrive already resolved.
+    fn refresh_palette_policy(&mut self) {
+        let policy = gb::palette_policy(self.platform, self.palette, self.use_sgb_colors);
+        self.screen_view.set_palette_policy(policy);
     }
 
     pub fn set_use_sgb_colors(&mut self, use_sgb: bool) {
         self.use_sgb_colors = use_sgb;
+        self.refresh_palette_policy();
     }
 
-    pub fn set_frame_blending(&mut self, blend: bool) {
-        self.frame_blending = blend;
+    pub fn set_persistence(&mut self, persistence: bool) {
+        self.persistence = persistence;
+        self.screen_view.set_persistence(persistence);
     }
 
     /// The console, present only while paused/idle (not while running).
@@ -135,8 +155,6 @@ impl Emulator {
 
     /// Update the displayed frame from the emu thread's latest-frame slot.
     pub fn apply_frame(&mut self, display: Frame) {
-        self.screen_view.use_sgb_colors = self.use_sgb_colors;
-        self.screen_view.blend = self.frame_blending;
         self.screen_view.apply(&display);
     }
 
@@ -144,7 +162,7 @@ impl Emulator {
     /// back unchanged.
     pub fn enable_debugger(self) -> Result<app::debugger::Debugger, Box<Emulator>> {
         let use_sgb_colors = self.use_sgb_colors;
-        let frame_blending = self.frame_blending;
+        let persistence = self.persistence;
         let platform = self.platform;
         let console = self
             .console
@@ -157,7 +175,7 @@ impl Emulator {
                     screen_view,
                     platform,
                     use_sgb_colors,
-                    frame_blending,
+                    persistence,
                 ))
             },
         )
@@ -189,7 +207,8 @@ impl Emulator {
     }
 
     pub fn set_palette(&mut self, palette: PaletteChoice) {
-        self.screen_view.palette = palette;
+        self.palette = palette;
+        self.refresh_palette_policy();
     }
 
     pub fn view(
@@ -266,7 +285,7 @@ impl Emulator {
         let ctx = panels::PanelContext {
             switches: self.switches,
             switch_levels: &self.switch_levels,
-            palette: self.screen_view.palette,
+            palette: self.palette,
             use_sgb_colors: self.use_sgb_colors,
             play_log,
             has_console: !self.switches.is_empty(),

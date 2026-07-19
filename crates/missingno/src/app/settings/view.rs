@@ -46,7 +46,7 @@ pub enum Message {
     RemoveRomDirectory(usize),
     SelectPalette(missingno_gb::ppu::types::palette::PaletteChoice),
     SetUseSgbColors(bool),
-    SetFrameBlending(bool),
+    SetPersistence(bool),
     SetHasheousEnabled(bool),
     SetHomebrewHubEnabled(bool),
     SetCartridgeRwEnabled(bool),
@@ -268,11 +268,11 @@ fn display_section(settings: &super::Settings) -> Element<'_, app::Message> {
             .size(m()),
         text("When disabled, the default palette is used for all games.").color(MUTED),
         horizontal_rule(),
-        toggler(settings.frame_blending)
-            .label("Inter-frame blending")
-            .on_toggle(|enabled| Message::SetFrameBlending(enabled).into())
+        toggler(settings.persistence)
+            .label("Screen persistence")
+            .on_toggle(|enabled| Message::SetPersistence(enabled).into())
             .size(m()),
-        text("Blends consecutive frames like the original LCD, smoothing flicker effects some games rely on.")
+        text("Simulates the display's slow pixel response, blending consecutive frames — flicker effects some games rely on. Off shows each frame crisply, so those games strobe.")
             .color(MUTED),
         horizontal_rule(),
         app_text::label("Palette"),

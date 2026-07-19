@@ -283,6 +283,29 @@ mod tests {
     }
 
     #[test]
+    fn screen_pane_device_raw_mode_round_trips() {
+        // The screen pane persists its device/raw mode through the source slot;
+        // a pane switched to raw (source 0) restores to raw, and the default
+        // device pane (source 1) restores to device.
+        for (raw, expected_source) in [(true, Some(0)), (false, Some(1))] {
+            let mut screen = construct(DebuggerPane::Screen);
+            if raw {
+                screen.set_source_index(0);
+            }
+            let (state, _) = pane_grid::State::new(screen);
+            let saved = SavedLayout::capture(state.layout(), &state).unwrap();
+            let serialized = ron::to_string(&saved).unwrap();
+            let restored: SavedLayout = ron::from_str(&serialized).unwrap();
+            let restored_state = match restored.into_configuration().unwrap() {
+                Rebuilt::Node(config) => pane_grid::State::with_configuration(config),
+                Rebuilt::Skip => panic!("a live layout is not skipped"),
+            };
+            let panes = panes_of(&restored_state);
+            assert_eq!(panes, vec![(DebuggerPane::Screen, expected_source)]);
+        }
+    }
+
+    #[test]
     fn legacy_two_kind_tile_maps_migrate_to_one_kind() {
         // A pre-instance layout naming both separate tile-map panes must load as
         // two instances of the collapsed kind — not trip the discard.

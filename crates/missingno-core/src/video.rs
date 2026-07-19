@@ -96,6 +96,9 @@ impl RgbaFrame {
 pub trait ConsoleFrame: Send + Sync {
     fn as_any(&self) -> &dyn std::any::Any;
     fn resolve_rgba(&self) -> RgbaFrame;
+    /// Clone into a fresh box so a renderer can hold the frame and re-resolve it
+    /// at draw time when the frontend's colour policy changes.
+    fn clone_box(&self) -> Box<dyn ConsoleFrame>;
 }
 
 /// One completed frame in whichever form its core produces it.

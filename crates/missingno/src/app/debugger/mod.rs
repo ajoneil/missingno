@@ -216,8 +216,12 @@ impl Debugger {
         console: Box<dyn SystemConsole>,
         platform: Platform,
     ) -> Result<Self, Box<dyn SystemConsole>> {
+        // Seed the screen pane with the console's stated technology so a
+        // debugger opened cold still renders at the right aspect and persistence.
+        let mut screen_view = ScreenView::new();
+        screen_view.set_technology(console.video_out());
         console.into_debugger().map(|core| {
-            let panes = DebuggerPanes::new(pane_family(platform));
+            let panes = DebuggerPanes::with_screen(pane_family(platform), screen_view);
             Self::build(core, panes, platform)
         })
     }
@@ -426,7 +430,7 @@ impl Debugger {
         }
     }
 
-    pub fn disable_debugger(mut self, use_sgb_colors: bool, frame_blending: bool) -> Emulator {
+    pub fn disable_debugger(mut self, use_sgb_colors: bool, persistence: bool) -> Emulator {
         self.save_sidecars();
         let core = self
             .debugger
@@ -438,7 +442,7 @@ impl Debugger {
             screen_view,
             self.platform,
             use_sgb_colors,
-            frame_blending,
+            persistence,
         )
     }
 
@@ -767,10 +771,6 @@ impl Debugger {
 
     pub fn set_palette(&mut self, palette: PaletteChoice) {
         self.panes.set_palette(palette);
-    }
-
-    pub fn set_frame_blending(&mut self, blend: bool) {
-        self.panes.set_frame_blending(blend);
     }
 
     pub fn view(&self) -> Element<'_, app::Message> {

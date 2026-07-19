@@ -1,26 +1,33 @@
 use iced::{
     Length::{self, Fill},
-    widget::{container, pane_grid, responsive, shader},
+    widget::{button, container, pane_grid, responsive, shader, text},
 };
 
 use crate::app::{
     self,
     debugger::{
         self,
-        panes::{self, DebuggerPane, PaneContext, PaneMessage, pane, title_bar},
+        panes::{self, DebuggerPane, PaneContext, PaneMessage, pane, title_bar_with_detail},
     },
-    screen::{Frame, ScreenView},
+    screen::{Frame, PalettePolicy, ScreenView},
+    ui::fonts,
 };
-use missingno_gb::ppu::types::palette::PaletteChoice;
+use missingno_core::video::DisplayTechnology;
 use std::sync::Arc;
 
 pub struct ScreenPane {
     screen_view: ScreenView,
+    /// Whether the pane simulates the display device (persistence, and later the
+    /// pixel grid / scanlines) or shows raw resolved frames — an
+    /// inspection-honest instantaneous view. Persisted per-pane in the layout.
+    device_simulation: bool,
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Update(Arc<Frame>),
+    /// Flip this pane between device simulation and raw resolved frames.
+    ToggleDeviceSimulation,
 }
 
 impl From<Message> for app::Message {
@@ -33,8 +40,11 @@ impl From<Message> for app::Message {
 
 impl ScreenPane {
     pub fn new() -> Self {
+        let mut screen_view = ScreenView::new();
+        screen_view.set_persistence(true);
         Self {
-            screen_view: ScreenView::new(),
+            screen_view,
+            device_simulation: true,
         }
     }
 
@@ -43,20 +53,37 @@ impl ScreenPane {
             Message::Update(display) => {
                 self.screen_view.apply(&display);
             }
+            Message::ToggleDeviceSimulation => {
+                self.set_device_simulation(!self.device_simulation);
+            }
         }
     }
 
-    pub fn set_palette(&mut self, palette: PaletteChoice) {
-        self.screen_view.palette = palette;
+    fn set_device_simulation(&mut self, on: bool) {
+        self.device_simulation = on;
+        self.screen_view.set_persistence(on);
     }
 
-    pub fn set_frame_blending(&mut self, blend: bool) {
-        self.screen_view.blend = blend;
+    pub fn set_technology(&mut self, technology: DisplayTechnology) {
+        self.screen_view.set_technology(technology);
+    }
+
+    pub fn set_palette_policy(&mut self, policy: Option<Box<dyn PalettePolicy>>) {
+        self.screen_view.set_palette_policy(policy);
     }
 
     pub fn content(&self, close: pane_grid::Pane) -> pane_grid::Content<'_, app::Message> {
+        let mode = if self.device_simulation {
+            "Device"
+        } else {
+            "Raw"
+        };
+        let toggle = button(text(mode).font(fonts::monospace()).size(11.0))
+            .on_press(Message::ToggleDeviceSimulation.into())
+            .style(button::text)
+            .padding(0);
         pane(
-            title_bar("Screen", close),
+            title_bar_with_detail("Screen", toggle, close),
             responsive(|size| {
                 let (width, height) = self.screen_view.fitted_size(size);
 
@@ -93,19 +120,32 @@ impl panes::Pane for ScreenPane {
         }
     }
 
-    fn set_palette(&mut self, palette: PaletteChoice) {
-        ScreenPane::set_palette(self, palette);
+    /// The device/raw mode is persisted through the layout's source slot: raw is
+    /// 0, device simulation is 1.
+    fn source_index(&self) -> Option<usize> {
+        Some(self.device_simulation as usize)
     }
 
-    fn set_frame_blending(&mut self, blend: bool) {
-        ScreenPane::set_frame_blending(self, blend);
+    fn set_source_index(&mut self, index: usize) {
+        self.set_device_simulation(index != 0);
+    }
+
+    fn set_technology(&mut self, technology: DisplayTechnology) {
+        ScreenPane::set_technology(self, technology);
+    }
+
+    fn set_palette_policy(&mut self, policy: Option<Box<dyn PalettePolicy>>) {
+        ScreenPane::set_palette_policy(self, policy);
     }
 
     fn screen_view(&self) -> Option<ScreenView> {
         Some(self.screen_view.clone())
     }
 
-    fn adopt_screen_view(&mut self, view: ScreenView) {
+    fn adopt_screen_view(&mut self, mut view: ScreenView) {
+        // The pane's own device/raw mode wins over whatever the incoming view
+        // carried from the other surface.
+        view.set_persistence(self.device_simulation);
         self.screen_view = view;
     }
 }
