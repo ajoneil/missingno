@@ -8,21 +8,25 @@ use std::sync::Arc;
 use rgb::RGB8;
 
 use missingno_core::cdl::CdlWindow;
+use missingno_core::graphics::{GraphicsView, MapEntry, NamedPalette, PaletteSet, TileMap};
 use missingno_core::inspect;
 use missingno_core::symbols::SymbolTable;
 use missingno_core::system::{DebugView, InspectSnapshot};
 use missingno_core::video::{Frame, RgbaFrame};
 
 use missingno_gb::Console;
+use missingno_gb::debugger::graphics as gb_graphics;
 use missingno_gb::debugger::inspection::{
     self as parts, AudioView, ColorSnapshot, CpuSource, GbSnapshot, PpuSource,
 };
 use missingno_gb::frame::NATIVE_SIZE;
+use missingno_gb::ppu::memory::VramView;
 use missingno_gb::ppu::types::palette::{Palette, PaletteIndex, PaletteMap};
+use missingno_gb::ppu::types::tiles::TileMapId;
 use missingno_gb::system::ConsoleUi;
 
 use crate::screen::Color555;
-use crate::{Cgb, GameBoyColor, VramDmaStatus};
+use crate::{BgAttribute, Cgb, GameBoyColor, VramDmaStatus};
 
 /// The 8 corrected display palettes of one CGB palette RAM.
 pub fn cram_palettes(color: impl Fn(u8, u8) -> Color555) -> [Palette; 8] {
@@ -31,6 +35,84 @@ pub fn cram_palettes(color: impl Fn(u8, u8) -> Color555) -> [Palette; 8] {
             color(palette as u8, index as u8).to_corrected_rgb8()
         }))
     })
+}
+
+/// One CRAM bank's eight palettes as named resolved-colour palettes.
+fn cram_named(prefix: &str, palettes: &[Palette; 8]) -> Vec<NamedPalette> {
+    palettes
+        .iter()
+        .enumerate()
+        .map(|(index, palette)| NamedPalette {
+            label: format!("{prefix}{index}"),
+            colors: (0..4).map(|c| palette.color(PaletteIndex(c))).collect(),
+        })
+        .collect()
+}
+
+/// The CGB graphics view: two VRAM banks as core-owned CRAM-palette atlases, the
+/// two tile maps with each cell's bank-1 attribute (palette, tile bank, flips,
+/// BG-over-OBJ priority), and the OAM object table with per-entry CGB
+/// attributes. Composes its own two-bank view over the shared Game Boy decode
+/// helpers rather than layering onto the DMG builder.
+pub fn cgb_graphics_view(
+    ppu: &dyn PpuSource,
+    vram: &dyn VramView,
+    background: &[Palette; 8],
+    objects: &[Palette; 8],
+) -> GraphicsView {
+    let mut owned = cram_named("BG", background);
+    owned.extend(cram_named("OBP", objects));
+
+    let atlases = vec![
+        gb_graphics::decode_bank_atlas(
+            vram.bank(0),
+            "VRAM bank 0".into(),
+            PaletteSet::Owned(owned.clone()),
+        ),
+        gb_graphics::decode_bank_atlas(
+            vram.bank(1),
+            "VRAM bank 1".into(),
+            PaletteSet::Owned(owned),
+        ),
+    ];
+
+    let mode = ppu.control().tile_address_mode();
+    let maps = [TileMapId(0), TileMapId(1)]
+        .into_iter()
+        .map(|id| {
+            let tiles = vram.bank(0).tile_map(id);
+            let attributes = vram.bank(1).tile_map(id);
+            let entries = (0..32u16)
+                .flat_map(|row| (0..32u16).map(move |column| (column, row)))
+                .map(|(column, row)| {
+                    let raw = tiles.get_tile(column as u8, row as u8);
+                    let attribute = BgAttribute(attributes.get_tile(column as u8, row as u8).0);
+                    MapEntry {
+                        tile: gb_graphics::resolved_atlas_index(mode, raw),
+                        palette: Some(attribute.palette()),
+                        atlas: Some(attribute.tile_bank()),
+                        flip_x: attribute.flip_x(),
+                        flip_y: attribute.flip_y(),
+                        priority: attribute.priority(),
+                    }
+                })
+                .collect();
+            TileMap {
+                label: format!("Tile Map {}", id.0),
+                columns: 32,
+                rows: 32,
+                atlas: 0,
+                entries,
+                viewports: gb_graphics::map_viewports(ppu, id),
+            }
+        })
+        .collect();
+
+    GraphicsView {
+        atlases,
+        maps,
+        objects: Some(gb_graphics::object_table(ppu, true)),
+    }
 }
 
 /// The CGB-only register state the sidebar draws — absent on DMG. Plain data,
@@ -299,6 +381,9 @@ impl InspectSnapshot for CgbSnapshot {
     fn channel_waves(&self) -> Option<Vec<missingno_core::waveform::ChannelWave>> {
         self.base.channel_waves()
     }
+    fn graphics(&self) -> Option<GraphicsView> {
+        self.base.graphics()
+    }
 }
 
 impl ConsoleUi for Cgb {
@@ -330,11 +415,21 @@ impl ConsoleUi for Cgb {
             background: cram_palettes(|palette, index| ppu.bg_color(palette, index)),
             objects: cram_palettes(|palette, index| ppu.obj_color(palette, index)),
         };
-        let base = GbSnapshot::capture(console, colors, frame, symbols, cdl);
+        let graphics = console
+            .graphics_capture()
+            .then(|| Self::graphics_view(console));
+        let base = GbSnapshot::capture(console, colors, frame, symbols, cdl, graphics);
         Box::new(CgbSnapshot {
             cgb: CgbView::capture(console),
             base,
         })
+    }
+
+    fn graphics_view(console: &Console<Self>) -> GraphicsView {
+        let ppu = console.ppu().model();
+        let background = cram_palettes(|palette, index| ppu.bg_color(palette, index));
+        let objects = cram_palettes(|palette, index| ppu.obj_color(palette, index));
+        cgb_graphics_view(console.ppu(), console.vram(), &background, &objects)
     }
 
     fn sidebar_sections(console: &Console<Self>) -> Vec<inspect::Section> {
@@ -394,5 +489,91 @@ mod tests {
         }
         let sections = Cgb::sidebar_sections(debugger.game_boy());
         assert!(sections.iter().any(|section| section.name == "APU"));
+    }
+
+    fn stepped_cgb() -> Debugger<Cgb> {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x100] = 0x00;
+        rom[0x101..0x104].copy_from_slice(&[0xc3, 0x50, 0x01]);
+        let mut debugger = Debugger::new(GameBoyColor::new(Cartridge::new(rom, None), None));
+        for _ in 0..4 {
+            debugger.step();
+        }
+        debugger
+    }
+
+    #[test]
+    fn snapshot_graphics_matches_live_and_is_gated() {
+        let mut debugger = stepped_cgb();
+        // Disabled: the snapshot carries no graphics.
+        let off = Cgb::snapshot(
+            debugger.game_boy(),
+            0,
+            Arc::new(SymbolTable::default()),
+            CdlWindow::default(),
+        );
+        assert!(off.graphics().is_none());
+
+        // Enabled: the running snapshot equals the live (paused) view.
+        debugger.game_boy_mut().set_graphics_capture(true);
+        let console = debugger.game_boy();
+        let live = Cgb::graphics_view(console);
+        let on = Cgb::snapshot(
+            console,
+            0,
+            Arc::new(SymbolTable::default()),
+            CdlWindow::default(),
+        );
+        assert_eq!(on.graphics(), Some(live.clone()));
+        // Two banks, both core-owned CRAM palettes; maps carry per-cell palette.
+        assert_eq!(live.atlases.len(), 2);
+        assert!(
+            live.atlases
+                .iter()
+                .all(|a| matches!(a.palettes, PaletteSet::Owned(_)))
+        );
+        assert!(live.maps.iter().all(|m| {
+            m.entries
+                .iter()
+                .all(|e| e.palette.is_some() && e.atlas.is_some())
+        }));
+    }
+
+    #[test]
+    fn cgb_attribute_decodes_to_map_entry_fields() {
+        use missingno_gb::ppu::memory::{VramBank, VramView};
+
+        struct TwoBank {
+            banks: [VramBank; 2],
+        }
+        impl VramView for TwoBank {
+            fn bank(&self, bank: u8) -> &VramBank {
+                &self.banks[bank as usize]
+            }
+        }
+
+        // Bank 0: tile index 5 at map-0 cell (0,0) — flat VRAM offset 0x1800.
+        let mut b0 = vec![0u8; 0x2000];
+        b0[0x1800] = 5;
+        // Bank 1: attribute 0x2B at the same cell — palette 3, tile bank 1,
+        // X-flip set, Y-flip clear, priority clear.
+        let mut b1 = vec![0u8; 0x2000];
+        b1[0x1800] = 0x2B;
+        let vram = TwoBank {
+            banks: [VramBank::from_bytes(&b0), VramBank::from_bytes(&b1)],
+        };
+
+        let debugger = stepped_cgb();
+        let ppu = debugger.game_boy().ppu();
+        let palettes = cram_palettes(|_, _| Color555(0));
+        let view = cgb_graphics_view(ppu, &vram, &palettes, &palettes);
+
+        let entry = view.maps[0].entry(0, 0).expect("cell present");
+        assert_eq!(entry.tile, 5); // Block0Block1 identity for index 5.
+        assert_eq!(entry.palette, Some(3));
+        assert_eq!(entry.atlas, Some(1));
+        assert!(entry.flip_x);
+        assert!(!entry.flip_y);
+        assert!(!entry.priority);
     }
 }

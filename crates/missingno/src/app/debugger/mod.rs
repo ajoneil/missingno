@@ -23,6 +23,7 @@ use crate::app::{
 use missingno_core::inspect::{MemoryRegion, MemoryWindow, Watch, WatchTerm};
 use missingno_core::symbols::Symbol;
 use missingno_gb::ppu::types::palette::PaletteChoice;
+use missingno_gb::ppu::types::tiles::TileMapId;
 
 use inspect::{DebugView, GbPaneContext};
 use panes::{DebuggerPanes, PaneContext};
@@ -343,6 +344,20 @@ impl Debugger {
         self.panes.plane_shown(panes::DebuggerPane::Audio)
     }
 
+    /// Whether any consumer wants per-vblank graphics capture on — the tile,
+    /// tile-map, and sprite panes. Off drops the snapshot's VRAM clone and its
+    /// surface decode.
+    pub fn wants_graphics_capture(&self) -> bool {
+        self.panes.plane_shown(panes::DebuggerPane::Tiles)
+            || self
+                .panes
+                .plane_shown(panes::DebuggerPane::TileMap(TileMapId(0)))
+            || self
+                .panes
+                .plane_shown(panes::DebuggerPane::TileMap(TileMapId(1)))
+            || self.panes.plane_shown(panes::DebuggerPane::Sprites)
+    }
+
     pub fn audio_coupling(&self) -> Option<missingno_core::HighPass> {
         self.debugger
             .as_ref()
@@ -655,13 +670,16 @@ impl Debugger {
                 // while the core is here, capture toggles on it directly so the
                 // paused tail fills as the user steps.
                 let wants_waves = self.wants_wave_capture();
+                let wants_graphics = self.wants_graphics_capture();
                 if self.is_detached() {
                     if let Some(emu) = emu {
                         emu.send(EmuCommand::SetMemoryInterest(self.memory_interest()));
                         emu.set_wave_capture(wants_waves);
+                        emu.set_graphics_capture(wants_graphics);
                     }
                 } else if let Some(core) = &mut self.debugger {
                     core.set_wave_capture(wants_waves);
+                    core.set_graphics_capture(wants_graphics);
                 }
                 Task::none()
             }

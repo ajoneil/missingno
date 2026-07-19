@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use missingno_core::HighPass;
+use missingno_core::graphics::GraphicsView;
 use missingno_core::inspect;
 use missingno_core::isa::InstructionSet;
 use missingno_core::symbols::{Symbol, SymbolTable};
@@ -58,6 +59,12 @@ pub trait ConsoleUi: Model {
     /// section part-builders — each system decides its own sections and where
     /// its console-specific state sits.
     fn sidebar_sections(console: &Console<Self>) -> Vec<inspect::Section>;
+
+    /// The decoded graphics surfaces (tile atlases, maps, object table) for this
+    /// console. One builder serves the live console (paused) and the per-vblank
+    /// snapshot (running); each model composes its own view — DMG's frontend-
+    /// shaded single bank, CGB's two-bank CRAM view.
+    fn graphics_view(console: &Console<Self>) -> GraphicsView;
 }
 
 impl ConsoleUi for Dmg {
@@ -99,7 +106,12 @@ impl ConsoleUi for Dmg {
         let colors = ColorSnapshot::Dmg {
             sgb: console.sgb().is_some(),
         };
-        Box::new(GbSnapshot::capture(console, colors, frame, symbols, cdl))
+        let graphics = console
+            .graphics_capture()
+            .then(|| Self::graphics_view(console));
+        Box::new(GbSnapshot::capture(
+            console, colors, frame, symbols, cdl, graphics,
+        ))
     }
 
     fn sidebar_sections(console: &Console<Self>) -> Vec<inspect::Section> {
@@ -110,6 +122,10 @@ impl ConsoleUi for Dmg {
             console.interrupts(),
             &AudioView::capture(console.audio()),
         )
+    }
+
+    fn graphics_view(console: &Console<Self>) -> GraphicsView {
+        crate::debugger::graphics::dmg_graphics_view(console.ppu(), console.vram())
     }
 }
 
@@ -348,6 +364,17 @@ where
 
     fn channel_waves(&self) -> Option<Vec<missingno_core::waveform::ChannelWave>> {
         self.core.game_boy().channel_waves()
+    }
+
+    fn set_graphics_capture(&mut self, on: bool) {
+        self.core.game_boy_mut().set_graphics_capture(on);
+    }
+
+    fn graphics(&self) -> Option<GraphicsView> {
+        let console = self.core.game_boy();
+        console
+            .graphics_capture()
+            .then(|| M::graphics_view(console))
     }
 
     fn set_breakpoint(&mut self, address: u32) {

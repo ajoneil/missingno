@@ -14,6 +14,7 @@ use std::sync::Arc;
 use symbols::SymbolTable;
 
 pub mod cdl;
+pub mod graphics;
 pub mod inspection;
 pub mod instructions;
 use missingno_core::inspect;

@@ -272,6 +272,7 @@ impl App {
                     // match capture to whether the audio scope is open.
                     handle.send(EmuCommand::SetMemoryInterest(debugger.memory_interest()));
                     handle.set_wave_capture(debugger.wants_wave_capture());
+                    handle.set_graphics_capture(debugger.wants_graphics_capture());
                 }
             }
             _ => {}

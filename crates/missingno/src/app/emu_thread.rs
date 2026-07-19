@@ -97,6 +97,9 @@ pub enum EmuCommand {
     /// Enable or disable the debugger's per-channel waveform capture. Stored on
     /// the loop and re-applied to each payload it runs.
     SetWaveCapture(bool),
+    /// Enable or disable the debugger's per-vblank graphics-surface capture.
+    /// Stored on the loop and re-applied to each payload it runs.
+    SetGraphicsCapture(bool),
     RequestScreenshot {
         options: CaptureOptions,
     },
@@ -169,6 +172,12 @@ impl EmuHandle {
     /// driven by whether the audio scope pane is open.
     pub fn set_wave_capture(&self, on: bool) {
         self.send(EmuCommand::SetWaveCapture(on));
+    }
+
+    /// Enable or disable the running debugger's per-vblank graphics-surface
+    /// capture, driven by whether a graphics pane is open.
+    pub fn set_graphics_capture(&self, on: bool) {
+        self.send(EmuCommand::SetGraphicsCapture(on));
     }
 
     /// Pause and recover the payload synchronously (bounded wait). Returns
@@ -305,6 +314,9 @@ struct EmuLoop {
     /// Whether the audio scope wants per-channel waveform capture. Re-applied
     /// to each payload the loop starts running.
     wave_capture: bool,
+    /// Whether a graphics pane wants per-vblank graphics-surface capture.
+    /// Re-applied to each payload the loop starts running.
+    graphics_capture: bool,
     events: EventSink,
     returns: Sender<Payload>,
     shutdown_ack: Sender<()>,
@@ -328,6 +340,7 @@ impl EmuLoop {
             memory_window: slots.memory_window,
             memory_interest: None,
             wave_capture: false,
+            graphics_capture: false,
             events,
             returns,
             shutdown_ack,
@@ -354,6 +367,7 @@ impl EmuLoop {
         match command {
             EmuCommand::Run(mut payload) => {
                 payload.set_wave_capture(self.wave_capture);
+                payload.set_graphics_capture(self.graphics_capture);
                 self.payload = Some(payload);
                 self.sram_countdown = None;
                 self.next_deadline = Instant::now();
@@ -395,6 +409,12 @@ impl EmuLoop {
                 self.wave_capture = on;
                 if let Some(payload) = &mut self.payload {
                     payload.set_wave_capture(on);
+                }
+            }
+            EmuCommand::SetGraphicsCapture(on) => {
+                self.graphics_capture = on;
+                if let Some(payload) = &mut self.payload {
+                    payload.set_graphics_capture(on);
                 }
             }
             EmuCommand::RequestScreenshot { options } => {
@@ -526,6 +546,18 @@ mod tests {
         state.handle(EmuCommand::SetWaveCapture(false));
         assert!(!state.wave_capture);
     }
+
+    // A graphics pane drives this through the handle; here it exercises the
+    // stored-flag path the emu loop re-applies to each payload it runs.
+    #[test]
+    fn set_graphics_capture_stores_the_flag() {
+        let mut state = test_loop();
+        assert!(!state.graphics_capture);
+        state.handle(EmuCommand::SetGraphicsCapture(true));
+        assert!(state.graphics_capture);
+        state.handle(EmuCommand::SetGraphicsCapture(false));
+        assert!(!state.graphics_capture);
+    }
 }
 
 impl Payload {
@@ -586,6 +618,14 @@ impl Payload {
     fn set_wave_capture(&mut self, on: bool) {
         if let Self::Debugger(payload) = self {
             payload.core.set_wave_capture(on);
+        }
+    }
+
+    /// Toggle graphics-surface capture. Only the debugger core captures; a
+    /// plain console has no debugger surface, so the toggle is a no-op there.
+    fn set_graphics_capture(&mut self, on: bool) {
+        if let Self::Debugger(payload) = self {
+            payload.core.set_graphics_capture(on);
         }
     }
 

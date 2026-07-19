@@ -395,6 +395,7 @@ impl GameBoy {
                 sgb,
                 ..Default::default()
             },
+            graphics_capture: false,
         }
     }
 }

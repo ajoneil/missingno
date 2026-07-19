@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use crate::HighPass;
 use crate::cdl::CdlWindow;
+use crate::graphics::GraphicsView;
 use crate::inspect::{MemoryRegion, MemoryWindow, RegisterGroup, Section, Watch, Watchable};
 use crate::isa::InstructionSet;
 use crate::symbols::{Symbol, SymbolTable};
@@ -144,6 +145,12 @@ pub trait InspectSnapshot: Send {
     fn channel_waves(&self) -> Option<Vec<ChannelWave>> {
         None
     }
+    /// The decoded graphics surfaces (tile atlases, maps, object table) captured
+    /// this vblank, for the graphics panes while the core runs. `None` when the
+    /// family has no such surfaces, or graphics capture is disabled.
+    fn graphics(&self) -> Option<GraphicsView> {
+        None
+    }
 }
 
 /// The model-erased snapshot handed from the emulation thread to the UI.
@@ -253,6 +260,16 @@ pub trait SystemDebugger: Send {
     /// paused. `None` when the family captures no waveforms, or capture is
     /// disabled.
     fn channel_waves(&self) -> Option<Vec<ChannelWave>> {
+        None
+    }
+    /// Enable or disable graphics-surface capture. Interest-gated like
+    /// [`set_wave_capture`](Self::set_wave_capture): capture stays off — and
+    /// the per-vblank tile/map/object decode costs nothing — until a consumer
+    /// turns it on. A family without a graphics backend does nothing.
+    fn set_graphics_capture(&mut self, _on: bool) {}
+    /// The current decoded graphics surfaces, for the graphics panes while
+    /// paused. `None` when the family has none, or graphics capture is disabled.
+    fn graphics(&self) -> Option<GraphicsView> {
         None
     }
 

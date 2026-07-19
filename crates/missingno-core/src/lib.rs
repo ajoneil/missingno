@@ -18,6 +18,7 @@
 pub mod analog;
 pub mod cdl;
 pub mod disasm;
+pub mod graphics;
 pub mod inspect;
 pub mod isa;
 pub mod stepping;

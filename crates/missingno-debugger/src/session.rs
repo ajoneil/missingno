@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use missingno_core::cdl::CdlWindow;
 use missingno_core::disasm::{ReadMemory, Row, window_after};
+use missingno_core::graphics::GraphicsView;
 use missingno_core::inspect::{
     MemoryRegion, RegisterGroup, Section, Watch, WatchParam, WatchTerm, Watchable,
 };
@@ -208,6 +209,17 @@ impl Session {
     /// captures none or capture is disabled.
     pub fn channel_waves(&self) -> Option<Vec<ChannelWave>> {
         self.debugger.channel_waves()
+    }
+
+    /// Enable or disable the debugger's per-vblank graphics-surface capture.
+    pub fn set_graphics_capture(&mut self, on: bool) {
+        self.debugger.set_graphics_capture(on);
+    }
+
+    /// The current decoded graphics surfaces, or `None` when the core has none
+    /// or graphics capture is disabled.
+    pub fn graphics(&self) -> Option<GraphicsView> {
+        self.debugger.graphics()
     }
 
     /// A resolved RGBA frame of the current screen, as it stands (paused).

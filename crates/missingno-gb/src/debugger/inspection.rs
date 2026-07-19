@@ -10,6 +10,7 @@
 use std::sync::Arc;
 
 use missingno_core::cdl::CdlWindow;
+use missingno_core::graphics::GraphicsView;
 use missingno_core::inspect;
 use missingno_core::symbols::SymbolTable;
 use missingno_core::system::InspectSnapshot;
@@ -1065,7 +1066,10 @@ pub fn dmg_sidebar_sections(
 pub struct GbSnapshot {
     pub cpu: CpuView,
     pub ppu: PpuView,
-    pub vram: Box<dyn VramView + Send>,
+    /// A per-vblank VRAM clone for the tile/map/sprite panes, taken only while
+    /// graphics capture is enabled. `None` frees the copy when no such pane is
+    /// open — the common case pays nothing.
+    pub vram: Option<Box<dyn VramView + Send>>,
     pub audio: AudioView,
     pub interrupts: interrupts::Registers,
     pub colors: ColorSnapshot,
@@ -1077,6 +1081,9 @@ pub struct GbSnapshot {
     /// The per-channel waveform windows, captured when the APU's wave capture
     /// is enabled. `None` otherwise.
     pub channel_waves: Option<Vec<ChannelWave>>,
+    /// The decoded graphics surfaces, captured when graphics capture is enabled.
+    /// `None` otherwise.
+    pub graphics: Option<GraphicsView>,
 }
 
 impl GbSnapshot {
@@ -1086,6 +1093,7 @@ impl GbSnapshot {
         frame: u64,
         symbols: Arc<SymbolTable>,
         cdl: CdlWindow,
+        graphics: Option<GraphicsView>,
     ) -> Self
     where
         <M::Ppu as PpuModel>::Vram: Clone + Send + 'static,
@@ -1093,7 +1101,9 @@ impl GbSnapshot {
         Self {
             cpu: CpuView::capture(console.cpu()),
             ppu: PpuView::capture(console.ppu()),
-            vram: Box::new(console.vram().clone()),
+            vram: console
+                .graphics_capture()
+                .then(|| Box::new(console.vram().clone()) as Box<dyn VramView + Send>),
             audio: AudioView::capture(console.audio()),
             interrupts: console.interrupts().clone(),
             colors,
@@ -1103,6 +1113,7 @@ impl GbSnapshot {
             cdl,
             frame,
             channel_waves: console.channel_waves(),
+            graphics,
         }
     }
 }
@@ -1143,6 +1154,9 @@ impl InspectSnapshot for GbSnapshot {
     }
     fn channel_waves(&self) -> Option<Vec<ChannelWave>> {
         self.channel_waves.clone()
+    }
+    fn graphics(&self) -> Option<GraphicsView> {
+        self.graphics.clone()
     }
 }
 
@@ -1186,6 +1200,7 @@ mod tests {
             0,
             Arc::new(SymbolTable::default()),
             CdlWindow::default(),
+            None,
         );
         let waves = snapshot.channel_waves().expect("capture enabled");
         assert_eq!(waves.len(), 4);
@@ -1204,8 +1219,83 @@ mod tests {
             0,
             Arc::new(SymbolTable::default()),
             CdlWindow::default(),
+            None,
         );
         assert!(snapshot.channel_waves().is_none());
+    }
+
+    #[test]
+    fn graphics_view_live_matches_snapshot_source() {
+        use crate::debugger::graphics::dmg_graphics_view;
+        let mut console = ran_console(false);
+        console.set_graphics_capture(true);
+        let live = dmg_graphics_view(console.ppu(), console.vram());
+        let snapshot = GbSnapshot::capture(
+            &console,
+            ColorSnapshot::Dmg { sgb: false },
+            0,
+            Arc::new(SymbolTable::default()),
+            CdlWindow::default(),
+            Some(live.clone()),
+        );
+        // The gated VRAM clone is present, and the snapshot's captured ppu/vram
+        // views rebuild the identical view.
+        let snapshot_vram = snapshot
+            .vram
+            .as_deref()
+            .expect("vram cloned when capturing");
+        let from_snapshot = dmg_graphics_view(&snapshot.ppu, snapshot_vram);
+        assert_eq!(live, from_snapshot);
+        assert_eq!(snapshot.graphics(), Some(live));
+    }
+
+    #[test]
+    fn snapshot_vram_gated_by_graphics_capture() {
+        let mut console = ran_console(false);
+        console.set_graphics_capture(false);
+        let off = GbSnapshot::capture(
+            &console,
+            ColorSnapshot::Dmg { sgb: false },
+            0,
+            Arc::new(SymbolTable::default()),
+            CdlWindow::default(),
+            None,
+        );
+        assert!(off.vram.is_none());
+
+        console.set_graphics_capture(true);
+        let on = GbSnapshot::capture(
+            &console,
+            ColorSnapshot::Dmg { sgb: false },
+            0,
+            Arc::new(SymbolTable::default()),
+            CdlWindow::default(),
+            None,
+        );
+        assert!(on.vram.is_some());
+    }
+
+    #[test]
+    fn snapshot_graphics_gated_by_flag() {
+        use crate::system::ConsoleUi;
+        let mut console = ran_console(false);
+        console.set_graphics_capture(false);
+        let off = crate::Dmg::snapshot(
+            &console,
+            0,
+            Arc::new(SymbolTable::default()),
+            CdlWindow::default(),
+        );
+        assert!(off.graphics().is_none());
+
+        console.set_graphics_capture(true);
+        let on = crate::Dmg::snapshot(
+            &console,
+            0,
+            Arc::new(SymbolTable::default()),
+            CdlWindow::default(),
+        );
+        assert!(on.graphics().is_some());
     }
 
     #[test]
@@ -1218,6 +1308,7 @@ mod tests {
             0,
             Arc::new(SymbolTable::default()),
             CdlWindow::default(),
+            None,
         );
         assert_eq!(
             format!("{live:?}"),
@@ -1237,6 +1328,7 @@ mod tests {
             0,
             Arc::new(SymbolTable::default()),
             CdlWindow::default(),
+            None,
         );
         assert_eq!(
             format!("{live:?}"),

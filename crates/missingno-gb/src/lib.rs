@@ -550,6 +550,10 @@ pub struct Chassis<M: Model> {
 pub struct Console<M: Model> {
     chassis: Chassis<M>,
     model: M,
+    /// Whether the debugger's per-vblank graphics-surface capture is enabled.
+    /// Interest-gated: off by default so the snapshot decodes and clones
+    /// nothing until a graphics pane turns it on.
+    graphics_capture: bool,
 }
 
 /// The original Game Boy (DMG): SGB co-processor support, the OAM
@@ -631,6 +635,7 @@ impl<M: Model> Console<M> {
                 dma_conflict: DmaConflictLatch::default(),
             },
             model: M::default(),
+            graphics_capture: false,
         };
         console.rebuild_state();
         console
@@ -800,6 +805,16 @@ impl<M: Model> Console<M> {
     /// The captured per-channel waveforms, or `None` when capture is off.
     pub fn channel_waves(&self) -> Option<Vec<missingno_core::waveform::ChannelWave>> {
         self.chassis.audio.channel_waves()
+    }
+
+    /// Enable or disable the debugger's per-vblank graphics-surface capture.
+    pub fn set_graphics_capture(&mut self, on: bool) {
+        self.graphics_capture = on;
+    }
+
+    /// Whether graphics-surface capture is enabled.
+    pub fn graphics_capture(&self) -> bool {
+        self.graphics_capture
     }
 
     pub fn press_button(&mut self, button: Button) {

@@ -54,7 +54,10 @@ impl GbColors for Cgb {
 /// snapshot while the core runs on the emulation thread.
 pub trait InspectSource {
     fn ppu(&self) -> &dyn PpuSource;
-    fn vram(&self) -> &dyn VramView;
+    /// The VRAM the tile/map/sprite panes read. `None` on a running snapshot
+    /// while graphics capture is off (the clone is not taken then); always
+    /// present on the live console while paused.
+    fn vram(&self) -> Option<&dyn VramView>;
     fn colors(&self, user_palette: &Palette) -> ConsoleColors;
 }
 
@@ -62,8 +65,8 @@ impl<M: GbColors> InspectSource for Console<M> {
     fn ppu(&self) -> &dyn PpuSource {
         Console::ppu(self)
     }
-    fn vram(&self) -> &dyn VramView {
-        Console::vram(self)
+    fn vram(&self) -> Option<&dyn VramView> {
+        Some(Console::vram(self))
     }
     fn colors(&self, user_palette: &Palette) -> ConsoleColors {
         M::colors(self, user_palette)
@@ -74,8 +77,8 @@ impl InspectSource for GbSnapshot {
     fn ppu(&self) -> &dyn PpuSource {
         &self.ppu
     }
-    fn vram(&self) -> &dyn VramView {
-        &*self.vram
+    fn vram(&self) -> Option<&dyn VramView> {
+        self.vram.as_deref().map(|vram| vram as &dyn VramView)
     }
     fn colors(&self, user_palette: &Palette) -> ConsoleColors {
         colors_from_snapshot(&self.colors, user_palette)
@@ -86,7 +89,7 @@ impl InspectSource for CgbSnapshot {
     fn ppu(&self) -> &dyn PpuSource {
         self.base.ppu()
     }
-    fn vram(&self) -> &dyn VramView {
+    fn vram(&self) -> Option<&dyn VramView> {
         self.base.vram()
     }
     fn colors(&self, user_palette: &Palette) -> ConsoleColors {

@@ -248,8 +248,11 @@ impl panes::Pane for SpritesPane {
         &'a self,
         ctx: Option<&panes::PaneContext<'_>>,
     ) -> pane_grid::Content<'a, app::Message> {
-        match ctx.and_then(|ctx| ctx.gb) {
-            Some(gb) => self.content(gb.source.ppu(), gb.source.vram(), gb.colors),
+        match ctx
+            .and_then(|ctx| ctx.gb)
+            .and_then(|gb| gb.source.vram().map(|vram| (gb, vram)))
+        {
+            Some((gb, vram)) => self.content(gb.source.ppu(), vram, gb.colors),
             None => panes::running_placeholder("Sprites"),
         }
     }
