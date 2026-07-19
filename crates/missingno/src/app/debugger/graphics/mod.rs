@@ -27,10 +27,22 @@ pub fn atlas_texture(
     columns: usize,
     resolve: impl Fn(u8) -> RGB8,
 ) -> (u32, u32, Vec<u8>) {
+    atlas_span_texture(atlas, 0, atlas.tiles.len(), columns, resolve)
+}
+
+/// As [`atlas_texture`], but over the tile span `start..start + len` — the unit
+/// a region draws. Tiles beyond the atlas pad with blank cells.
+pub fn atlas_span_texture(
+    atlas: &TileAtlas,
+    start: usize,
+    len: usize,
+    columns: usize,
+    resolve: impl Fn(u8) -> RGB8,
+) -> (u32, u32, Vec<u8>) {
     let tile_w = atlas.tile_width as usize;
     let tile_h = atlas.tile_height as usize;
     let columns = columns.max(1);
-    let rows = atlas.tiles.len().div_ceil(columns).max(1);
+    let rows = len.div_ceil(columns).max(1);
     let width = (columns * tile_w) as u32;
     let height = (rows * tile_h) as u32;
 
@@ -38,9 +50,14 @@ pub fn atlas_texture(
     for tile_row in 0..rows {
         for pixel_y in 0..tile_h {
             for tile_col in 0..columns {
-                let tile = tile_row * columns + tile_col;
+                let offset = tile_row * columns + tile_col;
+                let tile = start + offset;
                 for pixel_x in 0..tile_w {
-                    let index = atlas.pixel(tile, pixel_x as u8, pixel_y as u8).unwrap_or(0);
+                    let index = if offset < len {
+                        atlas.pixel(tile, pixel_x as u8, pixel_y as u8).unwrap_or(0)
+                    } else {
+                        0
+                    };
                     let color = resolve(index);
                     pixels.extend_from_slice(&[color.r, color.g, color.b, 255]);
                 }
@@ -156,10 +173,34 @@ mod tests {
                 })
                 .collect(),
             palettes: PaletteSet::FrontendShades,
+            regions: vec![],
         };
         let (w, h, pixels) = atlas_texture(&atlas, ATLAS_COLUMNS, |_| RGB8::new(1, 2, 3));
         assert_eq!((w, h), (128, 16)); // 16 cols × 8px wide, 2 rows × 8px tall
         assert_eq!(pixels.len(), (w * h * 4) as usize);
         assert_eq!(&pixels[0..4], &[1, 2, 3, 255]);
+    }
+
+    #[test]
+    fn span_texture_covers_a_region_slice() {
+        use missingno_core::graphics::{PaletteSet, Tile};
+        let atlas = TileAtlas {
+            label: "t".into(),
+            tile_width: 8,
+            tile_height: 8,
+            depth_bits: 2,
+            tiles: (0..40)
+                .map(|_| Tile {
+                    indices: vec![0u8; 64],
+                })
+                .collect(),
+            palettes: PaletteSet::FrontendShades,
+            regions: vec![],
+        };
+        // A 16-tile span over 16 columns is one tile-row: 128×8.
+        let (w, h, pixels) =
+            atlas_span_texture(&atlas, 8, 16, ATLAS_COLUMNS, |_| RGB8::new(9, 9, 9));
+        assert_eq!((w, h), (128, 8));
+        assert_eq!(pixels.len(), (w * h * 4) as usize);
     }
 }

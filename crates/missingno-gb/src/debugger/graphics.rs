@@ -7,7 +7,8 @@
 //! snapshot (running) so the two agree by construction.
 
 use missingno_core::graphics::{
-    GraphicsView, MapEntry, Object, ObjectTable, PaletteSet, Tile, TileAtlas, TileMap, Viewport,
+    AtlasRegion, GraphicsView, MapEntry, Object, ObjectTable, PaletteSet, Tile, TileAtlas, TileMap,
+    Viewport,
 };
 use missingno_core::inspect::Tone;
 
@@ -19,6 +20,30 @@ use super::inspection::PpuSource;
 
 /// Addressable tiles per VRAM bank: three 128-tile blocks in address order.
 pub const TILES_PER_BANK: usize = 384;
+
+/// The three tile-data blocks a VRAM bank holds, in address order — the
+/// LCDC.4-addressing building blocks the map indices resolve through. Named as
+/// the Game Boy community does, with each block's VRAM address range.
+const TILE_BLOCKS: [AtlasRegion; 3] = [
+    AtlasRegion {
+        label: "Block 0",
+        start: 0,
+        len: 128,
+        help: Some("$8000-$87FF"),
+    },
+    AtlasRegion {
+        label: "Block 1",
+        start: 128,
+        len: 128,
+        help: Some("$8800-$8FFF"),
+    },
+    AtlasRegion {
+        label: "Block 2",
+        start: 256,
+        len: 128,
+        help: Some("$9000-$97FF"),
+    },
+];
 
 /// Decode one VRAM bank's 384 tiles (blocks 0, 1, 2 in address order) into an
 /// atlas of 8×8, 2bpp palette indices. `palettes` says how a consumer colours
@@ -38,14 +63,17 @@ pub fn decode_bank_atlas(bank: &VramBank, label: String, palettes: PaletteSet) -
             tiles.push(Tile { indices });
         }
     }
-    TileAtlas {
+    let atlas = TileAtlas {
         label,
         tile_width: 8,
         tile_height: 8,
         depth_bits: 2,
         tiles,
         palettes,
-    }
+        regions: TILE_BLOCKS.to_vec(),
+    };
+    debug_assert!(atlas.regions_valid());
+    atlas
 }
 
 /// The atlas index (0..384) a raw tile-map index resolves to under `mode` —
@@ -186,6 +214,12 @@ mod tests {
         let atlas = decode_bank_atlas(&bank, "VRAM".into(), PaletteSet::FrontendShades);
         assert_eq!(atlas.tiles.len(), TILES_PER_BANK);
         assert!(matches!(atlas.palettes, PaletteSet::FrontendShades));
+        // Three 128-tile blocks in address order, fully covering the bank.
+        assert!(atlas.regions_valid());
+        let labels: Vec<_> = atlas.regions.iter().map(|r| r.label).collect();
+        assert_eq!(labels, ["Block 0", "Block 1", "Block 2"]);
+        assert!(atlas.regions.iter().all(|r| r.len == 128));
+        assert_eq!(atlas.region_of(200).map(|r| r.label), Some("Block 1"));
         assert_eq!(atlas.pixel(1, 0, 0), Some(1));
         assert_eq!(atlas.pixel(1, 1, 0), Some(2));
         assert_eq!(atlas.pixel(1, 2, 0), Some(3));

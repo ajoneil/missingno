@@ -9,20 +9,22 @@ use std::fmt;
 use iced::{
     Element,
     Length::Fill,
-    widget::{pick_list, row, scrollable, shader},
+    widget::{column, container, pick_list, row, rule, scrollable, shader, text, tooltip},
 };
+use rgb::RGB8;
 
 use crate::app::{
     self,
     console::ConsoleColors,
     debugger::{
-        graphics::{ATLAS_COLUMNS, atlas_texture},
+        graphics::{ATLAS_COLUMNS, atlas_span_texture, atlas_texture},
         panes::{self, pane, running_placeholder, title_bar, title_bar_with_detail},
+        sidebar::tooltip_style,
     },
     texture_renderer::TextureRenderer,
-    ui::fonts,
+    ui::{fonts, palette, sizes::s},
 };
-use missingno_core::graphics::{GraphicsView, PaletteSet};
+use missingno_core::graphics::{AtlasRegion, GraphicsView, PaletteSet, TileAtlas};
 use missingno_gb::ppu::types::palette::{Palette, PaletteIndex};
 
 /// Display scale of the atlas texture.
@@ -87,40 +89,37 @@ impl TileAtlasPane {
             return running_placeholder("Tiles");
         };
 
-        let (width, height, pixels) = match &atlas.palettes {
+        let resolve = self.tile_resolver(atlas, colors);
+        let body = region_layout(atlas, resolve.as_ref());
+
+        pane(self.title_bar(graphics, atlas.palettes.clone()), body)
+    }
+
+    /// The palette index → colour map for `atlas`: the user's DMG shades for a
+    /// frontend-shaded atlas, or the picked CRAM palette (greyscale when none)
+    /// for a core-owned one.
+    fn tile_resolver(&self, atlas: &TileAtlas, colors: &ConsoleColors) -> Box<dyn Fn(u8) -> RGB8> {
+        match &atlas.palettes {
             PaletteSet::FrontendShades => {
                 let palette = *colors.tiles_palette();
-                atlas_texture(atlas, ATLAS_COLUMNS, move |index| {
-                    palette.color(PaletteIndex(index))
-                })
+                Box::new(move |index| palette.color(PaletteIndex(index)))
             }
             PaletteSet::Owned(named) => {
                 let chosen = self
                     .selected_palette
                     .checked_sub(1)
-                    .and_then(|i| named.get(i));
-                atlas_texture(atlas, ATLAS_COLUMNS, |index| match chosen {
-                    Some(named) => *named
+                    .and_then(|i| named.get(i))
+                    .cloned();
+                Box::new(move |index| match &chosen {
+                    Some(named) => named
                         .colors
                         .get(index as usize)
-                        .unwrap_or(&rgb::RGB8::new(0, 0, 0)),
+                        .copied()
+                        .unwrap_or(RGB8::new(0, 0, 0)),
                     None => Palette::CLASSIC.color(PaletteIndex(index)),
                 })
             }
-        };
-
-        let renderer = TextureRenderer::with_pixels(width, height, pixels);
-        let body = scrollable(
-            shader(renderer)
-                .width(iced::Length::Fixed((width * SCALE) as f32))
-                .height(iced::Length::Fixed((height * SCALE) as f32)),
-        )
-        .width(Fill);
-
-        pane(
-            self.title_bar(graphics, atlas.palettes.clone()),
-            body.into(),
-        )
+        }
     }
 
     fn title_bar<'a>(
@@ -172,6 +171,57 @@ impl TileAtlasPane {
             (None, None) => title_bar("Tiles"),
         }
     }
+}
+
+/// The atlas body laid out by region: each region's tiles under a muted header
+/// separating it from the last (the sidebar Rule idiom, scaled to the pane). An
+/// unannotated atlas (no regions) draws as one 16-wide grid.
+fn region_layout<'a>(atlas: &TileAtlas, resolve: &dyn Fn(u8) -> RGB8) -> Element<'a, app::Message> {
+    if atlas.regions.is_empty() {
+        let (width, height, pixels) = atlas_texture(atlas, ATLAS_COLUMNS, resolve);
+        return scrollable(region_texture(width, height, pixels))
+            .width(Fill)
+            .into();
+    }
+
+    let mut layout = column![].spacing(s());
+    for region in &atlas.regions {
+        let (width, height, pixels) =
+            atlas_span_texture(atlas, region.start, region.len, ATLAS_COLUMNS, resolve);
+        layout = layout
+            .push(region_header(region))
+            .push(region_texture(width, height, pixels));
+    }
+    scrollable(layout).width(Fill).into()
+}
+
+/// One region's tile grid as a scaled shader texture.
+fn region_texture<'a>(width: u32, height: u32, pixels: Vec<u8>) -> Element<'a, app::Message> {
+    let renderer = TextureRenderer::with_pixels(width, height, pixels);
+    shader(renderer)
+        .width(iced::Length::Fixed((width * SCALE) as f32))
+        .height(iced::Length::Fixed((height * SCALE) as f32))
+        .into()
+}
+
+/// A region's muted label above a faint rule, its address-range help (if any) on
+/// hover.
+fn region_header(region: &AtlasRegion) -> Element<'static, app::Message> {
+    let label = text(region.label)
+        .font(fonts::monospace())
+        .size(11.0)
+        .color(palette::MUTED);
+    let header: Element<'static, app::Message> = match region.help {
+        Some(help) => tooltip(
+            label,
+            container(text(help).font(fonts::monospace()).size(11.0)).padding([2.0, s()]),
+            tooltip::Position::Right,
+        )
+        .style(tooltip_style)
+        .into(),
+        None => label.into(),
+    };
+    column![rule::horizontal(1), header].spacing(2.0).into()
 }
 
 /// A compact `pick_list` styled for a pane title bar.

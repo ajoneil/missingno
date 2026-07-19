@@ -37,6 +37,24 @@ pub struct TileAtlas {
     pub tiles: Vec<Tile>,
     /// How to colour the indices.
     pub palettes: PaletteSet,
+    /// The hardware's grouping of the index range, for the frontend to lay out
+    /// and label — the Game Boy's three tile-data blocks. Empty where a family
+    /// exposes no grouping. Presentation metadata only: maps and objects still
+    /// index the flat `tiles` vector, never a region.
+    pub regions: Vec<AtlasRegion>,
+}
+
+/// A contiguous, named span of an atlas's tiles — the memory-map analog for
+/// tile indices. The `label` is the hardware's name for the span (Game Boy
+/// "Block 0"), the `help` an optional address-range hint ("$8000–$87FF").
+#[derive(Clone, Debug, PartialEq)]
+pub struct AtlasRegion {
+    pub label: &'static str,
+    /// First tile index in the span.
+    pub start: usize,
+    /// Tile count in the span.
+    pub len: usize,
+    pub help: Option<&'static str>,
 }
 
 impl TileAtlas {
@@ -50,6 +68,29 @@ impl TileAtlas {
         self.tiles
             .get(tile)
             .and_then(|tile| tile.indices.get(offset).copied())
+    }
+
+    /// The region containing `tile`, or `None` when unannotated or out of range.
+    pub fn region_of(&self, tile: usize) -> Option<&AtlasRegion> {
+        self.regions
+            .iter()
+            .find(|region| tile >= region.start && tile < region.start + region.len)
+    }
+
+    /// Whether `regions` is a valid grouping: ordered, contiguous, and covering
+    /// exactly `0..tiles.len()`. An empty grouping (unannotated) is valid.
+    pub fn regions_valid(&self) -> bool {
+        if self.regions.is_empty() {
+            return true;
+        }
+        let mut next = 0;
+        for region in &self.regions {
+            if region.start != next {
+                return false;
+            }
+            next += region.len;
+        }
+        next == self.tiles.len()
     }
 }
 
@@ -188,7 +229,64 @@ mod tests {
             depth_bits: 2,
             tiles,
             palettes: PaletteSet::FrontendShades,
+            regions: vec![],
         }
+    }
+
+    fn region(label: &'static str, start: usize, len: usize) -> AtlasRegion {
+        AtlasRegion {
+            label,
+            start,
+            len,
+            help: None,
+        }
+    }
+
+    #[test]
+    fn empty_regions_are_valid() {
+        let a = atlas(vec![Tile {
+            indices: vec![0; 64],
+        }]);
+        assert!(a.regions_valid());
+        assert!(a.region_of(0).is_none());
+    }
+
+    #[test]
+    fn contiguous_covering_regions_are_valid() {
+        let mut a = atlas(
+            (0..6)
+                .map(|_| Tile {
+                    indices: vec![0; 64],
+                })
+                .collect(),
+        );
+        a.regions = vec![region("A", 0, 2), region("B", 2, 4)];
+        assert!(a.regions_valid());
+        assert_eq!(a.region_of(0).map(|r| r.label), Some("A"));
+        assert_eq!(a.region_of(1).map(|r| r.label), Some("A"));
+        assert_eq!(a.region_of(2).map(|r| r.label), Some("B"));
+        assert_eq!(a.region_of(5).map(|r| r.label), Some("B"));
+        assert!(a.region_of(6).is_none());
+    }
+
+    #[test]
+    fn non_contiguous_or_short_regions_are_invalid() {
+        let mut a = atlas(
+            (0..6)
+                .map(|_| Tile {
+                    indices: vec![0; 64],
+                })
+                .collect(),
+        );
+        // A gap between the two spans.
+        a.regions = vec![region("A", 0, 2), region("B", 3, 3)];
+        assert!(!a.regions_valid());
+        // Fails to cover the whole atlas.
+        a.regions = vec![region("A", 0, 2), region("B", 2, 2)];
+        assert!(!a.regions_valid());
+        // Overshoots the atlas.
+        a.regions = vec![region("A", 0, 2), region("B", 2, 6)];
+        assert!(!a.regions_valid());
     }
 
     #[test]

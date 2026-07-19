@@ -532,6 +532,14 @@ mod tests {
                 .iter()
                 .all(|a| matches!(a.palettes, PaletteSet::Owned(_)))
         );
+        // Each bank carries the three tile-data blocks, covering its atlas.
+        assert!(live.atlases.iter().all(|a| {
+            a.regions_valid()
+                && a.regions
+                    .iter()
+                    .map(|r| r.label)
+                    .eq(["Block 0", "Block 1", "Block 2"])
+        }));
         assert!(live.maps.iter().all(|m| {
             m.entries
                 .iter()

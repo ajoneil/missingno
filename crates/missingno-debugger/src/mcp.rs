@@ -954,11 +954,23 @@ fn get_tiles(session: &mut Session, args: &Value) -> ToolOutcome {
     }
 }
 
-/// The whole atlas as a greyscale PNG image block, with a summary line.
+/// The whole atlas as a greyscale PNG image block, with a summary line. The PNG
+/// stays a plain 16-wide grid; the region grouping rides in the text summary.
 fn atlas_survey(atlas: &TileAtlas) -> ToolOutcome {
     let (width, height, pixels) = atlas_pixels(atlas, ATLAS_COLUMNS);
     let png = encode_png(width, height, &pixels)?;
-    let summary = format!(
+    Ok(vec![
+        Content::Text(atlas_summary(atlas)),
+        Content::Image {
+            data: base64_encode(&png),
+            mime_type: "image/png".into(),
+        },
+    ])
+}
+
+/// The survey text: the atlas header line plus one line per named tile region.
+fn atlas_summary(atlas: &TileAtlas) -> String {
+    let mut summary = format!(
         "{}: {} tiles, {}×{}, {}bpp, {}",
         atlas.label,
         atlas.tiles.len(),
@@ -967,13 +979,20 @@ fn atlas_survey(atlas: &TileAtlas) -> ToolOutcome {
         atlas.depth_bits,
         palette_set_name(&atlas.palettes),
     );
-    Ok(vec![
-        Content::Text(summary),
-        Content::Image {
-            data: base64_encode(&png),
-            mime_type: "image/png".into(),
-        },
-    ])
+    if !atlas.regions.is_empty() {
+        summary.push_str("\nregions:");
+        for region in &atlas.regions {
+            let last = region.start + region.len - 1;
+            summary.push_str(&format!(
+                "\n  {}: tiles {}-{}",
+                region.label, region.start, last
+            ));
+            if let Some(help) = region.help {
+                summary.push_str(&format!(" ({help})"));
+            }
+        }
+    }
+    summary
 }
 
 /// One tile as a shade glyph grid over its raw palette indices.
@@ -981,7 +1000,11 @@ fn tile_detail(atlas: &TileAtlas, tile: usize) -> ToolOutcome {
     if tile >= atlas.tiles.len() {
         return Err(format!("no tile {tile} (atlas has {})", atlas.tiles.len()));
     }
-    let mut out = format!("tile {tile} of {}:\n", atlas.label);
+    let region = atlas
+        .region_of(tile)
+        .map(|region| format!(" ({})", region.label))
+        .unwrap_or_default();
+    let mut out = format!("tile {tile} of {}{region}:\n", atlas.label);
     for y in 0..atlas.tile_height {
         for x in 0..atlas.tile_width {
             out.push(tile_glyph(atlas.pixel(tile, x, y).unwrap_or(0)));
@@ -1620,7 +1643,7 @@ mod tests {
     }
 
     fn synthetic_atlas() -> TileAtlas {
-        use missingno_core::graphics::Tile;
+        use missingno_core::graphics::{AtlasRegion, Tile};
         // Tile 0's first row ramps 0,1,2,3 then mirrors; the rest are flat.
         let mut first = vec![0u8; 64];
         first[0..8].copy_from_slice(&[0, 1, 2, 3, 3, 2, 1, 0]);
@@ -1642,6 +1665,20 @@ mod tests {
                 },
             ],
             palettes: PaletteSet::FrontendShades,
+            regions: vec![
+                AtlasRegion {
+                    label: "Block 0",
+                    start: 0,
+                    len: 2,
+                    help: Some("$8000-$87FF"),
+                },
+                AtlasRegion {
+                    label: "Block 1",
+                    start: 2,
+                    len: 2,
+                    help: Some("$8800-$8FFF"),
+                },
+            ],
         }
     }
 
@@ -1664,6 +1701,23 @@ mod tests {
             }
             _ => panic!("expected a PNG image"),
         }
+    }
+
+    #[test]
+    fn atlas_survey_summary_lists_regions() {
+        let summary = atlas_summary(&synthetic_atlas());
+        assert!(summary.contains("regions:"));
+        assert!(summary.contains("Block 0: tiles 0-1 ($8000-$87FF)"));
+        assert!(summary.contains("Block 1: tiles 2-3 ($8800-$8FFF)"));
+    }
+
+    #[test]
+    fn tile_detail_names_its_region() {
+        let out = tile_detail(&synthetic_atlas(), 3).unwrap();
+        let Content::Text(body) = &out[0] else {
+            panic!("expected text");
+        };
+        assert!(body.starts_with("tile 3 of VRAM (Block 1):"));
     }
 
     #[test]
