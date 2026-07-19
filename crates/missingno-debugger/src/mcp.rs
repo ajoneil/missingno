@@ -1797,9 +1797,10 @@ mod tests {
         assert!(out.contains("ly 100/154 (visible)"));
         assert!(out.contains(&format!("fifo: {CELL_FILLED}{CELL_EMPTY}{CELL_FILLED}")));
         assert!(out.contains("ie"));
-        // The pair matrix: headers a/b, a set (a,b) pair pip on row b.
-        assert!(out.contains("a b"));
-        assert!(out.contains("●"));
+        // The pair matrix: labels on the diagonal, the set (a,b) pip on b's
+        // row just before its label.
+        assert!(out.contains("  a\n"));
+        assert!(out.contains("● b"));
     }
 
     fn synthetic_atlas() -> TileAtlas {
