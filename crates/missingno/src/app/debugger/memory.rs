@@ -72,47 +72,32 @@ impl MemoryInterest {
 /// frame so a pane never borrows the core.
 #[derive(Clone, Copy)]
 pub enum MemoryPaneData<'b> {
-    /// Paused: one live peek readout per open memory pane, matched by base.
-    Paused {
-        regions: &'b [MemoryRegion],
-        readouts: &'b [MemoryReadout],
-    },
-    /// Running: the region browser fed by the vblank interest windows — one per
-    /// open memory pane, matched by base. A pane with no matching window yet
-    /// shows placeholders.
-    RunningBrowse {
+    /// The region browser fed by one window per open memory pane, each matched
+    /// by its base — the paused live peeks and the running vblank interest
+    /// windows alike. A pane with no matching window yet shows placeholders.
+    Browse {
         regions: &'b [MemoryRegion],
         windows: &'b [MemoryWindow],
     },
     /// Running fallback for a family without a region map: the PC-anchored
     /// snapshot window, unscrollable.
-    RunningWindow { base: u32, bytes: &'b [u8] },
-}
-
-/// An owned readout the context builder holds so a pane can borrow its bytes,
-/// matched to its pane by `base`.
-pub struct MemoryReadout {
-    pub base: u32,
-    pub bytes: Vec<u8>,
+    Window(&'b MemoryWindow),
 }
 
 impl<'b> MemoryPaneData<'b> {
-    /// The paused view over one live peek readout per open memory pane.
-    pub fn paused(regions: &'b [MemoryRegion], readouts: &'b [MemoryReadout]) -> Self {
-        Self::Paused { regions, readouts }
+    /// The paused view over one live peek window per open memory pane.
+    pub fn paused(regions: &'b [MemoryRegion], windows: &'b [MemoryWindow]) -> Self {
+        Self::Browse { regions, windows }
     }
 
     /// The running browser fed by the vblank interest windows.
     pub fn running_browse(regions: &'b [MemoryRegion], windows: &'b [MemoryWindow]) -> Self {
-        Self::RunningBrowse { regions, windows }
+        Self::Browse { regions, windows }
     }
 
     /// The running PC-anchored fallback for a family with no region map.
     pub fn running_window(window: &'b MemoryWindow) -> Self {
-        Self::RunningWindow {
-            base: window.base,
-            bytes: &window.bytes,
-        }
+        Self::Window(window)
     }
 }
 
@@ -193,9 +178,9 @@ pub fn build_readout(
     core: &dyn SystemDebugger,
     regions: &[MemoryRegion],
     selection: MemorySelection,
-) -> MemoryReadout {
+) -> MemoryWindow {
     if regions.is_empty() {
-        return MemoryReadout {
+        return MemoryWindow {
             base: 0,
             bytes: Vec::new(),
         };
@@ -204,7 +189,7 @@ pub fn build_readout(
     let region = regions[selected];
     let (_, base, visible) = window_range(region.start, region.len, selection.offset);
     let bytes = (0..visible).map(|i| core.peek(base + i)).collect();
-    MemoryReadout { base, bytes }
+    MemoryWindow { base, bytes }
 }
 
 /// Hue span in degrees a byte value is mapped across — short of a full wheel so
@@ -280,25 +265,6 @@ fn row_spans(address: u32, cells: &[Option<u8>]) -> Vec<(String, Option<Color>)>
     spans
 }
 
-/// Where the browser grid reads a byte from: contiguous paused bytes, or the
-/// running interest window (a miss renders as a placeholder cell).
-#[derive(Clone, Copy)]
-enum GridSource<'b> {
-    Contiguous { base: u32, bytes: &'b [u8] },
-    Windowed(Option<&'b MemoryWindow>),
-}
-
-impl GridSource<'_> {
-    fn cell(&self, address: u32) -> Option<u8> {
-        match self {
-            GridSource::Contiguous { base, bytes } => address
-                .checked_sub(*base)
-                .and_then(|i| bytes.get(i as usize).copied()),
-            GridSource::Windowed(window) => window.and_then(|w| w.read(address)),
-        }
-    }
-}
-
 pub struct MemoryPane {
     selection: MemorySelection,
     jump_input: String,
@@ -363,13 +329,16 @@ impl MemoryPane {
     fn browser_view(
         &self,
         regions: &[MemoryRegion],
-        source: GridSource<'_>,
+        window: Option<&MemoryWindow>,
         id: pane_grid::Pane,
     ) -> Element<'static, app::Message> {
         let selected = self.selection.region.min(regions.len() - 1);
         let region = regions[selected];
         let (offset, base, visible) = window_range(region.start, region.len, self.selection.offset);
-        let cells: Vec<Option<u8>> = (0..visible).map(|i| source.cell(base + i)).collect();
+        // A cell outside the matched window reads as an unpublished placeholder.
+        let cells: Vec<Option<u8>> = (0..visible)
+            .map(|i| window.and_then(|w| w.read(base + i)))
+            .collect();
 
         let choices: Vec<RegionChoice> = regions
             .iter()
@@ -431,13 +400,13 @@ impl MemoryPane {
 
     /// The running fallback for a family with no region map: the PC-anchored
     /// snapshot window, with a note that browsing needs a pause.
-    fn window_view(base: u32, bytes: &[u8]) -> Element<'static, app::Message> {
+    fn window_view(window: &MemoryWindow) -> Element<'static, app::Message> {
         let hint = text("Pause to browse full memory")
             .font(fonts::monospace())
             .size(11.0)
             .color(palette::MUTED);
-        let cells: Vec<Option<u8>> = bytes.iter().map(|&b| Some(b)).collect();
-        column![hint, Self::grid(base, &cells)]
+        let cells: Vec<Option<u8>> = window.bytes.iter().map(|&b| Some(b)).collect();
+        column![hint, Self::grid(window.base, &cells)]
             .spacing(s())
             .padding(s())
             .into()
@@ -522,34 +491,18 @@ impl Pane for MemoryPane {
             return panes::running_placeholder("Memory", id);
         };
         let (body, detail) = match data {
-            MemoryPaneData::Paused { regions, readouts } => {
+            MemoryPaneData::Browse { regions, windows } => {
                 if regions.is_empty() {
                     (no_map_body(), None)
                 } else {
-                    // Match this pane's own live readout by its window base.
+                    // Match this pane's own window by its base; a pane whose
+                    // window hasn't arrived yet shows placeholders.
                     let base = self.base(regions);
-                    let source = readouts
-                        .iter()
-                        .find(|readout| readout.base == base)
-                        .map(|readout| GridSource::Contiguous {
-                            base: readout.base,
-                            bytes: &readout.bytes,
-                        })
-                        .unwrap_or(GridSource::Contiguous { base, bytes: &[] });
-                    (self.browser_view(regions, source, id), self.detail(regions))
+                    let window = windows.iter().find(|window| window.base == base);
+                    (self.browser_view(regions, window, id), self.detail(regions))
                 }
             }
-            MemoryPaneData::RunningBrowse { regions, windows } => {
-                // Match this pane's own interest window by its base; a pane
-                // whose window hasn't arrived yet shows placeholders.
-                let base = self.base(regions);
-                let window = windows.iter().find(|window| window.base == base);
-                (
-                    self.browser_view(regions, GridSource::Windowed(window), id),
-                    self.detail(regions),
-                )
-            }
-            MemoryPaneData::RunningWindow { base, bytes } => (Self::window_view(base, bytes), None),
+            MemoryPaneData::Window(window) => (Self::window_view(window), None),
         };
         let title = match detail {
             Some(detail) => panes::title_bar_with_detail("Memory", detail, id),
@@ -841,15 +794,12 @@ mod tests {
             base: 0xC100,
             bytes: vec![0x10, 0x20, 0x30, 0x40],
         };
-        let source = GridSource::Windowed(Some(&window));
         // Covered addresses read through.
-        assert_eq!(source.cell(0xC100), Some(0x10));
-        assert_eq!(source.cell(0xC103), Some(0x40));
+        assert_eq!(window.read(0xC100), Some(0x10));
+        assert_eq!(window.read(0xC103), Some(0x40));
         // Just outside the published span → an unpublished cell.
-        assert_eq!(source.cell(0xC104), None);
-        assert_eq!(source.cell(0xC0FF), None);
-        // No window published yet → every cell is a miss.
-        assert_eq!(GridSource::Windowed(None).cell(0xC100), None);
+        assert_eq!(window.read(0xC104), None);
+        assert_eq!(window.read(0xC0FF), None);
     }
 
     #[test]

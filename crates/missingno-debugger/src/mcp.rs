@@ -1076,9 +1076,8 @@ const TILE_GLYPHS: [char; 4] = ['·', '░', '▒', '▓'];
 /// The decoded graphics surfaces, enabling capture first if it was off — the
 /// `get_waveforms` pattern. `None` when the core exposes none.
 fn ensure_graphics(session: &mut Session) -> Option<GraphicsView> {
-    if session.graphics().is_none() {
-        session.set_graphics_capture(true);
-    }
+    // Enabling capture is a no-op when already on, so one decode suffices.
+    session.set_graphics_capture(true);
     session.graphics()
 }
 
@@ -1118,7 +1117,7 @@ fn atlas_summary(atlas: &TileAtlas) -> String {
     let mut summary = format!(
         "{}: {} tiles, {}×{}, {}bpp, {}",
         atlas.label,
-        atlas.tiles.len(),
+        atlas.tile_count(),
         atlas.tile_width,
         atlas.tile_height,
         atlas.depth_bits,
@@ -1142,8 +1141,8 @@ fn atlas_summary(atlas: &TileAtlas) -> String {
 
 /// One tile as a shade glyph grid over its raw palette indices.
 fn tile_detail(atlas: &TileAtlas, tile: usize) -> ToolOutcome {
-    if tile >= atlas.tiles.len() {
-        return Err(format!("no tile {tile} (atlas has {})", atlas.tiles.len()));
+    if tile >= atlas.tile_count() {
+        return Err(format!("no tile {tile} (atlas has {})", atlas.tile_count()));
     }
     let region = atlas
         .region_of(tile)
@@ -1171,7 +1170,7 @@ fn atlas_pixels(atlas: &TileAtlas, columns: usize) -> (u32, u32, Vec<u8>) {
     let tile_w = atlas.tile_width as usize;
     let tile_h = atlas.tile_height as usize;
     let columns = columns.max(1);
-    let rows = atlas.tiles.len().div_ceil(columns).max(1);
+    let rows = atlas.tile_count().div_ceil(columns).max(1);
     let width = (columns * tile_w) as u32;
     let height = (rows * tile_h) as u32;
 
@@ -1804,27 +1803,18 @@ mod tests {
     }
 
     fn synthetic_atlas() -> TileAtlas {
-        use missingno_core::graphics::{AtlasRegion, Tile};
+        use missingno_core::graphics::AtlasRegion;
         // Tile 0's first row ramps 0,1,2,3 then mirrors; the rest are flat.
-        let mut first = vec![0u8; 64];
-        first[0..8].copy_from_slice(&[0, 1, 2, 3, 3, 2, 1, 0]);
+        let mut indices = vec![0u8; 4 * 64];
+        indices[0..8].copy_from_slice(&[0, 1, 2, 3, 3, 2, 1, 0]);
+        indices[2 * 64..3 * 64].fill(1);
+        indices[3 * 64..4 * 64].fill(3);
         TileAtlas {
             label: "VRAM".into(),
             tile_width: 8,
             tile_height: 8,
             depth_bits: 2,
-            tiles: vec![
-                Tile { indices: first },
-                Tile {
-                    indices: vec![0; 64],
-                },
-                Tile {
-                    indices: vec![1; 64],
-                },
-                Tile {
-                    indices: vec![3; 64],
-                },
-            ],
+            indices,
             palettes: PaletteSet::FrontendShades,
             regions: vec![
                 AtlasRegion {

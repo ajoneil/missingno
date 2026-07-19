@@ -20,6 +20,7 @@ use crate::app::{
         sizes::{s, xs},
     },
 };
+use missingno_core::graphics::GraphicsView;
 use missingno_core::inspect::{MemoryRegion, MemoryWindow, Watch, WatchTerm};
 use missingno_core::symbols::Symbol;
 use missingno_gb::ppu::types::palette::PaletteChoice;
@@ -154,6 +155,10 @@ pub struct Debugger {
     /// browser and jump-to-address work while the core is away. Owned because
     /// it is cart-dependent (a board with RAM adds a region).
     memory_regions: Vec<MemoryRegion>,
+    /// The paused decode of the core's graphics surfaces, rebuilt only when
+    /// emulation advances (or capture toggles) rather than on every redraw.
+    /// `None` unless a graphics pane has capture on.
+    graphics: Option<GraphicsView>,
     sidebar: Sidebar,
     panes: DebuggerPanes,
     running: bool,
@@ -243,6 +248,7 @@ impl Debugger {
             last_snapshot: None,
             last_memory_windows: Vec::new(),
             memory_regions,
+            graphics: None,
             sidebar: Sidebar::new(),
             panes,
             running: false,
@@ -265,6 +271,13 @@ impl Debugger {
             core.load_sidecars(rom_path);
             self.rom_path = Some(rom_path.to_path_buf());
         }
+    }
+
+    /// Rebuild the paused graphics decode from the core. Called only when
+    /// emulation advances or capture toggles, so a plain redraw reuses the last
+    /// decode instead of re-walking VRAM.
+    fn refresh_graphics(&mut self) {
+        self.graphics = self.debugger.as_ref().and_then(|core| core.graphics());
     }
 
     fn save_sidecars(&self) {
@@ -329,6 +342,9 @@ impl Debugger {
         self.last_status = None;
         self.last_snapshot = None;
         self.last_memory_windows.clear();
+        // The core is back and paused; decode its surfaces once for the redraws
+        // that follow rather than on each one.
+        self.refresh_graphics();
     }
 
     /// Whether the core is away on the emu thread.
@@ -500,13 +516,17 @@ impl Debugger {
                 let Some(core) = &mut self.debugger else {
                     return Task::none();
                 };
-                Self::display_task(core.step().into_frame())
+                let frame = core.step().into_frame();
+                self.refresh_graphics();
+                Self::display_task(frame)
             }
             Message::StepOver => {
                 let Some(core) = &mut self.debugger else {
                     return Task::none();
                 };
-                Self::display_task(core.step_over().into_frame())
+                let frame = core.step_over().into_frame();
+                self.refresh_graphics();
+                Self::display_task(frame)
             }
             Message::StepFrame => {
                 let Some(core) = &mut self.debugger else {
@@ -520,7 +540,9 @@ impl Debugger {
                 ) {
                     self.running = false;
                 }
-                Self::display_task(outcome.into_frame())
+                let frame = outcome.into_frame();
+                self.refresh_graphics();
+                Self::display_task(frame)
             }
             Message::CaptureFrame => {
                 let Some(core) = &self.debugger else {
@@ -545,6 +567,7 @@ impl Debugger {
                 match core.capture_trace(&path) {
                     Some(display) => {
                         self.frame += 1;
+                        self.refresh_graphics();
                         Self::display_task(Some(display))
                     }
                     None => Task::none(),
@@ -733,6 +756,9 @@ impl Debugger {
                 } else if let Some(core) = &mut self.debugger {
                     core.set_wave_capture(wants_waves);
                     core.set_graphics_capture(wants_graphics);
+                    // Capture just changed what the core will decode; refresh so
+                    // a newly opened graphics pane fills without a step.
+                    self.refresh_graphics();
                 }
                 Task::none()
             }
@@ -756,10 +782,11 @@ impl Debugger {
         let colors = gb_source.map(|source| source.colors(self.panes.palette()));
         // One live readout per open memory pane, each matched back by its base.
         let memory_selections = self.panes.memory_selections();
-        let memory_regions = core.memory_regions();
-        let readouts: Vec<memory::MemoryReadout> = memory_selections
+        // The cached region map: cart-fixed, so no need to re-query the core.
+        let memory_regions = &self.memory_regions;
+        let readouts: Vec<MemoryWindow> = memory_selections
             .iter()
-            .map(|&selection| memory::build_readout(core.as_ref(), &memory_regions, selection))
+            .map(|&selection| memory::build_readout(core.as_ref(), memory_regions, selection))
             .collect();
         let disasm_readout = self
             .panes
@@ -768,20 +795,18 @@ impl Debugger {
         // The frozen tail the core still holds while paused; `None` unless the
         // audio scope has capture on.
         let waves = core.channel_waves();
-        // The decoded surfaces the core still holds while paused; `None` unless
-        // a graphics pane has capture on.
-        let graphics = core.graphics();
         let ctx = PaneContext {
             colors: colors.as_ref(),
             breakpoints: &self.breakpoints,
             watches: &self.watchpoints,
             memory: (!memory_selections.is_empty())
-                .then(|| memory::MemoryPaneData::paused(&memory_regions, &readouts)),
+                .then(|| memory::MemoryPaneData::paused(memory_regions, &readouts)),
             disasm: disasm_readout
                 .as_ref()
                 .map(disassembly::DisasmPaneData::new),
             waves: waves.as_deref(),
-            graphics: graphics.as_ref(),
+            // The paused decode, rebuilt only when emulation advances.
+            graphics: self.graphics.as_ref(),
         };
 
         let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
@@ -867,7 +892,8 @@ impl Debugger {
             .flatten();
         // This vblank's captured windows; `None` unless capture is on.
         let waves = snapshot.channel_waves();
-        // This vblank's decoded surfaces; `None` unless graphics capture is on.
+        // This vblank's decoded surfaces, borrowed from the snapshot; `None`
+        // unless graphics capture is on.
         let graphics = snapshot.graphics();
         self.panes.view(Some(PaneContext {
             colors,
@@ -876,9 +902,9 @@ impl Debugger {
             memory: self.running_memory(snapshot),
             disasm: disasm_readout
                 .as_ref()
-                .map(disassembly::DisasmPaneData::new),
+                .map(disassembly::DisasmPaneData::running),
             waves: waves.as_deref(),
-            graphics: graphics.as_ref(),
+            graphics,
         }))
     }
 
@@ -1079,6 +1105,7 @@ impl Debugger {
             core.reset();
             self.frame = 0;
         }
+        self.refresh_graphics();
     }
 
     pub fn set_control(&mut self, control: ControlId, input: ControlInput) {

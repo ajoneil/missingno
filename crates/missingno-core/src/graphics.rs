@@ -33,14 +33,17 @@ pub struct TileAtlas {
     pub tile_height: u8,
     /// Palette-index depth: 2 (Game Boy / NES) or 4 (SMS).
     pub depth_bits: u8,
-    /// Tiles in hardware index order.
-    pub tiles: Vec<Tile>,
+    /// Every tile's decoded palette indices, row-major within a tile and one
+    /// tile after another in hardware index order — a single flat buffer, each
+    /// tile occupying [`tile_stride`](Self::tile_stride) entries. Index it
+    /// through [`pixel`](Self::pixel) or [`tile_indices`](Self::tile_indices).
+    pub indices: Vec<u8>,
     /// How to colour the indices.
     pub palettes: PaletteSet,
     /// The hardware's grouping of the index range, for the frontend to lay out
     /// and label — the Game Boy's three tile-data blocks. Empty where a family
     /// exposes no grouping. Presentation metadata only: maps and objects still
-    /// index the flat `tiles` vector, never a region.
+    /// index tiles by number, never a region.
     pub regions: Vec<AtlasRegion>,
 }
 
@@ -58,16 +61,35 @@ pub struct AtlasRegion {
 }
 
 impl TileAtlas {
+    /// Palette indices per tile: `tile_width * tile_height`.
+    pub fn tile_stride(&self) -> usize {
+        self.tile_width as usize * self.tile_height as usize
+    }
+
+    /// Number of tiles in the atlas.
+    pub fn tile_count(&self) -> usize {
+        match self.tile_stride() {
+            0 => 0,
+            stride => self.indices.len() / stride,
+        }
+    }
+
+    /// One tile's row-major palette indices, or `None` when out of range.
+    pub fn tile_indices(&self, tile: usize) -> Option<&[u8]> {
+        let stride = self.tile_stride();
+        let start = tile.checked_mul(stride)?;
+        self.indices.get(start..start.checked_add(stride)?)
+    }
+
     /// The palette index at pixel `(x, y)` of `tile`, or `None` when either
     /// index is out of range. Row-major within the tile.
     pub fn pixel(&self, tile: usize, x: u8, y: u8) -> Option<u8> {
         if x >= self.tile_width || y >= self.tile_height {
             return None;
         }
-        let offset = y as usize * self.tile_width as usize + x as usize;
-        self.tiles
-            .get(tile)
-            .and_then(|tile| tile.indices.get(offset).copied())
+        let within = y as usize * self.tile_width as usize + x as usize;
+        self.tile_indices(tile)
+            .and_then(|indices| indices.get(within).copied())
     }
 
     /// The region containing `tile`, or `None` when unannotated or out of range.
@@ -78,7 +100,7 @@ impl TileAtlas {
     }
 
     /// Whether `regions` is a valid grouping: ordered, contiguous, and covering
-    /// exactly `0..tiles.len()`. An empty grouping (unannotated) is valid.
+    /// exactly `0..tile_count()`. An empty grouping (unannotated) is valid.
     pub fn regions_valid(&self) -> bool {
         if self.regions.is_empty() {
             return true;
@@ -90,16 +112,8 @@ impl TileAtlas {
             }
             next += region.len;
         }
-        next == self.tiles.len()
+        next == self.tile_count()
     }
-}
-
-/// One tile's decoded palette indices, row-major, `tile_width * tile_height` of
-/// them, each `0..2^depth_bits`. The core has decoded the planar bytes; a
-/// consumer just indexes.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Tile {
-    pub indices: Vec<u8>,
 }
 
 /// How an atlas's indices become colours.
@@ -109,8 +123,9 @@ pub enum PaletteSet {
     /// indices through the user palette, exactly like the BGP/OBP swatches.
     FrontendShades,
     /// Core owns the palettes (CGB CRAM, NES palette RAM, SMS CRAM): named
-    /// resolved-colour palettes a consumer previews or picks between.
-    Owned(Vec<NamedPalette>),
+    /// resolved-colour palettes a consumer previews or picks between. Reference
+    /// counted so the atlases sharing one palette set hold one allocation.
+    Owned(std::sync::Arc<[NamedPalette]>),
 }
 
 /// A named resolved-colour palette: `2^depth_bits` entries.
@@ -221,13 +236,13 @@ pub struct Object {
 mod tests {
     use super::*;
 
-    fn atlas(tiles: Vec<Tile>) -> TileAtlas {
+    fn atlas(indices: Vec<u8>) -> TileAtlas {
         TileAtlas {
             label: "test".into(),
             tile_width: 8,
             tile_height: 8,
             depth_bits: 2,
-            tiles,
+            indices,
             palettes: PaletteSet::FrontendShades,
             regions: vec![],
         }
@@ -244,22 +259,14 @@ mod tests {
 
     #[test]
     fn empty_regions_are_valid() {
-        let a = atlas(vec![Tile {
-            indices: vec![0; 64],
-        }]);
+        let a = atlas(vec![0; 64]);
         assert!(a.regions_valid());
         assert!(a.region_of(0).is_none());
     }
 
     #[test]
     fn contiguous_covering_regions_are_valid() {
-        let mut a = atlas(
-            (0..6)
-                .map(|_| Tile {
-                    indices: vec![0; 64],
-                })
-                .collect(),
-        );
+        let mut a = atlas(vec![0; 6 * 64]);
         a.regions = vec![region("A", 0, 2), region("B", 2, 4)];
         assert!(a.regions_valid());
         assert_eq!(a.region_of(0).map(|r| r.label), Some("A"));
@@ -271,13 +278,7 @@ mod tests {
 
     #[test]
     fn non_contiguous_or_short_regions_are_invalid() {
-        let mut a = atlas(
-            (0..6)
-                .map(|_| Tile {
-                    indices: vec![0; 64],
-                })
-                .collect(),
-        );
+        let mut a = atlas(vec![0; 6 * 64]);
         // A gap between the two spans.
         a.regions = vec![region("A", 0, 2), region("B", 3, 3)];
         assert!(!a.regions_valid());
@@ -293,7 +294,7 @@ mod tests {
     fn atlas_pixel_indexes_row_major() {
         // A single 8×8 tile whose index equals x for every row.
         let indices: Vec<u8> = (0..64).map(|i| (i % 8) as u8).collect();
-        let a = atlas(vec![Tile { indices }]);
+        let a = atlas(indices);
         assert_eq!(a.pixel(0, 0, 0), Some(0));
         assert_eq!(a.pixel(0, 5, 0), Some(5));
         assert_eq!(a.pixel(0, 5, 3), Some(5));
@@ -302,9 +303,7 @@ mod tests {
 
     #[test]
     fn atlas_pixel_bounds_check() {
-        let a = atlas(vec![Tile {
-            indices: vec![0; 64],
-        }]);
+        let a = atlas(vec![0; 64]);
         assert_eq!(a.pixel(0, 8, 0), None); // x out of range
         assert_eq!(a.pixel(0, 0, 8), None); // y out of range
         assert_eq!(a.pixel(1, 0, 0), None); // no such tile

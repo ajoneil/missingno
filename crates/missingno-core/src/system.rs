@@ -152,9 +152,10 @@ pub trait InspectSnapshot: Send {
         None
     }
     /// The decoded graphics surfaces (tile atlases, maps, object table) captured
-    /// this vblank, for the graphics panes while the core runs. `None` when the
-    /// family has no such surfaces, or graphics capture is disabled.
-    fn graphics(&self) -> Option<GraphicsView> {
+    /// this vblank, for the graphics panes while the core runs. Borrowed from the
+    /// snapshot so the per-frame render does not clone it. `None` when the family
+    /// has no such surfaces, or graphics capture is disabled.
+    fn graphics(&self) -> Option<&GraphicsView> {
         None
     }
 }

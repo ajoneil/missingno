@@ -62,7 +62,10 @@ pub type SnapshotSlot = Arc<Mutex<Option<DebugView>>>;
 /// Latest-value handoff for the memory viewers' interest windows: one window
 /// per open memory pane, peeked at the vblank boundary. Only written while a
 /// debugger payload runs with at least one interest set.
-pub type MemoryWindowSlot = Arc<Mutex<Vec<MemoryWindow>>>;
+/// `None` when no window set has been published since the last take (keep the
+/// last); `Some` for a fresh publish, empty when interest just went away so the
+/// consumer clears rather than pinning a stale peek.
+pub type MemoryWindowSlot = Arc<Mutex<Option<Vec<MemoryWindow>>>>;
 
 /// The latest-value publish slots the emu thread writes each frame, grouped so
 /// they thread through construction as one handle.
@@ -223,7 +226,7 @@ pub fn subscription_worker() -> impl iced::futures::Stream<Item = EmuEvent> {
         frames: Arc::new(Mutex::new(None)),
         status: Arc::new(Mutex::new(None)),
         snapshot: Arc::new(Mutex::new(None)),
-        memory_window: Arc::new(Mutex::new(Vec::new())),
+        memory_window: Arc::new(Mutex::new(None)),
     };
 
     let handle = EmuHandle {
@@ -404,7 +407,17 @@ impl EmuLoop {
                     payload.remove_watch(&watch);
                 }
             }
-            EmuCommand::SetMemoryInterest(interest) => self.memory_interest = interest,
+            EmuCommand::SetMemoryInterest(interest) => {
+                self.memory_interest = interest;
+                // Interest gone empty (the last memory pane closed): publish an
+                // empty set once so the consumer clears the pinned windows
+                // rather than keeping the last peek shown.
+                if self.memory_interest.is_empty()
+                    && let Ok(mut slot) = self.memory_window.lock()
+                {
+                    *slot = Some(Vec::new());
+                }
+            }
             EmuCommand::SetWaveCapture(on) => {
                 self.wave_capture = on;
                 if let Some(payload) = &mut self.payload {
@@ -462,11 +475,12 @@ impl EmuLoop {
             && !self.memory_interest.is_empty()
             && let Ok(mut slot) = self.memory_window.lock()
         {
-            *slot = self
-                .memory_interest
-                .iter()
-                .filter_map(|&interest| payload.peek_window(interest))
-                .collect();
+            *slot = Some(
+                self.memory_interest
+                    .iter()
+                    .filter_map(|&interest| payload.peek_window(interest))
+                    .collect(),
+            );
         }
         if new_frame {
             let _ = self.events.unbounded_send(EmuEvent::FrameReady);
@@ -530,7 +544,7 @@ mod tests {
             frames: Arc::new(Mutex::new(None)),
             status: Arc::new(Mutex::new(None)),
             snapshot: Arc::new(Mutex::new(None)),
-            memory_window: Arc::new(Mutex::new(Vec::new())),
+            memory_window: Arc::new(Mutex::new(None)),
         };
         let (events, _events_rx) = iced::futures::channel::mpsc::unbounded();
         let (returns, _returns_rx) = channel();

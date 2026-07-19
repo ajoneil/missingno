@@ -64,12 +64,26 @@ pub struct DisasmReadout {
 #[derive(Clone, Copy)]
 pub struct DisasmPaneData<'b> {
     pub rows: &'b [DisasmRow],
+    /// The core is running on the emu thread: the walk is PC-anchored and a bank
+    /// jump cannot be resolved (the core is away), so the pane disables the jump
+    /// form and hides the jumped chip rather than contradicting the display.
+    pub running: bool,
 }
 
 impl<'b> DisasmPaneData<'b> {
+    /// Paused: the walk honours the pane's jump anchor.
     pub fn new(readout: &'b DisasmReadout) -> Self {
         Self {
             rows: &readout.rows,
+            running: false,
+        }
+    }
+
+    /// Running: the walk is PC-anchored from the snapshot.
+    pub fn running(readout: &'b DisasmReadout) -> Self {
+        Self {
+            rows: &readout.rows,
+            running: true,
         }
     }
 }
@@ -271,21 +285,39 @@ impl DisassemblyPane {
         }
     }
 
-    /// The jump field and the button that returns to following the PC.
-    fn controls(&self) -> iced::Element<'static, app::Message> {
-        let jump = text_input("bank:addr", &self.jump_input)
-            .font(fonts::monospace())
-            .size(13.0)
-            .width(Length::Fixed(110.0))
-            .on_input(|value| Message::JumpInput(value).into())
-            .on_submit(app::Message::Debugger(
-                debugger::Message::ResolveDisasmJump(self.jump_input.clone()),
-            ));
+    /// The jump field and the button that returns to following the PC. While the
+    /// core runs the walk is PC-anchored and a jump cannot be resolved, so the
+    /// field is disabled (an on-input-less `text_input`) with a hint to pause.
+    fn controls(&self, running: bool) -> iced::Element<'static, app::Message> {
+        let jump: iced::Element<'static, app::Message> = {
+            let field: iced::widget::TextInput<'_, app::Message> =
+                text_input("bank:addr", &self.jump_input)
+                    .font(fonts::monospace())
+                    .size(13.0)
+                    .width(Length::Fixed(110.0));
+            if running {
+                iced::widget::tooltip(
+                    field,
+                    text("pause to jump to a bank")
+                        .font(fonts::monospace())
+                        .size(11.0),
+                    iced::widget::tooltip::Position::Bottom,
+                )
+                .into()
+            } else {
+                field
+                    .on_input(|value| Message::JumpInput(value).into())
+                    .on_submit(app::Message::Debugger(
+                        debugger::Message::ResolveDisasmJump(self.jump_input.clone()),
+                    ))
+                    .into()
+            }
+        };
 
         let follow = {
             let label = text("PC").font(fonts::monospace()).size(13.0);
             let mut btn = button(label).style(button::text);
-            if self.anchor.is_some() {
+            if self.anchor.is_some() && !running {
                 btn = btn.on_press(Message::SetAnchor(None).into());
             }
             btn
@@ -366,12 +398,14 @@ impl Pane for DisassemblyPane {
             .collect();
 
         // The anchor detail names where the walk starts when it isn't the PC.
+        // While running the walk is PC-anchored regardless of the stored anchor,
+        // so the jumped chip is suppressed to not contradict the display.
         let detail = match self.anchor {
-            Some(_) => Some(text("jumped").color(palette::YELLOW)),
-            None if !breakpoints.is_empty() => {
+            Some(_) if !data.running => Some(text("jumped").color(palette::YELLOW)),
+            _ if !breakpoints.is_empty() => {
                 Some(text(format!("{} bp", breakpoints.len())).color(palette::MUTED))
             }
-            None => None,
+            _ => None,
         }
         .map(|t| t.font(fonts::monospace()).size(11.0));
 
@@ -392,7 +426,7 @@ impl Pane for DisassemblyPane {
         pane(
             header,
             Column::new()
-                .push(self.controls())
+                .push(self.controls(data.running))
                 .push(listing)
                 .spacing(s())
                 .width(Length::Fill)

@@ -123,14 +123,28 @@ pub fn save(key: &str, state: Option<&pane_grid::State<Box<dyn Pane>>>) {
     }
 }
 
+/// Labels of panes retired into the sidebar (SMS Z80/VDP, NES 2A03/2C02): a
+/// saved layout naming one drops just that pane, unlike an unknown label which
+/// discards the whole layout.
+const RETIRED_LABELS: &[&str] = &["Z80", "VDP", "2A03", "2C02"];
+
+/// The outcome of rebuilding one saved node: a live configuration, or a
+/// retired-known pane to omit (collapsing its split). An unknown label is a
+/// `None` at the call site and discards the whole layout.
+enum Rebuilt {
+    Node(pane_grid::Configuration<Box<dyn Pane>>),
+    Skip,
+}
+
 impl SavedPanes {
     pub fn into_state(self) -> Option<Option<pane_grid::State<Box<dyn Pane>>>> {
         match self.0 {
             None => Some(None),
-            Some(layout) => {
-                let config = layout.into_configuration()?;
-                Some(Some(pane_grid::State::with_configuration(config)))
-            }
+            Some(layout) => match layout.into_configuration()? {
+                Rebuilt::Node(config) => Some(Some(pane_grid::State::with_configuration(config))),
+                // The whole saved layout was retired panes: no layout to restore.
+                Rebuilt::Skip => Some(None),
+            },
         }
     }
 }
@@ -157,32 +171,45 @@ impl SavedLayout {
         }
     }
 
-    fn into_configuration(self) -> Option<pane_grid::Configuration<Box<dyn Pane>>> {
+    fn into_configuration(self) -> Option<Rebuilt> {
         match self {
             Self::Split {
                 vertical,
                 ratio,
                 a,
                 b,
-            } => Some(pane_grid::Configuration::Split {
-                axis: if vertical {
+            } => {
+                let axis = if vertical {
                     pane_grid::Axis::Vertical
                 } else {
                     pane_grid::Axis::Horizontal
-                },
-                ratio,
-                a: Box::new(a.into_configuration()?),
-                b: Box::new(b.into_configuration()?),
-            }),
-            Self::Pane(saved) => Some(pane_grid::Configuration::Pane(saved.build()?)),
+                };
+                match (a.into_configuration()?, b.into_configuration()?) {
+                    // Both children retired: the whole split collapses away.
+                    (Rebuilt::Skip, Rebuilt::Skip) => Some(Rebuilt::Skip),
+                    // One retired: the split collapses onto the surviving child.
+                    (Rebuilt::Skip, keep) | (keep, Rebuilt::Skip) => Some(keep),
+                    (Rebuilt::Node(a), Rebuilt::Node(b)) => {
+                        Some(Rebuilt::Node(pane_grid::Configuration::Split {
+                            axis,
+                            ratio,
+                            a: Box::new(a),
+                            b: Box::new(b),
+                        }))
+                    }
+                }
+            }
+            Self::Pane(saved) => saved.build(),
         }
     }
 }
 
 impl SavedPane {
     /// Rebuild the pane, migrating the retired two-kind tile-map labels onto the
-    /// collapsed kind and restoring its source and scroll offset.
-    fn build(self) -> Option<Box<dyn Pane>> {
+    /// collapsed kind and restoring its source and scroll offset. A retired
+    /// chip-state label (now in the sidebar) drops just this pane; an unknown
+    /// label is `None` and discards the whole layout.
+    fn build(self) -> Option<Rebuilt> {
         // The pre-instance layout named a map per pane; the collapsed kind takes
         // that map as its source.
         let (label, source) = match self.label.as_str() {
@@ -190,6 +217,9 @@ impl SavedPane {
             "Tile Map 1" => ("Tile Map", self.source.or(Some(1))),
             other => (other, self.source),
         };
+        if RETIRED_LABELS.contains(&label) {
+            return Some(Rebuilt::Skip);
+        }
         let descriptor = all_descriptors().find(|descriptor| descriptor.label == label)?;
         let mut pane = (descriptor.construct)();
         if let Some(index) = source {
@@ -198,7 +228,7 @@ impl SavedPane {
         if let Some(offset) = self.offset {
             pane.set_source_offset(offset);
         }
-        Some(pane)
+        Some(Rebuilt::Node(pane_grid::Configuration::Pane(pane)))
     }
 }
 
@@ -238,8 +268,10 @@ mod tests {
         let saved = SavedLayout::capture(state.layout(), &state).unwrap();
         let serialized = ron::to_string(&saved).unwrap();
         let restored: SavedLayout = ron::from_str(&serialized).unwrap();
-        let restored_state =
-            pane_grid::State::with_configuration(restored.into_configuration().unwrap());
+        let restored_state = match restored.into_configuration().unwrap() {
+            Rebuilt::Node(config) => pane_grid::State::with_configuration(config),
+            Rebuilt::Skip => panic!("a live layout is not skipped"),
+        };
 
         // The tile map's map and the memory pane's region survive the trip.
         let panes = panes_of(&restored_state);
@@ -292,6 +324,38 @@ mod tests {
         assert!(saved.into_configuration().is_none());
         // And a whole file naming it discards rather than restoring lopsided.
         let data = r#"(Some(Pane(SavedPane(label:"Not A Pane"))))"#;
+        assert!(parse(data).unwrap().into_state().is_none());
+    }
+
+    #[test]
+    fn retired_chip_label_drops_only_that_pane() {
+        // A saved split naming a retired chip pane (SMS Z80) alongside a live
+        // pane collapses onto the survivor instead of discarding the layout.
+        let data = r#"(Some(Split(vertical:false,ratio:0.5,a:Pane("Z80"),b:Pane("Memory"))))"#;
+        let state = parse(data)
+            .unwrap()
+            .into_state()
+            .expect("a retired-known label is not discarded")
+            .expect("the surviving pane keeps a layout");
+        let panes = panes_of(&state);
+        assert_eq!(panes.len(), 1);
+        assert_eq!(panes[0].0, DebuggerPane::Memory);
+    }
+
+    #[test]
+    fn all_retired_layout_restores_to_no_layout() {
+        // A layout that is nothing but retired panes restores to the default (no
+        // layout), not a discard error.
+        let data = r#"(Some(Split(vertical:false,ratio:0.5,a:Pane("2A03"),b:Pane("2C02"))))"#;
+        assert!(matches!(parse(data).unwrap().into_state(), Some(None)));
+    }
+
+    #[test]
+    fn unknown_label_still_discards_beside_a_retired_pane() {
+        // A retired pane collapses, but an unknown label anywhere still discards
+        // the whole layout — the retired-known allowance is deliberate, not a
+        // blanket "drop anything unrecognised".
+        let data = r#"(Some(Split(vertical:false,ratio:0.5,a:Pane("VDP"),b:Pane("Not A Pane"))))"#;
         assert!(parse(data).unwrap().into_state().is_none());
     }
 }

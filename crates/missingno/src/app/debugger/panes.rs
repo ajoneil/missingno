@@ -1,5 +1,5 @@
 use core::fmt;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 
 use iced::{
     Border, Color, Element, Theme,
@@ -29,7 +29,7 @@ use crate::app::{
     system::Platform,
     ui::{
         fonts,
-        icons::{self, Icon},
+        icons::Icon,
         palette,
         sizes::{self as sizes, s, xs},
     },
@@ -353,17 +353,7 @@ const AUDIO_DESCRIPTOR: PaneDescriptor = PaneDescriptor {
 pub struct DebuggerPanes {
     family: &'static Family,
     panes: Option<pane_grid::State<Box<dyn Pane>>>,
-    handles: HashMap<PaneKey, pane_grid::Pane>,
     palette: PaletteChoice,
-}
-
-/// One open pane's identity: its kind plus an ordinal that separates coexisting
-/// instances of an instanceable kind. A single-instance kind is always
-/// ordinal 0.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PaneKey {
-    pub kind: DebuggerPane,
-    pub instance: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -419,7 +409,6 @@ impl DebuggerPanes {
 
         let mut this = Self {
             family,
-            handles: panes.as_ref().map(Self::key_handles).unwrap_or_default(),
             panes,
             palette: PaletteChoice::default(),
         };
@@ -427,25 +416,6 @@ impl DebuggerPanes {
             this.adopt_screen_view(view);
         }
         this
-    }
-
-    /// Assign each open pane a `(kind, ordinal)` key, numbering instances of a
-    /// kind in grid-iteration order.
-    fn key_handles(state: &pane_grid::State<Box<dyn Pane>>) -> HashMap<PaneKey, pane_grid::Pane> {
-        let mut next: HashMap<DebuggerPane, u32> = HashMap::new();
-        state
-            .iter()
-            .map(|(&handle, pane)| {
-                let kind = pane.kind();
-                let instance = next.entry(kind).or_insert(0);
-                let key = PaneKey {
-                    kind,
-                    instance: *instance,
-                };
-                *instance += 1;
-                (key, handle)
-            })
-            .collect()
     }
 }
 
@@ -576,59 +546,41 @@ impl DebuggerPanes {
     /// to the first one its siblings don't already show, and place it with the
     /// existing insertion logic.
     fn open_instance(&mut self, kind: DebuggerPane) {
-        let instance = self.next_instance(kind);
         let mut pane = kind.construct();
         if kind.instanceable() {
             let default = first_unshown_source(self.source_indices(kind));
             pane.set_source_index(default);
         }
 
-        let handle = if let Some(panes) = &mut self.panes {
+        if let Some(panes) = &mut self.panes {
             let (last_pane, _) = panes.iter().last().unwrap();
-            let (handle, _) = panes.split(Horizontal, *last_pane, pane).unwrap();
-            handle
+            panes.split(Horizontal, *last_pane, pane).unwrap();
         } else {
-            let (panes, handle) = pane_grid::State::new(pane);
+            let (panes, _) = pane_grid::State::new(pane);
             self.panes = Some(panes);
-            handle
-        };
-        self.handles.insert(PaneKey { kind, instance }, handle);
-        self.persist();
-    }
-
-    fn close_handle(&mut self, handle: pane_grid::Pane) {
-        let Some(key) = self.key_of_handle(handle) else {
-            return;
-        };
-        if self.handles.len() == 1 {
-            self.panes = None;
-            self.handles.clear();
-        } else if let Some(panes) = &mut self.panes {
-            panes.close(handle);
-            self.handles.remove(&key);
         }
         self.persist();
     }
 
-    /// The lowest ordinal no open instance of `kind` currently uses.
-    fn next_instance(&self, kind: DebuggerPane) -> u32 {
-        (0..)
-            .find(|&i| !self.handles.contains_key(&PaneKey { kind, instance: i }))
-            .unwrap()
+    fn close_handle(&mut self, handle: pane_grid::Pane) {
+        let Some(panes) = &mut self.panes else {
+            return;
+        };
+        // Closing the last pane leaves no grid at all.
+        if panes.iter().count() <= 1 {
+            self.panes = None;
+        } else {
+            panes.close(handle);
+        }
+        self.persist();
     }
 
+    /// The handle of the first open pane of `kind` in grid order, if any.
     fn handle_of_kind(&self, kind: DebuggerPane) -> Option<pane_grid::Pane> {
-        self.handles
+        self.panes
+            .as_ref()?
             .iter()
-            .find(|(key, _)| key.kind == kind)
-            .map(|(_, &handle)| handle)
-    }
-
-    fn key_of_handle(&self, handle: pane_grid::Pane) -> Option<PaneKey> {
-        self.handles
-            .iter()
-            .find(|(_, h)| **h == handle)
-            .map(|(&key, _)| key)
+            .find_map(|(&handle, pane)| (pane.kind() == kind).then_some(handle))
     }
 
     /// The sources currently shown by open instances of `kind`, so a new one
@@ -701,7 +653,10 @@ impl DebuggerPanes {
 
     /// How many instances of a kind are open — the rail badge count.
     pub fn instance_count(&self, kind: DebuggerPane) -> usize {
-        self.handles.keys().filter(|key| key.kind == kind).count()
+        match &self.panes {
+            Some(panes) => panes.iter().filter(|(_, pane)| pane.kind() == kind).count(),
+            None => 0,
+        }
     }
 
     pub fn available_panes(&self) -> impl Iterator<Item = DebuggerPane> {
@@ -839,18 +794,23 @@ fn build_title_bar<'a>(
 }
 
 /// The title-bar close control every pane inherits, closing its own instance.
-/// A muted × that reads as title-bar furniture — no chrome until hovered.
+/// A small muted × that reads as quiet title-bar furniture — no chrome until
+/// hovered — over a comfortably sized click target.
 fn close_button<'a>(close: pane_grid::Pane) -> Element<'a, app::Message> {
-    button(icons::m_muted(Icon::Close))
+    let glyph = iced::widget::text("\u{00D7}")
+        .font(fonts::monospace())
+        .size(11.0);
+    button(glyph)
         .on_press(Message::CloseHandle(close).into())
         .style(close_control_style)
-        .padding(0.0)
+        .padding(xs() + 2.0)
         .into()
 }
 
 fn close_control_style(_theme: &Theme, status: button::Status) -> button::Style {
     let base = button::Style {
         background: None,
+        text_color: palette::MUTED,
         border: Border::default().rounded(4.0),
         ..button::Style::default()
     };
@@ -921,7 +881,6 @@ mod tests {
         DebuggerPanes {
             family: &GB_FAMILY,
             panes: None,
-            handles: HashMap::new(),
             palette: PaletteChoice::default(),
         }
     }
@@ -931,16 +890,8 @@ mod tests {
         let mut panes = gb_panes();
         panes.update(Message::RailClick(DebuggerPane::TileMap));
         panes.update(Message::RailClick(DebuggerPane::TileMap));
-        // Two tile maps coexist, keyed by distinct ordinals.
+        // Two tile maps coexist as distinct grid panes.
         assert_eq!(panes.instance_count(DebuggerPane::TileMap), 2);
-        assert!(panes.handles.contains_key(&PaneKey {
-            kind: DebuggerPane::TileMap,
-            instance: 0,
-        }));
-        assert!(panes.handles.contains_key(&PaneKey {
-            kind: DebuggerPane::TileMap,
-            instance: 1,
-        }));
         // Their default sources are the first two maps.
         let mut sources = panes.source_indices(DebuggerPane::TileMap);
         sources.sort_unstable();

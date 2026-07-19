@@ -7,7 +7,7 @@
 //! snapshot (running) so the two agree by construction.
 
 use missingno_core::graphics::{
-    AtlasRegion, GraphicsView, MapEntry, Object, ObjectTable, PaletteSet, Tile, TileAtlas, TileMap,
+    AtlasRegion, GraphicsView, MapEntry, Object, ObjectTable, PaletteSet, TileAtlas, TileMap,
     Viewport,
 };
 use missingno_core::inspect::Tone;
@@ -49,18 +49,16 @@ const TILE_BLOCKS: [AtlasRegion; 3] = [
 /// atlas of 8×8, 2bpp palette indices. `palettes` says how a consumer colours
 /// them — frontend shades on DMG, core-owned CRAM on CGB.
 pub fn decode_bank_atlas(bank: &VramBank, label: String, palettes: PaletteSet) -> TileAtlas {
-    let mut tiles = Vec::with_capacity(TILES_PER_BANK);
+    let mut indices = Vec::with_capacity(TILES_PER_BANK * 64);
     for block in 0..3u8 {
         let tile_block = bank.tile_block(TileBlockId(block));
         for index in 0..128u8 {
             let tile = tile_block.tile(TileIndex(index));
-            let mut indices = Vec::with_capacity(64);
             for y in 0..8 {
                 for x in 0..8 {
                     indices.push(tile.pixel(x, y).0);
                 }
             }
-            tiles.push(Tile { indices });
         }
     }
     let atlas = TileAtlas {
@@ -68,7 +66,7 @@ pub fn decode_bank_atlas(bank: &VramBank, label: String, palettes: PaletteSet) -
         tile_width: 8,
         tile_height: 8,
         depth_bits: 2,
-        tiles,
+        indices,
         palettes,
         regions: TILE_BLOCKS.to_vec(),
     };
@@ -212,7 +210,7 @@ mod tests {
         data[0x11] = 0b0110_0000;
         let bank = VramBank::from_bytes(&data);
         let atlas = decode_bank_atlas(&bank, "VRAM".into(), PaletteSet::FrontendShades);
-        assert_eq!(atlas.tiles.len(), TILES_PER_BANK);
+        assert_eq!(atlas.tile_count(), TILES_PER_BANK);
         assert!(matches!(atlas.palettes, PaletteSet::FrontendShades));
         // Three 128-tile blocks in address order, fully covering the bank.
         assert!(atlas.regions_valid());
@@ -225,7 +223,7 @@ mod tests {
         assert_eq!(atlas.pixel(1, 2, 0), Some(3));
         assert_eq!(atlas.pixel(1, 3, 0), Some(0));
         // Every index stays within the 2bpp range.
-        assert!(atlas.tiles.iter().all(|t| t.indices.iter().all(|&i| i < 4)));
+        assert!(atlas.indices.iter().all(|&i| i < 4));
     }
 
     #[test]

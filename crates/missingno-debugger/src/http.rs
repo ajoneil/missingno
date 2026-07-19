@@ -4,8 +4,8 @@
 //! routes serve any core.
 
 use missingno_core::graphics::{
-    GraphicsView, MapEntry, NamedPalette, Object, ObjectTable, PaletteSet, Tile, TileAtlas,
-    TileMap, Viewport,
+    GraphicsView, MapEntry, NamedPalette, Object, ObjectTable, PaletteSet, TileAtlas, TileMap,
+    Viewport,
 };
 use missingno_core::inspect::{
     BitTable, PairMatrix, PixelStrip, Pointer, Register, RegisterPair, Row, Section, SectionBlock,
@@ -511,9 +511,8 @@ fn wave_json(wave: &ChannelWave) -> Value {
 
 /// Auto-enables capture when it was off, like `/waveforms`.
 fn graphics_json(session: &mut Session) -> Value {
-    if session.graphics().is_none() {
-        session.set_graphics_capture(true);
-    }
+    // Enabling capture is a no-op when already on, so one decode suffices.
+    session.set_graphics_capture(true);
     match session.graphics() {
         Some(graphics) => json!({ "graphics": graphics_view_json(&graphics) }),
         None => json!({ "graphics": Value::Null }),
@@ -548,7 +547,7 @@ fn atlas_json(atlas: &TileAtlas) -> Value {
         "depth_bits": atlas.depth_bits,
         "palettes": palette_set_json(&atlas.palettes),
         "regions": regions,
-        "tiles": atlas.tiles.iter().map(|tile: &Tile| json!(tile.indices)).collect::<Vec<_>>(),
+        "tiles": (0..atlas.tile_count()).map(|tile| json!(atlas.tile_indices(tile))).collect::<Vec<_>>(),
     })
 }
 

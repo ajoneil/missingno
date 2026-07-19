@@ -199,11 +199,11 @@ impl App {
                         if let Some(snapshot) = snapshot {
                             debugger.apply_snapshot(snapshot);
                         }
-                        // Skip an empty take so a frame the emu thread didn't
-                        // publish keeps the last windows rather than clearing.
-                        if let Some(memory_windows) = memory_windows
-                            && !memory_windows.is_empty()
-                        {
+                        // `Some(Some(_))` is a fresh publish — apply it even
+                        // when empty, so a closed pane clears rather than pins
+                        // the last peek. `Some(None)` means nothing was
+                        // published since the last take: keep the last windows.
+                        if let Some(Some(memory_windows)) = memory_windows {
                             debugger.apply_memory_windows(memory_windows);
                         }
                     }

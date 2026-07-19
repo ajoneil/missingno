@@ -27,7 +27,7 @@ pub fn atlas_texture(
     columns: usize,
     resolve: impl Fn(u8) -> RGB8,
 ) -> (u32, u32, Vec<u8>) {
-    atlas_span_texture(atlas, 0, atlas.tiles.len(), columns, resolve)
+    atlas_span_texture(atlas, 0, atlas.tile_count(), columns, resolve)
 }
 
 /// As [`atlas_texture`], but over the tile span `start..start + len` — the unit
@@ -160,18 +160,14 @@ mod tests {
 
     #[test]
     fn atlas_texture_dimensions_and_colour() {
-        use missingno_core::graphics::{PaletteSet, Tile};
+        use missingno_core::graphics::PaletteSet;
         let atlas = TileAtlas {
             label: "t".into(),
             tile_width: 8,
             tile_height: 8,
             depth_bits: 2,
             // 20 tiles over 16 columns → 2 rows, the second row half blank.
-            tiles: (0..20)
-                .map(|_| Tile {
-                    indices: vec![0u8; 64],
-                })
-                .collect(),
+            indices: vec![0u8; 20 * 64],
             palettes: PaletteSet::FrontendShades,
             regions: vec![],
         };
@@ -183,17 +179,13 @@ mod tests {
 
     #[test]
     fn span_texture_covers_a_region_slice() {
-        use missingno_core::graphics::{PaletteSet, Tile};
+        use missingno_core::graphics::PaletteSet;
         let atlas = TileAtlas {
             label: "t".into(),
             tile_width: 8,
             tile_height: 8,
             depth_bits: 2,
-            tiles: (0..40)
-                .map(|_| Tile {
-                    indices: vec![0u8; 64],
-                })
-                .collect(),
+            indices: vec![0u8; 40 * 64],
             palettes: PaletteSet::FrontendShades,
             regions: vec![],
         };

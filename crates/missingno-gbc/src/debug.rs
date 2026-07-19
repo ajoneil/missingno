@@ -61,8 +61,10 @@ pub fn cgb_graphics_view(
     background: &[Palette; 8],
     objects: &[Palette; 8],
 ) -> GraphicsView {
-    let mut owned = cram_named("BG", background);
-    owned.extend(cram_named("OBP", objects));
+    let mut named = cram_named("BG", background);
+    named.extend(cram_named("OBP", objects));
+    // Both bank atlases preview the same CRAM palettes; share one allocation.
+    let owned: std::sync::Arc<[NamedPalette]> = named.into();
 
     let atlases = vec![
         gb_graphics::decode_bank_atlas(
@@ -408,7 +410,7 @@ impl InspectSnapshot for CgbSnapshot {
     fn channel_waves(&self) -> Option<Vec<missingno_core::waveform::ChannelWave>> {
         self.base.channel_waves()
     }
-    fn graphics(&self) -> Option<GraphicsView> {
+    fn graphics(&self) -> Option<&GraphicsView> {
         self.base.graphics()
     }
 }
@@ -438,13 +440,17 @@ impl ConsoleUi for Cgb {
         cdl: CdlWindow,
     ) -> DebugView {
         let ppu = console.ppu().model();
-        let colors = ColorSnapshot::Cgb {
-            background: cram_palettes(|palette, index| ppu.bg_color(palette, index)),
-            objects: cram_palettes(|palette, index| ppu.obj_color(palette, index)),
-        };
+        // Resolve the corrected CRAM palettes once and feed both the colour
+        // snapshot and the graphics decode, rather than re-resolving per surface.
+        let background = cram_palettes(|palette, index| ppu.bg_color(palette, index));
+        let objects = cram_palettes(|palette, index| ppu.obj_color(palette, index));
         let graphics = console
             .graphics_capture()
-            .then(|| Self::graphics_view(console));
+            .then(|| cgb_graphics_view(console.ppu(), console.vram(), &background, &objects));
+        let colors = ColorSnapshot::Cgb {
+            background,
+            objects,
+        };
         let base = GbSnapshot::capture(console, colors, frame, symbols, cdl, graphics);
         Box::new(CgbSnapshot {
             cgb: CgbView::capture(console),
@@ -658,7 +664,7 @@ mod tests {
             Arc::new(SymbolTable::default()),
             CdlWindow::default(),
         );
-        assert_eq!(on.graphics(), Some(live.clone()));
+        assert_eq!(on.graphics(), Some(&live));
         // Two banks, both core-owned CRAM palettes; maps carry per-cell palette.
         assert_eq!(live.atlases.len(), 2);
         assert!(

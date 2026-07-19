@@ -1241,8 +1241,8 @@ impl InspectSnapshot for GbSnapshot {
     fn channel_waves(&self) -> Option<Vec<ChannelWave>> {
         self.channel_waves.clone()
     }
-    fn graphics(&self) -> Option<GraphicsView> {
-        self.graphics.clone()
+    fn graphics(&self) -> Option<&GraphicsView> {
+        self.graphics.as_ref()
     }
 }
 
@@ -1357,7 +1357,7 @@ mod tests {
             Arc::new(SymbolTable::default()),
             CdlWindow::default(),
         );
-        assert_eq!(snapshot.graphics(), Some(live));
+        assert_eq!(snapshot.graphics(), Some(&live));
     }
 
     #[test]
