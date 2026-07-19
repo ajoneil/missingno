@@ -637,11 +637,20 @@ fn call_generic(
 
 // --- generic tool bodies ------------------------------------------------------
 
+/// The display device line for the status view: the technology and the panel
+/// class or broadcast standard the core states.
+fn display_line(video: &missingno_core::video::DisplayTechnology) -> String {
+    use missingno_core::video::DisplayTechnology;
+    match video {
+        DisplayTechnology::Lcd { native, panel, .. } => {
+            format!("LCD ({}) {}x{}", panel.description(), native.0, native.1)
+        }
+        DisplayTechnology::Crt { standard, .. } => format!("CRT {}", standard.name()),
+    }
+}
+
 fn status_text(session: &Session, core_name: &str) -> String {
-    let display = match session.video_out() {
-        missingno_core::video::VideoOut::Lcd { native } => format!("LCD {}x{}", native.0, native.1),
-        missingno_core::video::VideoOut::Tv { standard, .. } => format!("TV {standard:?}"),
-    };
+    let display = display_line(&session.video_out());
     format!(
         "core: {core_name}\ntitle: {title}\ndisplay: {display}\npc: {pc:04x}\nframe: {frame}\n\
          stop: {stop}",
@@ -1638,6 +1647,42 @@ mod tests {
         let tool = step_tick_tool(Some("dot")).expect("a named tick advertises step_tick");
         assert_eq!(tool.name, "step_tick");
         assert!(tool.description.contains("dot"));
+    }
+
+    #[test]
+    fn display_line_names_panel_and_standard() {
+        use missingno_core::video::{DisplayTechnology, LcdPanel};
+
+        assert_eq!(
+            display_line(&DisplayTechnology::Lcd {
+                native: (160, 144),
+                panel: LcdPanel::PassiveStn,
+                pixel_aspect: 1.0,
+            }),
+            "LCD (passive STN) 160x144"
+        );
+        assert_eq!(
+            display_line(&DisplayTechnology::Lcd {
+                native: (160, 144),
+                panel: LcdPanel::ActiveTft,
+                pixel_aspect: 1.0,
+            }),
+            "LCD (active TFT) 160x144"
+        );
+        assert_eq!(
+            display_line(&DisplayTechnology::Crt {
+                standard: missingno_core::TvStandard::Ntsc,
+                pixel_aspect: 12.0 / 7.0,
+            }),
+            "CRT NTSC"
+        );
+        assert_eq!(
+            display_line(&DisplayTechnology::Crt {
+                standard: missingno_core::TvStandard::Secam,
+                pixel_aspect: 12.0 / 7.0,
+            }),
+            "CRT SECAM"
+        );
     }
 
     #[test]

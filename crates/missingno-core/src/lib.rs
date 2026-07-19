@@ -36,5 +36,5 @@ pub use inspect::{
 };
 pub use isa::{Flow, Instruction, InstructionSet};
 pub use tv::TvStandard;
-pub use video::{ConsoleFrame, Frame, IndexedFrame, RgbaFrame, VideoOut};
+pub use video::{ConsoleFrame, DisplayTechnology, Frame, IndexedFrame, LcdPanel, RgbaFrame};
 pub use waveform::{ChannelWave, WaveRing};

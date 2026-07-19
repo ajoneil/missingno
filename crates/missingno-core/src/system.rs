@@ -15,7 +15,7 @@ use crate::graphics::GraphicsView;
 use crate::inspect::{MemoryRegion, MemoryWindow, RegisterGroup, Section, Watch, Watchable};
 use crate::isa::InstructionSet;
 use crate::symbols::{Symbol, SymbolTable};
-use crate::video::{Frame, RawFrame, VideoOut};
+use crate::video::{DisplayTechnology, Frame, RawFrame};
 use crate::waveform::ChannelWave;
 
 /// A family-interpreted control identifier. Ids 0-7 mirror the Game Boy
@@ -193,8 +193,8 @@ pub trait SystemConsole: Send {
         None
     }
     fn screen_display(&self) -> Frame;
-    /// How this console presents its video: a fixed-size LCD, or a TV raster.
-    fn video_out(&self) -> VideoOut;
+    /// The display device this console drives: a fixed-size LCD, or a CRT.
+    fn video_out(&self) -> DisplayTechnology;
     /// The game's title for filenames and session records.
     fn game_title(&self) -> String;
     /// Serialized battery-backed save contents, if the media persists any.
@@ -401,8 +401,8 @@ pub trait SystemDebugger: Send {
         None
     }
     fn frame_interval(&self) -> Duration;
-    /// How this console presents its video: a fixed-size LCD, or a TV raster.
-    fn video_out(&self) -> VideoOut;
+    /// The display device this console drives: a fixed-size LCD, or a CRT.
+    fn video_out(&self) -> DisplayTechnology;
     /// Step one frame while writing an execution trace to `path`; `None` when
     /// the system has no capture backend or capture fails.
     fn capture_trace(&mut self, _path: &Path) -> Option<Frame> {

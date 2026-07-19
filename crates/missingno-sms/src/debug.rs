@@ -314,7 +314,6 @@ impl SteppingSystem for SmsSystem {
             height: vdp::ACTIVE_LINES as u32,
             pixels: frame.pixels.clone().into(),
             palette: cram_palette(&frame.cram),
-            pixel_aspect: PIXEL_ASPECT,
         }
     }
 
@@ -322,7 +321,6 @@ impl SteppingSystem for SmsSystem {
         IndexedFrame::blank(
             vdp::PIXELS_PER_LINE as u32,
             vdp::ACTIVE_LINES as u32,
-            PIXEL_ASPECT,
             cram_palette(&[0; 32]),
         )
     }

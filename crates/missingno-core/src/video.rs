@@ -11,7 +11,9 @@ use crate::tv::TvStandard;
 /// converted to RGBA at draw time. Height is per-frame: systems without a
 /// hardware frame (emergent sync) legitimately vary line counts. The
 /// palette is shared, not static — systems with programmable colour RAM
-/// send the palette as it stood when the frame completed.
+/// send the palette as it stood when the frame completed. Pixel aspect is
+/// static per system, so it lives on the [`DisplayTechnology`] descriptor,
+/// not on the frame.
 #[derive(Clone, Debug)]
 pub struct IndexedFrame {
     pub width: u32,
@@ -19,20 +21,15 @@ pub struct IndexedFrame {
     /// Row-major palette indices, `width * height` entries.
     pub pixels: Arc<[u8]>,
     pub palette: Arc<[RGB8]>,
-    /// How wide one pixel displays relative to its height — a display-side
-    /// calibratable stage, derived from the system's dot clock on an NTSC
-    /// 4:3 screen.
-    pub pixel_aspect: f32,
 }
 
 impl IndexedFrame {
-    pub fn blank(width: u32, height: u32, pixel_aspect: f32, palette: Arc<[RGB8]>) -> Self {
+    pub fn blank(width: u32, height: u32, palette: Arc<[RGB8]>) -> Self {
         IndexedFrame {
             width,
             height,
             pixels: vec![0; (width * height) as usize].into(),
             palette,
-            pixel_aspect,
         }
     }
 
@@ -81,7 +78,6 @@ pub struct RgbaFrame {
     pub width: u32,
     pub height: u32,
     pub pixels: Arc<[u8]>,
-    pub pixel_aspect: f32,
 }
 
 impl RgbaFrame {
@@ -91,7 +87,6 @@ impl RgbaFrame {
             width,
             height,
             pixels: vec![255; (width * height * 4) as usize].into(),
-            pixel_aspect: 1.0,
         }
     }
 }
@@ -127,7 +122,6 @@ impl Frame {
                 width: frame.width,
                 height: frame.height,
                 pixels: frame.to_rgba().into(),
-                pixel_aspect: frame.pixel_aspect,
             },
             Frame::Rgba(frame) => frame.clone(),
             Frame::Console(frame) => frame.resolve_rgba(),
@@ -135,15 +129,55 @@ impl Frame {
     }
 }
 
-/// How a core presents its video: a fixed-size LCD, or a TV-standard raster.
-pub enum VideoOut {
+/// The display device a console drives — a hardware fact the core states.
+/// Presentation coefficients (persistence strength, pixel grid, scanlines) are
+/// frontend policy keyed to the technology; the core states the device, never
+/// the coefficient (cf. [`crate::analog::HighPass`] for audio).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum DisplayTechnology {
+    /// A fixed-size dot-matrix LCD panel.
     Lcd {
         native: (u32, u32),
+        panel: LcdPanel,
+        /// One pixel's display width ÷ height. Game Boy pixels are square
+        /// (1.0); the screen aspect is `native.0 * pixel_aspect / native.1`.
+        pixel_aspect: f32,
     },
-    Tv {
+    /// A raster scanned onto a CRT television.
+    Crt {
         standard: TvStandard,
         pixel_aspect: f32,
     },
+}
+
+impl DisplayTechnology {
+    /// The display width one source pixel occupies relative to its height.
+    pub fn pixel_aspect(&self) -> f32 {
+        match self {
+            DisplayTechnology::Lcd { pixel_aspect, .. }
+            | DisplayTechnology::Crt { pixel_aspect, .. } => *pixel_aspect,
+        }
+    }
+}
+
+/// The LCD panel technology — a component fact, no coefficients. The frontend
+/// keys its response simulation off this; the core only names the panel.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LcdPanel {
+    /// Passive-matrix STN (DMG, Game Boy Pocket): slow pixel response.
+    PassiveStn,
+    /// Active-matrix TFT (Game Boy Color): faster response.
+    ActiveTft,
+}
+
+impl LcdPanel {
+    /// Lower-case name for status lines.
+    pub fn description(self) -> &'static str {
+        match self {
+            LcdPanel::PassiveStn => "passive STN",
+            LcdPanel::ActiveTft => "active TFT",
+        }
+    }
 }
 
 /// One raw scanline handed to the television: the visible pixels and the
@@ -199,6 +233,33 @@ impl<const WIDTH: usize> Television<WIDTH> {
             self.building.push(line.pixels);
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod display_technology_tests {
+    use super::{DisplayTechnology, LcdPanel};
+    use crate::tv::TvStandard;
+
+    #[test]
+    fn pixel_aspect_reads_from_either_variant() {
+        let lcd = DisplayTechnology::Lcd {
+            native: (160, 144),
+            panel: LcdPanel::ActiveTft,
+            pixel_aspect: 1.0,
+        };
+        let crt = DisplayTechnology::Crt {
+            standard: TvStandard::Pal,
+            pixel_aspect: 12.0 / 7.0,
+        };
+        assert_eq!(lcd.pixel_aspect(), 1.0);
+        assert_eq!(crt.pixel_aspect(), 12.0 / 7.0);
+    }
+
+    #[test]
+    fn panel_descriptions() {
+        assert_eq!(LcdPanel::PassiveStn.description(), "passive STN");
+        assert_eq!(LcdPanel::ActiveTft.description(), "active TFT");
     }
 }
 

@@ -190,6 +190,10 @@ pub trait Model: Default {
     /// Hardware revision name recorded in morepork captures.
     const TRACE_MODEL_NAME: &'static str = "DMG-B";
 
+    /// The LCD panel technology the console drives — passive STN on the DMG,
+    /// active TFT on the CGB.
+    const LCD_PANEL: missingno_core::LcdPanel = missingno_core::LcdPanel::PassiveStn;
+
     /// Bank-complete work RAM the debugger exposes linearly above the bus, when
     /// the console banks WRAM (CGB's eight 4 KB banks). `None` for a flat-WRAM
     /// console (DMG): its 8 KB is fully visible through the `$C000` bus window.

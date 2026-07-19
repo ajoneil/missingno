@@ -283,7 +283,6 @@ impl SteppingSystem for NesSystem {
             height: ppu::VISIBLE_LINES as u32,
             pixels: frame.pixels.clone().into(),
             palette: nes_palette(),
-            pixel_aspect: PIXEL_ASPECT,
         }
     }
 
@@ -291,7 +290,6 @@ impl SteppingSystem for NesSystem {
         IndexedFrame::blank(
             ppu::PIXELS_PER_LINE as u32,
             ppu::VISIBLE_LINES as u32,
-            PIXEL_ASPECT,
             nes_palette(),
         )
     }

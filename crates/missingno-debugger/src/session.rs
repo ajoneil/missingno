@@ -15,7 +15,7 @@ use missingno_core::inspect::{
 };
 use missingno_core::symbols::SymbolTable;
 use missingno_core::system::{ControlId, ControlInput, RunningStatus, StepOutcome, SystemDebugger};
-use missingno_core::video::{RawFrame, RgbaFrame, VideoOut};
+use missingno_core::video::{DisplayTechnology, RawFrame, RgbaFrame};
 use missingno_core::waveform::ChannelWave;
 
 /// Why the last stepping call returned. The transport-carried form of
@@ -80,7 +80,7 @@ impl Session {
         self.debugger.game_title()
     }
 
-    pub fn video_out(&self) -> VideoOut {
+    pub fn video_out(&self) -> DisplayTechnology {
         self.debugger.video_out()
     }
 

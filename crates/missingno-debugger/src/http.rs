@@ -100,8 +100,33 @@ fn status_json(session: &Session) -> Value {
         "frame": session.frame(),
         "title": session.game_title(),
         "tick": session.tick_name(),
+        "video": video_json(session.video_out()),
         "stop": stop_json(session.last_stop()),
     })
+}
+
+fn video_json(video: missingno_core::video::DisplayTechnology) -> Value {
+    use missingno_core::video::DisplayTechnology;
+    match video {
+        DisplayTechnology::Lcd {
+            native,
+            panel,
+            pixel_aspect,
+        } => json!({
+            "technology": "lcd",
+            "panel": panel.description(),
+            "native": [native.0, native.1],
+            "pixel_aspect": pixel_aspect,
+        }),
+        DisplayTechnology::Crt {
+            standard,
+            pixel_aspect,
+        } => json!({
+            "technology": "crt",
+            "standard": standard.name(),
+            "pixel_aspect": pixel_aspect,
+        }),
+    }
 }
 
 fn respond_step(request: Request, session: &Session, stop: &StopReason) {

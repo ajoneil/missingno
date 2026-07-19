@@ -15,7 +15,7 @@ use crate::system::{
     ControlId, ControlInput, DebugView, FrameOutcome, InspectSnapshot, RunningStatus, StepOutcome,
     SystemConsole, SystemDebugger,
 };
-use crate::video::{Frame, IndexedFrame, VideoOut};
+use crate::video::{DisplayTechnology, Frame, IndexedFrame};
 
 /// Bytes captured before the program counter — enough for the disassembly's
 /// backward sweep — and the total span, its remainder covering the forward
@@ -122,8 +122,8 @@ impl<S: SteppingSystem> SystemConsole for SteppingConsole<S> {
         Frame::Indexed(self.last_frame.clone())
     }
 
-    fn video_out(&self) -> VideoOut {
-        VideoOut::Tv {
+    fn video_out(&self) -> DisplayTechnology {
+        DisplayTechnology::Crt {
             standard: TvStandard::Ntsc,
             pixel_aspect: S::PIXEL_ASPECT,
         }
@@ -292,8 +292,8 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
         S::sidebar_sections(&self.inspect)
     }
 
-    fn video_out(&self) -> VideoOut {
-        VideoOut::Tv {
+    fn video_out(&self) -> DisplayTechnology {
+        DisplayTechnology::Crt {
             standard: TvStandard::Ntsc,
             pixel_aspect: S::PIXEL_ASPECT,
         }

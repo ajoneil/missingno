@@ -69,10 +69,12 @@ impl Emulator {
     ) -> Self {
         let switches = console.console_switches();
         let monochrome_palette = console.uses_monochrome_palette();
+        let mut screen_view = ScreenView::new();
+        screen_view.pixel_aspect = console.video_out().pixel_aspect();
         Self {
             console: Some(console),
             platform,
-            screen_view: ScreenView::new(),
+            screen_view,
             running: false,
             screen_hovered: false,
             use_sgb_colors,

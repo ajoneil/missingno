@@ -22,6 +22,10 @@ pub struct ScreenView {
     pub rgba: Option<RgbaFrame>,
     /// Palette-indexed frame from a non-GB system; carries its own size.
     pub indexed: Option<IndexedFrame>,
+    /// One source pixel's display width ÷ height, from the system's
+    /// `DisplayTechnology`. Set once at load; a bridge until S2 holds the
+    /// whole descriptor here.
+    pub pixel_aspect: f32,
     /// Average each frame with the previous one, like the LCD's slow response.
     pub blend: bool,
     pub prev_rgba: Option<std::sync::Arc<[u8]>>,
@@ -36,6 +40,7 @@ impl ScreenView {
             use_sgb_colors: true,
             rgba: None,
             indexed: None,
+            pixel_aspect: 1.0,
             blend: true,
             prev_rgba: None,
         }
@@ -118,7 +123,7 @@ impl ScreenView {
     pub fn fitted_size(&self, available: iced::Size) -> (f32, f32) {
         match &self.indexed {
             Some(frame) => {
-                let aspect = frame.width as f32 * frame.pixel_aspect / frame.height as f32;
+                let aspect = frame.width as f32 * self.pixel_aspect / frame.height as f32;
                 let width = available.width.min(available.height * aspect);
                 (width, width / aspect)
             }

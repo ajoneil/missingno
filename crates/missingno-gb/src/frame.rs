@@ -65,7 +65,6 @@ impl ConsoleFrame for GbFrame {
             width: NATIVE_SIZE.0,
             height: NATIVE_SIZE.1,
             pixels: pixels.into(),
-            pixel_aspect: 1.0,
         }
     }
 }

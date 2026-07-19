@@ -206,6 +206,7 @@ impl Model for Cgb {
     const TRACE_MODEL_NAME: &'static str = "CGB-C";
     const HAS_PCM_REGISTERS: bool = true;
     const VRAM_BANKS: u8 = 2;
+    const LCD_PANEL: missingno_core::LcdPanel = missingno_core::LcdPanel::ActiveTft;
 
     type ConsoleState = CgbConsoleState;
     type Apu = CgbApu;

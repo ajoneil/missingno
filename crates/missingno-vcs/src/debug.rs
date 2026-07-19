@@ -14,7 +14,9 @@ use missingno_core::system::{
     ConsoleSwitch, ControlId, ControlInput, DebugView, FrameOutcome, InspectSnapshot,
     RunningStatus, StepOutcome, SystemConsole, SystemDebugger,
 };
-use missingno_core::video::{self, Frame as VideoFrame, IndexedFrame, Television, VideoOut};
+use missingno_core::video::{
+    self, DisplayTechnology, Frame as VideoFrame, IndexedFrame, Television,
+};
 
 use crate::cartridge::CartridgeError;
 use crate::console::{Frame, JoystickDirection, Vcs};
@@ -243,7 +245,6 @@ fn indexed_frame(lines: &[[u8; VISIBLE_CLOCKS]], standard: TvStandard) -> Indexe
         height: window.height as u32,
         pixels: pixels.into(),
         palette: region_palette(standard),
-        pixel_aspect: PIXEL_ASPECT,
     }
 }
 
@@ -252,7 +253,6 @@ fn blank_frame() -> IndexedFrame {
     IndexedFrame::blank(
         VISIBLE_CLOCKS as u32,
         height,
-        PIXEL_ASPECT,
         region_palette(TvStandard::Ntsc),
     )
 }
@@ -305,8 +305,8 @@ impl SystemConsole for VcsConsole {
         VideoFrame::Indexed(self.last_frame.clone())
     }
 
-    fn video_out(&self) -> VideoOut {
-        VideoOut::Tv {
+    fn video_out(&self) -> DisplayTechnology {
+        DisplayTechnology::Crt {
             standard: self.vcs.tv_standard(),
             pixel_aspect: PIXEL_ASPECT,
         }
@@ -1082,8 +1082,8 @@ impl SystemDebugger for VcsDebugger {
         &self.inspect
     }
 
-    fn video_out(&self) -> VideoOut {
-        VideoOut::Tv {
+    fn video_out(&self) -> DisplayTechnology {
+        DisplayTechnology::Crt {
             standard: self.core.console().tv_standard(),
             pixel_aspect: PIXEL_ASPECT,
         }
@@ -1150,6 +1150,29 @@ mod tests {
                 _ => Vec::new(),
             })
             .collect()
+    }
+
+    #[test]
+    fn video_out_reports_a_crt_with_the_carts_standard() {
+        // A 4 KiB ROM whose reset vector points at its origin; the caller-
+        // supplied standard maps straight onto the CRT descriptor.
+        let mut rom = vec![0xEA; 0x1000];
+        rom[0xFFC] = 0x00;
+        rom[0xFFD] = 0xF0;
+        for standard in [TvStandard::Ntsc, TvStandard::Pal, TvStandard::Secam] {
+            let console =
+                create_console(&rom, "test".into(), Some(standard), None).expect("console builds");
+            match console.video_out() {
+                DisplayTechnology::Crt {
+                    standard: reported,
+                    pixel_aspect,
+                } => {
+                    assert_eq!(reported, standard);
+                    assert_eq!(pixel_aspect, PIXEL_ASPECT);
+                }
+                other => panic!("VCS should drive a CRT, got {other:?}"),
+            }
+        }
     }
 
     #[test]

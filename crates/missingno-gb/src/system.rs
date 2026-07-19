@@ -16,7 +16,7 @@ use missingno_core::system::{
     ControlId, ControlInput, DebugView, FrameOutcome, RunningStatus, StepOutcome, SystemConsole,
     SystemDebugger,
 };
-use missingno_core::video::{Frame, RawFrame, VideoOut};
+use missingno_core::video::{DisplayTechnology, Frame, RawFrame};
 
 use crate::cartridge::Cartridge;
 use crate::debugger::cdl::{CdlWindow, CodeDataLog};
@@ -235,9 +235,11 @@ where
             .expect("screen_display is always Some when given a screen")
     }
 
-    fn video_out(&self) -> VideoOut {
-        VideoOut::Lcd {
+    fn video_out(&self) -> DisplayTechnology {
+        DisplayTechnology::Lcd {
             native: crate::frame::NATIVE_SIZE,
+            panel: M::LCD_PANEL,
+            pixel_aspect: 1.0,
         }
     }
 
@@ -484,9 +486,11 @@ where
         self
     }
 
-    fn video_out(&self) -> VideoOut {
-        VideoOut::Lcd {
+    fn video_out(&self) -> DisplayTechnology {
+        DisplayTechnology::Lcd {
             native: crate::frame::NATIVE_SIZE,
+            panel: M::LCD_PANEL,
+            pixel_aspect: 1.0,
         }
     }
 

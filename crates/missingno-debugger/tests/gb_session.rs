@@ -34,6 +34,60 @@ fn session() -> Session {
     Session::new(debugger)
 }
 
+/// A CGB-header ROM: the CGB flag at 0x143 makes the factory boot the colour
+/// core, like a CGB cartridge in a real GBC.
+fn cgb_rom() -> Vec<u8> {
+    let mut rom = vec![0x00; 0x8000];
+    rom[0x143] = 0xC0;
+    rom
+}
+
+fn session_from(path: &str, rom: &[u8]) -> Session {
+    let console = factory::create_console(Path::new(path), rom)
+        .expect("factory should not error")
+        .expect("gb factory should claim the ROM");
+    let debugger = console
+        .into_debugger()
+        .ok()
+        .expect("gb has a debugger backend");
+    Session::new(debugger)
+}
+
+#[test]
+fn dmg_drives_a_passive_stn_lcd() {
+    use missingno_core::video::{DisplayTechnology, LcdPanel};
+    match session().video_out() {
+        DisplayTechnology::Lcd {
+            native,
+            panel,
+            pixel_aspect,
+        } => {
+            assert_eq!(native, (160, 144));
+            assert_eq!(panel, LcdPanel::PassiveStn);
+            assert_eq!(pixel_aspect, 1.0);
+        }
+        other => panic!("DMG should drive an LCD, got {other:?}"),
+    }
+}
+
+#[test]
+fn cgb_drives_an_active_tft_lcd() {
+    use missingno_core::video::{DisplayTechnology, LcdPanel};
+    let session = session_from("test.gbc", &cgb_rom());
+    match session.video_out() {
+        DisplayTechnology::Lcd {
+            native,
+            panel,
+            pixel_aspect,
+        } => {
+            assert_eq!(native, (160, 144));
+            assert_eq!(panel, LcdPanel::ActiveTft);
+            assert_eq!(pixel_aspect, 1.0);
+        }
+        other => panic!("CGB should drive an LCD, got {other:?}"),
+    }
+}
+
 #[test]
 fn steps_and_reads_state() {
     let mut session = session();

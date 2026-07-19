@@ -430,7 +430,6 @@ impl ConsoleUi for Cgb {
                     width: NATIVE_SIZE.0,
                     height: NATIVE_SIZE.1,
                     pixels: screen.to_corrected_rgba().into(),
-                    pixel_aspect: 1.0,
                 })
             })
         }
