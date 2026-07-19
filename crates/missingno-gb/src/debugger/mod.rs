@@ -31,6 +31,8 @@ const RAM_BASE: u32 = 0x0100_0000;
 const ROM_BASE: u32 = 0x0200_0000;
 /// Bank-complete work RAM, all banks linear (CGB's eight banks; DMG has none).
 const WRAM_BASE: u32 = 0x0300_0000;
+/// Bank-complete video RAM, both banks linear (CGB's two banks; DMG has none).
+const VRAM_BASE: u32 = 0x0400_0000;
 
 /// Which bank-complete store a synthetic address resolves to.
 #[derive(Clone, Copy)]
@@ -38,6 +40,7 @@ enum SyntheticStore {
     Rom,
     Sram,
     Wram,
+    Vram,
 }
 
 /// Embedded profile for full T-cycle frame capture with all PPU details.
@@ -809,13 +812,14 @@ impl<M: Model> Debugger<M> {
     /// [`peek`](Self::peek) and [`present_address`](Self::present_address) so the
     /// published bounds and the routing cannot drift. A store the cart lacks has
     /// length 0 and so contains no address.
-    fn synthetic_regions(&self) -> [(SyntheticStore, inspect::MemoryRegion); 3] {
+    fn synthetic_regions(&self) -> [(SyntheticStore, inspect::MemoryRegion); 4] {
         let cartridge = self.game_boy.cartridge();
         let wram_len = self
             .game_boy
             .model()
             .wram_image()
             .map_or(0, |wram| wram.len() as u32);
+        let vram_len = self.game_boy.vram_image_len().unwrap_or(0);
         let region = |name, start, len| inspect::MemoryRegion { name, start, len };
         [
             (
@@ -829,6 +833,10 @@ impl<M: Model> Debugger<M> {
             (
                 SyntheticStore::Wram,
                 region("wram-all", WRAM_BASE, wram_len),
+            ),
+            (
+                SyntheticStore::Vram,
+                region("vram-all", VRAM_BASE, vram_len),
             ),
         ]
     }
@@ -887,6 +895,7 @@ impl<M: Model> Debugger<M> {
                 .wram_image()
                 .and_then(|wram| wram.get(offset as usize).copied())
                 .unwrap_or(0xFF),
+            Some((SyntheticStore::Vram, offset)) => self.game_boy.vram_image_byte(offset),
             None if address <= u16::MAX as u32 => self.game_boy.peek(address as u16),
             None => 0xFF,
         }
@@ -922,6 +931,11 @@ impl<M: Model> Debugger<M> {
                     AddressDisplay::banked(0xD000 + (offset % 0x1000), bank, WRAM_BANK_KEY)
                 }
             }
+            // Both VRAM banks page into the same $8000 window (VBK-switched);
+            // there is no VBK bank watch, so the bank shows for orientation only.
+            Some((SyntheticStore::Vram, offset)) => {
+                AddressDisplay::shared_window(0x8000 + (offset % 0x2000), (offset / 0x2000) as u16)
+            }
             None => {
                 let bank = match address as u16 {
                     0x4000..=0x7FFF => self.game_boy.cartridge().switchable_rom_bank(),
@@ -940,6 +954,7 @@ impl<M: Model> Debugger<M> {
     pub fn locate_bank_window(&self, bank: u16, window: u32) -> Option<u32> {
         let cartridge = self.game_boy.cartridge();
         let wram_len = self.game_boy.model().wram_image().map(<[u8]>::len);
+        let vram_len = self.game_boy.vram_image_len();
         match window {
             0x0000..=0x3FFF if bank == 0 => {
                 (window < cartridge.rom_len() as u32).then_some(ROM_BASE + window)
@@ -963,6 +978,12 @@ impl<M: Model> Debugger<M> {
                 wram_len
                     .filter(|&len| (linear as usize) < len)
                     .map(|_| WRAM_BASE + linear)
+            }
+            0x8000..=0x9FFF => {
+                let linear = bank as u32 * 0x2000 + (window - 0x8000);
+                vram_len
+                    .filter(|&len| linear < len)
+                    .map(|_| VRAM_BASE + linear)
             }
             _ => None,
         }
@@ -1353,6 +1374,19 @@ mod tests {
         );
         // DMG's model exposes no bank-complete WRAM image.
         assert!(debugger.game_boy().model().wram_image().is_none());
+    }
+
+    #[test]
+    fn dmg_has_no_linear_vram_region() {
+        let debugger = Debugger::new(traced_program_console());
+        assert!(
+            debugger
+                .memory_regions()
+                .iter()
+                .all(|r| r.name != "vram-all")
+        );
+        // DMG's single VRAM bank is fully visible through the $8000 window.
+        assert!(debugger.game_boy().vram_image_len().is_none());
     }
 
     /// Code uploaded to work RAM and executed there disassembles live: the walk

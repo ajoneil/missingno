@@ -15,7 +15,7 @@ use crate::graphics::GraphicsView;
 use crate::inspect::{MemoryRegion, MemoryWindow, RegisterGroup, Section, Watch, Watchable};
 use crate::isa::InstructionSet;
 use crate::symbols::{Symbol, SymbolTable};
-use crate::video::{Frame, VideoOut};
+use crate::video::{Frame, RawFrame, VideoOut};
 use crate::waveform::ChannelWave;
 
 /// A family-interpreted control identifier. Ids 0-7 mirror the Game Boy
@@ -261,6 +261,20 @@ pub trait SystemDebugger: Send {
     /// The current screen as it stands, without stepping — for screenshots
     /// taken while paused.
     fn screen_display(&self) -> Frame;
+    /// The current frame in its pre-resolution domain (the values the accuracy
+    /// references compare in), or `None` when the family has no such surface.
+    /// Defaults to the palette indices of an indexed frame; a family whose
+    /// screen resolves before the seam overrides with its own raw domain.
+    fn frame_raw(&self) -> Option<RawFrame> {
+        match self.screen_display() {
+            Frame::Indexed(frame) => Some(RawFrame::Palette {
+                width: frame.width,
+                height: frame.height,
+                pixels: frame.pixels.to_vec(),
+            }),
+            _ => None,
+        }
+    }
     fn reset(&mut self);
     fn set_control(&mut self, control: ControlId, input: ControlInput);
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)>;

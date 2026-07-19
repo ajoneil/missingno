@@ -15,7 +15,7 @@ use missingno_core::inspect::{
 };
 use missingno_core::symbols::SymbolTable;
 use missingno_core::system::{ControlId, ControlInput, RunningStatus, StepOutcome, SystemDebugger};
-use missingno_core::video::{RgbaFrame, VideoOut};
+use missingno_core::video::{RawFrame, RgbaFrame, VideoOut};
 use missingno_core::waveform::ChannelWave;
 
 /// Why the last stepping call returned. The transport-carried form of
@@ -246,6 +246,12 @@ impl Session {
     /// A resolved RGBA frame of the current screen, as it stands (paused).
     pub fn frame_rgba(&self) -> RgbaFrame {
         self.debugger.screen_display().resolve_rgba()
+    }
+
+    /// The current frame in its pre-resolution domain (the values the accuracy
+    /// references compare in), or `None` when the core has no such surface.
+    pub fn frame_raw(&self) -> Option<RawFrame> {
+        self.debugger.frame_raw()
     }
 
     /// The forward disassembly window from `at`, `count` lines. Errors when the

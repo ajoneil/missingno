@@ -50,6 +50,31 @@ impl IndexedFrame {
     }
 }
 
+/// A frame in the pre-resolution domain the accuracy references compare in,
+/// before palette or LCD-colour correction: the raw values the console's video
+/// hardware produced. Each variant names the domain a family emits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RawFrame {
+    /// DMG 2-bit shade indices (0-3), row-major.
+    Shade2 {
+        width: u32,
+        height: u32,
+        pixels: Vec<u8>,
+    },
+    /// CGB 15-bit RGB555 words (`0b_bbbbb_ggggg_rrrrr`), row-major.
+    Rgb555 {
+        width: u32,
+        height: u32,
+        pixels: Vec<u16>,
+    },
+    /// Palette indices into the frame's own palette, row-major.
+    Palette {
+        width: u32,
+        height: u32,
+        pixels: Vec<u8>,
+    },
+}
+
 /// A display-ready RGBA frame — colours already resolved.
 #[derive(Clone, Debug)]
 pub struct RgbaFrame {

@@ -12,13 +12,13 @@ use missingno_core::graphics::{GraphicsView, MapEntry, NamedPalette, PaletteSet,
 use missingno_core::inspect;
 use missingno_core::symbols::SymbolTable;
 use missingno_core::system::{DebugView, InspectSnapshot};
-use missingno_core::video::{Frame, RgbaFrame};
+use missingno_core::video::{Frame, RawFrame, RgbaFrame};
 
 use missingno_gb::Console;
 use missingno_gb::cartridge::CartridgeView;
 use missingno_gb::debugger::graphics as gb_graphics;
 use missingno_gb::debugger::inspection::{
-    self as parts, AudioView, ColorSnapshot, CpuSource, GbSnapshot, PpuSource,
+    self as parts, AudioView, ColorSnapshot, CpuSource, GbSnapshot, PpuSource, TimersView,
 };
 use missingno_gb::frame::NATIVE_SIZE;
 use missingno_gb::ppu::memory::VramView;
@@ -180,6 +180,7 @@ pub fn cgb_sidebar_sections(
     cpu: &impl CpuSource,
     ppu: &impl PpuSource,
     ints: &missingno_gb::interrupts::Registers,
+    timers: &TimersView,
     audio: &AudioView,
     view: &CgbView,
     background: &[Palette; 8],
@@ -243,6 +244,7 @@ pub fn cgb_sidebar_sections(
             detail: None,
             blocks: cram_content,
         },
+        parts::timers_section(timers),
         parts::apu_section(audio),
         parts::cartridge_section(cart),
     ]
@@ -382,6 +384,7 @@ impl InspectSnapshot for CgbSnapshot {
             &self.base.cpu,
             &self.base.ppu,
             &self.base.interrupts,
+            &self.base.timers,
             &self.base.audio,
             &self.cgb,
             background,
@@ -433,6 +436,19 @@ impl ConsoleUi for Cgb {
         }
     }
 
+    fn raw_frame(console: &Console<Self>) -> RawFrame {
+        use crate::screen::{NUM_SCANLINES, PIXELS_PER_LINE};
+        let screen = console.screen();
+        let pixels = (0..NUM_SCANLINES)
+            .flat_map(|y| (0..PIXELS_PER_LINE).map(move |x| screen.pixel(x, y).0))
+            .collect();
+        RawFrame::Rgb555 {
+            width: NATIVE_SIZE.0,
+            height: NATIVE_SIZE.1,
+            pixels,
+        }
+    }
+
     fn snapshot(
         console: &Console<Self>,
         frame: u64,
@@ -473,6 +489,7 @@ impl ConsoleUi for Cgb {
             console.cpu(),
             console.ppu(),
             console.interrupts(),
+            &TimersView::capture(console.timers()),
             &AudioView::capture(console.audio()),
             &CgbView::capture(console),
             &background,
@@ -545,6 +562,49 @@ mod tests {
         assert_eq!(
             debugger.locate_bank_window(3, 0xD034),
             Some(wram.start + bank3)
+        );
+    }
+
+    #[test]
+    fn cgb_exposes_a_linear_vram_region_reaching_bank_one() {
+        // Turn the LCD off (VRAM always accessible), select VBK=1, stamp a
+        // marker into bank 1 at $8000, then restore VBK=0.
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x143] = 0xC0;
+        rom[0x100..0x113].copy_from_slice(&[
+            0x3e, 0x00, 0xe0, 0x40, // LD A,0; LDH ($40),A — LCD off
+            0x3e, 0x01, 0xe0, 0x4f, // LD A,1; LDH ($4F),A — VBK=1
+            0x3e, 0xab, 0xea, 0x00, 0x80, // LD A,$AB; LD ($8000),A
+            0x3e, 0x00, 0xe0, 0x4f, // LD A,0; LDH ($4F),A — VBK=0
+            0x18, 0xfe, // JR -2
+        ]);
+        let mut debugger = Debugger::new(GameBoyColor::new(Cartridge::new(rom, None), None));
+        for _ in 0..40 {
+            debugger.step();
+        }
+
+        let vram = debugger
+            .memory_regions()
+            .into_iter()
+            .find(|r| r.name == "vram-all")
+            .expect("cgb vram synthetic region");
+        // Two 8 KB banks, linear.
+        assert_eq!(vram.len, 0x4000);
+
+        // Bank 1's byte is readable through the synthetic image while the bus,
+        // with VBK=0, cannot see it.
+        assert_eq!(debugger.peek(vram.start + 0x2000), 0xAB);
+        assert_ne!(debugger.peek(0x8000), 0xAB);
+
+        // present_address / locate_bank_window round-trip over the VRAM store,
+        // both banks presenting through the $8000 window.
+        let display = debugger.present_address(vram.start + 0x2000 + 0x0034);
+        assert_eq!(display.bank, Some(1));
+        assert_eq!(display.window, 0x8034);
+        assert_eq!(display.breakpoint, None);
+        assert_eq!(
+            debugger.locate_bank_window(1, 0x8034),
+            Some(vram.start + 0x2000 + 0x0034)
         );
     }
 

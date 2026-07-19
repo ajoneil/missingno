@@ -520,6 +520,18 @@ impl AddressDisplay {
         }
     }
 
+    /// A synthetic banked row whose banks all share one bus window with no bank
+    /// register to watch (CGB VRAM at `$8000`, VBK-switched): the bank shows for
+    /// orientation, but no breakpoint or bank watch pins it to that bank.
+    pub fn shared_window(window: u32, bank: u16) -> Self {
+        Self {
+            window,
+            bank: Some(bank),
+            breakpoint: None,
+            bank_watch: None,
+        }
+    }
+
     /// A synthetic row with no bus window and no bank to pin (a VCS cart-RAM
     /// mirror): neither a breakpoint nor a bank watch.
     pub fn unmarked(window: u32) -> Self {

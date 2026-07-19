@@ -168,6 +168,11 @@ pub trait Model: Default {
     /// the shared step loop is dead code.
     const DOUBLE_SPEED: bool = false;
 
+    /// VRAM banks the console carries: one on the DMG (fully visible through the
+    /// `$8000` window), two on the CGB (VBK-switched). More than one means the
+    /// debugger exposes the bank-complete image linearly above the bus.
+    const VRAM_BANKS: u8 = 1;
+
     /// CGB silicon exposes the APU channel DAC outputs at FF76/FF77.
     const HAS_PCM_REGISTERS: bool = false;
 
@@ -780,6 +785,24 @@ impl<M: Model> Console<M> {
 
     pub fn vram(&self) -> &<M::Ppu as PpuModel>::Vram {
         &self.chassis.vram_bus.vram
+    }
+
+    /// Length of the bank-complete VRAM image the debugger walks linearly above
+    /// the bus, on a console that banks VRAM (CGB's two 8 KiB banks). `None` for
+    /// a single-bank console (DMG): its 8 KiB is the `$8000` bus window.
+    pub fn vram_image_len(&self) -> Option<u32> {
+        (M::VRAM_BANKS > 1).then(|| M::VRAM_BANKS as u32 * 0x2000)
+    }
+
+    /// A byte of the bank-complete VRAM image by flat offset — bank
+    /// `offset / 0x2000`, within-bank `offset % 0x2000` — independent of the
+    /// CPU's VBK selection. `0xFF` on a single-bank console or past the image.
+    pub fn vram_image_byte(&self, offset: u32) -> u8 {
+        use crate::ppu::memory::VramView;
+        if offset >= self.vram_image_len().unwrap_or(0) {
+            return 0xFF;
+        }
+        VramView::bank(self.vram(), (offset / 0x2000) as u8).read_byte((offset % 0x2000) as u16)
     }
 
     /// Read a contiguous range of memory via peek (bypasses bus conflicts).

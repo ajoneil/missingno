@@ -245,6 +245,9 @@ pub trait PpuSource {
     fn bg_fifo(&self) -> Option<[BgFifoCell; 8]>;
     /// The object FIFO's 8 stages, or `None` with the LCD off.
     fn obj_fifo(&self) -> Option<[ObjFifoCell; 8]>;
+    /// The OAM-scan progress entry during mode 2, or `None` outside it (or with
+    /// the LCD off).
+    fn scan_counter(&self) -> Option<u8>;
 }
 
 impl<P: PpuModel> PpuSource for Ppu<P> {
@@ -296,6 +299,9 @@ impl<P: PpuModel> PpuSource for Ppu<P> {
     fn obj_fifo(&self) -> Option<[ObjFifoCell; 8]> {
         Ppu::obj_fifo(self)
     }
+    fn scan_counter(&self) -> Option<u8> {
+        Ppu::scan_counter(self)
+    }
 }
 
 #[derive(Clone)]
@@ -316,6 +322,7 @@ pub struct PpuView {
     sprites: [Sprite; SPRITE_COUNT],
     bg_fifo: Option<[BgFifoCell; 8]>,
     obj_fifo: Option<[ObjFifoCell; 8]>,
+    scan_counter: Option<u8>,
 }
 
 impl PpuView {
@@ -337,6 +344,7 @@ impl PpuView {
             sprites: std::array::from_fn(|i| *ppu.sprite(SpriteId(i as u8))),
             bg_fifo: ppu.bg_fifo(),
             obj_fifo: ppu.obj_fifo(),
+            scan_counter: ppu.scan_counter(),
         }
     }
 }
@@ -390,6 +398,9 @@ impl PpuSource for PpuView {
     fn obj_fifo(&self) -> Option<[ObjFifoCell; 8]> {
         self.obj_fifo
     }
+    fn scan_counter(&self) -> Option<u8> {
+        self.scan_counter
+    }
 }
 
 // --- Audio -------------------------------------------------------------------
@@ -406,6 +417,11 @@ pub struct AudioView {
     pub volume_right: u8,
     /// NR50 master volume / VIN byte.
     pub nr50: u8,
+    /// Frame-sequencer step (0-7): the DIV-APU divider's phase.
+    pub frame_sequencer_step: u8,
+    /// The DIV bit the frame sequencer last sampled — its falling edge clocks
+    /// the sequencer.
+    pub prev_div_apu_bit: bool,
     pub ch1: PulseChannelView,
     pub ch2: PulseChannelView,
     pub ch3: WaveChannelView,
@@ -429,6 +445,16 @@ pub struct PulseChannelView {
     pub length_counter: u16,
     /// Current envelope output volume (0-15).
     pub envelope_volume: u8,
+    /// Envelope period counter — steps the volume when it reaches the pace.
+    pub envelope_timer: u8,
+    /// CH1 sweep shadow frequency, or `None` on the sweepless CH2.
+    pub shadow_frequency: Option<u16>,
+    /// CH1 sweep period counter, or `None` on CH2.
+    pub sweep_timer: Option<u8>,
+    /// CH1 sweep enabled, or `None` on CH2.
+    pub sweep_enabled: Option<bool>,
+    /// CH1 sweep has performed a negate calculation, or `None` on CH2.
+    pub sweep_negate_used: Option<bool>,
 }
 
 #[derive(Clone, Copy)]
@@ -458,6 +484,10 @@ pub struct NoiseChannelView {
     pub length_enabled: bool,
     pub length_counter: u16,
     pub envelope_volume: u8,
+    /// Envelope period counter — steps the volume when it reaches the pace.
+    pub envelope_timer: u8,
+    /// The noise LFSR (15-bit shift register).
+    pub lfsr: u16,
 }
 
 impl AudioView {
@@ -472,6 +502,8 @@ impl AudioView {
             volume_left: audio.volume_left().0,
             volume_right: audio.volume_right().0,
             nr50: audio.nr50(),
+            frame_sequencer_step: audio.frame_sequencer_step(),
+            prev_div_apu_bit: audio.prev_div_apu_bit(),
             ch1: PulseChannelView {
                 enabled: ch1.enabled,
                 sweep: Some(ch1.sweep.0),
@@ -481,6 +513,11 @@ impl AudioView {
                 length_enabled: ch1.length.enabled,
                 length_counter: ch1.length.counter,
                 envelope_volume: ch1.envelope.volume,
+                envelope_timer: ch1.envelope.timer,
+                shadow_frequency: Some(ch1.shadow_frequency),
+                sweep_timer: Some(ch1.sweep_timer),
+                sweep_enabled: Some(ch1.sweep_enabled),
+                sweep_negate_used: Some(ch1.sweep_negate_used),
             },
             ch2: PulseChannelView {
                 enabled: ch2.enabled,
@@ -491,6 +528,11 @@ impl AudioView {
                 length_enabled: ch2.length.enabled,
                 length_counter: ch2.length.counter,
                 envelope_volume: ch2.envelope.volume,
+                envelope_timer: ch2.envelope.timer,
+                shadow_frequency: None,
+                sweep_timer: None,
+                sweep_enabled: None,
+                sweep_negate_used: None,
             },
             ch3: WaveChannelView {
                 enabled: ch3.enabled,
@@ -509,6 +551,8 @@ impl AudioView {
                 length_enabled: ch4.length.enabled,
                 length_counter: ch4.length.counter,
                 envelope_volume: ch4.envelope.volume,
+                envelope_timer: ch4.envelope.timer,
+                lfsr: ch4.lfsr,
             },
         }
     }
@@ -751,11 +795,18 @@ pub fn ppu_position_block(ppu: &impl PpuSource) -> inspect::SectionBlock {
 /// the mode/LYC interrupt-enable bits the decoded rows don't otherwise show,
 /// and LYC is the compare value that drives the coincidence flag.
 pub fn ppu_status_block(ppu: &impl PpuSource) -> inspect::SectionBlock {
+    // The scan counter advances only in mode 2; outside it the entry is stale,
+    // so the row reads "-".
+    let scan = match (ppu.mode(), ppu.scan_counter()) {
+        (Mode::OamScan, Some(entry)) => entry.to_string(),
+        _ => "-".to_string(),
+    };
     inspect::SectionBlock::Rows(vec![
         inspect::Row::value("stat", format!("{:02X}", ppu.stat()))
             .help("LCD status (STAT) — mode, LYC coincidence, and mode/LYC interrupt enables"),
         inspect::Row::value("lyc", format!("{:02X}", ppu.lyc()))
             .help("LY compare (LYC) — matches LY to raise the STAT coincidence flag"),
+        inspect::Row::value("scan", scan).help("OAM scan entry (mode 2)"),
     ])
 }
 
@@ -928,8 +979,26 @@ fn pulse_channel_block(
         .help("period high & length-enable (trigger is write-only)"),
         inspect::Row::value("vol", ch.envelope_volume.to_string())
             .help("current envelope volume (0-15)"),
+        inspect::Row::value("env timer", ch.envelope_timer.to_string())
+            .help("envelope period counter — steps volume at the pace"),
         inspect::Row::value("len", ch.length_counter.to_string()).help("length counter (0-64)"),
     ]);
+    if let (Some(shadow), Some(timer), Some(enabled), Some(negate)) = (
+        ch.shadow_frequency,
+        ch.sweep_timer,
+        ch.sweep_enabled,
+        ch.sweep_negate_used,
+    ) {
+        rows.extend([
+            inspect::Row::value("shadow", format!("{shadow:03X}"))
+                .help("sweep shadow frequency (11-bit)"),
+            inspect::Row::value("swp timer", timer.to_string())
+                .help("sweep period counter — recalculates at the pace"),
+            inspect::Row::flag("swp on", enabled).help("sweep unit enabled"),
+            inspect::Row::flag("negate", negate)
+                .help("a negate-direction sweep calculation has run"),
+        ]);
+    }
     inspect::SectionBlock::Rows(rows)
 }
 
@@ -960,6 +1029,10 @@ fn noise_channel_block(ch: &NoiseChannelView) -> inspect::SectionBlock {
             .help("clock shift, LFSR width & divisor (NR43)"),
         inspect::Row::value("vol", ch.envelope_volume.to_string())
             .help("current envelope volume (0-15)"),
+        inspect::Row::value("env timer", ch.envelope_timer.to_string())
+            .help("envelope period counter — steps volume at the pace"),
+        inspect::Row::value("lfsr", format!("{:04X}", ch.lfsr))
+            .help("noise shift register (15-bit LFSR)"),
         inspect::Row::value("len", ch.length_counter.to_string()).help("length counter (0-64)"),
     ])
 }
@@ -1020,6 +1093,10 @@ pub fn apu_section(audio: &AudioView) -> inspect::Section {
                     .help("master volume L/R & VIN (NR50)"),
                 inspect::Row::value("nr51", format!("{:02X}", panning_byte(audio)))
                     .help("sound panning — per-channel L/R (NR51)"),
+                inspect::Row::value("fs step", audio.frame_sequencer_step.to_string())
+                    .help("frame-sequencer step (0-7) — DIV-APU divider phase"),
+                inspect::Row::flag("div bit", audio.prev_div_apu_bit)
+                    .help("DIV bit last sampled — its fall clocks the sequencer"),
             ]),
             Rule,
             pulse_channel_block(
@@ -1100,14 +1177,79 @@ pub fn cartridge_section(cart: &CartridgeView) -> inspect::Section {
     }
 }
 
-/// The DMG sidebar: CPU, PPU, APU and Cartridge sections composed from the
-/// shared parts, with the DMG shade swatches sat with the registers they
+// --- Timers -------------------------------------------------------------------
+
+/// The timer registers plus the internal divider counter, captured so the live
+/// console (paused) and the running snapshot serve the same section.
+#[derive(Clone, Copy)]
+pub struct TimersView {
+    /// DIV ($FF04) — the divider's upper byte.
+    pub div: u8,
+    /// TIMA ($FF05) — the counter.
+    pub tima: u8,
+    /// TMA ($FF06) — the reload modulo.
+    pub tma: u8,
+    /// TAC ($FF07) — the control byte.
+    pub tac: u8,
+    /// The full 16-bit internal divider counter DIV reads its byte from.
+    pub internal_counter: u16,
+}
+
+impl TimersView {
+    pub fn capture(timers: &crate::timers::Timers) -> Self {
+        use crate::timers::Register;
+        Self {
+            div: timers.read_register(Register::Divider),
+            tima: timers.read_register(Register::Counter),
+            tma: timers.read_register(Register::Modulo),
+            tac: timers.read_register(Register::Control),
+            internal_counter: timers.internal_counter(),
+        }
+    }
+}
+
+/// The Timers section: the DIV/TIMA/TMA/TAC registers, the TAC enable pip and
+/// decoded increment frequency, and the internal 16-bit divider counter DIV is
+/// a window onto. Shared by DMG and CGB (the same timer silicon).
+pub fn timers_section(timers: &TimersView) -> inspect::Section {
+    use inspect::{Row, SectionBlock};
+
+    let enabled = timers.tac & 0b100 != 0;
+    let frequency = match timers.tac & 0b11 {
+        0b00 => 4096,
+        0b01 => 262144,
+        0b10 => 65536,
+        _ => 16384,
+    };
+
+    inspect::Section {
+        name: "Timers",
+        summary: format!("div {:02X} · tima {:02X}", timers.div, timers.tima),
+        active: Some(enabled),
+        detail: None,
+        blocks: vec![SectionBlock::Rows(vec![
+            Row::value("div", format!("{:02X}", timers.div)).help("divider register (FF04)"),
+            Row::value("tima", format!("{:02X}", timers.tima)).help("timer counter (FF05)"),
+            Row::value("tma", format!("{:02X}", timers.tma)).help("timer modulo — reload (FF06)"),
+            Row::value("tac", format!("{:02X}", timers.tac)).help("timer control (FF07)"),
+            Row::flag("enabled", enabled).help("timer enable (TAC bit 2)"),
+            Row::value("freq", format!("{frequency} Hz"))
+                .help("TIMA increment frequency (TAC bits 0-1)"),
+            Row::value("counter", format!("{:04X}", timers.internal_counter))
+                .help("internal 16-bit divider counter"),
+        ])],
+    }
+}
+
+/// The DMG sidebar: CPU, PPU, Timers, APU and Cartridge sections composed from
+/// the shared parts, with the DMG shade swatches sat with the registers they
 /// describe. Shared by the live console (paused) and the running snapshot so
 /// the two agree.
 pub fn dmg_sidebar_sections(
     cpu: &impl CpuSource,
     ppu: &impl PpuSource,
     ints: &interrupts::Registers,
+    timers: &TimersView,
     audio: &AudioView,
     cart: &CartridgeView,
 ) -> Vec<inspect::Section> {
@@ -1141,6 +1283,7 @@ pub fn dmg_sidebar_sections(
                 dmg_fifo_block(ppu),
             ],
         },
+        timers_section(timers),
         apu_section(audio),
         cartridge_section(cart),
     ]
@@ -1155,6 +1298,7 @@ pub struct GbSnapshot {
     pub cpu: CpuView,
     pub ppu: PpuView,
     pub audio: AudioView,
+    pub timers: TimersView,
     pub interrupts: interrupts::Registers,
     pub colors: ColorSnapshot,
     pub switchable_rom_bank: Option<u16>,
@@ -1184,6 +1328,7 @@ impl GbSnapshot {
             cpu: CpuView::capture(console.cpu()),
             ppu: PpuView::capture(console.ppu()),
             audio: AudioView::capture(console.audio()),
+            timers: TimersView::capture(console.timers()),
             interrupts: console.interrupts().clone(),
             colors,
             switchable_rom_bank: console.cartridge().switchable_rom_bank(),
@@ -1213,6 +1358,7 @@ impl InspectSnapshot for GbSnapshot {
             &self.cpu,
             &self.ppu,
             &self.interrupts,
+            &self.timers,
             &self.audio,
             &self.cartridge,
         )
@@ -1406,11 +1552,13 @@ mod tests {
         let debugger = stepped_dmg();
         let console = debugger.game_boy();
         let audio = AudioView::capture(console.audio());
+        let timers = TimersView::capture(console.timers());
         let cart = console.cartridge().inspect();
         let live = dmg_sidebar_sections(
             console.cpu(),
             console.ppu(),
             console.interrupts(),
+            &timers,
             &audio,
             &cart,
         );
@@ -1506,6 +1654,65 @@ mod tests {
     }
 
     #[test]
+    fn timers_section_carries_registers_and_divider_width() {
+        let debugger = stepped_dmg();
+        let timers = TimersView::capture(debugger.game_boy().timers());
+        let section = timers_section(&timers);
+        assert_eq!(section.name, "Timers");
+        let labels = row_labels(&section);
+        for expected in ["div", "tima", "tma", "tac", "enabled", "freq", "counter"] {
+            assert!(
+                labels.iter().any(|l| l == expected),
+                "missing row {expected}"
+            );
+        }
+        // The internal divider counter is the full 16-bit value — four hex digits.
+        let counter = section
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                inspect::SectionBlock::Rows(rows) => rows
+                    .iter()
+                    .find(|row| row.label == "counter")
+                    .map(|row| row.value.clone()),
+                _ => None,
+            })
+            .expect("a counter row");
+        assert_eq!(counter.len(), 4, "divider counter is 16-bit hex: {counter}");
+    }
+
+    #[test]
+    fn apu_section_carries_runtime_rows() {
+        let audio = AudioView::capture(&Audio::<crate::audio::DmgApu>::post_boot(0));
+        let section = apu_section(&audio);
+        let labels = row_labels(&section);
+        // Master block: frame-sequencer step and prev-DIV-bit pip.
+        for expected in ["fs step", "div bit"] {
+            assert!(labels.iter().any(|l| l == expected), "missing {expected}");
+        }
+        // CH1 carries the envelope timer plus its sweep runtime.
+        for expected in ["env timer", "shadow", "swp timer", "swp on", "negate"] {
+            assert!(labels.iter().any(|l| l == expected), "missing {expected}");
+        }
+        // CH4 carries the LFSR; CH2 (no sweep) carries no sweep rows.
+        assert!(labels.iter().any(|l| l == "lfsr"));
+    }
+
+    #[test]
+    fn ppu_status_block_carries_scan_row() {
+        let debugger = stepped_dmg();
+        let ppu = PpuView::capture(debugger.game_boy().ppu());
+        let block = ppu_status_block(&ppu);
+        let labels = match &block {
+            inspect::SectionBlock::Rows(rows) => {
+                rows.iter().map(|r| r.label.clone()).collect::<Vec<_>>()
+            }
+            _ => panic!("expected rows"),
+        };
+        assert!(labels.iter().any(|l| l == "scan"), "missing scan row");
+    }
+
+    #[test]
     fn interrupt_table_tracks_enabled_and_requested() {
         use crate::interrupts::{Interrupt, InterruptFlags, Registers};
 
@@ -1573,11 +1780,13 @@ mod tests {
         // The DMG PPU section places both swatch blocks with its registers.
         let console = debugger.game_boy();
         let audio = AudioView::capture(console.audio());
+        let timers = TimersView::capture(console.timers());
         let cart = console.cartridge().inspect();
         let sections = dmg_sidebar_sections(
             console.cpu(),
             console.ppu(),
             console.interrupts(),
+            &timers,
             &audio,
             &cart,
         );

@@ -205,6 +205,7 @@ impl Model for Cgb {
     type Screen = Screen;
     const TRACE_MODEL_NAME: &'static str = "CGB-C";
     const HAS_PCM_REGISTERS: bool = true;
+    const VRAM_BANKS: u8 = 2;
 
     type ConsoleState = CgbConsoleState;
     type Apu = CgbApu;

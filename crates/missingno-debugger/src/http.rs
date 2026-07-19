@@ -59,6 +59,7 @@ fn handle(request: Request, session: &mut Session) {
         (Method::Get, "/symbols") => respond_json(request, symbols_json(session)),
         (Method::Get, "/disassembly") => disassembly(request, session, &query),
         (Method::Get, "/frame/bitmap") => frame_bitmap(request, session),
+        (Method::Get, "/frame/raw") => respond_json(request, frame_raw_json(session)),
         (Method::Get, "/waveforms") => respond_json(request, waveforms_json(session)),
         (Method::Get, "/graphics") => respond_json(request, graphics_json(session)),
 
@@ -693,6 +694,33 @@ fn disasm_json(line: &DisasmLine) -> Value {
     })
 }
 
+/// The current frame in its pre-resolution domain: DMG shade indices (0-3), CGB
+/// RGB555 words as hex, or palette indices. `null` when the core exposes none.
+fn frame_raw_json(session: &Session) -> Value {
+    use missingno_core::video::RawFrame;
+    match session.frame_raw() {
+        Some(RawFrame::Shade2 {
+            width,
+            height,
+            pixels,
+        }) => json!({ "format": "shade2", "width": width, "height": height, "pixels": pixels }),
+        Some(RawFrame::Palette {
+            width,
+            height,
+            pixels,
+        }) => json!({ "format": "palette", "width": width, "height": height, "pixels": pixels }),
+        Some(RawFrame::Rgb555 {
+            width,
+            height,
+            pixels,
+        }) => {
+            let hex: Vec<String> = pixels.iter().map(|word| format!("{word:04x}")).collect();
+            json!({ "format": "rgb555", "width": width, "height": height, "pixels": hex })
+        }
+        None => json!({ "format": Value::Null }),
+    }
+}
+
 fn frame_bitmap(request: Request, session: &Session) {
     let frame = session.frame_rgba();
     let response = Response::from_data(frame.pixels.to_vec())
@@ -900,6 +928,41 @@ mod tests {
         assert_eq!(body["tick"], json!("dot"));
         assert_eq!(body["ran"], json!(4));
         assert_eq!(body["pc"], json!(format!("{:x}", pc0 + 1)));
+    }
+
+    /// A CGB session: the CGB header flag makes the factory boot the colour core.
+    fn cgb_session() -> Session {
+        let mut rom = vec![0x00u8; 0x8000];
+        rom[0x143] = 0xC0;
+        let console = crate::factory::create_console(Path::new("test.gbc"), &rom)
+            .expect("factory should not error")
+            .expect("gb factory claims a .gbc ROM");
+        Session::new(console.into_debugger().ok().expect("gbc has a debugger"))
+    }
+
+    #[test]
+    fn frame_raw_dmg_serves_shade_indices() {
+        let session = gb_session();
+        let raw = frame_raw_json(&session);
+        assert_eq!(raw["format"], json!("shade2"));
+        assert_eq!(raw["width"], json!(160));
+        assert_eq!(raw["height"], json!(144));
+        let pixels = raw["pixels"].as_array().expect("pixels array");
+        assert_eq!(pixels.len(), 160 * 144);
+        // Every DMG pixel is a 2-bit shade (0-3).
+        assert!(pixels.iter().all(|p| p.as_u64().is_some_and(|v| v <= 3)));
+    }
+
+    #[test]
+    fn frame_raw_cgb_serves_rgb555_words() {
+        let session = cgb_session();
+        let raw = frame_raw_json(&session);
+        assert_eq!(raw["format"], json!("rgb555"));
+        assert_eq!(raw["width"], json!(160));
+        let pixels = raw["pixels"].as_array().expect("pixels array");
+        assert_eq!(pixels.len(), 160 * 144);
+        // The boot fade seeds the screen white ($7FFF), a real RGB555 word.
+        assert_eq!(pixels[0], json!("7fff"));
     }
 
     #[test]

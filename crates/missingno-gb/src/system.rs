@@ -16,13 +16,13 @@ use missingno_core::system::{
     ControlId, ControlInput, DebugView, FrameOutcome, RunningStatus, StepOutcome, SystemConsole,
     SystemDebugger,
 };
-use missingno_core::video::{Frame, VideoOut};
+use missingno_core::video::{Frame, RawFrame, VideoOut};
 
 use crate::cartridge::Cartridge;
 use crate::debugger::cdl::{CdlWindow, CodeDataLog};
 use crate::debugger::inspection::{ColorSnapshot, GbSnapshot};
 use crate::debugger::{Debugger, WatchCondition};
-use crate::frame::{GameBoyScreen, GbFrame, SgbScreen};
+use crate::frame::{GameBoyScreen, GbFrame, NATIVE_SIZE, SgbScreen};
 use crate::joypad::Button;
 use crate::sgb::MaskMode;
 use crate::{Console, Dmg, Model};
@@ -45,6 +45,10 @@ pub trait ConsoleUi: Model {
     /// The display for a step's screen result; `None` leaves the screen pane
     /// as-is.
     fn screen_display(console: &Console<Self>, new_screen: Option<Self::Screen>) -> Option<Frame>;
+
+    /// The current screen in its pre-resolution domain (DMG shade indices, CGB
+    /// RGB555 words) — the values the accuracy references compare in.
+    fn raw_frame(console: &Console<Self>) -> RawFrame;
 
     /// A per-vblank inspection snapshot for the UI to render while running.
     fn snapshot(
@@ -96,6 +100,19 @@ impl ConsoleUi for Dmg {
         }
     }
 
+    fn raw_frame(console: &Console<Self>) -> RawFrame {
+        use crate::ppu::screen::{NUM_SCANLINES, PIXELS_PER_LINE};
+        let screen = console.screen();
+        let pixels = (0..NUM_SCANLINES)
+            .flat_map(|y| (0..PIXELS_PER_LINE).map(move |x| screen.pixel(x, y).0))
+            .collect();
+        RawFrame::Shade2 {
+            width: NATIVE_SIZE.0,
+            height: NATIVE_SIZE.1,
+            pixels,
+        }
+    }
+
     fn snapshot(
         console: &Console<Self>,
         frame: u64,
@@ -114,11 +131,12 @@ impl ConsoleUi for Dmg {
     }
 
     fn sidebar_sections(console: &Console<Self>) -> Vec<inspect::Section> {
-        use crate::debugger::inspection::{AudioView, dmg_sidebar_sections};
+        use crate::debugger::inspection::{AudioView, TimersView, dmg_sidebar_sections};
         dmg_sidebar_sections(
             console.cpu(),
             console.ppu(),
             console.interrupts(),
+            &TimersView::capture(console.timers()),
             &AudioView::capture(console.audio()),
             &console.cartridge().inspect(),
         )
@@ -342,6 +360,10 @@ where
     fn screen_display(&self) -> Frame {
         self.display(Some(self.core.game_boy().screen().clone()))
             .expect("screen_display is always Some when given a screen")
+    }
+
+    fn frame_raw(&self) -> Option<RawFrame> {
+        Some(M::raw_frame(self.core.game_boy()))
     }
 
     fn reset(&mut self) {
