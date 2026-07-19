@@ -136,6 +136,9 @@ pub struct CgbView {
     /// DMG cartridge in CGB DMG-compatibility mode: the pixel FIFOs index the
     /// boot palette through BGP/OBP rather than directly.
     pub dmg_compat: bool,
+    /// Raw 15-bit CRAM words per palette entry, as the hardware holds them.
+    pub bg_raws: [[u16; 4]; 8],
+    pub obj_raws: [[u16; 4]; 8],
 }
 
 impl CgbView {
@@ -152,8 +155,15 @@ impl CgbView {
             ocps,
             vram_dma: model.vram_dma_status(),
             dmg_compat: ppu.model().dmg_compat(),
+            bg_raws: cram_raws(|palette, index| ppu.model().bg_color(palette, index)),
+            obj_raws: cram_raws(|palette, index| ppu.model().obj_color(palette, index)),
         }
     }
+}
+
+/// The raw 15-bit words of one CGB palette RAM.
+fn cram_raws(color: impl Fn(u8, u8) -> Color555) -> [[u16; 4]; 8] {
+    std::array::from_fn(|palette| std::array::from_fn(|index| color(palette as u8, index as u8).0))
 }
 
 /// The CGB sidebar: CPU, PPU, and CRAM sections composed from the shared Game
@@ -202,8 +212,8 @@ pub fn cgb_sidebar_sections(
     ];
 
     let cram_content = vec![
-        SectionBlock::Swatches(cram_swatches("bg", background)),
-        SectionBlock::Swatches(cram_swatches("obj", objects)),
+        SectionBlock::Swatches(cram_swatches("bg", background, &view.bg_raws)),
+        SectionBlock::Swatches(cram_swatches("obj", objects, &view.obj_raws)),
     ];
 
     vec![
@@ -301,16 +311,27 @@ fn cgb_fifo_block(
     ])
 }
 
-/// The eight resolved palettes of one CRAM bank as swatch rows.
-fn cram_swatches(prefix: &str, palettes: &[Palette; 8]) -> Vec<inspect::SwatchRow> {
+/// The eight resolved palettes of one CRAM bank as swatch rows, each swatch
+/// carrying its raw 15-bit CRAM word.
+fn cram_swatches(
+    prefix: &str,
+    palettes: &[Palette; 8],
+    raws: &[[u16; 4]; 8],
+) -> Vec<inspect::SwatchRow> {
     use missingno_gb::ppu::types::palette::PaletteIndex;
 
     palettes
         .iter()
+        .zip(raws)
         .enumerate()
-        .map(|(index, palette)| inspect::SwatchRow::Colors {
+        .map(|(index, (palette, words))| inspect::SwatchRow::Colors {
             label: format!("{prefix}{index}"),
-            colors: (0..4).map(|i| palette.color(PaletteIndex(i))).collect(),
+            colors: (0..4)
+                .map(|i| inspect::ColorSwatch {
+                    color: palette.color(PaletteIndex(i)),
+                    raw: Some(words[i as usize]),
+                })
+                .collect(),
         })
         .collect()
 }
@@ -490,6 +511,35 @@ mod tests {
         }
         let sections = Cgb::sidebar_sections(debugger.game_boy());
         assert!(sections.iter().any(|section| section.name == "APU"));
+    }
+
+    #[test]
+    fn cram_swatches_carry_the_raw_words() {
+        let debugger = stepped_cgb();
+        let sections = Cgb::sidebar_sections(debugger.game_boy());
+        let cram = sections
+            .iter()
+            .find(|section| section.name == "CRAM")
+            .expect("CRAM section");
+        let raws: Vec<u16> = cram
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                inspect::SectionBlock::Swatches(rows) => Some(rows),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|row| match row {
+                inspect::SwatchRow::Colors { colors, .. } => Some(colors),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|swatch| swatch.raw)
+            .collect();
+        // 2 banks × 8 palettes × 4 colours, every swatch carrying its word.
+        assert_eq!(raws.len(), 64);
+        // The boot fade seeds BG palettes white ($7FFF).
+        assert_eq!(raws[0], 0x7FFF);
     }
 
     fn stepped_cgb() -> Debugger<Cgb> {

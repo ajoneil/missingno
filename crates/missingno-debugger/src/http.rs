@@ -409,7 +409,15 @@ fn swatch_json(swatch: &SwatchRow) -> Value {
         SwatchRow::Colors { label, colors } => json!({
             "label": label,
             "kind": "colors",
-            "colors": colors.iter().map(rgb_hex).collect::<Vec<_>>(),
+            "colors": colors
+                .iter()
+                .map(|swatch| {
+                    json!({
+                        "rgb": rgb_hex(&swatch.color),
+                        "raw": swatch.raw,
+                    })
+                })
+                .collect::<Vec<_>>(),
         }),
     }
 }

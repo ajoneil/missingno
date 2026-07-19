@@ -1448,7 +1448,12 @@ fn render_block(block: &SectionBlock, out: &mut String) {
                     SwatchRow::Colors { label, colors } => {
                         let cells: Vec<String> = colors
                             .iter()
-                            .map(|c| format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b))
+                            .map(|c| match c.raw {
+                                Some(raw) => format!("${raw:04X}"),
+                                None => {
+                                    format!("#{:02x}{:02x}{:02x}", c.color.r, c.color.g, c.color.b)
+                                }
+                            })
                             .collect();
                         out.push_str(&format!("  {label}: {}\n", cells.join(" ")));
                     }

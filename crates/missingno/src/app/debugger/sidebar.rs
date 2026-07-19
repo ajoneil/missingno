@@ -913,13 +913,16 @@ fn swatch_row(
                 _ => Palette::CLASSIC,
             };
             let map = PaletteMap(*packed);
-            let swatches: Vec<Color> = (0..4)
-                .map(|i| iced_color(map.color(PaletteIndex(i), &palette)))
+            let swatches: Vec<(Color, Option<u16>)> = (0..4)
+                .map(|i| (iced_color(map.color(PaletteIndex(i), &palette)), None))
                 .collect();
             swatch_line(label, swatches, Some(format!("{:02X}", packed)))
         }
         inspect::SwatchRow::Colors { label, colors } => {
-            let swatches: Vec<Color> = colors.iter().map(|c| iced_color(*c)).collect();
+            let swatches: Vec<(Color, Option<u16>)> = colors
+                .iter()
+                .map(|c| (iced_color(c.color), c.raw))
+                .collect();
             swatch_line(label, swatches, None)
         }
     }
@@ -927,12 +930,28 @@ fn swatch_row(
 
 fn swatch_line(
     label: &str,
-    swatches: Vec<Color>,
+    swatches: Vec<(Color, Option<u16>)>,
     trailing: Option<String>,
 ) -> Element<'static, app::Message> {
     let mut cells = iced::widget::row![].spacing(2.0);
-    for color in swatches {
-        cells = cells.push(color_swatch(color));
+    for (color, raw) in swatches {
+        let swatch = color_swatch(color);
+        cells = cells.push(match raw {
+            // The raw palette word as the hardware holds it, on hover.
+            Some(word) => tooltip(
+                swatch,
+                container(
+                    text(format!("${word:04X}"))
+                        .font(fonts::monospace())
+                        .size(LABEL),
+                )
+                .padding([2.0, s()]),
+                tooltip::Position::Bottom,
+            )
+            .style(tooltip_style)
+            .into(),
+            None => swatch,
+        });
     }
 
     let mut line = iced::widget::row![

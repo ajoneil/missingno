@@ -410,8 +410,16 @@ pub enum SwatchRow {
     /// Resolved colours the core genuinely owns (CGB palette RAM).
     Colors {
         label: String,
-        colors: Vec<rgb::RGB8>,
+        colors: Vec<ColorSwatch>,
     },
+}
+
+/// One owned-colour swatch: the resolved display colour, and the raw palette
+/// word as the hardware holds it (CGB: the 15-bit BGR555 CRAM entry).
+#[derive(Clone, Copy, Debug)]
+pub struct ColorSwatch {
+    pub color: rgb::RGB8,
+    pub raw: Option<u16>,
 }
 
 /// The fallback sidebar for a core that has not built family-specific sections:
