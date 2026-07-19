@@ -166,13 +166,15 @@ impl Sidebar {
 }
 
 /// Wrap the sidebar sections in a vertical scrollable so they scroll on
-/// overflow, with a hidden scrollbar so no gutter eats the fixed width.
+/// overflow, with a slim scrollbar in the slack between the content budget and
+/// the fixed sidebar width.
 fn scroll_sidebar(content: Element<'static, app::Message>) -> Element<'static, app::Message> {
     scrollable(content)
         .direction(iced::widget::scrollable::Direction::Vertical(
             iced::widget::scrollable::Scrollbar::new()
-                .width(0)
-                .scroller_width(0),
+                .width(6)
+                .scroller_width(4)
+                .margin(1),
         ))
         .width(Length::Fixed(SIDEBAR_WIDTH))
         .height(Fill)
