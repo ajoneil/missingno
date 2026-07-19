@@ -6,7 +6,6 @@ use iced::{
     widget::{
         container, pane_grid,
         pane_grid::Axis::{Horizontal, Vertical},
-        toggler,
     },
 };
 
@@ -14,7 +13,7 @@ use crate::app::{
     self,
     debugger::{
         self,
-        audio::AudioPane,
+        audio_scope::AudioScopePane,
         disassembly::{DisasmPaneData, DisassemblyPane},
         inspect::GbPaneContext,
         layout,
@@ -35,6 +34,7 @@ use crate::app::{
         sizes::{self as sizes, s, xs},
     },
 };
+use missingno_core::waveform::ChannelWave;
 use missingno_gb::ppu::types::{
     palette::{Palette, PaletteChoice},
     tiles::TileMapId,
@@ -87,6 +87,10 @@ pub struct PaneContext<'b> {
     /// The disassembly rows built for the current PC; `None` when no
     /// disassembly pane is shown or the running snapshot can't fuel the walk.
     pub disasm: Option<DisasmPaneData<'b>>,
+    /// The per-channel waveform windows for the audio scope; `None` when the
+    /// family captures none or capture is off. Held oldest-first, owned by the
+    /// view that built the context.
+    pub waves: Option<&'b [ChannelWave]>,
 }
 
 impl<'b> PaneContext<'b> {
@@ -251,6 +255,7 @@ pub static VCS_PANE_REGISTRY: &[PaneDescriptor] = &[
     },
     MEMORY_DESCRIPTOR,
     DISASSEMBLY_DESCRIPTOR,
+    AUDIO_DESCRIPTOR,
 ];
 
 /// The generic memory viewer, registered for every family — it reads the
@@ -304,13 +309,17 @@ pub static PANE_REGISTRY: &[PaneDescriptor] = &[
         label: "Sprites",
         construct: || Box::new(SpritesPane::new()),
     },
-    PaneDescriptor {
-        kind: DebuggerPane::Audio,
-        icon: Icon::Sliders,
-        label: "Audio",
-        construct: || Box::new(AudioPane::new()),
-    },
+    AUDIO_DESCRIPTOR,
 ];
+
+/// The generic audio scope: registered for every family whose core captures
+/// per-channel waveforms. Reads the seam's [`ChannelWave`]s while capture is on.
+const AUDIO_DESCRIPTOR: PaneDescriptor = PaneDescriptor {
+    kind: DebuggerPane::Audio,
+    icon: Icon::Sliders,
+    label: "Audio",
+    construct: || Box::new(AudioScopePane::new()),
+};
 
 pub struct DebuggerPanes {
     family: &'static Family,
@@ -692,15 +701,25 @@ fn build_title_bar<'a>(
         .style(title_style)
 }
 
-pub fn checkbox_title_bar(label: &str, checked: bool) -> pane_grid::TitleBar<'_, app::Message> {
-    pane_grid::TitleBar::new(
-        container(
-            toggler(checked)
-                .label(label)
-                .font(fonts::title())
-                .size(13.0),
-        )
-        .padding([xs(), s()]),
-    )
-    .style(title_style)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn audio_in(registry: &[PaneDescriptor]) -> Option<&PaneDescriptor> {
+        registry
+            .iter()
+            .find(|descriptor| descriptor.kind == DebuggerPane::Audio)
+    }
+
+    #[test]
+    fn audio_scope_registered_for_waveform_families() {
+        // Both the Game Boy family and the VCS register the scope, under the
+        // same "Audio" label so a layout saved by the old pane still resolves.
+        for registry in [PANE_REGISTRY, VCS_PANE_REGISTRY] {
+            let audio = audio_in(registry).expect("audio pane registered");
+            assert_eq!(audio.label, "Audio");
+        }
+        // The pane's kind resolves back to that stable label.
+        assert_eq!(DebuggerPane::Audio.to_string(), "Audio");
+    }
 }

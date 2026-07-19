@@ -28,7 +28,7 @@ use inspect::{DebugView, GbPaneContext};
 use panes::{DebuggerPanes, PaneContext};
 use sidebar::Sidebar;
 
-mod audio;
+mod audio_scope;
 mod disasm_rows;
 mod disassembly;
 pub mod inspect;
@@ -337,6 +337,12 @@ impl Debugger {
         memory::interest_for(self.memory_regions, self.panes.memory_selection()?)
     }
 
+    /// Whether any consumer wants per-channel waveform capture on — currently
+    /// the audio scope pane. Off frees the core's capture rings.
+    pub fn wants_wave_capture(&self) -> bool {
+        self.panes.plane_shown(panes::DebuggerPane::Audio)
+    }
+
     pub fn audio_coupling(&self) -> Option<missingno_core::HighPass> {
         self.debugger
             .as_ref()
@@ -643,12 +649,19 @@ impl Debugger {
                         memory::Message::SetRegions(self.memory_regions),
                     )));
                 self.panes.update(message);
-                // A memory selection change while running must re-aim the emu
-                // thread's vblank peek at the new view.
-                if self.is_detached()
-                    && let Some(emu) = emu
-                {
-                    emu.send(EmuCommand::SetMemoryInterest(self.memory_interest()));
+                // Opening or closing a pane can change what the running core
+                // must produce: re-aim the vblank memory peek and toggle
+                // waveform capture. While detached both ride the emu thread;
+                // while the core is here, capture toggles on it directly so the
+                // paused tail fills as the user steps.
+                let wants_waves = self.wants_wave_capture();
+                if self.is_detached() {
+                    if let Some(emu) = emu {
+                        emu.send(EmuCommand::SetMemoryInterest(self.memory_interest()));
+                        emu.set_wave_capture(wants_waves);
+                    }
+                } else if let Some(core) = &mut self.debugger {
+                    core.set_wave_capture(wants_waves);
                 }
                 Task::none()
             }
@@ -682,6 +695,9 @@ impl Debugger {
             .panes
             .plane_shown(panes::DebuggerPane::Disassembly)
             .then(|| disassembly::paused_readout(core.as_ref()));
+        // The frozen tail the core still holds while paused; `None` unless the
+        // audio scope has capture on.
+        let waves = core.channel_waves();
         let ctx = PaneContext {
             gb,
             family: family_any,
@@ -690,6 +706,7 @@ impl Debugger {
             disasm: disasm_readout
                 .as_ref()
                 .map(disassembly::DisasmPaneData::new),
+            waves: waves.as_deref(),
         };
 
         let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
@@ -789,6 +806,8 @@ impl Debugger {
             .plane_shown(panes::DebuggerPane::Disassembly)
             .then(|| disassembly::running_readout(snapshot))
             .flatten();
+        // This vblank's captured windows; `None` unless capture is on.
+        let waves = snapshot.channel_waves();
         self.panes.view(Some(PaneContext {
             gb,
             family: family_any,
@@ -797,6 +816,7 @@ impl Debugger {
             disasm: disasm_readout
                 .as_ref()
                 .map(disassembly::DisasmPaneData::new),
+            waves: waves.as_deref(),
         }))
     }
 

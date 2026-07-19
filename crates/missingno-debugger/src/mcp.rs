@@ -262,6 +262,15 @@ fn generic_tools(session: &Session) -> Vec<Tool> {
             input_schema: empty(),
         },
         Tool {
+            name: "get_waveforms",
+            description:
+                "Each sound channel's captured DAC waveform as a text sparkline, with its \
+                          rate and whether it is driving. Enables capture if it was off; steps \
+                          nothing, so call again after stepping to see the window fill."
+                    .into(),
+            input_schema: empty(),
+        },
+        Tool {
             name: "step",
             description: format!(
                 "Execute instructions (count, default 1, max {MAX_STEP_COUNT}); stops early on a \
@@ -451,6 +460,7 @@ fn call_generic(
         "list_symbols" => text(symbols_text(session)),
         "disassemble" => disassemble(session, args),
         "describe_machine" => text(describe_machine(session)),
+        "get_waveforms" => text(waveforms_text(session)),
         "step" => stepping(session, args, Stepping::Instruction),
         "step_over" => {
             let stop = session.step_over();
@@ -827,6 +837,58 @@ fn set_control(session: &mut Session, args: &Value) -> ToolOutcome {
     text(format!("control {control} set"))
 }
 
+// --- get_waveforms ------------------------------------------------------------
+
+/// Sparkline glyphs from lowest to highest level.
+const SPARK_BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+/// Column budget a waveform sparkline downsamples to.
+const SPARK_WIDTH: usize = 48;
+
+fn waveforms_text(session: &mut Session) -> String {
+    if session.channel_waves().is_none() {
+        session.set_wave_capture(true);
+    }
+    let Some(waves) = session.channel_waves() else {
+        return "(this core captures no waveforms)".into();
+    };
+    let mut out = String::new();
+    for wave in &waves {
+        let max = ((1u32 << wave.depth_bits.min(31)) - 1).max(1) as u8;
+        let spark = sparkline(&wave.levels, max, SPARK_WIDTH);
+        out.push_str(&format!(
+            "{} @ {} Hz  {}\n  {}\n",
+            wave.label,
+            wave.rate,
+            if wave.active { "driving" } else { "idle" },
+            if spark.is_empty() {
+                "(no samples yet)".to_string()
+            } else {
+                spark
+            },
+        ));
+    }
+    out.trim_end().to_string()
+}
+
+/// Reduce `levels` to at most `width` sparkline glyphs, each the peak code of
+/// the samples in its column so a spike is not aliased away.
+fn sparkline(levels: &[u8], max_code: u8, width: usize) -> String {
+    let n = levels.len();
+    if n == 0 || width == 0 {
+        return String::new();
+    }
+    let cols = width.min(n);
+    (0..cols)
+        .map(|col| {
+            let start = col * n / cols;
+            let end = ((col + 1) * n / cols).max(start + 1).min(n);
+            let peak = levels[start..end].iter().copied().max().unwrap_or(0);
+            let step = (peak as usize * (SPARK_BARS.len() - 1)) / max_code.max(1) as usize;
+            SPARK_BARS[step.min(SPARK_BARS.len() - 1)]
+        })
+        .collect()
+}
+
 // --- describe_machine ---------------------------------------------------------
 
 /// The empty glyph for a pixel-strip cell.
@@ -1138,6 +1200,25 @@ mod tests {
         let dump = hex_dump(0xc000, b"AB\x00\xff");
         assert!(dump.starts_with("c000  41 42 00 ff"));
         assert!(dump.contains("AB.."));
+    }
+
+    #[test]
+    fn sparkline_spans_bars_and_keeps_peaks() {
+        // A 0..=15 ramp over a 4-bit channel walks the whole glyph range.
+        let ramp: Vec<u8> = (0..=15).collect();
+        let line = sparkline(&ramp, 15, SPARK_WIDTH);
+        assert_eq!(line.chars().count(), 16);
+        assert!(line.starts_with('▁'));
+        assert!(line.ends_with('█'));
+
+        // A lone spike downsampled hard still shows a full bar.
+        let mut spiky = vec![0u8; 200];
+        spiky[100] = 15;
+        assert!(sparkline(&spiky, 15, SPARK_WIDTH).contains('█'));
+
+        // Empty and zero-width windows render nothing.
+        assert!(sparkline(&[], 15, SPARK_WIDTH).is_empty());
+        assert!(sparkline(&[1, 2, 3], 15, 0).is_empty());
     }
 
     #[test]

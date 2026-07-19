@@ -268,8 +268,10 @@ impl App {
                 if let Some(payload) = debugger.take_payload() {
                     handle.run(Payload::Debugger(payload));
                     // Aim the vblank memory peek at the pane's current view so
-                    // the running browser fills in from the first frame.
+                    // the running browser fills in from the first frame, and
+                    // match capture to whether the audio scope is open.
                     handle.send(EmuCommand::SetMemoryInterest(debugger.memory_interest()));
+                    handle.set_wave_capture(debugger.wants_wave_capture());
                 }
             }
             _ => {}

@@ -13,7 +13,7 @@ use missingno_gbc::{Cgb, GameBoyColor, cram_palettes};
 use crate::app::console::{ConsoleColors, colors_from_snapshot};
 
 pub use missingno_core::system::DebugView;
-pub use missingno_gb::debugger::inspection::{AudioView, GbSnapshot, PpuSource, WaveChannelView};
+pub use missingno_gb::debugger::inspection::{GbSnapshot, PpuSource};
 pub use missingno_gbc::CgbSnapshot;
 
 // --- Model colour hooks ------------------------------------------------------
@@ -55,7 +55,6 @@ impl GbColors for Cgb {
 pub trait InspectSource {
     fn ppu(&self) -> &dyn PpuSource;
     fn vram(&self) -> &dyn VramView;
-    fn audio(&self) -> AudioView;
     fn colors(&self, user_palette: &Palette) -> ConsoleColors;
 }
 
@@ -65,9 +64,6 @@ impl<M: GbColors> InspectSource for Console<M> {
     }
     fn vram(&self) -> &dyn VramView {
         Console::vram(self)
-    }
-    fn audio(&self) -> AudioView {
-        AudioView::capture(Console::audio(self))
     }
     fn colors(&self, user_palette: &Palette) -> ConsoleColors {
         M::colors(self, user_palette)
@@ -81,9 +77,6 @@ impl InspectSource for GbSnapshot {
     fn vram(&self) -> &dyn VramView {
         &*self.vram
     }
-    fn audio(&self) -> AudioView {
-        self.audio.clone()
-    }
     fn colors(&self, user_palette: &Palette) -> ConsoleColors {
         colors_from_snapshot(&self.colors, user_palette)
     }
@@ -95,9 +88,6 @@ impl InspectSource for CgbSnapshot {
     }
     fn vram(&self) -> &dyn VramView {
         self.base.vram()
-    }
-    fn audio(&self) -> AudioView {
-        self.base.audio()
     }
     fn colors(&self, user_palette: &Palette) -> ConsoleColors {
         self.base.colors(user_palette)

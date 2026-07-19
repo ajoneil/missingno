@@ -165,10 +165,8 @@ impl EmuHandle {
         self.send(EmuCommand::Run(payload));
     }
 
-    /// Enable or disable the debugger's per-channel waveform capture. The audio
-    /// scope pane (A3) is the caller once it lands; until then nothing in the
-    /// GUI sends this.
-    #[allow(dead_code)]
+    /// Enable or disable the running debugger's per-channel waveform capture,
+    /// driven by whether the audio scope pane is open.
     pub fn set_wave_capture(&self, on: bool) {
         self.send(EmuCommand::SetWaveCapture(on));
     }
@@ -517,8 +515,8 @@ mod tests {
         EmuLoop::new(slots, events, returns, ack)
     }
 
-    // The GUI sender lands in A3; until then this stands in for it, driving the
-    // stored-flag path the emu loop applies to each payload it runs.
+    // The audio scope pane drives this through the handle; here it exercises
+    // the stored-flag path the emu loop re-applies to each payload it runs.
     #[test]
     fn set_wave_capture_stores_the_flag() {
         let mut state = test_loop();
