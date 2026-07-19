@@ -1495,33 +1495,27 @@ fn render_relations(matrix: &PairMatrix, out: &mut String) {
     if n < 2 {
         return;
     }
-    // Identical axes: the full entity list in the same order on both, a marked
-    // diagonal for the self-pairs, pips below it.
-    let header = matrix.entities.join(" ");
-    out.push_str(&format!("  {: <10}{header}\n", ""));
+    // Labels on the diagonal head their column and end their row, so both axes
+    // read in the same order and every cell sits beside both of its labels.
+    let column_width = matrix
+        .entities
+        .iter()
+        .map(|name| name.len())
+        .max()
+        .unwrap_or(1);
     for row in 0..n {
-        let cells: Vec<String> = (0..n)
+        let mut cells: Vec<String> = (0..row)
             .map(|col| {
-                let width = matrix.entities[col].len().max(1);
-                let glyph = match col.cmp(&row) {
-                    std::cmp::Ordering::Less => {
-                        if matrix.cell(col, row).set {
-                            "●"
-                        } else {
-                            "·"
-                        }
-                    }
-                    std::cmp::Ordering::Equal => "╲",
-                    std::cmp::Ordering::Greater => " ",
+                let glyph = if matrix.cell(col, row).set {
+                    "●"
+                } else {
+                    "·"
                 };
-                format!("{glyph:^width$}")
+                format!("{glyph:^column_width$}")
             })
             .collect();
-        out.push_str(&format!(
-            "  {: <10}{}\n",
-            matrix.entities[row],
-            cells.join(" ").trim_end()
-        ));
+        cells.push(matrix.entities[row].to_string());
+        out.push_str(&format!("  {}\n", cells.join(" ")));
     }
 }
 

@@ -796,58 +796,35 @@ fn flag_badge(name: &str, active: bool) -> Element<'static, app::Message> {
 
 // --- Pair matrix -------------------------------------------------------------
 
-/// A symmetric relation as a lower-triangular pip grid over identical axes:
-/// the full entity list in the same order down the left and across the top, a
-/// marked diagonal for the self-pairs that cannot collide, and a pip where a
-/// row meets a column below the diagonal — the cell for that unordered pair.
-/// The empty upper triangle is left as blank space.
+/// A symmetric relation as a lower-triangular pip grid with the entity labels
+/// on the diagonal, where each one heads its column and ends its row — so both
+/// axes read in the same order and every pip sits adjacent to both of its
+/// labels. A pip below the diagonal is the cell for that unordered pair; the
+/// upper triangle is blank.
 fn pair_matrix(matrix: &inspect::PairMatrix) -> Element<'static, app::Message> {
     let n = matrix.entities.len();
     let mut grid = column![];
 
-    // Both axes carry the full entity list in the same order, so rows and
-    // columns read identically; the diagonal anchors the triangle and every
-    // column's pips start just below it.
-    let mut header = iced::widget::row![pair_slot(Space::new().into())];
-    for &name in matrix.entities {
-        header = header.push(pair_rule_v());
-        header = header.push(pair_slot(
-            text(name.to_owned())
-                .font(fonts::monospace())
-                .size(HEADER)
-                .color(palette::MUTED)
-                .into(),
-        ));
-    }
-    grid = grid.push(header);
-
     for row in 0..n {
-        grid = grid.push(pair_rule_h(1 + n));
-        let mut line = iced::widget::row![pair_slot(
+        if row > 0 {
+            grid = grid.push(pair_rule_h(1 + row));
+        }
+        let mut line = iced::widget::row![];
+        for col in 0..row {
+            let cell = matrix.cell(col, row);
+            line = line.push(pair_slot(with_help(
+                pip(cell.set, palette::GREEN),
+                cell.help,
+            )));
+            line = line.push(pair_rule_v());
+        }
+        line = line.push(pair_slot(
             text(matrix.entities[row].to_owned())
                 .font(fonts::monospace())
                 .size(LABEL)
                 .color(palette::MUTED)
                 .into(),
-        )];
-        for col in 0..n {
-            line = line.push(pair_rule_v());
-            let content: Element<'static, app::Message> = if col < row {
-                let cell = matrix.cell(col, row);
-                pair_slot(with_help(pip(cell.set, palette::GREEN), cell.help))
-            } else if col == row {
-                pair_slot(
-                    text("╲")
-                        .font(fonts::monospace())
-                        .size(LABEL)
-                        .color(palette::OVERLAY0)
-                        .into(),
-                )
-            } else {
-                pair_slot(Space::new().into())
-            };
-            line = line.push(content);
-        }
+        ));
         grid = grid.push(line);
     }
 
