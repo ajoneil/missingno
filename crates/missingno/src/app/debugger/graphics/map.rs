@@ -253,8 +253,11 @@ impl panes::Pane for TileMapPane {
         ctx: Option<&panes::PaneContext<'_>>,
         id: pane_grid::Pane,
     ) -> pane_grid::Content<'a, app::Message> {
-        match (ctx.and_then(|ctx| ctx.graphics), ctx.and_then(|ctx| ctx.gb)) {
-            (Some(graphics), Some(gb)) => self.content(graphics, gb.colors, id),
+        match (
+            ctx.and_then(|ctx| ctx.graphics),
+            ctx.and_then(|ctx| ctx.colors),
+        ) {
+            (Some(graphics), Some(colors)) => self.content(graphics, colors, id),
             _ => running_placeholder("Tile Map", id),
         }
     }

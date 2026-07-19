@@ -24,7 +24,7 @@ use missingno_core::inspect::{MemoryRegion, MemoryWindow, Watch, WatchTerm};
 use missingno_core::symbols::Symbol;
 use missingno_gb::ppu::types::palette::PaletteChoice;
 
-use inspect::{DebugView, GbPaneContext};
+use inspect::DebugView;
 use panes::{DebuggerPanes, PaneContext};
 use sidebar::Sidebar;
 
@@ -103,7 +103,7 @@ pub enum Message {
     WatchpointKindChanged(AccessKind),
     AddWatchpoint,
     /// Add a pre-built watch — the disassembly gutter's `{pc, bank}` compound.
-    AddWatch(Watch),
+    SetWatchpoint(Watch),
 
     RemoveLabel(Symbol),
     LabelAddressChanged(String),
@@ -580,7 +580,7 @@ impl Debugger {
                 self.remove_watchpoint(&watch, emu);
                 Task::none()
             }
-            Message::AddWatch(watch) => {
+            Message::SetWatchpoint(watch) => {
                 self.add_watchpoint(watch, emu);
                 Task::none()
             }
@@ -754,7 +754,6 @@ impl Debugger {
         let family_any = core.family_state();
         let gb_source = inspect::as_inspect_source(family_any);
         let colors = gb_source.map(|source| source.colors(self.panes.palette()));
-        let gb = colors.as_ref().map(|colors| GbPaneContext { colors });
         // One live readout per open memory pane, each matched back by its base.
         let memory_selections = self.panes.memory_selections();
         let memory_regions = core.memory_regions();
@@ -773,7 +772,7 @@ impl Debugger {
         // a graphics pane has capture on.
         let graphics = core.graphics();
         let ctx = PaneContext {
-            gb,
+            colors: colors.as_ref(),
             breakpoints: &self.breakpoints,
             watches: &self.watchpoints,
             memory: (!memory_selections.is_empty())
@@ -861,14 +860,6 @@ impl Debugger {
         let Some(snapshot) = self.last_snapshot.as_deref() else {
             return self.panes.view(None);
         };
-        let family_any = snapshot.family_state();
-        // The colour context is a Game Boy pane surface only when the snapshot
-        // is a GB-family one; other families leave `gb` empty.
-        let is_gb_family =
-            family_any.is::<inspect::GbSnapshot>() || family_any.is::<inspect::CgbSnapshot>();
-        let gb = colors
-            .filter(|_| is_gb_family)
-            .map(|colors| GbPaneContext { colors });
         let disasm_readout = self
             .panes
             .plane_shown(panes::DebuggerPane::Disassembly)
@@ -879,7 +870,7 @@ impl Debugger {
         // This vblank's decoded surfaces; `None` unless graphics capture is on.
         let graphics = snapshot.graphics();
         self.panes.view(Some(PaneContext {
-            gb,
+            colors,
             breakpoints: &self.breakpoints,
             watches: &self.watchpoints,
             memory: self.running_memory(snapshot),
@@ -1133,7 +1124,7 @@ fn rail_icon<'a>(
 }
 
 /// An instanceable pane's rail button: the icon lit while any instance is open,
-/// with a small count badge in the corner.
+/// with a row of small accent dots beneath it — one per open instance.
 fn rail_icon_badged<'a>(
     icon: icons::Icon,
     label: &str,
@@ -1147,23 +1138,9 @@ fn rail_icon_badged<'a>(
     };
     let icon_el: Element<'a, app::Message> = icons::m_colored(icon, color).into();
     let content: Element<'a, app::Message> = if count >= 1 {
-        let badge = container(
-            text(count.to_string())
-                .font(fonts::monospace())
-                .size(8.0)
-                .color(palette::TEXT),
-        )
-        .padding([0.0, 3.0])
-        .style(badge_style);
-        iced::widget::Stack::new()
-            .push(icon_el)
-            .push(
-                container(badge)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .align_x(iced::alignment::Horizontal::Right)
-                    .align_y(iced::alignment::Vertical::Top),
-            )
+        column![icon_el, instance_dots(count)]
+            .spacing(2.0)
+            .align_x(iced::alignment::Horizontal::Center)
             .into()
     } else {
         icon_el
@@ -1172,27 +1149,30 @@ fn rail_icon_badged<'a>(
     rail_tooltip(btn.into(), label)
 }
 
-/// A rounded, filled pill behind a rail badge count.
-fn badge_style(_theme: &iced::Theme) -> container::Style {
+/// A row of small filled accent dots, one per open instance, capped at what the
+/// rail button's width holds.
+fn instance_dots<'a>(count: usize) -> Element<'a, app::Message> {
+    const DOT: f32 = 3.0;
+    const MAX_DOTS: usize = 4;
+    let dots = (0..count.min(MAX_DOTS))
+        .map(|_| container("").width(DOT).height(DOT).style(dot_style).into());
+    row(dots).spacing(2.0).into()
+}
+
+fn dot_style(_theme: &iced::Theme) -> container::Style {
     container::Style {
         background: Some(palette::PURPLE.into()),
-        border: iced::Border::default().rounded(6.0),
+        border: iced::Border::default().rounded(1.5),
         ..Default::default()
     }
 }
 
 /// The left-flyout tooltip shared by every rail button.
 fn rail_tooltip<'a>(btn: Element<'a, app::Message>, label: &str) -> Element<'a, app::Message> {
-    use crate::app::debugger::sidebar::tooltip_style;
+    use crate::app::debugger::sidebar::help_tooltip;
     use iced::widget::tooltip;
 
-    tooltip(
-        btn,
-        container(text(label.to_owned()).font(fonts::monospace()).size(13.0)).padding([2.0, s()]),
-        tooltip::Position::Left,
-    )
-    .style(tooltip_style)
-    .into()
+    help_tooltip(btn, label.to_owned(), 13.0, tooltip::Position::Left)
 }
 
 fn label_row(symbol: &Symbol) -> Element<'static, app::Message> {

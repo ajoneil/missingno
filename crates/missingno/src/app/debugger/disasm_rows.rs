@@ -13,7 +13,7 @@ use iced::{
 
 use crate::app::{
     self,
-    debugger::{self, sidebar::tooltip_style},
+    debugger::{self, sidebar::help_tooltip},
     ui::{fonts, palette, sizes::s},
 };
 use missingno_core::inspect::{AddressDisplay, Watch, WatchTerm};
@@ -252,25 +252,19 @@ fn gutter(
                 if is_watched {
                     debugger::Message::RemoveWatchpoint(watch)
                 } else {
-                    debugger::Message::AddWatch(watch)
+                    debugger::Message::SetWatchpoint(watch)
                 }
                 .into(),
             )
             .into();
     }
 
-    tooltip(
+    help_tooltip(
         dot(palette::SURFACE2, false),
-        container(
-            text("no breakpoint — bank-shared window")
-                .font(fonts::monospace())
-                .size(11.0),
-        )
-        .padding([2.0, s()]),
+        "no breakpoint — bank-shared window",
+        11.0,
         tooltip::Position::Right,
     )
-    .style(tooltip_style)
-    .into()
 }
 
 /// The 8px gutter marker: a filled disc (`filled`) or a hollow ring outlined in

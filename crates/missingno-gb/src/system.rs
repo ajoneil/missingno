@@ -24,7 +24,6 @@ use crate::debugger::inspection::{ColorSnapshot, GbSnapshot};
 use crate::debugger::{Debugger, WatchCondition};
 use crate::frame::{GameBoyScreen, GbFrame, SgbScreen};
 use crate::joypad::Button;
-use crate::ppu::model::PpuModel;
 use crate::sgb::MaskMode;
 use crate::{Console, Dmg, Model};
 
@@ -165,7 +164,6 @@ impl<M: ConsoleUi> GbConsole<M> {
 impl<M: ConsoleUi + 'static> SystemConsole for GbConsole<M>
 where
     Console<M>: Send,
-    <M::Ppu as PpuModel>::Vram: Clone + Send + 'static,
 {
     fn step_frame(&mut self) -> FrameOutcome {
         let console = &mut self.console;
@@ -302,7 +300,6 @@ impl<M: ConsoleUi> GbDebugger<M> {
 impl<M: ConsoleUi + 'static> SystemDebugger for GbDebugger<M>
 where
     Console<M>: Send,
-    <M::Ppu as PpuModel>::Vram: Clone + Send + 'static,
 {
     fn step(&mut self) -> StepOutcome {
         let screen = self.core.step();

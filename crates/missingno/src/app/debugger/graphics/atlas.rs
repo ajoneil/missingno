@@ -9,7 +9,7 @@ use std::fmt;
 use iced::{
     Element,
     Length::Fill,
-    widget::{column, container, pick_list, row, rule, scrollable, shader, text, tooltip},
+    widget::{column, pick_list, row, rule, scrollable, shader, text, tooltip},
 };
 use rgb::RGB8;
 
@@ -19,7 +19,7 @@ use crate::app::{
     debugger::{
         graphics::{ATLAS_COLUMNS, atlas_span_texture, atlas_texture},
         panes::{self, pane, running_placeholder, title_bar, title_bar_with_detail},
-        sidebar::tooltip_style,
+        sidebar::help_tooltip,
     },
     texture_renderer::TextureRenderer,
     ui::{fonts, palette, sizes::s},
@@ -211,13 +211,7 @@ fn region_header(region: &AtlasRegion) -> Element<'static, app::Message> {
         .size(11.0)
         .color(palette::MUTED);
     let header: Element<'static, app::Message> = match region.help {
-        Some(help) => tooltip(
-            label,
-            container(text(help).font(fonts::monospace()).size(11.0)).padding([2.0, s()]),
-            tooltip::Position::Right,
-        )
-        .style(tooltip_style)
-        .into(),
+        Some(help) => help_tooltip(label, help, 11.0, tooltip::Position::Right),
         None => label.into(),
     };
     column![rule::horizontal(1), header].spacing(2.0).into()
@@ -250,8 +244,11 @@ impl panes::Pane for TileAtlasPane {
         ctx: Option<&panes::PaneContext<'_>>,
         id: iced::widget::pane_grid::Pane,
     ) -> iced::widget::pane_grid::Content<'a, app::Message> {
-        match (ctx.and_then(|ctx| ctx.graphics), ctx.and_then(|ctx| ctx.gb)) {
-            (Some(graphics), Some(gb)) => self.content(graphics, gb.colors, id),
+        match (
+            ctx.and_then(|ctx| ctx.graphics),
+            ctx.and_then(|ctx| ctx.colors),
+        ) {
+            (Some(graphics), Some(colors)) => self.content(graphics, colors, id),
             _ => running_placeholder("Tiles", id),
         }
     }

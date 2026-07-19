@@ -7,9 +7,7 @@ use iced::{
     Element,
     Length::Fill,
     never,
-    widget::{
-        Row, column, container, pane_grid, rich_text, row, scrollable, span, toggler, tooltip,
-    },
+    widget::{Row, column, pane_grid, rich_text, row, scrollable, span, toggler, tooltip},
 };
 
 use crate::app::{
@@ -221,7 +219,7 @@ fn position<'a>(object: &Object) -> Element<'a, app::Message> {
 }
 
 fn priority_icon<'a>(behind_background: bool) -> Element<'a, app::Message> {
-    use crate::app::debugger::sidebar::tooltip_style;
+    use crate::app::debugger::sidebar::help_tooltip;
 
     let (icon, label) = if behind_background {
         (Icon::Back, "Behind BG")
@@ -229,18 +227,7 @@ fn priority_icon<'a>(behind_background: bool) -> Element<'a, app::Message> {
         (Icon::Front, "Above BG")
     };
 
-    tooltip(
-        icons::m_muted(icon),
-        container(
-            iced::widget::text(label)
-                .font(fonts::monospace())
-                .size(11.0),
-        )
-        .padding([2.0, s()]),
-        tooltip::Position::Right,
-    )
-    .style(tooltip_style)
-    .into()
+    help_tooltip(icons::m_muted(icon), label, 11.0, tooltip::Position::Right)
 }
 
 impl panes::Pane for ObjectTablePane {
@@ -253,8 +240,11 @@ impl panes::Pane for ObjectTablePane {
         ctx: Option<&panes::PaneContext<'_>>,
         id: pane_grid::Pane,
     ) -> pane_grid::Content<'a, app::Message> {
-        match (ctx.and_then(|ctx| ctx.graphics), ctx.and_then(|ctx| ctx.gb)) {
-            (Some(graphics), Some(gb)) => self.content(graphics, gb.colors, id),
+        match (
+            ctx.and_then(|ctx| ctx.graphics),
+            ctx.and_then(|ctx| ctx.colors),
+        ) {
+            (Some(graphics), Some(colors)) => self.content(graphics, colors, id),
             _ => running_placeholder("Sprites", id),
         }
     }

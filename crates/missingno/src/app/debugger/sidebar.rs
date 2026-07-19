@@ -297,18 +297,29 @@ fn render_block(
 
 /// Wrap an element in a hover tooltip carrying its one-line help, if any. The
 /// tooltip is an overlay, so it never disturbs the sidebar's layout.
+/// A hover tooltip: the anchor with a muted monospace bubble beside it, styled
+/// the shared way. `size` matches the anchor's own text scale.
+pub fn help_tooltip<'a>(
+    anchor: impl Into<Element<'a, app::Message>>,
+    tip: impl iced::widget::text::IntoFragment<'a>,
+    size: f32,
+    position: tooltip::Position,
+) -> Element<'a, app::Message> {
+    tooltip(
+        anchor,
+        container(text(tip).font(fonts::monospace()).size(size)).padding([2.0, s()]),
+        position,
+    )
+    .style(tooltip_style)
+    .into()
+}
+
 fn with_help(
     element: Element<'static, app::Message>,
     help: Option<&'static str>,
 ) -> Element<'static, app::Message> {
     match help {
-        Some(text_help) => tooltip(
-            element,
-            container(text(text_help).font(fonts::monospace()).size(LABEL)).padding([2.0, s()]),
-            tooltip::Position::Bottom,
-        )
-        .style(tooltip_style)
-        .into(),
+        Some(text_help) => help_tooltip(element, text_help, LABEL, tooltip::Position::Bottom),
         None => element,
     }
 }
@@ -348,13 +359,7 @@ fn pointer_item(pointer: &inspect::Pointer) -> Element<'static, app::Message> {
     .into();
 
     if inactive {
-        tooltip(
-            display,
-            container(text("halted").font(fonts::monospace()).size(REG)).padding([2.0, s()]),
-            tooltip::Position::Bottom,
-        )
-        .style(tooltip_style)
-        .into()
+        help_tooltip(display, "halted", REG, tooltip::Position::Bottom)
     } else {
         with_help(display, register.help)
     }
@@ -603,13 +608,7 @@ fn sweep_row(sweep: &inspect::Sweep) -> Element<'static, app::Message> {
         (None, None) => None,
     };
     match tip {
-        Some(tip) => tooltip(
-            line,
-            container(text(tip).font(fonts::monospace()).size(LABEL)).padding([2.0, s()]),
-            tooltip::Position::Bottom,
-        )
-        .style(tooltip_style)
-        .into(),
+        Some(tip) => help_tooltip(line, tip, LABEL, tooltip::Position::Bottom),
         None => line,
     }
 }
@@ -718,18 +717,12 @@ fn bit_table(table: &inspect::BitTable) -> Element<'static, app::Message> {
 /// its name as a tooltip), else the column name as text.
 fn column_header(column: &inspect::BitColumn) -> Element<'static, app::Message> {
     match column.concept.map(concept_icon) {
-        Some(icon) => tooltip(
+        Some(icon) => help_tooltip(
             icons::m_muted(icon),
-            container(
-                text(column.name.to_owned())
-                    .font(fonts::monospace())
-                    .size(HEADER),
-            )
-            .padding([2.0, s()]),
+            column.name.to_owned(),
+            HEADER,
             tooltip::Position::Top,
-        )
-        .style(tooltip_style)
-        .into(),
+        ),
         None => text(column.name.to_owned())
             .font(fonts::monospace())
             .size(HEADER)
@@ -925,18 +918,12 @@ fn swatch_line(
         let swatch = color_swatch(color);
         cells = cells.push(match raw {
             // The raw palette word as the hardware holds it, on hover.
-            Some(word) => tooltip(
+            Some(word) => help_tooltip(
                 swatch,
-                container(
-                    text(format!("${word:04X}"))
-                        .font(fonts::monospace())
-                        .size(LABEL),
-                )
-                .padding([2.0, s()]),
+                format!("${word:04X}"),
+                LABEL,
                 tooltip::Position::Bottom,
-            )
-            .style(tooltip_style)
-            .into(),
+            ),
             None => swatch,
         });
     }
@@ -1146,7 +1133,7 @@ fn section_header_style(_theme: &iced::Theme) -> container::Style {
     }
 }
 
-pub fn tooltip_style(theme: &iced::Theme) -> container::Style {
+fn tooltip_style(theme: &iced::Theme) -> container::Style {
     let palette = theme.extended_palette();
     container::Style {
         background: Some(palette.background.weak.color.into()),

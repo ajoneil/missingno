@@ -11,6 +11,7 @@ use iced::{
 
 use crate::app::{
     self,
+    console::ConsoleColors,
     debugger::{
         self,
         audio_scope::AudioScopePane,
@@ -20,7 +21,6 @@ use crate::app::{
             map::{self, TileMapPane},
             objects::{self, ObjectTablePane},
         },
-        inspect::GbPaneContext,
         layout,
         memory::{self, MemoryPane, MemoryPaneData, MemorySelection},
         screen::{self, ScreenPane},
@@ -92,8 +92,9 @@ impl From<Message> for app::Message {
 /// has arrived yet.
 #[derive(Clone, Copy)]
 pub struct PaneContext<'b> {
-    /// The Game Boy family's typed pane surface, when that family is live.
-    pub gb: Option<GbPaneContext<'b>>,
+    /// The Game Boy family's render palettes, when that family is live; the
+    /// graphics panes colour their decoded indices through it.
+    pub colors: Option<&'b ConsoleColors>,
     pub breakpoints: &'b BTreeSet<u32>,
     /// The active watches, so a disassembly row can mark itself when it composes
     /// one (a switchable-bank gutter watch).
@@ -838,12 +839,28 @@ fn build_title_bar<'a>(
 }
 
 /// The title-bar close control every pane inherits, closing its own instance.
+/// A muted × that reads as title-bar furniture — no chrome until hovered.
 fn close_button<'a>(close: pane_grid::Pane) -> Element<'a, app::Message> {
-    button(icons::m_colored(Icon::Close, palette::SURFACE2))
+    button(icons::m_muted(Icon::Close))
         .on_press(Message::CloseHandle(close).into())
-        .style(button::text)
+        .style(close_control_style)
         .padding(0.0)
         .into()
+}
+
+fn close_control_style(_theme: &Theme, status: button::Status) -> button::Style {
+    let base = button::Style {
+        background: None,
+        border: Border::default().rounded(4.0),
+        ..button::Style::default()
+    };
+    match status {
+        button::Status::Hovered => button::Style {
+            background: Some(palette::PURPLE.scale_alpha(0.2).into()),
+            ..base
+        },
+        _ => base,
+    }
 }
 
 #[cfg(test)]

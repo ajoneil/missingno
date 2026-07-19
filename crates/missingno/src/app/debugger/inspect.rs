@@ -78,14 +78,6 @@ impl InspectSource for CgbSnapshot {
     }
 }
 
-/// The Game Boy family's typed pane surface: the colour context its graphics
-/// panes render with. Bundled so shared pane plumbing carries one optional GB
-/// field.
-#[derive(Clone, Copy)]
-pub struct GbPaneContext<'b> {
-    pub colors: &'b ConsoleColors,
-}
-
 /// Recover the Game Boy inspection surface from a family-erased state — the
 /// live console while paused, or its snapshot while running. `None` for any
 /// other family, whose own panes downcast their typed state.

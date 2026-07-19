@@ -132,8 +132,9 @@ consumers, feature-gated):
 - **Audio**: the contract is 44.1 kHz stereo `f32`; families convert from
   their native rate on their own side.
 - **Debugger**: panes render exclusively from the typed surfaces the shared
-  `PaneContext` carries (gb-colours, decoded graphics, the memory readout, the
-  disassembly rows, breakpoints, waveform windows) — there is no
+  `PaneContext` carries (the render palettes, decoded graphics, the memory
+  readout, the disassembly rows, breakpoints, watches, waveform windows) —
+  there is no
   family-specific escape hatch, so a family cannot add a bespoke pane. A
   family surfaces its own chip state through the sidebar `Section`s its core
   crate builds (register files, rows, bit tables, sweeps), and reaches the
