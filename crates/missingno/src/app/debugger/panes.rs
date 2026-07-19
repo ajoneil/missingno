@@ -15,14 +15,14 @@ use crate::app::{
         self,
         audio_scope::AudioScopePane,
         disassembly::{DisasmPaneData, DisassemblyPane},
+        graphics::{
+            atlas::{self, TileAtlasPane},
+            map::TileMapPane,
+            objects::{self, ObjectTablePane},
+        },
         inspect::GbPaneContext,
         layout,
         memory::{self, MemoryPane, MemoryPaneData, MemorySelection},
-        ppu::{
-            sprites::{self, SpritesPane},
-            tile_maps::TileMapPane,
-            tiles::{self, TilesPane},
-        },
         screen::{self, ScreenPane},
     },
     screen::ScreenView,
@@ -34,6 +34,7 @@ use crate::app::{
         sizes::{self as sizes, s, xs},
     },
 };
+use missingno_core::graphics::GraphicsView;
 use missingno_core::waveform::ChannelWave;
 use missingno_gb::ppu::types::{
     palette::{Palette, PaletteChoice},
@@ -57,8 +58,8 @@ pub enum Message {
 #[derive(Debug, Clone)]
 pub enum PaneMessage {
     Screen(screen::Message),
-    Sprites(sprites::Message),
-    Tiles(tiles::Message),
+    Sprites(objects::Message),
+    Tiles(atlas::Message),
     Memory(memory::Message),
 }
 
@@ -91,6 +92,10 @@ pub struct PaneContext<'b> {
     /// family captures none or capture is off. Held oldest-first, owned by the
     /// view that built the context.
     pub waves: Option<&'b [ChannelWave]>,
+    /// The decoded graphics surfaces for the tile/map/object panes; `None` when
+    /// the family exposes none or graphics capture is off. Owned by the view
+    /// that built the context.
+    pub graphics: Option<&'b GraphicsView>,
 }
 
 impl<'b> PaneContext<'b> {
@@ -289,7 +294,7 @@ pub static PANE_REGISTRY: &[PaneDescriptor] = &[
         kind: DebuggerPane::Tiles,
         icon: Icon::Grid,
         label: "Tiles",
-        construct: || Box::new(TilesPane::new()),
+        construct: || Box::new(TileAtlasPane::new()),
     },
     PaneDescriptor {
         kind: DebuggerPane::TileMap(TileMapId(0)),
@@ -307,7 +312,7 @@ pub static PANE_REGISTRY: &[PaneDescriptor] = &[
         kind: DebuggerPane::Sprites,
         icon: Icon::Human,
         label: "Sprites",
-        construct: || Box::new(SpritesPane::new()),
+        construct: || Box::new(ObjectTablePane::new()),
     },
     AUDIO_DESCRIPTOR,
 ];
@@ -721,5 +726,25 @@ mod tests {
         }
         // The pane's kind resolves back to that stable label.
         assert_eq!(DebuggerPane::Audio.to_string(), "Audio");
+    }
+
+    #[test]
+    fn graphics_panes_keep_their_labels() {
+        // The generic graphics panes reuse the retired bespoke panes' kinds and
+        // labels, so a Game Boy layout saved by the old panes still resolves.
+        let expected = [
+            (DebuggerPane::Tiles, "Tiles"),
+            (DebuggerPane::TileMap(TileMapId(0)), "Tile Map 0"),
+            (DebuggerPane::TileMap(TileMapId(1)), "Tile Map 1"),
+            (DebuggerPane::Sprites, "Sprites"),
+        ];
+        for (kind, label) in expected {
+            let descriptor = PANE_REGISTRY
+                .iter()
+                .find(|descriptor| descriptor.kind == kind)
+                .expect("graphics pane registered");
+            assert_eq!(descriptor.label, label);
+            assert_eq!(kind.to_string(), label);
+        }
     }
 }

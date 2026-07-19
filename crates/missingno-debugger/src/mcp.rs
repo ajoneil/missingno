@@ -11,6 +11,7 @@
 
 use std::io::{self, BufRead, Write};
 
+use missingno_core::graphics::{GraphicsView, Object, ObjectTable, PaletteSet, TileAtlas};
 use missingno_core::inspect::{
     BitTable, PairMatrix, PixelStrip, Register, Section, SectionBlock, SwatchRow, ValueStyle,
     WatchTerm,
@@ -271,6 +272,35 @@ fn generic_tools(session: &Session) -> Vec<Tool> {
             input_schema: empty(),
         },
         Tool {
+            name: "get_tiles",
+            description: "Decoded tile atlas. Default: a PNG image of the whole atlas grid \
+                          (greyscale) plus a summary line. With `tile`: that one tile's shade \
+                          glyph grid and raw palette indices as text. `atlas` selects which \
+                          atlas (default 0). Enables graphics capture if it was off."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "atlas": { "type": "integer", "minimum": 0, "description": "atlas index (default 0)" },
+                    "tile": { "type": "integer", "minimum": 0, "description": "a single tile to detail as glyphs" },
+                },
+            }),
+        },
+        Tool {
+            name: "get_objects",
+            description: "The object/sprite table. Default: a text table (index, x, y, tile, \
+                          palette, bank, flips, priority, on-screen). With `object`: that \
+                          entry's fields and its composed sprite as a shade glyph grid. \
+                          Enables graphics capture if it was off."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "object": { "type": "integer", "minimum": 0, "description": "a single object to detail" },
+                },
+            }),
+        },
+        Tool {
             name: "step",
             description: format!(
                 "Execute instructions (count, default 1, max {MAX_STEP_COUNT}); stops early on a \
@@ -461,6 +491,8 @@ fn call_generic(
         "disassemble" => disassemble(session, args),
         "describe_machine" => text(describe_machine(session)),
         "get_waveforms" => text(waveforms_text(session)),
+        "get_tiles" => get_tiles(session, args),
+        "get_objects" => get_objects(session, args),
         "step" => stepping(session, args, Stepping::Instruction),
         "step_over" => {
             let stop = session.step_over();
@@ -811,7 +843,7 @@ fn parse_optional_u32(value: Option<&Value>) -> Result<Option<u32>, String> {
 
 fn get_frame(session: &Session) -> ToolOutcome {
     let frame = session.frame_rgba();
-    let png = encode_png(&frame)?;
+    let png = encode_png(frame.width, frame.height, &frame.pixels)?;
     Ok(vec![Content::Image {
         data: base64_encode(&png),
         mime_type: "image/png".into(),
@@ -887,6 +919,246 @@ fn sparkline(levels: &[u8], max_code: u8, width: usize) -> String {
             SPARK_BARS[step.min(SPARK_BARS.len() - 1)]
         })
         .collect()
+}
+
+// --- get_tiles / get_objects --------------------------------------------------
+
+/// Tiles per row in the atlas PNG, matching the debugger's Tiles pane.
+const ATLAS_COLUMNS: usize = 16;
+/// Shade glyphs for a 2bpp tile, lightest to darkest.
+const TILE_GLYPHS: [char; 4] = ['·', '░', '▒', '▓'];
+
+/// The decoded graphics surfaces, enabling capture first if it was off — the
+/// `get_waveforms` pattern. `None` when the core exposes none.
+fn ensure_graphics(session: &mut Session) -> Option<GraphicsView> {
+    if session.graphics().is_none() {
+        session.set_graphics_capture(true);
+    }
+    session.graphics()
+}
+
+fn get_tiles(session: &mut Session, args: &Value) -> ToolOutcome {
+    let Some(graphics) = ensure_graphics(session) else {
+        return Err("this core exposes no graphics surfaces".into());
+    };
+    let atlas_index = args.get("atlas").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let Some(atlas) = graphics.atlases.get(atlas_index) else {
+        return Err(format!(
+            "no atlas {atlas_index} (have {})",
+            graphics.atlases.len()
+        ));
+    };
+    match args.get("tile").and_then(Value::as_u64) {
+        Some(tile) => tile_detail(atlas, tile as usize),
+        None => atlas_survey(atlas),
+    }
+}
+
+/// The whole atlas as a greyscale PNG image block, with a summary line.
+fn atlas_survey(atlas: &TileAtlas) -> ToolOutcome {
+    let (width, height, pixels) = atlas_pixels(atlas, ATLAS_COLUMNS);
+    let png = encode_png(width, height, &pixels)?;
+    let summary = format!(
+        "{}: {} tiles, {}×{}, {}bpp, {}",
+        atlas.label,
+        atlas.tiles.len(),
+        atlas.tile_width,
+        atlas.tile_height,
+        atlas.depth_bits,
+        palette_set_name(&atlas.palettes),
+    );
+    Ok(vec![
+        Content::Text(summary),
+        Content::Image {
+            data: base64_encode(&png),
+            mime_type: "image/png".into(),
+        },
+    ])
+}
+
+/// One tile as a shade glyph grid over its raw palette indices.
+fn tile_detail(atlas: &TileAtlas, tile: usize) -> ToolOutcome {
+    if tile >= atlas.tiles.len() {
+        return Err(format!("no tile {tile} (atlas has {})", atlas.tiles.len()));
+    }
+    let mut out = format!("tile {tile} of {}:\n", atlas.label);
+    for y in 0..atlas.tile_height {
+        for x in 0..atlas.tile_width {
+            out.push(tile_glyph(atlas.pixel(tile, x, y).unwrap_or(0)));
+        }
+        out.push('\n');
+    }
+    out.push_str("indices:\n");
+    for y in 0..atlas.tile_height {
+        let row: Vec<String> = (0..atlas.tile_width)
+            .map(|x| atlas.pixel(tile, x, y).unwrap_or(0).to_string())
+            .collect();
+        out.push_str(&format!("{}\n", row.join(" ")));
+    }
+    text(out.trim_end())
+}
+
+/// Greyscale RGBA for the whole atlas, `columns` tiles wide.
+fn atlas_pixels(atlas: &TileAtlas, columns: usize) -> (u32, u32, Vec<u8>) {
+    let tile_w = atlas.tile_width as usize;
+    let tile_h = atlas.tile_height as usize;
+    let columns = columns.max(1);
+    let rows = atlas.tiles.len().div_ceil(columns).max(1);
+    let width = (columns * tile_w) as u32;
+    let height = (rows * tile_h) as u32;
+
+    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+    for tile_row in 0..rows {
+        for pixel_y in 0..tile_h {
+            for tile_col in 0..columns {
+                let tile = tile_row * columns + tile_col;
+                for pixel_x in 0..tile_w {
+                    let index = atlas.pixel(tile, pixel_x as u8, pixel_y as u8).unwrap_or(0);
+                    let grey = shade(index, atlas.depth_bits);
+                    pixels.extend_from_slice(&[grey, grey, grey, 255]);
+                }
+            }
+        }
+    }
+    (width, height, pixels)
+}
+
+/// A palette index as a greyscale level, 0 lightest — the classic Game Boy
+/// arrangement, family-agnostic here since no palette is chosen.
+fn shade(index: u8, depth_bits: u8) -> u8 {
+    let max = ((1u32 << depth_bits.min(8)) - 1).max(1);
+    let index = (index as u32).min(max);
+    (255 - index * 255 / max) as u8
+}
+
+fn tile_glyph(index: u8) -> char {
+    TILE_GLYPHS[(index as usize).min(TILE_GLYPHS.len() - 1)]
+}
+
+fn palette_set_name(set: &PaletteSet) -> &'static str {
+    match set {
+        PaletteSet::FrontendShades => "frontend shades",
+        PaletteSet::Owned(_) => "core palettes",
+    }
+}
+
+fn get_objects(session: &mut Session, args: &Value) -> ToolOutcome {
+    let Some(graphics) = ensure_graphics(session) else {
+        return Err("this core exposes no graphics surfaces".into());
+    };
+    let Some(table) = &graphics.objects else {
+        return Err("this core exposes no object table".into());
+    };
+    match args.get("object").and_then(Value::as_u64) {
+        Some(object) => object_detail(&graphics, table, object as usize),
+        None => text(objects_table(table)),
+    }
+}
+
+/// The object table as text: one row per entry.
+fn objects_table(table: &ObjectTable) -> String {
+    let mut out = format!(
+        "{}: {} objects, 8×{} sprites\n",
+        table.label,
+        table.objects.len(),
+        table.object_height
+    );
+    out.push_str("idx    x    y  tile  pal bank flip pri  on\n");
+    for object in &table.objects {
+        out.push_str(&format!(
+            "{:>3} {:>4} {:>4} {:>5}  {:>3} {:>4}  {:>2} {:>3}  {}\n",
+            object.index,
+            object.x,
+            object.y,
+            object.tile,
+            opt(object.palette),
+            opt(object.bank),
+            flips(object.flip_x, object.flip_y),
+            if object.priority { "beh" } else { "abv" },
+            if object.on_screen { "yes" } else { "no" },
+        ));
+    }
+    out.trim_end().to_string()
+}
+
+/// One object's fields plus its composed sprite as a shade glyph grid.
+fn object_detail(graphics: &GraphicsView, table: &ObjectTable, index: usize) -> ToolOutcome {
+    let Some(object) = table.objects.get(index) else {
+        return Err(format!(
+            "no object {index} (table has {})",
+            table.objects.len()
+        ));
+    };
+    let mut out = format!(
+        "object {}:\n  x={} y={} tile={} palette={} bank={} flip_x={} flip_y={} \
+         priority={} on_screen={}\n",
+        object.index,
+        object.x,
+        object.y,
+        object.tile,
+        opt(object.palette),
+        opt(object.bank),
+        object.flip_x,
+        object.flip_y,
+        if object.priority { "behind" } else { "above" },
+        object.on_screen,
+    );
+    match graphics
+        .atlases
+        .get(object.bank.unwrap_or(table.atlas) as usize)
+    {
+        Some(atlas) => {
+            out.push_str(&format!("sprite (8×{}):\n", table.object_height));
+            out.push_str(&object_glyphs(atlas, object, table.object_height));
+        }
+        None => out.push_str("(pattern atlas unavailable)\n"),
+    }
+    text(out.trim_end())
+}
+
+/// Compose an object's tile(s) — an 8×16 two-tile stack where `object_height`
+/// exceeds one tile — into a shade glyph grid, flips applied.
+fn object_glyphs(atlas: &TileAtlas, object: &Object, object_height: u8) -> String {
+    let tile_w = atlas.tile_width;
+    let tile_h = atlas.tile_height;
+    let slots: Vec<u16> = if object_height > tile_h {
+        let top = object.tile & !1;
+        let bottom = object.tile | 1;
+        if object.flip_y {
+            vec![bottom, top]
+        } else {
+            vec![top, bottom]
+        }
+    } else {
+        vec![object.tile]
+    };
+
+    let mut out = String::new();
+    for slot in slots {
+        for y in 0..tile_h {
+            for x in 0..tile_w {
+                let sx = if object.flip_x { tile_w - 1 - x } else { x };
+                let sy = if object.flip_y { tile_h - 1 - y } else { y };
+                out.push(tile_glyph(atlas.pixel(slot as usize, sx, sy).unwrap_or(0)));
+            }
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn opt(value: Option<u8>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-".into())
+}
+
+fn flips(flip_x: bool, flip_y: bool) -> String {
+    format!(
+        "{}{}",
+        if flip_x { "x" } else { "-" },
+        if flip_y { "y" } else { "-" }
+    )
 }
 
 // --- describe_machine ---------------------------------------------------------
@@ -1135,17 +1407,17 @@ fn parse_hex(text: &str) -> Result<u32, String> {
 
 // --- PNG + base64 -------------------------------------------------------------
 
-fn encode_png(frame: &missingno_core::video::RgbaFrame) -> Result<Vec<u8>, String> {
+fn encode_png(width: u32, height: u32, pixels: &[u8]) -> Result<Vec<u8>, String> {
     let mut buffer = Vec::new();
     {
-        let mut encoder = png::Encoder::new(&mut buffer, frame.width, frame.height);
+        let mut encoder = png::Encoder::new(&mut buffer, width, height);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
         let mut writer = encoder
             .write_header()
             .map_err(|error| format!("png header: {error}"))?;
         writer
-            .write_image_data(&frame.pixels)
+            .write_image_data(pixels)
             .map_err(|error| format!("png data: {error}"))?;
         writer
             .finish()
@@ -1345,5 +1617,114 @@ mod tests {
         // The pair matrix: headers a/b, a set (a,b) pair pip on row b.
         assert!(out.contains("a b"));
         assert!(out.contains("●"));
+    }
+
+    fn synthetic_atlas() -> TileAtlas {
+        use missingno_core::graphics::Tile;
+        // Tile 0's first row ramps 0,1,2,3 then mirrors; the rest are flat.
+        let mut first = vec![0u8; 64];
+        first[0..8].copy_from_slice(&[0, 1, 2, 3, 3, 2, 1, 0]);
+        TileAtlas {
+            label: "VRAM".into(),
+            tile_width: 8,
+            tile_height: 8,
+            depth_bits: 2,
+            tiles: vec![
+                Tile { indices: first },
+                Tile {
+                    indices: vec![0; 64],
+                },
+                Tile {
+                    indices: vec![1; 64],
+                },
+                Tile {
+                    indices: vec![3; 64],
+                },
+            ],
+            palettes: PaletteSet::FrontendShades,
+        }
+    }
+
+    #[test]
+    fn atlas_survey_emits_png_and_summary() {
+        let out = atlas_survey(&synthetic_atlas()).unwrap();
+        match &out[0] {
+            Content::Text(summary) => {
+                assert!(summary.contains("VRAM"));
+                assert!(summary.contains("4 tiles"));
+                assert!(summary.contains("2bpp"));
+            }
+            _ => panic!("expected a summary line"),
+        }
+        match &out[1] {
+            Content::Image { data, mime_type } => {
+                assert_eq!(mime_type, "image/png");
+                // Base64 of the 8-byte PNG signature (\x89PNG\r\n\x1a\n).
+                assert!(data.starts_with("iVBORw0KGgo"));
+            }
+            _ => panic!("expected a PNG image"),
+        }
+    }
+
+    #[test]
+    fn atlas_pixels_has_plausible_dimensions() {
+        // Four 8×8 tiles over 16 columns is one tile-row: 128×8.
+        let (width, height, pixels) = atlas_pixels(&synthetic_atlas(), ATLAS_COLUMNS);
+        assert_eq!((width, height), (128, 8));
+        assert_eq!(pixels.len() as u32, width * height * 4);
+    }
+
+    #[test]
+    fn tile_detail_shows_glyphs_and_indices() {
+        let out = tile_detail(&synthetic_atlas(), 0).unwrap();
+        let Content::Text(body) = &out[0] else {
+            panic!("expected text");
+        };
+        // The 0,1,2,3 ramp maps to the four distinct shade glyphs.
+        assert!(body.contains("·░▒▓▓▒░·"));
+        assert!(body.contains("indices:"));
+        assert!(body.contains("0 1 2 3 3 2 1 0"));
+    }
+
+    #[test]
+    fn objects_table_and_object_detail() {
+        let table = ObjectTable {
+            label: "OAM".into(),
+            atlas: 0,
+            object_height: 16,
+            objects: vec![Object {
+                index: 0,
+                x: -8,
+                y: -16,
+                tile: 2,
+                on_screen: false,
+                palette: Some(3),
+                bank: None,
+                flip_x: true,
+                flip_y: false,
+                priority: true,
+            }],
+        };
+        let listing = objects_table(&table);
+        assert!(listing.contains("OAM"));
+        assert!(listing.contains("8×16"));
+        assert!(listing.contains("-8"));
+        assert!(listing.contains("beh")); // priority: behind background
+
+        let graphics = GraphicsView {
+            atlases: vec![synthetic_atlas()],
+            maps: vec![],
+            objects: Some(table.clone()),
+        };
+        let out = object_detail(&graphics, &table, 0).unwrap();
+        let Content::Text(body) = &out[0] else {
+            panic!("expected text");
+        };
+        assert!(body.contains("object 0"));
+        assert!(body.contains("palette=3"));
+        // 8×16 stacks tile 2 (the top &!1 slot, index-1 fill) over tile 3.
+        assert!(body.contains("sprite (8×16)"));
+        assert_eq!(body.matches('░').count(), 8 * 8); // tile 2 fills the top slot
+        assert_eq!(body.matches('▓').count(), 8 * 8); // tile 3 fills the bottom slot
     }
 }

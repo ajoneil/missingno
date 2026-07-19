@@ -250,7 +250,7 @@ fn section_chrome(
 
 /// The palette accent for a detail's semantic tone — the Game Boy PPU mode
 /// colours, now serving every core's coloured section detail.
-fn tone_color(tone: inspect::Tone) -> Color {
+pub(crate) fn tone_color(tone: inspect::Tone) -> Color {
     match tone {
         inspect::Tone::Neutral => palette::MUTED,
         inspect::Tone::Idle => palette::BLUE,

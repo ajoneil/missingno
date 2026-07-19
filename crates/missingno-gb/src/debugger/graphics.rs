@@ -56,9 +56,12 @@ pub fn resolved_atlas_index(mode: TileAddressMode, raw: TileIndex) -> u16 {
     block.0 as u16 * 128 + index.0 as u16
 }
 
-/// The BG/window viewports drawn over a map: the background rectangle at
-/// (SCX,SCY) when this is the BG map, the window rectangle at (WX,WY) when it is
-/// the window map. Shared by both models. Registers sampled as-of the instant.
+/// The BG/window viewports drawn over a map. The background scrolls under the
+/// screen, so its rectangle sits at the map-space (SCX,SCY) and wraps the map
+/// edges. The window instead places its map at a screen offset — its left edge
+/// is WX−7 — so its rectangle is non-wrapping and its `x`/`y` are that on-screen
+/// offset, from which only the on-screen extent shows. Registers sampled as-of
+/// the instant.
 pub fn map_viewports(ppu: &dyn PpuSource, map: TileMapId) -> Vec<Viewport> {
     let control = ppu.control();
     let mut viewports = Vec::new();
@@ -76,7 +79,7 @@ pub fn map_viewports(ppu: &dyn PpuSource, map: TileMapId) -> Vec<Viewport> {
     if map == control.window_tile_map() {
         viewports.push(Viewport {
             label: "window (WX,WY)".into(),
-            x: ppu.wx() as u16,
+            x: (ppu.wx() as i16 - 7).max(0) as u16,
             y: ppu.wy() as u16,
             width: 160,
             height: 144,

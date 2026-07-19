@@ -6,14 +6,14 @@
 
 use std::any::Any;
 
-use missingno_gb::ppu::{memory::VramView, types::palette::Palette};
+use missingno_gb::ppu::types::palette::Palette;
 use missingno_gb::{Console, Dmg, GameBoy, Model};
 use missingno_gbc::{Cgb, GameBoyColor, cram_palettes};
 
 use crate::app::console::{ConsoleColors, colors_from_snapshot};
 
 pub use missingno_core::system::DebugView;
-pub use missingno_gb::debugger::inspection::{GbSnapshot, PpuSource};
+pub use missingno_gb::debugger::inspection::GbSnapshot;
 pub use missingno_gbc::CgbSnapshot;
 
 // --- Model colour hooks ------------------------------------------------------
@@ -49,60 +49,40 @@ impl GbColors for Cgb {
 
 // --- Inspection source -------------------------------------------------------
 
-/// Everything the debugger panes and sidebar render from, behind one
-/// model-erased surface: the live console while paused, or the per-vblank
-/// snapshot while the core runs on the emulation thread.
+/// The Game Boy family's colour resolution, behind one model-erased surface:
+/// the live console while paused, or the per-vblank snapshot while the core
+/// runs on the emulation thread. The graphics panes read their structure from
+/// the decoded [`GraphicsView`] on the context; this resolves the DMG/CGB
+/// palettes those indices colour through.
+///
+/// [`GraphicsView`]: missingno_core::graphics::GraphicsView
 pub trait InspectSource {
-    fn ppu(&self) -> &dyn PpuSource;
-    /// The VRAM the tile/map/sprite panes read. `None` on a running snapshot
-    /// while graphics capture is off (the clone is not taken then); always
-    /// present on the live console while paused.
-    fn vram(&self) -> Option<&dyn VramView>;
     fn colors(&self, user_palette: &Palette) -> ConsoleColors;
 }
 
 impl<M: GbColors> InspectSource for Console<M> {
-    fn ppu(&self) -> &dyn PpuSource {
-        Console::ppu(self)
-    }
-    fn vram(&self) -> Option<&dyn VramView> {
-        Some(Console::vram(self))
-    }
     fn colors(&self, user_palette: &Palette) -> ConsoleColors {
         M::colors(self, user_palette)
     }
 }
 
 impl InspectSource for GbSnapshot {
-    fn ppu(&self) -> &dyn PpuSource {
-        &self.ppu
-    }
-    fn vram(&self) -> Option<&dyn VramView> {
-        self.vram.as_deref().map(|vram| vram as &dyn VramView)
-    }
     fn colors(&self, user_palette: &Palette) -> ConsoleColors {
         colors_from_snapshot(&self.colors, user_palette)
     }
 }
 
 impl InspectSource for CgbSnapshot {
-    fn ppu(&self) -> &dyn PpuSource {
-        self.base.ppu()
-    }
-    fn vram(&self) -> Option<&dyn VramView> {
-        self.base.vram()
-    }
     fn colors(&self, user_palette: &Palette) -> ConsoleColors {
         self.base.colors(user_palette)
     }
 }
 
-/// The Game Boy family's typed pane surface: its trait-erased inspection
-/// source plus the colour context its panes render with. Bundled so shared
-/// pane plumbing carries one optional GB field.
+/// The Game Boy family's typed pane surface: the colour context its graphics
+/// panes render with. Bundled so shared pane plumbing carries one optional GB
+/// field.
 #[derive(Clone, Copy)]
 pub struct GbPaneContext<'b> {
-    pub source: &'b dyn InspectSource,
     pub colors: &'b ConsoleColors,
 }
 

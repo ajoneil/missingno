@@ -32,13 +32,13 @@ use sidebar::Sidebar;
 mod audio_scope;
 mod disasm_rows;
 mod disassembly;
+mod graphics;
 pub mod inspect;
 mod layout;
 pub(crate) mod memory;
 #[cfg(feature = "nes")]
 pub(crate) mod nes;
 pub mod panes;
-mod ppu;
 mod screen;
 pub(crate) mod sidebar;
 #[cfg(feature = "sms")]
@@ -701,10 +701,7 @@ impl Debugger {
         let family_any = core.family_state();
         let gb_source = inspect::as_inspect_source(family_any);
         let colors = gb_source.map(|source| source.colors(self.panes.palette()));
-        let gb = match (gb_source, &colors) {
-            (Some(source), Some(colors)) => Some(GbPaneContext { source, colors }),
-            _ => None,
-        };
+        let gb = colors.as_ref().map(|colors| GbPaneContext { colors });
         let readout = self
             .panes
             .memory_selection()
@@ -716,6 +713,9 @@ impl Debugger {
         // The frozen tail the core still holds while paused; `None` unless the
         // audio scope has capture on.
         let waves = core.channel_waves();
+        // The decoded surfaces the core still holds while paused; `None` unless
+        // a graphics pane has capture on.
+        let graphics = core.graphics();
         let ctx = PaneContext {
             gb,
             family: family_any,
@@ -725,6 +725,7 @@ impl Debugger {
                 .as_ref()
                 .map(disassembly::DisasmPaneData::new),
             waves: waves.as_deref(),
+            graphics: graphics.as_ref(),
         };
 
         let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
@@ -804,21 +805,13 @@ impl Debugger {
             return self.panes.view(None);
         };
         let family_any = snapshot.family_state();
-        let gb = colors.and_then(|colors| {
-            if let Some(snap) = family_any.downcast_ref::<inspect::GbSnapshot>() {
-                Some(GbPaneContext {
-                    source: snap,
-                    colors,
-                })
-            } else {
-                family_any
-                    .downcast_ref::<inspect::CgbSnapshot>()
-                    .map(|snap| GbPaneContext {
-                        source: snap,
-                        colors,
-                    })
-            }
-        });
+        // The colour context is a Game Boy pane surface only when the snapshot
+        // is a GB-family one; other families leave `gb` empty.
+        let is_gb_family =
+            family_any.is::<inspect::GbSnapshot>() || family_any.is::<inspect::CgbSnapshot>();
+        let gb = colors
+            .filter(|_| is_gb_family)
+            .map(|colors| GbPaneContext { colors });
         let disasm_readout = self
             .panes
             .plane_shown(panes::DebuggerPane::Disassembly)
@@ -826,6 +819,8 @@ impl Debugger {
             .flatten();
         // This vblank's captured windows; `None` unless capture is on.
         let waves = snapshot.channel_waves();
+        // This vblank's decoded surfaces; `None` unless graphics capture is on.
+        let graphics = snapshot.graphics();
         self.panes.view(Some(PaneContext {
             gb,
             family: family_any,
@@ -835,6 +830,7 @@ impl Debugger {
                 .as_ref()
                 .map(disassembly::DisasmPaneData::new),
             waves: waves.as_deref(),
+            graphics: graphics.as_ref(),
         }))
     }
 

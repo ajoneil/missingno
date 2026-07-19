@@ -21,10 +21,6 @@ impl ConsoleColors {
             Self::Cgb { .. } => &Palette::CLASSIC,
         }
     }
-
-    pub fn is_cgb(&self) -> bool {
-        matches!(self, Self::Cgb { .. })
-    }
 }
 
 /// Rebuild the render palettes from a running snapshot's colour data, applying
