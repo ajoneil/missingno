@@ -131,11 +131,14 @@ consumers, feature-gated):
   family serializes saves is its own concern.
 - **Audio**: the contract is 44.1 kHz stereo `f32`; families convert from
   their native rate on their own side.
-- **Debugger**: `Inspection` family-erases the inspection surface — the GB's
-  structured surface travels as one optional `GbPaneContext` bundle on the
-  shared `PaneContext`; every other family exposes one typed state object
-  through `family_state()` (a `&dyn Any`) that its own panes downcast back
-  out. Pane registries, default layouts, and layout sidecars are
+- **Debugger**: panes render exclusively from the typed surfaces the shared
+  `PaneContext` carries (gb-colours, decoded graphics, the memory readout, the
+  disassembly rows, breakpoints, waveform windows) — there is no
+  family-specific escape hatch, so a family cannot add a bespoke pane. A
+  family surfaces its own chip state through the sidebar `Section`s its core
+  crate builds (register files, rows, bit tables, sweeps), and reaches the
+  pane grid only by implementing the seam surfaces the generic panes read.
+  Pane registries, default layouts, and layout sidecars are
   family-provided through `panes::Family` (`pane_family()` is a required
   seam method — there is no default family); debug sidecars load and save
   through the path-only `load_sidecars`/`save_sidecars` hooks, no-ops for
@@ -186,10 +189,13 @@ consumers, feature-gated):
 3. A palette table (or RGBA-producing path) and a pixel-aspect constant for
    `ScreenDisplay::Indexed`, and the family's reading of the shared control
    ids.
-4. If it ships a debugger: an inspection-state struct + panes module under
-   `app/debugger/<family>.rs` (implement `Inspection::family_state` on the
-   state and its snapshot), a `panes::Family` static with its registry and
+4. If it ships a debugger: an inspection-state struct whose `sidebar_sections`
+   builds the family's whole sidebar from the shared `Section` vocabulary, a
+   `panes::Family` static naming which generic panes it registers (Screen plus
+   the Memory/Disassembly set for a register-dump family; the graphics and
+   audio panes only where the core implements their seam surfaces) and its
    default layout, entries in `DebuggerPane` and `PANE_FAMILIES`, and a
-   `running_status()` wording its own video summary. Otherwise return the
+   `running_status()` wording its own video summary. There are no bespoke
+   panes — chip state renders through the sidebar. Otherwise return the
    console from `into_debugger` and the shell falls back to plain emulation.
 5. Convert audio to 44.1 kHz on the family's side of the seam.

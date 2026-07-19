@@ -108,12 +108,36 @@ fn cpu_register_groups(state: &SmsInspectState) -> Vec<RegisterGroup> {
 }
 
 /// The SMS sidebar sections, shared by the live view and the running snapshot:
-/// the Z80 register file plus the VDP's position, status, and registers.
+/// the Z80 register file, the Sega mapper's paged banks, and the VDP's
+/// position, status, and registers.
 fn sms_sidebar_sections(state: &SmsInspectState) -> Vec<Section> {
     let mut sections = missingno_core::inspect::default_sections(cpu_register_groups(state));
+    sections.push(mapper_section(state));
     sections.push(vdp_section(state));
     sections.push(psg_section(state));
     sections
+}
+
+/// The Sega mapper's three bank registers ($FFFD–$FFFF), each selecting the ROM
+/// bank paged into its 16 KiB slot.
+fn mapper_section(state: &SmsInspectState) -> Section {
+    Section {
+        name: "Mapper",
+        summary: format!(
+            "{:02X} {:02X} {:02X}",
+            state.banks[0], state.banks[1], state.banks[2]
+        ),
+        active: None,
+        detail: None,
+        blocks: vec![SectionBlock::Rows(vec![
+            Row::value("slot0", format!("{:02X}", state.banks[0]))
+                .help("bank register $FFFD — slot 0 ($0000–$3FFF)"),
+            Row::value("slot1", format!("{:02X}", state.banks[1]))
+                .help("bank register $FFFE — slot 1 ($4000–$7FFF)"),
+            Row::value("slot2", format!("{:02X}", state.banks[2]))
+                .help("bank register $FFFF — slot 2 ($8000–$BFFF)"),
+        ])],
+    }
 }
 
 /// The SN76489 PSG: three tone channels and one noise channel. Each channel
@@ -450,5 +474,29 @@ mod tests {
             rows.iter().find(|r| r.label == "t1").and_then(|r| r.active),
             Some(false)
         );
+    }
+
+    #[test]
+    fn mapper_section_reports_each_slot_bank() {
+        let mut state = SmsInspectState::default();
+        state.banks = [0x01, 0x02, 0x03];
+        let section = mapper_section(&state);
+        assert_eq!(section.name, "Mapper");
+
+        let rows: Vec<&Row> = section
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                SectionBlock::Rows(rows) => Some(rows),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        for (label, value) in [("slot0", "01"), ("slot1", "02"), ("slot2", "03")] {
+            assert_eq!(
+                rows.iter().find(|r| r.label == label).map(|r| &r.value),
+                Some(&value.to_string())
+            );
+        }
     }
 }

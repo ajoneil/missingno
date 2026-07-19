@@ -36,13 +36,9 @@ mod graphics;
 pub mod inspect;
 mod layout;
 pub(crate) mod memory;
-#[cfg(feature = "nes")]
-pub(crate) mod nes;
 pub mod panes;
 mod screen;
 pub(crate) mod sidebar;
-#[cfg(feature = "sms")]
-pub(crate) mod sms;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BottomPanel {
@@ -718,7 +714,6 @@ impl Debugger {
         let graphics = core.graphics();
         let ctx = PaneContext {
             gb,
-            family: family_any,
             breakpoints: &self.breakpoints,
             memory: readout.as_ref().map(memory::MemoryPaneData::paused),
             disasm: disasm_readout
@@ -823,7 +818,6 @@ impl Debugger {
         let graphics = snapshot.graphics();
         self.panes.view(Some(PaneContext {
             gb,
-            family: family_any,
             breakpoints: &self.breakpoints,
             memory: self.running_memory(snapshot),
             disasm: disasm_readout

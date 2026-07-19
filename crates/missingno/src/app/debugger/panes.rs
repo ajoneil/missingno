@@ -76,11 +76,6 @@ impl From<Message> for app::Message {
 pub struct PaneContext<'b> {
     /// The Game Boy family's typed pane surface, when that family is live.
     pub gb: Option<GbPaneContext<'b>>,
-    /// The active family's typed inspection state; family panes downcast it
-    /// back out with [`PaneContext::family_state`]. Read only by the feature-gated
-    /// family panes — the shipping families render their state through the sidebar.
-    #[cfg_attr(not(any(feature = "sms", feature = "nes")), allow(dead_code))]
-    pub family: &'b dyn std::any::Any,
     pub breakpoints: &'b BTreeSet<u32>,
     /// The memory viewer's visible bytes for its current selection, copied at
     /// context-build time; `None` when no memory pane is shown.
@@ -96,14 +91,6 @@ pub struct PaneContext<'b> {
     /// the family exposes none or graphics capture is off. Owned by the view
     /// that built the context.
     pub graphics: Option<&'b GraphicsView>,
-}
-
-impl<'b> PaneContext<'b> {
-    /// The family state, if the active family's is of type `T`.
-    #[cfg_attr(not(any(feature = "sms", feature = "nes")), allow(dead_code))]
-    pub fn family_state<T: 'static>(&self) -> Option<&'b T> {
-        self.family.downcast_ref()
-    }
 }
 
 /// One debugger pane behind the grid. Implementations live with their pane
@@ -195,6 +182,8 @@ pub static NES_FAMILY: Family = Family {
     default_layout: nes_default_layout,
 };
 
+/// The NES presents the screen and the two generic code/data panes; its 2A03
+/// and 2C02 register state lives in the sidebar.
 #[cfg(feature = "nes")]
 pub static NES_PANE_REGISTRY: &[PaneDescriptor] = &[
     PaneDescriptor {
@@ -205,18 +194,6 @@ pub static NES_PANE_REGISTRY: &[PaneDescriptor] = &[
     },
     MEMORY_DESCRIPTOR,
     DISASSEMBLY_DESCRIPTOR,
-    PaneDescriptor {
-        kind: DebuggerPane::NesCpu,
-        icon: Icon::FileText,
-        label: "2A03",
-        construct: || Box::new(crate::app::debugger::nes::CpuPane),
-    },
-    PaneDescriptor {
-        kind: DebuggerPane::NesPpu,
-        icon: Icon::Image,
-        label: "2C02",
-        construct: || Box::new(crate::app::debugger::nes::PpuPane),
-    },
 ];
 
 #[cfg(feature = "sms")]
@@ -227,6 +204,8 @@ pub static SMS_FAMILY: Family = Family {
     default_layout: sms_default_layout,
 };
 
+/// The SMS presents the screen and the two generic code/data panes; its Z80,
+/// VDP, mapper, and PSG state lives in the sidebar.
 #[cfg(feature = "sms")]
 pub static SMS_PANE_REGISTRY: &[PaneDescriptor] = &[
     PaneDescriptor {
@@ -237,18 +216,6 @@ pub static SMS_PANE_REGISTRY: &[PaneDescriptor] = &[
     },
     MEMORY_DESCRIPTOR,
     DISASSEMBLY_DESCRIPTOR,
-    PaneDescriptor {
-        kind: DebuggerPane::SmsCpu,
-        icon: Icon::FileText,
-        label: "Z80",
-        construct: || Box::new(crate::app::debugger::sms::CpuPane),
-    },
-    PaneDescriptor {
-        kind: DebuggerPane::SmsVdp,
-        icon: Icon::Image,
-        label: "VDP",
-        construct: || Box::new(crate::app::debugger::sms::VdpPane),
-    },
 ];
 
 pub static VCS_PANE_REGISTRY: &[PaneDescriptor] = &[
@@ -342,14 +309,6 @@ pub enum DebuggerPane {
     TileMap(TileMapId),
     Sprites,
     Audio,
-    #[cfg(feature = "sms")]
-    SmsCpu,
-    #[cfg(feature = "sms")]
-    SmsVdp,
-    #[cfg(feature = "nes")]
-    NesCpu,
-    #[cfg(feature = "nes")]
-    NesPpu,
 }
 
 impl DebuggerPane {
@@ -424,37 +383,29 @@ fn gb_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
     Some(panes)
 }
 
-/// The NES starts with the 2A03 beside the screen, the 2C02 below.
+/// The NES starts with the disassembly beside the screen, memory below — its
+/// CPU/PPU state lives in the sidebar.
 #[cfg(feature = "nes")]
 fn nes_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
-    let (mut panes, cpu_handle) = pane_grid::State::new(DebuggerPane::NesCpu.construct());
-    let (screen_handle, split) = panes
-        .split(Vertical, cpu_handle, DebuggerPane::Screen.construct())
-        .unwrap();
-    panes.resize(split, 1.0 / 3.0);
-    panes
-        .split(Horizontal, screen_handle, DebuggerPane::NesPpu.construct())
-        .unwrap();
-    Some(panes)
+    disassembly_screen_memory_layout()
 }
 
-/// The SMS starts with the Z80 beside the screen, the VDP below.
+/// The SMS starts with the disassembly beside the screen, memory below — its
+/// CPU/VDP/PSG state lives in the sidebar.
 #[cfg(feature = "sms")]
 fn sms_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
-    let (mut panes, cpu_handle) = pane_grid::State::new(DebuggerPane::SmsCpu.construct());
-    let (screen_handle, split) = panes
-        .split(Vertical, cpu_handle, DebuggerPane::Screen.construct())
-        .unwrap();
-    panes.resize(split, 1.0 / 3.0);
-    panes
-        .split(Horizontal, screen_handle, DebuggerPane::SmsVdp.construct())
-        .unwrap();
-    Some(panes)
+    disassembly_screen_memory_layout()
 }
 
 /// The VCS starts with the disassembly beside the screen, memory below — its
 /// CPU/TIA/RIOT state lives in the sidebar.
 fn vcs_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
+    disassembly_screen_memory_layout()
+}
+
+/// The shared default for a register-dump family: disassembly beside the
+/// screen, memory below.
+fn disassembly_screen_memory_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
     let (mut panes, disassembly_handle) =
         pane_grid::State::new(DebuggerPane::Disassembly.construct());
     let (screen_handle, split) = panes
@@ -746,5 +697,43 @@ mod tests {
             assert_eq!(descriptor.label, label);
             assert_eq!(kind.to_string(), label);
         }
+    }
+
+    /// The register-dump families expose only the screen and the two generic
+    /// code/data panes; their chip state renders through the sidebar.
+    #[cfg(any(feature = "nes", feature = "sms"))]
+    fn assert_screen_and_generic_set(registry: &[PaneDescriptor]) {
+        let kinds: Vec<DebuggerPane> = registry.iter().map(|descriptor| descriptor.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                DebuggerPane::Screen,
+                DebuggerPane::Memory,
+                DebuggerPane::Disassembly,
+            ]
+        );
+        for (kind, label) in [
+            (DebuggerPane::Screen, "Screen"),
+            (DebuggerPane::Memory, "Memory"),
+            (DebuggerPane::Disassembly, "Disassembly"),
+        ] {
+            let descriptor = registry
+                .iter()
+                .find(|descriptor| descriptor.kind == kind)
+                .expect("generic pane registered");
+            assert_eq!(descriptor.label, label);
+        }
+    }
+
+    #[cfg(feature = "nes")]
+    #[test]
+    fn nes_registry_is_screen_and_generic_set() {
+        assert_screen_and_generic_set(NES_PANE_REGISTRY);
+    }
+
+    #[cfg(feature = "sms")]
+    #[test]
+    fn sms_registry_is_screen_and_generic_set() {
+        assert_screen_and_generic_set(SMS_PANE_REGISTRY);
     }
 }
