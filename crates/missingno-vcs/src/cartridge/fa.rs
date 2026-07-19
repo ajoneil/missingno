@@ -69,6 +69,17 @@ impl Fa {
         }
     }
 
+    /// The 256-byte cart RAM, all of it.
+    pub(super) fn ram(&self) -> &[u8] {
+        self.ram.as_slice()
+    }
+
+    /// The full ROM image, all banks in file order, for the debugger's
+    /// bank-complete `rom` region.
+    pub(super) fn rom(&self) -> &[u8] {
+        &self.image
+    }
+
     pub fn peek(&self, address: u16) -> u8 {
         match Fa::ram_port(address) {
             Some((cell, _)) => self.ram[cell],

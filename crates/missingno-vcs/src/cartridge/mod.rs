@@ -92,6 +92,64 @@ pub struct Cartridge {
     board: Board,
 }
 
+/// A read-only view of the board and, on a DPC cart, its custom chip, for the
+/// debugger's Cartridge sidebar section.
+#[derive(Clone, Debug, Default)]
+pub struct CartridgeInspect {
+    pub board: &'static str,
+    /// The 4 KB bank in the window, on boards that page a single one.
+    pub bank: Option<usize>,
+    pub dpc: Option<dpc::DpcView>,
+}
+
+impl Board {
+    /// A short display name for the debugger.
+    fn name(&self) -> &'static str {
+        match self {
+            Board::Empty => "empty",
+            Board::Ar(_) => "Supercharger",
+            Board::Plain(_) => "plain",
+            Board::Atari(_) => "Atari bankswitch",
+            Board::Fa(_) => "CBS RAM Plus",
+            Board::E0(_) => "Parker Bros E0",
+            Board::E7(_) => "M-Network E7",
+            Board::Cv(_) => "CommaVid",
+            Board::Dpc(_) => "DPC (Pitfall II)",
+            Board::F0(_) => "Megaboy F0",
+            Board::Jane(_) => "Tarzan (Jane)",
+            Board::Wf8(_) => "Coleco WF8",
+            Board::Wd(_) => "Wickstead WD",
+            Board::Fc(_) => "Amiga FC",
+            Board::ZeroFa0(_) => "Fotomania",
+            Board::Zero3E0(_) => "Parker Bros 3E0",
+            Board::Fe(_) => "Activision FE",
+            Board::Ua(_) => "UA Ltd",
+            Board::ThreeF(_) => "Tigervision 3F",
+            Board::ThreeE(_) => "3E",
+            Board::ThreeEPlus(_) => "3E+",
+            Board::Sb(_) => "SuperBanking",
+            Board::Zero840(_) => "EconoBanking",
+            Board::X07(_) => "X07",
+            Board::Mdm(_) => "Megacart MDM",
+        }
+    }
+
+    /// The single 4 KB bank paged into the window, on boards that keep one.
+    fn selected_bank(&self) -> Option<usize> {
+        match self {
+            Board::Atari(board) => Some(board.selected_bank()),
+            Board::F0(board) => Some(board.selected_bank()),
+            Board::Jane(board) => Some(board.selected_bank()),
+            Board::Wf8(board) => Some(board.selected_bank()),
+            Board::Fc(board) => Some(board.selected_bank()),
+            Board::Sb(board) => Some(board.selected_bank()),
+            Board::Mdm(board) => Some(board.selected_bank()),
+            Board::X07(board) => Some(board.selected_bank()),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum CartridgeError {
     UnsupportedSize(usize),
@@ -412,6 +470,85 @@ impl Cartridge {
         }
     }
 
+    /// The board's cart RAM as one linear space, for the debugger's
+    /// bank-complete region. Empty for a board with no RAM the core stores
+    /// accessibly.
+    fn ram_slice(&self) -> &[u8] {
+        match &self.board {
+            Board::Atari(board) => board.ram(),
+            Board::Fa(board) => board.ram(),
+            Board::Cv(board) => board.ram(),
+            Board::ThreeE(board) => board.ram(),
+            Board::ThreeEPlus(board) => board.ram(),
+            Board::Ar(board) => board.ram(),
+            _ => &[],
+        }
+    }
+
+    /// The cart RAM size in bytes; zero when the board exposes none.
+    pub fn ram_len(&self) -> usize {
+        self.ram_slice().len()
+    }
+
+    /// A side-effect-free read of linearised cart RAM at `offset`; `0xFF` past
+    /// the end.
+    pub fn peek_ram(&self, offset: usize) -> u8 {
+        self.ram_slice().get(offset).copied().unwrap_or(0xff)
+    }
+
+    /// The board's full ROM image, all banks in file order, for the debugger's
+    /// bank-complete region. Empty for a board with no retained image (a plain
+    /// board is already fully visible; the Supercharger keeps only tape RAM).
+    fn rom_slice(&self) -> &[u8] {
+        match &self.board {
+            Board::Atari(board) => board.rom(),
+            Board::Fa(board) => board.rom(),
+            Board::E0(board) => board.rom(),
+            Board::E7(board) => board.rom(),
+            Board::Dpc(board) => board.rom(),
+            Board::F0(board) => board.rom(),
+            Board::Jane(board) => board.rom(),
+            Board::Wf8(board) => board.rom(),
+            Board::Wd(board) => board.rom(),
+            Board::Fc(board) => board.rom(),
+            Board::ZeroFa0(board) => board.rom(),
+            Board::Zero3E0(board) => board.rom(),
+            Board::Ua(board) => board.rom(),
+            Board::ThreeF(board) => board.rom(),
+            Board::ThreeE(board) => board.rom(),
+            Board::ThreeEPlus(board) => board.rom(),
+            Board::Fe(board) => board.rom(),
+            Board::Sb(board) => board.rom(),
+            Board::Zero840(board) => board.rom(),
+            Board::X07(board) => board.rom(),
+            Board::Mdm(board) => board.rom(),
+            _ => &[],
+        }
+    }
+
+    /// A read-only view of the board for the debugger's Cartridge section.
+    pub fn inspect(&self) -> CartridgeInspect {
+        CartridgeInspect {
+            board: self.board.name(),
+            bank: self.board.selected_bank(),
+            dpc: match &self.board {
+                Board::Dpc(board) => Some(board.inspect()),
+                _ => None,
+            },
+        }
+    }
+
+    /// The board's ROM image size in bytes; zero when it retains none.
+    pub fn rom_len(&self) -> usize {
+        self.rom_slice().len()
+    }
+
+    /// A side-effect-free read of the linearised ROM image at `offset`,
+    /// independent of the current bank; `0xFF` past the end.
+    pub fn peek_rom(&self, offset: usize) -> u8 {
+        self.rom_slice().get(offset).copied().unwrap_or(0xff)
+    }
+
     /// Side-effect-free read for inspection: never trips a hotspot.
     pub fn peek(&self, address: u16) -> u8 {
         match &self.board {
@@ -441,5 +578,46 @@ impl Cartridge {
             Board::ThreeEPlus(board) => board.peek(address),
             Board::Fe(board) => board.peek(address),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CLOCK: f32 = 3_579_545.0;
+
+    #[test]
+    fn rom_slice_is_the_full_image_in_file_order() {
+        let mut rom = vec![0u8; 0x2000];
+        for (i, bank) in rom.chunks_mut(0x1000).enumerate() {
+            bank.fill(i as u8);
+        }
+        let cart = Cartridge::load(&rom, Some(CartType::F8), CLOCK).unwrap();
+        assert_eq!(cart.rom_len(), 0x2000);
+        // Both banks readable regardless of which is paged in.
+        assert_eq!(cart.peek_rom(0), 0);
+        assert_eq!(cart.peek_rom(0x1000), 1);
+        assert_eq!(cart.peek_rom(0x2000), 0xff); // past the end
+    }
+
+    #[test]
+    fn superchip_ram_round_trips_through_the_linear_view() {
+        let cart_image = vec![0u8; 0x2000];
+        let mut cart = Cartridge::load(&cart_image, Some(CartType::F8Sc), CLOCK).unwrap();
+        assert_eq!(cart.ram_len(), 0x80);
+        // The Superchip write port is the low half of the window.
+        cart.write_access(0x1000, 0x77, 0);
+        assert_eq!(cart.peek_ram(0), 0x77);
+        assert_eq!(cart.peek_ram(0x80), 0xff); // past the end
+    }
+
+    #[test]
+    fn a_plain_board_exposes_no_synthetic_stores() {
+        let cart = Cartridge::load(&vec![0u8; 0x1000], Some(CartType::Plain4K), CLOCK).unwrap();
+        // A plain board is fully visible through the window, so it contributes
+        // no synthetic ROM or RAM region.
+        assert_eq!(cart.ram_len(), 0);
+        assert_eq!(cart.rom_len(), 0);
     }
 }

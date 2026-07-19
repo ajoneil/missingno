@@ -43,6 +43,11 @@ impl Cv {
         }
     }
 
+    /// The 1 KB cart RAM, all of it.
+    pub(super) fn ram(&self) -> &[u8] {
+        self.ram.as_slice()
+    }
+
     pub fn peek(&self, address: u16) -> u8 {
         let offset = (address & 0x0FFF) as usize;
         match offset {

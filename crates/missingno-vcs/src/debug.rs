@@ -424,6 +424,8 @@ pub struct VcsInspectState {
     pub audc: [u8; 2],
     pub audf: [u8; 2],
     pub audv: [u8; 2],
+    /// The board and, on a DPC cart, its custom chip.
+    pub cartridge: crate::cartridge::CartridgeInspect,
     pub frame: u64,
 }
 
@@ -436,7 +438,66 @@ pub fn vcs_sidebar_sections(state: &VcsInspectState) -> Vec<inspect::Section> {
         tia_section(state),
         audio_section(state),
         riot_section(state),
+        cartridge_section(state),
     ]
+}
+
+/// The Cartridge section: the board, its selected bank on a banked board, and —
+/// on a DPC cart — the custom chip's data fetchers, music voices and RNG.
+fn cartridge_section(state: &VcsInspectState) -> inspect::Section {
+    use inspect::{Row, SectionBlock};
+
+    let cart = &state.cartridge;
+    let summary = match cart.bank {
+        Some(bank) => format!("{} · bank {bank}", cart.board),
+        None => cart.board.to_owned(),
+    };
+
+    let mut rows = vec![Row::value("board", cart.board).help("cartridge board type")];
+    if let Some(bank) = cart.bank {
+        rows.push(Row::value("bank", bank.to_string()).help("4 KB ROM bank in the window"));
+    }
+    let mut blocks = vec![SectionBlock::Rows(rows)];
+
+    if let Some(dpc) = &cart.dpc {
+        blocks.push(SectionBlock::Rule);
+        let fetcher_rows = dpc
+            .fetchers
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                let mode = if f.music {
+                    if f.oscillator { " music/osc" } else { " music" }
+                } else {
+                    ""
+                };
+                Row {
+                    label: format!("df{i}"),
+                    value: format!(
+                        "ptr {:03X} top {:02X} bot {:02X}{mode}",
+                        f.counter, f.top, f.bottom
+                    ),
+                    active: Some(f.flag),
+                    help: Some("data fetcher: display-ROM pointer, top/bottom limits, flag pip"),
+                }
+            })
+            .collect();
+        blocks.push(SectionBlock::Rows(fetcher_rows));
+        blocks.push(SectionBlock::Rule);
+        blocks.push(SectionBlock::Rows(vec![
+            Row::value("rng", format!("{:02X}", dpc.rng))
+                .help("8-bit LFSR, clocked on every select"),
+            Row::value("prog bank", dpc.bank.to_string()).help("F8-banked program ROM window"),
+        ]));
+    }
+
+    inspect::Section {
+        name: "Cartridge",
+        summary,
+        active: None,
+        detail: None,
+        blocks,
+    }
 }
 
 fn cpu_section(state: &VcsInspectState) -> inspect::Section {
@@ -866,6 +927,7 @@ impl VcsDebugger {
             audc: [audio[0].control, audio[1].control],
             audf: [audio[0].frequency, audio[1].frequency],
             audv: [audio[0].volume, audio[1].volume],
+            cartridge: vcs.cartridge().inspect(),
             frame: self.frame_count,
         };
     }
@@ -964,7 +1026,7 @@ impl SystemDebugger for VcsDebugger {
         vcs_sidebar_sections(&self.inspect)
     }
 
-    fn memory_regions(&self) -> &'static [inspect::MemoryRegion] {
+    fn memory_regions(&self) -> Vec<inspect::MemoryRegion> {
         self.core.memory_regions()
     }
 
@@ -1046,6 +1108,58 @@ impl SystemDebugger for VcsDebugger {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cartridge_rows(section: &inspect::Section) -> Vec<String> {
+        section
+            .blocks
+            .iter()
+            .flat_map(|block| match block {
+                inspect::SectionBlock::Rows(rows) => rows.iter().map(|r| r.label.clone()).collect(),
+                _ => Vec::new(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn cartridge_section_shows_dpc_fetchers() {
+        let cart =
+            crate::cartridge::Cartridge::load(&vec![0u8; 0x2900], Some(CartType::Dpc), 3_579_545.0)
+                .unwrap();
+        let state = VcsInspectState {
+            cartridge: cart.inspect(),
+            ..Default::default()
+        };
+        let sections = vcs_sidebar_sections(&state);
+        let section = sections
+            .iter()
+            .find(|s| s.name == "Cartridge")
+            .expect("cartridge section");
+        assert_eq!(section.summary, "DPC (Pitfall II)");
+        let labels = cartridge_rows(section);
+        for i in 0..8 {
+            assert!(
+                labels.iter().any(|l| *l == format!("df{i}")),
+                "missing df{i}"
+            );
+        }
+        assert!(labels.iter().any(|l| l == "rng"));
+    }
+
+    #[test]
+    fn cartridge_section_shows_bank_for_banked_boards() {
+        let cart =
+            crate::cartridge::Cartridge::load(&vec![0u8; 0x2000], Some(CartType::F8), 3_579_545.0)
+                .unwrap();
+        let state = VcsInspectState {
+            cartridge: cart.inspect(),
+            ..Default::default()
+        };
+        let section = vcs_sidebar_sections(&state)
+            .into_iter()
+            .find(|s| s.name == "Cartridge")
+            .expect("cartridge section");
+        assert!(cartridge_rows(&section).iter().any(|l| l == "bank"));
+    }
 
     #[test]
     fn player_pattern_bit_order() {

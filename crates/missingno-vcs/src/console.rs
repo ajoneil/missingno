@@ -356,6 +356,11 @@ impl Vcs {
         }
     }
 
+    /// The cartridge, for the debugger's board and cart-RAM inspection.
+    pub fn cartridge(&self) -> &Cartridge {
+        &self.cartridge
+    }
+
     /// Side-effect-free bus read for inspection: the debugger's view of
     /// any address without perturbing latches or timer flags.
     pub fn peek(&self, address: u16) -> u8 {

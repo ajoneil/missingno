@@ -170,7 +170,7 @@ impl Session {
         self.debugger.set_control(control, input);
     }
 
-    pub fn memory_regions(&self) -> &'static [MemoryRegion] {
+    pub fn memory_regions(&self) -> Vec<MemoryRegion> {
         self.debugger.memory_regions()
     }
 

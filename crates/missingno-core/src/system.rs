@@ -297,9 +297,11 @@ pub trait SystemDebugger: Send {
     fn sidebar_sections(&self) -> Vec<Section> {
         crate::inspect::default_sections(self.register_groups())
     }
-    /// The CPU-visible address map, named by role.
-    fn memory_regions(&self) -> &'static [MemoryRegion] {
-        &[]
+    /// The CPU-visible address map, named by role. Owned because the list is
+    /// cart-dependent — a board with RAM contributes a region the bare console
+    /// does not — even though each region's `name` stays a static string.
+    fn memory_regions(&self) -> Vec<MemoryRegion> {
+        Vec::new()
     }
     /// Side-effect-free read of the CPU address space.
     fn peek(&self, _address: u32) -> u8 {

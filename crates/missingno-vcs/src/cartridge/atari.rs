@@ -90,6 +90,25 @@ impl Atari {
         }
     }
 
+    /// The Superchip cart RAM, all of it; empty on a board without one.
+    pub(super) fn ram(&self) -> &[u8] {
+        match &self.ram {
+            Some(ram) => ram.as_slice(),
+            None => &[],
+        }
+    }
+
+    /// The full ROM image, all banks in file order, for the debugger's
+    /// bank-complete `rom` region.
+    pub(super) fn rom(&self) -> &[u8] {
+        &self.image
+    }
+
+    /// The 4 KB bank currently paged into the window, for the debugger.
+    pub(super) fn selected_bank(&self) -> usize {
+        self.bank
+    }
+
     pub fn peek(&self, address: u16) -> u8 {
         let offset = (address & 0x0FFF) as usize;
         if let Some(ram) = &self.ram

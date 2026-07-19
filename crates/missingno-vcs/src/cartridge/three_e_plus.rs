@@ -107,6 +107,17 @@ impl ThreeEPlus {
         }
     }
 
+    /// The cart RAM segments as one linear space.
+    pub(super) fn ram(&self) -> &[u8] {
+        &self.ram
+    }
+
+    /// The full ROM image, all banks in file order, for the debugger's
+    /// bank-complete `rom` region.
+    pub(super) fn rom(&self) -> &[u8] {
+        &self.image
+    }
+
     pub fn peek(&self, address: u16) -> u8 {
         let offset = usize::from(address & 0x0FFF);
         let within = offset % SEGMENT_SIZE;

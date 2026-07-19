@@ -145,9 +145,10 @@ pub struct Debugger {
     /// The memory viewer's interest window as of the last vblank, fed by the
     /// emu thread while the core runs; drives the running memory browser.
     last_memory_window: Option<MemoryWindow>,
-    /// The core's static region map, cached at build so the memory pane's
-    /// running browser and jump-to-address work while the core is away.
-    memory_regions: &'static [MemoryRegion],
+    /// The core's region map, cached at build so the memory pane's running
+    /// browser and jump-to-address work while the core is away. Owned because
+    /// it is cart-dependent (a board with RAM adds a region).
+    memory_regions: Vec<MemoryRegion>,
     sidebar: Sidebar,
     panes: DebuggerPanes,
     running: bool,
@@ -331,7 +332,7 @@ impl Debugger {
     /// resolved against the cached region map. `None` when no memory pane is
     /// shown or the family has no region map.
     pub fn memory_interest(&self) -> Option<memory::MemoryInterest> {
-        memory::interest_for(self.memory_regions, self.panes.memory_selection()?)
+        memory::interest_for(&self.memory_regions, self.panes.memory_selection()?)
     }
 
     /// Whether any consumer wants per-channel waveform capture on — currently
@@ -657,7 +658,7 @@ impl Debugger {
                 // thread; harmless no-op for every other pane.
                 self.panes
                     .update(panes::Message::Pane(panes::PaneMessage::Memory(
-                        memory::Message::SetRegions(self.memory_regions),
+                        memory::Message::SetRegions(self.memory_regions.clone()),
                     )));
                 self.panes.update(message);
                 // Opening or closing a pane can change what the running core
@@ -841,7 +842,7 @@ impl Debugger {
                 .map(memory::MemoryPaneData::running_window)
         } else {
             Some(memory::MemoryPaneData::running_browse(
-                self.memory_regions,
+                &self.memory_regions,
                 self.last_memory_window.as_ref(),
             ))
         }

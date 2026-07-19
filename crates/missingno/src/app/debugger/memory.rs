@@ -92,7 +92,7 @@ pub enum MemoryPaneData<'b> {
 
 /// An owned readout the context builder holds so the pane can borrow its bytes.
 pub struct MemoryReadout {
-    pub regions: &'static [MemoryRegion],
+    pub regions: Vec<MemoryRegion>,
     pub base: u32,
     pub bytes: Vec<u8>,
 }
@@ -101,7 +101,7 @@ impl<'b> MemoryPaneData<'b> {
     /// The paused view over a live peek readout.
     pub fn paused(readout: &'b MemoryReadout) -> Self {
         Self::Paused {
-            regions: readout.regions,
+            regions: &readout.regions,
             base: readout.base,
             bytes: &readout.bytes,
         }
@@ -127,9 +127,9 @@ pub enum Message {
     SetOffset(u32),
     JumpInput(String),
     Jump,
-    /// The core's static region map, pushed in so the pane's jump-to-address
-    /// can resolve while the core runs on the emu thread.
-    SetRegions(&'static [MemoryRegion]),
+    /// The core's region map, pushed in so the pane's jump-to-address can
+    /// resolve while the core runs on the emu thread.
+    SetRegions(Vec<MemoryRegion>),
 }
 
 impl From<Message> for app::Message {
@@ -303,7 +303,7 @@ pub struct MemoryPane {
     selection: MemorySelection,
     jump_input: String,
     /// Cached region map so jump-to-address resolves while the core is away.
-    regions: &'static [MemoryRegion],
+    regions: Vec<MemoryRegion>,
 }
 
 impl MemoryPane {
@@ -314,7 +314,7 @@ impl MemoryPane {
                 offset: 0,
             },
             jump_input: String::new(),
-            regions: &[],
+            regions: Vec::new(),
         }
     }
 
@@ -327,7 +327,7 @@ impl MemoryPane {
             Message::SetOffset(offset) => self.selection.offset = offset,
             Message::JumpInput(input) => self.jump_input = input,
             Message::Jump => {
-                if let Some((region, offset)) = resolve_jump(self.regions, &self.jump_input) {
+                if let Some((region, offset)) = resolve_jump(&self.regions, &self.jump_input) {
                     self.selection.region = region;
                     self.selection.offset = offset;
                     self.jump_input.clear();

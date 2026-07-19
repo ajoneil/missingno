@@ -32,6 +32,30 @@ impl Ram {
             Ram::Banked { data } => Some(data.iter().flatten().copied().collect()),
         }
     }
+
+    /// The linear RAM size, all banks, matching [`Ram::to_vec`]'s layout.
+    pub(super) fn len(&self) -> usize {
+        match self {
+            Ram::None => 0,
+            Ram::Unbanked { data } => data.len(),
+            Ram::Banked { data } => data.len() * data[0].len(),
+        }
+    }
+
+    /// A raw read at linear `offset`, ignoring the current bank and enable
+    /// state; `0xFF` past the end.
+    pub(super) fn peek(&self, offset: usize) -> u8 {
+        match self {
+            Ram::None => 0xff,
+            Ram::Unbanked { data } => data.get(offset).copied().unwrap_or(0xff),
+            Ram::Banked { data } => {
+                let bank = offset / data[0].len();
+                data.get(bank)
+                    .and_then(|b| b.get(offset % b.len()).copied())
+                    .unwrap_or(0xff)
+            }
+        }
+    }
 }
 
 pub struct Mbc1 {

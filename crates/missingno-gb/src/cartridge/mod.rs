@@ -1,10 +1,43 @@
 pub mod mbc;
 
-use mbc::mbc3::ClockRegisters;
+use mbc::mbc3::{ClockRegisters, Mapped};
 use mbc::{
     Mbc, dbz_trans::DbzTrans, huc1::Huc1, huc3::Huc3, mbc1::Mbc1, mbc2::Mbc2, mbc3::Mbc3,
     mbc5::Mbc5, mbc6::Mbc6, mbc7::Mbc7, no_mbc::NoMbc,
 };
+
+/// A read-only view of the cartridge's mapper and clock state, for the
+/// debugger's Cartridge sidebar section. A plain data copy the running snapshot
+/// takes cheaply and the paused console builds live.
+#[derive(Clone, Debug)]
+pub struct CartridgeView {
+    pub mapper: &'static str,
+    /// The 16 KB bank at $4000; `None` for a half-window mapper.
+    pub rom_bank: Option<u16>,
+    /// The selected RAM bank, where the mapper banks RAM.
+    pub ram_bank: Option<u8>,
+    /// The RAM/clock enable latch, where the mapper has one.
+    pub ram_enabled: Option<bool>,
+    /// The MBC1 banking mode; `None` for every other mapper.
+    pub mode1: Option<bool>,
+    /// The real-time clock, on MBC3 carts that carry one.
+    pub rtc: Option<RtcView>,
+}
+
+/// A read-only view of the MBC3 real-time clock's live register state.
+#[derive(Clone, Debug)]
+pub struct RtcView {
+    pub seconds: u8,
+    pub minutes: u8,
+    pub hours: u8,
+    pub day: u16,
+    /// RTCDH bit 6 — the clock is halted.
+    pub halted: bool,
+    /// A $6000 latch is armed, awaiting its completing write.
+    pub latch_ready: bool,
+    /// RTCDH bit 7 — the sticky day-counter overflow.
+    pub day_carry: bool,
+}
 
 /// Real-time-clock state as saved alongside SRAM.
 #[derive(Clone, Copy)]
@@ -125,6 +158,54 @@ impl Cartridge {
         }
     }
 
+    /// A read-only view of the mapper and clock state for the debugger.
+    pub fn inspect(&self) -> CartridgeView {
+        let (ram_enabled, ram_bank, mode1) = match &self.mbc {
+            Mbc::NoMbc(_) => (None, None, None),
+            Mbc::Mbc1(m) => (Some(m.ram_enabled), Some(m.ram_bank), Some(m.mode1)),
+            Mbc::Mbc2(m) => (Some(m.ram_enabled), None, None),
+            Mbc::Mbc3(m) => {
+                let ram_bank = match m.mapped {
+                    Mapped::Ram(bank) => Some(bank),
+                    Mapped::Clock(_) => None,
+                };
+                (Some(m.ram_and_clock_enabled), ram_bank, None)
+            }
+            Mbc::Mbc5(m) => (Some(m.ram_enabled), Some(m.ram_bank), None),
+            Mbc::Mbc6(m) => (Some(m.ram_enabled), Some(m.ram_bank_a), None),
+            Mbc::Mbc7(m) => (Some(m.ram_enabled_1 && m.ram_enabled_2), None, None),
+            Mbc::Huc1(m) => (None, Some(m.ram_bank), None),
+            Mbc::Huc3(m) => (None, Some(m.ram_bank), None),
+            Mbc::DbzTrans(m) => (Some(m.ram_enabled), Some(m.ram_bank), None),
+        };
+        CartridgeView {
+            mapper: self.mbc.name(),
+            rom_bank: self.switchable_rom_bank(),
+            ram_bank,
+            ram_enabled,
+            mode1,
+            rtc: self.rtc_view(),
+        }
+    }
+
+    /// The MBC3 clock's live registers as a debugger view, if the cart has one.
+    fn rtc_view(&self) -> Option<RtcView> {
+        let Mbc::Mbc3(mbc) = &self.mbc else {
+            return None;
+        };
+        let clock = mbc.clock.as_ref()?;
+        let r = clock.registers;
+        Some(RtcView {
+            seconds: r.seconds,
+            minutes: r.minutes,
+            hours: r.hours,
+            day: ((r.days_upper as u16 & 1) << 8) | r.days_lower as u16,
+            halted: r.days_upper & 0x40 != 0,
+            latch_ready: clock.latch_ready,
+            day_carry: r.days_upper & 0x80 != 0,
+        })
+    }
+
     pub fn peek_title(rom: &[u8]) -> String {
         parse_title(rom)
     }
@@ -162,6 +243,23 @@ impl Cartridge {
 
     pub fn ram(&self) -> Option<Vec<u8>> {
         self.mbc.ram()
+    }
+
+    /// The cartridge RAM size in bytes, all banks linearised; zero with no RAM.
+    pub fn ram_len(&self) -> usize {
+        self.mbc.ram_len()
+    }
+
+    /// A side-effect-free read of linearised cartridge RAM — the raw backing
+    /// store across every bank, past the enable latch and bank selection.
+    pub fn peek_ram(&self, offset: usize) -> u8 {
+        self.mbc.peek_ram(offset)
+    }
+
+    /// A side-effect-free read of the full ROM image at a linear `offset`,
+    /// independent of the current bank; `0xFF` past the end.
+    pub fn peek_rom(&self, offset: usize) -> u8 {
+        self.rom.get(offset).copied().unwrap_or(0xff)
     }
 
     pub fn rom(&self) -> &[u8] {

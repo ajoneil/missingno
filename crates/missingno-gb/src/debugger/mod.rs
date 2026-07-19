@@ -21,6 +21,15 @@ use missingno_core::inspect;
 use missingno_core::isa::InstructionSet;
 use missingno_core::symbols;
 
+// Synthetic address bases above the real bus, where the debugger exposes
+// bank-complete cartridge stores past the CPU's bank-selected windows. Each
+// gets its own decade with room for the largest image the family allows (GB ROM
+// reaches 8 MB), and the same scheme is mirrored in the VCS debugger.
+/// Bank-complete cartridge RAM, all banks linear.
+const RAM_BASE: u32 = 0x0100_0000;
+/// The full ROM image, all banks in file order.
+const ROM_BASE: u32 = 0x0200_0000;
+
 /// Embedded profile for full T-cycle frame capture with all PPU details.
 #[cfg(feature = "morepork")]
 const FRAME_CAPTURE_PROFILE: &str = r#"
@@ -702,12 +711,16 @@ impl<M: Model> Debugger<M> {
         inspection::cpu_register_groups(self.game_boy.cpu())
     }
 
-    /// The CPU-visible flat address map, named by role.
-    pub fn memory_regions(&self) -> &'static [inspect::MemoryRegion] {
+    /// The CPU-visible flat address map, named by role, plus the cartridge's
+    /// bank-complete stores in the synthetic space above the bus: the full ROM
+    /// image, and `sram` when the cart has RAM. The bus-window regions
+    /// (`rom0`/`romx`/`extram`) stay the CPU's bank-selected, enable-gated view.
+    pub fn memory_regions(&self) -> Vec<inspect::MemoryRegion> {
         const fn region(name: &'static str, start: u32, len: u32) -> inspect::MemoryRegion {
             inspect::MemoryRegion { name, start, len }
         }
-        static REGIONS: &[inspect::MemoryRegion] = &[
+        let cartridge = self.game_boy.cartridge();
+        let mut regions = vec![
             region("rom0", 0x0000, 0x4000),
             region("romx", 0x4000, 0x4000),
             region("vram", 0x8000, 0x2000),
@@ -716,13 +729,27 @@ impl<M: Model> Debugger<M> {
             region("oam", 0xFE00, 0xA0),
             region("io", 0xFF00, 0x80),
             region("hram", 0xFF80, 0x7F),
+            region("rom", ROM_BASE, cartridge.rom_len() as u32),
         ];
-        REGIONS
+        let ram_len = cartridge.ram_len();
+        if ram_len > 0 {
+            regions.push(region("sram", RAM_BASE, ram_len as u32));
+        }
+        regions
     }
 
-    /// Side-effect-free read of the CPU address space.
+    /// Side-effect-free read of the CPU address space. Addresses in the
+    /// synthetic bank-complete space read the cart's raw ROM or RAM linearly,
+    /// independent of the current bank; below it, the CPU bus.
     pub fn peek(&self, address: u32) -> u8 {
-        self.game_boy.peek(address as u16)
+        let cartridge = self.game_boy.cartridge();
+        if address >= ROM_BASE {
+            cartridge.peek_rom((address - ROM_BASE) as usize)
+        } else if address >= RAM_BASE {
+            cartridge.peek_ram((address - RAM_BASE) as usize)
+        } else {
+            self.game_boy.peek(address as u16)
+        }
     }
 
     /// The address the debugger keys instructions on — the current opcode's
@@ -906,6 +933,66 @@ mod tests {
         );
         assert_eq!(flags(0x0200), cdl::DATA);
         assert_eq!(flags(0x0300), 0);
+    }
+
+    /// A four-bank MBC5 cart with 32 KB RAM, each ROM bank stamped with its
+    /// index so a linear read reveals which bank a byte came from.
+    fn mbc5_ram_cart() -> crate::cartridge::Cartridge {
+        let mut rom = vec![0u8; 4 * 0x4000];
+        for (i, bank) in rom.chunks_mut(0x4000).enumerate() {
+            bank.fill(i as u8);
+        }
+        rom[0x147] = 0x1a; // MBC5 + RAM
+        rom[0x149] = 3; // 32 KB (four 8 KB banks)
+        crate::cartridge::Cartridge::new(rom, None)
+    }
+
+    #[test]
+    fn sram_region_present_only_with_cart_ram() {
+        let with_ram = Debugger::new(Console::<Dmg>::new(mbc5_ram_cart(), None));
+        let regions = with_ram.memory_regions();
+        let sram = regions.iter().find(|r| r.name == "sram").expect("sram");
+        assert_eq!(sram.start, RAM_BASE);
+        assert_eq!(sram.len, 4 * 0x2000);
+
+        // traced_program_console is a plain no-RAM cart.
+        let no_ram = Debugger::new(traced_program_console());
+        assert!(no_ram.memory_regions().iter().all(|r| r.name != "sram"));
+    }
+
+    #[test]
+    fn rom_region_spans_the_full_image() {
+        let debugger = Debugger::new(traced_program_console());
+        let rom = debugger
+            .memory_regions()
+            .into_iter()
+            .find(|r| r.name == "rom")
+            .expect("rom region");
+        assert_eq!(rom.start, ROM_BASE);
+        assert_eq!(rom.len, 0x8000);
+    }
+
+    #[test]
+    fn synthetic_ram_peek_bypasses_bank_and_enable() {
+        let mut cart = mbc5_ram_cart();
+        cart.write(0x0000, 0x0A); // enable RAM
+        cart.write(0x4000, 0x02); // RAM bank 2
+        cart.write(0xA005, 0x77);
+        cart.write(0x0000, 0x00); // disable RAM again
+        let debugger = Debugger::new(Console::<Dmg>::new(cart, None));
+
+        // The CPU bus sees the disabled RAM as open bus.
+        assert_eq!(debugger.peek(0xA005), 0xFF);
+        // The synthetic region reads the raw byte in bank 2 regardless.
+        assert_eq!(debugger.peek(RAM_BASE + 2 * 0x2000 + 5), 0x77);
+    }
+
+    #[test]
+    fn synthetic_rom_peek_reads_unmapped_bank() {
+        let debugger = Debugger::new(Console::<Dmg>::new(mbc5_ram_cart(), None));
+        // File order, independent of what the mapper currently pages in.
+        assert_eq!(debugger.peek(ROM_BASE), 0);
+        assert_eq!(debugger.peek(ROM_BASE + 3 * 0x4000), 3);
     }
 
     #[test]

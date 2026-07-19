@@ -15,6 +15,7 @@ use missingno_core::system::{DebugView, InspectSnapshot};
 use missingno_core::video::{Frame, RgbaFrame};
 
 use missingno_gb::Console;
+use missingno_gb::cartridge::CartridgeView;
 use missingno_gb::debugger::graphics as gb_graphics;
 use missingno_gb::debugger::inspection::{
     self as parts, AudioView, ColorSnapshot, CpuSource, GbSnapshot, PpuSource,
@@ -172,6 +173,7 @@ fn cram_raws(color: impl Fn(u8, u8) -> Color555) -> [[u16; 4]; 8] {
 /// section; VRAM banking, palette registers, and HDMA in the PPU section; the
 /// resolved BG/OBJ palette RAM in its own CRAM section. Shared by the live
 /// console (paused) and the running snapshot so the two agree by construction.
+#[allow(clippy::too_many_arguments)]
 pub fn cgb_sidebar_sections(
     cpu: &impl CpuSource,
     ppu: &impl PpuSource,
@@ -180,6 +182,7 @@ pub fn cgb_sidebar_sections(
     view: &CgbView,
     background: &[Palette; 8],
     objects: &[Palette; 8],
+    cart: &CartridgeView,
 ) -> Vec<inspect::Section> {
     use inspect::{Row, Section, SectionBlock};
 
@@ -239,6 +242,7 @@ pub fn cgb_sidebar_sections(
             blocks: cram_content,
         },
         parts::apu_section(audio),
+        parts::cartridge_section(cart),
     ]
 }
 
@@ -380,6 +384,7 @@ impl InspectSnapshot for CgbSnapshot {
             &self.cgb,
             background,
             objects,
+            &self.base.cartridge,
         )
     }
     fn memory_window(&self) -> Option<&inspect::MemoryWindow> {
@@ -466,6 +471,7 @@ impl ConsoleUi for Cgb {
             &CgbView::capture(console),
             &background,
             &objects,
+            &console.cartridge().inspect(),
         )
     }
 }

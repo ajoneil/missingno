@@ -15,6 +15,28 @@
 //! answers a second time at $1800-$187F. Both are patent/kevtris-derived and
 //! await a socketed board to confirm.
 
+/// A read-only view of the DPC's internals for the debugger's Cartridge section.
+#[derive(Clone, Debug)]
+pub struct DpcView {
+    pub fetchers: [DpcFetcherView; FETCHERS],
+    pub rng: u8,
+    pub bank: usize,
+}
+
+/// One data fetcher's state.
+#[derive(Clone, Debug)]
+pub struct DpcFetcherView {
+    /// The 11-bit down-counter into the display ROM.
+    pub counter: u16,
+    pub top: u8,
+    pub bottom: u8,
+    /// The equality comparator's output — the voice's square wave in music mode.
+    pub flag: bool,
+    pub music: bool,
+    /// The voice clocks from the RC oscillator rather than its read strobe.
+    pub oscillator: bool,
+}
+
 const BANK_SIZE: usize = 0x1000;
 const PROGRAM_SIZE: usize = 0x2000;
 const DISPLAY_SIZE: usize = 0x800;
@@ -350,6 +372,32 @@ impl Dpc {
         }
         self.seed_draw_line(offset, data);
         self.write_function(offset, data);
+    }
+
+    /// The banked program ROM, both banks in file order, for the debugger's
+    /// bank-complete `rom` region. The display ROM is not CPU-addressable — it
+    /// is reachable only through the fetchers — so it is not part of this view.
+    pub(super) fn rom(&self) -> &[u8] {
+        &self.program
+    }
+
+    /// A read-only view of the chip's internals for the debugger.
+    pub(super) fn inspect(&self) -> DpcView {
+        DpcView {
+            fetchers: std::array::from_fn(|i| {
+                let f = &self.fetchers[i];
+                DpcFetcherView {
+                    counter: f.counter & 0x7FF,
+                    top: f.top,
+                    bottom: f.bottom,
+                    flag: f.flag,
+                    music: f.music,
+                    oscillator: f.oscillator_clocked,
+                }
+            }),
+            rng: self.rng,
+            bank: self.bank,
+        }
     }
 
     pub fn peek(&self, address: u16) -> u8 {

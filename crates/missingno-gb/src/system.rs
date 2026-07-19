@@ -121,6 +121,7 @@ impl ConsoleUi for Dmg {
             console.ppu(),
             console.interrupts(),
             &AudioView::capture(console.audio()),
+            &console.cartridge().inspect(),
         )
     }
 
@@ -405,7 +406,7 @@ where
         M::sidebar_sections(self.core.game_boy())
     }
 
-    fn memory_regions(&self) -> &'static [inspect::MemoryRegion] {
+    fn memory_regions(&self) -> Vec<inspect::MemoryRegion> {
         self.core.memory_regions()
     }
 

@@ -25,6 +25,22 @@ pub enum Mbc {
 }
 
 impl Mbc {
+    /// The mapper's display name for the debugger.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Mbc::NoMbc(_) => "None",
+            Mbc::Mbc1(_) => "MBC1",
+            Mbc::Mbc2(_) => "MBC2",
+            Mbc::Mbc3(_) => "MBC3",
+            Mbc::Mbc5(_) => "MBC5",
+            Mbc::Mbc6(_) => "MBC6",
+            Mbc::Mbc7(_) => "MBC7",
+            Mbc::Huc1(_) => "HuC1",
+            Mbc::Huc3(_) => "HuC3",
+            Mbc::DbzTrans(_) => "DbzTrans",
+        }
+    }
+
     pub fn ram(&self) -> Option<Vec<u8>> {
         match self {
             Mbc::NoMbc(m) => m.ram(),
@@ -95,6 +111,56 @@ impl Mbc {
             m.tick_rtc(dots);
         }
     }
+
+    /// The cartridge RAM size in bytes, all banks linearised — the length the
+    /// debugger's bank-complete `sram` region spans. Zero when the mapper has
+    /// no RAM.
+    pub fn ram_len(&self) -> usize {
+        match self {
+            Mbc::NoMbc(m) => m.ram.map_or(0, |ram| ram.len()),
+            Mbc::Mbc1(m) => m.ram.len(),
+            Mbc::Mbc2(m) => m.ram.len(),
+            Mbc::Mbc3(m) => m.ram.len() * 8 * 1024,
+            Mbc::Mbc5(m) => m.ram.len() * 8 * 1024,
+            Mbc::Mbc6(m) => m.ram.len() * 4 * 1024,
+            Mbc::Mbc7(m) => m.eeprom.data.len() * 2,
+            Mbc::Huc1(m) => m.ram.len() * 8 * 1024,
+            Mbc::Huc3(m) => m.ram.len() * 8 * 1024,
+            Mbc::DbzTrans(m) => m.ram.len() * 8 * 1024,
+        }
+    }
+
+    /// A side-effect-free read of linearised cartridge RAM at `offset` — the raw
+    /// backing store, bypassing the enable latch and bank selection, so the
+    /// debugger sees every bank regardless of what the CPU has mapped. `0xFF`
+    /// past the end.
+    pub fn peek_ram(&self, offset: usize) -> u8 {
+        match self {
+            Mbc::NoMbc(m) => m
+                .ram
+                .as_ref()
+                .and_then(|ram| ram.get(offset).copied())
+                .unwrap_or(0xff),
+            Mbc::Mbc1(m) => m.ram.peek(offset),
+            Mbc::Mbc2(m) => m.ram.get(offset).copied().unwrap_or(0xff),
+            Mbc::Mbc3(m) => peek_banked(&m.ram, offset),
+            Mbc::Mbc5(m) => peek_banked(&m.ram, offset),
+            Mbc::Mbc6(m) => peek_banked(&m.ram, offset),
+            Mbc::Mbc7(m) => m
+                .eeprom
+                .data
+                .get(offset / 2)
+                .map_or(0xff, |word| word.to_be_bytes()[offset % 2]),
+            Mbc::Huc1(m) => peek_banked(&m.ram, offset),
+            Mbc::Huc3(m) => peek_banked(&m.ram, offset),
+            Mbc::DbzTrans(m) => peek_banked(&m.ram, offset),
+        }
+    }
+}
+
+/// Read byte `offset` from a bank-major RAM store as one linear space.
+fn peek_banked<const N: usize>(banks: &[[u8; N]], offset: usize) -> u8 {
+    banks.get(offset / N).map_or(0xff, |bank| bank[offset % N])
 }
 
 #[cfg(test)]
