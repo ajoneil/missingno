@@ -421,6 +421,10 @@ impl InspectSnapshot for CgbSnapshot {
 impl ConsoleUi for Cgb {
     const MONOCHROME_PALETTE: bool = false;
 
+    fn state_schema() -> Option<&'static missingno_core::state::SystemStateSchema> {
+        Some(crate::state_schema::cgb_state_schema())
+    }
+
     fn screen_display(console: &Console<Self>, new_screen: Option<Self::Screen>) -> Option<Frame> {
         if !console.ppu().control().video_enabled() {
             Some(Frame::Rgba(RgbaFrame::blank(NATIVE_SIZE.0, NATIVE_SIZE.1)))

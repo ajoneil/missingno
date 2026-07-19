@@ -25,6 +25,7 @@
 pub mod debug;
 pub mod render;
 pub mod screen;
+pub mod state_schema;
 pub mod timing;
 
 mod apu;

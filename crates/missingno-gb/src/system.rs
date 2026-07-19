@@ -11,6 +11,7 @@ use missingno_core::HighPass;
 use missingno_core::graphics::GraphicsView;
 use missingno_core::inspect;
 use missingno_core::isa::InstructionSet;
+use missingno_core::state::SystemStateSchema;
 use missingno_core::symbols::{Symbol, SymbolTable};
 use missingno_core::system::{
     ControlId, ControlInput, DebugView, FrameOutcome, RunningStatus, StepOutcome, SystemConsole,
@@ -42,6 +43,12 @@ pub trait ConsoleUi: Model {
     /// colour. Gates the play-mode Display panel's palette picker.
     const MONOCHROME_PALETTE: bool;
 
+    /// This model's hardware state schema, if it authors one. DMG returns its
+    /// schema; CGB composes it as the DMG fields plus its colour delta.
+    fn state_schema() -> Option<&'static SystemStateSchema> {
+        None
+    }
+
     /// The display for a step's screen result; `None` leaves the screen pane
     /// as-is.
     fn screen_display(console: &Console<Self>, new_screen: Option<Self::Screen>) -> Option<Frame>;
@@ -72,6 +79,10 @@ pub trait ConsoleUi: Model {
 
 impl ConsoleUi for Dmg {
     const MONOCHROME_PALETTE: bool = true;
+
+    fn state_schema() -> Option<&'static SystemStateSchema> {
+        Some(crate::state_schema::dmg_state_schema())
+    }
 
     fn screen_display(console: &Console<Self>, new_screen: Option<Self::Screen>) -> Option<Frame> {
         let video_enabled = console.ppu().control().video_enabled();
@@ -253,6 +264,10 @@ where
 
     fn frame_interval(&self) -> Duration {
         FRAME_INTERVAL
+    }
+
+    fn state_schema(&self) -> Option<&'static SystemStateSchema> {
+        M::state_schema()
     }
 
     fn into_debugger(self: Box<Self>) -> Result<Box<dyn SystemDebugger>, Box<dyn SystemConsole>> {
@@ -587,6 +602,10 @@ where
             let _ = path;
             None
         }
+    }
+
+    fn state_schema(&self) -> Option<&'static SystemStateSchema> {
+        M::state_schema()
     }
 
     fn into_console(self: Box<Self>) -> Box<dyn SystemConsole> {

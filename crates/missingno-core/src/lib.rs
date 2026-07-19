@@ -21,6 +21,7 @@ pub mod disasm;
 pub mod graphics;
 pub mod inspect;
 pub mod isa;
+pub mod state;
 pub mod stepping;
 pub mod symbols;
 pub mod system;
@@ -35,6 +36,10 @@ pub use inspect::{
     Watchable,
 };
 pub use isa::{Flow, Instruction, InstructionSet};
+pub use state::{
+    FieldDef, FieldType, FrameSpec, PixelFormat, Provenance, StateRecord, StateValue,
+    SystemStateSchema, Tier,
+};
 pub use tv::TvStandard;
 pub use video::{ConsoleFrame, DisplayTechnology, Frame, IndexedFrame, LcdPanel, RgbaFrame};
 pub use waveform::{ChannelWave, WaveRing};

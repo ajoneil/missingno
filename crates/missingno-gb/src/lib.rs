@@ -21,6 +21,7 @@ pub mod serial_transfer;
 pub mod sgb;
 #[cfg(feature = "morepork")]
 pub mod snapshot;
+pub mod state_schema;
 pub mod system;
 #[cfg(feature = "test-support")]
 pub mod test_support;

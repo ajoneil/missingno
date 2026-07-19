@@ -14,6 +14,7 @@ use crate::cdl::CdlWindow;
 use crate::graphics::GraphicsView;
 use crate::inspect::{MemoryRegion, MemoryWindow, RegisterGroup, Section, Watch, Watchable};
 use crate::isa::InstructionSet;
+use crate::state::{StateRecord, SystemStateSchema};
 use crate::symbols::{Symbol, SymbolTable};
 use crate::video::{DisplayTechnology, Frame, RawFrame};
 use crate::waveform::ChannelWave;
@@ -210,6 +211,18 @@ pub trait SystemConsole: Send {
     /// Restore a previously serialized machine state.
     fn load_state(&mut self, _bytes: &[u8]) -> Result<(), StateError> {
         Err(StateError::Unsupported)
+    }
+    /// The hardware-named state schema this console describes, if it authors
+    /// one. The save-state bridge and the trace writer key their records on its
+    /// fields; a console without a schema returns `None`.
+    fn state_schema(&self) -> Option<&'static SystemStateSchema> {
+        None
+    }
+    /// Read the current machine state into a record keyed by the schema's field
+    /// names — the bridge's capture side. `None` for a console without a schema
+    /// or before its bridge is wired.
+    fn read_state(&self) -> Option<StateRecord> {
+        None
     }
     /// Convert to the debugger-backed form. Systems without a debugger
     /// backend hand the console back; callers fall back to plain emulation.
@@ -415,6 +428,18 @@ pub trait SystemDebugger: Send {
     /// Restore a previously serialized machine state.
     fn load_state(&mut self, _bytes: &[u8]) -> Result<(), StateError> {
         Err(StateError::Unsupported)
+    }
+    /// The hardware-named state schema this core describes, if it authors one.
+    /// The save-state bridge and the trace writer key their records on its
+    /// fields; a core without a schema returns `None`.
+    fn state_schema(&self) -> Option<&'static SystemStateSchema> {
+        None
+    }
+    /// Read the current machine state into a record keyed by the schema's field
+    /// names — the bridge's capture side. `None` for a core without a schema or
+    /// before its bridge is wired.
+    fn read_state(&self) -> Option<StateRecord> {
+        None
     }
 
     fn into_console(self: Box<Self>) -> Box<dyn SystemConsole>;
