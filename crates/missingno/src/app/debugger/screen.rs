@@ -25,7 +25,7 @@ pub enum Message {
 
 impl From<Message> for app::Message {
     fn from(val: Message) -> Self {
-        app::Message::Debugger(debugger::Message::Pane(panes::Message::Pane(
+        app::Message::Debugger(debugger::Message::Pane(panes::Message::Broadcast(
             panes::PaneMessage::Screen(val),
         )))
     }
@@ -54,9 +54,9 @@ impl ScreenPane {
         self.screen_view.blend = blend;
     }
 
-    pub fn content(&self) -> pane_grid::Content<'_, app::Message> {
+    pub fn content(&self, close: pane_grid::Pane) -> pane_grid::Content<'_, app::Message> {
         pane(
-            title_bar("Screen"),
+            title_bar("Screen", close),
             responsive(|size| {
                 let (width, height) = self.screen_view.fitted_size(size);
 
@@ -79,8 +79,12 @@ impl panes::Pane for ScreenPane {
     }
 
     /// The screen renders its own live frame slot even without a context.
-    fn view<'a>(&'a self, _ctx: Option<&PaneContext<'_>>) -> pane_grid::Content<'a, app::Message> {
-        self.content()
+    fn view<'a>(
+        &'a self,
+        _ctx: Option<&PaneContext<'_>>,
+        id: pane_grid::Pane,
+    ) -> pane_grid::Content<'a, app::Message> {
+        self.content(id)
     }
 
     fn on_message(&mut self, message: &PaneMessage) {

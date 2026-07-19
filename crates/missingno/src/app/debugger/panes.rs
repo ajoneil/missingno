@@ -4,7 +4,7 @@ use std::collections::{BTreeSet, HashMap};
 use iced::{
     Border, Color, Element, Theme,
     widget::{
-        container, pane_grid,
+        button, container, pane_grid,
         pane_grid::Axis::{Horizontal, Vertical},
     },
 };
@@ -17,7 +17,7 @@ use crate::app::{
         disassembly::{self, DisasmPaneData, DisassemblyPane},
         graphics::{
             atlas::{self, TileAtlasPane},
-            map::TileMapPane,
+            map::{self, TileMapPane},
             objects::{self, ObjectTablePane},
         },
         inspect::GbPaneContext,
@@ -29,7 +29,7 @@ use crate::app::{
     system::Platform,
     ui::{
         fonts,
-        icons::Icon,
+        icons::{self, Icon},
         palette,
         sizes::{self as sizes, s, xs},
     },
@@ -45,13 +45,21 @@ use missingno_gb::ppu::types::{
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum Message {
-    ShowPane(DebuggerPane),
-    ClosePane(DebuggerPane),
+    /// The icon-rail button for a pane kind. A single-instance kind toggles; an
+    /// instanceable kind opens a fresh instance.
+    RailClick(DebuggerPane),
+    /// The title-bar close control of one open pane, identified by its handle.
+    CloseHandle(pane_grid::Pane),
 
     ResizePane(pane_grid::ResizeEvent),
     DragPane(pane_grid::DragEvent),
 
-    Pane(PaneMessage),
+    /// A pane message delivered to every pane; single-instance panes and cache
+    /// refreshes ride this.
+    Broadcast(PaneMessage),
+    /// A pane message delivered to one instance, so a dropdown change in one
+    /// instanceable pane leaves its siblings untouched.
+    Targeted(pane_grid::Pane, PaneMessage),
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -60,8 +68,16 @@ pub enum PaneMessage {
     Screen(screen::Message),
     Sprites(objects::Message),
     Tiles(atlas::Message),
+    TileMap(map::Message),
     Memory(memory::Message),
     Disassembly(disassembly::Message),
+}
+
+impl PaneMessage {
+    /// Deliver this message to just the pane behind `handle`.
+    pub fn to(self, handle: pane_grid::Pane) -> app::Message {
+        Message::Targeted(handle, self).into()
+    }
 }
 
 impl From<Message> for app::Message {
@@ -99,8 +115,31 @@ pub struct PaneContext<'b> {
 /// [`PANE_REGISTRY`] entry.
 pub trait Pane {
     fn kind(&self) -> DebuggerPane;
-    fn view<'a>(&'a self, ctx: Option<&PaneContext<'_>>) -> pane_grid::Content<'a, app::Message>;
+    /// Render the pane. `id` is its grid handle, threaded so the shared title
+    /// bar can build the close control and instanceable panes can target their
+    /// own dropdown messages.
+    fn view<'a>(
+        &'a self,
+        ctx: Option<&PaneContext<'_>>,
+        id: pane_grid::Pane,
+    ) -> pane_grid::Content<'a, app::Message>;
     fn on_message(&mut self, _message: &PaneMessage) {}
+    /// The source this instanceable pane currently shows (atlas index, map id,
+    /// or memory region), so a new sibling can default to the first unshown
+    /// one. `None` for a single-instance pane.
+    fn source_index(&self) -> Option<usize> {
+        None
+    }
+    /// Point a freshly-opened instanceable pane at a source (its dropdown
+    /// default, or a restored layout selection).
+    fn set_source_index(&mut self, _index: usize) {}
+    /// Restore the secondary scroll offset a pane persists — only the memory
+    /// viewer has one, applied after its region is set.
+    fn set_source_offset(&mut self, _offset: u32) {}
+    /// The scroll offset the memory viewer persists into a saved layout.
+    fn source_offset(&self) -> Option<u32> {
+        None
+    }
     /// The memory viewer's current region/offset selection, so the context
     /// builder can copy the right bytes. Only the memory pane has one.
     fn memory_selection(&self) -> Option<MemorySelection> {
@@ -126,6 +165,9 @@ pub struct PaneDescriptor {
     pub icon: Icon,
     /// Stable display name; also the key saved layouts refer to panes by.
     pub label: &'static str,
+    /// Whether the rail opens a fresh instance each click (many can coexist,
+    /// each owning its source selection) rather than toggling a single pane.
+    pub instanceable: bool,
     pub(super) construct: fn() -> Box<dyn Pane>,
 }
 
@@ -196,6 +238,7 @@ pub static NES_PANE_REGISTRY: &[PaneDescriptor] = &[
         kind: DebuggerPane::Screen,
         icon: Icon::Monitor,
         label: "Screen",
+        instanceable: false,
         construct: || Box::new(ScreenPane::new()),
     },
     MEMORY_DESCRIPTOR,
@@ -218,6 +261,7 @@ pub static SMS_PANE_REGISTRY: &[PaneDescriptor] = &[
         kind: DebuggerPane::Screen,
         icon: Icon::Monitor,
         label: "Screen",
+        instanceable: false,
         construct: || Box::new(ScreenPane::new()),
     },
     MEMORY_DESCRIPTOR,
@@ -229,6 +273,7 @@ pub static VCS_PANE_REGISTRY: &[PaneDescriptor] = &[
         kind: DebuggerPane::Screen,
         icon: Icon::Monitor,
         label: "Screen",
+        instanceable: false,
         construct: || Box::new(ScreenPane::new()),
     },
     MEMORY_DESCRIPTOR,
@@ -242,6 +287,7 @@ const MEMORY_DESCRIPTOR: PaneDescriptor = PaneDescriptor {
     kind: DebuggerPane::Memory,
     icon: Icon::CircuitBoard,
     label: "Memory",
+    instanceable: true,
     construct: || Box::new(MemoryPane::new()),
 };
 
@@ -251,6 +297,7 @@ const DISASSEMBLY_DESCRIPTOR: PaneDescriptor = PaneDescriptor {
     kind: DebuggerPane::Disassembly,
     icon: Icon::FileText,
     label: "Disassembly",
+    instanceable: false,
     construct: || Box::new(DisassemblyPane::new()),
 };
 
@@ -259,6 +306,7 @@ pub static PANE_REGISTRY: &[PaneDescriptor] = &[
         kind: DebuggerPane::Screen,
         icon: Icon::Monitor,
         label: "Screen",
+        instanceable: false,
         construct: || Box::new(ScreenPane::new()),
     },
     MEMORY_DESCRIPTOR,
@@ -267,24 +315,21 @@ pub static PANE_REGISTRY: &[PaneDescriptor] = &[
         kind: DebuggerPane::Tiles,
         icon: Icon::Grid,
         label: "Tiles",
+        instanceable: true,
         construct: || Box::new(TileAtlasPane::new()),
     },
     PaneDescriptor {
-        kind: DebuggerPane::TileMap(TileMapId(0)),
+        kind: DebuggerPane::TileMap,
         icon: Icon::Image,
-        label: "Tile Map 0",
+        label: "Tile Map",
+        instanceable: true,
         construct: || Box::new(TileMapPane::new(TileMapId(0))),
-    },
-    PaneDescriptor {
-        kind: DebuggerPane::TileMap(TileMapId(1)),
-        icon: Icon::Image,
-        label: "Tile Map 1",
-        construct: || Box::new(TileMapPane::new(TileMapId(1))),
     },
     PaneDescriptor {
         kind: DebuggerPane::Sprites,
         icon: Icon::Human,
         label: "Sprites",
+        instanceable: false,
         construct: || Box::new(ObjectTablePane::new()),
     },
     AUDIO_DESCRIPTOR,
@@ -296,14 +341,24 @@ const AUDIO_DESCRIPTOR: PaneDescriptor = PaneDescriptor {
     kind: DebuggerPane::Audio,
     icon: Icon::Sliders,
     label: "Audio",
+    instanceable: false,
     construct: || Box::new(AudioScopePane::new()),
 };
 
 pub struct DebuggerPanes {
     family: &'static Family,
     panes: Option<pane_grid::State<Box<dyn Pane>>>,
-    handles: HashMap<DebuggerPane, pane_grid::Pane>,
+    handles: HashMap<PaneKey, pane_grid::Pane>,
     palette: PaletteChoice,
+}
+
+/// One open pane's identity: its kind plus an ordinal that separates coexisting
+/// instances of an instanceable kind. A single-instance kind is always
+/// ordinal 0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PaneKey {
+    pub kind: DebuggerPane,
+    pub instance: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -312,7 +367,7 @@ pub enum DebuggerPane {
     Memory,
     Disassembly,
     Tiles,
-    TileMap(TileMapId),
+    TileMap,
     Sprites,
     Audio,
 }
@@ -326,6 +381,10 @@ impl DebuggerPane {
 
     pub fn icon(&self) -> Icon {
         self.descriptor().icon
+    }
+
+    pub fn instanceable(&self) -> bool {
+        self.descriptor().instanceable
     }
 
     fn construct(&self) -> Box<dyn Pane> {
@@ -355,15 +414,7 @@ impl DebuggerPanes {
 
         let mut this = Self {
             family,
-            handles: panes
-                .as_ref()
-                .map(|state| {
-                    state
-                        .iter()
-                        .map(|(&handle, pane)| (pane.kind(), handle))
-                        .collect()
-                })
-                .unwrap_or_default(),
+            handles: panes.as_ref().map(Self::key_handles).unwrap_or_default(),
             panes,
             palette: PaletteChoice::default(),
         };
@@ -371,6 +422,25 @@ impl DebuggerPanes {
             this.adopt_screen_view(view);
         }
         this
+    }
+
+    /// Assign each open pane a `(kind, ordinal)` key, numbering instances of a
+    /// kind in grid-iteration order.
+    fn key_handles(state: &pane_grid::State<Box<dyn Pane>>) -> HashMap<PaneKey, pane_grid::Pane> {
+        let mut next: HashMap<DebuggerPane, u32> = HashMap::new();
+        state
+            .iter()
+            .map(|(&handle, pane)| {
+                let kind = pane.kind();
+                let instance = next.entry(kind).or_insert(0);
+                let key = PaneKey {
+                    kind,
+                    instance: *instance,
+                };
+                *instance += 1;
+                (key, handle)
+            })
+            .collect()
     }
 }
 
@@ -453,34 +523,18 @@ impl DebuggerPanes {
 
     pub fn update(&mut self, message: Message) {
         match message {
-            Message::ShowPane(pane) => {
-                if !self.handles.contains_key(&pane) {
-                    let instance = pane.construct();
-
-                    if let Some(panes) = &mut self.panes {
-                        let (last_pane, _) = panes.iter().last().unwrap();
-                        let (handle, _) = panes.split(Horizontal, *last_pane, instance).unwrap();
-                        self.handles.insert(pane, handle);
-                    } else {
-                        let (panes, handle) = pane_grid::State::new(instance);
-                        self.handles.insert(pane, handle);
-                        self.panes = Some(panes);
-                    }
-                    self.persist();
+            Message::RailClick(kind) => {
+                // A single-instance kind toggles; an already-open one closes.
+                // An instanceable kind always opens a fresh instance.
+                if !kind.instanceable()
+                    && let Some(handle) = self.handle_of_kind(kind)
+                {
+                    self.close_handle(handle);
+                } else {
+                    self.open_instance(kind);
                 }
             }
-            Message::ClosePane(pane) => {
-                if let Some(&handle) = self.handles.get(&pane) {
-                    if self.handles.len() == 1 {
-                        self.panes = None;
-                        self.handles.clear();
-                    } else if let Some(panes) = &mut self.panes {
-                        panes.close(handle);
-                        self.handles.remove(&pane);
-                    }
-                    self.persist();
-                }
-            }
+            Message::CloseHandle(handle) => self.close_handle(handle),
 
             Message::ResizePane(resize) => {
                 if let Some(panes) = &mut self.panes {
@@ -496,18 +550,102 @@ impl DebuggerPanes {
                 }
             }
 
-            Message::Pane(pane_message) => {
+            Message::Broadcast(pane_message) => {
                 if let Some(panes) = &mut self.panes {
                     panes
                         .iter_mut()
                         .for_each(|(_, pane)| pane.on_message(&pane_message));
                 }
             }
+            Message::Targeted(handle, pane_message) => {
+                if let Some(panes) = &mut self.panes
+                    && let Some(pane) = panes.get_mut(handle)
+                {
+                    pane.on_message(&pane_message);
+                }
+            }
         }
     }
 
+    /// Open a new instance of `kind`, defaulting an instanceable pane's source
+    /// to the first one its siblings don't already show, and place it with the
+    /// existing insertion logic.
+    fn open_instance(&mut self, kind: DebuggerPane) {
+        let instance = self.next_instance(kind);
+        let mut pane = kind.construct();
+        if kind.instanceable() {
+            let default = first_unshown_source(self.source_indices(kind));
+            pane.set_source_index(default);
+        }
+
+        let handle = if let Some(panes) = &mut self.panes {
+            let (last_pane, _) = panes.iter().last().unwrap();
+            let (handle, _) = panes.split(Horizontal, *last_pane, pane).unwrap();
+            handle
+        } else {
+            let (panes, handle) = pane_grid::State::new(pane);
+            self.panes = Some(panes);
+            handle
+        };
+        self.handles.insert(PaneKey { kind, instance }, handle);
+        self.persist();
+    }
+
+    fn close_handle(&mut self, handle: pane_grid::Pane) {
+        let Some(key) = self.key_of_handle(handle) else {
+            return;
+        };
+        if self.handles.len() == 1 {
+            self.panes = None;
+            self.handles.clear();
+        } else if let Some(panes) = &mut self.panes {
+            panes.close(handle);
+            self.handles.remove(&key);
+        }
+        self.persist();
+    }
+
+    /// The lowest ordinal no open instance of `kind` currently uses.
+    fn next_instance(&self, kind: DebuggerPane) -> u32 {
+        (0..)
+            .find(|&i| !self.handles.contains_key(&PaneKey { kind, instance: i }))
+            .unwrap()
+    }
+
+    fn handle_of_kind(&self, kind: DebuggerPane) -> Option<pane_grid::Pane> {
+        self.handles
+            .iter()
+            .find(|(key, _)| key.kind == kind)
+            .map(|(_, &handle)| handle)
+    }
+
+    fn key_of_handle(&self, handle: pane_grid::Pane) -> Option<PaneKey> {
+        self.handles
+            .iter()
+            .find(|(_, h)| **h == handle)
+            .map(|(&key, _)| key)
+    }
+
+    /// The sources currently shown by open instances of `kind`, so a new one
+    /// can pick the first unshown.
+    fn source_indices(&self, kind: DebuggerPane) -> Vec<usize> {
+        let Some(panes) = &self.panes else {
+            return Vec::new();
+        };
+        panes
+            .iter()
+            .filter(|(_, pane)| pane.kind() == kind)
+            .filter_map(|(_, pane)| pane.source_index())
+            .collect()
+    }
+
     fn persist(&self) {
+        // Tests exercise the same update path; keep their layout churn off the
+        // user's real config file.
+        #[cfg(not(test))]
         layout::save(self.family.layout_key, self.panes.as_ref());
+        #[cfg(test)]
+        let _ = self;
     }
 
     pub fn palette(&self) -> &Palette {
@@ -537,8 +675,8 @@ impl DebuggerPanes {
     /// the screen, which always renders its own live frame.
     pub fn view<'a>(&'a self, ctx: Option<PaneContext<'_>>) -> Element<'a, app::Message> {
         if let Some(panes) = &self.panes {
-            pane_grid(panes, move |_handle, instance, _is_maximized| {
-                instance.view(ctx.as_ref())
+            pane_grid(panes, move |handle, instance, _is_maximized| {
+                instance.view(ctx.as_ref(), handle)
             })
             .on_resize(10.0, |resize| Message::ResizePane(resize).into())
             .on_drag(|drag| Message::DragPane(drag).into())
@@ -553,7 +691,12 @@ impl DebuggerPanes {
     }
 
     pub fn plane_shown(&self, plane: DebuggerPane) -> bool {
-        self.handles.contains_key(&plane)
+        self.instance_count(plane) > 0
+    }
+
+    /// How many instances of a kind are open — the rail badge count.
+    pub fn instance_count(&self, kind: DebuggerPane) -> usize {
+        self.handles.keys().filter(|key| key.kind == kind).count()
     }
 
     pub fn available_panes(&self) -> impl Iterator<Item = DebuggerPane> {
@@ -563,13 +706,16 @@ impl DebuggerPanes {
             .map(|descriptor| descriptor.kind)
     }
 
-    /// The memory pane's current selection, if that pane is shown, so the
-    /// context builder knows which region and offset to copy.
-    pub fn memory_selection(&self) -> Option<MemorySelection> {
-        self.panes
-            .as_ref()?
+    /// Every open memory pane's selection, so the context builder can copy one
+    /// window per instance and the running interest is their union.
+    pub fn memory_selections(&self) -> Vec<MemorySelection> {
+        let Some(panes) = &self.panes else {
+            return Vec::new();
+        };
+        panes
             .iter()
-            .find_map(|(_, pane)| pane.memory_selection())
+            .filter_map(|(_, pane)| pane.memory_selection())
+            .collect()
     }
 
     /// The disassembly pane's walk anchor, if that pane is shown and jumped
@@ -590,19 +736,20 @@ impl Drop for DebuggerPanes {
     }
 }
 
-impl Message {
-    pub fn if_shown(pane: DebuggerPane, shown: bool) -> Self {
-        if shown {
-            Message::ClosePane(pane)
-        } else {
-            Message::ShowPane(pane)
-        }
-    }
+/// The first source no sibling shows: the lowest non-negative index absent from
+/// `shown`. With every low index taken it keeps counting, so a surplus instance
+/// lands past the sources and waits for the user's dropdown.
+pub fn first_unshown_source(shown: impl IntoIterator<Item = usize>) -> usize {
+    let taken: BTreeSet<usize> = shown.into_iter().collect();
+    (0..).find(|i| !taken.contains(i)).unwrap()
 }
 
-pub fn running_placeholder(label: &str) -> pane_grid::Content<'_, app::Message> {
+pub fn running_placeholder(
+    label: &str,
+    close: pane_grid::Pane,
+) -> pane_grid::Content<'_, app::Message> {
     pane(
-        title_bar(label),
+        title_bar(label, close),
         container(iced::widget::text("Running…").color(palette::MUTED))
             .center(iced::Length::Fill)
             .into(),
@@ -639,37 +786,60 @@ fn title_style(_theme: &Theme) -> container::Style {
     }
 }
 
-pub fn title_bar(label: &str) -> pane_grid::TitleBar<'_, app::Message> {
-    pane_grid::TitleBar::new(
-        container(iced::widget::text(label).font(fonts::title()).size(13.0)).padding([xs(), s()]),
-    )
-    .style(title_style)
+pub fn title_bar(label: &str, close: pane_grid::Pane) -> pane_grid::TitleBar<'_, app::Message> {
+    build_title_bar(title_text(label), None, close)
+}
+
+/// A title bar with no close control, for the bottom panels that manage their
+/// own open/close through the rail rather than the pane grid.
+pub fn title_bar_plain(label: &str) -> pane_grid::TitleBar<'_, app::Message> {
+    pane_grid::TitleBar::new(container(title_text(label)).padding([xs(), s()])).style(title_style)
 }
 
 pub fn title_bar_with_detail<'a>(
     label: &'a str,
     detail: impl Into<Element<'a, app::Message>>,
+    close: pane_grid::Pane,
 ) -> pane_grid::TitleBar<'a, app::Message> {
-    build_title_bar(
-        iced::widget::text(label)
-            .font(fonts::title())
-            .size(13.0)
-            .into(),
-        detail,
-    )
+    build_title_bar(title_text(label), Some(detail.into()), close)
+}
+
+fn title_text(label: &str) -> Element<'_, app::Message> {
+    iced::widget::text(label)
+        .font(fonts::title())
+        .size(13.0)
+        .into()
 }
 
 fn build_title_bar<'a>(
     title: Element<'a, app::Message>,
-    detail: impl Into<Element<'a, app::Message>>,
+    detail: Option<Element<'a, app::Message>>,
+    close: pane_grid::Pane,
 ) -> pane_grid::TitleBar<'a, app::Message> {
-    pane_grid::TitleBar::new(container(title).padding([xs(), s()]))
+    let mut controls = iced::widget::Row::new()
+        .spacing(s())
+        .align_y(iced::alignment::Vertical::Center);
+    if let Some(detail) = detail {
         // +1px top padding nudge: the detail font (monospace 11px) is shorter
         // than the title font (Chakra Petch 13px), so it needs a small offset
         // to visually center within the title bar height.
-        .controls(Element::from(container(detail).padding([xs() + 1.0, s()])))
+        controls = controls.push(container(detail).padding([xs() + 1.0, 0.0]));
+    }
+    controls = controls.push(close_button(close));
+
+    pane_grid::TitleBar::new(container(title).padding([xs(), s()]))
+        .controls(Element::from(container(controls).padding([0.0, s()])))
         .always_show_controls()
         .style(title_style)
+}
+
+/// The title-bar close control every pane inherits, closing its own instance.
+fn close_button<'a>(close: pane_grid::Pane) -> Element<'a, app::Message> {
+    button(icons::m_colored(Icon::Close, palette::SURFACE2))
+        .on_press(Message::CloseHandle(close).into())
+        .style(button::text)
+        .padding(0.0)
+        .into()
 }
 
 #[cfg(test)]
@@ -696,22 +866,104 @@ mod tests {
 
     #[test]
     fn graphics_panes_keep_their_labels() {
-        // The generic graphics panes reuse the retired bespoke panes' kinds and
-        // labels, so a Game Boy layout saved by the old panes still resolves.
+        // The generic graphics panes keep their kinds and labels; the two tile
+        // maps collapse into one instanceable "Tile Map" kind.
         let expected = [
-            (DebuggerPane::Tiles, "Tiles"),
-            (DebuggerPane::TileMap(TileMapId(0)), "Tile Map 0"),
-            (DebuggerPane::TileMap(TileMapId(1)), "Tile Map 1"),
-            (DebuggerPane::Sprites, "Sprites"),
+            (DebuggerPane::Tiles, "Tiles", true),
+            (DebuggerPane::TileMap, "Tile Map", true),
+            (DebuggerPane::Sprites, "Sprites", false),
         ];
-        for (kind, label) in expected {
+        for (kind, label, instanceable) in expected {
             let descriptor = PANE_REGISTRY
                 .iter()
                 .find(|descriptor| descriptor.kind == kind)
                 .expect("graphics pane registered");
             assert_eq!(descriptor.label, label);
+            assert_eq!(descriptor.instanceable, instanceable);
             assert_eq!(kind.to_string(), label);
         }
+    }
+
+    #[test]
+    fn first_unshown_source_picks_lowest_absent() {
+        // No siblings → the first source.
+        assert_eq!(first_unshown_source([]), 0);
+        // One sibling on source 0 → the next unshown.
+        assert_eq!(first_unshown_source([0]), 1);
+        // Both low sources taken (order-independent) → the one past them.
+        assert_eq!(first_unshown_source([1, 0]), 2);
+        // A gap is filled before counting on.
+        assert_eq!(first_unshown_source([0, 2]), 1);
+    }
+
+    fn gb_panes() -> DebuggerPanes {
+        DebuggerPanes {
+            family: &GB_FAMILY,
+            panes: None,
+            handles: HashMap::new(),
+            palette: PaletteChoice::default(),
+        }
+    }
+
+    #[test]
+    fn instanceable_kind_opens_a_fresh_instance_each_click() {
+        let mut panes = gb_panes();
+        panes.update(Message::RailClick(DebuggerPane::TileMap));
+        panes.update(Message::RailClick(DebuggerPane::TileMap));
+        // Two tile maps coexist, keyed by distinct ordinals.
+        assert_eq!(panes.instance_count(DebuggerPane::TileMap), 2);
+        assert!(panes.handles.contains_key(&PaneKey {
+            kind: DebuggerPane::TileMap,
+            instance: 0,
+        }));
+        assert!(panes.handles.contains_key(&PaneKey {
+            kind: DebuggerPane::TileMap,
+            instance: 1,
+        }));
+        // Their default sources are the first two maps.
+        let mut sources = panes.source_indices(DebuggerPane::TileMap);
+        sources.sort_unstable();
+        assert_eq!(sources, vec![0, 1]);
+    }
+
+    #[test]
+    fn two_memory_instances_coexist_on_different_regions() {
+        let mut panes = gb_panes();
+        panes.update(Message::RailClick(DebuggerPane::Memory));
+        panes.update(Message::RailClick(DebuggerPane::Memory));
+        assert_eq!(panes.instance_count(DebuggerPane::Memory), 2);
+        // Each defaulted to a different region; both selections are collected.
+        let regions: Vec<usize> = panes
+            .memory_selections()
+            .iter()
+            .map(|selection| selection.region)
+            .collect();
+        assert_eq!(regions.len(), 2);
+        assert_ne!(regions[0], regions[1]);
+    }
+
+    #[test]
+    fn single_instance_kind_toggles() {
+        let mut panes = gb_panes();
+        // Opening then clicking again closes it — today's toggle, unchanged.
+        panes.update(Message::RailClick(DebuggerPane::Screen));
+        assert!(panes.plane_shown(DebuggerPane::Screen));
+        panes.update(Message::RailClick(DebuggerPane::Screen));
+        assert!(!panes.plane_shown(DebuggerPane::Screen));
+    }
+
+    #[test]
+    fn closing_last_instance_clears_the_badge() {
+        let mut panes = gb_panes();
+        panes.update(Message::RailClick(DebuggerPane::Tiles));
+        panes.update(Message::RailClick(DebuggerPane::Tiles));
+        let handle = panes.handle_of_kind(DebuggerPane::Tiles).unwrap();
+        panes.update(Message::CloseHandle(handle));
+        assert_eq!(panes.instance_count(DebuggerPane::Tiles), 1);
+        let handle = panes.handle_of_kind(DebuggerPane::Tiles).unwrap();
+        panes.update(Message::CloseHandle(handle));
+        assert_eq!(panes.instance_count(DebuggerPane::Tiles), 0);
+        assert!(!panes.plane_shown(DebuggerPane::Tiles));
     }
 
     /// The register-dump families expose only the screen and the two generic

@@ -180,10 +180,9 @@ impl App {
                     .emu
                     .as_ref()
                     .and_then(|handle| handle.snapshot().lock().ok()?.take());
-                let memory_window = self
-                    .emu
-                    .as_ref()
-                    .and_then(|handle| handle.memory_window().lock().ok()?.take());
+                let memory_windows = self.emu.as_ref().and_then(|handle| {
+                    Some(std::mem::take(&mut *handle.memory_window().lock().ok()?))
+                });
                 match &mut self.game {
                     Game::Loaded(LoadedGame::Emulator(emulator)) => {
                         if let Some(display) = display {
@@ -200,8 +199,12 @@ impl App {
                         if let Some(snapshot) = snapshot {
                             debugger.apply_snapshot(snapshot);
                         }
-                        if let Some(memory_window) = memory_window {
-                            debugger.apply_memory_window(memory_window);
+                        // Skip an empty take so a frame the emu thread didn't
+                        // publish keeps the last windows rather than clearing.
+                        if let Some(memory_windows) = memory_windows
+                            && !memory_windows.is_empty()
+                        {
+                            debugger.apply_memory_windows(memory_windows);
                         }
                     }
                     _ => {}
@@ -270,7 +273,7 @@ impl App {
                     // Aim the vblank memory peek at the pane's current view so
                     // the running browser fills in from the first frame, and
                     // match capture to whether the audio scope is open.
-                    handle.send(EmuCommand::SetMemoryInterest(debugger.memory_interest()));
+                    handle.send(EmuCommand::SetMemoryInterest(debugger.memory_interests()));
                     handle.set_wave_capture(debugger.wants_wave_capture());
                     handle.set_graphics_capture(debugger.wants_graphics_capture());
                 }

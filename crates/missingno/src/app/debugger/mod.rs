@@ -23,7 +23,6 @@ use crate::app::{
 use missingno_core::inspect::{MemoryRegion, MemoryWindow, Watch, WatchTerm};
 use missingno_core::symbols::Symbol;
 use missingno_gb::ppu::types::palette::PaletteChoice;
-use missingno_gb::ppu::types::tiles::TileMapId;
 
 use inspect::{DebugView, GbPaneContext};
 use panes::{DebuggerPanes, PaneContext};
@@ -148,7 +147,7 @@ pub struct Debugger {
     last_snapshot: Option<DebugView>,
     /// The memory viewer's interest window as of the last vblank, fed by the
     /// emu thread while the core runs; drives the running memory browser.
-    last_memory_window: Option<MemoryWindow>,
+    last_memory_windows: Vec<MemoryWindow>,
     /// The core's region map, cached at build so the memory pane's running
     /// browser and jump-to-address work while the core is away. Owned because
     /// it is cart-dependent (a board with RAM adds a region).
@@ -240,7 +239,7 @@ impl Debugger {
             watchpoints: Vec::new(),
             last_status: None,
             last_snapshot: None,
-            last_memory_window: None,
+            last_memory_windows: Vec::new(),
             memory_regions,
             sidebar: Sidebar::new(),
             panes,
@@ -327,7 +326,7 @@ impl Debugger {
         self.frame = payload.frame;
         self.last_status = None;
         self.last_snapshot = None;
-        self.last_memory_window = None;
+        self.last_memory_windows.clear();
     }
 
     /// Whether the core is away on the emu thread.
@@ -338,7 +337,7 @@ impl Debugger {
     /// Update the screen pane from the emu thread's latest-frame slot.
     pub fn apply_frame(&mut self, display: Frame) {
         self.panes
-            .update(panes::Message::Pane(panes::PaneMessage::Screen(
+            .update(panes::Message::Broadcast(panes::PaneMessage::Screen(
                 screen::Message::Update(std::sync::Arc::new(display)),
             )));
     }
@@ -355,16 +354,17 @@ impl Debugger {
         self.last_snapshot = Some(view);
     }
 
-    /// Update the memory viewer's interest window from the emu thread's slot.
-    pub fn apply_memory_window(&mut self, window: MemoryWindow) {
-        self.last_memory_window = Some(window);
+    /// Update the memory viewers' interest windows from the emu thread's slot —
+    /// one window per open memory pane.
+    pub fn apply_memory_windows(&mut self, windows: Vec<MemoryWindow>) {
+        self.last_memory_windows = windows;
     }
 
-    /// The span the memory pane wants peeked while running: its current view,
-    /// resolved against the cached region map. `None` when no memory pane is
-    /// shown or the family has no region map.
-    pub fn memory_interest(&self) -> Option<memory::MemoryInterest> {
-        memory::interest_for(&self.memory_regions, self.panes.memory_selection()?)
+    /// The spans the open memory panes want peeked while running: the union of
+    /// their views, resolved against the cached region map. Empty when no memory
+    /// pane is shown or the family has no region map.
+    pub fn memory_interests(&self) -> Vec<memory::MemoryInterest> {
+        memory::interests_for(&self.memory_regions, &self.panes.memory_selections())
     }
 
     /// Resolve a disassembly jump-to-address to a walk anchor. A `bank:addr`
@@ -391,12 +391,7 @@ impl Debugger {
     /// surface decode.
     pub fn wants_graphics_capture(&self) -> bool {
         self.panes.plane_shown(panes::DebuggerPane::Tiles)
-            || self
-                .panes
-                .plane_shown(panes::DebuggerPane::TileMap(TileMapId(0)))
-            || self
-                .panes
-                .plane_shown(panes::DebuggerPane::TileMap(TileMapId(1)))
+            || self.panes.plane_shown(panes::DebuggerPane::TileMap)
             || self.panes.plane_shown(panes::DebuggerPane::Sprites)
     }
 
@@ -700,7 +695,7 @@ impl Debugger {
             Message::ResolveDisasmJump(input) => {
                 if let Some(anchor) = self.resolve_disasm_jump(&input) {
                     self.panes
-                        .update(panes::Message::Pane(panes::PaneMessage::Disassembly(
+                        .update(panes::Message::Broadcast(panes::PaneMessage::Disassembly(
                             disassembly::Message::SetAnchor(Some(anchor)),
                         )));
                 }
@@ -712,7 +707,7 @@ impl Debugger {
                 // jump-to-address resolves while the core runs on the emu
                 // thread; harmless no-op for every other pane.
                 self.panes
-                    .update(panes::Message::Pane(panes::PaneMessage::Memory(
+                    .update(panes::Message::Broadcast(panes::PaneMessage::Memory(
                         memory::Message::SetRegions(self.memory_regions.clone()),
                     )));
                 self.panes.update(message);
@@ -725,7 +720,7 @@ impl Debugger {
                 let wants_graphics = self.wants_graphics_capture();
                 if self.is_detached() {
                     if let Some(emu) = emu {
-                        emu.send(EmuCommand::SetMemoryInterest(self.memory_interest()));
+                        emu.send(EmuCommand::SetMemoryInterest(self.memory_interests()));
                         emu.set_wave_capture(wants_waves);
                         emu.set_graphics_capture(wants_graphics);
                     }
@@ -754,10 +749,13 @@ impl Debugger {
         let gb_source = inspect::as_inspect_source(family_any);
         let colors = gb_source.map(|source| source.colors(self.panes.palette()));
         let gb = colors.as_ref().map(|colors| GbPaneContext { colors });
-        let readout = self
-            .panes
-            .memory_selection()
-            .map(|selection| memory::build_readout(core.as_ref(), selection));
+        // One live readout per open memory pane, each matched back by its base.
+        let memory_selections = self.panes.memory_selections();
+        let memory_regions = core.memory_regions();
+        let readouts: Vec<memory::MemoryReadout> = memory_selections
+            .iter()
+            .map(|&selection| memory::build_readout(core.as_ref(), &memory_regions, selection))
+            .collect();
         let disasm_readout = self
             .panes
             .plane_shown(panes::DebuggerPane::Disassembly)
@@ -771,7 +769,8 @@ impl Debugger {
         let ctx = PaneContext {
             gb,
             breakpoints: &self.breakpoints,
-            memory: readout.as_ref().map(memory::MemoryPaneData::paused),
+            memory: (!memory_selections.is_empty())
+                .then(|| memory::MemoryPaneData::paused(&memory_regions, &readouts)),
             disasm: disasm_readout
                 .as_ref()
                 .map(disassembly::DisasmPaneData::new),
@@ -898,7 +897,7 @@ impl Debugger {
         } else {
             Some(memory::MemoryPaneData::running_browse(
                 &self.memory_regions,
-                self.last_memory_window.as_ref(),
+                &self.last_memory_windows,
             ))
         }
     }
@@ -914,7 +913,7 @@ impl Debugger {
                 BottomPanel::Labels => self.labels_content(),
             };
 
-            panes::pane(panes::title_bar(panel.label()), content)
+            panes::pane(panes::title_bar_plain(panel.label()), content)
         })
         .on_resize(10.0, |resize| {
             Message::BottomPane(BottomPaneMessage::Resize(resize)).into()
@@ -1010,12 +1009,24 @@ impl Debugger {
         use icons::Icon;
 
         let pane_buttons = self.panes.available_panes().map(|pane| {
-            rail_icon(
-                pane.icon(),
-                &pane.to_string(),
-                self.panes.plane_shown(pane),
-                panes::Message::if_shown(pane, self.panes.plane_shown(pane)).into(),
-            )
+            let message = panes::Message::RailClick(pane).into();
+            if pane.instanceable() {
+                // Instanceable kinds show how many are open; each click opens one
+                // more, so there is no on/off state to toggle.
+                rail_icon_badged(
+                    pane.icon(),
+                    &pane.to_string(),
+                    self.panes.instance_count(pane),
+                    message,
+                )
+            } else {
+                rail_icon(
+                    pane.icon(),
+                    &pane.to_string(),
+                    self.panes.plane_shown(pane),
+                    message,
+                )
+            }
         });
 
         let panel_buttons = [
@@ -1102,19 +1113,70 @@ fn rail_icon<'a>(
     active: bool,
     message: app::Message,
 ) -> Element<'a, app::Message> {
-    use crate::app::debugger::sidebar::tooltip_style;
-    use iced::widget::tooltip;
-
     let color = if active {
         palette::PURPLE
     } else {
         palette::SURFACE2
     };
-
-    let btn: Element<'_, app::Message> = button(icons::m_colored(icon, color))
+    let btn = button(icons::m_colored(icon, color))
         .on_press(message)
-        .style(button::text)
-        .into();
+        .style(button::text);
+    rail_tooltip(btn.into(), label)
+}
+
+/// An instanceable pane's rail button: the icon lit while any instance is open,
+/// with a small count badge in the corner.
+fn rail_icon_badged<'a>(
+    icon: icons::Icon,
+    label: &str,
+    count: usize,
+    message: app::Message,
+) -> Element<'a, app::Message> {
+    let color = if count > 0 {
+        palette::PURPLE
+    } else {
+        palette::SURFACE2
+    };
+    let icon_el: Element<'a, app::Message> = icons::m_colored(icon, color).into();
+    let content: Element<'a, app::Message> = if count >= 1 {
+        let badge = container(
+            text(count.to_string())
+                .font(fonts::monospace())
+                .size(8.0)
+                .color(palette::TEXT),
+        )
+        .padding([0.0, 3.0])
+        .style(badge_style);
+        iced::widget::Stack::new()
+            .push(icon_el)
+            .push(
+                container(badge)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(iced::alignment::Horizontal::Right)
+                    .align_y(iced::alignment::Vertical::Top),
+            )
+            .into()
+    } else {
+        icon_el
+    };
+    let btn = button(content).on_press(message).style(button::text);
+    rail_tooltip(btn.into(), label)
+}
+
+/// A rounded, filled pill behind a rail badge count.
+fn badge_style(_theme: &iced::Theme) -> container::Style {
+    container::Style {
+        background: Some(palette::PURPLE.into()),
+        border: iced::Border::default().rounded(6.0),
+        ..Default::default()
+    }
+}
+
+/// The left-flyout tooltip shared by every rail button.
+fn rail_tooltip<'a>(btn: Element<'a, app::Message>, label: &str) -> Element<'a, app::Message> {
+    use crate::app::debugger::sidebar::tooltip_style;
+    use iced::widget::tooltip;
 
     tooltip(
         btn,

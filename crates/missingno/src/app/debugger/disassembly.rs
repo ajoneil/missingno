@@ -238,7 +238,7 @@ pub enum Message {
 
 impl From<Message> for app::Message {
     fn from(val: Message) -> Self {
-        panes::Message::Pane(PaneMessage::Disassembly(val)).into()
+        panes::Message::Broadcast(PaneMessage::Disassembly(val)).into()
     }
 }
 
@@ -311,12 +311,16 @@ impl Pane for DisassemblyPane {
         self.anchor
     }
 
-    fn view<'a>(&'a self, ctx: Option<&PaneContext<'_>>) -> pane_grid::Content<'a, app::Message> {
+    fn view<'a>(
+        &'a self,
+        ctx: Option<&PaneContext<'_>>,
+        id: pane_grid::Pane,
+    ) -> pane_grid::Content<'a, app::Message> {
         let Some(ctx) = ctx else {
-            return running_placeholder("Disassembly");
+            return running_placeholder("Disassembly", id);
         };
         let Some(data) = ctx.disasm else {
-            return running_placeholder("Disassembly");
+            return running_placeholder("Disassembly", id);
         };
 
         let breakpoints = ctx.breakpoints;
@@ -360,8 +364,8 @@ impl Pane for DisassemblyPane {
         .map(|t| t.font(fonts::monospace()).size(11.0));
 
         let header = match detail {
-            Some(detail) => panes::title_bar_with_detail("Disassembly", detail),
-            None => panes::title_bar("Disassembly"),
+            Some(detail) => panes::title_bar_with_detail("Disassembly", detail, id),
+            None => panes::title_bar("Disassembly", id),
         };
 
         let listing = iced::widget::scrollable(Column::from_vec(rows).width(Length::Fill))

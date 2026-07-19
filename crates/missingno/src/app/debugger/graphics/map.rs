@@ -1,7 +1,7 @@
 //! The tile map pane: a background/name-table map composited from its atlas,
 //! with the on-screen viewports (the Game Boy background and window rectangles)
-//! drawn over it. One pane serves each map; the registry constructs it per map
-//! id so saved layouts keep their per-map identity.
+//! drawn over it. A map dropdown in the title bar selects which map this
+//! instance shows; several instances can watch different maps at once.
 
 use iced::{
     Length,
@@ -10,19 +10,20 @@ use iced::{
     widget::{
         Stack,
         canvas::{Frame, Geometry, Path, Program, Stroke},
-        container, pane_grid, responsive, shader,
+        container, pane_grid, pick_list, responsive, shader,
     },
 };
 
 use crate::app::{
-    Message,
+    self,
     console::ConsoleColors,
     debugger::{
         graphics::{flipped, wrapping_parts},
-        panes::{self, pane, running_placeholder, title_bar},
+        panes::{self, pane, running_placeholder, title_bar, title_bar_with_detail},
         sidebar::tone_color,
     },
     texture_renderer::TextureRenderer,
+    ui::fonts,
 };
 use missingno_core::graphics::{GraphicsView, TileMap, Viewport};
 use missingno_gb::ppu::types::palette::PaletteIndex;
@@ -30,14 +31,21 @@ use missingno_gb::ppu::types::tiles::TileMapId;
 
 pub struct TileMapPane {
     tile_map: TileMapId,
-    title: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Message {
+    SelectMap(TileMapId),
 }
 
 impl TileMapPane {
     pub fn new(tile_map: TileMapId) -> Self {
-        Self {
-            tile_map,
-            title: format!("Tile Map {}", tile_map.0),
+        Self { tile_map }
+    }
+
+    pub fn update(&mut self, message: Message) {
+        match message {
+            Message::SelectMap(id) => self.tile_map = id,
         }
     }
 
@@ -45,9 +53,10 @@ impl TileMapPane {
         &'a self,
         graphics: &GraphicsView,
         colors: &ConsoleColors,
-    ) -> pane_grid::Content<'a, Message> {
+        close: pane_grid::Pane,
+    ) -> pane_grid::Content<'a, app::Message> {
         let Some(map) = graphics.maps.get(self.tile_map.0 as usize) else {
-            return running_placeholder(&self.title);
+            return running_placeholder("Tile Map", close);
         };
 
         let (width, height, pixels) = compose(map, graphics, colors);
@@ -59,7 +68,7 @@ impl TileMapPane {
         };
 
         pane(
-            title_bar(&self.title),
+            self.title_bar(graphics, close),
             responsive(move |size| {
                 let fit = size.width.min(size.height);
                 let renderer = TextureRenderer::with_pixels(width, height, pixels.clone());
@@ -81,6 +90,38 @@ impl TileMapPane {
             })
             .into(),
         )
+    }
+
+    /// The title bar with a map picker, when the family exposes more than one
+    /// map; a plain title otherwise. The picker targets this instance's handle.
+    fn title_bar<'a>(
+        &self,
+        graphics: &GraphicsView,
+        close: pane_grid::Pane,
+    ) -> pane_grid::TitleBar<'a, app::Message> {
+        if graphics.maps.len() <= 1 {
+            return title_bar("Tile Map", close);
+        }
+        let choices: Vec<MapChoice> = (0..graphics.maps.len())
+            .map(|index| MapChoice(TileMapId(index as u8)))
+            .collect();
+        let picker = pick_list(choices, Some(MapChoice(self.tile_map)), move |choice| {
+            panes::PaneMessage::TileMap(Message::SelectMap(choice.0)).to(close)
+        })
+        .font(fonts::monospace())
+        .text_size(11.0)
+        .padding([1.0, 4.0]);
+        title_bar_with_detail("Tile Map", picker, close)
+    }
+}
+
+/// A map-picker row naming one map.
+#[derive(Clone, Copy, PartialEq)]
+struct MapChoice(TileMapId);
+
+impl std::fmt::Display for MapChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Map {}", self.0.0)
     }
 }
 
@@ -148,7 +189,7 @@ struct ViewportOverlay {
     map_size: f32,
 }
 
-impl Program<Message> for ViewportOverlay {
+impl Program<app::Message> for ViewportOverlay {
     type State = ();
 
     fn draw(
@@ -204,13 +245,31 @@ fn stroke_rect(frame: &mut Frame, x: f32, y: f32, w: f32, h: f32, stroke: Stroke
 
 impl panes::Pane for TileMapPane {
     fn kind(&self) -> panes::DebuggerPane {
-        panes::DebuggerPane::TileMap(self.tile_map)
+        panes::DebuggerPane::TileMap
     }
 
-    fn view<'a>(&'a self, ctx: Option<&panes::PaneContext<'_>>) -> pane_grid::Content<'a, Message> {
+    fn view<'a>(
+        &'a self,
+        ctx: Option<&panes::PaneContext<'_>>,
+        id: pane_grid::Pane,
+    ) -> pane_grid::Content<'a, app::Message> {
         match (ctx.and_then(|ctx| ctx.graphics), ctx.and_then(|ctx| ctx.gb)) {
-            (Some(graphics), Some(gb)) => self.content(graphics, gb.colors),
-            _ => running_placeholder(&self.title),
+            (Some(graphics), Some(gb)) => self.content(graphics, gb.colors, id),
+            _ => running_placeholder("Tile Map", id),
         }
+    }
+
+    fn on_message(&mut self, message: &panes::PaneMessage) {
+        if let panes::PaneMessage::TileMap(message) = message {
+            self.update(*message);
+        }
+    }
+
+    fn source_index(&self) -> Option<usize> {
+        Some(self.tile_map.0 as usize)
+    }
+
+    fn set_source_index(&mut self, index: usize) {
+        self.tile_map = TileMapId(index as u8);
     }
 }

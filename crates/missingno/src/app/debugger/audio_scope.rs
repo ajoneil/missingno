@@ -52,32 +52,38 @@ impl panes::Pane for AudioScopePane {
     fn view<'a>(
         &'a self,
         ctx: Option<&panes::PaneContext<'_>>,
+        id: iced::widget::pane_grid::Pane,
     ) -> iced::widget::pane_grid::Content<'a, Message> {
         match ctx
             .and_then(|ctx| ctx.waves)
             .filter(|waves| !waves.is_empty())
         {
-            Some(waves) => scopes(waves),
-            None => capture_off(),
+            Some(waves) => scopes(waves, id),
+            None => capture_off(id),
         }
     }
 }
 
 /// The stacked per-channel scopes.
-fn scopes<'a>(waves: &[ChannelWave]) -> iced::widget::pane_grid::Content<'a, Message> {
+fn scopes<'a>(
+    waves: &[ChannelWave],
+    close: iced::widget::pane_grid::Pane,
+) -> iced::widget::pane_grid::Content<'a, Message> {
     let rows = waves
         .iter()
         .enumerate()
         .map(|(index, wave)| channel_row(wave, CHANNEL_COLORS[index % CHANNEL_COLORS.len()]));
     let body = Column::from_iter(rows).spacing(s()).padding(s());
-    pane(title_bar("Audio"), body.into())
+    pane(title_bar("Audio", close), body.into())
 }
 
 /// The hint shown when no waveform window is available — capture disabled, or
 /// the core has not published one yet.
-fn capture_off<'a>() -> iced::widget::pane_grid::Content<'a, Message> {
+fn capture_off<'a>(
+    close: iced::widget::pane_grid::Pane,
+) -> iced::widget::pane_grid::Content<'a, Message> {
     pane(
-        title_bar("Audio"),
+        title_bar("Audio", close),
         container(text("Waveform capture off").color(palette::MUTED))
             .center(Length::Fill)
             .into(),

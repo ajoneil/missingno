@@ -44,7 +44,7 @@ pub enum Message {
 
 impl From<Message> for app::Message {
     fn from(val: Message) -> Self {
-        panes::Message::Pane(panes::PaneMessage::Sprites(val)).into()
+        panes::Message::Broadcast(panes::PaneMessage::Sprites(val)).into()
     }
 }
 
@@ -65,9 +65,10 @@ impl ObjectTablePane {
         &'a self,
         graphics: &GraphicsView,
         colors: &ConsoleColors,
+        close: pane_grid::Pane,
     ) -> pane_grid::Content<'a, app::Message> {
         let Some(table) = &graphics.objects else {
-            return running_placeholder("Sprites");
+            return running_placeholder("Sprites", close);
         };
 
         let height = table.object_height;
@@ -103,6 +104,7 @@ impl ObjectTablePane {
                     .font(fonts::monospace())
                     .size(11.0)
                     .color(palette::MUTED),
+                close,
             ),
             scrollable(
                 column![
@@ -249,10 +251,11 @@ impl panes::Pane for ObjectTablePane {
     fn view<'a>(
         &'a self,
         ctx: Option<&panes::PaneContext<'_>>,
+        id: pane_grid::Pane,
     ) -> pane_grid::Content<'a, app::Message> {
         match (ctx.and_then(|ctx| ctx.graphics), ctx.and_then(|ctx| ctx.gb)) {
-            (Some(graphics), Some(gb)) => self.content(graphics, gb.colors),
-            _ => running_placeholder("Sprites"),
+            (Some(graphics), Some(gb)) => self.content(graphics, gb.colors, id),
+            _ => running_placeholder("Sprites", id),
         }
     }
 

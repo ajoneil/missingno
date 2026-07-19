@@ -59,10 +59,10 @@ pub type StatusSlot = Arc<Mutex<Option<RunningStatus>>>;
 /// written while a debugger payload runs; `None` for plain-console payloads.
 pub type SnapshotSlot = Arc<Mutex<Option<DebugView>>>;
 
-/// Latest-value handoff for the memory viewer's interest window: the bytes the
-/// emu thread peeked at the vblank boundary for the pane's current view. Only
-/// written while a debugger payload runs with an interest set.
-pub type MemoryWindowSlot = Arc<Mutex<Option<MemoryWindow>>>;
+/// Latest-value handoff for the memory viewers' interest windows: one window
+/// per open memory pane, peeked at the vblank boundary. Only written while a
+/// debugger payload runs with at least one interest set.
+pub type MemoryWindowSlot = Arc<Mutex<Vec<MemoryWindow>>>;
 
 /// The latest-value publish slots the emu thread writes each frame, grouped so
 /// they thread through construction as one handle.
@@ -91,9 +91,9 @@ pub enum EmuCommand {
     ClearBreakpoint(u32),
     AddWatchpoint(Watch),
     RemoveWatchpoint(Watch),
-    /// The memory viewer's current view span, peeked each vblank and published
-    /// to the memory-window slot. `None` clears it (the pane closed).
-    SetMemoryInterest(Option<MemoryInterest>),
+    /// The open memory viewers' view spans, peeked each vblank and published to
+    /// the memory-window slot. Empty clears them (the last pane closed).
+    SetMemoryInterest(Vec<MemoryInterest>),
     /// Enable or disable the debugger's per-channel waveform capture. Stored on
     /// the loop and re-applied to each payload it runs.
     SetWaveCapture(bool),
@@ -223,7 +223,7 @@ pub fn subscription_worker() -> impl iced::futures::Stream<Item = EmuEvent> {
         frames: Arc::new(Mutex::new(None)),
         status: Arc::new(Mutex::new(None)),
         snapshot: Arc::new(Mutex::new(None)),
-        memory_window: Arc::new(Mutex::new(None)),
+        memory_window: Arc::new(Mutex::new(Vec::new())),
     };
 
     let handle = EmuHandle {
@@ -308,9 +308,9 @@ struct EmuLoop {
     status: StatusSlot,
     snapshot: SnapshotSlot,
     memory_window: MemoryWindowSlot,
-    /// The memory viewer's current view span, peeked each vblank into the
-    /// memory-window slot. `None` when no memory pane is browsing.
-    memory_interest: Option<MemoryInterest>,
+    /// The open memory viewers' view spans, peeked each vblank into the
+    /// memory-window slot. Empty when no memory pane is browsing.
+    memory_interest: Vec<MemoryInterest>,
     /// Whether the audio scope wants per-channel waveform capture. Re-applied
     /// to each payload the loop starts running.
     wave_capture: bool,
@@ -338,7 +338,7 @@ impl EmuLoop {
             status: slots.status,
             snapshot: slots.snapshot,
             memory_window: slots.memory_window,
-            memory_interest: None,
+            memory_interest: Vec::new(),
             wave_capture: false,
             graphics_capture: false,
             events,
@@ -456,14 +456,17 @@ impl EmuLoop {
         {
             *slot = Some(view);
         }
-        // Peek the memory viewer's current view span at this vblank boundary, so
-        // the running pane shows the bytes as of the frame it publishes.
+        // Peek each open memory viewer's view span at this vblank boundary, so
+        // the running panes show the bytes as of the frame they publish.
         if new_frame
-            && let Some(interest) = self.memory_interest
-            && let Some(window) = payload.peek_window(interest)
+            && !self.memory_interest.is_empty()
             && let Ok(mut slot) = self.memory_window.lock()
         {
-            *slot = Some(window);
+            *slot = self
+                .memory_interest
+                .iter()
+                .filter_map(|&interest| payload.peek_window(interest))
+                .collect();
         }
         if new_frame {
             let _ = self.events.unbounded_send(EmuEvent::FrameReady);
@@ -527,7 +530,7 @@ mod tests {
             frames: Arc::new(Mutex::new(None)),
             status: Arc::new(Mutex::new(None)),
             snapshot: Arc::new(Mutex::new(None)),
-            memory_window: Arc::new(Mutex::new(None)),
+            memory_window: Arc::new(Mutex::new(Vec::new())),
         };
         let (events, _events_rx) = iced::futures::channel::mpsc::unbounded();
         let (returns, _returns_rx) = channel();

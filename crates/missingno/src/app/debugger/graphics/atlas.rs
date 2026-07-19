@@ -43,12 +43,6 @@ pub enum Message {
     SelectPalette(usize),
 }
 
-impl From<Message> for app::Message {
-    fn from(val: Message) -> Self {
-        panes::Message::Pane(panes::PaneMessage::Tiles(val)).into()
-    }
-}
-
 /// A `pick_list` row carrying the index it selects.
 #[derive(Clone, PartialEq)]
 struct Choice {
@@ -84,15 +78,19 @@ impl TileAtlasPane {
         &'a self,
         graphics: &GraphicsView,
         colors: &ConsoleColors,
+        close: iced::widget::pane_grid::Pane,
     ) -> iced::widget::pane_grid::Content<'a, app::Message> {
         let Some(atlas) = graphics.atlases.get(self.selected_atlas) else {
-            return running_placeholder("Tiles");
+            return running_placeholder("Tiles", close);
         };
 
         let resolve = self.tile_resolver(atlas, colors);
         let body = region_layout(atlas, resolve.as_ref());
 
-        pane(self.title_bar(graphics, atlas.palettes.clone()), body)
+        pane(
+            self.title_bar(graphics, atlas.palettes.clone(), close),
+            body,
+        )
     }
 
     /// The palette index → colour map for `atlas`: the user's DMG shades for a
@@ -126,6 +124,7 @@ impl TileAtlasPane {
         &self,
         graphics: &GraphicsView,
         palettes: PaletteSet,
+        close: iced::widget::pane_grid::Pane,
     ) -> iced::widget::pane_grid::TitleBar<'a, app::Message> {
         let atlas_picker = (graphics.atlases.len() > 1).then(|| {
             let choices: Vec<Choice> = graphics
@@ -138,7 +137,7 @@ impl TileAtlasPane {
                 })
                 .collect();
             let selected = choices.get(self.selected_atlas).cloned();
-            picker(choices, selected, |choice| {
+            picker(choices, selected, close, |choice| {
                 Message::SelectAtlas(choice.index)
             })
         });
@@ -154,7 +153,7 @@ impl TileAtlasPane {
                     label: named.label.clone(),
                 }));
                 let selected = choices.get(self.selected_palette).cloned();
-                Some(picker(choices, selected, |choice| {
+                Some(picker(choices, selected, close, |choice| {
                     Message::SelectPalette(choice.index)
                 }))
             }
@@ -163,12 +162,12 @@ impl TileAtlasPane {
 
         match (atlas_picker, palette_picker) {
             (Some(atlas), Some(palette)) => {
-                title_bar_with_detail("Tiles", row![atlas, palette].spacing(6.0))
+                title_bar_with_detail("Tiles", row![atlas, palette].spacing(6.0), close)
             }
             (Some(control), None) | (None, Some(control)) => {
-                title_bar_with_detail("Tiles", control)
+                title_bar_with_detail("Tiles", control, close)
             }
-            (None, None) => title_bar("Tiles"),
+            (None, None) => title_bar("Tiles", close),
         }
     }
 }
@@ -224,17 +223,21 @@ fn region_header(region: &AtlasRegion) -> Element<'static, app::Message> {
     column![rule::horizontal(1), header].spacing(2.0).into()
 }
 
-/// A compact `pick_list` styled for a pane title bar.
+/// A compact `pick_list` styled for a pane title bar, its selection targeted at
+/// this instance's handle so sibling tile panes stay put.
 fn picker(
     choices: Vec<Choice>,
     selected: Option<Choice>,
+    close: iced::widget::pane_grid::Pane,
     on_select: fn(Choice) -> Message,
 ) -> Element<'static, app::Message> {
-    pick_list(choices, selected, move |choice| on_select(choice).into())
-        .font(fonts::monospace())
-        .text_size(11.0)
-        .padding([1.0, 4.0])
-        .into()
+    pick_list(choices, selected, move |choice| {
+        panes::PaneMessage::Tiles(on_select(choice)).to(close)
+    })
+    .font(fonts::monospace())
+    .text_size(11.0)
+    .padding([1.0, 4.0])
+    .into()
 }
 
 impl panes::Pane for TileAtlasPane {
@@ -245,10 +248,11 @@ impl panes::Pane for TileAtlasPane {
     fn view<'a>(
         &'a self,
         ctx: Option<&panes::PaneContext<'_>>,
+        id: iced::widget::pane_grid::Pane,
     ) -> iced::widget::pane_grid::Content<'a, app::Message> {
         match (ctx.and_then(|ctx| ctx.graphics), ctx.and_then(|ctx| ctx.gb)) {
-            (Some(graphics), Some(gb)) => self.content(graphics, gb.colors),
-            _ => running_placeholder("Tiles"),
+            (Some(graphics), Some(gb)) => self.content(graphics, gb.colors, id),
+            _ => running_placeholder("Tiles", id),
         }
     }
 
@@ -256,5 +260,14 @@ impl panes::Pane for TileAtlasPane {
         if let panes::PaneMessage::Tiles(message) = message {
             self.update(*message);
         }
+    }
+
+    fn source_index(&self) -> Option<usize> {
+        Some(self.selected_atlas)
+    }
+
+    fn set_source_index(&mut self, index: usize) {
+        self.selected_atlas = index;
+        self.selected_palette = 0;
     }
 }
