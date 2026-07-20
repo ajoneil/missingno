@@ -102,8 +102,9 @@ pub fn rom_path(relative: &str) -> PathBuf {
 /// A test run wrapping a `GameBoy` and an optional trace writer.
 ///
 /// When the `morepork` feature is enabled and the `MOREPORK_PROFILE` env var
-/// is set (to a profile name like `cpu_basic`), each `step()` captures state
-/// into a parquet trace file under `receipts/traces/`.
+/// is set (any value enables capture — the column set comes from the state
+/// schema, not a named profile), each `step()` captures state into a native
+/// `.morepork` trace file under `receipts/traces/`.
 pub struct TestRun<M: Model = crate::Dmg> {
     pub gb: Console<M>,
     #[cfg(feature = "morepork")]
@@ -225,13 +226,23 @@ fn try_create_tracer<M: ConsoleUi>(
 ) -> Option<Tracer> {
     std::env::var("MOREPORK_PROFILE").ok()?;
 
+    // Unset falls back to the documented default; an explicit but unrecognized
+    // value is a harness misconfiguration, not a silent default — fail loudly.
     let trigger = match std::env::var("MOREPORK_TRIGGER").as_deref() {
         Ok("tcycle") => crate::trace::Trigger::Tcycle,
-        _ => crate::trace::Trigger::Instruction,
+        Ok("instruction") => crate::trace::Trigger::Instruction,
+        Err(_) => crate::trace::Trigger::Instruction,
+        Ok(other) => {
+            panic!("MOREPORK_TRIGGER: unknown value {other:?} (expected `tcycle` or `instruction`)")
+        }
     };
     let scope = match std::env::var("MOREPORK_SCOPE").as_deref() {
         Ok("full") => TraceScope::Full,
-        _ => TraceScope::Observable,
+        Ok("observable") => TraceScope::Observable,
+        Err(_) => TraceScope::Observable,
+        Ok(other) => {
+            panic!("MOREPORK_SCOPE: unknown value {other:?} (expected `full` or `observable`)")
+        }
     };
 
     let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../receipts/traces");

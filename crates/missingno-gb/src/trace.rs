@@ -47,8 +47,8 @@ pub enum TraceScope {
 }
 
 /// A pixel-pipeline cell read from the PPU's per-tick trace snapshot. These are
-/// the schema's nullable Tier-2a fields the boundary record does not carry.
-#[derive(Clone, Copy)]
+/// the schema's nullable Tier-2a `ppu` fields the boundary record does not carry.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PipelineCell {
     BgwFifoA,
     BgwFifoB,
@@ -67,24 +67,31 @@ enum PipelineCell {
 }
 
 impl PipelineCell {
+    /// Each cell paired with its schema field name — the single source of truth
+    /// `from_name` reads and the schema-tie test checks against the schema, so
+    /// renaming a field on either side breaks the build, never the trace data.
+    const BY_NAME: [(&'static str, Self); 14] = [
+        ("bgw_fifo_a", Self::BgwFifoA),
+        ("bgw_fifo_b", Self::BgwFifoB),
+        ("spr_fifo_a", Self::SprFifoA),
+        ("spr_fifo_b", Self::SprFifoB),
+        ("pal_pipe", Self::PalPipe),
+        ("tfetch_state", Self::TfetchState),
+        ("sfetch_state", Self::SfetchState),
+        ("tile_temp_a", Self::TileTempA),
+        ("tile_temp_b", Self::TileTempB),
+        ("pix_count", Self::PixCount),
+        ("sprite_count", Self::SpriteCount),
+        ("scan_count", Self::ScanCount),
+        ("rendering", Self::Rendering),
+        ("win_mode", Self::WinMode),
+    ];
+
     fn from_name(name: &str) -> Option<Self> {
-        Some(match name {
-            "bgw_fifo_a" => Self::BgwFifoA,
-            "bgw_fifo_b" => Self::BgwFifoB,
-            "spr_fifo_a" => Self::SprFifoA,
-            "spr_fifo_b" => Self::SprFifoB,
-            "pal_pipe" => Self::PalPipe,
-            "tfetch_state" => Self::TfetchState,
-            "sfetch_state" => Self::SfetchState,
-            "tile_temp_a" => Self::TileTempA,
-            "tile_temp_b" => Self::TileTempB,
-            "pix_count" => Self::PixCount,
-            "sprite_count" => Self::SpriteCount,
-            "scan_count" => Self::ScanCount,
-            "rendering" => Self::Rendering,
-            "win_mode" => Self::WinMode,
-            _ => return None,
-        })
+        Self::BY_NAME
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, cell)| *cell)
     }
 }
 
@@ -680,5 +687,50 @@ pub fn step_instruction_tcycle<M: ConsoleUi>(
         new_screen,
         tcycles,
         sram_dirty: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::system::ConsoleUi;
+
+    /// The pipeline-cell table and the schema must stay in lockstep: every cell
+    /// names a nullable Tier-2a `ppu` field, and every such field resolves to a
+    /// cell. A rename on either side then fails here rather than silently
+    /// dropping a column to nulls.
+    #[test]
+    fn pipeline_cells_match_the_schema_ppu_boundary_fields() {
+        let schema = <crate::Dmg as ConsoleUi>::state_schema()
+            .expect("the DMG model authors a state schema");
+
+        // Forward: every cell names a nullable Tier-2a `ppu` field.
+        for (name, _) in PipelineCell::BY_NAME {
+            let field = schema
+                .fields
+                .iter()
+                .find(|f| f.name == name)
+                .unwrap_or_else(|| panic!("pipeline cell `{name}` has no schema field"));
+            assert!(
+                matches!(field.tier, Tier::Boundary),
+                "`{name}` must be a Tier-2a (boundary) field"
+            );
+            assert!(field.nullable, "`{name}` must be nullable");
+            assert_eq!(field.subsystem, "ppu", "`{name}` must be a `ppu` field");
+        }
+
+        // Reverse: every nullable Tier-2a `ppu` field is a known cell, so adding
+        // one to the schema without wiring a cell breaks here.
+        for field in schema
+            .fields
+            .iter()
+            .filter(|f| f.subsystem == "ppu" && matches!(f.tier, Tier::Boundary) && f.nullable)
+        {
+            assert!(
+                PipelineCell::from_name(field.name).is_some(),
+                "nullable `ppu` boundary field `{}` has no PipelineCell",
+                field.name
+            );
+        }
     }
 }

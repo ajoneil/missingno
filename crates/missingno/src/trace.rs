@@ -58,18 +58,28 @@ pub(crate) fn trace_gb(request: TraceRequest) {
     eprintln!("limit: {} T-cycles", request.cycles);
     let save_data = std::fs::read(request.rom_path.with_extension("sav")).ok();
 
+    // Record whether a boot ROM actually ran: with one mapped the capture starts
+    // at the boot sequence, without one the console starts post-boot. The boot
+    // image's bytes aren't exposed at this seam, so the header records that a
+    // boot ROM ran rather than its hash.
+    let boot = match &request.boot_rom {
+        Some(_) => missingno_gb::trace::BootRom::Builtin,
+        None => missingno_gb::trace::BootRom::Skip,
+    };
+
     struct Trace<'a> {
         profile: &'a Profile,
         output: &'a Path,
         cycles: u64,
+        boot: missingno_gb::trace::BootRom,
     }
     impl GbLaunch for Trace<'_> {
         type Output = ();
         fn dmg(self, console: GameBoy) {
-            trace_console(console, self.profile, self.output, self.cycles);
+            trace_console(console, self.profile, self.output, self.cycles, self.boot);
         }
         fn cgb(self, console: GameBoyColor) {
-            trace_console(console, self.profile, self.output, self.cycles);
+            trace_console(console, self.profile, self.output, self.cycles, self.boot);
         }
     }
     system::gb::launch(
@@ -81,6 +91,7 @@ pub(crate) fn trace_gb(request: TraceRequest) {
             profile: request.profile,
             output: request.output,
             cycles: request.cycles,
+            boot,
         },
     );
 }
@@ -90,9 +101,9 @@ fn trace_console<M: ConsoleUi>(
     profile: &Profile,
     output_path: &Path,
     cycles: u64,
+    boot: missingno_gb::trace::BootRom,
 ) {
     let title = gb.cartridge().title().to_string();
-    let boot = missingno_gb::trace::BootRom::Skip;
 
     // The CLI trace is a reference capture, so it records the full tier depth;
     // the column set comes from the state schema and the cadence from the profile.
