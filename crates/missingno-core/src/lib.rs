@@ -21,6 +21,7 @@ pub mod disasm;
 pub mod graphics;
 pub mod inspect;
 pub mod isa;
+pub mod recording;
 pub mod state;
 pub mod state_file;
 pub mod stepping;

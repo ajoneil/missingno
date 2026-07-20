@@ -163,6 +163,47 @@ impl Session {
             .map_err(|error| error.to_string())
     }
 
+    /// Replay an input recording from `path`: restore its initial state, then
+    /// drive the core frame by frame, applying the recorded inputs at their
+    /// timestamps and verifying the frame-hash checkpoints. Errors (never
+    /// panics) on a missing/corrupt file, a state the core cannot restore, or a
+    /// divergence — naming the frame it first appears on.
+    pub fn replay_recording(&mut self, path: &std::path::Path) -> Result<u64, String> {
+        use missingno_core::recording::{Recording, frame_hash};
+
+        let bytes =
+            std::fs::read(path).map_err(|error| format!("could not read {path:?}: {error}"))?;
+        let recording = Recording::from_bytes(&bytes).map_err(|error| error.to_string())?;
+        self.debugger
+            .load_state(&recording.initial_state)
+            .map_err(|error| error.to_string())?;
+        self.frame = 0;
+
+        let mut input_cursor = 0;
+        let mut check_cursor = 0;
+        for frame in 0..recording.frames {
+            while let Some(event) = recording.inputs.get(input_cursor) {
+                if event.frame != frame {
+                    break;
+                }
+                self.debugger.set_control(event.control, event.input);
+                input_cursor += 1;
+            }
+            let produced = self.debugger.step_frame().into_frame();
+            self.frame = frame + 1;
+            if let Some(check) = recording.checks.get(check_cursor)
+                && check.frame == frame
+            {
+                let hash = produced.as_ref().map(frame_hash).unwrap_or(0);
+                if check.hash != hash {
+                    return Err(format!("replay diverged at frame {frame}"));
+                }
+                check_cursor += 1;
+            }
+        }
+        Ok(recording.frames)
+    }
+
     /// Set a breakpoint at a bus address. Breakpoints are bus-space by
     /// contract; the seam keys them as a 16-bit bus address, so a synthetic
     /// bank-complete address (the disassembly's above-the-bus rows) is rejected

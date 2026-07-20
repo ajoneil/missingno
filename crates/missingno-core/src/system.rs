@@ -25,7 +25,7 @@ use crate::waveform::ChannelWave;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ControlId(pub u8);
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ControlInput {
     Digital(bool),
     /// Normalised 0.0-1.0 (paddle knobs, pots).

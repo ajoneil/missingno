@@ -113,6 +113,8 @@ struct App {
     cartridge_rw: CartridgeRwState,
     /// Whether the hamburger menu overlay is open.
     menu_open: bool,
+    /// Whether an input recording is currently being captured (play mode).
+    recording: bool,
     /// Live library search text. Transient — not persisted, survives screen
     /// transitions (unlike the per-screen hover state).
     library_search: String,
@@ -324,6 +326,10 @@ enum Message {
     SaveState,
     /// Restore the game's save-state slot.
     LoadState,
+    /// Start or stop capturing an input recording of the running game.
+    ToggleRecording,
+    /// Replay the game's recording slot, driving the running console.
+    Replay,
     /// Export the session capture at this event index to a PNG (opens a dialog).
     ExportCapture(usize),
     /// The dialog resolved; write the capture at this event index, if a path
@@ -410,6 +416,7 @@ impl App {
             catalogue: std::sync::Arc::new(library::catalogue::Catalogue::load()),
             cartridge_rw: CartridgeRwState::default(),
             menu_open: false,
+            recording: false,
             library_search: String::new(),
         };
 
@@ -470,6 +477,8 @@ impl App {
             | Message::TakeScreenshot
             | Message::SaveState
             | Message::LoadState
+            | Message::ToggleRecording
+            | Message::Replay
             | Message::ExportCapture(_)
             | Message::ExportCaptureSaved(..)
             | Message::DismissScreenshotToast

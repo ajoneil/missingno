@@ -8,6 +8,7 @@ mod collision;
 mod common;
 mod cpu;
 mod harness;
+mod recording;
 mod riot;
 mod savestate;
 mod tia_render;

@@ -200,3 +200,18 @@ consumers, feature-gated):
    panes — chip state renders through the sidebar. Otherwise return the
    console from `into_debugger` and the shell falls back to plain emulation.
 5. Convert audio to 44.1 kHz on the family's side of the seam.
+6. State description, and the machinery that follows from it. Author a
+   `SystemStateSchema` (`missingno-core`'s `state.rs`) of hardware-named fields —
+   Tier-1 observable registers, Tier-2a boundary-complete deep state named for
+   the silicon — plus memory spans and a frame spec. Wire the `state_schema()` /
+   `read_state()` seam methods and a boundary bridge behind `save_state()` /
+   `load_state()` (capture the record, restore it at an instruction boundary;
+   error, never panic, off-boundary). One schema then drives three surfaces: the
+   save-state file (`state_file.rs`, `MPSV`), trace capture (columns are schema
+   fields plus a small bridge-owned observation set), and **input recordings**
+   (`recording.rs`, `MPRC` — an initial save state plus a frame-indexed input
+   trace). Recording and deterministic replay are built entirely on the existing
+   seam (`save_state`/`load_state`/`set_control`/`step_frame`) — a core that
+   wires save states gets replay for free, with no new trait methods. A
+   round-trip save-state test and a record→replay frame-hash gate are the
+   accuracy bar (see the `save_state` and `recording` integration tests).

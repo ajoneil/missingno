@@ -78,6 +78,7 @@ fn handle(request: Request, session: &mut Session) {
         (Method::Post, "/step-tick") => step_tick(request, session, &query),
         (Method::Post, "/state/save") => state_save(request, session),
         (Method::Post, "/state/load") => state_load(request, session),
+        (Method::Post, "/recording/replay") => recording_replay(request, session),
         (Method::Post, "/reset") => {
             session.reset();
             respond_json(request, status_json(session));
@@ -712,6 +713,17 @@ fn state_load(mut request: Request, session: &mut Session) {
     };
     match session.load_state(std::path::Path::new(&path)) {
         Ok(()) => respond_json(request, status_json(session)),
+        Err(message) => respond_error(request, 400, &message),
+    }
+}
+
+fn recording_replay(mut request: Request, session: &mut Session) {
+    let path = match read_path_body(&mut request) {
+        Ok(path) => path,
+        Err(message) => return respond_error(request, 400, &message),
+    };
+    match session.replay_recording(std::path::Path::new(&path)) {
+        Ok(frames) => respond_json(request, json!({ "replayed": path, "frames": frames })),
         Err(message) => respond_error(request, 400, &message),
     }
 }

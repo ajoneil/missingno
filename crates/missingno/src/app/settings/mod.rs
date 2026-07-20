@@ -22,6 +22,10 @@ pub enum Action {
     Pause,
     SaveState,
     LoadState,
+    /// Start or stop capturing an input recording of the running game.
+    ToggleRecording,
+    /// Replay the game's recording slot.
+    Replay,
 }
 
 /// The 8 shared game controls in display order (see `ControlId` for the
@@ -38,12 +42,14 @@ pub const GAME_CONTROLS: [Action; 8] = [
 ];
 
 /// Emulator-level actions, for iteration.
-pub const EMULATOR_ACTIONS: [Action; 5] = [
+pub const EMULATOR_ACTIONS: [Action; 7] = [
     Action::Screenshot,
     Action::ToggleFullscreen,
     Action::Pause,
     Action::SaveState,
     Action::LoadState,
+    Action::ToggleRecording,
+    Action::Replay,
 ];
 
 impl fmt::Display for Action {
@@ -57,6 +63,8 @@ impl fmt::Display for Action {
             Action::Pause => write!(f, "Pause"),
             Action::SaveState => write!(f, "Save State"),
             Action::LoadState => write!(f, "Load State"),
+            Action::ToggleRecording => write!(f, "Record"),
+            Action::Replay => write!(f, "Replay"),
         }
     }
 }
@@ -99,6 +107,8 @@ impl Bindings {
             (Action::Pause, "Space".to_string()),
             (Action::SaveState, "F5".to_string()),
             (Action::LoadState, "F8".to_string()),
+            (Action::ToggleRecording, "F6".to_string()),
+            (Action::Replay, "F7".to_string()),
         ]))
     }
 

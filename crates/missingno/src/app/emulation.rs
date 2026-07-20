@@ -84,6 +84,32 @@ impl App {
                     }
                 }
             }
+            Message::ToggleRecording | Message::Replay => {
+                // Recordings live beside the game's library folder, like the
+                // save-state slot. Recording and replay drive the play-mode
+                // console on the emu thread.
+                let Some(path) = self
+                    .current_game
+                    .as_ref()
+                    .map(|current| current.game_dir.join("recording.mprc"))
+                else {
+                    return Task::none();
+                };
+                if let Some(handle) = &self.emu {
+                    match message {
+                        Message::ToggleRecording => {
+                            if self.recording {
+                                handle.send(EmuCommand::StopRecording);
+                            } else {
+                                handle.send(EmuCommand::StartRecording(path));
+                            }
+                            self.recording = !self.recording;
+                        }
+                        Message::Replay => handle.send(EmuCommand::PlayRecording(path)),
+                        _ => unreachable!(),
+                    }
+                }
+            }
             Message::ExportCapture(index) => {
                 let default_name = self
                     .current_game
@@ -324,6 +350,8 @@ impl App {
     }
 
     pub(super) fn pause(&mut self) {
+        // The emu thread finalizes any recording when the payload leaves it.
+        self.recording = false;
         // Recover the payload from the emu thread so all inspection and saving
         // paths work synchronously while paused.
         if let Some(handle) = self.emu.clone() {

@@ -12,6 +12,7 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 use missingno_core::inspect::{MemoryWindow, Watch};
+use missingno_core::recording::{Recorder, Recording, frame_hash};
 
 use super::audio_output::AudioOutput;
 use super::debugger::inspect::DebugView;
@@ -29,6 +30,10 @@ const MAX_DEFICIT_FRAMES: u32 = 4;
 /// Frames of quiet before a debounced SRAM save is emitted. Games write SRAM
 /// across several consecutive frames during a save; we wait for writes to stop.
 const SRAM_DEBOUNCE_FRAMES: u32 = 30;
+
+/// How often a recording checkpoints a frame hash, for replay-divergence
+/// detection — every few seconds of play at ~60 fps.
+const RECORDING_CHECK_INTERVAL: u64 = 300;
 
 /// The latest fully-rendered frame, overwritten each `new_screen`. A latest-value
 /// handoff, not a queue: the UI reads whatever is current on redraw.
@@ -110,6 +115,14 @@ pub enum EmuCommand {
     SaveState(std::path::PathBuf),
     /// Restore the running machine state from a save file.
     LoadState(std::path::PathBuf),
+    /// Begin capturing an input recording to the given file (finalized on
+    /// [`StopRecording`](Self::StopRecording)). Play-mode consoles only.
+    StartRecording(std::path::PathBuf),
+    /// Finish the active recording and write it out.
+    StopRecording,
+    /// Load a recording and replay it, driving the running console frame by
+    /// frame so the playback is watchable.
+    PlayRecording(std::path::PathBuf),
 }
 
 /// Events the emu thread sends to the UI (via the Iced subscription).
@@ -330,6 +343,61 @@ struct EmuLoop {
     shutdown_requested: bool,
     sram_countdown: Option<u32>,
     next_deadline: Instant,
+    /// The active input recording and its destination file, while recording.
+    recorder: Option<(Recorder, std::path::PathBuf)>,
+    /// The recording being replayed frame by frame, while replaying.
+    replay: Option<ReplayPlayback>,
+}
+
+/// A recording played back through the running console: applies the recorded
+/// inputs at their frame boundaries and checks the frame-hash checkpoints,
+/// reporting the frame a divergence first appears on.
+struct ReplayPlayback {
+    recording: Recording,
+    frame: u64,
+    input_cursor: usize,
+    check_cursor: usize,
+}
+
+impl ReplayPlayback {
+    fn new(recording: Recording) -> Self {
+        Self {
+            recording,
+            frame: 0,
+            input_cursor: 0,
+            check_cursor: 0,
+        }
+    }
+
+    /// Apply the inputs scheduled for the current frame boundary.
+    fn apply_inputs(&mut self, payload: &mut Payload) {
+        while let Some(event) = self.recording.inputs.get(self.input_cursor) {
+            if event.frame != self.frame {
+                break;
+            }
+            payload.set_control(event.control, event.input);
+            self.input_cursor += 1;
+        }
+    }
+
+    /// Verify the checkpoint for the frame just produced, then advance. Returns
+    /// `false` once the whole recording has been replayed.
+    fn note_frame(&mut self, produced: Option<&Frame>) -> bool {
+        if let Some(check) = self.recording.checks.get(self.check_cursor)
+            && check.frame == self.frame
+        {
+            let hash = produced.map(frame_hash).unwrap_or(0);
+            if check.hash != hash {
+                eprintln!(
+                    "replay diverged at frame {} (expected {:#x}, got {hash:#x})",
+                    self.frame, check.hash
+                );
+            }
+            self.check_cursor += 1;
+        }
+        self.frame += 1;
+        self.frame < self.recording.frames
+    }
 }
 
 impl EmuLoop {
@@ -354,6 +422,8 @@ impl EmuLoop {
             shutdown_requested: false,
             sram_countdown: None,
             next_deadline: Instant::now(),
+            recorder: None,
+            replay: None,
         }
     }
 
@@ -378,6 +448,9 @@ impl EmuLoop {
                 self.payload = Some(payload);
                 self.sram_countdown = None;
                 self.next_deadline = Instant::now();
+                // A fresh session inherits no recording or replay from the last.
+                self.recorder = None;
+                self.replay = None;
             }
             EmuCommand::Pause => self.return_payload(),
             EmuCommand::Shutdown => self.shutdown_requested = true,
@@ -389,6 +462,9 @@ impl EmuLoop {
             EmuCommand::SetControl(control, input) => {
                 if let Some(payload) = &mut self.payload {
                     payload.set_control(control, input);
+                }
+                if let Some((recorder, _)) = &mut self.recorder {
+                    recorder.note_input(control, input);
                 }
             }
             EmuCommand::SetBreakpoint(address) => {
@@ -456,26 +532,98 @@ impl EmuLoop {
                     eprintln!("load state failed: {error}");
                 }
             }
+            EmuCommand::StartRecording(path) => match &mut self.payload {
+                Some(Payload::Console(console)) => {
+                    match Recorder::start(console.as_mut(), RECORDING_CHECK_INTERVAL) {
+                        Some(recorder) => self.recorder = Some((recorder, path)),
+                        None => {
+                            eprintln!("recording failed: this system has no save-state backend")
+                        }
+                    }
+                }
+                _ => eprintln!("recording is only available in play mode"),
+            },
+            EmuCommand::StopRecording => {
+                if let Some((recorder, path)) = self.recorder.take() {
+                    let bytes = recorder.finish().to_bytes();
+                    if let Err(error) = std::fs::write(&path, bytes) {
+                        eprintln!("could not write recording: {error}");
+                    }
+                }
+            }
+            EmuCommand::PlayRecording(path) => {
+                match std::fs::read(&path)
+                    .map_err(|error| error.to_string())
+                    .and_then(|bytes| {
+                        Recording::from_bytes(&bytes).map_err(|error| error.to_string())
+                    }) {
+                    Ok(recording) => match &mut self.payload {
+                        Some(Payload::Console(console)) => {
+                            match console.load_state(&recording.initial_state) {
+                                Ok(()) => self.replay = Some(ReplayPlayback::new(recording)),
+                                Err(error) => eprintln!("replay failed to restore: {error}"),
+                            }
+                        }
+                        _ => eprintln!("replay is only available in play mode"),
+                    },
+                    Err(error) => eprintln!("could not read recording: {error}"),
+                }
+            }
         }
     }
 
     fn return_payload(&mut self) {
+        // Finalize any in-progress recording before the payload leaves the
+        // thread, and drop a running replay — both belong to this session.
+        if let Some((recorder, path)) = self.recorder.take() {
+            let bytes = recorder.finish().to_bytes();
+            if let Err(error) = std::fs::write(&path, bytes) {
+                eprintln!("could not write recording: {error}");
+            }
+        }
+        self.replay = None;
         if let Some(payload) = self.payload.take() {
             let _ = self.returns.send(payload);
         }
     }
 
     fn emulate_frame(&mut self, audio: &mut Option<AudioOutput>) {
-        let Some(payload) = &mut self.payload else {
+        if self.payload.is_none() {
             return;
+        }
+
+        // Feed the running console the inputs the replay schedules for this
+        // frame boundary, before it steps.
+        if let (Some(replay), Some(payload)) = (&mut self.replay, &mut self.payload) {
+            replay.apply_inputs(payload);
+        }
+
+        let (outcome, breakpoint_hit) = match &mut self.payload {
+            Some(payload) => payload.step_frame(),
+            None => return,
         };
-        let (outcome, breakpoint_hit) = payload.step_frame();
         let new_frame = outcome.display.is_some();
+
+        // Record or replay-check the produced frame before it moves into the
+        // publish slot.
+        if let Some((recorder, _)) = &mut self.recorder {
+            recorder.note_frame(outcome.display.as_ref());
+        }
+        if let Some(replay) = &mut self.replay
+            && !replay.note_frame(outcome.display.as_ref())
+        {
+            self.replay = None;
+        }
+
         if let Some(display) = outcome.display
             && let Ok(mut slot) = self.frames.lock()
         {
             *slot = Some(display);
         }
+
+        let Some(payload) = &mut self.payload else {
+            return;
+        };
         if let Ok(mut slot) = self.status.lock() {
             *slot = payload.running_status();
         }

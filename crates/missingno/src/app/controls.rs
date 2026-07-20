@@ -58,6 +58,8 @@ fn action_to_press_message(action: Action) -> app::Message {
         Action::Pause => app::Message::TogglePause,
         Action::SaveState => app::Message::SaveState,
         Action::LoadState => app::Message::LoadState,
+        Action::ToggleRecording => app::Message::ToggleRecording,
+        Action::Replay => app::Message::Replay,
     }
 }
 
