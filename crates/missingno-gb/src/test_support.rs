@@ -17,8 +17,10 @@ use crate::{
     interrupts, ppu::screen::Screen,
 };
 
+use crate::system::ConsoleUi;
+
 #[cfg(feature = "morepork")]
-use crate::trace::Tracer;
+use crate::trace::{TraceScope, Tracer};
 
 /// Common interface for a Game Boy–family console runnable under the
 /// shared accuracy test helpers. Implemented by `GameBoy` here and by
@@ -108,7 +110,7 @@ pub struct TestRun<M: Model = crate::Dmg> {
     tracer: Option<Tracer>,
 }
 
-impl<M: Model> TestRun<M> {
+impl<M: ConsoleUi> TestRun<M> {
     /// Wrap a console for a traced run. `model_label` is the hardware-model
     /// string written into the trace metadata (e.g. "DMG-B", "CGB-C").
     pub fn new(gb: Console<M>, _rom_relative: &str, _model_label: &str) -> Self {
@@ -177,7 +179,7 @@ impl<M: Model> Drop for TestRun<M> {
     }
 }
 
-impl<M: Model> System for TestRun<M> {
+impl<M: ConsoleUi> System for TestRun<M> {
     fn step(&mut self) -> StepResult {
         TestRun::step(self)
     }
@@ -210,46 +212,27 @@ impl<M: Model> System for TestRun<M> {
     }
 }
 
+/// Build a schema-driven tracer when capture is requested. Capture is enabled by
+/// `MOREPORK_PROFILE` (any value, kept for muscle memory); `MOREPORK_TRIGGER`
+/// (`tcycle`/`instruction`, default instruction) sets the cadence and
+/// `MOREPORK_SCOPE` (`full`/`observable`, default observable) the tier depth. The
+/// column set and its typing come from the console model's state schema.
 #[cfg(feature = "morepork")]
-fn try_create_tracer<M: Model>(
+fn try_create_tracer<M: ConsoleUi>(
     gb: &Console<M>,
     rom_relative: &str,
     model_label: &str,
 ) -> Option<Tracer> {
-    let profile_name = std::env::var("MOREPORK_PROFILE").ok()?;
+    std::env::var("MOREPORK_PROFILE").ok()?;
 
-    let morepork_root =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../receipts/resources/morepork");
-    let profile_path = {
-        let candidates = [
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/accuracy/profiles")
-                .join(format!("{profile_name}.toml")),
-            morepork_root
-                .join("profiles")
-                .join(format!("{profile_name}.toml")),
-            morepork_root
-                .join("test-suites")
-                .join(&profile_name)
-                .join("profile.toml"),
-            morepork_root
-                .join("docs/tests")
-                .join(&profile_name)
-                .join(format!("{profile_name}.toml")),
-        ];
-        candidates
-            .into_iter()
-            .find(|p| p.exists())
-            .unwrap_or_else(|| {
-                panic!("morepork profile '{profile_name}' not found in any search path")
-            })
+    let trigger = match std::env::var("MOREPORK_TRIGGER").as_deref() {
+        Ok("tcycle") => crate::trace::Trigger::Tcycle,
+        _ => crate::trace::Trigger::Instruction,
     };
-    let profile = morepork::Profile::load(&profile_path).unwrap_or_else(|e| {
-        panic!(
-            "Failed to load morepork profile {}: {e}",
-            profile_path.display()
-        )
-    });
+    let scope = match std::env::var("MOREPORK_SCOPE").as_deref() {
+        Ok("full") => TraceScope::Full,
+        _ => TraceScope::Observable,
+    };
 
     let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../receipts/traces");
     std::fs::create_dir_all(&output_dir).unwrap();
@@ -260,16 +243,17 @@ fn try_create_tracer<M: Model>(
         .to_string_lossy();
     let output_path = output_dir.join(format!("{rom_stem}.morepork"));
 
-    let boot_rom = if gb.cpu().ir_address == 0x0000 {
-        morepork::BootRom::Skip
-    } else {
-        morepork::BootRom::Skip
-    };
-
     eprintln!("morepork: writing {}", output_path.display());
 
-    let mut tracer = Tracer::create(&output_path, &profile, gb, boot_rom, model_label)
-        .unwrap_or_else(|e| panic!("Failed to create tracer: {e}"));
+    let mut tracer = Tracer::create(
+        &output_path,
+        gb,
+        trigger,
+        scope,
+        crate::trace::BootRom::Skip,
+        model_label,
+    )
+    .unwrap_or_else(|e| panic!("Failed to create tracer: {e}"));
 
     tracer.mark_frame().unwrap();
 

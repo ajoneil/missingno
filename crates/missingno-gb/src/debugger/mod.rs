@@ -43,21 +43,6 @@ enum SyntheticStore {
     Vram,
 }
 
-/// Embedded profile for full T-cycle frame capture with all PPU details.
-#[cfg(feature = "morepork")]
-const FRAME_CAPTURE_PROFILE: &str = r#"
-[profile]
-name = "frame-capture"
-description = "Full T-cycle trace with CPU registers, all PPU internals, timer, and interrupts."
-trigger = "tcycle"
-
-[fields]
-cpu = "registers"
-ppu = "all"
-timer = true
-interrupt = true
-"#;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CpuRegister {
     A,
@@ -1081,18 +1066,21 @@ impl<M: Model> Debugger<M> {
         self.watchpoints.clear();
     }
 
-    /// Capture a full T-cycle trace of one frame to a .morepork file.
+    /// Capture a full T-cycle trace of one frame to a .morepork file. The full
+    /// scope records the schema's deep pipeline state alongside the observable
+    /// surface.
     #[cfg(feature = "morepork")]
-    pub fn capture_frame(&mut self, path: impl AsRef<Path>) -> Result<M::Screen, String> {
-        use crate::trace::{BootRom, Profile, Tracer};
-
-        let profile = Profile::parse(FRAME_CAPTURE_PROFILE)
-            .map_err(|e| format!("Failed to parse trace profile: {e}"))?;
+    pub fn capture_frame(&mut self, path: impl AsRef<Path>) -> Result<M::Screen, String>
+    where
+        M: crate::system::ConsoleUi,
+    {
+        use crate::trace::{BootRom, TraceScope, Tracer, Trigger};
 
         let mut tracer = Tracer::create(
             path,
-            &profile,
             &self.game_boy,
+            Trigger::Tcycle,
+            TraceScope::Full,
             BootRom::Skip,
             M::TRACE_MODEL_NAME,
         )

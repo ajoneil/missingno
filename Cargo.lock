@@ -3088,10 +3088,13 @@ dependencies = [
 [[package]]
 name = "morepork"
 version = "0.1.0"
-source = "git+https://github.com/ajoneil/morepork#ac73525547e845ea689d81fea9fb451f1ea9cc67"
 dependencies = [
  "arrow",
+ "clap",
  "flate2",
+ "missingno-6502",
+ "missingno-core",
+ "png 0.17.16",
  "serde",
  "serde_json",
  "sha2 0.10.9",

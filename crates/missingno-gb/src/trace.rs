@@ -1,209 +1,55 @@
-use std::collections::BTreeMap;
+//! The trace-capture bridge: a `.morepork` execution trace authored from the
+//! core's hardware-named [`SystemStateSchema`], not from a catalogue hand-mirrored
+//! beside it. Each captured column is either a schema field (its type, subsystem,
+//! and tier come straight from the schema) or a trace-only observation the schema
+//! deliberately excludes because it is re-derivable at a boundary — the executing
+//! instruction address, the pixel output, and the VRAM/APU write taps.
+//!
+//! The state a column carries is read through the same [`ConsoleUi::read_state`]
+//! bridge the save-state framing uses, so a trace column and a save-state field
+//! are the *same* hardware quantity produced the same way — one vocabulary, two
+//! framings. The pixel-pipeline cells the boundary record omits (they are idle at
+//! a boundary) come from the PPU's per-tick trace snapshot when the deep scope
+//! opts them in.
+
 use std::path::Path;
 
 use morepork::format::write::MoreporkWriter;
-use morepork::header::{ExtensionField, PixFormat, TraceHeader};
-use morepork::profile::{FieldType, field_nullable, field_type};
+use morepork::header::{HeaderFieldDef, PixFormat, TraceHeader};
+use morepork::profile::FieldType as WireType;
+// `Profile` is re-exported for the frontend's multi-system trace command, which
+// shares one profile type across the console families. The Game Boy schema-driven
+// capture reads only the trigger cadence from it — the column set comes from the
+// state schema, not the profile — while the 6502 cores still consume the full
+// profile.
 pub use morepork::{BootRom, Profile, Trigger};
 use sha2::{Digest, Sha256};
 
-use crate::audio::{ApuSpec, Audio};
-use crate::cartridge::Cartridge;
-use crate::cpu::Cpu;
-use crate::ppu::{Ppu, PpuModel, PpuTraceSnapshot, TracePixel};
-use crate::{Console, Model};
+use missingno_core::state::{
+    FieldType, PixelFormat, Provenance, StateValue, SystemStateSchema, Tier,
+};
 
-/// Abstraction over a Game Boy–family console that the [`Tracer`] can
-/// capture state from. Implemented by `GameBoy` (DMG) here and by
-/// `GameBoyColor` in the `missingno-gbc` crate, so a single tracer
-/// serves both systems. Every accessor yields a shared `missingno-gb`
-/// type, so the capture logic is identical regardless of console.
-pub trait Traceable {
-    type Ppu: PpuModel;
-    type Apu: ApuSpec;
-    fn cpu(&self) -> &Cpu;
-    fn ppu(&self) -> &Ppu<Self::Ppu>;
-    fn audio(&self) -> &Audio<Self::Apu>;
-    fn peek(&self, address: u16) -> u8;
-    fn cartridge(&self) -> &Cartridge;
+use crate::Console;
+use crate::ppu::{PpuTraceSnapshot, TracePixel};
+use crate::system::ConsoleUi;
+
+/// Which tier of the schema a trace captures. The observable surface is the
+/// cross-emulator comparison ground; the full scope adds the boundary-complete
+/// deep state (a gate-level producer fills nearly all of it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum TraceScope {
+    /// Tier-1 observable fields plus the trace observations. The diff surface.
+    #[default]
+    Observable,
+    /// Also the schema's Tier-2a deep state: the scalar counters/latches and the
+    /// pixel-pipeline cells.
+    Full,
 }
 
-impl<M: Model> Traceable for Console<M> {
-    type Ppu = M::Ppu;
-    type Apu = M::Apu;
-    fn cpu(&self) -> &Cpu {
-        Console::<M>::cpu(self)
-    }
-    fn ppu(&self) -> &Ppu<M::Ppu> {
-        Console::<M>::ppu(self)
-    }
-    fn audio(&self) -> &Audio<M::Apu> {
-        Console::<M>::audio(self)
-    }
-    fn peek(&self, address: u16) -> u8 {
-        Console::<M>::peek(self, address)
-    }
-    fn cartridge(&self) -> &Cartridge {
-        Console::<M>::cartridge(self)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Extension fields — emulator-internal debugging state
-// ---------------------------------------------------------------------------
-//
-// missingno declares a set of extension fields that adapters / profiles can
-// opt into via `[fields.extensions] missingno = ["..."]` in profile TOML.
-// Each entry below pairs the wire name (used in profile + trace header)
-// with: (FieldType, ExtensionEmitter, description).
-//
-// Adding a new extension field:
-//   1. Add the row here with type + Emitter variant + description.
-//   2. Add the matching `Emitter::Ext*` variant + capture branch below.
-//   3. Add the accessor on `Cpu` if needed.
-//
-// Extension fields don't go through the standard `is_known_field` catalogue
-// — they're declared in the trace header at create time and resolved by
-// readers via `TraceHeader::resolve_field_type`.
-
-struct ExtensionDef {
-    name: &'static str,
-    field_type: FieldType,
-    description: &'static str,
-}
-
-static EXTENSION_DEFS: &[ExtensionDef] = &[
-    ExtensionDef {
-        name: "pending_vector_resolve",
-        field_type: FieldType::Bool,
-        description: "IE push bug flag — set during dispatch M3 vector resolution",
-    },
-    ExtensionDef {
-        name: "halt_bug",
-        field_type: FieldType::Bool,
-        description: "HALT bug flag — opcode after HALT will be re-read because PC failed to advance",
-    },
-    ExtensionDef {
-        name: "ppu_half_mcycle",
-        field_type: FieldType::Bool,
-        description: "WUVU.Q — 2-dot half-mcycle divider",
-    },
-    ExtensionDef {
-        name: "ppu_mcycle",
-        field_type: FieldType::Bool,
-        description: "VENA.Q — 4-dot mcycle divider",
-    },
-    ExtensionDef {
-        name: "ppu_scan_clock",
-        field_type: FieldType::Bool,
-        description: "XUPY = NOT(WUVU.Q) — scan/OAM clock",
-    },
-    ExtensionDef {
-        name: "ppu_lx",
-        field_type: FieldType::UInt8,
-        description: "LX counter (0..113), M-cycle position on current line",
-    },
-    ExtensionDef {
-        name: "ppu_mode2_active",
-        field_type: FieldType::Bool,
-        description: "BESU — OAM scanning latch (drives ACYL)",
-    },
-    ExtensionDef {
-        name: "ppu_end_of_visible_line",
-        field_type: FieldType::Bool,
-        description: "WODU = AND2(XUGU, !FEPO) — HBlank STAT contributor",
-    },
-    ExtensionDef {
-        name: "ppu_stat_line",
-        field_type: FieldType::Bool,
-        description: "LALU.q level — aggregated STAT-line input to SUKO edge detector",
-    },
-];
-
-fn find_extension(name: &str) -> Option<&'static ExtensionDef> {
-    EXTENSION_DEFS.iter().find(|d| d.name == name)
-}
-
-/// Pre-resolved emitter — determines how to read a field value at capture time.
-enum Emitter {
-    // CPU
-    CpuA,
-    CpuF,
-    CpuB,
-    CpuC,
-    CpuD,
-    CpuE,
-    CpuH,
-    CpuL,
-    CpuSp,
-    CpuPc,
-    CpuOpAddr,
-    CpuBusAddr,
-    CpuIme,
-    CpuOpState,
-    CpuMcyclePhase,
-    CpuHalted,
-    // CPU interrupt-dispatch DFFs
-    IrqPending,
-    DispatchActive,
-    IrqLatched,
-    // Extension fields — emulator-internal debug state declared via
-    // [fields.extensions.missingno] in the profile. See EXTENSION_DEFS.
-    ExtPendingVectorResolve,
-    ExtHaltBug,
-    ExtPpuHalfMcycle,
-    ExtPpuMcycle,
-    ExtPpuScanClock,
-    ExtPpuLx,
-    ExtPpuMode2Active,
-    ExtPpuEndOfVisibleLine,
-    ExtPpuStatLine,
-    // IO read (PPU regs, timer, interrupt, serial, APU regs)
-    IoRead(u16),
-    // Memory read (profile [fields.memory])
-    MemRead(u16),
-    // PPU internal (needs snapshot)
-    PpuInternal(PpuField),
-    // APU internal
-    Ch1Active,
-    Ch1FreqCnt,
-    Ch1EnvVol,
-    Ch1Phase,
-    Ch1SweepShadow,
-    Ch1LenCnt,
-    Ch2Active,
-    Ch2FreqCnt,
-    Ch2EnvVol,
-    Ch2Phase,
-    Ch2LenCnt,
-    Ch3Active,
-    Ch3FreqCnt,
-    Ch3WaveIdx,
-    Ch3Sample,
-    Ch3LenCnt,
-    Ch4Active,
-    Ch4FreqCnt,
-    Ch4EnvVol,
-    Ch4Lfsr,
-    Ch4LenCnt,
-    // Pixel output
-    Pix,
-    PpuPixX,
-    // VRAM write tracking
-    VramAddr,
-    VramData,
-    // APU write tracking (registers + wave RAM, FF10-FF3F)
-    ApuWriteAddr,
-    ApuWriteData,
-    // Unknown — write type-appropriate zero/null
-    Unknown(FieldType, bool),
-}
-
-enum PpuField {
-    Oam {
-        index: usize,
-        component: OamComponent,
-    },
+/// A pixel-pipeline cell read from the PPU's per-tick trace snapshot. These are
+/// the schema's nullable Tier-2a fields the boundary record does not carry.
+#[derive(Clone, Copy)]
+enum PipelineCell {
     BgwFifoA,
     BgwFifoB,
     SprFifoA,
@@ -220,26 +66,142 @@ enum PpuField {
     WinMode,
 }
 
-#[derive(Copy, Clone)]
-enum OamComponent {
-    X,
-    Id,
-    Attr,
+impl PipelineCell {
+    fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "bgw_fifo_a" => Self::BgwFifoA,
+            "bgw_fifo_b" => Self::BgwFifoB,
+            "spr_fifo_a" => Self::SprFifoA,
+            "spr_fifo_b" => Self::SprFifoB,
+            "pal_pipe" => Self::PalPipe,
+            "tfetch_state" => Self::TfetchState,
+            "sfetch_state" => Self::SfetchState,
+            "tile_temp_a" => Self::TileTempA,
+            "tile_temp_b" => Self::TileTempB,
+            "pix_count" => Self::PixCount,
+            "sprite_count" => Self::SpriteCount,
+            "scan_count" => Self::ScanCount,
+            "rendering" => Self::Rendering,
+            "win_mode" => Self::WinMode,
+            _ => return None,
+        })
+    }
 }
 
-/// Resolved field: column index + how to emit.
-struct ResolvedField {
-    col: usize,
-    emitter: Emitter,
+/// A trace-only observation: a per-step surface the state schema excludes because
+/// it is re-derivable at a boundary rather than being machine state. Authored on
+/// the producer and marked `missingno`-sourced in the header.
+#[derive(Clone, Copy)]
+enum Observation {
+    /// The executing instruction's address — the stable per-instruction key diff
+    /// collapses and aligns on (`pc` moves within a multi-cycle instruction).
+    OpAddr,
+    /// Pixels pushed since the last capture, encoded per the header's pix_format.
+    Pix,
+    /// Pixels pushed on the current line (the PPU's pipeline pixel count).
+    PixX,
+    VramAddr,
+    VramData,
+    ApuWriteAddr,
+    ApuWriteData,
 }
 
-/// Captures morepork-format execution traces from a GameBoy.
+struct ObservationDef {
+    name: &'static str,
+    ty: FieldType,
+    subsystem: &'static str,
+    layer: &'static str,
+    nullable: bool,
+    observation: Observation,
+}
+
+/// The trace observations, in capture order. `op_addr` leads so it is the
+/// instruction-address column; `pix` and the write taps follow.
+static OBSERVATIONS: &[ObservationDef] = &[
+    ObservationDef {
+        name: "op_addr",
+        ty: FieldType::U16,
+        subsystem: "cpu",
+        layer: "timing",
+        nullable: false,
+        observation: Observation::OpAddr,
+    },
+    ObservationDef {
+        name: "pix",
+        ty: FieldType::Str,
+        subsystem: "ppu",
+        layer: "output",
+        nullable: true,
+        observation: Observation::Pix,
+    },
+    ObservationDef {
+        name: "pix_x",
+        ty: FieldType::U8,
+        subsystem: "ppu",
+        layer: "output",
+        nullable: false,
+        observation: Observation::PixX,
+    },
+    ObservationDef {
+        name: "vram_addr",
+        ty: FieldType::U16,
+        subsystem: "ppu",
+        layer: "writes",
+        nullable: true,
+        observation: Observation::VramAddr,
+    },
+    ObservationDef {
+        name: "vram_data",
+        ty: FieldType::U8,
+        subsystem: "ppu",
+        layer: "writes",
+        nullable: true,
+        observation: Observation::VramData,
+    },
+    ObservationDef {
+        name: "apu_write_addr",
+        ty: FieldType::U16,
+        subsystem: "apu",
+        layer: "writes",
+        nullable: true,
+        observation: Observation::ApuWriteAddr,
+    },
+    ObservationDef {
+        name: "apu_write_data",
+        ty: FieldType::U8,
+        subsystem: "apu",
+        layer: "writes",
+        nullable: true,
+        observation: Observation::ApuWriteData,
+    },
+];
+
+/// How a column's value is produced at capture time.
+enum Source {
+    /// A schema field read from the per-capture boundary record by name.
+    Field(&'static str),
+    /// A pixel-pipeline cell from the PPU trace snapshot.
+    Pipeline(PipelineCell),
+    /// A trace observation.
+    Obs(Observation),
+}
+
+/// One trace column: its schema/observation type (fixing the emitted width) and
+/// how to produce its value.
+struct Column {
+    ty: FieldType,
+    nullable: bool,
+    source: Source,
+}
+
+/// Captures `.morepork` execution traces from a Game Boy–family console, keyed on
+/// the console's hardware state schema.
 pub struct Tracer {
     writer: MoreporkWriter,
-    emitters: Vec<ResolvedField>,
+    columns: Vec<Column>,
+    needs_pipeline: bool,
     tcycle_count: u64,
     trigger: Trigger,
-    needs_ppu_snapshot: bool,
     pix_buffer: String,
     vram_write_addr: u16,
     vram_write_data: u8,
@@ -247,174 +209,55 @@ pub struct Tracer {
     apu_write_data: u8,
 }
 
-static IO_FIELDS: &[(&str, u16)] = &[
-    // PPU registers
-    ("lcdc", 0xFF40),
-    ("stat", 0xFF41),
-    ("ly", 0xFF44),
-    ("lyc", 0xFF45),
-    ("scy", 0xFF42),
-    ("scx", 0xFF43),
-    ("wy", 0xFF4A),
-    ("wx", 0xFF4B),
-    ("bgp", 0xFF47),
-    ("obp0", 0xFF48),
-    ("obp1", 0xFF49),
-    ("dma", 0xFF46),
-    // Timer
-    ("div", 0xFF04),
-    ("tima", 0xFF05),
-    ("tma", 0xFF06),
-    ("tac", 0xFF07),
-    // Interrupt
-    ("if_", 0xFF0F),
-    ("ie", 0xFFFF),
-    // Serial
-    ("sb", 0xFF01),
-    ("sc", 0xFF02),
-    // APU registers
-    ("ch1_sweep", 0xFF10),
-    ("ch1_duty_len", 0xFF11),
-    ("ch1_vol_env", 0xFF12),
-    ("ch1_freq_lo", 0xFF13),
-    ("ch1_freq_hi", 0xFF14),
-    ("ch2_duty_len", 0xFF16),
-    ("ch2_vol_env", 0xFF17),
-    ("ch2_freq_lo", 0xFF18),
-    ("ch2_freq_hi", 0xFF19),
-    ("ch3_dac", 0xFF1A),
-    ("ch3_len", 0xFF1B),
-    ("ch3_vol", 0xFF1C),
-    ("ch3_freq_lo", 0xFF1D),
-    ("ch3_freq_hi", 0xFF1E),
-    ("ch4_len", 0xFF20),
-    ("ch4_vol_env", 0xFF21),
-    ("ch4_freq", 0xFF22),
-    ("ch4_control", 0xFF23),
-    ("master_vol", 0xFF24),
-    ("sound_pan", 0xFF25),
-    ("sound_on", 0xFF26),
-];
+fn wire_type(ty: FieldType) -> WireType {
+    match ty {
+        FieldType::Bool => WireType::Bool,
+        FieldType::U8 => WireType::UInt8,
+        FieldType::U16 => WireType::UInt16,
+        // The wire format has no 32-bit column; a u32 field widens to u64.
+        FieldType::U32 => WireType::UInt64,
+        FieldType::Str => WireType::Str,
+    }
+}
 
-fn resolve_emitter(field: &str, memory: &BTreeMap<String, u16>) -> Emitter {
-    match field {
-        // CPU
-        "a" => Emitter::CpuA,
-        "f" => Emitter::CpuF,
-        "b" => Emitter::CpuB,
-        "c" => Emitter::CpuC,
-        "d" => Emitter::CpuD,
-        "e" => Emitter::CpuE,
-        "h" => Emitter::CpuH,
-        "l" => Emitter::CpuL,
-        "sp" => Emitter::CpuSp,
-        "pc" => Emitter::CpuPc,
-        "op_addr" => Emitter::CpuOpAddr,
-        "bus_addr" => Emitter::CpuBusAddr,
-        "ime" => Emitter::CpuIme,
-        "op_state" => Emitter::CpuOpState,
-        "mcycle_phase" => Emitter::CpuMcyclePhase,
-        "halted" => Emitter::CpuHalted,
-        // CPU interrupt-dispatch DFFs
-        "irq_pending" => Emitter::IrqPending,
-        "dispatch_active" => Emitter::DispatchActive,
-        "irq_latched" => Emitter::IrqLatched,
-        // Extension fields
-        "pending_vector_resolve" => Emitter::ExtPendingVectorResolve,
-        "halt_bug" => Emitter::ExtHaltBug,
-        "ppu_half_mcycle" => Emitter::ExtPpuHalfMcycle,
-        "ppu_mcycle" => Emitter::ExtPpuMcycle,
-        "ppu_scan_clock" => Emitter::ExtPpuScanClock,
-        "ppu_lx" => Emitter::ExtPpuLx,
-        "ppu_mode2_active" => Emitter::ExtPpuMode2Active,
-        "ppu_end_of_visible_line" => Emitter::ExtPpuEndOfVisibleLine,
-        "ppu_stat_line" => Emitter::ExtPpuStatLine,
-        // APU internal
-        "ch1_active" => Emitter::Ch1Active,
-        "ch1_freq_cnt" => Emitter::Ch1FreqCnt,
-        "ch1_env_vol" => Emitter::Ch1EnvVol,
-        "ch1_phase" => Emitter::Ch1Phase,
-        "ch1_sweep_shadow" => Emitter::Ch1SweepShadow,
-        "ch1_len_cnt" => Emitter::Ch1LenCnt,
-        "ch2_active" => Emitter::Ch2Active,
-        "ch2_freq_cnt" => Emitter::Ch2FreqCnt,
-        "ch2_env_vol" => Emitter::Ch2EnvVol,
-        "ch2_phase" => Emitter::Ch2Phase,
-        "ch2_len_cnt" => Emitter::Ch2LenCnt,
-        "ch3_active" => Emitter::Ch3Active,
-        "ch3_freq_cnt" => Emitter::Ch3FreqCnt,
-        "ch3_wave_idx" => Emitter::Ch3WaveIdx,
-        "ch3_sample" => Emitter::Ch3Sample,
-        "ch3_len_cnt" => Emitter::Ch3LenCnt,
-        "ch4_active" => Emitter::Ch4Active,
-        "ch4_freq_cnt" => Emitter::Ch4FreqCnt,
-        "ch4_env_vol" => Emitter::Ch4EnvVol,
-        "ch4_lfsr" => Emitter::Ch4Lfsr,
-        "ch4_len_cnt" => Emitter::Ch4LenCnt,
-        // Pixel output
-        "pix" => Emitter::Pix,
-        "pix_x" => Emitter::PpuPixX,
-        // VRAM writes
-        "vram_addr" => Emitter::VramAddr,
-        "vram_data" => Emitter::VramData,
-        // APU writes (registers + wave RAM)
-        "apu_write_addr" => Emitter::ApuWriteAddr,
-        "apu_write_data" => Emitter::ApuWriteData,
-        // PPU internal
-        "bgw_fifo_a" => Emitter::PpuInternal(PpuField::BgwFifoA),
-        "bgw_fifo_b" => Emitter::PpuInternal(PpuField::BgwFifoB),
-        "spr_fifo_a" => Emitter::PpuInternal(PpuField::SprFifoA),
-        "spr_fifo_b" => Emitter::PpuInternal(PpuField::SprFifoB),
-        "pal_pipe" => Emitter::PpuInternal(PpuField::PalPipe),
-        "tfetch_state" => Emitter::PpuInternal(PpuField::TfetchState),
-        "sfetch_state" => Emitter::PpuInternal(PpuField::SfetchState),
-        "tile_temp_a" => Emitter::PpuInternal(PpuField::TileTempA),
-        "tile_temp_b" => Emitter::PpuInternal(PpuField::TileTempB),
-        "pix_count" => Emitter::PpuInternal(PpuField::PixCount),
-        "sprite_count" => Emitter::PpuInternal(PpuField::SpriteCount),
-        "scan_count" => Emitter::PpuInternal(PpuField::ScanCount),
-        "rendering" => Emitter::PpuInternal(PpuField::Rendering),
-        "win_mode" => Emitter::PpuInternal(PpuField::WinMode),
-        _ => {
-            // OAM sprite fields: oam0_x, oam3_attr, etc.
-            if let Some(rest) = field.strip_prefix("oam")
-                && let Some((idx_str, suffix)) = rest.split_once('_')
-                && let Ok(idx) = idx_str.parse::<usize>()
-                && idx < 10
-            {
-                let component = match suffix {
-                    "x" => OamComponent::X,
-                    "id" => OamComponent::Id,
-                    "attr" => OamComponent::Attr,
-                    _ => return Emitter::Unknown(FieldType::UInt8, false),
-                };
-                return Emitter::PpuInternal(PpuField::Oam {
-                    index: idx,
-                    component,
-                });
-            }
-            // IO register
-            if let Some(&(_, addr)) = IO_FIELDS.iter().find(|(name, _)| *name == field) {
-                return Emitter::IoRead(addr);
-            }
-            // Memory-mapped field
-            if let Some(&addr) = memory.get(field) {
-                return Emitter::MemRead(addr);
-            }
-            // Unknown
-            Emitter::Unknown(field_type(field), field_nullable(field))
-        }
+fn tier_layer(tier: Tier) -> &'static str {
+    match tier {
+        Tier::Observable => "registers",
+        Tier::Boundary => "internal",
+        Tier::Tick => "timing",
+    }
+}
+
+fn pix_format(format: PixelFormat) -> PixFormat {
+    match format {
+        PixelFormat::Shade2 => PixFormat::Shade2,
+        PixelFormat::Rgb555 => PixFormat::Rgb555,
+        PixelFormat::Indexed8 => PixFormat::Indexed8,
     }
 }
 
 impl Tracer {
-    pub fn create<T: Traceable>(
+    /// Create a tracer whose columns are authored from the console model's state
+    /// schema. `scope` selects the tier depth; `trigger` records the capture
+    /// cadence in the header for downstream alignment.
+    pub fn create<M: ConsoleUi>(
         path: impl AsRef<Path>,
-        profile: &Profile,
-        gb: &T,
+        gb: &Console<M>,
+        trigger: Trigger,
+        scope: TraceScope,
         boot_rom: BootRom,
-        model: &str,
+        model_label: &str,
     ) -> Result<Self, morepork::Error> {
+        let schema = M::state_schema().ok_or_else(|| {
+            morepork::Error::Profile("console model authors no state schema".into())
+        })?;
+
+        let (columns, field_defs) = build_columns(schema, scope);
+        let needs_pipeline = columns.iter().any(|c| {
+            matches!(c.source, Source::Pipeline(_))
+                || matches!(c.source, Source::Obs(Observation::PixX))
+        });
+
         let rom_sha256 = {
             let mut hasher = Sha256::new();
             hasher.update(gb.cartridge().rom());
@@ -425,50 +268,7 @@ impl Tracer {
                 .collect::<String>()
         };
 
-        let trigger = profile.trigger.clone();
-
-        // Merge profile.extensions["missingno"] into the field list and
-        // declare each extension's type metadata in the header. Unknown
-        // extension names (not in EXTENSION_DEFS) are an error — better
-        // to fail at create time than silently emit zeros.
-        let mut all_fields = profile.fields.clone();
-        let mut extension_fields = BTreeMap::new();
-        if let Some(ext_names) = profile.extensions.get("missingno") {
-            for name in ext_names {
-                let def = find_extension(name).ok_or_else(|| {
-                    morepork::Error::Profile(format!(
-                        "unknown missingno extension field '{name}' (not in EXTENSION_DEFS)"
-                    ))
-                })?;
-                if all_fields.iter().any(|f| f == name) {
-                    return Err(morepork::Error::Profile(format!(
-                        "extension field '{name}' duplicates a built-in field"
-                    )));
-                }
-                extension_fields.insert(
-                    name.clone(),
-                    ExtensionField {
-                        field_type: def.field_type,
-                        nullable: false,
-                        description: Some(def.description.into()),
-                        source: Some("missingno".into()),
-                    },
-                );
-                all_fields.push(name.clone());
-            }
-        }
-
-        // CGB/AGB output is colour, so the pix field stores RGB555; DMG stays
-        // 2-bit greyscale. `push_pixel` / `push_pixel_rgb555` must match this.
-        let is_color = model.starts_with("CGB") || model.starts_with("AGB");
-        let pix_format = if is_color {
-            PixFormat::Rgb555
-        } else {
-            PixFormat::Shade2
-        };
-        // DMG and CGB are distinct morepork systems sharing the sm83 ISA;
-        // the writer derives `isa` from `system`.
-        let system = if is_color { "cgb" } else { "dmg" };
+        let field_names: Vec<String> = field_defs.iter().map(|d| d.name.clone()).collect();
 
         let header = TraceHeader {
             _header: true,
@@ -476,39 +276,32 @@ impl Tracer {
             emulator: "missingno".into(),
             emulator_version: env!("CARGO_PKG_VERSION").into(),
             rom_sha256,
-            model: model.into(),
+            model: model_label.into(),
             boot_rom,
-            profile: profile.name.clone(),
-            fields: all_fields,
-            trigger: profile.trigger.clone(),
-            system: system.into(),
-            pix_format,
-            extension_fields,
+            profile: match scope {
+                TraceScope::Observable => "observable".into(),
+                TraceScope::Full => "full".into(),
+            },
+            fields: field_names,
+            trigger: trigger.clone(),
+            system: schema.system.into(),
+            isa: "sm83".into(),
+            pix_format: pix_format(schema.frame.format),
+            field_defs,
+            instruction_addr_field: Some("op_addr".into()),
+            snapshot_kinds: vec!["frame".into(), "memory".into()],
             notes: String::new(),
             ..Default::default()
         };
 
-        // Empty groups: the writer groups columns by the header's field defs.
         let writer = MoreporkWriter::create(path, &header, &[])?;
-
-        // Resolve all fields to emitters at creation time
-        let mut emitters = Vec::with_capacity(header.fields.len());
-        let mut needs_ppu_snapshot = false;
-
-        for (col, field) in header.fields.iter().enumerate() {
-            let emitter = resolve_emitter(field, &profile.memory);
-            if matches!(emitter, Emitter::PpuInternal(_) | Emitter::PpuPixX) {
-                needs_ppu_snapshot = true;
-            }
-            emitters.push(ResolvedField { col, emitter });
-        }
 
         Ok(Self {
             writer,
-            emitters,
+            columns,
+            needs_pipeline,
             tcycle_count: 0,
             trigger,
-            needs_ppu_snapshot,
             pix_buffer: String::new(),
             vram_write_addr: 0,
             vram_write_data: 0,
@@ -525,8 +318,8 @@ impl Tracer {
         self.pix_buffer.push((b'0' + (shade & 3)) as char);
     }
 
-    /// Push a CGB pixel as 4 hex chars (15-bit RGB555). Use this when the
-    /// trace's `pix_format` is `Rgb555` (CGB/AGB models); `push_pixel` otherwise.
+    /// Push a CGB pixel as 4 hex chars (15-bit RGB555). Use this when the trace's
+    /// `pix_format` is `Rgb555` (CGB/AGB models); `push_pixel` otherwise.
     pub fn push_pixel_rgb555(&mut self, value: u16) {
         use std::fmt::Write;
         let _ = write!(self.pix_buffer, "{:04X}", value & 0x7FFF);
@@ -543,162 +336,47 @@ impl Tracer {
     }
 
     /// Write a typed snapshot record into the trace stream. `tag` is a
-    /// format-level tag (`format::TAG_MEMORY`) or one of the GB family's
-    /// (`system::gb::snapshot::TAG_*`).
+    /// format-level tag (`TAG_FRAME`, `TAG_MEMORY`).
     pub fn write_snapshot(&mut self, tag: u8, payload: &[u8]) -> Result<(), morepork::Error> {
         self.writer.write_snapshot(tag, payload)
     }
 
-    pub fn capture<T: Traceable>(&mut self, gb: &T) -> Result<(), morepork::Error> {
-        let ppu_snap = if self.needs_ppu_snapshot {
+    /// Capture one row: the schema fields from the boundary record, the pipeline
+    /// cells from the PPU snapshot, and the observations from the taps.
+    pub fn capture<M: ConsoleUi>(&mut self, gb: &Console<M>) -> Result<(), morepork::Error> {
+        let record = M::read_state(gb);
+        let ppu_snap = if self.needs_pipeline {
             gb.ppu().trace_snapshot()
         } else {
             None
         };
+        let taps = ObsTaps {
+            op_addr: gb.cpu().ir_address,
+            vram_addr: self.vram_write_addr,
+            vram_data: self.vram_write_data,
+            apu_addr: self.apu_write_addr,
+            apu_data: self.apu_write_data,
+        };
 
-        let channels = gb.audio().channels();
-        let ppu_sigs = gb.ppu().trace_signals();
         let pix_buffer = &self.pix_buffer;
-        let vram_write_addr = self.vram_write_addr;
-        let vram_write_data = self.vram_write_data;
-        let apu_write_addr = self.apu_write_addr;
-        let apu_write_data = self.apu_write_data;
+        let columns = &self.columns;
         let w = &mut self.writer;
-
-        for rf in &self.emitters {
-            let col = rf.col;
-            match &rf.emitter {
-                // CPU
-                Emitter::CpuA => w.set_u8(col, gb.cpu().a),
-                Emitter::CpuF => w.set_u8(col, gb.cpu().flags.bits()),
-                Emitter::CpuB => w.set_u8(col, gb.cpu().b),
-                Emitter::CpuC => w.set_u8(col, gb.cpu().c),
-                Emitter::CpuD => w.set_u8(col, gb.cpu().d),
-                Emitter::CpuE => w.set_u8(col, gb.cpu().e),
-                Emitter::CpuH => w.set_u8(col, gb.cpu().h),
-                Emitter::CpuL => w.set_u8(col, gb.cpu().l),
-                Emitter::CpuSp => w.set_u16(col, gb.cpu().stack_pointer),
-                Emitter::CpuPc => w.set_u16(col, gb.cpu().pc),
-                Emitter::CpuOpAddr => w.set_u16(col, gb.cpu().ir_address),
-                Emitter::CpuBusAddr => w.set_u16(col, gb.cpu().bus_address()),
-                Emitter::CpuIme => w.set_bool(col, gb.cpu().interrupts_enabled()),
-                Emitter::CpuOpState => w.set_u8(col, gb.cpu().op_state()),
-                Emitter::CpuMcyclePhase => w.set_u8(col, gb.cpu().mcycle_phase()),
-                Emitter::CpuHalted => w.set_bool(col, gb.cpu().is_halted()),
-                // CPU interrupt-dispatch DFFs
-                Emitter::IrqPending => w.set_bool(col, gb.cpu().irq_pending()),
-                Emitter::DispatchActive => w.set_bool(col, gb.cpu().dispatch_active()),
-                Emitter::IrqLatched => w.set_bool(col, gb.cpu().irq_latched()),
-                // Extension fields
-                Emitter::ExtPendingVectorResolve => {
-                    w.set_bool(col, gb.cpu().pending_vector_resolve_flag())
+        for (col, column) in columns.iter().enumerate() {
+            match &column.source {
+                Source::Field(name) => {
+                    let value = record.as_ref().and_then(|r| r.get(name));
+                    emit_value(w, col, column.ty, column.nullable, value);
                 }
-                Emitter::ExtHaltBug => w.set_bool(col, gb.cpu().halt_bug_flag()),
-                Emitter::ExtPpuHalfMcycle => w.set_bool(col, ppu_sigs.half_mcycle),
-                Emitter::ExtPpuMcycle => w.set_bool(col, ppu_sigs.mcycle),
-                Emitter::ExtPpuScanClock => w.set_bool(col, ppu_sigs.scan_clock),
-                Emitter::ExtPpuLx => w.set_u8(col, gb.ppu().lx()),
-                Emitter::ExtPpuMode2Active => w.set_bool(col, ppu_sigs.mode2_active),
-                Emitter::ExtPpuEndOfVisibleLine => w.set_bool(col, ppu_sigs.end_of_visible_line),
-                Emitter::ExtPpuStatLine => w.set_bool(col, ppu_sigs.stat_line),
-                // IO / memory reads
-                Emitter::IoRead(addr) | Emitter::MemRead(addr) => {
-                    w.set_u8(col, gb.peek(*addr));
-                }
-                // APU internal — channel 1
-                Emitter::Ch1Active => w.set_bool(col, channels.ch1.enabled.enabled),
-                Emitter::Ch1FreqCnt => w.set_u16(col, channels.ch1.divider.counter),
-                Emitter::Ch1EnvVol => w.set_u8(col, channels.ch1.envelope.volume),
-                Emitter::Ch1Phase => w.set_u8(col, channels.ch1.wave_duty_position),
-                Emitter::Ch1SweepShadow => w.set_u16(col, channels.ch1.shadow_frequency),
-                Emitter::Ch1LenCnt => w.set_u8(col, channels.ch1.length.counter as u8),
-                // APU internal — channel 2
-                Emitter::Ch2Active => w.set_bool(col, channels.ch2.enabled.enabled),
-                Emitter::Ch2FreqCnt => w.set_u16(col, channels.ch2.divider.counter),
-                Emitter::Ch2EnvVol => w.set_u8(col, channels.ch2.envelope.volume),
-                Emitter::Ch2Phase => w.set_u8(col, channels.ch2.wave_duty_position),
-                Emitter::Ch2LenCnt => w.set_u8(col, channels.ch2.length.counter as u8),
-                // APU internal — channel 3
-                Emitter::Ch3Active => w.set_bool(col, channels.ch3.enabled.enabled),
-                Emitter::Ch3FreqCnt => w.set_u16(col, channels.ch3.frequency_timer),
-                Emitter::Ch3WaveIdx => w.set_u8(col, channels.ch3.wave_position),
-                Emitter::Ch3Sample => {
-                    let byte = channels.ch3.ram[channels.ch3.wave_position as usize / 2];
-                    let nibble = if channels.ch3.wave_position.is_multiple_of(2) {
-                        byte >> 4
-                    } else {
-                        byte & 0x0F
-                    };
-                    w.set_u8(col, nibble);
-                }
-                Emitter::Ch3LenCnt => w.set_u8(col, channels.ch3.length.counter as u8),
-                // APU internal — channel 4
-                Emitter::Ch4Active => w.set_bool(col, channels.ch4.enabled.enabled),
-                Emitter::Ch4FreqCnt => w.set_u16(col, channels.ch4.divider),
-                Emitter::Ch4EnvVol => w.set_u8(col, channels.ch4.envelope.volume),
-                Emitter::Ch4Lfsr => w.set_u16(col, channels.ch4.lfsr),
-                Emitter::Ch4LenCnt => w.set_u8(col, channels.ch4.length.counter as u8),
-                // Pixel output
-                Emitter::Pix => {
-                    if pix_buffer.is_empty() {
-                        w.set_null(col);
-                    } else {
-                        w.set_str(col, pix_buffer);
-                    }
-                }
-                Emitter::PpuPixX => {
-                    if let Some(snap) = &ppu_snap {
-                        w.set_u8(col, snap.pix_count);
-                    } else {
-                        w.set_u8(col, 0);
-                    }
-                }
-                // VRAM write tracking
-                Emitter::VramAddr => {
-                    if vram_write_addr != 0 {
-                        w.set_u16(col, vram_write_addr);
-                    } else {
-                        w.set_null(col);
-                    }
-                }
-                Emitter::VramData => {
-                    if vram_write_addr != 0 {
-                        w.set_u8(col, vram_write_data);
-                    } else {
-                        w.set_null(col);
-                    }
-                }
-                // APU write tracking
-                Emitter::ApuWriteAddr => {
-                    if apu_write_addr != 0 {
-                        w.set_u16(col, apu_write_addr);
-                    } else {
-                        w.set_null(col);
-                    }
-                }
-                Emitter::ApuWriteData => {
-                    if apu_write_addr != 0 {
-                        w.set_u8(col, apu_write_data);
-                    } else {
-                        w.set_null(col);
-                    }
-                }
-                // PPU internal
-                Emitter::PpuInternal(ppu_field) => {
-                    emit_ppu_field(w, col, ppu_field, &ppu_snap);
-                }
-                // Unknown
-                Emitter::Unknown(ft, nullable) => {
-                    if *nullable {
-                        w.set_null(col);
-                    } else {
-                        match ft {
-                            FieldType::Bool => w.set_bool(col, false),
-                            FieldType::Str => w.set_str(col, ""),
-                            _ => w.set_u8(col, 0),
-                        }
-                    }
-                }
+                Source::Pipeline(cell) => emit_pipeline(w, col, *cell, &ppu_snap),
+                Source::Obs(observation) => emit_obs(
+                    w,
+                    col,
+                    *observation,
+                    column.nullable,
+                    &taps,
+                    pix_buffer,
+                    &ppu_snap,
+                ),
             }
         }
 
@@ -732,10 +410,214 @@ impl Tracer {
     }
 }
 
-/// Step one instruction dot-by-dot, capturing trace state at every CPU
-/// T-cycle and resolving STOP / VRAM-DMA holds at the boundary like `step`.
-/// The shared driver behind every tcycle-triggered capture.
-pub fn step_instruction_tcycle<M: Model>(
+/// Build the ordered column plan and the matching header field defs for a scope.
+/// Tier-1 (and, under `Full`, Tier-2a) schema fields lead; the observations
+/// follow. Every column's type metadata comes from the schema or the observation
+/// table — never re-authored here.
+fn build_columns(
+    schema: &SystemStateSchema,
+    scope: TraceScope,
+) -> (Vec<Column>, Vec<HeaderFieldDef>) {
+    let mut columns = Vec::new();
+    let mut defs = Vec::new();
+
+    for field in &schema.fields {
+        let include = match field.tier {
+            Tier::Observable => true,
+            Tier::Boundary => scope == TraceScope::Full,
+            Tier::Tick => false,
+        };
+        if !include {
+            continue;
+        }
+
+        let source = match PipelineCell::from_name(field.name) {
+            Some(cell) => Source::Pipeline(cell),
+            None => Source::Field(field.name),
+        };
+        columns.push(Column {
+            ty: field.ty,
+            nullable: field.nullable,
+            source,
+        });
+        defs.push(HeaderFieldDef {
+            name: field.name.to_string(),
+            field_type: wire_type(field.ty),
+            subsystem: Some(field.subsystem.to_string()),
+            layer: Some(tier_layer(field.tier).to_string()),
+            nullable: field.nullable,
+            dictionary: false,
+            source: match field.provenance {
+                Provenance::Hardware => None,
+                Provenance::Emulator(id) => Some(id.to_string()),
+            },
+        });
+    }
+
+    for obs in OBSERVATIONS {
+        columns.push(Column {
+            ty: obs.ty,
+            nullable: obs.nullable,
+            source: Source::Obs(obs.observation),
+        });
+        defs.push(HeaderFieldDef {
+            name: obs.name.to_string(),
+            field_type: wire_type(obs.ty),
+            subsystem: Some(obs.subsystem.to_string()),
+            layer: Some(obs.layer.to_string()),
+            nullable: obs.nullable,
+            dictionary: false,
+            source: Some("missingno".to_string()),
+        });
+    }
+
+    (columns, defs)
+}
+
+fn emit_value(
+    w: &mut MoreporkWriter,
+    col: usize,
+    ty: FieldType,
+    nullable: bool,
+    value: Option<&StateValue>,
+) {
+    match value {
+        Some(StateValue::Int(v)) => match ty {
+            FieldType::U8 => w.set_u8(col, *v as u8),
+            FieldType::U16 => w.set_u16(col, *v as u16),
+            FieldType::U32 => w.set_u64(col, *v as u64),
+            _ => w.set_u8(col, *v as u8),
+        },
+        Some(StateValue::Bool(b)) => w.set_bool(col, *b),
+        Some(StateValue::Text(t)) => w.set_str(col, t),
+        Some(StateValue::Null) | None => {
+            if nullable {
+                w.set_null(col);
+            } else {
+                // A non-nullable schema field the record did not carry: emit a
+                // type-appropriate zero so columns stay aligned.
+                match ty {
+                    FieldType::Bool => w.set_bool(col, false),
+                    FieldType::U16 => w.set_u16(col, 0),
+                    FieldType::U32 => w.set_u64(col, 0),
+                    FieldType::Str => w.set_str(col, ""),
+                    FieldType::U8 => w.set_u8(col, 0),
+                }
+            }
+        }
+    }
+}
+
+fn emit_pipeline(
+    w: &mut MoreporkWriter,
+    col: usize,
+    cell: PipelineCell,
+    snap: &Option<PpuTraceSnapshot>,
+) {
+    let Some(snap) = snap else {
+        w.set_null(col);
+        return;
+    };
+    match cell {
+        PipelineCell::BgwFifoA => w.set_u8(col, snap.bgw_fifo_a),
+        PipelineCell::BgwFifoB => w.set_u8(col, snap.bgw_fifo_b),
+        PipelineCell::SprFifoA => w.set_u8(col, snap.spr_fifo_a),
+        PipelineCell::SprFifoB => w.set_u8(col, snap.spr_fifo_b),
+        PipelineCell::PalPipe => w.set_u8(col, snap.pal_pipe),
+        PipelineCell::TfetchState => w.set_u8(col, snap.tfetch_state),
+        PipelineCell::SfetchState => w.set_u8(col, snap.sfetch_state),
+        PipelineCell::TileTempA => w.set_u8(col, snap.tile_temp_a),
+        PipelineCell::TileTempB => w.set_u8(col, snap.tile_temp_b),
+        PipelineCell::PixCount => w.set_u8(col, snap.pix_count),
+        PipelineCell::SpriteCount => w.set_u8(col, snap.sprite_count),
+        PipelineCell::ScanCount => w.set_u8(col, snap.scan_count),
+        PipelineCell::Rendering => w.set_bool(col, snap.rendering),
+        PipelineCell::WinMode => w.set_bool(col, snap.win_mode),
+    }
+}
+
+/// The per-step write taps and instruction address, snapshotted before the
+/// column loop so the emitter borrows no `self` field but the writer.
+struct ObsTaps {
+    op_addr: u16,
+    vram_addr: u16,
+    vram_data: u8,
+    apu_addr: u16,
+    apu_data: u8,
+}
+
+fn emit_obs(
+    w: &mut MoreporkWriter,
+    col: usize,
+    observation: Observation,
+    nullable: bool,
+    taps: &ObsTaps,
+    pix_buffer: &str,
+    ppu_snap: &Option<PpuTraceSnapshot>,
+) {
+    let ObsTaps {
+        op_addr,
+        vram_addr,
+        vram_data,
+        apu_addr,
+        apu_data,
+    } = *taps;
+    match observation {
+        Observation::OpAddr => w.set_u16(col, op_addr),
+        Observation::Pix => {
+            if pix_buffer.is_empty() {
+                w.set_null(col);
+            } else {
+                w.set_str(col, pix_buffer);
+            }
+        }
+        Observation::PixX => {
+            let count = ppu_snap.as_ref().map(|s| s.pix_count).unwrap_or(0);
+            w.set_u8(col, count);
+        }
+        Observation::VramAddr => {
+            if vram_addr != 0 {
+                w.set_u16(col, vram_addr);
+            } else if nullable {
+                w.set_null(col);
+            } else {
+                w.set_u16(col, 0);
+            }
+        }
+        Observation::VramData => {
+            if vram_addr != 0 {
+                w.set_u8(col, vram_data);
+            } else if nullable {
+                w.set_null(col);
+            } else {
+                w.set_u8(col, 0);
+            }
+        }
+        Observation::ApuWriteAddr => {
+            if apu_addr != 0 {
+                w.set_u16(col, apu_addr);
+            } else if nullable {
+                w.set_null(col);
+            } else {
+                w.set_u16(col, 0);
+            }
+        }
+        Observation::ApuWriteData => {
+            if apu_addr != 0 {
+                w.set_u8(col, apu_data);
+            } else if nullable {
+                w.set_null(col);
+            } else {
+                w.set_u8(col, 0);
+            }
+        }
+    }
+}
+
+/// Step one instruction dot-by-dot, capturing trace state at every CPU T-cycle
+/// and resolving STOP / VRAM-DMA holds at the boundary like `step`. The shared
+/// driver behind every tcycle-triggered capture.
+pub fn step_instruction_tcycle<M: ConsoleUi>(
     gb: &mut Console<M>,
     tracer: &mut Tracer,
 ) -> crate::execute::StepResult {
@@ -745,11 +627,11 @@ pub fn step_instruction_tcycle<M: Model>(
     gb.cpu_mut().bus.data_latch = 0;
     gb.cpu_mut().take_instruction_boundary();
 
-    // Speed is fixed across one instruction; a mid-instruction switch settles
-    // at the boundary in `resolve_stop`. Single speed captures once per T-cycle
+    // Speed is fixed across one instruction; a mid-instruction switch settles at
+    // the boundary in `resolve_stop`. Single speed captures once per T-cycle
     // (after the fall, combining both edges' frame flag); double speed captures
-    // after every master edge — the CPU runs at 2× the dot clock — and may
-    // retire mid-pair, deferring the fall to the next call.
+    // after every master edge — the CPU runs at 2× the dot clock — and may retire
+    // mid-pair, deferring the fall to the next call.
     let double_speed = gb.cpu_steps_per_dot() == 2;
 
     loop {
@@ -789,8 +671,8 @@ pub fn step_instruction_tcycle<M: Model>(
     }
 
     // Mirror `step`: resolve a settled STOP (CGB speed-switch blackout) and
-    // engage/release a VRAM-DMA CPU hold, so traced runs progress past STOP
-    // and run their DMAs like untraced ones.
+    // engage/release a VRAM-DMA CPU hold, so traced runs progress past STOP and
+    // run their DMAs like untraced ones.
     gb.resolve_stop(tcycles);
     gb.manage_dma_hold();
 
@@ -798,48 +680,5 @@ pub fn step_instruction_tcycle<M: Model>(
         new_screen,
         tcycles,
         sram_dirty: false,
-    }
-}
-
-fn emit_ppu_field(
-    w: &mut MoreporkWriter,
-    col: usize,
-    field: &PpuField,
-    snap: &Option<PpuTraceSnapshot>,
-) {
-    let snap = match snap {
-        Some(s) => s,
-        None => {
-            match field {
-                PpuField::Rendering | PpuField::WinMode => w.set_bool(col, false),
-                _ => w.set_u8(col, 0),
-            }
-            return;
-        }
-    };
-
-    match field {
-        PpuField::Oam { index, component } => {
-            let val = match component {
-                OamComponent::X => snap.sprite_x[*index],
-                OamComponent::Id => snap.sprite_id[*index],
-                OamComponent::Attr => snap.sprite_attr[*index],
-            };
-            w.set_u8(col, val);
-        }
-        PpuField::BgwFifoA => w.set_u8(col, snap.bgw_fifo_a),
-        PpuField::BgwFifoB => w.set_u8(col, snap.bgw_fifo_b),
-        PpuField::SprFifoA => w.set_u8(col, snap.spr_fifo_a),
-        PpuField::SprFifoB => w.set_u8(col, snap.spr_fifo_b),
-        PpuField::PalPipe => w.set_u8(col, snap.pal_pipe),
-        PpuField::TfetchState => w.set_u8(col, snap.tfetch_state),
-        PpuField::SfetchState => w.set_u8(col, snap.sfetch_state),
-        PpuField::TileTempA => w.set_u8(col, snap.tile_temp_a),
-        PpuField::TileTempB => w.set_u8(col, snap.tile_temp_b),
-        PpuField::PixCount => w.set_u8(col, snap.pix_count),
-        PpuField::SpriteCount => w.set_u8(col, snap.sprite_count),
-        PpuField::ScanCount => w.set_u8(col, snap.scan_count),
-        PpuField::Rendering => w.set_bool(col, snap.rendering),
-        PpuField::WinMode => w.set_bool(col, snap.win_mode),
     }
 }

@@ -10,7 +10,9 @@ morepork = ["dep:morepork", "dep:sha2"]
 missingno-6502 = { path = "../missingno-6502" }
 missingno-core = { path = "../missingno-core" }
 rgb = { workspace = true }
-morepork = { git = "https://github.com/ajoneil/morepork", optional = true }
+# The in-tree trace engine (cloned into receipts/), shared with the other cores
+# so the whole workspace speaks one trace format. Requires that clone present.
+morepork = { path = "../../receipts/resources/morepork/crates/morepork", optional = true }
 sha2 = { version = "0.11", optional = true }
 
 [dev-dependencies]

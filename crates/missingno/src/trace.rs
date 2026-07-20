@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::process;
 
-use missingno_gb::trace::{Profile, Tracer, Trigger};
-use missingno_gb::{BootRom, Console, GameBoy, Model};
+use missingno_gb::system::ConsoleUi;
+use missingno_gb::trace::{Profile, TraceScope, Tracer, Trigger};
+use missingno_gb::{BootRom, Console, GameBoy};
 use missingno_gbc::GameBoyColor;
 
 use crate::app::system::{self, TraceRequest, gb::GbLaunch};
@@ -84,15 +85,29 @@ pub(crate) fn trace_gb(request: TraceRequest) {
     );
 }
 
-fn trace_console<M: Model>(mut gb: Console<M>, profile: &Profile, output_path: &Path, cycles: u64) {
+fn trace_console<M: ConsoleUi>(
+    mut gb: Console<M>,
+    profile: &Profile,
+    output_path: &Path,
+    cycles: u64,
+) {
     let title = gb.cartridge().title().to_string();
     let boot = missingno_gb::trace::BootRom::Skip;
 
-    let mut tracer = Tracer::create(output_path, profile, &gb, boot, M::TRACE_MODEL_NAME)
-        .unwrap_or_else(|e| {
-            eprintln!("error: failed to create trace file: {e}");
-            process::exit(1);
-        });
+    // The CLI trace is a reference capture, so it records the full tier depth;
+    // the column set comes from the state schema and the cadence from the profile.
+    let mut tracer = Tracer::create(
+        output_path,
+        &gb,
+        profile.trigger.clone(),
+        TraceScope::Full,
+        boot,
+        M::TRACE_MODEL_NAME,
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("error: failed to create trace file: {e}");
+        process::exit(1);
+    });
     tracer.mark_frame().unwrap();
 
     let mut tcycles: u64 = 0;
