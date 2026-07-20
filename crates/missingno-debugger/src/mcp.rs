@@ -22,11 +22,14 @@ use serde_json::{Value, json};
 
 use crate::factory::{self, LoadOptions};
 use crate::session::{Session, StopReason};
+use crate::shared::SharedSession;
 
-/// The server's currently loaded ROM: its session and the name of the core the
-/// factory recognised it as. `None` when the server is idle.
+/// The server's currently loaded ROM: its shared session and the name of the
+/// core the factory recognised it as. `None` when the server is idle. This
+/// transport is a client — every tool routes through the session handle onto the
+/// session thread, where the generic [`Session`] seam answers it.
 struct LoadedSession {
-    session: Session,
+    shared: SharedSession,
     core_name: &'static str,
 }
 
@@ -85,10 +88,13 @@ impl Tool {
     }
 }
 
-/// Serve a preloaded `session` as an MCP tool server over stdio. `core_name`
-/// names the core in `status` and the server handshake.
-pub fn serve(session: Session, core_name: &'static str) -> io::Result<()> {
-    run(Some(LoadedSession { session, core_name }))
+/// Serve a preloaded shared `session` as an MCP tool server over stdio.
+/// `core_name` names the core in `status` and the server handshake.
+pub fn serve(session: SharedSession, core_name: &'static str) -> io::Result<()> {
+    run(Some(LoadedSession {
+        shared: session,
+        core_name,
+    }))
 }
 
 /// Serve an idle MCP tool server: it starts with no ROM, advertising only
@@ -106,7 +112,7 @@ fn run(mut loaded: Option<LoadedSession>) -> io::Result<()> {
     match &loaded {
         Some(loaded) => eprintln!(
             "mcp: {} ({}) ready on stdio",
-            loaded.session.game_title(),
+            loaded.shared.handle().with_session(|s| s.game_title()),
             loaded.core_name
         ),
         None => eprintln!("mcp: idle (no ROM loaded) ready on stdio"),
@@ -208,7 +214,10 @@ fn tools_list(loaded: &Option<LoadedSession>) -> Value {
             .collect(),
         // Loaded: the full generic surface, plus the session-management tools so
         // the ROM can be swapped or ejected without restarting the server.
-        Some(loaded) => generic_tools(&loaded.session)
+        Some(loaded) => loaded
+            .shared
+            .handle()
+            .with_session(|session| generic_tools(session))
             .into_iter()
             .chain([load_rom_tool(), eject_tool()])
             .map(|tool| tool.to_json())
@@ -545,10 +554,15 @@ fn tools_call(loaded: &mut Option<LoadedSession>, params: &Value) -> Value {
         "eject" => eject(loaded),
         _ => match loaded {
             Some(loaded) => {
-                match call_generic(&mut loaded.session, loaded.core_name, name, &args) {
-                    Some(outcome) => outcome,
-                    None => Err(format!("unknown tool: {name}")),
-                }
+                let core_name = loaded.core_name;
+                let tool = name.to_string();
+                let arguments = args.clone();
+                loaded.shared.handle().with_session(move |session| {
+                    match call_generic(session, core_name, &tool, &arguments) {
+                        Some(outcome) => outcome,
+                        None => Err(format!("unknown tool: {tool}")),
+                    }
+                })
             }
             None if name == "status" => text(idle_status_text()),
             None => Err(format!("no ROM loaded; call load_rom first (tool: {name})")),
@@ -579,9 +593,9 @@ fn load_rom(loaded: &mut Option<LoadedSession>, args: &Value) -> ToolOutcome {
     let core_name = factory::factory_for(path_ref, &bytes)
         .map(|factory| factory.name)
         .unwrap_or("unknown");
-    let session = Session::new(debugger);
-    let title = session.game_title();
-    *loaded = Some(LoadedSession { session, core_name });
+    let shared = SharedSession::spawn(debugger);
+    let title = shared.handle().with_session(|s| s.game_title());
+    *loaded = Some(LoadedSession { shared, core_name });
     text(format!("loaded {core_name}: {title}"))
 }
 

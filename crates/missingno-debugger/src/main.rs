@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use missingno_debugger::Session;
+use missingno_debugger::SharedSession;
 use missingno_debugger::factory;
 use missingno_debugger::http;
 
@@ -67,6 +67,7 @@ fn run() -> Result<(), String> {
     let debugger = console
         .into_debugger()
         .map_err(|_| "this system has no debugger backend".to_string())?;
+    let session = SharedSession::spawn(debugger);
 
     if args.mcp {
         #[cfg(feature = "mcp")]
@@ -74,14 +75,13 @@ fn run() -> Result<(), String> {
             let core_name = factory::factory_for(&rom_path, &rom)
                 .map(|factory| factory.name)
                 .unwrap_or("unknown");
-            return missingno_debugger::mcp::serve(Session::new(debugger), core_name)
-                .map_err(|e| e.to_string());
+            return missingno_debugger::mcp::serve(session, core_name).map_err(|e| e.to_string());
         }
         #[cfg(not(feature = "mcp"))]
         return Err("this build has no MCP transport (enable the `mcp` feature)".to_string());
     }
 
-    http::serve(Session::new(debugger), args.port).map_err(|e| e.to_string())
+    http::serve(session, args.port).map_err(|e| e.to_string())
 }
 
 fn main() -> ExitCode {

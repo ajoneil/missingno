@@ -6,7 +6,9 @@
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::time::Duration;
 
+use missingno_core::HighPass;
 use missingno_core::cdl::CdlWindow;
 use missingno_core::disasm::{ReadMemory, Row, window_after};
 use missingno_core::graphics::GraphicsView;
@@ -14,8 +16,10 @@ use missingno_core::inspect::{
     MemoryRegion, RegisterGroup, Section, Watch, WatchParam, WatchTerm, Watchable,
 };
 use missingno_core::symbols::SymbolTable;
-use missingno_core::system::{ControlId, ControlInput, RunningStatus, StepOutcome, SystemDebugger};
-use missingno_core::video::{DisplayTechnology, RawFrame, RgbaFrame};
+use missingno_core::system::{
+    ControlId, ControlInput, DebugView, RunningStatus, StateError, StepOutcome, SystemDebugger,
+};
+use missingno_core::video::{DisplayTechnology, Frame, RawFrame, RgbaFrame};
 use missingno_core::waveform::ChannelWave;
 
 /// Why the last stepping call returned. The transport-carried form of
@@ -113,8 +117,29 @@ impl Session {
     }
 
     pub fn step_frame(&mut self) -> StopReason {
+        self.advance_frame().0
+    }
+
+    /// Step one frame and hand back both the stop reason and the display frame
+    /// it produced — the run-loop primitive. `step_frame` is this dropping the
+    /// frame; the recorder and the frame slot need the frame itself.
+    pub fn advance_frame(&mut self) -> (StopReason, Option<Frame>) {
         let outcome = self.debugger.step_frame();
-        self.record(outcome)
+        let completed_frame = matches!(
+            &outcome,
+            StepOutcome::Completed { frame: Some(_) } | StepOutcome::Breakpoint { frame: Some(_) }
+        );
+        if completed_frame {
+            self.frame += 1;
+        }
+        let (reason, frame) = match outcome {
+            StepOutcome::Completed { frame } => (StopReason::Completed, frame),
+            StepOutcome::Breakpoint { frame } => (StopReason::Breakpoint, frame),
+            StepOutcome::WatchHit(watch) => (StopReason::Watch(watch), None),
+            StepOutcome::BudgetExhausted => (StopReason::BudgetExhausted, None),
+        };
+        self.last_stop = reason.clone();
+        (reason, frame)
     }
 
     /// The name of this core's sub-instruction step unit, or `None` when the
@@ -360,6 +385,46 @@ impl Session {
             })
             .collect();
         Ok(lines)
+    }
+
+    /// Wall-clock duration of one emulated frame, for the run loop's pacing.
+    pub fn frame_interval(&self) -> Duration {
+        self.debugger.frame_interval()
+    }
+
+    /// An owned per-vblank inspection snapshot, published to the run loop's
+    /// snapshot slot while free-running.
+    pub fn snapshot(&self) -> DebugView {
+        self.debugger.snapshot(self.frame)
+    }
+
+    /// Drain the console's pending stereo samples — the run loop pulls these
+    /// each frame so the audio buffer cannot grow unbounded.
+    pub fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
+        self.debugger.drain_audio_samples()
+    }
+
+    /// The coupling the console's board puts between its audio pads and the jack.
+    pub fn audio_coupling(&self) -> Option<HighPass> {
+        self.debugger.audio_coupling()
+    }
+
+    /// A serialized machine state in memory, if the system has a backend. The
+    /// recorder's initial state and the run loop's boundary checks read this.
+    pub fn save_state_bytes(&self) -> Option<Vec<u8>> {
+        self.debugger.save_state()
+    }
+
+    /// Restore a serialized machine state from memory (the recorder re-seats the
+    /// console from its own captured state so the timeline is self-consistent).
+    pub fn load_state_bytes(&mut self, bytes: &[u8]) -> Result<(), StateError> {
+        self.debugger.load_state(bytes)
+    }
+
+    /// Hand back the owned debugger — the seam by which a bare session becomes a
+    /// shared, thread-owned one.
+    pub fn into_debugger(self) -> Box<dyn SystemDebugger> {
+        self.debugger
     }
 }
 

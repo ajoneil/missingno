@@ -15,5 +15,7 @@ pub mod http;
 #[cfg(feature = "mcp")]
 pub mod mcp;
 pub mod session;
+pub mod shared;
 
 pub use session::{DisasmLine, Session, StopReason, validate_watch};
+pub use shared::{MemoryInterest, RunningReadout, SessionHandle, SharedSession};

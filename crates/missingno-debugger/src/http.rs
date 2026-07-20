@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 use crate::session::{DisasmLine, Session, StopReason};
+use crate::shared::SharedSession;
 
 /// Cap on a single `/memory` read, so a bad length can't allocate unbounded.
 const MAX_MEMORY_LEN: u32 = 0x1000;
@@ -25,17 +26,25 @@ const MAX_DISASM_COUNT: usize = 256;
 /// Cap on sub-instruction ticks run by a single `/step-tick`.
 const MAX_TICK_COUNT: usize = 1_000_000;
 
-/// Serve `session` on `127.0.0.1:<port>` until the process is killed. Every
-/// route reads the console through the [`Session`] seam, so the same routes
-/// serve any core.
-pub fn serve(mut session: Session, port: u16) -> std::io::Result<()> {
+/// Serve `session` on `127.0.0.1:<port>` until the process is killed. This
+/// transport is a client of the shared session: each request routes through the
+/// handle onto the session thread, where the same generic [`Session`] seam
+/// answers it, so the same routes serve any core. Accepts anything that becomes
+/// a [`SharedSession`] — a `SharedSession` directly, or a bare `Session` a
+/// caller built itself.
+pub fn serve(session: impl Into<SharedSession>, port: u16) -> std::io::Result<()> {
+    let session = session.into();
+    let client = session.handle();
     let address = format!("127.0.0.1:{port}");
     let server = Server::http(&address)
         .map_err(|e| std::io::Error::other(format!("failed to bind {address}: {e}")))?;
-    eprintln!("headless debugger ready: {}", session.game_title());
+    eprintln!(
+        "headless debugger ready: {}",
+        client.with_session(|session| session.game_title())
+    );
     eprintln!("listening on http://{address}");
     for request in server.incoming_requests() {
-        handle(request, &mut session);
+        client.with_session(move |session| handle(request, session));
     }
     Ok(())
 }
