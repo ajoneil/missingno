@@ -23,12 +23,6 @@ The investigate skill is a **pure dispatcher**. It decides which subroutine to i
 | Planning code changes | `/design` | in-context |
 | Making code changes | `/implement` | in-context |
 
-**Subagent skills** are fact-finding tasks that produce large diagnostic outputs (logs, source reads, measurement data) — running them as Task subagents keeps that noise out of main context.
-
-**In-context skills** are synthesis tasks where conversation continuity is load-bearing — the design rationale, the user's clarifications, what was just tried. They run on the main agent under their own scope discipline.
-
-Both flavors produce a receipt as their durable deliverable; both require a Question/Context brief written into summary.md before invocation.
-
 ### Critical rules
 1. **summary.md before and after every dispatch.** If context compacted right now, could you continue from summary.md alone?
 2. **Skills are subroutine calls, not stopping points.** After a subagent returns or an in-context skill exits, immediately read the receipt, update summary.md, and continue in the same turn.
@@ -106,30 +100,15 @@ The core loop:
 ### 1. Scope the problem
 
 - Ask the developer what's wrong and what the expected vs actual behavior is.
-- Once the scope is clear, propose a receipt folder name and get approval. Create the receipt folder immediately with this structure:
-  ```
-  receipts/investigations/<YYYY-MM-DD-HHMM>-<short-name>/
-  ├── summary.md        # Create now with Status: Diagnosing
-  ├── research/         # Investigation-specific notes
-  ├── analysis/         # Analysis receipts (numbered chronologically)
-  ├── designs/          # Design receipts
-  ├── implementation/   # Implementation receipts
-  ├── measurements/     # Measurement receipts
-  └── logs/             # Raw diagnostic output captures
-  ```
+- Once the scope is clear, propose a receipt folder name and get approval. Create the receipt folder immediately (structure and naming conventions in "Receipt conventions" below) and write summary.md now with Status: Diagnosing.
 - **Capture a baseline.** Run `./scripts/test-report-gb.sh --diff` directly (not via a subroutine — use `-gbc` variant for CGB investigations) and record the pass/fail/ignored counts in summary.md's `## Baseline` section. The steady-state baseline is all-green: an investigation now typically triggers from a refactor-phase regression (a test that started failing) or a new behaviour question, not from a standing failure set — the baseline pins down exactly which tests, if any, are red. This is investigate's bookkeeping — like branch hygiene, it's not delegated. This is a blocking prerequisite: no other work happens until the baseline is recorded.
 - Invoke `/analyze` to interpret the initial results.
 - Classify the problem type and write it in summary.md.
 
 **For compatibility investigations:**
-- After capturing the baseline, **check available data sources before generating new data.** In order:
-  1. **The DMG Timing Specification** (https://ajoneil.github.io/dmg-timing-spec/): For PPU-related failures, this is the canonical hardware reference. Dispatch `/research` to check whether the behaviour under test is covered. If the spec has a gap a dmg-sim run could fill, **raise the gap with the user** before proceeding so the spec can be updated — don't route around it via emulator source.
-  2. **gekkio's gb-ctr** (https://gekkio.fi/files/gb-docs/gbctr.pdf): Primary written reference for non-PPU subsystems (timers, interrupts, CPU, DMA, etc.). Dispatch `/research` to consult.
-  3. **Hardware timing data** (`receipts/resources/gb-timing-data/campaigns/`): Check if a measurement campaign covers the behavior. Campaign CSV data provides definitive cycle-level measurements from real hardware. If a relevant campaign exists but has no results yet, note that it would be valuable when complete.
-  4. **`/compare-traces`**: Invoke to find the exact divergence point between missingno and a reference emulator. The reference emulators (SameBoy, DocBoy, gambatte) are all behavioural — prefer SameBoy, then DocBoy, then gambatte; they localise *where* execution diverges, but the *why* comes from the hardware, not from matching an emulator. For small focused tests, direct diff is productive. For larger tests, use individual trace inspection (`morepork query`, `morepork render`) to understand behavior.
-  5. **`/inspect`** (debugger): Fall back when you need sub-dot observation, internal pipeline state, or information that traces can't provide.
-  6. **dmg-sim** (`receipts/resources/dmg-sim/`, via `scripts/dmg-sim-observe.sh`): Gate-level simulation. Runs are slow and waveform analysis is specialised — **surface dmg-sim needs to the user** (with the specific signals / timing event to measure) rather than invoking it from a skill dispatch. When the user runs dmg-sim, the findings should go into the DMG Timing Specification.
-  7. **Slowpeek** (`receipts/resources/slowpeek/`): If the investigation requires measuring a specific hardware behavior that no existing data source covers, note that a Slowpeek sweep test could provide the definitive answer. Check whether the hardware serial path is available before attempting hardware mode; flag when a sweep would be useful.
+- After capturing the baseline, **check available data sources before generating new data.** The ordered source hierarchy — and how to use each source, including the core's gate-level sim — is the target core's methodology doc (`crates/missingno-<core>/AGENTS.md`); read it and dispatch `/research` for documentary sources. Then:
+  1. **`/compare-traces`**: Invoke to find the exact divergence point between missingno and a reference emulator. The reference emulators are all behavioural — they localise *where* execution diverges, but the *why* comes from the hardware, not from matching an emulator. For small focused tests, direct diff is productive. For larger tests, use individual trace inspection (`morepork query`, `morepork render`) to understand behavior.
+  2. **`/inspect`** (debugger): Fall back when you need sub-dot observation, internal pipeline state, or information that traces can't provide.
 - **When `/compare-traces` is not enough:** If the trace comparison can't answer the question (e.g. you need internal pipeline state, sub-dot phase timing, or the reference emulator has no trace available), invoke `/inspect` for targeted observation at the divergence point that `/compare-traces` identified.
 - **Boot ROM consideration.** If boot state is suspected to play a role (e.g., tests that depend on initial register values, VRAM contents, or hardware state that the boot ROM sets up differently from post-boot initialization), ask the user for a DMG boot ROM path and re-run the specific failing test with `DMG_BOOT_ROM=<path>`. Boot ROMs are proprietary and cannot be in the repo. Do NOT run the entire test suite with the boot ROM — it adds significant startup time per test. Use it only on targeted tests.
 - Classify the failure type:
@@ -139,7 +118,7 @@ The core loop:
 
 ### 2. Understand the domain and research correct behavior
 
-- Identify the target core first, and read its methodology doc (`crates/missingno-<core>/AGENTS.md`) — the ground-truth hierarchy is per-core (DMG: spec + dmg-sim; VCS: Sim2600 for CPU/TIA, datasheet/schematics for RIOT; CGB: hardware test-ROM values). This decides which sources `/research` should consult.
+- Identify the target core first, and read its methodology doc (`crates/missingno-<core>/AGENTS.md`) — the ground-truth hierarchy is per-core and decides which sources `/research` should consult.
 - Identify the hardware subsystem. Use `/research` to fill knowledge gaps — frame questions as "what does the hardware do?" not "what does emulator X do?"
 - Use `/research` any time you're uncertain about expected behavior — not just at the start.
 - Pass research results through `/analyze` before updating summary.md.
