@@ -152,7 +152,7 @@ Run `./scripts/test-report-gb.sh --diff` directly (investigate's bookkeeping; `-
 
 Observation priority: `/compare-traces` → `/inspect` → `/instrument`. Don't guess — observe.
 
-- `/inspect` first for runtime observation. When the debugger can't observe the needed state, fall back to `/instrument` directly — no approval step. If the gap is one the headless debugger could reasonably cover (and would keep being useful), consider extending the debugger instead. The headless server (`missingno-debugger` crate) is generic over every core — status/registers/memory/disassembly/watch endpoints work on VCS and the stepping cores too; only the deep PPU/APU routes are GB-specific extensions.
+- `/inspect` first for runtime observation. When the debugger can't observe the needed state, fall back to `/instrument` directly — no approval step. If the gap is one the headless debugger could reasonably cover (and would keep being useful), consider extending the debugger instead. The headless server (`missingno-debugger` crate) is generic over every core — every endpoint, including the chip-state sections, works on VCS and the stepping cores; a core's own state reaches them by filling the seam's inspection surfaces.
 - `/instrument` modifies code temporarily — instrumentation must be removed before any merge.
 - Pass all observation results through `/analyze` before updating summary.md.
 

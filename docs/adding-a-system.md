@@ -79,7 +79,7 @@ absent, so a family declares only what its hardware has.
 
 Implement it and two debuggers light up with no further per-core code:
 
-- **The headless server (`missingno-debugger`).** Its transport-agnostic
+- **The headless server (`missingno-debugger`).** `missingno-session`'s
   `Session` reads the console entirely through the seam; the HTTP transport
   (scripted/bulk access) and the MCP-over-stdio transport (interactive agent
   use) are both purely generic session calls, with no core-specific code
