@@ -9,14 +9,13 @@ use missingno_core::graphics::{
 };
 use missingno_core::inspect::{
     BitTable, PairMatrix, PixelStrip, Pointer, Register, RegisterPair, Row, Section, SectionBlock,
-    SwatchRow, Sweep, Tone, ValueStyle, Watch, WatchTerm,
+    SwatchRow, Sweep, Tone, ValueStyle, Watch,
 };
 use missingno_core::waveform::ChannelWave;
 use serde_json::{Value, json};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
-use missingno_core::system::{ControlId, ControlInput};
-
+use missingno_session::request::{parse_control, parse_hex, parse_watch_terms};
 use missingno_session::session::{DisasmLine, Session, StopReason};
 use missingno_session::shared::{SessionHandle, SharedSession};
 
@@ -68,13 +67,15 @@ fn session_route(mut request: Request, client: &SessionHandle) -> Option<Request
             client.pause();
             respond_json(request, run_state_json(client));
         }
-        (Method::Post, "/control") => match parse_control(&mut request) {
-            Ok((control, input)) => {
-                client.set_control(control, input);
-                respond_json(request, json!({ "control": control.0 }));
+        (Method::Post, "/control") => {
+            match read_json_body(&mut request).and_then(|body| parse_control(&body)) {
+                Ok((control, input)) => {
+                    client.set_control(control, input);
+                    respond_json(request, json!({ "control": control.0 }));
+                }
+                Err(message) => respond_error(request, 400, &message),
             }
-            Err(message) => respond_error(request, 400, &message),
-        },
+        }
         (Method::Post, "/state/save") => match read_path_body(&mut request) {
             Ok(path) => match client.save_state(path.clone().into()) {
                 Ok(()) => respond_json(request, json!({ "saved": path })),
@@ -126,28 +127,14 @@ fn run_state_json(client: &SessionHandle) -> Value {
     json!({ "running": client.is_running(), "recording": client.is_recording() })
 }
 
-fn parse_control(request: &mut Request) -> Result<(ControlId, ControlInput), String> {
+/// Read a request body as JSON, so the shared argument parsers can take it.
+fn read_json_body(request: &mut Request) -> Result<Value, String> {
     let mut body = String::new();
     request
         .as_reader()
         .read_to_string(&mut body)
         .map_err(|_| "could not read request body".to_string())?;
-    let value: Value = serde_json::from_str(&body).map_err(|e| format!("invalid JSON: {e}"))?;
-    let control = value
-        .get("control")
-        .and_then(Value::as_u64)
-        .and_then(|n| u8::try_from(n).ok())
-        .ok_or("'control' must be an integer 0-255")?;
-    let input = match value.get("axis").and_then(Value::as_f64) {
-        Some(axis) => ControlInput::Axis(axis as f32),
-        None => ControlInput::Digital(
-            value
-                .get("pressed")
-                .and_then(Value::as_bool)
-                .ok_or("provide 'pressed' (bool) or 'axis' (0.0-1.0)")?,
-        ),
-    };
-    Ok((ControlId(control), input))
+    serde_json::from_str(&body).map_err(|e| format!("invalid JSON: {e}"))
 }
 
 fn handle(request: Request, session: &mut Session) {
@@ -816,7 +803,7 @@ fn recording_replay(mut request: Request, session: &mut Session) {
 
 fn disassembly(request: Request, session: &Session, query: &str) {
     let at = match query_param(query, "at") {
-        Some(text) => match parse_hex_u32(&text) {
+        Some(text) => match parse_hex(&text) {
             Ok(address) => address,
             Err(message) => return respond_error(request, 400, &message),
         },
@@ -901,7 +888,7 @@ fn memory(request: Request, session: &Session, method: &Method, path: &str) {
         Some((address, length)) => (address, Some(length)),
         None => (rest, None),
     };
-    let address = match parse_hex_u32(address_text) {
+    let address = match parse_hex(address_text) {
         Ok(address) => address,
         Err(message) => return respond_error(request, 400, &message),
     };
@@ -926,7 +913,7 @@ fn memory(request: Request, session: &Session, method: &Method, path: &str) {
 }
 
 fn breakpoint_edit(request: Request, session: &mut Session, method: &Method, path: &str) {
-    let address = match parse_hex_u32(&path["/breakpoints/".len()..]) {
+    let address = match parse_hex(&path["/breakpoints/".len()..]) {
         Ok(address) => address,
         Err(message) => return respond_error(request, 400, &message),
     };
@@ -944,11 +931,7 @@ fn breakpoint_edit(request: Request, session: &mut Session, method: &Method, pat
 }
 
 fn watch_edit(mut request: Request, session: &mut Session, method: Method) {
-    let mut body = String::new();
-    if request.as_reader().read_to_string(&mut body).is_err() {
-        return respond_error(request, 400, "could not read request body");
-    }
-    let terms = match parse_watch_terms(&body) {
+    let terms = match read_json_body(&mut request).and_then(|body| parse_watch_terms(&body)) {
         Ok(terms) => terms,
         Err(message) => return respond_error(request, 400, &message),
     };
@@ -968,49 +951,6 @@ fn watch_edit(mut request: Request, session: &mut Session, method: Method) {
         }
         Err(message) => respond_error(request, 400, &message),
     }
-}
-
-fn parse_watch_terms(body: &str) -> Result<Vec<WatchTerm>, String> {
-    let value: Value = serde_json::from_str(body).map_err(|e| format!("invalid JSON: {e}"))?;
-    if let Some(terms) = value.get("terms").and_then(|terms| terms.as_array()) {
-        terms.iter().map(parse_watch_term).collect()
-    } else {
-        Ok(vec![parse_watch_term(&value)?])
-    }
-}
-
-fn parse_watch_term(value: &Value) -> Result<WatchTerm, String> {
-    let key = value
-        .get("key")
-        .and_then(|key| key.as_str())
-        .ok_or("watch term missing 'key'")?
-        .to_string();
-    Ok(WatchTerm {
-        key,
-        address: parse_optional_u32(value.get("address"))?,
-        value: parse_optional_u32(value.get("value"))?,
-    })
-}
-
-fn parse_optional_u32(value: Option<&Value>) -> Result<Option<u32>, String> {
-    match value {
-        None | Some(Value::Null) => Ok(None),
-        Some(Value::Number(number)) => number
-            .as_u64()
-            .and_then(|n| u32::try_from(n).ok())
-            .map(Some)
-            .ok_or_else(|| "number out of range".to_string()),
-        Some(Value::String(text)) => parse_hex_u32(text).map(Some),
-        Some(_) => Err("expected a number or hex string".to_string()),
-    }
-}
-
-fn parse_hex_u32(text: &str) -> Result<u32, String> {
-    let trimmed = text
-        .trim()
-        .trim_start_matches("0x")
-        .trim_start_matches("0X");
-    u32::from_str_radix(trimmed, 16).map_err(|_| format!("invalid hex value: {text}"))
 }
 
 fn query_param(query: &str, name: &str) -> Option<String> {

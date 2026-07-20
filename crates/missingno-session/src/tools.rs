@@ -8,11 +8,10 @@
 use missingno_core::graphics::{GraphicsView, Object, ObjectTable, PaletteSet, TileAtlas};
 use missingno_core::inspect::{
     BitTable, PairMatrix, PixelStrip, Register, Section, SectionBlock, SwatchRow, ValueStyle,
-    WatchTerm,
 };
-use missingno_core::system::{ControlId, ControlInput};
 use serde_json::{Value, json};
 
+use crate::request::{parse_control, parse_hex_arg, parse_watch_terms};
 use crate::session::{Session, StopReason};
 use crate::shared::SessionHandle;
 
@@ -867,40 +866,6 @@ fn watches_text(session: &Session) -> String {
         .join("\n")
 }
 
-fn parse_watch_terms(args: &Value) -> Result<Vec<WatchTerm>, String> {
-    if let Some(terms) = args.get("terms").and_then(Value::as_array) {
-        terms.iter().map(parse_watch_term).collect()
-    } else {
-        Ok(vec![parse_watch_term(args)?])
-    }
-}
-
-fn parse_watch_term(value: &Value) -> Result<WatchTerm, String> {
-    let key = value
-        .get("key")
-        .and_then(Value::as_str)
-        .ok_or("watch term missing 'key'")?
-        .to_string();
-    Ok(WatchTerm {
-        key,
-        address: parse_optional_u32(value.get("address"))?,
-        value: parse_optional_u32(value.get("value"))?,
-    })
-}
-
-fn parse_optional_u32(value: Option<&Value>) -> Result<Option<u32>, String> {
-    match value {
-        None | Some(Value::Null) => Ok(None),
-        Some(Value::Number(number)) => number
-            .as_u64()
-            .and_then(|n| u32::try_from(n).ok())
-            .map(Some)
-            .ok_or_else(|| "number out of range".to_string()),
-        Some(Value::String(text)) => parse_hex(text).map(Some),
-        Some(_) => Err("expected a number or hex string".to_string()),
-    }
-}
-
 fn get_frame(session: &Session) -> ToolOutcome {
     let frame = session.frame_rgba();
     let png = encode_png(frame.width, frame.height, &frame.pixels)?;
@@ -913,22 +878,9 @@ fn get_frame(session: &Session) -> ToolOutcome {
 /// Driven through the session's command queue rather than the debugger, so an
 /// agent's input lands in an active recording exactly as a user's does.
 fn set_control(handle: &SessionHandle, args: &Value) -> ToolOutcome {
-    let control = args
-        .get("control")
-        .and_then(Value::as_u64)
-        .and_then(|n| u8::try_from(n).ok())
-        .ok_or("'control' must be an integer 0-255")?;
-    let input = if let Some(axis) = args.get("axis").and_then(Value::as_f64) {
-        ControlInput::Axis(axis as f32)
-    } else {
-        let pressed = args
-            .get("pressed")
-            .and_then(Value::as_bool)
-            .ok_or("provide 'pressed' (bool) or 'axis' (0.0-1.0)")?;
-        ControlInput::Digital(pressed)
-    };
-    handle.set_control(ControlId(control), input);
-    text(format!("control {control} set"))
+    let (control, input) = parse_control(args)?;
+    handle.set_control(control, input);
+    text(format!("control {} set", control.0))
 }
 
 // --- get_waveforms ------------------------------------------------------------
@@ -1472,27 +1424,6 @@ fn render_pixel_strip(strip: &PixelStrip, out: &mut String) {
     out.push_str(&format!("  {label}: {glyphs}\n"));
 }
 
-// --- argument parsing ---------------------------------------------------------
-
-fn parse_hex_arg(args: &Value, name: &str) -> Result<u32, String> {
-    match args.get(name) {
-        Some(Value::String(text)) => parse_hex(text),
-        Some(Value::Number(number)) => number
-            .as_u64()
-            .and_then(|n| u32::try_from(n).ok())
-            .ok_or_else(|| format!("'{name}' out of range")),
-        _ => Err(format!("'{name}' must be a hex string or integer")),
-    }
-}
-
-fn parse_hex(text: &str) -> Result<u32, String> {
-    let trimmed = text
-        .trim()
-        .trim_start_matches("0x")
-        .trim_start_matches("0X");
-    u32::from_str_radix(trimmed, 16).map_err(|_| format!("invalid hex value: {text}"))
-}
-
 // --- PNG + base64 -------------------------------------------------------------
 
 fn encode_png(width: u32, height: u32, pixels: &[u8]) -> Result<Vec<u8>, String> {
@@ -1626,21 +1557,6 @@ mod tests {
         // Empty and zero-width windows render nothing.
         assert!(sparkline(&[], 15, SPARK_WIDTH).is_empty());
         assert!(sparkline(&[1, 2, 3], 15, 0).is_empty());
-    }
-
-    #[test]
-    fn parse_hex_accepts_prefixes_and_plain() {
-        assert_eq!(parse_hex("ff40").unwrap(), 0xff40);
-        assert_eq!(parse_hex("0xFF40").unwrap(), 0xff40);
-        assert!(parse_hex("nope").is_err());
-    }
-
-    #[test]
-    fn parse_hex_arg_takes_string_or_number() {
-        let args = json!({ "a": "1000", "b": 512 });
-        assert_eq!(parse_hex_arg(&args, "a").unwrap(), 0x1000);
-        assert_eq!(parse_hex_arg(&args, "b").unwrap(), 512);
-        assert!(parse_hex_arg(&args, "missing").is_err());
     }
 
     #[test]

@@ -9,7 +9,8 @@
 //! that knows concrete cores.
 //!
 //! Everything here is transport-free: an embedder depending on this crate alone
-//! gets a running, inspectable machine with no server linked. The `tools`
+//! gets a running, inspectable machine with no server linked, plus the JSON
+//! [`request`] vocabulary every transport parses its arguments with. The `tools`
 //! feature adds the session's agent tool surface ([`tools`]) and the Unix-socket
 //! [`attach`] endpoint that publishes it to another process; the HTTP and
 //! MCP-over-stdio servers live in `missingno-debugger`, which is a client of
@@ -18,6 +19,7 @@
 #[cfg(all(unix, feature = "tools"))]
 pub mod attach;
 pub mod factory;
+pub mod request;
 pub mod session;
 pub mod shared;
 #[cfg(feature = "tools")]
