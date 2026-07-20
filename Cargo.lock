@@ -2968,7 +2968,7 @@ dependencies = [
  "jiff",
  "libc",
  "missingno-6502",
- "missingno-core",
+ "missingno-core 0.1.0",
  "missingno-debugger",
  "missingno-gb",
  "missingno-gbc",
@@ -2996,7 +2996,7 @@ dependencies = [
 name = "missingno-6502"
 version = "0.1.0"
 dependencies = [
- "missingno-core",
+ "missingno-core 0.1.0",
  "serde",
  "serde_json",
 ]
@@ -3010,10 +3010,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "missingno-core"
+version = "0.1.0"
+source = "git+https://github.com/ajoneil/missingno?branch=main#910876c15d2193c149c0b9398a3cf4833610795e"
+dependencies = [
+ "rgb",
+ "serde",
+]
+
+[[package]]
 name = "missingno-debugger"
 version = "0.0.1"
 dependencies = [
- "missingno-core",
+ "missingno-core 0.1.0",
  "missingno-gb",
  "missingno-gbc",
  "missingno-nes",
@@ -3031,7 +3040,7 @@ name = "missingno-gb"
 version = "0.0.1"
 dependencies = [
  "bitflags 2.11.1",
- "missingno-core",
+ "missingno-core 0.1.0",
  "missingno-gb",
  "morepork",
  "png 0.18.1",
@@ -3043,7 +3052,7 @@ dependencies = [
 name = "missingno-gbc"
 version = "0.0.1"
 dependencies = [
- "missingno-core",
+ "missingno-core 0.1.0",
  "missingno-gb",
  "missingno-gbc",
  "png 0.18.1",
@@ -3055,7 +3064,7 @@ name = "missingno-nes"
 version = "0.1.0"
 dependencies = [
  "missingno-6502",
- "missingno-core",
+ "missingno-core 0.1.0",
  "morepork",
  "rgb",
  "sha2 0.11.0",
@@ -3065,7 +3074,7 @@ dependencies = [
 name = "missingno-sms"
 version = "0.1.0"
 dependencies = [
- "missingno-core",
+ "missingno-core 0.1.0",
  "rgb",
  "serde",
  "serde_json",
@@ -3076,7 +3085,7 @@ name = "missingno-vcs"
 version = "0.1.0"
 dependencies = [
  "missingno-6502",
- "missingno-core",
+ "missingno-core 0.1.0",
  "morepork",
  "png 0.18.1",
  "rgb",
@@ -3088,13 +3097,11 @@ dependencies = [
 [[package]]
 name = "morepork"
 version = "0.1.0"
+source = "git+https://github.com/ajoneil/morepork?branch=main#96bf93d266730cb68f4f0de1360c25618f9afdce"
 dependencies = [
  "arrow",
- "clap",
  "flate2",
- "missingno-6502",
- "missingno-core",
- "png 0.17.16",
+ "missingno-core 0.1.0 (git+https://github.com/ajoneil/missingno?branch=main)",
  "serde",
  "serde_json",
  "sha2 0.10.9",

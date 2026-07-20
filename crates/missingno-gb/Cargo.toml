@@ -14,9 +14,9 @@ missingno-core = { path = "../missingno-core" }
 bitflags = { workspace = true }
 rgb = { workspace = true }
 # The trace format lives in its own repo (cloned into receipts/); the capture
-# path depends on the in-tree engine so it and the core share one state
-# vocabulary. Enabling `morepork` requires that clone to be present.
-morepork = { path = "../../receipts/resources/morepork/crates/morepork", optional = true }
+# sourced from the public repo so a fresh clone resolves without credentials;
+# local morepork iteration lands by pushing there and `cargo update -p morepork`.
+morepork = { git = "https://github.com/ajoneil/morepork", branch = "main", optional = true }
 sha2 = { version = "0.11" }
 png = { version = "0.18", optional = true }
 
