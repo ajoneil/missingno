@@ -14,6 +14,13 @@ pub const OVERLAY_FULL_PX: f32 = 6.0;
 /// Peak darkening of a grid or scanline line, as a fraction of pixel brightness.
 const GRID_DARKEN: f32 = 0.15;
 const SCANLINE_DARKEN: f32 = 0.22;
+/// Darkening-band width as a fraction of the source-pixel pitch, per effect: a
+/// thin LCD grid line and a broader, softer CRT scanline valley. The band is
+/// proportional to the on-screen row height, so it keeps its look from a small
+/// window up to a 4K panel rather than collapsing to a resolution-fixed
+/// hairline. Shared with the fragment shader.
+const GRID_LINE_FRACTION: f32 = 0.12;
+const SCANLINE_FRACTION: f32 = 0.30;
 
 /// A cosmetic device-simulation overlay drawn over the sampled picture, keyed to
 /// the display technology and toggleable in settings.
@@ -488,6 +495,8 @@ fn shader_source() -> String {
         .replace("__OVERLAY_FULL_PX__", &wgsl_f32(OVERLAY_FULL_PX))
         .replace("__GRID_DARKEN__", &wgsl_f32(GRID_DARKEN))
         .replace("__SCANLINE_DARKEN__", &wgsl_f32(SCANLINE_DARKEN))
+        .replace("__GRID_LINE_FRACTION__", &wgsl_f32(GRID_LINE_FRACTION))
+        .replace("__SCANLINE_FRACTION__", &wgsl_f32(SCANLINE_FRACTION))
 }
 
 const SHADER_TEMPLATE: &str = r#"
@@ -507,6 +516,8 @@ const OVERLAY_ONSET_PX: f32 = __OVERLAY_ONSET_PX__;
 const OVERLAY_FULL_PX: f32 = __OVERLAY_FULL_PX__;
 const GRID_DARKEN: f32 = __GRID_DARKEN__;
 const SCANLINE_DARKEN: f32 = __SCANLINE_DARKEN__;
+const GRID_LINE_FRACTION: f32 = __GRID_LINE_FRACTION__;
+const SCANLINE_FRACTION: f32 = __SCANLINE_FRACTION__;
 
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
@@ -554,15 +565,26 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let vis = smoothstep(
             vec2(OVERLAY_ONSET_PX), vec2(OVERLAY_FULL_PX), screen_px_per_source);
 
-        let source_pos = input.tex_coords * tex_size;
-        let dist = min(fract(source_pos), vec2(1.0) - fract(source_pos));
-        let line = vec2(1.0) - smoothstep(vec2(0.0), scale, dist);
+        // Distance to the nearest cell boundary in the sampler's half-texel
+        // frame: integer frac lands between rendered rows/columns, so the
+        // darkening sits in the inter-cell gap, not through a cell's centre.
+        let dist = min(frac, vec2(1.0) - frac);
 
         var darken = 0.0;
         if (mode < 1.5) {
+            // LCD grid: a thin line at every cell boundary, both axes. Its width
+            // is a fixed fraction of the cell pitch, so it holds relative to the
+            // pixel at any output resolution.
+            let half = GRID_LINE_FRACTION * 0.5;
+            let line = vec2(1.0) - smoothstep(vec2(0.0), vec2(half), dist);
             darken = GRID_DARKEN * max(line.x * vis.x, line.y * vis.y);
         } else {
-            darken = SCANLINE_DARKEN * line.y * vis.y;
+            // CRT scanline: a soft dark valley between rows, its width a fixed
+            // fraction of the row pitch — proportional to the on-screen row
+            // height, not a resolution-fixed hairline.
+            let half = SCANLINE_FRACTION * 0.5;
+            let line = 1.0 - smoothstep(0.0, half, dist.y);
+            darken = SCANLINE_DARKEN * line * vis.y;
         }
         color = vec4<f32>(color.rgb * (1.0 - darken), color.a);
     }
@@ -581,6 +603,78 @@ mod tests {
         let t = ((screen_px_per_source - OVERLAY_ONSET_PX) / (OVERLAY_FULL_PX - OVERLAY_ONSET_PX))
             .clamp(0.0, 1.0);
         t * t * (3.0 - 2.0 * t)
+    }
+
+    /// The sampler's texel-space coordinate for a normalized tex-coord —
+    /// `tex_coord * tex_size - 0.5`, matching the shader's half-texel offset.
+    /// Its integers fall on the boundaries the sharp sampler renders between
+    /// rows; its half-integers on a rendered row's plateau centre.
+    fn texel_coord(tex_coord: f32, tex_size: f32) -> f32 {
+        tex_coord * tex_size - 0.5
+    }
+
+    /// CPU mirror of the shader's per-axis boundary-line term. `texel_axis` is a
+    /// position in the sampler's half-texel frame; the darkening peaks on the
+    /// integer (between rendered rows) and falls to zero across `half_band` —
+    /// a fixed fraction of the row pitch, independent of output resolution.
+    fn overlay_line(texel_axis: f32, half_band: f32) -> f32 {
+        let frac = texel_axis - texel_axis.floor();
+        let dist = frac.min(1.0 - frac);
+        let t = (dist / half_band).clamp(0.0, 1.0);
+        1.0 - t * t * (3.0 - 2.0 * t)
+    }
+
+    #[test]
+    fn overlay_darkening_aligns_to_rendered_row_boundaries() {
+        // A 228-line NTSC VCS field is the motivating case.
+        let tex_size = 228.0;
+        let half_band = SCANLINE_FRACTION / 2.0;
+
+        // The sharp sampler renders a row transition at an integer texel, which
+        // is tex_coord = (k + 0.5)/tex_size. The darkening must be full there —
+        // in the gap between rendered rows.
+        let rendered_boundary = texel_coord(3.5 / tex_size, tex_size);
+        assert_eq!(rendered_boundary, 3.0);
+        assert!((overlay_line(rendered_boundary, half_band) - 1.0).abs() < 1e-6);
+
+        // A rendered row's plateau centre is half a texel off — a half-integer
+        // texel, tex_coord = (k + 1)/tex_size — where the darkening must vanish
+        // so it never cuts through the row.
+        let row_centre = texel_coord(4.0 / tex_size, tex_size);
+        assert_eq!(row_centre, 3.5);
+        assert_eq!(overlay_line(row_centre, half_band), 0.0);
+
+        // The pre-fix placement dropped the half-texel offset, measuring from
+        // `tex_coord * tex_size` whose integers are the row centres — peaking on
+        // the row, not between rows. Pin that this frame differs by half a texel.
+        let unshifted_at_boundary = 3.5 / tex_size * tex_size;
+        assert_eq!(unshifted_at_boundary.fract(), 0.5);
+    }
+
+    #[test]
+    fn overlay_band_width_is_a_fixed_fraction_of_the_row() {
+        let half_band = SCANLINE_FRACTION / 2.0;
+
+        // The band reaches zero exactly half_band from the boundary, in row
+        // units — the same whatever the on-screen row height.
+        assert_eq!(overlay_line(3.0 + half_band, half_band), 0.0);
+        assert!(overlay_line(3.0 + half_band * 0.99, half_band) > 0.0);
+
+        // So in screen pixels the band tracks the row height: 3x wider at 12
+        // screen px/row than at 4, and the row-fraction is identical at both —
+        // not a resolution-fixed hairline.
+        let width_rows = 2.0 * half_band;
+        let width_px_at_4 = width_rows * 4.0;
+        let width_px_at_12 = width_rows * 12.0;
+        assert!((width_px_at_12 / width_px_at_4 - 3.0).abs() < 1e-6);
+        assert!(((width_px_at_4 / 4.0) - (width_px_at_12 / 12.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn grid_line_is_thinner_than_the_scanline_valley() {
+        assert!(GRID_LINE_FRACTION < SCANLINE_FRACTION);
+        // Both stay within a source pixel (half-band ≤ 0.5 row).
+        assert!(SCANLINE_FRACTION / 2.0 <= 0.5);
     }
 
     #[test]
