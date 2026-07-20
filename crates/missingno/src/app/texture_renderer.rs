@@ -657,9 +657,17 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let cell_color = textureSample(texture, texture_sampler, cell_centre).rgb;
         let d = abs(frac - vec2(0.5));
         let aperture = vec2(APERTURE_FRACTION * 0.5);
-        // Soften the matrix edge over ~one screen pixel so it never aliases.
-        let aa = clamp(scale, vec2(0.0001), aperture);
-        let inside = (vec2(1.0) - smoothstep(aperture - aa, aperture, d));
+        // Anti-alias by exact box-filter coverage: blend to the base only in
+        // proportion to how much of this fragment's one-pixel footprint overlaps
+        // the matrix band (half-width 0.5 - aperture each side of the cell
+        // boundary). Any wider ramp eats into the aperture and washes the whole
+        // picture toward the base.
+        let g = vec2(0.5) - aperture;
+        let boundary_dist = vec2(0.5) - d;
+        let half_px = max(scale, vec2(0.0001)) * 0.5;
+        let overlap = min(boundary_dist + half_px, g) - max(boundary_dist - half_px, -g);
+        let matrix_cover = clamp(overlap / (half_px * 2.0), vec2(0.0), vec2(1.0));
+        let inside = vec2(1.0) - matrix_cover;
         let lit = mix(input.panel_base, cell_color, inside.x * inside.y);
         // Below the onset the pixels are too few screen pixels apart to resolve
         // the matrix, so fall back to the plain sharp picture.
@@ -729,6 +737,18 @@ mod tests {
     fn aperture_color(frac: f32, cell: f32, base: f32) -> f32 {
         let inside = aperture_inside(frac);
         base * (1.0 - inside) + cell * inside
+    }
+
+    /// CPU mirror of the shader's box-filter matrix coverage: the fraction of a
+    /// `scale`-texel-wide fragment footprint at intra-cell position `frac` that
+    /// overlaps the matrix band around the cell boundary (one axis).
+    fn matrix_coverage(frac: f32, scale: f32) -> f32 {
+        let aperture = APERTURE_FRACTION * 0.5;
+        let g = 0.5 - aperture;
+        let boundary_dist = 0.5 - (frac - 0.5).abs();
+        let half_px = scale.max(0.0001) * 0.5;
+        let overlap = (boundary_dist + half_px).min(g) - (boundary_dist - half_px).max(-g);
+        (overlap / (half_px * 2.0)).clamp(0.0, 1.0)
     }
 
     // ── CRT beam-emission mirrors ────────────────────────────────────────
@@ -864,6 +884,42 @@ mod tests {
         assert!(APERTURE_FRACTION > 0.8 && APERTURE_FRACTION < 1.0);
         let area = APERTURE_FRACTION * APERTURE_FRACTION;
         assert!(area > 0.75, "lit area coverage {area}");
+    }
+
+    #[test]
+    fn aperture_blend_conserves_energy_at_every_scale() {
+        // The anti-aliased blend must show the base in exact proportion to the
+        // matrix's true area — at any display scale, the mean lit fraction
+        // across a cell stays APERTURE_FRACTION. (The former smoothstep ramp
+        // spanned a full screen pixel inward from the aperture edge, blending
+        // far more base than the matrix's area and washing black toward grey.)
+        for scale in [0.0002, 0.02, 0.067, 0.167, 0.33] {
+            let n = 100_000;
+            let lit: f32 = (0..n)
+                .map(|i| 1.0 - matrix_coverage((i as f32 + 0.5) / n as f32, scale))
+                .sum::<f32>()
+                / n as f32;
+            assert!(
+                (lit - APERTURE_FRACTION).abs() < 5e-3,
+                "mean lit fraction {lit} at scale {scale} vs {APERTURE_FRACTION}"
+            );
+        }
+    }
+
+    #[test]
+    fn aperture_coverage_is_crisp_at_high_zoom_and_proportional_when_thin() {
+        // Deep zoom (tiny footprint): full base on the boundary, zero at the
+        // cell centre, half-covered exactly at the aperture edge.
+        assert_eq!(matrix_coverage(0.0, 0.001), 1.0);
+        assert_eq!(matrix_coverage(0.5, 0.001), 0.0);
+        let edge = 0.5 - APERTURE_FRACTION * 0.5;
+        assert!((matrix_coverage(edge, 0.001) - 0.5).abs() < 0.01);
+        // Matrix thinner than a screen pixel: the boundary fragment shows the
+        // band's share of its footprint, not full base.
+        let g = 0.5 - APERTURE_FRACTION * 0.5;
+        let scale = 0.167;
+        let expect = (2.0 * g) / scale;
+        assert!((matrix_coverage(0.0, scale) - expect).abs() < 0.01);
     }
 
     #[test]
