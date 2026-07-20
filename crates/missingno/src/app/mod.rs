@@ -320,6 +320,10 @@ enum Message {
     TogglePause,
     Reset,
     TakeScreenshot,
+    /// Save the running machine state to the game's save-state slot.
+    SaveState,
+    /// Restore the game's save-state slot.
+    LoadState,
     /// Export the session capture at this event index to a PNG (opens a dialog).
     ExportCapture(usize),
     /// The dialog resolved; write the capture at this event index, if a path
@@ -464,6 +468,8 @@ impl App {
             | Message::TogglePause
             | Message::Reset
             | Message::TakeScreenshot
+            | Message::SaveState
+            | Message::LoadState
             | Message::ExportCapture(_)
             | Message::ExportCaptureSaved(..)
             | Message::DismissScreenshotToast

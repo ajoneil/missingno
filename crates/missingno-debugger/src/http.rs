@@ -76,6 +76,8 @@ fn handle(request: Request, session: &mut Session) {
             respond_step(request, session, &stop);
         }
         (Method::Post, "/step-tick") => step_tick(request, session, &query),
+        (Method::Post, "/state/save") => state_save(request, session),
+        (Method::Post, "/state/load") => state_load(request, session),
         (Method::Post, "/reset") => {
             session.reset();
             respond_json(request, status_json(session));
@@ -675,6 +677,43 @@ fn capture_edit(mut request: Request, session: &mut Session, capture: Capture) {
         Capture::Graphics => session.set_graphics_capture(on),
     }
     respond_json(request, json!({ "capture": on }));
+}
+
+/// Read a `{ "path": "..." }` body, returning the path or responding 400.
+fn read_path_body(request: &mut Request) -> Result<String, String> {
+    let mut body = String::new();
+    request
+        .as_reader()
+        .read_to_string(&mut body)
+        .map_err(|_| "could not read request body".to_string())?;
+    let value: Value = serde_json::from_str(&body).map_err(|e| format!("invalid JSON: {e}"))?;
+    value
+        .get("path")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "expected { \"path\": string }".to_string())
+}
+
+fn state_save(mut request: Request, session: &mut Session) {
+    let path = match read_path_body(&mut request) {
+        Ok(path) => path,
+        Err(message) => return respond_error(request, 400, &message),
+    };
+    match session.save_state(std::path::Path::new(&path)) {
+        Ok(()) => respond_json(request, json!({ "saved": path })),
+        Err(message) => respond_error(request, 400, &message),
+    }
+}
+
+fn state_load(mut request: Request, session: &mut Session) {
+    let path = match read_path_body(&mut request) {
+        Ok(path) => path,
+        Err(message) => return respond_error(request, 400, &message),
+    };
+    match session.load_state(std::path::Path::new(&path)) {
+        Ok(()) => respond_json(request, status_json(session)),
+        Err(message) => respond_error(request, 400, &message),
+    }
 }
 
 fn disassembly(request: Request, session: &Session, query: &str) {

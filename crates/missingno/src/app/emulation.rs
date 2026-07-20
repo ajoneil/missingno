@@ -50,6 +50,22 @@ impl App {
                     self.record_screenshot(capture);
                 }
             }
+            Message::SaveState | Message::LoadState => {
+                // The console runs on the emu thread in play mode; ask it to
+                // save or restore the game's state slot there. (A paused
+                // debugger session owns the console on the UI thread; state
+                // I/O there is not yet wired.)
+                if let Some(current) = &self.current_game
+                    && let Some(handle) = &self.emu
+                {
+                    let path = current.game_dir.join("state.mpsv");
+                    match message {
+                        Message::SaveState => handle.send(EmuCommand::SaveState(path)),
+                        Message::LoadState => handle.send(EmuCommand::LoadState(path)),
+                        _ => unreachable!(),
+                    }
+                }
+            }
             Message::ExportCapture(index) => {
                 let default_name = self
                     .current_game

@@ -106,6 +106,10 @@ pub enum EmuCommand {
     RequestScreenshot {
         options: CaptureOptions,
     },
+    /// Write the running machine state to a save file.
+    SaveState(std::path::PathBuf),
+    /// Restore the running machine state from a save file.
+    LoadState(std::path::PathBuf),
 }
 
 /// Events the emu thread sends to the UI (via the Iced subscription).
@@ -438,6 +442,20 @@ impl EmuLoop {
                         .unbounded_send(EmuEvent::Screenshot(Box::new(capture)));
                 }
             }
+            EmuCommand::SaveState(path) => {
+                if let Some(payload) = &self.payload
+                    && let Err(error) = payload.save_state(&path)
+                {
+                    eprintln!("save state failed: {error}");
+                }
+            }
+            EmuCommand::LoadState(path) => {
+                if let Some(payload) = &mut self.payload
+                    && let Err(error) = payload.load_state(&path)
+                {
+                    eprintln!("load state failed: {error}");
+                }
+            }
         }
     }
 
@@ -593,6 +611,28 @@ impl Payload {
             Self::Console(console) => console.set_control(control, input),
             Self::Debugger(payload) => payload.core.set_control(control, input),
         }
+    }
+
+    /// Serialize the running machine state to a save file. `None` when the
+    /// system has no save-state backend.
+    fn save_state(&self, path: &std::path::Path) -> Result<(), String> {
+        let bytes = match self {
+            Self::Console(console) => console.save_state(),
+            Self::Debugger(payload) => payload.core.save_state(),
+        }
+        .ok_or("this system has no save-state backend")?;
+        std::fs::write(path, bytes).map_err(|error| format!("could not write save state: {error}"))
+    }
+
+    /// Restore the running machine state from a save file.
+    fn load_state(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let bytes =
+            std::fs::read(path).map_err(|error| format!("could not read save state: {error}"))?;
+        match self {
+            Self::Console(console) => console.load_state(&bytes),
+            Self::Debugger(payload) => payload.core.load_state(&bytes),
+        }
+        .map_err(|error| error.to_string())
     }
 
     fn set_breakpoint(&mut self, address: u32) {

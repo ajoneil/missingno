@@ -386,6 +386,27 @@ fn generic_tools(session: &Session) -> Vec<Tool> {
             input_schema: empty(),
         },
         Tool {
+            name: "save_state",
+            description: "Write the current machine state to a filesystem path as a save file."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "path": { "type": "string", "description": "file to write" } },
+                "required": ["path"],
+            }),
+        },
+        Tool {
+            name: "load_state",
+            description: "Restore the machine state from a save file. Errors on a state for a \
+                          different system or ROM, an unsupported version, or a corrupt file."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "path": { "type": "string", "description": "save file to read" } },
+                "required": ["path"],
+            }),
+        },
+        Tool {
             name: "set_breakpoint",
             description: "Set a PC breakpoint at a hex address.".into(),
             input_schema: json!({
@@ -622,6 +643,8 @@ fn call_generic(
             session.reset();
             text(status_text(session, core_name))
         }
+        "save_state" => save_state(session, args),
+        "load_state" => load_state(session, args, core_name),
         "set_breakpoint" => breakpoint(session, args, true),
         "clear_breakpoint" => breakpoint(session, args, false),
         "list_breakpoints" => text(breakpoints_text(session)),
@@ -909,6 +932,24 @@ fn tick_report(session: &Session, tick: &str, ran: usize) -> String {
         "ran: {ran} {tick}{plural}\npc: {:04x}\n{}: {}",
         status.pc, status.video_label, status.video_summary,
     )
+}
+
+fn save_state(session: &mut Session, args: &Value) -> ToolOutcome {
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or("'path' (string) is required")?;
+    session.save_state(Path::new(path))?;
+    text(format!("saved state to {path}"))
+}
+
+fn load_state(session: &mut Session, args: &Value, core_name: &str) -> ToolOutcome {
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or("'path' (string) is required")?;
+    session.load_state(Path::new(path))?;
+    text(status_text(session, core_name))
 }
 
 fn breakpoint(session: &mut Session, args: &Value, set: bool) -> ToolOutcome {

@@ -56,6 +56,8 @@ fn action_to_press_message(action: Action) -> app::Message {
         Action::Screenshot => app::Message::TakeScreenshot,
         Action::ToggleFullscreen => app::Message::ToggleFullscreen,
         Action::Pause => app::Message::TogglePause,
+        Action::SaveState => app::Message::SaveState,
+        Action::LoadState => app::Message::LoadState,
     }
 }
 

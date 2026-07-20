@@ -142,6 +142,27 @@ impl Session {
         self.last_stop = StopReason::Completed;
     }
 
+    /// Write the current machine state to `path` as a save file. Errors when the
+    /// system has no save-state backend or the file cannot be written.
+    pub fn save_state(&self, path: &std::path::Path) -> Result<(), String> {
+        let bytes = self
+            .debugger
+            .save_state()
+            .ok_or("this system has no save-state backend")?;
+        std::fs::write(path, bytes).map_err(|error| format!("could not write {path:?}: {error}"))
+    }
+
+    /// Restore the machine state from a save file at `path`. Errors (never
+    /// panics) on a missing file, a state for a different system or ROM, an
+    /// unsupported version, or a corrupt file.
+    pub fn load_state(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let bytes =
+            std::fs::read(path).map_err(|error| format!("could not read {path:?}: {error}"))?;
+        self.debugger
+            .load_state(&bytes)
+            .map_err(|error| error.to_string())
+    }
+
     /// Set a breakpoint at a bus address. Breakpoints are bus-space by
     /// contract; the seam keys them as a 16-bit bus address, so a synthetic
     /// bank-complete address (the disassembly's above-the-bus rows) is rejected

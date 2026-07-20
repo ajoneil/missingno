@@ -20,6 +20,8 @@ pub enum Action {
     Screenshot,
     ToggleFullscreen,
     Pause,
+    SaveState,
+    LoadState,
 }
 
 /// The 8 shared game controls in display order (see `ControlId` for the
@@ -36,8 +38,13 @@ pub const GAME_CONTROLS: [Action; 8] = [
 ];
 
 /// Emulator-level actions, for iteration.
-pub const EMULATOR_ACTIONS: [Action; 3] =
-    [Action::Screenshot, Action::ToggleFullscreen, Action::Pause];
+pub const EMULATOR_ACTIONS: [Action; 5] = [
+    Action::Screenshot,
+    Action::ToggleFullscreen,
+    Action::Pause,
+    Action::SaveState,
+    Action::LoadState,
+];
 
 impl fmt::Display for Action {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -48,6 +55,8 @@ impl fmt::Display for Action {
             Action::Screenshot => write!(f, "Screenshot"),
             Action::ToggleFullscreen => write!(f, "Fullscreen"),
             Action::Pause => write!(f, "Pause"),
+            Action::SaveState => write!(f, "Save State"),
+            Action::LoadState => write!(f, "Load State"),
         }
     }
 }
@@ -88,6 +97,8 @@ impl Bindings {
             (Action::Screenshot, "F12".to_string()),
             (Action::ToggleFullscreen, "F11".to_string()),
             (Action::Pause, "Space".to_string()),
+            (Action::SaveState, "F5".to_string()),
+            (Action::LoadState, "F8".to_string()),
         ]))
     }
 
