@@ -139,6 +139,12 @@ Test ROMs live under `crates/missingno-gb/tests/accuracy/roms/` and `crates/miss
 
 **`dbg_screen <path>`** — save the resolved frame as raw RGBA (prints WxH). GET `/frame/bitmap`. For a viewable image use the MCP `get_frame` tool (PNG) or convert the RGBA yourself.
 
+**`dbg_regions`** — the named memory map (name, hex start, length). GET `/regions`. Read this before a memory sweep: it tells you which spans exist and their extents, including off-bus regions the CPU cannot address.
+
+**`dbg_save_state <path>`** / **`dbg_load_state <path>`** — capture and restore the whole machine. POST `/state/save` / `/state/load`. **Use this whenever navigation is expensive**: step to the state of interest once, save, then reload before each probe instead of re-navigating from reset. The load restores machine state exactly; the session's frame counter is its own bookkeeping and does not rewind.
+
+**`dbg_control <id> <down|up>`** — hold or release a console control. POST `/control`. For reaching a state the ROM only enters on input; ids follow the core's control order.
+
 ### Deprecated aliases
 
 `gb_start`/`gb_stop`/`gb_run_frames` forward to `dbg_start`/`dbg_stop`/`dbg_step_frame` with a stderr deprecation note. All other `gb_*` helpers are gone — their GB-specific routes no longer exist.
@@ -168,6 +174,20 @@ Test ROMs live under `crates/missingno-gb/tests/accuracy/roms/` and `crates/miss
 | `/watchables` | GET | this core's watch keys + param shapes |
 | `/watches` | GET, PUT, DELETE | list / add (term or `{terms:[…]}`) / clear |
 | `/symbols` | GET | loaded symbol table |
+| `/regions` | GET | `{regions:[{name, start (hex), len}]}` — the named memory map |
+| `/state/save`, `/state/load` | POST | `{path}` body; save/restore the whole machine |
+| `/control` | POST | `{control, pressed}` (or `{control, axis}`) — drive a console control |
+| `/run`, `/pause` | POST | free-run / halt; a session other clients (including the app window) share |
+| `/recording/start`, `/stop`, `/play`, `/replay` | POST | capture and play back an input recording |
+
+### Attaching to a running app window
+
+An investigation does not have to start its own server. If the user has enabled
+external clients (Settings → General, default off), the running app publishes
+its session on a Unix socket and an agent can attach to *that* — driving the
+game the user is watching, with the same tool vocabulary. Use the MCP `attach`
+tool (`status` lists reachable sessions). Prefer this when the question is about
+a state the user has already navigated to.
 
 ### Watches
 

@@ -224,6 +224,42 @@ dbg_screen() {
   echo "saved $out (${w}x${h} RGBA)"
 }
 
+# The CPU-visible memory map, named by role — which spans exist, before reading
+# any of them. Start addresses are hex; an off-bus region has no bus address.
+dbg_regions() {
+  curl -s "$DBG_URL/regions" | jq -r '.regions[] | "\(.name)\t\(.start)\t\(.len)"'
+}
+
+# dbg_save_state <path> / dbg_load_state <path> — capture the whole machine and
+# restore it. Navigating to an interesting state is often the expensive part of
+# an investigation: save once there, then reload instead of re-navigating.
+dbg_save_state() {
+  local path="${1:?usage: dbg_save_state <path>}"
+  curl -s -X POST "$DBG_URL/state/save" -H 'Content-Type: application/json' \
+    -d "$(jq -nc --arg p "$path" '{path: $p}')" | jq -r '.saved // .error'
+}
+
+dbg_load_state() {
+  local path="${1:?usage: dbg_load_state <path>}"
+  # The reported frame counts frames this session has stepped; it is session
+  # bookkeeping and does not rewind with the machine.
+  curl -s -X POST "$DBG_URL/state/load" -H 'Content-Type: application/json' \
+    -d "$(jq -nc --arg p "$path" '{path: $p}')" |
+    jq -r 'if .error then .error else "loaded (pc \(.pc // "?"))" end'
+}
+
+# dbg_control <id> <down|up>  — hold or release a console control, for reaching
+# a state the ROM only enters on input. Ids follow the core's control order.
+dbg_control() {
+  local id="${1:?usage: dbg_control <control-id> <down|up>}"
+  local action="${2:?usage: dbg_control <control-id> <down|up>}"
+  local pressed=true
+  [ "$action" = "up" ] && pressed=false
+  curl -s -X POST "$DBG_URL/control" -H 'Content-Type: application/json' \
+    -d "$(jq -nc --argjson c "$id" --argjson p "$pressed" '{control: $c, pressed: $p}')" |
+    jq -r 'if .error then .error else "control \(.control) \($ARGS.named.a)" end' --arg a "$action"
+}
+
 # ── Deprecated gb_* aliases (semantics that map 1:1 to a dbg_* helper) ─────────
 
 gb_start() {
