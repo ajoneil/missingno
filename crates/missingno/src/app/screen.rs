@@ -53,10 +53,10 @@ fn default_technology() -> DisplayTechnology {
 }
 
 /// A reflective panel's unlit "paper" tone for a core with no monochrome
-/// palette to source one from — the CGB (and any future RGBA-native LCD). A
-/// plausible pale, faintly warm off-white; the real CGB screen's off-state is a
-/// light grey-white, not pure white.
-const CGB_REFLECTIVE_BASE: RGB8 = RGB8::new(0xec, 0xee, 0xe4);
+/// palette to source one from — the CGB (and any future RGBA-native LCD). An
+/// unpowered CGB screen reads as a mid grey-green, well below white — the
+/// reflective TFT returns far less light than paper; eyeballed, not measured.
+const CGB_REFLECTIVE_BASE: RGB8 = RGB8::new(0xaa, 0xb0, 0xa0);
 
 /// The one colour decision the frontend owns for a family whose frames arrive as
 /// device-native indices — the Game Boy's monochrome palette and Super Game Boy

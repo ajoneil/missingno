@@ -17,10 +17,10 @@ pub const OVERLAY_FULL_PX: f32 = 6.0;
 /// exposes that light base — so a fragment either lands inside a lit pixel or in
 /// the base-coloured gap. `APERTURE_FRACTION` is the fraction of the cell pitch,
 /// per axis, that the lit pixel fills; the remaining border is the reflective
-/// base. 0.94 keeps the matrix a hairline so the base tone reads as structure
-/// without washing the colours toward it (linear coverage 0.94/axis, 0.88 of
+/// base. 0.96 keeps the matrix a hairline so the base tone reads as structure
+/// without washing the colours toward it (linear coverage 0.96/axis, 0.92 of
 /// area). Shared with the fragment shader.
-const APERTURE_FRACTION: f32 = 0.94;
+const APERTURE_FRACTION: f32 = 0.96;
 
 /// CRT scanlines are not a darkening laid over the picture — the beam *emits*
 /// each source row as a bright line with a soft vertical falloff, and the gaps
