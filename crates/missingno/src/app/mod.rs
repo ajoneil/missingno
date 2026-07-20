@@ -97,6 +97,9 @@ struct App {
     pending_action: Option<PendingAction>,
     /// When set, shows a brief "Screenshot saved" toast overlay.
     screenshot_toast: Option<Instant>,
+    /// A transient status line (save/load result, recording lifecycle,
+    /// replay divergence), shown as a toast until it times out.
+    notice: Option<(String, Instant)>,
     /// Serial link cable connection (BGB link protocol), injected into GameBoy on load.
     serial_link: Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
     /// Finished Game Boy Printer prints, sent from the printer (on the emu
@@ -360,6 +363,8 @@ enum Message {
     CloseRequested,
 
     DismissScreenshotToast,
+    /// Time out the transient status-line toast.
+    DismissNotice,
 
     // Cartridge reader/writer (device-level, not screen-specific)
     CartridgeRwPoll,
@@ -408,6 +413,7 @@ impl App {
             store,
             pending_action: None,
             screenshot_toast: None,
+            notice: None,
             serial_link,
             print_tx,
             print_rx,
@@ -482,6 +488,7 @@ impl App {
             | Message::ExportCapture(_)
             | Message::ExportCaptureSaved(..)
             | Message::DismissScreenshotToast
+            | Message::DismissNotice
             | Message::SetControl(..)
             | Message::SetAxis(..)
             | Message::ToggleDebugger(_) => return self.handle_emulation_message(message),

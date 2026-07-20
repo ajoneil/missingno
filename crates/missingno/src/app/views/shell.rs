@@ -20,10 +20,17 @@ use crate::app::{
 
 impl App {
     pub(super) fn apply_toast<'a>(&self, content: Element<'a, Message>) -> Element<'a, Message> {
+        let mut layers = vec![content];
         if self.screenshot_toast.is_some() {
-            Stack::with_children(vec![content, screenshot_toast()]).into()
+            layers.push(screenshot_toast());
+        }
+        if let Some((message, _)) = &self.notice {
+            layers.push(notice_toast(message));
+        }
+        if layers.len() == 1 {
+            layers.pop().unwrap()
         } else {
-            content
+            Stack::with_children(layers).into()
         }
     }
 
@@ -243,6 +250,25 @@ fn screenshot_toast<'a>() -> Element<'a, Message> {
     )
     .align_bottom(Fill)
     .align_right(Fill)
+    .padding(l())
+    .into()
+}
+
+/// A transient status-line toast (save/load result, recording lifecycle,
+/// replay divergence). Sits above the screenshot toast's corner so the two
+/// don't overlap when both are up.
+fn notice_toast<'a>(message: &str) -> Element<'a, Message> {
+    container(
+        container(iced_text(message.to_owned()).color(iced::Color::WHITE))
+            .padding(s())
+            .style(|_| container::Style {
+                background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.6).into()),
+                border: iced::Border::default().rounded(border_m()),
+                ..Default::default()
+            }),
+    )
+    .align_bottom(Fill)
+    .align_left(Fill)
     .padding(l())
     .into()
 }

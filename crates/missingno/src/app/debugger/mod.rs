@@ -324,10 +324,15 @@ impl Debugger {
         let bytes =
             std::fs::read(path).map_err(|error| format!("could not read save state: {error}"))?;
         core.load_state(&bytes).map_err(|error| error.to_string())?;
+        // The screen pane only renders broadcast frames; push the restored
+        // console's frame so the paused view reflects the load, as the stepping
+        // paths do through `display_task`.
+        let restored = core.screen_display();
         self.last_snapshot = None;
         self.last_status = None;
         self.last_memory_windows.clear();
         self.refresh_graphics();
+        self.apply_frame(restored);
         Ok(())
     }
 

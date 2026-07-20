@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use missingno_core::inspect::{MemoryWindow, Watch};
 use missingno_core::recording::{Recorder, Recording, frame_hash};
+use missingno_core::system::StateError;
 
 use super::audio_output::AudioOutput;
 use super::debugger::inspect::DebugView;
@@ -139,6 +140,19 @@ pub enum EmuEvent {
     /// The running debugger hit a breakpoint; its payload is on the return
     /// channel and the UI should switch to the paused view.
     BreakpointHit,
+    /// A user-facing status line the UI surfaces (save/load result, recording
+    /// lifecycle note, replay outcome).
+    Notice(String),
+    /// Input-recording capture turned on or off. The UI mirrors this into its
+    /// recording flag — the flag follows the event, never the click.
+    RecordingChanged(bool),
+    /// A replay checkpoint disagreed with the recorded timeline; playback
+    /// stopped at this frame.
+    ReplayDiverged {
+        frame: u64,
+        expected: u64,
+        actual: u64,
+    },
 }
 
 /// The UI-side handle to the emu thread. Cloneable so it can ride in a Message;
@@ -347,6 +361,13 @@ struct EmuLoop {
     recorder: Option<(Recorder, std::path::PathBuf)>,
     /// The recording being replayed frame by frame, while replaying.
     replay: Option<ReplayPlayback>,
+    /// A save requested off an instruction boundary (a VCS frame boundary need
+    /// not be one): retried at each frame until the console reaches a boundary
+    /// and its state serializes.
+    pending_save: Option<std::path::PathBuf>,
+    /// A recording-start requested off an instruction boundary, retried likewise
+    /// — its initial state is a save, so it has the same boundary requirement.
+    pending_record: Option<std::path::PathBuf>,
 }
 
 /// A recording played back through the running console: applies the recorded
@@ -357,6 +378,31 @@ struct ReplayPlayback {
     frame: u64,
     input_cursor: usize,
     check_cursor: usize,
+}
+
+/// What one replayed frame concluded: keep going, stop at a divergence, or the
+/// whole recording has been replayed.
+enum ReplayStep {
+    Continue,
+    Diverged {
+        frame: u64,
+        expected: u64,
+        actual: u64,
+    },
+    Finished,
+}
+
+/// The result of attempting to serialize the running state to a file.
+enum SaveOutcome {
+    /// Written to disk.
+    Saved,
+    /// The console has a backend but is off an instruction boundary; retry once
+    /// a frame steps it forward.
+    Retry,
+    /// The system has no save-state backend at all.
+    NoBackend,
+    /// The state serialized but the file write failed.
+    Failed(String),
 }
 
 impl ReplayPlayback {
@@ -380,23 +426,29 @@ impl ReplayPlayback {
         }
     }
 
-    /// Verify the checkpoint for the frame just produced, then advance. Returns
-    /// `false` once the whole recording has been replayed.
-    fn note_frame(&mut self, produced: Option<&Frame>) -> bool {
+    /// Verify the checkpoint for the frame just produced, then advance. A
+    /// disagreeing checkpoint stops playback at the divergent frame rather than
+    /// continuing on a timeline the recording no longer describes.
+    fn note_frame(&mut self, produced: Option<&Frame>) -> ReplayStep {
         if let Some(check) = self.recording.checks.get(self.check_cursor)
             && check.frame == self.frame
         {
             let hash = produced.map(frame_hash).unwrap_or(0);
-            if check.hash != hash {
-                eprintln!(
-                    "replay diverged at frame {} (expected {:#x}, got {hash:#x})",
-                    self.frame, check.hash
-                );
-            }
             self.check_cursor += 1;
+            if check.hash != hash {
+                return ReplayStep::Diverged {
+                    frame: self.frame,
+                    expected: check.hash,
+                    actual: hash,
+                };
+            }
         }
         self.frame += 1;
-        self.frame < self.recording.frames
+        if self.frame < self.recording.frames {
+            ReplayStep::Continue
+        } else {
+            ReplayStep::Finished
+        }
     }
 }
 
@@ -424,6 +476,8 @@ impl EmuLoop {
             next_deadline: Instant::now(),
             recorder: None,
             replay: None,
+            pending_save: None,
+            pending_record: None,
         }
     }
 
@@ -448,13 +502,21 @@ impl EmuLoop {
                 self.payload = Some(payload);
                 self.sram_countdown = None;
                 self.next_deadline = Instant::now();
-                // A fresh session inherits no recording or replay from the last.
+                // A fresh session inherits no recording, replay, or pending
+                // save/record from the last.
                 self.recorder = None;
                 self.replay = None;
+                self.pending_save = None;
+                self.pending_record = None;
             }
             EmuCommand::Pause => self.return_payload(),
             EmuCommand::Shutdown => self.shutdown_requested = true,
             EmuCommand::Reset => {
+                // A reset invalidates any recording-in-progress and any pending
+                // save; finalize the recording rather than corrupt it.
+                self.finalize_recording("Recording saved before reset");
+                self.replay = None;
+                self.pending_save = None;
                 if let Some(payload) = &mut self.payload {
                     payload.reset();
                 }
@@ -518,40 +580,36 @@ impl EmuLoop {
                         .unbounded_send(EmuEvent::Screenshot(Box::new(capture)));
                 }
             }
-            EmuCommand::SaveState(path) => {
-                if let Some(payload) = &self.payload
-                    && let Err(error) = payload.save_state(&path)
-                {
-                    eprintln!("save state failed: {error}");
-                }
-            }
-            EmuCommand::LoadState(path) => {
-                if let Some(payload) = &mut self.payload
-                    && let Err(error) = payload.load_state(&path)
-                {
-                    eprintln!("load state failed: {error}");
-                }
-            }
-            EmuCommand::StartRecording(path) => match &mut self.payload {
-                Some(Payload::Console(console)) => {
-                    match Recorder::start(console.as_mut(), RECORDING_CHECK_INTERVAL) {
-                        Some(recorder) => self.recorder = Some((recorder, path)),
-                        None => {
-                            eprintln!("recording failed: this system has no save-state backend")
-                        }
-                    }
-                }
-                _ => eprintln!("recording is only available in play mode"),
+            EmuCommand::SaveState(path) => match self.attempt_save(&path) {
+                SaveOutcome::Saved => self.notice("State saved"),
+                // Off an instruction boundary: retry when a frame reaches one.
+                SaveOutcome::Retry => self.pending_save = Some(path),
+                SaveOutcome::NoBackend => self.notice("this system has no save-state backend"),
+                SaveOutcome::Failed(error) => self.notice(error),
             },
-            EmuCommand::StopRecording => {
-                if let Some((recorder, path)) = self.recorder.take() {
-                    let bytes = recorder.finish().to_bytes();
-                    if let Err(error) = std::fs::write(&path, bytes) {
-                        eprintln!("could not write recording: {error}");
+            EmuCommand::LoadState(path) => {
+                // A load replaces the state a recording continues from and the
+                // state a pending save would capture; finalize the recording and
+                // drop both rather than corrupt them.
+                self.finalize_recording("Recording saved before load");
+                self.replay = None;
+                self.pending_save = None;
+                if let Some(payload) = &mut self.payload {
+                    match payload.load_state(&path) {
+                        Ok(()) => self.notice("State loaded"),
+                        Err(error) => self.notice(error),
                     }
                 }
             }
+            EmuCommand::StartRecording(path) => self.begin_recording(path),
+            EmuCommand::StopRecording => self.finalize_recording("Recording saved"),
             EmuCommand::PlayRecording(path) => {
+                // Replaying while recording would fold the replay's applied
+                // inputs (which bypass the recorder) into the capture; refuse.
+                if self.recorder.is_some() || self.pending_record.is_some() {
+                    self.notice("Stop recording before replaying");
+                    return;
+                }
                 match std::fs::read(&path)
                     .map_err(|error| error.to_string())
                     .and_then(|bytes| {
@@ -561,27 +619,113 @@ impl EmuLoop {
                         Some(Payload::Console(console)) => {
                             match console.load_state(&recording.initial_state) {
                                 Ok(()) => self.replay = Some(ReplayPlayback::new(recording)),
-                                Err(error) => eprintln!("replay failed to restore: {error}"),
+                                Err(error) => {
+                                    self.notice(format!("Replay could not restore: {error}"))
+                                }
                             }
                         }
-                        _ => eprintln!("replay is only available in play mode"),
+                        _ => self.notice("Replay is only available in play mode"),
                     },
-                    Err(error) => eprintln!("could not read recording: {error}"),
+                    Err(error) => self.notice(format!("Could not read recording: {error}")),
                 }
             }
         }
     }
 
-    fn return_payload(&mut self) {
-        // Finalize any in-progress recording before the payload leaves the
-        // thread, and drop a running replay — both belong to this session.
-        if let Some((recorder, path)) = self.recorder.take() {
-            let bytes = recorder.finish().to_bytes();
-            if let Err(error) = std::fs::write(&path, bytes) {
-                eprintln!("could not write recording: {error}");
+    /// Emit a user-facing status line to the UI.
+    fn notice(&self, message: impl Into<String>) {
+        let _ = self.events.unbounded_send(EmuEvent::Notice(message.into()));
+    }
+
+    /// Attempt to serialize the running state to `path`. `save_state` returns
+    /// `None` both when a console has no backend and when it is momentarily off
+    /// an instruction boundary; a console that authors a state schema has a
+    /// backend, so `None` there means "retry at the next boundary".
+    fn attempt_save(&self, path: &std::path::Path) -> SaveOutcome {
+        let Some(payload) = &self.payload else {
+            return SaveOutcome::NoBackend;
+        };
+        match payload.save_state_bytes() {
+            Some(bytes) => match std::fs::write(path, bytes) {
+                Ok(()) => SaveOutcome::Saved,
+                Err(error) => SaveOutcome::Failed(format!("could not write save state: {error}")),
+            },
+            None if payload.has_state_backend() => SaveOutcome::Retry,
+            None => SaveOutcome::NoBackend,
+        }
+    }
+
+    /// Begin an input recording, first finalizing any recording already running
+    /// (so its file is written, not dropped) and refusing during a replay.
+    fn begin_recording(&mut self, path: std::path::PathBuf) {
+        if self.replay.is_some() {
+            self.notice("Cannot record during replay");
+            return;
+        }
+        self.finalize_recording("Previous recording saved");
+        match &mut self.payload {
+            Some(Payload::Console(console)) => {
+                match Recorder::start(console.as_mut(), RECORDING_CHECK_INTERVAL) {
+                    Ok(recorder) => {
+                        self.recorder = Some((recorder, path));
+                        let _ = self.events.unbounded_send(EmuEvent::RecordingChanged(true));
+                    }
+                    // A schema-authoring console has a backend, so an
+                    // `Unsupported` there is really "off an instruction boundary"
+                    // (its initial save missed) — retry at the next frame. Any
+                    // other error (e.g. a double-speed boundary) is genuine.
+                    Err(StateError::Unsupported) if console.state_schema().is_some() => {
+                        self.pending_record = Some(path)
+                    }
+                    Err(error) => self.notice(format!("recording failed: {error}")),
+                }
+            }
+            _ => self.notice("recording is only available in play mode"),
+        }
+    }
+
+    /// Finish and write any active recording, emitting the flag change and a
+    /// note. A no-op (and silent) when nothing is recording.
+    fn finalize_recording(&mut self, note: &str) {
+        self.pending_record = None;
+        let Some((recorder, path)) = self.recorder.take() else {
+            return;
+        };
+        let _ = self
+            .events
+            .unbounded_send(EmuEvent::RecordingChanged(false));
+        match recorder.finish().to_bytes() {
+            Ok(bytes) => match std::fs::write(&path, bytes) {
+                Ok(()) => self.notice(note),
+                Err(error) => self.notice(format!("could not write recording: {error}")),
+            },
+            Err(error) => self.notice(format!("could not encode recording: {error}")),
+        }
+    }
+
+    /// Retry a save or recording-start that was requested off an instruction
+    /// boundary, now that a frame has stepped the console forward.
+    fn drive_pending_state(&mut self) {
+        if let Some(path) = self.pending_save.take() {
+            match self.attempt_save(&path) {
+                SaveOutcome::Saved => self.notice("State saved"),
+                SaveOutcome::Retry => self.pending_save = Some(path),
+                SaveOutcome::NoBackend => self.notice("this system has no save-state backend"),
+                SaveOutcome::Failed(error) => self.notice(error),
             }
         }
+        if let Some(path) = self.pending_record.take() {
+            self.begin_recording(path);
+        }
+    }
+
+    fn return_payload(&mut self) {
+        // Finalize any in-progress recording before the payload leaves the
+        // thread, and drop a running replay and pending save — all belong to
+        // this session.
+        self.finalize_recording("Recording saved");
         self.replay = None;
+        self.pending_save = None;
         if let Some(payload) = self.payload.take() {
             let _ = self.returns.send(payload);
         }
@@ -609,11 +753,35 @@ impl EmuLoop {
         if let Some((recorder, _)) = &mut self.recorder {
             recorder.note_frame(outcome.display.as_ref());
         }
-        if let Some(replay) = &mut self.replay
-            && !replay.note_frame(outcome.display.as_ref())
+        if let Some(step) = self
+            .replay
+            .as_mut()
+            .map(|replay| replay.note_frame(outcome.display.as_ref()))
         {
-            self.replay = None;
+            match step {
+                ReplayStep::Continue => {}
+                ReplayStep::Finished => {
+                    self.replay = None;
+                    self.notice("Replay finished");
+                }
+                ReplayStep::Diverged {
+                    frame,
+                    expected,
+                    actual,
+                } => {
+                    self.replay = None;
+                    let _ = self.events.unbounded_send(EmuEvent::ReplayDiverged {
+                        frame,
+                        expected,
+                        actual,
+                    });
+                }
+            }
         }
+
+        // A save or recording-start deferred to an instruction boundary retries
+        // now that this frame stepped the console.
+        self.drive_pending_state();
 
         if let Some(display) = outcome.display
             && let Ok(mut slot) = self.frames.lock()
@@ -706,16 +874,44 @@ mod tests {
     use super::*;
 
     fn test_loop() -> EmuLoop {
+        test_loop_with_events().0
+    }
+
+    fn test_loop_with_events() -> (
+        EmuLoop,
+        iced::futures::channel::mpsc::UnboundedReceiver<EmuEvent>,
+    ) {
         let slots = PublishSlots {
             frames: Arc::new(Mutex::new(None)),
             status: Arc::new(Mutex::new(None)),
             snapshot: Arc::new(Mutex::new(None)),
             memory_window: Arc::new(Mutex::new(None)),
         };
-        let (events, _events_rx) = iced::futures::channel::mpsc::unbounded();
+        let (events, events_rx) = iced::futures::channel::mpsc::unbounded();
         let (returns, _returns_rx) = channel();
         let (ack, _ack_rx) = channel();
-        EmuLoop::new(slots, events, returns, ack)
+        (EmuLoop::new(slots, events, returns, ack), events_rx)
+    }
+
+    fn drain(rx: &mut iced::futures::channel::mpsc::UnboundedReceiver<EmuEvent>) -> Vec<EmuEvent> {
+        let mut out = Vec::new();
+        while let Ok(Some(event)) = rx.try_next() {
+            out.push(event);
+        }
+        out
+    }
+
+    fn recording_with(
+        checks: Vec<missingno_core::recording::FrameCheck>,
+        frames: u64,
+    ) -> Recording {
+        Recording {
+            initial_state: Vec::new(),
+            inputs: Vec::new(),
+            checks,
+            frames,
+            check_interval: 0,
+        }
     }
 
     // The audio scope pane drives this through the handle; here it exercises
@@ -741,6 +937,66 @@ mod tests {
         state.handle(EmuCommand::SetGraphicsCapture(false));
         assert!(!state.graphics_capture);
     }
+
+    // A disagreeing checkpoint stops playback at the divergent frame and reports
+    // the expected/actual hashes rather than continuing on a stale timeline.
+    #[test]
+    fn replay_stops_and_reports_a_divergent_checkpoint() {
+        use missingno_core::recording::FrameCheck;
+        let mut replay = ReplayPlayback::new(recording_with(
+            vec![FrameCheck {
+                frame: 0,
+                hash: 0x1234,
+            }],
+            3,
+        ));
+        // A step that produced no frame hashes to 0, disagreeing with 0x1234.
+        match replay.note_frame(None) {
+            ReplayStep::Diverged {
+                frame,
+                expected,
+                actual,
+            } => {
+                assert_eq!(frame, 0);
+                assert_eq!(expected, 0x1234);
+                assert_eq!(actual, 0);
+            }
+            _ => panic!("expected a divergence"),
+        }
+    }
+
+    // A matching checkpoint continues; the run ends after the recorded count.
+    #[test]
+    fn replay_runs_to_the_recorded_frame_count() {
+        use missingno_core::recording::FrameCheck;
+        // A None frame hashes to 0; a checkpoint of 0 agrees.
+        let mut replay =
+            ReplayPlayback::new(recording_with(vec![FrameCheck { frame: 0, hash: 0 }], 2));
+        assert!(matches!(replay.note_frame(None), ReplayStep::Continue));
+        assert!(matches!(replay.note_frame(None), ReplayStep::Finished));
+    }
+
+    // Starting a recording during a replay would fold the replay's applied
+    // inputs into the capture; the loop refuses and leaves no recorder.
+    #[test]
+    fn recording_is_refused_during_replay() {
+        let (mut state, mut rx) = test_loop_with_events();
+        state.replay = Some(ReplayPlayback::new(recording_with(Vec::new(), 2)));
+        state.handle(EmuCommand::StartRecording("unused.mprc".into()));
+        assert!(state.recorder.is_none());
+        assert!(
+            matches!(drain(&mut rx).as_slice(), [EmuEvent::Notice(_)]),
+            "a refusal surfaces a notice, not a RecordingChanged"
+        );
+    }
+
+    // Finalizing with nothing recording is a silent no-op — no stray event.
+    #[test]
+    fn finalize_without_a_recording_is_silent() {
+        let (mut state, mut rx) = test_loop_with_events();
+        state.handle(EmuCommand::StopRecording);
+        assert!(drain(&mut rx).is_empty());
+    }
 }
 
 impl Payload {
@@ -761,15 +1017,24 @@ impl Payload {
         }
     }
 
-    /// Serialize the running machine state to a save file. `None` when the
-    /// system has no save-state backend.
-    fn save_state(&self, path: &std::path::Path) -> Result<(), String> {
-        let bytes = match self {
+    /// Serialize the running machine state. `None` when the system has no
+    /// backend, or the console is momentarily off an instruction boundary;
+    /// [`has_state_backend`](Self::has_state_backend) tells the two apart.
+    fn save_state_bytes(&self) -> Option<Vec<u8>> {
+        match self {
             Self::Console(console) => console.save_state(),
             Self::Debugger(payload) => payload.core.save_state(),
         }
-        .ok_or("this system has no save-state backend")?;
-        std::fs::write(path, bytes).map_err(|error| format!("could not write save state: {error}"))
+    }
+
+    /// Whether the system has a save-state backend at all — it authors a state
+    /// schema. A `None` from [`save_state_bytes`](Self::save_state_bytes) on a
+    /// backend-having console is a transient off-boundary miss, not "no backend".
+    fn has_state_backend(&self) -> bool {
+        match self {
+            Self::Console(console) => console.state_schema().is_some(),
+            Self::Debugger(payload) => payload.core.state_schema().is_some(),
+        }
     }
 
     /// Restore the running machine state from a save file.

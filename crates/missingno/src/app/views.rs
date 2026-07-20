@@ -189,6 +189,11 @@ impl App {
             } else {
                 Subscription::none()
             },
+            if self.notice.is_some() {
+                time::every(std::time::Duration::from_millis(3000)).map(|_| Message::DismissNotice)
+            } else {
+                Subscription::none()
+            },
             if self.settings.cartridge_rw_enabled {
                 time::every(std::time::Duration::from_secs(2)).map(|_| Message::CartridgeRwPoll)
             } else {

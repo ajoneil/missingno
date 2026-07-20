@@ -69,8 +69,12 @@ impl App {
                             Message::LoadState => dbg.load_state(&path),
                             _ => unreachable!(),
                         };
-                        if let Err(error) = result {
-                            eprintln!("state I/O failed: {error}");
+                        match result {
+                            Ok(()) => self.show_notice(match message {
+                                Message::SaveState => "State saved".into(),
+                                _ => "State loaded".into(),
+                            }),
+                            Err(error) => self.show_notice(error),
                         }
                     }
                     _ => {
@@ -97,13 +101,15 @@ impl App {
                 };
                 if let Some(handle) = &self.emu {
                     match message {
+                        // The recording flag follows the thread's
+                        // `RecordingChanged` event, never this click — a start
+                        // can fail (no backend) or defer (off a boundary).
                         Message::ToggleRecording => {
                             if self.recording {
                                 handle.send(EmuCommand::StopRecording);
                             } else {
                                 handle.send(EmuCommand::StartRecording(path));
                             }
-                            self.recording = !self.recording;
                         }
                         Message::Replay => handle.send(EmuCommand::PlayRecording(path)),
                         _ => unreachable!(),
@@ -157,6 +163,9 @@ impl App {
             Message::ExportCaptureSaved(_, None) => {}
             Message::DismissScreenshotToast => {
                 self.screenshot_toast = None;
+            }
+            Message::DismissNotice => {
+                self.notice = None;
             }
             Message::SetControl(control, pressed) => {
                 self.set_control(ControlId(control), ControlInput::Digital(pressed))
@@ -290,8 +299,23 @@ impl App {
                 }
             }
             EmuEvent::Screenshot(capture) => self.record_screenshot(*capture),
+            EmuEvent::Notice(message) => self.show_notice(message),
+            // The flag follows the thread's truth, not the toggle click.
+            EmuEvent::RecordingChanged(active) => self.recording = active,
+            EmuEvent::ReplayDiverged {
+                frame,
+                expected,
+                actual,
+            } => self.show_notice(format!(
+                "Replay diverged at frame {frame} (expected {expected:#x}, got {actual:#x})"
+            )),
         }
         Task::none()
+    }
+
+    /// Show a transient status-line toast.
+    fn show_notice(&mut self, message: String) {
+        self.notice = Some((message, Instant::now()));
     }
 
     pub(super) fn running(&self) -> bool {
