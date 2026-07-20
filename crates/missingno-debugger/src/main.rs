@@ -9,8 +9,8 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use missingno_debugger::SharedSession;
-use missingno_debugger::factory;
+use missingno_session::SharedSession;
+use missingno_session::factory;
 use missingno_debugger::http;
 
 /// Matches the GUI crate's headless server default.
@@ -90,11 +90,11 @@ fn run() -> Result<(), String> {
         let title = session
             .handle()
             .with_session(|session| session.game_title());
-        let publication = missingno_debugger::Publication {
+        let publication = missingno_session::Publication {
             title,
             core: core_name.to_string(),
         };
-        let endpoint = missingno_debugger::AttachEndpoint::open(session.handle(), publication)
+        let endpoint = missingno_session::AttachEndpoint::open(session.handle(), publication)
             .map_err(|error| format!("could not publish the session: {error}"))?;
         eprintln!("session published at {}", endpoint.path().display());
         Some(endpoint)

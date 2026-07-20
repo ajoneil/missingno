@@ -2973,6 +2973,7 @@ dependencies = [
  "missingno-gb",
  "missingno-gbc",
  "missingno-nes",
+ "missingno-session",
  "missingno-sms",
  "missingno-vcs",
  "open",
@@ -3022,16 +3023,9 @@ dependencies = [
 name = "missingno-debugger"
 version = "0.0.1"
 dependencies = [
- "libc",
  "missingno-core 0.1.0",
- "missingno-gb",
- "missingno-gbc",
- "missingno-nes",
- "missingno-sms",
- "missingno-vcs",
- "png 0.18.1",
+ "missingno-session",
  "rgb",
- "serde",
  "serde_json",
  "tiny_http",
 ]
@@ -3069,6 +3063,21 @@ dependencies = [
  "morepork",
  "rgb",
  "sha2 0.11.0",
+]
+
+[[package]]
+name = "missingno-session"
+version = "0.0.1"
+dependencies = [
+ "libc",
+ "missingno-core 0.1.0",
+ "missingno-gb",
+ "missingno-gbc",
+ "missingno-nes",
+ "missingno-sms",
+ "missingno-vcs",
+ "png 0.18.1",
+ "serde_json",
 ]
 
 [[package]]

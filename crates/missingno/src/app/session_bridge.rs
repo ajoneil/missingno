@@ -10,7 +10,7 @@
 use iced::futures::channel::mpsc::UnboundedSender;
 use iced::futures::{Stream, StreamExt, stream};
 
-use missingno_debugger::{SessionEvent, SessionHandle};
+use missingno_session::{SessionEvent, SessionHandle};
 
 /// Items the app-lifetime subscription yields: the sender handed over once at
 /// startup, then every session event forwarded through it.

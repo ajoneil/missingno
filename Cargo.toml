@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/missingno",
     "crates/missingno-debugger",
+    "crates/missingno-session",
     "crates/missingno-gb",
     "crates/missingno-gbc",
     "crates/missingno-core",
@@ -15,6 +16,7 @@ members = [
 default-members = [
     "crates/missingno",
     "crates/missingno-debugger",
+    "crates/missingno-session",
     "crates/missingno-gb",
     "crates/missingno-gbc",
     "crates/missingno-core",

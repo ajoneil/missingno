@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use iced::Task;
 use jiff::Timestamp;
-use missingno_debugger::SharedSession;
+use missingno_session::SharedSession;
 use rfd::{AsyncFileDialog, FileHandle};
 
 use crate::app::emulator::ConsoleFacts;

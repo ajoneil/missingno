@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::mcp;
+use crate::tools;
 use crate::shared::SessionHandle;
 
 /// How long an accept loop waits between polls, bounding how long a shutdown
@@ -333,10 +333,10 @@ fn answer(line: &str, handle: &SessionHandle, publication: &Publication) -> Valu
                 "debugger": handle.is_debugger(),
             }),
         ),
-        "tools/list" => success_frame(id, mcp::session_tools_json(handle)),
+        "tools/list" => success_frame(id, tools::session_tools_json(handle)),
         "tools/call" => success_frame(
             id,
-            mcp::call_session_tool_json(handle, &publication.core, &params),
+            tools::call_session_tool_json(handle, &publication.core, &params),
         ),
         other => error_frame(id, &format!("method not found: {other}")),
     }

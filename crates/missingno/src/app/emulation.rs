@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use iced::Task;
-use missingno_debugger::{ExtractedMachine, SessionEvent, SessionHandle, SharedSession};
+use missingno_session::{ExtractedMachine, SessionEvent, SessionHandle, SharedSession};
 
 use super::audio_output::AudioOutput;
 use super::emulator::{ConsoleFacts, Emulator};
@@ -29,7 +29,7 @@ impl App {
     /// Open an audio device for a freshly spawned session: the UI-thread stream
     /// holder to keep alive, and the Send sink the session drains into. `None`
     /// silences the game when no device is available.
-    pub(super) fn open_audio() -> (Option<AudioOutput>, Option<missingno_debugger::AudioSink>) {
+    pub(super) fn open_audio() -> (Option<AudioOutput>, Option<missingno_session::AudioSink>) {
         match AudioOutput::open() {
             Some((output, sink)) => (Some(output), Some(sink)),
             None => (None, None),
@@ -320,7 +320,7 @@ impl App {
         let Some(session) = &self.session else {
             return;
         };
-        let publication = missingno_debugger::Publication {
+        let publication = missingno_session::Publication {
             title: self
                 .current_game
                 .as_ref()
@@ -331,7 +331,7 @@ impl App {
                 .map(|platform| platform.name().to_string())
                 .unwrap_or_default(),
         };
-        match missingno_debugger::AttachEndpoint::open(session.handle(), publication) {
+        match missingno_session::AttachEndpoint::open(session.handle(), publication) {
             Ok(endpoint) => self.attach_endpoint = Some(endpoint),
             Err(error) => self.show_notice(format!("Could not allow external clients: {error}")),
         }

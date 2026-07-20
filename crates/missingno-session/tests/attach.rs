@@ -3,20 +3,20 @@
 //! sessions that actually answer, and the session-level tools drive the machine
 //! through its command queue.
 
-#![cfg(all(unix, feature = "mcp", feature = "gb"))]
+#![cfg(all(unix, feature = "tools", feature = "gb"))]
 
 use std::path::{Path, PathBuf};
 
-use missingno_debugger::attach::{AttachClient, AttachEndpoint, Publication, discover_in};
-use missingno_debugger::mcp;
-use missingno_debugger::{SessionHandle, SharedSession};
+use missingno_session::attach::{AttachClient, AttachEndpoint, Publication, discover_in};
+use missingno_session::tools;
+use missingno_session::{SessionHandle, SharedSession};
 use serde_json::{Value, json};
 
 /// A 32 KiB all-NOP `.gb` ROM: the extension makes the registry claim it, and
 /// the DMG core boots to PC 0x0100.
 fn gb_session() -> SharedSession {
     let rom = vec![0x00u8; 0x8000];
-    let console = missingno_debugger::factory::create_console(Path::new("test.gb"), &rom)
+    let console = missingno_session::factory::create_console(Path::new("test.gb"), &rom)
         .expect("factory should not error")
         .expect("gb factory claims a .gb ROM");
     SharedSession::spawn(console.into_debugger().ok().expect("gb has a debugger"))
@@ -25,7 +25,7 @@ fn gb_session() -> SharedSession {
 /// The same ROM hosted as a plain console, with no debugger surface.
 fn gb_console_session() -> SharedSession {
     let rom = vec![0x00u8; 0x8000];
-    let console = missingno_debugger::factory::create_console(Path::new("test.gb"), &rom)
+    let console = missingno_session::factory::create_console(Path::new("test.gb"), &rom)
         .expect("factory should not error")
         .expect("gb factory claims a .gb ROM");
     SharedSession::spawn_console(console)
@@ -258,10 +258,10 @@ fn a_console_session_publishes_only_the_tools_it_can_answer() {
 // --- the session-level tools, in process --------------------------------------
 
 fn tool(handle: &SessionHandle, name: &str, args: Value) -> Result<String, String> {
-    let outcome = mcp::call_session_tool(handle, "Game Boy", name, &args)
+    let outcome = tools::call_session_tool(handle, "Game Boy", name, &args)
         .unwrap_or_else(|| Err(format!("unknown tool: {name}")))?;
     Ok(match outcome.first() {
-        Some(mcp::Content::Text(body)) => body.clone(),
+        Some(tools::Content::Text(body)) => body.clone(),
         _ => String::new(),
     })
 }

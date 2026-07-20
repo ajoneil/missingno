@@ -24,10 +24,10 @@ mod texture_renderer;
 mod ui;
 mod views;
 
-use missingno_debugger::{SessionEvent, SharedSession};
+use missingno_session::{SessionEvent, SharedSession};
 
 #[cfg(unix)]
-use missingno_debugger::AttachEndpoint;
+use missingno_session::AttachEndpoint;
 
 // Cartridge reader/writer hardware support
 use crate::cartridge_rw;

@@ -7,7 +7,7 @@ use iced::{
     widget::{Column, button, column, container, pane_grid, pick_list, row, text, text_input},
 };
 
-use missingno_debugger::SessionHandle;
+use missingno_session::SessionHandle;
 
 use crate::app::system::Platform;
 use crate::app::{
@@ -393,10 +393,10 @@ impl Debugger {
     }
 
     /// The peek spans as the session's engine command wants them.
-    fn session_interests(&self) -> Vec<missingno_debugger::MemoryInterest> {
+    fn session_interests(&self) -> Vec<missingno_session::MemoryInterest> {
         self.memory_interests()
             .into_iter()
-            .map(|interest| missingno_debugger::MemoryInterest {
+            .map(|interest| missingno_session::MemoryInterest {
                 start: interest.start,
                 len: interest.len,
             })
@@ -474,7 +474,7 @@ impl Debugger {
     /// audio it produced. The session's audio sink only drains in the run loop,
     /// so paused-step audio does not play — draining here keeps it from piling up
     /// and bursting when the game next resumes.
-    fn step_and_drop(&self, step: impl FnOnce(&mut missingno_debugger::Session) + Send + 'static) {
+    fn step_and_drop(&self, step: impl FnOnce(&mut missingno_session::Session) + Send + 'static) {
         self.handle.with_session(move |session| {
             step(session);
             let _ = session.drain_audio_samples();

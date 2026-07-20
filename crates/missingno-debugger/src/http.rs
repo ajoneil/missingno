@@ -17,8 +17,8 @@ use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 use missingno_core::system::{ControlId, ControlInput};
 
-use crate::session::{DisasmLine, Session, StopReason};
-use crate::shared::{SessionHandle, SharedSession};
+use missingno_session::session::{DisasmLine, Session, StopReason};
+use missingno_session::shared::{SessionHandle, SharedSession};
 
 /// Cap on a single `/memory` read, so a bad length can't allocate unbounded.
 const MAX_MEMORY_LEN: u32 = 0x1000;
@@ -1047,13 +1047,13 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    use crate::Session;
+    use missingno_session::Session;
 
     /// A 32 KiB all-NOP `.gb` ROM: the extension makes the registry claim it,
     /// and the DMG core boots to PC 0x0100.
     fn gb_session() -> Session {
         let rom = vec![0x00u8; 0x8000];
-        let console = crate::factory::create_console(Path::new("test.gb"), &rom)
+        let console = missingno_session::factory::create_console(Path::new("test.gb"), &rom)
             .expect("factory should not error")
             .expect("gb factory claims a .gb ROM");
         Session::new(console.into_debugger().ok().expect("gb has a debugger"))
@@ -1096,7 +1096,7 @@ mod tests {
     fn cgb_session() -> Session {
         let mut rom = vec![0x00u8; 0x8000];
         rom[0x143] = 0xC0;
-        let console = crate::factory::create_console(Path::new("test.gbc"), &rom)
+        let console = missingno_session::factory::create_console(Path::new("test.gbc"), &rom)
             .expect("factory should not error")
             .expect("gb factory claims a .gbc ROM");
         Session::new(console.into_debugger().ok().expect("gbc has a debugger"))

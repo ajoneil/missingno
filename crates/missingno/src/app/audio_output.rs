@@ -1,6 +1,6 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use missingno_core::{HighPass, OnePoleHighPass};
-use missingno_debugger::AudioSink;
+use missingno_session::AudioSink;
 
 const SAMPLE_RATE: u32 = 44_100;
 

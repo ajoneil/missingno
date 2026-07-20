@@ -8,7 +8,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use missingno_debugger::{SessionEvent, SessionHandle, SharedSession, StopReason, factory};
+use missingno_session::{SessionEvent, SessionHandle, SharedSession, StopReason, factory};
 
 /// A 32 KiB all-NOP ROM: the `.gb` extension makes the registry claim it, and
 /// the DMG core boots to PC 0x0100 and marches NOPs from there.
@@ -144,7 +144,7 @@ fn readouts_are_honest_across_the_run_boundary() {
 fn interest_windows_publish_while_running() {
     let session = shared();
     let client = session.handle();
-    client.set_memory_interest(vec![missingno_debugger::MemoryInterest {
+    client.set_memory_interest(vec![missingno_session::MemoryInterest {
         start: 0xC000,
         len: 16,
     }]);
@@ -311,7 +311,7 @@ fn screenshot_captures_the_current_frame() {
 
 #[test]
 fn into_machine_hands_back_the_hosted_debugger() {
-    use missingno_debugger::ExtractedMachine;
+    use missingno_session::ExtractedMachine;
 
     // A debugger session hands back a debugger; the frontend re-hosts it (or its
     // console) in a session of the other kind to toggle the debugger.
@@ -327,7 +327,7 @@ fn into_machine_hands_back_the_hosted_debugger() {
 
 #[test]
 fn into_machine_hands_back_a_plain_console() {
-    use missingno_debugger::ExtractedMachine;
+    use missingno_session::ExtractedMachine;
 
     let rom = vec![0x00u8; 0x8000];
     let console = factory::create_console(Path::new("test.gb"), &rom)
@@ -341,10 +341,10 @@ fn into_machine_hands_back_a_plain_console() {
 }
 
 /// A plain `Session` over the same ROM, for replaying a recording against.
-fn session_engine() -> missingno_debugger::Session {
+fn session_engine() -> missingno_session::Session {
     let rom = vec![0x00u8; 0x8000];
     let console = factory::create_console(Path::new("test.gb"), &rom)
         .expect("factory should not error")
         .expect("gb factory should claim a .gb ROM");
-    missingno_debugger::Session::new(console.into_debugger().ok().expect("gb has a debugger"))
+    missingno_session::Session::new(console.into_debugger().ok().expect("gb has a debugger"))
 }

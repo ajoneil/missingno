@@ -127,7 +127,7 @@ fn run_headless(
     let save_data = std::fs::read(rom_path.with_extension("sav")).ok();
 
     let debugger = app::system::gb::headless_debugger(rom_data, save_data, boot_rom, link);
-    let session = missingno_debugger::Session::new(debugger);
+    let session = missingno_session::Session::new(debugger);
     if let Err(e) = missingno_debugger::http::serve(session, HEADLESS_PORT) {
         eprintln!("error: {e}");
         std::process::exit(1);

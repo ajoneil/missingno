@@ -15,26 +15,16 @@ path = "src/main.rs"
 # and the colour superset (gbc) together; there is no meaningful gb-without-gbc
 # split for a build that must still run dual-mode media.
 default = ["gb", "vcs"]
-gb = ["dep:missingno-gb", "dep:missingno-gbc"]
-vcs = ["dep:missingno-vcs"]
-nes = ["dep:missingno-nes"]
-sms = ["dep:missingno-sms"]
-# The MCP-over-stdio transport. Pulls a PNG encoder for the frame tool.
-mcp = ["dep:png"]
+gb = ["missingno-session/gb"]
+vcs = ["missingno-session/vcs"]
+nes = ["missingno-session/nes"]
+sms = ["missingno-session/sms"]
+# The MCP-over-stdio transport, over the session's agent tool surface.
+mcp = ["missingno-session/tools"]
 
 [dependencies]
 missingno-core = { path = "../missingno-core" }
-missingno-gb = { path = "../missingno-gb", optional = true }
-missingno-gbc = { path = "../missingno-gbc", optional = true }
-missingno-vcs = { path = "../missingno-vcs", optional = true }
-missingno-nes = { path = "../missingno-nes", optional = true }
-missingno-sms = { path = "../missingno-sms", optional = true }
+missingno-session = { path = "../missingno-session", default-features = false }
 tiny_http = "0.12"
 rgb = { workspace = true }
-serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-png = { version = "0.18", optional = true }
-
-[target.'cfg(unix)'.dependencies]
-# uid-scoping the attach runtime directory when XDG does not name one.
-libc = "0.2"

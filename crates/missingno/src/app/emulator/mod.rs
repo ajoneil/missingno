@@ -5,7 +5,7 @@ use iced::{
     widget::{button, container, mouse_area, responsive, row, shader, stack, svg},
 };
 
-use missingno_debugger::SessionHandle;
+use missingno_session::SessionHandle;
 
 use crate::app::system::{ConsoleSwitch, Platform, gb};
 use crate::app::{
