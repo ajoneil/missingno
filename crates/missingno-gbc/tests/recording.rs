@@ -45,7 +45,7 @@ fn cgb_recording_replays_deterministically() {
     }
     let recording = recorder.finish();
 
-    let bytes = recording.to_bytes();
+    let bytes = recording.to_bytes().unwrap();
     let parsed = Recording::from_bytes(&bytes).expect("round-trips through bytes");
 
     let mut fresh = cgb_console(rom);

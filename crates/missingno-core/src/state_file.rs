@@ -68,6 +68,8 @@ pub enum StateFileError {
     BadUtf8,
     /// A field's type or value tag was not a known code.
     BadEncoding,
+    /// A length or count exceeded what the 32-bit container framing can carry.
+    TooLarge,
 }
 
 impl std::fmt::Display for StateFileError {
@@ -80,6 +82,7 @@ impl std::fmt::Display for StateFileError {
             StateFileError::Truncated => f.write_str("state save file is truncated"),
             StateFileError::BadUtf8 => f.write_str("state save file has invalid text"),
             StateFileError::BadEncoding => f.write_str("state save file has an unknown encoding"),
+            StateFileError::TooLarge => f.write_str("state save file is too large to encode"),
         }
     }
 }
@@ -126,12 +129,21 @@ fn value_type_code(value: &StateValue) -> u8 {
 
 // ── Write ────────────────────────────────────────────────────────
 
-fn put_str(out: &mut Vec<u8>, text: &str) {
-    out.extend_from_slice(&(text.len() as u32).to_le_bytes());
-    out.extend_from_slice(text.as_bytes());
+/// A length prefix, rejecting anything the 32-bit framing cannot carry rather
+/// than silently truncating it.
+fn put_len(out: &mut Vec<u8>, len: usize) -> Result<(), StateFileError> {
+    let len = u32::try_from(len).map_err(|_| StateFileError::TooLarge)?;
+    out.extend_from_slice(&len.to_le_bytes());
+    Ok(())
 }
 
-fn put_value(out: &mut Vec<u8>, value: &StateValue) {
+fn put_str(out: &mut Vec<u8>, text: &str) -> Result<(), StateFileError> {
+    put_len(out, text.len())?;
+    out.extend_from_slice(text.as_bytes());
+    Ok(())
+}
+
+fn put_value(out: &mut Vec<u8>, value: &StateValue) -> Result<(), StateFileError> {
     match value {
         StateValue::Bool(b) => {
             out.push(0);
@@ -143,42 +155,44 @@ fn put_value(out: &mut Vec<u8>, value: &StateValue) {
         }
         StateValue::Text(text) => {
             out.push(2);
-            put_str(out, text);
+            put_str(out, text)?;
         }
         StateValue::Null => out.push(3),
     }
+    Ok(())
 }
 
 /// Serialize a full-state record, its memory spans, and its framebuffer into a
 /// save file. Memory spans are written in the order given; the frame is
-/// optional.
+/// optional. Errors ([`StateFileError::TooLarge`]) if a length overruns the
+/// 32-bit framing rather than truncating it.
 pub fn write_state_file(
     meta: &StateMeta,
     record: &StateRecord,
     memory: &[(&str, Vec<u8>)],
     frame: Option<&StateFrame>,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, StateFileError> {
     let mut out = Vec::new();
     out.extend_from_slice(STATE_MAGIC);
     out.push(STATE_VERSION);
 
-    put_str(&mut out, meta.system);
-    put_str(&mut out, meta.rom_sha256.unwrap_or(""));
-    put_str(&mut out, meta.emulator);
-    put_str(&mut out, meta.emulator_version);
+    put_str(&mut out, meta.system)?;
+    put_str(&mut out, meta.rom_sha256.unwrap_or(""))?;
+    put_str(&mut out, meta.emulator)?;
+    put_str(&mut out, meta.emulator_version)?;
 
     let fields: Vec<_> = record.iter().collect();
-    out.extend_from_slice(&(fields.len() as u32).to_le_bytes());
+    put_len(&mut out, fields.len())?;
     for (name, value) in fields {
-        put_str(&mut out, name);
+        put_str(&mut out, name)?;
         out.push(value_type_code(value));
-        put_value(&mut out, value);
+        put_value(&mut out, value)?;
     }
 
-    out.extend_from_slice(&(memory.len() as u32).to_le_bytes());
+    put_len(&mut out, memory.len())?;
     for (name, bytes) in memory {
-        put_str(&mut out, name);
-        out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        put_str(&mut out, name)?;
+        put_len(&mut out, bytes.len())?;
         out.extend_from_slice(bytes);
     }
 
@@ -194,13 +208,13 @@ pub fn write_state_file(
                 None => out.push(0),
             }
             out.push(pixel_format_code(frame.format));
-            out.extend_from_slice(&(frame.data.len() as u32).to_le_bytes());
+            put_len(&mut out, frame.data.len())?;
             out.extend_from_slice(&frame.data);
         }
         None => out.push(0),
     }
 
-    out
+    Ok(out)
 }
 
 // ── Read ─────────────────────────────────────────────────────────
@@ -222,8 +236,24 @@ impl<'a> Reader<'a> {
         Ok(slice)
     }
 
+    /// Bytes not yet consumed — the upper bound on any count, so a hostile
+    /// length can never drive a `with_capacity` past the data actually present.
+    fn remaining(&self) -> usize {
+        self.bytes.len() - self.pos
+    }
+
     fn u8(&mut self) -> Result<u8, StateFileError> {
         Ok(self.take(1)?[0])
+    }
+
+    /// A presence flag: exactly 0 or 1, so a garbage byte is a clean encoding
+    /// error rather than a silently-taken branch.
+    fn presence(&mut self) -> Result<bool, StateFileError> {
+        match self.u8()? {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(StateFileError::BadEncoding),
+        }
     }
 
     fn u32(&mut self) -> Result<u32, StateFileError> {
@@ -270,7 +300,7 @@ pub fn read_state_file(bytes: &[u8]) -> Result<StateFile, StateFileError> {
     let emulator_version = reader.string()?;
 
     let field_count = reader.u32()? as usize;
-    let mut fields = Vec::with_capacity(field_count);
+    let mut fields = Vec::with_capacity(field_count.min(reader.remaining()));
     for _ in 0..field_count {
         let name = reader.string()?;
         let _type_code = reader.u8()?;
@@ -279,7 +309,7 @@ pub fn read_state_file(bytes: &[u8]) -> Result<StateFile, StateFileError> {
     }
 
     let span_count = reader.u32()? as usize;
-    let mut memory = Vec::with_capacity(span_count);
+    let mut memory = Vec::with_capacity(span_count.min(reader.remaining()));
     for _ in 0..span_count {
         let name = reader.string()?;
         let len = reader.u32()? as usize;
@@ -287,9 +317,9 @@ pub fn read_state_file(bytes: &[u8]) -> Result<StateFile, StateFileError> {
         memory.push((name, data));
     }
 
-    let frame = if reader.u8()? == 1 {
+    let frame = if reader.presence()? {
         let width = reader.u32()?;
-        let height = if reader.u8()? == 1 {
+        let height = if reader.presence()? {
             Some(reader.u32()?)
         } else {
             None
@@ -306,6 +336,12 @@ pub fn read_state_file(bytes: &[u8]) -> Result<StateFile, StateFileError> {
     } else {
         None
     };
+
+    // A well-formed save file is consumed exactly; trailing bytes mean the
+    // framing did not describe the whole input.
+    if reader.remaining() != 0 {
+        return Err(StateFileError::BadEncoding);
+    }
 
     Ok(StateFile {
         system,
@@ -367,7 +403,7 @@ mod tests {
             format: PixelFormat::Shade2,
             data: vec![1u8; 160 * 144],
         };
-        let bytes = write_state_file(&meta, &record, &memory, Some(&frame));
+        let bytes = write_state_file(&meta, &record, &memory, Some(&frame)).unwrap();
 
         let file = read_state_file(&bytes).unwrap();
         assert_eq!(file.system, "dmg");
@@ -392,7 +428,7 @@ mod tests {
             emulator: "missingno",
             emulator_version: "0.0.1",
         };
-        let bytes = write_state_file(&meta, &full_record(), &[], None);
+        let bytes = write_state_file(&meta, &full_record(), &[], None).unwrap();
         let file = read_state_file(&bytes).unwrap();
         assert!(file.rom_sha256.is_none());
         assert!(file.frame.is_none());
@@ -412,7 +448,7 @@ mod tests {
             emulator: "e",
             emulator_version: "v",
         };
-        let mut bytes = write_state_file(&meta, &full_record(), &[], None);
+        let mut bytes = write_state_file(&meta, &full_record(), &[], None).unwrap();
         bytes[4] = 99;
         assert_eq!(
             read_state_file(&bytes),
@@ -428,7 +464,7 @@ mod tests {
             emulator: "e",
             emulator_version: "v",
         };
-        let bytes = write_state_file(&meta, &full_record(), &[], None);
+        let bytes = write_state_file(&meta, &full_record(), &[], None).unwrap();
         assert_eq!(
             read_state_file(&bytes[..bytes.len() - 3]),
             Err(StateFileError::Truncated)
@@ -445,7 +481,7 @@ mod tests {
             emulator: "e",
             emulator_version: "v",
         };
-        let bytes = write_state_file(&meta, &full_record(), &[], None);
+        let bytes = write_state_file(&meta, &full_record(), &[], None).unwrap();
         let file = read_state_file(&bytes).unwrap();
 
         let mut other = schema();
@@ -453,5 +489,49 @@ mod tests {
             .fields
             .push(FieldDef::observable("sp", FieldType::U16, "cpu"));
         assert!(other.record_from(file.fields).is_err());
+    }
+
+    #[test]
+    fn rejects_trailing_bytes() {
+        let meta = StateMeta {
+            system: "dmg",
+            rom_sha256: None,
+            emulator: "e",
+            emulator_version: "v",
+        };
+        let mut bytes = write_state_file(&meta, &full_record(), &[], None).unwrap();
+        bytes.push(0);
+        assert_eq!(read_state_file(&bytes), Err(StateFileError::BadEncoding));
+    }
+
+    #[test]
+    fn rejects_a_garbage_frame_presence_byte() {
+        // The frame-present flag is a presence byte; a value other than 0/1 is a
+        // clean encoding error, not a silently-taken branch.
+        let meta = StateMeta {
+            system: "dmg",
+            rom_sha256: None,
+            emulator: "e",
+            emulator_version: "v",
+        };
+        let mut bytes = write_state_file(&meta, &full_record(), &[], None).unwrap();
+        // The last byte is the frame-present flag (None ⇒ 0). Corrupt it.
+        *bytes.last_mut().unwrap() = 7;
+        assert_eq!(read_state_file(&bytes), Err(StateFileError::BadEncoding));
+    }
+
+    #[test]
+    fn a_hostile_field_count_does_not_over_allocate() {
+        // Magic + version + four empty strings + a field_count of u32::MAX, with
+        // no field data behind it: the count is clamped against remaining bytes,
+        // so parsing fails cleanly (truncated) rather than trying a huge alloc.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(STATE_MAGIC);
+        bytes.push(STATE_VERSION);
+        for _ in 0..4 {
+            bytes.extend_from_slice(&0u32.to_le_bytes()); // empty strings
+        }
+        bytes.extend_from_slice(&u32::MAX.to_le_bytes()); // field_count
+        assert_eq!(read_state_file(&bytes), Err(StateFileError::Truncated));
     }
 }

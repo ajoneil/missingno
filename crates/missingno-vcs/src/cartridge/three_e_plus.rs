@@ -122,6 +122,31 @@ impl ThreeEPlus {
         &self.image
     }
 
+    /// The four segment mappings (ROM/RAM bank each), for a state save, as
+    /// `[tag, bank]` pairs. RAM contents travel as the linear cart-RAM region;
+    /// this restores the selects. The arm latch is transient and stays cleared.
+    pub(super) fn bank_state(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(SEGMENTS * 2);
+        for mapping in self.segments {
+            match mapping {
+                Mapping::Rom(bank) => out.extend_from_slice(&[0, bank as u8]),
+                Mapping::Ram(bank) => out.extend_from_slice(&[1, bank as u8]),
+            }
+        }
+        out
+    }
+
+    pub(super) fn restore_bank_state(&mut self, bytes: &[u8]) {
+        for (segment, pair) in self.segments.iter_mut().zip(bytes.chunks_exact(2)) {
+            *segment = if pair[0] == 1 {
+                Mapping::Ram(pair[1] as usize % RAM_BANKS)
+            } else {
+                Mapping::Rom(pair[1] as usize % self.rom_banks.max(1))
+            };
+        }
+        self.armed = None;
+    }
+
     pub fn peek(&self, address: u16) -> u8 {
         let offset = usize::from(address & 0x0FFF);
         let within = offset % SEGMENT_SIZE;

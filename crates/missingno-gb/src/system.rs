@@ -253,8 +253,14 @@ fn state_frame(raw: &RawFrame) -> StateFrame {
 
 /// Serialize the console's boundary state into a save file: the schema-keyed
 /// record, the RAM spans, and the current framebuffer. `None` when the model
-/// authors no state schema.
+/// authors no state schema, or the console is mid-instruction — a save is only
+/// faithful at an instruction boundary, where the CPU carries no
+/// micro-sequencer residue (a fetch boundary, or halted waiting on an
+/// interrupt).
 fn save_state_bytes<M: ConsoleUi>(console: &Console<M>) -> Option<Vec<u8>> {
+    if !console.cpu().is_fetch_phase() && !console.cpu().is_halted() {
+        return None;
+    }
     let schema = M::state_schema()?;
     let record = M::read_state(console)?;
     let memory = M::capture_memory(console);
@@ -266,7 +272,7 @@ fn save_state_bytes<M: ConsoleUi>(console: &Console<M>) -> Option<Vec<u8>> {
         emulator: "missingno",
         emulator_version: env!("CARGO_PKG_VERSION"),
     };
-    Some(write_state_file(&meta, &record, &memory, Some(&frame)))
+    write_state_file(&meta, &record, &memory, Some(&frame)).ok()
 }
 
 /// Restore the console from a save file, rejecting a state for the wrong system

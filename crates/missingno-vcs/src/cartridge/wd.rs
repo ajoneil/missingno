@@ -126,6 +126,19 @@ impl Wd {
         &mut self.ram
     }
 
+    /// The settled segment arrangement, for a state save. The pending
+    /// switch-delay latch is transient and stays cleared on restore.
+    pub(super) fn bank_state(&self) -> Vec<u8> {
+        vec![self.arrangement as u8]
+    }
+
+    pub(super) fn restore_bank_state(&mut self, bytes: &[u8]) {
+        if let Some(&arrangement) = bytes.first() {
+            self.arrangement = (arrangement as usize) % ARRANGEMENTS.len();
+            self.pending = None;
+        }
+    }
+
     pub fn peek(&self, address: u16) -> u8 {
         let offset = usize::from(address & 0x0FFF);
         if offset < RAM_SIZE {

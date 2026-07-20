@@ -55,6 +55,17 @@ impl E0 {
         &self.image
     }
 
+    /// The three pageable-window slices, for a state save.
+    pub(super) fn bank_state(&self) -> Vec<u8> {
+        self.slices.iter().map(|&s| s as u8).collect()
+    }
+
+    pub(super) fn restore_bank_state(&mut self, bytes: &[u8]) {
+        for (slot, &value) in self.slices.iter_mut().zip(bytes) {
+            *slot = (value as usize) % SLICES as usize;
+        }
+    }
+
     pub fn peek(&self, address: u16) -> u8 {
         let offset = (address & 0x0FFF) as usize;
         let window = offset / SLICE_SIZE;

@@ -78,6 +78,17 @@ impl Fa {
         self.ram.as_slice()
     }
 
+    /// The selected bank, for a state save.
+    pub(super) fn bank_state(&self) -> Vec<u8> {
+        vec![self.bank as u8]
+    }
+
+    pub(super) fn restore_bank_state(&mut self, bytes: &[u8]) {
+        if let Some(&bank) = bytes.first() {
+            self.bank = (bank as usize).min(BANKS - 1);
+        }
+    }
+
     /// The full ROM image, all banks in file order, for the debugger's
     /// bank-complete `rom` region.
     pub(super) fn rom(&self) -> &[u8] {

@@ -67,7 +67,7 @@ fn dmg_recording_replays_deterministically() {
     );
 
     // Exercise the container round-trip, then replay the parsed recording.
-    let bytes = recording.to_bytes();
+    let bytes = recording.to_bytes().unwrap();
     let parsed = Recording::from_bytes(&bytes).expect("the recording round-trips through bytes");
 
     let mut console = dmg_console(rom);
@@ -106,7 +106,9 @@ fn replay_rejects_a_version_mismatched_initial_state() {
 
 #[test]
 fn recording_container_rejects_an_unsupported_version() {
-    let mut bytes = record("blargg/cpu_instrs/individual/06-ld r,r.gb", 1, 4, 2).to_bytes();
+    let mut bytes = record("blargg/cpu_instrs/individual/06-ld r,r.gb", 1, 4, 2)
+        .to_bytes()
+        .unwrap();
     bytes[4] = 0xEE;
     assert_eq!(
         Recording::from_bytes(&bytes),

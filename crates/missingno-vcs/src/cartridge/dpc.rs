@@ -381,6 +381,18 @@ impl Dpc {
         &self.program
     }
 
+    /// The selected F8 program bank, for a state save. The display-ROM fetchers
+    /// and RNG are the custom chip's transient run state, not bank selection.
+    pub(super) fn bank_state(&self) -> Vec<u8> {
+        vec![self.bank as u8]
+    }
+
+    pub(super) fn restore_bank_state(&mut self, bytes: &[u8]) {
+        if let Some(&bank) = bytes.first() {
+            self.bank = (bank as usize) % (self.program.len() / BANK_SIZE).max(1);
+        }
+    }
+
     /// A read-only view of the chip's internals for the debugger.
     pub(super) fn inspect(&self) -> DpcView {
         DpcView {

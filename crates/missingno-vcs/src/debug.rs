@@ -304,7 +304,7 @@ fn save_state_bytes(vcs: &Vcs, frame: &IndexedFrame, rom_sha256: &str) -> Option
         emulator: "missingno",
         emulator_version: env!("CARGO_PKG_VERSION"),
     };
-    Some(write_state_file(&meta, &record, &memory, Some(&saved)))
+    write_state_file(&meta, &record, &memory, Some(&saved)).ok()
 }
 
 /// Restore the console from a save file, rejecting a state for the wrong system

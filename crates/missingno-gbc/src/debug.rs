@@ -441,6 +441,15 @@ impl ConsoleUi for Cgb {
             .set("opri", ppu.read_object_priority())
             .set("bcps", bcps)
             .set("ocps", ocps);
+        // KEY1 arm bit and the undocumented $FF72-$FF75 scratch registers, so a
+        // fresh-console restore reproduces the same replay as an in-place one.
+        let (key1_armed, ff72, ff73, ff74, ff75) = model.scratch_registers();
+        record
+            .set("key1_armed", key1_armed)
+            .set("ff72", ff72)
+            .set("ff73", ff73)
+            .set("ff74", ff74)
+            .set("ff75", ff75);
         let (active, source, dest, remaining, hblank) = match model.vram_dma_status() {
             VramDmaStatus::Idle => (false, 0u16, 0u16, 0u8, false),
             VramDmaStatus::General { remaining } => (true, 0, 0, (remaining / 16) as u8, false),
@@ -480,6 +489,7 @@ impl ConsoleUi for Cgb {
             ("hram", console.high_ram().data().to_vec()),
             ("cram_bg", bg_cram.to_vec()),
             ("cram_obj", obj_cram.to_vec()),
+            ("extra_oam", console.model().extra_oam_bytes().to_vec()),
         ];
         if let Some(ram) = console.cartridge().ram()
             && !ram.is_empty()

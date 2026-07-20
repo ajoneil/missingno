@@ -107,6 +107,31 @@ impl E7 {
         &self.image
     }
 
+    /// The lower-window select (a ROM bank 0..6, or `FIXED_BANK` for the 1 KB
+    /// RAM) and the 256-byte page select, for a state save. The RAM contents
+    /// themselves are not part of the debugger's linear region and stay
+    /// uncaptured — this restores only the bank/slot selection.
+    pub(super) fn bank_state(&self) -> Vec<u8> {
+        let lower = match self.lower {
+            LowerWindow::Rom(bank) => bank as u8,
+            LowerWindow::Ram => FIXED_BANK as u8,
+        };
+        vec![lower, self.page as u8]
+    }
+
+    pub(super) fn restore_bank_state(&mut self, bytes: &[u8]) {
+        if let Some(&lower) = bytes.first() {
+            self.lower = if lower as usize >= FIXED_BANK {
+                LowerWindow::Ram
+            } else {
+                LowerWindow::Rom(lower as usize)
+            };
+        }
+        if let Some(&page) = bytes.get(1) {
+            self.page = (page as usize) % PAGES;
+        }
+    }
+
     pub fn peek(&self, address: u16) -> u8 {
         let offset = (address & 0x0FFF) as usize;
         match offset {

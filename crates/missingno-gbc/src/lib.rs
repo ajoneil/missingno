@@ -207,6 +207,17 @@ impl Cgb {
     pub fn vram_dma_status(&self) -> VramDmaStatus {
         self.vram_dma.status()
     }
+
+    /// The KEY1 arm bit and the undocumented $FF72-$FF75 scratch registers, as
+    /// stored — for save-state capture.
+    pub(crate) fn scratch_registers(&self) -> (bool, u8, u8, u8, u8) {
+        (self.key1_armed, self.ff72, self.ff73, self.ff74, self.ff75)
+    }
+
+    /// The 24 bytes of CGB extra OAM ($FEA0-$FEFF), for save-state capture.
+    pub(crate) fn extra_oam_bytes(&self) -> &[u8; 24] {
+        &self.extra_oam
+    }
 }
 impl Model for Cgb {
     type Ppu = CgbPpu;
@@ -633,10 +644,46 @@ impl Model for Cgb {
             out
         };
 
-        // Speed: single-speed boundaries only (double speed refused above); reset
-        // the KEY1/blackout transients to their idle values.
+        // Parse every field the delta needs BEFORE mutating any state — a bad or
+        // missing field then leaves the console untouched rather than
+        // half-restored.
+        let svbk = (int("svbk")? as u8) & 0x07;
+        let vbk = int("vbk")? as u8;
+        let bcps = int("bcps")? as u8;
+        let ocps = int("ocps")? as u8;
+        let opri = int("opri")? as u8;
+        let key1_armed = flag("key1_armed")?;
+        let ff72 = int("ff72")? as u8;
+        let ff73 = int("ff73")? as u8;
+        let ff74 = int("ff74")? as u8;
+        let ff75 = int("ff75")? as u8;
+        let hdma_active = flag("hdma_active")?;
+        let hdma_hblank = flag("hdma_hblank")?;
+        let (hdma_source, hdma_dest, hdma_remaining) = if hdma_active && hdma_hblank {
+            (
+                int("hdma_source")? as u16,
+                int("hdma_dest")? as u16,
+                (int("hdma_remaining")? as u16) * 16,
+            )
+        } else {
+            (0, 0, 0)
+        };
+        let bg = region("cram_bg");
+        let obj = region("cram_obj");
+        let extra_oam = {
+            let mut out = [0u8; 24];
+            if let Some((_, data)) = memory.iter().find(|(n, _)| n == "extra_oam") {
+                let len = data.len().min(24);
+                out[..len].copy_from_slice(&data[..len]);
+            }
+            out
+        };
+
+        // Everything parsed: now mutate. Speed is single-speed only (double speed
+        // refused in validate_boundary); reset the KEY1/blackout transients to
+        // their idle values, but honour the captured arm bit.
         self.double_speed = false;
-        self.key1_armed = false;
+        self.key1_armed = key1_armed;
         self.speed_switch_blackout = 0;
         self.speed_switch_wake_latency = None;
         self.switch_relock_debit = false;
@@ -647,32 +694,34 @@ impl Model for Cgb {
         self.console_state = CgbConsoleState::default();
         chassis.clock.set_divider(CpuDivider::One);
 
+        // Undocumented scratch registers and the extra OAM RAM.
+        self.ff72 = ff72;
+        self.ff73 = ff73;
+        self.ff74 = ff74;
+        self.ff75 = ff75;
+        self.extra_oam = extra_oam;
+
         // Work-RAM bank select (SVBK) and the VRAM bank select (VBK).
-        self.svbk = (int("svbk")? as u8) & 0x07;
-        chassis.vram_bus.vram.write_bank_select(int("vbk")? as u8);
+        self.svbk = svbk;
+        chassis.vram_bus.vram.write_bank_select(vbk);
 
         // Palette RAM and its index/priority registers.
-        let (bg, obj) = (region("cram_bg"), region("cram_obj"));
         let dmg_compat = self.dmg_compat;
-        chassis.ppu.model_mut().restore_boundary(
-            bg,
-            obj,
-            int("bcps")? as u8,
-            int("ocps")? as u8,
-            int("opri")? as u8,
-            dmg_compat,
-        );
+        chassis
+            .ppu
+            .model_mut()
+            .restore_boundary(bg, obj, bcps, ocps, opri, dmg_compat);
 
         // VRAM-DMA engine: rebuild the cursor for an armed HBlank transfer (a
         // GDMA holds the CPU for its whole run, so it cannot straddle a
         // boundary). The arbitration transients reset to idle — at a boundary no
         // block is in flight.
         self.vram_dma = VramDma::default();
-        if flag("hdma_active")? && flag("hdma_hblank")? {
+        if hdma_active && hdma_hblank {
             self.vram_dma.cursor.mode = TransferMode::HBlank;
-            self.vram_dma.cursor.source = int("hdma_source")? as u16;
-            self.vram_dma.cursor.dest = int("hdma_dest")? as u16;
-            self.vram_dma.cursor.remaining = (int("hdma_remaining")? as u16) * 16;
+            self.vram_dma.cursor.source = hdma_source;
+            self.vram_dma.cursor.dest = hdma_dest;
+            self.vram_dma.cursor.remaining = hdma_remaining;
         }
 
         Ok(())

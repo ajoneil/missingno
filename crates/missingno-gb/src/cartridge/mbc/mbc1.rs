@@ -42,6 +42,17 @@ impl Ram {
         }
     }
 
+    /// Restore from one linear span, ignoring the current bank and enable state
+    /// — the write counterpart to [`Ram::peek`], filling banks in order.
+    pub(super) fn restore(&mut self, src: &[u8]) {
+        use super::{restore_banked, restore_flat};
+        match self {
+            Ram::None => {}
+            Ram::Unbanked { data } => restore_flat(data, src),
+            Ram::Banked { data } => restore_banked(data, src),
+        }
+    }
+
     /// A raw read at linear `offset`, ignoring the current bank and enable
     /// state; `0xFF` past the end.
     pub(super) fn peek(&self, offset: usize) -> u8 {

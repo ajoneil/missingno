@@ -50,6 +50,18 @@ impl Eeprom {
         self.data.iter().flat_map(|w| w.to_be_bytes()).collect()
     }
 
+    /// Restore the EEPROM cells from a saved span (big-endian word pairs) — the
+    /// inverse of [`Eeprom::to_vec`]. The serial-shift state is transient and is
+    /// left at its idle default by the surrounding restore.
+    pub(super) fn restore(&mut self, src: &[u8]) {
+        for (i, word) in self.data.iter_mut().enumerate() {
+            let offset = i * 2;
+            if offset + 1 < src.len() {
+                *word = u16::from_be_bytes([src[offset], src[offset + 1]]);
+            }
+        }
+    }
+
     fn write(&mut self, value: u8) {
         let cs = value & 0x80 != 0;
         let clk = value & 0x40 != 0;

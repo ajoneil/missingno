@@ -242,6 +242,23 @@ impl Ar {
         self.ram.as_flattened_mut()
     }
 
+    /// The control register (bank configuration, RAM write-enable, ROM power)
+    /// and the data-hold latch, for a state save. The in-flight pending write
+    /// and the transition counter are transient and reset on restore.
+    pub(super) fn bank_state(&self) -> Vec<u8> {
+        vec![self.control, self.data_hold]
+    }
+
+    pub(super) fn restore_bank_state(&mut self, bytes: &[u8]) {
+        if let Some(&control) = bytes.first() {
+            self.control = control;
+        }
+        if let Some(&data_hold) = bytes.get(1) {
+            self.data_hold = data_hold;
+        }
+        self.pending = None;
+    }
+
     /// `None` where the powered-down BIOS leaves the window floating.
     pub fn peek(&self, address: u16) -> Option<u8> {
         match self.cell(address) {

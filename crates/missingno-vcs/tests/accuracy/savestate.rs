@@ -181,7 +181,7 @@ fn load_rejects_a_wrong_system_state() {
         emulator_version: "0",
     };
     let record = missingno_core::state::StateRecord::new();
-    let bytes = write_state_file(&meta, &record, &[], None);
+    let bytes = write_state_file(&meta, &record, &[], None).unwrap();
 
     let mut console = boundary_console("tia-render/draw-delay_ntsc.a26");
     assert_eq!(console.load_state(&bytes), Err(StateError::WrongSystem));
@@ -196,7 +196,7 @@ fn load_rejects_a_wrong_rom_state() {
         emulator_version: "0",
     };
     let record = missingno_core::state::StateRecord::new();
-    let bytes = write_state_file(&meta, &record, &[], None);
+    let bytes = write_state_file(&meta, &record, &[], None).unwrap();
 
     let mut console = boundary_console("tia-render/draw-delay_ntsc.a26");
     assert_eq!(console.load_state(&bytes), Err(StateError::IncompatibleRom));
@@ -229,9 +229,37 @@ fn state_file_round_trips_the_record() {
         emulator: "missingno",
         emulator_version: "0",
     };
-    let bytes = write_state_file(&meta, &record, &memory, None);
+    let bytes = write_state_file(&meta, &record, &memory, None).unwrap();
     let file = read_state_file(&bytes).unwrap();
     assert_eq!(file.system, "vcs");
     let rebuilt = vcs_state_schema().record_from(file.fields).unwrap();
     assert_eq!(rebuilt, record);
+}
+
+#[test]
+fn restore_parses_before_mutating_the_console() {
+    use missingno_core::state::StateValue;
+
+    let mut vcs = load("tia-render/draw-delay_ntsc.a26", CartType::Plain4K);
+    for _ in 0..4 {
+        vcs.step_frame(FRAME_LINE_BUDGET);
+    }
+    vcs.step_instruction();
+    let pc_before = vcs.cpu.pc;
+
+    // A record whose CPU parses cleanly but whose TIA is corrupt: `beam` is a
+    // U16 boundary field, here mistyped as a bool. Also move `pc` so a
+    // half-applied restore would be observable on the probe.
+    let mut bad = read_state(&vcs);
+    bad.set("pc", (pc_before ^ 0x0FF0) as u16);
+    bad.set("beam", true);
+
+    let err = restore(&mut vcs, &bad, &[]).unwrap_err();
+    assert_eq!(err, StateError::Corrupt);
+    // The CPU was never touched — parsing failed before any subsystem mutated.
+    assert_eq!(
+        vcs.cpu.pc, pc_before,
+        "console must be untouched on a parse error"
+    );
+    assert!(matches!(bad.get("beam"), Some(StateValue::Bool(true))));
 }

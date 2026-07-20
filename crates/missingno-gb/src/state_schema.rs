@@ -202,6 +202,76 @@ pub fn dmg_boundary_fields() -> Vec<FieldDef> {
         FieldDef::boundary("ram_bank", U8, "cartridge").help("selected RAM bank"),
         FieldDef::boundary("ram_enabled", Bool, "cartridge").help("cartridge RAM is enabled"),
         FieldDef::boundary("mbc_mode", U8, "cartridge").help("mapper-specific mode latch"),
+        // MBC3 clock-vs-RAM select and real-time clock (present only on an MBC3
+        // save, and the RTC fields only when the cart carries a clock).
+        FieldDef::boundary("mbc3_clock_sel", U8, "cartridge")
+            .help("MBC3 $A000 maps this clock register (0=S 1=M 2=H 3=DL 4=DH); absent ⇒ RAM")
+            .nullable(),
+        FieldDef::boundary("rtc_seconds", U8, "rtc")
+            .help("RTC seconds ($08)")
+            .nullable(),
+        FieldDef::boundary("rtc_minutes", U8, "rtc")
+            .help("RTC minutes ($09)")
+            .nullable(),
+        FieldDef::boundary("rtc_hours", U8, "rtc")
+            .help("RTC hours ($0A)")
+            .nullable(),
+        FieldDef::boundary("rtc_day_lower", U8, "rtc")
+            .help("RTC day low byte ($0B)")
+            .nullable(),
+        FieldDef::boundary("rtc_day_upper", U8, "rtc")
+            .help("RTCDH ($0C) — day bit 8, halt (bit 6), day-carry (bit 7)")
+            .nullable(),
+        FieldDef::boundary("rtc_latched_seconds", U8, "rtc")
+            .help("latched RTC seconds")
+            .nullable(),
+        FieldDef::boundary("rtc_latched_minutes", U8, "rtc")
+            .help("latched RTC minutes")
+            .nullable(),
+        FieldDef::boundary("rtc_latched_hours", U8, "rtc")
+            .help("latched RTC hours")
+            .nullable(),
+        FieldDef::boundary("rtc_latched_day_lower", U8, "rtc")
+            .help("latched RTC day low byte")
+            .nullable(),
+        FieldDef::boundary("rtc_latched_day_upper", U8, "rtc")
+            .help("latched RTCDH")
+            .nullable(),
+        FieldDef::boundary("rtc_latch_ready", Bool, "rtc")
+            .help("a $6000 latch is armed, awaiting its completing write")
+            .nullable(),
+        // MBC6's second switchable ROM/RAM half and flash latches.
+        FieldDef::boundary("mbc6_rom_bank_b", U8, "cartridge")
+            .help("MBC6 $6000-$7FFF ROM/flash bank")
+            .nullable(),
+        FieldDef::boundary("mbc6_ram_bank_b", U8, "cartridge")
+            .help("MBC6 $B000-$BFFF RAM bank")
+            .nullable(),
+        FieldDef::boundary("mbc6_rom_a_flash", Bool, "cartridge")
+            .help("MBC6 A-half maps flash rather than ROM")
+            .nullable(),
+        FieldDef::boundary("mbc6_rom_b_flash", Bool, "cartridge")
+            .help("MBC6 B-half maps flash rather than ROM")
+            .nullable(),
+        FieldDef::boundary("mbc6_flash_enabled", Bool, "cartridge")
+            .help("MBC6 flash read path enabled")
+            .nullable(),
+        // MBC7's split RAM enables, latched accelerometer, and EEPROM write-enable.
+        FieldDef::boundary("mbc7_ram_enabled_1", Bool, "cartridge")
+            .help("MBC7 enable latch 1 ($0A to $0000-$1FFF)")
+            .nullable(),
+        FieldDef::boundary("mbc7_ram_enabled_2", Bool, "cartridge")
+            .help("MBC7 enable latch 2 ($40 to $4000-$5FFF)")
+            .nullable(),
+        FieldDef::boundary("mbc7_accel_x", U16, "cartridge")
+            .help("MBC7 latched accelerometer X")
+            .nullable(),
+        FieldDef::boundary("mbc7_accel_y", U16, "cartridge")
+            .help("MBC7 latched accelerometer Y")
+            .nullable(),
+        FieldDef::boundary("mbc7_write_enabled", Bool, "cartridge")
+            .help("MBC7 EEPROM write-enable (EWEN) latch")
+            .nullable(),
     ]
 }
 

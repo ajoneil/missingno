@@ -286,6 +286,15 @@ impl Cartridge {
         self.mbc.peek_ram(offset)
     }
 
+    /// Restore linearised cartridge RAM across every bank from a saved span,
+    /// past the enable latch and bank selection — the write counterpart to
+    /// [`peek_ram`](Self::peek_ram). Independent of the mapper latch state, so a
+    /// state restore can call it before or after reseating the mapper, and it
+    /// leaves the SRAM-dirty flag untouched.
+    pub fn restore_ram(&mut self, bytes: &[u8]) {
+        self.mbc.restore_ram(bytes);
+    }
+
     /// A side-effect-free read of the full ROM image at a linear `offset`,
     /// independent of the current bank; `0xFF` past the end.
     pub fn peek_rom(&self, offset: usize) -> u8 {

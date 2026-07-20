@@ -29,6 +29,18 @@ fn cgb_observable_delta() -> Vec<FieldDef> {
         FieldDef::observable("opri", U8, "ppu").help("OPRI ($FF6C) — object priority mode"),
         FieldDef::observable("bcps", U8, "ppu").help("BCPS ($FF68) — background palette index"),
         FieldDef::observable("ocps", U8, "ppu").help("OCPS ($FF6A) — object palette index"),
+        FieldDef::observable("key1_armed", Bool, "cpu")
+            .help("KEY1 ($FF4D) bit 0 — speed-switch armed for the next STOP"),
+        // The undocumented CGB scratch registers. FF72/FF73 are full read/write
+        // bytes; FF74 is writable in CGB mode only (open bus in DMG-compat); FF75
+        // stores only bits 6-4 (the rest read back as 1). Hardware roles are
+        // undocumented — these appear to be plain latches.
+        FieldDef::observable("ff72", U8, "cpu").help("$FF72 scratch register (undocumented)"),
+        FieldDef::observable("ff73", U8, "cpu").help("$FF73 scratch register (undocumented)"),
+        FieldDef::observable("ff74", U8, "cpu")
+            .help("$FF74 scratch register (undocumented; CGB mode only)"),
+        FieldDef::observable("ff75", U8, "cpu")
+            .help("$FF75 scratch register (undocumented; only bits 6-4 store)"),
     ]
 }
 
@@ -53,6 +65,9 @@ fn cgb_memory_delta() -> Vec<MemorySpan> {
         MemorySpan::off_bus("wram", 8 * 0x1000).help("work RAM, all eight banks (bank order)"),
         MemorySpan::off_bus("cram_bg", 64).help("background palette RAM (8 palettes × 4 × RGB555)"),
         MemorySpan::off_bus("cram_obj", 64).help("object palette RAM (8 palettes × 4 × RGB555)"),
+        // The CGB ≤C extra OAM: 24 RAM bytes behind $FEA0-$FEFF (three 8-byte
+        // rows, each aliased across its 32-byte block).
+        MemorySpan::off_bus("extra_oam", 24).help("CGB $FEA0-$FEFF extra OAM RAM"),
     ]
 }
 

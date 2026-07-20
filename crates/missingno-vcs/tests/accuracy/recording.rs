@@ -57,7 +57,7 @@ fn vcs_recording_replays_deterministically() {
     );
     assert!(!recording.inputs.is_empty(), "carries the scripted inputs");
 
-    let bytes = recording.to_bytes();
+    let bytes = recording.to_bytes().unwrap();
     let parsed = Recording::from_bytes(&bytes).expect("round-trips through bytes");
 
     let mut console = console(rom);

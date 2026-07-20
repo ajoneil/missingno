@@ -346,6 +346,12 @@ pub fn capture_memory(vcs: &Vcs) -> Vec<(&'static str, Vec<u8>)> {
         let ram = (0..ram_len).map(|i| vcs.cartridge().peek_ram(i)).collect();
         regions.push(("cart_ram", ram));
     }
+    // A multi-slot board's bank/slot selection, which the single `cart_bank`
+    // field cannot describe. Carried only when the board holds any.
+    let bank_state = vcs.cartridge().bank_state();
+    if !bank_state.is_empty() {
+        regions.push(("cart_bank_state", bank_state));
+    }
     regions
 }
 
@@ -394,8 +400,10 @@ pub fn restore(
             .map(|(_, d)| d.as_slice())
     };
 
-    // 6507 register file → a clean instruction boundary.
-    vcs.cpu.restore_boundary(
+    // Parse the whole record BEFORE mutating any subsystem — a bad or missing
+    // field then leaves the console untouched rather than half-restored with the
+    // CPU already reseated.
+    let (a, x, y, s, p, pc, cpu_halted) = (
         u8_of(record, "a")?,
         u8_of(record, "x")?,
         u8_of(record, "y")?,
@@ -404,31 +412,36 @@ pub fn restore(
         u16_of(record, "pc")?,
         bool_of(record, "cpu_halted")?,
     );
-
     let tia = parse_tia(record)?;
-    vcs.tia.restore(&tia);
-
     let riot = parse_riot(record)?;
+    let pending = parse_pending(record)?;
+    let last_bus_value = u8_of(record, "last_bus_value")?;
+    let bank = match record.get("cart_bank") {
+        Some(StateValue::Int(v)) => Some(*v as usize),
+        Some(StateValue::Null) | None => None,
+        _ => return Err(StateError::Corrupt),
+    };
+
+    // Everything parsed: now mutate.
+    vcs.cpu.restore_boundary(a, x, y, s, p, pc, cpu_halted);
+    vcs.tia.restore(&tia);
     vcs.riot.restore(&riot);
     if let Some(ram) = region("riot_ram") {
         let len = ram.len().min(vcs.riot.ram.len());
         vcs.riot.ram[..len].copy_from_slice(&ram[..len]);
     }
 
-    // Cartridge bank + cart RAM.
-    let bank = match record.get("cart_bank") {
-        Some(StateValue::Int(v)) => Some(*v as usize),
-        Some(StateValue::Null) | None => None,
-        _ => return Err(StateError::Corrupt),
-    };
+    // Cartridge bank(s) + cart RAM. `restore_bank` reseats the single-bank
+    // boards; the board-state span carries the multi-slot boards.
     vcs.cartridge_mut().restore_bank(bank);
+    if let Some(state) = region("cart_bank_state") {
+        vcs.cartridge_mut().restore_bank_state(state);
+    }
     if let Some(ram) = region("cart_ram") {
         vcs.cartridge_mut().restore_ram(ram);
     }
 
-    // Console deferred-write pipe, bus capacitance, and frame-assembly reset.
-    let pending = parse_pending(record)?;
-    vcs.restore_console(&pending, u8_of(record, "last_bus_value")?);
+    vcs.restore_console(&pending, last_bus_value);
     Ok(())
 }
 

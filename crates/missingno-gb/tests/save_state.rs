@@ -141,6 +141,38 @@ fn load_rejects_an_unsupported_version() {
 }
 
 #[test]
+fn save_and_restore_are_refused_mid_instruction() {
+    use missingno_core::system::SystemConsole as _;
+
+    let mut console = dmg_console("blargg/cpu_instrs/individual/06-ld r,r.gb");
+    // Settle onto an instruction boundary and take a good save there.
+    for _ in 0..2 {
+        console.step_frame();
+    }
+    let good_save = console.save_state().expect("a boundary save");
+
+    let mut dbg = Box::new(console)
+        .into_debugger()
+        .ok()
+        .expect("debugger backend");
+
+    // Ticking off the boundary, the save is refused the moment the CPU is inside
+    // an instruction (past its fetch M-cycle) — and restoring a good save there
+    // is an honest boundary error, distinctly not the generic corrupt case.
+    let mut mid_instruction_error = None;
+    for _ in 0..64 {
+        dbg.step_tick();
+        if dbg.save_state().is_none() {
+            mid_instruction_error = Some(dbg.load_state(&good_save).unwrap_err());
+            break;
+        }
+    }
+    let err = mid_instruction_error.expect("a mid-instruction save must be refused");
+    assert_eq!(err, StateError::NotAtBoundary);
+    assert_ne!(err, StateError::Corrupt);
+}
+
+#[test]
 fn load_rejects_a_state_for_a_different_rom() {
     let mut console = dmg_console("blargg/cpu_instrs/individual/06-ld r,r.gb");
     let other = dmg_console("blargg/cpu_instrs/individual/07-jr,jp,call,ret,rst.gb");

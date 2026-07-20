@@ -117,6 +117,27 @@ impl ThreeE {
         &self.image
     }
 
+    /// The lower-window mapping (a ROM or RAM bank), for a state save. RAM
+    /// contents travel as the linear cart-RAM region; this restores the select.
+    /// The A12-rise arm latch is transient and stays cleared.
+    pub(super) fn bank_state(&self) -> Vec<u8> {
+        match self.lower {
+            LowerWindow::Rom(bank) => vec![0, bank as u8],
+            LowerWindow::Ram(bank) => vec![1, bank as u8],
+        }
+    }
+
+    pub(super) fn restore_bank_state(&mut self, bytes: &[u8]) {
+        if let (Some(&tag), Some(&bank)) = (bytes.first(), bytes.get(1)) {
+            self.lower = if tag == 1 {
+                LowerWindow::Ram(bank as usize % RAM_BANKS)
+            } else {
+                LowerWindow::Rom(bank as usize % self.rom_banks.max(1))
+            };
+        }
+        self.armed = None;
+    }
+
     pub fn peek(&self, address: u16) -> u8 {
         let offset = usize::from(address & 0x0FFF);
         if offset >= ROM_BANK_SIZE {

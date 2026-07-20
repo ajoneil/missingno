@@ -174,6 +174,78 @@ fn cgb_rejects_a_dmg_state() {
 }
 
 #[test]
+fn cgb_scratch_and_extra_oam_round_trip_deterministically() {
+    use missingno_core::state::StateValue;
+
+    // A CGB cartridge that writes the undocumented scratch registers and one
+    // extra-OAM byte, arms KEY1 (single speed — armed, not switched), then loops.
+    fn build() -> GbConsole<Cgb> {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x143] = 0xC0; // CGB cartridge
+        rom[0x100..0x104].copy_from_slice(&[0x00, 0xc3, 0x50, 0x01]); // NOP; JP $0150
+        rom[0x150..0x150 + 23].copy_from_slice(&[
+            0x3e, 0xab, 0xe0, 0x72, // FF72 := $AB
+            0x3e, 0xcd, 0xe0, 0x73, // FF73 := $CD
+            0x3e, 0xef, 0xe0, 0x74, // FF74 := $EF (CGB mode: writable)
+            0x3e, 0x99, 0xea, 0xa0, 0xfe, // ($FEA0) := $99
+            0x3e, 0x01, 0xe0, 0x4d, // arm KEY1
+            0x18, 0xfe, // JR -2 — loop
+        ]);
+        let mut gbc = GameBoyColor::new(Cartridge::new(rom, None), None);
+        missingno_gb::test_support::run_boot_rom(&mut gbc);
+        GbConsole::new(gbc, |_| None)
+    }
+
+    let mut console = build();
+    for _ in 0..4 {
+        console.step_frame();
+    }
+    let save = console.save_state().expect("CGB authors a save state");
+    let record_at_save = console.read_state().expect("CGB reads its state");
+
+    // The previously-dropped fields are captured with their written values.
+    assert_eq!(
+        record_at_save.get("key1_armed"),
+        Some(&StateValue::Bool(true))
+    );
+    assert_eq!(record_at_save.get("ff72"), Some(&StateValue::Int(0xAB)));
+    assert_eq!(record_at_save.get("ff73"), Some(&StateValue::Int(0xCD)));
+    assert_eq!(record_at_save.get("ff74"), Some(&StateValue::Int(0xEF)));
+
+    // The extra-OAM RAM travels as its own span.
+    let file = read_state_file(&save).expect("the save file parses");
+    let extra = file
+        .memory
+        .iter()
+        .find(|(name, _)| name == "extra_oam")
+        .expect("extra_oam span present");
+    assert_eq!(extra.1.len(), 24);
+    assert_eq!(extra.1[0], 0x99);
+
+    // The replay-determinism the gap broke: an in-place restore and a
+    // fresh-console restore reproduce the identical record.
+    console.load_state(&save).expect("in-place restore");
+    let in_place = console.read_state().unwrap();
+
+    let mut fresh = build();
+    fresh.load_state(&save).expect("fresh-console restore");
+    let fresh_restored = fresh.read_state().unwrap();
+
+    assert_eq!(
+        in_place, record_at_save,
+        "in-place restore reproduces the save"
+    );
+    assert_eq!(
+        fresh_restored, record_at_save,
+        "fresh restore reproduces the save"
+    );
+    assert_eq!(
+        fresh_restored, in_place,
+        "fresh and in-place restores agree"
+    );
+}
+
+#[test]
 fn cgb_refuses_a_double_speed_save() {
     // A cartridge that arms KEY1 and STOPs to engage double speed, then loops.
     let mut rom = vec![0u8; 0x8000];

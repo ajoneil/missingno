@@ -81,9 +81,17 @@ pub enum RecordingError {
     UnsupportedVersion(u8),
     /// The data ended before a declared section was complete.
     Truncated,
-    /// A field tag was not a known code.
+    /// A field tag was not a known code, a count did not describe the whole
+    /// input, or a frame stamp is out of range or out of order.
     BadEncoding,
+    /// A length or count exceeded what the 32-bit container framing can carry.
+    TooLarge,
 }
+
+/// A sanity ceiling on a recording's frame count, so a hostile file cannot ask
+/// replay to step an absurd number of frames. Far above any real play session
+/// (~19 days at 60 fps), it exists only to reject a garbage value.
+pub const MAX_RECORDING_FRAMES: u64 = 100_000_000;
 
 impl std::fmt::Display for RecordingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -94,6 +102,7 @@ impl std::fmt::Display for RecordingError {
             }
             RecordingError::Truncated => f.write_str("recording file is truncated"),
             RecordingError::BadEncoding => f.write_str("recording file has an unknown encoding"),
+            RecordingError::TooLarge => f.write_str("recording is too large to encode"),
         }
     }
 }
@@ -113,19 +122,22 @@ pub fn frame_hash(frame: &Frame) -> u64 {
 }
 
 impl Recording {
-    /// Serialize into a recording file.
-    pub fn to_bytes(&self) -> Vec<u8> {
+    /// Serialize into a recording file. Errors ([`RecordingError::TooLarge`]) if
+    /// a length overruns the 32-bit framing rather than truncating it.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, RecordingError> {
+        let len32 = |n: usize| u32::try_from(n).map_err(|_| RecordingError::TooLarge);
+
         let mut out = Vec::new();
         out.extend_from_slice(RECORDING_MAGIC);
         out.push(RECORDING_VERSION);
 
-        out.extend_from_slice(&(self.initial_state.len() as u32).to_le_bytes());
+        out.extend_from_slice(&len32(self.initial_state.len())?.to_le_bytes());
         out.extend_from_slice(&self.initial_state);
 
         out.extend_from_slice(&self.frames.to_le_bytes());
         out.extend_from_slice(&self.check_interval.to_le_bytes());
 
-        out.extend_from_slice(&(self.inputs.len() as u32).to_le_bytes());
+        out.extend_from_slice(&len32(self.inputs.len())?.to_le_bytes());
         for event in &self.inputs {
             out.extend_from_slice(&event.frame.to_le_bytes());
             out.push(event.control.0);
@@ -141,13 +153,13 @@ impl Recording {
             }
         }
 
-        out.extend_from_slice(&(self.checks.len() as u32).to_le_bytes());
+        out.extend_from_slice(&len32(self.checks.len())?.to_le_bytes());
         for check in &self.checks {
             out.extend_from_slice(&check.frame.to_le_bytes());
             out.extend_from_slice(&check.hash.to_le_bytes());
         }
 
-        out
+        Ok(out)
     }
 
     /// Parse a recording file.
@@ -166,12 +178,27 @@ impl Recording {
         let initial_state = reader.take(state_len)?.to_vec();
 
         let frames = reader.u64()?;
+        // A frame count above the sanity ceiling is a garbage value — replay
+        // would step an absurd number of frames.
+        if frames > MAX_RECORDING_FRAMES {
+            return Err(RecordingError::BadEncoding);
+        }
         let check_interval = reader.u64()?;
 
+        // Each event is at least 6 bytes on the wire, but clamp the reserve to
+        // the bytes actually present so a hostile count cannot force a huge
+        // allocation; the loop still errors cleanly on truncation.
         let input_count = reader.u32()? as usize;
-        let mut inputs = Vec::with_capacity(input_count);
+        let mut inputs = Vec::with_capacity(input_count.min(reader.remaining()));
+        let mut last_input_frame = 0u64;
         for _ in 0..input_count {
             let frame = reader.u64()?;
+            // Inputs land before the frame they stamp is stepped, so a stamp at
+            // or past the total is dead, and stamps must be ascending.
+            if frame >= frames || frame < last_input_frame {
+                return Err(RecordingError::BadEncoding);
+            }
+            last_input_frame = frame;
             let control = ControlId(reader.u8()?);
             let input = match reader.u8()? {
                 0 => ControlInput::Digital(reader.u8()? != 0),
@@ -186,11 +213,22 @@ impl Recording {
         }
 
         let check_count = reader.u32()? as usize;
-        let mut checks = Vec::with_capacity(check_count);
+        let mut checks = Vec::with_capacity(check_count.min(reader.remaining()));
+        let mut last_check_frame = 0u64;
         for _ in 0..check_count {
             let frame = reader.u64()?;
+            if frame >= frames || frame < last_check_frame {
+                return Err(RecordingError::BadEncoding);
+            }
+            last_check_frame = frame;
             let hash = reader.u64()?;
             checks.push(FrameCheck { frame, hash });
+        }
+
+        // A well-formed recording is consumed exactly; trailing bytes mean the
+        // framing did not describe the whole input.
+        if reader.remaining() != 0 {
+            return Err(RecordingError::BadEncoding);
         }
 
         Ok(Recording {
@@ -218,6 +256,12 @@ impl<'a> Reader<'a> {
             .ok_or(RecordingError::Truncated)?;
         self.pos = end;
         Ok(slice)
+    }
+
+    /// Bytes not yet consumed — the upper bound on any count, so a hostile
+    /// length can never drive a `with_capacity` past the data actually present.
+    fn remaining(&self) -> usize {
+        self.bytes.len() - self.pos
     }
 
     fn u8(&mut self) -> Result<u8, RecordingError> {
@@ -259,12 +303,17 @@ pub struct Recorder {
 
 impl Recorder {
     /// Begin recording from the console's current boundary state. `check_interval`
-    /// is the frame cadence for hash checkpoints (`0` disables them). `None` when
-    /// the console has no save-state backend, or its state cannot be restored.
-    pub fn start(console: &mut dyn SystemConsole, check_interval: u64) -> Option<Recorder> {
-        let initial_state = console.save_state()?;
-        console.load_state(&initial_state).ok()?;
-        Some(Recorder {
+    /// is the frame cadence for hash checkpoints (`0` disables them). Errors when
+    /// the console has no save-state backend ([`StateError::Unsupported`]), or its
+    /// state cannot be restored — including the CGB double-speed boundary, which
+    /// now surfaces instead of being swallowed.
+    pub fn start(
+        console: &mut dyn SystemConsole,
+        check_interval: u64,
+    ) -> Result<Recorder, StateError> {
+        let initial_state = console.save_state().ok_or(StateError::Unsupported)?;
+        console.load_state(&initial_state)?;
+        Ok(Recorder {
             initial_state,
             inputs: Vec::new(),
             checks: Vec::new(),
@@ -445,7 +494,7 @@ mod tests {
     #[test]
     fn round_trips_through_bytes() {
         let recording = sample();
-        let bytes = recording.to_bytes();
+        let bytes = recording.to_bytes().unwrap();
         assert_eq!(Recording::from_bytes(&bytes), Ok(recording));
     }
 
@@ -459,7 +508,7 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_version() {
-        let mut bytes = sample().to_bytes();
+        let mut bytes = sample().to_bytes().unwrap();
         bytes[4] = 0xEE;
         assert_eq!(
             Recording::from_bytes(&bytes),
@@ -469,9 +518,89 @@ mod tests {
 
     #[test]
     fn rejects_truncated() {
-        let bytes = sample().to_bytes();
+        let bytes = sample().to_bytes().unwrap();
         assert_eq!(
             Recording::from_bytes(&bytes[..bytes.len() - 3]),
+            Err(RecordingError::Truncated)
+        );
+    }
+
+    #[test]
+    fn rejects_trailing_bytes() {
+        let mut bytes = sample().to_bytes().unwrap();
+        bytes.push(0);
+        assert_eq!(
+            Recording::from_bytes(&bytes),
+            Err(RecordingError::BadEncoding)
+        );
+    }
+
+    #[test]
+    fn rejects_an_absurd_frame_count() {
+        let mut recording = sample();
+        recording.frames = MAX_RECORDING_FRAMES + 1;
+        recording.inputs.clear();
+        recording.checks.clear();
+        let bytes = recording.to_bytes().unwrap();
+        assert_eq!(
+            Recording::from_bytes(&bytes),
+            Err(RecordingError::BadEncoding)
+        );
+    }
+
+    #[test]
+    fn rejects_non_ascending_input_frames() {
+        let mut recording = sample();
+        recording.inputs = vec![
+            InputRecord {
+                frame: 5,
+                control: ControlId(2),
+                input: ControlInput::Digital(true),
+            },
+            InputRecord {
+                frame: 2,
+                control: ControlId(2),
+                input: ControlInput::Digital(false),
+            },
+        ];
+        recording.checks.clear();
+        let bytes = recording.to_bytes().unwrap();
+        assert_eq!(
+            Recording::from_bytes(&bytes),
+            Err(RecordingError::BadEncoding)
+        );
+    }
+
+    #[test]
+    fn rejects_an_event_at_or_past_the_frame_total() {
+        let mut recording = sample();
+        // frames is 8; an input stamped at 8 is dead — never applied.
+        recording.inputs = vec![InputRecord {
+            frame: 8,
+            control: ControlId(2),
+            input: ControlInput::Digital(true),
+        }];
+        recording.checks.clear();
+        let bytes = recording.to_bytes().unwrap();
+        assert_eq!(
+            Recording::from_bytes(&bytes),
+            Err(RecordingError::BadEncoding)
+        );
+    }
+
+    #[test]
+    fn a_hostile_input_count_does_not_over_allocate() {
+        // A truncated file claiming u32::MAX inputs must fail cleanly, not try
+        // to reserve billions of entries.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(RECORDING_MAGIC);
+        bytes.push(RECORDING_VERSION);
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // empty initial state
+        bytes.extend_from_slice(&8u64.to_le_bytes()); // frames
+        bytes.extend_from_slice(&0u64.to_le_bytes()); // check_interval
+        bytes.extend_from_slice(&u32::MAX.to_le_bytes()); // input_count
+        assert_eq!(
+            Recording::from_bytes(&bytes),
             Err(RecordingError::Truncated)
         );
     }

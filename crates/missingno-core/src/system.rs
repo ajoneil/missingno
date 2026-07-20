@@ -77,9 +77,12 @@ pub enum StateError {
     IncompatibleRom,
     /// The container version is not the one this build implements.
     VersionMismatch,
-    /// The state data is malformed, or restore was attempted off an instruction
-    /// boundary.
+    /// The state data is malformed.
     Corrupt,
+    /// A save or restore was attempted off an instruction boundary — the CPU is
+    /// mid-instruction, carrying micro-sequencer residue a boundary record does
+    /// not name.
+    NotAtBoundary,
     /// The state was taken with the CGB double-speed clock engaged. A boundary
     /// restore cannot reconstruct the free-running dot-phase alignment that a
     /// real speed switch left, so restore is limited to single-speed boundaries.
@@ -94,6 +97,9 @@ impl std::fmt::Display for StateError {
             StateError::IncompatibleRom => "save state was written for a different ROM",
             StateError::VersionMismatch => "save state uses an unsupported format version",
             StateError::Corrupt => "save state data is corrupt",
+            StateError::NotAtBoundary => {
+                "save state cannot be taken or restored mid-instruction; step to an instruction boundary"
+            }
             StateError::DoubleSpeedBoundary => {
                 "save state was taken at double speed; restore supports single-speed boundaries only"
             }

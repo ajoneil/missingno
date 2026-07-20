@@ -163,6 +163,51 @@ fn peek_banked<const N: usize>(banks: &[[u8; N]], offset: usize) -> u8 {
     banks.get(offset / N).map_or(0xff, |bank| bank[offset % N])
 }
 
+/// Copy a saved span into a flat store, truncating to whichever is shorter.
+pub(super) fn restore_flat(dst: &mut [u8], src: &[u8]) {
+    let len = dst.len().min(src.len());
+    dst[..len].copy_from_slice(&src[..len]);
+}
+
+/// Restore a bank-major RAM store from one linear span, filling banks in order —
+/// the write counterpart to [`peek_banked`].
+pub(super) fn restore_banked<const N: usize>(banks: &mut [[u8; N]], src: &[u8]) {
+    for (i, bank) in banks.iter_mut().enumerate() {
+        let start = i * N;
+        if start >= src.len() {
+            break;
+        }
+        let len = (src.len() - start).min(N);
+        bank[..len].copy_from_slice(&src[start..start + len]);
+    }
+}
+
+impl Mbc {
+    /// Restore linearised cartridge RAM from a saved span across every bank,
+    /// bypassing the enable latch and the bank selection — the write counterpart
+    /// to [`peek_ram`](Self::peek_ram). It never routes through the mapper's
+    /// banked `$A000` window (so it cannot overflow the 16-bit bus address or
+    /// drop banks past the mapped one) and never sets the SRAM-dirty flag.
+    pub fn restore_ram(&mut self, bytes: &[u8]) {
+        match self {
+            Mbc::NoMbc(m) => {
+                if let Some(ram) = &mut m.ram {
+                    restore_flat(ram, bytes);
+                }
+            }
+            Mbc::Mbc1(m) => m.ram.restore(bytes),
+            Mbc::Mbc2(m) => restore_flat(&mut m.ram, bytes),
+            Mbc::Mbc3(m) => restore_banked(&mut m.ram, bytes),
+            Mbc::Mbc5(m) => restore_banked(&mut m.ram, bytes),
+            Mbc::Mbc6(m) => restore_banked(&mut m.ram, bytes),
+            Mbc::Mbc7(m) => m.eeprom.restore(bytes),
+            Mbc::Huc1(m) => restore_banked(&mut m.ram, bytes),
+            Mbc::Huc3(m) => restore_banked(&mut m.ram, bytes),
+            Mbc::DbzTrans(m) => restore_banked(&mut m.ram, bytes),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

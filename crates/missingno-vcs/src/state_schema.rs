@@ -392,6 +392,11 @@ pub fn memory_spans() -> Vec<MemorySpan> {
         MemorySpan::off_bus("cart_ram", 0)
             .optional()
             .help("linear cart RAM (board-dependent size)"),
+        // A multi-slot board's bank/slot selection as an opaque per-board blob —
+        // the boards a single `cart_bank` field cannot describe.
+        MemorySpan::off_bus("cart_bank_state", 0)
+            .optional()
+            .help("board-dependent bank/slot selection"),
     ]
 }
 
