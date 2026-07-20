@@ -415,6 +415,25 @@ impl Session {
         self.debugger.save_state()
     }
 
+    /// Whether the system has a save-state backend at all — it authors a state
+    /// schema. A `None` from [`save_state_bytes`](Self::save_state_bytes) on a
+    /// backend-having console is a transient off-boundary miss, not "no backend".
+    pub fn has_state_backend(&self) -> bool {
+        self.debugger.state_schema().is_some()
+    }
+
+    /// The display frame as it currently stands — the screenshot source and the
+    /// frame the run loop publishes.
+    pub fn display_frame(&self) -> Frame {
+        self.debugger.screen_display()
+    }
+
+    /// The battery-backed RAM contents to persist, or `None` when the cart has
+    /// no battery.
+    pub fn battery_save(&self) -> Option<Vec<u8>> {
+        self.debugger.battery_save()
+    }
+
     /// Restore a serialized machine state from memory (the recorder re-seats the
     /// console from its own captured state so the timeline is self-consistent).
     pub fn load_state_bytes(&mut self, bytes: &[u8]) -> Result<(), StateError> {

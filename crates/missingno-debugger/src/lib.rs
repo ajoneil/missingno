@@ -18,4 +18,6 @@ pub mod session;
 pub mod shared;
 
 pub use session::{DisasmLine, Session, StopReason, validate_watch};
-pub use shared::{MemoryInterest, RunningReadout, SessionHandle, SharedSession};
+pub use shared::{
+    MemoryInterest, RunningReadout, SessionEvent, SessionHandle, SharedSession,
+};

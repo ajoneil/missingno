@@ -8,7 +8,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use missingno_debugger::{SessionHandle, SharedSession, StopReason, factory};
+use missingno_debugger::{SessionEvent, SessionHandle, SharedSession, StopReason, factory};
 
 /// A 32 KiB all-NOP ROM: the `.gb` extension makes the registry claim it, and
 /// the DMG core boots to PC 0x0100 and marches NOPs from there.
@@ -183,6 +183,92 @@ fn recording_round_trips_through_a_file() {
         .expect("the recorded timeline replays deterministically");
 
     let _ = std::fs::remove_file(&path);
+}
+
+/// A console-only shared session over the same ROM — the plain-emulator host,
+/// with no debugger inspection surface.
+fn shared_console() -> SharedSession {
+    let rom = vec![0x00u8; 0x8000];
+    let console = factory::create_console(Path::new("test.gb"), &rom)
+        .expect("factory should not error")
+        .expect("gb factory should claim a .gb ROM");
+    SharedSession::spawn_console(console)
+}
+
+/// Drain whatever session events have arrived without blocking.
+fn drain(rx: &std::sync::mpsc::Receiver<SessionEvent>) -> Vec<SessionEvent> {
+    rx.try_iter().collect()
+}
+
+#[test]
+fn console_session_runs_and_publishes_frames() {
+    let session = shared_console();
+    let client = session.handle();
+    assert!(!client.is_debugger(), "a console session hosts no debugger");
+
+    client.run();
+    assert!(
+        wait_until(|| client.is_running()),
+        "the console loop starts"
+    );
+    assert!(
+        wait_until(|| client.latest_frame().is_some()),
+        "the console loop publishes frames"
+    );
+    client.pause();
+    assert!(!client.is_running());
+}
+
+#[test]
+fn a_subscriber_sees_the_stop_event() {
+    let session = shared();
+    let client = session.handle();
+    let events = client.subscribe();
+    client.with_session(|s| s.set_breakpoint(0x0105)).unwrap();
+    client.run();
+
+    assert!(
+        wait_until(|| drain(&events)
+            .iter()
+            .any(|e| matches!(e, SessionEvent::Stopped))),
+        "the breakpoint stop reaches a subscriber"
+    );
+}
+
+#[test]
+fn saving_reports_a_notice_and_the_file_round_trips() {
+    let session = shared();
+    let client = session.handle();
+    let events = client.subscribe();
+
+    let path = std::env::temp_dir().join(format!("missingno-s2-{}.mpsv", std::process::id()));
+    client.save_state(path.clone());
+    assert!(
+        wait_until(|| drain(&events).iter().any(|e| matches!(
+            e,
+            SessionEvent::Notice(message) if message == "State saved"
+        ))),
+        "a save reports its outcome as a notice"
+    );
+    assert!(path.exists(), "the save file was written");
+
+    // The saved state loads back without error.
+    client.load_state(path.clone());
+    assert!(wait_until(|| drain(&events).iter().any(|e| matches!(
+        e,
+        SessionEvent::Notice(message) if message == "State loaded"
+    ))));
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn screenshot_captures_the_current_frame() {
+    let session = shared();
+    let client = session.handle();
+    assert!(
+        client.screenshot().is_some(),
+        "the current display frame is captured on request"
+    );
 }
 
 /// A plain `Session` over the same ROM, for replaying a recording against.
