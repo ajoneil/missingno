@@ -173,7 +173,7 @@ impl Session {
     /// panics) on a missing/corrupt file, a state the core cannot restore, or a
     /// divergence — naming the frame it first appears on.
     pub fn replay_recording(&mut self, path: &std::path::Path) -> Result<u64, String> {
-        use missingno_core::recording::{Recording, frame_hash};
+        use missingno_core::recording::{Recording, ReplayCursor, ReplayStep};
 
         let bytes =
             std::fs::read(path).map_err(|error| format!("could not read {path:?}: {error}"))?;
@@ -183,27 +183,17 @@ impl Session {
             .map_err(|error| error.to_string())?;
         self.frame = 0;
 
-        let mut input_cursor = 0;
-        let mut check_cursor = 0;
-        for frame in 0..recording.frames {
-            while let Some(event) = recording.inputs.get(input_cursor) {
-                if event.frame != frame {
-                    break;
-                }
-                self.debugger.set_control(event.control, event.input);
-                input_cursor += 1;
-            }
+        let mut cursor = ReplayCursor::new();
+        for _ in 0..recording.frames {
+            cursor.apply_inputs(&recording, self.debugger.as_mut());
             let produced = self.debugger.run_frame().into_frame();
-            self.frame = frame + 1;
-            if let Some(check) = recording.checks.get(check_cursor)
-                && check.frame == frame
+            if let ReplayStep::Diverged { frame, .. } =
+                cursor.note_frame(&recording, produced.as_ref())
             {
-                let hash = produced.as_ref().map(frame_hash).unwrap_or(0);
-                if check.hash != hash {
-                    return Err(format!("replay diverged at frame {frame}"));
-                }
-                check_cursor += 1;
+                self.frame = frame + 1;
+                return Err(format!("replay diverged at frame {frame}"));
             }
+            self.frame = cursor.frame();
         }
         Ok(recording.frames)
     }

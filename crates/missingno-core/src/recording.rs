@@ -304,14 +304,20 @@ pub struct Recorder {
 impl Recorder {
     /// Begin recording from the console's current boundary state. `check_interval`
     /// is the frame cadence for hash checkpoints (`0` disables them). Errors when
-    /// the console has no save-state backend ([`StateError::Unsupported`]), or its
-    /// state cannot be restored — including the CGB double-speed boundary, which
-    /// now surfaces instead of being swallowed.
+    /// the console has no save-state backend ([`StateError::Unsupported`]), when
+    /// it is off an instruction boundary ([`StateError::NotAtBoundary`] — a frame
+    /// boundary need not be one), or when its state cannot be restored, including
+    /// the CGB double-speed boundary.
     pub fn start(
         console: &mut dyn SystemConsole,
         check_interval: u64,
     ) -> Result<Recorder, StateError> {
-        let initial_state = console.save_state().ok_or(StateError::Unsupported)?;
+        let saved = console.save_state();
+        let initial_state = match saved {
+            Some(state) => state,
+            None if console.state_schema().is_some() => return Err(StateError::NotAtBoundary),
+            None => return Err(StateError::Unsupported),
+        };
         console.load_state(&initial_state)?;
         Ok(Recorder {
             initial_state,
@@ -345,8 +351,11 @@ impl Recorder {
         self.frame += 1;
     }
 
-    /// Finalize the recording.
-    pub fn finish(self) -> Recording {
+    /// Finalize the recording. An input noted after the last frame stepped (a
+    /// press while paused, or between the final frame and the stop) is stamped
+    /// on a frame replay never reaches, so the timeline ends without it.
+    pub fn finish(mut self) -> Recording {
+        self.inputs.retain(|input| input.frame < self.frame);
         Recording {
             initial_state: self.initial_state,
             inputs: self.inputs,
@@ -398,6 +407,84 @@ pub struct ReplayOutcome {
     pub checks_verified: u64,
 }
 
+/// What one replayed frame concluded: keep going, stop at a divergence, or the
+/// whole recording has been replayed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReplayStep {
+    Continue,
+    Diverged {
+        frame: u64,
+        expected: u64,
+        actual: u64,
+    },
+    Finished,
+}
+
+/// A replay's position in a recording: which frame is next, and how far the
+/// input and checkpoint streams have been consumed. It steps nothing itself, so
+/// a caller that runs the frames blocking ([`replay`]) and one that runs them
+/// from a paced loop share the same timeline handling.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ReplayCursor {
+    frame: u64,
+    input_cursor: usize,
+    check_cursor: usize,
+    checks_verified: u64,
+}
+
+impl ReplayCursor {
+    pub fn new() -> ReplayCursor {
+        ReplayCursor::default()
+    }
+
+    /// The frame about to be stepped.
+    pub fn frame(&self) -> u64 {
+        self.frame
+    }
+
+    pub fn checks_verified(&self) -> u64 {
+        self.checks_verified
+    }
+
+    /// Apply every input the recording stamps on the frame about to be stepped.
+    pub fn apply_inputs(&mut self, recording: &Recording, console: &mut dyn SystemConsole) {
+        while let Some(event) = recording.inputs.get(self.input_cursor) {
+            if event.frame != self.frame {
+                break;
+            }
+            console.set_control(event.control, event.input);
+            self.input_cursor += 1;
+        }
+    }
+
+    /// Verify every checkpoint stamped on the frame just stepped, then advance
+    /// the cursor. `produced` is that frame's display, or `None` for a step that
+    /// emitted none.
+    pub fn note_frame(&mut self, recording: &Recording, produced: Option<&Frame>) -> ReplayStep {
+        let hash = produced.map(frame_hash).unwrap_or(0);
+        while let Some(check) = recording.checks.get(self.check_cursor) {
+            if check.frame != self.frame {
+                break;
+            }
+            if check.hash != hash {
+                return ReplayStep::Diverged {
+                    frame: self.frame,
+                    expected: check.hash,
+                    actual: hash,
+                };
+            }
+            self.checks_verified += 1;
+            self.check_cursor += 1;
+        }
+        self.frame += 1;
+        if self.frame < recording.frames {
+            ReplayStep::Continue
+        } else {
+            ReplayStep::Finished
+        }
+    }
+}
+
 /// Restore a recording's initial state into `console`, then drive it frame by
 /// frame — applying the input stream at its timestamps and verifying frame-hash
 /// checkpoints. Deterministic by construction: an identical initial state and
@@ -414,41 +501,29 @@ pub fn replay(
         .load_state(&recording.initial_state)
         .map_err(ReplayError::State)?;
 
-    let mut input_cursor = 0;
-    let mut check_cursor = 0;
-    let mut checks_verified = 0;
-
-    for frame in 0..recording.frames {
-        while let Some(event) = recording.inputs.get(input_cursor) {
-            if event.frame != frame {
-                break;
-            }
-            console.set_control(event.control, event.input);
-            input_cursor += 1;
-        }
-
+    let mut cursor = ReplayCursor::new();
+    for _ in 0..recording.frames {
+        cursor.apply_inputs(recording, console);
         let produced = console.step_frame().display;
-        let hash = produced.as_ref().map(frame_hash).unwrap_or(0);
-
-        while let Some(check) = recording.checks.get(check_cursor) {
-            if check.frame != frame {
-                break;
-            }
-            if check.hash != hash {
+        match cursor.note_frame(recording, produced.as_ref()) {
+            ReplayStep::Continue | ReplayStep::Finished => {}
+            ReplayStep::Diverged {
+                frame,
+                expected,
+                actual,
+            } => {
                 return Err(ReplayError::Diverged {
                     frame,
-                    expected: check.hash,
-                    actual: hash,
+                    expected,
+                    actual,
                 });
             }
-            checks_verified += 1;
-            check_cursor += 1;
         }
     }
 
     Ok(ReplayOutcome {
         frames: recording.frames,
-        checks_verified,
+        checks_verified: cursor.checks_verified(),
     })
 }
 

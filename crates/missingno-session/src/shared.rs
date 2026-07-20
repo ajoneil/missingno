@@ -28,9 +28,9 @@ use std::time::{Duration, Instant};
 
 use missingno_core::HighPass;
 use missingno_core::inspect::MemoryWindow;
-use missingno_core::recording::{FrameCheck, InputRecord, Recording, frame_hash};
+use missingno_core::recording::{Recorder, Recording, ReplayCursor, ReplayStep};
 use missingno_core::system::{
-    ControlId, ControlInput, DebugView, RunningStatus, SystemConsole, SystemDebugger,
+    ControlId, ControlInput, DebugView, RunningStatus, StateError, SystemConsole, SystemDebugger,
 };
 use missingno_core::video::Frame;
 
@@ -602,48 +602,20 @@ impl Machine {
     }
 }
 
-/// An input recording being captured from the owned machine as it steps frames.
+/// An input recording being captured from the owned machine as it steps frames,
+/// and the file it is written to when it stops.
 struct Capture {
-    initial_state: Vec<u8>,
-    inputs: Vec<InputRecord>,
-    checks: Vec<FrameCheck>,
-    frame: u64,
-    check_interval: u64,
+    recorder: Recorder,
     path: PathBuf,
 }
 
 impl Capture {
-    fn note_input(&mut self, control: ControlId, input: ControlInput) {
-        self.inputs.push(InputRecord {
-            frame: self.frame,
-            control,
-            input,
-        });
-    }
-
-    fn note_frame(&mut self, frame: Option<&Frame>) {
-        if self.check_interval != 0 && self.frame.is_multiple_of(self.check_interval) {
-            self.checks.push(FrameCheck {
-                frame: self.frame,
-                hash: frame.map(frame_hash).unwrap_or(0),
-            });
-        }
-        self.frame += 1;
-    }
-
-    fn finish(mut self) -> Result<(), String> {
-        // An input noted after the last frame stepped (a press while paused, or
-        // between the final frame and the stop) is stamped on a frame replay
-        // never reaches, so the timeline ends without it.
-        self.inputs.retain(|input| input.frame < self.frame);
-        let recording = Recording {
-            initial_state: self.initial_state,
-            inputs: self.inputs,
-            checks: self.checks,
-            frames: self.frame,
-            check_interval: self.check_interval,
-        };
-        let bytes = recording.to_bytes().map_err(|error| error.to_string())?;
+    fn finish(self) -> Result<(), String> {
+        let bytes = self
+            .recorder
+            .finish()
+            .to_bytes()
+            .map_err(|error| error.to_string())?;
         std::fs::write(&self.path, bytes)
             .map_err(|error| format!("could not write {:?}: {error}", self.path))
     }
@@ -651,68 +623,29 @@ impl Capture {
 
 /// A recording played back through the running machine: applies the recorded
 /// inputs at their frame boundaries and checks the frame-hash checkpoints,
-/// reporting the frame a divergence first appears on.
+/// reporting the frame a divergence first appears on. The timeline handling is
+/// the shared [`ReplayCursor`]; what this adds is ownership of the recording
+/// while the paced loop steps it.
 struct ReplayPlayback {
     recording: Recording,
-    frame: u64,
-    input_cursor: usize,
-    check_cursor: usize,
-}
-
-/// What one replayed frame concluded: keep going, stop at a divergence, or the
-/// whole recording has been replayed.
-enum ReplayStep {
-    Continue,
-    Diverged {
-        frame: u64,
-        expected: u64,
-        actual: u64,
-    },
-    Finished,
+    cursor: ReplayCursor,
 }
 
 impl ReplayPlayback {
     fn new(recording: Recording) -> Self {
         Self {
             recording,
-            frame: 0,
-            input_cursor: 0,
-            check_cursor: 0,
+            cursor: ReplayCursor::new(),
         }
     }
 
     fn apply_inputs(&mut self, machine: &mut Machine) {
-        while let Some(event) = self.recording.inputs.get(self.input_cursor) {
-            if event.frame != self.frame {
-                break;
-            }
-            machine
-                .console_mut()
-                .set_control(event.control, event.input);
-            self.input_cursor += 1;
-        }
+        self.cursor
+            .apply_inputs(&self.recording, machine.console_mut());
     }
 
     fn note_frame(&mut self, produced: Option<&Frame>) -> ReplayStep {
-        if let Some(check) = self.recording.checks.get(self.check_cursor)
-            && check.frame == self.frame
-        {
-            let hash = produced.map(frame_hash).unwrap_or(0);
-            self.check_cursor += 1;
-            if check.hash != hash {
-                return ReplayStep::Diverged {
-                    frame: self.frame,
-                    expected: check.hash,
-                    actual: hash,
-                };
-            }
-        }
-        self.frame += 1;
-        if self.frame < self.recording.frames {
-            ReplayStep::Continue
-        } else {
-            ReplayStep::Finished
-        }
+        self.cursor.note_frame(&self.recording, produced)
     }
 }
 
@@ -841,7 +774,7 @@ impl SessionEngine {
             Request::SetControl(control, input) => {
                 self.machine.console_mut().set_control(control, input);
                 if let Some(capture) = &mut self.capture {
-                    capture.note_input(control, input);
+                    capture.recorder.note_input(control, input);
                 }
             }
             Request::SetMemoryInterest(interest) => {
@@ -913,7 +846,7 @@ impl SessionEngine {
         let display = step.display;
 
         if let Some(capture) = &mut self.capture {
-            capture.note_frame(display.as_ref());
+            capture.recorder.note_frame(display.as_ref());
         }
         let replay_step = self
             .replay
@@ -1115,34 +1048,21 @@ impl SessionEngine {
         // Finalize any recording already running before starting a fresh one so
         // its file is written rather than dropped.
         self.finish_recording()?;
-        if self.machine.console().state_schema().is_none() {
-            return Err("this system has no save-state backend".to_string());
-        }
-        match self.machine.console().save_state() {
-            Some(initial_state) => {
-                // Re-seat from the captured state so the recorded timeline is the
-                // exact continuation replay reproduces.
-                self.machine
-                    .console_mut()
-                    .load_state(&initial_state)
-                    .map_err(|error| error.to_string())?;
-                self.capture = Some(Capture {
-                    initial_state,
-                    inputs: Vec::new(),
-                    checks: Vec::new(),
-                    frame: 0,
-                    check_interval: RECORDING_CHECK_INTERVAL,
-                    path,
-                });
+        // The recorder re-seats the machine from its own initial state, so the
+        // recorded timeline is the exact continuation replay reproduces.
+        match Recorder::start(self.machine.console_mut(), RECORDING_CHECK_INTERVAL) {
+            Ok(recorder) => {
+                self.capture = Some(Capture { recorder, path });
                 self.emit(SessionEvent::RecordingChanged(true));
                 Ok(())
             }
-            // Off an instruction boundary: its initial save missed. Defer and
-            // retry at the next frame, matching the pending-save path.
-            None => {
+            // Its initial save missed the boundary. Defer and retry at the next
+            // frame, matching the pending-save path.
+            Err(StateError::NotAtBoundary) => {
                 self.pending_record = Some(path);
                 Ok(())
             }
+            Err(error) => Err(error.to_string()),
         }
     }
 
