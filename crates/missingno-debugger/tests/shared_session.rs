@@ -187,6 +187,42 @@ fn recording_round_trips_through_a_file() {
     let _ = std::fs::remove_file(&path);
 }
 
+#[test]
+fn recording_and_replay_refuse_each_other() {
+    let session = shared();
+    let client = session.handle();
+    let path = std::env::temp_dir().join(format!("missingno-excl-{}.mprc", std::process::id()));
+
+    // A replay's inputs bypass the capture, so neither may wrap the other:
+    // recording refuses mid-replay, and replay refuses mid-recording.
+    client
+        .start_recording(path.clone())
+        .expect("gb has a save-state backend");
+    client.run();
+    std::thread::sleep(Duration::from_millis(60));
+    client.pause();
+    client.stop_recording().expect("the recording writes out");
+
+    client
+        .play_recording(path.clone())
+        .expect("the recording replays");
+    assert!(
+        client.start_recording(path.clone()).is_err(),
+        "recording must refuse while a replay is running"
+    );
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn stopping_without_a_recording_is_silent() {
+    let session = shared();
+    assert!(
+        session.handle().stop_recording().is_ok(),
+        "finalizing nothing is a no-op, not an error"
+    );
+}
+
 /// A console-only shared session over the same ROM — the plain-emulator host,
 /// with no debugger inspection surface.
 fn shared_console() -> SharedSession {

@@ -1095,6 +1095,11 @@ impl SessionEngine {
     }
 
     fn begin_recording(&mut self, path: PathBuf) -> Result<(), String> {
+        // A replay's applied inputs bypass the capture, so recording one would
+        // write a timeline its own inputs cannot reproduce.
+        if self.replay.is_some() {
+            return Err("stop the replay before recording".to_string());
+        }
         // Finalize any recording already running before starting a fresh one so
         // its file is written rather than dropped.
         self.finish_recording()?;
@@ -1152,5 +1157,60 @@ impl SessionEngine {
             .map_err(|error| format!("replay could not restore: {error}"))?;
         self.replay = Some(ReplayPlayback::new(recording));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use missingno_core::recording::FrameCheck;
+
+    fn recording_with(checks: Vec<FrameCheck>, frames: u64) -> Recording {
+        Recording {
+            initial_state: Vec::new(),
+            inputs: Vec::new(),
+            checks,
+            frames,
+            check_interval: 0,
+        }
+    }
+
+    #[test]
+    fn replay_reports_a_divergent_checkpoint() {
+        let mut replay =
+            ReplayPlayback::new(recording_with(vec![FrameCheck { frame: 0, hash: 0x1234 }], 3));
+        // A step that produced no frame hashes to 0, disagreeing with 0x1234.
+        match replay.note_frame(None) {
+            ReplayStep::Diverged {
+                frame,
+                expected,
+                actual,
+            } => {
+                assert_eq!((frame, expected, actual), (0, 0x1234, 0));
+            }
+            _ => panic!("expected a divergence"),
+        }
+    }
+
+    #[test]
+    fn replay_runs_to_the_recorded_frame_count() {
+        // A None frame hashes to 0; a checkpoint of 0 agrees.
+        let mut replay =
+            ReplayPlayback::new(recording_with(vec![FrameCheck { frame: 0, hash: 0 }], 2));
+        assert!(matches!(replay.note_frame(None), ReplayStep::Continue));
+        assert!(matches!(replay.note_frame(None), ReplayStep::Finished));
+    }
+
+    #[test]
+    fn replay_checkpoints_only_the_recorded_frames() {
+        // A checkpoint on a later frame leaves earlier frames unchecked, so a
+        // mismatching hash before it cannot diverge the replay.
+        let mut replay =
+            ReplayPlayback::new(recording_with(vec![FrameCheck { frame: 1, hash: 0x99 }], 3));
+        assert!(matches!(replay.note_frame(None), ReplayStep::Continue));
+        assert!(matches!(
+            replay.note_frame(None),
+            ReplayStep::Diverged { frame: 1, .. }
+        ));
     }
 }
