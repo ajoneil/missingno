@@ -19,5 +19,6 @@ pub mod shared;
 
 pub use session::{DisasmLine, Session, StopReason, validate_watch};
 pub use shared::{
-    MemoryInterest, RunningReadout, SessionEvent, SessionHandle, SharedSession,
+    AudioSink, ExtractedMachine, MemoryInterest, RunningReadout, SessionEvent, SessionHandle,
+    SharedSession,
 };

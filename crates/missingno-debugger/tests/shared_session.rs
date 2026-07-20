@@ -60,7 +60,9 @@ fn commands_from_many_clients_serialize() {
             std::thread::spawn(move || {
                 for step in 0..8u32 {
                     let address = 0x0100 + (i as u32) * 0x0100 + step;
-                    client.with_session(move |s| s.set_breakpoint(address)).unwrap();
+                    client
+                        .with_session(move |s| s.set_breakpoint(address))
+                        .unwrap();
                 }
             })
         })
@@ -268,6 +270,37 @@ fn screenshot_captures_the_current_frame() {
     assert!(
         client.screenshot().is_some(),
         "the current display frame is captured on request"
+    );
+}
+
+#[test]
+fn into_machine_hands_back_the_hosted_debugger() {
+    use missingno_debugger::ExtractedMachine;
+
+    // A debugger session hands back a debugger; the frontend re-hosts it (or its
+    // console) in a session of the other kind to toggle the debugger.
+    let session = shared();
+    match session.into_machine() {
+        Some(ExtractedMachine::Debugger(debugger)) => {
+            // The returned machine is live — its console still answers a peek.
+            let _ = debugger.peek(0x0100);
+        }
+        _ => panic!("a debugger session hands back a debugger machine"),
+    }
+}
+
+#[test]
+fn into_machine_hands_back_a_plain_console() {
+    use missingno_debugger::ExtractedMachine;
+
+    let rom = vec![0x00u8; 0x8000];
+    let console = factory::create_console(Path::new("test.gb"), &rom)
+        .expect("factory should not error")
+        .expect("gb factory should claim a .gb ROM");
+    let session = SharedSession::spawn_console(console);
+    assert!(
+        matches!(session.into_machine(), Some(ExtractedMachine::Console(_))),
+        "a console session hands back a plain console machine"
     );
 }
 

@@ -445,6 +445,21 @@ impl Session {
     pub fn into_debugger(self) -> Box<dyn SystemDebugger> {
         self.debugger
     }
+
+    /// The owned debugger, borrowed — the seam a frontend reads to build an owned
+    /// paused readout (colours, disassembly rows, graphics) from within a
+    /// [`with_session`](crate::SessionHandle::with_session) closure, using the
+    /// same inspection surface the panes render from.
+    pub fn debugger(&self) -> &dyn SystemDebugger {
+        self.debugger.as_ref()
+    }
+
+    /// The owned debugger, mutably — for the mutating inspection commands a
+    /// frontend drives through a `with_session` closure that the typed `Session`
+    /// surface does not wrap (user labels, trace capture).
+    pub fn debugger_mut(&mut self) -> &mut dyn SystemDebugger {
+        self.debugger.as_mut()
+    }
 }
 
 /// Validate watch terms against a watchable table: each term's key must name a

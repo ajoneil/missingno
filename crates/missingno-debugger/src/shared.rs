@@ -174,7 +174,19 @@ enum Request {
     StopRecording(Sender<Result<(), String>>),
     PlayRecording(PathBuf, Sender<Result<(), String>>),
     Screenshot(Sender<Frame>),
+    BatterySave(Sender<Option<Vec<u8>>>),
+    /// Finalize any recording and hand the owned machine back, then exit — the
+    /// path a frontend takes to re-host the same live console in a session of the
+    /// other kind (a debugger↔emulator toggle).
+    Extract(Sender<ExtractedMachine>),
     Shutdown(Sender<()>),
+}
+
+/// The machine handed back by [`SharedSession::into_machine`]: the plain console,
+/// or the debugger the session hosted, whichever kind it was.
+pub enum ExtractedMachine {
+    Console(Box<dyn SystemConsole>),
+    Debugger(Box<dyn SystemDebugger>),
 }
 
 /// The cloneable client handle. All access to the machine flows through it.
@@ -317,7 +329,11 @@ impl SessionHandle {
     /// are its policy), so the seam carries the pre-resolution [`Frame`]; it is a
     /// take, not a clone, since `Frame` is a large move-only surface.
     pub fn latest_frame(&self) -> Option<Frame> {
-        self.slots.frame.lock().ok().and_then(|mut slot| slot.take())
+        self.slots
+            .frame
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take())
     }
 
     /// The latest published running status.
@@ -333,6 +349,26 @@ impl SessionHandle {
             Ok(slot) => f(slot.as_ref()),
             Err(_) => f(None),
         }
+    }
+
+    /// Take the latest published inspection snapshot, or `None` when none is
+    /// pending. A take, like [`latest_frame`](Self::latest_frame): the frontend
+    /// stores the owned snapshot and the run loop republishes one each frame.
+    pub fn take_snapshot(&self) -> Option<DebugView> {
+        self.slots
+            .snapshot
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take())
+    }
+
+    /// The battery-backed RAM to persist, captured at the next command boundary.
+    /// Works for both machine kinds, so a plain-console client can persist on a
+    /// pause without a debugger surface. `None` when the cart has no battery.
+    pub fn battery_save(&self) -> Option<Vec<u8>> {
+        let (tx, rx) = channel();
+        self.requests.send(Request::BatterySave(tx)).ok()?;
+        rx.recv().ok().flatten()
     }
 
     /// The latest published memory windows (one per set interest).
@@ -423,6 +459,21 @@ impl SharedSession {
     /// A fresh client handle onto this session.
     pub fn handle(&self) -> SessionHandle {
         self.handle.clone()
+    }
+
+    /// Consume the session and hand back the owned machine — the console, or the
+    /// debugger it hosted — finalizing any recording first. `None` only when the
+    /// thread has already gone. The frontend re-hosts the returned machine in a
+    /// session of the other kind to toggle the debugger while keeping the live
+    /// console (its serial link, printer, and cartridge state) intact.
+    pub fn into_machine(mut self) -> Option<ExtractedMachine> {
+        let (tx, rx) = channel();
+        self.handle.requests.send(Request::Extract(tx)).ok()?;
+        let extracted = rx.recv().ok();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+        extracted
     }
 }
 
@@ -569,6 +620,13 @@ impl Machine {
             Machine::Console(console) => console.screen_display(),
         }
     }
+
+    fn into_extracted(self) -> ExtractedMachine {
+        match self {
+            Machine::Console(console) => ExtractedMachine::Console(console),
+            Machine::Debugger(session) => ExtractedMachine::Debugger(session.into_debugger()),
+        }
+    }
 }
 
 /// An input recording being captured from the owned machine as it steps frames.
@@ -707,6 +765,9 @@ struct SessionEngine {
     pending_record: Option<PathBuf>,
     /// Frames of quiet since the last SRAM write, or `None` when settled.
     sram_countdown: Option<u32>,
+    /// A pending machine-extraction reply, set by [`Request::Extract`] and
+    /// answered by `finish_extract` once the loop releases the machine.
+    extract: Option<Sender<ExtractedMachine>>,
     audio: Option<AudioSink>,
     next_deadline: Instant,
 }
@@ -723,6 +784,7 @@ impl SessionEngine {
             pending_save: None,
             pending_record: None,
             sram_countdown: None,
+            extract: None,
             audio,
             next_deadline: Instant::now(),
         }
@@ -745,7 +807,7 @@ impl SessionEngine {
                     match requests.try_recv() {
                         Ok(request) => {
                             if self.handle(request) {
-                                return;
+                                return self.finish_extract();
                             }
                             if !self.running {
                                 break;
@@ -763,7 +825,7 @@ impl SessionEngine {
                 match requests.recv_timeout(IDLE_POLL) {
                     Ok(request) => {
                         if self.handle(request) {
-                            return;
+                            return self.finish_extract();
                         }
                     }
                     Err(RecvTimeoutError::Timeout) => {}
@@ -819,6 +881,16 @@ impl SessionEngine {
             Request::Screenshot(ack) => {
                 let _ = ack.send(self.machine.screen_display());
             }
+            Request::BatterySave(ack) => {
+                let _ = ack.send(self.machine.battery_save());
+            }
+            // Extract and Shutdown both exit the thread; Extract stashes the
+            // reply channel so `finish_extract` can hand the machine back after
+            // the loop releases it.
+            Request::Extract(ack) => {
+                self.extract = Some(ack);
+                return true;
+            }
             Request::Shutdown(ack) => {
                 let _ = self.finish_recording();
                 let _ = ack.send(());
@@ -826,6 +898,16 @@ impl SessionEngine {
             }
         }
         false
+    }
+
+    /// The thread is exiting: if it was an [`Request::Extract`], finalize any
+    /// recording and hand the owned machine back; a plain shutdown drops it.
+    fn finish_extract(mut self) {
+        if let Some(ack) = self.extract.take() {
+            let _ = self.finish_recording();
+            let SessionEngine { machine, .. } = self;
+            let _ = ack.send(machine.into_extracted());
+        }
     }
 
     fn start_running(&mut self) {
