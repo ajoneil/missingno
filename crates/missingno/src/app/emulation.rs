@@ -51,18 +51,36 @@ impl App {
                 }
             }
             Message::SaveState | Message::LoadState => {
-                // The console runs on the emu thread in play mode; ask it to
-                // save or restore the game's state slot there. (A paused
-                // debugger session owns the console on the UI thread; state
-                // I/O there is not yet wired.)
-                if let Some(current) = &self.current_game
-                    && let Some(handle) = &self.emu
-                {
-                    let path = current.game_dir.join("state.mpsv");
-                    match message {
-                        Message::SaveState => handle.send(EmuCommand::SaveState(path)),
-                        Message::LoadState => handle.send(EmuCommand::LoadState(path)),
-                        _ => unreachable!(),
+                // The state slot lives beside the game's library folder.
+                let Some(path) = self
+                    .current_game
+                    .as_ref()
+                    .map(|current| current.game_dir.join("state.mpsv"))
+                else {
+                    return Task::none();
+                };
+                // A paused debugger session owns the console on the UI thread, so
+                // save/load runs here directly; otherwise the console is on the
+                // emu thread and the command routes there.
+                match &mut self.game {
+                    Game::Loaded(LoadedGame::Debugger(dbg)) if !dbg.is_detached() => {
+                        let result = match message {
+                            Message::SaveState => dbg.save_state(&path),
+                            Message::LoadState => dbg.load_state(&path),
+                            _ => unreachable!(),
+                        };
+                        if let Err(error) = result {
+                            eprintln!("state I/O failed: {error}");
+                        }
+                    }
+                    _ => {
+                        if let Some(handle) = &self.emu {
+                            match message {
+                                Message::SaveState => handle.send(EmuCommand::SaveState(path)),
+                                Message::LoadState => handle.send(EmuCommand::LoadState(path)),
+                                _ => unreachable!(),
+                            }
+                        }
                     }
                 }
             }

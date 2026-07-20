@@ -306,6 +306,31 @@ impl Debugger {
             .map(|core| FrameCapture::from_frame(&core.screen_display(), options))
     }
 
+    /// Save the paused session's state to `path`. Available only while the core
+    /// is on the UI thread (paused); returns `Err` when the core is detached, the
+    /// system has no save-state backend, or the write fails.
+    pub fn save_state(&self, path: &std::path::Path) -> Result<(), String> {
+        let core = self.debugger.as_ref().ok_or("the debugger is running")?;
+        let bytes = core
+            .save_state()
+            .ok_or("this system has no save-state backend")?;
+        std::fs::write(path, bytes).map_err(|error| format!("could not write save state: {error}"))
+    }
+
+    /// Restore the paused session's state from `path`, then refresh the paused
+    /// inspection surfaces so the panes reflect the restored core.
+    pub fn load_state(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let core = self.debugger.as_mut().ok_or("the debugger is running")?;
+        let bytes =
+            std::fs::read(path).map_err(|error| format!("could not read save state: {error}"))?;
+        core.load_state(&bytes).map_err(|error| error.to_string())?;
+        self.last_snapshot = None;
+        self.last_status = None;
+        self.last_memory_windows.clear();
+        self.refresh_graphics();
+        Ok(())
+    }
+
     /// Take the core to hand it to the emu thread for running.
     pub fn take_payload(&mut self) -> Option<DebuggerPayload> {
         let frame = self.frame;
