@@ -386,21 +386,31 @@ impl Debugger {
     }
 
     /// The spans the open memory panes want peeked while free-running: the union
-    /// of their views, resolved against the cached region map. Empty when no
-    /// memory pane is shown or the family has no region map.
-    pub fn memory_interests(&self) -> Vec<memory::MemoryInterest> {
-        memory::interests_for(&self.memory_regions, &self.panes.memory_selections())
-    }
-
-    /// The peek spans as the session's engine command wants them.
+    /// of their views, resolved against the cached region map, as the session's
+    /// engine command wants them. Empty when no memory pane is shown or the
+    /// family has no region map.
     fn session_interests(&self) -> Vec<missingno_session::MemoryInterest> {
-        self.memory_interests()
+        memory::interests_for(&self.memory_regions, &self.panes.memory_selections())
             .into_iter()
             .map(|interest| missingno_session::MemoryInterest {
                 start: interest.start,
                 len: interest.len,
             })
             .collect()
+    }
+
+    /// Re-aim what the free-running core produces at the panes that are open:
+    /// the vblank memory peek's spans, and whether waveform and graphics capture
+    /// run at all. The session's debugger holds the capture state; the interest
+    /// rides the engine command.
+    fn aim_capture(&self) {
+        let wants_waves = self.wants_wave_capture();
+        let wants_graphics = self.wants_graphics_capture();
+        self.handle.set_memory_interest(self.session_interests());
+        self.handle.with_session(move |s| {
+            s.set_wave_capture(wants_waves);
+            s.set_graphics_capture(wants_graphics);
+        });
     }
 
     /// Resolve a disassembly jump-to-address to a walk anchor. A `bank:addr` jump
@@ -418,14 +428,14 @@ impl Debugger {
 
     /// Whether any consumer wants per-channel waveform capture on — currently
     /// the audio scope pane. Off frees the core's capture rings.
-    pub fn wants_wave_capture(&self) -> bool {
+    fn wants_wave_capture(&self) -> bool {
         self.panes.plane_shown(panes::DebuggerPane::Audio)
     }
 
     /// Whether any consumer wants per-vblank graphics capture on — the tile,
     /// tile-map, and sprite panes. Off drops the snapshot's VRAM clone and its
     /// surface decode.
-    pub fn wants_graphics_capture(&self) -> bool {
+    fn wants_graphics_capture(&self) -> bool {
         self.panes.plane_shown(panes::DebuggerPane::Tiles)
             || self.panes.plane_shown(panes::DebuggerPane::TileMap)
             || self.panes.plane_shown(panes::DebuggerPane::Sprites)
@@ -696,17 +706,7 @@ impl Debugger {
                         memory::Message::SetRegions(self.memory_regions.clone()),
                     )));
                 self.panes.update(message);
-                // Opening or closing a pane can change what the running core must
-                // produce: re-aim the vblank memory peek and toggle capture. The
-                // session's debugger holds the capture state; the interest rides
-                // the engine command.
-                let wants_waves = self.wants_wave_capture();
-                let wants_graphics = self.wants_graphics_capture();
-                self.handle.set_memory_interest(self.session_interests());
-                self.handle.with_session(move |s| {
-                    s.set_wave_capture(wants_waves);
-                    s.set_graphics_capture(wants_graphics);
-                });
+                self.aim_capture();
                 // Capture just changed what the core will decode; refresh so a
                 // newly opened graphics pane fills without a step.
                 self.refresh_paused();
@@ -1031,13 +1031,7 @@ impl Debugger {
     }
 
     pub fn run(&mut self) {
-        let wants_waves = self.wants_wave_capture();
-        let wants_graphics = self.wants_graphics_capture();
-        self.handle.set_memory_interest(self.session_interests());
-        self.handle.with_session(move |s| {
-            s.set_wave_capture(wants_waves);
-            s.set_graphics_capture(wants_graphics);
-        });
+        self.aim_capture();
         self.handle.run();
         self.paused = None;
     }

@@ -156,7 +156,6 @@ pub trait Pane {
     fn disasm_anchor(&self) -> Option<u32> {
         None
     }
-    fn set_palette(&mut self, _palette: PaletteChoice) {}
     /// Point the screen pane at the technology the core states, so a freshly
     /// opened screen renders at the right aspect and persistence.
     fn set_technology(&mut self, _technology: DisplayTechnology) {}
@@ -637,11 +636,6 @@ impl DebuggerPanes {
 
     pub fn set_palette(&mut self, palette: PaletteChoice) {
         self.palette = palette;
-        if let Some(panes) = &mut self.panes {
-            panes
-                .iter_mut()
-                .for_each(|(_, pane)| pane.set_palette(palette));
-        }
         let policy = self.screen_palette_policy();
         self.install_screen_policy(policy);
     }
