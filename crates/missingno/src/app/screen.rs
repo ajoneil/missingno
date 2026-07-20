@@ -52,11 +52,12 @@ fn default_technology() -> DisplayTechnology {
     }
 }
 
-/// A reflective panel's unlit "paper" tone for a core with no monochrome
-/// palette to source one from — the CGB (and any future RGBA-native LCD). An
-/// unpowered CGB screen reads as a mid grey-green, well below white — the
-/// reflective TFT returns far less light than paper; eyeballed, not measured.
-const CGB_REFLECTIVE_BASE: RGB8 = RGB8::new(0xaa, 0xb0, 0xa0);
+/// A reflective panel's unlit "paper" tone for a frame with no monochrome
+/// palette to source one from — the CGB, SGB-coloured DMG frames, and any
+/// future RGBA-native LCD. An unpowered CGB screen reads as a mid grey-green,
+/// well below white — the reflective TFT returns far less light than paper;
+/// eyeballed, not measured.
+const CGB_REFLECTIVE_BASE: RGB8 = RGB8::new(0x90, 0x96, 0x88);
 
 /// The one colour decision the frontend owns for a family whose frames arrive as
 /// device-native indices — the Game Boy's monochrome palette and Super Game Boy
@@ -67,8 +68,10 @@ pub trait PalettePolicy: Send {
     fn clone_box(&self) -> Box<dyn PalettePolicy>;
     /// The reflective panel's unlit paper tone — the base the LCD aperture grid
     /// exposes between pixels. For the Game Boy this is the palette's lightest
-    /// shade, the colour an off pixel shows.
-    fn panel_base(&self) -> RGB8;
+    /// shade, the colour an off pixel shows. `None` when the policy's frames
+    /// aren't drawn from a monochrome palette (SGB colours), so no shade names
+    /// the paper tone and the neutral reflective base applies.
+    fn panel_base(&self) -> Option<RGB8>;
 }
 
 /// The single screen renderer, driven by the [`DisplayTechnology`] the core
@@ -157,13 +160,13 @@ impl ScreenView {
     }
 
     /// The reflective panel base the LCD aperture grid shows between pixels, as
-    /// linear RGB in 0..1. A device-native index frame carries the Game Boy's
-    /// monochrome palette, whose lightest shade is the panel's paper tone; a
-    /// core that delivers resolved RGBA (the CGB) has no such palette, so it
-    /// falls back to a near-white reflective base.
+    /// linear RGB in 0..1. A device-native index frame drawn from the Game
+    /// Boy's monochrome palette takes that palette's lightest shade as the
+    /// panel's paper tone; every other frame — resolved RGBA (the CGB) or SGB
+    /// colours — has no such palette and takes the neutral reflective base.
     fn panel_base_color(&self) -> [f32; 3] {
         let rgb = match (&self.palette_policy, self.console_frame.is_some()) {
-            (Some(policy), true) => policy.panel_base(),
+            (Some(policy), true) => policy.panel_base().unwrap_or(CGB_REFLECTIVE_BASE),
             _ => CGB_REFLECTIVE_BASE,
         };
         [
@@ -323,8 +326,8 @@ mod tests {
         fn clone_box(&self) -> Box<dyn PalettePolicy> {
             Box::new(StubPolicy(self.0))
         }
-        fn panel_base(&self) -> RGB8 {
-            self.0
+        fn panel_base(&self) -> Option<RGB8> {
+            Some(self.0)
         }
     }
 
@@ -358,9 +361,9 @@ mod tests {
     }
 
     #[test]
-    fn panel_base_is_near_white_for_resolved_rgba() {
+    fn panel_base_is_the_reflective_tone_for_resolved_rgba() {
         // A core delivering resolved RGBA (the CGB) has no monochrome palette,
-        // so the base is the near-white reflective constant — even if a policy
+        // so the base is the reflective grey-green constant — even if a policy
         // is installed, since no index frame reaches it.
         let mut view = ScreenView::new();
         view.set_technology(lcd(LcdPanel::ActiveTft));

@@ -38,10 +38,11 @@ impl PalettePolicy for GbPalettePolicy {
         Box::new(self.clone())
     }
 
-    fn panel_base(&self) -> rgb::RGB8 {
+    fn panel_base(&self) -> Option<rgb::RGB8> {
         // The lightest palette shade is the panel's unlit paper — what the
-        // reflective LCD shows through the inter-pixel matrix.
-        self.palette.palette().color(PaletteIndex(0))
+        // reflective LCD shows through the inter-pixel matrix. SGB colours
+        // don't draw from this palette, so no shade names the paper tone.
+        (!self.use_sgb_colors).then(|| self.palette.palette().color(PaletteIndex(0)))
     }
 }
 
