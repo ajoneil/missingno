@@ -261,6 +261,10 @@ struct SettingsFile {
     scanlines: bool,
     #[serde(default = "default_true")]
     cartridge_rw_enabled: bool,
+    // Off unless the user opts in: with it off no socket exists, so nothing
+    // outside this process can reach the running game.
+    #[serde(default)]
+    allow_external_clients: bool,
     #[serde(default)]
     library_sort: crate::app::library::store::SortKey,
     #[serde(default)]
@@ -318,6 +322,7 @@ impl Default for SettingsFile {
             pixel_grid: true,
             scanlines: true,
             cartridge_rw_enabled: true,
+            allow_external_clients: false,
             library_sort: SortKey::default(),
             library_layout: LibraryLayout::default(),
             window_width: None,
@@ -346,6 +351,9 @@ pub struct Settings {
     pub pixel_grid: bool,
     pub scanlines: bool,
     pub cartridge_rw_enabled: bool,
+    /// Whether a running game publishes an attach socket for clients in other
+    /// processes (an agent driving the debugger).
+    pub allow_external_clients: bool,
     pub library_sort: SortKey,
     pub library_layout: LibraryLayout,
     pub window_width: Option<f32>,
@@ -368,6 +376,7 @@ impl Default for Settings {
             pixel_grid: true,
             scanlines: true,
             cartridge_rw_enabled: true,
+            allow_external_clients: false,
             library_sort: SortKey::default(),
             library_layout: LibraryLayout::default(),
             window_width: None,
@@ -432,6 +441,7 @@ impl Settings {
                 pixel_grid: file.pixel_grid,
                 scanlines: file.scanlines,
                 cartridge_rw_enabled: file.cartridge_rw_enabled,
+                allow_external_clients: file.allow_external_clients,
                 library_sort: file.library_sort,
                 library_layout: file.library_layout,
                 window_width: file.window_width,
@@ -469,6 +479,7 @@ impl Settings {
                 pixel_grid: true,
                 scanlines: true,
                 cartridge_rw_enabled: true,
+                allow_external_clients: false,
                 library_sort: SortKey::default(),
                 library_layout: LibraryLayout::default(),
                 window_width: file.window_width,
@@ -511,6 +522,7 @@ impl Settings {
             pixel_grid: self.pixel_grid,
             scanlines: self.scanlines,
             cartridge_rw_enabled: self.cartridge_rw_enabled,
+            allow_external_clients: self.allow_external_clients,
             library_sort: self.library_sort,
             library_layout: self.library_layout,
             window_width: self.window_width,
@@ -704,5 +716,19 @@ mod tests {
         assert_eq!(file.gamepad_controls.get(Action::Control(2)), Some("South"));
         assert_eq!(file.gamepad_controls.get(Action::Screenshot), None);
         assert!(file.keyboard_bindings.0.is_empty());
+        // A file written before the setting existed leaves external clients
+        // off — publishing a session is never inherited, only chosen.
+        assert!(!file.allow_external_clients);
+    }
+
+    #[test]
+    fn external_clients_round_trip() {
+        let opted_in = r#"( setup_complete: true, allow_external_clients: true )"#;
+        let file: SettingsFile = ron::from_str(opted_in).unwrap();
+        assert!(file.allow_external_clients);
+
+        let written = ron::ser::to_string(&file).unwrap();
+        let reread: SettingsFile = ron::from_str(&written).unwrap();
+        assert!(reread.allow_external_clients);
     }
 }

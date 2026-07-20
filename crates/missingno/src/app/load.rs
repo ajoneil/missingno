@@ -138,8 +138,10 @@ fn finish_start(
                     app::debugger::Debugger::new(handle, platform, regions, screen_view);
                 debugger.load_sidecars(rom_path);
                 debugger.set_palette(palette);
-                app.install_session(session, audio);
+                // The game is installed first so the attach socket, if the user
+                // allows one, publishes the platform it will serve.
                 app.game = Game::Loaded(LoadedGame::Debugger(debugger));
+                app.install_session(session, audio);
                 return title;
             }
             // No debugger backend for this system: plain emulation.
@@ -156,9 +158,9 @@ fn finish_start(
     let mut emu =
         app::emulator::Emulator::new(handle, facts, platform, app.settings.presentation());
     emu.set_palette(palette);
-    app.install_session(session, audio);
     emu.run();
     app.game = Game::Loaded(LoadedGame::Emulator(emu));
+    app.install_session(session, audio);
     title
 }
 

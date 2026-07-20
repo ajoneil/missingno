@@ -200,7 +200,9 @@ impl App {
             .and_then(|current| current.entry.rom_paths.iter().find(|p| p.exists()).cloned());
 
         // Take the session while its thread is still alive so the old shell's
-        // handle keeps working for the handoff prep below.
+        // handle keeps working for the handoff prep below. The socket points at
+        // that thread, so it closes before the handoff consumes it.
+        self.unpublish_session();
         let Some(session) = self.session.take() else {
             return;
         };
@@ -223,8 +225,8 @@ impl App {
                 let mut emulator =
                     Emulator::from_debugger(handle, screen_view, facts, platform, presentation);
                 emulator.set_palette(palette);
-                self.install_session(new_session, audio);
                 self.game = Game::Loaded(LoadedGame::Emulator(emulator));
+                self.install_session(new_session, audio);
             }
             Game::Loaded(LoadedGame::Emulator(mut emulator)) if want_debugger => {
                 let mut screen_view = emulator.take_screen_view();
@@ -250,8 +252,8 @@ impl App {
                             debugger.load_sidecars(rom_path);
                         }
                         debugger.set_palette(palette);
-                        self.install_session(new_session, audio);
                         self.game = Game::Loaded(LoadedGame::Debugger(debugger));
+                        self.install_session(new_session, audio);
                     }
                     // No debugger backend: re-host as a plain console, staying in
                     // emulator mode.
@@ -266,8 +268,8 @@ impl App {
                             platform,
                             presentation,
                         );
-                        self.install_session(new_session, audio);
                         self.game = Game::Loaded(LoadedGame::Emulator(emulator));
+                        self.install_session(new_session, audio);
                     }
                 }
             }
@@ -289,9 +291,62 @@ impl App {
     /// Install a freshly spawned session as the current one: keep its audio
     /// stream alive and wire its event bridge.
     pub(super) fn install_session(&mut self, session: SharedSession, audio: Option<AudioOutput>) {
+        self.unpublish_session();
         self.session = Some(session);
         self.audio_output = audio;
         self.attach_session_bridge();
+        self.publish_session();
+    }
+
+    /// Stop publishing. An endpoint holds a handle onto one session, so it must
+    /// close before that session ends — a client reaching a session whose thread
+    /// has gone gets no answer at all.
+    #[cfg(unix)]
+    pub(super) fn unpublish_session(&mut self) {
+        self.attach_endpoint = None;
+    }
+
+    #[cfg(not(unix))]
+    pub(super) fn unpublish_session(&mut self) {}
+
+    /// Reconcile the attach socket with the user's permission and the current
+    /// session.
+    #[cfg(unix)]
+    pub(super) fn publish_session(&mut self) {
+        self.unpublish_session();
+        if !self.settings.allow_external_clients {
+            return;
+        }
+        let Some(session) = &self.session else {
+            return;
+        };
+        let publication = missingno_debugger::Publication {
+            title: self
+                .current_game
+                .as_ref()
+                .map(|current| current.entry.display_title().to_string())
+                .unwrap_or_else(|| "Missingno".into()),
+            core: self
+                .platform()
+                .map(|platform| platform.name().to_string())
+                .unwrap_or_default(),
+        };
+        match missingno_debugger::AttachEndpoint::open(session.handle(), publication) {
+            Ok(endpoint) => self.attach_endpoint = Some(endpoint),
+            Err(error) => self.show_notice(format!("Could not allow external clients: {error}")),
+        }
+    }
+
+    #[cfg(not(unix))]
+    pub(super) fn publish_session(&mut self) {}
+
+    /// The platform of the loaded game, if one is loaded.
+    fn platform(&self) -> Option<crate::app::system::Platform> {
+        match &self.game {
+            Game::Loaded(LoadedGame::Debugger(debugger)) => Some(debugger.platform()),
+            Game::Loaded(LoadedGame::Emulator(emulator)) => Some(emulator.platform()),
+            _ => None,
+        }
     }
 
     /// Handle an item from the app-lifetime session subscription.
@@ -405,6 +460,7 @@ impl App {
     /// thread) and drop the cpal stream — both on the UI thread so teardown never
     /// races the audio backend. Run on every app-close path before `window::close`.
     pub(super) fn shutdown_emu(&mut self) {
+        self.unpublish_session();
         self.session = None;
         self.audio_output = None;
     }

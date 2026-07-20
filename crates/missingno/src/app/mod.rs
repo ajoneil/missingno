@@ -26,6 +26,9 @@ mod views;
 
 use missingno_debugger::{SessionEvent, SharedSession};
 
+#[cfg(unix)]
+use missingno_debugger::AttachEndpoint;
+
 // Cartridge reader/writer hardware support
 use crate::cartridge_rw;
 
@@ -91,6 +94,11 @@ struct App {
     /// The shared session hosting the current game's console, `None` until a game
     /// loads. Owns the session thread; dropping it shuts the thread down.
     session: Option<SharedSession>,
+    /// The socket the current session is published on, so clients in other
+    /// processes can drive it. `None` unless the user allows external clients;
+    /// dropping it unpublishes.
+    #[cfg(unix)]
+    attach_endpoint: Option<AttachEndpoint>,
     /// The Iced sink a per-game bridge thread forwards session events into,
     /// handed over once at startup by the app-lifetime subscription.
     event_sink: Option<iced::futures::channel::mpsc::UnboundedSender<SessionEvent>>,
@@ -414,6 +422,8 @@ impl App {
             action_bar: ActionBar::new(),
             audio_output: None,
             session: None,
+            #[cfg(unix)]
+            attach_endpoint: None,
             event_sink: None,
             recent_games,
             settings,
