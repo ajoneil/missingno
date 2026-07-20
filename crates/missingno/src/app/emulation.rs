@@ -6,9 +6,10 @@ use missingno_session::{ExtractedMachine, SessionEvent, SessionHandle, SharedSes
 use super::audio_output::AudioOutput;
 use super::emulator::{ConsoleFacts, Emulator};
 use super::session_bridge::{self, SessionBridge};
-use super::{App, Game, LoadedGame, Message, PendingAction, library};
+use super::{App, Game, LoadedGame, Message, Notice, PendingAction, library};
 use crate::app::library::activity::FrameCapture;
 use crate::app::system::{ControlId, ControlInput};
+use crate::app::ui::icons::Icon;
 
 impl App {
     /// A fresh client handle onto the current game's session, if one is loaded.
@@ -109,7 +110,7 @@ impl App {
                         _ => unreachable!(),
                     };
                     if let Err(error) = result {
-                        self.show_notice(error);
+                        self.show_notice(Notice::text(error));
                     }
                 }
             }
@@ -158,9 +159,6 @@ impl App {
                 }
             }
             Message::ExportCaptureSaved(_, None) => {}
-            Message::DismissScreenshotToast => {
-                self.screenshot_toast = None;
-            }
             Message::DismissNotice => {
                 self.notice = None;
             }
@@ -334,7 +332,9 @@ impl App {
         };
         match missingno_session::AttachEndpoint::open(session.handle(), publication) {
             Ok(endpoint) => self.attach_endpoint = Some(endpoint),
-            Err(error) => self.show_notice(format!("Could not allow external clients: {error}")),
+            Err(error) => self.show_notice(Notice::text(format!(
+                "Could not allow external clients: {error}"
+            ))),
         }
     }
 
@@ -426,17 +426,17 @@ impl App {
                 frame,
                 expected,
                 actual,
-            } => self.show_notice(format!(
+            } => self.show_notice(Notice::text(format!(
                 "Replay diverged at frame {frame} (expected {expected:#x}, got {actual:#x})"
-            )),
-            SessionEvent::Notice(message) => self.show_notice(message),
+            ))),
+            SessionEvent::Notice(message) => self.show_notice(Notice::text(message)),
         }
         Task::none()
     }
 
     /// Show a transient status-line toast.
-    fn show_notice(&mut self, message: String) {
-        self.notice = Some((message, Instant::now()));
+    fn show_notice(&mut self, notice: Notice) {
+        self.notice = Some((notice, Instant::now()));
     }
 
     pub(super) fn running(&self) -> bool {
@@ -501,7 +501,7 @@ impl App {
             library::activity::write_session(&current.game_dir, session);
             self.store.update_live_screenshots(session);
         }
-        self.screenshot_toast = Some(Instant::now());
+        self.show_notice(Notice::with_icon(Icon::Camera, "Screenshot saved"));
     }
 
     fn record_print(&mut self, print: crate::printer::CompletedPrint) {

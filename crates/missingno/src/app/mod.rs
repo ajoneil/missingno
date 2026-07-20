@@ -4,6 +4,7 @@ use action_bar::ActionBar;
 use audio_output::AudioOutput;
 use iced::{Task, Theme, window};
 use ui::fonts;
+use ui::icons::Icon;
 
 mod action_bar;
 mod audio_output;
@@ -109,11 +110,9 @@ struct App {
     store: library::store::GameStore,
     /// Action waiting for user confirmation (e.g. close game before launching another).
     pending_action: Option<PendingAction>,
-    /// When set, shows a brief "Screenshot saved" toast overlay.
-    screenshot_toast: Option<Instant>,
-    /// A transient status line (save/load result, recording lifecycle,
-    /// replay divergence), shown as a toast until it times out.
-    notice: Option<(String, Instant)>,
+    /// A transient status line (screenshot, save/load result, recording
+    /// lifecycle, replay divergence), shown as a toast until it times out.
+    notice: Option<(Notice, Instant)>,
     /// Serial link cable connection (BGB link protocol), injected into GameBoy on load.
     serial_link: Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
     /// Finished Game Boy Printer prints, sent from the printer (on the emu
@@ -184,6 +183,30 @@ pub(crate) enum FlashState {
     Complete,
     /// Flash failed.
     Failed(String),
+}
+
+/// A transient toast: what happened, and an optional icon for the ones the app
+/// raises itself. Outcomes reported by the session arrive as text alone.
+#[derive(Clone)]
+struct Notice {
+    icon: Option<Icon>,
+    message: String,
+}
+
+impl Notice {
+    fn text(message: impl Into<String>) -> Self {
+        Notice {
+            icon: None,
+            message: message.into(),
+        }
+    }
+
+    fn with_icon(icon: Icon, message: impl Into<String>) -> Self {
+        Notice {
+            icon: Some(icon),
+            message: message.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -376,7 +399,6 @@ enum Message {
     HideCursorTick,
     CloseRequested,
 
-    DismissScreenshotToast,
     /// Time out the transient status-line toast.
     DismissNotice,
 
@@ -430,7 +452,6 @@ impl App {
             current_game: None,
             store,
             pending_action: None,
-            screenshot_toast: None,
             notice: None,
             serial_link,
             print_tx,
@@ -505,7 +526,6 @@ impl App {
             | Message::Replay
             | Message::ExportCapture(_)
             | Message::ExportCaptureSaved(..)
-            | Message::DismissScreenshotToast
             | Message::DismissNotice
             | Message::SetControl(..)
             | Message::SetAxis(..)

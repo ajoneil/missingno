@@ -15,17 +15,14 @@ use crate::app::ui::{
     text,
 };
 use crate::app::{
-    App, DetailMessage, DetailSubScreen, Message, PendingAction, Screen, debugger, load,
+    App, DetailMessage, DetailSubScreen, Message, Notice, PendingAction, Screen, debugger, load,
 };
 
 impl App {
     pub(super) fn apply_toast<'a>(&self, content: Element<'a, Message>) -> Element<'a, Message> {
         let mut layers = vec![content];
-        if self.screenshot_toast.is_some() {
-            layers.push(screenshot_toast());
-        }
-        if let Some((message, _)) = &self.notice {
-            layers.push(notice_toast(message));
+        if let Some((notice, _)) = &self.notice {
+            layers.push(notice_toast(notice));
         }
         if layers.len() == 1 {
             layers.pop().unwrap()
@@ -229,46 +226,24 @@ fn menu_item_danger<'a>(icon: Icon, label: &'a str, message: Message) -> Element
         .into()
 }
 
-fn screenshot_toast<'a>() -> Element<'a, Message> {
-    container(
-        container(
-            row![
-                icons::m(Icon::Camera).style(|_, _| svg::Style {
-                    color: Some(iced::Color::WHITE),
-                }),
-                iced_text("Screenshot saved").color(iced::Color::WHITE),
-            ]
-            .spacing(s())
-            .align_y(Center),
-        )
-        .padding(s())
-        .style(|_| container::Style {
-            background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.6).into()),
-            border: iced::Border::default().rounded(border_m()),
-            ..Default::default()
-        }),
-    )
+/// The one transient toast — screenshot, save/load outcome, recording
+/// lifecycle, replay divergence. Bottom right, above the picture.
+fn notice_toast<'a>(notice: &Notice) -> Element<'a, Message> {
+    let mut line = row![].spacing(s()).align_y(Center);
+    if let Some(icon) = notice.icon {
+        line = line.push(icons::m(icon).style(|_, _| svg::Style {
+            color: Some(iced::Color::WHITE),
+        }));
+    }
+    line = line.push(iced_text(notice.message.clone()).color(iced::Color::WHITE));
+
+    container(container(line).padding(s()).style(|_| container::Style {
+        background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.6).into()),
+        border: iced::Border::default().rounded(border_m()),
+        ..Default::default()
+    }))
     .align_bottom(Fill)
     .align_right(Fill)
-    .padding(l())
-    .into()
-}
-
-/// A transient status-line toast (save/load result, recording lifecycle,
-/// replay divergence). Sits above the screenshot toast's corner so the two
-/// don't overlap when both are up.
-fn notice_toast<'a>(message: &str) -> Element<'a, Message> {
-    container(
-        container(iced_text(message.to_owned()).color(iced::Color::WHITE))
-            .padding(s())
-            .style(|_| container::Style {
-                background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.6).into()),
-                border: iced::Border::default().rounded(border_m()),
-                ..Default::default()
-            }),
-    )
-    .align_bottom(Fill)
-    .align_left(Fill)
     .padding(l())
     .into()
 }

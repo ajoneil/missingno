@@ -180,16 +180,6 @@ impl App {
                 }) => Some(Message::ExitFullscreen),
                 _ => None,
             }),
-            // One app-lifetime subscription bridges the current session's events
-            // into the UI: its first item hands over the sink a per-game bridge
-            // thread forwards through. Always included so the sink persists.
-            Subscription::run(super::session_bridge::session_events_worker).map(Message::Session),
-            if self.screenshot_toast.is_some() {
-                time::every(std::time::Duration::from_millis(1500))
-                    .map(|_| Message::DismissScreenshotToast)
-            } else {
-                Subscription::none()
-            },
             if self.notice.is_some() {
                 time::every(std::time::Duration::from_millis(3000)).map(|_| Message::DismissNotice)
             } else {
@@ -200,6 +190,10 @@ impl App {
             } else {
                 Subscription::none()
             },
+            // One app-lifetime subscription bridges the current session's events
+            // into the UI: its first item hands over the sink a per-game bridge
+            // thread forwards through. Always included so the sink persists.
+            Subscription::run(super::session_bridge::session_events_worker).map(Message::Session),
         ])
     }
 }
