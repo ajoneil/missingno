@@ -280,7 +280,7 @@ fn saving_reports_a_notice_and_the_file_round_trips() {
     let events = client.subscribe();
 
     let path = std::env::temp_dir().join(format!("missingno-s2-{}.mpsv", std::process::id()));
-    client.save_state(path.clone());
+    client.save_state(path.clone()).expect("a paused save answers");
     assert!(
         wait_until(|| drain(&events).iter().any(|e| matches!(
             e,
@@ -291,11 +291,47 @@ fn saving_reports_a_notice_and_the_file_round_trips() {
     assert!(path.exists(), "the save file was written");
 
     // The saved state loads back without error.
-    client.load_state(path.clone());
+    client.load_state(path.clone()).expect("the save loads back");
     assert!(wait_until(|| drain(&events).iter().any(|e| matches!(
         e,
         SessionEvent::Notice(message) if message == "State loaded"
     ))));
+    let _ = std::fs::remove_file(&path);
+}
+
+/// A console session has no debugger, but it does have a state backend: saving
+/// and loading are answered by the command queue, so both machine kinds serve
+/// them.
+#[test]
+fn a_console_session_saves_and_loads_state() {
+    let session = shared_console();
+    let client = session.handle();
+
+    let path = std::env::temp_dir().join(format!("missingno-s4-{}.mpsv", std::process::id()));
+    client
+        .save_state(path.clone())
+        .expect("a console session saves state");
+    assert!(path.exists());
+    client
+        .load_state(path.clone())
+        .expect("a console session loads state");
+    let _ = std::fs::remove_file(&path);
+}
+
+/// A save requested while the machine free-runs is answered by the run loop,
+/// waiting out an off-boundary request rather than reporting a state it did not
+/// capture.
+#[test]
+fn a_running_save_is_answered_by_the_run_loop() {
+    let session = shared();
+    let client = session.handle();
+    client.run();
+
+    let path = std::env::temp_dir().join(format!("missingno-s4-run-{}.mpsv", std::process::id()));
+    let outcome = client.save_state(path.clone());
+    client.pause();
+    assert_eq!(outcome, Ok(()), "a running save answers its requester");
+    assert!(path.exists(), "the save file was written");
     let _ = std::fs::remove_file(&path);
 }
 

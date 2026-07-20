@@ -5,8 +5,6 @@
 //! endpoint publishes the identical functions for a remote one, so both clients
 //! see one surface.
 
-use std::path::Path;
-
 use missingno_core::graphics::{GraphicsView, Object, ObjectTable, PaletteSet, TileAtlas};
 use missingno_core::inspect::{
     BitTable, PairMatrix, PixelStrip, Register, Section, SectionBlock, SwatchRow, ValueStyle,
@@ -144,6 +142,20 @@ fn machine_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "save_state",
+            description: "Write the current machine state to a filesystem path as a save file."
+                .into(),
+            input_schema: path("save file to write"),
+        },
+        Tool {
+            name: "load_state",
+            description: "Restore the machine state from a save file, finalizing any recording \
+                          and dropping any replay. Errors on a state for a different system or \
+                          ROM, an unsupported version, or a corrupt file."
+                .into(),
+            input_schema: path("save file to read"),
+        },
+        Tool {
             name: "start_recording",
             description: "Begin capturing an input recording, written when it is stopped. Every \
                           control driven from any client is captured."
@@ -279,27 +291,6 @@ fn generic_tools(session: &Session) -> Vec<Tool> {
             input_schema: count_schema(MAX_FRAME_COUNT),
         },
         Tool {
-            name: "save_state",
-            description: "Write the current machine state to a filesystem path as a save file."
-                .into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": { "path": { "type": "string", "description": "file to write" } },
-                "required": ["path"],
-            }),
-        },
-        Tool {
-            name: "load_state",
-            description: "Restore the machine state from a save file. Errors on a state for a \
-                          different system or ROM, an unsupported version, or a corrupt file."
-                .into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": { "path": { "type": "string", "description": "save file to read" } },
-                "required": ["path"],
-            }),
-        },
-        Tool {
             name: "set_breakpoint",
             description: "Set a PC breakpoint at a hex address.".into(),
             input_schema: json!({
@@ -428,13 +419,19 @@ pub fn call_session_tool(
             status_report(handle, core_name)
         }
         "set_control" => set_control(handle, args),
-        "start_recording" => recording_path(args)
+        "save_state" => path_arg(args)
+            .and_then(|path| handle.save_state(path))
+            .map(|()| vec![Content::Text("state saved".into())]),
+        "load_state" => path_arg(args)
+            .and_then(|path| handle.load_state(path))
+            .and_then(|()| status_report(handle, core_name)),
+        "start_recording" => path_arg(args)
             .and_then(|path| handle.start_recording(path))
             .map(|()| vec![Content::Text("recording".into())]),
         "stop_recording" => handle
             .stop_recording()
             .map(|()| vec![Content::Text("recording written".into())]),
-        "play_recording" => recording_path(args)
+        "play_recording" => path_arg(args)
             .and_then(|path| handle.play_recording(path))
             .map(|()| vec![Content::Text("replaying".into())]),
         "reset" => {
@@ -451,11 +448,9 @@ pub fn call_session_tool(
             )));
         }
         _ => {
-            let core_name = core_name.to_string();
             let tool = name.to_string();
             let arguments = args.clone();
-            return handle
-                .with_session(move |session| call_generic(session, &core_name, &tool, &arguments));
+            return handle.with_session(move |session| call_generic(session, &tool, &arguments));
         }
     };
     Some(outcome)
@@ -491,7 +486,8 @@ fn status_report(handle: &SessionHandle, core_name: &str) -> ToolOutcome {
     ))
 }
 
-fn recording_path(args: &Value) -> Result<std::path::PathBuf, String> {
+/// The `path` argument every file-taking tool requires.
+fn path_arg(args: &Value) -> Result<std::path::PathBuf, String> {
     args.get("path")
         .and_then(Value::as_str)
         .map(std::path::PathBuf::from)
@@ -515,12 +511,7 @@ pub fn outcome_json(outcome: ToolOutcome) -> Value {
 pub fn text(body: impl Into<String>) -> ToolOutcome {
     Ok(vec![Content::Text(body.into())])
 }
-fn call_generic(
-    session: &mut Session,
-    core_name: &str,
-    name: &str,
-    args: &Value,
-) -> Option<ToolOutcome> {
+fn call_generic(session: &mut Session, name: &str, args: &Value) -> Option<ToolOutcome> {
     let outcome = match name {
         "read_registers" => text(registers_text(session)),
         "read_memory" => read_memory(session, args),
@@ -538,8 +529,6 @@ fn call_generic(
         }
         "step_frame" => stepping(session, args, Stepping::Frame),
         "step_tick" => step_tick(session, args),
-        "save_state" => save_state(session, args),
-        "load_state" => load_state(session, args, core_name),
         "set_breakpoint" => breakpoint(session, args, true),
         "clear_breakpoint" => breakpoint(session, args, false),
         "list_breakpoints" => text(breakpoints_text(session)),
@@ -826,24 +815,6 @@ fn tick_report(session: &Session, tick: &str, ran: usize) -> String {
         "ran: {ran} {tick}{plural}\npc: {:04x}\n{}: {}",
         status.pc, status.video_label, status.video_summary,
     )
-}
-
-fn save_state(session: &mut Session, args: &Value) -> ToolOutcome {
-    let path = args
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or("'path' (string) is required")?;
-    session.save_state(Path::new(path))?;
-    text(format!("saved state to {path}"))
-}
-
-fn load_state(session: &mut Session, args: &Value, core_name: &str) -> ToolOutcome {
-    let path = args
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or("'path' (string) is required")?;
-    session.load_state(Path::new(path))?;
-    text(status_text(session, core_name))
 }
 
 fn breakpoint(session: &mut Session, args: &Value, set: bool) -> ToolOutcome {

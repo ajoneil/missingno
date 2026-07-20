@@ -71,21 +71,22 @@ impl App {
                     return Task::none();
                 };
                 if let Some(handle) = self.handle() {
-                    match message {
+                    // The session announces the outcome as a notice either way.
+                    let _ = match message {
                         Message::SaveState => handle.save_state(path),
                         Message::LoadState => {
-                            // Queue the load, then refresh the paused debugger: the
-                            // refresh job serializes after the load on the session's
+                            // The refresh serializes after the load on the session's
                             // one request channel, so it reads the loaded state.
-                            handle.load_state(path);
+                            let outcome = handle.load_state(path);
                             if let Game::Loaded(LoadedGame::Debugger(debugger)) = &mut self.game
                                 && !debugger.running()
                             {
                                 debugger.sync_paused();
                             }
+                            outcome
                         }
                         _ => unreachable!(),
-                    }
+                    };
                 }
             }
             Message::ToggleRecording | Message::Replay => {

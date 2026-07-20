@@ -175,8 +175,8 @@ enum Request {
     Reset,
     SetControl(ControlId, ControlInput),
     SetMemoryInterest(Vec<MemoryInterest>),
-    SaveState(PathBuf),
-    LoadState(PathBuf),
+    SaveState(PathBuf, Sender<Result<(), String>>),
+    LoadState(PathBuf, Sender<Result<(), String>>),
     StartRecording(PathBuf, Sender<Result<(), String>>),
     StopRecording(Sender<Result<(), String>>),
     PlayRecording(PathBuf, Sender<Result<(), String>>),
@@ -290,17 +290,19 @@ impl SessionHandle {
         let _ = self.requests.send(Request::SetMemoryInterest(interest));
     }
 
-    /// Save the machine state to `path`; the outcome arrives as a
-    /// [`SessionEvent::Notice`]. A request that misses an instruction boundary
-    /// retries at each frame while running.
-    pub fn save_state(&self, path: PathBuf) {
-        let _ = self.requests.send(Request::SaveState(path));
+    /// Save the machine state to `path`. A request that misses an instruction
+    /// boundary waits for the next frame while running, and errors while paused
+    /// — no frame is coming to reach a boundary on. The outcome also reaches
+    /// every client as a [`SessionEvent::Notice`].
+    pub fn save_state(&self, path: PathBuf) -> Result<(), String> {
+        self.round_trip(|ack| Request::SaveState(path, ack))
     }
 
-    /// Load the machine state from `path`; the outcome arrives as a
-    /// [`SessionEvent::Notice`]. Finalizes any recording and drops any replay.
-    pub fn load_state(&self, path: PathBuf) {
-        let _ = self.requests.send(Request::LoadState(path));
+    /// Load the machine state from `path`, finalizing any recording and dropping
+    /// any replay. The outcome also reaches every client as a
+    /// [`SessionEvent::Notice`].
+    pub fn load_state(&self, path: PathBuf) -> Result<(), String> {
+        self.round_trip(|ack| Request::LoadState(path, ack))
     }
 
     /// Begin capturing an input recording to `path`, finalized by
@@ -781,8 +783,9 @@ struct SessionEngine {
     capture: Option<Capture>,
     replay: Option<ReplayPlayback>,
     /// A save requested off an instruction boundary (a frame boundary need not be
-    /// one): retried at each frame until the machine reaches a boundary.
-    pending_save: Option<PathBuf>,
+    /// one): retried at each frame until the machine reaches a boundary, with the
+    /// requester still waiting on its ack.
+    pending_save: Option<(PathBuf, Sender<Result<(), String>>)>,
     /// A recording-start requested off an instruction boundary, retried likewise
     /// — its initial state is a save, so it has the same boundary requirement.
     pending_record: Option<PathBuf>,
@@ -879,7 +882,7 @@ impl SessionEngine {
             Request::Reset => {
                 let _ = self.finish_recording();
                 self.replay = None;
-                self.pending_save = None;
+                self.cancel_pending_save("a reset replaced the state it would have captured");
                 self.pending_record = None;
                 self.machine.reset();
             }
@@ -893,8 +896,8 @@ impl SessionEngine {
                 self.memory_interest = interest;
                 self.publish_memory_windows();
             }
-            Request::SaveState(path) => self.save_state(path),
-            Request::LoadState(path) => self.load_state(path),
+            Request::SaveState(path, ack) => self.save_state(path, ack),
+            Request::LoadState(path, ack) => self.load_state(path, ack),
             Request::StartRecording(path, ack) => {
                 let _ = ack.send(self.begin_recording(path));
             }
@@ -1084,27 +1087,53 @@ impl SessionEngine {
         }
     }
 
-    fn save_state(&mut self, path: PathBuf) {
+    fn save_state(&mut self, path: PathBuf, ack: Sender<Result<(), String>>) {
         match self.attempt_save(&path) {
-            SaveOutcome::Saved => self.notice("State saved"),
-            SaveOutcome::Retry => self.pending_save = Some(path),
-            SaveOutcome::NoBackend => self.notice("this system has no save-state backend"),
-            SaveOutcome::Failed(error) => self.notice(error),
+            SaveOutcome::Saved => self.settle(ack, Ok("State saved")),
+            // Only a stepping machine reaches a boundary, so deferring while
+            // paused would leave the requester waiting on a frame that never
+            // comes.
+            SaveOutcome::Retry if self.running => self.pending_save = Some((path, ack)),
+            SaveOutcome::Retry => self.settle(
+                ack,
+                Err("the machine is between instructions; step it to a boundary first".to_string()),
+            ),
+            SaveOutcome::NoBackend => {
+                self.settle(ack, Err("this system has no save-state backend".to_string()))
+            }
+            SaveOutcome::Failed(error) => self.settle(ack, Err(error)),
         }
     }
 
-    fn load_state(&mut self, path: PathBuf) {
+    fn load_state(&mut self, path: PathBuf, ack: Sender<Result<(), String>>) {
         // A load replaces the state a recording continues from and the state a
         // pending save would capture; finalize the recording and drop both.
         let _ = self.finish_recording();
         self.replay = None;
-        self.pending_save = None;
+        self.cancel_pending_save("a state load replaced the state it would have captured");
         match std::fs::read(&path)
             .map_err(|error| format!("could not read save state: {error}"))
             .and_then(|bytes| self.machine.load_state_bytes(&bytes))
         {
-            Ok(()) => self.notice("State loaded"),
-            Err(error) => self.notice(error),
+            Ok(()) => self.settle(ack, Ok("State loaded")),
+            Err(error) => self.settle(ack, Err(error)),
+        }
+    }
+
+    /// Answer a state request on both channels a client may be listening on: the
+    /// notice every client sees, and the ack the requester is blocked on.
+    fn settle(&self, ack: Sender<Result<(), String>>, outcome: Result<&str, String>) {
+        let (message, result) = match outcome {
+            Ok(note) => (note.to_string(), Ok(())),
+            Err(error) => (error.clone(), Err(error)),
+        };
+        self.notice(message);
+        let _ = ack.send(result);
+    }
+
+    fn cancel_pending_save(&mut self, why: &str) {
+        if let Some((_, ack)) = self.pending_save.take() {
+            let _ = ack.send(Err(why.to_string()));
         }
     }
 
@@ -1112,8 +1141,8 @@ impl SessionEngine {
     /// boundary, now that a frame has stepped the machine forward.
     fn drive_pending_state(&mut self) {
         // A still-off-boundary save re-defers itself through `save_state`.
-        if let Some(path) = self.pending_save.take() {
-            self.save_state(path);
+        if let Some((path, ack)) = self.pending_save.take() {
+            self.save_state(path, ack);
         }
         if let Some(path) = self.pending_record.take() {
             let _ = self.begin_recording(path);

@@ -167,27 +167,6 @@ impl Session {
         self.last_stop = StopReason::Completed;
     }
 
-    /// Write the current machine state to `path` as a save file. Errors when the
-    /// system has no save-state backend or the file cannot be written.
-    pub fn save_state(&self, path: &std::path::Path) -> Result<(), String> {
-        let bytes = self
-            .debugger
-            .save_state()
-            .ok_or("this system has no save-state backend")?;
-        std::fs::write(path, bytes).map_err(|error| format!("could not write {path:?}: {error}"))
-    }
-
-    /// Restore the machine state from a save file at `path`. Errors (never
-    /// panics) on a missing file, a state for a different system or ROM, an
-    /// unsupported version, or a corrupt file.
-    pub fn load_state(&mut self, path: &std::path::Path) -> Result<(), String> {
-        let bytes =
-            std::fs::read(path).map_err(|error| format!("could not read {path:?}: {error}"))?;
-        self.debugger
-            .load_state(&bytes)
-            .map_err(|error| error.to_string())
-    }
-
     /// Replay an input recording from `path`: restore its initial state, then
     /// drive the core frame by frame, applying the recorded inputs at their
     /// timestamps and verifying the frame-hash checkpoints. Errors (never

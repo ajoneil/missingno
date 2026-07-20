@@ -75,6 +75,20 @@ fn session_route(mut request: Request, client: &SessionHandle) -> Option<Request
             }
             Err(message) => respond_error(request, 400, &message),
         },
+        (Method::Post, "/state/save") => match read_path_body(&mut request) {
+            Ok(path) => match client.save_state(path.clone().into()) {
+                Ok(()) => respond_json(request, json!({ "saved": path })),
+                Err(message) => respond_error(request, 400, &message),
+            },
+            Err(message) => respond_error(request, 400, &message),
+        },
+        (Method::Post, "/state/load") => match read_path_body(&mut request) {
+            Ok(path) => match client.load_state(path.into()) {
+                Ok(()) => respond_json(request, loaded_state_json(client)),
+                Err(message) => respond_error(request, 400, &message),
+            },
+            Err(message) => respond_error(request, 400, &message),
+        },
         (Method::Post, "/recording/start") => match read_path_body(&mut request) {
             Ok(path) => match client.start_recording(path.clone().into()) {
                 Ok(()) => respond_json(request, json!({ "recording": path })),
@@ -96,6 +110,16 @@ fn session_route(mut request: Request, client: &SessionHandle) -> Option<Request
         _ => return Some(request),
     }
     None
+}
+
+/// The post-load view: the debugger's status where there is one, and the run
+/// state for a session hosting a plain console.
+fn loaded_state_json(client: &SessionHandle) -> Value {
+    if client.is_debugger() {
+        client.with_session(|session| status_json(session))
+    } else {
+        run_state_json(client)
+    }
 }
 
 fn run_state_json(client: &SessionHandle) -> Value {
@@ -162,8 +186,6 @@ fn handle(request: Request, session: &mut Session) {
             respond_step(request, session, &stop);
         }
         (Method::Post, "/step-tick") => step_tick(request, session, &query),
-        (Method::Post, "/state/save") => state_save(request, session),
-        (Method::Post, "/state/load") => state_load(request, session),
         (Method::Post, "/recording/replay") => recording_replay(request, session),
         (Method::Post, "/reset") => {
             session.reset();
@@ -779,28 +801,6 @@ fn read_path_body(request: &mut Request) -> Result<String, String> {
         .and_then(Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| "expected { \"path\": string }".to_string())
-}
-
-fn state_save(mut request: Request, session: &mut Session) {
-    let path = match read_path_body(&mut request) {
-        Ok(path) => path,
-        Err(message) => return respond_error(request, 400, &message),
-    };
-    match session.save_state(std::path::Path::new(&path)) {
-        Ok(()) => respond_json(request, json!({ "saved": path })),
-        Err(message) => respond_error(request, 400, &message),
-    }
-}
-
-fn state_load(mut request: Request, session: &mut Session) {
-    let path = match read_path_body(&mut request) {
-        Ok(path) => path,
-        Err(message) => return respond_error(request, 400, &message),
-    };
-    match session.load_state(std::path::Path::new(&path)) {
-        Ok(()) => respond_json(request, status_json(session)),
-        Err(message) => respond_error(request, 400, &message),
-    }
 }
 
 fn recording_replay(mut request: Request, session: &mut Session) {
