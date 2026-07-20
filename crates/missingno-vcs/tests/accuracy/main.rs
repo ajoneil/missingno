@@ -9,5 +9,6 @@ mod common;
 mod cpu;
 mod harness;
 mod riot;
+mod savestate;
 mod tia_render;
 mod tia_timing;

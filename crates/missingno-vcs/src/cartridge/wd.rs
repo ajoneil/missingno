@@ -122,6 +122,10 @@ impl Wd {
         &self.ram
     }
 
+    pub(super) fn ram_mut(&mut self) -> &mut [u8] {
+        &mut self.ram
+    }
+
     pub fn peek(&self, address: u16) -> u8 {
         let offset = usize::from(address & 0x0FFF);
         if offset < RAM_SIZE {

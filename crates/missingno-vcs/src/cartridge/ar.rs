@@ -238,6 +238,10 @@ impl Ar {
         self.ram.as_flattened()
     }
 
+    pub(super) fn ram_mut(&mut self) -> &mut [u8] {
+        self.ram.as_flattened_mut()
+    }
+
     /// `None` where the powered-down BIOS leaves the window floating.
     pub fn peek(&self, address: u16) -> Option<u8> {
         match self.cell(address) {

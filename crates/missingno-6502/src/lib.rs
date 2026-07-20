@@ -146,6 +146,22 @@ impl Cpu {
         matches!(self.state, State::Halted)
     }
 
+    /// Reseat the register file and place the core at an instruction boundary —
+    /// the sequencer at `Fetch`, or `Halted` when the save was taken on a JAM.
+    /// A save is taken only between instructions, so there is no mid-instruction
+    /// `Exec`/`Interrupt` micro-state to reconstruct; RDY is re-driven by the bus.
+    #[allow(clippy::too_many_arguments)]
+    pub fn restore_boundary(&mut self, a: u8, x: u8, y: u8, s: u8, p: u8, pc: u16, halted: bool) {
+        self.a = a;
+        self.x = x;
+        self.y = y;
+        self.s = s;
+        self.p = p;
+        self.pc = pc;
+        self.rdy = true;
+        self.state = if halted { State::Halted } else { State::Fetch };
+    }
+
     pub fn step_cycle(&mut self, bus: &mut impl Bus) {
         match self.state {
             State::Fetch => self.fetch_cycle(bus),

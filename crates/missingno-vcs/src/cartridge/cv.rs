@@ -48,6 +48,10 @@ impl Cv {
         self.ram.as_slice()
     }
 
+    pub(super) fn ram_mut(&mut self) -> &mut [u8] {
+        self.ram.as_mut_slice()
+    }
+
     pub fn peek(&self, address: u16) -> u8 {
         let offset = (address & 0x0FFF) as usize;
         match offset {

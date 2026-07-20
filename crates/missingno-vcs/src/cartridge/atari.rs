@@ -109,6 +109,22 @@ impl Atari {
         self.bank
     }
 
+    /// Re-page the window to a saved bank, clamped to the board's bank count.
+    pub(super) fn set_bank(&mut self, bank: usize) {
+        if bank < self.banks {
+            self.bank = bank;
+        }
+    }
+
+    /// The Superchip cart RAM as a writable slice for a state restore; empty on
+    /// a board without one.
+    pub(super) fn ram_mut(&mut self) -> &mut [u8] {
+        match &mut self.ram {
+            Some(ram) => ram.as_mut_slice(),
+            None => &mut [],
+        }
+    }
+
     pub fn peek(&self, address: u16) -> u8 {
         let offset = (address & 0x0FFF) as usize;
         if let Some(ram) = &self.ram

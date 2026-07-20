@@ -66,6 +66,10 @@ impl X07 {
         self.bank
     }
 
+    pub(super) fn set_bank(&mut self, bank: usize) {
+        self.bank = bank & 0x0F;
+    }
+
     pub fn peek(&self, address: u16) -> u8 {
         self.image[self.bank * BANK_SIZE + (address & 0x0FFF) as usize]
     }

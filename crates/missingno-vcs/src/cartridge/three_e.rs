@@ -107,6 +107,10 @@ impl ThreeE {
         &self.ram
     }
 
+    pub(super) fn ram_mut(&mut self) -> &mut [u8] {
+        &mut self.ram
+    }
+
     /// The full ROM image, all banks in file order, for the debugger's
     /// bank-complete `rom` region.
     pub(super) fn rom(&self) -> &[u8] {

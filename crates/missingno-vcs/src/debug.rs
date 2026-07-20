@@ -10,13 +10,17 @@ use rgb::RGB8;
 
 use missingno_core::inspect;
 use missingno_core::isa::InstructionSet;
+use missingno_core::state::{PixelFormat, StateRecord, SystemStateSchema};
+use missingno_core::state_file::{StateFrame, StateMeta, read_state_file, write_state_file};
 use missingno_core::system::{
     ConsoleSwitch, ControlId, ControlInput, DebugView, FrameOutcome, InspectSnapshot,
-    RunningStatus, StepOutcome, SystemConsole, SystemDebugger,
+    RunningStatus, StateError, StepOutcome, SystemConsole, SystemDebugger,
 };
 use missingno_core::video::{
     self, DisplayTechnology, Frame as VideoFrame, IndexedFrame, Television,
 };
+
+use crate::state_schema::vcs_state_schema;
 
 use crate::cartridge::CartridgeError;
 use crate::console::{Frame, JoystickDirection, Vcs};
@@ -100,6 +104,7 @@ pub fn create_console(
     Ok(Box::new(VcsConsole {
         vcs: Vcs::new(rom, region, cart)?,
         title,
+        rom_sha256: rom_fingerprint(rom),
         last_frame: blank_frame(),
         tv: Television::new(VSYNC_LOCK_LINES),
     }))
@@ -200,6 +205,7 @@ fn core_cart_type(code: &str) -> Option<CartType> {
 struct VcsConsole {
     vcs: Vcs,
     title: String,
+    rom_sha256: String,
     last_frame: IndexedFrame,
     tv: Television<VISIBLE_CLOCKS>,
 }
@@ -255,6 +261,74 @@ fn blank_frame() -> IndexedFrame {
         height,
         region_palette(TvStandard::Ntsc),
     )
+}
+
+/// A hex SHA-256 of the raw ROM image, taken at load (the cartridge does not
+/// retain a plain board's image), so a save state can refuse a ROM it was not
+/// written for.
+fn rom_fingerprint(rom: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(rom);
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// The current displayed field as a save-state framebuffer blob — informational;
+/// a restored console regenerates its display from the restored hardware.
+fn state_frame(frame: &IndexedFrame) -> StateFrame {
+    StateFrame {
+        width: frame.width,
+        height: Some(frame.height),
+        format: PixelFormat::Indexed8,
+        data: frame.pixels.to_vec(),
+    }
+}
+
+/// Serialize the console's boundary state into a save file. `None` when the
+/// console is mid-instruction — a save is only faithful at an instruction
+/// boundary, where the CPU carries no micro-sequencer residue.
+fn save_state_bytes(vcs: &Vcs, frame: &IndexedFrame, rom_sha256: &str) -> Option<Vec<u8>> {
+    if !vcs.at_instruction_boundary() {
+        return None;
+    }
+    let record = crate::snapshot::read_state(vcs);
+    let memory = crate::snapshot::capture_memory(vcs);
+    let saved = state_frame(frame);
+    let meta = StateMeta {
+        system: vcs_state_schema().system,
+        rom_sha256: Some(rom_sha256),
+        emulator: "missingno",
+        emulator_version: env!("CARGO_PKG_VERSION"),
+    };
+    Some(write_state_file(&meta, &record, &memory, Some(&saved)))
+}
+
+/// Restore the console from a save file, rejecting a state for the wrong system
+/// or ROM, an unsupported version, or a record that fails schema validation.
+fn load_state_into(vcs: &mut Vcs, bytes: &[u8], rom_sha256: &str) -> Result<(), StateError> {
+    use missingno_core::state_file::StateFileError;
+
+    let schema = vcs_state_schema();
+    let file = read_state_file(bytes).map_err(|error| match error {
+        StateFileError::UnsupportedVersion(_) => StateError::VersionMismatch,
+        _ => StateError::Corrupt,
+    })?;
+    if file.system != schema.system {
+        return Err(StateError::WrongSystem);
+    }
+    if let Some(fingerprint) = &file.rom_sha256
+        && fingerprint != rom_sha256
+    {
+        return Err(StateError::IncompatibleRom);
+    }
+    let record = schema
+        .record_from(file.fields)
+        .map_err(|_| StateError::Corrupt)?;
+    crate::snapshot::restore(vcs, &record, &file.memory)
 }
 
 impl SystemConsole for VcsConsole {
@@ -320,10 +394,27 @@ impl SystemConsole for VcsConsole {
         frame_interval(self.vcs.tv_standard())
     }
 
+    fn state_schema(&self) -> Option<&'static SystemStateSchema> {
+        Some(vcs_state_schema())
+    }
+
+    fn read_state(&self) -> Option<StateRecord> {
+        Some(crate::snapshot::read_state(&self.vcs))
+    }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        save_state_bytes(&self.vcs, &self.last_frame, &self.rom_sha256)
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> Result<(), StateError> {
+        load_state_into(&mut self.vcs, bytes, &self.rom_sha256)
+    }
+
     fn into_debugger(self: Box<Self>) -> Result<Box<dyn SystemDebugger>, Box<dyn SystemConsole>> {
         Ok(Box::new(VcsDebugger::new(
             crate::debugger::Debugger::new(self.vcs),
             self.title,
+            self.rom_sha256,
             self.last_frame,
         )))
     }
@@ -867,16 +958,23 @@ impl InspectSnapshot for VcsSnapshot {
 struct VcsDebugger {
     core: crate::debugger::Debugger,
     title: String,
+    rom_sha256: String,
     last_frame: IndexedFrame,
     inspect: VcsInspectState,
     frame_count: u64,
 }
 
 impl VcsDebugger {
-    fn new(core: crate::debugger::Debugger, title: String, last_frame: IndexedFrame) -> Self {
+    fn new(
+        core: crate::debugger::Debugger,
+        title: String,
+        rom_sha256: String,
+        last_frame: IndexedFrame,
+    ) -> Self {
         let mut this = VcsDebugger {
             core,
             title,
+            rom_sha256,
             last_frame,
             inspect: VcsInspectState::default(),
             frame_count: 0,
@@ -1127,10 +1225,31 @@ impl SystemDebugger for VcsDebugger {
         frame_interval(self.core.console().tv_standard())
     }
 
+    fn state_schema(&self) -> Option<&'static SystemStateSchema> {
+        Some(vcs_state_schema())
+    }
+
+    fn read_state(&self) -> Option<StateRecord> {
+        Some(crate::snapshot::read_state(self.core.console()))
+    }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        save_state_bytes(self.core.console(), &self.last_frame, &self.rom_sha256)
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> Result<(), StateError> {
+        let result = load_state_into(self.core.console_mut(), bytes, &self.rom_sha256);
+        if result.is_ok() {
+            self.refresh();
+        }
+        result
+    }
+
     fn into_console(self: Box<Self>) -> Box<dyn SystemConsole> {
         Box::new(VcsConsole {
             vcs: self.core.into_console(),
             title: self.title,
+            rom_sha256: self.rom_sha256,
             last_frame: self.last_frame,
             tv: Television::new(VSYNC_LOCK_LINES),
         })
@@ -1355,6 +1474,7 @@ mod tests {
         let mut debugger = VcsDebugger::new(
             crate::debugger::Debugger::new(vcs),
             "test".to_string(),
+            String::new(),
             blank_frame(),
         );
         for _ in 0..64 {

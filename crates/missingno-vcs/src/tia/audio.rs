@@ -218,6 +218,53 @@ impl Channel {
     }
 }
 
+/// One audio channel's boundary state: the AUDC/AUDF/AUDV registers, the
+/// counters (divider count, pulse and noise shift registers), and the phase0
+/// latches held between an audio tick's sample and commit halves.
+#[derive(Clone, Copy)]
+pub(crate) struct ChannelState {
+    pub control: u8,
+    pub frequency: u8,
+    pub volume: u8,
+    pub divider_count: u8,
+    pub pulse: u8,
+    pub noise: u8,
+    pub enable: bool,
+    pub noise_feedback: bool,
+    pub noise_tap: bool,
+    pub advance: bool,
+}
+
+impl Channel {
+    pub(crate) fn capture(&self) -> ChannelState {
+        ChannelState {
+            control: self.control,
+            frequency: self.frequency,
+            volume: self.volume,
+            divider_count: self.divider.count,
+            pulse: self.pulse.reg,
+            noise: self.noise.reg,
+            enable: self.enable,
+            noise_feedback: self.noise_feedback,
+            noise_tap: self.noise_tap,
+            advance: self.advance,
+        }
+    }
+
+    pub(crate) fn restore(&mut self, s: &ChannelState) {
+        self.control = s.control;
+        self.frequency = s.frequency;
+        self.volume = s.volume;
+        self.divider.count = s.divider_count & 0x1F;
+        self.pulse.reg = s.pulse & 0x0F;
+        self.noise.reg = s.noise & 0x1F;
+        self.enable = s.enable;
+        self.noise_feedback = s.noise_feedback;
+        self.noise_tap = s.noise_tap;
+        self.advance = s.advance;
+    }
+}
+
 /// D0's leg; D1, D2 and D3 are 15K, 7.5K and 3.75K, so a channel's legs sum
 /// to its AUDV value in units of this one's conductance.
 const LSB_LEG_OHMS: f32 = 30_000.0;

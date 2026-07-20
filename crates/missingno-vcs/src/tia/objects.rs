@@ -538,6 +538,192 @@ impl Ball {
     }
 }
 
+// ── Boundary-state capture / restore ─────────────────────────────
+//
+// The movable objects free-run continuously, so at an instruction boundary
+// their counters, ÷4 ring phases, START-pending latches, and serialiser/gate
+// state are all live — full Tier-2a hardware state a bit-exact restore needs.
+
+/// A player's serialiser scan: MOTCK lead, the walked bit, the per-bit clock
+/// remainder, and the stretched-clock lag.
+#[derive(Clone, Copy)]
+pub(crate) struct ScanState {
+    pub lead: u8,
+    pub bit: u8,
+    pub clocks_left: u8,
+    pub serial_lag: u8,
+}
+
+/// A player object's boundary state.
+#[derive(Clone, Copy)]
+pub(crate) struct PlayerState {
+    pub graphics_new: u8,
+    pub graphics_old: u8,
+    pub vertical_delay: bool,
+    pub reflect: bool,
+    pub nusiz: u8,
+    /// ÷4 position count (0..40).
+    pub position: u8,
+    /// ÷4 ring sub-phase (0..3).
+    pub ring_phase: u8,
+    /// The one-wrap START-pending latch.
+    pub start_pending: bool,
+    pub scan: Option<ScanState>,
+}
+
+/// A missile object's boundary state.
+#[derive(Clone, Copy)]
+pub(crate) struct MissileState {
+    pub enabled: bool,
+    pub locked_to_player: bool,
+    pub nusiz: u8,
+    pub position: u8,
+    pub ring_phase: u8,
+    pub start_pending: bool,
+    /// Width-gate select-network lead and remaining lit width.
+    pub gate_lead: u8,
+    pub gate_width_left: u8,
+    pub reset_decode_hold: bool,
+}
+
+/// The ball object's boundary state.
+#[derive(Clone, Copy)]
+pub(crate) struct BallState {
+    pub enabled_new: bool,
+    pub enabled_old: bool,
+    pub vertical_delay: bool,
+    pub width_exponent: u8,
+    pub position: u8,
+    pub ring_phase: u8,
+    pub start_pending: bool,
+    pub gate_lead: u8,
+    pub gate_width_left: u8,
+}
+
+/// The playfield's registers and its per-cell serialiser latch.
+#[derive(Clone, Copy)]
+pub(crate) struct PlayfieldState {
+    pub pf0: u8,
+    pub pf1: u8,
+    pub pf2: u8,
+    pub mirrored: bool,
+    pub latched: [u8; 3],
+}
+
+impl Player {
+    pub(crate) fn capture(&self) -> PlayerState {
+        PlayerState {
+            graphics_new: self.graphics_new,
+            graphics_old: self.graphics_old,
+            vertical_delay: self.vertical_delay,
+            reflect: self.reflect,
+            nusiz: self.nusiz,
+            position: self.counter.position,
+            ring_phase: self.counter.div.phase,
+            start_pending: self.counter.start_pending,
+            scan: self.scan.as_ref().map(|s| ScanState {
+                lead: s.lead,
+                bit: s.bit,
+                clocks_left: s.clocks_left,
+                serial_lag: s.serial_lag,
+            }),
+        }
+    }
+
+    pub(crate) fn restore(&mut self, s: &PlayerState) {
+        self.graphics_new = s.graphics_new;
+        self.graphics_old = s.graphics_old;
+        self.vertical_delay = s.vertical_delay;
+        self.reflect = s.reflect;
+        self.nusiz = s.nusiz;
+        self.counter.position = s.position % COUNTS;
+        self.counter.div.phase = s.ring_phase & 3;
+        self.counter.start_pending = s.start_pending;
+        self.scan = s.scan.map(|s| Scan {
+            lead: s.lead,
+            bit: s.bit,
+            clocks_left: s.clocks_left,
+            serial_lag: s.serial_lag,
+        });
+    }
+}
+
+impl Missile {
+    pub(crate) fn capture(&self) -> MissileState {
+        MissileState {
+            enabled: self.enabled,
+            locked_to_player: self.locked_to_player,
+            nusiz: self.nusiz,
+            position: self.counter.position,
+            ring_phase: self.counter.div.phase,
+            start_pending: self.counter.start_pending,
+            gate_lead: self.gate.lead,
+            gate_width_left: self.gate.width_left,
+            reset_decode_hold: self.reset_decode_hold,
+        }
+    }
+
+    pub(crate) fn restore(&mut self, s: &MissileState) {
+        self.enabled = s.enabled;
+        self.locked_to_player = s.locked_to_player;
+        self.nusiz = s.nusiz;
+        self.counter.position = s.position % COUNTS;
+        self.counter.div.phase = s.ring_phase & 3;
+        self.counter.start_pending = s.start_pending;
+        self.gate.lead = s.gate_lead;
+        self.gate.width_left = s.gate_width_left;
+        self.reset_decode_hold = s.reset_decode_hold;
+    }
+}
+
+impl Ball {
+    pub(crate) fn capture(&self) -> BallState {
+        BallState {
+            enabled_new: self.enabled_new,
+            enabled_old: self.enabled_old,
+            vertical_delay: self.vertical_delay,
+            width_exponent: self.width_exponent,
+            position: self.counter.position,
+            ring_phase: self.counter.div.phase,
+            start_pending: self.counter.start_pending,
+            gate_lead: self.gate.lead,
+            gate_width_left: self.gate.width_left,
+        }
+    }
+
+    pub(crate) fn restore(&mut self, s: &BallState) {
+        self.enabled_new = s.enabled_new;
+        self.enabled_old = s.enabled_old;
+        self.vertical_delay = s.vertical_delay;
+        self.width_exponent = s.width_exponent;
+        self.counter.position = s.position % COUNTS;
+        self.counter.div.phase = s.ring_phase & 3;
+        self.counter.start_pending = s.start_pending;
+        self.gate.lead = s.gate_lead;
+        self.gate.width_left = s.gate_width_left;
+    }
+}
+
+impl Playfield {
+    pub(crate) fn capture(&self) -> PlayfieldState {
+        PlayfieldState {
+            pf0: self.pf0,
+            pf1: self.pf1,
+            pf2: self.pf2,
+            mirrored: self.mirrored,
+            latched: self.latched,
+        }
+    }
+
+    pub(crate) fn restore(&mut self, s: &PlayfieldState) {
+        self.pf0 = s.pf0;
+        self.pf1 = s.pf1;
+        self.pf2 = s.pf2;
+        self.mirrored = s.mirrored;
+        self.latched = s.latched;
+    }
+}
+
 /// The playfield is beam-derived, not counter-driven: 20 bits across the
 /// left half (PF0 high nibble low-bit-first, PF1 high-bit-first, PF2
 /// low-bit-first), repeated or mirrored on the right per CTRLPF.

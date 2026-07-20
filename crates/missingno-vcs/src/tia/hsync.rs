@@ -128,6 +128,17 @@ impl HSyncCounter {
     pub(crate) fn columns_drawn(&self) -> usize {
         (self.position.saturating_sub(HBLANK_CLOCKS) as usize).min(VISIBLE_CLOCKS)
     }
+
+    /// The line-timing spine's boundary state: the colour-clock position and
+    /// the HB-latch release the RHB decode chose this line.
+    pub(crate) fn capture(&self) -> (u16, u16) {
+        (self.position, self.hblank_release)
+    }
+
+    pub(crate) fn restore(&mut self, position: u16, hblank_release: u16) {
+        self.position = position % CLOCKS_PER_LINE;
+        self.hblank_release = hblank_release;
+    }
 }
 
 #[cfg(test)]

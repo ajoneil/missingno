@@ -70,6 +70,10 @@ impl Fa {
     }
 
     /// The 256-byte cart RAM, all of it.
+    pub(super) fn ram_mut(&mut self) -> &mut [u8] {
+        self.ram.as_mut_slice()
+    }
+
     pub(super) fn ram(&self) -> &[u8] {
         self.ram.as_slice()
     }

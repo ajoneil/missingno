@@ -49,6 +49,24 @@ pub struct Riot {
     pa7_positive_edge: bool,
 }
 
+/// The RIOT's boundary state, RAM excepted (it travels as a memory span). The
+/// timer phase is coded 0 counting / 1 underflowed-this-cycle / 2 free-running.
+#[derive(Clone, Copy)]
+pub(crate) struct RiotState {
+    pub timer: u8,
+    pub interval: u16,
+    pub prescaler: u16,
+    pub timer_phase: u8,
+    pub porta_output: u8,
+    pub porta_pins: u8,
+    pub porta_ddr: u8,
+    pub portb_output: u8,
+    pub portb_pins: u8,
+    pub portb_ddr: u8,
+    pub pa7_flag: bool,
+    pub pa7_positive_edge: bool,
+}
+
 impl Default for Riot {
     fn default() -> Self {
         Self::new()
@@ -178,6 +196,54 @@ impl Riot {
                 value
             }
         }
+    }
+
+    /// The RIOT's boundary state (RAM travels as a memory span, not here): the
+    /// timer value and its prescaler/interval/phase, both ports, and the PA7
+    /// edge detector. Hardware-named; the RIOT has no die oracle, so these are
+    /// datasheet-grounded roles, not gate names.
+    pub(crate) fn capture(&self) -> RiotState {
+        RiotState {
+            timer: self.timer,
+            interval: self.interval,
+            prescaler: self.prescaler,
+            timer_phase: match self.timer_phase {
+                TimerPhase::Counting => 0,
+                TimerPhase::UnderflowedThisCycle => 1,
+                TimerPhase::FreeRunning => 2,
+            },
+            porta_output: self.port_a.output,
+            porta_pins: self.port_a.pins,
+            porta_ddr: self.port_a.ddr,
+            portb_output: self.port_b.output,
+            portb_pins: self.port_b.pins,
+            portb_ddr: self.port_b.ddr,
+            pa7_flag: self.pa7_flag,
+            pa7_positive_edge: self.pa7_positive_edge,
+        }
+    }
+
+    pub(crate) fn restore(&mut self, s: &RiotState) {
+        self.timer = s.timer;
+        self.interval = s.interval;
+        self.prescaler = s.prescaler;
+        self.timer_phase = match s.timer_phase {
+            1 => TimerPhase::UnderflowedThisCycle,
+            2 => TimerPhase::FreeRunning,
+            _ => TimerPhase::Counting,
+        };
+        self.port_a = Port {
+            output: s.porta_output,
+            pins: s.porta_pins,
+            ddr: s.porta_ddr,
+        };
+        self.port_b = Port {
+            output: s.portb_output,
+            pins: s.portb_pins,
+            ddr: s.portb_ddr,
+        };
+        self.pa7_flag = s.pa7_flag;
+        self.pa7_positive_edge = s.pa7_positive_edge;
     }
 
     pub fn write(&mut self, register: u16, value: u8) {

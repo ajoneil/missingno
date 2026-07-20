@@ -1,11 +1,12 @@
 //! End-to-end morepork capture: run a minimal kernel, write a trace, and
-//! read it back through morepork's own reader. The VCS has no hardware
-//! frame — the kernel's sync pattern decides the height — so this also
-//! pins the per-frame-dimensions path.
+//! read it back through morepork's own reader. The trace is authored from the
+//! console's hardware state schema (the same vocabulary as the save-state
+//! framing). The VCS has no hardware frame — the kernel's sync pattern decides
+//! the height — so this also pins the per-frame-dimensions path.
 #![cfg(feature = "morepork")]
 
 use missingno_vcs::console::Vcs;
-use missingno_vcs::trace::{Profile, Tracer, step_instruction_counted};
+use missingno_vcs::trace::{TraceScope, Tracer, Trigger, step_instruction_counted};
 
 /// A 4 KiB cartridge with a minimal 262-line NTSC kernel: 3 lines of
 /// VSYNC, then 259 counted WSYNC lines of solid background colour.
@@ -42,30 +43,18 @@ fn captures_a_readable_trace_with_emergent_frames() {
     let rom = test_rom();
     let mut vcs = Vcs::new(&rom, missingno_vcs::TvStandard::Ntsc, None).unwrap();
 
-    let profile = Profile::parse(
-        r#"
-[profile]
-name = "vcs-test"
-description = "capture test"
-trigger = "instruction"
-system = "vcs"
-
-[fields]
-cpu = ["registers", "timing"]
-tia = "registers"
-riot = "registers"
-
-[fields.memory]
-ram80 = "0080"
-"#,
-    )
-    .unwrap();
-
     let path = std::env::temp_dir().join(format!(
         "missingno-vcs-trace-test-{}.morepork",
         std::process::id()
     ));
-    let mut tracer = Tracer::create(&path, &profile, &rom, vcs.tv_standard()).unwrap();
+    let mut tracer = Tracer::create(
+        &path,
+        &rom,
+        vcs.tv_standard(),
+        Trigger::Instruction,
+        TraceScope::Observable,
+    )
+    .unwrap();
 
     // A bit over two frames of the kernel (one frame = 262 lines × 76
     // CPU cycles).
@@ -98,15 +87,17 @@ ram80 = "0080"
     let store = morepork::format::read::MoreporkStore::from_bytes(&data).unwrap();
     let header = store.header();
     assert_eq!(header.system, "vcs");
+    assert_eq!(header.isa, "6502");
     assert_eq!(header.system_def().id, "vcs");
-    assert_eq!(
-        header.fields,
-        [
-            "pc", "a", "x", "y", "s", "p", "cycles", "line", "clock", "timer", "port_a", "port_b",
-            "ram80"
-        ]
-        .map(String::from)
-    );
+    assert_eq!(header.instruction_addr_field.as_deref(), Some("pc"));
+    // The columns are the schema's Tier-1 observable fields plus the two
+    // bridge-owned observations, authored from the schema — not a catalogue.
+    for expected in ["pc", "a", "x", "y", "s", "p", "color_bk", "cycles", "line"] {
+        assert!(
+            header.fields.iter().any(|f| f == expected),
+            "trace is missing column {expected}"
+        );
+    }
 
     use morepork::store::TraceStore;
     assert!(store.entry_count() > 1000);
@@ -137,4 +128,41 @@ ram80 = "0080"
     // The 6507's flags resolve through the shared 6502 vocabulary.
     let zero_set = store.query_range("flag z set", 0, 1000).unwrap();
     assert!(!zero_set.is_empty());
+}
+
+#[test]
+fn full_scope_adds_the_deep_die_state() {
+    // The Full scope opts in the schema's Tier-2a fields — the object counters,
+    // ring phases, and beam position a gate-level producer would also emit.
+    let rom = test_rom();
+    let mut vcs = Vcs::new(&rom, missingno_vcs::TvStandard::Ntsc, None).unwrap();
+    let path = std::env::temp_dir().join(format!(
+        "missingno-vcs-trace-full-{}.morepork",
+        std::process::id()
+    ));
+    let mut tracer = Tracer::create(
+        &path,
+        &rom,
+        vcs.tv_standard(),
+        Trigger::Instruction,
+        TraceScope::Full,
+    )
+    .unwrap();
+    for _ in 0..200 {
+        tracer.capture(&vcs, 0).unwrap();
+        step_instruction_counted(&mut vcs);
+    }
+    tracer.finish().unwrap();
+
+    let data = std::fs::read(&path).unwrap();
+    std::fs::remove_file(&path).ok();
+    use morepork::store::TraceStore;
+    let store = morepork::format::read::MoreporkStore::from_bytes(&data).unwrap();
+    let header = store.header();
+    for deep in ["beam", "p0_position", "mot_ripple", "ch0_pulse"] {
+        assert!(
+            header.fields.iter().any(|f| f == deep),
+            "full scope is missing deep field {deep}"
+        );
+    }
 }

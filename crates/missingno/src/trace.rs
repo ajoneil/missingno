@@ -204,7 +204,7 @@ pub(crate) fn trace_nes(request: TraceRequest) {
 
 pub(crate) fn trace_vcs(request: TraceRequest) {
     use missingno_vcs::console::Vcs;
-    use missingno_vcs::trace::{Tracer, step_instruction_counted};
+    use missingno_vcs::trace::{TraceScope, Tracer, step_instruction_counted};
 
     let (rom, profile, output_path, cycle_limit) =
         (request.rom, request.profile, request.output, request.cycles);
@@ -214,11 +214,19 @@ pub(crate) fn trace_vcs(request: TraceRequest) {
         eprintln!("error: failed to load VCS ROM: {e:?}");
         process::exit(1);
     });
-    let mut tracer =
-        Tracer::create(output_path, profile, rom, vcs.tv_standard()).unwrap_or_else(|e| {
-            eprintln!("error: failed to create trace file: {e}");
-            process::exit(1);
-        });
+    // Columns are authored from the console's state schema; the profile now
+    // supplies only the trigger cadence. Capture the full Tier-2a depth.
+    let mut tracer = Tracer::create(
+        output_path,
+        rom,
+        vcs.tv_standard(),
+        profile.trigger.clone(),
+        TraceScope::Full,
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("error: failed to create trace file: {e}");
+        process::exit(1);
+    });
 
     let per_cycle = profile.trigger == Trigger::Cycle;
     let mut total_cycles: u64 = 0;

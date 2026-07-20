@@ -527,6 +527,47 @@ impl Cartridge {
         self.ram_slice().len()
     }
 
+    /// The board's linear cart RAM as a writable slice, for a state restore.
+    /// Mirrors [`ram_slice`](Self::ram_slice); empty for a board with none.
+    fn ram_slice_mut(&mut self) -> &mut [u8] {
+        match &mut self.board {
+            Board::Atari(board) => board.ram_mut(),
+            Board::Fa(board) => board.ram_mut(),
+            Board::Cv(board) => board.ram_mut(),
+            Board::ThreeE(board) => board.ram_mut(),
+            Board::ThreeEPlus(board) => board.ram_mut(),
+            Board::Ar(board) => board.ram_mut(),
+            Board::Wd(board) => board.ram_mut(),
+            _ => &mut [],
+        }
+    }
+
+    /// Restore linear cart RAM from a saved span, up to the board's RAM size.
+    pub fn restore_ram(&mut self, bytes: &[u8]) {
+        let ram = self.ram_slice_mut();
+        let len = ram.len().min(bytes.len());
+        ram[..len].copy_from_slice(&bytes[..len]);
+    }
+
+    /// Re-page a banked board to a saved bank. A boardʼs extra switch state
+    /// beyond its selected bank (a one-way lock, a pending half-latch) is not
+    /// reconstructed — a Tier-2a limit for those exotic boards. `None` and an
+    /// unbanked board are no-ops.
+    pub fn restore_bank(&mut self, bank: Option<usize>) {
+        let Some(bank) = bank else { return };
+        match &mut self.board {
+            Board::Atari(board) => board.set_bank(bank),
+            Board::F0(board) => board.set_bank(bank),
+            Board::Jane(board) => board.set_bank(bank),
+            Board::Wf8(board) => board.set_bank(bank),
+            Board::Fc(board) => board.set_bank(bank),
+            Board::Sb(board) => board.set_bank(bank),
+            Board::Mdm(board) => board.set_bank(bank),
+            Board::X07(board) => board.set_bank(bank),
+            _ => {}
+        }
+    }
+
     /// A side-effect-free read of linearised cart RAM at `offset`; `0xFF` past
     /// the end.
     pub fn peek_ram(&self, offset: usize) -> u8 {

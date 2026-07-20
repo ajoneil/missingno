@@ -361,6 +361,58 @@ impl Vcs {
         &self.cartridge
     }
 
+    /// The cartridge for a state restore (bank + cart-RAM reseat).
+    pub fn cartridge_mut(&mut self) -> &mut Cartridge {
+        &mut self.cartridge
+    }
+
+    /// True between instructions — the only boundary a state save is taken at.
+    pub fn at_instruction_boundary(&self) -> bool {
+        self.cpu.at_instruction_boundary()
+    }
+
+    /// The in-flight TIA write pipe as `(register, data, half_clocks_remaining)`
+    /// tuples — deferred writes that are live boundary state when a save lands
+    /// between two instructions.
+    pub fn pending_tia_writes(&self) -> Vec<(u8, u8, u8)> {
+        self.pending_tia_writes
+            .iter()
+            .flatten()
+            .map(|w| (w.register, w.data, w.hc_until_effective))
+            .collect()
+    }
+
+    /// The byte the data bus still carries (bus capacitance) — boundary state a
+    /// latch clocked by an address edge reads.
+    pub fn last_bus_value(&self) -> u8 {
+        self.last_bus_value
+    }
+
+    /// Reseat the deferred-write pipe, the bus-capacitance byte, and clear the
+    /// frame-assembly buffers. The completed-line accumulator, the in-progress
+    /// field flag, and the audio resampler window are the frontend Television's
+    /// off-chip integration surface, not hardware, so a restore starts them
+    /// empty and the field re-locks on the next VSYNC.
+    pub fn restore_console(&mut self, pending: &[(u8, u8, u8)], last_bus_value: u8) {
+        self.pending_tia_writes = [None; MAX_TIA_WRITES_IN_FLIGHT];
+        for (slot, &(register, data, hc)) in self.pending_tia_writes.iter_mut().zip(pending) {
+            *slot = Some(TiaWrite {
+                register,
+                data,
+                hc_until_effective: hc,
+            });
+        }
+        self.last_bus_value = last_bus_value;
+        self.building.clear();
+        self.in_vsync = false;
+        self.finished_frame = None;
+        self.last_line = None;
+        self.sample_clock = 0.0;
+        self.sample_accum = 0.0;
+        self.sample_accum_clocks = 0;
+        self.samples.clear();
+    }
+
     /// Side-effect-free bus read for inspection: the debugger's view of
     /// any address without perturbing latches or timer flags.
     pub fn peek(&self, address: u16) -> u8 {

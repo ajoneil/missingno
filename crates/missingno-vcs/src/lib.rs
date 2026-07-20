@@ -7,6 +7,8 @@ pub use missingno_6502 as cpu;
 pub mod debug;
 pub mod debugger;
 pub mod riot;
+pub mod snapshot;
+pub mod state_schema;
 pub mod tia;
 #[cfg(feature = "morepork")]
 pub mod trace;
