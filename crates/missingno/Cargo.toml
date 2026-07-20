@@ -13,22 +13,20 @@ path = "src/main.rs"
 # Sega Master System support; off until it is ready to be public.
 sms = ["dep:missingno-sms"]
 # NES / Famicom support; off until it is ready to be public.
-nes = ["dep:missingno-nes", "dep:missingno-6502", "missingno-nes/morepork"]
+nes = ["dep:missingno-nes", "missingno-nes/morepork"]
 
 [dependencies]
 missingno-core = { path = "../missingno-core" }
 missingno-gb = { path = "../missingno-gb", features = ["morepork"] }
 missingno-gbc = { path = "../missingno-gbc", features = ["morepork"] }
-missingno-6502 = { path = "../missingno-6502", optional = true }
 missingno-nes = { path = "../missingno-nes", optional = true }
 missingno-sms = { path = "../missingno-sms", optional = true }
 missingno-vcs = { path = "../missingno-vcs", features = ["morepork"] }
-missingno-session = { path = "../missingno-session", default-features = false, features = ["gb", "tools"] }
+missingno-session = { path = "../missingno-session", default-features = false, features = ["tools"] }
 cpal = "0.17"
 bytemuck = { version = "1.25", features = ["derive"] }
 clap = { version = "4.6.1", features = ["derive"] }
 iced = { version = "0.14.0", features = ["advanced", "canvas", "image", "smol", "svg", "wgpu"] }
-replace_with = "0.1.8"
 rtrb = "0.3"
 rgb = { workspace = true }
 rfd = "0.17.2"
