@@ -17,10 +17,10 @@ pub const OVERLAY_FULL_PX: f32 = 6.0;
 /// exposes that light base — so a fragment either lands inside a lit pixel or in
 /// the base-coloured gap. `APERTURE_FRACTION` is the fraction of the cell pitch,
 /// per axis, that the lit pixel fills; the remaining border is the reflective
-/// base. ~0.88 reads like a photographed DMG screen — pixels nearly touching
-/// with a thin base gridline between (linear coverage 0.88/axis, 0.774 of area).
-/// Shared with the fragment shader.
-const APERTURE_FRACTION: f32 = 0.88;
+/// base. 0.94 keeps the matrix a hairline so the base tone reads as structure
+/// without washing the colours toward it (linear coverage 0.94/axis, 0.88 of
+/// area). Shared with the fragment shader.
+const APERTURE_FRACTION: f32 = 0.94;
 
 /// CRT scanlines are not a darkening laid over the picture — the beam *emits*
 /// each source row as a bright line with a soft vertical falloff, and the gaps
@@ -786,7 +786,10 @@ mod tests {
         // the pinned constant reproduces unit average brightness there, and that
         // the image never reads dim (average ≥ ~1) for mid content.
         let mean = BEAM_NORM * mean_beam_field(beam_sigma(0.5));
-        assert!((mean - 1.0).abs() < 0.01, "mid-field mean brightness: {mean}");
+        assert!(
+            (mean - 1.0).abs() < 0.01,
+            "mid-field mean brightness: {mean}"
+        );
         assert!(mean >= 0.99, "mid content must not go dim: {mean}");
     }
 
@@ -797,8 +800,14 @@ mod tests {
         // but vanished, leaving a wide dark gap.
         let white_mid_gap = beam_weight(0.5, beam_sigma(1.0));
         let dark_mid_gap = beam_weight(0.5, beam_sigma(0.0));
-        assert!(white_mid_gap > 0.5, "white beam should fill: {white_mid_gap}");
-        assert!(dark_mid_gap < 0.1, "dark beam should stay thin: {dark_mid_gap}");
+        assert!(
+            white_mid_gap > 0.5,
+            "white beam should fill: {white_mid_gap}"
+        );
+        assert!(
+            dark_mid_gap < 0.1,
+            "dark beam should stay thin: {dark_mid_gap}"
+        );
         assert!(white_mid_gap > dark_mid_gap * 5.0);
     }
 
@@ -815,7 +824,10 @@ mod tests {
         );
         // The two-row sum brackets the normalization target: at least full
         // brightness on the row, at most it in the gap.
-        assert!(at_row_centre >= 1.0, "row centre below target: {at_row_centre}");
+        assert!(
+            at_row_centre >= 1.0,
+            "row centre below target: {at_row_centre}"
+        );
         assert!(at_mid_gap <= 1.0, "gap above target: {at_mid_gap}");
     }
 
