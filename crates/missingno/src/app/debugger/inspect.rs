@@ -2,7 +2,7 @@
 //! `missingno_gb::debugger::inspection` (and the CGB register view in
 //! `missingno_gbc`); this module re-exports them and layers the pane-facing
 //! [`InspectSource`] surface — the live console while paused, or a per-vblank
-//! snapshot while the core runs on the emulation thread — on top.
+//! snapshot while the machine free-runs — on top.
 
 use std::any::Any;
 
@@ -50,8 +50,8 @@ impl GbColors for Cgb {
 // --- Inspection source -------------------------------------------------------
 
 /// The Game Boy family's colour resolution, behind one model-erased surface:
-/// the live console while paused, or the per-vblank snapshot while the core
-/// runs on the emulation thread. The graphics panes read their structure from
+/// the live console while paused, or the per-vblank snapshot while the machine
+/// free-runs. The graphics panes read their structure from
 /// the decoded [`GraphicsView`] on the context; this resolves the DMG/CGB
 /// palettes those indices colour through.
 ///

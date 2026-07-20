@@ -1,8 +1,8 @@
 //! A generic memory viewer pane, registered for every family. While paused it
 //! reads live through the seam's `memory_regions()` + `peek()`, showing a
-//! region picker and a scrollable hex/ASCII grid. While the core runs on the
-//! emulation thread the same browser renders from the interest window the emu
-//! thread peeks each vblank for the pane's current view: scrolling emits a new
+//! region picker and a scrollable hex/ASCII grid. While the machine free-runs
+//! the same browser renders from the interest window the session peeks each
+//! vblank for the pane's current view: scrolling emits a new
 //! interest and the bytes catch up next vblank, with a placeholder row where
 //! the published window doesn't yet cover the selection. A family with no
 //! region map falls back to the PC-anchored snapshot window.
@@ -87,7 +87,7 @@ pub enum Message {
     JumpInput(String),
     Jump,
     /// The core's region map, pushed in so the pane's jump-to-address can
-    /// resolve while the core runs on the emu thread.
+    /// resolve while the machine free-runs.
     SetRegions(Vec<MemoryRegion>),
 }
 
@@ -107,7 +107,7 @@ fn window_range(region_start: u32, region_len: u32, offset: u32) -> (u32, u32, u
 }
 
 /// The interest span for a selection over a region list — the exact window the
-/// pane shows, so the emu thread peeks the same bytes. `None` with no regions.
+/// pane shows, so the session peeks the same bytes. `None` with no regions.
 pub fn interest_for(
     regions: &[MemoryRegion],
     selection: MemorySelection,
@@ -785,7 +785,7 @@ mod tests {
     #[test]
     fn each_pane_matches_its_own_window_by_base() {
         // The acceptance scenario: one pane on wram, one on the linear sram
-        // region; the emu thread peeks one window per interest and each pane
+        // region; the session peeks one window per interest and each pane
         // resolves its own by base.
         let regions = vec![
             region("wram", 0xC000, 0x2000),

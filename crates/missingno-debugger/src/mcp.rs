@@ -32,7 +32,9 @@ enum Host {
     },
     /// Someone else's running session, driven over its attach socket.
     #[cfg(unix)]
-    Attached { client: missingno_session::attach::AttachClient },
+    Attached {
+        client: missingno_session::attach::AttachClient,
+    },
 }
 
 impl Host {

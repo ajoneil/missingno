@@ -24,8 +24,8 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::tools;
 use crate::shared::SessionHandle;
+use crate::tools;
 
 /// How long an accept loop waits between polls, bounding how long a shutdown
 /// takes to be noticed.

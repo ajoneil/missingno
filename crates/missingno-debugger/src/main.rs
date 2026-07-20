@@ -9,9 +9,9 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use missingno_debugger::http;
 use missingno_session::SharedSession;
 use missingno_session::factory::{self, LoadOptions};
-use missingno_debugger::http;
 
 /// Matches the GUI crate's headless server default.
 const DEFAULT_PORT: u16 = 3333;
@@ -43,9 +43,7 @@ fn parse_args() -> Result<Args, String> {
                     .map_err(|_| format!("invalid port: {value}"))?;
             }
             "--boot-rom" => {
-                boot_rom = Some(PathBuf::from(
-                    iter.next().ok_or("--boot-rom needs a path")?,
-                ));
+                boot_rom = Some(PathBuf::from(iter.next().ok_or("--boot-rom needs a path")?));
             }
             "--mcp" => mcp = true,
             "--allow-attach" => allow_attach = true,

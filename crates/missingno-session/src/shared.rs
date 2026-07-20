@@ -1098,9 +1098,10 @@ impl SessionEngine {
                 ack,
                 Err("the machine is between instructions; step it to a boundary first".to_string()),
             ),
-            SaveOutcome::NoBackend => {
-                self.settle(ack, Err("this system has no save-state backend".to_string()))
-            }
+            SaveOutcome::NoBackend => self.settle(
+                ack,
+                Err("this system has no save-state backend".to_string()),
+            ),
             SaveOutcome::Failed(error) => self.settle(ack, Err(error)),
         }
     }

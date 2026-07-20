@@ -64,9 +64,9 @@ pub struct DisasmReadout {
 #[derive(Clone, Copy)]
 pub struct DisasmPaneData<'b> {
     pub rows: &'b [DisasmRow],
-    /// The core is running on the emu thread: the walk is PC-anchored and a bank
-    /// jump cannot be resolved (the core is away), so the pane disables the jump
-    /// form and hides the jumped chip rather than contradicting the display.
+    /// The machine is free-running: the walk is PC-anchored and a bank jump
+    /// cannot be resolved from the snapshot, so the pane disables the jump form
+    /// and hides the jumped chip rather than contradicting the display.
     pub running: bool,
 }
 

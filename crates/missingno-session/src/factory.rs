@@ -3,8 +3,8 @@
 //! that builds a `Box<dyn SystemConsole>`; everything downstream is generic.
 //!
 //! Entries are feature-gated, so a build carries only the cores it selected.
-//! Off-chip Game Boy peripherals (serial link, printer, boot ROM, battery
-//! save) are frontend policy — the headless factory constructs without them.
+//! Off-chip Game Boy peripherals (serial link, printer, battery save) are
+//! frontend policy — this factory constructs without them.
 
 use std::path::Path;
 
@@ -77,7 +77,10 @@ mod gb {
                 no_battery,
             ))
         } else {
-            Box::new(GbConsole::new(GameBoy::new(cartridge, boot_rom), no_battery))
+            Box::new(GbConsole::new(
+                GameBoy::new(cartridge, boot_rom),
+                no_battery,
+            ))
         })
     }
 
@@ -214,8 +217,8 @@ pub fn create_console(path: &Path, rom: &[u8]) -> Result<Option<Box<dyn SystemCo
     create_console_with(path, rom, &LoadOptions::default())
 }
 
-/// Build a console, passing construction options a core may honour (the
-/// broadcast standard, for the VCS). Recognition is unaffected by the options.
+/// Build a console, passing construction options a core may honour.
+/// Recognition is unaffected by the options.
 pub fn create_console_with(
     path: &Path,
     rom: &[u8],
