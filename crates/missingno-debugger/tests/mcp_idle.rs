@@ -1,7 +1,7 @@
 //! With the `mcp` feature, drive the idle MCP server over stdio end to end:
-//! a static server with no ROM advertises three tools, gains the full set once
-//! `load_rom` recognises a Game Boy ROM through the factory, and returns to the
-//! three-tool idle set on `eject`.
+//! a static server with no machine advertises only the tools that reach one,
+//! gains the full set once `load_rom` recognises a Game Boy ROM through the
+//! factory, and returns to the idle set on `eject`.
 
 #![cfg(all(feature = "mcp", feature = "gb"))]
 
@@ -95,10 +95,10 @@ fn idle_server_loads_a_rom_and_ejects() {
         .unwrap();
     assert!(name.contains("idle"), "idle handshake, got {name}");
 
-    // Idle advertises exactly load_rom / eject / status.
+    // Idle advertises exactly the tools that reach a machine, plus status.
     let idle = tool_names(&responses[1]);
-    assert_eq!(idle.len(), 3, "idle tools: {idle:?}");
-    for expected in ["load_rom", "eject", "status"] {
+    assert_eq!(idle.len(), 4, "idle tools: {idle:?}");
+    for expected in ["load_rom", "attach", "eject", "status"] {
         assert!(
             idle.contains(&expected.to_string()),
             "idle missing {expected}"
@@ -109,9 +109,9 @@ fn idle_server_loads_a_rom_and_ejects() {
     assert_eq!(responses[2]["result"]["isError"], json!(false));
     assert!(text_of(&responses[2]).contains("Game Boy"));
 
-    // The full tool set now appears (well past three), still offering eject.
+    // The full tool set now appears, still offering eject.
     let full = tool_names(&responses[3]);
-    assert!(full.len() > 3, "full tools: {full:?}");
+    assert!(full.len() > 4, "full tools: {full:?}");
     for expected in ["step_tick", "describe_machine", "read_memory", "eject"] {
         assert!(
             full.contains(&expected.to_string()),
@@ -125,10 +125,10 @@ fn idle_server_loads_a_rom_and_ejects() {
     assert_eq!(responses[5]["result"]["isError"], json!(false));
     assert!(text_of(&responses[5]).contains("CPU"));
 
-    // eject returns to the three-tool idle set.
+    // eject returns to the idle set.
     assert_eq!(responses[6]["result"]["isError"], json!(false));
     let after = tool_names(&responses[7]);
-    assert_eq!(after.len(), 3, "post-eject tools: {after:?}");
+    assert_eq!(after.len(), 4, "post-eject tools: {after:?}");
 
     let _ = std::fs::remove_file(rom);
 }

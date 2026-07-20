@@ -10,6 +10,13 @@
 //! waveform surfaces, the disassembly walkers), so they work over any core with
 //! no core-specific code outside the factory registry.
 
+//! A session host can additionally publish the session it owns on a Unix
+//! socket ([`attach`]), so a client in another process drives that live machine
+//! instead of creating one — the app's own window is then just another client
+//! of it.
+
+#[cfg(all(unix, feature = "mcp"))]
+pub mod attach;
 pub mod factory;
 pub mod http;
 #[cfg(feature = "mcp")]
@@ -17,6 +24,8 @@ pub mod mcp;
 pub mod session;
 pub mod shared;
 
+#[cfg(all(unix, feature = "mcp"))]
+pub use attach::{AttachClient, AttachEndpoint, Publication, SessionInfo};
 pub use session::{DisasmLine, Session, StopReason, validate_watch};
 pub use shared::{
     AudioSink, ExtractedMachine, MemoryInterest, RunningReadout, SessionEvent, SessionHandle,

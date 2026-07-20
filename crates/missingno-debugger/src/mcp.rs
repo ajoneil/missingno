@@ -22,15 +22,33 @@ use serde_json::{Value, json};
 
 use crate::factory::{self, LoadOptions};
 use crate::session::{Session, StopReason};
-use crate::shared::SharedSession;
+use crate::shared::{SessionHandle, SharedSession};
 
-/// The server's currently loaded ROM: its shared session and the name of the
-/// core the factory recognised it as. `None` when the server is idle. This
-/// transport is a client — every tool routes through the session handle onto the
-/// session thread, where the generic [`Session`] seam answers it.
-struct LoadedSession {
-    shared: SharedSession,
-    core_name: &'static str,
+/// What the server is currently driving. This transport is a client either way:
+/// a locally hosted session is reached through its handle, an attached one
+/// through the socket a host published, and the tool surface is the same.
+enum Host {
+    /// A console this server created and owns, and the core the factory
+    /// recognised it as.
+    Local {
+        shared: SharedSession,
+        core_name: &'static str,
+    },
+    /// Someone else's running session, driven over its attach socket.
+    #[cfg(unix)]
+    Attached { client: crate::attach::AttachClient },
+}
+
+impl Host {
+    fn description(&self) -> String {
+        match self {
+            Host::Local { core_name, .. } => core_name.to_string(),
+            #[cfg(unix)]
+            Host::Attached { client } => {
+                format!("attached: {}", client.info().summary())
+            }
+        }
+    }
 }
 
 /// The MCP protocol version whose message shapes this server targets.
@@ -91,15 +109,16 @@ impl Tool {
 /// Serve a preloaded shared `session` as an MCP tool server over stdio.
 /// `core_name` names the core in `status` and the server handshake.
 pub fn serve(session: SharedSession, core_name: &'static str) -> io::Result<()> {
-    run(Some(LoadedSession {
+    run(Some(Host::Local {
         shared: session,
         core_name,
     }))
 }
 
-/// Serve an idle MCP tool server: it starts with no ROM, advertising only
-/// `load_rom`/`eject`/`status`, and gains the full tool set once `load_rom`
-/// recognises a ROM through the factory. One idle server serves any ROM.
+/// Serve an idle MCP tool server: it starts with no machine, advertising only
+/// `load_rom`/`attach`/`eject`/`status`, and gains the full tool set once
+/// `load_rom` recognises a ROM or `attach` reaches a running session. One idle
+/// server serves any ROM and any host.
 pub fn serve_idle() -> io::Result<()> {
     run(None)
 }
@@ -108,13 +127,9 @@ pub fn serve_idle() -> io::Result<()> {
 /// EOF or a `shutdown` request arrives. Every tool is a [`Session`] call: the
 /// transport is Session-only by construction, with no family-specific escape
 /// hatch.
-fn run(mut loaded: Option<LoadedSession>) -> io::Result<()> {
+fn run(mut loaded: Option<Host>) -> io::Result<()> {
     match &loaded {
-        Some(loaded) => eprintln!(
-            "mcp: {} ({}) ready on stdio",
-            loaded.shared.handle().with_session(|s| s.game_title()),
-            loaded.core_name
-        ),
+        Some(host) => eprintln!("mcp: {} ready on stdio", host.description()),
         None => eprintln!("mcp: idle (no ROM loaded) ready on stdio"),
     }
     let stdin = io::stdin();
@@ -138,7 +153,7 @@ fn run(mut loaded: Option<LoadedSession>) -> io::Result<()> {
 
 /// Dispatch one JSON-RPC message. Returns the response to emit (if any) and
 /// whether the loop should exit afterwards.
-fn handle_message(line: &str, loaded: &mut Option<LoadedSession>) -> (Option<Value>, bool) {
+fn handle_message(line: &str, loaded: &mut Option<Host>) -> (Option<Value>, bool) {
     let message: Value = match serde_json::from_str(line) {
         Ok(message) => message,
         Err(error) => {
@@ -180,9 +195,9 @@ fn handle_message(line: &str, loaded: &mut Option<LoadedSession>) -> (Option<Val
     }
 }
 
-fn initialize_result(loaded: &Option<LoadedSession>) -> Value {
+fn initialize_result(loaded: &Option<Host>) -> Value {
     let name = match loaded {
-        Some(loaded) => format!("missingno-debugger ({})", loaded.core_name),
+        Some(host) => format!("missingno-debugger ({})", host.description()),
         None => "missingno-debugger (idle)".to_string(),
     };
     json!({
@@ -205,25 +220,137 @@ fn error_response(id: Value, code: i64, message: &str) -> Value {
 
 // --- tools/list ---------------------------------------------------------------
 
-fn tools_list(loaded: &Option<LoadedSession>) -> Value {
+fn tools_list(loaded: &mut Option<Host>) -> Value {
     let tools: Vec<Value> = match loaded {
-        // Idle: only the tools that get a ROM loaded, plus an idle-aware status.
-        None => [load_rom_tool(), eject_tool(), status_tool()]
+        // Idle: only the tools that reach a machine, plus an idle-aware status.
+        None => [load_rom_tool(), attach_tool(), eject_tool(), status_tool()]
             .iter()
             .map(Tool::to_json)
             .collect(),
-        // Loaded: the full generic surface, plus the session-management tools so
-        // the ROM can be swapped or ejected without restarting the server.
-        Some(loaded) => loaded
-            .shared
-            .handle()
-            .with_session(|session| generic_tools(session))
-            .into_iter()
-            .chain([load_rom_tool(), eject_tool()])
-            .map(|tool| tool.to_json())
-            .collect(),
+        // Driving something: the session's own surface, plus the management
+        // tools so the machine can be swapped without restarting the server.
+        Some(host) => {
+            let session_tools = match host {
+                Host::Local { shared, .. } => session_tools(&shared.handle())
+                    .iter()
+                    .map(Tool::to_json)
+                    .collect(),
+                // An attached host advertises its own surface; forward it rather
+                // than guessing what the other process serves.
+                #[cfg(unix)]
+                Host::Attached { client } => client
+                    .request("tools/list", json!({}))
+                    .ok()
+                    .and_then(|result| result.get("tools").and_then(Value::as_array).cloned())
+                    .unwrap_or_default(),
+            };
+            session_tools
+                .into_iter()
+                .chain(
+                    [load_rom_tool(), attach_tool(), eject_tool()]
+                        .iter()
+                        .map(Tool::to_json),
+                )
+                .collect()
+        }
     };
     json!({ "tools": tools })
+}
+
+/// The tools a live session serves every client — the surface the stdio server
+/// advertises for a local session and an attach endpoint publishes for a remote
+/// one. A plain-console session offers only the tools that need no debugger.
+pub fn session_tools(handle: &SessionHandle) -> Vec<Tool> {
+    let mut tools = machine_tools();
+    if handle.is_debugger() {
+        tools.extend(handle.with_session(|session| generic_tools(session)));
+    }
+    tools
+}
+
+/// [`session_tools`] as the `tools/list` result body.
+pub fn session_tools_json(handle: &SessionHandle) -> Value {
+    let tools: Vec<Value> = session_tools(handle).iter().map(Tool::to_json).collect();
+    json!({ "tools": tools })
+}
+
+/// The tools answered by the session's command queue rather than by its debugger
+/// — free-running control, input, and recording capture. They work on both
+/// machine kinds, so a plain-console session still serves them.
+fn machine_tools() -> Vec<Tool> {
+    let empty = || json!({ "type": "object", "properties": {}, "additionalProperties": false });
+    let path = |what: &str| {
+        json!({
+            "type": "object",
+            "properties": { "path": { "type": "string", "description": what } },
+            "required": ["path"],
+        })
+    };
+    vec![
+        Tool {
+            name: "status",
+            description: "The machine's core, title, program counter, frame count, last stop \
+                          reason, and whether it is running or recording."
+                .into(),
+            input_schema: empty(),
+        },
+        Tool {
+            name: "reset",
+            description: "Reset the console to power-on, finalizing any recording and dropping \
+                          any replay."
+                .into(),
+            input_schema: empty(),
+        },
+        Tool {
+            name: "run",
+            description: "Start the machine free-running at its native frame rate. Any client \
+                          watching this session — including the app's own window — follows."
+                .into(),
+            input_schema: empty(),
+        },
+        Tool {
+            name: "pause",
+            description: "Stop free-running and block until the machine has halted, so the next \
+                          readout sees the paused core."
+                .into(),
+            input_schema: empty(),
+        },
+        Tool {
+            name: "set_control",
+            description: "Drive a console control: control id (0-7 map to the Game Boy button \
+                          order), pressed, or an analog axis 0.0-1.0. Captured into an active \
+                          recording."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "control": { "type": "integer", "minimum": 0, "maximum": 255 },
+                    "pressed": { "type": "boolean" },
+                    "axis": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+                },
+                "required": ["control"],
+            }),
+        },
+        Tool {
+            name: "start_recording",
+            description: "Begin capturing an input recording, written when it is stopped. Every \
+                          control driven from any client is captured."
+                .into(),
+            input_schema: path("recording file to write"),
+        },
+        Tool {
+            name: "stop_recording",
+            description: "Finish and write the active recording.".into(),
+            input_schema: empty(),
+        },
+        Tool {
+            name: "play_recording",
+            description: "Replay a recording, driving the machine frame by frame so the playback \
+                          is watchable. A checkpoint disagreement stops it and reports the frame."
+                .into(),
+            input_schema: path("recording file to read"),
+        },
+    ]
 }
 
 /// The idle-server tool that recognises and loads a ROM.
@@ -249,12 +376,40 @@ fn load_rom_tool() -> Tool {
     }
 }
 
-/// The tool that unloads the current ROM and returns the server to idle.
+/// The tool that unloads the current machine and returns the server to idle.
 fn eject_tool() -> Tool {
     Tool {
         name: "eject",
-        description: "Unload the current ROM and return the server to idle.".into(),
+        description: "Unload the current ROM, or detach from an attached session, returning the \
+                      server to idle."
+            .into(),
         input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+    }
+}
+
+/// The tool that joins a session another process is already running.
+fn attach_tool() -> Tool {
+    Tool {
+        name: "attach",
+        description: "Attach to a session another process is already running (an app window that \
+                      allows external debugger clients), and drive that live machine instead of \
+                      loading a private copy. `status` lists reachable sessions; give `pid` to \
+                      pick one, or omit it when exactly one is reachable. Whatever you do to the \
+                      session, its own window shows."
+            .into(),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "pid": {
+                    "type": "integer",
+                    "description": "process id of the session to attach to",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "socket path, when it is not in the usual runtime directory",
+                },
+            },
+        }),
     }
 }
 
@@ -274,12 +429,6 @@ fn generic_tools(session: &Session) -> Vec<Tool> {
     let empty = || json!({ "type": "object", "properties": {}, "additionalProperties": false });
 
     let mut tools = vec![
-        Tool {
-            name: "status",
-            description: "Program counter, frame count, last stop reason, game title, and core."
-                .into(),
-            input_schema: empty(),
-        },
         Tool {
             name: "read_registers",
             description: "Every register group, each value rendered in its natural style.".into(),
@@ -390,11 +539,6 @@ fn generic_tools(session: &Session) -> Vec<Tool> {
             input_schema: count_schema(MAX_FRAME_COUNT),
         },
         Tool {
-            name: "reset",
-            description: "Reset the console to power-on.".into(),
-            input_schema: empty(),
-        },
-        Tool {
             name: "save_state",
             description: "Write the current machine state to a filesystem path as a save file."
                 .into(),
@@ -457,21 +601,6 @@ fn generic_tools(session: &Session) -> Vec<Tool> {
             name: "get_frame",
             description: "The current resolved screen as a PNG image.".into(),
             input_schema: empty(),
-        },
-        Tool {
-            name: "set_control",
-            description: "Drive a console control: control id (0-7 map to the Game Boy button \
-                          order), pressed, or an analog axis 0.0-1.0."
-                .into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "control": { "type": "integer", "minimum": 0, "maximum": 255 },
-                    "pressed": { "type": "boolean" },
-                    "axis": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
-                },
-                "required": ["control"],
-            }),
         },
     ];
 
@@ -542,7 +671,7 @@ fn watch_description(session: &Session, verb: &str) -> String {
 
 // --- tools/call ---------------------------------------------------------------
 
-fn tools_call(loaded: &mut Option<LoadedSession>, params: &Value) -> Value {
+fn tools_call(loaded: &mut Option<Host>, params: &Value) -> Value {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
     let args = params
         .get("arguments")
@@ -551,28 +680,127 @@ fn tools_call(loaded: &mut Option<LoadedSession>, params: &Value) -> Value {
 
     let outcome = match name {
         "load_rom" => load_rom(loaded, &args),
+        "attach" => attach(loaded, &args),
         "eject" => eject(loaded),
         _ => match loaded {
-            Some(loaded) => {
-                let core_name = loaded.core_name;
-                let tool = name.to_string();
-                let arguments = args.clone();
-                loaded.shared.handle().with_session(move |session| {
-                    match call_generic(session, core_name, &tool, &arguments) {
-                        Some(outcome) => outcome,
-                        None => Err(format!("unknown tool: {tool}")),
+            Some(Host::Local { shared, core_name }) => {
+                match call_session_tool(&shared.handle(), core_name, name, &args) {
+                    Some(outcome) => outcome,
+                    None => Err(format!("unknown tool: {name}")),
+                }
+            }
+            // An attached session answers its own tools; forward the call frame
+            // and hand back the result it produced.
+            #[cfg(unix)]
+            Some(Host::Attached { client }) => {
+                return match client.request("tools/call", params.clone()) {
+                    Ok(result) => result,
+                    Err(error) => {
+                        outcome_json(Err(format!("the attached session is gone: {error}")))
                     }
-                })
+                };
             }
             None if name == "status" => text(idle_status_text()),
-            None => Err(format!("no ROM loaded; call load_rom first (tool: {name})")),
+            None => Err(format!(
+                "nothing loaded; call load_rom or attach first (tool: {name})"
+            )),
         },
     };
     outcome_json(outcome)
 }
 
+/// Answer one tool call against a live session, whichever client asked. The
+/// machine-level tools are answered by the session's command queue; everything
+/// else runs against the owned debugger. `None` names a tool this session has no
+/// answer for.
+pub fn call_session_tool(
+    handle: &SessionHandle,
+    core_name: &str,
+    name: &str,
+    args: &Value,
+) -> Option<ToolOutcome> {
+    let outcome = match name {
+        "run" => {
+            handle.run();
+            status_report(handle, core_name)
+        }
+        "pause" => {
+            handle.pause();
+            status_report(handle, core_name)
+        }
+        "set_control" => set_control(handle, args),
+        "start_recording" => recording_path(args)
+            .and_then(|path| handle.start_recording(path))
+            .map(|()| vec![Content::Text("recording".into())]),
+        "stop_recording" => handle
+            .stop_recording()
+            .map(|()| vec![Content::Text("recording written".into())]),
+        "play_recording" => recording_path(args)
+            .and_then(|path| handle.play_recording(path))
+            .map(|()| vec![Content::Text("replaying".into())]),
+        "reset" => {
+            handle.reset();
+            status_report(handle, core_name)
+        }
+        // The run/recording state lives on the session, not in the debugger, so
+        // the status line is completed here.
+        "status" => status_report(handle, core_name),
+        _ if !handle.is_debugger() => {
+            return Some(Err(format!(
+                "this session hosts no debugger, so it has no {name}; it serves run, pause, \
+                 set_control, and recording"
+            )));
+        }
+        _ => {
+            let core_name = core_name.to_string();
+            let tool = name.to_string();
+            let arguments = args.clone();
+            return handle
+                .with_session(move |session| call_generic(session, &core_name, &tool, &arguments));
+        }
+    };
+    Some(outcome)
+}
+
+/// [`call_session_tool`] over a whole `tools/call` params object, as the result
+/// body — what an attach endpoint answers a forwarded call frame with.
+pub fn call_session_tool_json(handle: &SessionHandle, core_name: &str, params: &Value) -> Value {
+    let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+    let args = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    outcome_json(
+        call_session_tool(handle, core_name, name, &args)
+            .unwrap_or_else(|| Err(format!("unknown tool: {name}"))),
+    )
+}
+
+/// The status line for either machine kind: the debugger's own view where there
+/// is one, and the session's run/recording state either way.
+fn status_report(handle: &SessionHandle, core_name: &str) -> ToolOutcome {
+    let running = handle.is_running();
+    let recording = handle.is_recording();
+    let core = core_name.to_string();
+    let body = if handle.is_debugger() {
+        handle.with_session(move |session| status_text(session, &core))
+    } else {
+        format!("core: {core}\n(a plain console: no debugger surface)")
+    };
+    text(format!(
+        "{body}\nrunning: {running}\nrecording: {recording}"
+    ))
+}
+
+fn recording_path(args: &Value) -> Result<std::path::PathBuf, String> {
+    args.get("path")
+        .and_then(Value::as_str)
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| "'path' (string) is required".to_string())
+}
+
 /// Load a ROM through the factory and make it the server's active session.
-fn load_rom(loaded: &mut Option<LoadedSession>, args: &Value) -> ToolOutcome {
+fn load_rom(loaded: &mut Option<Host>, args: &Value) -> ToolOutcome {
     let path = args
         .get("path")
         .and_then(Value::as_str)
@@ -595,20 +823,91 @@ fn load_rom(loaded: &mut Option<LoadedSession>, args: &Value) -> ToolOutcome {
         .unwrap_or("unknown");
     let shared = SharedSession::spawn(debugger);
     let title = shared.handle().with_session(|s| s.game_title());
-    *loaded = Some(LoadedSession { shared, core_name });
+    *loaded = Some(Host::Local { shared, core_name });
     text(format!("loaded {core_name}: {title}"))
 }
 
-/// Unload the active ROM, returning the server to idle.
-fn eject(loaded: &mut Option<LoadedSession>) -> ToolOutcome {
+/// Attach to a session another process published, and drive it from here.
+#[cfg(unix)]
+fn attach(loaded: &mut Option<Host>, args: &Value) -> ToolOutcome {
+    use crate::attach::{AttachClient, discover};
+
+    let client = match args.get("path").and_then(Value::as_str) {
+        Some(path) => AttachClient::connect(std::path::Path::new(path))?,
+        None => {
+            let wanted = args.get("pid").and_then(Value::as_u64);
+            let sessions = discover();
+            let chosen = match wanted {
+                Some(pid) => sessions
+                    .into_iter()
+                    .find(|session| u64::from(session.pid) == pid)
+                    .ok_or_else(|| format!("no reachable session with pid {pid}"))?,
+                None => match sessions.len() {
+                    0 => return Err(NO_SESSIONS.into()),
+                    1 => sessions.into_iter().next().expect("one session"),
+                    // Which live machine to join is the agent's choice, never a
+                    // guess made here.
+                    _ => {
+                        return Err(format!(
+                            "several sessions are reachable; \
+                                             give a pid:\n{}",
+                            session_list(&sessions)
+                        ));
+                    }
+                },
+            };
+            AttachClient::connect(&chosen.path)?
+        }
+    };
+    let summary = client.info().summary();
+    *loaded = Some(Host::Attached { client });
+    text(format!("attached to {summary}"))
+}
+
+#[cfg(not(unix))]
+fn attach(_loaded: &mut Option<Host>, _args: &Value) -> ToolOutcome {
+    Err("attaching to a running session needs Unix domain sockets".into())
+}
+
+/// Unload the active machine — a loaded ROM or an attached session — returning
+/// the server to idle. Detaching leaves the other process's session running.
+fn eject(loaded: &mut Option<Host>) -> ToolOutcome {
     match loaded.take() {
-        Some(loaded) => text(format!("ejected {}", loaded.core_name)),
-        None => Err("no ROM loaded".into()),
+        Some(host) => text(format!("ejected {}", host.description())),
+        None => Err("nothing loaded".into()),
     }
 }
 
+const NO_SESSIONS: &str = "no running sessions are reachable (an app window publishes one only \
+                           while it allows external debugger clients)";
+
+#[cfg(unix)]
+fn session_list(sessions: &[crate::attach::SessionInfo]) -> String {
+    sessions
+        .iter()
+        .map(|session| session.summary())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The idle server's status: what it can do, and which live sessions it can
+/// reach right now.
 fn idle_status_text() -> String {
-    "idle: no ROM loaded. Call load_rom with a ROM path to begin.".into()
+    let mut body =
+        "idle: nothing loaded. Call load_rom with a ROM path, or attach to a running session."
+            .to_string();
+    #[cfg(unix)]
+    {
+        let sessions = crate::attach::discover();
+        body.push_str("\n\n");
+        if sessions.is_empty() {
+            body.push_str(NO_SESSIONS);
+        } else {
+            body.push_str("reachable sessions:\n");
+            body.push_str(&session_list(&sessions));
+        }
+    }
+    body
 }
 
 fn outcome_json(outcome: ToolOutcome) -> Value {
@@ -636,7 +935,6 @@ fn call_generic(
     args: &Value,
 ) -> Option<ToolOutcome> {
     let outcome = match name {
-        "status" => text(status_text(session, core_name)),
         "read_registers" => text(registers_text(session)),
         "read_memory" => read_memory(session, args),
         "list_regions" => text(regions_text(session)),
@@ -653,10 +951,6 @@ fn call_generic(
         }
         "step_frame" => stepping(session, args, Stepping::Frame),
         "step_tick" => step_tick(session, args),
-        "reset" => {
-            session.reset();
-            text(status_text(session, core_name))
-        }
         "save_state" => save_state(session, args),
         "load_state" => load_state(session, args, core_name),
         "set_breakpoint" => breakpoint(session, args, true),
@@ -666,7 +960,6 @@ fn call_generic(
         "remove_watch" => watch_edit(session, args, false),
         "list_watches" => text(watches_text(session)),
         "get_frame" => get_frame(session),
-        "set_control" => set_control(session, args),
         _ => return None,
     };
     Some(outcome)
@@ -1059,7 +1352,9 @@ fn get_frame(session: &Session) -> ToolOutcome {
     }])
 }
 
-fn set_control(session: &mut Session, args: &Value) -> ToolOutcome {
+/// Driven through the session's command queue rather than the debugger, so an
+/// agent's input lands in an active recording exactly as a user's does.
+fn set_control(handle: &SessionHandle, args: &Value) -> ToolOutcome {
     let control = args
         .get("control")
         .and_then(Value::as_u64)
@@ -1074,7 +1369,7 @@ fn set_control(session: &mut Session, args: &Value) -> ToolOutcome {
             .ok_or("provide 'pressed' (bool) or 'axis' (0.0-1.0)")?;
         ControlInput::Digital(pressed)
     };
-    session.set_control(ControlId(control), input);
+    handle.set_control(ControlId(control), input);
     text(format!("control {control} set"))
 }
 

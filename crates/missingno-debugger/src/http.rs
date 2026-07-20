@@ -15,8 +15,10 @@ use missingno_core::waveform::ChannelWave;
 use serde_json::{Value, json};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
+use missingno_core::system::{ControlId, ControlInput};
+
 use crate::session::{DisasmLine, Session, StopReason};
-use crate::shared::SharedSession;
+use crate::shared::{SessionHandle, SharedSession};
 
 /// Cap on a single `/memory` read, so a bad length can't allocate unbounded.
 const MAX_MEMORY_LEN: u32 = 0x1000;
@@ -44,9 +46,84 @@ pub fn serve(session: impl Into<SharedSession>, port: u16) -> std::io::Result<()
     );
     eprintln!("listening on http://{address}");
     for request in server.incoming_requests() {
-        client.with_session(move |session| handle(request, session));
+        // The session-level routes are answered by the command queue, so they
+        // must not be wrapped in a job that runs against the debugger.
+        if let Some(request) = session_route(request, &client) {
+            client.with_session(move |session| handle(request, session));
+        }
     }
     Ok(())
+}
+
+/// Answer the routes the session's command queue owns — free-running control,
+/// input, and recording capture — handing back any request they do not claim.
+fn session_route(mut request: Request, client: &SessionHandle) -> Option<Request> {
+    match (request.method().clone(), request.url().to_string().as_str()) {
+        (Method::Get, "/run") => respond_json(request, run_state_json(client)),
+        (Method::Post, "/run") => {
+            client.run();
+            respond_json(request, run_state_json(client));
+        }
+        (Method::Post, "/pause") => {
+            client.pause();
+            respond_json(request, run_state_json(client));
+        }
+        (Method::Post, "/control") => match parse_control(&mut request) {
+            Ok((control, input)) => {
+                client.set_control(control, input);
+                respond_json(request, json!({ "control": control.0 }));
+            }
+            Err(message) => respond_error(request, 400, &message),
+        },
+        (Method::Post, "/recording/start") => match read_path_body(&mut request) {
+            Ok(path) => match client.start_recording(path.clone().into()) {
+                Ok(()) => respond_json(request, json!({ "recording": path })),
+                Err(message) => respond_error(request, 400, &message),
+            },
+            Err(message) => respond_error(request, 400, &message),
+        },
+        (Method::Post, "/recording/stop") => match client.stop_recording() {
+            Ok(()) => respond_json(request, run_state_json(client)),
+            Err(message) => respond_error(request, 400, &message),
+        },
+        (Method::Post, "/recording/play") => match read_path_body(&mut request) {
+            Ok(path) => match client.play_recording(path.clone().into()) {
+                Ok(()) => respond_json(request, json!({ "playing": path })),
+                Err(message) => respond_error(request, 400, &message),
+            },
+            Err(message) => respond_error(request, 400, &message),
+        },
+        _ => return Some(request),
+    }
+    None
+}
+
+fn run_state_json(client: &SessionHandle) -> Value {
+    json!({ "running": client.is_running(), "recording": client.is_recording() })
+}
+
+fn parse_control(request: &mut Request) -> Result<(ControlId, ControlInput), String> {
+    let mut body = String::new();
+    request
+        .as_reader()
+        .read_to_string(&mut body)
+        .map_err(|_| "could not read request body".to_string())?;
+    let value: Value = serde_json::from_str(&body).map_err(|e| format!("invalid JSON: {e}"))?;
+    let control = value
+        .get("control")
+        .and_then(Value::as_u64)
+        .and_then(|n| u8::try_from(n).ok())
+        .ok_or("'control' must be an integer 0-255")?;
+    let input = match value.get("axis").and_then(Value::as_f64) {
+        Some(axis) => ControlInput::Axis(axis as f32),
+        None => ControlInput::Digital(
+            value
+                .get("pressed")
+                .and_then(Value::as_bool)
+                .ok_or("provide 'pressed' (bool) or 'axis' (0.0-1.0)")?,
+        ),
+    };
+    Ok((ControlId(control), input))
 }
 
 fn handle(request: Request, session: &mut Session) {

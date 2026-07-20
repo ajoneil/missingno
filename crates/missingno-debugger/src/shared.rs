@@ -132,6 +132,7 @@ struct Slots {
     snapshot: Arc<Mutex<Option<DebugView>>>,
     memory_windows: Arc<Mutex<Vec<MemoryWindow>>>,
     running: Arc<AtomicBool>,
+    recording: Arc<AtomicBool>,
     subscribers: Subscribers,
 }
 
@@ -143,11 +144,17 @@ impl Slots {
             snapshot: Arc::new(Mutex::new(None)),
             memory_windows: Arc::new(Mutex::new(Vec::new())),
             running: Arc::new(AtomicBool::new(false)),
+            recording: Arc::new(AtomicBool::new(false)),
             subscribers: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
     fn emit(&self, event: SessionEvent) {
+        // The pollable flag is set from the announcement itself, so it cannot
+        // drift from what subscribers were told.
+        if let SessionEvent::RecordingChanged(active) = event {
+            self.recording.store(active, Ordering::SeqCst);
+        }
         if let Ok(mut subscribers) = self.subscribers.lock() {
             subscribers.retain(|tx| tx.send(event.clone()).is_ok());
         }
@@ -163,7 +170,7 @@ type Job = Box<dyn FnOnce(&mut Session) + Send>;
 /// own variants.
 enum Request {
     Job(Job),
-    Run,
+    Run(Sender<()>),
     Pause(Sender<()>),
     Reset,
     SetControl(ControlId, ControlInput),
@@ -236,9 +243,14 @@ impl SessionHandle {
     }
 
     /// Start free-running: the loop paces frame stepping and publishes the slots
-    /// until [`pause`](Self::pause) or a breakpoint/watch stop.
+    /// until [`pause`](Self::pause) or a breakpoint/watch stop. Blocks until the
+    /// loop has started, so [`is_running`](Self::is_running) is settled on
+    /// return — symmetric with [`pause`](Self::pause).
     pub fn run(&self) {
-        let _ = self.requests.send(Request::Run);
+        let (tx, rx) = channel();
+        if self.requests.send(Request::Run(tx)).is_ok() {
+            let _ = rx.recv();
+        }
     }
 
     /// Stop free-running and block until the loop has halted, so a following
@@ -253,6 +265,13 @@ impl SessionHandle {
     /// Whether the machine is free-running right now.
     pub fn is_running(&self) -> bool {
         self.slots.running.load(Ordering::SeqCst)
+    }
+
+    /// Whether an input recording is being captured right now. Tracks the same
+    /// truth [`SessionEvent::RecordingChanged`] announces, for a client that
+    /// polls rather than subscribes.
+    pub fn is_recording(&self) -> bool {
+        self.slots.recording.load(Ordering::SeqCst)
     }
 
     /// Reset the machine, finalizing any recording and dropping any replay.
@@ -660,7 +679,11 @@ impl Capture {
         self.frame += 1;
     }
 
-    fn finish(self) -> Result<(), String> {
+    fn finish(mut self) -> Result<(), String> {
+        // An input noted after the last frame stepped (a press while paused, or
+        // between the final frame and the stop) is stamped on a frame replay
+        // never reaches, so the timeline ends without it.
+        self.inputs.retain(|input| input.frame < self.frame);
         let recording = Recording {
             initial_state: self.initial_state,
             inputs: self.inputs,
@@ -845,7 +868,10 @@ impl SessionEngine {
                     job(session);
                 }
             }
-            Request::Run => self.start_running(),
+            Request::Run(ack) => {
+                self.start_running();
+                let _ = ack.send(());
+            }
             Request::Pause(ack) => {
                 self.stop_running();
                 let _ = ack.send(());
@@ -1177,8 +1203,13 @@ mod tests {
 
     #[test]
     fn replay_reports_a_divergent_checkpoint() {
-        let mut replay =
-            ReplayPlayback::new(recording_with(vec![FrameCheck { frame: 0, hash: 0x1234 }], 3));
+        let mut replay = ReplayPlayback::new(recording_with(
+            vec![FrameCheck {
+                frame: 0,
+                hash: 0x1234,
+            }],
+            3,
+        ));
         // A step that produced no frame hashes to 0, disagreeing with 0x1234.
         match replay.note_frame(None) {
             ReplayStep::Diverged {
@@ -1205,8 +1236,13 @@ mod tests {
     fn replay_checkpoints_only_the_recorded_frames() {
         // A checkpoint on a later frame leaves earlier frames unchecked, so a
         // mismatching hash before it cannot diverge the replay.
-        let mut replay =
-            ReplayPlayback::new(recording_with(vec![FrameCheck { frame: 1, hash: 0x99 }], 3));
+        let mut replay = ReplayPlayback::new(recording_with(
+            vec![FrameCheck {
+                frame: 1,
+                hash: 0x99,
+            }],
+            3,
+        ));
         assert!(matches!(replay.note_frame(None), ReplayStep::Continue));
         assert!(matches!(
             replay.note_frame(None),
