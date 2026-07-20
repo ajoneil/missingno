@@ -10,7 +10,6 @@ mod audio_output;
 mod console;
 mod controls;
 mod debugger;
-mod emu_thread;
 mod emulation;
 mod emulator;
 pub mod library;
@@ -18,11 +17,14 @@ mod load;
 pub(crate) use load::file_stem_title;
 mod recent;
 mod screen;
+mod session_bridge;
 pub mod settings;
 pub(crate) mod system;
 mod texture_renderer;
 mod ui;
 mod views;
+
+use missingno_debugger::{SessionEvent, SharedSession};
 
 // Cartridge reader/writer hardware support
 use crate::cartridge_rw;
@@ -83,11 +85,15 @@ struct App {
     debugger_enabled: bool,
     fullscreen: Fullscreen,
     action_bar: ActionBar,
-    /// Audio device for the on-UI-thread debugger. The plain emulator's audio is
-    /// produced on the emu thread instead.
+    /// The UI-thread cpal stream for the current game's audio; the session holds
+    /// the matching sink. Replaced per game load, `None` when nothing is loaded.
     audio_output: Option<AudioOutput>,
-    /// Handle to the emulation thread; `None` until it reports `Started`.
-    emu: Option<emu_thread::EmuHandle>,
+    /// The shared session hosting the current game's console, `None` until a game
+    /// loads. Owns the session thread; dropping it shuts the thread down.
+    session: Option<SharedSession>,
+    /// The Iced sink a per-game bridge thread forwards session events into,
+    /// handed over once at startup by the app-lifetime subscription.
+    event_sink: Option<iced::futures::channel::mpsc::UnboundedSender<SessionEvent>>,
     recent_games: recent::RecentGames,
     settings: settings::Settings,
     /// The running emulation session. Only set when a game is actually loaded.
@@ -293,8 +299,8 @@ struct CurrentGame {
     started_from: Option<String>,
     /// SRAM snapshot at session start, for detecting meaningful changes.
     initial_sram: Option<Vec<u8>>,
-    /// Cartridge header title, cached so SRAM saves from the emu thread (which
-    /// owns the console) can run the game-specific scratch-region comparison.
+    /// Cartridge header title, cached so an SRAM save can run the game-specific
+    /// scratch-region comparison without reaching into the session-owned console.
     cartridge_title: String,
 }
 
@@ -379,8 +385,9 @@ enum Message {
 
     Debugger(debugger::Message),
     Emulator(emulator::Message),
-    /// An event pushed from the emulation thread.
-    Emu(emu_thread::EmuEvent),
+    /// An item from the app-lifetime session subscription: the event sink handed
+    /// over at startup, then every session event forwarded through it.
+    Session(session_bridge::SessionBridge),
 
     None,
 }
@@ -405,8 +412,9 @@ impl App {
             debugger_enabled: debugger,
             fullscreen: Fullscreen::Windowed,
             action_bar: ActionBar::new(),
-            audio_output: AudioOutput::new(),
-            emu: None,
+            audio_output: None,
+            session: None,
+            event_sink: None,
             recent_games,
             settings,
             current_game: None,
@@ -493,7 +501,7 @@ impl App {
             | Message::SetAxis(..)
             | Message::ToggleDebugger(_) => return self.handle_emulation_message(message),
 
-            Message::Emu(event) => return self.handle_emu_event(event),
+            Message::Session(bridge) => return self.handle_session_bridge(bridge),
 
             // Settings messages
             Message::CompleteSetup { internet_enabled } => {
@@ -751,9 +759,7 @@ impl App {
 
             Message::Debugger(message) => {
                 if let Game::Loaded(LoadedGame::Debugger(debugger)) = &mut self.game {
-                    let task = debugger.update(message, self.emu.as_ref());
-                    self.drain_audio();
-                    return task;
+                    return debugger.update(message);
                 }
             }
 

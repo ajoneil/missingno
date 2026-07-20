@@ -2,8 +2,12 @@ use std::path::PathBuf;
 
 use iced::Task;
 use jiff::Timestamp;
+use missingno_debugger::SharedSession;
 use rfd::{AsyncFileDialog, FileHandle};
 
+use crate::app::emulator::ConsoleFacts;
+use crate::app::screen::ScreenView;
+use crate::app::system::SystemConsole;
 use crate::app::{self, App, CurrentGame, Game, LoadedGame, Screen, library, system};
 
 #[derive(Debug, Clone)]
@@ -107,22 +111,34 @@ pub(crate) fn file_stem_title(rom_path: &std::path::Path) -> String {
         .to_string()
 }
 
-/// Wrap a built console for the active mode (debugger where the system
-/// supports one, plain emulation otherwise) and store it in `app.game`.
+/// Spawn the shared session hosting a built console and wrap it in the shell
+/// for the active mode (debugger where the system supports one, plain emulation
+/// otherwise), storing it in `app.game`.
 fn finish_start(
     app: &mut App,
-    console: Box<dyn system::SystemConsole>,
+    console: Box<dyn SystemConsole>,
     rom_path: &std::path::Path,
     platform: system::Platform,
 ) -> String {
     let title = console.game_title();
     let palette = app.settings.palette;
+    let (audio, sink) = App::open_audio();
 
+    // Debugger mode first, if enabled and the system supports it.
     let console = if app.debugger_enabled {
-        match app::debugger::Debugger::new(console, platform) {
-            Ok(mut debugger) => {
+        let technology = console.video_out();
+        match console.into_debugger() {
+            Ok(core) => {
+                let regions = core.memory_regions();
+                let session = SharedSession::spawn_with_audio(core, sink);
+                let handle = session.handle();
+                let mut screen_view = ScreenView::new();
+                screen_view.set_technology(technology);
+                let mut debugger =
+                    app::debugger::Debugger::new(handle, platform, regions, screen_view);
                 debugger.load_sidecars(rom_path);
                 debugger.set_palette(palette);
+                app.install_session(session, audio);
                 app.game = Game::Loaded(LoadedGame::Debugger(debugger));
                 return title;
             }
@@ -132,11 +148,17 @@ fn finish_start(
     } else {
         console
     };
-    let mut emu = app::emulator::Emulator::new(console, platform, app.settings.presentation());
+
+    // Plain emulation: the console runs on the fast path, auto-started.
+    let facts = ConsoleFacts::of(console.as_ref());
+    let session = SharedSession::spawn_console_with_audio(console, sink);
+    let handle = session.handle();
+    let mut emu =
+        app::emulator::Emulator::new(handle, facts, platform, app.settings.presentation());
     emu.set_palette(palette);
-    emu.set_running(true);
+    app.install_session(session, audio);
+    emu.run();
     app.game = Game::Loaded(LoadedGame::Emulator(emu));
-    app.start_running();
     title
 }
 

@@ -1,14 +1,41 @@
 use std::time::Instant;
 
 use iced::Task;
-use replace_with::replace_with_or_abort;
+use missingno_debugger::{ExtractedMachine, SessionEvent, SessionHandle, SharedSession};
 
-use super::emu_thread::{EmuCommand, EmuEvent, Payload};
+use super::audio_output::AudioOutput;
+use super::emulator::{ConsoleFacts, Emulator};
+use super::session_bridge::{self, SessionBridge};
 use super::{App, Game, LoadedGame, Message, PendingAction, library};
 use crate::app::library::activity::FrameCapture;
 use crate::app::system::{ControlId, ControlInput};
 
 impl App {
+    /// A fresh client handle onto the current game's session, if one is loaded.
+    pub(super) fn handle(&self) -> Option<SessionHandle> {
+        self.session.as_ref().map(|session| session.handle())
+    }
+
+    /// Wire the current session's events into the UI: spawn a per-game bridge
+    /// thread forwarding them into the app's Iced sink. A no-op before the
+    /// subscription has handed over the sink (a CLI ROM loaded at startup — the
+    /// bridge is spawned when the sink arrives).
+    pub(super) fn attach_session_bridge(&self) {
+        if let (Some(session), Some(sink)) = (&self.session, &self.event_sink) {
+            session_bridge::spawn_bridge(&session.handle(), sink.clone());
+        }
+    }
+
+    /// Open an audio device for a freshly spawned session: the UI-thread stream
+    /// holder to keep alive, and the Send sink the session drains into. `None`
+    /// silences the game when no device is available.
+    pub(super) fn open_audio() -> (Option<AudioOutput>, Option<missingno_debugger::AudioSink>) {
+        match AudioOutput::open() {
+            Some((output, sink)) => (Some(output), Some(sink)),
+            None => (None, None),
+        }
+    }
+
     pub(super) fn handle_emulation_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Run => self.run(),
@@ -25,28 +52,12 @@ impl App {
             }
             Message::TakeScreenshot => {
                 let options = self.settings.capture_options();
-                // While the game runs, the console is on the emu thread; ask
-                // it to capture and record on the resulting `Screenshot` event.
-                let capture = match &self.game {
-                    Game::Loaded(LoadedGame::Emulator(emu)) if emu.running() => {
-                        if let Some(handle) = &self.emu {
-                            handle.send(EmuCommand::RequestScreenshot { options });
-                        }
-                        None
-                    }
-                    Game::Loaded(LoadedGame::Emulator(emu)) => emu.console().map(|console| {
-                        FrameCapture::from_frame(&console.screen_display(), &options)
-                    }),
-                    Game::Loaded(LoadedGame::Debugger(dbg)) if dbg.is_detached() => {
-                        if let Some(handle) = &self.emu {
-                            handle.send(EmuCommand::RequestScreenshot { options });
-                        }
-                        None
-                    }
-                    Game::Loaded(LoadedGame::Debugger(dbg)) => dbg.capture_screenshot(&options),
-                    _ => None,
-                };
-                if let Some(capture) = capture {
+                // The session captures the current frame whether running or
+                // paused; one path for both shells.
+                if let Some(handle) = self.handle()
+                    && let Some(frame) = handle.screenshot()
+                {
+                    let capture = FrameCapture::from_frame(&frame, &options);
                     self.record_screenshot(capture);
                 }
             }
@@ -59,39 +70,27 @@ impl App {
                 else {
                     return Task::none();
                 };
-                // A paused debugger session owns the console on the UI thread, so
-                // save/load runs here directly; otherwise the console is on the
-                // emu thread and the command routes there.
-                match &mut self.game {
-                    Game::Loaded(LoadedGame::Debugger(dbg)) if !dbg.is_detached() => {
-                        let result = match message {
-                            Message::SaveState => dbg.save_state(&path),
-                            Message::LoadState => dbg.load_state(&path),
-                            _ => unreachable!(),
-                        };
-                        match result {
-                            Ok(()) => self.show_notice(match message {
-                                Message::SaveState => "State saved".into(),
-                                _ => "State loaded".into(),
-                            }),
-                            Err(error) => self.show_notice(error),
-                        }
-                    }
-                    _ => {
-                        if let Some(handle) = &self.emu {
-                            match message {
-                                Message::SaveState => handle.send(EmuCommand::SaveState(path)),
-                                Message::LoadState => handle.send(EmuCommand::LoadState(path)),
-                                _ => unreachable!(),
+                if let Some(handle) = self.handle() {
+                    match message {
+                        Message::SaveState => handle.save_state(path),
+                        Message::LoadState => {
+                            // Queue the load, then refresh the paused debugger: the
+                            // refresh job serializes after the load on the session's
+                            // one request channel, so it reads the loaded state.
+                            handle.load_state(path);
+                            if let Game::Loaded(LoadedGame::Debugger(debugger)) = &mut self.game
+                                && !debugger.running()
+                            {
+                                debugger.sync_paused();
                             }
                         }
+                        _ => unreachable!(),
                     }
                 }
             }
             Message::ToggleRecording | Message::Replay => {
                 // Recordings live beside the game's library folder, like the
-                // save-state slot. Recording and replay drive the play-mode
-                // console on the emu thread.
+                // save-state slot.
                 let Some(path) = self
                     .current_game
                     .as_ref()
@@ -99,20 +98,17 @@ impl App {
                 else {
                     return Task::none();
                 };
-                if let Some(handle) = &self.emu {
-                    match message {
-                        // The recording flag follows the thread's
-                        // `RecordingChanged` event, never this click — a start
-                        // can fail (no backend) or defer (off a boundary).
-                        Message::ToggleRecording => {
-                            if self.recording {
-                                handle.send(EmuCommand::StopRecording);
-                            } else {
-                                handle.send(EmuCommand::StartRecording(path));
-                            }
-                        }
-                        Message::Replay => handle.send(EmuCommand::PlayRecording(path)),
+                if let Some(handle) = self.handle() {
+                    // The recording flag follows the session's `RecordingChanged`
+                    // event, never this click — a start can fail or defer.
+                    let result = match message {
+                        Message::ToggleRecording if self.recording => handle.stop_recording(),
+                        Message::ToggleRecording => handle.start_recording(path),
+                        Message::Replay => handle.play_recording(path),
                         _ => unreachable!(),
+                    };
+                    if let Err(error) = result {
+                        self.show_notice(error);
                     }
                 }
             }
@@ -175,43 +171,7 @@ impl App {
             }
             Message::ToggleDebugger(debugger_enabled) => {
                 self.debugger_enabled = debugger_enabled;
-                // Conversion needs the console on the UI thread.
-                self.pause();
-
-                if let Game::Loaded(game) = &mut self.game {
-                    let palette = self.settings.palette;
-                    let rom_path = self.current_game.as_ref().and_then(|current| {
-                        current.entry.rom_paths.iter().find(|p| p.exists()).cloned()
-                    });
-                    replace_with_or_abort(game, |game| match game {
-                        LoadedGame::Debugger(debugger) => {
-                            if debugger_enabled {
-                                LoadedGame::Debugger(debugger)
-                            } else {
-                                let mut emu =
-                                    debugger.disable_debugger(self.settings.presentation());
-                                emu.set_palette(palette);
-                                LoadedGame::Emulator(emu)
-                            }
-                        }
-                        LoadedGame::Emulator(emulator) => {
-                            if debugger_enabled {
-                                match emulator.enable_debugger() {
-                                    Ok(mut dbg) => {
-                                        if let Some(rom_path) = &rom_path {
-                                            dbg.load_sidecars(rom_path);
-                                        }
-                                        dbg.set_palette(palette);
-                                        LoadedGame::Debugger(dbg)
-                                    }
-                                    Err(emulator) => LoadedGame::Emulator(*emulator),
-                                }
-                            } else {
-                                LoadedGame::Emulator(emulator)
-                            }
-                        }
-                    });
-                }
+                self.toggle_debugger_mode(debugger_enabled);
             }
             _ => {}
         }
@@ -219,37 +179,153 @@ impl App {
         Task::none()
     }
 
-    /// Handle an event from the emulation thread.
-    pub(super) fn handle_emu_event(&mut self, event: EmuEvent) -> Task<Message> {
-        match event {
-            EmuEvent::Started(handle) => {
-                self.emu = Some(handle);
-                // A game loaded before the thread was ready (e.g. a CLI ROM)
-                // starts running now.
-                self.start_running();
+    /// Swap the current game between debugger and emulator shells, keeping the
+    /// live console (its serial link, printer, cartridge state) by handing it
+    /// from the old session to a fresh one of the other kind.
+    fn toggle_debugger_mode(&mut self, want_debugger: bool) {
+        // Toggle on a stopped machine.
+        let was_running = self.running();
+        self.pause();
+
+        let currently_debugger = matches!(&self.game, Game::Loaded(LoadedGame::Debugger(_)));
+        if currently_debugger == want_debugger {
+            return;
+        }
+
+        let palette = self.settings.palette;
+        let presentation = self.settings.presentation();
+        let rom_path = self
+            .current_game
+            .as_ref()
+            .and_then(|current| current.entry.rom_paths.iter().find(|p| p.exists()).cloned());
+
+        // Take the session while its thread is still alive so the old shell's
+        // handle keeps working for the handoff prep below.
+        let Some(session) = self.session.take() else {
+            return;
+        };
+        let old_game = std::mem::replace(&mut self.game, Game::Unloaded);
+        let (audio, sink) = Self::open_audio();
+
+        match old_game {
+            Game::Loaded(LoadedGame::Debugger(mut debugger)) if !want_debugger => {
+                debugger.prepare_handoff();
+                let screen_view = debugger.take_screen_view();
+                let platform = debugger.platform();
+                drop(debugger);
+                let Some(ExtractedMachine::Debugger(core)) = session.into_machine() else {
+                    return;
+                };
+                let console = core.into_console();
+                let facts = ConsoleFacts::of(console.as_ref());
+                let new_session = SharedSession::spawn_console_with_audio(console, sink);
+                let handle = new_session.handle();
+                let mut emulator =
+                    Emulator::from_debugger(handle, screen_view, facts, platform, presentation);
+                emulator.set_palette(palette);
+                self.install_session(new_session, audio);
+                self.game = Game::Loaded(LoadedGame::Emulator(emulator));
             }
-            EmuEvent::FrameReady => {
-                // The printer runs on the emu thread; drain any finished prints
-                // into the session log.
+            Game::Loaded(LoadedGame::Emulator(mut emulator)) if want_debugger => {
+                let mut screen_view = emulator.take_screen_view();
+                let platform = emulator.platform();
+                drop(emulator);
+                let Some(ExtractedMachine::Console(console)) = session.into_machine() else {
+                    return;
+                };
+                let technology = console.video_out();
+                match console.into_debugger() {
+                    Ok(core) => {
+                        let regions = core.memory_regions();
+                        let new_session = SharedSession::spawn_with_audio(core, sink);
+                        let handle = new_session.handle();
+                        screen_view.set_technology(technology);
+                        let mut debugger = crate::app::debugger::Debugger::new(
+                            handle,
+                            platform,
+                            regions,
+                            screen_view,
+                        );
+                        if let Some(rom_path) = &rom_path {
+                            debugger.load_sidecars(rom_path);
+                        }
+                        debugger.set_palette(palette);
+                        self.install_session(new_session, audio);
+                        self.game = Game::Loaded(LoadedGame::Debugger(debugger));
+                    }
+                    // No debugger backend: re-host as a plain console, staying in
+                    // emulator mode.
+                    Err(console) => {
+                        let facts = ConsoleFacts::of(console.as_ref());
+                        let new_session = SharedSession::spawn_console_with_audio(console, sink);
+                        let handle = new_session.handle();
+                        let emulator = Emulator::from_debugger(
+                            handle,
+                            screen_view,
+                            facts,
+                            platform,
+                            presentation,
+                        );
+                        self.install_session(new_session, audio);
+                        self.game = Game::Loaded(LoadedGame::Emulator(emulator));
+                    }
+                }
+            }
+            // The shell already matches the wanted mode (the early return above
+            // usually catches this): put everything back.
+            other => {
+                drop(sink);
+                self.session = Some(session);
+                self.game = other;
+                return;
+            }
+        }
+
+        if was_running {
+            self.run();
+        }
+    }
+
+    /// Install a freshly spawned session as the current one: keep its audio
+    /// stream alive and wire its event bridge.
+    pub(super) fn install_session(&mut self, session: SharedSession, audio: Option<AudioOutput>) {
+        self.session = Some(session);
+        self.audio_output = audio;
+        self.attach_session_bridge();
+    }
+
+    /// Handle an item from the app-lifetime session subscription.
+    pub(super) fn handle_session_bridge(&mut self, bridge: SessionBridge) -> Task<Message> {
+        match bridge {
+            SessionBridge::Ready(sink) => {
+                self.event_sink = Some(sink);
+                // A game loaded before the sink arrived (a CLI ROM) has a session
+                // but no bridge yet — wire it now.
+                self.attach_session_bridge();
+            }
+            SessionBridge::Event(event) => return self.handle_session_event(event),
+        }
+        Task::none()
+    }
+
+    /// Handle a single session event forwarded through the bridge.
+    fn handle_session_event(&mut self, event: SessionEvent) -> Task<Message> {
+        match event {
+            SessionEvent::FrameReady => {
+                // The printer runs against the console on the session thread;
+                // drain any finished prints into the session log.
                 let prints: Vec<_> = self.print_rx.try_iter().collect();
                 for print in prints {
                     self.record_print(print);
                 }
-                let display = self
-                    .emu
+                let handle = self.handle();
+                let display = handle.as_ref().and_then(|handle| handle.latest_frame());
+                let status = handle.as_ref().and_then(|handle| handle.latest_status());
+                let snapshot = handle.as_ref().and_then(|handle| handle.take_snapshot());
+                let memory_windows = handle
                     .as_ref()
-                    .and_then(|handle| handle.frames().lock().ok()?.take());
-                let status = self
-                    .emu
-                    .as_ref()
-                    .and_then(|handle| handle.status().lock().ok()?.clone());
-                let snapshot = self
-                    .emu
-                    .as_ref()
-                    .and_then(|handle| handle.snapshot().lock().ok()?.take());
-                let memory_windows = self.emu.as_ref().and_then(|handle| {
-                    Some(std::mem::take(&mut *handle.memory_window().lock().ok()?))
-                });
+                    .map(|handle| handle.latest_memory_windows())
+                    .unwrap_or_default();
                 match &mut self.game {
                     Game::Loaded(LoadedGame::Emulator(emulator)) => {
                         if let Some(display) = display {
@@ -266,30 +342,20 @@ impl App {
                         if let Some(snapshot) = snapshot {
                             debugger.apply_snapshot(snapshot);
                         }
-                        // `Some(Some(_))` is a fresh publish — apply it even
-                        // when empty, so a closed pane clears rather than pins
-                        // the last peek. `Some(None)` means nothing was
-                        // published since the last take: keep the last windows.
-                        if let Some(Some(memory_windows)) = memory_windows {
-                            debugger.apply_memory_windows(memory_windows);
-                        }
+                        debugger.apply_memory_windows(memory_windows);
                     }
                     _ => {}
                 }
             }
-            EmuEvent::BreakpointHit => {
+            SessionEvent::Stopped => {
+                // A breakpoint/watch stopped the free-run; the session is already
+                // paused. Rebuild the paused view and persist any battery save.
                 if let Game::Loaded(LoadedGame::Debugger(debugger)) = &mut self.game {
-                    if debugger.is_detached()
-                        && let Some(handle) = &self.emu
-                        && let Some(Payload::Debugger(payload)) = handle.recover()
-                    {
-                        debugger.restore_payload(payload);
-                    }
-                    debugger.pause();
+                    debugger.sync_paused();
                 }
                 self.save();
             }
-            EmuEvent::SramDirty(ram) => {
+            SessionEvent::SramDirty(ram) => {
                 if let Some(title) = self
                     .current_game
                     .as_ref()
@@ -298,17 +364,16 @@ impl App {
                     self.persist_sram(&ram, &title);
                 }
             }
-            EmuEvent::Screenshot(capture) => self.record_screenshot(*capture),
-            EmuEvent::Notice(message) => self.show_notice(message),
-            // The flag follows the thread's truth, not the toggle click.
-            EmuEvent::RecordingChanged(active) => self.recording = active,
-            EmuEvent::ReplayDiverged {
+            // The flag follows the session's truth, not the toggle click.
+            SessionEvent::RecordingChanged(active) => self.recording = active,
+            SessionEvent::ReplayDiverged {
                 frame,
                 expected,
                 actual,
             } => self.show_notice(format!(
                 "Replay diverged at frame {frame} (expected {expected:#x}, got {actual:#x})"
             )),
+            SessionEvent::Notice(message) => self.show_notice(message),
         }
         Task::none()
     }
@@ -331,129 +396,40 @@ impl App {
     pub(super) fn run(&mut self) {
         match &mut self.game {
             Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.run(),
-            Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.set_running(true),
-            _ => {}
-        }
-        self.start_running();
-    }
-
-    /// Hand the running payload (console or debugger core) to the emu thread
-    /// if it should run. Idempotent.
-    pub(super) fn start_running(&mut self) {
-        let Some(handle) = self.emu.clone() else {
-            return;
-        };
-        match &mut self.game {
-            Game::Loaded(LoadedGame::Emulator(emulator)) if emulator.running() => {
-                if let Some(console) = emulator.take_console() {
-                    handle.run(Payload::Console(console));
-                }
-            }
-            Game::Loaded(LoadedGame::Debugger(debugger)) if debugger.running() => {
-                if let Some(payload) = debugger.take_payload() {
-                    handle.run(Payload::Debugger(payload));
-                    // Aim the vblank memory peek at the pane's current view so
-                    // the running browser fills in from the first frame, and
-                    // match capture to whether the audio scope is open.
-                    handle.send(EmuCommand::SetMemoryInterest(debugger.memory_interests()));
-                    handle.set_wave_capture(debugger.wants_wave_capture());
-                    handle.set_graphics_capture(debugger.wants_graphics_capture());
-                }
-            }
+            Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.run(),
             _ => {}
         }
     }
 
-    /// Terminate the emu thread and wait (bounded) for it to tear down its
-    /// audio device. Run on every app-close path before `window::close` so the
-    /// cpal stream is destroyed on the emu thread, not left to a teardown race.
-    pub(super) fn shutdown_emu(&self) {
-        if let Some(handle) = &self.emu {
-            handle.shutdown();
-        }
+    /// Terminate the current session (finalizing any recording, joining its
+    /// thread) and drop the cpal stream — both on the UI thread so teardown never
+    /// races the audio backend. Run on every app-close path before `window::close`.
+    pub(super) fn shutdown_emu(&mut self) {
+        self.session = None;
+        self.audio_output = None;
     }
 
     pub(super) fn pause(&mut self) {
-        // The emu thread finalizes any recording when the payload leaves it.
-        self.recording = false;
-        // Recover the payload from the emu thread so all inspection and saving
-        // paths work synchronously while paused.
-        if let Some(handle) = self.emu.clone() {
-            let on_emu_thread = match &self.game {
-                Game::Loaded(LoadedGame::Emulator(emu)) => emu.running() && emu.console().is_none(),
-                Game::Loaded(LoadedGame::Debugger(dbg)) => dbg.running() && dbg.is_detached(),
-                _ => false,
-            };
-            if on_emu_thread {
-                match (handle.pause_and_recover(), &mut self.game) {
-                    (
-                        Some(Payload::Console(console)),
-                        Game::Loaded(LoadedGame::Emulator(emulator)),
-                    ) => emulator.restore_console(console),
-                    (
-                        Some(Payload::Debugger(payload)),
-                        Game::Loaded(LoadedGame::Debugger(debugger)),
-                    ) => debugger.restore_payload(payload),
-                    _ => {}
-                }
-            }
-        }
         match &mut self.game {
             Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.pause(),
-            Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.set_running(false),
+            Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.pause(),
             _ => {}
         }
-        // Persist any pending SRAM from the recovered payload.
+        // Persist any pending SRAM now that the machine is stopped.
         self.save();
     }
 
     pub(super) fn reset(&mut self) {
-        let handle = self.emu.clone();
         match &mut self.game {
-            Game::Loaded(LoadedGame::Debugger(debugger)) => {
-                if debugger.is_detached()
-                    && let Some(handle) = &handle
-                {
-                    handle.send(EmuCommand::Reset);
-                } else {
-                    debugger.reset();
-                }
-            }
-            Game::Loaded(LoadedGame::Emulator(emulator)) => {
-                if emulator.running()
-                    && let Some(handle) = &handle
-                {
-                    handle.send(EmuCommand::Reset);
-                } else {
-                    emulator.reset();
-                }
-            }
+            Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.reset(),
+            Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.reset(),
             _ => {}
         }
     }
 
     pub(super) fn set_control(&mut self, control: ControlId, input: ControlInput) {
-        let handle = self.emu.clone();
-        match &mut self.game {
-            Game::Loaded(LoadedGame::Debugger(debugger)) => {
-                if debugger.is_detached()
-                    && let Some(handle) = &handle
-                {
-                    handle.send(EmuCommand::SetControl(control, input));
-                } else {
-                    debugger.set_control(control, input);
-                }
-            }
-            Game::Loaded(LoadedGame::Emulator(emulator)) => {
-                if emulator.running()
-                    && let Some(handle) = &handle
-                {
-                    handle.send(EmuCommand::SetControl(control, input));
-                } else {
-                    emulator.set_control(control, input);
-                }
-            }
-            _ => {}
+        if let Some(handle) = self.handle() {
+            handle.set_control(control, input);
         }
     }
 
@@ -491,42 +467,20 @@ impl App {
     }
 
     pub(super) fn save(&mut self) {
-        let (ram, cartridge_title) = match &self.game {
-            Game::Loaded(LoadedGame::Debugger(debugger)) => {
-                let Some(ram) = debugger.battery_save() else {
-                    return;
-                };
-                let Some(title) = debugger.game_title() else {
-                    return;
-                };
-                (ram, title)
-            }
-            Game::Loaded(LoadedGame::Emulator(emulator)) => {
-                let Some(console) = emulator.console() else {
-                    return;
-                };
-                let Some(ram) = console.battery_save() else {
-                    return;
-                };
-                (ram, console.game_title())
-            }
-            _ => return,
+        let Some(handle) = self.handle() else {
+            return;
+        };
+        let Some(ram) = handle.battery_save() else {
+            return;
+        };
+        let Some(cartridge_title) = self
+            .current_game
+            .as_ref()
+            .map(|current| current.cartridge_title.clone())
+        else {
+            return;
         };
         self.persist_sram(&ram, &cartridge_title);
-    }
-
-    /// Drain audio from the on-thread debugger to the UI-side output device.
-    /// The plain emulator pushes audio directly from the emu thread instead.
-    pub(super) fn drain_audio(&mut self) {
-        let (samples, coupling) = match &mut self.game {
-            Game::Loaded(LoadedGame::Debugger(debugger)) => {
-                (debugger.drain_audio_samples(), debugger.audio_coupling())
-            }
-            _ => return,
-        };
-        if let Some(audio) = &mut self.audio_output {
-            audio.push_samples(&samples, coupling);
-        }
     }
 
     /// Write an SRAM snapshot to the session if it meaningfully changed.

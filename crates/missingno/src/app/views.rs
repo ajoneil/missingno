@@ -180,9 +180,10 @@ impl App {
                 }) => Some(Message::ExitFullscreen),
                 _ => None,
             }),
-            // The emulation thread runs for the whole app lifetime; its events
-            // wake the UI. Always included so the thread persists.
-            Subscription::run(super::emu_thread::subscription_worker).map(Message::Emu),
+            // One app-lifetime subscription bridges the current session's events
+            // into the UI: its first item hands over the sink a per-game bridge
+            // thread forwards through. Always included so the sink persists.
+            Subscription::run(super::session_bridge::session_events_worker).map(Message::Session),
             if self.screenshot_toast.is_some() {
                 time::every(std::time::Duration::from_millis(1500))
                     .map(|_| Message::DismissScreenshotToast)

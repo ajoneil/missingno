@@ -8,8 +8,7 @@
 use std::path::Path;
 
 pub use missingno_core::system::{
-    ConsoleSwitch, ControlId, ControlInput, FrameOutcome, StepOutcome, SystemConsole,
-    SystemDebugger,
+    ConsoleSwitch, ControlId, ControlInput, SystemConsole, SystemDebugger,
 };
 
 pub mod gb;
