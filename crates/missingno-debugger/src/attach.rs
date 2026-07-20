@@ -94,8 +94,8 @@ pub fn discover() -> Vec<SessionInfo> {
     discover_in(&runtime_dir())
 }
 
-/// Every reachable session published in `dir`. A socket file whose host has gone
-/// is unlinked rather than reported — a crashed session must not haunt the
+/// Every reachable session published in `dir`. A socket file with nothing behind
+/// it is unlinked rather than reported — a crashed session must not haunt the
 /// listing, nor block the next one from taking its name.
 pub fn discover_in(dir: &Path) -> Vec<SessionInfo> {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -108,8 +108,12 @@ pub fn discover_in(dir: &Path) -> Vec<SessionInfo> {
             continue;
         }
         match probe(&path) {
-            Some(info) => sessions.push(info),
-            None => {
+            Probe::Answered(info) => sessions.push(info),
+            // Something holds the socket but did not answer in time: a busy host
+            // is still a live one, so leave its file alone and let the next scan
+            // find it. Only a refused connection proves the host is gone.
+            Probe::Silent => {}
+            Probe::NoListener => {
                 let _ = std::fs::remove_file(&path);
             }
         }
@@ -118,10 +122,46 @@ pub fn discover_in(dir: &Path) -> Vec<SessionInfo> {
     sessions
 }
 
-/// Ask the socket at `path` who it is; `None` when nothing answers.
-fn probe(path: &Path) -> Option<SessionInfo> {
-    let client = AttachClient::connect(path).ok()?;
-    Some(client.info().clone())
+/// Why attaching to a published session failed.
+#[derive(Debug)]
+pub enum AttachError {
+    /// Nothing is listening on the socket — the file outlived its host, so it is
+    /// safe to clear away.
+    NoListener,
+    Failed(String),
+}
+
+impl std::fmt::Display for AttachError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AttachError::NoListener => f.write_str("no session is listening there"),
+            AttachError::Failed(reason) => f.write_str(reason),
+        }
+    }
+}
+
+impl From<AttachError> for String {
+    fn from(error: AttachError) -> String {
+        error.to_string()
+    }
+}
+
+/// What asking a socket file who it is revealed about its host.
+enum Probe {
+    Answered(SessionInfo),
+    /// Connected, but the handshake did not complete — host present, busy or wedged.
+    Silent,
+    /// Nothing is listening: the file outlived its host.
+    NoListener,
+}
+
+/// Ask the socket at `path` who it is.
+fn probe(path: &Path) -> Probe {
+    match AttachClient::connect(path) {
+        Ok(client) => Probe::Answered(client.info().clone()),
+        Err(AttachError::NoListener) => Probe::NoListener,
+        Err(AttachError::Failed(_)) => Probe::Silent,
+    }
 }
 
 // --- host ---------------------------------------------------------------------
@@ -323,12 +363,19 @@ pub struct AttachClient {
 
 impl AttachClient {
     /// Connect to the session published at `path` and complete the handshake.
-    pub fn connect(path: &Path) -> Result<Self, String> {
-        let stream = UnixStream::connect(path).map_err(|error| error.to_string())?;
+    pub fn connect(path: &Path) -> Result<Self, AttachError> {
+        let stream = UnixStream::connect(path).map_err(|error| match error.kind() {
+            std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound => {
+                AttachError::NoListener
+            }
+            _ => AttachError::Failed(error.to_string()),
+        })?;
         stream
             .set_read_timeout(Some(PROBE_TIMEOUT))
-            .map_err(|error| error.to_string())?;
-        let writer = stream.try_clone().map_err(|error| error.to_string())?;
+            .map_err(|error| AttachError::Failed(error.to_string()))?;
+        let writer = stream
+            .try_clone()
+            .map_err(|error| AttachError::Failed(error.to_string()))?;
         let mut client = AttachClient {
             reader: BufReader::new(stream),
             writer,
@@ -341,7 +388,9 @@ impl AttachClient {
                 debugger: false,
             },
         };
-        let info = client.request("session/info", json!({}))?;
+        let info = client
+            .request("session/info", json!({}))
+            .map_err(AttachError::Failed)?;
         client.info = SessionInfo {
             path: path.to_path_buf(),
             pid: info.get("pid").and_then(Value::as_u64).unwrap_or(0) as u32,

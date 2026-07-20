@@ -164,6 +164,32 @@ fn discovery_reports_live_sessions_and_clears_stale_ones() {
 }
 
 #[test]
+fn discovery_leaves_a_listening_but_silent_session_alone() {
+    let dir = scratch_dir("silent-host");
+    // A socket someone is listening on but that never completes the handshake —
+    // a host too busy to answer. Unlinking it would unpublish a live session
+    // that is still running, so discovery must leave the file in place.
+    let path = dir.join("session-999999.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&path).expect("bind a silent socket");
+
+    assert!(
+        discover_in(&dir).is_empty(),
+        "a host that never answers is not reportable"
+    );
+    assert!(
+        path.exists(),
+        "a listening host's socket must survive discovery"
+    );
+
+    drop(listener);
+    // Once nothing is listening, the same scan clears the file away.
+    assert!(discover_in(&dir).is_empty());
+    assert!(!path.exists(), "a socket with no listener is cleared");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_stale_socket_file_does_not_block_publishing() {
     let dir = scratch_dir("stale-bind");
     // A file exactly where this process would publish, left by a dead host.
