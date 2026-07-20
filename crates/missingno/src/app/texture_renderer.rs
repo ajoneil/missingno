@@ -657,16 +657,25 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let cell_color = textureSample(texture, texture_sampler, cell_centre).rgb;
         let d = abs(frac - vec2(0.5));
         let aperture = vec2(APERTURE_FRACTION * 0.5);
-        // Anti-alias by exact box-filter coverage: blend to the base only in
-        // proportion to how much of this fragment's one-pixel footprint overlaps
-        // the matrix band (half-width 0.5 - aperture each side of the cell
-        // boundary). Any wider ramp eats into the aperture and washes the whole
-        // picture toward the base.
+        // The matrix band has half-width 0.5 - aperture each side of the cell
+        // boundary. Blend to the base only in proportion to the band's true
+        // area — any wider ramp washes the whole picture toward the base.
         let g = vec2(0.5) - aperture;
         let boundary_dist = vec2(0.5) - d;
-        let half_px = max(scale, vec2(0.0001)) * 0.5;
+        let px = max(scale, vec2(0.0001));
+        // Hairline regime (band thinner than a screen pixel): snap each line to
+        // the nearest pixel row/column at constant strength. Free-phase coverage
+        // would concentrate a line in one fragment or split it across two as its
+        // sub-pixel phase drifts, beating against the pixel grid as a large
+        // moiré pattern at non-integer scales.
+        let hairline = min(2.0 * g / px, vec2(1.0))
+            * vec2(f32(boundary_dist.x < px.x * 0.5), f32(boundary_dist.y < px.y * 0.5));
+        // Wide regime (zoomed in): exact box-filter coverage anti-aliases the
+        // band edges.
+        let half_px = px * 0.5;
         let overlap = min(boundary_dist + half_px, g) - max(boundary_dist - half_px, -g);
-        let matrix_cover = clamp(overlap / (half_px * 2.0), vec2(0.0), vec2(1.0));
+        let box_cover = clamp(overlap / px, vec2(0.0), vec2(1.0));
+        let matrix_cover = select(box_cover, hairline, 2.0 * g < px);
         let inside = vec2(1.0) - matrix_cover;
         let lit = mix(input.panel_base, cell_color, inside.x * inside.y);
         // Below the onset the pixels are too few screen pixels apart to resolve
@@ -739,16 +748,26 @@ mod tests {
         base * (1.0 - inside) + cell * inside
     }
 
-    /// CPU mirror of the shader's box-filter matrix coverage: the fraction of a
-    /// `scale`-texel-wide fragment footprint at intra-cell position `frac` that
-    /// overlaps the matrix band around the cell boundary (one axis).
+    /// CPU mirror of the shader's matrix coverage at intra-cell position `frac`
+    /// for a `scale`-texel screen pixel (one axis): pixel-snapped constant
+    /// strength while the band is a hairline, box-filter coverage once zoomed
+    /// wide enough to resolve its edges.
     fn matrix_coverage(frac: f32, scale: f32) -> f32 {
         let aperture = APERTURE_FRACTION * 0.5;
         let g = 0.5 - aperture;
         let boundary_dist = 0.5 - (frac - 0.5).abs();
-        let half_px = scale.max(0.0001) * 0.5;
-        let overlap = (boundary_dist + half_px).min(g) - (boundary_dist - half_px).max(-g);
-        (overlap / (half_px * 2.0)).clamp(0.0, 1.0)
+        let px = scale.max(0.0001);
+        if 2.0 * g < px {
+            if boundary_dist < px * 0.5 {
+                (2.0 * g / px).min(1.0)
+            } else {
+                0.0
+            }
+        } else {
+            let half_px = px * 0.5;
+            let overlap = (boundary_dist + half_px).min(g) - (boundary_dist - half_px).max(-g);
+            (overlap / px).clamp(0.0, 1.0)
+        }
     }
 
     // ── CRT beam-emission mirrors ────────────────────────────────────────
@@ -903,6 +922,27 @@ mod tests {
                 (lit - APERTURE_FRACTION).abs() < 5e-3,
                 "mean lit fraction {lit} at scale {scale} vs {APERTURE_FRACTION}"
             );
+        }
+    }
+
+    #[test]
+    fn hairline_lines_have_phase_invariant_strength() {
+        // In the hairline regime every rendered line carries the same coverage
+        // wherever the cell boundary falls relative to the pixel grid — a
+        // phase-modulated peak beats against the pixel grid as visible moiré
+        // at non-integer scales.
+        for scale in [0.1_f32, 0.133, 0.2] {
+            let g = 0.5 - APERTURE_FRACTION * 0.5;
+            assert!(2.0 * g < scale, "not hairline at scale {scale}");
+            let expect = 2.0 * g / scale;
+            let n = 10_000;
+            for i in 0..n {
+                let cover = matrix_coverage((i as f32 + 0.5) / n as f32, scale);
+                assert!(
+                    cover == 0.0 || (cover - expect).abs() < 1e-5,
+                    "phase-dependent strength {cover} vs {expect} at scale {scale}"
+                );
+            }
         }
     }
 
