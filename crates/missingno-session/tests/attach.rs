@@ -19,7 +19,7 @@ fn gb_session() -> SharedSession {
     let console = missingno_session::factory::create_console(Path::new("test.gb"), &rom)
         .expect("factory should not error")
         .expect("gb factory claims a .gb ROM");
-    SharedSession::spawn(console.into_debugger().ok().expect("gb has a debugger"))
+    SharedSession::spawn(console.into_debugger())
 }
 
 /// The same ROM hosted as a plain console, with no debugger surface.

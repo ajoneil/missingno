@@ -15,7 +15,6 @@ pub mod joypad;
 pub mod media;
 pub mod memory;
 pub mod ppu;
-pub mod render;
 pub mod serial_transfer;
 pub mod sgb;
 pub mod snapshot;

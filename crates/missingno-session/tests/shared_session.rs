@@ -18,9 +18,7 @@ fn shared() -> SharedSession {
         .expect("factory should not error")
         .expect("gb factory should claim a .gb ROM");
     let debugger = console
-        .into_debugger()
-        .ok()
-        .expect("gb has a debugger backend");
+        .into_debugger();
     SharedSession::spawn(debugger)
 }
 
@@ -386,5 +384,5 @@ fn session_engine() -> missingno_session::Session {
     let console = factory::create_console(Path::new("test.gb"), &rom)
         .expect("factory should not error")
         .expect("gb factory should claim a .gb ROM");
-    missingno_session::Session::new(console.into_debugger().ok().expect("gb has a debugger"))
+    missingno_session::Session::new(console.into_debugger())
 }

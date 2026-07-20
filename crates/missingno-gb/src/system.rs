@@ -423,11 +423,11 @@ where
         load_state_into(&mut self.console, bytes)
     }
 
-    fn into_debugger(self: Box<Self>) -> Result<Box<dyn SystemDebugger>, Box<dyn SystemConsole>> {
-        Ok(Box::new(GbDebugger {
+    fn into_debugger(self: Box<Self>) -> Box<dyn SystemDebugger> {
+        Box::new(GbDebugger {
             core: Debugger::new(self.console),
             battery_save: self.battery_save,
-        }))
+        })
     }
 }
 
@@ -648,10 +648,6 @@ where
 
     fn family_state(&self) -> &dyn std::any::Any {
         self.core.game_boy()
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
     }
 
     fn video_out(&self) -> DisplayTechnology {

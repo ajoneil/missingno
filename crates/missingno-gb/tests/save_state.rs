@@ -152,9 +152,7 @@ fn save_and_restore_are_refused_mid_instruction() {
     let good_save = console.save_state().expect("a boundary save");
 
     let mut dbg = Box::new(console)
-        .into_debugger()
-        .ok()
-        .expect("debugger backend");
+        .into_debugger();
 
     // Ticking off the boundary, the save is refused the moment the CPU is inside
     // an instruction (past its fetch M-cycle) — and restoring a good save there

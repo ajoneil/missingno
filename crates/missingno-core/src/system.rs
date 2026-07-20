@@ -245,9 +245,8 @@ pub trait SystemConsole: Send {
     fn read_state(&self) -> Option<StateRecord> {
         None
     }
-    /// Convert to the debugger-backed form. Systems without a debugger
-    /// backend hand the console back; callers fall back to plain emulation.
-    fn into_debugger(self: Box<Self>) -> Result<Box<dyn SystemDebugger>, Box<dyn SystemConsole>>;
+    /// Convert to the debugger-backed form.
+    fn into_debugger(self: Box<Self>) -> Box<dyn SystemDebugger>;
 }
 
 /// Why a stepping call returned, and the displayable frame it produced.
@@ -426,9 +425,6 @@ pub trait SystemDebugger: Send {
     /// The family's typed inspection state, for its own panes to downcast —
     /// the live console while paused.
     fn family_state(&self) -> &dyn Any;
-    /// The concrete debugger, for its family's own extension surfaces
-    /// (e.g. headless extension routes) to downcast.
-    fn as_any_mut(&mut self) -> &mut dyn Any;
 
     fn game_title(&self) -> String;
     fn battery_save(&self) -> Option<Vec<u8>> {

@@ -331,9 +331,7 @@ fn load_rom(loaded: &mut Option<Host>, args: &Value) -> ToolOutcome {
     let path_ref = Path::new(path);
     let console = factory::create_console_with(path_ref, &bytes, &options)?
         .ok_or_else(|| format!("no core recognises {path}"))?;
-    let debugger = console
-        .into_debugger()
-        .map_err(|_| "this system has no debugger backend".to_string())?;
+    let debugger = console.into_debugger();
     let core_name = factory::factory_for(path_ref, &bytes)
         .map(|factory| factory.name)
         .unwrap_or("unknown");

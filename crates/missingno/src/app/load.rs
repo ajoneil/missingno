@@ -124,32 +124,23 @@ fn finish_start(
     let palette = app.settings.palette;
     let (audio, sink) = App::open_audio();
 
-    // Debugger mode first, if enabled and the system supports it.
-    let console = if app.debugger_enabled {
+    if app.debugger_enabled {
         let technology = console.video_out();
-        match console.into_debugger() {
-            Ok(core) => {
-                let regions = core.memory_regions();
-                let session = SharedSession::spawn_with_audio(core, sink);
-                let handle = session.handle();
-                let mut screen_view = ScreenView::new();
-                screen_view.set_technology(technology);
-                let mut debugger =
-                    app::debugger::Debugger::new(handle, platform, regions, screen_view);
-                debugger.load_sidecars(rom_path);
-                debugger.set_palette(palette);
-                // The game is installed first so the attach socket, if the user
-                // allows one, publishes the platform it will serve.
-                app.game = Game::Loaded(LoadedGame::Debugger(debugger));
-                app.install_session(session, audio);
-                return title;
-            }
-            // No debugger backend for this system: plain emulation.
-            Err(console) => console,
-        }
-    } else {
-        console
-    };
+        let core = console.into_debugger();
+        let regions = core.memory_regions();
+        let session = SharedSession::spawn_with_audio(core, sink);
+        let handle = session.handle();
+        let mut screen_view = ScreenView::new();
+        screen_view.set_technology(technology);
+        let mut debugger = app::debugger::Debugger::new(handle, platform, regions, screen_view);
+        debugger.load_sidecars(rom_path);
+        debugger.set_palette(palette);
+        // The game is installed first so the attach socket, if the user allows
+        // one, publishes the platform it will serve.
+        app.game = Game::Loaded(LoadedGame::Debugger(debugger));
+        app.install_session(session, audio);
+        return title;
+    }
 
     // Plain emulation: the console runs on the fast path, auto-started.
     let facts = ConsoleFacts::of(console.as_ref());

@@ -151,7 +151,7 @@ fn read_state_validates_against_the_schema() {
 fn boundary_console(relative: &str) -> Box<dyn missingno_core::system::SystemDebugger> {
     let rom = std::fs::read(rom_path(relative)).unwrap();
     let console = create_console(&rom, "test".into(), Some(TvStandard::Ntsc), None).unwrap();
-    let mut dbg = console.into_debugger().ok().expect("debugger backend");
+    let mut dbg = console.into_debugger();
     // Step instructions to settle and land on an instruction boundary.
     for _ in 0..20_000 {
         dbg.step();
@@ -166,7 +166,7 @@ fn seam_save_and_load_round_trips() {
 
     let rom = std::fs::read(rom_path("tia-render/draw-delay_ntsc.a26")).unwrap();
     let console = create_console(&rom, "test".into(), Some(TvStandard::Ntsc), None).unwrap();
-    let mut b = console.into_debugger().ok().expect("debugger backend");
+    let mut b = console.into_debugger();
     b.load_state(&bytes).expect("load a matching state");
 }
 

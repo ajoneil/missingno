@@ -1056,7 +1056,7 @@ mod tests {
         let console = missingno_session::factory::create_console(Path::new("test.gb"), &rom)
             .expect("factory should not error")
             .expect("gb factory claims a .gb ROM");
-        Session::new(console.into_debugger().ok().expect("gb has a debugger"))
+        Session::new(console.into_debugger())
     }
 
     #[test]
@@ -1099,7 +1099,7 @@ mod tests {
         let console = missingno_session::factory::create_console(Path::new("test.gbc"), &rom)
             .expect("factory should not error")
             .expect("gb factory claims a .gbc ROM");
-        Session::new(console.into_debugger().ok().expect("gbc has a debugger"))
+        Session::new(console.into_debugger())
     }
 
     #[test]

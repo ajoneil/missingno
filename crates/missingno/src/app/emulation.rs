@@ -235,42 +235,19 @@ impl App {
                     return;
                 };
                 let technology = console.video_out();
-                match console.into_debugger() {
-                    Ok(core) => {
-                        let regions = core.memory_regions();
-                        let new_session = SharedSession::spawn_with_audio(core, sink);
-                        let handle = new_session.handle();
-                        screen_view.set_technology(technology);
-                        let mut debugger = crate::app::debugger::Debugger::new(
-                            handle,
-                            platform,
-                            regions,
-                            screen_view,
-                        );
-                        if let Some(rom_path) = &rom_path {
-                            debugger.load_sidecars(rom_path);
-                        }
-                        debugger.set_palette(palette);
-                        self.game = Game::Loaded(LoadedGame::Debugger(debugger));
-                        self.install_session(new_session, audio);
-                    }
-                    // No debugger backend: re-host as a plain console, staying in
-                    // emulator mode.
-                    Err(console) => {
-                        let facts = ConsoleFacts::of(console.as_ref());
-                        let new_session = SharedSession::spawn_console_with_audio(console, sink);
-                        let handle = new_session.handle();
-                        let emulator = Emulator::from_debugger(
-                            handle,
-                            screen_view,
-                            facts,
-                            platform,
-                            presentation,
-                        );
-                        self.game = Game::Loaded(LoadedGame::Emulator(emulator));
-                        self.install_session(new_session, audio);
-                    }
+                let core = console.into_debugger();
+                let regions = core.memory_regions();
+                let new_session = SharedSession::spawn_with_audio(core, sink);
+                let handle = new_session.handle();
+                screen_view.set_technology(technology);
+                let mut debugger =
+                    crate::app::debugger::Debugger::new(handle, platform, regions, screen_view);
+                if let Some(rom_path) = &rom_path {
+                    debugger.load_sidecars(rom_path);
                 }
+                debugger.set_palette(palette);
+                self.game = Game::Loaded(LoadedGame::Debugger(debugger));
+                self.install_session(new_session, audio);
             }
             // The shell already matches the wanted mode (the early return above
             // usually catches this): put everything back.

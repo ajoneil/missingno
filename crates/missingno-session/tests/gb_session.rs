@@ -28,9 +28,7 @@ fn session() -> Session {
         .expect("factory should not error")
         .expect("gb factory should claim a .gb ROM");
     let debugger = console
-        .into_debugger()
-        .ok()
-        .expect("gb has a debugger backend");
+        .into_debugger();
     Session::new(debugger)
 }
 
@@ -47,9 +45,7 @@ fn session_from(path: &str, rom: &[u8]) -> Session {
         .expect("factory should not error")
         .expect("gb factory should claim the ROM");
     let debugger = console
-        .into_debugger()
-        .ok()
-        .expect("gb has a debugger backend");
+        .into_debugger();
     Session::new(debugger)
 }
 
@@ -221,7 +217,7 @@ fn banked_session() -> Session {
     let console = factory::create_console(Path::new("test.gb"), &rom)
         .expect("factory should not error")
         .expect("gb factory should claim a .gb ROM");
-    Session::new(console.into_debugger().ok().expect("gb has a debugger"))
+    Session::new(console.into_debugger())
 }
 
 #[test]

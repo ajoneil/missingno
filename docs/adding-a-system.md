@@ -61,9 +61,8 @@ must provide:
 
 The whole seam is two object-safe traits in `missingno-core`'s `system.rs`. A
 family builds a `Box<dyn SystemConsole>`; the shell drives it, and converts it
-into a `Box<dyn SystemDebugger>` (`into_debugger`, fallible — a family with no
-debugger backend hands the console back and the shell falls back to plain
-emulation).
+into a `Box<dyn SystemDebugger>` (`into_debugger`) whenever it wants the
+debugger surface.
 
 ### `SystemConsole` → the plain emulator and the session's run loop
 
@@ -104,7 +103,7 @@ surface on across both frontends:
 | `set_graphics_capture` + `graphics` (a `GraphicsView`: tile atlases, maps, an object table) | the graphics panes / `get_tiles` / `get_objects` — likewise interest-gated |
 | `symbols` / `add_symbol` / `cdl_window` + `load_sidecars` / `save_sidecars` | debug-symbol labels and the code/data-log data rows (no-ops for a family with no sidecars) |
 | `snapshot` → a `DebugView` (`Box<dyn InspectSnapshot>`) + `running_status` | the per-vblank running view every client renders while the machine free-runs, without owning the console |
-| `family_state` / `as_any_mut` | the family's own typed state, downcast by its panes and any headless extension routes |
+| `family_state` | the family's own typed state, downcast by its panes |
 
 Everything above the family's own decode backends is generic. A family with a
 disassembler, a register file, and a memory map gets a working debugger; the

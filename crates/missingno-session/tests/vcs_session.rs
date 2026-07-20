@@ -32,9 +32,7 @@ fn session() -> Session {
         .expect("factory should not error")
         .expect("vcs factory should claim an .a26 ROM");
     let debugger = console
-        .into_debugger()
-        .ok()
-        .expect("vcs has a debugger backend");
+        .into_debugger();
     Session::new(debugger)
 }
 

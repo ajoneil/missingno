@@ -137,12 +137,12 @@ impl<S: SteppingSystem> SystemConsole for SteppingConsole<S> {
         S::FRAME_INTERVAL
     }
 
-    fn into_debugger(self: Box<Self>) -> Result<Box<dyn SystemDebugger>, Box<dyn SystemConsole>> {
-        Ok(Box::new(SteppingDebugger::<S>::new(
+    fn into_debugger(self: Box<Self>) -> Box<dyn SystemDebugger> {
+        Box::new(SteppingDebugger::<S>::new(
             self.core,
             self.title,
             self.last_frame,
-        )))
+        ))
     }
 }
 
@@ -274,10 +274,6 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
 
     fn instruction_set(&self) -> Option<&dyn InstructionSet> {
         S::instruction_set()
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
     }
 
     fn family_state(&self) -> &dyn std::any::Any {

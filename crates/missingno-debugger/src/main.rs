@@ -92,9 +92,7 @@ fn run() -> Result<(), String> {
     };
     let console = factory::create_console_with(&rom_path, &rom, &options)?
         .ok_or_else(|| format!("no core recognises {}", rom_path.display()))?;
-    let debugger = console
-        .into_debugger()
-        .map_err(|_| "this system has no debugger backend".to_string())?;
+    let debugger = console.into_debugger();
     let session = SharedSession::spawn(debugger);
 
     #[cfg(feature = "mcp")]

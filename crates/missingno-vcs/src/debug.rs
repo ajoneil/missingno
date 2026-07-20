@@ -410,13 +410,13 @@ impl SystemConsole for VcsConsole {
         load_state_into(&mut self.vcs, bytes, &self.rom_sha256)
     }
 
-    fn into_debugger(self: Box<Self>) -> Result<Box<dyn SystemDebugger>, Box<dyn SystemConsole>> {
-        Ok(Box::new(VcsDebugger::new(
+    fn into_debugger(self: Box<Self>) -> Box<dyn SystemDebugger> {
+        Box::new(VcsDebugger::new(
             crate::debugger::Debugger::new(self.vcs),
             self.title,
             self.rom_sha256,
             self.last_frame,
-        )))
+        ))
     }
 }
 
@@ -1170,10 +1170,6 @@ impl SystemDebugger for VcsDebugger {
 
     fn last_watch_hit(&self) -> Option<inspect::Watch> {
         self.core.last_watch_hit()
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
     }
 
     fn family_state(&self) -> &dyn std::any::Any {
