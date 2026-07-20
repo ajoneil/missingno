@@ -22,6 +22,7 @@ pub mod graphics;
 pub mod inspect;
 pub mod isa;
 pub mod state;
+pub mod state_file;
 pub mod stepping;
 pub mod symbols;
 pub mod system;
@@ -40,6 +41,7 @@ pub use state::{
     FieldDef, FieldType, FrameSpec, PixelFormat, Provenance, StateRecord, StateValue,
     SystemStateSchema, Tier,
 };
+pub use state_file::{StateFile, StateFrame, StateMeta, read_state_file, write_state_file};
 pub use tv::TvStandard;
 pub use video::{ConsoleFrame, DisplayTechnology, Frame, IndexedFrame, LcdPanel, RgbaFrame};
 pub use waveform::{ChannelWave, WaveRing};

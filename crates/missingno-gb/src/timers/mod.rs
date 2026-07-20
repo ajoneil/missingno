@@ -202,8 +202,7 @@ impl Timers {
         }
     }
 
-    #[cfg(feature = "morepork")]
-    pub fn from_snapshot(snap: &morepork::system::gb::snapshot::TimerSnapshot) -> Self {
+    pub fn from_snapshot(snap: &crate::snapshot::TimerSnapshot) -> Self {
         Self {
             internal_counter: snap.internal_counter,
             counter: snap.tima,

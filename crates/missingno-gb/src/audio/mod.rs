@@ -523,12 +523,8 @@ impl<A: ApuSpec> Audio<A> {
         )
     }
 
-    /// Construct an Audio instance from a morepork snapshot.
-    #[cfg(feature = "morepork")]
-    pub fn from_snapshot(
-        snap: &morepork::system::gb::snapshot::ApuSnapshot,
-        wave_ram: [u8; 16],
-    ) -> Self {
+    /// Construct an Audio instance from a save-state snapshot.
+    pub fn from_snapshot(snap: &crate::snapshot::ApuSnapshot, wave_ram: [u8; 16]) -> Self {
         use channels::noise::FrequencyAndRandomness;
         use channels::registers::{
             PeriodDivider, Prescaler, Signed11, VolumeAndEnvelope, WaveformAndInitialLength,
@@ -547,9 +543,9 @@ impl<A: ApuSpec> Audio<A> {
         let channels = Channels {
             ch1: PulseSweepChannel {
                 enabled: Enabled {
-                    enabled: true,
-                    output_left: true,
-                    output_right: true,
+                    enabled: snap.sound_on & 0x01 != 0,
+                    output_left: snap.sound_pan & 0x10 != 0,
+                    output_right: snap.sound_pan & 0x01 != 0,
                 },
                 sweep: Sweep(snap.ch1_sweep),
                 waveform_and_initial_length: WaveformAndInitialLength(snap.ch1_duty_len),
@@ -582,9 +578,9 @@ impl<A: ApuSpec> Audio<A> {
             },
             ch2: PulseChannel {
                 enabled: Enabled {
-                    enabled: true,
-                    output_left: true,
-                    output_right: true,
+                    enabled: snap.sound_on & 0x02 != 0,
+                    output_left: snap.sound_pan & 0x20 != 0,
+                    output_right: snap.sound_pan & 0x02 != 0,
                 },
                 waveform_and_initial_length: WaveformAndInitialLength(snap.ch2_duty_len),
                 volume_and_envelope: VolumeAndEnvelope(snap.ch2_vol_env),
@@ -607,9 +603,9 @@ impl<A: ApuSpec> Audio<A> {
             },
             ch3: WaveChannel {
                 enabled: Enabled {
-                    enabled: true,
-                    output_left: true,
-                    output_right: true,
+                    enabled: snap.sound_on & 0x04 != 0,
+                    output_left: snap.sound_pan & 0x40 != 0,
+                    output_right: snap.sound_pan & 0x04 != 0,
                 },
                 dac_enabled: snap.ch3_dac & 0x80 != 0,
                 volume: WaveVolume(snap.ch3_vol),
@@ -632,9 +628,9 @@ impl<A: ApuSpec> Audio<A> {
             },
             ch4: NoiseChannel {
                 enabled: Enabled {
-                    enabled: true,
-                    output_left: true,
-                    output_right: true,
+                    enabled: snap.sound_on & 0x08 != 0,
+                    output_left: snap.sound_pan & 0x80 != 0,
+                    output_right: snap.sound_pan & 0x08 != 0,
                 },
                 volume_and_envelope: VolumeAndEnvelope(snap.ch4_vol_env),
                 length: LengthCounter {

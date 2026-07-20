@@ -425,6 +425,43 @@ impl ConsoleUi for Cgb {
         Some(crate::state_schema::cgb_state_schema())
     }
 
+    fn read_state(console: &Console<Self>) -> Option<missingno_core::state::StateRecord> {
+        // The shared Game Boy record plus the colour console's delta: KEY1
+        // speed and SVBK banking, VBK, OPRI, the palette-index registers, and
+        // the VRAM-DMA engine's live transfer.
+        let mut record = missingno_gb::snapshot::read_shared_record(console);
+        let model = console.model();
+        let ppu = console.ppu();
+        let (bcps, ocps) = ppu.model().palette_index_registers();
+        record
+            .set("double_speed", model.double_speed())
+            .set("svbk", model.wram_bank())
+            .set("vbk", console.vram().selected_bank())
+            .set("opri", ppu.read_object_priority())
+            .set("bcps", bcps)
+            .set("ocps", ocps);
+        let (active, source, dest, remaining, hblank) = match model.vram_dma_status() {
+            VramDmaStatus::Idle => (false, 0u16, 0u16, 0u8, false),
+            VramDmaStatus::General { remaining } => (true, 0, 0, (remaining / 16) as u8, false),
+            VramDmaStatus::HBlank {
+                remaining,
+                source,
+                dest,
+            } => (true, source, dest, (remaining / 16) as u8, true),
+        };
+        record
+            .set("hdma_active", active)
+            .set("hdma_source", source)
+            .set("hdma_dest", dest)
+            .set("hdma_remaining", remaining)
+            .set("hdma_hblank", hblank);
+        Some(record)
+    }
+
+    fn capture_memory(console: &Console<Self>) -> Vec<(&'static str, Vec<u8>)> {
+        missingno_gb::snapshot::capture_memory(console)
+    }
+
     fn screen_display(console: &Console<Self>, new_screen: Option<Self::Screen>) -> Option<Frame> {
         if !console.ppu().control().video_enabled() {
             Some(Frame::Rgba(RgbaFrame::blank(NATIVE_SIZE.0, NATIVE_SIZE.1)))

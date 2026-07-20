@@ -70,9 +70,15 @@ pub struct RunningStatus {
 pub enum StateError {
     /// The system has no save-state backend.
     Unsupported,
+    /// The state was written for a different console family (a DMG state into a
+    /// CGB session, or vice versa).
+    WrongSystem,
     /// The state was written for a different ROM.
     IncompatibleRom,
-    /// The state data is malformed.
+    /// The container version is not the one this build implements.
+    VersionMismatch,
+    /// The state data is malformed, or restore was attempted off an instruction
+    /// boundary.
     Corrupt,
 }
 
@@ -80,7 +86,9 @@ impl std::fmt::Display for StateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             StateError::Unsupported => "save states are not supported for this system",
+            StateError::WrongSystem => "save state was written for a different system",
             StateError::IncompatibleRom => "save state was written for a different ROM",
+            StateError::VersionMismatch => "save state uses an unsupported format version",
             StateError::Corrupt => "save state data is corrupt",
         })
     }

@@ -211,18 +211,15 @@ impl Dma {
         }
     }
 
-    #[cfg(feature = "morepork")]
     pub fn dma_run(&self) -> bool {
         self.dma_run
     }
 
-    #[cfg(feature = "morepork")]
     pub fn byte_index(&self) -> u8 {
         self.dma_a
     }
 
-    #[cfg(feature = "morepork")]
-    pub fn from_snapshot(snap: &morepork::system::gb::snapshot::DmaSnapshot) -> Dma {
+    pub fn from_snapshot(snap: &crate::snapshot::DmaSnapshot) -> Dma {
         let mut dma = Dma::new();
         if snap.active {
             dma.source_register = (snap.source >> 8) as u8;

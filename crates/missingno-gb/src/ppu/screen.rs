@@ -43,6 +43,19 @@ impl Screen {
     pub fn front(&self) -> &Framebuffer {
         &self.front
     }
+
+    /// Seed the displayed (front) buffer from a row-major slice of shade indices
+    /// — restoring a save state's screenshot so the first frame after a restore
+    /// matches the saved display. The back buffer stays cleared for the next draw.
+    pub fn restore_front(&mut self, shades: &[u8]) {
+        for y in 0..NUM_SCANLINES as usize {
+            for x in 0..PIXELS_PER_LINE as usize {
+                if let Some(&shade) = shades.get(y * PIXELS_PER_LINE as usize + x) {
+                    self.front.pixels[y][x] = PaletteIndex(shade & 3);
+                }
+            }
+        }
+    }
 }
 
 impl crate::ScreenBuffer for Screen {

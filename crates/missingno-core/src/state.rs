@@ -238,6 +238,28 @@ impl SystemStateSchema {
         self.fields.iter().filter(move |f| f.tier == tier)
     }
 
+    /// Rebuild a validated [`StateRecord`] from name/value pairs read off a save
+    /// file. Each name is resolved to this schema's own static field name (a
+    /// name the schema does not define is rejected), then the assembled record
+    /// is validated — so a well-formed record over the wrong schema fails here
+    /// with a concrete field error rather than silently mis-restoring.
+    pub fn record_from(
+        &self,
+        fields: impl IntoIterator<Item = (String, StateValue)>,
+    ) -> Result<StateRecord, RecordError> {
+        let mut record = StateRecord::new();
+        for (name, value) in fields {
+            match self.field(&name) {
+                Some(field) => {
+                    record.set(field.name, value);
+                }
+                None => return Err(RecordError::UnknownField(name)),
+            }
+        }
+        record.validate(self)?;
+        Ok(record)
+    }
+
     /// Check the schema is well-formed: unique field names, unique span names,
     /// and addressable spans that neither overflow the address space nor
     /// overlap one another.
@@ -365,7 +387,7 @@ impl From<String> for StateValue {
 /// in-memory form the bridge fills (capture) and the format engine walks
 /// (serialise). Memory regions and the framebuffer travel as separate blobs,
 /// not through this record.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StateRecord {
     values: BTreeMap<&'static str, StateValue>,
 }
@@ -383,6 +405,11 @@ impl StateRecord {
 
     pub fn get(&self, name: &str) -> Option<&StateValue> {
         self.values.get(name)
+    }
+
+    /// The recorded fields, in name order, for a serializer to walk.
+    pub fn iter(&self) -> impl Iterator<Item = (&'static str, &StateValue)> {
+        self.values.iter().map(|(&name, value)| (name, value))
     }
 
     pub fn len(&self) -> usize {

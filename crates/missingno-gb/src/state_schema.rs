@@ -115,22 +115,53 @@ pub fn dmg_boundary_fields() -> Vec<FieldDef> {
             .help("LALU.q — the STAT interrupt line's prior level, for the rising-edge detector"),
         FieldDef::boundary("window_line_counter", U8, "ppu").help("internal window line counter"),
         // PPU pixel pipeline: the two FIFOs, the palette pipe, the fetcher state
-        // and its tile-row temporaries, and the per-line counters/flags.
-        FieldDef::boundary("bgw_fifo_a", U8, "ppu").help("background/window FIFO, plane A"),
-        FieldDef::boundary("bgw_fifo_b", U8, "ppu").help("background/window FIFO, plane B"),
-        FieldDef::boundary("spr_fifo_a", U8, "ppu").help("sprite FIFO, plane A"),
-        FieldDef::boundary("spr_fifo_b", U8, "ppu").help("sprite FIFO, plane B"),
-        FieldDef::boundary("pal_pipe", U8, "ppu").help("palette pipeline"),
-        FieldDef::boundary("tfetch_state", U8, "ppu").help("background fetcher state"),
-        FieldDef::boundary("sfetch_state", U8, "ppu").help("sprite fetcher state"),
-        FieldDef::boundary("tile_temp_a", U8, "ppu").help("fetched tile row, plane A"),
-        FieldDef::boundary("tile_temp_b", U8, "ppu").help("fetched tile row, plane B"),
-        FieldDef::boundary("pix_count", U8, "ppu").help("pixels pushed on this line"),
-        FieldDef::boundary("sprite_count", U8, "ppu").help("sprites found for this line"),
-        FieldDef::boundary("scan_count", U8, "ppu").help("OAM entries scanned"),
-        FieldDef::boundary("rendering", Bool, "ppu").help("pixel pipeline active"),
+        // and its tile-row temporaries, and the per-line counters/flags. These
+        // are nullable — a boundary save omits them: at a frame/instruction
+        // boundary the pipeline is idle, so the restore reconstructs them from
+        // the pipeline's boundary defaults. A mid-scanline (tick-complete)
+        // producer fills them.
+        FieldDef::boundary("bgw_fifo_a", U8, "ppu")
+            .help("background/window FIFO, plane A")
+            .nullable(),
+        FieldDef::boundary("bgw_fifo_b", U8, "ppu")
+            .help("background/window FIFO, plane B")
+            .nullable(),
+        FieldDef::boundary("spr_fifo_a", U8, "ppu")
+            .help("sprite FIFO, plane A")
+            .nullable(),
+        FieldDef::boundary("spr_fifo_b", U8, "ppu")
+            .help("sprite FIFO, plane B")
+            .nullable(),
+        FieldDef::boundary("pal_pipe", U8, "ppu")
+            .help("palette pipeline")
+            .nullable(),
+        FieldDef::boundary("tfetch_state", U8, "ppu")
+            .help("background fetcher state")
+            .nullable(),
+        FieldDef::boundary("sfetch_state", U8, "ppu")
+            .help("sprite fetcher state")
+            .nullable(),
+        FieldDef::boundary("tile_temp_a", U8, "ppu")
+            .help("fetched tile row, plane A")
+            .nullable(),
+        FieldDef::boundary("tile_temp_b", U8, "ppu")
+            .help("fetched tile row, plane B")
+            .nullable(),
+        FieldDef::boundary("pix_count", U8, "ppu")
+            .help("pixels pushed on this line")
+            .nullable(),
+        FieldDef::boundary("sprite_count", U8, "ppu")
+            .help("sprites found for this line")
+            .nullable(),
+        FieldDef::boundary("scan_count", U8, "ppu")
+            .help("OAM entries scanned")
+            .nullable(),
+        FieldDef::boundary("rendering", Bool, "ppu")
+            .help("pixel pipeline active")
+            .nullable(),
         FieldDef::boundary("win_mode", Bool, "ppu")
-            .help("fetching the window rather than background"),
+            .help("fetching the window rather than background")
+            .nullable(),
         // APU divider + per-channel counters.
         FieldDef::boundary("frame_sequencer_step", U8, "apu").help("frame-sequencer step (0..7)"),
         FieldDef::boundary("prev_div_apu_bit", Bool, "apu")

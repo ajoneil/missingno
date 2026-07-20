@@ -11,11 +11,12 @@ use missingno_core::HighPass;
 use missingno_core::graphics::GraphicsView;
 use missingno_core::inspect;
 use missingno_core::isa::InstructionSet;
-use missingno_core::state::SystemStateSchema;
+use missingno_core::state::{StateRecord, SystemStateSchema};
+use missingno_core::state_file::{StateFrame, StateMeta, read_state_file, write_state_file};
 use missingno_core::symbols::{Symbol, SymbolTable};
 use missingno_core::system::{
-    ControlId, ControlInput, DebugView, FrameOutcome, RunningStatus, StepOutcome, SystemConsole,
-    SystemDebugger,
+    ControlId, ControlInput, DebugView, FrameOutcome, RunningStatus, StateError, StepOutcome,
+    SystemConsole, SystemDebugger,
 };
 use missingno_core::video::{DisplayTechnology, Frame, RawFrame};
 
@@ -47,6 +48,30 @@ pub trait ConsoleUi: Model {
     /// schema; CGB composes it as the DMG fields plus its colour delta.
     fn state_schema() -> Option<&'static SystemStateSchema> {
         None
+    }
+
+    /// Read the console into a record keyed by the schema's field names — the
+    /// save-state capture side. `None` when the model authors no schema.
+    fn read_state(_console: &Console<Self>) -> Option<StateRecord> {
+        None
+    }
+
+    /// The named RAM regions a save state carries for this model, keyed by
+    /// schema span name.
+    fn capture_memory(_console: &Console<Self>) -> Vec<(&'static str, Vec<u8>)> {
+        Vec::new()
+    }
+
+    /// Restore the console in place from a validated record, its memory spans,
+    /// and its saved framebuffer, at an instruction boundary. Errors (never
+    /// panics) on a mid-instruction call or a record this model cannot restore.
+    fn restore_state(
+        _console: &mut Console<Self>,
+        _record: &StateRecord,
+        _memory: Vec<(String, Vec<u8>)>,
+        _frame: Option<&StateFrame>,
+    ) -> Result<(), StateError> {
+        Err(StateError::Unsupported)
     }
 
     /// The display for a step's screen result; `None` leaves the screen pane
@@ -82,6 +107,33 @@ impl ConsoleUi for Dmg {
 
     fn state_schema() -> Option<&'static SystemStateSchema> {
         Some(crate::state_schema::dmg_state_schema())
+    }
+
+    fn read_state(console: &Console<Self>) -> Option<StateRecord> {
+        Some(crate::snapshot::read_shared_record(console))
+    }
+
+    fn capture_memory(console: &Console<Self>) -> Vec<(&'static str, Vec<u8>)> {
+        crate::snapshot::capture_memory(console)
+    }
+
+    fn restore_state(
+        console: &mut Console<Self>,
+        record: &StateRecord,
+        memory: Vec<(String, Vec<u8>)>,
+        frame: Option<&StateFrame>,
+    ) -> Result<(), StateError> {
+        if !console.cpu().is_fetch_phase() {
+            return Err(StateError::Corrupt);
+        }
+        let snapshot = crate::snapshot::parse_record(record, memory)?;
+        console.restore_snapshot(&snapshot);
+        // Seed the displayed screen from the saved framebuffer so the first
+        // frame after a restore matches the save.
+        if let Some(frame) = frame {
+            console.restore_screen(&frame.data);
+        }
+        Ok(())
     }
 
     fn screen_display(console: &Console<Self>, new_screen: Option<Self::Screen>) -> Option<Frame> {
@@ -156,6 +208,99 @@ impl ConsoleUi for Dmg {
     fn graphics_view(console: &Console<Self>) -> GraphicsView {
         crate::debugger::graphics::dmg_graphics_view(console.ppu(), console.vram())
     }
+}
+
+/// A hex SHA-256 of the cartridge ROM, so a save state can refuse a ROM it was
+/// not written for.
+fn rom_sha256(cartridge: &Cartridge) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(cartridge.rom());
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// The current frame in its pre-resolution domain, as a save-state framebuffer
+/// blob (informational — a restored console regenerates its display).
+fn state_frame(raw: &RawFrame) -> StateFrame {
+    use missingno_core::state::PixelFormat;
+    match raw {
+        RawFrame::Shade2 {
+            width,
+            height,
+            pixels,
+        } => StateFrame {
+            width: *width,
+            height: Some(*height),
+            format: PixelFormat::Shade2,
+            data: pixels.clone(),
+        },
+        RawFrame::Rgb555 {
+            width,
+            height,
+            pixels,
+        } => StateFrame {
+            width: *width,
+            height: Some(*height),
+            format: PixelFormat::Rgb555,
+            data: pixels.iter().flat_map(|word| word.to_le_bytes()).collect(),
+        },
+        RawFrame::Palette {
+            width,
+            height,
+            pixels,
+        } => StateFrame {
+            width: *width,
+            height: Some(*height),
+            format: PixelFormat::Indexed8,
+            data: pixels.clone(),
+        },
+    }
+}
+
+/// Serialize the console's boundary state into a save file: the schema-keyed
+/// record, the RAM spans, and the current framebuffer. `None` when the model
+/// authors no state schema.
+fn save_state_bytes<M: ConsoleUi>(console: &Console<M>) -> Option<Vec<u8>> {
+    let schema = M::state_schema()?;
+    let record = M::read_state(console)?;
+    let memory = M::capture_memory(console);
+    let frame = state_frame(&M::raw_frame(console));
+    let hash = rom_sha256(console.cartridge());
+    let meta = StateMeta {
+        system: schema.system,
+        rom_sha256: Some(&hash),
+        emulator: "missingno",
+        emulator_version: env!("CARGO_PKG_VERSION"),
+    };
+    Some(write_state_file(&meta, &record, &memory, Some(&frame)))
+}
+
+/// Restore the console from a save file, rejecting a state for the wrong system
+/// or ROM, an unsupported version, or a record that fails schema validation.
+fn load_state_into<M: ConsoleUi>(console: &mut Console<M>, bytes: &[u8]) -> Result<(), StateError> {
+    use missingno_core::state_file::StateFileError;
+
+    let schema = M::state_schema().ok_or(StateError::Unsupported)?;
+    let file = read_state_file(bytes).map_err(|error| match error {
+        StateFileError::UnsupportedVersion(_) => StateError::VersionMismatch,
+        _ => StateError::Corrupt,
+    })?;
+    if file.system != schema.system {
+        return Err(StateError::WrongSystem);
+    }
+    if let Some(fingerprint) = &file.rom_sha256
+        && *fingerprint != rom_sha256(console.cartridge())
+    {
+        return Err(StateError::IncompatibleRom);
+    }
+    let record = schema
+        .record_from(file.fields)
+        .map_err(|_| StateError::Corrupt)?;
+    M::restore_state(console, &record, file.memory, file.frame.as_ref())
 }
 
 /// The inverse of the seam's numeric convention; ids 8+ are not GB controls.
@@ -268,6 +413,18 @@ where
 
     fn state_schema(&self) -> Option<&'static SystemStateSchema> {
         M::state_schema()
+    }
+
+    fn read_state(&self) -> Option<StateRecord> {
+        M::read_state(&self.console)
+    }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        save_state_bytes(&self.console)
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> Result<(), StateError> {
+        load_state_into(&mut self.console, bytes)
     }
 
     fn into_debugger(self: Box<Self>) -> Result<Box<dyn SystemDebugger>, Box<dyn SystemConsole>> {
@@ -606,6 +763,18 @@ where
 
     fn state_schema(&self) -> Option<&'static SystemStateSchema> {
         M::state_schema()
+    }
+
+    fn read_state(&self) -> Option<StateRecord> {
+        M::read_state(self.core.game_boy())
+    }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        save_state_bytes(self.core.game_boy())
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> Result<(), StateError> {
+        load_state_into(self.core.game_boy_mut(), bytes)
     }
 
     fn into_console(self: Box<Self>) -> Box<dyn SystemConsole> {

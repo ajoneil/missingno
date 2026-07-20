@@ -461,11 +461,10 @@ impl Cpu {
         }
     }
 
-    /// Construct a CPU from a morepork snapshot at an instruction
+    /// Construct a CPU from a save-state snapshot at an instruction
     /// boundary. The state machine fields are reset to their boundary
     /// defaults (Fetch phase, step 0, no pending actions).
-    #[cfg(feature = "morepork")]
-    pub fn from_snapshot(snap: &morepork::system::gb::snapshot::CpuSnapshot) -> Cpu {
+    pub fn from_snapshot(snap: &crate::snapshot::CpuSnapshot) -> Cpu {
         Cpu {
             a: snap.a,
             b: snap.b,
