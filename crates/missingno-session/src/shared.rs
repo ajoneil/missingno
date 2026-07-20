@@ -556,61 +556,27 @@ impl Machine {
         }
     }
 
-    fn set_control(&mut self, control: ControlId, input: ControlInput) {
+    /// The machine as a plain console — every debugger is one, so the
+    /// non-inspection surface needs no per-kind arm.
+    fn console(&self) -> &dyn SystemConsole {
         match self {
-            Machine::Debugger(session) => session.set_control(control, input),
-            Machine::Console(console) => console.set_control(control, input),
+            Machine::Debugger(session) => session.console(),
+            Machine::Console(console) => console.as_ref(),
         }
     }
 
+    fn console_mut(&mut self) -> &mut dyn SystemConsole {
+        match self {
+            Machine::Debugger(session) => session.console_mut(),
+            Machine::Console(console) => console.as_mut(),
+        }
+    }
+
+    /// Power-cycle, clearing the hosting session's run bookkeeping with it.
     fn reset(&mut self) {
         match self {
             Machine::Debugger(session) => session.reset(),
             Machine::Console(console) => console.reset(),
-        }
-    }
-
-    fn save_state_bytes(&self) -> Option<Vec<u8>> {
-        match self {
-            Machine::Debugger(session) => session.save_state_bytes(),
-            Machine::Console(console) => console.save_state(),
-        }
-    }
-
-    fn has_state_backend(&self) -> bool {
-        match self {
-            Machine::Debugger(session) => session.has_state_backend(),
-            Machine::Console(console) => console.state_schema().is_some(),
-        }
-    }
-
-    fn load_state_bytes(&mut self, bytes: &[u8]) -> Result<(), String> {
-        match self {
-            Machine::Debugger(session) => {
-                session.load_state_bytes(bytes).map_err(|e| e.to_string())
-            }
-            Machine::Console(console) => console.load_state(bytes).map_err(|e| e.to_string()),
-        }
-    }
-
-    fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
-        match self {
-            Machine::Debugger(session) => session.drain_audio_samples(),
-            Machine::Console(console) => console.drain_audio_samples(),
-        }
-    }
-
-    fn audio_coupling(&self) -> Option<HighPass> {
-        match self {
-            Machine::Debugger(session) => session.audio_coupling(),
-            Machine::Console(console) => console.audio_coupling(),
-        }
-    }
-
-    fn frame_interval(&self) -> Duration {
-        match self {
-            Machine::Debugger(session) => session.frame_interval(),
-            Machine::Console(console) => console.frame_interval(),
         }
     }
 
@@ -628,20 +594,6 @@ impl Machine {
         }
     }
 
-    fn battery_save(&self) -> Option<Vec<u8>> {
-        match self {
-            Machine::Debugger(session) => session.battery_save(),
-            Machine::Console(console) => console.battery_save(),
-        }
-    }
-
-    fn screen_display(&self) -> Frame {
-        match self {
-            Machine::Debugger(session) => session.display_frame(),
-            Machine::Console(console) => console.screen_display(),
-        }
-    }
-
     fn into_extracted(self) -> ExtractedMachine {
         match self {
             Machine::Console(console) => ExtractedMachine::Console(console),
@@ -651,8 +603,6 @@ impl Machine {
 }
 
 /// An input recording being captured from the owned machine as it steps frames.
-/// Reuses the recording container directly — the core's `Recorder` is typed to
-/// `&mut dyn SystemConsole`, which the machine does not necessarily hold.
 struct Capture {
     initial_state: Vec<u8>,
     inputs: Vec<InputRecord>,
@@ -736,7 +686,9 @@ impl ReplayPlayback {
             if event.frame != self.frame {
                 break;
             }
-            machine.set_control(event.control, event.input);
+            machine
+                .console_mut()
+                .set_control(event.control, event.input);
             self.input_cursor += 1;
         }
     }
@@ -887,7 +839,7 @@ impl SessionEngine {
                 self.machine.reset();
             }
             Request::SetControl(control, input) => {
-                self.machine.set_control(control, input);
+                self.machine.console_mut().set_control(control, input);
                 if let Some(capture) = &mut self.capture {
                     capture.note_input(control, input);
                 }
@@ -908,10 +860,10 @@ impl SessionEngine {
                 let _ = ack.send(self.start_replay(path));
             }
             Request::Screenshot(ack) => {
-                let _ = ack.send(self.machine.screen_display());
+                let _ = ack.send(self.machine.console().screen_display());
             }
             Request::BatterySave(ack) => {
-                let _ = ack.send(self.machine.battery_save());
+                let _ = ack.send(self.machine.console().battery_save());
             }
             // Extract and Shutdown both exit the thread; Extract stashes the
             // reply channel so `finish_extract` can hand the machine back after
@@ -1013,9 +965,9 @@ impl SessionEngine {
 
         // Drain the frame's audio so the buffer can't grow unbounded; a frontend
         // sink consumes it, the headless default drops it.
-        let samples = self.machine.drain_audio_samples();
+        let samples = self.machine.console_mut().drain_audio_samples();
         if let Some(sink) = &mut self.audio {
-            let coupling = self.machine.audio_coupling();
+            let coupling = self.machine.console().audio_coupling();
             sink(samples, coupling);
         }
 
@@ -1040,7 +992,7 @@ impl SessionEngine {
             let count = count + 1;
             if count >= SRAM_DEBOUNCE_FRAMES {
                 self.sram_countdown = None;
-                if let Some(ram) = self.machine.battery_save() {
+                if let Some(ram) = self.machine.console().battery_save() {
                     self.emit(SessionEvent::SramDirty(ram));
                 }
             } else {
@@ -1066,7 +1018,7 @@ impl SessionEngine {
     /// Fixed-timestep pacing against a wall clock: sleep when ahead, drop the
     /// backlog when it exceeds the deficit cap.
     fn pace(&mut self) {
-        let interval = self.machine.frame_interval();
+        let interval = self.machine.console().frame_interval();
         self.next_deadline += interval;
         let now = Instant::now();
         if now < self.next_deadline {
@@ -1077,12 +1029,12 @@ impl SessionEngine {
     }
 
     fn attempt_save(&self, path: &std::path::Path) -> SaveOutcome {
-        match self.machine.save_state_bytes() {
+        match self.machine.console().save_state() {
             Some(bytes) => match std::fs::write(path, bytes) {
                 Ok(()) => SaveOutcome::Saved,
                 Err(error) => SaveOutcome::Failed(format!("could not write save state: {error}")),
             },
-            None if self.machine.has_state_backend() => SaveOutcome::Retry,
+            None if self.machine.console().state_schema().is_some() => SaveOutcome::Retry,
             None => SaveOutcome::NoBackend,
         }
     }
@@ -1114,8 +1066,12 @@ impl SessionEngine {
         self.cancel_pending_save("a state load replaced the state it would have captured");
         match std::fs::read(&path)
             .map_err(|error| format!("could not read save state: {error}"))
-            .and_then(|bytes| self.machine.load_state_bytes(&bytes))
-        {
+            .and_then(|bytes| {
+                self.machine
+                    .console_mut()
+                    .load_state(&bytes)
+                    .map_err(|error| error.to_string())
+            }) {
             Ok(()) => self.settle(ack, Ok("State loaded")),
             Err(error) => self.settle(ack, Err(error)),
         }
@@ -1159,15 +1115,16 @@ impl SessionEngine {
         // Finalize any recording already running before starting a fresh one so
         // its file is written rather than dropped.
         self.finish_recording()?;
-        if !self.machine.has_state_backend() {
+        if self.machine.console().state_schema().is_none() {
             return Err("this system has no save-state backend".to_string());
         }
-        match self.machine.save_state_bytes() {
+        match self.machine.console().save_state() {
             Some(initial_state) => {
                 // Re-seat from the captured state so the recorded timeline is the
                 // exact continuation replay reproduces.
                 self.machine
-                    .load_state_bytes(&initial_state)
+                    .console_mut()
+                    .load_state(&initial_state)
                     .map_err(|error| error.to_string())?;
                 self.capture = Some(Capture {
                     initial_state,
@@ -1209,7 +1166,8 @@ impl SessionEngine {
         let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
         let recording = Recording::from_bytes(&bytes).map_err(|error| error.to_string())?;
         self.machine
-            .load_state_bytes(&recording.initial_state)
+            .console_mut()
+            .load_state(&recording.initial_state)
             .map_err(|error| format!("replay could not restore: {error}"))?;
         self.replay = Some(ReplayPlayback::new(recording));
         Ok(())

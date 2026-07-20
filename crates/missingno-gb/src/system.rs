@@ -485,6 +485,93 @@ impl<M: ConsoleUi> GbDebugger<M> {
     }
 }
 
+impl<M: ConsoleUi + 'static> SystemConsole for GbDebugger<M>
+where
+    Console<M>: Send,
+{
+    /// One frame under the debugger: the breakpoints and watches still stop it,
+    /// and the host learns why only through [`SystemDebugger::run_frame`].
+    fn step_frame(&mut self) -> FrameOutcome {
+        FrameOutcome {
+            display: SystemDebugger::run_frame(self).into_frame(),
+            sram_dirty: false,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.core.reset();
+    }
+
+    fn uses_monochrome_palette(&self) -> bool {
+        M::MONOCHROME_PALETTE
+    }
+
+    fn set_control(&mut self, control: ControlId, input: ControlInput) {
+        let (Some(button), ControlInput::Digital(pressed)) = (button_for_control(control), input)
+        else {
+            return;
+        };
+        if pressed {
+            self.core.game_boy_mut().press_button(button);
+        } else {
+            self.core.game_boy_mut().release_button(button);
+        }
+    }
+
+    fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
+        self.core.game_boy_mut().drain_audio_samples()
+    }
+
+    fn audio_coupling(&self) -> Option<HighPass> {
+        Some(crate::board::audio_coupling())
+    }
+
+    fn screen_display(&self) -> Frame {
+        self.display(Some(self.core.game_boy().screen().clone()))
+            .expect("screen_display is always Some when given a screen")
+    }
+
+    fn video_out(&self) -> DisplayTechnology {
+        DisplayTechnology::Lcd {
+            native: crate::frame::NATIVE_SIZE,
+            panel: M::LCD_PANEL,
+            pixel_aspect: 1.0,
+        }
+    }
+
+    fn game_title(&self) -> String {
+        self.core.game_boy().cartridge().title().to_string()
+    }
+
+    fn battery_save(&self) -> Option<Vec<u8>> {
+        (self.battery_save)(self.core.game_boy().cartridge())
+    }
+
+    fn frame_interval(&self) -> Duration {
+        FRAME_INTERVAL
+    }
+
+    fn state_schema(&self) -> Option<&'static SystemStateSchema> {
+        M::state_schema()
+    }
+
+    fn read_state(&self) -> Option<StateRecord> {
+        M::read_state(self.core.game_boy())
+    }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        save_state_bytes(self.core.game_boy())
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> Result<(), StateError> {
+        load_state_into(self.core.game_boy_mut(), bytes)
+    }
+
+    fn into_debugger(self: Box<Self>) -> Box<dyn SystemDebugger> {
+        self
+    }
+}
+
 impl<M: ConsoleUi + 'static> SystemDebugger for GbDebugger<M>
 where
     Console<M>: Send,
@@ -503,7 +590,7 @@ where
         }
     }
 
-    fn step_frame(&mut self) -> StepOutcome {
+    fn run_frame(&mut self) -> StepOutcome {
         let screen = self.core.step_frame();
         // The core stops early (no completed frame) on a breakpoint or watch;
         // `last_watch_hit` names which, without changing the stop condition.
@@ -527,33 +614,8 @@ where
         self.core.step_tcycle();
     }
 
-    fn screen_display(&self) -> Frame {
-        self.display(Some(self.core.game_boy().screen().clone()))
-            .expect("screen_display is always Some when given a screen")
-    }
-
     fn frame_raw(&self) -> Option<RawFrame> {
         Some(M::raw_frame(self.core.game_boy()))
-    }
-
-    fn reset(&mut self) {
-        self.core.reset();
-    }
-
-    fn set_control(&mut self, control: ControlId, input: ControlInput) {
-        let (Some(button), ControlInput::Digital(pressed)) = (button_for_control(control), input)
-        else {
-            return;
-        };
-        if pressed {
-            self.core.game_boy_mut().press_button(button);
-        } else {
-            self.core.game_boy_mut().release_button(button);
-        }
-    }
-
-    fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
-        self.core.game_boy_mut().drain_audio_samples()
     }
 
     fn set_wave_capture(&mut self, on: bool) {
@@ -650,18 +712,6 @@ where
         self.core.game_boy()
     }
 
-    fn video_out(&self) -> DisplayTechnology {
-        DisplayTechnology::Lcd {
-            native: crate::frame::NATIVE_SIZE,
-            panel: M::LCD_PANEL,
-            pixel_aspect: 1.0,
-        }
-    }
-
-    fn audio_coupling(&self) -> Option<HighPass> {
-        Some(crate::board::audio_coupling())
-    }
-
     fn symbols(&self) -> Arc<SymbolTable> {
         self.core.symbols().clone()
     }
@@ -728,18 +778,6 @@ where
         }
     }
 
-    fn game_title(&self) -> String {
-        self.core.game_boy().cartridge().title().to_string()
-    }
-
-    fn battery_save(&self) -> Option<Vec<u8>> {
-        (self.battery_save)(self.core.game_boy().cartridge())
-    }
-
-    fn frame_interval(&self) -> Duration {
-        FRAME_INTERVAL
-    }
-
     fn capture_trace(&mut self, path: &Path) -> Option<Frame> {
         #[cfg(feature = "morepork")]
         {
@@ -751,22 +789,6 @@ where
             let _ = path;
             None
         }
-    }
-
-    fn state_schema(&self) -> Option<&'static SystemStateSchema> {
-        M::state_schema()
-    }
-
-    fn read_state(&self) -> Option<StateRecord> {
-        M::read_state(self.core.game_boy())
-    }
-
-    fn save_state(&self) -> Option<Vec<u8>> {
-        save_state_bytes(self.core.game_boy())
-    }
-
-    fn load_state(&mut self, bytes: &[u8]) -> Result<(), StateError> {
-        load_state_into(self.core.game_boy_mut(), bytes)
     }
 
     fn into_console(self: Box<Self>) -> Box<dyn SystemConsole> {

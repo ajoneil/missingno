@@ -1039,6 +1039,81 @@ impl VcsDebugger {
     }
 }
 
+impl SystemConsole for VcsDebugger {
+    /// One frame under the debugger: the breakpoints and watches still stop it,
+    /// and the host learns why only through [`SystemDebugger::run_frame`].
+    fn step_frame(&mut self) -> FrameOutcome {
+        FrameOutcome {
+            display: SystemDebugger::run_frame(self).into_frame(),
+            sram_dirty: false,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.core.console_mut().power_cycle();
+        self.refresh();
+    }
+
+    fn set_control(&mut self, control: ControlId, input: ControlInput) {
+        apply_control(self.core.console_mut(), control, input);
+    }
+
+    fn console_switches(&self) -> &'static [ConsoleSwitch] {
+        &CONSOLE_SWITCHES
+    }
+
+    fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
+        self.core.console_mut().drain_audio_samples()
+    }
+
+    fn audio_coupling(&self) -> Option<missingno_core::HighPass> {
+        Some(crate::board::AUDIO_COUPLING.high_pass())
+    }
+
+    fn screen_display(&self) -> VideoFrame {
+        VideoFrame::Indexed(self.last_frame.clone())
+    }
+
+    fn video_out(&self) -> DisplayTechnology {
+        DisplayTechnology::Crt {
+            standard: self.core.console().tv_standard(),
+            pixel_aspect: PIXEL_ASPECT,
+        }
+    }
+
+    fn game_title(&self) -> String {
+        self.title.clone()
+    }
+
+    fn frame_interval(&self) -> Duration {
+        frame_interval(self.core.console().tv_standard())
+    }
+
+    fn state_schema(&self) -> Option<&'static SystemStateSchema> {
+        Some(vcs_state_schema())
+    }
+
+    fn read_state(&self) -> Option<StateRecord> {
+        Some(crate::snapshot::read_state(self.core.console()))
+    }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        save_state_bytes(self.core.console(), &self.last_frame, &self.rom_sha256)
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> Result<(), StateError> {
+        let result = load_state_into(self.core.console_mut(), bytes, &self.rom_sha256);
+        if result.is_ok() {
+            self.refresh();
+        }
+        result
+    }
+
+    fn into_debugger(self: Box<Self>) -> Box<dyn SystemDebugger> {
+        self
+    }
+}
+
 impl SystemDebugger for VcsDebugger {
     fn step(&mut self) -> StepOutcome {
         let frame = self.core.step();
@@ -1054,7 +1129,7 @@ impl SystemDebugger for VcsDebugger {
         StepOutcome::Completed { frame: display }
     }
 
-    fn step_frame(&mut self) -> StepOutcome {
+    fn run_frame(&mut self) -> StepOutcome {
         use crate::debugger::Stop;
         let (frame, stop) = self.core.step_frame();
         let display = self.display(frame);
@@ -1077,27 +1152,6 @@ impl SystemDebugger for VcsDebugger {
     fn step_tick(&mut self) {
         self.core.console_mut().step_clock();
         self.refresh();
-    }
-
-    fn screen_display(&self) -> VideoFrame {
-        VideoFrame::Indexed(self.last_frame.clone())
-    }
-
-    fn reset(&mut self) {
-        self.core.console_mut().power_cycle();
-        self.refresh();
-    }
-
-    fn set_control(&mut self, control: ControlId, input: ControlInput) {
-        apply_control(self.core.console_mut(), control, input);
-    }
-
-    fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
-        self.core.console_mut().drain_audio_samples()
-    }
-
-    fn audio_coupling(&self) -> Option<missingno_core::HighPass> {
-        Some(crate::board::AUDIO_COUPLING.high_pass())
     }
 
     fn set_wave_capture(&mut self, on: bool) {
@@ -1176,13 +1230,6 @@ impl SystemDebugger for VcsDebugger {
         &self.inspect
     }
 
-    fn video_out(&self) -> DisplayTechnology {
-        DisplayTechnology::Crt {
-            standard: self.core.console().tv_standard(),
-            pixel_aspect: PIXEL_ASPECT,
-        }
-    }
-
     fn snapshot(&self, frame: u64) -> DebugView {
         let mut state = self.inspect.clone();
         state.frame = frame;
@@ -1211,34 +1258,6 @@ impl SystemDebugger for VcsDebugger {
             ),
             frame,
         }
-    }
-
-    fn game_title(&self) -> String {
-        self.title.clone()
-    }
-
-    fn frame_interval(&self) -> Duration {
-        frame_interval(self.core.console().tv_standard())
-    }
-
-    fn state_schema(&self) -> Option<&'static SystemStateSchema> {
-        Some(vcs_state_schema())
-    }
-
-    fn read_state(&self) -> Option<StateRecord> {
-        Some(crate::snapshot::read_state(self.core.console()))
-    }
-
-    fn save_state(&self) -> Option<Vec<u8>> {
-        save_state_bytes(self.core.console(), &self.last_frame, &self.rom_sha256)
-    }
-
-    fn load_state(&mut self, bytes: &[u8]) -> Result<(), StateError> {
-        let result = load_state_into(self.core.console_mut(), bytes, &self.rom_sha256);
-        if result.is_ok() {
-            self.refresh();
-        }
-        result
     }
 
     fn into_console(self: Box<Self>) -> Box<dyn SystemConsole> {

@@ -17,8 +17,7 @@ fn shared() -> SharedSession {
     let console = factory::create_console(Path::new("test.gb"), &rom)
         .expect("factory should not error")
         .expect("gb factory should claim a .gb ROM");
-    let debugger = console
-        .into_debugger();
+    let debugger = console.into_debugger();
     SharedSession::spawn(debugger)
 }
 

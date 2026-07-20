@@ -124,7 +124,7 @@ impl Session {
     /// it produced — the run-loop primitive. `step_frame` is this dropping the
     /// frame; the recorder and the frame slot need the frame itself.
     pub fn advance_frame(&mut self) -> (StopReason, Option<Frame>) {
-        let outcome = self.debugger.step_frame();
+        let outcome = self.debugger.run_frame();
         let completed_frame = matches!(
             &outcome,
             StepOutcome::Completed { frame: Some(_) } | StepOutcome::Breakpoint { frame: Some(_) }
@@ -193,7 +193,7 @@ impl Session {
                 self.debugger.set_control(event.control, event.input);
                 input_cursor += 1;
             }
-            let produced = self.debugger.step_frame().into_frame();
+            let produced = self.debugger.run_frame().into_frame();
             self.frame = frame + 1;
             if let Some(check) = recording.checks.get(check_cursor)
                 && check.frame == frame
@@ -423,6 +423,16 @@ impl Session {
     /// shared, thread-owned one.
     pub fn into_debugger(self) -> Box<dyn SystemDebugger> {
         self.debugger
+    }
+
+    /// The owned debugger as a plain console — the non-inspection surface a host
+    /// drives identically whether or not a debugger is hosting the machine.
+    pub fn console(&self) -> &dyn missingno_core::system::SystemConsole {
+        self.debugger.as_ref()
+    }
+
+    pub fn console_mut(&mut self) -> &mut dyn missingno_core::system::SystemConsole {
+        self.debugger.as_mut()
     }
 
     /// The owned debugger, borrowed — the seam a frontend reads to build an owned

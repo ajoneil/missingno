@@ -59,10 +59,13 @@ must provide:
 
 ## The two seam traits, and what they buy
 
-The whole seam is two object-safe traits in `missingno-core`'s `system.rs`. A
-family builds a `Box<dyn SystemConsole>`; the shell drives it, and converts it
-into a `Box<dyn SystemDebugger>` (`into_debugger`) whenever it wants the
-debugger surface.
+The whole seam is two object-safe traits in `missingno-core`'s `system.rs`.
+`SystemDebugger` extends `SystemConsole`, so a debugger *is* a console: the
+running, control, audio, screen and save-state surface is declared and
+implemented once, and the debugger trait adds only stepping and inspection on
+top. A family builds a `Box<dyn SystemConsole>`; the shell drives it, and
+converts it into a `Box<dyn SystemDebugger>` (`into_debugger`) whenever it wants
+the debugger surface.
 
 ### `SystemConsole` → the plain emulator and the session's run loop
 
@@ -93,7 +96,7 @@ surface on across both frontends:
 
 | Seam method(s) | Debugger surface it buys |
 |---|---|
-| `step` / `step_over` / `step_frame`, `set_breakpoint` / `clear_breakpoint` / `breakpoints` | stepping and PC breakpoints |
+| `step` / `step_over` / `run_frame`, `set_breakpoint` / `clear_breakpoint` / `breakpoints` | stepping and PC breakpoints (`run_frame` is `step_frame`'s stop-reporting counterpart) |
 | `tick_name` + `step_tick` | sub-instruction stepping (a Game Boy dot, a VCS colour clock) — advertised only when `tick_name` is `Some` |
 | `peek` + `memory_regions` | the memory hex dump and the named memory map |
 | `instruction_set` (a `missingno-core` `InstructionSet`) + `pc` | disassembly; `bank_for` / `present_address` / `locate_bank_window` add bank-prefixed and `bank:window` rows |

@@ -186,6 +186,53 @@ impl<S: SteppingSystem> SteppingDebugger<S> {
     }
 }
 
+impl<S: SteppingSystem> SystemConsole for SteppingDebugger<S> {
+    /// One frame under the debugger: the breakpoints still stop it, and the
+    /// host learns why only through [`SystemDebugger::run_frame`].
+    fn step_frame(&mut self) -> FrameOutcome {
+        FrameOutcome {
+            display: SystemDebugger::run_frame(self).into_frame(),
+            sram_dirty: false,
+        }
+    }
+
+    fn reset(&mut self) {
+        S::power_cycle(&mut self.core);
+        self.refresh();
+    }
+
+    fn set_control(&mut self, control: ControlId, input: ControlInput) {
+        S::apply_control(&mut self.core, control, input);
+    }
+
+    fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
+        S::drain_audio_samples(&mut self.core)
+    }
+
+    fn screen_display(&self) -> Frame {
+        Frame::Indexed(self.last_frame.clone())
+    }
+
+    fn video_out(&self) -> DisplayTechnology {
+        DisplayTechnology::Crt {
+            standard: TvStandard::Ntsc,
+            pixel_aspect: S::PIXEL_ASPECT,
+        }
+    }
+
+    fn game_title(&self) -> String {
+        self.title.clone()
+    }
+
+    fn frame_interval(&self) -> Duration {
+        S::FRAME_INTERVAL
+    }
+
+    fn into_debugger(self: Box<Self>) -> Box<dyn SystemDebugger> {
+        self
+    }
+}
+
 impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
     fn step(&mut self) -> StepOutcome {
         S::step_instruction(&mut self.core);
@@ -212,7 +259,7 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
         StepOutcome::Completed { frame: display }
     }
 
-    fn step_frame(&mut self) -> StepOutcome {
+    fn run_frame(&mut self) -> StepOutcome {
         let mut breakpoint_hit = false;
         let mut frame = None;
         for _ in 0..S::RUN_BUDGET {
@@ -233,23 +280,6 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
         } else {
             StepOutcome::Completed { frame: display }
         }
-    }
-
-    fn screen_display(&self) -> Frame {
-        Frame::Indexed(self.last_frame.clone())
-    }
-
-    fn reset(&mut self) {
-        S::power_cycle(&mut self.core);
-        self.refresh();
-    }
-
-    fn set_control(&mut self, control: ControlId, input: ControlInput) {
-        S::apply_control(&mut self.core, control, input);
-    }
-
-    fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
-        S::drain_audio_samples(&mut self.core)
     }
 
     fn set_breakpoint(&mut self, address: u32) {
@@ -288,13 +318,6 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
         S::sidebar_sections(&self.inspect)
     }
 
-    fn video_out(&self) -> DisplayTechnology {
-        DisplayTechnology::Crt {
-            standard: TvStandard::Ntsc,
-            pixel_aspect: S::PIXEL_ASPECT,
-        }
-    }
-
     fn snapshot(&self, frame: u64) -> DebugView {
         let pc = S::pc(&self.core);
         let base = pc.wrapping_sub(WINDOW_BEHIND);
@@ -314,14 +337,6 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
 
     fn running_status(&self, frame: u64) -> RunningStatus {
         S::running_status(&self.inspect, frame)
-    }
-
-    fn game_title(&self) -> String {
-        self.title.clone()
-    }
-
-    fn frame_interval(&self) -> Duration {
-        S::FRAME_INTERVAL
     }
 
     fn into_console(self: Box<Self>) -> Box<dyn SystemConsole> {

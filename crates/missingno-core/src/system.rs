@@ -271,16 +271,19 @@ impl StepOutcome {
     }
 }
 
-/// A console under a debugger: stepping, breakpoints, and inspection.
+/// A console under a debugger: stepping, breakpoints, and inspection. Every
+/// debugger is also a [`SystemConsole`], so a host drives it exactly as it
+/// drives a bare console and reaches for this surface only to inspect.
 ///
 /// Watchpoints, symbols, code/data logging, and trace capture default to
 /// absent — a family implements only the backends it has. Breakpoints and
 /// peeks cross the seam as `u32`; a core masks them to its own bus width.
-pub trait SystemDebugger: Send {
+pub trait SystemDebugger: SystemConsole {
     fn step(&mut self) -> StepOutcome;
     fn step_over(&mut self) -> StepOutcome;
-    /// Step until the next frame or a stop.
-    fn step_frame(&mut self) -> StepOutcome;
+    /// Run until the next frame or a stop — the debugger's counterpart to
+    /// [`SystemConsole::step_frame`], reporting why it stopped.
+    fn run_frame(&mut self) -> StepOutcome;
     /// The name of this core's sub-instruction step unit — a "dot" (T-cycle) on
     /// the Game Boy, a "colour clock" on the VCS — or `None` when the finest
     /// step the core exposes is a whole instruction. A transport offers
@@ -291,9 +294,6 @@ pub trait SystemDebugger: Send {
     /// Advance one sub-instruction tick (see [`tick_name`](Self::tick_name)).
     /// A core without sub-instruction granularity does nothing.
     fn step_tick(&mut self) {}
-    /// The current screen as it stands, without stepping — for screenshots
-    /// taken while paused.
-    fn screen_display(&self) -> Frame;
     /// The current frame in its pre-resolution domain (the values the accuracy
     /// references compare in), or `None` when the family has no such surface.
     /// Defaults to the palette indices of an indexed frame; a family whose
@@ -307,14 +307,6 @@ pub trait SystemDebugger: Send {
             }),
             _ => None,
         }
-    }
-    fn reset(&mut self);
-    fn set_control(&mut self, control: ControlId, input: ControlInput);
-    fn drain_audio_samples(&mut self) -> Vec<(f32, f32)>;
-    /// The coupling the console's board puts between its audio pads and the
-    /// jack; `None` for a family whose board has not been modelled.
-    fn audio_coupling(&self) -> Option<HighPass> {
-        None
     }
     /// Enable or disable per-channel waveform capture. Interest-gated: capture
     /// stays off — and costs nothing — until a consumer turns it on. A family
@@ -426,39 +418,13 @@ pub trait SystemDebugger: Send {
     /// the live console while paused.
     fn family_state(&self) -> &dyn Any;
 
-    fn game_title(&self) -> String;
-    fn battery_save(&self) -> Option<Vec<u8>> {
-        None
-    }
-    fn frame_interval(&self) -> Duration;
-    /// The display device this console drives: a fixed-size LCD, or a CRT.
-    fn video_out(&self) -> DisplayTechnology;
     /// Step one frame while writing an execution trace to `path`; `None` when
     /// the system has no capture backend or capture fails.
     fn capture_trace(&mut self, _path: &Path) -> Option<Frame> {
         None
     }
-    /// A serialized machine state, if the system has a save-state backend.
-    fn save_state(&self) -> Option<Vec<u8>> {
-        None
-    }
-    /// Restore a previously serialized machine state.
-    fn load_state(&mut self, _bytes: &[u8]) -> Result<(), StateError> {
-        Err(StateError::Unsupported)
-    }
-    /// The hardware-named state schema this core describes, if it authors one.
-    /// The save-state bridge and the trace writer key their records on its
-    /// fields; a core without a schema returns `None`.
-    fn state_schema(&self) -> Option<&'static SystemStateSchema> {
-        None
-    }
-    /// Read the current machine state into a record keyed by the schema's field
-    /// names — the bridge's capture side. `None` for a core without a schema or
-    /// before its bridge is wired.
-    fn read_state(&self) -> Option<StateRecord> {
-        None
-    }
 
+    /// Hand back a plain console, dropping the debugger's per-step bookkeeping.
     fn into_console(self: Box<Self>) -> Box<dyn SystemConsole>;
 }
 

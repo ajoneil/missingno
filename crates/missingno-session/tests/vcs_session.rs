@@ -31,8 +31,7 @@ fn session() -> Session {
     let console = factory::create_console(Path::new("test.a26"), &rom)
         .expect("factory should not error")
         .expect("vcs factory should claim an .a26 ROM");
-    let debugger = console
-        .into_debugger();
+    let debugger = console.into_debugger();
     Session::new(debugger)
 }
 
