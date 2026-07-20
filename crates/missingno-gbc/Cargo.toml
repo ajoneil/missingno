@@ -1,6 +1,6 @@
 [package]
 name = "missingno-gbc"
-version = "0.0.1"
+version.workspace = true
 authors = ["Andrew O'Neil <andy@andyofniall.net>"]
 edition = "2024"
 license = "MIT"

@@ -1,8 +1,8 @@
 //! A generic memory viewer pane, registered for every family. While paused it
 //! reads live through the seam's `memory_regions()` + `peek()`, showing a
-//! region picker and a scrollable hex/ASCII grid. While the core runs on the
-//! emulation thread the same browser renders from the interest window the emu
-//! thread peeks each vblank for the pane's current view: scrolling emits a new
+//! region picker and a scrollable hex/ASCII grid. While the machine free-runs
+//! the same browser renders from the interest window the session peeks each
+//! vblank for the pane's current view: scrolling emits a new
 //! interest and the bytes catch up next vblank, with a placeholder row where
 //! the published window doesn't yet cover the selection. A family with no
 //! region map falls back to the PC-anchored snapshot window.
@@ -26,9 +26,6 @@ const BYTES_PER_ROW: u32 = 16;
 const VISIBLE_ROWS: u32 = 16;
 /// One screen's worth of bytes — the bounded span copied per render.
 const VISIBLE_BYTES: u32 = BYTES_PER_ROW * VISIBLE_ROWS;
-/// Server-side ceiling on an interest span the emu thread peeks each vblank —
-/// the pane never asks for more than one screen, but the thread caps anyway.
-const MAX_INTEREST_LEN: u32 = 512;
 
 /// The memory pane's current view, owned by the pane and consulted by the
 /// context builder to copy the right bytes.
@@ -41,29 +38,11 @@ pub struct MemorySelection {
 }
 
 /// The span the running pane wants peeked each vblank: a base address and a
-/// length. The emu thread caps the length before reading through the seam.
+/// length. The session engine caps the length before reading through the seam.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MemoryInterest {
     pub start: u32,
     pub len: u32,
-}
-
-impl MemoryInterest {
-    /// The length actually read, bounded server-side.
-    fn capped_len(self) -> u32 {
-        self.len.min(MAX_INTEREST_LEN)
-    }
-
-    /// Peek the capped span through the seam, side-effect-free.
-    pub fn read_through(self, core: &dyn SystemDebugger) -> MemoryWindow {
-        let bytes = (0..self.capped_len())
-            .map(|i| core.peek(self.start.wrapping_add(i)))
-            .collect();
-        MemoryWindow {
-            base: self.start,
-            bytes,
-        }
-    }
 }
 
 /// What the memory panes render from this frame. All open instances share one
@@ -108,7 +87,7 @@ pub enum Message {
     JumpInput(String),
     Jump,
     /// The core's region map, pushed in so the pane's jump-to-address can
-    /// resolve while the core runs on the emu thread.
+    /// resolve while the machine free-runs.
     SetRegions(Vec<MemoryRegion>),
 }
 
@@ -128,7 +107,7 @@ fn window_range(region_start: u32, region_len: u32, offset: u32) -> (u32, u32, u
 }
 
 /// The interest span for a selection over a region list — the exact window the
-/// pane shows, so the emu thread peeks the same bytes. `None` with no regions.
+/// pane shows, so the session peeks the same bytes. `None` with no regions.
 pub fn interest_for(
     regions: &[MemoryRegion],
     selection: MemorySelection,
@@ -728,28 +707,6 @@ mod tests {
     }
 
     #[test]
-    fn interest_len_is_capped_server_side() {
-        // The pane never asks for more than a screen, but an oversized request
-        // is bounded before the peek.
-        assert_eq!(
-            MemoryInterest {
-                start: 0xC000,
-                len: 4096,
-            }
-            .capped_len(),
-            MAX_INTEREST_LEN
-        );
-        assert_eq!(
-            MemoryInterest {
-                start: 0xC000,
-                len: 64,
-            }
-            .capped_len(),
-            64
-        );
-    }
-
-    #[test]
     fn interest_short_region_shrinks_to_fit() {
         let regions = [region("oam", 0xFE00, 0xA0)];
         let interest = interest_for(
@@ -828,7 +785,7 @@ mod tests {
     #[test]
     fn each_pane_matches_its_own_window_by_base() {
         // The acceptance scenario: one pane on wram, one on the linear sram
-        // region; the emu thread peeks one window per interest and each pane
+        // region; the session peeks one window per interest and each pane
         // resolves its own by base.
         let regions = vec![
             region("wram", 0xC000, 0x2000),

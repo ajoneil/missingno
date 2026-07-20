@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use missingno_core::inspect::WatchTerm;
-use missingno_debugger::{Session, factory};
+use missingno_session::{Session, factory};
 
 fn value_term(key: &str, value: u32) -> WatchTerm {
     WatchTerm {

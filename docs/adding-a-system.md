@@ -7,9 +7,10 @@ claim here is checkable against the trait it names — trust the seams, but veri
 signatures against the source before building on them.
 
 The seam vocabulary and its behavioural traits live in **`missingno-core`**
-(`crates/missingno-core/src/`); the headless debugger that consumes them lives
-in **`missingno-debugger`**; the GUI's family-registration layer lives in
-**`crates/missingno/src/app/system/`**. Those three locations recur throughout.
+(`crates/missingno-core/src/`); the session component that hosts a machine and
+serves every client lives in **`missingno-session`**; the servers that publish it
+live in **`missingno-debugger`**; the GUI's family-registration layer lives in
+**`crates/missingno/src/app/system/`**. Those four locations recur throughout.
 
 ## Two different axes
 
@@ -64,12 +65,12 @@ into a `Box<dyn SystemDebugger>` (`into_debugger`, fallible — a family with no
 debugger backend hands the console back and the shell falls back to plain
 emulation).
 
-### `SystemConsole` → the plain emulator and the emu thread
+### `SystemConsole` → the plain emulator and the session's run loop
 
 `step_frame` (budgeted), `reset`, `set_control`, `drain_audio_samples` (44.1 kHz
 stereo — the seam's fixed rate), `screen_display`, `game_title`, `battery_save`,
 and `frame_interval` (the pacing loop's wall-clock). Everything the library, the
-emulator screen, and the emulation thread need. Optional surfaces —
+emulator screen, and the session's run loop need. Optional surfaces —
 `console_switches` (the VCS's difficulty/colour toggles), `uses_monochrome_palette`
 (the DMG palette picker), `audio_coupling` (the board's high-pass) — default to
 absent, so a family declares only what its hardware has.
@@ -81,7 +82,7 @@ Implement it and two debuggers light up with no further per-core code:
 - **The headless server (`missingno-debugger`).** Its transport-agnostic
   `Session` reads the console entirely through the seam; the HTTP transport
   (scripted/bulk access) and the MCP-over-stdio transport (interactive agent
-  use) are both purely generic `Session` calls, with no core-specific code
+  use) are both purely generic session calls, with no core-specific code
   outside the one-line factory registry. Registering a core there gives it
   every route and every tool at once.
 - **The GUI debugger.** Its pane grid renders exclusively from the typed
@@ -102,12 +103,35 @@ surface on across both frontends:
 | `set_wave_capture` + `channel_waves` | the audio scopes / `get_waveforms` — interest-gated, costing nothing until a consumer turns capture on |
 | `set_graphics_capture` + `graphics` (a `GraphicsView`: tile atlases, maps, an object table) | the graphics panes / `get_tiles` / `get_objects` — likewise interest-gated |
 | `symbols` / `add_symbol` / `cdl_window` + `load_sidecars` / `save_sidecars` | debug-symbol labels and the code/data-log data rows (no-ops for a family with no sidecars) |
-| `snapshot` → a `DebugView` (`Box<dyn InspectSnapshot>`) + `running_status` | the per-vblank running view the UI renders while the core runs on the emu thread, without owning the console |
+| `snapshot` → a `DebugView` (`Box<dyn InspectSnapshot>`) + `running_status` | the per-vblank running view every client renders while the machine free-runs, without owning the console |
 | `family_state` / `as_any_mut` | the family's own typed state, downcast by its panes and any headless extension routes |
 
 Everything above the family's own decode backends is generic. A family with a
 disassembler, a register file, and a memory map gets a working debugger; the
 graphics and audio surfaces come online as it fills their capture hooks.
+
+### The session hosts it: one machine, many clients
+
+Neither seam trait knows about hosting. `missingno-session` takes a
+`Box<dyn SystemConsole>` or `Box<dyn SystemDebugger>` and owns it permanently on
+its own thread as a `SharedSession`: it runs the paced free-run loop, publishes
+the latest frame, running status, per-vblank snapshot and memory windows, and
+serializes every client's commands through one queue. A core that fills the seam
+is hosted with no per-core code — and every client of that session comes with it:
+
+- **The app window** drives its game through a `SessionHandle` like any other
+  client; there is no separate emulation thread and no ownership handoff.
+- **Save states, recordings and deterministic replay** are session commands, so
+  a core that wires `save_state` / `load_state` gets recording capture, watchable
+  playback and checkpoint-verified replay without touching a transport.
+- **The agent tool surface** (`tools`) is the session's own, so registering a
+  core in the factory gives an agent its whole tool set over MCP-over-stdio and
+  over the attach socket alike.
+- **Attach** (`attach`, Unix domain socket) publishes a running session for
+  another process to join, so an agent drives the machine the app is showing
+  rather than a private copy of it. The app opens the socket only when its
+  external-clients setting is on; the standalone binary only with
+  `--allow-attach`.
 
 ### `video_out` → `DisplayTechnology` → authentic rendering
 
@@ -248,8 +272,9 @@ until a second family grows the equivalent:
    *Per-core methodology* table.
 2. **The seam impl** — either a `SteppingSystem` impl for a simple stepping
    core, or hand-written `SystemConsole` + `SystemDebugger` impls where the core
-   has its own debugger backend. Registering the core in `missingno-debugger`'s
-   factory (`factory.rs`) gives it the whole headless server.
+   has its own debugger backend. Registering the core in `missingno-session`'s
+   factory (`factory.rs`) gives it session hosting, both servers, the agent tool
+   surface, and attach.
 3. **`video_out`** returning the right `DisplayTechnology`, and a palette table
    (or RGBA-producing frame) plus the family's reading of the shared control ids.
 4. **The state schema** — a `SystemStateSchema`, `state_schema` / `read_state`,

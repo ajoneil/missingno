@@ -2969,10 +2969,10 @@ dependencies = [
  "libc",
  "missingno-6502",
  "missingno-core 0.1.0",
- "missingno-debugger",
  "missingno-gb",
  "missingno-gbc",
  "missingno-nes",
+ "missingno-session",
  "missingno-sms",
  "missingno-vcs",
  "open",
@@ -2987,7 +2987,6 @@ dependencies = [
  "sha1",
  "smol",
  "tar",
- "tiny_http",
  "ureq",
  "zstd",
 ]
@@ -3020,24 +3019,18 @@ dependencies = [
 
 [[package]]
 name = "missingno-debugger"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "missingno-core 0.1.0",
- "missingno-gb",
- "missingno-gbc",
- "missingno-nes",
- "missingno-sms",
- "missingno-vcs",
- "png 0.18.1",
+ "missingno-session",
  "rgb",
- "serde",
  "serde_json",
  "tiny_http",
 ]
 
 [[package]]
 name = "missingno-gb"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bitflags 2.11.1",
  "missingno-core 0.1.0",
@@ -3050,7 +3043,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-gbc"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "missingno-core 0.1.0",
  "missingno-gb",
@@ -3068,6 +3061,21 @@ dependencies = [
  "morepork",
  "rgb",
  "sha2 0.11.0",
+]
+
+[[package]]
+name = "missingno-session"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "missingno-core 0.1.0",
+ "missingno-gb",
+ "missingno-gbc",
+ "missingno-nes",
+ "missingno-sms",
+ "missingno-vcs",
+ "png 0.18.1",
+ "serde_json",
 ]
 
 [[package]]

@@ -52,6 +52,7 @@ pub enum Message {
     SetHasheousEnabled(bool),
     SetHomebrewHubEnabled(bool),
     SetCartridgeRwEnabled(bool),
+    SetAllowExternalClients(bool),
     StartListening(ListeningFor),
     CaptureBinding(String),
     ClearBinding,
@@ -427,6 +428,20 @@ fn general_section(settings: &super::Settings) -> Element<'_, app::Message> {
         );
     }
 
+    let external = column![
+        toggler(settings.allow_external_clients)
+            .label("Allow external debugger clients")
+            .on_toggle(|enabled| Message::SetAllowExternalClients(enabled).into())
+            .size(m()),
+        text(
+            "Lets a debugger or agent signed in as you attach to the running game and drive it \
+             — whatever it does shows in this window. While this is off, nothing outside \
+             Missingno can reach a game."
+        )
+        .color(MUTED),
+    ]
+    .spacing(s());
+
     let mut directories = column![].spacing(s());
 
     for (i, dir) in settings.rom_directories.iter().enumerate() {
@@ -466,6 +481,9 @@ fn general_section(settings: &super::Settings) -> Element<'_, app::Message> {
         horizontal_rule(),
         app_text::label("Network"),
         network,
+        horizontal_rule(),
+        app_text::label("External Clients"),
+        external,
         horizontal_rule(),
         app_text::label("ROM Folders"),
         directories,

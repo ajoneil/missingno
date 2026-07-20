@@ -11,7 +11,6 @@ use crate::app::{
     self,
     console::ConsoleColors,
     debugger::{self},
-    emu_thread::RunningStatus,
     screen::iced_color,
     ui::{
         fonts,
@@ -21,6 +20,7 @@ use crate::app::{
     },
 };
 use missingno_core::inspect;
+use missingno_core::system::RunningStatus;
 use missingno_gb::ppu::types::palette::{Palette, PaletteIndex, PaletteMap};
 
 /// Monospace text size for register labels and values.

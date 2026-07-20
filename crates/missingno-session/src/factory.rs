@@ -3,8 +3,8 @@
 //! that builds a `Box<dyn SystemConsole>`; everything downstream is generic.
 //!
 //! Entries are feature-gated, so a build carries only the cores it selected.
-//! Off-chip Game Boy peripherals (serial link, printer, boot ROM, battery
-//! save) are frontend policy — the headless factory constructs without them.
+//! Off-chip Game Boy peripherals (serial link, printer, battery save) are
+//! frontend policy — this factory constructs without them.
 
 use std::path::Path;
 
@@ -17,13 +17,16 @@ pub type IsRom = fn(&Path, &[u8]) -> bool;
 pub type Create = fn(&Path, &[u8], &LoadOptions) -> Option<Box<dyn SystemConsole>>;
 
 /// Optional construction overrides a core may honour. Generic by design: a core
-/// that does not recognise an option ignores it. The one option so far is the
-/// broadcast standard, which only the Atari VCS core reads.
+/// that does not recognise an option ignores it.
 #[derive(Clone, Default)]
 pub struct LoadOptions {
     /// A broadcast-standard override ("ntsc"/"pal"/"secam", case-insensitive);
-    /// `None` lets the core auto-detect.
+    /// `None` lets the core auto-detect. Read by the Atari VCS core.
     pub tv_standard: Option<String>,
+    /// A boot ROM's contents, so a session can observe the boot sequence
+    /// rather than the post-boot state the core otherwise seeds. Read by the
+    /// Game Boy family.
+    pub boot_rom: Option<Vec<u8>>,
 }
 
 /// A registered core: how its media is recognised, and how a console is built.
@@ -50,7 +53,7 @@ mod gb {
     use missingno_core::system::SystemConsole;
     use missingno_gb::cartridge::Cartridge;
     use missingno_gb::system::GbConsole;
-    use missingno_gb::{GameBoy, media};
+    use missingno_gb::{BootRom, GameBoy, media};
     use missingno_gbc::GameBoyColor;
 
     /// The headless build persists no battery save; the format is frontend
@@ -64,17 +67,31 @@ mod gb {
     pub fn create(
         _path: &Path,
         rom: &[u8],
-        _options: &LoadOptions,
+        options: &LoadOptions,
     ) -> Option<Box<dyn SystemConsole>> {
         let cartridge = Cartridge::new(rom.to_vec(), None);
+        let boot_rom = boot_rom_for(options, cartridge.is_cgb());
         Some(if cartridge.is_cgb() {
             Box::new(GbConsole::new(
-                GameBoyColor::new(cartridge, None),
+                GameBoyColor::new(cartridge, boot_rom),
                 no_battery,
             ))
         } else {
-            Box::new(GbConsole::new(GameBoy::new(cartridge, None), no_battery))
+            Box::new(GbConsole::new(
+                GameBoy::new(cartridge, boot_rom),
+                no_battery,
+            ))
         })
+    }
+
+    /// A boot ROM only boots the model it was dumped from, so one that does not
+    /// match the core the header selected is dropped rather than forced on it.
+    fn boot_rom_for(options: &LoadOptions, cgb_core: bool) -> Option<BootRom> {
+        let boot_rom = BootRom::from_bytes(options.boot_rom.clone()?).ok()?;
+        match (&boot_rom, cgb_core) {
+            (BootRom::Dmg(_), true) | (BootRom::Cgb(_), false) => None,
+            _ => Some(boot_rom),
+        }
     }
 
     pub fn is_rom(path: &Path, rom: &[u8]) -> bool {
@@ -200,8 +217,8 @@ pub fn create_console(path: &Path, rom: &[u8]) -> Result<Option<Box<dyn SystemCo
     create_console_with(path, rom, &LoadOptions::default())
 }
 
-/// Build a console, passing construction options a core may honour (the
-/// broadcast standard, for the VCS). Recognition is unaffected by the options.
+/// Build a console, passing construction options a core may honour.
+/// Recognition is unaffected by the options.
 pub fn create_console_with(
     path: &Path,
     rom: &[u8],

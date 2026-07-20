@@ -89,13 +89,11 @@ dbg_stop            # Kills the server cleanly
 
 `dbg_start` works for ANY core's ROM (the factory recognises it), launches `missingno-debugger` on port 3333, polls `/status` for readiness, and prints "ready" or fails. **Never manage the server process manually** — no `cargo run &`, no `pkill`, no `lsof`.
 
-**Boot ROM.** If the investigation needs boot state, ask the user for a DMG boot ROM path (proprietary — never in the repo), then start the server through the frontend binary, which wires the flag:
+**Boot ROM.** If the investigation needs boot state, ask the user for a DMG boot ROM path (proprietary — never in the repo) and pass it as `dbg_start`'s second argument:
 ```bash
-dbg_stop 2>/dev/null
-cargo run -- "$rom_path" --headless --boot-rom "$boot_rom_path" &>/dev/null &
-DBG_PID=$!
-# Then poll /status for readiness as dbg_start does
+dbg_start "$rom_path" "$boot_rom_path"
 ```
+The machine then starts at PC 0x0000 in the boot ROM rather than at the post-boot state.
 
 ### ROM paths
 

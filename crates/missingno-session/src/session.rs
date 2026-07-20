@@ -6,7 +6,9 @@
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::time::Duration;
 
+use missingno_core::HighPass;
 use missingno_core::cdl::CdlWindow;
 use missingno_core::disasm::{ReadMemory, Row, window_after};
 use missingno_core::graphics::GraphicsView;
@@ -14,8 +16,10 @@ use missingno_core::inspect::{
     MemoryRegion, RegisterGroup, Section, Watch, WatchParam, WatchTerm, Watchable,
 };
 use missingno_core::symbols::SymbolTable;
-use missingno_core::system::{ControlId, ControlInput, RunningStatus, StepOutcome, SystemDebugger};
-use missingno_core::video::{DisplayTechnology, RawFrame, RgbaFrame};
+use missingno_core::system::{
+    ControlId, ControlInput, DebugView, RunningStatus, StateError, StepOutcome, SystemDebugger,
+};
+use missingno_core::video::{DisplayTechnology, Frame, RawFrame, RgbaFrame};
 use missingno_core::waveform::ChannelWave;
 
 /// Why the last stepping call returned. The transport-carried form of
@@ -113,8 +117,29 @@ impl Session {
     }
 
     pub fn step_frame(&mut self) -> StopReason {
+        self.advance_frame().0
+    }
+
+    /// Step one frame and hand back both the stop reason and the display frame
+    /// it produced — the run-loop primitive. `step_frame` is this dropping the
+    /// frame; the recorder and the frame slot need the frame itself.
+    pub fn advance_frame(&mut self) -> (StopReason, Option<Frame>) {
         let outcome = self.debugger.step_frame();
-        self.record(outcome)
+        let completed_frame = matches!(
+            &outcome,
+            StepOutcome::Completed { frame: Some(_) } | StepOutcome::Breakpoint { frame: Some(_) }
+        );
+        if completed_frame {
+            self.frame += 1;
+        }
+        let (reason, frame) = match outcome {
+            StepOutcome::Completed { frame } => (StopReason::Completed, frame),
+            StepOutcome::Breakpoint { frame } => (StopReason::Breakpoint, frame),
+            StepOutcome::WatchHit(watch) => (StopReason::Watch(watch), None),
+            StepOutcome::BudgetExhausted => (StopReason::BudgetExhausted, None),
+        };
+        self.last_stop = reason.clone();
+        (reason, frame)
     }
 
     /// The name of this core's sub-instruction step unit, or `None` when the
@@ -140,27 +165,6 @@ impl Session {
         self.debugger.reset();
         self.frame = 0;
         self.last_stop = StopReason::Completed;
-    }
-
-    /// Write the current machine state to `path` as a save file. Errors when the
-    /// system has no save-state backend or the file cannot be written.
-    pub fn save_state(&self, path: &std::path::Path) -> Result<(), String> {
-        let bytes = self
-            .debugger
-            .save_state()
-            .ok_or("this system has no save-state backend")?;
-        std::fs::write(path, bytes).map_err(|error| format!("could not write {path:?}: {error}"))
-    }
-
-    /// Restore the machine state from a save file at `path`. Errors (never
-    /// panics) on a missing file, a state for a different system or ROM, an
-    /// unsupported version, or a corrupt file.
-    pub fn load_state(&mut self, path: &std::path::Path) -> Result<(), String> {
-        let bytes =
-            std::fs::read(path).map_err(|error| format!("could not read {path:?}: {error}"))?;
-        self.debugger
-            .load_state(&bytes)
-            .map_err(|error| error.to_string())
     }
 
     /// Replay an input recording from `path`: restore its initial state, then
@@ -360,6 +364,80 @@ impl Session {
             })
             .collect();
         Ok(lines)
+    }
+
+    /// Wall-clock duration of one emulated frame, for the run loop's pacing.
+    pub fn frame_interval(&self) -> Duration {
+        self.debugger.frame_interval()
+    }
+
+    /// An owned per-vblank inspection snapshot, published to the run loop's
+    /// snapshot slot while free-running.
+    pub fn snapshot(&self) -> DebugView {
+        self.debugger.snapshot(self.frame)
+    }
+
+    /// Drain the console's pending stereo samples — the run loop pulls these
+    /// each frame so the audio buffer cannot grow unbounded.
+    pub fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
+        self.debugger.drain_audio_samples()
+    }
+
+    /// The coupling the console's board puts between its audio pads and the jack.
+    pub fn audio_coupling(&self) -> Option<HighPass> {
+        self.debugger.audio_coupling()
+    }
+
+    /// A serialized machine state in memory, if the system has a backend. The
+    /// recorder's initial state and the run loop's boundary checks read this.
+    pub fn save_state_bytes(&self) -> Option<Vec<u8>> {
+        self.debugger.save_state()
+    }
+
+    /// Whether the system has a save-state backend at all — it authors a state
+    /// schema. A `None` from [`save_state_bytes`](Self::save_state_bytes) on a
+    /// backend-having console is a transient off-boundary miss, not "no backend".
+    pub fn has_state_backend(&self) -> bool {
+        self.debugger.state_schema().is_some()
+    }
+
+    /// The display frame as it currently stands — the screenshot source and the
+    /// frame the run loop publishes.
+    pub fn display_frame(&self) -> Frame {
+        self.debugger.screen_display()
+    }
+
+    /// The battery-backed RAM contents to persist, or `None` when the cart has
+    /// no battery.
+    pub fn battery_save(&self) -> Option<Vec<u8>> {
+        self.debugger.battery_save()
+    }
+
+    /// Restore a serialized machine state from memory (the recorder re-seats the
+    /// console from its own captured state so the timeline is self-consistent).
+    pub fn load_state_bytes(&mut self, bytes: &[u8]) -> Result<(), StateError> {
+        self.debugger.load_state(bytes)
+    }
+
+    /// Hand back the owned debugger — the seam by which a bare session becomes a
+    /// shared, thread-owned one.
+    pub fn into_debugger(self) -> Box<dyn SystemDebugger> {
+        self.debugger
+    }
+
+    /// The owned debugger, borrowed — the seam a frontend reads to build an owned
+    /// paused readout (colours, disassembly rows, graphics) from within a
+    /// [`with_session`](crate::SessionHandle::with_session) closure, using the
+    /// same inspection surface the panes render from.
+    pub fn debugger(&self) -> &dyn SystemDebugger {
+        self.debugger.as_ref()
+    }
+
+    /// The owned debugger, mutably — for the mutating inspection commands a
+    /// frontend drives through a `with_session` closure that the typed `Session`
+    /// surface does not wrap (user labels, trace capture).
+    pub fn debugger_mut(&mut self) -> &mut dyn SystemDebugger {
+        self.debugger.as_mut()
     }
 }
 

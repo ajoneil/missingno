@@ -1,6 +1,6 @@
 //! The seam between the system-agnostic app shell and an emulated system.
 //!
-//! The app (library, emulator shell, emu thread, debugger UI) drives a console
+//! The app (library, emulator shell, session client, debugger UI) drives a console
 //! through these object-safe traits; each system family implements them once,
 //! in its own submodule, and registers in its factory. Adding a system means
 //! adding a submodule — not extending parallel dispatch enums.
@@ -8,8 +8,7 @@
 use std::path::Path;
 
 pub use missingno_core::system::{
-    ConsoleSwitch, ControlId, ControlInput, FrameOutcome, StepOutcome, SystemConsole,
-    SystemDebugger,
+    ConsoleSwitch, ControlId, ControlInput, SystemConsole, SystemDebugger,
 };
 
 pub mod gb;

@@ -1,17 +1,19 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use missingno_core::{HighPass, OnePoleHighPass};
+use missingno_session::AudioSink;
 
 const SAMPLE_RATE: u32 = 44_100;
 
-/// The device end of the audio path. It plays what a console's board delivers
-/// to the jack, so the only stage here is that board's coupling — which the
-/// console states and this retunes to whenever the machine changes.
+/// The device end of the audio path. The `!Send` cpal [`cpal::Stream`] lives
+/// here on the UI thread for the process's life; the session thread that
+/// produces samples holds only the [`AudioSink`] half. Dropping this stops the
+/// stream — done on the UI thread, so the OS backend never calls the callback
+/// into freed memory.
 pub struct AudioOutput {
     _stream: cpal::Stream,
-    producer: rtrb::Producer<(f32, f32)>,
-    coupling: Option<Coupling>,
 }
 
+/// The board coupling applied to a console's samples before they reach the jack.
 struct Coupling {
     spec: HighPass,
     left: OnePoleHighPass,
@@ -19,7 +21,12 @@ struct Coupling {
 }
 
 impl AudioOutput {
-    pub fn new() -> Option<Self> {
+    /// Open the default output device, returning the UI-thread stream holder and
+    /// the [`AudioSink`] that pushes a console's samples into it through the
+    /// board coupling. `None` when no device is available. The sink owns the
+    /// ring-buffer producer and the coupling filters, so it moves into the
+    /// session thread; the stream stays here.
+    pub fn open() -> Option<(Self, AudioSink)> {
         let host = cpal::default_host();
         let device = host.default_output_device()?;
 
@@ -29,7 +36,7 @@ impl AudioOutput {
             buffer_size: cpal::BufferSize::Default,
         };
 
-        let (producer, mut consumer) = rtrb::RingBuffer::new(4096);
+        let (mut producer, mut consumer) = rtrb::RingBuffer::new(4096);
 
         let stream = device
             .build_output_stream(
@@ -48,38 +55,35 @@ impl AudioOutput {
 
         stream.play().ok()?;
 
-        Some(Self {
-            _stream: stream,
-            producer,
-            coupling: None,
-        })
-    }
-
-    /// Play a console's samples through the coupling its board provides. A
-    /// board the console does not describe leaves the samples untouched.
-    pub fn push_samples(&mut self, samples: &[(f32, f32)], coupling: Option<HighPass>) {
-        self.tune(coupling);
-        for &(left, right) in samples {
-            let played = match &mut self.coupling {
-                Some(coupling) => (coupling.left.process(left), coupling.right.process(right)),
-                None => (left, right),
-            };
-            let _ = self.producer.push(played);
-        }
-    }
-
-    /// Rebuild the filters when the machine on the other end changes; holding
-    /// them steady otherwise keeps each one's charge across the stream.
-    fn tune(&mut self, spec: Option<HighPass>) {
-        if self.coupling.as_ref().map(|coupling| coupling.spec) == spec {
-            return;
-        }
-        self.coupling = spec.map(|spec| Coupling {
-            spec,
-            left: spec.at_sample_rate(SAMPLE_RATE as f32),
-            right: spec.at_sample_rate(SAMPLE_RATE as f32),
+        // The sink holds the coupling across calls (a filter keeps its charge),
+        // rebuilding only when the console on the other end changes.
+        let mut coupling: Option<Coupling> = None;
+        let sink: AudioSink = Box::new(move |samples, spec| {
+            tune(&mut coupling, spec);
+            for (left, right) in samples {
+                let played = match &mut coupling {
+                    Some(coupling) => (coupling.left.process(left), coupling.right.process(right)),
+                    None => (left, right),
+                };
+                let _ = producer.push(played);
+            }
         });
+
+        Some((Self { _stream: stream }, sink))
     }
+}
+
+/// Rebuild the coupling filters when the machine changes; holding them steady
+/// otherwise keeps each one's charge across the stream.
+fn tune(coupling: &mut Option<Coupling>, spec: Option<HighPass>) {
+    if coupling.as_ref().map(|coupling| coupling.spec) == spec {
+        return;
+    }
+    *coupling = spec.map(|spec| Coupling {
+        spec,
+        left: spec.at_sample_rate(SAMPLE_RATE as f32),
+        right: spec.at_sample_rate(SAMPLE_RATE as f32),
+    });
 }
 
 #[cfg(test)]

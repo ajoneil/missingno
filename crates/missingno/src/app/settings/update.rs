@@ -40,6 +40,13 @@ pub(in crate::app) fn handle(
             app.settings.homebrew_hub_enabled = enabled;
             app.settings.save();
         }
+        super::view::Message::SetAllowExternalClients(enabled) => {
+            app.settings.allow_external_clients = enabled;
+            app.settings.save();
+            // Takes effect on the running game immediately: turning it off
+            // unpublishes the socket rather than waiting for the next load.
+            app.publish_session();
+        }
         super::view::Message::PickRomDirectory => {
             let dialog = rfd::AsyncFileDialog::new();
             return Task::perform(dialog.pick_folder(), |folder| match folder {

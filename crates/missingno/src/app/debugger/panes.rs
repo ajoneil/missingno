@@ -668,8 +668,8 @@ impl DebuggerPanes {
     }
 
     /// The pane grid, rendered from the live console while paused or the
-    /// per-vblank snapshot while the core runs on the emu thread. Without a
-    /// context (core away, no snapshot yet) panes show placeholders — except
+    /// per-vblank snapshot while the machine free-runs. Without a context (no
+    /// readout or snapshot yet) panes show placeholders — except
     /// the screen, which always renders its own live frame.
     pub fn view<'a>(&'a self, ctx: Option<PaneContext<'_>>) -> Element<'a, app::Message> {
         if let Some(panes) = &self.panes {

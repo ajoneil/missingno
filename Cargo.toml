@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/missingno",
     "crates/missingno-debugger",
+    "crates/missingno-session",
     "crates/missingno-gb",
     "crates/missingno-gbc",
     "crates/missingno-core",
@@ -15,12 +16,18 @@ members = [
 default-members = [
     "crates/missingno",
     "crates/missingno-debugger",
+    "crates/missingno-session",
     "crates/missingno-gb",
     "crates/missingno-gbc",
     "crates/missingno-core",
     "crates/missingno-6502",
     "crates/missingno-vcs",
 ]
+
+# One version for every library crate, so they cannot drift apart. The app sets
+# its own — it ships to people and versions by calendar.
+[workspace.package]
+version = "0.1.0"
 
 [workspace.dependencies]
 bitflags = "2.11.1"

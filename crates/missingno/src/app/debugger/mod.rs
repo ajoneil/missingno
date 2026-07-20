@@ -1,4 +1,5 @@
 use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
 
 use iced::{
     Element, Length, Task,
@@ -6,25 +7,26 @@ use iced::{
     widget::{Column, button, column, container, pane_grid, pick_list, row, text, text_input},
 };
 
-use crate::app::system::{ControlId, ControlInput, Platform, StepOutcome};
+use missingno_session::SessionHandle;
+
+use crate::app::system::Platform;
 use crate::app::{
     self,
     console::ConsoleColors,
-    emu_thread::{DebuggerPayload, EmuCommand, EmuHandle, RunningStatus},
-    emulator::{Emulator, Presentation},
-    library::activity::{CaptureOptions, FrameCapture},
     screen::{Frame, ScreenView},
-    system::{SystemConsole, SystemDebugger},
     ui::{
         fonts, icons, palette,
         sizes::{s, xs},
     },
 };
 use missingno_core::graphics::GraphicsView;
-use missingno_core::inspect::{MemoryRegion, MemoryWindow, Watch, WatchTerm};
-use missingno_core::symbols::Symbol;
+use missingno_core::inspect::{MemoryRegion, MemoryWindow, Section, Watch, WatchTerm};
+use missingno_core::symbols::{Symbol, SymbolTable};
+use missingno_core::system::RunningStatus;
+use missingno_core::waveform::ChannelWave;
 use missingno_gb::ppu::types::palette::PaletteChoice;
 
+use disassembly::DisasmReadout;
 use inspect::DebugView;
 use panes::{DebuggerPanes, PaneContext};
 use sidebar::Sidebar;
@@ -128,40 +130,62 @@ impl From<Message> for super::Message {
     }
 }
 
+/// The owned paused inspection readout, built in one [`SessionHandle::with_session`]
+/// round-trip and cached so `view` (which borrows `&self`) can render the panes
+/// from data that lives in the shell. Rebuilt at every core-mutation point;
+/// absent while the session free-runs (the snapshot path renders instead).
+struct PausedReadout {
+    /// The Game Boy family's render palettes, `None` for other families.
+    colors: Option<ConsoleColors>,
+    /// One live-peek window per open memory pane, in selection order, each keyed
+    /// by its base so a pane matches its own.
+    memory_windows: Vec<MemoryWindow>,
+    /// The disassembly rows, present only when a disassembly pane is open.
+    disasm: Option<DisasmReadout>,
+    /// The frozen per-channel waveform tail, `None` unless capture is on.
+    waves: Option<Vec<ChannelWave>>,
+    /// The decoded graphics surfaces, `None` unless graphics capture is on.
+    graphics: Option<GraphicsView>,
+    /// The structured machine-state sidebar sections.
+    sidebar: Vec<Section>,
+    /// The symbol table for the labels panel.
+    symbols: Arc<SymbolTable>,
+    /// The last watch the core stopped on, for the watchpoints panel.
+    last_watch_hit: Option<Watch>,
+}
+
 pub struct Debugger {
-    /// The core (console + breakpoints) — `None` while it runs on the emu thread.
-    debugger: Option<Box<dyn SystemDebugger>>,
+    /// The client handle onto the session that owns this game's debugger core.
+    handle: SessionHandle,
     /// Where the ROM's debug sidecars (.sym, .cdl) live; set on load.
     rom_path: Option<std::path::PathBuf>,
     /// The platform this debugger presents, captured at load; keys the pane
     /// registry and layout persistence.
     platform: Platform,
-    /// UI copy of the breakpoint set, kept editable while the core is away.
-    /// Held as bus addresses; a core masks to its own width.
+    /// UI copy of the breakpoint set, a display cache refreshed from the
+    /// session. Held as bus addresses; a core masks to its own width.
     breakpoints: BTreeSet<u32>,
-    /// UI copy of the watchpoint list, kept editable while the core is away.
+    /// UI copy of the watchpoint list, a display cache refreshed from the session.
     watchpoints: Vec<Watch>,
-    /// Lightweight status published every frame while the core is away; feeds
-    /// the sidebar summary until the first full snapshot lands.
+    /// Lightweight status published every frame while free-running; feeds the
+    /// sidebar summary until the first full snapshot lands.
     last_status: Option<RunningStatus>,
     /// The per-vblank inspection snapshot the running panes render from.
     /// Boxed — a snapshot carries a full VRAM copy and shouldn't inflate the
     /// paused-path `Debugger` (and the `Game` enum) by that much.
     last_snapshot: Option<DebugView>,
     /// The memory viewer's interest window as of the last vblank, fed by the
-    /// emu thread while the core runs; drives the running memory browser.
+    /// session while free-running; drives the running memory browser.
     last_memory_windows: Vec<MemoryWindow>,
     /// The core's region map, cached at build so the memory pane's running
-    /// browser and jump-to-address work while the core is away. Owned because
-    /// it is cart-dependent (a board with RAM adds a region).
+    /// browser and jump-to-address work while the session free-runs. Owned
+    /// because it is cart-dependent (a board with RAM adds a region).
     memory_regions: Vec<MemoryRegion>,
-    /// The paused decode of the core's graphics surfaces, rebuilt only when
-    /// emulation advances (or capture toggles) rather than on every redraw.
-    /// `None` unless a graphics pane has capture on.
-    graphics: Option<GraphicsView>,
+    /// The owned paused readout the panes render from while paused; `None` while
+    /// free-running (the snapshot path renders instead).
+    paused: Option<PausedReadout>,
     sidebar: Sidebar,
     panes: DebuggerPanes,
-    running: bool,
     frame: u64,
     bottom_panes: Option<pane_grid::State<BottomPanel>>,
     bottom_handles: HashMap<BottomPanel, pane_grid::Pane>,
@@ -172,10 +196,6 @@ pub struct Debugger {
     label_address_input: String,
     label_name_input: String,
 }
-
-/// A console handed back by a system with no debugger backend, with the
-/// screen view that was to be carried over.
-pub type ReturnedConsole = Box<(Box<dyn SystemConsole>, ScreenView)>;
 
 /// The panes a platform presents. Every platform whose debugger this build can
 /// construct registers a family behind the same feature gate.
@@ -212,38 +232,19 @@ fn parse_disasm_jump(input: &str) -> Option<DisasmJump> {
 }
 
 impl Debugger {
+    /// Build a shell over the session hosting a debugger core. `screen_view`
+    /// carries the console's technology (fresh from a cold load, or transferred
+    /// across a debugger toggle). Builds the initial paused readout so the first
+    /// view has data.
     pub fn new(
-        console: Box<dyn SystemConsole>,
+        handle: SessionHandle,
         platform: Platform,
-    ) -> Result<Self, Box<dyn SystemConsole>> {
-        // Seed the screen pane with the console's stated technology so a
-        // debugger opened cold still renders at the right aspect and persistence.
-        let mut screen_view = ScreenView::new();
-        screen_view.set_technology(console.video_out());
-        console.into_debugger().map(|core| {
-            let panes = DebuggerPanes::with_screen(pane_family(platform), screen_view);
-            Self::build(core, panes, platform)
-        })
-    }
-
-    pub fn from_console(
-        console: Box<dyn SystemConsole>,
+        memory_regions: Vec<MemoryRegion>,
         screen_view: ScreenView,
-        platform: Platform,
-    ) -> Result<Self, ReturnedConsole> {
-        match console.into_debugger() {
-            Ok(core) => {
-                let panes = DebuggerPanes::with_screen(pane_family(platform), screen_view);
-                Ok(Self::build(core, panes, platform))
-            }
-            Err(console) => Err(Box::new((console, screen_view))),
-        }
-    }
-
-    fn build(core: Box<dyn SystemDebugger>, panes: DebuggerPanes, platform: Platform) -> Self {
-        let memory_regions = core.memory_regions();
-        Self {
-            debugger: Some(core),
+    ) -> Self {
+        let panes = DebuggerPanes::with_screen(pane_family(platform), screen_view);
+        let mut this = Self {
+            handle,
             rom_path: None,
             platform,
             breakpoints: BTreeSet::new(),
@@ -252,10 +253,9 @@ impl Debugger {
             last_snapshot: None,
             last_memory_windows: Vec::new(),
             memory_regions,
-            graphics: None,
+            paused: None,
             sidebar: Sidebar::new(),
             panes,
-            running: false,
             frame: 0,
             bottom_panes: None,
             bottom_handles: HashMap::new(),
@@ -265,128 +265,101 @@ impl Debugger {
             watchpoint_kind: AccessKind::Write,
             label_address_input: String::new(),
             label_name_input: String::new(),
-        }
+        };
+        this.refresh_paused();
+        this
     }
 
-    /// Load the ROM's debug sidecars, whatever the system keeps beside its
-    /// media. No-op while the core is away on the emu thread.
+    pub fn platform(&self) -> Platform {
+        self.platform
+    }
+
+    /// Prepare to hand this game's console to a session of the other kind: save
+    /// the debug sidecars while the session (and its handle) is still alive, then
+    /// disarm the drop-time save so it cannot touch the handle once the session
+    /// is consumed.
+    pub fn prepare_handoff(&mut self) {
+        self.save_sidecars();
+        self.rom_path = None;
+    }
+
+    /// Make `refresh_paused` reachable to the app after a session-side mutation
+    /// it drove directly (a state load, a run-loop stop).
+    pub fn sync_paused(&mut self) {
+        self.refresh_paused();
+    }
+
+    /// Load the ROM's debug sidecars, whatever the system keeps beside its media.
     pub fn load_sidecars(&mut self, rom_path: &std::path::Path) {
-        if let Some(core) = &mut self.debugger {
-            core.load_sidecars(rom_path);
-            self.rom_path = Some(rom_path.to_path_buf());
-        }
+        let path = rom_path.to_path_buf();
+        self.handle
+            .with_session(move |s| s.debugger_mut().load_sidecars(&path));
+        self.rom_path = Some(rom_path.to_path_buf());
+        self.refresh_paused();
     }
 
-    /// Rebuild the paused graphics decode from the core. Called only when
-    /// emulation advances or capture toggles, so a plain redraw reuses the last
-    /// decode instead of re-walking VRAM.
-    fn refresh_graphics(&mut self) {
-        self.graphics = self.debugger.as_ref().and_then(|core| core.graphics());
+    /// Rebuild the owned paused readout from the session in one round-trip, and
+    /// push the current display frame to the screen pane. A no-op that clears the
+    /// cache while free-running (the snapshot path renders instead).
+    fn refresh_paused(&mut self) {
+        if self.handle.is_running() {
+            self.paused = None;
+            return;
+        }
+        let palette = *self.panes.palette();
+        let anchor = self.panes.disasm_anchor();
+        let selections = self.panes.memory_selections();
+        let regions = self.memory_regions.clone();
+        let disasm_shown = self.panes.plane_shown(panes::DebuggerPane::Disassembly);
+        let (readout, breakpoints, watches, frame, display) =
+            self.handle.with_session(move |session| {
+                let core = session.debugger();
+                let colors = inspect::as_inspect_source(core.family_state())
+                    .map(|source| source.colors(&palette));
+                let memory_windows = selections
+                    .iter()
+                    .map(|&selection| memory::build_readout(core, &regions, selection))
+                    .collect();
+                let disasm = disasm_shown.then(|| disassembly::paused_readout(core, anchor));
+                let readout = PausedReadout {
+                    colors,
+                    memory_windows,
+                    disasm,
+                    waves: core.channel_waves(),
+                    graphics: core.graphics(),
+                    sidebar: core.sidebar_sections(),
+                    symbols: core.symbols(),
+                    last_watch_hit: core.last_watch_hit(),
+                };
+                (
+                    readout,
+                    core.breakpoints(),
+                    core.watches(),
+                    session.frame(),
+                    session.display_frame(),
+                )
+            });
+        self.breakpoints = breakpoints;
+        self.watchpoints = watches;
+        self.frame = frame;
+        self.paused = Some(readout);
+        self.apply_frame(display);
     }
 
     fn save_sidecars(&self) {
-        if let (Some(core), Some(rom_path)) = (&self.debugger, &self.rom_path) {
-            core.save_sidecars(rom_path);
+        if let Some(rom_path) = &self.rom_path {
+            let path = rom_path.clone();
+            self.handle
+                .with_session(move |s| s.debugger().save_sidecars(&path));
         }
     }
 
-    /// Save contents, available only while the core is on the UI thread.
-    pub fn battery_save(&self) -> Option<Vec<u8>> {
-        self.debugger.as_ref().and_then(|core| core.battery_save())
+    /// The live screen state, taken to carry across a debugger→emulator toggle.
+    pub fn take_screen_view(&self) -> ScreenView {
+        self.panes.take_screen_view()
     }
 
-    /// Game title, available only while the core is on the UI thread.
-    pub fn game_title(&self) -> Option<String> {
-        self.debugger.as_ref().map(|core| core.game_title())
-    }
-
-    pub fn capture_screenshot(&self, options: &CaptureOptions) -> Option<FrameCapture> {
-        self.debugger
-            .as_ref()
-            .map(|core| FrameCapture::from_frame(&core.screen_display(), options))
-    }
-
-    /// Save the paused session's state to `path`. Available only while the core
-    /// is on the UI thread (paused); returns `Err` when the core is detached, the
-    /// system has no save-state backend, or the write fails.
-    pub fn save_state(&self, path: &std::path::Path) -> Result<(), String> {
-        let core = self.debugger.as_ref().ok_or("the debugger is running")?;
-        let bytes = core
-            .save_state()
-            .ok_or("this system has no save-state backend")?;
-        std::fs::write(path, bytes).map_err(|error| format!("could not write save state: {error}"))
-    }
-
-    /// Restore the paused session's state from `path`, then refresh the paused
-    /// inspection surfaces so the panes reflect the restored core.
-    pub fn load_state(&mut self, path: &std::path::Path) -> Result<(), String> {
-        let core = self.debugger.as_mut().ok_or("the debugger is running")?;
-        let bytes =
-            std::fs::read(path).map_err(|error| format!("could not read save state: {error}"))?;
-        core.load_state(&bytes).map_err(|error| error.to_string())?;
-        // The screen pane only renders broadcast frames; push the restored
-        // console's frame so the paused view reflects the load, as the stepping
-        // paths do through `display_task`.
-        let restored = core.screen_display();
-        self.last_snapshot = None;
-        self.last_status = None;
-        self.last_memory_windows.clear();
-        self.refresh_graphics();
-        self.apply_frame(restored);
-        Ok(())
-    }
-
-    /// Take the core to hand it to the emu thread for running.
-    pub fn take_payload(&mut self) -> Option<DebuggerPayload> {
-        let frame = self.frame;
-        self.debugger
-            .take()
-            .map(|core| DebuggerPayload { core, frame })
-    }
-
-    /// Put the core back when the emu thread returns it on pause or breakpoint.
-    pub fn restore_payload(&mut self, payload: DebuggerPayload) {
-        let mut core = payload.core;
-        // Resync from the UI's set: a breakpoint edit can race the payload's
-        // return and get dropped by the idle emu thread.
-        let stale: Vec<u32> = core
-            .breakpoints()
-            .difference(&self.breakpoints)
-            .copied()
-            .collect();
-        for address in stale {
-            core.clear_breakpoint(address);
-        }
-        for &address in &self.breakpoints {
-            core.set_breakpoint(address);
-        }
-        let stale: Vec<Watch> = core
-            .watches()
-            .into_iter()
-            .filter(|w| !self.watchpoints.contains(w))
-            .collect();
-        for watch in &stale {
-            core.remove_watch(watch);
-        }
-        for watch in &self.watchpoints {
-            core.add_watch(watch.clone());
-        }
-        self.debugger = Some(core);
-        self.frame = payload.frame;
-        self.last_status = None;
-        self.last_snapshot = None;
-        self.last_memory_windows.clear();
-        // The core is back and paused; decode its surfaces once for the redraws
-        // that follow rather than on each one.
-        self.refresh_graphics();
-    }
-
-    /// Whether the core is away on the emu thread.
-    pub fn is_detached(&self) -> bool {
-        self.debugger.is_none()
-    }
-
-    /// Update the screen pane from the emu thread's latest-frame slot.
+    /// Update the screen pane from the session's latest-frame slot.
     pub fn apply_frame(&mut self, display: Frame) {
         self.panes
             .update(panes::Message::Broadcast(panes::PaneMessage::Screen(
@@ -394,7 +367,7 @@ impl Debugger {
             )));
     }
 
-    /// Update the live status shown while the core runs on the emu thread.
+    /// Update the live status shown while the session free-runs.
     pub fn apply_status(&mut self, status: RunningStatus) {
         self.frame = status.frame;
         self.last_status = Some(status);
@@ -406,29 +379,40 @@ impl Debugger {
         self.last_snapshot = Some(view);
     }
 
-    /// Update the memory viewers' interest windows from the emu thread's slot —
-    /// one window per open memory pane.
+    /// Update the memory viewers' interest windows from the session's slot — one
+    /// window per open memory pane.
     pub fn apply_memory_windows(&mut self, windows: Vec<MemoryWindow>) {
         self.last_memory_windows = windows;
     }
 
-    /// The spans the open memory panes want peeked while running: the union of
-    /// their views, resolved against the cached region map. Empty when no memory
-    /// pane is shown or the family has no region map.
+    /// The spans the open memory panes want peeked while free-running: the union
+    /// of their views, resolved against the cached region map. Empty when no
+    /// memory pane is shown or the family has no region map.
     pub fn memory_interests(&self) -> Vec<memory::MemoryInterest> {
         memory::interests_for(&self.memory_regions, &self.panes.memory_selections())
     }
 
-    /// Resolve a disassembly jump-to-address to a walk anchor. A `bank:addr`
-    /// jump resolves through the live core's region/bank mapping to a synthetic
-    /// bank-complete address (so it needs a paused core); a plain hex address
-    /// anchors directly in bus space. `None` for unparseable or unmapped input.
+    /// The peek spans as the session's engine command wants them.
+    fn session_interests(&self) -> Vec<missingno_session::MemoryInterest> {
+        self.memory_interests()
+            .into_iter()
+            .map(|interest| missingno_session::MemoryInterest {
+                start: interest.start,
+                len: interest.len,
+            })
+            .collect()
+    }
+
+    /// Resolve a disassembly jump-to-address to a walk anchor. A `bank:addr` jump
+    /// resolves through the live core's region/bank mapping to a synthetic
+    /// bank-complete address; a plain hex address anchors directly in bus space.
+    /// `None` for unparseable or unmapped input.
     fn resolve_disasm_jump(&self, input: &str) -> Option<u32> {
         match parse_disasm_jump(input)? {
             DisasmJump::Bus(address) => Some(address),
-            DisasmJump::BankWindow { bank, window } => {
-                self.debugger.as_ref()?.locate_bank_window(bank, window)
-            }
+            DisasmJump::BankWindow { bank, window } => self
+                .handle
+                .with_session(move |s| s.debugger().locate_bank_window(bank, window)),
         }
     }
 
@@ -447,146 +431,79 @@ impl Debugger {
             || self.panes.plane_shown(panes::DebuggerPane::Sprites)
     }
 
-    pub fn audio_coupling(&self) -> Option<missingno_core::HighPass> {
-        self.debugger
-            .as_ref()
-            .and_then(|core| core.audio_coupling())
-    }
-
-    pub fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
-        match &mut self.debugger {
-            Some(core) => core.drain_audio_samples(),
-            None => Vec::new(),
-        }
-    }
-
     /// The display technology the debugged console states.
     pub fn technology(&self) -> missingno_core::video::DisplayTechnology {
         self.panes.screen_technology()
     }
 
-    pub fn disable_debugger(mut self, presentation: Presentation) -> Emulator {
-        self.save_sidecars();
-        let core = self
-            .debugger
-            .take()
-            .expect("core present when disabling the debugger");
-        let screen_view = self.panes.take_screen_view();
-        Emulator::from_debugger(
-            core.into_console(),
-            screen_view,
-            self.platform,
-            presentation,
-        )
-    }
-
-    fn set_breakpoint(&mut self, address: u32, emu: Option<&EmuHandle>) {
+    fn set_breakpoint(&mut self, address: u32) {
         self.breakpoints.insert(address);
-        match &mut self.debugger {
-            Some(core) => core.set_breakpoint(address),
-            None => {
-                if let Some(emu) = emu {
-                    emu.send(EmuCommand::SetBreakpoint(address));
-                }
-            }
-        }
+        self.handle.with_session(move |s| {
+            let _ = s.set_breakpoint(address);
+        });
     }
 
-    fn clear_breakpoint(&mut self, address: u32, emu: Option<&EmuHandle>) {
+    fn clear_breakpoint(&mut self, address: u32) {
         self.breakpoints.remove(&address);
-        match &mut self.debugger {
-            Some(core) => core.clear_breakpoint(address),
-            None => {
-                if let Some(emu) = emu {
-                    emu.send(EmuCommand::ClearBreakpoint(address));
-                }
-            }
-        }
+        self.handle
+            .with_session(move |s| s.clear_breakpoint(address));
     }
 
-    fn add_watchpoint(&mut self, watch: Watch, emu: Option<&EmuHandle>) {
+    fn add_watchpoint(&mut self, watch: Watch) {
         if self.watchpoints.contains(&watch) {
             return;
         }
         self.watchpoints.push(watch.clone());
-        match &mut self.debugger {
-            Some(core) => core.add_watch(watch),
-            None => {
-                if let Some(emu) = emu {
-                    emu.send(EmuCommand::AddWatchpoint(watch));
-                }
-            }
-        }
+        self.handle
+            .with_session(move |s| s.debugger_mut().add_watch(watch));
     }
 
-    fn remove_watchpoint(&mut self, watch: &Watch, emu: Option<&EmuHandle>) {
+    fn remove_watchpoint(&mut self, watch: &Watch) {
         self.watchpoints.retain(|w| w != watch);
-        match &mut self.debugger {
-            Some(core) => core.remove_watch(watch),
-            None => {
-                if let Some(emu) = emu {
-                    emu.send(EmuCommand::RemoveWatchpoint(watch.clone()));
-                }
-            }
-        }
+        let watch = watch.clone();
+        self.handle
+            .with_session(move |s| s.debugger_mut().remove_watch(&watch));
     }
 
-    /// The most recent watch the core stopped on, present only while the
-    /// core is on the UI thread (paused after a hit).
-    fn last_watchpoint_hit(&self) -> Option<Watch> {
-        self.debugger
-            .as_ref()
-            .and_then(|core| core.last_watch_hit())
+    fn display_after_step(&mut self) -> Task<app::Message> {
+        self.refresh_paused();
+        Task::none()
     }
 
-    fn display_task(display: Option<Frame>) -> Task<app::Message> {
-        match display {
-            Some(display) => {
-                Task::done(screen::Message::Update(std::sync::Arc::new(display)).into())
-            }
-            None => Task::none(),
-        }
+    /// Run a paused-step command against the session, then drain and drop the
+    /// audio it produced. The session's audio sink only drains in the run loop,
+    /// so paused-step audio does not play — draining here keeps it from piling up
+    /// and bursting when the game next resumes.
+    fn step_and_drop(&self, step: impl FnOnce(&mut missingno_session::Session) + Send + 'static) {
+        self.handle.with_session(move |session| {
+            step(session);
+            let _ = session.drain_audio_samples();
+        });
     }
 
-    pub fn update(&mut self, message: Message, emu: Option<&EmuHandle>) -> Task<app::Message> {
+    pub fn update(&mut self, message: Message) -> Task<app::Message> {
         match message {
             Message::Step => {
-                let Some(core) = &mut self.debugger else {
-                    return Task::none();
-                };
-                let frame = core.step().into_frame();
-                self.refresh_graphics();
-                Self::display_task(frame)
+                self.step_and_drop(|s| {
+                    s.step();
+                });
+                self.display_after_step()
             }
             Message::StepOver => {
-                let Some(core) = &mut self.debugger else {
-                    return Task::none();
-                };
-                let frame = core.step_over().into_frame();
-                self.refresh_graphics();
-                Self::display_task(frame)
+                self.step_and_drop(|s| {
+                    s.step_over();
+                });
+                self.display_after_step()
             }
             Message::StepFrame => {
-                let Some(core) = &mut self.debugger else {
-                    return Task::none();
-                };
-                let outcome = core.step_frame();
-                self.frame += 1;
-                if matches!(
-                    outcome,
-                    StepOutcome::Breakpoint { .. } | StepOutcome::WatchHit(_)
-                ) {
-                    self.running = false;
-                }
-                let frame = outcome.into_frame();
-                self.refresh_graphics();
-                Self::display_task(frame)
+                self.step_and_drop(|s| {
+                    s.step_frame();
+                });
+                self.display_after_step()
             }
             Message::CaptureFrame => {
-                let Some(core) = &self.debugger else {
-                    return Task::none();
-                };
-                let title = core.game_title().to_lowercase().replace(' ', "_");
+                let title = self.handle.with_session(|s| s.game_title());
+                let title = title.to_lowercase().replace(' ', "_");
                 let default_name = format!("{title}_frame{}.morepork", self.frame);
 
                 let dialog = rfd::AsyncFileDialog::new()
@@ -599,25 +516,24 @@ impl Debugger {
                 })
             }
             Message::CaptureFrameTo(path) => {
-                let Some(core) = &mut self.debugger else {
-                    return Task::none();
-                };
-                match core.capture_trace(&path) {
-                    Some(display) => {
-                        self.frame += 1;
-                        self.refresh_graphics();
-                        Self::display_task(Some(display))
-                    }
-                    None => Task::none(),
+                let captured = self.handle.with_session(move |s| {
+                    let captured = s.debugger_mut().capture_trace(&path).is_some();
+                    // The capture steps a frame; drop its audio (paused, no sink).
+                    let _ = s.drain_audio_samples();
+                    captured
+                });
+                if captured {
+                    self.refresh_paused();
                 }
+                Task::none()
             }
 
             Message::SetBreakpoint(address) => {
-                self.set_breakpoint(address, emu);
+                self.set_breakpoint(address);
                 Task::none()
             }
             Message::ClearBreakpoint(address) => {
-                self.clear_breakpoint(address, emu);
+                self.clear_breakpoint(address);
                 Task::none()
             }
             Message::BreakpointInputChanged(input) => {
@@ -631,18 +547,18 @@ impl Debugger {
             Message::AddBreakpoint => {
                 if self.breakpoint_input.len() == 4 {
                     let address = u16::from_str_radix(&self.breakpoint_input, 16).unwrap();
-                    self.set_breakpoint(address as u32, emu);
+                    self.set_breakpoint(address as u32);
                     self.breakpoint_input.clear();
                 }
                 Task::none()
             }
 
             Message::RemoveWatchpoint(watch) => {
-                self.remove_watchpoint(&watch, emu);
+                self.remove_watchpoint(&watch);
                 Task::none()
             }
             Message::SetWatchpoint(watch) => {
-                self.add_watchpoint(watch, emu);
+                self.add_watchpoint(watch);
                 Task::none()
             }
             Message::WatchpointInputChanged(input) => {
@@ -664,17 +580,17 @@ impl Debugger {
                         AccessKind::Read => "bus-read",
                         AccessKind::Write => "bus-write",
                     };
-                    self.add_watchpoint(Watch::single(key, Some(address as u32), None), emu);
+                    self.add_watchpoint(Watch::single(key, Some(address as u32), None));
                     self.watchpoint_input.clear();
                 }
                 Task::none()
             }
 
             Message::RemoveLabel(symbol) => {
-                if let Some(core) = &mut self.debugger {
-                    core.remove_symbol(&symbol);
-                }
+                self.handle
+                    .with_session(move |s| s.debugger_mut().remove_symbol(&symbol));
                 self.save_sidecars();
+                self.refresh_paused();
                 Task::none()
             }
             Message::LabelAddressChanged(input) => {
@@ -692,11 +608,12 @@ impl Debugger {
             Message::AddLabel => {
                 if self.label_address_input.len() == 4 && !self.label_name_input.is_empty() {
                     let address = u16::from_str_radix(&self.label_address_input, 16).unwrap();
-                    if let Some(core) = &mut self.debugger {
-                        core.add_symbol(address as u32, std::mem::take(&mut self.label_name_input));
-                        self.label_address_input.clear();
-                    }
+                    let name = std::mem::take(&mut self.label_name_input);
+                    self.handle
+                        .with_session(move |s| s.debugger_mut().add_symbol(address as u32, name));
+                    self.label_address_input.clear();
                     self.save_sidecars();
+                    self.refresh_paused();
                 }
                 Task::none()
             }
@@ -765,39 +682,34 @@ impl Debugger {
                         .update(panes::Message::Broadcast(panes::PaneMessage::Disassembly(
                             disassembly::Message::SetAnchor(Some(anchor)),
                         )));
+                    self.refresh_paused();
                 }
                 Task::none()
             }
 
             Message::Pane(message) => {
                 // Keep the memory pane's region cache fresh so its
-                // jump-to-address resolves while the core runs on the emu
-                // thread; harmless no-op for every other pane.
+                // jump-to-address resolves while the session free-runs; harmless
+                // no-op for every other pane.
                 self.panes
                     .update(panes::Message::Broadcast(panes::PaneMessage::Memory(
                         memory::Message::SetRegions(self.memory_regions.clone()),
                     )));
                 self.panes.update(message);
-                // Opening or closing a pane can change what the running core
-                // must produce: re-aim the vblank memory peek and toggle
-                // waveform capture. While detached both ride the emu thread;
-                // while the core is here, capture toggles on it directly so the
-                // paused tail fills as the user steps.
+                // Opening or closing a pane can change what the running core must
+                // produce: re-aim the vblank memory peek and toggle capture. The
+                // session's debugger holds the capture state; the interest rides
+                // the engine command.
                 let wants_waves = self.wants_wave_capture();
                 let wants_graphics = self.wants_graphics_capture();
-                if self.is_detached() {
-                    if let Some(emu) = emu {
-                        emu.send(EmuCommand::SetMemoryInterest(self.memory_interests()));
-                        emu.set_wave_capture(wants_waves);
-                        emu.set_graphics_capture(wants_graphics);
-                    }
-                } else if let Some(core) = &mut self.debugger {
-                    core.set_wave_capture(wants_waves);
-                    core.set_graphics_capture(wants_graphics);
-                    // Capture just changed what the core will decode; refresh so
-                    // a newly opened graphics pane fills without a step.
-                    self.refresh_graphics();
-                }
+                self.handle.set_memory_interest(self.session_interests());
+                self.handle.with_session(move |s| {
+                    s.set_wave_capture(wants_waves);
+                    s.set_graphics_capture(wants_graphics);
+                });
+                // Capture just changed what the core will decode; refresh so a
+                // newly opened graphics pane fills without a step.
+                self.refresh_paused();
                 Task::none()
             }
         }
@@ -805,42 +717,27 @@ impl Debugger {
 
     pub fn set_palette(&mut self, palette: PaletteChoice) {
         self.panes.set_palette(palette);
+        // The DMG render palettes flow through the readout's colours; rebuild so
+        // a palette change is reflected while paused.
+        self.refresh_paused();
     }
 
     pub fn view(&self) -> Element<'_, app::Message> {
-        let Some(core) = &self.debugger else {
+        let Some(paused) = self.paused.as_ref().filter(|_| !self.handle.is_running()) else {
             return self.running_view();
         };
-        let family_any = core.family_state();
-        let gb_source = inspect::as_inspect_source(family_any);
-        let colors = gb_source.map(|source| source.colors(self.panes.palette()));
         // One live readout per open memory pane, each matched back by its base.
         let memory_selections = self.panes.memory_selections();
-        // The cached region map: cart-fixed, so no need to re-query the core.
-        let memory_regions = &self.memory_regions;
-        let readouts: Vec<MemoryWindow> = memory_selections
-            .iter()
-            .map(|&selection| memory::build_readout(core.as_ref(), memory_regions, selection))
-            .collect();
-        let disasm_readout = self
-            .panes
-            .plane_shown(panes::DebuggerPane::Disassembly)
-            .then(|| disassembly::paused_readout(core.as_ref(), self.panes.disasm_anchor()));
-        // The frozen tail the core still holds while paused; `None` unless the
-        // audio scope has capture on.
-        let waves = core.channel_waves();
         let ctx = PaneContext {
-            colors: colors.as_ref(),
+            colors: paused.colors.as_ref(),
             breakpoints: &self.breakpoints,
             watches: &self.watchpoints,
-            memory: (!memory_selections.is_empty())
-                .then(|| memory::MemoryPaneData::paused(memory_regions, &readouts)),
-            disasm: disasm_readout
-                .as_ref()
-                .map(disassembly::DisasmPaneData::new),
-            waves: waves.as_deref(),
-            // The paused decode, rebuilt only when emulation advances.
-            graphics: self.graphics.as_ref(),
+            memory: (!memory_selections.is_empty()).then(|| {
+                memory::MemoryPaneData::paused(&self.memory_regions, &paused.memory_windows)
+            }),
+            disasm: paused.disasm.as_ref().map(disassembly::DisasmPaneData::new),
+            waves: paused.waves.as_deref(),
+            graphics: paused.graphics.as_ref(),
         };
 
         let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
@@ -862,17 +759,19 @@ impl Debugger {
             self.panes.view(Some(ctx))
         };
 
-        let sidebar = self.sidebar.view(core.sidebar_sections(), colors.as_ref());
+        let sidebar = self
+            .sidebar
+            .view(paused.sidebar.clone(), paused.colors.as_ref());
         row![sidebar, center, self.icon_rail(),]
             .spacing(s())
             .padding(s())
             .into()
     }
 
-    /// The view while the core runs on the emu thread. The screen pane stays
-    /// live from the frame slot; every other pane and the sidebar render from
-    /// the per-vblank inspection snapshot, falling back to titled placeholders
-    /// and the [`RunningStatus`] summary until the first snapshot arrives.
+    /// The view while the session free-runs. The screen pane stays live from the
+    /// frame slot; every other pane and the sidebar render from the per-vblank
+    /// inspection snapshot, falling back to titled placeholders and the
+    /// [`RunningStatus`] summary until the first snapshot arrives.
     fn running_view(&self) -> Element<'_, app::Message> {
         let colors = self
             .last_snapshot
@@ -1014,9 +913,13 @@ impl Debugger {
 
         let add_row = row![address, kind].spacing(s()).align_y(Vertical::Center);
 
-        let panel = match self.last_watchpoint_hit() {
+        let hit = self
+            .paused
+            .as_ref()
+            .and_then(|paused| paused.last_watch_hit.as_ref());
+        let panel = match hit {
             Some(hit) => column![
-                text(format!("hit: {}", watch_summary(&hit))).font(fonts::monospace()),
+                text(format!("hit: {}", watch_summary(hit))).font(fonts::monospace()),
                 watchpoint_list,
                 add_row,
             ],
@@ -1026,16 +929,16 @@ impl Debugger {
         panel.spacing(s()).padding(s()).into()
     }
 
-    /// Label editing needs the core on the UI thread; while it runs on the
-    /// emu thread the panel is read-only.
+    /// Label editing needs the paused readout's symbol table; while the session
+    /// free-runs (no readout) the panel is read-only.
     fn labels_content(&self) -> Element<'_, app::Message> {
-        let Some(core) = &self.debugger else {
+        let Some(paused) = &self.paused else {
             return column![text("Pause to edit labels").font(fonts::monospace()),]
                 .spacing(s())
                 .padding(s())
                 .into();
         };
-        let symbols = core.symbols();
+        let symbols = &paused.symbols;
 
         let user_rows = Column::from_iter(symbols.user_symbols().iter().map(label_row));
 
@@ -1122,30 +1025,35 @@ impl Debugger {
         self.main_split = Some(state);
     }
 
+    /// Whether the session is free-running — the session is the source of truth.
     pub fn running(&self) -> bool {
-        self.running
+        self.handle.is_running()
     }
 
     pub fn run(&mut self) {
-        self.running = true;
+        let wants_waves = self.wants_wave_capture();
+        let wants_graphics = self.wants_graphics_capture();
+        self.handle.set_memory_interest(self.session_interests());
+        self.handle.with_session(move |s| {
+            s.set_wave_capture(wants_waves);
+            s.set_graphics_capture(wants_graphics);
+        });
+        self.handle.run();
+        self.paused = None;
     }
 
     pub fn pause(&mut self) {
-        self.running = false;
+        self.handle.pause();
+        self.refresh_paused();
     }
 
     pub fn reset(&mut self) {
-        if let Some(core) = &mut self.debugger {
-            core.reset();
-            self.frame = 0;
-        }
-        self.refresh_graphics();
-    }
-
-    pub fn set_control(&mut self, control: ControlId, input: ControlInput) {
-        if let Some(core) = &mut self.debugger {
-            core.set_control(control, input);
-        }
+        self.handle.reset();
+        self.frame = 0;
+        self.last_snapshot = None;
+        self.last_status = None;
+        self.last_memory_windows.clear();
+        self.refresh_paused();
     }
 }
 

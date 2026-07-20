@@ -4,13 +4,13 @@ use action_bar::ActionBar;
 use audio_output::AudioOutput;
 use iced::{Task, Theme, window};
 use ui::fonts;
+use ui::icons::Icon;
 
 mod action_bar;
 mod audio_output;
 mod console;
 mod controls;
 mod debugger;
-mod emu_thread;
 mod emulation;
 mod emulator;
 pub mod library;
@@ -18,11 +18,17 @@ mod load;
 pub(crate) use load::file_stem_title;
 mod recent;
 mod screen;
+mod session_bridge;
 pub mod settings;
 pub(crate) mod system;
 mod texture_renderer;
 mod ui;
 mod views;
+
+use missingno_session::{SessionEvent, SharedSession};
+
+#[cfg(unix)]
+use missingno_session::AttachEndpoint;
 
 // Cartridge reader/writer hardware support
 use crate::cartridge_rw;
@@ -83,11 +89,20 @@ struct App {
     debugger_enabled: bool,
     fullscreen: Fullscreen,
     action_bar: ActionBar,
-    /// Audio device for the on-UI-thread debugger. The plain emulator's audio is
-    /// produced on the emu thread instead.
+    /// The UI-thread cpal stream for the current game's audio; the session holds
+    /// the matching sink. Replaced per game load, `None` when nothing is loaded.
     audio_output: Option<AudioOutput>,
-    /// Handle to the emulation thread; `None` until it reports `Started`.
-    emu: Option<emu_thread::EmuHandle>,
+    /// The shared session hosting the current game's console, `None` until a game
+    /// loads. Owns the session thread; dropping it shuts the thread down.
+    session: Option<SharedSession>,
+    /// The socket the current session is published on, so clients in other
+    /// processes can drive it. `None` unless the user allows external clients;
+    /// dropping it unpublishes.
+    #[cfg(unix)]
+    attach_endpoint: Option<AttachEndpoint>,
+    /// The Iced sink a per-game bridge thread forwards session events into,
+    /// handed over once at startup by the app-lifetime subscription.
+    event_sink: Option<iced::futures::channel::mpsc::UnboundedSender<SessionEvent>>,
     recent_games: recent::RecentGames,
     settings: settings::Settings,
     /// The running emulation session. Only set when a game is actually loaded.
@@ -95,11 +110,9 @@ struct App {
     store: library::store::GameStore,
     /// Action waiting for user confirmation (e.g. close game before launching another).
     pending_action: Option<PendingAction>,
-    /// When set, shows a brief "Screenshot saved" toast overlay.
-    screenshot_toast: Option<Instant>,
-    /// A transient status line (save/load result, recording lifecycle,
-    /// replay divergence), shown as a toast until it times out.
-    notice: Option<(String, Instant)>,
+    /// A transient status line (screenshot, save/load result, recording
+    /// lifecycle, replay divergence), shown as a toast until it times out.
+    notice: Option<(Notice, Instant)>,
     /// Serial link cable connection (BGB link protocol), injected into GameBoy on load.
     serial_link: Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
     /// Finished Game Boy Printer prints, sent from the printer (on the emu
@@ -170,6 +183,30 @@ pub(crate) enum FlashState {
     Complete,
     /// Flash failed.
     Failed(String),
+}
+
+/// A transient toast: what happened, and an optional icon for the ones the app
+/// raises itself. Outcomes reported by the session arrive as text alone.
+#[derive(Clone)]
+struct Notice {
+    icon: Option<Icon>,
+    message: String,
+}
+
+impl Notice {
+    fn text(message: impl Into<String>) -> Self {
+        Notice {
+            icon: None,
+            message: message.into(),
+        }
+    }
+
+    fn with_icon(icon: Icon, message: impl Into<String>) -> Self {
+        Notice {
+            icon: Some(icon),
+            message: message.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -293,8 +330,8 @@ struct CurrentGame {
     started_from: Option<String>,
     /// SRAM snapshot at session start, for detecting meaningful changes.
     initial_sram: Option<Vec<u8>>,
-    /// Cartridge header title, cached so SRAM saves from the emu thread (which
-    /// owns the console) can run the game-specific scratch-region comparison.
+    /// Cartridge header title, cached so an SRAM save can run the game-specific
+    /// scratch-region comparison without reaching into the session-owned console.
     cartridge_title: String,
 }
 
@@ -362,7 +399,6 @@ enum Message {
     HideCursorTick,
     CloseRequested,
 
-    DismissScreenshotToast,
     /// Time out the transient status-line toast.
     DismissNotice,
 
@@ -379,8 +415,9 @@ enum Message {
 
     Debugger(debugger::Message),
     Emulator(emulator::Message),
-    /// An event pushed from the emulation thread.
-    Emu(emu_thread::EmuEvent),
+    /// An item from the app-lifetime session subscription: the event sink handed
+    /// over at startup, then every session event forwarded through it.
+    Session(session_bridge::SessionBridge),
 
     None,
 }
@@ -405,14 +442,16 @@ impl App {
             debugger_enabled: debugger,
             fullscreen: Fullscreen::Windowed,
             action_bar: ActionBar::new(),
-            audio_output: AudioOutput::new(),
-            emu: None,
+            audio_output: None,
+            session: None,
+            #[cfg(unix)]
+            attach_endpoint: None,
+            event_sink: None,
             recent_games,
             settings,
             current_game: None,
             store,
             pending_action: None,
-            screenshot_toast: None,
             notice: None,
             serial_link,
             print_tx,
@@ -487,13 +526,12 @@ impl App {
             | Message::Replay
             | Message::ExportCapture(_)
             | Message::ExportCaptureSaved(..)
-            | Message::DismissScreenshotToast
             | Message::DismissNotice
             | Message::SetControl(..)
             | Message::SetAxis(..)
             | Message::ToggleDebugger(_) => return self.handle_emulation_message(message),
 
-            Message::Emu(event) => return self.handle_emu_event(event),
+            Message::Session(bridge) => return self.handle_session_bridge(bridge),
 
             // Settings messages
             Message::CompleteSetup { internet_enabled } => {
@@ -751,9 +789,7 @@ impl App {
 
             Message::Debugger(message) => {
                 if let Game::Loaded(LoadedGame::Debugger(debugger)) = &mut self.game {
-                    let task = debugger.update(message, self.emu.as_ref());
-                    self.drain_audio();
-                    return task;
+                    return debugger.update(message);
                 }
             }
 

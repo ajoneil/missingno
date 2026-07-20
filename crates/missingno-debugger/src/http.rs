@@ -15,7 +15,10 @@ use missingno_core::waveform::ChannelWave;
 use serde_json::{Value, json};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
-use crate::session::{DisasmLine, Session, StopReason};
+use missingno_core::system::{ControlId, ControlInput};
+
+use missingno_session::session::{DisasmLine, Session, StopReason};
+use missingno_session::shared::{SessionHandle, SharedSession};
 
 /// Cap on a single `/memory` read, so a bad length can't allocate unbounded.
 const MAX_MEMORY_LEN: u32 = 0x1000;
@@ -25,19 +28,126 @@ const MAX_DISASM_COUNT: usize = 256;
 /// Cap on sub-instruction ticks run by a single `/step-tick`.
 const MAX_TICK_COUNT: usize = 1_000_000;
 
-/// Serve `session` on `127.0.0.1:<port>` until the process is killed. Every
-/// route reads the console through the [`Session`] seam, so the same routes
-/// serve any core.
-pub fn serve(mut session: Session, port: u16) -> std::io::Result<()> {
+/// Serve `session` on `127.0.0.1:<port>` until the process is killed. This
+/// transport is a client of the shared session: each request routes through the
+/// handle onto the session thread, where the same generic [`Session`] seam
+/// answers it, so the same routes serve any core. Accepts anything that becomes
+/// a [`SharedSession`] — a `SharedSession` directly, or a bare `Session` a
+/// caller built itself.
+pub fn serve(session: impl Into<SharedSession>, port: u16) -> std::io::Result<()> {
+    let session = session.into();
+    let client = session.handle();
     let address = format!("127.0.0.1:{port}");
     let server = Server::http(&address)
         .map_err(|e| std::io::Error::other(format!("failed to bind {address}: {e}")))?;
-    eprintln!("headless debugger ready: {}", session.game_title());
+    eprintln!(
+        "headless debugger ready: {}",
+        client.with_session(|session| session.game_title())
+    );
     eprintln!("listening on http://{address}");
     for request in server.incoming_requests() {
-        handle(request, &mut session);
+        // The session-level routes are answered by the command queue, so they
+        // must not be wrapped in a job that runs against the debugger.
+        if let Some(request) = session_route(request, &client) {
+            client.with_session(move |session| handle(request, session));
+        }
     }
     Ok(())
+}
+
+/// Answer the routes the session's command queue owns — free-running control,
+/// input, and recording capture — handing back any request they do not claim.
+fn session_route(mut request: Request, client: &SessionHandle) -> Option<Request> {
+    match (request.method().clone(), request.url().to_string().as_str()) {
+        (Method::Get, "/run") => respond_json(request, run_state_json(client)),
+        (Method::Post, "/run") => {
+            client.run();
+            respond_json(request, run_state_json(client));
+        }
+        (Method::Post, "/pause") => {
+            client.pause();
+            respond_json(request, run_state_json(client));
+        }
+        (Method::Post, "/control") => match parse_control(&mut request) {
+            Ok((control, input)) => {
+                client.set_control(control, input);
+                respond_json(request, json!({ "control": control.0 }));
+            }
+            Err(message) => respond_error(request, 400, &message),
+        },
+        (Method::Post, "/state/save") => match read_path_body(&mut request) {
+            Ok(path) => match client.save_state(path.clone().into()) {
+                Ok(()) => respond_json(request, json!({ "saved": path })),
+                Err(message) => respond_error(request, 400, &message),
+            },
+            Err(message) => respond_error(request, 400, &message),
+        },
+        (Method::Post, "/state/load") => match read_path_body(&mut request) {
+            Ok(path) => match client.load_state(path.into()) {
+                Ok(()) => respond_json(request, loaded_state_json(client)),
+                Err(message) => respond_error(request, 400, &message),
+            },
+            Err(message) => respond_error(request, 400, &message),
+        },
+        (Method::Post, "/recording/start") => match read_path_body(&mut request) {
+            Ok(path) => match client.start_recording(path.clone().into()) {
+                Ok(()) => respond_json(request, json!({ "recording": path })),
+                Err(message) => respond_error(request, 400, &message),
+            },
+            Err(message) => respond_error(request, 400, &message),
+        },
+        (Method::Post, "/recording/stop") => match client.stop_recording() {
+            Ok(()) => respond_json(request, run_state_json(client)),
+            Err(message) => respond_error(request, 400, &message),
+        },
+        (Method::Post, "/recording/play") => match read_path_body(&mut request) {
+            Ok(path) => match client.play_recording(path.clone().into()) {
+                Ok(()) => respond_json(request, json!({ "playing": path })),
+                Err(message) => respond_error(request, 400, &message),
+            },
+            Err(message) => respond_error(request, 400, &message),
+        },
+        _ => return Some(request),
+    }
+    None
+}
+
+/// The post-load view: the debugger's status where there is one, and the run
+/// state for a session hosting a plain console.
+fn loaded_state_json(client: &SessionHandle) -> Value {
+    if client.is_debugger() {
+        client.with_session(|session| status_json(session))
+    } else {
+        run_state_json(client)
+    }
+}
+
+fn run_state_json(client: &SessionHandle) -> Value {
+    json!({ "running": client.is_running(), "recording": client.is_recording() })
+}
+
+fn parse_control(request: &mut Request) -> Result<(ControlId, ControlInput), String> {
+    let mut body = String::new();
+    request
+        .as_reader()
+        .read_to_string(&mut body)
+        .map_err(|_| "could not read request body".to_string())?;
+    let value: Value = serde_json::from_str(&body).map_err(|e| format!("invalid JSON: {e}"))?;
+    let control = value
+        .get("control")
+        .and_then(Value::as_u64)
+        .and_then(|n| u8::try_from(n).ok())
+        .ok_or("'control' must be an integer 0-255")?;
+    let input = match value.get("axis").and_then(Value::as_f64) {
+        Some(axis) => ControlInput::Axis(axis as f32),
+        None => ControlInput::Digital(
+            value
+                .get("pressed")
+                .and_then(Value::as_bool)
+                .ok_or("provide 'pressed' (bool) or 'axis' (0.0-1.0)")?,
+        ),
+    };
+    Ok((ControlId(control), input))
 }
 
 fn handle(request: Request, session: &mut Session) {
@@ -76,8 +186,6 @@ fn handle(request: Request, session: &mut Session) {
             respond_step(request, session, &stop);
         }
         (Method::Post, "/step-tick") => step_tick(request, session, &query),
-        (Method::Post, "/state/save") => state_save(request, session),
-        (Method::Post, "/state/load") => state_load(request, session),
         (Method::Post, "/recording/replay") => recording_replay(request, session),
         (Method::Post, "/reset") => {
             session.reset();
@@ -695,28 +803,6 @@ fn read_path_body(request: &mut Request) -> Result<String, String> {
         .ok_or_else(|| "expected { \"path\": string }".to_string())
 }
 
-fn state_save(mut request: Request, session: &mut Session) {
-    let path = match read_path_body(&mut request) {
-        Ok(path) => path,
-        Err(message) => return respond_error(request, 400, &message),
-    };
-    match session.save_state(std::path::Path::new(&path)) {
-        Ok(()) => respond_json(request, json!({ "saved": path })),
-        Err(message) => respond_error(request, 400, &message),
-    }
-}
-
-fn state_load(mut request: Request, session: &mut Session) {
-    let path = match read_path_body(&mut request) {
-        Ok(path) => path,
-        Err(message) => return respond_error(request, 400, &message),
-    };
-    match session.load_state(std::path::Path::new(&path)) {
-        Ok(()) => respond_json(request, status_json(session)),
-        Err(message) => respond_error(request, 400, &message),
-    }
-}
-
 fn recording_replay(mut request: Request, session: &mut Session) {
     let path = match read_path_body(&mut request) {
         Ok(path) => path,
@@ -961,13 +1047,13 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    use crate::Session;
+    use missingno_session::Session;
 
     /// A 32 KiB all-NOP `.gb` ROM: the extension makes the registry claim it,
     /// and the DMG core boots to PC 0x0100.
     fn gb_session() -> Session {
         let rom = vec![0x00u8; 0x8000];
-        let console = crate::factory::create_console(Path::new("test.gb"), &rom)
+        let console = missingno_session::factory::create_console(Path::new("test.gb"), &rom)
             .expect("factory should not error")
             .expect("gb factory claims a .gb ROM");
         Session::new(console.into_debugger().ok().expect("gb has a debugger"))
@@ -1010,7 +1096,7 @@ mod tests {
     fn cgb_session() -> Session {
         let mut rom = vec![0x00u8; 0x8000];
         rom[0x143] = 0xC0;
-        let console = crate::factory::create_console(Path::new("test.gbc"), &rom)
+        let console = missingno_session::factory::create_console(Path::new("test.gbc"), &rom)
             .expect("factory should not error")
             .expect("gb factory claims a .gbc ROM");
         Session::new(console.into_debugger().ok().expect("gbc has a debugger"))

@@ -5,7 +5,9 @@ use iced::{
     widget::{button, container, mouse_area, responsive, row, shader, stack, svg},
 };
 
-use crate::app::system::{ConsoleSwitch, ControlId, ControlInput, Platform, gb};
+use missingno_session::SessionHandle;
+
+use crate::app::system::{ConsoleSwitch, Platform, gb};
 use crate::app::{
     self,
     screen::{Frame, ScreenView},
@@ -31,16 +33,16 @@ pub struct Presentation {
     pub scanlines: bool,
 }
 
-/// The UI-side shell for a plain (non-debugger) game. While the game runs the
-/// console lives on the emu thread (`console` is `None`); it is recovered here
-/// synchronously on pause so all inspection paths keep working.
+/// The UI-side shell for a plain (non-debugger) game. The console lives
+/// permanently in the shared session; this shell is a client — it drives the
+/// session through the handle and renders the frames it publishes.
 pub struct Emulator {
-    console: Option<Box<dyn SystemConsole>>,
+    /// The client handle onto the session hosting this game's console.
+    handle: SessionHandle,
     /// The platform this game presents, captured at load; carried so a
     /// debugger toggle can key its panes without the console at hand.
     platform: Platform,
     screen_view: ScreenView,
-    running: bool,
     screen_hovered: bool,
     /// The user's monochrome palette choice, held so a palette change can rebuild
     /// the renderer's colour policy and the Display panel can show the selection.
@@ -50,8 +52,8 @@ pub struct Emulator {
     pixel_grid: bool,
     scanlines: bool,
     /// The family's latching console switches and their current levels,
-    /// captured at load so the Console panel renders while the console is on
-    /// the emu thread. Empty for families with none.
+    /// captured at load so the Console panel renders without reaching into the
+    /// session-owned console. Empty for families with none.
     switches: &'static [ConsoleSwitch],
     switch_levels: Vec<bool>,
     /// Whether this console has a selectable monochrome palette (DMG),
@@ -76,50 +78,60 @@ impl From<Message> for app::Message {
     }
 }
 
+/// The console properties this shell caches at load, read from the console
+/// once before it moves into the session (which then owns it permanently).
+pub struct ConsoleFacts {
+    pub switches: &'static [ConsoleSwitch],
+    pub monochrome_palette: bool,
+    pub technology: missingno_core::video::DisplayTechnology,
+}
+
+impl ConsoleFacts {
+    pub fn of(console: &dyn SystemConsole) -> Self {
+        Self {
+            switches: console.console_switches(),
+            monochrome_palette: console.uses_monochrome_palette(),
+            technology: console.video_out(),
+        }
+    }
+}
+
 impl Emulator {
+    /// Build a fresh shell over the session hosting a newly loaded console.
     pub fn new(
-        console: Box<dyn SystemConsole>,
+        handle: SessionHandle,
+        facts: ConsoleFacts,
         platform: Platform,
         presentation: Presentation,
     ) -> Self {
-        let switches = console.console_switches();
-        let monochrome_palette = console.uses_monochrome_palette();
         let mut screen_view = ScreenView::new();
-        screen_view.set_technology(console.video_out());
-        let mut this = Self {
-            console: Some(console),
-            platform,
-            screen_view,
-            running: false,
-            screen_hovered: false,
-            palette: PaletteChoice::default(),
-            use_sgb_colors: presentation.use_sgb_colors,
-            persistence: presentation.persistence,
-            pixel_grid: presentation.pixel_grid,
-            scanlines: presentation.scanlines,
-            switches,
-            switch_levels: switches.iter().map(|s| s.default_high).collect(),
-            monochrome_palette,
-            open_panels: Vec::new(),
-        };
-        this.apply_presentation();
-        this.refresh_palette_policy();
-        this
+        screen_view.set_technology(facts.technology);
+        Self::build(handle, screen_view, facts, platform, presentation)
     }
 
+    /// Build a shell carrying a screen view across a debugger→emulator toggle.
     pub fn from_debugger(
-        console: Box<dyn SystemConsole>,
+        handle: SessionHandle,
         screen_view: ScreenView,
+        facts: ConsoleFacts,
         platform: Platform,
         presentation: Presentation,
     ) -> Self {
-        let switches = console.console_switches();
-        let monochrome_palette = console.uses_monochrome_palette();
+        Self::build(handle, screen_view, facts, platform, presentation)
+    }
+
+    fn build(
+        handle: SessionHandle,
+        screen_view: ScreenView,
+        facts: ConsoleFacts,
+        platform: Platform,
+        presentation: Presentation,
+    ) -> Self {
+        let switches = facts.switches;
         let mut this = Self {
-            console: Some(console),
+            handle,
             platform,
             screen_view,
-            running: false,
             screen_hovered: false,
             palette: PaletteChoice::default(),
             use_sgb_colors: presentation.use_sgb_colors,
@@ -128,7 +140,7 @@ impl Emulator {
             scanlines: presentation.scanlines,
             switches,
             switch_levels: switches.iter().map(|s| s.default_high).collect(),
-            monochrome_palette,
+            monochrome_palette: facts.monochrome_palette,
             open_panels: Vec::new(),
         };
         this.apply_presentation();
@@ -175,50 +187,18 @@ impl Emulator {
         self.screen_view.technology()
     }
 
-    /// The console, present only while paused/idle (not while running).
-    pub fn console(&self) -> Option<&dyn SystemConsole> {
-        self.console.as_deref()
-    }
-
-    /// Take the console to hand it to the emu thread for running.
-    pub fn take_console(&mut self) -> Option<Box<dyn SystemConsole>> {
-        self.console.take()
-    }
-
-    /// Put the console back when the emu thread returns it on pause.
-    pub fn restore_console(&mut self, console: Box<dyn SystemConsole>) {
-        self.console = Some(console);
-    }
-
-    /// Update the displayed frame from the emu thread's latest-frame slot.
+    /// Update the displayed frame from the session's latest-frame slot.
     pub fn apply_frame(&mut self, display: Frame) {
         self.screen_view.apply(&display);
     }
 
-    /// Switch to debugger mode; systems without a debugger backend come
-    /// back unchanged.
-    pub fn enable_debugger(self) -> Result<app::debugger::Debugger, Box<Emulator>> {
-        let presentation = Presentation {
-            use_sgb_colors: self.use_sgb_colors,
-            persistence: self.persistence,
-            pixel_grid: self.pixel_grid,
-            scanlines: self.scanlines,
-        };
-        let platform = self.platform;
-        let console = self
-            .console
-            .expect("console present when enabling the debugger");
-        app::debugger::Debugger::from_console(console, self.screen_view, platform).map_err(
-            |returned| {
-                let (console, screen_view) = *returned;
-                Box::new(Emulator::from_debugger(
-                    console,
-                    screen_view,
-                    platform,
-                    presentation,
-                ))
-            },
-        )
+    pub fn platform(&self) -> Platform {
+        self.platform
+    }
+
+    /// The screen view, taken to carry across a debugger toggle.
+    pub fn take_screen_view(&mut self) -> ScreenView {
+        std::mem::replace(&mut self.screen_view, ScreenView::new())
     }
 
     pub fn update(&mut self, message: Message) -> Task<app::Message> {
@@ -230,8 +210,8 @@ impl Emulator {
                     (self.switch_levels.get_mut(index), self.switches.get(index))
                 {
                     *level = !*level;
-                    // Route through the shared control path so it reaches
-                    // the console whether it is local or on the emu thread.
+                    // Route through the shared control path so it reaches the
+                    // session-owned console.
                     return Task::done(app::Message::SetControl(switch.control.0, *level));
                 }
             }
@@ -344,23 +324,20 @@ impl Emulator {
         layout.width(Fill).height(Fill).into()
     }
 
+    /// Whether the session is free-running — the session is the source of truth.
     pub fn running(&self) -> bool {
-        self.running
+        self.handle.is_running()
     }
 
-    pub fn set_running(&mut self, running: bool) {
-        self.running = running;
+    pub fn run(&self) {
+        self.handle.run();
     }
 
-    pub fn reset(&mut self) {
-        if let Some(console) = &mut self.console {
-            console.reset();
-        }
+    pub fn pause(&self) {
+        self.handle.pause();
     }
 
-    pub fn set_control(&mut self, control: ControlId, input: ControlInput) {
-        if let Some(console) = &mut self.console {
-            console.set_control(control, input);
-        }
+    pub fn reset(&self) {
+        self.handle.reset();
     }
 }
