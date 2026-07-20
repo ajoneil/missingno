@@ -84,6 +84,23 @@ impl Bindings {
         self.0.insert(action, value);
     }
 
+    /// Bind anything `defaults` names that the settings file had never heard
+    /// of, so an action added after the file was written does not stay unbound
+    /// forever. An action the file knew and left unbound was cleared on
+    /// purpose and stays cleared; a default whose key the user has already
+    /// given to another action is skipped rather than double-bound.
+    fn adopt_new_defaults(&mut self, defaults: &Bindings, known: &[Action]) {
+        for (action, key) in &defaults.0 {
+            if self.0.contains_key(action)
+                || known.contains(action)
+                || self.find_action(key).is_some()
+            {
+                continue;
+            }
+            self.0.insert(*action, key.clone());
+        }
+    }
+
     /// Find the action bound to a given key/button string.
     pub fn find_action(&self, key_str: &str) -> Option<Action> {
         self.0
@@ -225,6 +242,27 @@ impl From<LegacyActionBindings> for Bindings {
     }
 }
 
+/// Every action this build can bind — written into the settings file so a later
+/// build can tell its own new actions from ones the user cleared.
+fn all_actions() -> Vec<Action> {
+    GAME_CONTROLS
+        .iter()
+        .chain(&EMULATOR_ACTIONS)
+        .copied()
+        .collect()
+}
+
+/// What a settings file written before it recorded its own action set could
+/// have known: the game controls and the three original emulator actions.
+/// Anything else really is new to such a file.
+fn actions_predating_the_marker() -> Vec<Action> {
+    GAME_CONTROLS
+        .iter()
+        .copied()
+        .chain([Action::Screenshot, Action::ToggleFullscreen, Action::Pause])
+        .collect()
+}
+
 fn default_keyboard_bindings() -> Bindings {
     Bindings::default_keyboard()
 }
@@ -277,6 +315,11 @@ struct SettingsFile {
     keyboard_controls: Bindings,
     #[serde(default = "default_gamepad_bindings")]
     gamepad_controls: Bindings,
+    // Which actions existed when this file was written. An action missing from
+    // the bindings but present here was cleared on purpose; one missing from
+    // both is simply newer than the file, and takes its default.
+    #[serde(default)]
+    known_actions: Vec<Action>,
     // Bindings keyed by the pre-control-id action names; read for
     // migration, never written. Empty when the file is current-format.
     #[serde(default, skip_serializing)]
@@ -329,6 +372,7 @@ impl Default for SettingsFile {
             window_height: None,
             keyboard_controls: Bindings::default_keyboard(),
             gamepad_controls: Bindings::default_gamepad(),
+            known_actions: all_actions(),
             keyboard_bindings: LegacyActionBindings::default(),
             gamepad_bindings: LegacyActionBindings::default(),
         }
@@ -419,16 +463,23 @@ impl Settings {
         // Try current format (control-id keyed bindings), migrating any
         // action-name keyed maps a pre-control-id file carries.
         if let Ok(file) = ron::from_str::<SettingsFile>(&data) {
-            let keyboard = if file.keyboard_bindings.0.is_empty() {
+            let mut keyboard: Bindings = if file.keyboard_bindings.0.is_empty() {
                 file.keyboard_controls
             } else {
                 file.keyboard_bindings.into()
             };
-            let gamepad = if file.gamepad_bindings.0.is_empty() {
+            let mut gamepad: Bindings = if file.gamepad_bindings.0.is_empty() {
                 file.gamepad_controls
             } else {
                 file.gamepad_bindings.into()
             };
+            let known = if file.known_actions.is_empty() {
+                actions_predating_the_marker()
+            } else {
+                file.known_actions
+            };
+            keyboard.adopt_new_defaults(&Bindings::default_keyboard(), &known);
+            gamepad.adopt_new_defaults(&Bindings::default_gamepad(), &known);
             return Self {
                 setup_complete: file.setup_complete,
                 internet_enabled: file.internet_enabled,
@@ -529,6 +580,7 @@ impl Settings {
             window_height: self.window_height,
             keyboard_controls: self.keyboard_bindings.clone(),
             gamepad_controls: self.gamepad_bindings.clone(),
+            known_actions: all_actions(),
             keyboard_bindings: LegacyActionBindings::default(),
             gamepad_bindings: LegacyActionBindings::default(),
         };
@@ -719,6 +771,73 @@ mod tests {
         // A file written before the setting existed leaves external clients
         // off — publishing a session is never inherited, only chosen.
         assert!(!file.allow_external_clients);
+    }
+
+    #[test]
+    fn a_settings_file_predating_an_action_still_gets_its_default_key() {
+        // Exactly the shape an upgraded install carries: bindings written
+        // before save states existed, so the map names no such action.
+        let mut saved = Bindings(HashMap::from([
+            (Action::Control(2), "x".to_string()),
+            (Action::Screenshot, "F12".to_string()),
+            (Action::Pause, "Space".to_string()),
+        ]));
+        assert_eq!(saved.get(Action::SaveState), None);
+
+        saved.adopt_new_defaults(
+            &Bindings::default_keyboard(),
+            &actions_predating_the_marker(),
+        );
+
+        assert_eq!(saved.get(Action::SaveState), Some("F5"));
+        assert_eq!(saved.get(Action::LoadState), Some("F8"));
+        // What the user already chose is untouched.
+        assert_eq!(saved.get(Action::Control(2)), Some("x"));
+    }
+
+    #[test]
+    fn adopting_defaults_never_double_binds_a_key() {
+        // The user gave F5 to something else; the new action stays unbound
+        // rather than making one key fire two actions.
+        let mut saved = Bindings(HashMap::from([(Action::Screenshot, "F5".to_string())]));
+
+        saved.adopt_new_defaults(
+            &Bindings::default_keyboard(),
+            &actions_predating_the_marker(),
+        );
+
+        assert_eq!(saved.get(Action::Screenshot), Some("F5"));
+        assert_eq!(saved.get(Action::SaveState), None);
+        assert_eq!(saved.find_action("F5"), Some(Action::Screenshot));
+        // Unclaimed defaults still arrive.
+        assert_eq!(saved.get(Action::LoadState), Some("F8"));
+    }
+
+    #[test]
+    fn a_cleared_binding_stays_cleared() {
+        // The file knew the action and carries no key for it: the user cleared
+        // it deliberately, so it must not come back on the next load.
+        let mut saved = Bindings(HashMap::from([(Action::Control(2), "x".to_string())]));
+
+        saved.adopt_new_defaults(&Bindings::default_keyboard(), &all_actions());
+
+        assert_eq!(saved.get(Action::SaveState), None);
+        assert_eq!(saved.get(Action::Pause), None);
+        assert_eq!(saved.get(Action::Control(4)), None);
+    }
+
+    #[test]
+    fn a_saved_file_records_the_actions_it_knew() {
+        // Without this the next build cannot tell its new actions from ones
+        // the user cleared.
+        let written = ron::ser::to_string(&SettingsFile::default()).expect("settings serialize");
+        let read: SettingsFile = ron::from_str(&written).expect("settings round-trip");
+        for action in EMULATOR_ACTIONS {
+            assert!(
+                read.known_actions.contains(&action),
+                "{action} missing from the recorded action set"
+            );
+        }
     }
 
     #[test]
