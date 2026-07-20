@@ -664,6 +664,37 @@ mod tests {
     }
 
     #[test]
+    fn a_recorder_never_writes_an_input_the_reader_rejects() {
+        // A press between the last stepped frame and the stop is stamped on a
+        // frame replay never reaches — exactly what the reader refuses above.
+        // The writer must not be able to produce that file.
+        let mut recorder = Recorder {
+            initial_state: vec![1, 2, 3],
+            inputs: Vec::new(),
+            checks: Vec::new(),
+            frame: 0,
+            check_interval: 0,
+        };
+        recorder.note_input(ControlId(2), ControlInput::Digital(true));
+        recorder.note_frame(None);
+        // Recording stops here; this press lands past the timeline's end.
+        recorder.note_input(ControlId(2), ControlInput::Digital(false));
+
+        let recording = recorder.finish();
+        assert_eq!(recording.frames, 1);
+        assert!(
+            recording.inputs.iter().all(|i| i.frame < recording.frames),
+            "an input outlived the timeline: {:?}",
+            recording.inputs
+        );
+        let bytes = recording.to_bytes().expect("serializes");
+        assert!(
+            Recording::from_bytes(&bytes).is_ok(),
+            "the writer produced a file its own reader rejects"
+        );
+    }
+
+    #[test]
     fn a_hostile_input_count_does_not_over_allocate() {
         // A truncated file claiming u32::MAX inputs must fail cleanly, not try
         // to reserve billions of entries.
