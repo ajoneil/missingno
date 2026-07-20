@@ -9,7 +9,7 @@ The reference emulators are all **behavioural** — none is die-derived, so none
 ## When to use
 
 Use this skill when investigating a test failure where:
-- A reference trace exists (check suite manifests at `https://ajoneil.github.io/morepork/tests/{suite}/manifest.json` or locally in `receipts/resources/morepork/test-suites/`)
+- The test belongs to a suite morepork covers (`receipts/resources/morepork/test-suites/` — reference traces are generated locally, see below)
 - You need to find **where** execution diverges, not just **that** it fails
 - The failure involves timing, register values, or execution path differences
 - You need to understand what the emulator did during a test (individual trace inspection)
@@ -23,67 +23,58 @@ Prefer this over `/inspect` (debugger) for initial diagnosis — traces show the
 
 ## Prerequisites
 
-1. **morepork CLI** built: `cd receipts/resources/morepork && cargo build -p morepork --features cli`
+1. **morepork CLI** built: `cd receipts/resources/morepork && make cli` (binary at `target/release/morepork`; equivalently `cargo build --release --features cli`)
 2. **morepork feature** on missingno: `cargo test -p missingno-gb --features morepork`
-3. **MOREPORK_PROFILE** env var set to the suite name (e.g. `gbmicrotest`, `blargg`, `mooneye`). Profiles are per-suite TOML files in `receipts/resources/morepork/test-suites/*/profile.toml`.
+3. **MOREPORK_PROFILE** env var set (any value enables capture). The column set comes from the core's hardware state schema, not a named profile; `MOREPORK_TRIGGER` (`tcycle`/`instruction`, default instruction) sets the cadence and `MOREPORK_SCOPE` (`observable`/`full`, default observable) the tier depth.
+
+The format is **version 3**, re-founded on hardware-named system state schemas. Traces from older morepork versions (the v2 corpus) don't open in v3 tools — regenerate rather than reuse old files.
 
 ## Generating traces
 
 ### Missingno trace
 ```bash
-MOREPORK_PROFILE=gbmicrotest cargo test -p missingno-gb --features morepork -- <test_name>
+MOREPORK_PROFILE=1 MOREPORK_TRIGGER=tcycle cargo test -p missingno-gb --features morepork -- <test_name>
 # Writes to: receipts/traces/<rom_name>.morepork
 ```
 
-The test runner captures state at every T-cycle (for tcycle profiles) or every instruction (for instruction profiles). Traces are written even when tests fail.
+The test runner captures at every T-cycle (`MOREPORK_TRIGGER=tcycle`) or every instruction (the default). `MOREPORK_SCOPE=full` adds the schema's Tier-2a deep state. Traces are written even when tests fail.
 
 ### Missingno CGB trace
 The CGB core has its own `morepork` feature (`missingno-gbc`), captured through a dedicated `morepork_capture` test driven by an env var rather than a test-name filter:
 ```bash
-MOREPORK_PROFILE=<suite> MOREPORK_CAPTURE_ROM=<rom-relative-to-gbc-roms-dir> \
+MOREPORK_PROFILE=1 MOREPORK_CAPTURE_ROM=<rom-relative-to-gbc-roms-dir> \
   cargo test -p missingno-gbc --features morepork -- morepork_capture
 # Uses load_cgb_rom_traced; writes to receipts/traces/<rom_name>.morepork
 ```
 
-### Reference traces from manifests
-**Manifests** are on GitHub Pages; **trace blobs** are on a DigitalOcean Spaces CDN (the full set exceeds the Pages 1 GB limit). Two different hosts:
-- Manifest: `https://ajoneil.github.io/morepork/tests/{suite}/manifest.json`
-- Trace blob: `https://morepork.syd1.cdn.digitaloceanspaces.com/tests/{suite}/{test}_{emulator}_{system}_{status}.morepork`
+### Reference traces — generate locally
 
-**Suite-name gotcha:** `{suite}` is the *web* suite name. It usually matches the local `test-suites/` folder, **except gambatte: the folder is `gambatte` but the web suite is `gambatte-tests`**. Authoritative list of web suite names: `receipts/resources/morepork/web/src/components/test-picker.js`.
+**The published trace library is legacy.** The old CDN corpus was written in format v2 and is orphaned by the v3 re-founding — do not download traces from the web manifests or the CDN. Generate the reference traces you need locally in `receipts/resources/morepork/`:
 
-**Fetch a manifest to find available traces:**
 ```bash
-curl -s https://ajoneil.github.io/morepork/tests/gambatte-tests/manifest.json | jq '.[0]'
-# → {"name": "...", "rom": "....gbc",
-#    "systems": {"cgb": {"sameboy": "pass", "docboy": "pass", "gambatte": "pass", "missingno": "fail"}}}
+cd receipts/resources/morepork
+make adapters                              # build the adapter binaries once
+make traces-gbmicrotest EMUS=sameboy       # one suite, one emulator
+make traces-blargg EMUS=sameboy,docboy -j$(nproc)
 ```
 
-Status lives under `systems.{dmg,cgb}.{emulator}` — pick the system matching the core under test (`cgb` for `missingno-gbc`, `dmg` for `missingno-gb`). A suite may carry only one system.
+There is a `traces-<suite>` target per suite (see the Makefile's `.PHONY` list); `EMUS=` restricts which emulators run (default `gambatte,sameboy,missingno,docboy`). Generate only what the investigation needs — a full `make traces` run is hours of work.
 
-**Download a reference trace** (note the `_{system}_` segment — `cgb` or `dmg`):
-```bash
-curl -fLO https://morepork.syd1.cdn.digitaloceanspaces.com/tests/gambatte-tests/<test>_sameboy_cgb_pass.morepork
-```
-
-URL pattern: blob `{TRACE_CDN}/tests/{suite}/{test}_{emulator}_{system}_{status}.morepork`, manifest `{PAGES}/tests/{suite}/manifest.json`.
-
-Tracked emulators: **sameboy, docboy, gambatte, missingno** — all behavioural; prefer SameBoy, then DocBoy (T-cycle granularity, useful for sub-M-cycle visibility on non-PPU behaviour), then gambatte. 17 suites — see `receipts/resources/morepork/test-suites/` for the current set.
-
-Reference traces are also available locally in `receipts/resources/morepork/test-suites/` if the morepork repo has them built.
+Reference emulators: **sameboy, docboy, gambatte** (GB/CGB), **stella, gopher2600, mame** (VCS) — all behavioural; follow the per-core adapter preference above. Generated traces land in `build/traces/<suite>/`, named `<test>_<emu>_<model>_<status>.morepork`.
 
 ## Diffing traces
 
 ### Basic diff
 ```bash
 morepork diff <missingno.morepork> <reference.morepork>
+morepork diff <a> <b> --summary        # one line per divergent field, with first-divergence values
 ```
 
 ### Alignment gotchas
 
 **Initial state differs between emulators.** Post-boot register values (LY, STAT, DIV, IF, TAC) differ between skip-boot emulators. Fields that diverge from entry 0 are noise, not bugs.
 
-**Use `--sync` to align at a meaningful event.** The `--sync` flag skips entries in both traces until a condition is met, aligning them at the same logical point:
+**Sync defaults to `auto`** — skip to the family's program entry when both traces start there, else first-common-address. That usually suffices. Other modes: `--sync cartridge`, `--sync pc`, `--sync none`, or an explicit condition that skips entries in both traces until it's met (hex values):
 
 ```bash
 # Sync at LCD-on (PPU enable)
@@ -121,11 +112,17 @@ Common noise fields: `div` (phase-dependent), `tac` (init differs), `if_` (upper
 --fields test_result,test_expect,test_pass
 ```
 
+### Mixed granularities — downsample
+
+When one trace is T-cycle and the other instruction/M-cycle cadence, downsample the finer one first:
+```bash
+morepork downsample <tcycle.morepork>            # → mcycle view; missingno traces keep the M-boundary phase
+morepork downsample <trace> --keep "<condition>" # custom keep filter
+```
+
 ### Interpreting results
 
-**`Classification: execution-path-split`** means PC diverges — the emulators take different code paths. Look at where PC first differs.
-
-**`Classification: register-drift`** means PC matches but register values differ — same code, different results. Look at which register diverges first.
+The diff reports per-field divergence counts plus the first few divergent entries (`field:a|b` pairs). **PC diverging** means the emulators take different code paths — look at where PC first differs. **PC matching while other fields differ** means same code, different results — look at which register diverges first.
 
 **Persistent PC offset (e.g. missingno=0x0150 vs reference=0x0151):** This is a 4-dot (1 M-cycle) timing offset, usually from initial state divergence. Not a bug in the code under test — it's the starting position within the frame being different.
 
