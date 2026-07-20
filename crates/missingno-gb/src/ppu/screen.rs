@@ -69,6 +69,9 @@ impl crate::ScreenBuffer for Screen {
     fn blank(&mut self) {
         Screen::blank(self);
     }
+    fn restore(&mut self, bytes: &[u8]) {
+        self.restore_front(bytes);
+    }
 }
 
 #[derive(Copy, Clone, Debug)]

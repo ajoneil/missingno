@@ -74,6 +74,18 @@ impl ColorRam {
             self.index = (self.index + 1) & 0x3F;
         }
     }
+
+    /// The raw 64 palette bytes, for a save-state capture.
+    pub(crate) fn raw(&self) -> [u8; 64] {
+        self.data
+    }
+
+    /// Reseat the palette bytes and the index register (BCPS/OCPS) from a save
+    /// state — `index_register` carries both the auto-increment bit and index.
+    pub(crate) fn restore(&mut self, data: [u8; 64], index_register: u8) {
+        self.data = data;
+        self.write_index(index_register);
+    }
 }
 
 /// A CGB colour-palette RAM port. BCPS/BCPD ($FF68/9) address BG palettes;

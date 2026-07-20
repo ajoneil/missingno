@@ -356,4 +356,8 @@ impl WindowControl {
     pub(crate) fn window_line_counter(&self) -> u8 {
         self.window_line_counter
     }
+
+    pub(crate) fn set_window_line_counter(&mut self, value: u8) {
+        self.window_line_counter = value;
+    }
 }

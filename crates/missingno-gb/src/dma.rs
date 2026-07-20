@@ -99,6 +99,11 @@ impl Dma {
         self.source_register
     }
 
+    /// Reseat the DMA register (FF46) readback from a save state.
+    pub fn set_source_register(&mut self, value: u8) {
+        self.source_register = value;
+    }
+
     /// Base source address of the transfer (`source_register << 8`).
     pub fn source(&self) -> u16 {
         self.source

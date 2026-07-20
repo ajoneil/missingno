@@ -388,7 +388,13 @@ impl<P: PpuModel> Ppu<P> {
         let shadow = ppu.model.stat_shadow_mut();
         shadow.set_synced_enables(enables);
         shadow.set_synced_lyc(snap.lyc);
+        // Seed the STAT rising-edge detector and the window line counter from the
+        // captured boundary state so they round-trip.
+        ppu.video
+            .stat
+            .restore_boundary(snap.stat & 0x03, snap.ly == snap.lyc);
         if let Some(rendering) = ppu.pixel_pipeline.as_mut() {
+            rendering.restore_window_line_counter(snap.window_line_counter);
             rendering.capture_register_sync(&ppu.registers);
         }
         ppu

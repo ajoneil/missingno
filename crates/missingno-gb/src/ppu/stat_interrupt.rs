@@ -123,6 +123,24 @@ impl StatInterrupt {
         self.legs_was_high
     }
 
+    /// Seed the rising-edge detector from a save state's boundary registers: the
+    /// prior STAT condition legs derived from the current mode and LYC match, so
+    /// the first evaluation after a restore sees the steady line rather than a
+    /// spurious 0→1. `enables` must already be set.
+    pub(in crate::ppu) fn restore_boundary(&mut self, mode: u8, lyc_match: bool) {
+        let mut conditions = match mode {
+            0 => InterruptFlags::HORIZONTAL_BLANK,
+            1 => InterruptFlags::VERTICAL_BLANK,
+            2 => InterruptFlags::OAM_SCAN,
+            _ => InterruptFlags::empty(),
+        };
+        if lyc_match {
+            conditions |= InterruptFlags::CURRENT_LINE_COMPARE;
+        }
+        self.conditions_was = conditions;
+        self.legs_was_high = conditions & self.enables;
+    }
+
     /// Used by the STAT write glitch path to install the transient all-bits-high state.
     pub(in crate::ppu) fn set_enables(&mut self, flags: InterruptFlags) {
         self.enables = flags;

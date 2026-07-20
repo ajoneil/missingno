@@ -184,6 +184,19 @@ impl ScreenBuffer for Screen {
         self.front.clear();
         self.back.clear();
     }
+
+    /// Seed the displayed (front) buffer from a save state's framebuffer:
+    /// little-endian RGB555 words, row-major. The back buffer stays cleared.
+    fn restore(&mut self, bytes: &[u8]) {
+        for y in 0..NUM_SCANLINES as usize {
+            for x in 0..PIXELS_PER_LINE as usize {
+                let offset = (y * PIXELS_PER_LINE as usize + x) * 2;
+                if let Some(pair) = bytes.get(offset..offset + 2) {
+                    self.front.pixels[y][x] = Color555(u16::from_le_bytes([pair[0], pair[1]]));
+                }
+            }
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]

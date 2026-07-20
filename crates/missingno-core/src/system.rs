@@ -80,6 +80,10 @@ pub enum StateError {
     /// The state data is malformed, or restore was attempted off an instruction
     /// boundary.
     Corrupt,
+    /// The state was taken with the CGB double-speed clock engaged. A boundary
+    /// restore cannot reconstruct the free-running dot-phase alignment that a
+    /// real speed switch left, so restore is limited to single-speed boundaries.
+    DoubleSpeedBoundary,
 }
 
 impl std::fmt::Display for StateError {
@@ -90,6 +94,9 @@ impl std::fmt::Display for StateError {
             StateError::IncompatibleRom => "save state was written for a different ROM",
             StateError::VersionMismatch => "save state uses an unsupported format version",
             StateError::Corrupt => "save state data is corrupt",
+            StateError::DoubleSpeedBoundary => {
+                "save state was taken at double speed; restore supports single-speed boundaries only"
+            }
         })
     }
 }

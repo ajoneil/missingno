@@ -69,4 +69,12 @@ impl Vram for CgbVram {
     fn init_post_boot(&mut self, logo: &[u8; 0x30]) {
         self.banks[0].seed_post_boot(logo);
     }
+
+    /// Rebuild both 8 KiB banks from a linear 16 KiB image (bank 0 then bank 1).
+    /// The VBK selection is restored separately through `write_bank_select`.
+    fn restore_image(&mut self, bytes: &[u8]) {
+        for (bank, chunk) in self.banks.iter_mut().zip(bytes.chunks(0x2000)) {
+            *bank = VramBank::from_bytes(chunk);
+        }
+    }
 }

@@ -44,10 +44,13 @@ fn cgb_boundary_delta() -> Vec<FieldDef> {
     ]
 }
 
-/// The CGB palette RAM regions, reached through the palette-index ports rather
-/// than the CPU address map.
+/// The CGB memory spans that diverge from the DMG's: bank-complete VRAM (both
+/// 8 KiB banks) and WRAM (all eight 4 KiB banks) as linear off-bus images, and
+/// the palette RAM reached through the index ports rather than the CPU map.
 fn cgb_memory_delta() -> Vec<MemorySpan> {
     vec![
+        MemorySpan::off_bus("vram", 2 * 0x2000).help("video RAM, both banks (bank 0 then bank 1)"),
+        MemorySpan::off_bus("wram", 8 * 0x1000).help("work RAM, all eight banks (bank order)"),
         MemorySpan::off_bus("cram_bg", 64).help("background palette RAM (8 palettes × 4 × RGB555)"),
         MemorySpan::off_bus("cram_obj", 64).help("object palette RAM (8 palettes × 4 × RGB555)"),
     ]
@@ -59,7 +62,12 @@ static CGB_SCHEMA: LazyLock<SystemStateSchema> = LazyLock::new(|| {
     fields.extend(dmg_boundary_fields());
     fields.extend(cgb_boundary_delta());
 
-    let mut memory = dmg_memory_spans();
+    // The colour delta replaces the DMG's single-bank VRAM/WRAM spans with
+    // bank-complete images; keep the DMG's OAM / wave RAM / high RAM / cart RAM.
+    let mut memory: Vec<MemorySpan> = dmg_memory_spans()
+        .into_iter()
+        .filter(|span| span.name != "vram" && span.name != "wram")
+        .collect();
     memory.extend(cgb_memory_delta());
 
     SystemStateSchema {
@@ -121,6 +129,21 @@ mod tests {
         }
         assert!(cgb.span("cram_bg").is_some());
         assert!(cgb.span("cram_obj").is_some());
+    }
+
+    #[test]
+    fn cgb_memory_spans_are_bank_complete() {
+        let cgb = cgb_state_schema();
+        // Both VRAM banks (16 KiB) and all eight WRAM banks (32 KiB), off-bus.
+        let vram = cgb.span("vram").expect("vram span");
+        assert_eq!(vram.len, 0x4000);
+        assert_eq!(vram.start, None);
+        let wram = cgb.span("wram").expect("wram span");
+        assert_eq!(wram.len, 0x8000);
+        assert_eq!(wram.start, None);
+        // Palette RAM: 64 bytes each.
+        assert_eq!(cgb.span("cram_bg").unwrap().len, 64);
+        assert_eq!(cgb.span("cram_obj").unwrap().len, 64);
     }
 
     #[test]

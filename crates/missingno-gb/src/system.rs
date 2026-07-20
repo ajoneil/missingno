@@ -123,17 +123,7 @@ impl ConsoleUi for Dmg {
         memory: Vec<(String, Vec<u8>)>,
         frame: Option<&StateFrame>,
     ) -> Result<(), StateError> {
-        if !console.cpu().is_fetch_phase() {
-            return Err(StateError::Corrupt);
-        }
-        let snapshot = crate::snapshot::parse_record(record, memory)?;
-        console.restore_snapshot(&snapshot);
-        // Seed the displayed screen from the saved framebuffer so the first
-        // frame after a restore matches the save.
-        if let Some(frame) = frame {
-            console.restore_screen(&frame.data);
-        }
-        Ok(())
+        console.restore_boundary(record, memory, frame)
     }
 
     fn screen_display(console: &Console<Self>, new_screen: Option<Self::Screen>) -> Option<Frame> {

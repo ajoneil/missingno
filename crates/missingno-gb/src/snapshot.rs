@@ -16,13 +16,14 @@
 //! this bridge omits them.
 
 use missingno_core::state::{StateRecord, StateValue};
+use missingno_core::state_file::StateFrame;
 use missingno_core::system::StateError;
 
 use crate::audio::Audio;
 use crate::cartridge::mbc::Mbc;
 use crate::cpu::HaltState;
 use crate::interrupts::InterruptFlags;
-use crate::{Console, GameBoy};
+use crate::{Console, Model, ScreenBuffer};
 
 // ── Per-subsystem boundary snapshot structs ──────────────────────
 //
@@ -659,15 +660,46 @@ pub fn parse_record(
 
 // ── Restore: structs → console (in place) ────────────────────────
 
-impl GameBoy {
-    /// Rebuild this console in place from a boundary snapshot, keeping the
-    /// existing cartridge (the ROM) and re-seating every subsystem at an
-    /// instruction boundary: the clock is placed at the `Low` phase and the
-    /// volatile bus/pixel state is defaulted.
+impl<M: Model> Console<M> {
+    /// Restore this console in place from a validated record at an instruction
+    /// boundary: the shared subsystems, the model's banked memory and register
+    /// delta, and the displayed framebuffer. Errors (never panics) on a
+    /// mid-instruction call or a record this model cannot faithfully restore.
+    pub fn restore_boundary(
+        &mut self,
+        record: &StateRecord,
+        memory: Vec<(String, Vec<u8>)>,
+        frame: Option<&StateFrame>,
+    ) -> Result<(), StateError> {
+        // A save is taken between instructions: the CPU is either about to fetch
+        // or halted (waiting on an interrupt). Both are clean boundaries; a
+        // mid-instruction or speed-switch-stopped console is not restorable.
+        if !self.cpu().is_fetch_phase() && !self.cpu().is_halted() {
+            return Err(StateError::Corrupt);
+        }
+        self.model.validate_boundary(record)?;
+        let snapshot = parse_record(record, memory)?;
+        self.restore_snapshot(&snapshot);
+        self.model
+            .restore_boundary_delta(&mut self.chassis, record, &snapshot.memory)?;
+        // Seed the displayed screen from the saved framebuffer so the first
+        // frame after a restore matches the save.
+        if let Some(frame) = frame {
+            self.chassis.screen.restore(&frame.data);
+        }
+        Ok(())
+    }
+
+    /// Rebuild the shared subsystems in place from a boundary snapshot, keeping
+    /// the existing cartridge (the ROM) and re-seating every subsystem at an
+    /// instruction boundary: the clock is placed at the single-speed `Rise`
+    /// phase and the volatile bus/pixel state is defaulted. Model-specific state
+    /// (CGB banks, palette RAM, speed) is reseated separately by
+    /// [`Model::restore_boundary_delta`].
     pub fn restore_snapshot(&mut self, snap: &Snapshot) {
         use crate::memory::VramBus;
-        use crate::ppu::memory::{Oam, VramBank};
-        use crate::ppu::screen::Screen;
+        use crate::ppu::memory::{Oam, Vram};
+        use crate::ppu::model::PpuModel;
 
         let region = |name: &str| -> Option<&[u8]> {
             snap.memory
@@ -682,10 +714,11 @@ impl GameBoy {
             wave_ram[..len].copy_from_slice(&data[..len]);
         }
 
-        // Work RAM and cartridge RAM land in the existing external bus.
+        // Work RAM lands where the model keeps it (DMG flat bus, CGB banks);
+        // cartridge RAM lands in the existing external bus.
         if let Some(wram) = region("wram") {
-            let len = wram.len().min(self.chassis.external.work_ram.len());
-            self.chassis.external.work_ram[..len].copy_from_slice(&wram[..len]);
+            self.model
+                .restore_work_ram(&mut self.chassis.external, wram);
         }
         if let Some(cart_ram) = region("cart_ram") {
             for (i, &byte) in cart_ram.iter().enumerate() {
@@ -704,6 +737,9 @@ impl GameBoy {
         self.chassis.audio = Audio::from_snapshot(&snap.apu, wave_ram);
         self.chassis.timers = crate::timers::Timers::from_snapshot(&snap.timer);
         self.chassis.dma = crate::dma::Dma::from_snapshot(&snap.dma);
+        // The OAM-DMA source register (FF46) reads back independently of an
+        // in-flight transfer, so restore it from the captured register value.
+        self.chassis.dma.set_source_register(snap.ppu.dma);
         self.chassis.serial = crate::serial_transfer::Serial::from_snapshot(&snap.serial);
         self.chassis.interrupts = {
             let mut regs = crate::interrupts::Registers::new();
@@ -711,26 +747,21 @@ impl GameBoy {
             regs.requested = InterruptFlags::from_bits_retain(snap.cpu.if_);
             regs
         };
-        self.chassis.vram_bus = VramBus {
-            vram: region("vram").map(VramBank::from_bytes).unwrap_or_default(),
-            latch: 0xFF,
-        };
+        let mut vram = <<M::Ppu as PpuModel>::Vram>::default();
+        if let Some(bytes) = region("vram") {
+            vram.restore_image(bytes);
+        }
+        self.chassis.vram_bus = VramBus { vram, latch: 0xFF };
         self.chassis.high_ram = region("hram")
             .map(crate::memory::HighRam::from_bytes)
             .unwrap_or_else(crate::memory::HighRam::new);
 
-        self.chassis.screen = Screen::default();
+        self.chassis.screen = M::Screen::default();
         self.chassis.bus_trace = crate::cpu_bus::BusTrace::new();
         self.chassis.clock = crate::MasterClock::new(crate::CpuDivider::One);
         self.chassis.cpu_bus = crate::cpu_bus::CpuBus::new();
         self.chassis.dma_conflict = crate::DmaConflictLatch::default();
         self.chassis.joypad = crate::joypad::Joypad::new();
-    }
-
-    /// Seed the displayed screen from a save state's framebuffer (row-major
-    /// shade indices), so the first frame after a restore matches the save.
-    pub fn restore_screen(&mut self, shades: &[u8]) {
-        self.chassis.screen.restore_front(shades);
     }
 }
 

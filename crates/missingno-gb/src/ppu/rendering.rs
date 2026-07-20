@@ -161,6 +161,11 @@ impl<P: PpuModel> Rendering<P> {
         self.window.window_line_counter()
     }
 
+    /// Seed the internal window line counter from a save state.
+    pub(crate) fn restore_window_line_counter(&mut self, value: u8) {
+        self.window.set_window_line_counter(value);
+    }
+
     pub(super) fn new() -> Self {
         Rendering {
             hblank: HblankPipeline::new(),

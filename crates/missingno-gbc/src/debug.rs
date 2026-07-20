@@ -15,6 +15,7 @@ use missingno_core::system::{DebugView, InspectSnapshot};
 use missingno_core::video::{Frame, RawFrame, RgbaFrame};
 
 use missingno_gb::Console;
+use missingno_gb::Model;
 use missingno_gb::cartridge::CartridgeView;
 use missingno_gb::debugger::graphics as gb_graphics;
 use missingno_gb::debugger::inspection::{
@@ -435,7 +436,7 @@ impl ConsoleUi for Cgb {
         let (bcps, ocps) = ppu.model().palette_index_registers();
         record
             .set("double_speed", model.double_speed())
-            .set("svbk", model.wram_bank())
+            .set("svbk", model.svbk_register())
             .set("vbk", console.vram().selected_bank())
             .set("opri", ppu.read_object_priority())
             .set("bcps", bcps)
@@ -459,7 +460,42 @@ impl ConsoleUi for Cgb {
     }
 
     fn capture_memory(console: &Console<Self>) -> Vec<(&'static str, Vec<u8>)> {
-        missingno_gb::snapshot::capture_memory(console)
+        // The colour console's memory is bank-complete: both VRAM banks (16 KiB)
+        // and all eight WRAM banks (32 KiB), plus the off-bus palette RAM. OAM,
+        // wave RAM, high RAM, and cartridge RAM follow the shared Game Boy map.
+        let vram = (0..console.vram_image_len().unwrap_or(0))
+            .map(|offset| console.vram_image_byte(offset))
+            .collect();
+        let wram = console
+            .model()
+            .wram_image()
+            .map(<[u8]>::to_vec)
+            .unwrap_or_default();
+        let (bg_cram, obj_cram) = console.ppu().model().cram_bytes();
+        let mut regions = vec![
+            ("vram", vram),
+            ("wram", wram),
+            ("oam", console.peek_range(0xFE00, 0x00A0)),
+            ("wave_ram", console.audio().channels().ch3.ram.to_vec()),
+            ("hram", console.high_ram().data().to_vec()),
+            ("cram_bg", bg_cram.to_vec()),
+            ("cram_obj", obj_cram.to_vec()),
+        ];
+        if let Some(ram) = console.cartridge().ram()
+            && !ram.is_empty()
+        {
+            regions.push(("cart_ram", ram));
+        }
+        regions
+    }
+
+    fn restore_state(
+        console: &mut Console<Self>,
+        record: &missingno_core::state::StateRecord,
+        memory: Vec<(String, Vec<u8>)>,
+        frame: Option<&missingno_core::state_file::StateFrame>,
+    ) -> Result<(), missingno_core::system::StateError> {
+        console.restore_boundary(record, memory, frame)
     }
 
     fn screen_display(console: &Console<Self>, new_screen: Option<Self::Screen>) -> Option<Frame> {

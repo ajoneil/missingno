@@ -127,6 +127,9 @@ pub trait Vram: Default {
     fn write_bank_select(&mut self, _value: u8) {}
     /// Seed bank 0 with the post-boot logo state.
     fn init_post_boot(&mut self, logo: &[u8; 0x30]);
+    /// Rebuild every bank from a linear bank-complete image (a save-state
+    /// restore). The DMG fills its single 8 KiB bank; the CGB fills both.
+    fn restore_image(&mut self, bytes: &[u8]);
 }
 
 /// Object-safe, read-only bank access for inspection UIs, where [`Vram`]
@@ -156,6 +159,10 @@ impl Vram for VramBank {
 
     fn init_post_boot(&mut self, logo: &[u8; 0x30]) {
         self.seed_post_boot(logo);
+    }
+
+    fn restore_image(&mut self, bytes: &[u8]) {
+        *self = VramBank::from_bytes(bytes);
     }
 }
 

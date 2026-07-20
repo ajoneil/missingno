@@ -327,6 +327,29 @@ impl CgbPpu {
         }
     }
 
+    /// The raw BG and OBJ palette-RAM bytes (64 each), for a save-state capture.
+    pub fn cram_bytes(&self) -> ([u8; 64], [u8; 64]) {
+        (self.bg_cram.raw(), self.obj_cram.raw())
+    }
+
+    /// Reseat the palette RAM and its index registers from a save state, and
+    /// restore the DMG-compatibility flag (a cart-derived boot decision the
+    /// shared PPU rebuild resets to its full-CGB default).
+    pub fn restore_boundary(
+        &mut self,
+        bg: [u8; 64],
+        obj: [u8; 64],
+        bcps: u8,
+        ocps: u8,
+        opri: u8,
+        dmg_compat: bool,
+    ) {
+        self.bg_cram.restore(bg, bcps);
+        self.obj_cram.restore(obj, ocps);
+        self.opri = opri & 0x01 != 0;
+        self.dmg_compat = dmg_compat;
+    }
+
     /// BCPS/OCPS ($FF68/$FF6A) index registers for the debugger — the raw
     /// auto-increment flag and index the CPU reads back. Read-only.
     pub fn palette_index_registers(&self) -> (u8, u8) {

@@ -54,6 +54,10 @@ pub trait ScreenBuffer: Default + Clone {
     /// Swap back→front and clear back. Returns true for `new_screen` tracking.
     fn present(&mut self) -> bool;
     fn blank(&mut self);
+    /// Seed the displayed (front) buffer from a save state's framebuffer bytes,
+    /// so the first frame after a restore matches the save. Each console decodes
+    /// its own pixel format (DMG shade indices, CGB little-endian RGB555).
+    fn restore(&mut self, bytes: &[u8]);
 }
 
 /// CGB-only console-level arbitration state, relocated off the shared
@@ -230,6 +234,37 @@ pub trait Model: Default {
     /// post-boot HLE the boot ROM performs itself (CGB: the DMG-compat
     /// KEY0/palette setup).
     fn on_reset(&mut self, _cartridge: &Cartridge, _has_boot_rom: bool) {}
+
+    /// Restore work RAM from a save state's bank-complete image at a boundary.
+    /// The DMG copies the 8 KiB into its flat work RAM; the CGB fills its eight
+    /// banks (held in the model, off the shared bus).
+    fn restore_work_ram(&mut self, external: &mut ExternalBus, bytes: &[u8]) {
+        let len = bytes.len().min(external.work_ram.len());
+        external.work_ram[..len].copy_from_slice(&bytes[..len]);
+    }
+
+    /// Reject a record this model cannot faithfully restore at a boundary,
+    /// before any state is mutated. The CGB refuses a double-speed save — the
+    /// dot-phase alignment a speed switch leaves is not boundary-observable.
+    fn validate_boundary(
+        &self,
+        _record: &missingno_core::state::StateRecord,
+    ) -> Result<(), missingno_core::system::StateError> {
+        Ok(())
+    }
+
+    /// Restore the model's own hardware delta after the shared subsystems are
+    /// rebuilt: the CGB reseats its banked VRAM/palette RAM, the VBK / OPRI /
+    /// palette-index registers, the single-speed clock, and the VRAM-DMA cursor.
+    /// A no-op on the DMG.
+    fn restore_boundary_delta(
+        &mut self,
+        _chassis: &mut Chassis<Self>,
+        _record: &missingno_core::state::StateRecord,
+        _memory: &[(String, Vec<u8>)],
+    ) -> Result<(), missingno_core::system::StateError> {
+        Ok(())
+    }
 
     /// Post-boot CPU state when no boot ROM is present. DMG seeds the flags
     /// from the header checksum; CGB uses a fixed register file (A=$11).

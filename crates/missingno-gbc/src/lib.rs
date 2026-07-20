@@ -196,6 +196,13 @@ impl Cgb {
         self.svbk.max(1)
     }
 
+    /// SVBK ($FF70) bits 0-2 as written — the raw register value, distinct from
+    /// the floored effective bank. The save-state capture keys on this so a
+    /// written `0` round-trips (its FF70 read differs from `1`).
+    pub fn svbk_register(&self) -> u8 {
+        self.svbk
+    }
+
     /// A read-only snapshot of the VRAM-DMA engine for the debugger.
     pub fn vram_dma_status(&self) -> VramDmaStatus {
         self.vram_dma.status()
@@ -571,6 +578,104 @@ impl Model for Cgb {
         if !has_boot_rom {
             self.dmg_compat = !cartridge.is_cgb();
         }
+    }
+
+    fn restore_work_ram(
+        &mut self,
+        _external: &mut missingno_gb::memory::ExternalBus,
+        bytes: &[u8],
+    ) {
+        // CGB work RAM lives in the model's eight banks, not the shared bus.
+        let len = bytes.len().min(self.wram.len());
+        self.wram[..len].copy_from_slice(&bytes[..len]);
+    }
+
+    fn validate_boundary(
+        &self,
+        record: &missingno_core::state::StateRecord,
+    ) -> Result<(), missingno_core::system::StateError> {
+        // A double-speed save carries no boundary-observable dot-phase alignment
+        // (the free-running dot clock's parity a speed switch left is Tier-2b
+        // state); reconstructing it would be a guess, so refuse the restore.
+        if let Some(missingno_core::state::StateValue::Bool(true)) = record.get("double_speed") {
+            return Err(missingno_core::system::StateError::DoubleSpeedBoundary);
+        }
+        Ok(())
+    }
+
+    fn restore_boundary_delta(
+        &mut self,
+        chassis: &mut Chassis<Self>,
+        record: &missingno_core::state::StateRecord,
+        memory: &[(String, Vec<u8>)],
+    ) -> Result<(), missingno_core::system::StateError> {
+        use missingno_core::state::StateValue;
+        use missingno_core::system::StateError;
+
+        let int = |name: &str| -> Result<u32, StateError> {
+            match record.get(name) {
+                Some(StateValue::Int(v)) => Ok(*v),
+                _ => Err(StateError::Corrupt),
+            }
+        };
+        let flag = |name: &str| -> Result<bool, StateError> {
+            match record.get(name) {
+                Some(StateValue::Bool(b)) => Ok(*b),
+                _ => Err(StateError::Corrupt),
+            }
+        };
+        let region = |name: &str| -> [u8; 64] {
+            let mut out = [0u8; 64];
+            if let Some((_, data)) = memory.iter().find(|(n, _)| n == name) {
+                let len = data.len().min(64);
+                out[..len].copy_from_slice(&data[..len]);
+            }
+            out
+        };
+
+        // Speed: single-speed boundaries only (double speed refused above); reset
+        // the KEY1/blackout transients to their idle values.
+        self.double_speed = false;
+        self.key1_armed = false;
+        self.speed_switch_blackout = 0;
+        self.speed_switch_wake_latency = None;
+        self.switch_relock_debit = false;
+        self.pre_alet_rendering = false;
+        self.pre_alet_lock = None;
+        self.read_drive_oam_lock = None;
+        self.ff44_ripple_old = None;
+        self.console_state = CgbConsoleState::default();
+        chassis.clock.set_divider(CpuDivider::One);
+
+        // Work-RAM bank select (SVBK) and the VRAM bank select (VBK).
+        self.svbk = (int("svbk")? as u8) & 0x07;
+        chassis.vram_bus.vram.write_bank_select(int("vbk")? as u8);
+
+        // Palette RAM and its index/priority registers.
+        let (bg, obj) = (region("cram_bg"), region("cram_obj"));
+        let dmg_compat = self.dmg_compat;
+        chassis.ppu.model_mut().restore_boundary(
+            bg,
+            obj,
+            int("bcps")? as u8,
+            int("ocps")? as u8,
+            int("opri")? as u8,
+            dmg_compat,
+        );
+
+        // VRAM-DMA engine: rebuild the cursor for an armed HBlank transfer (a
+        // GDMA holds the CPU for its whole run, so it cannot straddle a
+        // boundary). The arbitration transients reset to idle — at a boundary no
+        // block is in flight.
+        self.vram_dma = VramDma::default();
+        if flag("hdma_active")? && flag("hdma_hblank")? {
+            self.vram_dma.cursor.mode = TransferMode::HBlank;
+            self.vram_dma.cursor.source = int("hdma_source")? as u16;
+            self.vram_dma.cursor.dest = int("hdma_dest")? as u16;
+            self.vram_dma.cursor.remaining = (int("hdma_remaining")? as u16) * 16;
+        }
+
+        Ok(())
     }
 
     fn map_read(&self, address: u16, ppu: &Ppu<CgbPpu>, vram: &CgbVram) -> Option<u8> {
