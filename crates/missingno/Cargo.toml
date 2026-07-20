@@ -24,7 +24,6 @@ missingno-nes = { path = "../missingno-nes", optional = true }
 missingno-sms = { path = "../missingno-sms", optional = true }
 missingno-vcs = { path = "../missingno-vcs", features = ["morepork"] }
 missingno-session = { path = "../missingno-session", default-features = false, features = ["gb", "tools"] }
-missingno-debugger = { path = "../missingno-debugger", default-features = false, features = ["gb"] }
 cpal = "0.17"
 bytemuck = { version = "1.25", features = ["derive"] }
 clap = { version = "4.6.1", features = ["derive"] }
@@ -43,7 +42,6 @@ sha1 = "0.11"
 smol = "2"
 ureq = "3"
 zstd = "0.13"
-tiny_http = "0.12"
 jiff = { version = "0.2", features = ["serde"] }
 libc = "0.2"
 dirs = "6"

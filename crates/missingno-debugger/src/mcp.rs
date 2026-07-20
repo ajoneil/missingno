@@ -324,6 +324,7 @@ fn load_rom(loaded: &mut Option<Host>, args: &Value) -> ToolOutcome {
             .get("tv_standard")
             .and_then(Value::as_str)
             .map(str::to_string),
+        ..LoadOptions::default()
     };
     let path_ref = Path::new(path);
     let console = factory::create_console_with(path_ref, &bytes, &options)?

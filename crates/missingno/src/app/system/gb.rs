@@ -11,7 +11,7 @@ use missingno_gbc::GameBoyColor;
 
 use missingno_core::video::{ConsoleFrame, RgbaFrame};
 
-use super::{MediaLoad, Platform, SystemConsole, SystemDebugger};
+use super::{MediaLoad, Platform, SystemConsole};
 use crate::app::screen::PalettePolicy;
 
 /// The Game Boy family's colour policy: the user's monochrome palette plus the
@@ -116,9 +116,8 @@ pub trait GbLaunch {
 }
 
 /// The one DMG-vs-CGB selection point for every executable path (GUI load,
-/// trace, headless): CGB-aware media — enhanced or required — boots the CGB
-/// core, like a cartridge slotted into a real GBC; DMG-only media boots the
-/// DMG core.
+/// trace): CGB-aware media — enhanced or required — boots the CGB core, like a
+/// cartridge slotted into a real GBC; DMG-only media boots the DMG core.
 pub fn launch<L: GbLaunch>(
     rom: Vec<u8>,
     save_data: Option<Vec<u8>>,
@@ -180,29 +179,4 @@ pub fn create_console(media: MediaLoad) -> Option<Box<dyn SystemConsole>> {
         link,
         Boxed,
     ))
-}
-
-/// Build a headless debugger over the same seam the GUI uses, wiring the boot
-/// ROM, an optional serial link, and the battery-save format. The headless
-/// server never persists, so the battery-save hook stays inert.
-pub fn headless_debugger(
-    rom: Vec<u8>,
-    save_data: Option<Vec<u8>>,
-    boot_rom: Option<BootRom>,
-    link: Option<Box<dyn SerialLink>>,
-) -> Box<dyn SystemDebugger> {
-    struct Build;
-    impl GbLaunch for Build {
-        type Output = Box<dyn SystemConsole>;
-        fn dmg(self, console: GameBoy) -> Self::Output {
-            Box::new(GbConsole::new(console, battery_save))
-        }
-        fn cgb(self, console: GameBoyColor) -> Self::Output {
-            Box::new(GbConsole::new(console, battery_save))
-        }
-    }
-    match launch(rom, save_data, boot_rom, link, Build).into_debugger() {
-        Ok(debugger) => debugger,
-        Err(_) => unreachable!("the Game Boy console always has a debugger backend"),
-    }
 }

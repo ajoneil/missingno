@@ -2969,7 +2969,6 @@ dependencies = [
  "libc",
  "missingno-6502",
  "missingno-core 0.1.0",
- "missingno-debugger",
  "missingno-gb",
  "missingno-gbc",
  "missingno-nes",
@@ -2988,7 +2987,6 @@ dependencies = [
  "sha1",
  "smol",
  "tar",
- "tiny_http",
  "ureq",
  "zstd",
 ]

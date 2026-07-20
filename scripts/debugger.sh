@@ -17,15 +17,24 @@ GB_URL="$DBG_URL"
 # ── Server lifecycle ──────────────────────────────────────────────
 
 dbg_start() {
-  local rom_path="${1:?usage: dbg_start <rom_path>}"
+  local rom_path="${1:?usage: dbg_start <rom_path> [boot_rom_path]}"
+  local boot_rom_path="${2:-}"
   if [[ ! -f "$rom_path" ]]; then
     echo "error: ROM not found: $rom_path" >&2
+    return 1
+  fi
+  if [[ -n "$boot_rom_path" && ! -f "$boot_rom_path" ]]; then
+    echo "error: boot ROM not found: $boot_rom_path" >&2
     return 1
   fi
 
   dbg_stop 2>/dev/null
 
-  cargo run -p missingno-debugger -- "$rom_path" &>/dev/null &
+  if [[ -n "$boot_rom_path" ]]; then
+    cargo run -p missingno-debugger -- "$rom_path" --boot-rom "$boot_rom_path" &>/dev/null &
+  else
+    cargo run -p missingno-debugger -- "$rom_path" &>/dev/null &
+  fi
   DBG_PID=$!
 
   # Wait for the server to answer /status (up to ~60s, covering a cold build).

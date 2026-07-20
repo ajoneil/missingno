@@ -1,28 +1,30 @@
-//! `missingno-debugger [<rom>] [--port N] [--mcp] [--allow-attach]`: recognise
-//! the ROM through the core registry, put its console under the debugger, and
-//! serve it — over HTTP by default, or as an MCP tool server over stdio with
-//! `--mcp`. With `--mcp` and no ROM, the MCP server starts idle and loads a ROM
-//! or attaches to a running session on request, so one static server entry
-//! serves any ROM. `--allow-attach` additionally publishes this process's own
-//! session for other clients to attach to.
+//! `missingno-debugger [<rom>] [--port N] [--mcp] [--allow-attach] [--boot-rom
+//! PATH]`: recognise the ROM through the core registry, put its console under
+//! the debugger, and serve it — over HTTP by default, or as an MCP tool server
+//! over stdio with `--mcp`. With `--mcp` and no ROM, the MCP server starts idle
+//! and loads a ROM or attaches to a running session on request, so one static
+//! server entry serves any ROM. `--allow-attach` additionally publishes this
+//! process's own session for other clients to attach to.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use missingno_session::SharedSession;
-use missingno_session::factory;
+use missingno_session::factory::{self, LoadOptions};
 use missingno_debugger::http;
 
 /// Matches the GUI crate's headless server default.
 const DEFAULT_PORT: u16 = 3333;
 
-const USAGE: &str = "usage: missingno-debugger [<rom>] [--port N] [--mcp] [--allow-attach]";
+const USAGE: &str =
+    "usage: missingno-debugger [<rom>] [--port N] [--mcp] [--allow-attach] [--boot-rom PATH]";
 
 struct Args {
     rom: Option<PathBuf>,
     port: u16,
     mcp: bool,
     allow_attach: bool,
+    boot_rom: Option<PathBuf>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -30,6 +32,7 @@ fn parse_args() -> Result<Args, String> {
     let mut port = DEFAULT_PORT;
     let mut mcp = false;
     let mut allow_attach = false;
+    let mut boot_rom = None;
     let mut iter = std::env::args().skip(1);
     while let Some(argument) = iter.next() {
         match argument.as_str() {
@@ -38,6 +41,11 @@ fn parse_args() -> Result<Args, String> {
                 port = value
                     .parse()
                     .map_err(|_| format!("invalid port: {value}"))?;
+            }
+            "--boot-rom" => {
+                boot_rom = Some(PathBuf::from(
+                    iter.next().ok_or("--boot-rom needs a path")?,
+                ));
             }
             "--mcp" => mcp = true,
             "--allow-attach" => allow_attach = true,
@@ -55,6 +63,7 @@ fn parse_args() -> Result<Args, String> {
         port,
         mcp,
         allow_attach,
+        boot_rom,
     })
 }
 
@@ -72,7 +81,18 @@ fn run() -> Result<(), String> {
     let rom_path = args.rom.ok_or(USAGE)?;
     let rom = std::fs::read(&rom_path)
         .map_err(|e| format!("failed to read {}: {e}", rom_path.display()))?;
-    let console = factory::create_console(&rom_path, &rom)?
+    let boot_rom = match &args.boot_rom {
+        Some(path) => Some(
+            std::fs::read(path)
+                .map_err(|e| format!("failed to read boot ROM {}: {e}", path.display()))?,
+        ),
+        None => None,
+    };
+    let options = LoadOptions {
+        boot_rom,
+        ..LoadOptions::default()
+    };
+    let console = factory::create_console_with(&rom_path, &rom, &options)?
         .ok_or_else(|| format!("no core recognises {}", rom_path.display()))?;
     let debugger = console
         .into_debugger()
