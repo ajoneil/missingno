@@ -1,10 +1,15 @@
 # Adding an emulated system
 
-Missingno is built so a second console family can arrive without disturbing the
-first. This document maps the seams a new system plugs into, what each one
-demands, and which parts of the frontend are still Game Boy-shaped and would
-need widening first. Trust the seams named here, but verify signatures
-against the source before building on them.
+Missingno is built so a new console family plugs into a fixed set of seams and
+earns whole subsystems by filling them. This document is the checklist spine:
+what implementing a new system costs, and what each seam surface buys. Every
+claim here is checkable against the trait it names — trust the seams, but verify
+signatures against the source before building on them.
+
+The seam vocabulary and its behavioural traits live in **`missingno-core`**
+(`crates/missingno-core/src/`); the headless debugger that consumes them lives
+in **`missingno-debugger`**; the GUI's family-registration layer lives in
+**`crates/missingno/src/app/system/`**. Those three locations recur throughout.
 
 ## Two different axes
 
@@ -18,200 +23,243 @@ Don't confuse the two kinds of "new system":
   inside the family. Read the extensive doc comments on those traits — every
   associated const and hook documents the exact hardware divergence it exists
   to carry.
-- **A new family entirely** (Game Gear, NES, …) — a new core crate plus a new
-  frontend submodule. The rest of this document is about this axis.
+- **A new family entirely** (Master System, NES, a future Game Gear) — a new
+  core crate plus a frontend family registration. The rest of this document is
+  about this axis.
 
-## The accuracy philosophy, per core
+## The invariant contract every core owes
 
 Use the available evidence to reach the highest accuracy possible — **and the
-mechanism that achieves it is a per-core decision**. The
-Game Boy runs a fused-T-cycle lockstep because gate-level ground truth
-(dmg-sim, the netlist) makes sub-cycle ordering verifiable and the suites
-demand it. A system whose best evidence is test-ROM-granular must not pay
-for — or claim — fidelity nobody can check; its methodology doc
-(`crates/<crate>/AGENTS.md`) picks the internal quantum (dot, color clock,
-master-cycle slice, instruction-granular catch-up), names its ground-truth
-hierarchy, and defends the quantum against that tier. The VCS doc is the
-worked example: Sim2600 for the CPU/TIA, datasheet/schematics for the RIOT.
+mechanism that achieves it is a per-core decision**. The Game Boy runs a
+fused-T-cycle lockstep because gate-level ground truth (dmg-sim, the netlist)
+makes sub-cycle ordering verifiable and the suites demand it. A system whose
+best evidence is test-ROM-granular must not pay for — or claim — fidelity
+nobody can check; its methodology doc (`crates/<crate>/AGENTS.md`) picks the
+internal quantum (dot, colour clock, master-cycle slice, instruction-granular
+catch-up), names its ground-truth hierarchy, and defends the quantum against
+that tier. The VCS doc is the worked example: Sim2600 for the CPU/TIA,
+datasheet/schematics for the RIOT.
 
-What is NOT per-core is the contract with the frontend, debugger, tests, and
-tracing. Any internal mechanism must provide:
+What is NOT per-core is the contract the seam depends on. Any internal mechanism
+must provide:
 
 1. **Determinism** — same ROM + inputs → bit-exact execution (replay,
    tracing, and bisection depend on it).
-2. **Instruction-boundary stepping** for the debugger's step/breakpoints.
+2. **Instruction-boundary stepping** for the debugger's step/breakpoints, and
+   a **restore boundary** for save states (capture and restore at an
+   instruction boundary; error, never panic, off-boundary).
 3. **On-demand bus observability** without behaviour change (watchpoints,
-   code/data logging, trace capture — the `BusTrace` pattern).
+   code/data logging, trace capture).
 4. **Side-effect-free inspection reads** (disassembly, memory panes).
 5. **A cheap owned per-frame snapshot** for the running debugger view.
 6. **Budgeted frame stepping** with a stall guard, frames as data.
 7. **Committable test oracles in CI from day one** — accuracy claims live
    in tests.
 
-## What a new core crate provides
+## The two seam traits, and what they buy
 
-Structurally, the frontend needs a console type that can:
+The whole seam is two object-safe traits in `missingno-core`'s `system.rs`. A
+family builds a `Box<dyn SystemConsole>`; the shell drives it, and converts it
+into a `Box<dyn SystemDebugger>` (`into_debugger`, fallible — a family with no
+debugger backend hands the console back and the shell falls back to plain
+emulation).
 
-- construct from ROM bytes plus optional save data and boot ROM
-- step, reporting per-step: cycles consumed, whether a display frame
-  completed, whether battery-backed save memory was dirtied
-  (see `StepResult` in `missingno-gb`)
-- expose the completed frame, drain stereo `f32` audio samples, accept
-  button press/release, export save memory
-- optionally: a debugger wrapper with breakpoints/watchpoints and
-  side-effect-free memory reads (see `missingno_gb::debugger`)
+### `SystemConsole` → the plain emulator and the emu thread
 
-`missingno-gb` is the worked example: `Console<M>` in `lib.rs`, the step loop
-in `execute.rs`, the debugger backend under `debugger/`.
+`step_frame` (budgeted), `reset`, `set_control`, `drain_audio_samples` (44.1 kHz
+stereo — the seam's fixed rate), `screen_display`, `game_title`, `battery_save`,
+and `frame_interval` (the pacing loop's wall-clock). Everything the library, the
+emulator screen, and the emulation thread need. Optional surfaces —
+`console_switches` (the VCS's difficulty/colour toggles), `uses_monochrome_palette`
+(the DMG palette picker), `audio_coupling` (the board's high-pass) — default to
+absent, so a family declares only what its hardware has.
 
-## The frontend seam: `crates/missingno/src/app/system/`
+### `SystemDebugger` → the whole debugger, both frontends
 
-The app shell (library, emulator screen, emulation thread, debugger UI) drives
-consoles only through two object-safe traits in `app/system/mod.rs`:
+Implement it and two debuggers light up with no further per-core code:
 
-- **`SystemConsole`** — run a frame within a step budget, reset, input, audio,
-  produce a `ScreenDisplay`, capture screenshots, expose save data, report its
-  wall-clock `frame_interval()` for the pacing loop, and convert
-  `into_debugger()`.
-- **`SystemDebugger`** — stepping (instruction / over / frame), breakpoints,
-  an `inspect()` surface for the paused panes, an owned `snapshot()` the
-  running view renders from, and `into_console()`. Watchpoints, debug
-  symbols, code/data logging, trace capture, and battery saves have default
-  no-op implementations — a family implements only the backends it has.
+- **The headless server (`missingno-debugger`).** Its transport-agnostic
+  `Session` reads the console entirely through the seam; the HTTP transport
+  (scripted/bulk access) and the MCP-over-stdio transport (interactive agent
+  use) are both purely generic `Session` calls, with no core-specific code
+  outside the one-line factory registry. Registering a core there gives it
+  every route and every tool at once.
+- **The GUI debugger.** Its pane grid renders exclusively from the typed
+  surfaces the seam carries — there is no family-specific pane escape hatch, so
+  a family cannot (and need not) add a bespoke pane.
 
-Every family registers in the `FAMILIES` descriptor table in
-`app/system/mod.rs` — a `Platform` variant (the canonical platform identity;
-its `name()`/`short_name()` are the only display strings, and external
-platform descriptions such as Hasheous's are mapped into the enum rather
-than shown raw), extensions, control labels, an `is_rom` predicate, an
-optional header-title hook (`title_from_rom`), a console factory, and an
-optional morepork entry point for the `trace` subcommand. The file dialog,
-ROM loading, title detection, the library scanner (which stamps
-`GameEntry.platform` from the descriptor), the bindings UI, and the trace CLI
-all iterate that table; `family_for` is the single classification point, and
-media no family claims is reported as unsupported rather than guessed at.
-Factories receive a `MediaLoad` — ROM bytes, file-stem fallback title,
-battery-save contents to restore, the game's library folder, and the two
-Game Boy peripheral fields (boot ROM, serial link) quarantined under the same
-generalize-when-a-second-family-needs-one rule as the seam's GB types.
+Concretely, each debugger surface is one seam method, and filling it turns that
+surface on across both frontends:
 
-The Game Boy family implements the seam traits once, generically over its
-`Model` seam, in `app/system/gb.rs` — but registers **two** platforms:
-"Game Boy" (DMG-only and dual-compatible media) and "Game Boy Color"
-(CGB-required media, header flag `$C0`). Both descriptors share
-one factory; the execution core is picked by the header inside the family's
-`launch` visitor (`GbLaunch`, also the single selection point for the trace
-and headless CLIs), so a dual-compatible Game Boy game still boots the CGB
-core enhanced — platform identity and execution core are deliberately
-decoupled, like a GB cart slotted into a real GBC.
+| Seam method(s) | Debugger surface it buys |
+|---|---|
+| `step` / `step_over` / `step_frame`, `set_breakpoint` / `clear_breakpoint` / `breakpoints` | stepping and PC breakpoints |
+| `tick_name` + `step_tick` | sub-instruction stepping (a Game Boy dot, a VCS colour clock) — advertised only when `tick_name` is `Some` |
+| `peek` + `memory_regions` | the memory hex dump and the named memory map |
+| `instruction_set` (a `missingno-core` `InstructionSet`) + `pc` | disassembly; `bank_for` / `present_address` / `locate_bank_window` add bank-prefixed and `bank:window` rows |
+| `register_groups` → `sidebar_sections` | the registers view and the whole machine-state sidebar (see below) |
+| `watchables` + `add_watch` / `remove_watch` / `watches` | the watch panel, and banked breakpoints where the family exposes pc/bank watchables (a banked stop composes as a pc+bank compound watch — plain `set_breakpoint` is bus-space by contract and rejects a synthetic banked address) |
+| `set_wave_capture` + `channel_waves` | the audio scopes / `get_waveforms` — interest-gated, costing nothing until a consumer turns capture on |
+| `set_graphics_capture` + `graphics` (a `GraphicsView`: tile atlases, maps, an object table) | the graphics panes / `get_tiles` / `get_objects` — likewise interest-gated |
+| `symbols` / `add_symbol` / `cdl_window` + `load_sidecars` / `save_sidecars` | debug-symbol labels and the code/data-log data rows (no-ops for a family with no sidecars) |
+| `snapshot` → a `DebugView` (`Box<dyn InspectSnapshot>`) + `running_status` | the per-vblank running view the UI renders while the core runs on the emu thread, without owning the console |
+| `family_state` / `as_any_mut` | the family's own typed state, downcast by its panes and any headless extension routes |
+
+Everything above the family's own decode backends is generic. A family with a
+disassembler, a register file, and a memory map gets a working debugger; the
+graphics and audio surfaces come online as it fills their capture hooks.
+
+### `video_out` → `DisplayTechnology` → authentic rendering
+
+`SystemConsole::video_out` (and the debugger's) returns a `DisplayTechnology` —
+a hardware fact the core states, never a presentation coefficient. `Lcd { native,
+panel, pixel_aspect }` names the panel class (`PassiveStn` for the DMG's slow
+passive-matrix STN, `ActiveTft` for the CGB's faster TFT); `Crt { standard,
+pixel_aspect }` names the broadcast standard. The single frontend screen
+renderer (`crates/missingno/src/app/screen.rs`) keys its persistence blend and
+its cosmetic overlay (an LCD pixel grid vs. CRT scanlines) off that technology,
+and aspect-fits by the stated `pixel_aspect`. State the technology and the
+console renders authentically; the coefficients stay frontend policy.
+
+### `SystemStateSchema` → save states, traces, and recordings
+
+Author one `SystemStateSchema` (`missingno-core`'s `state.rs`) of hardware-named
+fields — Tier-1 `observable` registers (the CPU-visible surface any emulator can
+produce), Tier-2a `boundary` deep state named for the silicon (enough to restore
+bit-exactly at a boundary) — plus memory spans and a `FrameSpec`. Wire the
+`state_schema()` / `read_state()` seam methods and a boundary bridge behind
+`save_state()` / `load_state()`. That one schema then drives three surfaces off
+the same field vocabulary:
+
+- **Save states** — the `MPSV` state file (`state_file.rs`): every field at one
+  instant, carrying its own system id and ROM fingerprint so a restore validates
+  the target console and rejects a state for the wrong ROM, wrong system, or
+  wrong version.
+- **Traces** — the `MPRK` trace container: columns are the schema's fields
+  (Tier-1, or Tier-2a with the deep scope) plus a small bridge-owned observation
+  set. `crates/missingno-gb/src/trace.rs` is the worked bridge; there is no
+  per-suite field catalogue.
+- **Recordings** — the `MPRC` recording (`recording.rs`): an initial save state
+  plus a frame-indexed input trace with periodic frame-hash checkpoints.
+  **Recording and deterministic replay are built entirely on the existing seam**
+  (`save_state` / `load_state` / `set_control` / `step_frame`) — a core that
+  wires save states gets replay for free, with no new trait methods.
+
+### `sidebar_sections` → the GUI sidebar, `describe_machine`, and `/sections`
+
+A family surfaces its chip state by composing `Section`s from `missingno-core`'s
+`inspect.rs` vocabulary (register files, bit tables, sweeps, pair matrices,
+pixel strips, colour swatches, rows). `sidebar_sections` defaults to a single CPU
+section from `register_groups`; a family overrides it to add its video and system
+sections. The same list renders three ways from one authoring: the GUI's
+left-column sidebar, the headless `describe_machine` MCP tool, and the HTTP
+`/sections` route. This composition is per-system by design — the shared panes
+read typed surfaces, but the sidebar's shape is the family's own.
+
+## The shortcut for a plain stepping core
 
 For a core whose debugger is plain instruction stepping (PC breakpoints, one
-typed inspection state, indexed frames), don't implement the seam traits by
-hand: implement `SteppingSystem` (`app/system/stepping.rs`) — a flat list of
-hooks — and the shared `SteppingConsole`/`SteppingDebugger` carry the seam's
-control flow. The SMS and NES are the worked examples; the VCS adapts its
-core-side debugger backend directly instead.
+typed inspection state, indexed frames), don't implement the two seam traits by
+hand: implement `SteppingSystem` (`missingno-core`'s `stepping.rs`) — a flat list
+of hooks — and the shared `SteppingConsole<S>` / `SteppingDebugger<S>` carry the
+seam's control flow. The Master System and NES are the worked consumers; the VCS
+adapts its own core-side debugger backend directly instead, and the Game Boy
+family implements the seam once (in `missingno-gb`'s `system.rs`, as
+`GbConsole<M>`, generic over its `Model`) — consumed unchanged by both the
+headless factory and the GUI.
 
-The seams several families exercise (VCS, SMS, and NES are the worked
-consumers, feature-gated):
+## The frontend family axis: `app/system/`
 
-- **Frames**: `ScreenDisplay::Indexed` carries per-frame dimensions,
-  palette-index pixels, the family's palette table, and its display
-  pixel-aspect (from the system's dot clock on an NTSC screen), resolved to
-  RGBA and aspect-fitted at draw time (`IndexedFrame::blank`,
-  `FrameCapture::from_indexed` are the shared helpers). The GB render
-  formats remain their own variants.
-- **Input**: the seam takes `set_control(ControlId, ControlInput)` —
-  family-interpreted ids (0-7 follow the GB button order; 8 and up are
-  analog and family-specific). Bindings map keys and pads straight to the
-  numeric ids, so one physical layout drives every family; each family
-  publishes its names for the ids (`control_labels`) and the bindings UI
-  shows them.
-- **Media**: the seam carries `game_title` and `battery_save` only; how a
-  family serializes saves is its own concern.
-- **Audio**: the contract is 44.1 kHz stereo `f32`; families convert from
-  their native rate on their own side.
-- **Debugger**: panes render exclusively from the typed surfaces the shared
-  `PaneContext` carries (the render palettes, decoded graphics, the memory
-  readout, the disassembly rows, breakpoints, watches, waveform windows) —
-  there is no
-  family-specific escape hatch, so a family cannot add a bespoke pane. A
-  family surfaces its own chip state through the sidebar `Section`s its core
-  crate builds (register files, rows, bit tables, sweeps), and reaches the
-  pane grid only by implementing the seam surfaces the generic panes read.
-  Pane registries, default layouts, and layout sidecars are
-  family-provided through `panes::Family` (`pane_family()` is a required
-  seam method — there is no default family); debug sidecars load and save
-  through the path-only `load_sidecars`/`save_sidecars` hooks, no-ops for
-  families without any; the paused sidebar for non-GB families renders the
-  same `RunningStatus` summary as the running view; `into_debugger` is
-  fallible so a family without a debugger backend falls back to plain
-  emulation.
+The core seam is system-agnostic; the GUI still needs a per-family registration
+for media handling. Each family registers one `FamilyDescriptor` in the
+`FAMILIES` table (`app/system/mod.rs`): a `Platform` variant (the canonical
+platform identity — its `name()` / `short_name()` are the only display strings,
+and external platform descriptions map into the enum rather than showing raw),
+`extensions`, `control_labels` (the family's names for the shared control ids),
+an `is_rom` predicate (mutually exclusive across the table), an optional
+`title_from_rom` header hook, a `create_console` factory taking a `MediaLoad`,
+and an optional `trace` entry point for the `trace` subcommand. The file dialog,
+ROM loading, title detection, the library scanner (which stamps the platform),
+the bindings UI, and the trace CLI all iterate that table; `family_for` is the
+single classification point.
 
-## Honest inventory: what is still Game Boy-shaped
+The Game Boy registers **two** platforms — "Game Boy" and "Game Boy Color" —
+sharing one factory; the header picks the execution core inside the factory (a
+dual-compatible cart boots the CGB core enhanced), so platform identity and
+execution core are deliberately decoupled, like a GB cart slotted into a real
+GBC.
 
-1. **GB types ride a few seam signatures** — `WatchCondition` (watchpoint
-   methods), `SymbolTable`/`Symbol` (label editing), and `CdlWindow`
-   (`cdl_window()`) are GB types on `SystemDebugger`, quarantined by no-op
-   defaults, plus the boot-ROM and serial-link fields on `MediaLoad`.
-   Generalize each when a second family grows the equivalent backend — for
-   watchpoints/symbols the natural moment is its bus-observability work.
-2. **Presentation details** — `ScreenView` carries GB palette/SGB fields
-   beside the indexed path (they exist so the palette choice and SGB toggle
-   re-apply at draw time on delivered frames), and the GB frame keeps the
-   shell's square fit while indexed frames aspect-fit. The GB frame formats
-   and resolvers live in `app/screen/gb.rs`; captures size themselves and
-   `capture_frame` takes the app-owned `CaptureOptions` display-settings
-   snapshot (currently only the GB family reads its knobs).
-3. **The library/gamedb** — game identification is SHA1-based and
-   platform-tagged from the descriptor table; the bundled catalogue is Game
-   Boy titles, and the homebrew browser is a Game Boy (gbdev) flow. Mostly
-   data, not code shape.
-4. **16-bit addressing** — breakpoints, symbols, and `RunningStatus.pc/sp`
-   assume `u16` addresses. Fine for every current family; widen when a
-   32-bit-bus system arrives.
+The GUI's pane registry is likewise family-provided: `pane_family()` is a
+required seam method returning a `panes::Family` (its `PaneDescriptor` list names
+which generic panes the family registers — Screen plus the Memory/Disassembly
+set for a register-dump family; the graphics and audio panes only where the core
+fills their capture hooks — and its default layout). Panes may be instanceable
+(the Memory pane opens a fresh instance per click; a message can target one
+instance so sibling panes are untouched) or single-instance.
+
+## Honest inventory: what is still per-system
+
+Filling the seam buys the subsystems above; these stay a family's own work:
+
+1. **Sidebar composition** — the shared panes read typed surfaces, but a
+   family authors its own `sidebar_sections` from the `inspect` vocabulary.
+2. **State-schema authoring and its bridge** — the schema, `read_state`, and
+   the boundary save/restore are per-system; only the file/trace/recording
+   machinery downstream is shared.
+3. **The instruction set, if the CPU is new** — implement `InstructionSet`
+   (`missingno-core`'s `isa.rs`) for decode-for-display, or reuse a shared one
+   (`missingno-6502` serves the VCS and NES).
+4. **The graphics and audio decode backends** — `graphics()` and
+   `channel_waves()` are the family's per-vblank decode into the shared
+   `GraphicsView` / `ChannelWave` vocabulary.
+
+And a few surfaces are still Game Boy-shaped, quarantined by no-op defaults
+until a second family grows the equivalent:
+
+- **GB types ride a few seam signatures** — `WatchCondition`-shaped watch
+  methods, `SymbolTable` / `Symbol` label editing, and `CdlWindow`
+  (`cdl_window`) are GB-flavoured on `SystemDebugger`, plus the boot-ROM and
+  serial-link fields on `MediaLoad`. Generalize each when a second family grows
+  the backend.
+- **Presentation details** — the GUI's `ScreenView` carries GB palette/SGB
+  fields beside the indexed path, and the library's bundled catalogue and
+  homebrew browser are Game Boy data flows. Mostly data, not code shape.
+- **16-bit addressing assumptions** — breakpoints and `RunningStatus.pc/sp`
+  cross the seam as `u32` but every current core masks to a 16-bit bus. Fine
+  for every current family; widen when a 32-bit-bus system arrives.
+
+## Quality bars
+
+- **Accuracy oracles in CI from day one.** The GB, GBC, and VCS suites all
+  fully pass; the gate for any change is a fully-passing suite. A new core lands
+  its own accuracy tests (screenshot or trace parity against its ground-truth
+  tier) with it.
+- **Round-trip gates for the state story.** A save-state round-trip test and a
+  record→replay frame-hash gate are the accuracy bar for the schema work (see
+  the `save_state` and `recording` integration tests).
+- **Suite-green is the merge gate**, per the per-core methodology docs; ANY
+  failure is a regression.
 
 ## Checklist for a new family
 
-1. Core crate with the console type (hardware-model quality bar applies), plus
-   a `crates/<crate>/AGENTS.md` methodology doc (ground-truth hierarchy,
+1. **Core crate** with the console type (hardware-model quality bar applies),
+   plus a `crates/<crate>/AGENTS.md` methodology doc (ground-truth hierarchy,
    resources, timing model) and one routing row in the root `AGENTS.md`
    *Per-core methodology* table.
-2. `app/system/<family>.rs`: a `SteppingSystem` impl for a simple stepping
-   core (or hand-written `SystemConsole` + `SystemDebugger` impls where the
-   core has its own debugger backend), media-metadata constants, a
-   `MediaLoad`-taking factory — plus a `Platform` variant (with its
-   `name()`/`short_name()`) and one entry in the `FAMILIES` descriptor
-   table in `app/system/mod.rs` (including `control_labels`,
-   `title_from_rom`, and the `trace` hook or `None`). Dialogs, loading,
-   library scanning, platform badges, the bindings UI, and the trace CLI
-   follow from the table. Keep `is_rom` predicates mutually exclusive across
-   the table.
-3. A palette table (or RGBA-producing path) and a pixel-aspect constant for
-   `ScreenDisplay::Indexed`, and the family's reading of the shared control
-   ids.
-4. If it ships a debugger: an inspection-state struct whose `sidebar_sections`
-   builds the family's whole sidebar from the shared `Section` vocabulary, a
-   `panes::Family` static naming which generic panes it registers (Screen plus
-   the Memory/Disassembly set for a register-dump family; the graphics and
-   audio panes only where the core implements their seam surfaces) and its
-   default layout, entries in `DebuggerPane` and `PANE_FAMILIES`, and a
-   `running_status()` wording its own video summary. There are no bespoke
-   panes — chip state renders through the sidebar. Otherwise return the
-   console from `into_debugger` and the shell falls back to plain emulation.
-5. Convert audio to 44.1 kHz on the family's side of the seam.
-6. State description, and the machinery that follows from it. Author a
-   `SystemStateSchema` (`missingno-core`'s `state.rs`) of hardware-named fields —
-   Tier-1 observable registers, Tier-2a boundary-complete deep state named for
-   the silicon — plus memory spans and a frame spec. Wire the `state_schema()` /
-   `read_state()` seam methods and a boundary bridge behind `save_state()` /
-   `load_state()` (capture the record, restore it at an instruction boundary;
-   error, never panic, off-boundary). One schema then drives three surfaces: the
-   save-state file (`state_file.rs`, `MPSV`), trace capture (columns are schema
-   fields plus a small bridge-owned observation set), and **input recordings**
-   (`recording.rs`, `MPRC` — an initial save state plus a frame-indexed input
-   trace). Recording and deterministic replay are built entirely on the existing
-   seam (`save_state`/`load_state`/`set_control`/`step_frame`) — a core that
-   wires save states gets replay for free, with no new trait methods. A
-   round-trip save-state test and a record→replay frame-hash gate are the
-   accuracy bar (see the `save_state` and `recording` integration tests).
+2. **The seam impl** — either a `SteppingSystem` impl for a simple stepping
+   core, or hand-written `SystemConsole` + `SystemDebugger` impls where the core
+   has its own debugger backend. Registering the core in `missingno-debugger`'s
+   factory (`factory.rs`) gives it the whole headless server.
+3. **`video_out`** returning the right `DisplayTechnology`, and a palette table
+   (or RGBA-producing frame) plus the family's reading of the shared control ids.
+4. **The state schema** — a `SystemStateSchema`, `state_schema` / `read_state`,
+   and the `save_state` / `load_state` boundary bridge. Save states, traces, and
+   recordings follow.
+5. **The debugger surfaces** you have — `sidebar_sections`, `instruction_set`,
+   the graphics/audio capture hooks — each of which lights up its pane and tool.
+6. **Frontend registration** — a `FamilyDescriptor` in `FAMILIES`
+   (`app/system/mod.rs`) with its `Platform` variant, a `pane_family()`, and a
+   default layout. Dialogs, loading, library scanning, badges, the bindings UI,
+   and the trace CLI follow from the table.
+7. **Convert audio to 44.1 kHz** on the family's side of the seam.
+8. **Accuracy and round-trip tests** committed with the core.
