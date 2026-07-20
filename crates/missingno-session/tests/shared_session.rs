@@ -280,7 +280,9 @@ fn saving_reports_a_notice_and_the_file_round_trips() {
     let events = client.subscribe();
 
     let path = std::env::temp_dir().join(format!("missingno-s2-{}.mpsv", std::process::id()));
-    client.save_state(path.clone()).expect("a paused save answers");
+    client
+        .save_state(path.clone())
+        .expect("a paused save answers");
     assert!(
         wait_until(|| drain(&events).iter().any(|e| matches!(
             e,
@@ -291,7 +293,9 @@ fn saving_reports_a_notice_and_the_file_round_trips() {
     assert!(path.exists(), "the save file was written");
 
     // The saved state loads back without error.
-    client.load_state(path.clone()).expect("the save loads back");
+    client
+        .load_state(path.clone())
+        .expect("the save loads back");
     assert!(wait_until(|| drain(&events).iter().any(|e| matches!(
         e,
         SessionEvent::Notice(message) if message == "State loaded"
