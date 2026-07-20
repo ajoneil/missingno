@@ -11,20 +11,38 @@ static NEXT_TEXTURE_ID: AtomicU64 = AtomicU64::new(0);
 /// the same ramp.
 pub const OVERLAY_ONSET_PX: f32 = 3.0;
 pub const OVERLAY_FULL_PX: f32 = 6.0;
-/// Peak darkening of a grid or scanline line, as a fraction of pixel brightness.
+/// Peak darkening of an LCD grid line, as a fraction of pixel brightness.
 const GRID_DARKEN: f32 = 0.15;
-const SCANLINE_DARKEN: f32 = 0.22;
-/// Darkening-band geometry as a fraction of the source-pixel pitch, per effect.
-/// `*_FRACTION` is the band's full width (where darkening reaches zero);
-/// `*_CORE_FRACTION` is an inner core held at full darkness, with smoothstep
-/// shoulders between core and band. The flat core keeps the gap genuinely dark
-/// across most of its width instead of tapering to a sub-perceptual point, and
-/// the whole band is proportional to the on-screen row height so it holds its
-/// look from a small window up to a 4K panel. Shared with the fragment shader.
+/// LCD grid-band geometry as a fraction of the source-pixel pitch. `*_FRACTION`
+/// is the band's full width (where darkening reaches zero); `*_CORE_FRACTION` is
+/// an inner core held at full darkness, with smoothstep shoulders between core
+/// and band. The flat core keeps the gap genuinely dark across most of its width
+/// instead of tapering to a sub-perceptual point, and the band is proportional
+/// to the on-screen pitch so it holds its look from a small window up to a 4K
+/// panel. Darkening-on-top is authentic for an LCD's inter-pixel mask. Shared
+/// with the fragment shader.
 const GRID_LINE_FRACTION: f32 = 0.2;
 const GRID_CORE_FRACTION: f32 = 0.1;
-const SCANLINE_FRACTION: f32 = 0.5;
-const SCANLINE_CORE_FRACTION: f32 = 0.3;
+
+/// CRT scanlines are not a darkening laid over the picture — the beam *emits*
+/// each source row as a bright line with a soft vertical falloff, and the gaps
+/// are simply where no beam lands. The output row is the sum of Gaussian beam
+/// contributions from the two source rows bracketing it, each beam's width
+/// growing with that row's luminance: bright lines bloom to nearly fill the
+/// pitch, dark lines stay thin and leave a wide gap. Widths are in units of the
+/// source-row pitch, so the look holds at any output resolution. Shared with the
+/// fragment shader.
+const BEAM_SIGMA_MIN: f32 = 0.18;
+const BEAM_SIGMA_MAX: f32 = 0.52;
+/// Emission normalization: a naive beam profile spreads a row's energy over less
+/// than a full pitch and dims the image. `BEAM_NORM` is `1 / mean_beam_field`
+/// evaluated at the mid-luminance width (`BEAM_SIGMA_MIN..MAX` midpoint), so a
+/// flat mid-bright field keeps its average brightness across a pitch. Brighter
+/// content blooms past unity (an intentional, authentic-reading contrast lift);
+/// darker content stays dark. Recomputed and pinned by the CPU tests.
+const BEAM_NORM: f32 = 1.1447;
+/// Rec.601 luma weights driving a beam's width from its row's brightness.
+const BEAM_LUMA: [f32; 3] = [0.299, 0.587, 0.114];
 
 /// A cosmetic device-simulation overlay drawn over the sampled picture, keyed to
 /// the display technology and toggleable in settings.
@@ -498,11 +516,14 @@ fn shader_source() -> String {
         .replace("__OVERLAY_ONSET_PX__", &wgsl_f32(OVERLAY_ONSET_PX))
         .replace("__OVERLAY_FULL_PX__", &wgsl_f32(OVERLAY_FULL_PX))
         .replace("__GRID_DARKEN__", &wgsl_f32(GRID_DARKEN))
-        .replace("__SCANLINE_DARKEN__", &wgsl_f32(SCANLINE_DARKEN))
         .replace("__GRID_LINE_FRACTION__", &wgsl_f32(GRID_LINE_FRACTION))
         .replace("__GRID_CORE_FRACTION__", &wgsl_f32(GRID_CORE_FRACTION))
-        .replace("__SCANLINE_FRACTION__", &wgsl_f32(SCANLINE_FRACTION))
-        .replace("__SCANLINE_CORE_FRACTION__", &wgsl_f32(SCANLINE_CORE_FRACTION))
+        .replace("__BEAM_SIGMA_MIN__", &wgsl_f32(BEAM_SIGMA_MIN))
+        .replace("__BEAM_SIGMA_MAX__", &wgsl_f32(BEAM_SIGMA_MAX))
+        .replace("__BEAM_NORM__", &wgsl_f32(BEAM_NORM))
+        .replace("__BEAM_LUMA_R__", &wgsl_f32(BEAM_LUMA[0]))
+        .replace("__BEAM_LUMA_G__", &wgsl_f32(BEAM_LUMA[1]))
+        .replace("__BEAM_LUMA_B__", &wgsl_f32(BEAM_LUMA[2]))
 }
 
 const SHADER_TEMPLATE: &str = r#"
@@ -521,11 +542,12 @@ struct VertexOutput {
 const OVERLAY_ONSET_PX: f32 = __OVERLAY_ONSET_PX__;
 const OVERLAY_FULL_PX: f32 = __OVERLAY_FULL_PX__;
 const GRID_DARKEN: f32 = __GRID_DARKEN__;
-const SCANLINE_DARKEN: f32 = __SCANLINE_DARKEN__;
 const GRID_LINE_FRACTION: f32 = __GRID_LINE_FRACTION__;
 const GRID_CORE_FRACTION: f32 = __GRID_CORE_FRACTION__;
-const SCANLINE_FRACTION: f32 = __SCANLINE_FRACTION__;
-const SCANLINE_CORE_FRACTION: f32 = __SCANLINE_CORE_FRACTION__;
+const BEAM_SIGMA_MIN: f32 = __BEAM_SIGMA_MIN__;
+const BEAM_SIGMA_MAX: f32 = __BEAM_SIGMA_MAX__;
+const BEAM_NORM: f32 = __BEAM_NORM__;
+const BEAM_LUMA: vec3<f32> = vec3<f32>(__BEAM_LUMA_R__, __BEAM_LUMA_G__, __BEAM_LUMA_B__);
 
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
@@ -541,6 +563,23 @@ var texture: texture_2d<f32>;
 
 @group(0) @binding(1)
 var texture_sampler: sampler;
+
+fn beam_luma(rgb: vec3<f32>) -> f32 {
+    return dot(rgb, BEAM_LUMA);
+}
+
+// A source row's beam half-width, growing with its luminance so bright lines
+// bloom and dark lines stay thin.
+fn beam_sigma(luma: f32) -> f32 {
+    return BEAM_SIGMA_MIN + (BEAM_SIGMA_MAX - BEAM_SIGMA_MIN) * clamp(luma, 0.0, 1.0);
+}
+
+// Gaussian vertical beam profile at distance `d` (in row-pitch units) for a
+// beam of half-width `sigma`.
+fn beam_weight(d: f32, sigma: f32) -> f32 {
+    let z = d / sigma;
+    return exp(-0.5 * z * z);
+}
 
 // Sharp bilinear filtering: each source texel maps to a uniform-sized
 // block of screen pixels. Bilinear blending only occurs in a 1-pixel
@@ -561,46 +600,54 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let sharp = clamp((frac - (vec2(1.0) - scale)) / scale, vec2(0.0), vec2(1.0));
 
     let snapped = (texel_floor + vec2(0.5) + sharp) / tex_size;
-    var color = textureSample(texture, texture_sampler, snapped);
+    let plain = textureSample(texture, texture_sampler, snapped);
 
-    // Cosmetic device-simulation overlay: 1 = LCD pixel grid, 2 = CRT
-    // scanlines. Both darken a ~1-screen-pixel line at the source-pixel
-    // boundary, fading out below OVERLAY_ONSET_PX screen pixels per source
-    // pixel where the lines would merge into flat dimming.
+    // Cosmetic device-simulation overlay: 1 = LCD pixel grid (darkening on top,
+    // authentic for an inter-pixel mask), 2 = CRT beam emission. Both fade out
+    // below OVERLAY_ONSET_PX screen pixels per source pixel where the structure
+    // would merge into flat dimming.
     let mode = input.overlay;
-    if (mode > 0.5) {
-        let screen_px_per_source = vec2(1.0) / max(scale, vec2(0.0001));
-        let vis = smoothstep(
-            vec2(OVERLAY_ONSET_PX), vec2(OVERLAY_FULL_PX), screen_px_per_source);
-
-        // Distance to the nearest cell boundary in the sampler's half-texel
-        // frame: integer frac lands between rendered rows/columns, so the
-        // darkening sits in the inter-cell gap, not through a cell's centre.
-        let dist = min(frac, vec2(1.0) - frac);
-
-        var darken = 0.0;
-        if (mode < 1.5) {
-            // LCD grid: a thin line at every cell boundary, both axes. A flat
-            // full-dark core with smoothstep shoulders, its width a fixed
-            // fraction of the cell pitch so it holds at any output resolution.
-            let core = GRID_CORE_FRACTION * 0.5;
-            let band = GRID_LINE_FRACTION * 0.5;
-            let line = vec2(1.0) - smoothstep(vec2(core), vec2(band), dist);
-            darken = GRID_DARKEN * max(line.x * vis.x, line.y * vis.y);
-        } else {
-            // CRT scanline: a flat-bottomed dark valley between rows — full
-            // darkness across the core, smoothstep shoulders out to the band
-            // edge — sized as a fixed fraction of the row pitch, so the gap
-            // stays genuinely dark across its width at any output resolution.
-            let core = SCANLINE_CORE_FRACTION * 0.5;
-            let band = SCANLINE_FRACTION * 0.5;
-            let line = 1.0 - smoothstep(core, band, dist.y);
-            darken = SCANLINE_DARKEN * line * vis.y;
-        }
-        color = vec4<f32>(color.rgb * (1.0 - darken), color.a);
+    if (mode < 0.5) {
+        return plain;
     }
 
-    return color;
+    let screen_px_per_source = vec2(1.0) / max(scale, vec2(0.0001));
+    let vis = smoothstep(
+        vec2(OVERLAY_ONSET_PX), vec2(OVERLAY_FULL_PX), screen_px_per_source);
+
+    if (mode < 1.5) {
+        // LCD grid: a thin darkening line at every cell boundary, both axes. A
+        // flat full-dark core with smoothstep shoulders, its width a fixed
+        // fraction of the cell pitch so it holds at any output resolution.
+        // Integer `frac` lands between rendered cells, placing the line in the
+        // inter-cell gap rather than through a cell's centre.
+        let dist = min(frac, vec2(1.0) - frac);
+        let core = GRID_CORE_FRACTION * 0.5;
+        let band = GRID_LINE_FRACTION * 0.5;
+        let line = vec2(1.0) - smoothstep(vec2(core), vec2(band), dist);
+        let darken = GRID_DARKEN * max(line.x * vis.x, line.y * vis.y);
+        return vec4<f32>(plain.rgb * (1.0 - darken), plain.a);
+    }
+
+    // CRT beam emission: keep the sharp-bilinear x treatment, but along y sum
+    // the beam contributions of the two source rows bracketing this output
+    // pixel. Each row is sampled at its centre and weighted by a Gaussian
+    // profile whose width grows with that row's luminance, so a bright row
+    // blooms to fill the pitch while a dark row stays a thin line with a wide
+    // dark gap around it. Two rows suffice — the profile is narrow enough that
+    // the next row out never contributes meaningfully.
+    let row_below_y = (texel_floor.y + 0.5) / tex_size.y;
+    let row_above_y = (texel_floor.y + 1.5) / tex_size.y;
+    let c_below = textureSample(texture, texture_sampler, vec2(snapped.x, row_below_y)).rgb;
+    let c_above = textureSample(texture, texture_sampler, vec2(snapped.x, row_above_y)).rgb;
+
+    let w_below = beam_weight(frac.y, beam_sigma(beam_luma(c_below)));
+    let w_above = beam_weight(1.0 - frac.y, beam_sigma(beam_luma(c_above)));
+    let emitted = (c_below * w_below + c_above * w_above) * BEAM_NORM;
+
+    // Below the visibility onset the rows are too few screen pixels apart to
+    // resolve the beam structure, so fall back to the plain sharp picture.
+    return vec4<f32>(mix(plain.rgb, emitted, vis.y), plain.a);
 }
 "#;
 
@@ -609,121 +656,146 @@ mod tests {
     use super::*;
 
     /// The CPU mirror of the shader's visibility ramp, exercising the shared
-    /// overlay thresholds.
+    /// overlay thresholds. The scanline emission and the LCD grid both scale
+    /// their strength by this ramp.
     fn overlay_visibility(screen_px_per_source: f32) -> f32 {
         let t = ((screen_px_per_source - OVERLAY_ONSET_PX) / (OVERLAY_FULL_PX - OVERLAY_ONSET_PX))
             .clamp(0.0, 1.0);
         t * t * (3.0 - 2.0 * t)
     }
 
-    /// The sampler's texel-space coordinate for a normalized tex-coord —
-    /// `tex_coord * tex_size - 0.5`, matching the shader's half-texel offset.
-    /// Its integers fall on the boundaries the sharp sampler renders between
-    /// rows; its half-integers on a rendered row's plateau centre.
-    fn texel_coord(tex_coord: f32, tex_size: f32) -> f32 {
-        tex_coord * tex_size - 0.5
-    }
-
-    /// CPU mirror of the shader's flat-bottomed line term as a function of the
-    /// distance (in row units) to the nearest rendered-row boundary: full
-    /// darkness within `core_half`, smoothstep shoulders out to `band_half`,
-    /// zero beyond. Both are fixed fractions of the row pitch.
+    /// CPU mirror of the shader's LCD flat-bottomed line term: full darkness
+    /// within `core_half`, smoothstep shoulders out to `band_half`, zero beyond
+    /// (all in cell-pitch units).
     fn line_at_dist(dist: f32, core_half: f32, band_half: f32) -> f32 {
         let t = ((dist - core_half) / (band_half - core_half)).clamp(0.0, 1.0);
         1.0 - t * t * (3.0 - 2.0 * t)
     }
 
-    /// The line term at a position in the sampler's half-texel frame; the
-    /// darkening peaks on the integer (between rendered rows) and vanishes at
-    /// the half-integer (a rendered row's centre).
-    fn overlay_line(texel_axis: f32, core_half: f32, band_half: f32) -> f32 {
-        let frac = texel_axis - texel_axis.floor();
-        let dist = frac.min(1.0 - frac);
-        line_at_dist(dist, core_half, band_half)
-    }
-
-    /// Screen pixels within one row pitch whose darkening reaches at least
-    /// `threshold` of the peak, at `screen_px_per_row` output scale — the
-    /// perceived width of the dark line, which straddles the pitch boundary.
+    /// Screen pixels within one cell pitch whose grid darkening reaches at least
+    /// `threshold` of the peak, at `screen_px_per_cell` output scale.
     fn pixels_at_least(
         core_half: f32,
         band_half: f32,
-        screen_px_per_row: f32,
+        screen_px_per_cell: f32,
         threshold: f32,
     ) -> usize {
-        let n = screen_px_per_row.round() as usize;
+        let n = screen_px_per_cell.round() as usize;
         (0..n)
             .filter(|&i| {
-                let row_pos = (i as f32 + 0.5) / screen_px_per_row;
-                let dist = row_pos.min(1.0 - row_pos);
+                let pos = (i as f32 + 0.5) / screen_px_per_cell;
+                let dist = pos.min(1.0 - pos);
                 line_at_dist(dist, core_half, band_half) >= threshold
             })
             .count()
     }
 
-    #[test]
-    fn overlay_darkening_aligns_to_rendered_row_boundaries() {
-        // A 228-line NTSC VCS field is the motivating case.
-        let tex_size = 228.0;
-        let core_half = SCANLINE_CORE_FRACTION / 2.0;
-        let band_half = SCANLINE_FRACTION / 2.0;
+    // ── CRT beam-emission mirrors ────────────────────────────────────────
 
-        // The sharp sampler renders a row transition at an integer texel, which
-        // is tex_coord = (k + 0.5)/tex_size. The darkening must be full there —
-        // in the gap between rendered rows.
-        let rendered_boundary = texel_coord(3.5 / tex_size, tex_size);
-        assert_eq!(rendered_boundary, 3.0);
-        assert!((overlay_line(rendered_boundary, core_half, band_half) - 1.0).abs() < 1e-6);
+    /// CPU mirror of the shader's luminance-driven beam half-width.
+    fn beam_sigma(luma: f32) -> f32 {
+        BEAM_SIGMA_MIN + (BEAM_SIGMA_MAX - BEAM_SIGMA_MIN) * luma.clamp(0.0, 1.0)
+    }
 
-        // A rendered row's plateau centre is half a texel off — a half-integer
-        // texel, tex_coord = (k + 1)/tex_size — where the darkening must vanish
-        // so it never cuts through the row.
-        let row_centre = texel_coord(4.0 / tex_size, tex_size);
-        assert_eq!(row_centre, 3.5);
-        assert_eq!(overlay_line(row_centre, core_half, band_half), 0.0);
+    /// CPU mirror of the Gaussian beam profile at distance `d` (row-pitch units).
+    fn beam_weight(d: f32, sigma: f32) -> f32 {
+        let z = d / sigma;
+        (-0.5 * z * z).exp()
+    }
 
-        // The pre-fix placement dropped the half-texel offset, measuring from
-        // `tex_coord * tex_size` whose integers are the row centres — peaking on
-        // the row, not between rows. Pin that this frame differs by half a texel.
-        let unshifted_at_boundary = 3.5 / tex_size * tex_size;
-        assert_eq!(unshifted_at_boundary.fract(), 0.5);
+    /// Normalized emitted brightness of a uniform grayscale field of the given
+    /// `luminance`, sampled at fractional row position `frac`, as a multiple of
+    /// the field's flat brightness. 1.0 = brightness preserved. Both bracketing
+    /// rows share the field's luminance, so this is the beam sum times the norm.
+    fn field_brightness_ratio(frac: f32, luminance: f32) -> f32 {
+        let sigma = beam_sigma(luminance);
+        BEAM_NORM * (beam_weight(frac, sigma) + beam_weight(1.0 - frac, sigma))
+    }
+
+    /// Mean of the two-row beam sum across a full pitch, `2 ∫₀¹ beam(f) df`,
+    /// by fine numeric integration — the factor `BEAM_NORM` cancels against.
+    fn mean_beam_field(sigma: f32) -> f32 {
+        let n = 100_000;
+        let mut sum = 0.0f32;
+        for i in 0..n {
+            let f = (i as f32 + 0.5) / n as f32;
+            sum += beam_weight(f, sigma) + beam_weight(1.0 - f, sigma);
+        }
+        sum / n as f32
     }
 
     #[test]
-    fn overlay_band_width_is_a_fixed_fraction_of_the_row() {
-        let core_half = SCANLINE_CORE_FRACTION / 2.0;
-        let band_half = SCANLINE_FRACTION / 2.0;
-
-        // The band reaches zero exactly band_half from the boundary, and holds
-        // full darkness within core_half — in row units, the same whatever the
-        // on-screen row height.
-        assert_eq!(overlay_line(3.0 + band_half, core_half, band_half), 0.0);
-        assert!(overlay_line(3.0 + band_half * 0.99, core_half, band_half) > 0.0);
-        assert_eq!(overlay_line(3.0 + core_half * 0.99, core_half, band_half), 1.0);
-
-        // So in screen pixels the band tracks the row height: 3x wider at 12
-        // screen px/row than at 4, and the row-fraction is identical at both —
-        // not a resolution-fixed hairline.
-        let width_rows = 2.0 * band_half;
-        let width_px_at_4 = width_rows * 4.0;
-        let width_px_at_12 = width_rows * 12.0;
-        assert!((width_px_at_12 / width_px_at_4 - 3.0).abs() < 1e-6);
-        assert!(((width_px_at_4 / 4.0) - (width_px_at_12 / 12.0)).abs() < 1e-6);
+    fn beam_width_grows_monotonically_with_luminance() {
+        let widths: Vec<f32> = [0.0, 0.25, 0.5, 0.75, 1.0]
+            .iter()
+            .map(|&l| beam_sigma(l))
+            .collect();
+        for pair in widths.windows(2) {
+            assert!(pair[1] > pair[0], "widths not monotonic: {widths:?}");
+        }
+        // Bounded by the stated range.
+        assert_eq!(beam_sigma(0.0), BEAM_SIGMA_MIN);
+        assert_eq!(beam_sigma(1.0), BEAM_SIGMA_MAX);
+        assert!(BEAM_SIGMA_MIN < BEAM_SIGMA_MAX);
     }
 
     #[test]
-    fn scanline_valley_reads_as_dark_across_its_width_at_4k() {
-        // A 4K-class zoom: ~12 screen pixels per source row.
-        let core_half = SCANLINE_CORE_FRACTION / 2.0;
-        let band_half = SCANLINE_FRACTION / 2.0;
-        let full = pixels_at_least(core_half, band_half, 12.0, 0.999);
-        let half = pixels_at_least(core_half, band_half, 12.0, 0.5);
+    fn mid_content_brightness_is_preserved() {
+        // BEAM_NORM is fixed as 1/mean_field at the mid-luminance width; verify
+        // the pinned constant reproduces unit average brightness there, and that
+        // the image never reads dim (average ≥ ~1) for mid content.
+        let mean = BEAM_NORM * mean_beam_field(beam_sigma(0.5));
+        assert!((mean - 1.0).abs() < 0.01, "mid-field mean brightness: {mean}");
+        assert!(mean >= 0.99, "mid content must not go dim: {mean}");
+    }
 
-        // The flat core holds several pixels at full darkness, and most of the
-        // valley reaches at least half — not the sub-perceptual taper a pure
-        // gradient leaves (~2 half-dark pixels, none at full).
-        assert!(full >= 3, "full-dark pixels at 12px/row: {full}");
-        assert!(half >= 4, "half-dark pixels at 12px/row: {half}");
+    #[test]
+    fn bright_line_blooms_and_dark_line_stays_thin() {
+        // At the mid-gap (half a pitch from a row centre) a full-white beam is
+        // still strong — it nearly fills the pitch — while a black beam has all
+        // but vanished, leaving a wide dark gap.
+        let white_mid_gap = beam_weight(0.5, beam_sigma(1.0));
+        let dark_mid_gap = beam_weight(0.5, beam_sigma(0.0));
+        assert!(white_mid_gap > 0.5, "white beam should fill: {white_mid_gap}");
+        assert!(dark_mid_gap < 0.1, "dark beam should stay thin: {dark_mid_gap}");
+        assert!(white_mid_gap > dark_mid_gap * 5.0);
+    }
+
+    #[test]
+    fn beam_leaves_a_valley_between_rows() {
+        // For mid content the row centre reads brighter than the gap between
+        // rows — the scanline structure, emergent from emission rather than an
+        // applied darkening.
+        let at_row_centre = field_brightness_ratio(0.0, 0.5);
+        let at_mid_gap = field_brightness_ratio(0.5, 0.5);
+        assert!(
+            at_row_centre > at_mid_gap,
+            "no valley: centre {at_row_centre}, gap {at_mid_gap}"
+        );
+        // The two-row sum brackets the normalization target: at least full
+        // brightness on the row, at most it in the gap.
+        assert!(at_row_centre >= 1.0, "row centre below target: {at_row_centre}");
+        assert!(at_mid_gap <= 1.0, "gap above target: {at_mid_gap}");
+    }
+
+    #[test]
+    fn third_row_contribution_is_negligible() {
+        // A neighbour-of-neighbour row is one full pitch beyond the bracketing
+        // pair; even at the widest beam it contributes far below perceptible,
+        // so two rows suffice.
+        assert!(beam_weight(1.5, BEAM_SIGMA_MAX) < 0.02);
+    }
+
+    #[test]
+    fn emission_degrades_to_plain_below_threshold() {
+        // The shader mixes plain→emission by the visibility ramp, so below the
+        // onset (weight 0) the CRT path is the plain sharp picture, and at full
+        // threshold it is entirely the beam emission.
+        assert_eq!(overlay_visibility(OVERLAY_ONSET_PX), 0.0);
+        assert_eq!(overlay_visibility(2.9), 0.0);
+        assert_eq!(overlay_visibility(OVERLAY_FULL_PX), 1.0);
+        let partial = overlay_visibility((OVERLAY_ONSET_PX + OVERLAY_FULL_PX) / 2.0);
+        assert!(partial > 0.0 && partial < 1.0);
     }
 
     #[test]
@@ -733,21 +805,13 @@ mod tests {
         let full = pixels_at_least(core_half, band_half, 12.0, 0.999);
         let half = pixels_at_least(core_half, band_half, 12.0, 0.5);
 
-        // Thinner than the scanline valley by design, but still a genuinely dark
-        // core rather than a single-pixel taper.
-        assert!(full >= 1, "full-dark pixels at 12px/row: {full}");
-        assert!(half >= 2, "half-dark pixels at 12px/row: {half}");
-    }
-
-    #[test]
-    fn grid_line_is_thinner_than_the_scanline_valley() {
-        assert!(GRID_LINE_FRACTION < SCANLINE_FRACTION);
-        assert!(GRID_CORE_FRACTION < SCANLINE_CORE_FRACTION);
-        // The full-dark core sits inside the band, which stays within a source
-        // pixel (half-band ≤ 0.5 row).
+        // A genuinely dark core rather than a single-pixel taper, holding its
+        // look at a 4K-class ~12 screen pixels per source cell.
+        assert!(full >= 1, "full-dark pixels at 12px/cell: {full}");
+        assert!(half >= 2, "half-dark pixels at 12px/cell: {half}");
+        // The core sits inside the band, which stays within a source cell.
         assert!(GRID_CORE_FRACTION < GRID_LINE_FRACTION);
-        assert!(SCANLINE_CORE_FRACTION < SCANLINE_FRACTION);
-        assert!(SCANLINE_FRACTION / 2.0 <= 0.5);
+        assert!(GRID_LINE_FRACTION / 2.0 <= 0.5);
     }
 
     #[test]
@@ -773,13 +837,14 @@ mod tests {
     #[test]
     fn shader_source_resolves_all_placeholders() {
         // The shader the pipeline loads is this injected string — assert the
-        // reshaped band constants reach it, ruling out a stale-source path.
+        // beam and grid constants reach it, ruling out a stale-source path.
         let source = shader_source();
         assert!(!source.contains("__"));
         assert!(source.contains("const OVERLAY_ONSET_PX: f32 = 3.0;"));
         assert!(source.contains("const OVERLAY_FULL_PX: f32 = 6.0;"));
-        assert!(source.contains("const SCANLINE_FRACTION: f32 = 0.5;"));
-        assert!(source.contains("const SCANLINE_CORE_FRACTION: f32 = 0.3;"));
+        assert!(source.contains("const BEAM_SIGMA_MIN: f32 = 0.18;"));
+        assert!(source.contains("const BEAM_SIGMA_MAX: f32 = 0.52;"));
+        assert!(source.contains(&format!("const BEAM_NORM: f32 = {BEAM_NORM};")));
         assert!(source.contains("const GRID_LINE_FRACTION: f32 = 0.2;"));
         assert!(source.contains("const GRID_CORE_FRACTION: f32 = 0.1;"));
     }
