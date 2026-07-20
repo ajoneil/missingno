@@ -4,7 +4,7 @@
 //! format are frontend policy wired in here.
 
 use missingno_gb::frame::GbFrame;
-use missingno_gb::ppu::types::palette::PaletteChoice;
+use missingno_gb::ppu::types::palette::{PaletteChoice, PaletteIndex};
 use missingno_gb::system::GbConsole;
 use missingno_gb::{BootRom, GameBoy, cartridge::Cartridge, serial_transfer::SerialLink};
 use missingno_gbc::GameBoyColor;
@@ -36,6 +36,12 @@ impl PalettePolicy for GbPalettePolicy {
 
     fn clone_box(&self) -> Box<dyn PalettePolicy> {
         Box::new(self.clone())
+    }
+
+    fn panel_base(&self) -> rgb::RGB8 {
+        // The lightest palette shade is the panel's unlit paper — what the
+        // reflective LCD shows through the inter-pixel matrix.
+        self.palette.palette().color(PaletteIndex(0))
     }
 }
 

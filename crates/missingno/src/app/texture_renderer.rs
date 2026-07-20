@@ -11,18 +11,16 @@ static NEXT_TEXTURE_ID: AtomicU64 = AtomicU64::new(0);
 /// the same ramp.
 pub const OVERLAY_ONSET_PX: f32 = 3.0;
 pub const OVERLAY_FULL_PX: f32 = 6.0;
-/// Peak darkening of an LCD grid line, as a fraction of pixel brightness.
-const GRID_DARKEN: f32 = 0.15;
-/// LCD grid-band geometry as a fraction of the source-pixel pitch. `*_FRACTION`
-/// is the band's full width (where darkening reaches zero); `*_CORE_FRACTION` is
-/// an inner core held at full darkness, with smoothstep shoulders between core
-/// and band. The flat core keeps the gap genuinely dark across most of its width
-/// instead of tapering to a sub-perceptual point, and the band is proportional
-/// to the on-screen pitch so it holds its look from a small window up to a 4K
-/// panel. Darkening-on-top is authentic for an LCD's inter-pixel mask. Shared
-/// with the fragment shader.
-const GRID_LINE_FRACTION: f32 = 0.2;
-const GRID_CORE_FRACTION: f32 = 0.1;
+/// The LCD grid is a pixel *aperture*, not a darkening laid on top. Both Game
+/// Boy panels are reflective (no backlight): the unlit state is the pale panel
+/// base, pixels darken against it, and the inter-pixel matrix is a border that
+/// exposes that light base — so a fragment either lands inside a lit pixel or in
+/// the base-coloured gap. `APERTURE_FRACTION` is the fraction of the cell pitch,
+/// per axis, that the lit pixel fills; the remaining border is the reflective
+/// base. ~0.88 reads like a photographed DMG screen — pixels nearly touching
+/// with a thin base gridline between (linear coverage 0.88/axis, 0.774 of area).
+/// Shared with the fragment shader.
+const APERTURE_FRACTION: f32 = 0.88;
 
 /// CRT scanlines are not a darkening laid over the picture — the beam *emits*
 /// each source row as a bright line with a soft vertical falloff, and the gaps
@@ -74,6 +72,7 @@ pub struct TextureRenderer {
     height: u32,
     pixels: Arc<[u8]>,
     overlay: ScreenOverlay,
+    panel_base: [f32; 3],
 }
 
 impl TextureRenderer {
@@ -86,12 +85,20 @@ impl TextureRenderer {
             height,
             pixels,
             overlay: ScreenOverlay::None,
+            panel_base: [1.0, 1.0, 1.0],
         }
     }
 
     /// Draw the given cosmetic overlay over the picture.
     pub fn overlay(mut self, overlay: ScreenOverlay) -> Self {
         self.overlay = overlay;
+        self
+    }
+
+    /// The reflective panel base the LCD aperture grid shows between pixels, as
+    /// linear RGB in 0..1. Ignored unless the overlay is the pixel grid.
+    pub fn panel_base(mut self, base: [f32; 3]) -> Self {
+        self.panel_base = base;
         self
     }
 }
@@ -109,6 +116,7 @@ impl<Message> shader::Program<Message> for TextureRenderer {
         TexturePrimitive {
             id: self.id,
             overlay: self.overlay.shader_mode(),
+            panel_base: self.panel_base,
             state: Mutex::new(PrimitiveState::Pending {
                 width: self.width,
                 height: self.height,
@@ -122,6 +130,7 @@ impl<Message> shader::Program<Message> for TextureRenderer {
 pub struct TexturePrimitive {
     id: u64,
     overlay: f32,
+    panel_base: [f32; 3],
     state: Mutex<PrimitiveState>,
 }
 
@@ -194,7 +203,14 @@ impl shader::Primitive for TexturePrimitive {
                 // Use prepare()'s bounds (screen-space) not draw()'s bounds
                 // (content-space), so the texture renders at the correct
                 // position when inside a scrollable.
-                pipeline.update_vertices(queue, self.id, *bounds, viewport, self.overlay);
+                pipeline.update_vertices(
+                    queue,
+                    self.id,
+                    *bounds,
+                    viewport,
+                    self.overlay,
+                    self.panel_base,
+                );
 
                 *state = PrimitiveState::Prepared {
                     width,
@@ -210,7 +226,14 @@ impl shader::Primitive for TexturePrimitive {
                 pipeline.ensure_texture(device, self.id, width, height);
 
                 if &old_bounds != bounds {
-                    pipeline.update_vertices(queue, self.id, *bounds, viewport, self.overlay);
+                    pipeline.update_vertices(
+                        queue,
+                        self.id,
+                        *bounds,
+                        viewport,
+                        self.overlay,
+                        self.panel_base,
+                    );
                 }
                 *state = PrimitiveState::Prepared {
                     width,
@@ -331,6 +354,7 @@ impl shader::Pipeline for TexturePipeline {
                         0 => Float32x2,
                         1 => Float32x2,
                         2 => Float32,
+                        3 => Float32x3,
                     ],
                 }],
                 compilation_options: Default::default(),
@@ -432,6 +456,7 @@ impl TexturePipeline {
         bounds: Rectangle,
         viewport: &shader::Viewport,
         overlay: f32,
+        panel_base: [f32; 3],
     ) {
         // Transform bounds to NDC space based on viewport
         let scale = viewport.scale_factor();
@@ -451,31 +476,37 @@ impl TexturePipeline {
                 position: [left, top],
                 tex_coords: [0.0, 0.0],
                 overlay,
+                panel_base,
             },
             Vertex {
                 position: [right, top],
                 tex_coords: [1.0, 0.0],
                 overlay,
+                panel_base,
             },
             Vertex {
                 position: [left, bottom],
                 tex_coords: [0.0, 1.0],
                 overlay,
+                panel_base,
             },
             Vertex {
                 position: [left, bottom],
                 tex_coords: [0.0, 1.0],
                 overlay,
+                panel_base,
             },
             Vertex {
                 position: [right, top],
                 tex_coords: [1.0, 0.0],
                 overlay,
+                panel_base,
             },
             Vertex {
                 position: [right, bottom],
                 tex_coords: [1.0, 1.0],
                 overlay,
+                panel_base,
             },
         ];
 
@@ -496,6 +527,7 @@ struct Vertex {
     position: [f32; 2],
     tex_coords: [f32; 2],
     overlay: f32,
+    panel_base: [f32; 3],
 }
 
 /// A WGSL float literal for `value` — always carrying a decimal point so it
@@ -515,9 +547,7 @@ fn shader_source() -> String {
     SHADER_TEMPLATE
         .replace("__OVERLAY_ONSET_PX__", &wgsl_f32(OVERLAY_ONSET_PX))
         .replace("__OVERLAY_FULL_PX__", &wgsl_f32(OVERLAY_FULL_PX))
-        .replace("__GRID_DARKEN__", &wgsl_f32(GRID_DARKEN))
-        .replace("__GRID_LINE_FRACTION__", &wgsl_f32(GRID_LINE_FRACTION))
-        .replace("__GRID_CORE_FRACTION__", &wgsl_f32(GRID_CORE_FRACTION))
+        .replace("__APERTURE_FRACTION__", &wgsl_f32(APERTURE_FRACTION))
         .replace("__BEAM_SIGMA_MIN__", &wgsl_f32(BEAM_SIGMA_MIN))
         .replace("__BEAM_SIGMA_MAX__", &wgsl_f32(BEAM_SIGMA_MAX))
         .replace("__BEAM_NORM__", &wgsl_f32(BEAM_NORM))
@@ -531,19 +561,19 @@ struct VertexInput {
     @location(0) position: vec2<f32>,
     @location(1) tex_coords: vec2<f32>,
     @location(2) overlay: f32,
+    @location(3) panel_base: vec3<f32>,
 }
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) tex_coords: vec2<f32>,
     @location(1) @interpolate(flat) overlay: f32,
+    @location(2) @interpolate(flat) panel_base: vec3<f32>,
 }
 
 const OVERLAY_ONSET_PX: f32 = __OVERLAY_ONSET_PX__;
 const OVERLAY_FULL_PX: f32 = __OVERLAY_FULL_PX__;
-const GRID_DARKEN: f32 = __GRID_DARKEN__;
-const GRID_LINE_FRACTION: f32 = __GRID_LINE_FRACTION__;
-const GRID_CORE_FRACTION: f32 = __GRID_CORE_FRACTION__;
+const APERTURE_FRACTION: f32 = __APERTURE_FRACTION__;
 const BEAM_SIGMA_MIN: f32 = __BEAM_SIGMA_MIN__;
 const BEAM_SIGMA_MAX: f32 = __BEAM_SIGMA_MAX__;
 const BEAM_NORM: f32 = __BEAM_NORM__;
@@ -555,6 +585,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     output.position = vec4<f32>(input.position, 0.0, 1.0);
     output.tex_coords = input.tex_coords;
     output.overlay = input.overlay;
+    output.panel_base = input.panel_base;
     return output;
 }
 
@@ -602,10 +633,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let snapped = (texel_floor + vec2(0.5) + sharp) / tex_size;
     let plain = textureSample(texture, texture_sampler, snapped);
 
-    // Cosmetic device-simulation overlay: 1 = LCD pixel grid (darkening on top,
-    // authentic for an inter-pixel mask), 2 = CRT beam emission. Both fade out
-    // below OVERLAY_ONSET_PX screen pixels per source pixel where the structure
-    // would merge into flat dimming.
+    // Cosmetic device-simulation overlay: 1 = reflective-LCD pixel aperture,
+    // 2 = CRT beam emission. Both fade out below OVERLAY_ONSET_PX screen pixels
+    // per source pixel where the structure would merge into flat dimming.
     let mode = input.overlay;
     if (mode < 0.5) {
         return plain;
@@ -616,17 +646,25 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         vec2(OVERLAY_ONSET_PX), vec2(OVERLAY_FULL_PX), screen_px_per_source);
 
     if (mode < 1.5) {
-        // LCD grid: a thin darkening line at every cell boundary, both axes. A
-        // flat full-dark core with smoothstep shoulders, its width a fixed
-        // fraction of the cell pitch so it holds at any output resolution.
-        // Integer `frac` lands between rendered cells, placing the line in the
-        // inter-cell gap rather than through a cell's centre.
-        let dist = min(frac, vec2(1.0) - frac);
-        let core = GRID_CORE_FRACTION * 0.5;
-        let band = GRID_LINE_FRACTION * 0.5;
-        let line = vec2(1.0) - smoothstep(vec2(core), vec2(band), dist);
-        let darken = GRID_DARKEN * max(line.x * vis.x, line.y * vis.y);
-        return vec4<f32>(plain.rgb * (1.0 - darken), plain.a);
+        // LCD pixel aperture: a reflective panel has no backlight, so the cell
+        // is a flat-coloured lit pixel and the inter-pixel matrix is a border
+        // that exposes the pale panel base — the grid is where pixels aren't.
+        // Point-sample THIS cell's colour at its centre (a physical pixel is one
+        // flat colour — no cross-cell bilinear inside the aperture), and blend
+        // to the panel base across the border. The cell centre sits at frac 0.5;
+        // its edges (frac 0 and 1) are the matrix gap.
+        let cell_centre = (texel_floor + vec2(0.5)) / tex_size;
+        let cell_color = textureSample(texture, texture_sampler, cell_centre).rgb;
+        let d = abs(frac - vec2(0.5));
+        let aperture = vec2(APERTURE_FRACTION * 0.5);
+        // Soften the matrix edge over ~one screen pixel so it never aliases.
+        let aa = clamp(scale, vec2(0.0001), aperture);
+        let inside = (vec2(1.0) - smoothstep(aperture - aa, aperture, d));
+        let lit = mix(input.panel_base, cell_color, inside.x * inside.y);
+        // Below the onset the pixels are too few screen pixels apart to resolve
+        // the matrix, so fall back to the plain sharp picture.
+        let grid_vis = min(vis.x, vis.y);
+        return vec4<f32>(mix(plain.rgb, lit, grid_vis), plain.a);
     }
 
     // CRT beam emission: keep the sharp-bilinear x treatment, but along y sum
@@ -664,30 +702,33 @@ mod tests {
         t * t * (3.0 - 2.0 * t)
     }
 
-    /// CPU mirror of the shader's LCD flat-bottomed line term: full darkness
-    /// within `core_half`, smoothstep shoulders out to `band_half`, zero beyond
-    /// (all in cell-pitch units).
-    fn line_at_dist(dist: f32, core_half: f32, band_half: f32) -> f32 {
-        let t = ((dist - core_half) / (band_half - core_half)).clamp(0.0, 1.0);
-        1.0 - t * t * (3.0 - 2.0 * t)
+    // ── LCD aperture mirrors ─────────────────────────────────────────────
+
+    /// CPU mirror of the shader's hard-edged aperture membership at intra-cell
+    /// position `frac` (per axis): 1 inside the lit pixel, 0 in the matrix
+    /// border. The aperture is centred on the cell (`frac` 0.5), spanning
+    /// `APERTURE_FRACTION` of the pitch, so its edges sit at `0.5 ± aperture`.
+    fn aperture_inside(frac: f32) -> f32 {
+        let aperture = APERTURE_FRACTION * 0.5;
+        let d = (frac - 0.5).abs();
+        if d <= aperture { 1.0 } else { 0.0 }
     }
 
-    /// Screen pixels within one cell pitch whose grid darkening reaches at least
-    /// `threshold` of the peak, at `screen_px_per_cell` output scale.
-    fn pixels_at_least(
-        core_half: f32,
-        band_half: f32,
-        screen_px_per_cell: f32,
-        threshold: f32,
-    ) -> usize {
-        let n = screen_px_per_cell.round() as usize;
-        (0..n)
-            .filter(|&i| {
-                let pos = (i as f32 + 0.5) / screen_px_per_cell;
-                let dist = pos.min(1.0 - pos);
-                line_at_dist(dist, core_half, band_half) >= threshold
-            })
-            .count()
+    /// The one-axis lit fraction of a cell — the share of intra-cell positions
+    /// falling inside the aperture — by fine sampling.
+    fn lit_fraction() -> f32 {
+        let n = 100_000;
+        let lit = (0..n)
+            .filter(|&i| aperture_inside((i as f32 + 0.5) / n as f32) > 0.5)
+            .count();
+        lit as f32 / n as f32
+    }
+
+    /// CPU mirror of the aperture colour blend: the cell's own colour inside the
+    /// aperture, the panel base in the border (hard-edged, one axis).
+    fn aperture_color(frac: f32, cell: f32, base: f32) -> f32 {
+        let inside = aperture_inside(frac);
+        base * (1.0 - inside) + cell * inside
     }
 
     // ── CRT beam-emission mirrors ────────────────────────────────────────
@@ -799,19 +840,45 @@ mod tests {
     }
 
     #[test]
-    fn grid_line_stays_visible_at_4k() {
-        let core_half = GRID_CORE_FRACTION / 2.0;
-        let band_half = GRID_LINE_FRACTION / 2.0;
-        let full = pixels_at_least(core_half, band_half, 12.0, 0.999);
-        let half = pixels_at_least(core_half, band_half, 12.0, 0.5);
+    fn aperture_lit_fraction_matches_the_constant() {
+        // The lit pixel covers APERTURE_FRACTION of the cell per axis, leaving
+        // the rest as matrix border — so the 2D lit area is that squared.
+        let lit = lit_fraction();
+        assert!(
+            (lit - APERTURE_FRACTION).abs() < 1e-3,
+            "one-axis lit fraction {lit} vs {APERTURE_FRACTION}"
+        );
+        // The border is a thin minority of the cell — pixels nearly touch.
+        assert!(APERTURE_FRACTION > 0.8 && APERTURE_FRACTION < 1.0);
+        let area = APERTURE_FRACTION * APERTURE_FRACTION;
+        assert!(area > 0.75, "lit area coverage {area}");
+    }
 
-        // A genuinely dark core rather than a single-pixel taper, holding its
-        // look at a 4K-class ~12 screen pixels per source cell.
-        assert!(full >= 1, "full-dark pixels at 12px/cell: {full}");
-        assert!(half >= 2, "half-dark pixels at 12px/cell: {half}");
-        // The core sits inside the band, which stays within a source cell.
-        assert!(GRID_CORE_FRACTION < GRID_LINE_FRACTION);
-        assert!(GRID_LINE_FRACTION / 2.0 <= 0.5);
+    #[test]
+    fn aperture_centre_is_the_cell_colour_border_is_the_base() {
+        // A dark pixel (0.1) on a pale base (0.9): the cell centre reads the
+        // pixel's own flat colour, the matrix border reads the panel base — not
+        // a darkened sample of the picture.
+        let cell = 0.1;
+        let base = 0.9;
+        assert_eq!(aperture_color(0.5, cell, base), cell); // cell centre
+        assert_eq!(aperture_color(0.0, cell, base), base); // cell edge = gap
+        assert_eq!(aperture_color(1.0, cell, base), base);
+        // The border is the light base, brighter than the darkened pixel — the
+        // inverse of the old dark-line overlay.
+        assert!(aperture_color(0.0, cell, base) > aperture_color(0.5, cell, base));
+    }
+
+    #[test]
+    fn aperture_degrades_to_plain_below_threshold() {
+        // The shader mixes plain→aperture by the visibility ramp, so below the
+        // onset (weight 0) the grid path is the plain sharp picture, and at full
+        // threshold it is entirely the aperture model.
+        assert_eq!(overlay_visibility(OVERLAY_ONSET_PX), 0.0);
+        assert_eq!(overlay_visibility(2.9), 0.0);
+        assert_eq!(overlay_visibility(OVERLAY_FULL_PX), 1.0);
+        let partial = overlay_visibility((OVERLAY_ONSET_PX + OVERLAY_FULL_PX) / 2.0);
+        assert!(partial > 0.0 && partial < 1.0);
     }
 
     #[test]
@@ -837,7 +904,7 @@ mod tests {
     #[test]
     fn shader_source_resolves_all_placeholders() {
         // The shader the pipeline loads is this injected string — assert the
-        // beam and grid constants reach it, ruling out a stale-source path.
+        // beam and aperture constants reach it, ruling out a stale-source path.
         let source = shader_source();
         assert!(!source.contains("__"));
         assert!(source.contains("const OVERLAY_ONSET_PX: f32 = 3.0;"));
@@ -845,7 +912,8 @@ mod tests {
         assert!(source.contains("const BEAM_SIGMA_MIN: f32 = 0.18;"));
         assert!(source.contains("const BEAM_SIGMA_MAX: f32 = 0.52;"));
         assert!(source.contains(&format!("const BEAM_NORM: f32 = {BEAM_NORM};")));
-        assert!(source.contains("const GRID_LINE_FRACTION: f32 = 0.2;"));
-        assert!(source.contains("const GRID_CORE_FRACTION: f32 = 0.1;"));
+        assert!(source.contains(&format!(
+            "const APERTURE_FRACTION: f32 = {APERTURE_FRACTION};"
+        )));
     }
 }

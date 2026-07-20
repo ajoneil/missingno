@@ -52,6 +52,12 @@ fn default_technology() -> DisplayTechnology {
     }
 }
 
+/// A reflective panel's unlit "paper" tone for a core with no monochrome
+/// palette to source one from — the CGB (and any future RGBA-native LCD). A
+/// plausible pale, faintly warm off-white; the real CGB screen's off-state is a
+/// light grey-white, not pure white.
+const CGB_REFLECTIVE_BASE: RGB8 = RGB8::new(0xec, 0xee, 0xe4);
+
 /// The one colour decision the frontend owns for a family whose frames arrive as
 /// device-native indices — the Game Boy's monochrome palette and Super Game Boy
 /// borders. The family that emits such frames installs one; every other family's
@@ -59,6 +65,10 @@ fn default_technology() -> DisplayTechnology {
 pub trait PalettePolicy: Send {
     fn resolve(&self, frame: &dyn ConsoleFrame) -> RgbaFrame;
     fn clone_box(&self) -> Box<dyn PalettePolicy>;
+    /// The reflective panel's unlit paper tone — the base the LCD aperture grid
+    /// exposes between pixels. For the Game Boy this is the palette's lightest
+    /// shade, the colour an off pixel shows.
+    fn panel_base(&self) -> RGB8;
 }
 
 /// The single screen renderer, driven by the [`DisplayTechnology`] the core
@@ -144,6 +154,23 @@ impl ScreenView {
     /// The overlay this screen draws — its technology's option, if enabled.
     fn overlay(&self) -> ScreenOverlay {
         overlay_for(&self.technology, self.pixel_grid, self.scanlines)
+    }
+
+    /// The reflective panel base the LCD aperture grid shows between pixels, as
+    /// linear RGB in 0..1. A device-native index frame carries the Game Boy's
+    /// monochrome palette, whose lightest shade is the panel's paper tone; a
+    /// core that delivers resolved RGBA (the CGB) has no such palette, so it
+    /// falls back to a near-white reflective base.
+    fn panel_base_color(&self) -> [f32; 3] {
+        let rgb = match (&self.palette_policy, self.console_frame.is_some()) {
+            (Some(policy), true) => policy.panel_base(),
+            _ => CGB_REFLECTIVE_BASE,
+        };
+        [
+            rgb.r as f32 / 255.0,
+            rgb.g as f32 / 255.0,
+            rgb.b as f32 / 255.0,
+        ]
     }
 
     /// The current frame resolved to RGBA under the active colour policy.
@@ -262,7 +289,9 @@ impl<Message> shader::Program<Message> for ScreenView {
             }
             _ => current.pixels,
         };
-        let renderer = TextureRenderer::with_pixels(width, height, pixels).overlay(self.overlay());
+        let renderer = TextureRenderer::with_pixels(width, height, pixels)
+            .overlay(self.overlay())
+            .panel_base(self.panel_base_color());
 
         <TextureRenderer as shader::Program<Message>>::draw(&renderer, &(), cursor, bounds)
     }
@@ -282,6 +311,69 @@ mod tests {
             panel,
             pixel_aspect: 1.0,
         }
+    }
+
+    /// A palette policy whose paper tone is a fixed colour, standing in for the
+    /// Game Boy's lightest palette shade.
+    struct StubPolicy(RGB8);
+    impl PalettePolicy for StubPolicy {
+        fn resolve(&self, frame: &dyn ConsoleFrame) -> RgbaFrame {
+            frame.resolve_rgba()
+        }
+        fn clone_box(&self) -> Box<dyn PalettePolicy> {
+            Box::new(StubPolicy(self.0))
+        }
+        fn panel_base(&self) -> RGB8 {
+            self.0
+        }
+    }
+
+    /// A minimal device-native frame, standing in for a delivered DMG frame.
+    struct StubFrame;
+    impl ConsoleFrame for StubFrame {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn resolve_rgba(&self) -> RgbaFrame {
+            RgbaFrame::blank(160, 144)
+        }
+        fn clone_box(&self) -> Box<dyn ConsoleFrame> {
+            Box::new(StubFrame)
+        }
+    }
+
+    #[test]
+    fn panel_base_takes_the_policy_paper_tone_for_index_frames() {
+        let mut view = ScreenView::new();
+        view.set_technology(lcd(LcdPanel::PassiveStn));
+        view.set_palette_policy(Some(Box::new(StubPolicy(RGB8::new(0x7b, 0x82, 0x10)))));
+        view.apply(&Frame::Console(Box::new(StubFrame)));
+
+        // A device-native (index) frame plus a policy: the reflective base is
+        // the policy's paper tone, normalized to 0..1.
+        let base = view.panel_base_color();
+        assert!((base[0] - 0x7b as f32 / 255.0).abs() < 1e-6);
+        assert!((base[1] - 0x82 as f32 / 255.0).abs() < 1e-6);
+        assert!((base[2] - 0x10 as f32 / 255.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn panel_base_is_near_white_for_resolved_rgba() {
+        // A core delivering resolved RGBA (the CGB) has no monochrome palette,
+        // so the base is the near-white reflective constant — even if a policy
+        // is installed, since no index frame reaches it.
+        let mut view = ScreenView::new();
+        view.set_technology(lcd(LcdPanel::ActiveTft));
+        view.set_palette_policy(Some(Box::new(StubPolicy(RGB8::new(0, 0, 0)))));
+        view.apply(&Frame::Rgba(RgbaFrame::blank(160, 144)));
+
+        let base = view.panel_base_color();
+        let expected = [
+            CGB_REFLECTIVE_BASE.r as f32 / 255.0,
+            CGB_REFLECTIVE_BASE.g as f32 / 255.0,
+            CGB_REFLECTIVE_BASE.b as f32 / 255.0,
+        ];
+        assert_eq!(base, expected);
     }
 
     #[test]
