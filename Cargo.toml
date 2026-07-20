@@ -24,6 +24,11 @@ default-members = [
     "crates/missingno-vcs",
 ]
 
+# One version for every library crate, so they cannot drift apart. The app sets
+# its own — it ships to people and versions by calendar.
+[workspace.package]
+version = "0.1.0"
+
 [workspace.dependencies]
 bitflags = "2.11.1"
 rgb = "0.8.53"

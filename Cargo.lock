@@ -3019,7 +3019,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-debugger"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "missingno-core 0.1.0",
  "missingno-session",
@@ -3030,7 +3030,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-gb"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bitflags 2.11.1",
  "missingno-core 0.1.0",
@@ -3043,7 +3043,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-gbc"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "missingno-core 0.1.0",
  "missingno-gb",
@@ -3065,7 +3065,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-session"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "libc",
  "missingno-core 0.1.0",
