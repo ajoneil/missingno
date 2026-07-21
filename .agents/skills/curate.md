@@ -80,13 +80,25 @@ While the developer plays the current game:
    claims this game *is*; nobody re-checks them once imported, so bad groupings persist
    silently. Look up each sha1 and compare the answer against what the entry claims.
 
-   Hasheous is the lookup — a documented API built for frontends to call, one request at
-   a time:
+   Hasheous is the lookup. Run it for the entry in front of you and no further:
 
    ```
-   curl -s -H 'accept: application/json' \
-     https://hasheous.org/api/v1/Lookup/ByHash/sha1/<sha1>
+   gamedb verify-hashes --key <tree>/<slug>
    ```
+
+   which asks per hash, records each answer on the artifact as `verified` evidence, and
+   reports what contradicts the entry. **Never sweep the whole database** — that is
+   thousands of requests at someone else's API for entries nobody is curating, and the
+   command refuses an unbounded run for exactly that reason. Verification is part of
+   looking at an entry, not a batch job. (The raw endpoint, when you want one hash by
+   hand: `curl -s -H 'accept: application/json'
+   https://hasheous.org/api/v1/Lookup/ByHash/sha1/<sha1>`.)
+
+   Evidence is recorded per artifact and carries *how* it was checked — a `Signature`
+   match keeps the name the database returned, which is the thing that distinguishes an
+   original from a hack that hashes perfectly well. A `Playtest` verification is the
+   developer's observation, never yours: record one only when they say so, and never
+   infer it from an entry being accepted.
 
    Its `signature.rom.name` is a TOSEC/No-Intro-style filename, and the bracket flags are
    the signal: `[h]` hack, `[t]` trained, `[tr]` translation, `[cr]` cracked, `[a]`
@@ -120,6 +132,20 @@ While the developer plays the current game:
    legitimate dumps, `label_artifact` gives each a short distinguishing label. Mods are
    curated independently of their game — note anything you learn about a mod's quality,
    but the endorsement buttons are the developer's.
+
+   **Name a mod only what it is actually called.** A documented title goes in verbatim
+   ("Adventure SI"). When the hack has no known name, do not dress a dump-flag descriptor
+   up as one — `[h New Graphics]` is a cataloguer's note, not a title. Use the
+   `Unnamed …` form the curator itself defaults to, so a reader can always tell a real
+   title from one we supplied:
+
+   - `Unnamed graphics hack of Adventure`
+   - `Unnamed trainer of Adventure`
+   - `Unnamed hack of <game>` when even the nature of the change is unclear
+
+   Rename it with `update_mod` the moment a real name turns up. The same call records a
+   mod's `author`, `date` and `url` — the signature entry usually names the group and
+   year (Channel2, 2003), and those are worth staging when it does.
 3. Research the gaps — empty developer/description/license, suspicious titles, flag
    questions. Source preference: existing structured sources first (the gamedb itself,
    pouet.net data dumps, gbdev database, publisher/developer sites), then ordinary web

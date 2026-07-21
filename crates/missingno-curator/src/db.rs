@@ -218,6 +218,7 @@ impl AnyGame {
                     sha1,
                     label: None,
                     size: Some(size),
+                    verified: Vec::new(),
                 });
                 true
             } else {

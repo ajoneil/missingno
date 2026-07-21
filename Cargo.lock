@@ -3028,6 +3028,7 @@ dependencies = [
  "serde_json",
  "sha1",
  "smol",
+ "tempfile",
  "ureq",
 ]
 
