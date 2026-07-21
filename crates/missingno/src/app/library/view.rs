@@ -162,23 +162,24 @@ fn toolbar<'a>(
         .width(Fill);
 
     // A clear affordance appears once there's something to clear, overlaid at
-    // the trailing edge of the input.
-    let search_area: Element<'a, app::Message> = if search.is_empty() {
-        search_field.into()
+    // the trailing edge of the input. The stack is always present so the
+    // input keeps its widget state (focus) when the button appears.
+    let clear: Element<'a, app::Message> = if search.is_empty() {
+        iced::widget::Space::new().into()
     } else {
-        stack![
-            search_field,
-            container(
-                buttons::subtle_raw(icons::m_muted(Icon::Close))
-                    .on_press(Message::SearchChanged(String::new()).into()),
-            )
+        buttons::subtle_raw(icons::m_muted(Icon::Close))
+            .on_press(Message::SearchChanged(String::new()).into())
+            .into()
+    };
+    let search_area: Element<'a, app::Message> = stack![
+        search_field,
+        container(clear)
             .width(Fill)
             .height(Fill)
             .align_x(iced::alignment::Horizontal::Right)
             .align_y(iced::alignment::Vertical::Center)
-        ]
-        .into()
-    };
+    ]
+    .into();
 
     let system_picker = pick_list(SystemFilter::all_options(), Some(system_filter), |filter| {
         Message::SystemFilterSelected(filter).into()
