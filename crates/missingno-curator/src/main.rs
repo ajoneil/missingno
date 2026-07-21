@@ -263,7 +263,7 @@ impl Curator {
                 _remote: endpoint,
                 curator_name,
                 recommend_next: false,
-                list_visible: true,
+                list_visible: false,
                 flag_note: None,
             },
             // A --rom-dir given at launch (e.g. by an agent starting the
@@ -1606,7 +1606,9 @@ impl Curator {
                         );
                     }
                 }
-                if let Some(note) = self.agent_notes.get(&entry_key) {
+                if self.playing.is_none()
+                    && let Some(note) = self.agent_notes.get(&entry_key)
+                {
                     editor = editor.push(text("Agent notes").size(15));
                     editor = editor.push(text(note.clone()).size(12));
                 }
@@ -1643,6 +1645,11 @@ impl Curator {
                         .width(Length::Fill)
                         .height(Length::Fill),
                     );
+                }
+                if let Some(note) = self.agent_notes.get(key) {
+                    pane = pane.push(text("Agent notes").size(15));
+                    pane = pane
+                        .push(scrollable(text(note.clone()).size(13)).height(Length::Fixed(160.0)));
                 }
                 let mut body = row![].spacing(16);
                 if let Some(left) = left {
