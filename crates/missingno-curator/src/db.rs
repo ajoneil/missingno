@@ -644,6 +644,7 @@ fn attach_mod<P: Platform>(
     name: String,
     category: ModCategory,
     homepage: Option<String>,
+    base_sha1: Option<Sha1>,
 ) -> bool {
     for release in &mut source.releases {
         let Some(at) = release
@@ -654,7 +655,6 @@ fn attach_mod<P: Platform>(
             continue;
         };
         let artifact = release.artifacts.remove(at);
-        let base_sha1 = release.artifacts.first().map(|a| a.sha1.clone());
         source.mods.push(Mod {
             name,
             category,
@@ -790,10 +790,11 @@ impl Db {
         if !matches!(category, ModCategory::TotalConversion) {
             let source_title = self.entries[source].game.title().to_owned();
             let name = title.unwrap_or_else(|| format!("Unnamed hack of {source_title}"));
+            let base = self.resolve_base(source, sha1, base_override)?;
             let attached = match &mut self.entries[source].game {
-                AnyGame::Gb(g) => attach_mod(g, sha1, name.clone(), category, homepage),
-                AnyGame::Gbc(g) => attach_mod(g, sha1, name.clone(), category, homepage),
-                AnyGame::Vcs(g) => attach_mod(g, sha1, name.clone(), category, homepage),
+                AnyGame::Gb(g) => attach_mod(g, sha1, name.clone(), category, homepage, base),
+                AnyGame::Gbc(g) => attach_mod(g, sha1, name.clone(), category, homepage, base),
+                AnyGame::Vcs(g) => attach_mod(g, sha1, name.clone(), category, homepage, base),
             };
             if !attached {
                 return Err(format!("{sha1} is not an artifact of this entry"));
@@ -806,6 +807,46 @@ impl Db {
             ));
         }
         self.split_out_conversion(source, sha1, title, category, base_override, homepage)
+    }
+
+    /// The dump a mod derives from: an explicit base must be one of the
+    /// entry's artifacts; without one, a single remaining candidate is used,
+    /// none is honestly None, and several is a refusal — never a guess.
+    fn resolve_base(
+        &self,
+        source: usize,
+        hack_sha1: &str,
+        base_override: Option<String>,
+    ) -> Result<Option<Sha1>, String> {
+        let candidates: Vec<String> = self.entries[source]
+            .game
+            .artifact_sha1s()
+            .into_iter()
+            .filter(|s| s != hack_sha1)
+            .collect();
+        match base_override {
+            Some(base) => {
+                let base = base.to_ascii_lowercase();
+                if base == hack_sha1 {
+                    return Err("base_sha1 is the hack itself".to_owned());
+                }
+                if !candidates.contains(&base) {
+                    return Err(format!(
+                        "base_sha1 {base} is not an artifact of this entry; artifacts: {}",
+                        candidates.join(", ")
+                    ));
+                }
+                Ok(Some(base.parse()?))
+            }
+            None => match candidates.as_slice() {
+                [] => Ok(None),
+                [only] => Ok(Some(only.parse()?)),
+                many => Err(format!(
+                    "several dumps could be the base — pass base_sha1; candidates: {}",
+                    many.join(", ")
+                )),
+            },
+        }
     }
 
     fn split_out_conversion(
@@ -827,16 +868,9 @@ impl Db {
         {
             return Err(format!("{sha1} is not an artifact of this entry"));
         }
-        let base: Sha1 = match base_override {
-            Some(base) => base.parse()?,
-            None => self.entries[source]
-                .game
-                .artifact_sha1s()
-                .into_iter()
-                .find(|s| s != sha1)
-                .ok_or("no other artifact to use as the base — pass base_sha1")?
-                .parse()?,
-        };
+        let base: Sha1 = self
+            .resolve_base(source, sha1, base_override)?
+            .ok_or("a total conversion needs a base artifact — pass base_sha1")?;
         let title = title.unwrap_or_else(|| format!("Hack of {source_title}"));
 
         let mut slug = slugify(&title);
@@ -959,5 +993,128 @@ mod link_tests {
         assert!(parse_link_type("Guide").is_ok());
         let err = parse_link_type("Blog").unwrap_err();
         assert!(err.contains("Blog") && err.contains("Community"));
+    }
+}
+
+#[cfg(test)]
+mod mark_hack_tests {
+    use super::*;
+    use missingno_gamedb::ModCategory;
+
+    fn db_with_three_dumps() -> (tempfile::TempDir, Db) {
+        let dir = tempfile::tempdir().unwrap();
+        let game_dir = dir.path().join("data/vcs/adventure");
+        std::fs::create_dir_all(&game_dir).unwrap();
+        std::fs::write(
+            game_dir.join("manifest.ron"),
+            r#"(
+    title: "Adventure",
+    releases: [
+        (
+            artifacts: [
+                (sha1: "e07e48d463d30321239a8acc00c490f27f1f7422"),
+                (sha1: "4ffe36c574a30188db7f9548d5e9ac36c9df5a09"),
+                (sha1: "7362b7ee00e4e0d777100dc8b70ba6b4a5e6ee6e"),
+            ],
+        ),
+    ],
+)
+"#,
+        )
+        .unwrap();
+        let db = Db::load(dir.path().to_path_buf()).unwrap();
+        (dir, db)
+    }
+
+    const REAL: &str = "e07e48d463d30321239a8acc00c490f27f1f7422";
+    const HACK_A: &str = "4ffe36c574a30188db7f9548d5e9ac36c9df5a09";
+    const HACK_B: &str = "7362b7ee00e4e0d777100dc8b70ba6b4a5e6ee6e";
+
+    fn mod_bases(db: &Db) -> Vec<Option<String>> {
+        match &db.entries[0].game {
+            AnyGame::Vcs(g) => g
+                .mods
+                .iter()
+                .map(|m| {
+                    m.releases[0]
+                        .base_sha1
+                        .as_ref()
+                        .map(|s| s.as_str().to_owned())
+                })
+                .collect(),
+            _ => unreachable!(),
+        }
+    }
+
+    // The reproduced bug: an explicit base must be recorded verbatim, in
+    // whatever order the hacks are marked.
+    #[test]
+    fn explicit_base_is_recorded_regardless_of_order() {
+        for order in [[HACK_A, HACK_B], [HACK_B, HACK_A]] {
+            let (_dir, mut db) = db_with_three_dumps();
+            for hack in order {
+                db.mark_hack(
+                    0,
+                    hack,
+                    Some(format!("hack {hack}")),
+                    ModCategory::ContentChange,
+                    Some(REAL.to_owned()),
+                    None,
+                )
+                .unwrap();
+            }
+            assert_eq!(
+                mod_bases(&db),
+                vec![Some(REAL.to_owned()), Some(REAL.to_owned())]
+            );
+        }
+    }
+
+    #[test]
+    fn ambiguous_base_refuses_rather_than_guessing() {
+        let (_dir, mut db) = db_with_three_dumps();
+        let err = db
+            .mark_hack(0, HACK_A, None, ModCategory::ContentChange, None, None)
+            .unwrap_err();
+        assert!(err.contains("pass base_sha1"), "{err}");
+        assert!(
+            mod_bases(&db).is_empty(),
+            "nothing may be written on refusal"
+        );
+    }
+
+    #[test]
+    fn single_candidate_is_used_and_lone_dump_gets_none() {
+        let (_dir, mut db) = db_with_three_dumps();
+        db.mark_hack(
+            0,
+            HACK_A,
+            None,
+            ModCategory::ContentChange,
+            Some(REAL.to_owned()),
+            None,
+        )
+        .unwrap();
+        // Two dumps left (REAL, HACK_B): marking HACK_B has one candidate.
+        db.mark_hack(0, HACK_B, None, ModCategory::ContentChange, None, None)
+            .unwrap();
+        assert_eq!(mod_bases(&db)[1], Some(REAL.to_owned()));
+    }
+
+    #[test]
+    fn bogus_base_is_rejected_not_stored() {
+        let (_dir, mut db) = db_with_three_dumps();
+        let err = db
+            .mark_hack(
+                0,
+                HACK_A,
+                None,
+                ModCategory::ContentChange,
+                Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned()),
+                None,
+            )
+            .unwrap_err();
+        assert!(err.contains("not an artifact"), "{err}");
+        assert!(mod_bases(&db).is_empty());
     }
 }
