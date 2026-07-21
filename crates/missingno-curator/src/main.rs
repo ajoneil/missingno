@@ -117,6 +117,10 @@ struct Curator {
     enriching: bool,
     remote_sink: SharedSink,
     _remote: Option<RemoteEndpoint>,
+    /// Parked wait_for_action replies, answered when the human acts.
+    action_waiters: Vec<std::sync::mpsc::Sender<serde_json::Value>>,
+    /// Decisions made while no agent was waiting.
+    action_events: std::collections::VecDeque<String>,
     curator_name: String,
     /// Stamp the next confirm as an editor's-choice recommendation.
     recommend_next: bool,
@@ -271,6 +275,8 @@ impl Curator {
                 enriching: false,
                 remote_sink,
                 _remote: endpoint,
+                action_waiters: Vec::new(),
+                action_events: std::collections::VecDeque::new(),
                 curator_name,
                 recommend_next: false,
                 list_visible: false,
@@ -318,6 +324,15 @@ impl Curator {
                 }
             }
             Message::Remote(Bridge::Call(call)) => {
+                if call.name == "wait_for_action" {
+                    match self.action_events.pop_front() {
+                        Some(event) => {
+                            let _ = call.reply.send(text_result(event));
+                        }
+                        None => self.action_waiters.push(call.reply),
+                    }
+                    return Task::none();
+                }
                 let (body, task) = self.run_tool_tasked(&call.name, &call.args);
                 let _ = call.reply.send(body);
                 return task;
@@ -663,9 +678,14 @@ impl Curator {
                 if let (Ok(db), Some(i)) = (&mut self.db, self.selected) {
                     let (by, recommended) = (self.curator_name.clone(), self.recommend_next);
                     db.entries[i].game.stamp_curation(&by, recommended);
+                    let confirmed_key = db.entries[i].key();
+                    let confirmed_star = if recommended { " ★ recommended" } else { "" };
                     self.recommend_next = false;
                     match db.write_entry(i) {
-                        Ok(()) => self.status = format!("confirmed {}", db.entries[i].key()),
+                        Ok(()) => {
+                            self.status = format!("confirmed {}", db.entries[i].key());
+                            self.emit_action(format!("accepted {confirmed_key}{confirmed_star}"));
+                        }
                         Err(e) => {
                             self.status = format!("write failed: {e}");
                             return Task::none();
@@ -727,12 +747,21 @@ impl Curator {
                         self.play_frame = None;
                         while let Some(next_key) = self.queue.front().cloned() {
                             match self.find_entry(&next_key) {
-                                Some(next) => return self.start_playtest_for(next),
+                                Some(next) => {
+                                    self.emit_action(format!(
+                                        "flagged {key} ({note:?}); now playing {next_key}                                          ({} left in queue)",
+                                        self.queue.len()
+                                    ));
+                                    return self.start_playtest_for(next);
+                                }
                                 None => {
                                     self.queue.pop_front();
                                 }
                             }
                         }
+                        self.emit_action(format!("flagged {key} ({note:?}); queue is empty"));
+                    } else {
+                        self.emit_action(format!("flagged {key} ({note:?})"));
                     }
                 }
             }
@@ -863,7 +892,7 @@ impl Curator {
         let Some(i) = self.selected else {
             return Task::none();
         };
-        let key = {
+        let (key, recommended) = {
             let Ok(db) = &mut self.db else {
                 return Task::none();
             };
@@ -875,7 +904,7 @@ impl Curator {
                 self.status = format!("write failed: {e}");
                 return Task::none();
             }
-            key
+            (key, recommended)
         };
         self.status = format!("accepted {key}");
         if self.queue.front() == Some(&key) {
@@ -883,15 +912,23 @@ impl Curator {
         }
         self.playing = None;
         self.play_frame = None;
+        let star = if recommended { " ★ recommended" } else { "" };
         while let Some(next_key) = self.queue.front().cloned() {
             match self.find_entry(&next_key) {
-                Some(next) => return self.start_playtest_for(next),
+                Some(next) => {
+                    self.emit_action(format!(
+                        "accepted {key}{star}; now playing {next_key} ({} left in queue)",
+                        self.queue.len()
+                    ));
+                    return self.start_playtest_for(next);
+                }
                 None => {
                     self.status = format!("queued {next_key} not found — skipped");
                     self.queue.pop_front();
                 }
             }
         }
+        self.emit_action(format!("accepted {key}{star}; queue is empty"));
         Task::none()
     }
 
@@ -926,6 +963,20 @@ impl Curator {
                     s.push_str(&line);
                 })
                 .or_insert(line);
+        }
+    }
+
+    /// Tell a waiting agent (or queue for the next wait) what the human did.
+    fn emit_action(&mut self, event: String) {
+        if self.action_waiters.is_empty() {
+            self.action_events.push_back(event);
+            if self.action_events.len() > 20 {
+                self.action_events.pop_front();
+            }
+        } else {
+            for waiter in self.action_waiters.drain(..) {
+                let _ = waiter.send(text_result(event.clone()));
+            }
         }
     }
 

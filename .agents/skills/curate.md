@@ -35,7 +35,8 @@ they did not ask for. Concretely:
   of sequential lookups you do inline.
 - **When a game is done, stop and say so.** Report what you staged, then wait. Silence from the
   developer means they are playing, not that you should find more to do. Don't poll
-  `queue_status` in a loop; check it once when you finish, and again when they speak.
+  `queue_status` in a loop — `wait_for_action` blocks until they Accept or Flag and tells
+  you which game is now up; that is the wait.
 
 A session where you enrich six games thoroughly, at their pace, beats one where you stage forty
 and they trust none of it.
@@ -192,9 +193,9 @@ While the developer plays the current game:
 10. If a flag's answer is now established by the staged data and the developer has agreed
    (in conversation or by accepting the related edit), `resolve_flag`; otherwise propose the
    resolution in the note and leave the flag open.
-11. Watch for the queue to advance: check `queue_status` when you finish a game's research;
-   if the developer hasn't accepted yet, deepen the research or answer their questions —
-   don't spin on polling, and don't stage anything for the next game to fill the time (see
+11. When you finish a game's research, call `wait_for_action`: it blocks (~50s per call)
+   until the developer Accepts (± recommendation) or Flags, and names the game now up.
+   On timeout, call it again or answer their questions — don't spin on `queue_status`, and don't stage anything for the next game to fill the time (see
    *One game at a time*). A quiet queue usually means they are still playing; talking to
    them about the game in front of them is the useful move.
 

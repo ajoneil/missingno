@@ -149,9 +149,20 @@ fn dispatch(sink: &SharedSink, name: &str, args: Value) -> Result<Value, String>
         reply,
     })
     .map_err(|_| "curator UI gone")?;
-    answer
-        .recv_timeout(REPLY_TIMEOUT)
-        .map_err(|_| "curator UI did not answer in time".to_owned())
+    // The long-poll parks its reply until the human acts; everything else
+    // answers promptly or is stuck.
+    let timeout = if name == "wait_for_action" {
+        Duration::from_secs(55)
+    } else {
+        REPLY_TIMEOUT
+    };
+    answer.recv_timeout(timeout).map_err(|_| {
+        if name == "wait_for_action" {
+            "no action yet — call wait_for_action again".to_owned()
+        } else {
+            "curator UI did not answer in time".to_owned()
+        }
+    })
 }
 
 fn respond(writer: &mut UnixStream, frame: Value) -> std::io::Result<()> {
@@ -292,6 +303,11 @@ fn tool_definitions() -> Value {
             "name": "find_duplicates",
             "description": "Entries whose normalized title (or any localized release title) collides with this game's — merge candidates. Run this for every game you curate; duplicates hide under punctuation, articles, and localized names.",
             "inputSchema": object(json!({ "key": { "type": "string" } }), &["key"]),
+        },
+        {
+            "name": "wait_for_action",
+            "description": "Long-poll for the developer's next decision: blocks up to ~50s and returns when they Accept (with or without a recommendation) or Flag the current entry, including which game is now up. Call it after you finish enriching; on timeout just call again. Events queue while you're not waiting, so nothing is missed.",
+            "inputSchema": object(json!({}), &[]),
         },
         {
             "name": "queue_status",
