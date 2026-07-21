@@ -18,6 +18,7 @@ use crate::app::{
 };
 
 use crate::app::library;
+use crate::app::system::Platform;
 use crate::app::views::friendly_ago;
 
 /// Deterministic accent colour from a title string, using Catppuccin Mocha accents
@@ -472,35 +473,13 @@ fn list_cover(game: &GameSummary) -> Element<'_, app::Message> {
             .border_radius(radius)
             .into()
     } else {
-        let initial = game
-            .entry
-            .display_title()
-            .chars()
-            .next()
-            .unwrap_or('?')
-            .to_uppercase()
-            .next()
-            .unwrap_or('?');
-        let bg = title_color(&game.entry.display_title());
-        container(
-            text(initial)
-                .size(LIST_COVER_HEIGHT * 0.45)
-                .font(fonts::heading())
-                .color(Color::WHITE),
+        cartridge_placeholder(
+            &game.entry.display_title(),
+            game.entry.platform,
+            LIST_COVER_WIDTH,
+            LIST_COVER_HEIGHT,
+            radius,
         )
-        .width(LIST_COVER_WIDTH)
-        .height(LIST_COVER_HEIGHT)
-        .align_x(Center)
-        .align_y(iced::alignment::Vertical::Center)
-        .style(move |_: &iced::Theme| container::Style {
-            background: Some(bg.into()),
-            border: iced::Border {
-                radius,
-                ..Default::default()
-            },
-            ..Default::default()
-        })
-        .into()
     }
 }
 
@@ -524,41 +503,18 @@ fn game_card(game: &GameSummary, hovered: bool) -> Element<'_, app::Message> {
             })
             .into()
     } else {
-        let initial = game
-            .entry
-            .display_title()
-            .chars()
-            .next()
-            .unwrap_or('?')
-            .to_uppercase()
-            .next()
-            .unwrap_or('?');
-        let bg = title_color(&game.entry.display_title());
-
-        container(
-            text(initial)
-                .size(COVER_HEIGHT * 0.35)
-                .font(fonts::heading())
-                .color(Color::WHITE),
-        )
-        .width(COVER_WIDTH)
-        .height(COVER_HEIGHT)
-        .align_x(Center)
-        .align_y(iced::alignment::Vertical::Center)
-        .style(move |_: &iced::Theme| container::Style {
-            background: Some(bg.into()),
-            border: iced::Border {
-                radius: iced::border::Radius {
-                    top_left: 8.0,
-                    top_right: 0.0,
-                    bottom_right: 0.0,
-                    bottom_left: 8.0,
-                },
-                ..Default::default()
+        cartridge_placeholder(
+            &game.entry.display_title(),
+            game.entry.platform,
+            COVER_WIDTH,
+            COVER_HEIGHT,
+            iced::border::Radius {
+                top_left: 8.0,
+                top_right: 0.0,
+                bottom_right: 0.0,
+                bottom_left: 8.0,
             },
-            ..Default::default()
-        })
-        .into()
+        )
     };
 
     // Overlay play button on cover when hovered
@@ -726,39 +682,18 @@ fn unmatched_cartridge_card<'a>(
     } else {
         &cart.title
     };
-    let bg = title_color(display_title);
-    let initial = display_title
-        .chars()
-        .next()
-        .unwrap_or('?')
-        .to_uppercase()
-        .next()
-        .unwrap_or('?');
-
-    let cover: Element<'_, app::Message> = container(
-        text(initial)
-            .size(COVER_HEIGHT * 0.35)
-            .font(fonts::heading())
-            .color(Color::WHITE),
-    )
-    .width(COVER_WIDTH)
-    .height(COVER_HEIGHT)
-    .align_x(Center)
-    .align_y(iced::alignment::Vertical::Center)
-    .style(move |_: &iced::Theme| container::Style {
-        background: Some(bg.into()),
-        border: iced::Border {
-            radius: iced::border::Radius {
-                top_left: 8.0,
-                top_right: 0.0,
-                bottom_right: 0.0,
-                bottom_left: 8.0,
-            },
-            ..Default::default()
+    let cover: Element<'_, app::Message> = cartridge_placeholder(
+        display_title,
+        None,
+        COVER_WIDTH,
+        COVER_HEIGHT,
+        iced::border::Radius {
+            top_left: 8.0,
+            top_right: 0.0,
+            bottom_right: 0.0,
+            bottom_left: 8.0,
         },
-        ..Default::default()
-    })
-    .into();
+    );
 
     let mut info = column![text(display_title).font(fonts::bold()),].spacing(4);
 
@@ -800,7 +735,75 @@ fn unmatched_cartridge_card<'a>(
         .into()
 }
 
-/// Cover art or initial-letter placeholder for tile cards.
+/// Cartridge silhouette for a platform (generic when the system is unknown).
+/// The SVGs carry their own white relief so they read as artwork over the
+/// deterministic placeholder background.
+fn cartridge_for(platform: Option<Platform>, size: f32) -> Element<'static, app::Message> {
+    let bytes: &'static [u8] = match platform {
+        Some(Platform::GameBoy | Platform::GameBoyColor) => {
+            include_bytes!("../../app/ui/icons/cartridges/gb.svg")
+        }
+        Some(Platform::Nes) => include_bytes!("../../app/ui/icons/cartridges/nes.svg"),
+        Some(Platform::MasterSystem) => include_bytes!("../../app/ui/icons/cartridges/sms.svg"),
+        Some(Platform::AtariVcs) => include_bytes!("../../app/ui/icons/cartridges/vcs.svg"),
+        None => include_bytes!("../../app/ui/icons/cartridges/generic.svg"),
+    };
+    iced::widget::svg(iced::advanced::svg::Handle::from_memory(bytes))
+        .width(size)
+        .height(size)
+        .into()
+}
+
+/// Placeholder used wherever a game has no cover: the per-system cartridge
+/// silhouette over the title's deterministic accent background, with the title
+/// beneath it as a title card on tiles tall enough to fit one.
+pub(super) fn cartridge_placeholder(
+    title: &str,
+    platform: Option<Platform>,
+    width: f32,
+    height: f32,
+    radius: iced::border::Radius,
+) -> Element<'static, app::Message> {
+    const LABEL: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.92);
+    let bg = title_color(title);
+
+    // Small list thumbnails stay art-only; taller tiles read as a title card.
+    let show_title = height >= 100.0;
+    let (content, padding): (Element<'static, app::Message>, iced::Padding) = if show_title {
+        let card = column![
+            cartridge_for(platform, height * 0.4),
+            text(title.to_string())
+                .size(13)
+                .color(LABEL)
+                .width(Fill)
+                .align_x(Center),
+        ]
+        .spacing(s())
+        .align_x(Center);
+        (card.into(), [m(), s()].into())
+    } else {
+        (cartridge_for(platform, height * 0.5), xs().into())
+    };
+
+    container(content)
+        .width(width)
+        .height(height)
+        .padding(padding)
+        .clip(true)
+        .align_x(Center)
+        .align_y(iced::alignment::Vertical::Center)
+        .style(move |_: &iced::Theme| container::Style {
+            background: Some(bg.into()),
+            border: iced::Border {
+                radius,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+/// Cover art or cartridge placeholder for tile cards.
 fn cover_element<'a>(title: &str, cover: Option<&'a image::Handle>) -> Element<'a, app::Message> {
     if let Some(handle) = cover {
         image(handle.clone())
@@ -809,30 +812,13 @@ fn cover_element<'a>(title: &str, cover: Option<&'a image::Handle>) -> Element<'
             .content_fit(iced::ContentFit::Cover)
             .into()
     } else {
-        let initial = title
-            .chars()
-            .next()
-            .unwrap_or('?')
-            .to_uppercase()
-            .next()
-            .unwrap_or('?');
-        let bg = title_color(title);
-
-        container(
-            text(initial)
-                .size(COVER_HEIGHT * 0.35)
-                .font(fonts::heading())
-                .color(Color::WHITE),
+        cartridge_placeholder(
+            title,
+            None,
+            COVER_WIDTH,
+            COVER_HEIGHT,
+            iced::border::Radius::from(0.0),
         )
-        .width(COVER_WIDTH)
-        .height(COVER_HEIGHT)
-        .align_x(Center)
-        .align_y(iced::alignment::Vertical::Center)
-        .style(move |_: &iced::Theme| container::Style {
-            background: Some(bg.into()),
-            ..Default::default()
-        })
-        .into()
     }
 }
 

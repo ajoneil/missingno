@@ -106,10 +106,34 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
             cover_el
         }
     } else {
-        container(buttons::subtle(icons::m(Icon::Back)).on_press(app::Message::BackToLibrary))
-            .width(COVER_WIDTH)
-            .height(COVER_HEIGHT)
-            .into()
+        let placeholder = super::view::cartridge_placeholder(
+            &data.entry.display_title(),
+            data.entry.platform,
+            COVER_WIDTH,
+            COVER_HEIGHT,
+            iced::border::Radius::from(0.0),
+        );
+        let back_btn = container(
+            button(icons::m(Icon::Back).style(|_, _| iced::widget::svg::Style {
+                color: Some(iced::Color::WHITE),
+            }))
+            .on_press(app::Message::BackToLibrary)
+            .style(|_, status| {
+                let bg_alpha = match status {
+                    button::Status::Hovered => 0.9,
+                    _ => 0.7,
+                };
+                button::Style {
+                    background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, bg_alpha).into()),
+                    text_color: iced::Color::WHITE,
+                    border: iced::Border::default().rounded(border_s()),
+                    ..Default::default()
+                }
+            }),
+        )
+        .padding([m() + 4.0, m()]);
+
+        stack![placeholder, back_btn].into()
     };
 
     // Title + metadata column
