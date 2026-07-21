@@ -5,7 +5,7 @@ use std::{fs, io, path::PathBuf, process::Command};
 
 use missingno_gamedb::{
     Date, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Link, LinkType, Mod, ModCategory, ModOf,
-    ModRelease, Platform, Release, Sha1, Tree, Vcs,
+    ModRelease, Platform, Release, Sha1, Tree, Vcs, Verification, VerificationMethod,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -356,6 +356,110 @@ impl AnyGame {
                 )
             })
             .collect())
+    }
+
+    /// Record that a signature database recognised a dump — additive evidence
+    /// about an immutable hash; curations are untouched. Replaces an earlier
+    /// answer from the same database (a refresh proves it still holds).
+    pub fn record_signature(&mut self, sha1: &str, database: &str, entry: &str) -> bool {
+        let evidence = Verification {
+            method: VerificationMethod::Signature {
+                database: database.to_owned(),
+                entry: entry.to_owned(),
+            },
+            date: Db::today(),
+        };
+        common!(self, g => {
+            for release in &mut g.releases {
+                for artifact in &mut release.artifacts {
+                    if artifact.sha1.as_str() != sha1 {
+                        continue;
+                    }
+                    let existing = artifact.verified.iter_mut().find(|v| {
+                        matches!(&v.method, VerificationMethod::Signature { database: d, .. }
+                            if d == database)
+                    });
+                    match existing {
+                        Some(slot) if *slot == evidence => return false,
+                        Some(slot) => *slot = evidence.clone(),
+                        None => artifact.verified.push(evidence.clone()),
+                    }
+                    return true;
+                }
+            }
+            false
+        })
+    }
+
+    /// The developer saw this exact dump run. Never inferred — only the
+    /// explicit button writes it. Mod dumps count: people play hacks.
+    pub fn record_playtest(&mut self, sha1: &str, by: &str) -> bool {
+        let evidence = Verification {
+            method: VerificationMethod::Playtest { by: by.to_owned() },
+            date: Db::today(),
+        };
+        let upsert = |artifact: &mut missingno_gamedb::Artifact| {
+            let existing = artifact
+                .verified
+                .iter_mut()
+                .find(|v| matches!(&v.method, VerificationMethod::Playtest { by: b } if b == by));
+            match existing {
+                Some(slot) => *slot = evidence.clone(),
+                None => artifact.verified.push(evidence.clone()),
+            }
+        };
+        common!(self, g => {
+            for release in &mut g.releases {
+                if let Some(artifact) =
+                    release.artifacts.iter_mut().find(|a| a.sha1.as_str() == sha1)
+                {
+                    upsert(artifact);
+                    return true;
+                }
+            }
+            for game_mod in &mut g.mods {
+                for release in &mut game_mod.releases {
+                    if let Some(artifact) =
+                        release.artifacts.iter_mut().find(|a| a.sha1.as_str() == sha1)
+                    {
+                        upsert(artifact);
+                        return true;
+                    }
+                }
+            }
+            false
+        })
+    }
+
+    /// Short display marks for a dump's recorded verifications.
+    pub fn verification_marks(&self, sha1: &str) -> Vec<String> {
+        let marks = |artifact: &missingno_gamedb::Artifact| {
+            artifact
+                .verified
+                .iter()
+                .map(|v| match &v.method {
+                    VerificationMethod::Signature { database, .. } => format!("✓{database}"),
+                    VerificationMethod::Playtest { by } => format!("▶{by}"),
+                })
+                .collect::<Vec<_>>()
+        };
+        common!(self, g => {
+            for release in &g.releases {
+                if let Some(a) = release.artifacts.iter().find(|a| a.sha1.as_str() == sha1) {
+                    return marks(a);
+                }
+            }
+            for game_mod in &g.mods {
+                for release in &game_mod.releases {
+                    if let Some(a) =
+                        release.artifacts.iter().find(|a| a.sha1.as_str() == sha1)
+                    {
+                        return marks(a);
+                    }
+                }
+            }
+            Vec::new()
+        })
     }
 
     /// Run an edit against the named attached mod (Mod is platform-shared).
@@ -875,6 +979,8 @@ impl Db {
             if !attached {
                 return Err(format!("{sha1} is not an artifact of this entry"));
             }
+            // Re-filing a dump changes what the entry claims: un-vouch it.
+            self.entries[source].game.clear_curations();
             self.entries[source].dirty = true;
             self.write_entry(source).map_err(|e| e.to_string())?;
             return Ok(format!(
@@ -975,6 +1081,7 @@ impl Db {
         }
         .ok_or("artifact vanished mid-operation")?;
 
+        self.entries[source].game.clear_curations();
         self.entries.push(EntryHandle {
             tree,
             slug: slug.clone(),
@@ -1192,5 +1299,49 @@ mod mark_hack_tests {
             .unwrap_err();
         assert!(err.contains("not an artifact"), "{err}");
         assert!(mod_bases(&db).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod verification_tests {
+    use super::*;
+    use missingno_gamedb::VerificationMethod;
+
+    #[test]
+    fn signature_evidence_is_idempotent_and_preserves_curations() {
+        let game = Game::<GameBoy>::from_ron(
+            r#"(
+    title: "T",
+    curated: [(by: "andrew", date: "2026-07-21", recommended: true)],
+    releases: [(artifacts: [(sha1: "0123456789abcdef0123456789abcdef01234567")])],
+)"#,
+        )
+        .unwrap();
+        let mut any = AnyGame::Gb(game);
+        assert!(any.record_signature(
+            "0123456789abcdef0123456789abcdef01234567",
+            "Hasheous",
+            "T (1983)(Someone)(NTSC)"
+        ));
+        // Same evidence again: unchanged, no duplicate.
+        assert!(!any.record_signature(
+            "0123456789abcdef0123456789abcdef01234567",
+            "Hasheous",
+            "T (1983)(Someone)(NTSC)"
+        ));
+        // A different answer from the same database replaces, not stacks.
+        assert!(any.record_signature(
+            "0123456789abcdef0123456789abcdef01234567",
+            "Hasheous",
+            "T (1983)(Someone)(PAL)"
+        ));
+        let AnyGame::Gb(g) = &any else { unreachable!() };
+        let artifact = &g.releases[0].artifacts[0];
+        assert_eq!(artifact.verified.len(), 1);
+        assert!(matches!(
+            &artifact.verified[0].method,
+            VerificationMethod::Signature { entry, .. } if entry.ends_with("(PAL)")
+        ));
+        assert_eq!(g.curated.len(), 1, "verification never clears curations");
     }
 }

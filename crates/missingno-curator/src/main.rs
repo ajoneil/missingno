@@ -140,7 +140,9 @@ enum Message {
     Pad(u8, bool),
     Boot(BootSource),
     Booted(String, Result<BootDone, String>),
-    Fetch { play_after: bool },
+    Fetch {
+        play_after: bool,
+    },
     Fetched(String, Result<(String, std::sync::Arc<Vec<u8>>), String>),
     ScanRoms,
     ScannedRoms(Result<std::sync::Arc<RomIndex>, String>),
@@ -152,13 +154,24 @@ enum Message {
     Edit(TextField, String),
     EditReleasePublisher(usize, String),
     SetArtifactLabel(String, String),
-    CurateMod { index: usize, recommend: bool },
+    RecordPlaytest(String),
+    ArtifactsVerified {
+        key: String,
+        results: Vec<(String, verify::SigResult)>,
+        reply: std::sync::mpsc::Sender<serde_json::Value>,
+    },
+    CurateMod {
+        index: usize,
+        recommend: bool,
+    },
     DescriptionAction(iced::widget::text_editor::Action),
     Enrich,
     Enriched(String, Result<Option<verify::HasheousHit>, String>),
     CoverLoaded(String, Option<iced::widget::image::Handle>),
     ConfirmAndNext,
-    Accept { recommend: bool },
+    Accept {
+        recommend: bool,
+    },
     FlagPrompt,
     FlagNote(String),
     SaveFlag,
@@ -324,6 +337,45 @@ impl Curator {
                 }
             }
             Message::Remote(Bridge::Call(call)) => {
+                if call.name == "verify_artifacts" {
+                    let Some(key) = call.args.get("key").and_then(serde_json::Value::as_str) else {
+                        let _ = call.reply.send(error_result("missing key"));
+                        return Task::none();
+                    };
+                    let Some(i) = self.find_entry(key) else {
+                        let _ = call.reply.send(error_result(format!("no entry {key}")));
+                        return Task::none();
+                    };
+                    let Ok(db) = &self.db else {
+                        let _ = call.reply.send(error_result("db not loaded"));
+                        return Task::none();
+                    };
+                    // Release dumps only: a hack hash being a hack is expected
+                    // on a mod, and one entry is the polite unit of API load.
+                    let mut sha1s = Vec::new();
+                    for r in 0..db.entries[i].game.release_lines().len() {
+                        for (sha1, _) in db.entries[i].game.release_artifacts(r) {
+                            sha1s.push(sha1);
+                        }
+                    }
+                    if sha1s.is_empty() {
+                        let _ = call
+                            .reply
+                            .send(text_result(format!("{key} has no dumps to verify")));
+                        return Task::none();
+                    }
+                    let key = key.to_owned();
+                    let reply = call.reply.clone();
+                    self.status = format!("verifying {} dump(s) of {key}…", sha1s.len());
+                    return Task::perform(
+                        smol::unblock(move || verify::lookup_signatures(sha1s)),
+                        move |results| Message::ArtifactsVerified {
+                            key: key.clone(),
+                            results,
+                            reply: reply.clone(),
+                        },
+                    );
+                }
                 if call.name == "wait_for_action" {
                     match self.action_events.pop_front() {
                         Some(event) => {
@@ -649,6 +701,74 @@ impl Curator {
                         db.entries[i].dirty = true;
                         match db.write_entry(i) {
                             Ok(()) => self.status = "mod endorsed".to_owned(),
+                            Err(e) => self.status = format!("write failed: {e}"),
+                        }
+                    }
+                }
+            }
+            Message::ArtifactsVerified {
+                key,
+                results,
+                reply,
+            } => {
+                let mut lines = Vec::new();
+                let mut recorded = 0;
+                let found = self.find_entry(&key);
+                if let (Ok(db), Some(i)) = (&mut self.db, found) {
+                    for (sha1, outcome) in &results {
+                        let short = &sha1[..12];
+                        match outcome {
+                            verify::SigResult::Found { signature, game } => {
+                                let evidence = signature.clone().unwrap_or_else(|| game.clone());
+                                match verify::derived_reason(&evidence) {
+                                    Some(reason) => lines.push(format!(
+                                        "{short}… DERIVED ({reason}): {evidence} —                                          consider mark_hack"
+                                    )),
+                                    None => {
+                                        if db.entries[i].game.record_signature(
+                                            sha1, "Hasheous", &evidence,
+                                        ) {
+                                            recorded += 1;
+                                            db.entries[i].dirty = true;
+                                        }
+                                        lines.push(format!(
+                                            "{short}… confirmed: {evidence}"
+                                        ));
+                                    }
+                                }
+                            }
+                            verify::SigResult::Unknown => {
+                                lines.push(format!("{short}… unknown to the signature database"))
+                            }
+                            verify::SigResult::Failed(e) => {
+                                lines.push(format!("{short}… lookup failed: {e}"))
+                            }
+                        }
+                    }
+                    if recorded > 0
+                        && let Err(e) = db.write_entry(i)
+                    {
+                        lines.push(format!("write failed: {e}"));
+                    }
+                    self.status = format!(
+                        "verified {key}: {} recorded, {} dumps checked",
+                        recorded,
+                        results.len()
+                    );
+                } else {
+                    lines.push(format!("entry {key} disappeared during verification"));
+                }
+                let _ = reply.send(text_result(lines.join("\n")));
+            }
+            Message::RecordPlaytest(sha1) => {
+                if let (Ok(db), Some(i)) = (&mut self.db, self.selected) {
+                    let by = self.curator_name.clone();
+                    if db.entries[i].game.record_playtest(&sha1, &by) {
+                        db.entries[i].dirty = true;
+                        match db.write_entry(i) {
+                            Ok(()) => {
+                                self.status = format!("playtest recorded for {}…", &sha1[..12])
+                            }
                             Err(e) => self.status = format!("write failed: {e}"),
                         }
                     }
@@ -1400,6 +1520,10 @@ impl Curator {
                     } else if base.is_some() || label.is_some() || date.is_some() {
                         applied.push("(release fields skipped: no such release_index)");
                     }
+                    if !applied.is_empty() {
+                        // Editing the mod un-vouches the mod (not the game).
+                        m.curated.clear();
+                    }
                     applied
                 });
                 match applied {
@@ -1585,6 +1709,17 @@ impl Curator {
             line = line.push(text(file).size(11).width(Length::Fill));
         } else {
             line = line.push(Space::new().width(Length::Fill));
+        }
+        if let (Ok(db), Some(i)) = (&self.db, self.selected) {
+            let marks = db.entries[i].game.verification_marks(sha1);
+            if !marks.is_empty() {
+                line = line.push(text(marks.join(" ")).size(11));
+            }
+        }
+        if playing_this {
+            line = line.push(
+                button(text("✓ works").size(11)).on_press(Message::RecordPlaytest(sha1.to_owned())),
+            );
         }
         if playable {
             let source = if let Some(path) = local {

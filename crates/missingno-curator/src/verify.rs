@@ -41,8 +41,63 @@ const HASHEOUS: &str = "https://hasheous.org/api/v1";
 #[derive(Clone, Debug, Default)]
 pub struct HasheousHit {
     pub name: String,
+    /// The signature database's per-dump name — the evidence string, carrying
+    /// the TOSEC bracket flags that identify hacks/trained/bad dumps.
+    pub signature_name: Option<String>,
     pub cover_url: Option<String>,
     pub wikipedia_url: Option<String>,
+}
+
+/// TOSEC-style flags marking a dump as derived rather than original.
+/// `[a]` (alternate) and `[!]` (verified) are deliberately absent: an
+/// alternate dump still belongs to the game. Longest flag first, so a
+/// translation is not misread as trained.
+const DERIVED_FLAGS: [(&str, &str); 6] = [
+    ("[tr", "translation"),
+    ("[cr", "cracked"),
+    ("[h", "hack"),
+    ("[t", "trained"),
+    ("[b", "bad dump"),
+    ("[o", "overdump"),
+];
+
+pub fn derived_reason(signature: &str) -> Option<&'static str> {
+    let lower = signature.to_lowercase();
+    DERIVED_FLAGS
+        .iter()
+        .find(|(flag, _)| lower.contains(flag))
+        .map(|(_, reason)| *reason)
+}
+
+/// One dump's signature-database answer.
+#[derive(Clone, Debug)]
+pub enum SigResult {
+    Found {
+        signature: Option<String>,
+        game: String,
+    },
+    Unknown,
+    Failed(String),
+}
+
+/// Sequential, politely-spaced lookups — one entry's dumps, never a sweep.
+pub fn lookup_signatures(sha1s: Vec<String>) -> Vec<(String, SigResult)> {
+    let mut results = Vec::new();
+    for (i, sha1) in sha1s.iter().enumerate() {
+        if i > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(750));
+        }
+        let outcome = match hasheous_lookup(sha1) {
+            Ok(Some(hit)) => SigResult::Found {
+                signature: hit.signature_name,
+                game: hit.name,
+            },
+            Ok(None) => SigResult::Unknown,
+            Err(e) => SigResult::Failed(e),
+        };
+        results.push((sha1.clone(), outcome));
+    }
+    results
 }
 
 pub fn hasheous_lookup(sha1: &str) -> Result<Option<HasheousHit>, String> {
@@ -73,6 +128,10 @@ pub fn hasheous_lookup(sha1: &str) -> Result<Option<HasheousHit>, String> {
         name,
         ..Default::default()
     };
+    hit.signature_name = body["signature"]["rom"]["name"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
     if let Some(attributes) = body["attributes"].as_array() {
         for attr in attributes {
             if attr["attributeName"].as_str() == Some("Logo")
@@ -252,4 +311,22 @@ pub fn gb_header(rom: &[u8]) -> Option<GbHeader> {
         sgb: rom[0x146] == 0x03 && rom[0x14B] == 0x33,
         mapper,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::derived_reason;
+
+    #[test]
+    fn derived_flags_classify_and_translation_is_not_trained() {
+        assert_eq!(
+            derived_reason("Adventure SI (2003)(Channel2)(NTSC)[h Color Scrolling]"),
+            Some("hack")
+        );
+        assert_eq!(derived_reason("Game (1983)[tr de]"), Some("translation"));
+        assert_eq!(derived_reason("Game (1983)[t +5]"), Some("trained"));
+        assert_eq!(derived_reason("Adventure (1978)(Atari)(NTSC)"), None);
+        assert_eq!(derived_reason("Game (1983)[a2]"), None);
+        assert_eq!(derived_reason("Game (1983)[!]"), None);
+    }
 }

@@ -151,7 +151,7 @@ fn dispatch(sink: &SharedSink, name: &str, args: Value) -> Result<Value, String>
     .map_err(|_| "curator UI gone")?;
     // The long-poll parks its reply until the human acts; everything else
     // answers promptly or is stuck.
-    let timeout = if name == "wait_for_action" {
+    let timeout = if matches!(name, "wait_for_action" | "verify_artifacts") {
         Duration::from_secs(55)
     } else {
         REPLY_TIMEOUT
@@ -302,6 +302,11 @@ fn tool_definitions() -> Value {
         {
             "name": "find_duplicates",
             "description": "Entries whose normalized title (or any localized release title) collides with this game's — merge candidates. Run this for every game you curate; duplicates hide under punctuation, articles, and localized names.",
+            "inputSchema": object(json!({ "key": { "type": "string" } }), &["key"]),
+        },
+        {
+            "name": "verify_artifacts",
+            "description": "Check one entry's release dumps against the Hasheous signature database (sequential, rate-limited; can take ~10s). Confirmed originals get Signature evidence recorded on the artifact; DERIVED results (TOSEC [h]/[t]/[tr]/[cr]/[b]/[o] flags) are reported for you to judge and mark_hack — the bracket note is a cataloguer's shorthand, not the mod's real name. 'Unknown' is a result, not an error: homebrew, prototypes and private dumps are usually unsigned. Curations are never touched — verification is evidence about an immutable hash.",
             "inputSchema": object(json!({ "key": { "type": "string" } }), &["key"]),
         },
         {

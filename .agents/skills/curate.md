@@ -146,7 +146,12 @@ While the developer plays the current game:
    Rename it with `update_mod` the moment a real name turns up. The same call records a
    mod's `author`, `date` and `url` — the signature entry usually names the group and
    year (Channel2, 2003), and those are worth staging when it does.
-3. Research the gaps — empty developer/description/license, suspicious titles, flag
+3. `verify_artifacts` early for entries with several dumps: confirmed originals gain
+   recorded Signature evidence; DERIVED results are your cue to judge and `mark_hack`
+   (find the mod's real name — the TOSEC bracket note is not it); "unknown" is a normal
+   result for homebrew and prototypes. Playtest verification is different: only the
+   developer's "✓ works" button records it — never claim a dump was playtested.
+4. Research the gaps — empty developer/description/license, suspicious titles, flag
    questions. Source preference: existing structured sources first (the gamedb itself,
    pouet.net data dumps, gbdev database, publisher/developer sites), then ordinary web
    pages. **Scraping etiquette is binding**: respect robots.txt, touch only documented or
