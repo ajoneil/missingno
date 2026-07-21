@@ -90,9 +90,10 @@ While the developer plays the current game:
    emulator's board choice; if a VCS playtest shows garbage, the board is the first
    suspect — check the game's known board on AtariAge or in Stella's properties and stage
    the correction, then have the developer replay).
-7. `set_note` with your reasoning — what you changed, the source for each fact (URL or
-   dataset name), your confidence, and anything the developer should double-check or decide
-   (e.g. a flag you'd resolve and why). Keep it short enough to read during a playtest.
+7. `set_note` with a SHORT summary — three or four lines at most: what you staged, the
+   single most load-bearing source, and anything to double-check. The developer has your
+   chat window open beside the curator; full reasoning, source lists, and caveats belong
+   in the conversation, not the note panel.
 8. If a flag's answer is now established by the staged data and the developer has agreed
    (in conversation or by accepting the related edit), `resolve_flag`; otherwise propose the
    resolution in the note and leave the flag open.
