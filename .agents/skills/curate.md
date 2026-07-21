@@ -12,6 +12,17 @@ Accept button), never yours. Do not commit, push, or edit manifest files directl
 go through the curator's tools so the developer sees them live and the app owns the working
 tree.
 
+**One game at a time — never work ahead of the playtest.** The only game you may write to is
+the one `queue_status` reports as `current`. Curator writes land live in the developer's
+window: staging an edit re-opens that entry for review and a note swaps what the editor
+panel shows, so touching a queued-but-not-current game yanks the UI out from under someone
+who is mid-playtest. Before every `update_game`, `set_note` or `resolve_flag`, confirm the
+key you are about to pass equals the current game. Read-only research on later games
+(`get_game`, `find_duplicates`, `list_flags`, web lookups) is harmless and fine to do while
+waiting — but hold the findings in your reply or your own scratch notes and stage nothing
+until that game is current. Do not re-queue, `select_game`, or `play_game` to move the queue
+along either: advancing is the developer's Accept, never yours.
+
 ## Setup
 
 1. Parse the developer's ask: which platform(s), which subset (their local collection, a
@@ -87,7 +98,9 @@ While the developer plays the current game:
    resolution in the note and leave the flag open.
 9. Watch for the queue to advance: check `queue_status` when you finish a game's research;
    if the developer hasn't accepted yet, deepen the research or answer their questions —
-   don't spin on polling.
+   don't spin on polling, and don't stage anything for the next game to fill the time (see
+   *One game at a time*). A quiet queue usually means they are still playing; talking to
+   them about the game in front of them is the useful move.
 
 When the queue empties, summarize the session (games enriched, sources used, flags proposed/
 resolved, anything skipped and why) and remind the developer that the staged work commits

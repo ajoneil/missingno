@@ -112,6 +112,8 @@ struct Curator {
     recommend_next: bool,
     /// The filter/list column; hidden automatically when an agent queues work.
     list_visible: bool,
+    /// Open red-flag note input for the current entry (None = closed).
+    flag_note: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -125,7 +127,6 @@ enum Message {
     Booted(String, Result<BootDone, String>),
     Fetch { play_after: bool },
     Fetched(String, Result<(String, std::sync::Arc<Vec<u8>>), String>),
-    AcceptNext,
     ScanRoms,
     ScannedRoms(Result<std::sync::Arc<RomIndex>, String>),
     FilterTree(TreeChoice),
@@ -140,7 +141,10 @@ enum Message {
     Enriched(String, Result<Option<verify::HasheousHit>, String>),
     CoverLoaded(String, Option<iced::widget::image::Handle>),
     ConfirmAndNext,
-    RecommendNext(bool),
+    Accept { recommend: bool },
+    FlagPrompt,
+    FlagNote(String),
+    SaveFlag,
     ToggleList,
     ResolveFlag(u32),
     Commit,
@@ -245,6 +249,7 @@ impl Curator {
                 curator_name,
                 recommend_next: false,
                 list_visible: true,
+                flag_note: None,
             },
             // A --rom-dir given at launch (e.g. by an agent starting the
             // curator) scans immediately; nothing to click.
@@ -472,9 +477,6 @@ impl Curator {
                     }
                 }
             }
-            Message::AcceptNext => {
-                return self.accept_and_next();
-            }
             Message::ScanRoms => {
                 if let Some(dir) = self.rom_dir.clone() {
                     self.scanning = true;
@@ -617,7 +619,54 @@ impl Curator {
                     };
                 }
             }
-            Message::RecommendNext(v) => self.recommend_next = v,
+            Message::Accept { recommend } => {
+                self.recommend_next = recommend;
+                if self.queue.is_empty() {
+                    return Task::done(Message::ConfirmAndNext);
+                }
+                return self.accept_and_next();
+            }
+            Message::FlagPrompt => {
+                self.flag_note = match self.flag_note {
+                    Some(_) => None,
+                    None => Some(String::new()),
+                };
+            }
+            Message::FlagNote(note) => self.flag_note = Some(note),
+            Message::SaveFlag => {
+                let Some(note) = self.flag_note.take() else {
+                    return Task::none();
+                };
+                if let (Ok(db), Some(i)) = (&mut self.db, self.selected) {
+                    let key = db.entries[i].key();
+                    let flag = missingno_gamedb::Flag {
+                        id: db.flags.next_id(),
+                        kind: missingno_gamedb::FlagKind::Custom,
+                        subject: vec![key.clone()],
+                        note: format!("{}: {note}", self.curator_name),
+                        resolved: None,
+                    };
+                    db.flags.flags.push(flag);
+                    match db.save_flags() {
+                        Ok(()) => self.status = format!("flagged {key}"),
+                        Err(e) => self.status = format!("flag save failed: {e}"),
+                    }
+                    // A flag is "park it and move on": advance without a stamp.
+                    if self.queue.front() == Some(&key) {
+                        self.queue.pop_front();
+                        self.playing = None;
+                        self.play_frame = None;
+                        while let Some(next_key) = self.queue.front().cloned() {
+                            match self.find_entry(&next_key) {
+                                Some(next) => return self.start_playtest_for(next),
+                                None => {
+                                    self.queue.pop_front();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             Message::ToggleList => self.list_visible = !self.list_visible,
             Message::ResolveFlag(id) => {
                 if let Ok(db) = &mut self.db {
@@ -1160,39 +1209,51 @@ impl Curator {
             }
         };
 
-        // ── Top bar: queue counts + commit ────────────────────────────
-        let mut top = row![].spacing(16).align_y(iced::Alignment::Center);
-        for tree in TreeId::ALL {
-            top = top.push(text(format!(
-                "{}: {} to review",
-                tree.label(),
-                db.backlog_count(tree)
-            )));
+        // ── Workflow bar: the current game and what to do with it ─────
+        let mut top = row![].spacing(12).align_y(iced::Alignment::Center);
+        match self.selected.and_then(|i| db.entries.get(i)) {
+            Some(entry) => {
+                top = top.push(text(entry.game.title().to_owned()).size(22));
+                if !self.queue.is_empty() {
+                    top = top.push(text(format!("· {} in queue", self.queue.len())).size(13));
+                }
+                top = top.push(Space::new().width(Length::Fill));
+                match &self.flag_note {
+                    Some(note) => {
+                        top = top.push(
+                            text_input("what's wrong with this entry?", note)
+                                .on_input(Message::FlagNote)
+                                .on_submit(Message::SaveFlag)
+                                .width(Length::Fixed(360.0)),
+                        );
+                        top = top.push(
+                            button(text("Save flag"))
+                                .style(button::danger)
+                                .on_press(Message::SaveFlag),
+                        );
+                        top = top.push(button(text("✕")).on_press(Message::FlagPrompt));
+                    }
+                    None => {
+                        top = top.push(
+                            button(text("Accept ✓")).on_press(Message::Accept { recommend: false }),
+                        );
+                        top = top.push(
+                            button(text("Accept ★ recommend"))
+                                .on_press(Message::Accept { recommend: true }),
+                        );
+                        top = top.push(
+                            button(text("⚑ Flag"))
+                                .style(button::danger)
+                                .on_press(Message::FlagPrompt),
+                        );
+                    }
+                }
+            }
+            None => {
+                top = top.push(text("missingno curator").size(22));
+                top = top.push(Space::new().width(Length::Fill));
+            }
         }
-        top = top.push(text(format!("flags: {}", db.flags.open().count())));
-        if !self.queue.is_empty() {
-            top = top.push(text(format!("queue: {}", self.queue.len())));
-        }
-        top = top.push(Space::new().width(Length::Fill));
-        top = top.push(text(&self.status).size(13));
-        top = top.push(
-            button(text(if self.list_visible { "☰ hide list" } else { "☰ list" }).size(13))
-                .on_press(Message::ToggleList),
-        );
-        if self.rom_dir.is_some() {
-            let label = match &self.rom_index {
-                Some(index) => format!("Rescan ROMs ({})", index.scanned),
-                None => "Scan ROM dir".to_owned(),
-            };
-            top = top.push(
-                button(text(label).size(14))
-                    .on_press_maybe((!self.scanning).then_some(Message::ScanRoms)),
-            );
-        }
-        top = top.push(
-            button(text(format!("Commit ({})", db.uncommitted)))
-                .on_press_maybe((db.uncommitted > 0).then_some(Message::Commit)),
-        );
 
         // ── Left: filters + list ──────────────────────────────────────
         let visible = self.visible();
@@ -1310,15 +1371,23 @@ impl Curator {
                     .push(text("Releases").size(16));
                 for (r, line) in entry.game.release_lines().into_iter().enumerate() {
                     editor = editor.push(
-                        row![
-                            text(format!("• {line}")).size(13).width(Length::Fill),
-                            text_input("publisher…", &entry.game.release_publisher(r))
-                                .on_input(move |v| Message::EditReleasePublisher(r, v))
-                                .size(13)
-                                .width(Length::Fixed(180.0)),
-                        ]
-                        .spacing(8)
-                        .align_y(iced::Alignment::Center),
+                        container(
+                            column![
+                                text(line).size(13),
+                                row![
+                                    text("Publisher").size(13).width(Length::Fixed(90.0)),
+                                    text_input("publisher…", &entry.game.release_publisher(r))
+                                        .on_input(move |v| Message::EditReleasePublisher(r, v))
+                                        .size(13)
+                                        .width(Length::Fixed(220.0)),
+                                ]
+                                .spacing(8)
+                                .align_y(iced::Alignment::Center),
+                            ]
+                            .spacing(6),
+                        )
+                        .padding([6, 10])
+                        .style(container::rounded_box),
                     );
                 }
                 let entry_key = entry.key();
@@ -1413,24 +1482,8 @@ impl Curator {
                     }
                 }
                 if let Some(note) = self.agent_notes.get(&entry_key) {
-                    editor = editor.push(text("Agent notes").size(16));
-                    editor = editor.push(text(note.clone()).size(13));
-                }
-                editor = editor.push(
-                    toggler(self.recommend_next)
-                        .label("recommend ★ (editor's choice) on next confirm")
-                        .on_toggle(Message::RecommendNext),
-                );
-                if self.queue.is_empty() {
-                    editor = editor.push(
-                        button(text("Confirm ✓ (stamp curated & next)"))
-                            .on_press(Message::ConfirmAndNext),
-                    );
-                } else {
-                    editor = editor.push(
-                        button(text("Accept ✓ (stamp curated & next in queue)"))
-                            .on_press(Message::AcceptNext),
-                    );
+                    editor = editor.push(text("Agent notes").size(15));
+                    editor = editor.push(text(note.clone()).size(12));
                 }
                 scrollable(editor.padding(4)).into()
             }
@@ -1483,6 +1536,41 @@ impl Curator {
             }
         };
 
-        column![top, body].spacing(12).padding(12).into()
+        let mut bottom = row![].spacing(14).align_y(iced::Alignment::Center);
+        bottom = bottom.push(text(&self.status).size(12).width(Length::Fill));
+        for tree in TreeId::ALL {
+            bottom =
+                bottom.push(text(format!("{} {}", tree.label(), db.backlog_count(tree))).size(12));
+        }
+        bottom = bottom.push(text(format!("flags {}", db.flags.open().count())).size(12));
+        bottom = bottom.push(
+            button(
+                text(if self.list_visible {
+                    "☰ hide list"
+                } else {
+                    "☰ list"
+                })
+                .size(12),
+            )
+            .style(button::text)
+            .on_press(Message::ToggleList),
+        );
+        if self.rom_dir.is_some() {
+            let label = match &self.rom_index {
+                Some(index) => format!("rescan ROMs ({})", index.scanned),
+                None => "scan ROM dir".to_owned(),
+            };
+            bottom = bottom.push(
+                button(text(label).size(12))
+                    .style(button::text)
+                    .on_press_maybe((!self.scanning).then_some(Message::ScanRoms)),
+            );
+        }
+        bottom = bottom.push(
+            button(text(format!("Commit ({})", db.uncommitted)).size(12))
+                .on_press_maybe((db.uncommitted > 0).then_some(Message::Commit)),
+        );
+
+        column![top, body, bottom].spacing(12).padding(12).into()
     }
 }
