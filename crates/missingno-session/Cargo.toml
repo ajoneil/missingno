@@ -6,6 +6,7 @@ edition = "2024"
 license = "MIT"
 
 [features]
+audio-output = ["dep:cpal", "dep:rtrb"]
 # The shipping cores. The Game Boy family ships both models — the cartridge
 # header picks the core at construction — so `gb` pulls the shared base (gb)
 # and the colour superset (gbc) together; there is no meaningful gb-without-gbc
@@ -20,6 +21,8 @@ sms = ["dep:missingno-sms"]
 tools = ["dep:png"]
 
 [dependencies]
+cpal = { version = "0.17", optional = true }
+rtrb = { version = "0.3", optional = true }
 missingno-core = { path = "../missingno-core" }
 missingno-gb = { path = "../missingno-gb", optional = true }
 missingno-gbc = { path = "../missingno-gbc", optional = true }

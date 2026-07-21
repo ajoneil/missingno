@@ -3,13 +3,12 @@ use std::{fs, path::PathBuf, time::Instant};
 use std::collections::HashMap;
 
 use action_bar::ActionBar;
-use audio_output::AudioOutput;
+use missingno_session::audio_output::AudioOutput;
 use iced::{Task, Theme, window};
 use ui::fonts;
 use ui::icons::Icon;
 
 mod action_bar;
-mod audio_output;
 pub(crate) mod automation;
 mod console;
 mod controls;

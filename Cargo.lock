@@ -2960,7 +2960,6 @@ version = "26.7.0"
 dependencies = [
  "bytemuck",
  "clap",
- "cpal",
  "dirs",
  "gilrs",
  "iced",
@@ -2979,7 +2978,6 @@ dependencies = [
  "rfd",
  "rgb",
  "ron",
- "rtrb",
  "serde",
  "serde_json",
  "serialport",
@@ -3021,6 +3019,7 @@ name = "missingno-curator"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "gilrs",
  "iced",
  "jiff",
  "missingno-core 0.1.0",
@@ -3097,6 +3096,7 @@ dependencies = [
 name = "missingno-session"
 version = "0.1.0"
 dependencies = [
+ "cpal",
  "libc",
  "missingno-core 0.1.0",
  "missingno-gb",
@@ -3105,6 +3105,7 @@ dependencies = [
  "missingno-sms",
  "missingno-vcs",
  "png 0.18.1",
+ "rtrb",
  "serde_json",
 ]
 

@@ -4,6 +4,7 @@
 //! screen; confirms stamp `curated` and accumulate into explicit git commits.
 
 mod db;
+mod play;
 mod remote;
 mod verify;
 
@@ -67,6 +68,8 @@ struct Curator {
     fetching: bool,
     scanning: bool,
     booting: bool,
+    playing: Option<(String, play::PlaySession)>,
+    play_frame: Option<iced::widget::image::Handle>,
     /// entry key → last fetched sha1 (bytes live in rom_cache).
     fetched_sha1: std::collections::HashMap<String, String>,
     /// entry key → boot note + screenshot.
@@ -78,6 +81,10 @@ struct Curator {
 #[derive(Debug, Clone)]
 enum Message {
     Remote(Bridge),
+    Play(BootSource),
+    PlayFrame,
+    StopPlay,
+    Pad(u8, bool),
     Boot(BootSource),
     Booted(String, Result<BootDone, String>),
     Fetch,
@@ -142,11 +149,13 @@ impl Curator {
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
+        let mut subscriptions = vec![
+            iced::Subscription::run(play::gamepad_worker).map(|(id, on)| Message::Pad(id, on)),
+        ];
         if self._remote.is_some() {
-            iced::Subscription::run(remote::worker).map(Message::Remote)
-        } else {
-            iced::Subscription::none()
+            subscriptions.push(iced::Subscription::run(remote::worker).map(Message::Remote));
         }
+        iced::Subscription::batch(subscriptions)
     }
 
     fn new(db_path: PathBuf, rom_dir: Option<PathBuf>, remote: bool) -> (Self, Task<Message>) {
@@ -171,6 +180,8 @@ impl Curator {
                 fetching: false,
                 scanning: false,
                 booting: false,
+                playing: None,
+                play_frame: None,
                 fetched_sha1: std::collections::HashMap::new(),
                 boot_shots: std::collections::HashMap::new(),
                 remote_sink,
@@ -214,6 +225,70 @@ impl Curator {
             Message::Remote(Bridge::Call(call)) => {
                 let body = self.run_tool(&call.name, &call.args);
                 let _ = call.reply.send(body);
+            }
+            Message::Play(source) => {
+                if let (Ok(db), Some(i)) = (&self.db, self.selected) {
+                    let entry = &db.entries[i];
+                    let key = entry.key();
+                    let hint = match entry.tree {
+                        TreeId::Gb => "verify.gb",
+                        TreeId::Gbc => "verify.gbc",
+                        TreeId::Vcs => "verify.a26",
+                    };
+                    let tv = entry.game.tv_hint();
+                    let bytes = match &source {
+                        BootSource::Cached(sha1) => self.rom_cache.get(sha1).cloned(),
+                        BootSource::File(path) => std::fs::read(path).ok().map(std::sync::Arc::new),
+                    };
+                    let Some(bytes) = bytes else {
+                        self.status = "no ROM bytes to play".to_owned();
+                        return Task::none();
+                    };
+                    match play::start(hint, &bytes, tv) {
+                        Ok(session) => {
+                            let events = session.events.clone();
+                            self.playing = Some((key, session));
+                            self.play_frame = None;
+                            return Task::perform(
+                                smol::unblock(move || play::await_frame(&events)),
+                                |_| Message::PlayFrame,
+                            );
+                        }
+                        Err(e) => self.status = format!("play failed: {e}"),
+                    }
+                }
+            }
+            Message::PlayFrame => {
+                if let Some((_, session)) = &self.playing {
+                    if let Some(frame) = session.handle.latest_frame() {
+                        let rgba = frame.resolve_rgba();
+                        self.play_frame = Some(iced::widget::image::Handle::from_rgba(
+                            rgba.width,
+                            rgba.height,
+                            rgba.pixels.to_vec(),
+                        ));
+                    }
+                    let events = session.events.clone();
+                    return Task::perform(
+                        smol::unblock(move || play::await_frame(&events)),
+                        |alive| {
+                            if alive {
+                                Message::PlayFrame
+                            } else {
+                                Message::StopPlay
+                            }
+                        },
+                    );
+                }
+            }
+            Message::StopPlay => {
+                self.playing = None;
+                self.play_frame = None;
+            }
+            Message::Pad(id, pressed) => {
+                if let Some((_, session)) = &self.playing {
+                    session.set_control(id, pressed);
+                }
             }
             Message::Boot(source) => {
                 if let (Ok(db), Some(i)) = (&self.db, self.selected) {
@@ -752,6 +827,11 @@ impl Curator {
                                                 BootSource::File(path.clone())
                                             )),
                                         ),
+                                        button(text("Play ▶").size(13)).on_press_maybe(
+                                            self.playing.is_none().then(|| Message::Play(
+                                                BootSource::File(path.clone())
+                                            )),
+                                        ),
                                     ]
                                     .spacing(8),
                                 );
@@ -794,6 +874,31 @@ impl Curator {
                 scrollable(editor.padding(4)).into()
             }
             None => container(text("select an entry")).padding(20).into(),
+        };
+
+        let right: Element<'_, Message> = match &self.playing {
+            Some((key, _)) => {
+                let mut pane = column![
+                    row![
+                        text(format!("Playing {key} — pad: dpad/stick · south=A/Fire · east=B · start · select"))
+                            .size(13)
+                            .width(Length::Fill),
+                        button(text("Stop ■").size(13)).on_press(Message::StopPlay),
+                    ]
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center),
+                ]
+                .spacing(8);
+                if let Some(frame) = &self.play_frame {
+                    pane = pane.push(
+                        iced::widget::image(frame.clone())
+                            .filter_method(iced::widget::image::FilterMethod::Nearest)
+                            .width(Length::Fixed(480.0)),
+                    );
+                }
+                column![pane, right].spacing(12).into()
+            }
+            None => right,
         };
 
         column![

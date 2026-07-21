@@ -18,6 +18,8 @@
 
 #[cfg(all(unix, feature = "tools"))]
 pub mod attach;
+#[cfg(feature = "audio-output")]
+pub mod audio_output;
 pub mod factory;
 pub mod request;
 pub mod session;

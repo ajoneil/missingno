@@ -1,6 +1,6 @@
+use crate::AudioSink;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use missingno_core::{HighPass, OnePoleHighPass};
-use missingno_session::AudioSink;
 
 const SAMPLE_RATE: u32 = 44_100;
 
@@ -86,7 +86,7 @@ fn tune(coupling: &mut Option<Coupling>, spec: Option<HighPass>) {
     });
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "gb", feature = "vcs"))]
 mod tests {
     use super::*;
 

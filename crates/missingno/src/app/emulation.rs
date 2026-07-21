@@ -3,7 +3,7 @@ use std::time::Instant;
 use iced::Task;
 use missingno_session::{ExtractedMachine, SessionEvent, SessionHandle, SharedSession};
 
-use super::audio_output::AudioOutput;
+use missingno_session::audio_output::AudioOutput;
 use super::emulator::{ConsoleFacts, Emulator};
 use super::session_bridge::{self, SessionBridge};
 use super::{App, Game, LoadedGame, Message, Notice, PendingAction, library};
