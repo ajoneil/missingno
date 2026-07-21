@@ -771,9 +771,12 @@ pub(super) fn cartridge_placeholder(
     // Small list thumbnails stay art-only; taller tiles read as a title card.
     let show_title = height >= 100.0;
     let (content, padding): (Element<'static, app::Message>, iced::Padding) = if show_title {
+        // Underscores aren't line-break opportunities like hyphens are; a
+        // zero-width space after each lets snake_case titles wrap.
+        let wrappable_title = title.replace('_', "_\u{200B}");
         let card = column![
             cartridge_for(platform, height * 0.4),
-            text(title.to_string())
+            text(wrappable_title)
                 .size(13)
                 .color(LABEL)
                 .width(Fill)
