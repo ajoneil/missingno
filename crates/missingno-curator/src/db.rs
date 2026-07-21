@@ -347,6 +347,15 @@ impl AnyGame {
             .collect())
     }
 
+    /// Run an edit against the named attached mod (Mod is platform-shared).
+    pub fn edit_mod<R>(&mut self, name: &str, edit: impl FnOnce(&mut Mod) -> R) -> Option<R> {
+        common!(self, g => g.mods.iter_mut().find(|m| m.name == name).map(edit))
+    }
+
+    pub fn mod_names(&self) -> Vec<String> {
+        common!(self, g => g.mods.iter().map(|m| m.name.clone()).collect())
+    }
+
     /// Endorse one attached mod, independently of the game.
     pub fn stamp_mod_curation(&mut self, index: usize, by: &str, recommended: bool) -> bool {
         let stamp = missingno_gamedb::Curation {

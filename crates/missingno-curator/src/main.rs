@@ -1246,6 +1246,119 @@ impl Curator {
                     Err(e) => error_result(e),
                 }
             }
+            "update_mod" => {
+                let (Some(key), Some(mod_name)) = (str_arg("key"), str_arg("mod")) else {
+                    return error_result("missing key or mod (the mod's current name)");
+                };
+                let Some(i) = self.find_entry(key) else {
+                    return error_result(format!("no entry {key}"));
+                };
+                let Some(set) = args.get("set").and_then(serde_json::Value::as_object) else {
+                    return error_result("missing set object");
+                };
+                let set_str = |k: &str| set.get(k).and_then(serde_json::Value::as_str);
+                // Validate everything before touching anything.
+                let category = match set_str("category") {
+                    Some(c) => Some(match db::parse_mod_category(c) {
+                        Ok(c) => c,
+                        Err(e) => return error_result(e),
+                    }),
+                    None => None,
+                };
+                let date = match set_str("date") {
+                    Some(d) => Some(match d.parse::<missingno_gamedb::ReleaseDate>() {
+                        Ok(d) => d,
+                        Err(e) => return error_result(e),
+                    }),
+                    None => None,
+                };
+                let Ok(db) = &mut self.db else {
+                    return error_result("db not loaded");
+                };
+                let base = match set_str("base_sha1") {
+                    Some("none") => Some(None),
+                    Some(base) => {
+                        let base = base.to_ascii_lowercase();
+                        if !db.entries[i].game.artifact_sha1s().contains(&base) {
+                            return error_result(format!(
+                                "base_sha1 {base} is not an artifact of {key}"
+                            ));
+                        }
+                        match base.parse::<missingno_gamedb::Sha1>() {
+                            Ok(sha1) => Some(Some(sha1)),
+                            Err(e) => return error_result(e),
+                        }
+                    }
+                    None => None,
+                };
+                if !db.entries[i].game.mod_names().iter().any(|n| n == mod_name) {
+                    return error_result(format!(
+                        "no mod named {mod_name:?} on {key}; mods: {:?}",
+                        db.entries[i].game.mod_names()
+                    ));
+                }
+                let release_index = set
+                    .get("release_index")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0) as usize;
+                let rename = set_str("name").map(str::to_owned);
+                let author = set_str("author").map(str::to_owned);
+                let label = set_str("label").map(str::to_owned);
+                let url = set_str("url").map(str::to_owned);
+                let applied = db.entries[i].game.edit_mod(mod_name, move |m| {
+                    let mut applied = Vec::new();
+                    if let Some(name) = rename {
+                        m.name = name;
+                        applied.push("name");
+                    }
+                    if let Some(category) = category {
+                        m.category = category;
+                        applied.push("category");
+                    }
+                    if let Some(author) = author {
+                        m.author = (!author.is_empty()).then_some(author);
+                        applied.push("author");
+                    }
+                    if let Some(url) = url {
+                        match m.links.iter_mut().find(|l| l.name == "Homepage") {
+                            Some(link) => link.url = url,
+                            None => m.links.push(missingno_gamedb::Link {
+                                name: "Homepage".to_owned(),
+                                url,
+                                link_type: missingno_gamedb::LinkType::Community,
+                            }),
+                        }
+                        applied.push("url");
+                    }
+                    if let Some(release) = m.releases.get_mut(release_index) {
+                        if let Some(base) = base {
+                            release.base_sha1 = base;
+                            applied.push("base_sha1");
+                        }
+                        if let Some(label) = label {
+                            release.label = (!label.is_empty()).then_some(label);
+                            applied.push("label");
+                        }
+                        if let Some(date) = date {
+                            release.date = Some(date);
+                            applied.push("date");
+                        }
+                    } else if base.is_some() || label.is_some() || date.is_some() {
+                        applied.push("(release fields skipped: no such release_index)");
+                    }
+                    applied
+                });
+                match applied {
+                    Some(applied) if applied.is_empty() => {
+                        error_result("no recognized fields in set")
+                    }
+                    Some(applied) => {
+                        db.entries[i].dirty = true;
+                        text_result(format!("updated mod on {key}: {}", applied.join(", ")))
+                    }
+                    None => error_result(format!("mod {mod_name:?} vanished mid-edit")),
+                }
+            }
             "label_artifact" => {
                 let (Some(key), Some(sha1), Some(label)) =
                     (str_arg("key"), str_arg("sha1"), str_arg("label"))

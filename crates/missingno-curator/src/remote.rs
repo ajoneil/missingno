@@ -261,6 +261,25 @@ fn tool_definitions() -> Value {
             }), &["key", "sha1"]),
         },
         {
+            "name": "update_mod",
+            "description": "Correct or enrich an attached mod's recorded fields: rename it, fix its category, author, homepage url, or a release's base_sha1 ('none' to clear), label, or date. Identify the mod by its current name.",
+            "inputSchema": object(json!({
+                "key": { "type": "string" },
+                "mod": { "type": "string", "description": "the mod's current name" },
+                "set": { "type": "object", "properties": {
+                    "name": { "type": "string" },
+                    "category": { "type": "string",
+                                  "enum": ["Translation", "QualityOfLife", "ContentChange", "TotalConversion"] },
+                    "author": { "type": "string" },
+                    "url": { "type": "string" },
+                    "release_index": { "type": "integer" },
+                    "base_sha1": { "type": "string" },
+                    "label": { "type": "string" },
+                    "date": { "type": "string" },
+                }},
+            }), &["key", "mod", "set"]),
+        },
+        {
             "name": "label_artifact",
             "description": "Give a dump a short distinguishing label ('alt', 'overdump', 'PAL conversion') so multiple hashes in one release are tellable apart.",
             "inputSchema": object(json!({
