@@ -14,6 +14,8 @@ pub struct PlaySession {
     /// Owns the session thread; dropping stops the machine.
     _shared: SharedSession,
     pub handle: SessionHandle,
+    /// The display's pixel aspect, applied when frames are shown.
+    pub pixel_aspect: f32,
     /// The `!Send` cpal stream stays on the UI thread, as in the emulator.
     _audio: Option<AudioOutput>,
     pub events: Arc<Mutex<Receiver<SessionEvent>>>,
@@ -33,6 +35,7 @@ pub fn start(
     let console = factory::create_console_with(std::path::Path::new(filename_hint), rom, &options)
         .map_err(|e| format!("core rejected ROM: {e}"))?
         .ok_or("no core recognizes this ROM")?;
+    let pixel_aspect = console.video_out().pixel_aspect();
     let (audio, sink) = match AudioOutput::open() {
         Some((audio, sink)) => (Some(audio), Some(sink)),
         None => (None, None),
@@ -44,6 +47,7 @@ pub fn start(
     Ok(PlaySession {
         _shared: shared,
         handle,
+        pixel_aspect,
         _audio: audio,
         events: Arc::new(Mutex::new(events)),
     })

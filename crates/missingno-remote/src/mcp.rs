@@ -63,9 +63,17 @@ pub fn serve() -> io::Result<()> {
         if line.trim().is_empty() {
             continue;
         }
+        let was_attached = state.is_attached();
         let (response, exit) = handle_message(&line, &mut state);
         if let Some(response) = response {
             writeln!(stdout, "{}", serde_json::to_string(&response).unwrap())?;
+            stdout.flush()?;
+        }
+        // Attaching/detaching swaps the whole tool set: tell the client to
+        // re-list, or it keeps showing the idle tools.
+        if state.is_attached() != was_attached {
+            let notice = json!({ "jsonrpc": "2.0", "method": "notifications/tools/list_changed" });
+            writeln!(stdout, "{notice}")?;
             stdout.flush()?;
         }
         if exit {
@@ -126,7 +134,7 @@ fn initialize_result(state: &State) -> Value {
     };
     json!({
         "protocolVersion": PROTOCOL_VERSION,
-        "capabilities": { "tools": {} },
+        "capabilities": { "tools": { "listChanged": true } },
         "serverInfo": {
             "name": name,
             "version": env!("CARGO_PKG_VERSION"),

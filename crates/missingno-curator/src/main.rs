@@ -325,10 +325,14 @@ impl Curator {
                 if let Some((_, session)) = &self.playing {
                     if let Some(frame) = session.handle.latest_frame() {
                         let rgba = frame.resolve_rgba();
-                        self.play_frame = Some(iced::widget::image::Handle::from_rgba(
+                        let (width, height, pixels) = verify::aspect_corrected(
                             rgba.width,
                             rgba.height,
-                            rgba.pixels.to_vec(),
+                            session.pixel_aspect,
+                            &rgba.pixels,
+                        );
+                        self.play_frame = Some(iced::widget::image::Handle::from_rgba(
+                            width, height, pixels,
                         ));
                     }
                     let events = session.events.clone();
@@ -1419,9 +1423,15 @@ impl Curator {
                 .spacing(8);
                 if let Some(frame) = &self.play_frame {
                     pane = pane.push(
-                        iced::widget::image(frame.clone())
-                            .filter_method(iced::widget::image::FilterMethod::Nearest)
-                            .width(Length::Fill),
+                        container(
+                            iced::widget::image(frame.clone())
+                                .filter_method(iced::widget::image::FilterMethod::Nearest)
+                                .content_fit(iced::ContentFit::Contain)
+                                .width(Length::Fill)
+                                .height(Length::Fill),
+                        )
+                        .width(Length::Fill)
+                        .height(Length::Fill),
                     );
                 }
                 row![

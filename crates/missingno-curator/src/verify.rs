@@ -135,6 +135,28 @@ pub struct BootShot {
     pub rgba: Vec<u8>,
 }
 
+/// Stretch a square-pixel RGBA buffer to the display's pixel aspect (nearest).
+pub fn aspect_corrected(
+    width: u32,
+    height: u32,
+    aspect: f32,
+    pixels: &[u8],
+) -> (u32, u32, Vec<u8>) {
+    if (aspect - 1.0).abs() < 0.01 {
+        return (width, height, pixels.to_vec());
+    }
+    let out_width = ((width as f32) * aspect).round().max(1.0) as u32;
+    let mut out = Vec::with_capacity((out_width * height * 4) as usize);
+    for y in 0..height {
+        let row = &pixels[(y * width * 4) as usize..((y + 1) * width * 4) as usize];
+        for x_out in 0..out_width {
+            let x_src = ((x_out as f32 / aspect) as u32).min(width - 1) as usize;
+            out.extend_from_slice(&row[x_src * 4..x_src * 4 + 4]);
+        }
+    }
+    (out_width, height, out)
+}
+
 pub fn boot_check(
     filename_hint: &str,
     rom: &[u8],
@@ -151,6 +173,7 @@ pub fn boot_check(
     let mut console = missingno_session::factory::create_console_with(path, rom, &options)
         .map_err(|e| format!("core rejected ROM: {e}"))?
         .ok_or("no core recognizes this ROM")?;
+    let pixel_aspect = console.video_out().pixel_aspect();
     let mut frames_seen = 0;
     for _ in 0..frames {
         if console.step_frame().display.is_some() {
@@ -158,12 +181,14 @@ pub fn boot_check(
         }
     }
     let frame = console.screen_display().resolve_rgba();
+    let (width, height, rgba) =
+        aspect_corrected(frame.width, frame.height, pixel_aspect, &frame.pixels);
     Ok(BootShot {
         frames_run: frames,
         frames_seen,
-        width: frame.width,
-        height: frame.height,
-        rgba: frame.pixels.to_vec(),
+        width,
+        height,
+        rgba,
     })
 }
 
