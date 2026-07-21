@@ -6,8 +6,7 @@ use std::{fs, io, path::PathBuf, process::Command};
 use missingno_gamedb::{
     Date, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Link, LinkType, Mod, ModCategory, ModOf,
     ModRelease, Platform, Region, Release, ReleaseStatus, Sha1, Slug, Tree, TvFormat, Vcs,
-    Verification,
-    VerificationMethod,
+    Verification, VerificationMethod,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1186,11 +1185,7 @@ fn attach_mod<P: Platform>(
 
 /// Move `from`'s releases and mods into `into`, skipping dumps already held
 /// and releases those dumps were the whole of. Returns what actually landed.
-fn absorb_into<P: Platform>(
-    into: &mut Game<P>,
-    from: Game<P>,
-    held: &[String],
-) -> (usize, usize) {
+fn absorb_into<P: Platform>(into: &mut Game<P>, from: Game<P>, held: &[String]) -> (usize, usize) {
     let mut releases = 0;
     for mut release in from.releases {
         let had_artifacts = !release.artifacts.is_empty();
@@ -1948,7 +1943,10 @@ mod phantom_release_tests {
                 assert_eq!(g.mods[0].releases.len(), 2);
                 assert_eq!(g.mods[0].releases[1].label.as_deref(), Some("8K"));
                 // A version inherits what the mod is a hack of.
-                assert_eq!(g.mods[0].releases[1].base_sha1.as_ref().unwrap().as_str(), A);
+                assert_eq!(
+                    g.mods[0].releases[1].base_sha1.as_ref().unwrap().as_str(),
+                    A
+                );
             }
             _ => unreachable!(),
         }
@@ -2062,7 +2060,9 @@ mod merge_tests {
             ),
             (
                 "reissue",
-                &format!("(title: \"T2\", releases: [(publisher: Some(\"CCE\"), artifacts: [(sha1: \"{B}\")])])"),
+                &format!(
+                    "(title: \"T2\", releases: [(publisher: Some(\"CCE\"), artifacts: [(sha1: \"{B}\")])])"
+                ),
             ),
         ]);
         db.flags.flags.push(missingno_gamedb::Flag {

@@ -1510,9 +1510,9 @@ impl Curator {
                         // from the one being playtested: follow the merge only
                         // when the human was already looking at what it touched.
                         let playing = self.playing.as_ref().map(|(key, _)| key.clone());
-                        let follow = playing.as_deref().is_none_or(|key| {
-                            key == target_key || key == source_key
-                        });
+                        let follow = playing
+                            .as_deref()
+                            .is_none_or(|key| key == target_key || key == source_key);
                         self.selected = if follow {
                             self.find_entry(&target_key)
                         } else {
@@ -1847,8 +1847,9 @@ impl Curator {
                     regions,
                 };
                 if db.entries[i].game.update_release(index as usize, edits) {
-                    let tv = tv_format
-                        .is_some_and(|f| db.entries[i].game.set_release_tv_format(index as usize, f));
+                    let tv = tv_format.is_some_and(|f| {
+                        db.entries[i].game.set_release_tv_format(index as usize, f)
+                    });
                     db.entries[i].game.clear_curations();
                     db.entries[i].dirty = true;
                     if tv_format.is_some() && !tv {
@@ -1879,15 +1880,19 @@ impl Curator {
                 let Ok(db) = &mut self.db else {
                     return error_result("db not loaded");
                 };
-                match db.entries[i]
-                    .game
-                    .attach_dump_to_mod(mod_name, &sha1.to_ascii_lowercase(), as_version, label)
-                {
+                match db.entries[i].game.attach_dump_to_mod(
+                    mod_name,
+                    &sha1.to_ascii_lowercase(),
+                    as_version,
+                    label,
+                ) {
                     Ok(message) => {
                         db.entries[i].game.clear_curations();
                         db.entries[i].dirty = true;
                         if let Err(e) = db.write_entry(i) {
-                            return error_result(format!("attached, but writing {key} failed: {e}"));
+                            return error_result(format!(
+                                "attached, but writing {key} failed: {e}"
+                            ));
                         }
                         text_result(message)
                     }
