@@ -304,6 +304,16 @@ impl AnyGame {
                     return true;
                 }
             }
+            for game_mod in &mut g.mods {
+                for release in &mut game_mod.releases {
+                    if let Some(artifact) =
+                        release.artifacts.iter_mut().find(|a| a.sha1.as_str() == sha1)
+                    {
+                        artifact.label = value.clone();
+                        return true;
+                    }
+                }
+            }
             false
         })
     }
@@ -405,6 +415,62 @@ impl AnyGame {
             AnyGame::Vcs(g) => g.releases.iter().find_map(|r| r.hardware.cart_type.clone()),
             _ => None,
         }
+    }
+
+    /// TV/board hints for booting one specific dump: the release that owns it
+    /// speaks first; a mod's dump answers through its base's release; only
+    /// then fall back to the entry's first stated values.
+    pub fn hints_for(&self, sha1: &str) -> (Option<String>, Option<String>) {
+        let AnyGame::Vcs(g) = self else {
+            return (None, None);
+        };
+        let release_hints = |r: &Release<Vcs>| {
+            (
+                r.hardware
+                    .tv_format
+                    .map(|tv| format!("{tv:?}").to_lowercase()),
+                r.hardware.cart_type.clone(),
+            )
+        };
+        for release in &g.releases {
+            if release.artifacts.iter().any(|a| a.sha1.as_str() == sha1) {
+                return release_hints(release);
+            }
+        }
+        for game_mod in &g.mods {
+            for mod_release in &game_mod.releases {
+                if mod_release
+                    .artifacts
+                    .iter()
+                    .any(|a| a.sha1.as_str() == sha1)
+                    && let Some(base) = &mod_release.base_sha1
+                    && let Some(release) = g
+                        .releases
+                        .iter()
+                        .find(|r| r.artifacts.iter().any(|a| a.sha1 == *base))
+                {
+                    return release_hints(release);
+                }
+            }
+        }
+        (self.tv_hint(), self.cart_hint())
+    }
+
+    /// Every dump attached to the game's mods, flattened.
+    pub fn mod_artifacts(&self, index: usize) -> Vec<(String, String)> {
+        common!(self, g => g
+            .mods
+            .get(index)
+            .map(|m| m
+                .releases
+                .iter()
+                .flat_map(|r| &r.artifacts)
+                .map(|a| (
+                    a.sha1.as_str().to_owned(),
+                    a.label.clone().unwrap_or_default(),
+                ))
+                .collect())
+            .unwrap_or_default())
     }
 
     /// Stage what a Game Boy header states, filling only unknown fields.

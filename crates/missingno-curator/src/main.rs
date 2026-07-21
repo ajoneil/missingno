@@ -331,8 +331,6 @@ impl Curator {
                         TreeId::Gbc => "verify.gbc",
                         TreeId::Vcs => "verify.a26",
                     };
-                    let tv = entry.game.tv_hint();
-                    let cart = entry.game.cart_hint();
                     let bytes = match &source {
                         BootSource::Cached(sha1) => self.rom_cache.get(sha1).cloned(),
                         BootSource::File(path) => std::fs::read(path).ok().map(std::sync::Arc::new),
@@ -341,16 +339,18 @@ impl Curator {
                         self.status = "no ROM bytes to play".to_owned();
                         return Task::none();
                     };
+                    let sha1 = match &source {
+                        BootSource::Cached(sha1) => sha1.clone(),
+                        BootSource::File(_) => verify::sha1_hex(&bytes),
+                    };
+                    let (tv, cart) = entry.game.hints_for(&sha1);
                     self.stage_header_facts(i, &bytes);
                     match play::start(hint, &bytes, tv, cart) {
                         Ok(session) => {
                             let events = session.events.clone();
                             self.playing = Some((key, session));
                             self.play_frame = None;
-                            self.playing_sha1 = Some(match &source {
-                                BootSource::Cached(sha1) => sha1.clone(),
-                                BootSource::File(_) => verify::sha1_hex(&bytes),
-                            });
+                            self.playing_sha1 = Some(sha1);
                             self.play_generation += 1;
                             let generation = self.play_generation;
                             return Task::perform(
@@ -419,8 +419,6 @@ impl Curator {
                         TreeId::Gbc => "verify.gbc",
                         TreeId::Vcs => "verify.a26",
                     };
-                    let tv = entry.game.tv_hint();
-                    let cart = entry.game.cart_hint();
                     let bytes = match &source {
                         BootSource::Cached(sha1) => self.rom_cache.get(sha1).cloned(),
                         BootSource::File(path) => std::fs::read(path).ok().map(std::sync::Arc::new),
@@ -429,6 +427,11 @@ impl Curator {
                         self.status = "no ROM bytes to boot".to_owned();
                         return Task::none();
                     };
+                    let dump_sha1 = match &source {
+                        BootSource::Cached(sha1) => sha1.clone(),
+                        BootSource::File(_) => verify::sha1_hex(&bytes),
+                    };
+                    let (tv, cart) = entry.game.hints_for(&dump_sha1);
                     self.stage_header_facts(i, &bytes);
                     self.booting = true;
                     self.verify_status
@@ -1497,6 +1500,55 @@ impl Curator {
         }
     }
 
+    /// One dump's row: playing marker, short hash, label input, local
+    /// filename, and a Play button that switches sessions directly.
+    fn artifact_row(&self, sha1: &str, label: &str) -> Element<'_, Message> {
+        let short = format!("{}…", &sha1[..12]);
+        let local = self
+            .rom_index
+            .as_ref()
+            .and_then(|index| index.by_sha1.get(sha1));
+        let playable = local.is_some() || self.rom_cache.contains_key(sha1);
+        let playing_this = self.playing_sha1.as_deref() == Some(sha1);
+        let mut line = row![].spacing(8).align_y(iced::Alignment::Center);
+        line = line.push(
+            text(if playing_this {
+                format!("▶ {short}")
+            } else {
+                short
+            })
+            .size(12),
+        );
+        line = line.push({
+            let sha1_for_label = sha1.to_owned();
+            text_input("label…", label)
+                .on_input(move |v| Message::SetArtifactLabel(sha1_for_label.clone(), v))
+                .size(12)
+                .width(Length::Fixed(140.0))
+        });
+        if let Some(path) = local {
+            let file = path
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            line = line.push(text(file).size(11).width(Length::Fill));
+        } else {
+            line = line.push(Space::new().width(Length::Fill));
+        }
+        if playable {
+            let source = if let Some(path) = local {
+                BootSource::File(path.clone())
+            } else {
+                BootSource::Cached(sha1.to_owned())
+            };
+            line = line.push(
+                button(text(if playing_this { "playing" } else { "Play ▶" }).size(11))
+                    .on_press_maybe((!playing_this).then_some(Message::Play(source))),
+            );
+        }
+        line.into()
+    }
+
     fn view(&self) -> Element<'_, Message> {
         let db = match &self.db {
             Ok(db) => db,
@@ -1708,69 +1760,8 @@ impl Curator {
                                 {
                                     let mut artifacts = column![].spacing(2);
                                     for (sha1, label) in entry.game.release_artifacts(r) {
-                                        let short = format!("{}…", &sha1[..12]);
-                                        let local = self
-                                            .rom_index
-                                            .as_ref()
-                                            .and_then(|index| index.by_sha1.get(&sha1));
-                                        let playable =
-                                            local.is_some() || self.rom_cache.contains_key(&sha1);
-                                        let playing_this =
-                                            self.playing_sha1.as_deref() == Some(sha1.as_str());
-                                        let mut line =
-                                            row![].spacing(8).align_y(iced::Alignment::Center);
-                                        line = line.push(
-                                            text(if playing_this {
-                                                format!("▶ {short}")
-                                            } else {
-                                                short
-                                            })
-                                            .size(12),
-                                        );
-                                        line = line.push({
-                                            let sha1_for_label = sha1.clone();
-                                            text_input("label…", &label)
-                                                .on_input(move |v| {
-                                                    Message::SetArtifactLabel(
-                                                        sha1_for_label.clone(),
-                                                        v,
-                                                    )
-                                                })
-                                                .size(12)
-                                                .width(Length::Fixed(140.0))
-                                        });
-                                        if let Some(path) = local {
-                                            let file = path
-                                                .file_name()
-                                                .map(|f| f.to_string_lossy().into_owned())
-                                                .unwrap_or_default();
-                                            line =
-                                                line.push(text(file).size(11).width(Length::Fill));
-                                        } else {
-                                            line = line.push(Space::new().width(Length::Fill));
-                                        }
-                                        if playable {
-                                            let source = if let Some(path) = local {
-                                                BootSource::File(path.clone())
-                                            } else {
-                                                BootSource::Cached(sha1.clone())
-                                            };
-                                            line = line.push(
-                                                button(
-                                                    text(if playing_this {
-                                                        "playing"
-                                                    } else {
-                                                        "Play ▶"
-                                                    })
-                                                    .size(11),
-                                                )
-                                                .on_press_maybe(
-                                                    (!playing_this)
-                                                        .then_some(Message::Play(source)),
-                                                ),
-                                            );
-                                        }
-                                        artifacts = artifacts.push(line);
+                                        artifacts =
+                                            artifacts.push(self.artifact_row(&sha1, &label));
                                     }
                                     artifacts
                                 },
@@ -1821,6 +1812,15 @@ impl Curator {
                                     text(url).size(11).width(Length::Fill),
                                 ]
                                 .spacing(8)
+                                .align_y(iced::Alignment::Center),
+                            );
+                        }
+                        for (sha1, label) in entry.game.mod_artifacts(index) {
+                            editor = editor.push(
+                                row![
+                                    Space::new().width(Length::Fixed(16.0)),
+                                    self.artifact_row(&sha1, &label),
+                                ]
                                 .align_y(iced::Alignment::Center),
                             );
                         }
