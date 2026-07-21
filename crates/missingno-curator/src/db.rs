@@ -242,19 +242,26 @@ impl AnyGame {
         })
     }
 
-    /// Set or replace the game's Wikipedia link.
-    pub fn set_wikipedia(&mut self, url: &str) {
+    /// Add or replace a link, keyed by name — re-staging the same source is
+    /// idempotent rather than duplicating.
+    pub fn upsert_link(&mut self, name: &str, url: &str, link_type: LinkType) {
         common!(self, g => {
-            if let Some(link) = g.links.iter_mut().find(|l| l.name == "Wikipedia") {
+            if let Some(link) = g.links.iter_mut().find(|l| l.name == name) {
                 link.url = url.to_owned();
+                link.link_type = link_type;
             } else {
                 g.links.push(Link {
-                    name: "Wikipedia".to_owned(),
+                    name: name.to_owned(),
                     url: url.to_owned(),
-                    link_type: LinkType::Wiki,
+                    link_type,
                 });
             }
         });
+    }
+
+    /// Convenience alias for the one link every commercial game tends to have.
+    pub fn set_wikipedia(&mut self, url: &str) {
+        self.upsert_link("Wikipedia", url, LinkType::Wiki);
     }
 
     pub fn links(&self) -> Vec<(String, String)> {
@@ -432,6 +439,25 @@ impl AnyGame {
     }
 }
 
+/// A JSON string → LinkType, rejecting unknowns with the valid set named.
+pub fn parse_link_type(value: &str) -> Result<LinkType, String> {
+    Ok(match value {
+        "Wiki" => LinkType::Wiki,
+        "Manual" => LinkType::Manual,
+        "Source" => LinkType::Source,
+        "Speedrun" => LinkType::Speedrun,
+        "UnusedContent" => LinkType::UnusedContent,
+        "TechnicalReference" => LinkType::TechnicalReference,
+        "Guide" => LinkType::Guide,
+        "Community" => LinkType::Community,
+        other => {
+            return Err(format!(
+                "unknown link_type {other:?}; expected Wiki, Manual, Source, Speedrun,                  UnusedContent, TechnicalReference, Guide, or Community"
+            ));
+        }
+    })
+}
+
 pub struct EntryHandle {
     pub tree: TreeId,
     pub slug: String,
@@ -567,5 +593,42 @@ mod tests {
         assert!(db.entries.len() > 8000, "{}", db.entries.len());
         assert!(db.flags.open().count() > 2000);
         assert!(db.backlog_count(TreeId::Vcs) > 4000);
+    }
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::*;
+    use missingno_gamedb::{Game, GameBoy};
+
+    #[test]
+    fn upsert_link_is_idempotent_and_updates() {
+        let game = Game::<GameBoy>::from_ron(
+            r#"(title: "T", releases: [(sources: [Download(url: "x")])])"#,
+        )
+        .unwrap();
+        let mut any = AnyGame::Gb(game);
+        any.upsert_link("AtariAge", "https://atariage.com/a", LinkType::Community);
+        any.upsert_link("AtariAge", "https://atariage.com/a", LinkType::Community);
+        assert_eq!(any.links().len(), 1);
+        any.upsert_link(
+            "AtariAge",
+            "https://atariage.com/b",
+            LinkType::TechnicalReference,
+        );
+        assert_eq!(
+            any.links(),
+            vec![("AtariAge".to_owned(), "https://atariage.com/b".to_owned())]
+        );
+        any.set_wikipedia("https://en.wikipedia.org/wiki/T");
+        any.set_wikipedia("https://en.wikipedia.org/wiki/T");
+        assert_eq!(any.links().len(), 2);
+    }
+
+    #[test]
+    fn link_type_parse_rejects_unknowns_usefully() {
+        assert!(parse_link_type("Guide").is_ok());
+        let err = parse_link_type("Blog").unwrap_err();
+        assert!(err.contains("Blog") && err.contains("Community"));
     }
 }

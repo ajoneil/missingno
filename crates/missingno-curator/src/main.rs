@@ -1042,11 +1042,38 @@ impl Curator {
                 let Some(set) = args.get("set").and_then(serde_json::Value::as_object) else {
                     return error_result("missing set object");
                 };
+                let mut staged_links = Vec::new();
+                if let Some(links) = set.get("links").and_then(serde_json::Value::as_array) {
+                    for link in links {
+                        let (Some(name), Some(url)) = (
+                            link.get("name").and_then(serde_json::Value::as_str),
+                            link.get("url").and_then(serde_json::Value::as_str),
+                        ) else {
+                            return error_result("each link needs name and url");
+                        };
+                        let Some(kind) = link.get("link_type").and_then(serde_json::Value::as_str)
+                        else {
+                            return error_result(format!("link {name:?} needs a link_type"));
+                        };
+                        match db::parse_link_type(kind) {
+                            Ok(link_type) => {
+                                staged_links.push((name.to_owned(), url.to_owned(), link_type))
+                            }
+                            Err(e) => return error_result(e),
+                        }
+                    }
+                }
                 let Ok(db) = &mut self.db else {
                     return error_result("db not loaded");
                 };
                 let entry = &mut db.entries[i];
                 let mut applied = Vec::new();
+                for (name, url, link_type) in &staged_links {
+                    entry.game.upsert_link(name, url, *link_type);
+                }
+                if !staged_links.is_empty() {
+                    applied.push("links");
+                }
                 for (field_name, field) in [
                     ("title", TextField::Title),
                     ("developer", TextField::Developer),
@@ -1452,17 +1479,19 @@ impl Curator {
                 }
                 let links = entry.game.links();
                 if !links.is_empty() {
-                    let mut link_row = row![text("Links").size(13).width(Length::Fixed(90.0))]
-                        .spacing(8)
-                        .align_y(iced::Alignment::Center);
+                    editor = editor.push(text("Links").size(13));
                     for (name, url) in links {
-                        link_row = link_row.push(
-                            button(text(name).size(13))
-                                .style(button::text)
-                                .on_press(Message::OpenLink(url)),
+                        editor = editor.push(
+                            row![
+                                button(text(name).size(13))
+                                    .style(button::text)
+                                    .on_press(Message::OpenLink(url.clone())),
+                                text(url).size(12).width(Length::Fill),
+                            ]
+                            .spacing(8)
+                            .align_y(iced::Alignment::Center),
                         );
                     }
-                    editor = editor.push(link_row);
                 }
                 editor = editor.push(text("Releases").size(16));
                 for (r, line) in entry.game.release_lines().into_iter().enumerate() {
