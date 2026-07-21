@@ -169,6 +169,19 @@ While the developer plays the current game:
    Rename it with `update_mod` the moment a real name turns up. The same call records a
    mod's `author`, `date` and `url` — the signature entry usually names the group and
    year (Channel2, 2003), and those are worth staging when it does.
+
+   **A title names the hack, not the game it was built from.** "Space Invaders Pinball"
+   is a *Midnight Magic* hack; "Combat 500" is an *Indy 500* hack; a dump called
+   "Galaga" turned out to be a River Raid hack. The signature entry states the base
+   ("[h][River Raid]", "(MegaMania Hack)") — file the mod against *that* game, with
+   `base_sha1` pointing at its dump. Filing by the title is how a false derivation gets
+   recorded, and it reads perfectly plausibly afterwards.
+
+   **Where a hack's dumps live is worth searching for.** Archive.org's documented
+   search and metadata APIs (`advancedsearch.php`, `/metadata/<identifier>`) index the
+   2600 hack scene with year and author in the item title, and expose per-file SHA-1 —
+   which is how two same-named builds get told apart when the signature database knows
+   neither. Prefer that over guessing which dump is which.
 3. `verify_artifacts` early for entries with several dumps: confirmed originals gain
    recorded Signature evidence; DERIVED results ([h]/[t]/[tr]/[cr] — someone made these)
    are your cue to judge and `mark_hack` (find the mod's real name — the TOSEC bracket
@@ -180,6 +193,17 @@ While the developer plays the current game:
    the right status, keeping a working title, never inheriting the retail date. "Unknown"
    is a normal result for homebrew and prototypes. Playtest verification is different:
    only the developer's "✓ works" button records it — never claim a dump was playtested.
+
+   **A release holding many dumps is usually many releases.** The recurring import
+   defect on VCS is one release carrying every dump anyone ever made of a game, stamped
+   with whichever publisher happened to sort first — so the game's own original ends up
+   filed under a regional reissue's publisher and year (River Raid and Pac-Man both had
+   the Activision original inside a "Digitel 1983" release). The signature name states
+   the publisher per dump: `split_release` each into its own release and set publisher,
+   date and region from what the dump actually says. Dumps the signature database does
+   not know go in a release with **no publisher**, labelled `unidentified` — leaving
+   them where they sat asserts that whoever published that release published them too,
+   which nothing supports.
 4. Research the gaps — empty developer/description/license, suspicious titles, flag
    questions. Source preference: existing structured sources first (the gamedb itself,
    pouet.net data dumps, gbdev database, publisher/developer sites), then ordinary web
@@ -232,6 +256,14 @@ While the developer plays the current game:
      year, developer, publisher or platform — those are structured fields the UI renders
      already, so repeating them is pure duplication. (This is exactly why a Wikipedia lead
      is the wrong shape to lift: its first sentence is nothing but identity facts.)
+   - **Describe the port in front of you, not the arcade game it came from.** A
+     conversion's article is mostly about the coin-op, and its facts do not carry over:
+     the 2600 Missile Command has one missile base where the arcade has three, and
+     Pac-Man's maze, fruit and escape passages are all different. Check that a link
+     points at the port's own article (Space Invaders and Pac-Man both had entries
+     linked to the arcade game), and where sources disagree about a mechanic, leave the
+     detail out rather than pick — an arcade fact in a port's description is wrong in a
+     way that reads perfectly.
    - **Every clause must be traceable to a named source.** Not "mostly sourced with a bit
      of common knowledge" — the failure mode is a true-sounding fact you actually supplied
      from memory, which reads identically to a sourced one and survives every review. If
