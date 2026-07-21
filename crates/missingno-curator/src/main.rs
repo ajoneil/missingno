@@ -1289,6 +1289,21 @@ impl Curator {
 
     fn run_tool(&mut self, name: &str, args: &serde_json::Value) -> serde_json::Value {
         let str_arg = |k: &str| args.get(k).and_then(serde_json::Value::as_str);
+        // Names match list_flags' lowercased Debug spelling of the variant.
+        fn flag_kind_from_str(s: &str) -> Option<missingno_gamedb::FlagKind> {
+            use missingno_gamedb::FlagKind::*;
+            Some(match s.to_lowercase().as_str() {
+                "nearmisstitles" => NearMissTitles,
+                "reviewcandidatefamilies" => ReviewCandidateFamilies,
+                "leftover" => Leftover,
+                "unknownqualifier" => UnknownQualifier,
+                "conflictingfield" => ConflictingField,
+                "retiredhash" => RetiredHash,
+                "emulationincompatibility" => EmulationIncompatibility,
+                "custom" => Custom,
+                _ => return None,
+            })
+        }
         match name {
             "status" => {
                 let Ok(db) = &self.db else {
@@ -1825,6 +1840,23 @@ impl Curator {
                     }),
                     None => None,
                 };
+                let controllers = match set.get("controllers").and_then(serde_json::Value::as_array)
+                {
+                    Some(list) => {
+                        let mut parsed = Vec::with_capacity(list.len());
+                        for value in list {
+                            let Some(name) = value.as_str() else {
+                                return error_result("controllers must be strings");
+                            };
+                            match db::parse_controller(name) {
+                                Ok(controller) => parsed.push(controller),
+                                Err(e) => return error_result(e),
+                            }
+                        }
+                        Some(parsed)
+                    }
+                    None => None,
+                };
                 if status.is_none()
                     && title.is_none()
                     && label.is_none()
@@ -1832,6 +1864,7 @@ impl Curator {
                     && publisher.is_none()
                     && regions.is_none()
                     && tv_format.is_none()
+                    && controllers.is_none()
                 {
                     return error_result("no recognized fields in set");
                 }
@@ -1850,10 +1883,16 @@ impl Curator {
                     let tv = tv_format.is_some_and(|f| {
                         db.entries[i].game.set_release_tv_format(index as usize, f)
                     });
+                    let ctrl = controllers.clone().is_some_and(|c| {
+                        db.entries[i].game.set_release_controllers(index as usize, c)
+                    });
                     db.entries[i].game.clear_curations();
                     db.entries[i].dirty = true;
                     if tv_format.is_some() && !tv {
                         return error_result("tv_format applies to VCS releases only");
+                    }
+                    if controllers.is_some() && !ctrl {
+                        return error_result("controllers apply to VCS releases only");
                     }
                     if let Err(e) = db.write_entry(i) {
                         return error_result(format!("staged, but writing {key} failed: {e}"));
@@ -2077,6 +2116,66 @@ impl Curator {
                 flag.resolved = Some(Db::today());
                 match db.save_flags() {
                     Ok(()) => text_result(format!("flag #{id} resolved")),
+                    Err(e) => error_result(format!("flag save failed: {e}")),
+                }
+            }
+            "update_flag" => {
+                let Some(id) = args.get("id").and_then(serde_json::Value::as_u64) else {
+                    return error_result("missing id");
+                };
+                let kind = match str_arg("kind") {
+                    None => None,
+                    Some(k) => match flag_kind_from_str(k) {
+                        Some(kind) => Some(kind),
+                        None => return error_result(format!("unknown kind {k:?}")),
+                    },
+                };
+                let note = str_arg("note").map(str::to_owned);
+                let Ok(db) = &mut self.db else {
+                    return error_result("db not loaded");
+                };
+                let Some(flag) = db.flags.flags.iter_mut().find(|f| f.id == id as u32) else {
+                    return error_result(format!("no flag #{id}"));
+                };
+                if let Some(kind) = kind {
+                    flag.kind = kind;
+                }
+                if let Some(note) = note {
+                    flag.note = note;
+                }
+                let kind = flag.kind;
+                match db.save_flags() {
+                    Ok(()) => text_result(format!("flag #{id} [{kind:?}] updated")),
+                    Err(e) => error_result(format!("flag save failed: {e}")),
+                }
+            }
+            "raise_flag" => {
+                let (Some(key), Some(note)) = (str_arg("key"), str_arg("note")) else {
+                    return error_result("missing key or note");
+                };
+                let kind = match str_arg("kind") {
+                    None => missingno_gamedb::FlagKind::EmulationIncompatibility,
+                    Some(k) => match flag_kind_from_str(k) {
+                        Some(kind) => kind,
+                        None => return error_result(format!("unknown kind {k:?}")),
+                    },
+                };
+                if self.find_entry(key).is_none() {
+                    return error_result(format!("no entry {key}"));
+                }
+                let Ok(db) = &mut self.db else {
+                    return error_result("db not loaded");
+                };
+                let id = db.flags.next_id();
+                db.flags.flags.push(missingno_gamedb::Flag {
+                    id,
+                    kind,
+                    subject: vec![key.to_owned()],
+                    note: note.to_owned(),
+                    resolved: None,
+                });
+                match db.save_flags() {
+                    Ok(()) => text_result(format!("raised flag #{id} [{kind:?}] on {key}")),
                     Err(e) => error_result(format!("flag save failed: {e}")),
                 }
             }
@@ -2562,6 +2661,24 @@ impl Curator {
                         .height(Length::Fill),
                     );
                 }
+                let pane_flags: Vec<_> = db
+                    .flags
+                    .open()
+                    .filter(|f| f.subject.iter().any(|s| s == key))
+                    .collect();
+                if !pane_flags.is_empty() {
+                    pane = pane.push(text("Flags").size(15));
+                    for flag in pane_flags {
+                        pane = pane.push(
+                            row![
+                                text(flag.note.clone()).size(12).width(Length::Fill),
+                                button(text("Resolve").size(12))
+                                    .on_press(Message::ResolveFlag(flag.id)),
+                            ]
+                            .spacing(8),
+                        );
+                    }
+                }
                 if let Some(note) = self.agent_notes.get(key) {
                     pane = pane.push(text("Agent notes").size(15));
                     pane = pane
@@ -2576,11 +2693,18 @@ impl Curator {
                     .into()
             }
             None => {
+                // Reserve the play region even when idle so starting or
+                // stopping emulation never relayouts the editor column.
+                let idle = container(text("Boot a dump to play").size(13))
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill);
                 let mut body = row![].spacing(16);
                 if let Some(left) = left {
                     body = body.push(left);
                 }
-                body.push(container(right).width(Length::Fill)).into()
+                body.push(container(right).width(Length::FillPortion(2)))
+                    .push(container(idle).width(Length::FillPortion(3)))
+                    .into()
             }
         };
 

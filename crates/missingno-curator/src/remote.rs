@@ -307,7 +307,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "update_release",
-            "description": "Set fields on an existing release: status, title, label, date, publisher, regions. `title` is the name this release shipped under when it differs from the game's canonical title (a localized or retitled reissue). `regions` replaces the release's region list; the vocabulary is closed, so a region the list lacks is a schema question, not a free-text value.",
+            "description": "Set fields on an existing release: status, title, label, date, publisher, regions, controllers (VCS). `title` is the name this release shipped under when it differs from the game's canonical title (a localized or retitled reissue). `regions` replaces the release's region list; the vocabulary is closed, so a region the list lacks is a schema question, not a free-text value.",
             "inputSchema": object(json!({
                 "key": { "type": "string" },
                 "release_index": { "type": "integer" },
@@ -320,6 +320,9 @@ fn tool_definitions() -> Value {
                     "publisher": { "type": "string" },
                     "tv_format": { "type": "string", "enum": ["Ntsc", "Pal", "PalM", "Secam"],
                         "description": "VCS only. PalM is Brazil's PAL-M: PAL colour on System M's 525-line/59.94 Hz raster, so it runs at NTSC timing, not PAL's — never file a Brazilian release as Pal" },
+                    "controllers": { "type": "array", "items": { "type": "string",
+                        "enum": ["Joystick", "Paddle", "Driving", "Keypad", "Trackball", "BoosterGrip"] },
+                        "description": "VCS only. Controllers this release supports; replaces the list. Omit/empty for the default joystick, which most games use; list several when a game supports more than one." },
                     "regions": { "type": "array", "items": { "type": "string",
                         "enum": ["Japan", "Usa", "Europe", "World", "Taiwan", "Germany",
                                  "France", "China", "Spain", "Italy", "Australia",
@@ -427,6 +430,24 @@ fn tool_definitions() -> Value {
             "name": "resolve_flag",
             "description": "Mark a curation flag resolved (the data now reflects the decision).",
             "inputSchema": object(json!({ "id": { "type": "integer" } }), &["id"]),
+        },
+        {
+            "name": "raise_flag",
+            "description": "Raise a curation flag on a game — an issue to address later, with context. Defaults to kind EmulationIncompatibility (the emulator diverges from the hardware for this game); find these later with list_flags kind=EmulationIncompatibility. Put the full explanation in note; it survives the session where a chat message does not.",
+            "inputSchema": object(json!({
+                "key": { "type": "string", "description": "tree/slug the flag concerns" },
+                "note": { "type": "string", "description": "the issue and the context needed to act on it later" },
+                "kind": { "type": "string", "description": "flag kind; defaults to EmulationIncompatibility" },
+            }), &["key", "note"]),
+        },
+        {
+            "name": "update_flag",
+            "description": "Amend an open flag by id: replace its note and/or change its kind. Use to reword a flag without resolving and re-raising it.",
+            "inputSchema": object(json!({
+                "id": { "type": "integer" },
+                "note": { "type": "string", "description": "replacement note" },
+                "kind": { "type": "string", "description": "new flag kind" },
+            }), &["id"]),
         },
     ])
 }

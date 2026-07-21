@@ -4,9 +4,9 @@
 use std::{fs, io, path::PathBuf, process::Command};
 
 use missingno_gamedb::{
-    Date, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Link, LinkType, Mod, ModCategory, ModOf,
-    ModRelease, Platform, Region, Release, ReleaseStatus, Sha1, Slug, Tree, TvFormat, Vcs,
-    Verification, VerificationMethod,
+    Controller, Date, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Link, LinkType, Mod,
+    ModCategory, ModOf, ModRelease, Platform, Region, Release, ReleaseStatus, Sha1, Slug, Tree,
+    TvFormat, Vcs, Verification, VerificationMethod,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -168,6 +168,14 @@ impl AnyGame {
                     let hw = [
                         r.hardware.tv_format.map(|t| format!("{t:?}")),
                         r.hardware.cart_type.clone(),
+                        (!r.hardware.controllers.is_empty()).then(|| {
+                            r.hardware
+                                .controllers
+                                .iter()
+                                .map(|c| format!("{c:?}"))
+                                .collect::<Vec<_>>()
+                                .join("/")
+                        }),
                     ]
                     .into_iter()
                     .flatten()
@@ -869,6 +877,16 @@ impl AnyGame {
         .is_some()
     }
 
+    pub fn set_release_controllers(&mut self, index: usize, controllers: Vec<Controller>) -> bool {
+        match self {
+            AnyGame::Vcs(g) => g.releases.get_mut(index).map(|r| {
+                r.hardware.controllers = controllers;
+            }),
+            _ => None,
+        }
+        .is_some()
+    }
+
     /// Broadcast-standard hint for the session factory (VCS only).
     pub fn tv_hint(&self) -> Option<String> {
         match self {
@@ -929,6 +947,23 @@ pub fn parse_tv_format(value: &str) -> Result<TvFormat, String> {
         other => {
             return Err(format!(
                 "unknown tv_format {other:?}; expected Ntsc, Pal, PalM, or Secam"
+            ));
+        }
+    })
+}
+
+/// Non-default VCS controllers; a joystick game leaves the field unset.
+pub fn parse_controller(value: &str) -> Result<Controller, String> {
+    Ok(match value {
+        "Joystick" => Controller::Joystick,
+        "Paddle" => Controller::Paddle,
+        "Driving" => Controller::Driving,
+        "Keypad" => Controller::Keypad,
+        "Trackball" => Controller::Trackball,
+        "BoosterGrip" => Controller::BoosterGrip,
+        other => {
+            return Err(format!(
+                "unknown controller {other:?}; expected Joystick, Paddle, Driving, Keypad, Trackball, or BoosterGrip"
             ));
         }
     })
