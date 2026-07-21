@@ -3,8 +3,8 @@ use std::{fs, path::PathBuf, time::Instant};
 use std::collections::HashMap;
 
 use action_bar::ActionBar;
-use missingno_session::audio_output::AudioOutput;
 use iced::{Task, Theme, window};
+use missingno_session::audio_output::AudioOutput;
 use ui::fonts;
 use ui::icons::Icon;
 

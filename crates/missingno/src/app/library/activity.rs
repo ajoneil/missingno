@@ -446,11 +446,7 @@ impl FrameCapture {
         let (rgba, w, h) = if let Some(capture) = &self.rgba {
             (capture.data.clone(), capture.width, capture.height)
         } else {
-            (
-                self.to_rgba(),
-                PIXELS_PER_LINE as u32,
-                NUM_SCANLINES as u32,
-            )
+            (self.to_rgba(), PIXELS_PER_LINE as u32, NUM_SCANLINES as u32)
         };
         let aspect = self.pixel_aspect();
         if (aspect - 1.0).abs() < f32::EPSILON {

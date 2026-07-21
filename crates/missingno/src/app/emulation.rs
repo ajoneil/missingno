@@ -3,13 +3,13 @@ use std::time::Instant;
 use iced::Task;
 use missingno_session::{ExtractedMachine, SessionEvent, SessionHandle, SharedSession};
 
-use missingno_session::audio_output::AudioOutput;
 use super::emulator::{ConsoleFacts, Emulator};
 use super::session_bridge::{self, SessionBridge};
 use super::{App, Game, LoadedGame, Message, Notice, PendingAction, library};
 use crate::app::library::activity::FrameCapture;
 use crate::app::system::{ControlId, ControlInput};
 use crate::app::ui::icons::Icon;
+use missingno_session::audio_output::AudioOutput;
 
 impl App {
     /// A fresh client handle onto the current game's session, if one is loaded.
