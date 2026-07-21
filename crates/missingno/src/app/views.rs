@@ -205,6 +205,11 @@ impl App {
             // into the UI: its first item hands over the sink a per-game bridge
             // thread forwards through. Always included so the sink persists.
             Subscription::run(super::session_bridge::session_events_worker).map(Message::Session),
+            // An app-lifetime subscription carries UI-automation calls from the
+            // socket threads into `update`: its first item hands over the sink
+            // the endpoint pushes through. Always included so the sink persists.
+            Subscription::run(super::automation::bridge::automation_calls_worker)
+                .map(|bridge| Message::Automation(super::automation::Msg::Bridge(bridge))),
         ])
     }
 }

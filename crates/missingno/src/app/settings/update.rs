@@ -47,6 +47,11 @@ pub(in crate::app) fn handle(
             // unpublishes the socket rather than waiting for the next load.
             app.publish_session();
         }
+        super::view::Message::SetAllowUiAutomation(enabled) => {
+            app.settings.allow_ui_automation = enabled;
+            app.settings.save();
+            app.reconcile_automation();
+        }
         super::view::Message::PickRomDirectory => {
             let dialog = rfd::AsyncFileDialog::new();
             return Task::perform(dialog.pick_folder(), |folder| match folder {

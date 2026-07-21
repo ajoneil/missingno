@@ -303,6 +303,10 @@ struct SettingsFile {
     // outside this process can reach the running game.
     #[serde(default)]
     allow_external_clients: bool,
+    // Off unless the user opts in: with it off no automation socket exists, so
+    // nothing outside this process can enumerate or drive the window.
+    #[serde(default)]
+    allow_ui_automation: bool,
     #[serde(default)]
     library_sort: crate::app::library::store::SortKey,
     #[serde(default)]
@@ -366,6 +370,7 @@ impl Default for SettingsFile {
             scanlines: true,
             cartridge_rw_enabled: true,
             allow_external_clients: false,
+            allow_ui_automation: false,
             library_sort: SortKey::default(),
             library_layout: LibraryLayout::default(),
             window_width: None,
@@ -398,6 +403,9 @@ pub struct Settings {
     /// Whether a running game publishes an attach socket for clients in other
     /// processes (an agent driving the debugger).
     pub allow_external_clients: bool,
+    /// Whether the app publishes a UI-automation socket for clients in other
+    /// processes (an agent enumerating and driving the frontend).
+    pub allow_ui_automation: bool,
     pub library_sort: SortKey,
     pub library_layout: LibraryLayout,
     pub window_width: Option<f32>,
@@ -421,6 +429,7 @@ impl Default for Settings {
             scanlines: true,
             cartridge_rw_enabled: true,
             allow_external_clients: false,
+            allow_ui_automation: false,
             library_sort: SortKey::default(),
             library_layout: LibraryLayout::default(),
             window_width: None,
@@ -493,6 +502,7 @@ impl Settings {
                 scanlines: file.scanlines,
                 cartridge_rw_enabled: file.cartridge_rw_enabled,
                 allow_external_clients: file.allow_external_clients,
+                allow_ui_automation: file.allow_ui_automation,
                 library_sort: file.library_sort,
                 library_layout: file.library_layout,
                 window_width: file.window_width,
@@ -531,6 +541,7 @@ impl Settings {
                 scanlines: true,
                 cartridge_rw_enabled: true,
                 allow_external_clients: false,
+                allow_ui_automation: false,
                 library_sort: SortKey::default(),
                 library_layout: LibraryLayout::default(),
                 window_width: file.window_width,
@@ -574,6 +585,7 @@ impl Settings {
             scanlines: self.scanlines,
             cartridge_rw_enabled: self.cartridge_rw_enabled,
             allow_external_clients: self.allow_external_clients,
+            allow_ui_automation: self.allow_ui_automation,
             library_sort: self.library_sort,
             library_layout: self.library_layout,
             window_width: self.window_width,

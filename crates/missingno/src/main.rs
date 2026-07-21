@@ -32,6 +32,11 @@ struct Args {
     /// Link cable: connect to a server at host:port (BGB link protocol).
     #[arg(long, value_name = "HOST:PORT", conflicts_with = "link_listen")]
     link_connect: Option<String>,
+
+    /// Publish a UI-automation socket for this run, without persisting the
+    /// setting.
+    #[arg(long)]
+    allow_ui_automation: bool,
 }
 
 #[derive(Subcommand)]
@@ -94,7 +99,13 @@ fn main() -> iced::Result {
 
     let link = create_link(args.link_listen, args.link_connect);
 
-    app::run(args.rom_file, args.debugger, link, boot_rom)
+    app::run(
+        args.rom_file,
+        args.debugger,
+        link,
+        boot_rom,
+        args.allow_ui_automation,
+    )
 }
 
 fn create_link(

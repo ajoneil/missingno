@@ -8,7 +8,7 @@ use iced::{
 };
 
 use crate::app::{
-    self, controls,
+    self, automation, controls,
     settings::{Action, Bindings, EMULATOR_ACTIONS, GAME_CONTROLS},
     ui::{
         buttons, containers, horizontal_rule,
@@ -53,6 +53,7 @@ pub enum Message {
     SetHomebrewHubEnabled(bool),
     SetCartridgeRwEnabled(bool),
     SetAllowExternalClients(bool),
+    SetAllowUiAutomation(bool),
     StartListening(ListeningFor),
     CaptureBinding(String),
     ClearBinding,
@@ -85,7 +86,10 @@ pub(in crate::app) fn view<'a>(
 
     column![
         row![
-            buttons::subtle(icons::m(Icon::Back)).on_press(Message::Back.into()),
+            automation::tag(
+                automation::ids::SETTINGS_BACK,
+                buttons::subtle(icons::m(Icon::Back)).on_press(Message::Back.into())
+            ),
             app_text::heading("Settings"),
         ]
         .spacing(s())
@@ -96,6 +100,16 @@ pub(in crate::app) fn view<'a>(
     ]
     .height(Fill)
     .into()
+}
+
+/// The automation id-name for a settings section, matching the registry.
+fn section_id_name(section: Section) -> &'static str {
+    match section {
+        Section::General => "general",
+        Section::Display => "display",
+        Section::Controls => "controls",
+        Section::Hardware => "hardware",
+    }
 }
 
 fn sidebar_view(current: Section) -> Element<'static, app::Message> {
@@ -120,7 +134,10 @@ fn sidebar_view(current: Section) -> Element<'static, app::Message> {
                 .width(Fill)
         };
 
-        col = col.push(btn);
+        col = col.push(automation::tag(
+            &automation::ids::section(section_id_name(section)),
+            btn,
+        ));
     }
 
     container(col.padding(m()))
@@ -449,14 +466,34 @@ fn general_section(settings: &super::Settings) -> Element<'_, app::Message> {
     }
 
     let external = column![
-        toggler(settings.allow_external_clients)
-            .label("Allow external debugger clients")
-            .on_toggle(|enabled| Message::SetAllowExternalClients(enabled).into())
-            .size(m()),
+        automation::tag(
+            automation::ids::SETTINGS_EXTERNAL_CLIENTS,
+            toggler(settings.allow_external_clients)
+                .label("Allow external debugger clients")
+                .on_toggle(|enabled| Message::SetAllowExternalClients(enabled).into())
+                .size(m())
+        ),
         text(
             "Lets a debugger or agent signed in as you attach to the running game and drive it \
              — whatever it does shows in this window. While this is off, nothing outside \
              Missingno can reach a game."
+        )
+        .color(MUTED),
+    ]
+    .spacing(s());
+
+    let ui_automation = column![
+        automation::tag(
+            automation::ids::SETTINGS_UI_AUTOMATION,
+            toggler(settings.allow_ui_automation)
+                .label("Allow UI automation")
+                .on_toggle(|enabled| Message::SetAllowUiAutomation(enabled).into())
+                .size(m())
+        ),
+        text(
+            "Lets a tool signed in as you enumerate this window's controls and press, type, and \
+             scroll them — whatever it does shows here. While this is off, nothing outside \
+             Missingno can drive the window."
         )
         .color(MUTED),
     ]
@@ -504,6 +541,7 @@ fn general_section(settings: &super::Settings) -> Element<'_, app::Message> {
         horizontal_rule(),
         app_text::label("External Clients"),
         external,
+        ui_automation,
         horizontal_rule(),
         app_text::label("ROM Folders"),
         directories,

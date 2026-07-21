@@ -6,10 +6,11 @@ use iced::{
 };
 
 use crate::app::{
-    self, App, Game, LoadedGame, debugger,
+    self, App, Game, LoadedGame, automation, debugger,
     ui::{
         buttons,
         icons::{self, Icon},
+        labelled::labelled,
         sizes::{m, s, xl},
         text as app_text,
     },
@@ -61,9 +62,15 @@ impl ActionBar {
                 row![
                     container(
                         row![
-                            buttons::subtle(icons::m(Icon::Back)).on_press(
-                                app::Message::HomebrewBrowser(
-                                    crate::app::library::homebrew_browser::Message::Back,
+                            automation::tag(
+                                automation::ids::ACTION_BAR_BACK,
+                                labelled(
+                                    buttons::subtle(icons::m(Icon::Back)).on_press(
+                                        app::Message::HomebrewBrowser(
+                                            crate::app::library::homebrew_browser::Message::Back,
+                                        )
+                                    ),
+                                    "Back to library",
                                 )
                             ),
                             app_text::heading("Homebrew Hub")
@@ -90,9 +97,15 @@ impl ActionBar {
                 row![
                     container(
                         row![
-                            buttons::subtle(icons::m(Icon::Back)).on_press(
-                                app::Message::ScreenshotGallery(
-                                    crate::app::library::screenshot_gallery::Message::Back,
+                            automation::tag(
+                                automation::ids::ACTION_BAR_BACK,
+                                labelled(
+                                    buttons::subtle(icons::m(Icon::Back)).on_press(
+                                        app::Message::ScreenshotGallery(
+                                            crate::app::library::screenshot_gallery::Message::Back,
+                                        )
+                                    ),
+                                    "Back to game",
                                 )
                             ),
                             app_text::heading(title).wrapping(iced::widget::text::Wrapping::None),
@@ -116,7 +129,17 @@ impl ActionBar {
                 row![
                     container(
                         row![
-                            buttons::subtle(icons::m(Icon::Back)).on_press(back_action),
+                            automation::tag(
+                                automation::ids::EMULATOR_BACK,
+                                labelled(
+                                    buttons::subtle(icons::m(Icon::Back)).on_press(back_action),
+                                    if is_debugger {
+                                        "Close debugger"
+                                    } else {
+                                        "Back to game details"
+                                    },
+                                )
+                            ),
                             mouse_area(
                                 app_text::heading(title)
                                     .wrapping(iced::widget::text::Wrapping::None),
@@ -146,10 +169,16 @@ impl ActionBar {
     fn trailing(&self) -> Element<'_, app::Message> {
         let row = row![];
 
-        row.push(buttons::subtle(icons::m(Icon::Menu)).on_press(app::Message::ToggleMenu))
-            .spacing(m())
-            .align_y(Center)
-            .into()
+        row.push(automation::tag(
+            automation::ids::ACTION_BAR_MENU,
+            labelled(
+                buttons::subtle(icons::m(Icon::Menu)).on_press(app::Message::ToggleMenu),
+                "Open menu",
+            ),
+        ))
+        .spacing(m())
+        .align_y(Center)
+        .into()
     }
 }
 
@@ -157,10 +186,24 @@ fn controls(running: bool, debugger: bool) -> Element<'static, app::Message> {
     let mut r = row![];
 
     if debugger {
-        r = r.push(step(running)).push(step_over(running));
+        r = r
+            .push(automation::tag(
+                automation::ids::EMULATOR_STEP,
+                step(running),
+            ))
+            .push(automation::tag(
+                automation::ids::EMULATOR_STEP_OVER,
+                step_over(running),
+            ));
     }
 
-    r.push(play_pause(running)).spacing(s()).wrap().into()
+    r.push(automation::tag(
+        automation::ids::EMULATOR_PLAY_PAUSE,
+        play_pause(running),
+    ))
+    .spacing(s())
+    .wrap()
+    .into()
 }
 
 fn play_pause(running: bool) -> Button<'static, app::Message> {

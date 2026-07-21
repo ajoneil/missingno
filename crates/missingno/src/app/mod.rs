@@ -1,5 +1,7 @@
 use std::{fs, path::PathBuf, time::Instant};
 
+use std::collections::HashMap;
+
 use action_bar::ActionBar;
 use audio_output::AudioOutput;
 use iced::{Task, Theme, window};
@@ -8,6 +10,7 @@ use ui::icons::Icon;
 
 mod action_bar;
 mod audio_output;
+pub(crate) mod automation;
 mod console;
 mod controls;
 mod debugger;
@@ -38,6 +41,7 @@ pub fn run(
     debugger: bool,
     link: Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
     boot_rom: Option<missingno_gb::BootRom>,
+    ui_automation: bool,
 ) -> iced::Result {
     // Load settings early to get saved window size
     let saved = settings::Settings::load();
@@ -53,6 +57,7 @@ pub fn run(
                 debugger,
                 link_cell.take(),
                 boot_rom.clone(),
+                ui_automation,
             )
         },
         App::update,
@@ -103,6 +108,22 @@ struct App {
     /// The Iced sink a per-game bridge thread forwards session events into,
     /// handed over once at startup by the app-lifetime subscription.
     event_sink: Option<iced::futures::channel::mpsc::UnboundedSender<SessionEvent>>,
+    /// The shared slot the automation subscription hands its call sink into,
+    /// read by the automation endpoint's socket threads.
+    automation_sink: automation::bridge::SharedSink,
+    /// The UI-automation socket, open while the setting or CLI flag is on.
+    /// App-lifetime, independent of whether a game is loaded.
+    #[cfg(unix)]
+    automation_endpoint: Option<automation::endpoint::AutomationEndpoint>,
+    /// Parked `ui_tree` replies awaiting the bounds walk that will answer them.
+    automation_pending: HashMap<u64, automation::update::PendingReply>,
+    automation_next_request: u64,
+    /// The window's last-known scale factor, reported through `status`/`ui_tree`.
+    /// Filled by a scale query at startup and after each resize.
+    window_scale: Option<f32>,
+    /// `--allow-ui-automation`: opens the endpoint for this run without
+    /// persisting the setting.
+    automation_flag: bool,
     recent_games: recent::RecentGames,
     settings: settings::Settings,
     /// The running emulation session. Only set when a game is actually loaded.
@@ -165,6 +186,29 @@ impl App {
             _ => None,
         }
     }
+
+    /// Open or close the UI-automation socket to match the setting and the CLI
+    /// flag. App-lifetime: it does not depend on a game being loaded.
+    #[cfg(unix)]
+    fn reconcile_automation(&mut self) {
+        let wanted = self.settings.allow_ui_automation || self.automation_flag;
+        if wanted && self.automation_endpoint.is_none() {
+            match automation::endpoint::AutomationEndpoint::open(self.automation_sink.clone()) {
+                Ok(endpoint) => self.automation_endpoint = Some(endpoint),
+                Err(error) => {
+                    self.notice = Some((
+                        Notice::text(format!("Could not enable UI automation: {error}")),
+                        Instant::now(),
+                    ));
+                }
+            }
+        } else if !wanted {
+            self.automation_endpoint = None;
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn reconcile_automation(&mut self) {}
 
     /// Stamp the current session's end time and flush it to disk.
     fn end_current_session(&mut self) {
@@ -420,6 +464,9 @@ enum Message {
     /// An item from the app-lifetime session subscription: the event sink handed
     /// over at startup, then every session event forwarded through it.
     Session(session_bridge::SessionBridge),
+    /// An item from the app-lifetime UI-automation subscription: the call sink
+    /// handed over at startup, then every automation call and its follow-ups.
+    Automation(automation::Msg),
 
     None,
 }
@@ -430,6 +477,7 @@ impl App {
         debugger: bool,
         serial_link: Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
         boot_rom: Option<missingno_gb::BootRom>,
+        ui_automation: bool,
     ) -> (Self, Task<Message>) {
         let settings = settings::Settings::load();
         let recent_games = recent::RecentGames::load();
@@ -449,6 +497,13 @@ impl App {
             #[cfg(unix)]
             attach_endpoint: None,
             event_sink: None,
+            automation_sink: automation::bridge::SharedSink::default(),
+            #[cfg(unix)]
+            automation_endpoint: None,
+            automation_pending: HashMap::new(),
+            automation_next_request: 0,
+            window_scale: None,
+            automation_flag: ui_automation,
             recent_games,
             settings,
             current_game: None,
@@ -473,7 +528,9 @@ impl App {
             &app.settings.gamepad_bindings,
         );
 
-        let mut tasks = Vec::new();
+        app.reconcile_automation();
+
+        let mut tasks = vec![automation::update::query_scale()];
 
         if let Some(rom_path) = rom_path
             && let Ok(rom) = fs::read(&rom_path)
@@ -535,6 +592,8 @@ impl App {
             | Message::ToggleDebugger(_) => return self.handle_emulation_message(message),
 
             Message::Session(bridge) => return self.handle_session_bridge(bridge),
+
+            Message::Automation(msg) => return automation::update::handle(self, msg),
 
             // Settings messages
             Message::CompleteSetup { internet_enabled } => {
@@ -687,6 +746,10 @@ impl App {
                     self.settings.window_width = Some(size.width);
                     self.settings.window_height = Some(size.height);
                 }
+                return Task::batch([
+                    automation::update::on_window_resized(self, size),
+                    automation::update::query_scale(),
+                ]);
             }
             Message::ToggleFullscreen => {
                 let (new_fullscreen, mode) = match self.fullscreen {

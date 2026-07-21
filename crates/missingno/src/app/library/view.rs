@@ -158,6 +158,7 @@ fn toolbar<'a>(
     use iced::widget::{pick_list, stack, text_input};
 
     let search_field = text_input("Search library...", search)
+        .id(crate::app::automation::ids::LIBRARY_SEARCH)
         .on_input(|value| Message::SearchChanged(value).into())
         .width(Fill);
 
@@ -181,9 +182,12 @@ fn toolbar<'a>(
     ]
     .into();
 
-    let system_picker = pick_list(SystemFilter::all_options(), Some(system_filter), |filter| {
-        Message::SystemFilterSelected(filter).into()
-    });
+    let system_picker = crate::app::automation::tag(
+        crate::app::automation::ids::LIBRARY_FILTER,
+        pick_list(SystemFilter::all_options(), Some(system_filter), |filter| {
+            Message::SystemFilterSelected(filter).into()
+        }),
+    );
 
     let sort_picker = pick_list(SortKey::ALL, Some(sort), |key| {
         Message::SortSelected(key).into()
@@ -257,7 +261,10 @@ fn grid_body<'a>(
                 continue;
             }
             let hovered = hovered_sha1.as_deref() == Some(game.entry.sha1.as_str());
-            all_cards.push(game_card(game, hovered));
+            all_cards.push(crate::app::automation::tag(
+                &crate::app::automation::ids::game(&game.entry.sha1),
+                game_card(game, hovered),
+            ));
         }
 
         let mut content: Vec<Element<'_, app::Message>> = Vec::new();
@@ -316,7 +323,10 @@ fn list_body<'a>(
 
     for game in &games {
         let hovered = hovered_sha1.as_deref() == Some(game.entry.sha1.as_str());
-        rows.push(list_row(game, hovered));
+        rows.push(crate::app::automation::tag(
+            &crate::app::automation::ids::game(&game.entry.sha1),
+            list_row(game, hovered),
+        ));
     }
 
     scrollable(

@@ -6,6 +6,7 @@ pub mod buttons;
 pub mod containers;
 pub mod fonts;
 pub mod icons;
+pub mod labelled;
 pub mod palette;
 pub mod sizes;
 pub mod text;
