@@ -107,6 +107,8 @@ struct Curator {
     cover_previews: std::collections::HashMap<String, iced::widget::image::Handle>,
     /// cover urls that failed to fetch (shown as an error instead of silence).
     cover_failed: std::collections::HashSet<String>,
+    /// entries already auto-looked-up on Hasheous this session.
+    enrich_attempted: std::collections::HashSet<String>,
     enriching: bool,
     remote_sink: SharedSink,
     _remote: Option<RemoteEndpoint>,
@@ -254,6 +256,7 @@ impl Curator {
                 description: iced::widget::text_editor::Content::new(),
                 cover_previews: std::collections::HashMap::new(),
                 cover_failed: std::collections::HashSet::new(),
+                enrich_attempted: std::collections::HashSet::new(),
                 enriching: false,
                 remote_sink,
                 _remote: endpoint,
@@ -726,7 +729,30 @@ impl Curator {
         self.description = iced::widget::text_editor::Content::with_text(
             &entry.game.text_field(TextField::Description),
         );
-        self.load_cover_task(i)
+        Task::batch([self.load_cover_task(i), self.auto_enrich_task(i)])
+    }
+
+    /// Look a selected entry up on Hasheous unprompted — once per session,
+    /// only when it has a hash to ask about and no cover yet.
+    fn auto_enrich_task(&mut self, i: usize) -> Task<Message> {
+        let Ok(db) = &self.db else {
+            return Task::none();
+        };
+        let entry = &db.entries[i];
+        let key = entry.key();
+        if !entry.game.covers().is_empty() || self.enrich_attempted.contains(&key) || self.enriching
+        {
+            return Task::none();
+        }
+        let Some(sha1) = entry.game.artifact_sha1s().into_iter().next() else {
+            return Task::none();
+        };
+        self.enrich_attempted.insert(key.clone());
+        self.enriching = true;
+        Task::perform(
+            smol::unblock(move || verify::hasheous_lookup(&sha1)),
+            move |result| Message::Enriched(key.clone(), result),
+        )
     }
 
     fn load_cover_task(&self, i: usize) -> Task<Message> {
