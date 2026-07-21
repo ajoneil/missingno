@@ -32,6 +32,10 @@ struct Args {
     /// Don't publish the ui-<pid>.sock remote-control socket.
     #[arg(long)]
     no_remote: bool,
+
+    /// Name recorded on curation stamps (default: git user.name).
+    #[arg(long)]
+    curator: Option<String>,
 }
 
 pub fn main() -> iced::Result {
@@ -39,8 +43,24 @@ pub fn main() -> iced::Result {
     let db_path = args.db_path.clone();
     let rom_dir = args.rom_dir.clone();
     let remote = !args.no_remote;
+    let curator_name = args.curator.clone().unwrap_or_else(|| {
+        std::process::Command::new("git")
+            .args(["config", "user.name"])
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "unknown".to_owned())
+    });
     iced::application(
-        move || Curator::new(db_path.clone(), rom_dir.clone(), remote),
+        move || {
+            Curator::new(
+                db_path.clone(),
+                rom_dir.clone(),
+                remote,
+                curator_name.clone(),
+            )
+        },
         Curator::update,
         Curator::view,
     )
@@ -87,6 +107,9 @@ struct Curator {
     enriching: bool,
     remote_sink: SharedSink,
     _remote: Option<RemoteEndpoint>,
+    curator_name: String,
+    /// Stamp the next confirm as an editor's-choice recommendation.
+    recommend_next: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -114,6 +137,7 @@ enum Message {
     Enriched(String, Result<Option<verify::HasheousHit>, String>),
     CoverLoaded(String, Option<iced::widget::image::Handle>),
     ConfirmAndNext,
+    RecommendNext(bool),
     ResolveFlag(u32),
     Commit,
 }
@@ -174,7 +198,12 @@ impl Curator {
         iced::Subscription::batch(subscriptions)
     }
 
-    fn new(db_path: PathBuf, rom_dir: Option<PathBuf>, remote: bool) -> (Self, Task<Message>) {
+    fn new(
+        db_path: PathBuf,
+        rom_dir: Option<PathBuf>,
+        remote: bool,
+        curator_name: String,
+    ) -> (Self, Task<Message>) {
         let has_rom_dir = rom_dir.is_some();
         let db = Db::load(db_path).map_err(|e| e.to_string());
         let remote_sink = SharedSink::default();
@@ -209,6 +238,8 @@ impl Curator {
                 enriching: false,
                 remote_sink,
                 _remote: endpoint,
+                curator_name,
+                recommend_next: false,
             },
             // A --rom-dir given at launch (e.g. by an agent starting the
             // curator) scans immediately; nothing to click.
@@ -230,7 +261,7 @@ impl Curator {
             .iter()
             .enumerate()
             .filter(|(_, e)| self.filter_tree.is_none_or(|t| e.tree == t))
-            .filter(|(_, e)| !self.only_backlog || e.game.curated().is_none())
+            .filter(|(_, e)| !self.only_backlog || e.game.curations().is_empty())
             .filter(|(_, e)| {
                 !self.only_flagged || db.flags.open().any(|f| f.subject.contains(&e.key()))
             })
@@ -544,7 +575,9 @@ impl Curator {
             Message::ConfirmAndNext => {
                 let visible = self.visible();
                 if let (Ok(db), Some(i)) = (&mut self.db, self.selected) {
-                    db.entries[i].game.set_curated(Some(Db::today()));
+                    let (by, recommended) = (self.curator_name.clone(), self.recommend_next);
+                    db.entries[i].game.stamp_curation(&by, recommended);
+                    self.recommend_next = false;
                     match db.write_entry(i) {
                         Ok(()) => self.status = format!("confirmed {}", db.entries[i].key()),
                         Err(e) => {
@@ -569,6 +602,7 @@ impl Curator {
                     };
                 }
             }
+            Message::RecommendNext(v) => self.recommend_next = v,
             Message::ResolveFlag(id) => {
                 if let Ok(db) = &mut self.db {
                     if let Some(flag) = db.flags.flags.iter_mut().find(|f| f.id == id) {
@@ -661,7 +695,9 @@ impl Curator {
             let Ok(db) = &mut self.db else {
                 return Task::none();
             };
-            db.entries[i].game.set_curated(Some(Db::today()));
+            let (by, recommended) = (self.curator_name.clone(), self.recommend_next);
+            db.entries[i].game.stamp_curation(&by, recommended);
+            self.recommend_next = false;
             let key = db.entries[i].key();
             if let Err(e) = db.write_entry(i) {
                 self.status = format!("write failed: {e}");
@@ -813,7 +849,7 @@ impl Curator {
                     if tree.is_some_and(|t| t != e.tree.dir()) {
                         continue;
                     }
-                    if backlog_only && e.game.curated().is_some() {
+                    if backlog_only && !e.game.curations().is_empty() {
                         continue;
                     }
                     if !e.game.title().to_lowercase().contains(&query) && !e.slug.contains(&query) {
@@ -823,10 +859,10 @@ impl Curator {
                         "{} — {}{}",
                         e.key(),
                         e.game.title(),
-                        if e.game.curated().is_some() {
-                            " [curated]"
-                        } else {
+                        if e.game.curations().is_empty() {
                             ""
+                        } else {
+                            " [curated]"
                         }
                     ));
                     if lines.len() >= limit {
@@ -916,7 +952,7 @@ impl Curator {
                     return error_result("no recognized fields in set");
                 }
                 // Automation touching a curated entry re-opens it for review.
-                entry.game.set_curated(None);
+                entry.game.clear_curations();
                 entry.dirty = true;
                 self.selected = Some(i);
                 text_result(format!(
@@ -954,7 +990,7 @@ impl Curator {
                 let lines: Vec<String> = db
                     .entries
                     .iter()
-                    .filter(|e| !backlog_only || e.game.curated().is_none())
+                    .filter(|e| !backlog_only || e.game.curations().is_empty())
                     .filter(|e| {
                         e.game
                             .artifact_sha1s()
@@ -968,6 +1004,53 @@ impl Curator {
                     "no local ROM matches".to_owned()
                 } else {
                     lines.join("\n")
+                })
+            }
+            "find_duplicates" => {
+                let Some(key) = str_arg("key") else {
+                    return error_result("missing key");
+                };
+                let Some(i) = self.find_entry(key) else {
+                    return error_result(format!("no entry {key}"));
+                };
+                let Ok(db) = &self.db else {
+                    return error_result("db not loaded");
+                };
+                let entry = &db.entries[i];
+                let mut needles = vec![missingno_gamedb::normalized_title(entry.game.title())];
+                for release_title in entry.game.release_titles() {
+                    needles.push(missingno_gamedb::normalized_title(&release_title));
+                }
+                needles.retain(|n| !n.is_empty());
+                let lines: Vec<String> = db
+                    .entries
+                    .iter()
+                    .filter(|other| other.key() != entry.key())
+                    .filter(|other| {
+                        let other_norm = missingno_gamedb::normalized_title(other.game.title());
+                        needles.contains(&other_norm)
+                            || other.game.release_titles().iter().any(|rt| {
+                                let rt = missingno_gamedb::normalized_title(rt);
+                                needles.contains(&rt)
+                            })
+                    })
+                    .map(|other| {
+                        format!(
+                            "{} — {}{}",
+                            other.key(),
+                            other.game.title(),
+                            if other.game.curations().is_empty() {
+                                ""
+                            } else {
+                                " [curated]"
+                            }
+                        )
+                    })
+                    .collect();
+                text_result(if lines.is_empty() {
+                    "no duplicate candidates".to_owned()
+                } else {
+                    format!("possible duplicates of {key}:\n{}", lines.join("\n"))
                 })
             }
             "queue_status" => {
@@ -1111,10 +1194,12 @@ impl Curator {
         let mut list = column![].spacing(2);
         for &i in visible.iter().take(LIST_LIMIT) {
             let entry = &db.entries[i];
-            let marker = if entry.game.curated().is_some() {
-                "✓ "
-            } else {
+            let marker = if entry.game.curations().is_empty() {
                 ""
+            } else if entry.game.curations().iter().any(|c| c.recommended) {
+                "★ "
+            } else {
+                "✓ "
             };
             let label = format!("{marker}{}  ({})", entry.game.title(), entry.key());
             let mut item = button(text(label).size(14)).width(Length::Fill).style(
@@ -1153,11 +1238,25 @@ impl Curator {
                         "{} · {:?}{}{}",
                         entry.key(),
                         entry.game.kind(),
-                        entry
-                            .game
-                            .curated()
-                            .map(|d| format!(" · curated {d}"))
-                            .unwrap_or_default(),
+                        if entry.game.curations().is_empty() {
+                            String::new()
+                        } else {
+                            format!(
+                                " · curated by {}",
+                                entry
+                                    .game
+                                    .curations()
+                                    .iter()
+                                    .map(|c| format!(
+                                        "{}{} {}",
+                                        c.by,
+                                        if c.recommended { " ★" } else { "" },
+                                        c.date
+                                    ))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )
+                        },
                         if entry.dirty { " · edited" } else { "" },
                     ))
                     .size(13),
@@ -1282,6 +1381,11 @@ impl Curator {
                     editor = editor.push(text("Agent notes").size(16));
                     editor = editor.push(text(note.clone()).size(13));
                 }
+                editor = editor.push(
+                    toggler(self.recommend_next)
+                        .label("recommend ★ (editor's choice) on next confirm")
+                        .on_toggle(Message::RecommendNext),
+                );
                 if self.queue.is_empty() {
                     editor = editor.push(
                         button(text("Confirm ✓ (stamp curated & next)"))

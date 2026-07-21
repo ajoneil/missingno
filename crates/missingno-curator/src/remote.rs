@@ -238,6 +238,11 @@ fn tool_definitions() -> Value {
             }), &[]),
         },
         {
+            "name": "find_duplicates",
+            "description": "Entries whose normalized title (or any localized release title) collides with this game's — merge candidates. Run this for every game you curate; duplicates hide under punctuation, articles, and localized names.",
+            "inputSchema": object(json!({ "key": { "type": "string" } }), &["key"]),
+        },
+        {
             "name": "queue_status",
             "description": "Current playtest game and remaining queue.",
             "inputSchema": object(json!({}), &[]),

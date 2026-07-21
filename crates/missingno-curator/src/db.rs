@@ -69,12 +69,28 @@ impl AnyGame {
         common!(self, g => g.kind)
     }
 
-    pub fn curated(&self) -> Option<&Date> {
-        common!(self, g => g.curated.as_ref())
+    pub fn curations(&self) -> &[missingno_gamedb::Curation] {
+        common!(self, g => &g.curated)
     }
 
-    pub fn set_curated(&mut self, date: Option<Date>) {
-        common!(self, g => g.curated = date);
+    /// Add or refresh one curator's endorsement.
+    pub fn stamp_curation(&mut self, by: &str, recommended: bool) {
+        let stamp = missingno_gamedb::Curation {
+            by: by.to_owned(),
+            date: Db::today(),
+            recommended,
+        };
+        common!(self, g => {
+            match g.curated.iter_mut().find(|c| c.by == stamp.by) {
+                Some(existing) => *existing = stamp.clone(),
+                None => g.curated.push(stamp.clone()),
+            }
+        });
+    }
+
+    /// An automated change un-vouches every curator.
+    pub fn clear_curations(&mut self) {
+        common!(self, g => g.curated.clear());
     }
 
     pub fn text_field(&self, field: TextField) -> String {
@@ -239,6 +255,14 @@ impl AnyGame {
                 });
             }
         });
+    }
+
+    pub fn release_titles(&self) -> Vec<String> {
+        common!(self, g => g
+            .releases
+            .iter()
+            .filter_map(|r| r.title.clone())
+            .collect())
     }
 
     /// Board hint for the session factory (VCS only — carts have no header,
@@ -444,7 +468,7 @@ impl Db {
     pub fn backlog_count(&self, tree: TreeId) -> usize {
         self.entries
             .iter()
-            .filter(|e| e.tree == tree && e.game.curated().is_none())
+            .filter(|e| e.tree == tree && e.game.curations().is_empty())
             .count()
     }
 

@@ -40,7 +40,11 @@ tree.
 
 While the developer plays the current game:
 
-1. `get_game` for the manifest and its open flags.
+1. `get_game` for the manifest and its open flags, and `find_duplicates` for merge
+   candidates — always, for every game. A duplicate hit is a finding for your note (which
+   entry should absorb which, and why); merging is the developer's call. Same-title hits
+   that are genuinely different products (multicarts, unlicensed re-releases) are worth
+   saying so explicitly, so the developer doesn't re-investigate next time.
 2. Research the gaps — empty developer/description/license, suspicious titles, flag
    questions. Source preference: existing structured sources first (the gamedb itself,
    pouet.net data dumps, gbdev database, publisher/developer sites), then ordinary web
