@@ -257,6 +257,18 @@ impl AnyGame {
         });
     }
 
+    pub fn links(&self) -> Vec<(String, String)> {
+        common!(self, g => g
+            .links
+            .iter()
+            .map(|l| (l.name.clone(), l.url.clone()))
+            .collect())
+    }
+
+    pub fn tags(&self) -> Vec<String> {
+        common!(self, g => g.tags.clone())
+    }
+
     pub fn release_publisher(&self, index: usize) -> String {
         common!(self, g => g
             .releases

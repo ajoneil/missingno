@@ -152,6 +152,7 @@ enum Message {
     SaveFlag,
     ToggleList,
     CloseRequested,
+    OpenLink(String),
     ResolveFlag(u32),
     Commit,
 }
@@ -694,6 +695,9 @@ impl Curator {
                 self._remote = None;
                 return iced::window::latest().and_then(iced::window::close);
             }
+            Message::OpenLink(url) => {
+                let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+            }
             Message::ToggleList => self.list_visible = !self.list_visible,
             Message::ResolveFlag(id) => {
                 if let Ok(db) = &mut self.db {
@@ -719,16 +723,19 @@ impl Curator {
         Task::none()
     }
 
+    /// Rebuild the description widget from the selected entry's data.
+    fn sync_description(&mut self) {
+        if let (Ok(db), Some(i)) = (&self.db, self.selected) {
+            self.description = iced::widget::text_editor::Content::with_text(
+                &db.entries[i].game.text_field(TextField::Description),
+            );
+        }
+    }
+
     /// Select an entry: sync the description editor and kick a cover preview.
     fn select(&mut self, i: usize) -> Task<Message> {
         self.selected = Some(i);
-        let Ok(db) = &self.db else {
-            return Task::none();
-        };
-        let entry = &db.entries[i];
-        self.description = iced::widget::text_editor::Content::with_text(
-            &entry.game.text_field(TextField::Description),
-        );
+        self.sync_description();
         Task::batch([self.load_cover_task(i), self.auto_enrich_task(i)])
     }
 
@@ -1086,6 +1093,7 @@ impl Curator {
                 entry.game.clear_curations();
                 entry.dirty = true;
                 self.selected = Some(i);
+                self.sync_description();
                 text_result(format!(
                     "staged {} on {key}; entry re-opened for review (uncommitted until the curator confirms)",
                     applied.join(", ")
@@ -1200,11 +1208,7 @@ impl Curator {
                 match self.find_entry(key) {
                     Some(i) => {
                         self.selected = Some(i);
-                        self.description = iced::widget::text_editor::Content::with_text(
-                            &self.db.as_ref().unwrap().entries[i]
-                                .game
-                                .text_field(TextField::Description),
-                        );
+                        self.sync_description();
                         text_result(format!("showing {key}"))
                     }
                     None => error_result(format!("no entry {key}")),
@@ -1435,8 +1439,32 @@ impl Curator {
                         ]
                         .spacing(8),
                     )
-                    .push(field("License", TextField::License))
-                    .push(text("Releases").size(16));
+                    .push(field("License", TextField::License));
+                let tags = entry.game.tags();
+                if !tags.is_empty() {
+                    editor = editor.push(
+                        row![
+                            text("Tags").size(13).width(Length::Fixed(90.0)),
+                            text(tags.join(", ")).size(13),
+                        ]
+                        .spacing(8),
+                    );
+                }
+                let links = entry.game.links();
+                if !links.is_empty() {
+                    let mut link_row = row![text("Links").size(13).width(Length::Fixed(90.0))]
+                        .spacing(8)
+                        .align_y(iced::Alignment::Center);
+                    for (name, url) in links {
+                        link_row = link_row.push(
+                            button(text(name).size(13))
+                                .style(button::text)
+                                .on_press(Message::OpenLink(url)),
+                        );
+                    }
+                    editor = editor.push(link_row);
+                }
+                editor = editor.push(text("Releases").size(16));
                 for (r, line) in entry.game.release_lines().into_iter().enumerate() {
                     editor = editor.push(
                         container(
