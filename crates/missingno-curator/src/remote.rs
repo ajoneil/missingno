@@ -329,6 +329,17 @@ fn tool_definitions() -> Value {
             }), &["key", "release_index", "set"]),
         },
         {
+            "name": "attach_dump_to_mod",
+            "description": "Re-file a release dump onto a mod already attached to this game, instead of inventing a second mod for it. Use for a hack's later build (`as_version: true`, label it \"8K\" or \"v2\"), and for an alternate or defective dump of a hack (`as_version: false` — it joins the mod's latest version, labelled \"alt [a]\" or \"overdump\"). A bad dump of a hack is that hack's, not a work of its own.",
+            "inputSchema": object(json!({
+                "key": { "type": "string" },
+                "mod": { "type": "string", "description": "name of the mod already attached to this game" },
+                "sha1": { "type": "string" },
+                "as_version": { "type": "boolean", "description": "true = a distinct build of the mod; false (default) = another dump of the build it already has" },
+                "label": { "type": "string" },
+            }), &["key", "mod", "sha1"]),
+        },
+        {
             "name": "remove_release",
             "description": "Drop a release that holds nothing — a phantom left behind when its only dump was re-filed as a mod or moved elsewhere. Refuses while the release still carries dumps or sources, so it can never discard evidence.",
             "inputSchema": object(json!({

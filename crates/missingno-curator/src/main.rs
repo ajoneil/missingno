@@ -1263,10 +1263,19 @@ impl Curator {
                     None => (error_result(format!("no entry {key}")), Task::none()),
                 }
             }
-            _ => {
+            "select_game" => {
                 let body = self.run_tool(name, args);
-                // Agent-staged covers should appear without further clicks.
-                let task = if name == "update_game" {
+                let task = str_arg("key")
+                    .and_then(|key| self.find_entry(key))
+                    .map(|i| self.select(i))
+                    .unwrap_or_else(Task::none);
+                (body, task)
+            }
+            _ => {
+                // Anything that can change which entry is shown, or what cover
+                // it carries, has to fetch it — the plain path returns no task.
+                let body = self.run_tool(name, args);
+                let task = if matches!(name, "update_game" | "merge_game" | "rename_game") {
                     self.selected
                         .map(|i| self.load_cover_task(i))
                         .unwrap_or_else(Task::none)
@@ -1497,7 +1506,18 @@ impl Curator {
                         // The absorbed key must stop naming a queue slot, and
                         // `selected` indexes a vec that just lost an element.
                         self.merge_keys(&source_key, &target_key);
-                        self.selected = self.find_entry(&target_key);
+                        // Tidying some other game must not take the window away
+                        // from the one being playtested: follow the merge only
+                        // when the human was already looking at what it touched.
+                        let playing = self.playing.as_ref().map(|(key, _)| key.clone());
+                        let follow = playing.as_deref().is_none_or(|key| {
+                            key == target_key || key == source_key
+                        });
+                        self.selected = if follow {
+                            self.find_entry(&target_key)
+                        } else {
+                            playing.as_deref().and_then(|key| self.find_entry(key))
+                        };
                         self.sync_description();
                         text_result(message)
                     }
@@ -1842,6 +1862,38 @@ impl Curator {
                     error_result(format!("{key} has no release {index}"))
                 }
             }
+            "attach_dump_to_mod" => {
+                let (Some(key), Some(mod_name), Some(sha1)) =
+                    (str_arg("key"), str_arg("mod"), str_arg("sha1"))
+                else {
+                    return error_result("missing key, mod, or sha1");
+                };
+                let as_version = args
+                    .get("as_version")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                let label = str_arg("label").map(str::to_owned);
+                let Some(i) = self.find_entry(key) else {
+                    return error_result(format!("no entry {key}"));
+                };
+                let Ok(db) = &mut self.db else {
+                    return error_result("db not loaded");
+                };
+                match db.entries[i]
+                    .game
+                    .attach_dump_to_mod(mod_name, &sha1.to_ascii_lowercase(), as_version, label)
+                {
+                    Ok(message) => {
+                        db.entries[i].game.clear_curations();
+                        db.entries[i].dirty = true;
+                        if let Err(e) = db.write_entry(i) {
+                            return error_result(format!("attached, but writing {key} failed: {e}"));
+                        }
+                        text_result(message)
+                    }
+                    Err(e) => error_result(e),
+                }
+            }
             "remove_release" => {
                 let (Some(key), Some(index)) = (
                     str_arg("key"),
@@ -1967,15 +2019,13 @@ impl Curator {
                 ))
             }
             "select_game" => {
+                // Handled in run_tool_tasked: navigating has to fetch the
+                // cover, which needs the task the plain path throws away.
                 let Some(key) = str_arg("key") else {
                     return error_result("missing key");
                 };
                 match self.find_entry(key) {
-                    Some(i) => {
-                        self.selected = Some(i);
-                        self.sync_description();
-                        text_result(format!("showing {key}"))
-                    }
+                    Some(_) => text_result(format!("showing {key}")),
                     None => error_result(format!("no entry {key}")),
                 }
             }

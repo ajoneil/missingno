@@ -749,6 +749,95 @@ impl AnyGame {
         .is_some()
     }
 
+    /// Re-file a dump onto a mod that is already attached: another version of
+    /// it, or another dump of a version it already has. A hack's second build
+    /// and a bad dump of a hack are both the mod's, not the game's, and
+    /// neither is a mod of its own.
+    pub fn attach_dump_to_mod(
+        &mut self,
+        mod_name: &str,
+        sha1: &str,
+        as_version: bool,
+        label: Option<String>,
+    ) -> Result<String, String> {
+        common!(self, g => {
+            if !g.mods.iter().any(|m| m.name == mod_name) {
+                let known: Vec<&str> = g.mods.iter().map(|m| m.name.as_str()).collect();
+                return Err(format!(
+                    "no mod named {mod_name:?}; attached mods: {}",
+                    known.join(", ")
+                ));
+            }
+            let mut taken = None;
+            for index in 0..g.releases.len() {
+                let release = &mut g.releases[index];
+                if let Some(at) = release.artifacts.iter().position(|a| a.sha1.as_str() == sha1) {
+                    let artifact = release.artifacts.remove(at);
+                    if release.artifacts.is_empty() && release.sources.is_empty() {
+                        g.releases.remove(index);
+                    }
+                    taken = Some(artifact);
+                    break;
+                }
+            }
+            // Also reachable from another mod: a second build filed as a mod of
+            // its own is the case this exists to undo.
+            if taken.is_none() {
+                'mods: for m in 0..g.mods.len() {
+                    if g.mods[m].name == mod_name {
+                        continue;
+                    }
+                    for r in 0..g.mods[m].releases.len() {
+                        let release = &mut g.mods[m].releases[r];
+                        if let Some(at) =
+                            release.artifacts.iter().position(|a| a.sha1.as_str() == sha1)
+                        {
+                            let artifact = release.artifacts.remove(at);
+                            if release.artifacts.is_empty() {
+                                g.mods[m].releases.remove(r);
+                            }
+                            if g.mods[m].releases.is_empty() {
+                                g.mods.remove(m);
+                            }
+                            taken = Some(artifact);
+                            break 'mods;
+                        }
+                    }
+                }
+            }
+            let Some(mut artifact) = taken else {
+                return Err(format!("{sha1} is not a dump of this entry"));
+            };
+            let attached = g.mods.iter_mut().find(|m| m.name == mod_name).expect("checked above");
+            if as_version {
+                let base_sha1 = attached.releases.first().and_then(|r| r.base_sha1.clone());
+                attached.releases.push(ModRelease {
+                    label,
+                    date: None,
+                    base_sha1,
+                    patch: None,
+                    sources: Vec::new(),
+                    artifacts: vec![artifact],
+                });
+                Ok(format!("{sha1} added to {mod_name:?} as a new version"))
+            } else {
+                artifact.label = label;
+                match attached.releases.last_mut() {
+                    Some(release) => release.artifacts.push(artifact),
+                    None => attached.releases.push(ModRelease {
+                        label: None,
+                        date: None,
+                        base_sha1: None,
+                        patch: None,
+                        sources: Vec::new(),
+                        artifacts: vec![artifact],
+                    }),
+                }
+                Ok(format!("{sha1} added to {mod_name:?} as another dump"))
+            }
+        })
+    }
+
     /// Drop a release that holds nothing — a phantom left by re-filing its
     /// only dump. Refuses while it still carries dumps or sources, so this
     /// can never quietly discard evidence.
@@ -1838,6 +1927,91 @@ mod phantom_release_tests {
         };
         assert_eq!(game.release_lines().len(), 1);
         assert_eq!(game.artifact_sha1s(), vec![A]);
+    }
+
+    #[test]
+    fn a_hacks_later_build_joins_the_mod_rather_than_forking_one() {
+        let game = Game::<GameBoy>::from_ron(&format!(
+            "(title: \"T\", mods: [(name: \"Deluxe\", category: ContentChange,\
+                releases: [(base_sha1: Some(\"{A}\"), artifacts: [(sha1: \"{A}\")])])],\
+              releases: [(artifacts: [(sha1: \"{B}\")])])"
+        ))
+        .unwrap();
+        let mut game = AnyGame::Gb(game);
+        game.attach_dump_to_mod("Deluxe", B, true, Some("8K".to_owned()))
+            .unwrap();
+        assert!(game.artifact_sha1s().is_empty());
+        assert!(game.release_lines().is_empty());
+        match &game {
+            AnyGame::Gb(g) => {
+                assert_eq!(g.mods.len(), 1, "no second mod invented");
+                assert_eq!(g.mods[0].releases.len(), 2);
+                assert_eq!(g.mods[0].releases[1].label.as_deref(), Some("8K"));
+                // A version inherits what the mod is a hack of.
+                assert_eq!(g.mods[0].releases[1].base_sha1.as_ref().unwrap().as_str(), A);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn a_bad_dump_of_a_hack_joins_that_hacks_version() {
+        let game = Game::<GameBoy>::from_ron(&format!(
+            "(title: \"T\", mods: [(name: \"Deluxe\", category: ContentChange,\
+                releases: [(artifacts: [(sha1: \"{A}\")])])],\
+              releases: [(artifacts: [(sha1: \"{B}\")])])"
+        ))
+        .unwrap();
+        let mut game = AnyGame::Gb(game);
+        game.attach_dump_to_mod("Deluxe", B, false, Some("overdump".to_owned()))
+            .unwrap();
+        match &game {
+            AnyGame::Gb(g) => {
+                assert_eq!(g.mods[0].releases.len(), 1, "not a distinct version");
+                assert_eq!(g.mods[0].releases[0].artifacts.len(), 2);
+                assert_eq!(
+                    g.mods[0].releases[0].artifacts[1].label.as_deref(),
+                    Some("overdump")
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn a_build_wrongly_filed_as_its_own_mod_folds_back_in() {
+        let game = Game::<GameBoy>::from_ron(&format!(
+            "(title: \"T\", mods: [\
+               (name: \"Deluxe\", category: ContentChange, releases: [(artifacts: [(sha1: \"{A}\")])]),\
+               (name: \"Deluxe (8K)\", category: ContentChange, releases: [(artifacts: [(sha1: \"{B}\")])]),\
+             ])"
+        ))
+        .unwrap();
+        let mut game = AnyGame::Gb(game);
+        game.attach_dump_to_mod("Deluxe", B, true, Some("8K".to_owned()))
+            .unwrap();
+        match &game {
+            AnyGame::Gb(g) => {
+                assert_eq!(g.mods.len(), 1, "the emptied mod is gone");
+                assert_eq!(g.mods[0].name, "Deluxe");
+                assert_eq!(g.mods[0].releases.len(), 2);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn attaching_names_the_mods_it_knows_when_asked_for_one_it_does_not() {
+        let game = Game::<GameBoy>::from_ron(&format!(
+            "(title: \"T\", mods: [(name: \"Deluxe\", category: ContentChange)],\
+              releases: [(artifacts: [(sha1: \"{B}\")])])"
+        ))
+        .unwrap();
+        let mut game = AnyGame::Gb(game);
+        let err = game.attach_dump_to_mod("Typo", B, false, None).unwrap_err();
+        assert!(err.contains("Deluxe"), "{err}");
+        // The dump stays put when the mod is not found.
+        assert_eq!(game.artifact_sha1s(), vec![B]);
     }
 
     #[test]

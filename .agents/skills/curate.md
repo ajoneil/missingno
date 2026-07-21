@@ -147,6 +147,15 @@ While the developer plays the current game:
    curated independently of their game — note anything you learn about a mod's quality,
    but the endorsement buttons are the developer's.
 
+   **A hack's second dump belongs to that hack, not to a second mod.** `mark_hack`
+   always makes a new mod, so use it only for the first dump of a hack; for anything
+   further use `attach_dump_to_mod`: a later build is `as_version: true` with a label
+   ("8K", "v2"), while an alternate or defective dump of a build already recorded is
+   `as_version: false` (labelled "alt [a]", "overdump"). It also reaches a dump sitting
+   in the *wrong* mod, so a build mistakenly filed as its own hack folds back in and the
+   emptied mod disappears. A bad dump of a hack is that hack's evidence and never a work
+   of its own — the same rule as a bad dump of a game.
+
    **Name a mod only what it is actually called.** A documented title goes in verbatim
    ("Adventure SI"). When the hack has no known name, do not dress a dump-flag descriptor
    up as one — `[h New Graphics]` is a cataloguer's note, not a title. Use the
