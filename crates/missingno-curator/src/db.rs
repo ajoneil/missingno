@@ -774,9 +774,10 @@ impl Db {
         Ok(())
     }
 
-    /// A dump that turned out to be a hack. Small modifications (QoL, content
-    /// changes) become a mod attached to the same game; translations and total
-    /// conversions get their own derived-work entry. Returns where it went.
+    /// A dump that turned out to be a hack. Modifications of the game — QoL,
+    /// content changes, translations (a translated game is still the same
+    /// game, exactly as official localizations are releases of it) — attach
+    /// as mods; only total conversions get their own entry.
     pub fn mark_hack(
         &mut self,
         source: usize,
@@ -786,10 +787,7 @@ impl Db {
         base_override: Option<String>,
         homepage: Option<String>,
     ) -> Result<String, String> {
-        if matches!(
-            category,
-            ModCategory::QualityOfLife | ModCategory::ContentChange
-        ) {
+        if !matches!(category, ModCategory::TotalConversion) {
             let source_title = self.entries[source].game.title().to_owned();
             let name = title.unwrap_or_else(|| format!("Unnamed hack of {source_title}"));
             let attached = match &mut self.entries[source].game {

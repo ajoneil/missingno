@@ -111,9 +111,10 @@ While the developer plays the current game:
    the entry actually leads with before trusting what it returns.
 
    When a hash is confirmed to be a hacked or modified dump, `mark_hack` moves it out of
-   the real dumps: small modifications (QualityOfLife/ContentChange) become a mod attached
-   to the same game — supply its real name and homepage `url` when known — while
-   Translation/TotalConversion split into their own entry. Never leave a hack lumped in
+   the real dumps: everything short of a total conversion — QoL, content changes, fan
+   translations (the same game, as official localizations are) — becomes a mod attached to
+   that game; supply its real name and homepage `url` when known. Only TotalConversion
+   splits into its own entry. Never leave a hack lumped in
    with real dumps, and never silently delete the hash. When one release holds several
    legitimate dumps, `label_artifact` gives each a short distinguishing label. Mods are
    curated independently of their game — note anything you learn about a mod's quality,

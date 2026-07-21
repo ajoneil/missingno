@@ -249,7 +249,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "mark_hack",
-            "description": "A hash in an entry turned out to be a hacked/modified dump. Small modifications (category QualityOfLife or ContentChange, the default) become a mod ATTACHED to the same game — its own name, homepage link, versions and independent curation. Translation/TotalConversion split into their own derived-work entry. Supply title (the mod's real name) and url (its homepage) whenever known.",
+            "description": "A hash in an entry turned out to be a hacked/modified dump. Everything except a total conversion becomes a mod ATTACHED to the same game — its own name, homepage link, versions and independent curation; a fan translation is still the same game, exactly as official localizations are releases of it. Only TotalConversion splits into its own derived-work entry. Supply title (the mod's real name) and url (its homepage) whenever known.",
             "inputSchema": object(json!({
                 "key": { "type": "string" },
                 "sha1": { "type": "string" },
