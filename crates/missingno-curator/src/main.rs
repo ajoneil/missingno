@@ -803,10 +803,18 @@ impl Curator {
                 }
                 if let Some(sha1) = self.fetched_sha1.get(&entry_key) {
                     editor = editor.push(
-                        button(text("Boot fetched ROM (300 frames)").size(13)).on_press_maybe(
-                            (!self.booting)
-                                .then(|| Message::Boot(BootSource::Cached(sha1.clone()))),
-                        ),
+                        row![
+                            button(text("Boot fetched ROM (300 frames)").size(13)).on_press_maybe(
+                                (!self.booting)
+                                    .then(|| Message::Boot(BootSource::Cached(sha1.clone()))),
+                            ),
+                            button(text("Play ▶").size(13)).on_press_maybe(
+                                self.playing
+                                    .is_none()
+                                    .then(|| Message::Play(BootSource::Cached(sha1.clone()))),
+                            ),
+                        ]
+                        .spacing(8),
                     );
                 }
                 match &self.rom_index {
