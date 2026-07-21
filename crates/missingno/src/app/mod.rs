@@ -134,6 +134,8 @@ struct App {
     /// Live library search text. Transient — not persisted, survives screen
     /// transitions (unlike the per-screen hover state).
     library_search: String,
+    /// Live library system filter. Transient, like `library_search`.
+    library_filter: library::store::SystemFilter,
 }
 
 /// Cartridge reader/writer polling state (device detection and active-dump progress).
@@ -463,6 +465,7 @@ impl App {
             menu_open: false,
             recording: false,
             library_search: String::new(),
+            library_filter: library::store::SystemFilter::default(),
         };
 
         controls::update_bindings(

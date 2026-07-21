@@ -75,6 +75,12 @@ impl Platform {
     }
 }
 
+impl std::fmt::Display for Platform {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 /// The broadcast standard a game is authored for. Cross-family library
 /// metadata: the VCS consumes it (colour decode + frame timing) and future
 /// region-split families (NES, Master System) will too. Persisted on a

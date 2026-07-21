@@ -30,6 +30,9 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                 SearchChanged(text) => {
                     app.library_search = text;
                 }
+                SystemFilterSelected(filter) => {
+                    app.library_filter = filter;
+                }
                 SortSelected(sort) => {
                     app.settings.library_sort = sort;
                     app.settings.save();

@@ -104,6 +104,45 @@ impl std::fmt::Display for SortKey {
     }
 }
 
+/// Library system filter. "All systems" shows every entry (including ones
+/// with no known platform); a specific system shows only entries tagged with
+/// it. The picker doubles as an at-a-glance list of supported systems.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum SystemFilter {
+    #[default]
+    All,
+    System(crate::app::system::Platform),
+}
+
+impl SystemFilter {
+    /// Picker options: "All systems" followed by every registered family's platform.
+    pub fn all_options() -> Vec<SystemFilter> {
+        std::iter::once(SystemFilter::All)
+            .chain(
+                crate::app::system::FAMILIES
+                    .iter()
+                    .map(|family| SystemFilter::System(family.platform)),
+            )
+            .collect()
+    }
+
+    fn accepts(self, summary: &GameSummary) -> bool {
+        match self {
+            SystemFilter::All => true,
+            SystemFilter::System(platform) => summary.entry.platform == Some(platform),
+        }
+    }
+}
+
+impl std::fmt::Display for SystemFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SystemFilter::All => f.write_str("All systems"),
+            SystemFilter::System(platform) => f.write_str(platform.name()),
+        }
+    }
+}
+
 /// Activity detail for the currently viewed game.
 /// The state of activity data for a game.
 pub enum ActivityState {
@@ -255,17 +294,22 @@ impl GameStore {
 
     /// Get all game summaries in the default library order.
     pub fn all_summaries(&self) -> Vec<&GameSummary> {
-        self.summaries_sorted(SortKey::default(), "")
+        self.summaries_sorted(SortKey::default(), "", SystemFilter::All)
     }
 
     /// Game summaries matching `filter` (case-insensitive substring of title
-    /// or publisher; empty matches all), ordered by `sort`.
-    pub fn summaries_sorted(&self, sort: SortKey, filter: &str) -> Vec<&GameSummary> {
+    /// or publisher; empty matches all) and `system`, ordered by `sort`.
+    pub fn summaries_sorted(
+        &self,
+        sort: SortKey,
+        filter: &str,
+        system: SystemFilter,
+    ) -> Vec<&GameSummary> {
         let filter = filter.trim().to_lowercase();
         let mut entries: Vec<&GameSummary> = self
             .summaries
             .values()
-            .filter(|summary| summary.matches(&filter))
+            .filter(|summary| summary.matches(&filter) && system.accepts(summary))
             .collect();
         entries.sort_by(|a, b| sort.compare(a, b));
         entries
@@ -603,7 +647,7 @@ mod tests {
             summary("Alleyway", None, None),
         ]);
         assert_eq!(
-            titles(&store.summaries_sorted(SortKey::LastPlayed, "")),
+            titles(&store.summaries_sorted(SortKey::LastPlayed, "", SystemFilter::All)),
             ["Zelda", "Alleyway", "Metroid II"]
         );
     }
@@ -616,7 +660,7 @@ mod tests {
             summary("A", None, Some("1989")),
         ]);
         assert_eq!(
-            titles(&store.summaries_sorted(SortKey::Year, "")),
+            titles(&store.summaries_sorted(SortKey::Year, "", SystemFilter::All)),
             ["A", "B", "C"]
         );
     }
@@ -629,7 +673,7 @@ mod tests {
         short.play_time_secs = 10.0;
         let store = store_with(vec![short, long]);
         assert_eq!(
-            titles(&store.summaries_sorted(SortKey::MostPlayed, "")),
+            titles(&store.summaries_sorted(SortKey::MostPlayed, "", SystemFilter::All)),
             ["Long", "Short"]
         );
     }
@@ -641,14 +685,56 @@ mod tests {
             summary("Shantae", Some("Capcom"), None),
         ]);
         assert_eq!(
-            titles(&store.summaries_sorted(SortKey::Title, "WARIO")),
+            titles(&store.summaries_sorted(SortKey::Title, "WARIO", SystemFilter::All)),
             ["Wario Land"]
         );
         assert_eq!(
-            titles(&store.summaries_sorted(SortKey::Title, "capcom")),
+            titles(&store.summaries_sorted(SortKey::Title, "capcom", SystemFilter::All)),
             ["Shantae"]
         );
-        assert_eq!(store.summaries_sorted(SortKey::Title, "tetris").len(), 0);
-        assert_eq!(store.summaries_sorted(SortKey::Title, "  ").len(), 2);
+        assert_eq!(
+            store
+                .summaries_sorted(SortKey::Title, "tetris", SystemFilter::All)
+                .len(),
+            0
+        );
+        assert_eq!(
+            store
+                .summaries_sorted(SortKey::Title, "  ", SystemFilter::All)
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn system_filter_selects_by_platform_and_hides_untagged() {
+        use crate::app::system::Platform;
+        let mut gb = summary("Wario Land", None, None);
+        gb.entry.platform = Some(Platform::GameBoy);
+        let mut nes = summary("Metroid", None, None);
+        nes.entry.platform = Some(Platform::Nes);
+        let untagged = summary("Mystery", None, None);
+        let store = store_with(vec![gb, nes, untagged]);
+
+        assert_eq!(
+            titles(&store.summaries_sorted(SortKey::Title, "", SystemFilter::All)).len(),
+            3
+        );
+        assert_eq!(
+            titles(&store.summaries_sorted(
+                SortKey::Title,
+                "",
+                SystemFilter::System(Platform::GameBoy)
+            )),
+            ["Wario Land"]
+        );
+        assert_eq!(
+            titles(&store.summaries_sorted(
+                SortKey::Title,
+                "",
+                SystemFilter::System(Platform::Nes)
+            )),
+            ["Metroid"]
+        );
     }
 }

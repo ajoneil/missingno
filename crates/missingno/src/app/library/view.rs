@@ -61,6 +61,7 @@ pub enum Message {
     DumpCartridge,
     SearchChanged(String),
     SortSelected(super::store::SortKey),
+    SystemFilterSelected(super::store::SystemFilter),
     LayoutSelected(LibraryLayout),
 }
 
@@ -70,7 +71,7 @@ impl From<Message> for app::Message {
     }
 }
 
-use super::store::{GameStore, GameSummary, SortKey};
+use super::store::{GameStore, GameSummary, SortKey, SystemFilter};
 use crate::cartridge_rw;
 
 /// Everything the library page needs to render its toolbar and body.
@@ -83,6 +84,7 @@ pub(crate) struct LibraryView<'a> {
     pub sort: SortKey,
     pub layout: LibraryLayout,
     pub search: &'a str,
+    pub system_filter: SystemFilter,
 }
 
 #[allow(private_interfaces)]
@@ -96,6 +98,7 @@ pub(crate) fn view(data: LibraryView<'_>) -> Element<'_, app::Message> {
         sort,
         layout,
         search,
+        system_filter,
     } = data;
 
     if store.is_empty() && inserted_cartridge.is_none() {
@@ -114,7 +117,7 @@ pub(crate) fn view(data: LibraryView<'_>) -> Element<'_, app::Message> {
         })
     });
 
-    let games = store.summaries_sorted(sort, search);
+    let games = store.summaries_sorted(sort, search, system_filter);
     let hovered_sha1 = hovered_sha1.map(|s| s.to_string());
 
     let body: Element<'_, app::Message> = if games.is_empty() && inserted_cartridge.is_none() {
@@ -138,19 +141,47 @@ pub(crate) fn view(data: LibraryView<'_>) -> Element<'_, app::Message> {
         }
     };
 
-    column![toolbar(sort, layout, search), body]
+    column![toolbar(sort, layout, search, system_filter), body]
         .spacing(m())
         .height(Fill)
         .into()
 }
 
-/// Search field, sort picker, and grid/list toggle above the library body.
-fn toolbar<'a>(sort: SortKey, layout: LibraryLayout, search: &'a str) -> Element<'a, app::Message> {
-    use iced::widget::{pick_list, text_input};
+/// Search field, filters, sort picker, and grid/list toggle above the body.
+fn toolbar<'a>(
+    sort: SortKey,
+    layout: LibraryLayout,
+    search: &'a str,
+    system_filter: SystemFilter,
+) -> Element<'a, app::Message> {
+    use iced::widget::{pick_list, stack, text_input};
 
     let search_field = text_input("Search library...", search)
         .on_input(|value| Message::SearchChanged(value).into())
         .width(Fill);
+
+    // A clear affordance appears once there's something to clear, overlaid at
+    // the trailing edge of the input.
+    let search_area: Element<'a, app::Message> = if search.is_empty() {
+        search_field.into()
+    } else {
+        stack![
+            search_field,
+            container(
+                buttons::subtle_raw(icons::m_muted(Icon::Close))
+                    .on_press(Message::SearchChanged(String::new()).into()),
+            )
+            .width(Fill)
+            .height(Fill)
+            .align_x(iced::alignment::Horizontal::Right)
+            .align_y(iced::alignment::Vertical::Center)
+        ]
+        .into()
+    };
+
+    let system_picker = pick_list(SystemFilter::all_options(), Some(system_filter), |filter| {
+        Message::SystemFilterSelected(filter).into()
+    });
 
     let sort_picker = pick_list(SortKey::ALL, Some(sort), |key| {
         Message::SortSelected(key).into()
@@ -171,7 +202,7 @@ fn toolbar<'a>(sort: SortKey, layout: LibraryLayout, search: &'a str) -> Element
     .spacing(xs());
 
     container(
-        row![search_field, sort_picker, layout_toggle]
+        row![search_area, system_picker, sort_picker, layout_toggle]
             .spacing(m())
             .align_y(Center),
     )

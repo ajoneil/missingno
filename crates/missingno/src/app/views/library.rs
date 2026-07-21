@@ -142,6 +142,7 @@ impl App {
             sort: self.settings.library_sort,
             layout: self.settings.library_layout,
             search: &self.library_search,
+            system_filter: self.library_filter,
         })
     }
 
