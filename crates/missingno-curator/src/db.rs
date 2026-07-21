@@ -155,6 +155,71 @@ impl AnyGame {
         }
     }
 
+    /// First directly-downloadable source URL across releases.
+    pub fn download_url(&self) -> Option<String> {
+        const GBDEV: &str = "https://raw.githubusercontent.com/gbdev/database/master/entries";
+        let sources = common!(self, g => g
+            .releases
+            .iter()
+            .flat_map(|r| r.sources.clone())
+            .collect::<Vec<_>>());
+        sources.iter().find_map(|s| match s {
+            missingno_gamedb::Source::HomebrewHub { slug, filename } => {
+                Some(format!("{GBDEV}/{slug}/{filename}"))
+            }
+            missingno_gamedb::Source::Download { url } => Some(url.clone()),
+            _ => None,
+        })
+    }
+
+    pub fn artifact_sha1s(&self) -> Vec<String> {
+        common!(self, g => g
+            .releases
+            .iter()
+            .flat_map(|r| &r.artifacts)
+            .map(|a| a.sha1.as_str().to_owned())
+            .collect())
+    }
+
+    /// Record a newly verified dump on the first sourced (else first) release.
+    /// Returns false when the hash was already present.
+    pub fn stage_artifact(&mut self, sha1: &str, size: u64) -> bool {
+        if self.artifact_sha1s().iter().any(|s| s == sha1) {
+            return false;
+        }
+        let Ok(sha1) = sha1.parse::<missingno_gamedb::Sha1>() else {
+            return false;
+        };
+        common!(self, g => {
+            let at = g
+                .releases
+                .iter()
+                .position(|r| !r.sources.is_empty())
+                .unwrap_or(0);
+            if let Some(release) = g.releases.get_mut(at) {
+                release.artifacts.push(missingno_gamedb::Artifact {
+                    sha1,
+                    size: Some(size),
+                });
+                true
+            } else {
+                false
+            }
+        })
+    }
+
+    /// Broadcast-standard hint for the session factory (VCS only).
+    pub fn tv_hint(&self) -> Option<String> {
+        match self {
+            AnyGame::Vcs(g) => g
+                .releases
+                .iter()
+                .find_map(|r| r.hardware.tv_format)
+                .map(|tv| format!("{tv:?}").to_lowercase()),
+            _ => None,
+        }
+    }
+
     pub fn to_ron_string(&self) -> Result<String, String> {
         common!(self, g => g.to_ron_string().map_err(|e| e.to_string()))
     }

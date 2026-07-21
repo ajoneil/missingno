@@ -3023,7 +3023,13 @@ dependencies = [
  "clap",
  "iced",
  "jiff",
+ "missingno-core 0.1.0",
  "missingno-gamedb",
+ "missingno-session",
+ "serde_json",
+ "sha1",
+ "smol",
+ "ureq",
 ]
 
 [[package]]
