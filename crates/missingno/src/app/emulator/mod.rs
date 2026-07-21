@@ -57,8 +57,11 @@ pub struct Emulator {
     switches: &'static [ConsoleSwitch],
     switch_levels: Vec<bool>,
     /// Whether this console has a selectable monochrome palette (DMG),
-    /// captured at load; gates the Display panel.
+    /// captured at load; gates the Display panel's palette rows.
     monochrome_palette: bool,
+    /// Whether the loaded game enables Super Game Boy enhancements, captured at
+    /// load; gates the SGB colour rows.
+    supports_sgb: bool,
     /// The play-mode side panels currently open (rendered stacked, in a
     /// stable order regardless of toggle order).
     open_panels: Vec<PlayPanel>,
@@ -83,6 +86,7 @@ impl From<Message> for app::Message {
 pub struct ConsoleFacts {
     pub switches: &'static [ConsoleSwitch],
     pub monochrome_palette: bool,
+    pub supports_sgb: bool,
     pub technology: missingno_core::video::DisplayTechnology,
 }
 
@@ -91,6 +95,7 @@ impl ConsoleFacts {
         Self {
             switches: console.console_switches(),
             monochrome_palette: console.uses_monochrome_palette(),
+            supports_sgb: console.supports_sgb(),
             technology: console.video_out(),
         }
     }
@@ -141,6 +146,7 @@ impl Emulator {
             switches,
             switch_levels: switches.iter().map(|s| s.default_high).collect(),
             monochrome_palette: facts.monochrome_palette,
+            supports_sgb: facts.supports_sgb,
             open_panels: Vec::new(),
         };
         this.apply_presentation();
@@ -185,6 +191,11 @@ impl Emulator {
     /// The display technology the loaded console states.
     pub fn technology(&self) -> missingno_core::video::DisplayTechnology {
         self.screen_view.technology()
+    }
+
+    /// Whether the loaded game enables Super Game Boy enhancements.
+    pub fn supports_sgb(&self) -> bool {
+        self.supports_sgb
     }
 
     /// Update the displayed frame from the session's latest-frame slot.
@@ -307,9 +318,17 @@ impl Emulator {
             switch_levels: &self.switch_levels,
             palette: self.palette,
             use_sgb_colors: self.use_sgb_colors,
+            supports_sgb: self.supports_sgb,
+            monochrome_palette: self.monochrome_palette,
+            persistence: self.persistence,
+            pixel_grid: self.pixel_grid,
+            scanlines: self.scanlines,
+            technology: self.technology(),
             play_log,
             has_console: !self.switches.is_empty(),
-            has_display: self.monochrome_palette,
+            // The Display panel now carries options for every system, so it is
+            // available whenever a console is running.
+            has_display: true,
             // Capturing is always available, so the Play log is too.
             has_playlog: true,
         };

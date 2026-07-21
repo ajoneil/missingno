@@ -362,6 +362,10 @@ where
         M::MONOCHROME_PALETTE
     }
 
+    fn supports_sgb(&self) -> bool {
+        Console::cartridge(&self.console).supports_sgb()
+    }
+
     fn set_control(&mut self, control: ControlId, input: ControlInput) {
         let (Some(button), ControlInput::Digital(pressed)) = (button_for_control(control), input)
         else {
@@ -504,6 +508,10 @@ where
 
     fn uses_monochrome_palette(&self) -> bool {
         M::MONOCHROME_PALETTE
+    }
+
+    fn supports_sgb(&self) -> bool {
+        self.core.game_boy().cartridge().supports_sgb()
     }
 
     fn set_control(&mut self, control: ControlId, input: ControlInput) {

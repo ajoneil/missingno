@@ -11,6 +11,7 @@ use iced::{
     Length::{Fill, Fixed},
     widget::{button, column, container, image, row, scrollable, text, toggler},
 };
+use missingno_core::video::DisplayTechnology;
 use missingno_gb::ppu::types::palette::{PaletteChoice, PaletteIndex};
 
 use super::Message;
@@ -85,6 +86,12 @@ pub struct PanelContext<'a> {
     pub switch_levels: &'a [bool],
     pub palette: PaletteChoice,
     pub use_sgb_colors: bool,
+    pub supports_sgb: bool,
+    pub monochrome_palette: bool,
+    pub persistence: bool,
+    pub pixel_grid: bool,
+    pub scanlines: bool,
+    pub technology: DisplayTechnology,
     pub play_log: &'a [PlayLogEntry<'a>],
     pub has_console: bool,
     pub has_display: bool,
@@ -138,7 +145,7 @@ pub fn side_column(
             any = true;
             let body = match panel {
                 PlayPanel::Console => console_body(ctx.switches, ctx.switch_levels),
-                PlayPanel::Display => display_body(ctx.palette, ctx.use_sgb_colors),
+                PlayPanel::Display => display_body(ctx),
                 PlayPanel::PlayLog => playlog_body(ctx.play_log),
             };
             col = col.push(section_card(panel.title(), body));
@@ -209,36 +216,68 @@ fn console_body(switches: &[ConsoleSwitch], levels: &[bool]) -> Element<'static,
     col.into()
 }
 
-fn display_body(current: PaletteChoice, use_sgb_colors: bool) -> Element<'static, app::Message> {
+fn display_body(ctx: &PanelContext) -> Element<'static, app::Message> {
     use crate::app::settings::view::Message as SettingsMessage;
 
     let mut col = column![
-        toggler(use_sgb_colors)
-            .label("Super Game Boy colours")
-            .on_toggle(|enabled| SettingsMessage::SetUseSgbColors(enabled).into())
+        toggler(ctx.persistence)
+            .label("Screen persistence")
+            .on_toggle(|enabled| SettingsMessage::SetPersistence(enabled).into())
             .size(m()),
-        app_text::label("Palette"),
     ]
     .spacing(m());
 
-    for &choice in PaletteChoice::ALL {
-        let pal = choice.palette();
-        let swatches = row![
-            swatch(pal.color(PaletteIndex(0))),
-            swatch(pal.color(PaletteIndex(1))),
-            swatch(pal.color(PaletteIndex(2))),
-            swatch(pal.color(PaletteIndex(3))),
-        ];
-        let tile_content = row![swatches, text(format!("{choice}"))]
-            .spacing(s())
-            .align_y(Center);
-        let tile = if current == choice {
-            buttons::selected_raw(tile_content)
-        } else {
-            buttons::subtle_raw(tile_content)
-                .on_press(SettingsMessage::SelectPalette(choice).into())
-        };
-        col = col.push(tile.width(Fill));
+    // One cosmetic overlay, keyed to the console's display technology.
+    if matches!(ctx.technology, DisplayTechnology::Lcd { .. }) {
+        col = col.push(
+            toggler(ctx.pixel_grid)
+                .label("LCD pixel grid")
+                .on_toggle(|enabled| SettingsMessage::SetPixelGrid(enabled).into())
+                .size(m()),
+        );
+    }
+    if matches!(ctx.technology, DisplayTechnology::Crt { .. }) {
+        col = col.push(
+            toggler(ctx.scanlines)
+                .label("CRT scanlines")
+                .on_toggle(|enabled| SettingsMessage::SetScanlines(enabled).into())
+                .size(m()),
+        );
+    }
+
+    if ctx.monochrome_palette && ctx.supports_sgb {
+        col = col.push(
+            toggler(ctx.use_sgb_colors)
+                .label("Super Game Boy colours")
+                .on_toggle(|enabled| SettingsMessage::SetUseSgbColors(enabled).into())
+                .size(m()),
+        );
+    }
+
+    // The SGB palette overrides the monochrome one, so hide the picker it
+    // would silently ignore.
+    let sgb_overriding = ctx.supports_sgb && ctx.use_sgb_colors;
+    if ctx.monochrome_palette && !sgb_overriding {
+        col = col.push(app_text::label("Palette"));
+        for &choice in PaletteChoice::ALL {
+            let pal = choice.palette();
+            let swatches = row![
+                swatch(pal.color(PaletteIndex(0))),
+                swatch(pal.color(PaletteIndex(1))),
+                swatch(pal.color(PaletteIndex(2))),
+                swatch(pal.color(PaletteIndex(3))),
+            ];
+            let tile_content = row![swatches, text(format!("{choice}"))]
+                .spacing(s())
+                .align_y(Center);
+            let tile = if ctx.palette == choice {
+                buttons::selected_raw(tile_content)
+            } else {
+                buttons::subtle_raw(tile_content)
+                    .on_press(SettingsMessage::SelectPalette(choice).into())
+            };
+            col = col.push(tile.width(Fill));
+        }
     }
     col.into()
 }

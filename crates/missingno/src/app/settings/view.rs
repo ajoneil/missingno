@@ -73,10 +73,11 @@ pub(in crate::app) fn view<'a>(
     listening_for: Option<ListeningFor>,
     detected_cartridge_devices: &'a [crate::cartridge_rw::DetectedDevice],
     technology: Option<missingno_core::video::DisplayTechnology>,
+    sgb_support: Option<bool>,
 ) -> Element<'a, app::Message> {
     let sidebar = sidebar_view(section);
     let content = match section {
-        Section::Display => display_section(settings, technology),
+        Section::Display => display_section(settings, technology, sgb_support),
         Section::General => general_section(settings),
         Section::Controls => controls_section(settings, listening_for),
         Section::Hardware => hardware_section(settings, detected_cartridge_devices),
@@ -265,25 +266,40 @@ fn binding_row(
 fn display_section(
     settings: &super::Settings,
     technology: Option<missingno_core::video::DisplayTechnology>,
+    sgb_support: Option<bool>,
 ) -> Element<'_, app::Message> {
     use missingno_core::video::DisplayTechnology;
     use missingno_gb::ppu::types::palette::{PaletteChoice, PaletteIndex};
 
-    let mut content = column![
-        toggler(settings.use_sgb_colors)
-            .label("Use Super Game Boy colours for supported games")
-            .on_toggle(|enabled| Message::SetUseSgbColors(enabled).into())
-            .size(m()),
-        text("When disabled, the default palette is used for all games.").color(MUTED),
-        horizontal_rule(),
+    // A loaded game reports its own SGB support; with no game the global
+    // preference stays reachable.
+    let sgb_toggler_shown = sgb_support != Some(false);
+    let sgb_overriding = sgb_support == Some(true) && settings.use_sgb_colors;
+
+    let mut content = column![].spacing(m());
+
+    if sgb_toggler_shown {
+        content = content.push(
+            toggler(settings.use_sgb_colors)
+                .label("Use Super Game Boy colours for supported games")
+                .on_toggle(|enabled| Message::SetUseSgbColors(enabled).into())
+                .size(m()),
+        );
+        content = content
+            .push(text("When disabled, the default palette is used for all games.").color(MUTED));
+        content = content.push(horizontal_rule());
+    }
+
+    content = content.push(
         toggler(settings.persistence)
             .label("Screen persistence")
             .on_toggle(|enabled| Message::SetPersistence(enabled).into())
             .size(m()),
+    );
+    content = content.push(
         text("Simulates the display's slow pixel response, blending consecutive frames — flicker effects some games rely on. Off shows each frame crisply, so those games strobe.")
             .color(MUTED),
-    ]
-    .spacing(m());
+    );
 
     // The two cosmetic overlays are shown only for the loaded console's
     // technology — a pixel grid for an LCD, scanlines for a CRT.
@@ -311,37 +327,41 @@ fn display_section(
         );
     }
 
-    content = content.push(horizontal_rule());
-    content = content.push(app_text::label("Palette"));
+    // The SGB palette overrides the monochrome one, so hide the picker it
+    // would silently ignore.
+    if !sgb_overriding {
+        content = content.push(horizontal_rule());
+        content = content.push(app_text::label("Palette"));
 
-    // Palette selector as color tiles
-    let mut palette_row = row![].spacing(m());
+        let mut palette_row = row![].spacing(m());
 
-    for &choice in PaletteChoice::ALL {
-        let palette = choice.palette();
-        let is_selected = settings.palette == choice;
+        for &choice in PaletteChoice::ALL {
+            let palette = choice.palette();
+            let is_selected = settings.palette == choice;
 
-        let swatches = row![
-            color_swatch(palette.color(PaletteIndex(0))),
-            color_swatch(palette.color(PaletteIndex(1))),
-            color_swatch(palette.color(PaletteIndex(2))),
-            color_swatch(palette.color(PaletteIndex(3))),
-        ]
-        .spacing(0);
+            let swatches = row![
+                color_swatch(palette.color(PaletteIndex(0))),
+                color_swatch(palette.color(PaletteIndex(1))),
+                color_swatch(palette.color(PaletteIndex(2))),
+                color_swatch(palette.color(PaletteIndex(3))),
+            ]
+            .spacing(0);
 
-        let label = text(format!("{choice}"));
-        let tile_content = column![swatches, label,].spacing(s()).align_x(Center);
+            let label = text(format!("{choice}"));
+            let tile_content = column![swatches, label,].spacing(s()).align_x(Center);
 
-        let tile = if is_selected {
-            buttons::selected_raw(tile_content)
-        } else {
-            buttons::subtle_raw(tile_content).on_press(Message::SelectPalette(choice).into())
-        };
+            let tile = if is_selected {
+                buttons::selected_raw(tile_content)
+            } else {
+                buttons::subtle_raw(tile_content).on_press(Message::SelectPalette(choice).into())
+            };
 
-        palette_row = palette_row.push(tile);
+            palette_row = palette_row.push(tile);
+        }
+
+        content = content.push(palette_row);
     }
 
-    content = content.push(palette_row);
     let content = content.max_width(600);
 
     iced::widget::scrollable(container(content).padding(l()).width(Fill))

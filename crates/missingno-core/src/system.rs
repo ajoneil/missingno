@@ -205,6 +205,11 @@ pub trait SystemConsole: Send {
     fn uses_monochrome_palette(&self) -> bool {
         false
     }
+    /// Whether the loaded media enables Super Game Boy enhancements (the SGB
+    /// palette override). Only meaningful for the Game Boy; others return false.
+    fn supports_sgb(&self) -> bool {
+        false
+    }
     /// Stereo samples at 44.1 kHz — the seam's fixed rate. Families
     /// convert from their native rate on their own side.
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)>;

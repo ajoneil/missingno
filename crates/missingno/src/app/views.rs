@@ -33,6 +33,16 @@ impl App {
         }
     }
 
+    /// Whether the loaded game supports SGB enhancements: `Some` once a game
+    /// whose support is known is loaded, `None` when none is (so the settings
+    /// screen keeps the global SGB preference reachable).
+    fn current_sgb_support(&self) -> Option<bool> {
+        match &self.game {
+            Game::Loaded(LoadedGame::Emulator(emu)) => Some(emu.supports_sgb()),
+            _ => None,
+        }
+    }
+
     pub fn view(&self) -> Element<'_, Message> {
         // First-boot setup
         if !self.settings.setup_complete {
@@ -61,6 +71,7 @@ impl App {
                 *listening_for,
                 &self.cartridge_rw.detected_devices,
                 self.current_technology(),
+                self.current_sgb_support(),
             ),
             (
                 Screen::ViewingGame {
