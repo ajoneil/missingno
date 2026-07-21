@@ -257,6 +257,23 @@ impl AnyGame {
         });
     }
 
+    pub fn release_publisher(&self, index: usize) -> String {
+        common!(self, g => g
+            .releases
+            .get(index)
+            .and_then(|r| r.publisher.clone())
+            .unwrap_or_default())
+    }
+
+    pub fn set_release_publisher(&mut self, index: usize, value: String) {
+        let publisher = (!value.is_empty()).then_some(value.clone());
+        common!(self, g => {
+            if let Some(release) = g.releases.get_mut(index) {
+                release.publisher = publisher.clone();
+            }
+        });
+    }
+
     pub fn release_titles(&self) -> Vec<String> {
         common!(self, g => g
             .releases

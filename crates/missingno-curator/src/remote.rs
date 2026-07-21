@@ -207,6 +207,8 @@ fn tool_definitions() -> Value {
                     "developer": { "type": "string" },
                     "description": { "type": "string" },
                     "license": { "type": "string" },
+                    "publisher": { "type": "string",
+                                   "description": "publisher of the first release (release-level; UI edits others)" },
                     "covers": { "type": "array", "items": { "type": "string" },
                                 "description": "remote image URLs, preference order" },
                     "wikipedia": { "type": "string", "description": "article URL" },

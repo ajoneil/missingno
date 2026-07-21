@@ -132,6 +132,7 @@ enum Message {
     Search(String),
     Select(usize),
     Edit(TextField, String),
+    EditReleasePublisher(usize, String),
     DescriptionAction(iced::widget::text_editor::Action),
     Enrich,
     Enriched(String, Result<Option<verify::HasheousHit>, String>),
@@ -570,6 +571,12 @@ impl Curator {
                     self.cover_previews.insert(url, handle);
                 }
             }
+            Message::EditReleasePublisher(index, value) => {
+                if let (Ok(db), Some(i)) = (&mut self.db, self.selected) {
+                    db.entries[i].game.set_release_publisher(index, value);
+                    db.entries[i].dirty = true;
+                }
+            }
             Message::Edit(field, value) => {
                 if let (Ok(db), Some(i)) = (&mut self.db, self.selected) {
                     db.entries[i].game.set_text_field(field, value);
@@ -942,6 +949,10 @@ impl Curator {
                     entry.game.set_wikipedia(url);
                     applied.push("wikipedia");
                 }
+                if let Some(publisher) = set.get("publisher").and_then(serde_json::Value::as_str) {
+                    entry.game.set_release_publisher(0, publisher.to_owned());
+                    applied.push("publisher");
+                }
                 if let Some(mapper) = set.get("mapper").and_then(serde_json::Value::as_str)
                     && entry.game.set_mapper(mapper)
                 {
@@ -1287,8 +1298,18 @@ impl Curator {
                     )
                     .push(field("License", TextField::License))
                     .push(text("Releases").size(16));
-                for line in entry.game.release_lines() {
-                    editor = editor.push(text(format!("• {line}")).size(13));
+                for (r, line) in entry.game.release_lines().into_iter().enumerate() {
+                    editor = editor.push(
+                        row![
+                            text(format!("• {line}")).size(13).width(Length::Fill),
+                            text_input("publisher…", &entry.game.release_publisher(r))
+                                .on_input(move |v| Message::EditReleasePublisher(r, v))
+                                .size(13)
+                                .width(Length::Fixed(180.0)),
+                        ]
+                        .spacing(8)
+                        .align_y(iced::Alignment::Center),
+                    );
                 }
                 let entry_key = entry.key();
 
