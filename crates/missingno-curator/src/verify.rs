@@ -48,25 +48,33 @@ pub struct HasheousHit {
     pub wikipedia_url: Option<String>,
 }
 
-/// TOSEC-style flags marking a dump as derived rather than original.
+/// What a TOSEC bracket flag says about a dump. Derived works were made by
+/// someone (mods, with an author and a name); defective dumps were made by
+/// nobody (a dumper did it wrong) and must never be filed as mods.
 /// `[a]` (alternate) and `[!]` (verified) are deliberately absent: an
 /// alternate dump still belongs to the game. Longest flag first, so a
 /// translation is not misread as trained.
-const DERIVED_FLAGS: [(&str, &str); 6] = [
-    ("[tr", "translation"),
-    ("[cr", "cracked"),
-    ("[h", "hack"),
-    ("[t", "trained"),
-    ("[b", "bad dump"),
-    ("[o", "overdump"),
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SigFlag {
+    Derived(&'static str),
+    Defective(&'static str),
+}
+
+const SIG_FLAGS: [(&str, SigFlag); 6] = [
+    ("[tr", SigFlag::Derived("translation")),
+    ("[cr", SigFlag::Derived("cracked")),
+    ("[h", SigFlag::Derived("hack")),
+    ("[t", SigFlag::Derived("trained")),
+    ("[b", SigFlag::Defective("bad dump")),
+    ("[o", SigFlag::Defective("overdump")),
 ];
 
-pub fn derived_reason(signature: &str) -> Option<&'static str> {
+pub fn classify_signature(signature: &str) -> Option<SigFlag> {
     let lower = signature.to_lowercase();
-    DERIVED_FLAGS
+    SIG_FLAGS
         .iter()
         .find(|(flag, _)| lower.contains(flag))
-        .map(|(_, reason)| *reason)
+        .map(|(_, class)| *class)
 }
 
 /// One dump's signature-database answer.
@@ -315,18 +323,32 @@ pub fn gb_header(rom: &[u8]) -> Option<GbHeader> {
 
 #[cfg(test)]
 mod tests {
-    use super::derived_reason;
+    use super::{SigFlag, classify_signature};
 
     #[test]
-    fn derived_flags_classify_and_translation_is_not_trained() {
+    fn flags_classify_and_translation_is_not_trained() {
         assert_eq!(
-            derived_reason("Adventure SI (2003)(Channel2)(NTSC)[h Color Scrolling]"),
-            Some("hack")
+            classify_signature("Adventure SI (2003)(Channel2)(NTSC)[h Color Scrolling]"),
+            Some(SigFlag::Derived("hack"))
         );
-        assert_eq!(derived_reason("Game (1983)[tr de]"), Some("translation"));
-        assert_eq!(derived_reason("Game (1983)[t +5]"), Some("trained"));
-        assert_eq!(derived_reason("Adventure (1978)(Atari)(NTSC)"), None);
-        assert_eq!(derived_reason("Game (1983)[a2]"), None);
-        assert_eq!(derived_reason("Game (1983)[!]"), None);
+        assert_eq!(
+            classify_signature("Game (1983)[tr de]"),
+            Some(SigFlag::Derived("translation"))
+        );
+        assert_eq!(
+            classify_signature("Game (1983)[t +5]"),
+            Some(SigFlag::Derived("trained"))
+        );
+        assert_eq!(
+            classify_signature("Pitfall! (1982) (Activision) [o1]"),
+            Some(SigFlag::Defective("overdump"))
+        );
+        assert_eq!(
+            classify_signature("Game (1983)[b]"),
+            Some(SigFlag::Defective("bad dump"))
+        );
+        assert_eq!(classify_signature("Adventure (1978)(Atari)(NTSC)"), None);
+        assert_eq!(classify_signature("Game (1983)[a2]"), None);
+        assert_eq!(classify_signature("Game (1983)[!]"), None);
     }
 }

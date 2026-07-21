@@ -5,7 +5,8 @@ use std::{fs, io, path::PathBuf, process::Command};
 
 use missingno_gamedb::{
     Date, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Link, LinkType, Mod, ModCategory, ModOf,
-    ModRelease, Platform, Release, Sha1, Tree, Vcs, Verification, VerificationMethod,
+    ModRelease, Platform, Release, ReleaseStatus, Sha1, Tree, Vcs, Verification,
+    VerificationMethod,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -496,6 +497,38 @@ impl AnyGame {
             .unwrap_or_default())
     }
 
+    pub fn update_release(
+        &mut self,
+        index: usize,
+        status: Option<ReleaseStatus>,
+        title: Option<String>,
+        label: Option<String>,
+        date: Option<missingno_gamedb::ReleaseDate>,
+        publisher: Option<String>,
+    ) -> bool {
+        common!(self, g => {
+            let Some(release) = g.releases.get_mut(index) else {
+                return false;
+            };
+            if let Some(status) = status {
+                release.status = status;
+            }
+            if let Some(title) = title {
+                release.title = (!title.is_empty()).then_some(title);
+            }
+            if let Some(label) = label {
+                release.label = (!label.is_empty()).then_some(label);
+            }
+            if let Some(date) = date {
+                release.date = Some(date);
+            }
+            if let Some(publisher) = publisher {
+                release.publisher = (!publisher.is_empty()).then_some(publisher);
+            }
+            true
+        })
+    }
+
     pub fn set_release_publisher(&mut self, index: usize, value: String) {
         let publisher = (!value.is_empty()).then_some(value.clone());
         common!(self, g => {
@@ -726,6 +759,20 @@ pub fn parse_link_type(value: &str) -> Result<LinkType, String> {
     })
 }
 
+pub fn parse_release_status(value: &str) -> Result<ReleaseStatus, String> {
+    Ok(match value {
+        "Released" => ReleaseStatus::Released,
+        "WorkInProgress" => ReleaseStatus::WorkInProgress,
+        "Beta" => ReleaseStatus::Beta,
+        "Prototype" => ReleaseStatus::Prototype,
+        other => {
+            return Err(format!(
+                "unknown status {other:?}; expected Released, WorkInProgress, Beta, or Prototype"
+            ));
+        }
+    })
+}
+
 pub fn parse_mod_category(value: &str) -> Result<ModCategory, String> {
     Ok(match value {
         "Translation" => ModCategory::Translation,
@@ -815,6 +862,86 @@ fn split_hack_from<P: Platform>(
         });
     }
     None
+}
+
+/// Move `sha1` into its own release (a pre-retail build, say), inheriting the
+/// source release's hardware and publisher — but not its date: a prototype's
+/// date is not the retail date.
+fn split_release_from<P: Platform>(
+    source: &mut Game<P>,
+    sha1: &str,
+    status: ReleaseStatus,
+    title: Option<String>,
+    label: Option<String>,
+    date: Option<missingno_gamedb::ReleaseDate>,
+) -> bool {
+    for at in 0..source.releases.len() {
+        let Some(pos) = source.releases[at]
+            .artifacts
+            .iter()
+            .position(|a| a.sha1.as_str() == sha1)
+        else {
+            continue;
+        };
+        let artifact = source.releases[at].artifacts.remove(pos);
+        let hardware = source.releases[at].hardware.clone();
+        let publisher = source.releases[at].publisher.clone();
+        let regions = source.releases[at].regions.clone();
+        source.releases.push(Release {
+            title,
+            label,
+            regions,
+            date,
+            publisher,
+            status,
+            hardware,
+            sources: Vec::new(),
+            artifacts: vec![artifact],
+        });
+        return true;
+    }
+    false
+}
+
+/// Move `sha1` into an existing release; releases left with neither artifacts
+/// nor sources stopped describing anything and are pruned.
+fn move_artifact_in<P: Platform>(
+    source: &mut Game<P>,
+    sha1: &str,
+    to_index: usize,
+) -> Result<bool, String> {
+    if to_index >= source.releases.len() {
+        return Err(format!(
+            "no release {to_index}; entry has {}",
+            source.releases.len()
+        ));
+    }
+    let mut from = None;
+    for (r, release) in source.releases.iter().enumerate() {
+        if release.artifacts.iter().any(|a| a.sha1.as_str() == sha1) {
+            from = Some(r);
+            break;
+        }
+    }
+    let Some(from) = from else {
+        return Err(format!("{sha1} is not a release artifact of this entry"));
+    };
+    if from == to_index {
+        return Err("artifact is already in that release".to_owned());
+    }
+    let pos = source.releases[from]
+        .artifacts
+        .iter()
+        .position(|a| a.sha1.as_str() == sha1)
+        .expect("found above");
+    let artifact = source.releases[from].artifacts.remove(pos);
+    source.releases[to_index].artifacts.push(artifact);
+    let emptied =
+        source.releases[from].artifacts.is_empty() && source.releases[from].sources.is_empty();
+    if emptied {
+        source.releases.remove(from);
+    }
+    Ok(emptied)
 }
 
 /// Move `sha1` out of its release into a mod attached to the same game.
@@ -1094,6 +1221,50 @@ impl Db {
         Ok(format!("{}/{slug}", tree.dir()))
     }
 
+    /// An artifact that is really its own release (prototype, beta build).
+    pub fn split_release(
+        &mut self,
+        entry: usize,
+        sha1: &str,
+        status: ReleaseStatus,
+        title: Option<String>,
+        label: Option<String>,
+        date: Option<missingno_gamedb::ReleaseDate>,
+    ) -> Result<(), String> {
+        let split = match &mut self.entries[entry].game {
+            AnyGame::Gb(g) => split_release_from(g, sha1, status, title, label, date),
+            AnyGame::Gbc(g) => split_release_from(g, sha1, status, title, label, date),
+            AnyGame::Vcs(g) => split_release_from(g, sha1, status, title, label, date),
+        };
+        if !split {
+            return Err(format!("{sha1} is not a release artifact of this entry"));
+        }
+        // Reorganising the entry changes what it claims: un-vouch it.
+        self.entries[entry].game.clear_curations();
+        self.entries[entry].dirty = true;
+        self.write_entry(entry).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Move a dump into another release; returns whether the source release
+    /// was pruned (a release that only existed because of the dump).
+    pub fn move_artifact(
+        &mut self,
+        entry: usize,
+        sha1: &str,
+        to_index: usize,
+    ) -> Result<bool, String> {
+        let emptied = match &mut self.entries[entry].game {
+            AnyGame::Gb(g) => move_artifact_in(g, sha1, to_index),
+            AnyGame::Gbc(g) => move_artifact_in(g, sha1, to_index),
+            AnyGame::Vcs(g) => move_artifact_in(g, sha1, to_index),
+        }?;
+        self.entries[entry].game.clear_curations();
+        self.entries[entry].dirty = true;
+        self.write_entry(entry).map_err(|e| e.to_string())?;
+        Ok(emptied)
+    }
+
     pub fn commit(&mut self, message: &str) -> Result<String, String> {
         let run = |args: &[&str]| {
             let output = Command::new("git")
@@ -1343,5 +1514,85 @@ mod verification_tests {
             VerificationMethod::Signature { entry, .. } if entry.ends_with("(PAL)")
         ));
         assert_eq!(g.curated.len(), 1, "verification never clears curations");
+    }
+}
+
+#[cfg(test)]
+mod release_surgery_tests {
+    use super::*;
+    use missingno_gamedb::ReleaseStatus;
+
+    fn pitfall_like() -> AnyGame {
+        AnyGame::Vcs(
+            Game::from_ron(
+                r#"(
+    title: "Pitfall!",
+    curated: [(by: "andrew", date: "2026-07-21")],
+    releases: [
+        (
+            regions: [Usa],
+            hardware: (tv_format: Some(Ntsc), cart_type: Some("4K")),
+            artifacts: [
+                (sha1: "8d52548063ba852f47ae0d0d8b7f6c847bb5f5b0"),
+                (sha1: "c084539e364cfb0b1c74ba55ff2dee76d5e2f36f"),
+            ],
+        ),
+        (
+            regions: [Usa],
+            hardware: (tv_format: Some(Ntsc), cart_type: Some("F6")),
+            artifacts: [(sha1: "a10308a3f1051068c908d1e29fd57de5b911d31d")],
+        ),
+    ],
+)"#,
+            )
+            .unwrap(),
+        )
+    }
+
+    #[test]
+    fn split_release_leaves_retail_intact_and_skips_retail_date() {
+        let mut any = pitfall_like();
+        let AnyGame::Vcs(g) = &mut any else {
+            unreachable!()
+        };
+        let ok = split_release_from(
+            g,
+            "c084539e364cfb0b1c74ba55ff2dee76d5e2f36f",
+            ReleaseStatus::Prototype,
+            Some("Jungle Runner".to_owned()),
+            None,
+            None,
+        );
+        assert!(ok);
+        assert_eq!(g.releases.len(), 3);
+        assert_eq!(g.releases[0].artifacts.len(), 1, "retail keeps its dump");
+        let proto = &g.releases[2];
+        assert_eq!(proto.status, ReleaseStatus::Prototype);
+        assert_eq!(proto.title.as_deref(), Some("Jungle Runner"));
+        assert_eq!(
+            proto.date, None,
+            "a prototype never inherits the retail date"
+        );
+        assert_eq!(
+            proto.hardware.cart_type.as_deref(),
+            Some("4K"),
+            "hardware inherited"
+        );
+    }
+
+    #[test]
+    fn moving_the_overdump_prunes_the_fabricated_release() {
+        let mut any = pitfall_like();
+        let AnyGame::Vcs(g) = &mut any else {
+            unreachable!()
+        };
+        let emptied = move_artifact_in(g, "a10308a3f1051068c908d1e29fd57de5b911d31d", 0).unwrap();
+        assert!(
+            emptied,
+            "the F6 release existed only because of the overdump"
+        );
+        assert_eq!(g.releases.len(), 1);
+        assert_eq!(g.releases[0].artifacts.len(), 3);
+        assert_eq!(g.releases[0].hardware.cart_type.as_deref(), Some("4K"));
     }
 }

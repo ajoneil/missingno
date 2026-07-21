@@ -291,6 +291,44 @@ fn tool_definitions() -> Value {
             }), &["key", "mod", "set"]),
         },
         {
+            "name": "split_release",
+            "description": "An artifact that is really its own release — a (Prototype) or (Beta) build sitting in the retail release: move it into a new release with the given status, inheriting hardware and publisher but not the retail date. Keep a working title (e.g. 'Jungle Runner') via title.",
+            "inputSchema": object(json!({
+                "key": { "type": "string" },
+                "sha1": { "type": "string" },
+                "status": { "type": "string",
+                            "enum": ["Released", "WorkInProgress", "Beta", "Prototype"] },
+                "title": { "type": "string" },
+                "label": { "type": "string" },
+                "date": { "type": "string" },
+            }), &["key", "sha1", "status"]),
+        },
+        {
+            "name": "update_release",
+            "description": "Set fields on an existing release: status, title, label, date, publisher.",
+            "inputSchema": object(json!({
+                "key": { "type": "string" },
+                "release_index": { "type": "integer" },
+                "set": { "type": "object", "properties": {
+                    "status": { "type": "string",
+                                "enum": ["Released", "WorkInProgress", "Beta", "Prototype"] },
+                    "title": { "type": "string" },
+                    "label": { "type": "string" },
+                    "date": { "type": "string" },
+                    "publisher": { "type": "string" },
+                }},
+            }), &["key", "release_index", "set"]),
+        },
+        {
+            "name": "move_artifact",
+            "description": "Move a dump into another release (by index). Use when a defective dump fabricated a release — an 8K overdump of a 4K game fingerprints as the wrong board and invents a product that never shipped; moving the dump out prunes a release left with nothing.",
+            "inputSchema": object(json!({
+                "key": { "type": "string" },
+                "sha1": { "type": "string" },
+                "to_release_index": { "type": "integer" },
+            }), &["key", "sha1", "to_release_index"]),
+        },
+        {
             "name": "label_artifact",
             "description": "Give a dump a short distinguishing label ('alt', 'overdump', 'PAL conversion') so multiple hashes in one release are tellable apart.",
             "inputSchema": object(json!({

@@ -720,19 +720,46 @@ impl Curator {
                         match outcome {
                             verify::SigResult::Found { signature, game } => {
                                 let evidence = signature.clone().unwrap_or_else(|| game.clone());
-                                match verify::derived_reason(&evidence) {
-                                    Some(reason) => lines.push(format!(
-                                        "{short}… DERIVED ({reason}): {evidence} —                                          consider mark_hack"
-                                    )),
-                                    None => {
-                                        if db.entries[i].game.record_signature(
-                                            sha1, "Hasheous", &evidence,
-                                        ) {
+                                match verify::classify_signature(&evidence) {
+                                    Some(verify::SigFlag::Derived(reason)) => {
+                                        lines.push(format!(
+                                            "{short}… DERIVED ({reason}): {evidence} —                                              someone made this; judge and mark_hack"
+                                        ));
+                                    }
+                                    Some(verify::SigFlag::Defective(reason)) => {
+                                        // A dumper's mistake, not a work: the
+                                        // evidence IS the record; nothing moves.
+                                        if db.entries[i]
+                                            .game
+                                            .record_signature(sha1, "Hasheous", &evidence)
+                                        {
                                             recorded += 1;
                                             db.entries[i].dirty = true;
                                         }
                                         lines.push(format!(
-                                            "{short}… confirmed: {evidence}"
+                                            "{short}… DEFECTIVE ({reason}): {evidence} —                                              evidence recorded; label_artifact it, and if it                                              fabricated a release (wrong board from an                                              overdump), move_artifact into the real one"
+                                        ));
+                                    }
+                                    None => {
+                                        if db.entries[i]
+                                            .game
+                                            .record_signature(sha1, "Hasheous", &evidence)
+                                        {
+                                            recorded += 1;
+                                            db.entries[i].dirty = true;
+                                        }
+                                        let lower = evidence.to_lowercase();
+                                        let suggest = if lower.contains("(prototype)")
+                                            || lower.contains("(proto)")
+                                        {
+                                            " — a prototype build: consider split_release                                              (keep any working title it carries)"
+                                        } else if lower.contains("(beta)") {
+                                            " — a beta build: consider split_release"
+                                        } else {
+                                            ""
+                                        };
+                                        lines.push(format!(
+                                            "{short}… confirmed: {evidence}{suggest}"
                                         ));
                                     }
                                 }
@@ -1535,6 +1562,119 @@ impl Curator {
                         text_result(format!("updated mod on {key}: {}", applied.join(", ")))
                     }
                     None => error_result(format!("mod {mod_name:?} vanished mid-edit")),
+                }
+            }
+            "split_release" => {
+                let (Some(key), Some(sha1), Some(status)) =
+                    (str_arg("key"), str_arg("sha1"), str_arg("status"))
+                else {
+                    return error_result("missing key, sha1, or status");
+                };
+                let status = match db::parse_release_status(status) {
+                    Ok(status) => status,
+                    Err(e) => return error_result(e),
+                };
+                let date = match str_arg("date") {
+                    Some(d) => Some(match d.parse::<missingno_gamedb::ReleaseDate>() {
+                        Ok(d) => d,
+                        Err(e) => return error_result(e),
+                    }),
+                    None => None,
+                };
+                let Some(i) = self.find_entry(key) else {
+                    return error_result(format!("no entry {key}"));
+                };
+                let title = str_arg("title").map(str::to_owned);
+                let label = str_arg("label").map(str::to_owned);
+                let Ok(db) = &mut self.db else {
+                    return error_result("db not loaded");
+                };
+                match db.split_release(i, sha1, status, title, label, date) {
+                    Ok(()) => text_result(format!(
+                        "{sha1} moved into its own {status:?} release of {key}; the entry                          is re-opened for review"
+                    )),
+                    Err(e) => error_result(e),
+                }
+            }
+            "update_release" => {
+                let (Some(key), Some(index)) = (
+                    str_arg("key"),
+                    args.get("release_index")
+                        .and_then(serde_json::Value::as_u64),
+                ) else {
+                    return error_result("missing key or release_index");
+                };
+                let Some(set) = args.get("set").and_then(serde_json::Value::as_object) else {
+                    return error_result("missing set object");
+                };
+                let set_str = |k: &str| set.get(k).and_then(serde_json::Value::as_str);
+                let status = match set_str("status") {
+                    Some(s) => Some(match db::parse_release_status(s) {
+                        Ok(s) => s,
+                        Err(e) => return error_result(e),
+                    }),
+                    None => None,
+                };
+                let date = match set_str("date") {
+                    Some(d) => Some(match d.parse::<missingno_gamedb::ReleaseDate>() {
+                        Ok(d) => d,
+                        Err(e) => return error_result(e),
+                    }),
+                    None => None,
+                };
+                let Some(i) = self.find_entry(key) else {
+                    return error_result(format!("no entry {key}"));
+                };
+                let title = set_str("title").map(str::to_owned);
+                let label = set_str("label").map(str::to_owned);
+                let publisher = set_str("publisher").map(str::to_owned);
+                if status.is_none()
+                    && title.is_none()
+                    && label.is_none()
+                    && date.is_none()
+                    && publisher.is_none()
+                {
+                    return error_result("no recognized fields in set");
+                }
+                let Ok(db) = &mut self.db else {
+                    return error_result("db not loaded");
+                };
+                if db.entries[i].game.update_release(
+                    index as usize,
+                    status,
+                    title,
+                    label,
+                    date,
+                    publisher,
+                ) {
+                    db.entries[i].game.clear_curations();
+                    db.entries[i].dirty = true;
+                    text_result(format!("release {index} of {key} updated"))
+                } else {
+                    error_result(format!("{key} has no release {index}"))
+                }
+            }
+            "move_artifact" => {
+                let (Some(key), Some(sha1), Some(to)) = (
+                    str_arg("key"),
+                    str_arg("sha1"),
+                    args.get("to_release_index")
+                        .and_then(serde_json::Value::as_u64),
+                ) else {
+                    return error_result("missing key, sha1, or to_release_index");
+                };
+                let Some(i) = self.find_entry(key) else {
+                    return error_result(format!("no entry {key}"));
+                };
+                let Ok(db) = &mut self.db else {
+                    return error_result("db not loaded");
+                };
+                match db.move_artifact(i, sha1, to as usize) {
+                    Ok(true) => text_result(format!(
+                        "{sha1} moved; its old release had nothing else and was removed                          (it only existed because of this dump)"
+                    )),
+                    Ok(false) => text_result(format!("{sha1} moved")),
+                    Err(e) => error_result(e),
                 }
             }
             "label_artifact" => {
