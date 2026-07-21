@@ -4,8 +4,8 @@
 use std::{fs, io, path::PathBuf, process::Command};
 
 use missingno_gamedb::{
-    Date, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Link, LinkType, ModCategory, ModOf,
-    Platform, Release, Sha1, Tree, Vcs,
+    Date, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Link, LinkType, Mod, ModCategory, ModOf,
+    ModRelease, Platform, Release, Sha1, Tree, Vcs,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -216,6 +216,7 @@ impl AnyGame {
             if let Some(release) = g.releases.get_mut(at) {
                 release.artifacts.push(missingno_gamedb::Artifact {
                     sha1,
+                    label: None,
                     size: Some(size),
                 });
                 true
@@ -277,12 +278,90 @@ impl AnyGame {
         common!(self, g => g.tags.clone())
     }
 
-    pub fn release_artifact_sha1s(&self, index: usize) -> Vec<String> {
+    pub fn release_artifacts(&self, index: usize) -> Vec<(String, String)> {
         common!(self, g => g
             .releases
             .get(index)
-            .map(|r| r.artifacts.iter().map(|a| a.sha1.as_str().to_owned()).collect())
+            .map(|r| r
+                .artifacts
+                .iter()
+                .map(|a| (
+                    a.sha1.as_str().to_owned(),
+                    a.label.clone().unwrap_or_default(),
+                ))
+                .collect())
             .unwrap_or_default())
+    }
+
+    pub fn set_artifact_label(&mut self, sha1: &str, label: &str) -> bool {
+        let value = (!label.is_empty()).then(|| label.to_owned());
+        common!(self, g => {
+            for release in &mut g.releases {
+                if let Some(artifact) =
+                    release.artifacts.iter_mut().find(|a| a.sha1.as_str() == sha1)
+                {
+                    artifact.label = value.clone();
+                    return true;
+                }
+            }
+            false
+        })
+    }
+
+    /// One display line per attached mod, with its links.
+    pub fn mod_lines(&self) -> Vec<(String, Vec<(String, String)>)> {
+        common!(self, g => g
+            .mods
+            .iter()
+            .map(|m| {
+                let curations = if m.curated.is_empty() {
+                    " · unreviewed".to_owned()
+                } else {
+                    format!(
+                        " · curated by {}",
+                        m.curated
+                            .iter()
+                            .map(|c| format!(
+                                "{}{}",
+                                c.by,
+                                if c.recommended { " ★" } else { "" }
+                            ))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+                (
+                    format!(
+                        "{} · {:?}{} · {} version(s){curations}",
+                        m.name,
+                        m.category,
+                        m.author
+                            .as_ref()
+                            .map(|a| format!(" · by {a}"))
+                            .unwrap_or_default(),
+                        m.releases.len()
+                    ),
+                    m.links.iter().map(|l| (l.name.clone(), l.url.clone())).collect(),
+                )
+            })
+            .collect())
+    }
+
+    /// Endorse one attached mod, independently of the game.
+    pub fn stamp_mod_curation(&mut self, index: usize, by: &str, recommended: bool) -> bool {
+        let stamp = missingno_gamedb::Curation {
+            by: by.to_owned(),
+            date: Db::today(),
+            recommended,
+        };
+        common!(self, g => {
+            let Some(m) = g.mods.get_mut(index) else { return false };
+            match m.curated.iter_mut().find(|c| c.by == stamp.by) {
+                Some(existing) => *existing = stamp.clone(),
+                None => m.curated.push(stamp.clone()),
+            }
+            true
+        })
     }
 
     pub fn release_publisher(&self, index: usize) -> String {
@@ -506,6 +585,7 @@ fn split_hack_from<P: Platform>(
     title: String,
     category: ModCategory,
     base: Sha1,
+    homepage: Option<String>,
 ) -> Option<Game<P>> {
     for release in &mut source.releases {
         let Some(at) = release
@@ -523,7 +603,15 @@ fn split_hack_from<P: Platform>(
             description: None,
             license: None,
             tags: Vec::new(),
-            links: Vec::new(),
+            links: homepage
+                .map(|url| {
+                    vec![Link {
+                        name: "Homepage".to_owned(),
+                        url,
+                        link_type: LinkType::Community,
+                    }]
+                })
+                .unwrap_or_default(),
             covers: Vec::new(),
             screenshots: Vec::new(),
             mod_of: Some(ModOf {
@@ -531,6 +619,7 @@ fn split_hack_from<P: Platform>(
                 category,
                 patch: None,
             }),
+            mods: Vec::new(),
             curated: Vec::new(),
             releases: vec![Release {
                 title: None,
@@ -546,6 +635,52 @@ fn split_hack_from<P: Platform>(
         });
     }
     None
+}
+
+/// Move `sha1` out of its release into a mod attached to the same game.
+fn attach_mod<P: Platform>(
+    source: &mut Game<P>,
+    sha1: &str,
+    name: String,
+    category: ModCategory,
+    homepage: Option<String>,
+) -> bool {
+    for release in &mut source.releases {
+        let Some(at) = release
+            .artifacts
+            .iter()
+            .position(|a| a.sha1.as_str() == sha1)
+        else {
+            continue;
+        };
+        let artifact = release.artifacts.remove(at);
+        let base_sha1 = release.artifacts.first().map(|a| a.sha1.clone());
+        source.mods.push(Mod {
+            name,
+            category,
+            author: None,
+            curated: Vec::new(),
+            links: homepage
+                .map(|url| {
+                    vec![Link {
+                        name: "Homepage".to_owned(),
+                        url,
+                        link_type: LinkType::Community,
+                    }]
+                })
+                .unwrap_or_default(),
+            releases: vec![ModRelease {
+                label: None,
+                date: None,
+                base_sha1,
+                patch: None,
+                sources: Vec::new(),
+                artifacts: vec![artifact],
+            }],
+        });
+        return true;
+    }
+    false
 }
 
 pub struct EntryHandle {
@@ -626,6 +761,7 @@ impl Db {
             .join("data")
             .join(entry.tree.dir())
             .join(&entry.slug);
+        fs::create_dir_all(&dir)?;
         fs::write(dir.join("manifest.ron"), text)?;
         entry.dirty = false;
         self.uncommitted += 1;
@@ -638,8 +774,9 @@ impl Db {
         Ok(())
     }
 
-    /// A dump that turned out to be a hack: pull it out of `source` and give
-    /// it its own derived-work entry pointing at its base. Returns the new key.
+    /// A dump that turned out to be a hack. Small modifications (QoL, content
+    /// changes) become a mod attached to the same game; translations and total
+    /// conversions get their own derived-work entry. Returns where it went.
     pub fn mark_hack(
         &mut self,
         source: usize,
@@ -647,6 +784,40 @@ impl Db {
         title: Option<String>,
         category: ModCategory,
         base_override: Option<String>,
+        homepage: Option<String>,
+    ) -> Result<String, String> {
+        if matches!(
+            category,
+            ModCategory::QualityOfLife | ModCategory::ContentChange
+        ) {
+            let source_title = self.entries[source].game.title().to_owned();
+            let name = title.unwrap_or_else(|| format!("Unnamed hack of {source_title}"));
+            let attached = match &mut self.entries[source].game {
+                AnyGame::Gb(g) => attach_mod(g, sha1, name.clone(), category, homepage),
+                AnyGame::Gbc(g) => attach_mod(g, sha1, name.clone(), category, homepage),
+                AnyGame::Vcs(g) => attach_mod(g, sha1, name.clone(), category, homepage),
+            };
+            if !attached {
+                return Err(format!("{sha1} is not an artifact of this entry"));
+            }
+            self.entries[source].dirty = true;
+            self.write_entry(source).map_err(|e| e.to_string())?;
+            return Ok(format!(
+                "{} (as attached mod {name:?})",
+                self.entries[source].key()
+            ));
+        }
+        self.split_out_conversion(source, sha1, title, category, base_override, homepage)
+    }
+
+    fn split_out_conversion(
+        &mut self,
+        source: usize,
+        sha1: &str,
+        title: Option<String>,
+        category: ModCategory,
+        base_override: Option<String>,
+        homepage: Option<String>,
     ) -> Result<String, String> {
         let tree = self.entries[source].tree;
         let source_title = self.entries[source].game.title().to_owned();
@@ -684,9 +855,15 @@ impl Db {
         }
 
         let hack = match &mut self.entries[source].game {
-            AnyGame::Gb(g) => split_hack_from(g, sha1, title, category, base).map(AnyGame::Gb),
-            AnyGame::Gbc(g) => split_hack_from(g, sha1, title, category, base).map(AnyGame::Gbc),
-            AnyGame::Vcs(g) => split_hack_from(g, sha1, title, category, base).map(AnyGame::Vcs),
+            AnyGame::Gb(g) => {
+                split_hack_from(g, sha1, title, category, base, homepage).map(AnyGame::Gb)
+            }
+            AnyGame::Gbc(g) => {
+                split_hack_from(g, sha1, title, category, base, homepage).map(AnyGame::Gbc)
+            }
+            AnyGame::Vcs(g) => {
+                split_hack_from(g, sha1, title, category, base, homepage).map(AnyGame::Vcs)
+            }
         }
         .ok_or("artifact vanished mid-operation")?;
 

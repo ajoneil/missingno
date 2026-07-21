@@ -110,10 +110,14 @@ While the developer plays the current game:
    playtest booted a hack, that button will fetch the hack's metadata: check which dump
    the entry actually leads with before trusting what it returns.
 
-   When a hash is confirmed to be a hacked or modified dump, `mark_hack` splits it into
-   its own derived-work entry with the base recorded (supply the hack's real title if
-   known). Never leave a hack lumped in with real dumps, and never silently delete the
-   hash.
+   When a hash is confirmed to be a hacked or modified dump, `mark_hack` moves it out of
+   the real dumps: small modifications (QualityOfLife/ContentChange) become a mod attached
+   to the same game — supply its real name and homepage `url` when known — while
+   Translation/TotalConversion split into their own entry. Never leave a hack lumped in
+   with real dumps, and never silently delete the hash. When one release holds several
+   legitimate dumps, `label_artifact` gives each a short distinguishing label. Mods are
+   curated independently of their game — note anything you learn about a mod's quality,
+   but the endorsement buttons are the developer's.
 3. Research the gaps — empty developer/description/license, suspicious titles, flag
    questions. Source preference: existing structured sources first (the gamedb itself,
    pouet.net data dumps, gbdev database, publisher/developer sites), then ordinary web

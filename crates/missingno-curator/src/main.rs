@@ -93,6 +93,9 @@ struct Curator {
     booting: bool,
     playing: Option<(String, play::PlaySession)>,
     play_frame: Option<iced::widget::image::Handle>,
+    playing_sha1: Option<String>,
+    /// Guards frame-loop messages from superseded play sessions.
+    play_generation: u64,
     /// Agent-driven curation queue of entry keys; front = current.
     queue: std::collections::VecDeque<String>,
     /// entry key → the agent's explanation of its edits and sources.
@@ -127,7 +130,8 @@ struct Curator {
 enum Message {
     Remote(Bridge),
     Play(BootSource),
-    PlayFrame,
+    PlayFrame(u64),
+    PlayEnded(u64),
     StopPlay,
     Pad(u8, bool),
     Boot(BootSource),
@@ -143,7 +147,8 @@ enum Message {
     Select(usize),
     Edit(TextField, String),
     EditReleasePublisher(usize, String),
-    MarkHack(String),
+    SetArtifactLabel(String, String),
+    CurateMod { index: usize, recommend: bool },
     DescriptionAction(iced::widget::text_editor::Action),
     Enrich,
     Enriched(String, Result<Option<verify::HasheousHit>, String>),
@@ -252,6 +257,8 @@ impl Curator {
                 booting: false,
                 playing: None,
                 play_frame: None,
+                playing_sha1: None,
+                play_generation: 0,
                 queue: std::collections::VecDeque::new(),
                 agent_notes: std::collections::HashMap::new(),
                 play_after_fetch: None,
@@ -340,16 +347,25 @@ impl Curator {
                             let events = session.events.clone();
                             self.playing = Some((key, session));
                             self.play_frame = None;
+                            self.playing_sha1 = Some(match &source {
+                                BootSource::Cached(sha1) => sha1.clone(),
+                                BootSource::File(_) => verify::sha1_hex(&bytes),
+                            });
+                            self.play_generation += 1;
+                            let generation = self.play_generation;
                             return Task::perform(
                                 smol::unblock(move || play::await_frame(&events)),
-                                |_| Message::PlayFrame,
+                                move |_| Message::PlayFrame(generation),
                             );
                         }
                         Err(e) => self.status = format!("play failed: {e}"),
                     }
                 }
             }
-            Message::PlayFrame => {
+            Message::PlayFrame(generation) => {
+                if generation != self.play_generation {
+                    return Task::none(); // a superseded session's loop
+                }
                 if let Some((_, session)) = &self.playing {
                     if let Some(frame) = session.handle.latest_frame() {
                         let rgba = frame.resolve_rgba();
@@ -366,19 +382,28 @@ impl Curator {
                     let events = session.events.clone();
                     return Task::perform(
                         smol::unblock(move || play::await_frame(&events)),
-                        |alive| {
+                        move |alive| {
                             if alive {
-                                Message::PlayFrame
+                                Message::PlayFrame(generation)
                             } else {
-                                Message::StopPlay
+                                Message::PlayEnded(generation)
                             }
                         },
                     );
                 }
             }
+            Message::PlayEnded(generation) => {
+                if generation == self.play_generation {
+                    self.playing = None;
+                    self.play_frame = None;
+                    self.playing_sha1 = None;
+                }
+            }
             Message::StopPlay => {
                 self.playing = None;
                 self.play_frame = None;
+                self.playing_sha1 = None;
+                self.play_generation += 1;
             }
             Message::Pad(id, pressed) => {
                 if let Some((_, session)) = &self.playing {
@@ -599,21 +624,23 @@ impl Curator {
                     self.cover_failed.insert(url);
                 }
             },
-            Message::MarkHack(sha1) => {
+            Message::CurateMod { index, recommend } => {
                 if let (Ok(db), Some(i)) = (&mut self.db, self.selected) {
-                    match db.mark_hack(
-                        i,
-                        &sha1,
-                        None,
-                        missingno_gamedb::ModCategory::ContentChange,
-                        None,
-                    ) {
-                        Ok(new_key) => {
-                            self.status =
-                                format!("split {sha1} into {new_key} — rename it as needed")
+                    let by = self.curator_name.clone();
+                    if db.entries[i].game.stamp_mod_curation(index, &by, recommend) {
+                        db.entries[i].dirty = true;
+                        match db.write_entry(i) {
+                            Ok(()) => self.status = "mod endorsed".to_owned(),
+                            Err(e) => self.status = format!("write failed: {e}"),
                         }
-                        Err(e) => self.status = format!("mark hack failed: {e}"),
                     }
+                }
+            }
+            Message::SetArtifactLabel(sha1, label) => {
+                if let (Ok(db), Some(i)) = (&mut self.db, self.selected)
+                    && db.entries[i].game.set_artifact_label(&sha1, &label)
+                {
+                    db.entries[i].dirty = true;
                 }
             }
             Message::EditReleasePublisher(index, value) => {
@@ -1211,11 +1238,31 @@ impl Curator {
                 let Ok(db) = &mut self.db else {
                     return error_result("db not loaded");
                 };
-                match db.mark_hack(i, sha1, title, category, base) {
-                    Ok(new_key) => text_result(format!(
-                        "{sha1} split out of {key} into {new_key} (mod_of base recorded);                          retitle it with update_game if you know the hack's real name"
-                    )),
+                let homepage = str_arg("url").map(str::to_owned);
+                match db.mark_hack(i, sha1, title, category, base, homepage) {
+                    Ok(destination) => {
+                        text_result(format!("{sha1} moved out of {key}'s dumps → {destination}"))
+                    }
                     Err(e) => error_result(e),
+                }
+            }
+            "label_artifact" => {
+                let (Some(key), Some(sha1), Some(label)) =
+                    (str_arg("key"), str_arg("sha1"), str_arg("label"))
+                else {
+                    return error_result("missing key, sha1, or label");
+                };
+                let Some(i) = self.find_entry(key) else {
+                    return error_result(format!("no entry {key}"));
+                };
+                let Ok(db) = &mut self.db else {
+                    return error_result("db not loaded");
+                };
+                if db.entries[i].game.set_artifact_label(sha1, label) {
+                    db.entries[i].dirty = true;
+                    text_result(format!("labelled {sha1} {label:?}"))
+                } else {
+                    error_result(format!("{sha1} is not an artifact of {key}"))
                 }
             }
             "find_duplicates" => {
@@ -1547,18 +1594,70 @@ impl Curator {
                                 text(line).size(13),
                                 {
                                     let mut artifacts = column![].spacing(2);
-                                    for sha1 in entry.game.release_artifact_sha1s(r) {
+                                    for (sha1, label) in entry.game.release_artifacts(r) {
                                         let short = format!("{}…", &sha1[..12]);
-                                        artifacts = artifacts.push(
-                                            row![
-                                                text(short).size(12).width(Length::Fill),
-                                                button(text("⚠ hack").size(11))
-                                                    .style(button::danger)
-                                                    .on_press(Message::MarkHack(sha1.clone())),
-                                            ]
-                                            .spacing(8)
-                                            .align_y(iced::Alignment::Center),
+                                        let local = self
+                                            .rom_index
+                                            .as_ref()
+                                            .and_then(|index| index.by_sha1.get(&sha1));
+                                        let playable =
+                                            local.is_some() || self.rom_cache.contains_key(&sha1);
+                                        let playing_this =
+                                            self.playing_sha1.as_deref() == Some(sha1.as_str());
+                                        let mut line =
+                                            row![].spacing(8).align_y(iced::Alignment::Center);
+                                        line = line.push(
+                                            text(if playing_this {
+                                                format!("▶ {short}")
+                                            } else {
+                                                short
+                                            })
+                                            .size(12),
                                         );
+                                        line = line.push({
+                                            let sha1_for_label = sha1.clone();
+                                            text_input("label…", &label)
+                                                .on_input(move |v| {
+                                                    Message::SetArtifactLabel(
+                                                        sha1_for_label.clone(),
+                                                        v,
+                                                    )
+                                                })
+                                                .size(12)
+                                                .width(Length::Fixed(140.0))
+                                        });
+                                        if let Some(path) = local {
+                                            let file = path
+                                                .file_name()
+                                                .map(|f| f.to_string_lossy().into_owned())
+                                                .unwrap_or_default();
+                                            line =
+                                                line.push(text(file).size(11).width(Length::Fill));
+                                        } else {
+                                            line = line.push(Space::new().width(Length::Fill));
+                                        }
+                                        if playable {
+                                            let source = if let Some(path) = local {
+                                                BootSource::File(path.clone())
+                                            } else {
+                                                BootSource::Cached(sha1.clone())
+                                            };
+                                            line = line.push(
+                                                button(
+                                                    text(if playing_this {
+                                                        "playing"
+                                                    } else {
+                                                        "Play ▶"
+                                                    })
+                                                    .size(11),
+                                                )
+                                                .on_press_maybe(
+                                                    (!playing_this)
+                                                        .then_some(Message::Play(source)),
+                                                ),
+                                            );
+                                        }
+                                        artifacts = artifacts.push(line);
                                     }
                                     artifacts
                                 },
@@ -1580,6 +1679,40 @@ impl Curator {
                 }
                 let entry_key = entry.key();
 
+                let mods = entry.game.mod_lines();
+                if !mods.is_empty() {
+                    editor = editor.push(text("Mods").size(16));
+                    for (index, (line, links)) in mods.into_iter().enumerate() {
+                        editor = editor.push(
+                            row![
+                                text(format!("• {line}")).size(13).width(Length::Fill),
+                                button(text("✓").size(12)).on_press(Message::CurateMod {
+                                    index,
+                                    recommend: false,
+                                }),
+                                button(text("★").size(12)).on_press(Message::CurateMod {
+                                    index,
+                                    recommend: true,
+                                }),
+                            ]
+                            .spacing(6)
+                            .align_y(iced::Alignment::Center),
+                        );
+                        for (name, url) in links {
+                            editor = editor.push(
+                                row![
+                                    Space::new().width(Length::Fixed(16.0)),
+                                    button(text(name).size(12))
+                                        .style(button::text)
+                                        .on_press(Message::OpenLink(url.clone())),
+                                    text(url).size(11).width(Length::Fill),
+                                ]
+                                .spacing(8)
+                                .align_y(iced::Alignment::Center),
+                            );
+                        }
+                    }
+                }
                 editor = editor.push(text("Verify").size(16));
                 if let Some(line) = self.verify_status.get(&entry_key) {
                     editor = editor.push(text(line.clone()).size(13));
@@ -1597,18 +1730,10 @@ impl Curator {
                 }
                 if let Some(sha1) = self.fetched_sha1.get(&entry_key) {
                     editor = editor.push(
-                        row![
-                            button(text("Boot fetched ROM (300 frames)").size(13)).on_press_maybe(
-                                (!self.booting)
-                                    .then(|| Message::Boot(BootSource::Cached(sha1.clone()))),
-                            ),
-                            button(text("Play ▶").size(13)).on_press_maybe(
-                                self.playing
-                                    .is_none()
-                                    .then(|| Message::Play(BootSource::Cached(sha1.clone()))),
-                            ),
-                        ]
-                        .spacing(8),
+                        button(text("Boot fetched ROM (300 frames)").size(13)).on_press_maybe(
+                            (!self.booting)
+                                .then(|| Message::Boot(BootSource::Cached(sha1.clone()))),
+                        ),
                     );
                 }
                 match &self.rom_index {
@@ -1626,11 +1751,6 @@ impl Curator {
                                         .width(Length::Fill),
                                         button(text("Boot").size(13)).on_press_maybe(
                                             (!self.booting).then(|| Message::Boot(
-                                                BootSource::File(path.clone())
-                                            )),
-                                        ),
-                                        button(text("Play ▶").size(13)).on_press_maybe(
-                                            self.playing.is_none().then(|| Message::Play(
                                                 BootSource::File(path.clone())
                                             )),
                                         ),

@@ -249,7 +249,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "mark_hack",
-            "description": "A hash in an entry turned out to be a hacked/modified dump, not a real one: split it into its own derived-work entry (mod_of pointing at the base artifact). Defaults: base = the entry's first other artifact, category ContentChange, title \"Hack of <game>\" — supply title when the hack's real name is known.",
+            "description": "A hash in an entry turned out to be a hacked/modified dump. Small modifications (category QualityOfLife or ContentChange, the default) become a mod ATTACHED to the same game — its own name, homepage link, versions and independent curation. Translation/TotalConversion split into their own derived-work entry. Supply title (the mod's real name) and url (its homepage) whenever known.",
             "inputSchema": object(json!({
                 "key": { "type": "string" },
                 "sha1": { "type": "string" },
@@ -257,7 +257,17 @@ fn tool_definitions() -> Value {
                 "category": { "type": "string",
                               "enum": ["Translation", "QualityOfLife", "ContentChange", "TotalConversion"] },
                 "base_sha1": { "type": "string" },
+                "url": { "type": "string", "description": "the mod's homepage" },
             }), &["key", "sha1"]),
+        },
+        {
+            "name": "label_artifact",
+            "description": "Give a dump a short distinguishing label ('alt', 'overdump', 'PAL conversion') so multiple hashes in one release are tellable apart.",
+            "inputSchema": object(json!({
+                "key": { "type": "string" },
+                "sha1": { "type": "string" },
+                "label": { "type": "string" },
+            }), &["key", "sha1", "label"]),
         },
         {
             "name": "find_duplicates",
