@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 //! missingno-curator — review, enrich, and confirm gamedb entries.
 //!
 //! v1: Backlog (uncurated entries) and Flags drain through one list+editor
@@ -141,6 +143,7 @@ enum Message {
     Select(usize),
     Edit(TextField, String),
     EditReleasePublisher(usize, String),
+    MarkHack(String),
     DescriptionAction(iced::widget::text_editor::Action),
     Enrich,
     Enriched(String, Result<Option<verify::HasheousHit>, String>),
@@ -596,6 +599,23 @@ impl Curator {
                     self.cover_failed.insert(url);
                 }
             },
+            Message::MarkHack(sha1) => {
+                if let (Ok(db), Some(i)) = (&mut self.db, self.selected) {
+                    match db.mark_hack(
+                        i,
+                        &sha1,
+                        None,
+                        missingno_gamedb::ModCategory::ContentChange,
+                        None,
+                    ) {
+                        Ok(new_key) => {
+                            self.status =
+                                format!("split {sha1} into {new_key} — rename it as needed")
+                        }
+                        Err(e) => self.status = format!("mark hack failed: {e}"),
+                    }
+                }
+            }
             Message::EditReleasePublisher(index, value) => {
                 if let (Ok(db), Some(i)) = (&mut self.db, self.selected) {
                     db.entries[i].game.set_release_publisher(index, value);
@@ -1172,6 +1192,32 @@ impl Curator {
                     lines.join("\n")
                 })
             }
+            "mark_hack" => {
+                let (Some(key), Some(sha1)) = (str_arg("key"), str_arg("sha1")) else {
+                    return error_result("missing key or sha1");
+                };
+                let Some(i) = self.find_entry(key) else {
+                    return error_result(format!("no entry {key}"));
+                };
+                let category = match str_arg("category") {
+                    Some(c) => match db::parse_mod_category(c) {
+                        Ok(c) => c,
+                        Err(e) => return error_result(e),
+                    },
+                    None => missingno_gamedb::ModCategory::ContentChange,
+                };
+                let title = str_arg("title").map(str::to_owned);
+                let base = str_arg("base_sha1").map(str::to_owned);
+                let Ok(db) = &mut self.db else {
+                    return error_result("db not loaded");
+                };
+                match db.mark_hack(i, sha1, title, category, base) {
+                    Ok(new_key) => text_result(format!(
+                        "{sha1} split out of {key} into {new_key} (mod_of base recorded);                          retitle it with update_game if you know the hack's real name"
+                    )),
+                    Err(e) => error_result(e),
+                }
+            }
             "find_duplicates" => {
                 let Some(key) = str_arg("key") else {
                     return error_result("missing key");
@@ -1462,7 +1508,7 @@ impl Curator {
                             iced::widget::text_editor(&self.description)
                                 .placeholder("multi-line description…")
                                 .on_action(Message::DescriptionAction)
-                                .height(Length::Fixed(110.0)),
+                                .height(Length::Shrink),
                         ]
                         .spacing(8),
                     )
@@ -1499,6 +1545,23 @@ impl Curator {
                         container(
                             column![
                                 text(line).size(13),
+                                {
+                                    let mut artifacts = column![].spacing(2);
+                                    for sha1 in entry.game.release_artifact_sha1s(r) {
+                                        let short = format!("{}…", &sha1[..12]);
+                                        artifacts = artifacts.push(
+                                            row![
+                                                text(short).size(12).width(Length::Fill),
+                                                button(text("⚠ hack").size(11))
+                                                    .style(button::danger)
+                                                    .on_press(Message::MarkHack(sha1.clone())),
+                                            ]
+                                            .spacing(8)
+                                            .align_y(iced::Alignment::Center),
+                                        );
+                                    }
+                                    artifacts
+                                },
                                 row![
                                     text("Publisher").size(13).width(Length::Fixed(90.0)),
                                     text_input("publisher…", &entry.game.release_publisher(r))

@@ -248,6 +248,18 @@ fn tool_definitions() -> Value {
             }), &[]),
         },
         {
+            "name": "mark_hack",
+            "description": "A hash in an entry turned out to be a hacked/modified dump, not a real one: split it into its own derived-work entry (mod_of pointing at the base artifact). Defaults: base = the entry's first other artifact, category ContentChange, title \"Hack of <game>\" — supply title when the hack's real name is known.",
+            "inputSchema": object(json!({
+                "key": { "type": "string" },
+                "sha1": { "type": "string" },
+                "title": { "type": "string" },
+                "category": { "type": "string",
+                              "enum": ["Translation", "QualityOfLife", "ContentChange", "TotalConversion"] },
+                "base_sha1": { "type": "string" },
+            }), &["key", "sha1"]),
+        },
+        {
             "name": "find_duplicates",
             "description": "Entries whose normalized title (or any localized release title) collides with this game's — merge candidates. Run this for every game you curate; duplicates hide under punctuation, articles, and localized names.",
             "inputSchema": object(json!({ "key": { "type": "string" } }), &["key"]),

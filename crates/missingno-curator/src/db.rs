@@ -4,7 +4,8 @@
 use std::{fs, io, path::PathBuf, process::Command};
 
 use missingno_gamedb::{
-    Date, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Link, LinkType, Platform, Tree, Vcs,
+    Date, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Link, LinkType, ModCategory, ModOf,
+    Platform, Release, Sha1, Tree, Vcs,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -276,6 +277,14 @@ impl AnyGame {
         common!(self, g => g.tags.clone())
     }
 
+    pub fn release_artifact_sha1s(&self, index: usize) -> Vec<String> {
+        common!(self, g => g
+            .releases
+            .get(index)
+            .map(|r| r.artifacts.iter().map(|a| a.sha1.as_str().to_owned()).collect())
+            .unwrap_or_default())
+    }
+
     pub fn release_publisher(&self, index: usize) -> String {
         common!(self, g => g
             .releases
@@ -458,6 +467,87 @@ pub fn parse_link_type(value: &str) -> Result<LinkType, String> {
     })
 }
 
+pub fn parse_mod_category(value: &str) -> Result<ModCategory, String> {
+    Ok(match value {
+        "Translation" => ModCategory::Translation,
+        "QualityOfLife" => ModCategory::QualityOfLife,
+        "ContentChange" => ModCategory::ContentChange,
+        "TotalConversion" => ModCategory::TotalConversion,
+        other => {
+            return Err(format!(
+                "unknown category {other:?}; expected Translation, QualityOfLife,                  ContentChange, or TotalConversion"
+            ));
+        }
+    })
+}
+
+fn slugify(title: &str) -> String {
+    let mut slug = String::new();
+    let mut gap = false;
+    for c in title.chars() {
+        if c.is_ascii_alphanumeric() {
+            if gap && !slug.is_empty() {
+                slug.push('-');
+            }
+            slug.push(c.to_ascii_lowercase());
+            gap = false;
+        } else if c != '\'' && c != '\u{2019}' {
+            gap = true;
+        }
+    }
+    slug
+}
+
+/// Remove `sha1` from whichever release holds it and build the derived-work
+/// entry that inherits that release's status and hardware.
+fn split_hack_from<P: Platform>(
+    source: &mut Game<P>,
+    sha1: &str,
+    title: String,
+    category: ModCategory,
+    base: Sha1,
+) -> Option<Game<P>> {
+    for release in &mut source.releases {
+        let Some(at) = release
+            .artifacts
+            .iter()
+            .position(|a| a.sha1.as_str() == sha1)
+        else {
+            continue;
+        };
+        let artifact = release.artifacts.remove(at);
+        return Some(Game {
+            title,
+            kind: GameKind::Game,
+            developer: None,
+            description: None,
+            license: None,
+            tags: Vec::new(),
+            links: Vec::new(),
+            covers: Vec::new(),
+            screenshots: Vec::new(),
+            mod_of: Some(ModOf {
+                base_sha1: base,
+                category,
+                patch: None,
+            }),
+            curated: Vec::new(),
+            releases: vec![Release {
+                title: None,
+                label: None,
+                regions: Vec::new(),
+                date: None,
+                publisher: None,
+                status: release.status,
+                hardware: release.hardware.clone(),
+                sources: Vec::new(),
+                artifacts: vec![artifact],
+            }],
+        });
+    }
+    None
+}
+
 pub struct EntryHandle {
     pub tree: TreeId,
     pub slug: String,
@@ -546,6 +636,70 @@ impl Db {
         self.flags.save(&self.repo_root)?;
         self.uncommitted += 1;
         Ok(())
+    }
+
+    /// A dump that turned out to be a hack: pull it out of `source` and give
+    /// it its own derived-work entry pointing at its base. Returns the new key.
+    pub fn mark_hack(
+        &mut self,
+        source: usize,
+        sha1: &str,
+        title: Option<String>,
+        category: ModCategory,
+        base_override: Option<String>,
+    ) -> Result<String, String> {
+        let tree = self.entries[source].tree;
+        let source_title = self.entries[source].game.title().to_owned();
+        if !self.entries[source]
+            .game
+            .artifact_sha1s()
+            .iter()
+            .any(|s| s == sha1)
+        {
+            return Err(format!("{sha1} is not an artifact of this entry"));
+        }
+        let base: Sha1 = match base_override {
+            Some(base) => base.parse()?,
+            None => self.entries[source]
+                .game
+                .artifact_sha1s()
+                .into_iter()
+                .find(|s| s != sha1)
+                .ok_or("no other artifact to use as the base — pass base_sha1")?
+                .parse()?,
+        };
+        let title = title.unwrap_or_else(|| format!("Hack of {source_title}"));
+
+        let mut slug = slugify(&title);
+        let taken: std::collections::HashSet<String> = self
+            .entries
+            .iter()
+            .filter(|e| e.tree == tree)
+            .map(|e| e.slug.clone())
+            .collect();
+        let mut n = 1;
+        while taken.contains(&slug) {
+            n += 1;
+            slug = format!("{}-{n}", slugify(&title));
+        }
+
+        let hack = match &mut self.entries[source].game {
+            AnyGame::Gb(g) => split_hack_from(g, sha1, title, category, base).map(AnyGame::Gb),
+            AnyGame::Gbc(g) => split_hack_from(g, sha1, title, category, base).map(AnyGame::Gbc),
+            AnyGame::Vcs(g) => split_hack_from(g, sha1, title, category, base).map(AnyGame::Vcs),
+        }
+        .ok_or("artifact vanished mid-operation")?;
+
+        self.entries.push(EntryHandle {
+            tree,
+            slug: slug.clone(),
+            game: hack,
+            dirty: true,
+        });
+        let new_index = self.entries.len() - 1;
+        self.write_entry(source).map_err(|e| e.to_string())?;
+        self.write_entry(new_index).map_err(|e| e.to_string())?;
+        Ok(format!("{}/{slug}", tree.dir()))
     }
 
     pub fn commit(&mut self, message: &str) -> Result<String, String> {
