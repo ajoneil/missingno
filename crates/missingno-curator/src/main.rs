@@ -70,6 +70,12 @@ struct Curator {
     booting: bool,
     playing: Option<(String, play::PlaySession)>,
     play_frame: Option<iced::widget::image::Handle>,
+    /// Agent-driven curation queue of entry keys; front = current.
+    queue: std::collections::VecDeque<String>,
+    /// entry key → the agent's explanation of its edits and sources.
+    agent_notes: std::collections::HashMap<String, String>,
+    /// Fetch in flight that should start a playtest when it lands.
+    play_after_fetch: Option<String>,
     /// entry key → last fetched sha1 (bytes live in rom_cache).
     fetched_sha1: std::collections::HashMap<String, String>,
     /// entry key → boot note + screenshot.
@@ -87,8 +93,9 @@ enum Message {
     Pad(u8, bool),
     Boot(BootSource),
     Booted(String, Result<BootDone, String>),
-    Fetch,
+    Fetch { play_after: bool },
     Fetched(String, Result<(String, std::sync::Arc<Vec<u8>>), String>),
+    AcceptNext,
     ScanRoms,
     ScannedRoms(Result<std::sync::Arc<RomIndex>, String>),
     FilterTree(TreeChoice),
@@ -182,6 +189,9 @@ impl Curator {
                 booting: false,
                 playing: None,
                 play_frame: None,
+                queue: std::collections::VecDeque::new(),
+                agent_notes: std::collections::HashMap::new(),
+                play_after_fetch: None,
                 fetched_sha1: std::collections::HashMap::new(),
                 boot_shots: std::collections::HashMap::new(),
                 remote_sink,
@@ -223,8 +233,9 @@ impl Curator {
                 }
             }
             Message::Remote(Bridge::Call(call)) => {
-                let body = self.run_tool(&call.name, &call.args);
+                let (body, task) = self.run_tool_tasked(&call.name, &call.args);
                 let _ = call.reply.send(body);
+                return task;
             }
             Message::Play(source) => {
                 if let (Ok(db), Some(i)) = (&self.db, self.selected) {
@@ -341,13 +352,14 @@ impl Curator {
                     }
                 }
             }
-            Message::Fetch => {
+            Message::Fetch { play_after } => {
                 if let (Ok(db), Some(i)) = (&self.db, self.selected) {
                     let entry = &db.entries[i];
                     let Some(url) = entry.game.download_url() else {
                         return Task::none();
                     };
                     let key = entry.key();
+                    self.play_after_fetch = play_after.then(|| key.clone());
                     self.fetching = true;
                     self.verify_status
                         .insert(key.clone(), format!("fetching {url}…"));
@@ -367,6 +379,7 @@ impl Curator {
                         let size = bytes.len() as u64;
                         self.rom_cache.insert(sha1.clone(), bytes);
                         self.fetched_sha1.insert(key.clone(), sha1.clone());
+                        let sha1_for_play = sha1.clone();
                         let mut line = format!("{} bytes from {url}\nsha1 {sha1}", size);
                         if let Ok(db) = &mut self.db
                             && let Some(i) = db.entries.iter().position(|e| e.key() == key)
@@ -378,12 +391,20 @@ impl Curator {
                                 line.push_str(" — matches a known artifact");
                             }
                         }
-                        self.verify_status.insert(key, line);
+                        self.verify_status.insert(key.clone(), line);
+                        if self.play_after_fetch.as_deref() == Some(key.as_str()) {
+                            self.play_after_fetch = None;
+                            return Task::done(Message::Play(BootSource::Cached(sha1_for_play)));
+                        }
                     }
                     Err(e) => {
                         self.verify_status.insert(key, e);
+                        self.play_after_fetch = None;
                     }
                 }
+            }
+            Message::AcceptNext => {
+                return self.accept_and_next();
             }
             Message::ScanRoms => {
                 if let Some(dir) = self.rom_dir.clone() {
@@ -478,9 +499,119 @@ impl Curator {
         Task::none()
     }
 
+    fn start_playtest_for(&mut self, i: usize) -> Task<Message> {
+        let Ok(db) = &self.db else {
+            return Task::none();
+        };
+        let entry = &db.entries[i];
+        let key = entry.key();
+        self.selected = Some(i);
+        if let Some(index) = &self.rom_index {
+            for sha1 in entry.game.artifact_sha1s() {
+                if let Some(path) = index.by_sha1.get(&sha1) {
+                    return Task::done(Message::Play(BootSource::File(path.clone())));
+                }
+            }
+        }
+        if let Some(sha1) = self.fetched_sha1.get(&key) {
+            return Task::done(Message::Play(BootSource::Cached(sha1.clone())));
+        }
+        if entry.game.download_url().is_some() {
+            return Task::done(Message::Fetch { play_after: true });
+        }
+        self.status = format!("{key}: no local dump and no download source");
+        Task::none()
+    }
+
+    fn accept_and_next(&mut self) -> Task<Message> {
+        let Some(i) = self.selected else {
+            return Task::none();
+        };
+        let key = {
+            let Ok(db) = &mut self.db else {
+                return Task::none();
+            };
+            db.entries[i].game.set_curated(Some(Db::today()));
+            let key = db.entries[i].key();
+            if let Err(e) = db.write_entry(i) {
+                self.status = format!("write failed: {e}");
+                return Task::none();
+            }
+            key
+        };
+        self.status = format!("accepted {key}");
+        if self.queue.front() == Some(&key) {
+            self.queue.pop_front();
+        }
+        self.playing = None;
+        self.play_frame = None;
+        while let Some(next_key) = self.queue.front().cloned() {
+            match self.find_entry(&next_key) {
+                Some(next) => return self.start_playtest_for(next),
+                None => {
+                    self.status = format!("queued {next_key} not found — skipped");
+                    self.queue.pop_front();
+                }
+            }
+        }
+        Task::none()
+    }
+
     fn find_entry(&self, key: &str) -> Option<usize> {
         let Ok(db) = &self.db else { return None };
         db.entries.iter().position(|e| e.key() == key)
+    }
+
+    /// Tools whose effects need follow-up work return it alongside the reply.
+    fn run_tool_tasked(
+        &mut self,
+        name: &str,
+        args: &serde_json::Value,
+    ) -> (serde_json::Value, Task<Message>) {
+        let str_arg = |k: &str| args.get(k).and_then(serde_json::Value::as_str);
+        match name {
+            "queue_games" => {
+                let Some(keys) = args.get("keys").and_then(serde_json::Value::as_array) else {
+                    return (error_result("missing keys array"), Task::none());
+                };
+                let mut queued = Vec::new();
+                let mut missing = Vec::new();
+                for key in keys.iter().filter_map(serde_json::Value::as_str) {
+                    if self.find_entry(key).is_some() {
+                        queued.push(key.to_owned());
+                    } else {
+                        missing.push(key.to_owned());
+                    }
+                }
+                if queued.is_empty() {
+                    return (
+                        error_result(format!("no valid keys (missing: {missing:?})")),
+                        Task::none(),
+                    );
+                }
+                self.queue = queued.iter().cloned().collect();
+                let first = self.find_entry(&queued[0]).expect("validated above");
+                let task = self.start_playtest_for(first);
+                let mut note = format!("queued {} game(s); starting {}", queued.len(), queued[0]);
+                if !missing.is_empty() {
+                    note.push_str(&format!("; not found: {missing:?}"));
+                }
+                (text_result(note), task)
+            }
+            "play_game" => {
+                let Some(key) = str_arg("key") else {
+                    return (error_result("missing key"), Task::none());
+                };
+                match self.find_entry(key) {
+                    Some(i) => {
+                        let task = self.start_playtest_for(i);
+                        (text_result(format!("starting playtest of {key}")), task)
+                    }
+                    None => (error_result(format!("no entry {key}")), Task::none()),
+                }
+            }
+            _ => (self.run_tool(name, args), Task::none()),
+        }
     }
 
     fn run_tool(&mut self, name: &str, args: &serde_json::Value) -> serde_json::Value {
@@ -605,6 +736,25 @@ impl Curator {
                     applied.join(", ")
                 ))
             }
+            "set_note" => {
+                let (Some(key), Some(note)) = (str_arg("key"), str_arg("note")) else {
+                    return error_result("missing key or note");
+                };
+                if self.find_entry(key).is_none() {
+                    return error_result(format!("no entry {key}"));
+                }
+                self.agent_notes.insert(key.to_owned(), note.to_owned());
+                text_result(format!("note shown on {key}"))
+            }
+            "queue_status" => {
+                let preview: Vec<&str> = self.queue.iter().take(10).map(String::as_str).collect();
+                text_result(format!(
+                    "current: {} · {} queued: {}",
+                    self.queue.front().map(String::as_str).unwrap_or("(none)"),
+                    self.queue.len(),
+                    preview.join(", ")
+                ))
+            }
             "select_game" => {
                 let Some(key) = str_arg("key") else {
                     return error_result("missing key");
@@ -687,6 +837,9 @@ impl Curator {
             )));
         }
         top = top.push(text(format!("flags: {}", db.flags.open().count())));
+        if !self.queue.is_empty() {
+            top = top.push(text(format!("queue: {}", self.queue.len())));
+        }
         top = top.push(Space::new().width(Length::Fill));
         top = top.push(text(&self.status).size(13));
         if self.rom_dir.is_some() {
@@ -750,7 +903,7 @@ impl Curator {
         }
         let left = column![filters, scrollable(list).height(Length::Fill)]
             .spacing(12)
-            .width(Length::Fixed(420.0));
+            .width(Length::Fixed(320.0));
 
         // ── Right: editor ─────────────────────────────────────────────
         let right: Element<'_, Message> = match self.selected {
@@ -796,10 +949,9 @@ impl Curator {
                     editor = editor.push(text(line.clone()).size(13));
                 }
                 if entry.game.download_url().is_some() {
-                    editor = editor.push(
-                        button(text("Fetch & hash").size(13))
-                            .on_press_maybe((!self.fetching).then_some(Message::Fetch)),
-                    );
+                    editor = editor.push(button(text("Fetch & hash").size(13)).on_press_maybe(
+                        (!self.fetching).then_some(Message::Fetch { play_after: false }),
+                    ));
                 }
                 if let Some(sha1) = self.fetched_sha1.get(&entry_key) {
                     editor = editor.push(
@@ -875,22 +1027,35 @@ impl Curator {
                         );
                     }
                 }
-                editor = editor.push(
-                    button(text("Confirm ✓ (stamp curated & next)"))
-                        .on_press(Message::ConfirmAndNext),
-                );
+                if let Some(note) = self.agent_notes.get(&entry_key) {
+                    editor = editor.push(text("Agent notes").size(16));
+                    editor = editor.push(text(note.clone()).size(13));
+                }
+                if self.queue.is_empty() {
+                    editor = editor.push(
+                        button(text("Confirm ✓ (stamp curated & next)"))
+                            .on_press(Message::ConfirmAndNext),
+                    );
+                } else {
+                    editor = editor.push(
+                        button(text("Accept ✓ (stamp curated & next in queue)"))
+                            .on_press(Message::AcceptNext),
+                    );
+                }
                 scrollable(editor.padding(4)).into()
             }
             None => container(text("select an entry")).padding(20).into(),
         };
 
-        let right: Element<'_, Message> = match &self.playing {
+        let body: Element<'_, Message> = match &self.playing {
             Some((key, _)) => {
                 let mut pane = column![
                     row![
-                        text(format!("Playing {key} — pad: dpad/stick · south=A/Fire · east=B · start · select"))
-                            .size(13)
-                            .width(Length::Fill),
+                        text(format!(
+                            "Playing {key} — pad: dpad/stick · south=A/Fire · east=B · start · select"
+                        ))
+                        .size(13)
+                        .width(Length::Fill),
                         button(text("Stop ■").size(13)).on_press(Message::StopPlay),
                     ]
                     .spacing(8)
@@ -901,20 +1066,22 @@ impl Curator {
                     pane = pane.push(
                         iced::widget::image(frame.clone())
                             .filter_method(iced::widget::image::FilterMethod::Nearest)
-                            .width(Length::Fixed(480.0)),
+                            .width(Length::Fill),
                     );
                 }
-                column![pane, right].spacing(12).into()
+                row![
+                    left,
+                    container(right).width(Length::FillPortion(2)),
+                    container(pane).width(Length::FillPortion(3)),
+                ]
+                .spacing(16)
+                .into()
             }
-            None => right,
+            None => row![left, container(right).width(Length::Fill)]
+                .spacing(16)
+                .into(),
         };
 
-        column![
-            top,
-            row![left, container(right).width(Length::Fill)].spacing(16)
-        ]
-        .spacing(12)
-        .padding(12)
-        .into()
+        column![top, body].spacing(12).padding(12).into()
     }
 }

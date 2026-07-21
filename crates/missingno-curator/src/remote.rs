@@ -211,6 +211,31 @@ fn tool_definitions() -> Value {
             }), &["key", "set"]),
         },
         {
+            "name": "queue_games",
+            "description": "Set the curation queue (ordered tree/slug keys). The first game auto-downloads (or uses a local dump) and starts playing for the human to playtest; enrich it while they play. When they Accept, the next queued game starts — poll queue_status to follow along.",
+            "inputSchema": object(json!({
+                "keys": { "type": "array", "items": { "type": "string" } },
+            }), &["keys"]),
+        },
+        {
+            "name": "play_game",
+            "description": "Fetch (if needed) and start a live playtest of one game in the curator.",
+            "inputSchema": object(json!({ "key": { "type": "string" } }), &["key"]),
+        },
+        {
+            "name": "queue_status",
+            "description": "Current playtest game and remaining queue.",
+            "inputSchema": object(json!({}), &[]),
+        },
+        {
+            "name": "set_note",
+            "description": "Show the human your reasoning: what you changed, which sources you used, and anything they should double-check. Displayed in the editor next to the Accept button.",
+            "inputSchema": object(json!({
+                "key": { "type": "string" },
+                "note": { "type": "string" },
+            }), &["key", "note"]),
+        },
+        {
             "name": "select_game",
             "description": "Navigate the curator UI to a game so the human sees what you're working on.",
             "inputSchema": object(json!({ "key": { "type": "string" } }), &["key"]),
