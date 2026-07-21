@@ -17,11 +17,28 @@ the one `queue_status` reports as `current`. Curator writes land live in the dev
 window: staging an edit re-opens that entry for review and a note swaps what the editor
 panel shows, so touching a queued-but-not-current game yanks the UI out from under someone
 who is mid-playtest. Before every `update_game`, `set_note` or `resolve_flag`, confirm the
-key you are about to pass equals the current game. Read-only research on later games
-(`get_game`, `find_duplicates`, `list_flags`, web lookups) is harmless and fine to do while
-waiting — but hold the findings in your reply or your own scratch notes and stage nothing
-until that game is current. Do not re-queue, `select_game`, or `play_game` to move the queue
-along either: advancing is the developer's Accept, never yours.
+key you are about to pass equals the current game. Do not re-queue, `select_game`, or
+`play_game` to move the queue along either: advancing is the developer's Accept, never yours.
+
+**Go slow. The playtest is the clock, not your throughput.** This is a session you share with
+someone who is playing a game in front of you — they read what you write and reply to it. The
+failure mode is racing ahead: batching research for games they have not reached, queueing
+dozens of entries at once, or firing off surveys and background agents that bury them in work
+they did not ask for. Concretely:
+
+- **Queue a handful, not the backlog.** Five or ten games, then extend when they run low. A
+  640-entry queue is not a plan, it is a wall. Ask about ordering before a long queue.
+- **Research only the current game.** Not the next one, not the next twenty. Read-only lookups
+  on a later entry are fine when the developer asks about it specifically — otherwise the
+  answer to "what should I do while they play?" is: finish this game well, then talk to them.
+- **No background/subagent fan-out for lookahead research.** One game's research is a handful
+  of sequential lookups you do inline.
+- **When a game is done, stop and say so.** Report what you staged, then wait. Silence from the
+  developer means they are playing, not that you should find more to do. Don't poll
+  `queue_status` in a loop; check it once when you finish, and again when they speak.
+
+A session where you enrich six games thoroughly, at their pace, beats one where you stage forty
+and they trust none of it.
 
 ## Setup
 
@@ -32,12 +49,14 @@ along either: advancing is the developer's Accept, never yours.
    the background from the missingno repo root:
 
    ```
-   cargo run -p missingno-curator -- [--rom-dir <dir>]
+   cargo run --release -p missingno-curator -- [--rom-dir <dir>]
    ```
 
-   (debug build; pass `--rom-dir` whenever the ask involves the developer's own collection —
-   it auto-scans at startup). Wait for `ui-<pid>.sock` to appear (the build can take a couple
-   of minutes cold), then connect with the **missingno-remote** MCP server's `attach` tool.
+   **Release, always** — this is a standing exception to the repo's debug-by-default rule. The
+   developer playtests through this window, and a debug-build emulator runs too slowly to judge
+   a game by. Pass `--rom-dir` whenever the ask involves the developer's own collection — it
+   auto-scans at startup. Wait for `ui-<pid>.sock` to appear (a cold release build takes several
+   minutes), then connect with the **missingno-remote** MCP server's `attach` tool.
    If more than one UI socket is published, attach to the one whose app is
    `net.andyofniall.missingno-curator`.
 3. Call `status` to see the queue counts, then build the work list:
@@ -102,6 +121,10 @@ While the developer plays the current game:
    don't spin on polling, and don't stage anything for the next game to fill the time (see
    *One game at a time*). A quiet queue usually means they are still playing; talking to
    them about the game in front of them is the useful move.
+
+The developer may simply close the curator window: the background process exiting with
+status 0 means the session is over — summarize what was done and stop. Do not restart the
+curator or treat the exit as a failure unless it actually reported one.
 
 When the queue empties, summarize the session (games enriched, sources used, flags proposed/
 resolved, anything skipped and why) and remind the developer that the staged work commits

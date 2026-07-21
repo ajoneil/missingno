@@ -68,6 +68,7 @@ pub fn main() -> iced::Result {
     .theme(Curator::theme)
     .subscription(Curator::subscription)
     .window_size(iced::Size::new(1280.0, 800.0))
+    .exit_on_close_request(false)
     .run()
 }
 
@@ -148,6 +149,7 @@ enum Message {
     FlagNote(String),
     SaveFlag,
     ToggleList,
+    CloseRequested,
     ResolveFlag(u32),
     Commit,
 }
@@ -201,6 +203,12 @@ impl Curator {
     fn subscription(&self) -> iced::Subscription<Message> {
         let mut subscriptions = vec![
             iced::Subscription::run(play::gamepad_worker).map(|(id, on)| Message::Pad(id, on)),
+            iced::event::listen_with(|event, _, _| match event {
+                iced::Event::Window(iced::window::Event::CloseRequested) => {
+                    Some(Message::CloseRequested)
+                }
+                _ => None,
+            }),
         ];
         if self._remote.is_some() {
             subscriptions.push(iced::Subscription::run(remote::worker).map(Message::Remote));
@@ -673,6 +681,15 @@ impl Curator {
                         }
                     }
                 }
+            }
+            Message::CloseRequested => {
+                // Tear down in order on this thread — session first (its worker
+                // and the cpal stream go quietly), then the socket — so the
+                // process exits 0 and an attached agent sees a clean end.
+                self.playing = None;
+                self.play_frame = None;
+                self._remote = None;
+                return iced::window::latest().and_then(iced::window::close);
             }
             Message::ToggleList => self.list_visible = !self.list_visible,
             Message::ResolveFlag(id) => {
