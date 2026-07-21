@@ -21,6 +21,10 @@ pub fn sha1_hex(bytes: &[u8]) -> String {
 
 pub fn fetch(url: &str) -> Result<Vec<u8>, String> {
     let response = ureq::get(url)
+        .header(
+            "User-Agent",
+            concat!("missingno-curator/", env!("CARGO_PKG_VERSION")),
+        )
         .call()
         .map_err(|e| format!("download failed: {e}"))?;
     response

@@ -104,6 +104,8 @@ struct Curator {
     description: iced::widget::text_editor::Content,
     /// cover url → fetched preview.
     cover_previews: std::collections::HashMap<String, iced::widget::image::Handle>,
+    /// cover urls that failed to fetch (shown as an error instead of silence).
+    cover_failed: std::collections::HashSet<String>,
     enriching: bool,
     remote_sink: SharedSink,
     _remote: Option<RemoteEndpoint>,
@@ -243,6 +245,7 @@ impl Curator {
                 boot_shots: std::collections::HashMap::new(),
                 description: iced::widget::text_editor::Content::new(),
                 cover_previews: std::collections::HashMap::new(),
+                cover_failed: std::collections::HashSet::new(),
                 enriching: false,
                 remote_sink,
                 _remote: endpoint,
@@ -572,11 +575,15 @@ impl Curator {
                     Err(e) => self.status = format!("Hasheous: {e}"),
                 }
             }
-            Message::CoverLoaded(url, handle) => {
-                if let Some(handle) = handle {
+            Message::CoverLoaded(url, handle) => match handle {
+                Some(handle) => {
+                    self.cover_failed.remove(&url);
                     self.cover_previews.insert(url, handle);
                 }
-            }
+                None => {
+                    self.cover_failed.insert(url);
+                }
+            },
             Message::EditReleasePublisher(index, value) => {
                 if let (Ok(db), Some(i)) = (&mut self.db, self.selected) {
                     db.entries[i].game.set_release_publisher(index, value);
@@ -712,7 +719,7 @@ impl Curator {
         let Some(url) = db.entries[i].game.covers().first().cloned() else {
             return Task::none();
         };
-        if self.cover_previews.contains_key(&url) {
+        if self.cover_previews.contains_key(&url) || self.cover_failed.contains(&url) {
             return Task::none();
         }
         let fetch_url = url.clone();
@@ -876,7 +883,18 @@ impl Curator {
                     None => (error_result(format!("no entry {key}")), Task::none()),
                 }
             }
-            _ => (self.run_tool(name, args), Task::none()),
+            _ => {
+                let body = self.run_tool(name, args);
+                // Agent-staged covers should appear without further clicks.
+                let task = if name == "update_game" {
+                    self.selected
+                        .map(|i| self.load_cover_task(i))
+                        .unwrap_or_else(Task::none)
+                } else {
+                    Task::none()
+                };
+                (body, task)
+            }
         }
     }
 
@@ -1348,11 +1366,18 @@ impl Curator {
                     .size(13),
                 ]
                 .spacing(10);
-                if let Some(url) = entry.game.covers().first()
-                    && let Some(preview) = self.cover_previews.get(url)
-                {
-                    editor = editor
-                        .push(iced::widget::image(preview.clone()).height(Length::Fixed(160.0)));
+                if let Some(url) = entry.game.covers().first() {
+                    if let Some(preview) = self.cover_previews.get(url) {
+                        editor = editor.push(
+                            iced::widget::image(preview.clone())
+                                .content_fit(iced::ContentFit::Contain)
+                                .height(Length::Fixed(240.0)),
+                        );
+                    } else if self.cover_failed.contains(url) {
+                        editor = editor.push(text(format!("cover failed to load: {url}")).size(12));
+                    } else {
+                        editor = editor.push(text("cover loading…").size(12));
+                    }
                 }
                 editor = editor
                     .push(field("Title", TextField::Title))
