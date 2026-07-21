@@ -110,6 +110,8 @@ struct Curator {
     curator_name: String,
     /// Stamp the next confirm as an editor's-choice recommendation.
     recommend_next: bool,
+    /// The filter/list column; hidden automatically when an agent queues work.
+    list_visible: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -139,6 +141,7 @@ enum Message {
     CoverLoaded(String, Option<iced::widget::image::Handle>),
     ConfirmAndNext,
     RecommendNext(bool),
+    ToggleList,
     ResolveFlag(u32),
     Commit,
 }
@@ -241,6 +244,7 @@ impl Curator {
                 _remote: endpoint,
                 curator_name,
                 recommend_next: false,
+                list_visible: true,
             },
             // A --rom-dir given at launch (e.g. by an agent starting the
             // curator) scans immediately; nothing to click.
@@ -614,6 +618,7 @@ impl Curator {
                 }
             }
             Message::RecommendNext(v) => self.recommend_next = v,
+            Message::ToggleList => self.list_visible = !self.list_visible,
             Message::ResolveFlag(id) => {
                 if let Ok(db) = &mut self.db {
                     if let Some(flag) = db.flags.flags.iter_mut().find(|f| f.id == id) {
@@ -801,6 +806,7 @@ impl Curator {
                     );
                 }
                 self.queue = queued.iter().cloned().collect();
+                self.list_visible = false;
                 let first = self.find_entry(&queued[0]).expect("validated above");
                 let task = self.start_playtest_for(first);
                 let mut note = format!("queued {} game(s); starting {}", queued.len(), queued[0]);
@@ -1169,6 +1175,10 @@ impl Curator {
         }
         top = top.push(Space::new().width(Length::Fill));
         top = top.push(text(&self.status).size(13));
+        top = top.push(
+            button(text(if self.list_visible { "☰ hide list" } else { "☰ list" }).size(13))
+                .on_press(Message::ToggleList),
+        );
         if self.rom_dir.is_some() {
             let label = match &self.rom_index {
                 Some(index) => format!("Rescan ROMs ({})", index.scanned),
@@ -1427,6 +1437,7 @@ impl Curator {
             None => container(text("select an entry")).padding(20).into(),
         };
 
+        let left: Option<Element<'_, Message>> = self.list_visible.then_some(left.into());
         let body: Element<'_, Message> = match &self.playing {
             Some((key, _)) => {
                 let mut pane = column![
@@ -1455,17 +1466,21 @@ impl Curator {
                         .height(Length::Fill),
                     );
                 }
-                row![
-                    left,
-                    container(right).width(Length::FillPortion(2)),
-                    container(pane).width(Length::FillPortion(3)),
-                ]
-                .spacing(16)
-                .into()
+                let mut body = row![].spacing(16);
+                if let Some(left) = left {
+                    body = body.push(left);
+                }
+                body.push(container(right).width(Length::FillPortion(2)))
+                    .push(container(pane).width(Length::FillPortion(3)))
+                    .into()
             }
-            None => row![left, container(right).width(Length::Fill)]
-                .spacing(16)
-                .into(),
+            None => {
+                let mut body = row![].spacing(16);
+                if let Some(left) = left {
+                    body = body.push(left);
+                }
+                body.push(container(right).width(Length::Fill)).into()
+            }
         };
 
         column![top, body].spacing(12).padding(12).into()
