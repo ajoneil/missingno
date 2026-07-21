@@ -21,7 +21,9 @@ use super::bridge::{AutomationBridge, AutomationCall};
 use super::capture::{base64_encode, encode_png, physical_crop};
 use super::registry::{self, Screen, UiContext};
 use super::{CollectBounds, Msg, UiKind, UiNode};
-use crate::app::{App, DetailSubScreen, Game, LoadedGame, Message, Screen as AppScreen};
+use crate::app::{
+    App, DetailSubScreen, FlashState, Game, LoadedGame, Message, PendingAction, Screen as AppScreen,
+};
 
 /// The window's minimum content size, matched to `run`'s window settings so a
 /// sub-minimum resize can lift it and restore it afterwards.
@@ -669,11 +671,13 @@ fn window_json(window: (Option<f32>, Option<f32>), scale: Option<f32>) -> Value 
 fn screen_name(screen: Screen) -> &'static str {
     match screen {
         Screen::Library => "library",
+        Screen::GameDetail => "game_detail",
+        Screen::CartridgeActions => "cartridge_actions",
+        Screen::FlashCartridge => "flash_cartridge",
         Screen::HomebrewBrowser => "homebrew_browser",
         Screen::ScreenshotGallery => "screenshot_gallery",
         Screen::Settings => "settings",
         Screen::Emulator => "emulator",
-        Screen::Other => "other",
     }
 }
 
@@ -691,8 +695,9 @@ fn status_text(app: &App) -> String {
     };
     format!(
         "screen: {}\nwindow: {size}\nscale: {scale}\ngame loaded: {loaded}\nrunning: {}\n\
-         debugger: {}\n(UI automation coverage is partial: action bar, library, settings, \
-         emulator controls.)",
+         debugger: {}\n(Every screen exposes its navigation and primary actions; \
+         per-item lists — activity log entries, homebrew and gallery thumbnails — \
+         are not individually registered.)",
         screen_name(ctx.screen),
         ctx.running,
         ctx.is_debugger,
@@ -704,14 +709,25 @@ impl App {
     fn ui_context(&self) -> UiContext {
         let screen = match &self.screen {
             AppScreen::Library { .. } => Screen::Library,
-            AppScreen::HomebrewBrowser { .. } => Screen::HomebrewBrowser,
+            AppScreen::ViewingGame {
+                sub_screen: DetailSubScreen::Detail { .. },
+                ..
+            } => Screen::GameDetail,
+            AppScreen::ViewingGame {
+                sub_screen: DetailSubScreen::CartridgeActions { .. },
+                ..
+            } => Screen::CartridgeActions,
+            AppScreen::ViewingGame {
+                sub_screen: DetailSubScreen::FlashCartridge { .. },
+                ..
+            } => Screen::FlashCartridge,
             AppScreen::ViewingGame {
                 sub_screen: DetailSubScreen::ScreenshotGallery { .. },
                 ..
             } => Screen::ScreenshotGallery,
+            AppScreen::HomebrewBrowser { .. } => Screen::HomebrewBrowser,
             AppScreen::Settings { .. } => Screen::Settings,
             AppScreen::Emulator => Screen::Emulator,
-            _ => Screen::Other,
         };
         let games = if matches!(screen, Screen::Library) {
             self.store
@@ -735,14 +751,79 @@ impl App {
             AppScreen::Settings { section, .. } => *section,
             _ => crate::app::settings::view::Section::default(),
         };
+        let viewing_sha1 = self.viewing_sha1().map(str::to_string);
+        let (detail_has_rom, detail_game_loaded, detail_cartridge_actions) =
+            match viewing_sha1.as_deref() {
+                Some(sha1) if matches!(screen, Screen::GameDetail) => self.detail_affordances(sha1),
+                _ => (false, false, false),
+            };
+        let flash_in_progress = matches!(
+            &self.screen,
+            AppScreen::ViewingGame {
+                sub_screen: DetailSubScreen::FlashCartridge {
+                    flash_state: FlashState::InProgress(_),
+                },
+                ..
+            }
+        );
+        let homebrew_entry_selected = matches!(
+            &self.screen,
+            AppScreen::HomebrewBrowser { state } if state.selected_slug.is_some()
+        );
         UiContext {
             screen,
             running: self.running(),
             is_debugger: matches!(self.game, Game::Loaded(LoadedGame::Debugger(_))),
+            debugger_enabled: self.debugger_enabled,
+            menu_open: self.menu_open,
+            confirm_accept_label: self.pending_action.as_ref().map(confirm_accept_label),
             games,
             settings_section,
             allow_external_clients: self.settings.allow_external_clients,
             allow_ui_automation: self.settings.allow_ui_automation,
+            library_layout: self.settings.library_layout,
+            homebrew_available: self.settings.internet_enabled
+                && self.settings.homebrew_hub_enabled,
+            homebrew_entry_selected,
+            viewing_sha1,
+            detail_has_rom,
+            detail_game_loaded,
+            detail_cartridge_actions,
+            flash_in_progress,
         }
     }
+
+    /// The detail screen's conditional affordances for a viewed game: whether it
+    /// has a ROM on disk, is currently loaded, and offers cartridge actions.
+    fn detail_affordances(&self, sha1: &str) -> (bool, bool, bool) {
+        let Some(entry) = self.store.entry(sha1) else {
+            return (false, false, false);
+        };
+        let has_rom = entry.rom_paths.iter().any(|path| path.exists());
+        let game_loaded = self
+            .current_game
+            .as_ref()
+            .map(|current| current.entry.sha1 == sha1 && matches!(self.game, Game::Loaded(_)))
+            .unwrap_or(false);
+        let cartridge_actions = self.inserted_cartridge().is_some_and(|cart| {
+            let matches = entry
+                .header_title
+                .as_ref()
+                .is_some_and(|title| title == &cart.title);
+            matches || cart.flashable()
+        });
+        (has_rom, game_loaded, cartridge_actions)
+    }
+}
+
+/// The confirm button's label for a pending action, matching the shell's dialog.
+fn confirm_accept_label(action: &PendingAction) -> String {
+    match action {
+        PendingAction::SwitchGame(_) => "Close Game",
+        PendingAction::CloseApp => "Quit",
+        PendingAction::ResetEmulator => "Reset",
+        PendingAction::StopGame => "Stop",
+        PendingAction::RemoveGameFromLibrary => "Remove",
+    }
+    .to_string()
 }

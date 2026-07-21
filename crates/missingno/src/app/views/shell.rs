@@ -7,6 +7,7 @@ use iced::{
 };
 
 use super::friendly_ago;
+use crate::app::automation::ids;
 use crate::app::ui::{
     buttons, containers, fonts,
     icons::{self, Icon},
@@ -43,6 +44,7 @@ impl App {
         match &self.screen {
             Screen::Library { .. } | Screen::HomebrewBrowser { .. } => {
                 items = items.push(menu_item(
+                    ids::MENU_OPEN_ROM,
                     Icon::FolderOpen,
                     "Open ROM file...",
                     load::Message::Pick.into(),
@@ -54,28 +56,33 @@ impl App {
                 ..
             } => {
                 items = items.push(menu_item(
+                    ids::MENU_OPEN_ROM,
                     Icon::FolderOpen,
                     "Open ROM file...",
                     load::Message::Pick.into(),
                 ));
                 items = items.push(menu_divider());
                 items = items.push(menu_item(
+                    ids::MENU_IMPORT_SAVE,
                     Icon::Download,
                     "Import Save...",
                     Message::Detail(DetailMessage::ImportSave),
                 ));
                 items = items.push(menu_item(
+                    ids::MENU_OPEN_FOLDER,
                     Icon::FolderOpen,
                     "Open Folder",
                     Message::Detail(DetailMessage::OpenGameFolder),
                 ));
                 items = items.push(menu_item(
+                    ids::MENU_REFRESH_METADATA,
                     Icon::Globe,
                     "Refresh Metadata",
                     Message::Detail(DetailMessage::RefreshMetadata),
                 ));
                 items = items.push(menu_divider());
                 items = items.push(menu_item_danger(
+                    ids::MENU_REMOVE_GAME,
                     Icon::Close,
                     "Remove Game",
                     Message::Detail(DetailMessage::RemoveGame),
@@ -85,6 +92,7 @@ impl App {
             Screen::Emulator => {
                 if !self.debugger_enabled {
                     items = items.push(menu_item(
+                        ids::MENU_DEBUGGER,
                         Icon::Debug,
                         "Debugger",
                         Message::ToggleDebugger(true),
@@ -93,20 +101,28 @@ impl App {
                 }
                 if self.debugger_enabled {
                     items = items.push(menu_item(
+                        ids::MENU_STEP_FRAME,
                         Icon::Play,
                         "Step Frame",
                         debugger::Message::StepFrame.into(),
                     ));
                 }
-                items = items.push(menu_item_danger(Icon::Close, "Reset", Message::Reset));
+                items = items.push(menu_item_danger(
+                    ids::MENU_RESET,
+                    Icon::Close,
+                    "Reset",
+                    Message::Reset,
+                ));
                 items = items.push(menu_divider());
                 items = items.push(menu_item(
+                    ids::MENU_SCREENSHOT,
                     Icon::Camera,
                     "Screenshot",
                     Message::TakeScreenshot,
                 ));
                 if self.debugger_enabled {
                     items = items.push(menu_item(
+                        ids::MENU_CAPTURE_TRACE,
                         Icon::Download,
                         "Capture Trace",
                         debugger::Message::CaptureFrame.into(),
@@ -121,23 +137,31 @@ impl App {
         if has_items {
             items = items.push(menu_divider());
         }
-        items = items.push(menu_item(Icon::Gear, "Settings", Message::ShowSettings));
+        items = items.push(menu_item(
+            ids::MENU_SETTINGS,
+            Icon::Gear,
+            "Settings",
+            Message::ShowSettings,
+        ));
 
         let menu_panel = container(items.padding(s())).style(containers::menu);
 
-        // Anchor top-right: scrim covers everything, menu sits in corner
-        Stack::new()
-            .push(content)
-            .push(opaque(
-                mouse_area(container(menu_panel).align_right(Fill).padding(Padding {
-                    top: m() + 40.0,
-                    right: m(),
-                    bottom: 0.0,
-                    left: 0.0,
-                }))
-                .on_press(Message::DismissMenu),
-            ))
-            .into()
+        // Anchor top-right: scrim covers everything, menu sits in corner. The
+        // scrim carries the dismiss id so automation can close the menu.
+        let scrim = container(opaque(
+            mouse_area(container(menu_panel).align_right(Fill).padding(Padding {
+                top: m() + 40.0,
+                right: m(),
+                bottom: 0.0,
+                left: 0.0,
+            }))
+            .on_press(Message::DismissMenu),
+        ))
+        .id(iced::widget::Id::from(ids::MENU_DISMISS.to_string()))
+        .width(Fill)
+        .height(Fill);
+
+        Stack::new().push(content).push(scrim).into()
     }
 
     pub(super) fn apply_confirmation_dialog<'a>(
@@ -190,8 +214,16 @@ impl App {
                             column![
                                 info,
                                 row![
-                                    buttons::standard("Cancel").on_press(Message::DismissConfirm),
-                                    buttons::danger(confirm_label).on_press(Message::ConfirmAction),
+                                    crate::app::automation::tag(
+                                        ids::CONFIRM_CANCEL,
+                                        buttons::standard("Cancel")
+                                            .on_press(Message::DismissConfirm),
+                                    ),
+                                    crate::app::automation::tag(
+                                        ids::CONFIRM_ACCEPT,
+                                        buttons::danger(confirm_label)
+                                            .on_press(Message::ConfirmAction),
+                                    ),
                                 ]
                                 .spacing(s()),
                             ]
@@ -212,16 +244,37 @@ impl App {
     }
 }
 
-fn menu_item<'a>(icon: Icon, label: &'a str, message: Message) -> Element<'a, Message> {
-    buttons::subtle(row![icons::m(icon), label].spacing(s()).align_y(Center))
-        .on_press(Message::MenuAction(Box::new(message)))
-        .width(Fill)
-        .into()
+fn menu_item<'a>(id: &str, icon: Icon, label: &'a str, message: Message) -> Element<'a, Message> {
+    tagged_full_width(
+        id,
+        buttons::subtle(row![icons::m(icon), label].spacing(s()).align_y(Center))
+            .on_press(Message::MenuAction(Box::new(message)))
+            .width(Fill),
+    )
 }
 
-fn menu_item_danger<'a>(icon: Icon, label: &'a str, message: Message) -> Element<'a, Message> {
-    buttons::danger(row![icons::m(icon), label].spacing(s()).align_y(Center))
-        .on_press(Message::MenuAction(Box::new(message)))
+fn menu_item_danger<'a>(
+    id: &str,
+    icon: Icon,
+    label: &'a str,
+    message: Message,
+) -> Element<'a, Message> {
+    tagged_full_width(
+        id,
+        buttons::danger(row![icons::m(icon), label].spacing(s()).align_y(Center))
+            .on_press(Message::MenuAction(Box::new(message)))
+            .width(Fill),
+    )
+}
+
+/// Wrap a full-width menu control in an automation-tagged container that keeps
+/// its width, so its on-screen bounds resolve for the automation surface.
+fn tagged_full_width<'a>(
+    id: &str,
+    content: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    container(content)
+        .id(iced::widget::Id::from(id.to_string()))
         .width(Fill)
         .into()
 }

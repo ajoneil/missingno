@@ -3,9 +3,46 @@
 
 pub const ACTION_BAR_MENU: &str = "action_bar.menu";
 pub const ACTION_BAR_BACK: &str = "action_bar.back";
+pub const ACTION_BAR_HOMEBREW: &str = "action_bar.homebrew";
 
 pub const LIBRARY_SEARCH: &str = "library.search";
 pub const LIBRARY_FILTER: &str = "library.filter";
+pub const LIBRARY_SORT: &str = "library.sort";
+pub const LIBRARY_VIEW_GRID: &str = "library.view_grid";
+pub const LIBRARY_VIEW_LIST: &str = "library.view_list";
+
+// The action-bar overlay menu. Its items are only on screen while the menu is
+// open, so the registry enumerates them only then.
+pub const MENU_DISMISS: &str = "menu.dismiss";
+pub const MENU_OPEN_ROM: &str = "menu.open_rom";
+pub const MENU_SETTINGS: &str = "menu.settings";
+pub const MENU_IMPORT_SAVE: &str = "menu.import_save";
+pub const MENU_OPEN_FOLDER: &str = "menu.open_folder";
+pub const MENU_REFRESH_METADATA: &str = "menu.refresh_metadata";
+pub const MENU_REMOVE_GAME: &str = "menu.remove_game";
+pub const MENU_DEBUGGER: &str = "menu.debugger";
+pub const MENU_STEP_FRAME: &str = "menu.step_frame";
+pub const MENU_RESET: &str = "menu.reset";
+pub const MENU_SCREENSHOT: &str = "menu.screenshot";
+pub const MENU_CAPTURE_TRACE: &str = "menu.capture_trace";
+
+// The modal confirmation dialog, enumerated only while it is up.
+pub const CONFIRM_ACCEPT: &str = "confirm.accept";
+pub const CONFIRM_CANCEL: &str = "confirm.cancel";
+
+// The game detail screen (renders its own header, not the action bar).
+pub const DETAIL_BACK: &str = "detail.back";
+pub const DETAIL_MENU: &str = "detail.menu";
+pub const DETAIL_PLAY: &str = "detail.play";
+pub const DETAIL_STOP: &str = "detail.stop";
+pub const DETAIL_CARTRIDGE: &str = "detail.cartridge";
+
+pub const CARTRIDGE_BACK: &str = "cartridge.back";
+pub const FLASH_DONE: &str = "flash.done";
+
+pub const GALLERY_EXPORT: &str = "gallery.export";
+
+pub const HOMEBREW_SEARCH: &str = "homebrew.search";
 
 pub const SETTINGS_BACK: &str = "settings.back";
 pub const SETTINGS_EXTERNAL_CLIENTS: &str = "settings.external_clients";

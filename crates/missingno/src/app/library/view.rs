@@ -189,20 +189,29 @@ fn toolbar<'a>(
         }),
     );
 
-    let sort_picker = pick_list(SortKey::ALL, Some(sort), |key| {
-        Message::SortSelected(key).into()
-    });
+    let sort_picker = crate::app::automation::tag(
+        crate::app::automation::ids::LIBRARY_SORT,
+        pick_list(SortKey::ALL, Some(sort), |key| {
+            Message::SortSelected(key).into()
+        }),
+    );
 
     let layout_toggle = row![
-        layout_button(
-            Icon::Grid,
-            layout == LibraryLayout::Grid,
-            LibraryLayout::Grid
+        crate::app::automation::tag(
+            crate::app::automation::ids::LIBRARY_VIEW_GRID,
+            layout_button(
+                Icon::Grid,
+                layout == LibraryLayout::Grid,
+                LibraryLayout::Grid
+            ),
         ),
-        layout_button(
-            Icon::Menu,
-            layout == LibraryLayout::List,
-            LibraryLayout::List
+        crate::app::automation::tag(
+            crate::app::automation::ids::LIBRARY_VIEW_LIST,
+            layout_button(
+                Icon::Menu,
+                layout == LibraryLayout::List,
+                LibraryLayout::List
+            ),
         ),
     ]
     .spacing(xs());

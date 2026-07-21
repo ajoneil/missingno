@@ -18,7 +18,7 @@ use crate::cartridge_rw;
 
 impl App {
     /// Get the cartridge header from the first connected device with a cartridge inserted.
-    pub(super) fn inserted_cartridge(&self) -> Option<&cartridge_rw::CartridgeHeader> {
+    pub(in crate::app) fn inserted_cartridge(&self) -> Option<&cartridge_rw::CartridgeHeader> {
         self.cartridge_rw
             .detected_devices
             .iter()
@@ -321,8 +321,11 @@ impl App {
                             &cart_subtitle(game_entry, "Written successfully"),
                             game_cover,
                         ),
-                        buttons::primary("Done")
-                            .on_press(Message::Cartridge(CartridgeMessage::FlashCancel)),
+                        crate::app::automation::tag(
+                            crate::app::automation::ids::FLASH_DONE,
+                            buttons::primary("Done")
+                                .on_press(Message::Cartridge(CartridgeMessage::FlashCancel)),
+                        ),
                     ]
                     .spacing(s())
                     .max_width(600),
@@ -335,8 +338,11 @@ impl App {
                 container(
                     column![
                         iced_text(format!("Error: {error}")),
-                        buttons::primary("Back")
-                            .on_press(Message::Cartridge(CartridgeMessage::FlashCancel)),
+                        crate::app::automation::tag(
+                            crate::app::automation::ids::FLASH_DONE,
+                            buttons::primary("Back")
+                                .on_press(Message::Cartridge(CartridgeMessage::FlashCancel)),
+                        ),
                     ]
                     .spacing(s())
                     .max_width(600),
@@ -373,7 +379,10 @@ fn cart_subtitle(entry: Option<&library::GameEntry>, hardware: &str) -> String {
 fn screen_header<'a>(title: &'a str, back_message: Message) -> Element<'a, Message> {
     column![
         row![
-            buttons::subtle(icons::m(Icon::Back)).on_press(back_message),
+            crate::app::automation::tag(
+                crate::app::automation::ids::CARTRIDGE_BACK,
+                buttons::subtle(icons::m(Icon::Back)).on_press(back_message),
+            ),
             text::heading(title),
         ]
         .spacing(s())

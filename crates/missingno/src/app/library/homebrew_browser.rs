@@ -86,6 +86,7 @@ pub(crate) fn view<'a>(
     }
 
     let search_bar = text_input("Search homebrew games...", &state.search_text)
+        .id(crate::app::automation::ids::HOMEBREW_SEARCH)
         .on_input(|s| Message::SearchTextChanged(s).into())
         .size(18.0);
 

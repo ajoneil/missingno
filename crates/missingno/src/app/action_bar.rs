@@ -46,14 +46,15 @@ impl ActionBar {
             app::Screen::Library { .. } => {
                 let mut r = row![app_text::heading("").width(Fill)];
                 if app.settings.internet_enabled && app.settings.homebrew_hub_enabled {
-                    r = r.push(
+                    r = r.push(automation::tag(
+                        automation::ids::ACTION_BAR_HOMEBREW,
                         buttons::subtle(
                             row![icons::m(Icon::Globe), "Browse Homebrew"]
                                 .spacing(s())
                                 .align_y(Center),
                         )
                         .on_press(app::Message::OpenHomebrewBrowser),
-                    );
+                    ));
                 }
                 r = r.push(self.trailing());
                 r

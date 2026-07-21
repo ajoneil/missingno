@@ -255,14 +255,17 @@ fn controls_panel(state: &GalleryState) -> Element<'_, app::Message> {
     col = col.push(scale_row);
 
     // Export button
-    col = col.push(iced::widget::Space::new().height(s())).push(
-        buttons::primary(
-            row![icons::m(Icon::Download), "Export PNG"]
-                .spacing(s())
-                .align_y(Center),
-        )
-        .on_press(Message::Export.into()),
-    );
+    col = col
+        .push(iced::widget::Space::new().height(s()))
+        .push(app::automation::tag(
+            app::automation::ids::GALLERY_EXPORT,
+            buttons::primary(
+                row![icons::m(Icon::Download), "Export PNG"]
+                    .spacing(s())
+                    .align_y(Center),
+            )
+            .on_press(Message::Export.into()),
+        ));
 
     container(scrollable(col.padding(m())).height(Fill))
         .width(250)

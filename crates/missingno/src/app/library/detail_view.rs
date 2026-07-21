@@ -72,7 +72,8 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
             .into();
 
         let cover_el: Element<'_, app::Message> = if data.header_hovered {
-            let back_btn = container(
+            let back_btn = container(app::automation::tag(
+                app::automation::ids::DETAIL_BACK,
                 button(icons::m(Icon::Back).style(|_, _| iced::widget::svg::Style {
                     color: Some(iced::Color::WHITE),
                 }))
@@ -89,7 +90,7 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
                         ..Default::default()
                     }
                 }),
-            )
+            ))
             .padding([m() + 4.0, m()]);
 
             stack![cover_img, back_btn].into()
@@ -113,7 +114,8 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
             COVER_HEIGHT,
             iced::border::Radius::from(0.0),
         );
-        let back_btn = container(
+        let back_btn = container(app::automation::tag(
+            app::automation::ids::DETAIL_BACK,
             button(icons::m(Icon::Back).style(|_, _| iced::widget::svg::Style {
                 color: Some(iced::Color::WHITE),
             }))
@@ -130,7 +132,7 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
                     ..Default::default()
                 }
             }),
-        )
+        ))
         .padding([m() + 4.0, m()]);
 
         stack![placeholder, back_btn].into()
@@ -208,24 +210,29 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
     let mut primary = row![].spacing(s()).align_y(Center);
     if has_rom {
         if data.is_loaded {
-            primary = primary.push(
+            primary = primary.push(app::automation::tag(
+                app::automation::ids::DETAIL_PLAY,
                 buttons::primary(
                     row![icons::m(Icon::Play), "Resume"]
                         .spacing(s())
                         .align_y(Center),
                 )
                 .on_press(app::Message::PlayFromDetail),
-            );
-            primary = primary.push(buttons::danger("Stop").on_press(app::Message::StopGame));
+            ));
+            primary = primary.push(app::automation::tag(
+                app::automation::ids::DETAIL_STOP,
+                buttons::danger("Stop").on_press(app::Message::StopGame),
+            ));
         } else {
-            primary = primary.push(
+            primary = primary.push(app::automation::tag(
+                app::automation::ids::DETAIL_PLAY,
                 buttons::primary(
                     row![icons::m(Icon::Play), "Play"]
                         .spacing(s())
                         .align_y(Center),
                 )
                 .on_press(app::Message::PlayFromDetail),
-            );
+            ));
         }
     }
     // Cartridge actions button — only show when the cart matches this game or is flashable
@@ -236,7 +243,8 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
             .as_ref()
             .is_some_and(|ht| ht == &cart.title);
         if cart_matches || cart.flashable() {
-            primary = primary.push(
+            primary = primary.push(app::automation::tag(
+                app::automation::ids::DETAIL_CARTRIDGE,
                 buttons::standard(
                     row![icons::m(Icon::CircuitBoard), "Cartridge"]
                         .spacing(s())
@@ -245,12 +253,14 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
                 .on_press(app::Message::Cartridge(
                     app::CartridgeMessage::ShowActions(data.entry.sha1.clone()),
                 )),
-            );
+            ));
         }
     }
 
-    primary =
-        primary.push(buttons::subtle(icons::m(Icon::Menu)).on_press(app::Message::ToggleMenu));
+    primary = primary.push(app::automation::tag(
+        app::automation::ids::DETAIL_MENU,
+        buttons::subtle(icons::m(Icon::Menu)).on_press(app::Message::ToggleMenu),
+    ));
 
     let right = column![primary].align_x(iced::alignment::Horizontal::Right);
 
