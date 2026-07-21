@@ -1,0 +1,13 @@
+[package]
+name = "missingno-remote"
+version.workspace = true
+authors = ["Andrew O'Neil <andy@andyofniall.net>"]
+edition = "2024"
+license = "MIT"
+
+[[bin]]
+name = "missingno-remote"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"

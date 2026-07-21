@@ -3062,6 +3062,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "missingno-remote"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "missingno-session"
 version = "0.1.0"
 dependencies = [

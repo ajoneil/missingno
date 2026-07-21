@@ -11,6 +11,16 @@
         "--",
         "--mcp"
       ]
+    },
+    "missingno-remote": {
+      "command": "cargo",
+      "args": [
+        "run",
+        "-p",
+        "missingno-remote",
+        "--",
+        "--mcp"
+      ]
     }
   }
 }
