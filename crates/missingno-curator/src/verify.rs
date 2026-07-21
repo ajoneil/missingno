@@ -139,11 +139,13 @@ pub fn boot_check(
     filename_hint: &str,
     rom: &[u8],
     tv_standard: Option<String>,
+    cart_type: Option<String>,
     frames: usize,
 ) -> Result<BootShot, String> {
     let options = missingno_session::factory::LoadOptions {
         tv_standard,
         boot_rom: None,
+        cart_type,
     };
     let path = Path::new(filename_hint);
     let mut console = missingno_session::factory::create_console_with(path, rom, &options)
@@ -162,5 +164,63 @@ pub fn boot_check(
         width: frame.width,
         height: frame.height,
         rgba: frame.pixels.to_vec(),
+    })
+}
+
+/// Facts a Game Boy family header states about its cartridge.
+#[derive(Clone, Debug)]
+pub struct GbHeader {
+    /// 0x80 = dual-mode (CGB enhanced), 0xC0 = CGB only.
+    pub cgb_flag: u8,
+    pub sgb: bool,
+    pub mapper: String,
+}
+
+pub fn gb_header(rom: &[u8]) -> Option<GbHeader> {
+    if rom.len() < 0x150 {
+        return None;
+    }
+    let mapper = match rom[0x147] {
+        0x00 => "ROM ONLY",
+        0x01 => "MBC1",
+        0x02 => "MBC1+RAM",
+        0x03 => "MBC1+RAM+BATTERY",
+        0x05 => "MBC2",
+        0x06 => "MBC2+BATTERY",
+        0x08 => "ROM+RAM",
+        0x09 => "ROM+RAM+BATTERY",
+        0x0B => "MMM01",
+        0x0C => "MMM01+RAM",
+        0x0D => "MMM01+RAM+BATTERY",
+        0x0F => "MBC3+TIMER+BATTERY",
+        0x10 => "MBC3+TIMER+RAM+BATTERY",
+        0x11 => "MBC3",
+        0x12 => "MBC3+RAM",
+        0x13 => "MBC3+RAM+BATTERY",
+        0x19 => "MBC5",
+        0x1A => "MBC5+RAM",
+        0x1B => "MBC5+RAM+BATTERY",
+        0x1C => "MBC5+RUMBLE",
+        0x1D => "MBC5+RUMBLE+RAM",
+        0x1E => "MBC5+RUMBLE+RAM+BATTERY",
+        0x20 => "MBC6",
+        0x22 => "MBC7+SENSOR+RUMBLE+RAM+BATTERY",
+        0xFC => "POCKET CAMERA",
+        0xFD => "BANDAI TAMA5",
+        0xFE => "HuC3",
+        0xFF => "HuC1+RAM+BATTERY",
+        other => {
+            return Some(GbHeader {
+                cgb_flag: rom[0x143],
+                sgb: rom[0x146] == 0x03 && rom[0x14B] == 0x33,
+                mapper: format!("Unknown (0x{other:02X})"),
+            });
+        }
+    }
+    .to_owned();
+    Some(GbHeader {
+        cgb_flag: rom[0x143],
+        sgb: rom[0x146] == 0x03 && rom[0x14B] == 0x33,
+        mapper,
     })
 }

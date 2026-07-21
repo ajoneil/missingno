@@ -27,6 +27,9 @@ pub struct LoadOptions {
     /// rather than the post-boot state the core otherwise seeds. Read by the
     /// Game Boy family.
     pub boot_rom: Option<Vec<u8>>,
+    /// A cartridge board override ("F8", "F6SC", …); `None` lets the core
+    /// size-detect. Read by the Atari VCS core, whose carts have no header.
+    pub cart_type: Option<String>,
 }
 
 /// A registered core: how its media is recognised, and how a console is built.
@@ -110,7 +113,13 @@ mod vcs {
         options: &LoadOptions,
     ) -> Option<Box<dyn SystemConsole>> {
         let standard = options.tv_standard.as_deref().and_then(parse_tv_standard);
-        missingno_vcs::debug::create_console(rom, title_for(path), standard, None).ok()
+        missingno_vcs::debug::create_console(
+            rom,
+            title_for(path),
+            standard,
+            options.cart_type.as_deref(),
+        )
+        .ok()
     }
 
     pub fn is_rom(path: &Path, rom: &[u8]) -> bool {

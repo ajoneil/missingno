@@ -23,10 +23,12 @@ pub fn start(
     filename_hint: &str,
     rom: &[u8],
     tv_standard: Option<String>,
+    cart_type: Option<String>,
 ) -> Result<PlaySession, String> {
     let options = factory::LoadOptions {
         tv_standard,
         boot_rom: None,
+        cart_type,
     };
     let console = factory::create_console_with(std::path::Path::new(filename_hint), rom, &options)
         .map_err(|e| format!("core rejected ROM: {e}"))?

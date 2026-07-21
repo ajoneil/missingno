@@ -67,13 +67,21 @@ While the developer plays the current game:
    becomes the game's Wikipedia link). Hasheous often knows it for commercial games;
    otherwise a quick search — but only stage an article that is actually about this game,
    not its series or port.
-6. `set_note` with your reasoning — what you changed, the source for each fact (URL or
+6. **Hardware facts**: the curator auto-stages what a fetched/booted Game Boy header
+   states (SGB/CGB enhancement, mapper) into the release — filling unknowns only, and
+   reporting header-vs-db conflicts in the verify status, which you should surface in your
+   note. Overrides via update_game when the truth differs from the header: `mapper`
+   (GB/GBC — unlicensed carts lie) and `cart_type` (VCS — no headers, so the db drives the
+   emulator's board choice; if a VCS playtest shows garbage, the board is the first
+   suspect — check the game's known board on AtariAge or in Stella's properties and stage
+   the correction, then have the developer replay).
+7. `set_note` with your reasoning — what you changed, the source for each fact (URL or
    dataset name), your confidence, and anything the developer should double-check or decide
    (e.g. a flag you'd resolve and why). Keep it short enough to read during a playtest.
-7. If a flag's answer is now established by the staged data and the developer has agreed
+8. If a flag's answer is now established by the staged data and the developer has agreed
    (in conversation or by accepting the related edit), `resolve_flag`; otherwise propose the
    resolution in the note and leave the flag open.
-8. Watch for the queue to advance: check `queue_status` when you finish a game's research;
+9. Watch for the queue to advance: check `queue_status` when you finish a game's research;
    if the developer hasn't accepted yet, deepen the research or answer their questions —
    don't spin on polling.
 

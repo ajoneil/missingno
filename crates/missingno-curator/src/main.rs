@@ -266,6 +266,7 @@ impl Curator {
                         TreeId::Vcs => "verify.a26",
                     };
                     let tv = entry.game.tv_hint();
+                    let cart = entry.game.cart_hint();
                     let bytes = match &source {
                         BootSource::Cached(sha1) => self.rom_cache.get(sha1).cloned(),
                         BootSource::File(path) => std::fs::read(path).ok().map(std::sync::Arc::new),
@@ -274,7 +275,8 @@ impl Curator {
                         self.status = "no ROM bytes to play".to_owned();
                         return Task::none();
                     };
-                    match play::start(hint, &bytes, tv) {
+                    self.stage_header_facts(i, &bytes);
+                    match play::start(hint, &bytes, tv, cart) {
                         Ok(session) => {
                             let events = session.events.clone();
                             self.playing = Some((key, session));
@@ -330,6 +332,7 @@ impl Curator {
                         TreeId::Vcs => "verify.a26",
                     };
                     let tv = entry.game.tv_hint();
+                    let cart = entry.game.cart_hint();
                     let bytes = match &source {
                         BootSource::Cached(sha1) => self.rom_cache.get(sha1).cloned(),
                         BootSource::File(path) => std::fs::read(path).ok().map(std::sync::Arc::new),
@@ -338,12 +341,13 @@ impl Curator {
                         self.status = "no ROM bytes to boot".to_owned();
                         return Task::none();
                     };
+                    self.stage_header_facts(i, &bytes);
                     self.booting = true;
                     self.verify_status
                         .insert(key.clone(), "booting (300 frames)…".to_owned());
                     return Task::perform(
                         smol::unblock(move || {
-                            verify::boot_check(hint, &bytes, tv, 300).map(|shot| BootDone {
+                            verify::boot_check(hint, &bytes, tv, cart, 300).map(|shot| BootDone {
                                 note: format!(
                                     "boots: {}/{} frames produced a screen ({}×{})",
                                     shot.frames_seen, shot.frames_run, shot.width, shot.height
@@ -399,6 +403,12 @@ impl Curator {
                         self.rom_cache.insert(sha1.clone(), bytes);
                         self.fetched_sha1.insert(key.clone(), sha1.clone());
                         let sha1_for_play = sha1.clone();
+                        if let Some(i) = self.find_entry(&key) {
+                            let bytes = self.rom_cache.get(&sha1).cloned();
+                            if let Some(bytes) = bytes {
+                                self.stage_header_facts(i, &bytes);
+                            }
+                        }
                         let mut line = format!("{} bytes from {url}\nsha1 {sha1}", size);
                         if let Ok(db) = &mut self.db
                             && let Some(i) = db.entries.iter().position(|e| e.key() == key)
@@ -677,6 +687,40 @@ impl Curator {
         Task::none()
     }
 
+    /// Read the GB-family header from ROM bytes and stage its facts (fills
+    /// unknown enhancement flags and the mapper; conflicts go to the status).
+    fn stage_header_facts(&mut self, i: usize, rom: &[u8]) {
+        let Ok(db) = &mut self.db else { return };
+        if matches!(db.entries[i].tree, TreeId::Vcs) {
+            return;
+        }
+        let Some(header) = verify::gb_header(rom) else {
+            return;
+        };
+        let (staged, conflicts) = db.entries[i].game.stage_gb_header(&header);
+        if !staged.is_empty() {
+            db.entries[i].dirty = true;
+        }
+        let key = db.entries[i].key();
+        let mut lines = Vec::new();
+        if !staged.is_empty() {
+            lines.push(format!("header: staged {}", staged.join(", ")));
+        }
+        if !conflicts.is_empty() {
+            lines.push(format!("header CONFLICTS: {}", conflicts.join("; ")));
+        }
+        if !lines.is_empty() {
+            let line = lines.join(" · ");
+            self.verify_status
+                .entry(key)
+                .and_modify(|s| {
+                    s.push('\n');
+                    s.push_str(&line);
+                })
+                .or_insert(line);
+        }
+    }
+
     fn find_entry(&self, key: &str) -> Option<usize> {
         let Ok(db) = &self.db else { return None };
         db.entries.iter().position(|e| e.key() == key)
@@ -857,6 +901,16 @@ impl Curator {
                 if let Some(url) = set.get("wikipedia").and_then(serde_json::Value::as_str) {
                     entry.game.set_wikipedia(url);
                     applied.push("wikipedia");
+                }
+                if let Some(mapper) = set.get("mapper").and_then(serde_json::Value::as_str)
+                    && entry.game.set_mapper(mapper)
+                {
+                    applied.push("mapper");
+                }
+                if let Some(cart) = set.get("cart_type").and_then(serde_json::Value::as_str)
+                    && entry.game.set_cart_type(cart)
+                {
+                    applied.push("cart_type");
                 }
                 if applied.is_empty() {
                     return error_result("no recognized fields in set");

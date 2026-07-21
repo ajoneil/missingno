@@ -241,6 +241,127 @@ impl AnyGame {
         });
     }
 
+    /// Board hint for the session factory (VCS only — carts have no header,
+    /// so the db's word must reach the core).
+    pub fn cart_hint(&self) -> Option<String> {
+        match self {
+            AnyGame::Vcs(g) => g.releases.iter().find_map(|r| r.hardware.cart_type.clone()),
+            _ => None,
+        }
+    }
+
+    /// Stage what a Game Boy header states, filling only unknown fields.
+    /// Returns (staged, conflicts-with-db) descriptions.
+    pub fn stage_gb_header(
+        &mut self,
+        header: &crate::verify::GbHeader,
+    ) -> (Vec<String>, Vec<String>) {
+        use missingno_gamedb::Enhancement;
+        let mut staged = Vec::new();
+        let mut conflicts = Vec::new();
+        match self {
+            AnyGame::Gb(g) => {
+                if g.releases.is_empty() {
+                    return (staged, conflicts);
+                }
+                if header.cgb_flag == 0xC0 {
+                    conflicts
+                        .push("header says CGB-only, but this entry is in the gb tree".to_owned());
+                }
+                let release = &mut g.releases[0];
+                let header_sgb = if header.sgb {
+                    Enhancement::Enhanced
+                } else {
+                    Enhancement::NotEnhanced
+                };
+                let header_cgb = if header.cgb_flag & 0x80 != 0 {
+                    Enhancement::Enhanced
+                } else {
+                    Enhancement::NotEnhanced
+                };
+                match release.hardware.sgb {
+                    Enhancement::Unknown => {
+                        release.hardware.sgb = header_sgb;
+                        staged.push(format!("sgb: {header_sgb:?}"));
+                    }
+                    current if current != header_sgb => {
+                        conflicts.push(format!("sgb: db {current:?} vs header {header_sgb:?}"))
+                    }
+                    _ => {}
+                }
+                match release.hardware.cgb {
+                    Enhancement::Unknown => {
+                        release.hardware.cgb = header_cgb;
+                        staged.push(format!("cgb: {header_cgb:?}"));
+                    }
+                    current if current != header_cgb => {
+                        conflicts.push(format!("cgb: db {current:?} vs header {header_cgb:?}"))
+                    }
+                    _ => {}
+                }
+                match &release.hardware.mapper {
+                    None => {
+                        release.hardware.mapper = Some(header.mapper.clone());
+                        staged.push(format!("mapper: {}", header.mapper));
+                    }
+                    Some(current) if *current != header.mapper => {
+                        conflicts.push(format!("mapper: db {current} vs header {}", header.mapper))
+                    }
+                    _ => {}
+                }
+            }
+            AnyGame::Gbc(g) => {
+                if g.releases.is_empty() {
+                    return (staged, conflicts);
+                }
+                if header.cgb_flag & 0x80 == 0 {
+                    conflicts.push(
+                        "header has no CGB flag, but this entry is in the gbc tree".to_owned(),
+                    );
+                }
+                let release = &mut g.releases[0];
+                match &release.hardware.mapper {
+                    None => {
+                        release.hardware.mapper = Some(header.mapper.clone());
+                        staged.push(format!("mapper: {}", header.mapper));
+                    }
+                    Some(current) if *current != header.mapper => {
+                        conflicts.push(format!("mapper: db {current} vs header {}", header.mapper))
+                    }
+                    _ => {}
+                }
+            }
+            AnyGame::Vcs(_) => {}
+        }
+        (staged, conflicts)
+    }
+
+    /// Agent override: set the first release's mapper (GB/GBC) — for carts
+    /// whose headers lie.
+    pub fn set_mapper(&mut self, value: &str) -> bool {
+        match self {
+            AnyGame::Gb(g) => g.releases.first_mut().map(|r| {
+                r.hardware.mapper = Some(value.to_owned());
+            }),
+            AnyGame::Gbc(g) => g.releases.first_mut().map(|r| {
+                r.hardware.mapper = Some(value.to_owned());
+            }),
+            AnyGame::Vcs(_) => None,
+        }
+        .is_some()
+    }
+
+    /// Agent override: set the first release's board (VCS — no headers).
+    pub fn set_cart_type(&mut self, value: &str) -> bool {
+        match self {
+            AnyGame::Vcs(g) => g.releases.first_mut().map(|r| {
+                r.hardware.cart_type = Some(value.to_owned());
+            }),
+            _ => None,
+        }
+        .is_some()
+    }
+
     /// Broadcast-standard hint for the session factory (VCS only).
     pub fn tv_hint(&self) -> Option<String> {
         match self {
