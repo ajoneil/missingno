@@ -4,6 +4,7 @@ resolver = "3"
 exclude = ["missingno-gamedb"]
 members = [
     "crates/missingno",
+    "crates/missingno-curator",
     "crates/missingno-debugger",
     "crates/missingno-remote",
     "crates/missingno-session",
@@ -18,6 +19,7 @@ members = [
 # The shipping set; the immature cores build only via -p.
 default-members = [
     "crates/missingno",
+    "crates/missingno-curator",
     "crates/missingno-debugger",
     "crates/missingno-remote",
     "crates/missingno-session",

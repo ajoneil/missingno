@@ -3017,6 +3017,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "missingno-curator"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "iced",
+ "jiff",
+ "missingno-gamedb",
+]
+
+[[package]]
 name = "missingno-debugger"
 version = "0.1.0"
 dependencies = [

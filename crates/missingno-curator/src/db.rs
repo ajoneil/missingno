@@ -1,0 +1,299 @@
+//! The curator's view of the gamedb checkout: typed manifests behind a
+//! platform-agnostic editing surface, plus flags and git state.
+
+use std::{fs, io, path::PathBuf, process::Command};
+
+use missingno_gamedb::{
+    Date, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Platform, Tree, Vcs,
+};
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TreeId {
+    Gb,
+    Gbc,
+    Vcs,
+}
+
+impl TreeId {
+    pub const ALL: [TreeId; 3] = [TreeId::Gb, TreeId::Gbc, TreeId::Vcs];
+
+    pub fn dir(self) -> &'static str {
+        match self {
+            TreeId::Gb => "gb",
+            TreeId::Gbc => "gbc",
+            TreeId::Vcs => "vcs",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            TreeId::Gb => "Game Boy",
+            TreeId::Gbc => "Game Boy Color",
+            TreeId::Vcs => "Atari VCS",
+        }
+    }
+}
+
+/// One manifest, kept in its platform's schema type.
+pub enum AnyGame {
+    Gb(Game<GameBoy>),
+    Gbc(Game<GameBoyColor>),
+    Vcs(Game<Vcs>),
+}
+
+macro_rules! common {
+    ($self:expr, $game:ident => $body:expr) => {
+        match $self {
+            AnyGame::Gb($game) => $body,
+            AnyGame::Gbc($game) => $body,
+            AnyGame::Vcs($game) => $body,
+        }
+    };
+}
+
+/// The game-level fields every platform shares, editable as text.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TextField {
+    Title,
+    Developer,
+    Description,
+    License,
+}
+
+impl AnyGame {
+    pub fn title(&self) -> &str {
+        common!(self, g => &g.title)
+    }
+
+    pub fn kind(&self) -> GameKind {
+        common!(self, g => g.kind)
+    }
+
+    pub fn curated(&self) -> Option<&Date> {
+        common!(self, g => g.curated.as_ref())
+    }
+
+    pub fn set_curated(&mut self, date: Option<Date>) {
+        common!(self, g => g.curated = date);
+    }
+
+    pub fn text_field(&self, field: TextField) -> String {
+        common!(self, g => match field {
+            TextField::Title => g.title.clone(),
+            TextField::Developer => g.developer.clone().unwrap_or_default(),
+            TextField::Description => g.description.clone().unwrap_or_default(),
+            TextField::License => g.license.clone().unwrap_or_default(),
+        })
+    }
+
+    pub fn set_text_field(&mut self, field: TextField, value: String) {
+        let optional = (!value.is_empty()).then_some(value.clone());
+        common!(self, g => match field {
+            TextField::Title => g.title = value.clone(),
+            TextField::Developer => g.developer = optional.clone(),
+            TextField::Description => g.description = optional.clone(),
+            TextField::License => g.license = optional.clone(),
+        });
+    }
+
+    /// One display line per release.
+    pub fn release_lines(&self) -> Vec<String> {
+        fn line<P: Platform>(r: &missingno_gamedb::Release<P>, extra: &str) -> String {
+            let mut parts = Vec::new();
+            if let Some(title) = &r.title {
+                parts.push(title.clone());
+            }
+            if !r.regions.is_empty() {
+                parts.push(format!("{:?}", r.regions));
+            }
+            if let Some(label) = &r.label {
+                parts.push(label.clone());
+            }
+            if r.status != Default::default() {
+                parts.push(format!("{:?}", r.status));
+            }
+            if let Some(date) = &r.date {
+                parts.push(date.as_str().to_owned());
+            }
+            if !extra.is_empty() {
+                parts.push(extra.to_owned());
+            }
+            parts.push(format!(
+                "{} artifact(s), {} source(s)",
+                r.artifacts.len(),
+                r.sources.len()
+            ));
+            parts.join(" · ")
+        }
+        match self {
+            AnyGame::Gb(g) => g
+                .releases
+                .iter()
+                .map(|r| {
+                    line(
+                        r,
+                        &format!("sgb {:?} / cgb {:?}", r.hardware.sgb, r.hardware.cgb),
+                    )
+                })
+                .collect(),
+            AnyGame::Gbc(g) => g.releases.iter().map(|r| line(r, "")).collect(),
+            AnyGame::Vcs(g) => g
+                .releases
+                .iter()
+                .map(|r| {
+                    let hw = [
+                        r.hardware.tv_format.map(|t| format!("{t:?}")),
+                        r.hardware.cart_type.clone(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                    line(r, &hw)
+                })
+                .collect(),
+        }
+    }
+
+    pub fn to_ron_string(&self) -> Result<String, String> {
+        common!(self, g => g.to_ron_string().map_err(|e| e.to_string()))
+    }
+}
+
+pub struct EntryHandle {
+    pub tree: TreeId,
+    pub slug: String,
+    pub game: AnyGame,
+    pub dirty: bool,
+}
+
+impl EntryHandle {
+    pub fn key(&self) -> String {
+        format!("{}/{}", self.tree.dir(), self.slug)
+    }
+}
+
+pub struct Db {
+    pub repo_root: PathBuf,
+    pub entries: Vec<EntryHandle>,
+    pub flags: FlagFile,
+    /// Files written since the last commit.
+    pub uncommitted: usize,
+}
+
+impl Db {
+    pub fn load(repo_root: PathBuf) -> io::Result<Self> {
+        let data_root = repo_root.join("data");
+        let mut entries = Vec::new();
+        fn load_tree<P: Platform>(
+            data_root: &std::path::Path,
+            tree: TreeId,
+            wrap: impl Fn(Game<P>) -> AnyGame,
+            out: &mut Vec<EntryHandle>,
+        ) -> io::Result<()> {
+            let (loaded, issues) = Tree::<P>::load(data_root)?;
+            if let Some(first) = issues.first() {
+                return Err(io::Error::other(format!(
+                    "{} manifests failed to load; first: {}: {}",
+                    issues.len(),
+                    first.path.display(),
+                    first.message
+                )));
+            }
+            for entry in loaded.games {
+                out.push(EntryHandle {
+                    tree,
+                    slug: entry.slug.as_str().to_owned(),
+                    game: wrap(entry.game),
+                    dirty: false,
+                });
+            }
+            Ok(())
+        }
+        load_tree::<GameBoy>(&data_root, TreeId::Gb, AnyGame::Gb, &mut entries)?;
+        load_tree::<GameBoyColor>(&data_root, TreeId::Gbc, AnyGame::Gbc, &mut entries)?;
+        load_tree::<Vcs>(&data_root, TreeId::Vcs, AnyGame::Vcs, &mut entries)?;
+        let flags = FlagFile::load(&repo_root)?;
+        Ok(Self {
+            repo_root,
+            entries,
+            flags,
+            uncommitted: 0,
+        })
+    }
+
+    pub fn backlog_count(&self, tree: TreeId) -> usize {
+        self.entries
+            .iter()
+            .filter(|e| e.tree == tree && e.game.curated().is_none())
+            .count()
+    }
+
+    /// Write a dirty entry's manifest back in canonical form.
+    pub fn write_entry(&mut self, index: usize) -> io::Result<()> {
+        let entry = &mut self.entries[index];
+        let text = entry.game.to_ron_string().map_err(io::Error::other)?;
+        let dir = self
+            .repo_root
+            .join("data")
+            .join(entry.tree.dir())
+            .join(&entry.slug);
+        fs::write(dir.join("manifest.ron"), text)?;
+        entry.dirty = false;
+        self.uncommitted += 1;
+        Ok(())
+    }
+
+    pub fn save_flags(&mut self) -> io::Result<()> {
+        self.flags.save(&self.repo_root)?;
+        self.uncommitted += 1;
+        Ok(())
+    }
+
+    pub fn commit(&mut self, message: &str) -> Result<String, String> {
+        let run = |args: &[&str]| {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(&self.repo_root)
+                .args(args)
+                .output()
+                .map_err(|e| e.to_string())?;
+            if output.status.success() {
+                Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).into_owned())
+            }
+        };
+        run(&["add", "data", "curation"])?;
+        run(&["commit", "-m", message])?;
+        self.uncommitted = 0;
+        run(&["log", "--oneline", "-1"])
+    }
+
+    pub fn today() -> Date {
+        jiff::Zoned::now()
+            .date()
+            .to_string()
+            .parse()
+            .expect("jiff civil date is YYYY-MM-DD")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Load the real checkout when present: every manifest parses into the
+    // curator's editing surface and the flag file round-trips.
+    #[test]
+    fn real_gamedb_loads() {
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../missingno-gamedb");
+        if !repo.join("data/gb").is_dir() {
+            return;
+        }
+        let db = Db::load(repo).expect("gamedb loads");
+        assert!(db.entries.len() > 8000, "{}", db.entries.len());
+        assert!(db.flags.open().count() > 2000);
+        assert!(db.backlog_count(TreeId::Vcs) > 4000);
+    }
+}
