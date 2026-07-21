@@ -80,6 +80,11 @@ struct Curator {
     fetched_sha1: std::collections::HashMap<String, String>,
     /// entry key → boot note + screenshot.
     boot_shots: std::collections::HashMap<String, (String, iced::widget::image::Handle)>,
+    /// Multiline editor state for the selected entry's description.
+    description: iced::widget::text_editor::Content,
+    /// cover url → fetched preview.
+    cover_previews: std::collections::HashMap<String, iced::widget::image::Handle>,
+    enriching: bool,
     remote_sink: SharedSink,
     _remote: Option<RemoteEndpoint>,
 }
@@ -104,6 +109,10 @@ enum Message {
     Search(String),
     Select(usize),
     Edit(TextField, String),
+    DescriptionAction(iced::widget::text_editor::Action),
+    Enrich,
+    Enriched(String, Result<Option<verify::HasheousHit>, String>),
+    CoverLoaded(String, Option<iced::widget::image::Handle>),
     ConfirmAndNext,
     ResolveFlag(u32),
     Commit,
@@ -195,6 +204,9 @@ impl Curator {
                 play_after_fetch: None,
                 fetched_sha1: std::collections::HashMap::new(),
                 boot_shots: std::collections::HashMap::new(),
+                description: iced::widget::text_editor::Content::new(),
+                cover_previews: std::collections::HashMap::new(),
+                enriching: false,
                 remote_sink,
                 _remote: endpoint,
             },
@@ -447,7 +459,72 @@ impl Curator {
                 self.search = s;
                 self.selected = None;
             }
-            Message::Select(index) => self.selected = Some(index),
+            Message::Select(index) => return self.select(index),
+            Message::DescriptionAction(action) => {
+                self.description.perform(action);
+                if let (Ok(db), Some(i)) = (&mut self.db, self.selected) {
+                    let text = self.description.text();
+                    let text = text.trim_end();
+                    if db.entries[i].game.text_field(TextField::Description) != text {
+                        db.entries[i]
+                            .game
+                            .set_text_field(TextField::Description, text.to_owned());
+                        db.entries[i].dirty = true;
+                    }
+                }
+            }
+            Message::Enrich => {
+                if let (Ok(db), Some(i)) = (&self.db, self.selected) {
+                    let entry = &db.entries[i];
+                    let Some(sha1) = entry.game.artifact_sha1s().into_iter().next() else {
+                        self.status = "no artifact hash to look up".to_owned();
+                        return Task::none();
+                    };
+                    let key = entry.key();
+                    self.enriching = true;
+                    return Task::perform(
+                        smol::unblock(move || verify::hasheous_lookup(&sha1)),
+                        move |result| Message::Enriched(key.clone(), result),
+                    );
+                }
+            }
+            Message::Enriched(key, result) => {
+                self.enriching = false;
+                match result {
+                    Ok(Some(hit)) => {
+                        let mut changed = Vec::new();
+                        let found = self.find_entry(&key);
+                        if let (Ok(db), Some(i)) = (&mut self.db, found) {
+                            if let Some(url) = &hit.cover_url
+                                && db.entries[i].game.add_cover(url)
+                            {
+                                changed.push("cover");
+                                db.entries[i].dirty = true;
+                            }
+                            if let Some(url) = &hit.wikipedia_url {
+                                db.entries[i].game.set_wikipedia(url);
+                                changed.push("wikipedia link");
+                                db.entries[i].dirty = true;
+                            }
+                        }
+                        self.status = if changed.is_empty() {
+                            format!("Hasheous knows \"{}\" but adds nothing new", hit.name)
+                        } else {
+                            format!("Hasheous ({}): staged {}", hit.name, changed.join(" + "))
+                        };
+                        if let Some(i) = self.find_entry(&key) {
+                            return self.load_cover_task(i);
+                        }
+                    }
+                    Ok(None) => self.status = "Hasheous: no match for this hash".to_owned(),
+                    Err(e) => self.status = format!("Hasheous: {e}"),
+                }
+            }
+            Message::CoverLoaded(url, handle) => {
+                if let Some(handle) = handle {
+                    self.cover_previews.insert(url, handle);
+                }
+            }
             Message::Edit(field, value) => {
                 if let (Ok(db), Some(i)) = (&mut self.db, self.selected) {
                     db.entries[i].game.set_text_field(field, value);
@@ -506,13 +583,49 @@ impl Curator {
         Task::none()
     }
 
+    /// Select an entry: sync the description editor and kick a cover preview.
+    fn select(&mut self, i: usize) -> Task<Message> {
+        self.selected = Some(i);
+        let Ok(db) = &self.db else {
+            return Task::none();
+        };
+        let entry = &db.entries[i];
+        self.description = iced::widget::text_editor::Content::with_text(
+            &entry.game.text_field(TextField::Description),
+        );
+        self.load_cover_task(i)
+    }
+
+    fn load_cover_task(&self, i: usize) -> Task<Message> {
+        let Ok(db) = &self.db else {
+            return Task::none();
+        };
+        let Some(url) = db.entries[i].game.covers().first().cloned() else {
+            return Task::none();
+        };
+        if self.cover_previews.contains_key(&url) {
+            return Task::none();
+        }
+        let fetch_url = url.clone();
+        Task::perform(
+            smol::unblock(move || verify::fetch(&fetch_url).ok()),
+            move |bytes| {
+                Message::CoverLoaded(
+                    url.clone(),
+                    bytes.map(iced::widget::image::Handle::from_bytes),
+                )
+            },
+        )
+    }
+
     fn start_playtest_for(&mut self, i: usize) -> Task<Message> {
+        let select_task = self.select(i);
         let Ok(db) = &self.db else {
             return Task::none();
         };
         let entry = &db.entries[i];
         let key = entry.key();
-        self.selected = Some(i);
+        let _ = select_task; // cover preview races the playtest harmlessly
         if let Some(index) = &self.rom_index {
             for sha1 in entry.game.artifact_sha1s() {
                 if let Some(path) = index.by_sha1.get(&sha1) {
@@ -731,6 +844,20 @@ impl Curator {
                         applied.push(field_name);
                     }
                 }
+                if let Some(covers) = set.get("covers").and_then(serde_json::Value::as_array) {
+                    entry.game.set_covers(
+                        covers
+                            .iter()
+                            .filter_map(serde_json::Value::as_str)
+                            .map(str::to_owned)
+                            .collect(),
+                    );
+                    applied.push("covers");
+                }
+                if let Some(url) = set.get("wikipedia").and_then(serde_json::Value::as_str) {
+                    entry.game.set_wikipedia(url);
+                    applied.push("wikipedia");
+                }
                 if applied.is_empty() {
                     return error_result("no recognized fields in set");
                 }
@@ -805,6 +932,11 @@ impl Curator {
                 match self.find_entry(key) {
                     Some(i) => {
                         self.selected = Some(i);
+                        self.description = iced::widget::text_editor::Content::with_text(
+                            &self.db.as_ref().unwrap().entries[i]
+                                .game
+                                .text_field(TextField::Description),
+                        );
                         text_result(format!("showing {key}"))
                     }
                     None => error_result(format!("no entry {key}")),
@@ -975,13 +1107,29 @@ impl Curator {
                         if entry.dirty { " · edited" } else { "" },
                     ))
                     .size(13),
-                    field("Title", TextField::Title),
-                    field("Developer", TextField::Developer),
-                    field("Description", TextField::Description),
-                    field("License", TextField::License),
-                    text("Releases").size(16),
                 ]
                 .spacing(10);
+                if let Some(url) = entry.game.covers().first()
+                    && let Some(preview) = self.cover_previews.get(url)
+                {
+                    editor = editor
+                        .push(iced::widget::image(preview.clone()).height(Length::Fixed(160.0)));
+                }
+                editor = editor
+                    .push(field("Title", TextField::Title))
+                    .push(field("Developer", TextField::Developer))
+                    .push(
+                        row![
+                            text("Description").width(Length::Fixed(90.0)).size(14),
+                            iced::widget::text_editor(&self.description)
+                                .placeholder("multi-line description…")
+                                .on_action(Message::DescriptionAction)
+                                .height(Length::Fixed(110.0)),
+                        ]
+                        .spacing(8),
+                    )
+                    .push(field("License", TextField::License))
+                    .push(text("Releases").size(16));
                 for line in entry.game.release_lines() {
                     editor = editor.push(text(format!("• {line}")).size(13));
                 }
@@ -990,6 +1138,12 @@ impl Curator {
                 editor = editor.push(text("Verify").size(16));
                 if let Some(line) = self.verify_status.get(&entry_key) {
                     editor = editor.push(text(line.clone()).size(13));
+                }
+                if !entry.game.artifact_sha1s().is_empty() {
+                    editor = editor.push(
+                        button(text("Hasheous: cover & wiki").size(13))
+                            .on_press_maybe((!self.enriching).then_some(Message::Enrich)),
+                    );
                 }
                 if entry.game.download_url().is_some() {
                     editor = editor.push(button(text("Fetch & hash").size(13)).on_press_maybe(

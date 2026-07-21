@@ -31,6 +31,67 @@ pub fn fetch(url: &str) -> Result<Vec<u8>, String> {
 
 const ROM_EXTENSIONS: [&str; 5] = ["gb", "gbc", "a26", "bin", "rom"];
 
+const HASHEOUS: &str = "https://hasheous.org/api/v1";
+
+/// What Hasheous knows about a dump: a hosted cover URL and mapped links.
+#[derive(Clone, Debug, Default)]
+pub struct HasheousHit {
+    pub name: String,
+    pub cover_url: Option<String>,
+    pub wikipedia_url: Option<String>,
+}
+
+pub fn hasheous_lookup(sha1: &str) -> Result<Option<HasheousHit>, String> {
+    let url = format!("{HASHEOUS}/Lookup/ByHash/sha1/{sha1}");
+    let response = match ureq::get(&url)
+        .header(
+            "User-Agent",
+            concat!("missingno-curator/", env!("CARGO_PKG_VERSION")),
+        )
+        .header("Accept", "application/json")
+        .call()
+    {
+        Ok(response) => response,
+        Err(ureq::Error::StatusCode(404)) => return Ok(None),
+        Err(e) => return Err(format!("Hasheous request failed: {e}")),
+    };
+    let text = response
+        .into_body()
+        .read_to_string()
+        .map_err(|e| format!("read failed: {e}"))?;
+    let body: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("parse failed: {e}"))?;
+    let name = body["name"].as_str().unwrap_or_default().to_owned();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    let mut hit = HasheousHit {
+        name,
+        ..Default::default()
+    };
+    if let Some(attributes) = body["attributes"].as_array() {
+        for attr in attributes {
+            if attr["attributeName"].as_str() == Some("Logo")
+                && attr["attributeType"].as_str() == Some("ImageId")
+                && let Some(hash) = attr["value"].as_str()
+            {
+                hit.cover_url = Some(format!("{HASHEOUS}/images/{hash}"));
+            }
+        }
+    }
+    if let Some(metadata) = body["metadata"].as_array() {
+        for entry in metadata {
+            if entry["status"].as_str() == Some("Mapped")
+                && entry["source"].as_str() == Some("Wikipedia")
+                && let Some(link) = entry["link"].as_str().filter(|l| !l.is_empty())
+            {
+                hit.wikipedia_url = Some(link.to_owned());
+            }
+        }
+    }
+    Ok(Some(hit))
+}
+
 /// sha1 → path index over the user's ROM directory.
 #[derive(Default, Debug)]
 pub struct RomIndex {

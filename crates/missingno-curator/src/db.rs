@@ -4,7 +4,7 @@
 use std::{fs, io, path::PathBuf, process::Command};
 
 use missingno_gamedb::{
-    Date, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Platform, Tree, Vcs,
+    Date, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Link, LinkType, Platform, Tree, Vcs,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -206,6 +206,39 @@ impl AnyGame {
                 false
             }
         })
+    }
+
+    pub fn covers(&self) -> Vec<String> {
+        common!(self, g => g.covers.clone())
+    }
+
+    pub fn set_covers(&mut self, covers: Vec<String>) {
+        common!(self, g => g.covers = covers.clone());
+    }
+
+    /// Add a cover URL if absent; returns whether anything changed.
+    pub fn add_cover(&mut self, url: &str) -> bool {
+        common!(self, g => if g.covers.iter().any(|c| c == url) {
+            false
+        } else {
+            g.covers.push(url.to_owned());
+            true
+        })
+    }
+
+    /// Set or replace the game's Wikipedia link.
+    pub fn set_wikipedia(&mut self, url: &str) {
+        common!(self, g => {
+            if let Some(link) = g.links.iter_mut().find(|l| l.name == "Wikipedia") {
+                link.url = url.to_owned();
+            } else {
+                g.links.push(Link {
+                    name: "Wikipedia".to_owned(),
+                    url: url.to_owned(),
+                    link_type: LinkType::Wiki,
+                });
+            }
+        });
     }
 
     /// Broadcast-standard hint for the session factory (VCS only).

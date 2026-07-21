@@ -51,13 +51,29 @@ While the developer plays the current game:
 3. `update_game` to stage what you found. Stage only facts you have a source for; leave
    unknown fields empty rather than guessing. Staged edits clear the curated stamp by
    design.
-4. `set_note` with your reasoning — what you changed, the source for each fact (URL or
+4. **Cover image** (`covers` in update_game — remote URLs only, we host nothing):
+   - Commercial games: the curator's "Hasheous: cover & wiki" button (or WebFetch
+     `hasheous.org/api/v1/Lookup/ByHash/sha1/<sha1>` yourself and use its
+     `…/api/v1/images/<id>` URL) — Hasheous exists to serve frontends. Fallback:
+     libretro-thumbnails (raw.githubusercontent.com/libretro-thumbnails/...), then a
+     Wikipedia article's box art (upload.wikimedia.org — hotlinking is tolerated; note
+     the image is usually fair-use, not free-licensed).
+   - Homebrew: the project's own canonical host — its GitHub repo raw URLs (the gbdev
+     pattern), or its documented page assets.
+   - Demoscene: the prod's pouet.net page imagery.
+   - Never store-CDN URLs (itch/steam image links churn); the store page belongs in
+     `sources`, not `covers`.
+5. **Wikipedia**: if the game has an article, stage it (`wikipedia` in update_game — it
+   becomes the game's Wikipedia link). Hasheous often knows it for commercial games;
+   otherwise a quick search — but only stage an article that is actually about this game,
+   not its series or port.
+6. `set_note` with your reasoning — what you changed, the source for each fact (URL or
    dataset name), your confidence, and anything the developer should double-check or decide
    (e.g. a flag you'd resolve and why). Keep it short enough to read during a playtest.
-5. If a flag's answer is now established by the staged data and the developer has agreed
+7. If a flag's answer is now established by the staged data and the developer has agreed
    (in conversation or by accepting the related edit), `resolve_flag`; otherwise propose the
    resolution in the note and leave the flag open.
-6. Watch for the queue to advance: check `queue_status` when you finish a game's research;
+8. Watch for the queue to advance: check `queue_status` when you finish a game's research;
    if the developer hasn't accepted yet, deepen the research or answer their questions —
    don't spin on polling.
 

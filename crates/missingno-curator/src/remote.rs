@@ -199,7 +199,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "update_game",
-            "description": "Stage edits to a game's text fields (title, developer, description, license). Edits appear live in the curator UI as uncommitted changes; a curated stamp is cleared.",
+            "description": "Stage edits to a game. Text fields plus cover image URLs (remote links only — Hasheous, the project's own repo/pouet page, libretro-thumbnails, or Wikimedia; never store CDNs) and a Wikipedia article link. Edits appear live in the curator UI as uncommitted changes; a curated stamp is cleared.",
             "inputSchema": object(json!({
                 "key": { "type": "string" },
                 "set": { "type": "object", "properties": {
@@ -207,6 +207,9 @@ fn tool_definitions() -> Value {
                     "developer": { "type": "string" },
                     "description": { "type": "string" },
                     "license": { "type": "string" },
+                    "covers": { "type": "array", "items": { "type": "string" },
+                                "description": "remote image URLs, preference order" },
+                    "wikipedia": { "type": "string", "description": "article URL" },
                 }},
             }), &["key", "set"]),
         },
