@@ -5,7 +5,8 @@ use std::{fs, io, path::PathBuf, process::Command};
 
 use missingno_gamedb::{
     Date, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Link, LinkType, Mod, ModCategory, ModOf,
-    ModRelease, Platform, Release, ReleaseStatus, Sha1, Tree, Vcs, Verification,
+    ModRelease, Platform, Region, Release, ReleaseStatus, Sha1, Slug, Tree, TvFormat, Vcs,
+    Verification,
     VerificationMethod,
 };
 
@@ -122,7 +123,13 @@ impl AnyGame {
                 parts.push(title.clone());
             }
             if !r.regions.is_empty() {
-                parts.push(format!("{:?}", r.regions));
+                parts.push(
+                    r.regions
+                        .iter()
+                        .map(|region| format!("{region:?}"))
+                        .collect::<Vec<_>>()
+                        .join("/"),
+                );
             }
             if let Some(label) = &r.label {
                 parts.push(label.clone());
@@ -199,6 +206,19 @@ impl AnyGame {
             .collect())
     }
 
+    /// Take another entry's releases and mods into this one — the two
+    /// described one game (an unlicensed reissue filed as its own entry).
+    /// Dumps already held here are dropped rather than duplicated.
+    pub fn absorb(&mut self, other: AnyGame) -> Result<(usize, usize), String> {
+        let held = self.artifact_sha1s();
+        match (self, other) {
+            (AnyGame::Gb(into), AnyGame::Gb(from)) => Ok(absorb_into(into, from, &held)),
+            (AnyGame::Gbc(into), AnyGame::Gbc(from)) => Ok(absorb_into(into, from, &held)),
+            (AnyGame::Vcs(into), AnyGame::Vcs(from)) => Ok(absorb_into(into, from, &held)),
+            _ => Err("the two entries are on different platforms".to_owned()),
+        }
+    }
+
     /// Record a newly verified dump on the first sourced (else first) release.
     /// Returns false when the hash was already present.
     pub fn stage_artifact(&mut self, sha1: &str, size: u64) -> bool {
@@ -248,6 +268,17 @@ impl AnyGame {
 
     /// Add or replace a link, keyed by name — re-staging the same source is
     /// idempotent rather than duplicating.
+    /// Drop links by name — the `wikipedia` field mints its own "Wikipedia"
+    /// link, so a hand-added one for the same article is a duplicate.
+    /// Returns whether anything went.
+    pub fn remove_links(&mut self, names: &[String]) -> bool {
+        common!(self, g => {
+            let before = g.links.len();
+            g.links.retain(|l| !names.iter().any(|n| n == &l.name));
+            g.links.len() != before
+        })
+    }
+
     pub fn upsert_link(&mut self, name: &str, url: &str, link_type: LinkType) {
         common!(self, g => {
             if let Some(link) = g.links.iter_mut().find(|l| l.name == name) {
@@ -497,32 +528,27 @@ impl AnyGame {
             .unwrap_or_default())
     }
 
-    pub fn update_release(
-        &mut self,
-        index: usize,
-        status: Option<ReleaseStatus>,
-        title: Option<String>,
-        label: Option<String>,
-        date: Option<missingno_gamedb::ReleaseDate>,
-        publisher: Option<String>,
-    ) -> bool {
+    pub fn update_release(&mut self, index: usize, edits: ReleaseEdits) -> bool {
         common!(self, g => {
             let Some(release) = g.releases.get_mut(index) else {
                 return false;
             };
-            if let Some(status) = status {
+            if let Some(regions) = edits.regions {
+                release.regions = regions;
+            }
+            if let Some(status) = edits.status {
                 release.status = status;
             }
-            if let Some(title) = title {
+            if let Some(title) = edits.title {
                 release.title = (!title.is_empty()).then_some(title);
             }
-            if let Some(label) = label {
+            if let Some(label) = edits.label {
                 release.label = (!label.is_empty()).then_some(label);
             }
-            if let Some(date) = date {
+            if let Some(date) = edits.date {
                 release.date = Some(date);
             }
-            if let Some(publisher) = publisher {
+            if let Some(publisher) = edits.publisher {
                 release.publisher = (!publisher.is_empty()).then_some(publisher);
             }
             true
@@ -723,6 +749,18 @@ impl AnyGame {
         .is_some()
     }
 
+    /// The broadcast standard one release shipped on (VCS only). Per-release,
+    /// not per-game: one entry can hold an NTSC, a PAL and a PAL-M release.
+    pub fn set_release_tv_format(&mut self, index: usize, format: TvFormat) -> bool {
+        match self {
+            AnyGame::Vcs(g) => g.releases.get_mut(index).map(|r| {
+                r.hardware.tv_format = Some(format);
+            }),
+            _ => None,
+        }
+        .is_some()
+    }
+
     /// Broadcast-standard hint for the session factory (VCS only).
     pub fn tv_hint(&self) -> Option<String> {
         match self {
@@ -770,6 +808,46 @@ pub fn parse_release_status(value: &str) -> Result<ReleaseStatus, String> {
                 "unknown status {other:?}; expected Released, WorkInProgress, Beta, or Prototype"
             ));
         }
+    })
+}
+
+/// PAL-M is Brazil's: PAL colour on System M's 525-line/59.94 Hz raster.
+pub fn parse_tv_format(value: &str) -> Result<TvFormat, String> {
+    Ok(match value {
+        "Ntsc" => TvFormat::Ntsc,
+        "Pal" => TvFormat::Pal,
+        "PalM" => TvFormat::PalM,
+        "Secam" => TvFormat::Secam,
+        other => {
+            return Err(format!(
+                "unknown tv_format {other:?}; expected Ntsc, Pal, PalM, or Secam"
+            ));
+        }
+    })
+}
+
+/// The region vocabulary is closed: unknown text is a data error, not a value.
+pub fn parse_region(value: &str) -> Result<Region, String> {
+    Ok(match value {
+        "Japan" => Region::Japan,
+        "Usa" => Region::Usa,
+        "Europe" => Region::Europe,
+        "World" => Region::World,
+        "Taiwan" => Region::Taiwan,
+        "Germany" => Region::Germany,
+        "France" => Region::France,
+        "China" => Region::China,
+        "Spain" => Region::Spain,
+        "Italy" => Region::Italy,
+        "Australia" => Region::Australia,
+        "UnitedKingdom" => Region::UnitedKingdom,
+        "Korea" => Region::Korea,
+        "HongKong" => Region::HongKong,
+        "Sweden" => Region::Sweden,
+        "Netherlands" => Region::Netherlands,
+        "Canada" => Region::Canada,
+        "Brazil" => Region::Brazil,
+        other => return Err(format!("unknown region {other:?}")),
     })
 }
 
@@ -988,6 +1066,47 @@ fn attach_mod<P: Platform>(
         return true;
     }
     false
+}
+
+/// Move `from`'s releases and mods into `into`, skipping dumps already held
+/// and releases those dumps were the whole of. Returns what actually landed.
+fn absorb_into<P: Platform>(
+    into: &mut Game<P>,
+    from: Game<P>,
+    held: &[String],
+) -> (usize, usize) {
+    let mut releases = 0;
+    for mut release in from.releases {
+        let had_artifacts = !release.artifacts.is_empty();
+        release
+            .artifacts
+            .retain(|a| !held.iter().any(|s| s == a.sha1.as_str()));
+        if had_artifacts && release.artifacts.is_empty() {
+            continue;
+        }
+        into.releases.push(release);
+        releases += 1;
+    }
+    let mut mods = 0;
+    for m in from.mods {
+        if into.mods.iter().any(|existing| existing.name == m.name) {
+            continue;
+        }
+        into.mods.push(m);
+        mods += 1;
+    }
+    (releases, mods)
+}
+
+/// Release fields an edit may set; `None` leaves the field as it stands.
+#[derive(Default)]
+pub struct ReleaseEdits {
+    pub status: Option<ReleaseStatus>,
+    pub title: Option<String>,
+    pub label: Option<String>,
+    pub date: Option<missingno_gamedb::ReleaseDate>,
+    pub publisher: Option<String>,
+    pub regions: Option<Vec<Region>>,
 }
 
 pub struct EntryHandle {
@@ -1219,6 +1338,104 @@ impl Db {
         self.write_entry(source).map_err(|e| e.to_string())?;
         self.write_entry(new_index).map_err(|e| e.to_string())?;
         Ok(format!("{}/{slug}", tree.dir()))
+    }
+
+    /// Rename an entry's slug: move its directory and re-point flags at the
+    /// new key. The manifest's content is untouched, so curations stand.
+    pub fn rename_entry(&mut self, index: usize, new_slug: &str) -> Result<String, String> {
+        let new_slug: Slug = new_slug.parse()?;
+        let tree = self.entries[index].tree;
+        let old_slug = self.entries[index].slug.clone();
+        if new_slug.as_str() == old_slug {
+            return Err(format!("{} is already the slug", new_slug.as_str()));
+        }
+        if self
+            .entries
+            .iter()
+            .any(|e| e.tree == tree && e.slug == new_slug.as_str())
+        {
+            return Err(format!("{}/{new_slug} already exists", tree.dir()));
+        }
+        let tree_dir = self.repo_root.join("data").join(tree.dir());
+        let new_dir = tree_dir.join(new_slug.as_str());
+        if new_dir.exists() {
+            return Err(format!("{} already exists on disk", new_dir.display()));
+        }
+        let old_dir = tree_dir.join(&old_slug);
+        if old_dir.exists() {
+            fs::rename(&old_dir, &new_dir).map_err(|e| e.to_string())?;
+            self.uncommitted += 1;
+        } else {
+            self.entries[index].dirty = true;
+        }
+        let old_key = self.entries[index].key();
+        self.entries[index].slug = new_slug.as_str().to_owned();
+        let new_key = self.entries[index].key();
+        let mut flags_changed = false;
+        for flag in &mut self.flags.flags {
+            for subject in &mut flag.subject {
+                if *subject == old_key {
+                    *subject = new_key.clone();
+                    flags_changed = true;
+                }
+            }
+        }
+        if flags_changed {
+            self.save_flags().map_err(|e| e.to_string())?;
+        }
+        if self.entries[index].dirty {
+            self.write_entry(index).map_err(|e| e.to_string())?;
+        }
+        Ok(new_key)
+    }
+
+    /// Fold one entry into another: the two catalogued the same game, so
+    /// `source`'s releases become releases of `target` and its directory
+    /// goes. Flags follow the surviving key. Returns (message, source key).
+    pub fn merge_entry(&mut self, target: usize, source: usize) -> Result<String, String> {
+        if target == source {
+            return Err("an entry cannot absorb itself".to_owned());
+        }
+        if self.entries[target].tree != self.entries[source].tree {
+            return Err("the two entries are in different trees".to_owned());
+        }
+        let source_key = self.entries[source].key();
+        let target_key = self.entries[target].key();
+        let source_dir = self
+            .repo_root
+            .join("data")
+            .join(self.entries[source].tree.dir())
+            .join(&self.entries[source].slug);
+        // Taking the entry by value avoids deep-copying a manifest; removing
+        // it first shifts every later index, target included.
+        let absorbed = self.entries.remove(source);
+        let target = if source < target { target - 1 } else { target };
+        let (releases, mods) = self.entries[target].game.absorb(absorbed.game)?;
+        // The surviving entry now claims dumps nobody vouched for.
+        self.entries[target].game.clear_curations();
+        self.entries[target].dirty = true;
+        self.write_entry(target).map_err(|e| e.to_string())?;
+
+        if source_dir.exists() {
+            fs::remove_dir_all(&source_dir).map_err(|e| e.to_string())?;
+            self.uncommitted += 1;
+        }
+
+        let mut flags_changed = false;
+        for flag in &mut self.flags.flags {
+            for subject in &mut flag.subject {
+                if *subject == source_key {
+                    *subject = target_key.clone();
+                    flags_changed = true;
+                }
+            }
+        }
+        if flags_changed {
+            self.save_flags().map_err(|e| e.to_string())?;
+        }
+        Ok(format!(
+            "{source_key} merged into {target_key}: {releases} release(s), {mods} mod(s) carried over"
+        ))
     }
 
     /// An artifact that is really its own release (prototype, beta build).
@@ -1470,6 +1687,171 @@ mod mark_hack_tests {
             .unwrap_err();
         assert!(err.contains("not an artifact"), "{err}");
         assert!(mod_bases(&db).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod rename_tests {
+    use super::*;
+
+    fn db_with_entry(slug: &str) -> (tempfile::TempDir, Db) {
+        let dir = tempfile::tempdir().unwrap();
+        let game_dir = dir.path().join("data/gb").join(slug);
+        std::fs::create_dir_all(&game_dir).unwrap();
+        std::fs::write(game_dir.join("manifest.ron"), "(\n    title: \"T\",\n)\n").unwrap();
+        let db = Db::load(dir.path().to_path_buf()).unwrap();
+        (dir, db)
+    }
+
+    #[test]
+    fn rename_moves_directory_and_repoints_flags() {
+        let (dir, mut db) = db_with_entry("old-name");
+        db.flags.flags.push(missingno_gamedb::Flag {
+            id: 1,
+            kind: missingno_gamedb::FlagKind::Custom,
+            subject: vec!["gb/old-name".to_owned(), "gb/other".to_owned()],
+            note: "check title".to_owned(),
+            resolved: None,
+        });
+        let new_key = db.rename_entry(0, "new-name").unwrap();
+        assert_eq!(new_key, "gb/new-name");
+        assert_eq!(db.entries[0].key(), "gb/new-name");
+        assert!(dir.path().join("data/gb/new-name/manifest.ron").is_file());
+        assert!(!dir.path().join("data/gb/old-name").exists());
+        assert_eq!(
+            db.flags.flags[0].subject,
+            vec!["gb/new-name".to_owned(), "gb/other".to_owned()]
+        );
+        let saved = std::fs::read_to_string(dir.path().join("curation/flags.ron")).unwrap();
+        assert!(saved.contains("gb/new-name"));
+        assert!(db.uncommitted > 0);
+    }
+
+    #[test]
+    fn rename_refuses_collisions_and_bad_slugs() {
+        let dir = tempfile::tempdir().unwrap();
+        for slug in ["old-name", "taken"] {
+            let game_dir = dir.path().join("data/gb").join(slug);
+            std::fs::create_dir_all(&game_dir).unwrap();
+            std::fs::write(game_dir.join("manifest.ron"), "(\n    title: \"T\",\n)\n").unwrap();
+        }
+        let mut db = Db::load(dir.path().to_path_buf()).unwrap();
+        let at = db
+            .entries
+            .iter()
+            .position(|e| e.slug == "old-name")
+            .unwrap();
+        assert!(
+            db.rename_entry(at, "taken")
+                .unwrap_err()
+                .contains("already exists")
+        );
+        assert!(db.rename_entry(at, "Bad Slug").is_err());
+        assert!(
+            db.rename_entry(at, "old-name")
+                .unwrap_err()
+                .contains("already")
+        );
+        assert_eq!(db.entries[at].key(), "gb/old-name");
+        assert!(dir.path().join("data/gb/old-name/manifest.ron").is_file());
+    }
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+
+    const A: &str = "0123456789abcdef0123456789abcdef01234567";
+    const B: &str = "89abcdef0123456789abcdef0123456789abcdef";
+
+    fn db_with(entries: &[(&str, &str)]) -> (tempfile::TempDir, Db) {
+        let dir = tempfile::tempdir().unwrap();
+        for (slug, manifest) in entries {
+            let game_dir = dir.path().join("data/gb").join(slug);
+            std::fs::create_dir_all(&game_dir).unwrap();
+            std::fs::write(game_dir.join("manifest.ron"), manifest).unwrap();
+        }
+        let db = Db::load(dir.path().to_path_buf()).unwrap();
+        (dir, db)
+    }
+
+    fn index_of(db: &Db, slug: &str) -> usize {
+        db.entries.iter().position(|e| e.slug == slug).unwrap()
+    }
+
+    #[test]
+    fn merge_carries_releases_and_deletes_the_absorbed_entry() {
+        let (dir, mut db) = db_with(&[
+            (
+                "keeper",
+                &format!(
+                    "(title: \"T\", curated: [(by: \"a\", date: \"2026-07-21\", recommended: true)],\
+                      releases: [(artifacts: [(sha1: \"{A}\")])])"
+                ),
+            ),
+            (
+                "reissue",
+                &format!("(title: \"T2\", releases: [(publisher: Some(\"CCE\"), artifacts: [(sha1: \"{B}\")])])"),
+            ),
+        ]);
+        db.flags.flags.push(missingno_gamedb::Flag {
+            id: 1,
+            kind: missingno_gamedb::FlagKind::Custom,
+            subject: vec!["gb/reissue".to_owned()],
+            note: "same game?".to_owned(),
+            resolved: None,
+        });
+        let (keeper, reissue) = (index_of(&db, "keeper"), index_of(&db, "reissue"));
+        db.merge_entry(keeper, reissue).unwrap();
+
+        assert!(db.entries.iter().all(|e| e.slug != "reissue"));
+        assert!(!dir.path().join("data/gb/reissue").exists());
+        let keeper = index_of(&db, "keeper");
+        assert_eq!(db.entries[keeper].game.artifact_sha1s(), vec![A, B]);
+        // Absorbing dumps nobody vouched for re-opens the entry.
+        assert!(db.entries[keeper].game.curations().is_empty());
+        assert_eq!(db.flags.flags[0].subject, vec!["gb/keeper".to_owned()]);
+    }
+
+    #[test]
+    fn merge_drops_dumps_the_target_already_holds() {
+        let (_dir, mut db) = db_with(&[
+            (
+                "keeper",
+                &format!("(title: \"T\", releases: [(artifacts: [(sha1: \"{A}\")])])"),
+            ),
+            (
+                "dupe",
+                &format!("(title: \"T\", releases: [(artifacts: [(sha1: \"{A}\")])])"),
+            ),
+        ]);
+        let (keeper, dupe) = (index_of(&db, "keeper"), index_of(&db, "dupe"));
+        db.merge_entry(keeper, dupe).unwrap();
+        let keeper = index_of(&db, "keeper");
+        // The release held nothing new, so it is not carried as an empty one.
+        assert_eq!(db.entries[keeper].game.artifact_sha1s(), vec![A]);
+        assert_eq!(db.entries[keeper].game.release_lines().len(), 1);
+    }
+
+    #[test]
+    fn merge_refuses_itself_and_survives_a_lower_source_index() {
+        let (_dir, mut db) = db_with(&[
+            (
+                "absorbed",
+                &format!("(title: \"T\", releases: [(artifacts: [(sha1: \"{B}\")])])"),
+            ),
+            (
+                "keeper",
+                &format!("(title: \"T\", releases: [(artifacts: [(sha1: \"{A}\")])])"),
+            ),
+        ]);
+        let keeper = index_of(&db, "keeper");
+        assert!(db.merge_entry(keeper, keeper).is_err());
+        let absorbed = index_of(&db, "absorbed");
+        // Removing a lower-indexed source shifts the target down by one.
+        db.merge_entry(keeper, absorbed).unwrap();
+        let keeper = index_of(&db, "keeper");
+        assert_eq!(db.entries[keeper].game.artifact_sha1s(), vec![A, B]);
     }
 }
 

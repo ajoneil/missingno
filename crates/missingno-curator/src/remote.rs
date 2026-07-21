@@ -210,7 +210,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "update_game",
-            "description": "Stage edits to a game. Text fields plus cover image URLs (remote links only — Hasheous, the project's own repo/pouet page, libretro-thumbnails, or Wikimedia; never store CDNs) and a Wikipedia article link. Edits appear live in the curator UI as uncommitted changes; a curated stamp is cleared.",
+            "description": "Stage edits to a game. Text fields plus cover image URLs (remote links only — Hasheous, the project's own repo/pouet page, libretro-thumbnails, or Wikimedia; never store CDNs) and a Wikipedia article link. Setting `wikipedia` creates the game's \"Wikipedia\" link by itself — do not also pass one in `links`, or the article ends up listed twice. `remove_links` drops links by name. Edits appear live in the curator UI as uncommitted changes; a curated stamp is cleared.",
             "inputSchema": object(json!({
                 "key": { "type": "string" },
                 "set": { "type": "object", "properties": {
@@ -231,6 +231,8 @@ fn tool_definitions() -> Value {
                                    "link_type": { "type": "string",
                                                   "enum": ["Wiki", "Manual", "Source", "Speedrun", "UnusedContent", "TechnicalReference", "Guide", "Community"] },
                                }, "required": ["name", "url", "link_type"] } },
+                    "remove_links": { "type": "array", "items": { "type": "string" },
+                                      "description": "link names to drop, for clearing duplicates or a link that turned out to be wrong" },
                     "mapper": { "type": "string",
                                 "description": "GB/GBC cartridge mapper override (first release), e.g. \"MBC5+RUMBLE\" — when the header lies" },
                     "cart_type": { "type": "string",
@@ -305,7 +307,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "update_release",
-            "description": "Set fields on an existing release: status, title, label, date, publisher.",
+            "description": "Set fields on an existing release: status, title, label, date, publisher, regions. `title` is the name this release shipped under when it differs from the game's canonical title (a localized or retitled reissue). `regions` replaces the release's region list; the vocabulary is closed, so a region the list lacks is a schema question, not a free-text value.",
             "inputSchema": object(json!({
                 "key": { "type": "string" },
                 "release_index": { "type": "integer" },
@@ -316,6 +318,13 @@ fn tool_definitions() -> Value {
                     "label": { "type": "string" },
                     "date": { "type": "string" },
                     "publisher": { "type": "string" },
+                    "tv_format": { "type": "string", "enum": ["Ntsc", "Pal", "PalM", "Secam"],
+                        "description": "VCS only. PalM is Brazil's PAL-M: PAL colour on System M's 525-line/59.94 Hz raster, so it runs at NTSC timing, not PAL's — never file a Brazilian release as Pal" },
+                    "regions": { "type": "array", "items": { "type": "string",
+                        "enum": ["Japan", "Usa", "Europe", "World", "Taiwan", "Germany",
+                                 "France", "China", "Spain", "Italy", "Australia",
+                                 "UnitedKingdom", "Korea", "HongKong", "Sweden",
+                                 "Netherlands", "Canada", "Brazil"] } },
                 }},
             }), &["key", "release_index", "set"]),
         },
@@ -336,6 +345,22 @@ fn tool_definitions() -> Value {
                 "sha1": { "type": "string" },
                 "label": { "type": "string" },
             }), &["key", "sha1", "label"]),
+        },
+        {
+            "name": "merge_game",
+            "description": "Fold a duplicate entry into the one that should survive: `from`'s releases and mods become the target's, its directory is deleted and open flags follow the surviving key. Use when two entries catalogue the same game (an unlicensed reissue, a localized retitling) — not for a genuinely different product that merely shares a title, like a multicart. Dumps the target already holds are dropped rather than duplicated, and the target's curated stamp clears.",
+            "inputSchema": object(json!({
+                "key": { "type": "string" },
+                "from": { "type": "string", "description": "the entry being absorbed; it ceases to exist" },
+            }), &["key", "from"]),
+        },
+        {
+            "name": "rename_game",
+            "description": "Change an entry's slug (its directory name and tree/slug key). Moves the manifest on disk and re-points open flags and the play queue; curations stand, since the game's content is unchanged. Use the returned new key afterwards. Slugs are lowercase alphanumerics, '-' or '_'.",
+            "inputSchema": object(json!({
+                "key": { "type": "string" },
+                "new_slug": { "type": "string" },
+            }), &["key", "new_slug"]),
         },
         {
             "name": "find_duplicates",

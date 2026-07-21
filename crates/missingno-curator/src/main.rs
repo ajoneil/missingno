@@ -128,6 +128,8 @@ struct Curator {
     list_visible: bool,
     /// Open red-flag note input for the current entry (None = closed).
     flag_note: Option<String>,
+    /// Open slug-rename input for the current entry (None = closed).
+    slug_edit: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -175,6 +177,9 @@ enum Message {
     FlagPrompt,
     FlagNote(String),
     SaveFlag,
+    SlugPrompt,
+    SlugInput(String),
+    ApplySlug,
     ToggleList,
     CloseRequested,
     OpenLink(String),
@@ -294,6 +299,7 @@ impl Curator {
                 recommend_next: false,
                 list_visible: false,
                 flag_note: None,
+                slug_edit: None,
             },
             // A --rom-dir given at launch (e.g. by an agent starting the
             // curator) scans immediately; nothing to click.
@@ -912,6 +918,35 @@ impl Curator {
                     }
                 }
             }
+            Message::SlugPrompt => {
+                self.slug_edit = match self.slug_edit {
+                    Some(_) => None,
+                    None => self
+                        .selected
+                        .and_then(|i| self.db.as_ref().ok().map(|db| db.entries[i].slug.clone())),
+                };
+            }
+            Message::SlugInput(slug) => self.slug_edit = Some(slug),
+            Message::ApplySlug => {
+                let Some(new_slug) = self.slug_edit.take() else {
+                    return Task::none();
+                };
+                let (Ok(db), Some(i)) = (&mut self.db, self.selected) else {
+                    return Task::none();
+                };
+                let old_key = db.entries[i].key();
+                match db.rename_entry(i, new_slug.trim()) {
+                    Ok(new_key) => {
+                        self.rekey_entry(&old_key, &new_key);
+                        self.status = format!("renamed {old_key} → {new_key}");
+                        self.emit_action(format!("renamed {old_key} → {new_key}"));
+                    }
+                    Err(e) => {
+                        self.status = format!("rename failed: {e}");
+                        self.slug_edit = Some(new_slug);
+                    }
+                }
+            }
             Message::CloseRequested => {
                 // Tear down in order on this thread — session first (its worker
                 // and the cpal stream go quietly), then the socket — so the
@@ -961,6 +996,7 @@ impl Curator {
     /// Select an entry: sync the description editor and kick a cover preview.
     fn select(&mut self, i: usize) -> Task<Message> {
         self.selected = Some(i);
+        self.slug_edit = None;
         self.sync_description();
         Task::batch([self.load_cover_task(i), self.auto_enrich_task(i)])
     }
@@ -1011,28 +1047,32 @@ impl Curator {
     }
 
     fn start_playtest_for(&mut self, i: usize) -> Task<Message> {
+        // Selecting fetches the cover preview; it has to ride along with the
+        // boot, since a queued playtest never goes through a list click.
         let select_task = self.select(i);
         let Ok(db) = &self.db else {
-            return Task::none();
+            return select_task;
         };
         let entry = &db.entries[i];
         let key = entry.key();
-        let _ = select_task; // cover preview races the playtest harmlessly
-        if let Some(index) = &self.rom_index {
-            for sha1 in entry.game.artifact_sha1s() {
-                if let Some(path) = index.by_sha1.get(&sha1) {
-                    return Task::done(Message::Play(BootSource::File(path.clone())));
+        let boot = 'boot: {
+            if let Some(index) = &self.rom_index {
+                for sha1 in entry.game.artifact_sha1s() {
+                    if let Some(path) = index.by_sha1.get(&sha1) {
+                        break 'boot Task::done(Message::Play(BootSource::File(path.clone())));
+                    }
                 }
             }
-        }
-        if let Some(sha1) = self.fetched_sha1.get(&key) {
-            return Task::done(Message::Play(BootSource::Cached(sha1.clone())));
-        }
-        if entry.game.download_url().is_some() {
-            return Task::done(Message::Fetch { play_after: true });
-        }
-        self.status = format!("{key}: no local dump and no download source");
-        Task::none()
+            if let Some(sha1) = self.fetched_sha1.get(&key) {
+                break 'boot Task::done(Message::Play(BootSource::Cached(sha1.clone())));
+            }
+            if entry.game.download_url().is_some() {
+                break 'boot Task::done(Message::Fetch { play_after: true });
+            }
+            self.status = format!("{key}: no local dump and no download source");
+            Task::none()
+        };
+        Task::batch([select_task, boot])
     }
 
     fn accept_and_next(&mut self) -> Task<Message> {
@@ -1110,6 +1150,48 @@ impl Curator {
                     s.push_str(&line);
                 })
                 .or_insert(line);
+        }
+    }
+
+    /// Migrate every key-indexed piece of session state after a slug rename.
+    /// An absorbed entry's key stops existing: point what referenced it at the
+    /// survivor, without queueing that survivor twice.
+    fn merge_keys(&mut self, gone: &str, survivor: &str) {
+        self.rekey_entry(gone, survivor);
+        let mut seen = false;
+        self.queue.retain(|key| {
+            if key != survivor {
+                return true;
+            }
+            let first = !seen;
+            seen = true;
+            first
+        });
+    }
+
+    fn rekey_entry(&mut self, old_key: &str, new_key: &str) {
+        for key in self.queue.iter_mut().filter(|k| *k == old_key) {
+            *key = new_key.to_owned();
+        }
+        if let Some((key, _)) = &mut self.playing
+            && key == old_key
+        {
+            *key = new_key.to_owned();
+        }
+        if let Some(v) = self.verify_status.remove(old_key) {
+            self.verify_status.insert(new_key.to_owned(), v);
+        }
+        if let Some(v) = self.agent_notes.remove(old_key) {
+            self.agent_notes.insert(new_key.to_owned(), v);
+        }
+        if let Some(v) = self.fetched_sha1.remove(old_key) {
+            self.fetched_sha1.insert(new_key.to_owned(), v);
+        }
+        if let Some(v) = self.boot_shots.remove(old_key) {
+            self.boot_shots.insert(new_key.to_owned(), v);
+        }
+        if self.enrich_attempted.remove(old_key) {
+            self.enrich_attempted.insert(new_key.to_owned());
         }
     }
 
@@ -1311,6 +1393,17 @@ impl Curator {
                         }
                     }
                 }
+                let remove_links: Vec<String> = set
+                    .get("remove_links")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|names| {
+                        names
+                            .iter()
+                            .filter_map(serde_json::Value::as_str)
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 let Ok(db) = &mut self.db else {
                     return error_result("db not loaded");
                 };
@@ -1321,6 +1414,9 @@ impl Curator {
                 }
                 if !staged_links.is_empty() {
                     applied.push("links");
+                }
+                if !remove_links.is_empty() && entry.game.remove_links(&remove_links) {
+                    applied.push("removed links");
                 }
                 for (field_name, field) in [
                     ("title", TextField::Title),
@@ -1368,11 +1464,69 @@ impl Curator {
                 entry.game.clear_curations();
                 entry.dirty = true;
                 self.selected = Some(i);
+                // Staged text lives in the manifest, not just in memory: an
+                // agent's research must survive the window closing.
+                if let Ok(db) = &mut self.db
+                    && let Err(e) = db.write_entry(i)
+                {
+                    return error_result(format!("staged, but writing {key} failed: {e}"));
+                }
                 self.sync_description();
                 text_result(format!(
                     "staged {} on {key}; entry re-opened for review (uncommitted until the curator confirms)",
                     applied.join(", ")
                 ))
+            }
+            "merge_game" => {
+                let (Some(key), Some(from)) = (str_arg("key"), str_arg("from")) else {
+                    return error_result("missing key or from");
+                };
+                let (Some(target), Some(source)) = (self.find_entry(key), self.find_entry(from))
+                else {
+                    return error_result(format!("no entry {key} or {from}"));
+                };
+                let (target_key, source_key) = (key.to_owned(), from.to_owned());
+                let merged = {
+                    let Ok(db) = &mut self.db else {
+                        return error_result("db not loaded");
+                    };
+                    db.merge_entry(target, source)
+                };
+                match merged {
+                    Ok(message) => {
+                        // The absorbed key must stop naming a queue slot, and
+                        // `selected` indexes a vec that just lost an element.
+                        self.merge_keys(&source_key, &target_key);
+                        self.selected = self.find_entry(&target_key);
+                        self.sync_description();
+                        text_result(message)
+                    }
+                    Err(e) => error_result(e),
+                }
+            }
+            "rename_game" => {
+                let (Some(key), Some(new_slug)) = (str_arg("key"), str_arg("new_slug")) else {
+                    return error_result("missing key or new_slug");
+                };
+                let Some(i) = self.find_entry(key) else {
+                    return error_result(format!("no entry {key}"));
+                };
+                let old_key = key.to_owned();
+                let renamed = {
+                    let Ok(db) = &mut self.db else {
+                        return error_result("db not loaded");
+                    };
+                    db.rename_entry(i, new_slug)
+                };
+                match renamed {
+                    Ok(new_key) => {
+                        self.rekey_entry(&old_key, &new_key);
+                        text_result(format!(
+                            "{old_key} renamed → {new_key}; use the new key from now on"
+                        ))
+                    }
+                    Err(e) => error_result(e),
+                }
             }
             "set_note" => {
                 let (Some(key), Some(note)) = (str_arg("key"), str_arg("note")) else {
@@ -1628,27 +1782,61 @@ impl Curator {
                 let title = set_str("title").map(str::to_owned);
                 let label = set_str("label").map(str::to_owned);
                 let publisher = set_str("publisher").map(str::to_owned);
+                let regions = match set.get("regions").and_then(serde_json::Value::as_array) {
+                    Some(list) => {
+                        let mut parsed = Vec::with_capacity(list.len());
+                        for value in list {
+                            let Some(name) = value.as_str() else {
+                                return error_result("regions must be strings");
+                            };
+                            match db::parse_region(name) {
+                                Ok(region) => parsed.push(region),
+                                Err(e) => return error_result(e),
+                            }
+                        }
+                        Some(parsed)
+                    }
+                    None => None,
+                };
+                let tv_format = match set_str("tv_format") {
+                    Some(f) => Some(match db::parse_tv_format(f) {
+                        Ok(f) => f,
+                        Err(e) => return error_result(e),
+                    }),
+                    None => None,
+                };
                 if status.is_none()
                     && title.is_none()
                     && label.is_none()
                     && date.is_none()
                     && publisher.is_none()
+                    && regions.is_none()
+                    && tv_format.is_none()
                 {
                     return error_result("no recognized fields in set");
                 }
                 let Ok(db) = &mut self.db else {
                     return error_result("db not loaded");
                 };
-                if db.entries[i].game.update_release(
-                    index as usize,
+                let edits = db::ReleaseEdits {
                     status,
                     title,
                     label,
                     date,
                     publisher,
-                ) {
+                    regions,
+                };
+                if db.entries[i].game.update_release(index as usize, edits) {
+                    let tv = tv_format
+                        .is_some_and(|f| db.entries[i].game.set_release_tv_format(index as usize, f));
                     db.entries[i].game.clear_curations();
                     db.entries[i].dirty = true;
+                    if tv_format.is_some() && !tv {
+                        return error_result("tv_format applies to VCS releases only");
+                    }
+                    if let Err(e) = db.write_entry(i) {
+                        return error_result(format!("staged, but writing {key} failed: {e}"));
+                    }
                     text_result(format!("release {index} of {key} updated"))
                 } else {
                     error_result(format!("{key} has no release {index}"))
@@ -1996,34 +2184,59 @@ impl Curator {
                 };
                 let mut editor = column![
                     text(entry.game.title().to_owned()).size(22),
-                    text(format!(
-                        "{} · {:?}{}{}",
-                        entry.key(),
-                        entry.game.kind(),
-                        if entry.game.curations().is_empty() {
-                            String::new()
-                        } else {
-                            format!(
-                                " · curated by {}",
-                                entry
-                                    .game
-                                    .curations()
-                                    .iter()
-                                    .map(|c| format!(
-                                        "{}{} {}",
-                                        c.by,
-                                        if c.recommended { " ★" } else { "" },
-                                        c.date
-                                    ))
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            )
-                        },
-                        if entry.dirty { " · edited" } else { "" },
-                    ))
-                    .size(13),
+                    row![
+                        text(format!(
+                            "{} · {:?}{}{}",
+                            entry.key(),
+                            entry.game.kind(),
+                            if entry.game.curations().is_empty() {
+                                String::new()
+                            } else {
+                                format!(
+                                    " · curated by {}",
+                                    entry
+                                        .game
+                                        .curations()
+                                        .iter()
+                                        .map(|c| format!(
+                                            "{}{} {}",
+                                            c.by,
+                                            if c.recommended { " ★" } else { "" },
+                                            c.date
+                                        ))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                )
+                            },
+                            if entry.dirty { " · edited" } else { "" },
+                        ))
+                        .size(13),
+                        button(text("✎ rename").size(12))
+                            .style(button::text)
+                            .on_press(Message::SlugPrompt),
+                    ]
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center),
                 ]
                 .spacing(10);
+                if let Some(slug) = &self.slug_edit {
+                    editor = editor.push(
+                        row![
+                            text("Slug").width(Length::Fixed(90.0)).size(14),
+                            text_input("new-slug", slug)
+                                .on_input(Message::SlugInput)
+                                .on_submit(Message::ApplySlug)
+                                .size(13)
+                                .width(Length::Fixed(280.0)),
+                            button(text("Rename").size(13)).on_press(Message::ApplySlug),
+                            button(text("✕").size(13))
+                                .style(button::text)
+                                .on_press(Message::SlugPrompt),
+                        ]
+                        .spacing(8)
+                        .align_y(iced::Alignment::Center),
+                    );
+                }
                 if let Some(url) = entry.game.covers().first() {
                     if let Some(preview) = self.cover_previews.get(url) {
                         editor = editor.push(

@@ -160,7 +160,11 @@ While the developer plays the current game:
 4. Research the gaps — empty developer/description/license, suspicious titles, flag
    questions. Source preference: existing structured sources first (the gamedb itself,
    pouet.net data dumps, gbdev database, publisher/developer sites), then ordinary web
-   pages. **Scraping etiquette is binding**: respect robots.txt, touch only documented or
+   pages. **The per-tree source hierarchy — which catalogues answer which fields for
+   gb/gbc/vcs, and which are blocked — lives in `missingno-gamedb/SOURCES.md`. Read
+   the section for the tree you are curating before searching the open web**, and add
+   to it when a source proves itself: that file is the durable home for per-system
+   cataloguing knowledge, not this skill. **Scraping etiquette is binding**: respect robots.txt, touch only documented or
    normal-user URLs, never probe guessed endpoints or parameters, one request at a time,
    and stop at the first anti-scraper signal. A blocked source is a fact to note, not an
    obstacle to work around. **But confirm the block is the site's, not your tool's**: a 403
@@ -173,6 +177,27 @@ While the developer plays the current game:
    design. **Record each source as a link in the same call** (`links`:
    `{name, url, link_type}` — upserts by name): links live in the manifest and survive;
    notes do not. A description sourced from an AtariAge thread means a link to that thread.
+   When a title correction leaves the slug wrong too (a typo'd import, a game that turned
+   out to be something else), `rename_game` changes the slug — it moves the entry on disk
+   and re-points flags and the queue, and its reply names the new `tree/slug` key: use
+   that key for every later call. Fixing a title does not require renaming; do it when
+   the slug would mislead someone browsing the tree.
+
+   When `find_duplicates` (or a rename that collides) turns up an entry cataloguing the
+   *same game* — an unlicensed reissue, a regional retitling — `merge_game` folds one
+   into the other: the absorbed entry's releases and mods become the survivor's, its
+   directory goes, and flags follow the surviving key. Dumps the target already holds
+   are dropped rather than duplicated. **The merge is the developer's call, never
+   yours** — propose it in the note and wait. A shared title alone is not sameness: a
+   multicart or an unrelated game with the same name stays its own entry.
+
+   A merged-in reissue usually shipped under its own publisher, region and sometimes
+   its own name — `update_release` carries `publisher`, `regions` (a closed vocabulary:
+   Japan, Usa, Europe, World, Taiwan, Germany, France, China, Spain, Italy, Australia,
+   UnitedKingdom, Korea, HongKong, Sweden, Netherlands, Canada, Brazil) and `title`,
+   which is the name *that release* shipped under when it differs from the game's
+   canonical title. Set them from what the evidence names, and note that a TOSEC-style
+   dump flag ("[a]", "[!]") is never a release title.
 5. **Descriptions** — the field most likely to accumulate quiet fiction, so it has its own
    rules:
    - **Write the facts in your own words; never copy the prose.** The database is CC0;

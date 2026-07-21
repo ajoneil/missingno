@@ -115,6 +115,10 @@ fn tv_standard(format: TvFormat) -> TvStandard {
     match format {
         TvFormat::Ntsc => TvStandard::Ntsc,
         TvFormat::Pal => TvStandard::Pal,
+        // PAL-M is System M — 525 lines at 59.94 Hz — so the machine runs on
+        // NTSC timing; only the colour encoding is PAL's, and on the VCS that
+        // came from a board outside the TIA.
+        TvFormat::PalM => TvStandard::Ntsc,
         TvFormat::Secam => TvStandard::Secam,
     }
 }
