@@ -26,7 +26,7 @@ use crate::console::{Frame, Vcs};
 use crate::snapshot::read_state;
 use crate::state_schema::vcs_state_schema;
 use crate::tia::{VISIBLE_CLOCKS, palette, palette_index};
-use crate::tv_standard::PIXEL_ASPECT;
+use crate::tv_standard::pixel_aspect;
 
 use morepork::snapshot::IndexedFrame;
 
@@ -215,7 +215,7 @@ impl Tracer {
             IndexedFrame {
                 width: VISIBLE_CLOCKS as u16,
                 height: frame.lines.len() as u16,
-                pixel_aspect: PIXEL_ASPECT,
+                pixel_aspect: pixel_aspect(self.region),
                 palette: palette(self.region)
                     .iter()
                     .map(|&(r, g, b)| [r, g, b])

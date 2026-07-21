@@ -25,7 +25,7 @@ use crate::state_schema::vcs_state_schema;
 use crate::cartridge::CartridgeError;
 use crate::console::{Frame, JoystickDirection, Vcs};
 use crate::tia::{VISIBLE_CLOCKS, palette_index};
-use crate::tv_standard::PIXEL_ASPECT;
+use crate::tv_standard::pixel_aspect;
 use crate::{CartType, TvStandard};
 
 /// The latching console switches, driven through control ids past the
@@ -382,7 +382,7 @@ impl SystemConsole for VcsConsole {
     fn video_out(&self) -> DisplayTechnology {
         DisplayTechnology::Crt {
             standard: self.vcs.tv_standard(),
-            pixel_aspect: PIXEL_ASPECT,
+            pixel_aspect: pixel_aspect(self.vcs.tv_standard()),
         }
     }
 
@@ -1077,7 +1077,7 @@ impl SystemConsole for VcsDebugger {
     fn video_out(&self) -> DisplayTechnology {
         DisplayTechnology::Crt {
             standard: self.core.console().tv_standard(),
-            pixel_aspect: PIXEL_ASPECT,
+            pixel_aspect: pixel_aspect(self.core.console().tv_standard()),
         }
     }
 
@@ -1302,7 +1302,7 @@ mod tests {
                     pixel_aspect,
                 } => {
                     assert_eq!(reported, standard);
-                    assert_eq!(pixel_aspect, PIXEL_ASPECT);
+                    assert_eq!(pixel_aspect, crate::tv_standard::pixel_aspect(standard));
                 }
                 other => panic!("VCS should drive a CRT, got {other:?}"),
             }
