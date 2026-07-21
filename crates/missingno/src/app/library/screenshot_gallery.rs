@@ -142,12 +142,31 @@ impl GalleryState {
         }
     }
 
-    /// Create a scaled image handle for the preview (nearest-neighbour).
-    fn selected_image_handle_scaled(&self) -> iced::widget::image::Handle {
+    /// A display-correct RGBA image for PNG export at the chosen scale: integer
+    /// upscale, then a horizontal stretch by the capture's pixel aspect.
+    pub fn export_image(&self) -> (u32, u32, Vec<u8>) {
         let rgba = self.selected_rgba();
-        let (width, height) = self.selected_capture().dimensions();
-        let scaled = scale_nearest_neighbour(&rgba, width, height, self.scale);
-        iced::widget::image::Handle::from_rgba(width * self.scale, height * self.scale, scaled)
+        let capture = self.selected_capture();
+        let (w, h) = capture.dimensions();
+        let out_w = ((w * self.scale) as f32 * capture.pixel_aspect())
+            .round()
+            .max(1.0) as u32;
+        let out_h = h * self.scale;
+        (
+            out_w,
+            out_h,
+            activity::resample_nearest(&rgba, w, h, out_w, out_h),
+        )
+    }
+
+    /// A display-correct preview handle plus its pixel size (nearest-neighbour).
+    fn selected_scaled(&self) -> (iced::widget::image::Handle, u32, u32) {
+        let (width, height, scaled) = self.export_image();
+        (
+            iced::widget::image::Handle::from_rgba(width, height, scaled),
+            width,
+            height,
+        )
     }
 
     /// Whether the current screenshot has SGB data.
@@ -156,28 +175,10 @@ impl GalleryState {
     }
 }
 
-pub fn scale_nearest_neighbour(rgba: &[u8], w: u32, h: u32, scale: u32) -> Vec<u8> {
-    let sw = w * scale;
-    let sh = h * scale;
-    let mut out = Vec::with_capacity((sw * sh * 4) as usize);
-    for y in 0..sh {
-        for x in 0..sw {
-            let src_x = (x / scale) as usize;
-            let src_y = (y / scale) as usize;
-            let idx = (src_y * w as usize + src_x) * 4;
-            out.extend_from_slice(&rgba[idx..idx + 4]);
-        }
-    }
-    out
-}
-
 #[allow(private_interfaces)]
 pub(crate) fn view(state: &GalleryState) -> Element<'_, app::Message> {
     let main_image = {
-        let handle = state.selected_image_handle_scaled();
-        let (width, height) = state.selected_capture().dimensions();
-        let px = width * state.scale;
-        let py = height * state.scale;
+        let (handle, px, py) = state.selected_scaled();
         container(
             image(handle)
                 .width(px as f32)
@@ -287,7 +288,14 @@ fn thumbnail_strip(state: &GalleryState) -> Element<'_, app::Message> {
 
     for (i, screenshot) in state.screenshots.iter().enumerate() {
         let handle = screenshot.capture.to_image_handle();
-        let thumb = image(handle).width(80).height(72);
+        let thumb_height = 72u32;
+        let thumb_width = (thumb_height as f32 * screenshot.capture.display_aspect())
+            .round()
+            .max(1.0) as u32;
+        let thumb = image(handle)
+            .width(thumb_width as f32)
+            .height(thumb_height as f32)
+            .content_fit(iced::ContentFit::Fill);
         let is_selected = i == state.selected;
 
         let thumb_btn = button(thumb)

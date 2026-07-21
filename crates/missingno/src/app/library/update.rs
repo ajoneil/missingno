@@ -552,17 +552,7 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                     } = &app.screen
                         && let Some(handle) = handle
                     {
-                        let rgba = gallery_state.selected_rgba();
-                        let (native_width, native_height) =
-                            gallery_state.selected_capture().dimensions();
-                        let width = native_width * gallery_state.scale;
-                        let height = native_height * gallery_state.scale;
-                        let scaled = screenshot_gallery::scale_nearest_neighbour(
-                            &rgba,
-                            native_width,
-                            native_height,
-                            gallery_state.scale,
-                        );
+                        let (width, height, scaled) = gallery_state.export_image();
                         if let Some(img) = image::RgbaImage::from_raw(width, height, scaled) {
                             let _ = img.save(handle.path());
                         }

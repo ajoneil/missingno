@@ -142,6 +142,11 @@ pub struct FrameCapture {
     /// render paths entirely when present.
     #[serde(default)]
     pub rgba: Option<RgbaCapture>,
+    /// One source pixel's display width ÷ height at capture time, mirroring the
+    /// console's `DisplayTechnology`. `None` on captures predating aspect
+    /// awareness, treated as square.
+    #[serde(default)]
+    pub pixel_aspect: Option<f32>,
 }
 
 /// A display-ready RGBA frame with its own dimensions.
@@ -193,6 +198,7 @@ impl FrameCapture {
         sgb_render_data: Option<&missingno_gb::sgb::SgbRenderData>,
         use_sgb_colors: bool,
         palette_name: &str,
+        pixel_aspect: f32,
     ) -> Self {
         use missingno_gb::ppu::screen::{NUM_SCANLINES, PIXELS_PER_LINE};
 
@@ -216,14 +222,21 @@ impl FrameCapture {
             display_mode,
             cgb_rgba: None,
             rgba: None,
+            pixel_aspect: Some(pixel_aspect),
         }
     }
 
     /// Resolve a delivered frame into a capture. The Game Boy family's frame
     /// carries the screen and any SGB data; the display mode the options select
     /// (`Sgb` when SGB colours are on and present, else the named palette) is
-    /// baked in here just as a live capture would.
-    pub fn from_frame(frame: &crate::app::screen::Frame, options: &CaptureOptions) -> Self {
+    /// baked in here just as a live capture would. `pixel_aspect` is the
+    /// console's presentation aspect, recorded so exports and the gallery match
+    /// the screen.
+    pub fn from_frame(
+        frame: &crate::app::screen::Frame,
+        options: &CaptureOptions,
+        pixel_aspect: f32,
+    ) -> Self {
         use crate::app::screen::Frame;
         use missingno_gb::frame::{GameBoyScreen, GbFrame, SgbScreen};
         use missingno_gb::ppu::screen::Screen;
@@ -241,7 +254,13 @@ impl FrameCapture {
                     None => (None, None),
                 };
                 let fb = screen.unwrap_or(&default_screen).front();
-                Self::capture(fb, sgb, options.use_sgb_colors, &options.palette_name)
+                Self::capture(
+                    fb,
+                    sgb,
+                    options.use_sgb_colors,
+                    &options.palette_name,
+                    pixel_aspect,
+                )
             }
             Frame::Rgba(frame) => Self {
                 pixels: Vec::new(),
@@ -249,13 +268,14 @@ impl FrameCapture {
                 display_mode: DisplayMode::Cgb,
                 cgb_rgba: Some(frame.pixels.to_vec()),
                 rgba: None,
+                pixel_aspect: Some(pixel_aspect),
             },
-            Frame::Indexed(frame) => Self::from_indexed(frame),
+            Frame::Indexed(frame) => Self::from_indexed(frame, pixel_aspect),
         }
     }
 
     /// A display-ready RGBA capture of a palette-indexed frame.
-    pub fn from_indexed(frame: &crate::app::screen::IndexedFrame) -> Self {
+    pub fn from_indexed(frame: &crate::app::screen::IndexedFrame, pixel_aspect: f32) -> Self {
         Self {
             pixels: Vec::new(),
             sgb: None,
@@ -266,6 +286,7 @@ impl FrameCapture {
                 height: frame.height,
                 data: frame.to_rgba(),
             }),
+            pixel_aspect: Some(pixel_aspect),
         }
     }
 
@@ -382,20 +403,79 @@ impl FrameCapture {
         }
     }
 
-    /// Create an iced image handle rendered with the capture-time display mode.
+    /// One source pixel's display width ÷ height; 1.0 (square) for captures
+    /// predating aspect awareness.
+    pub fn pixel_aspect(&self) -> f32 {
+        self.pixel_aspect.unwrap_or(1.0)
+    }
+
+    /// The whole capture's display width ÷ height, aspect applied.
+    pub fn display_aspect(&self) -> f32 {
+        let (w, h) = self.dimensions();
+        if h == 0 {
+            return 1.0;
+        }
+        w as f32 * self.pixel_aspect() / h as f32
+    }
+
+    /// A display-correct RGBA image for PNG export. Square-pixel captures export
+    /// at native resolution; a non-square aspect integer-upscales first, then
+    /// stretches horizontally by the aspect so the PNG matches the screen.
+    pub fn export_image(&self) -> (u32, u32, Vec<u8>) {
+        const BASE_SCALE: u32 = 3;
+        let (w, h) = self.dimensions();
+        let rgba = self
+            .rgba
+            .as_ref()
+            .map(|capture| capture.data.clone())
+            .unwrap_or_else(|| self.to_rgba());
+        let aspect = self.pixel_aspect();
+        if (aspect - 1.0).abs() < f32::EPSILON {
+            return (w, h, rgba);
+        }
+        let out_w = ((w * BASE_SCALE) as f32 * aspect).round().max(1.0) as u32;
+        let out_h = h * BASE_SCALE;
+        (out_w, out_h, resample_nearest(&rgba, w, h, out_w, out_h))
+    }
+
+    /// Create an iced image handle rendered with the capture-time display mode,
+    /// resampled to display-correct proportions for non-square pixels.
     pub fn to_image_handle(&self) -> iced::widget::image::Handle {
         use missingno_gb::ppu::screen::{NUM_SCANLINES, PIXELS_PER_LINE};
 
-        if let Some(capture) = &self.rgba {
-            return iced::widget::image::Handle::from_rgba(
-                capture.width,
-                capture.height,
-                capture.data.clone(),
-            );
+        let (rgba, w, h) = if let Some(capture) = &self.rgba {
+            (capture.data.clone(), capture.width, capture.height)
+        } else {
+            (
+                self.to_rgba(),
+                PIXELS_PER_LINE as u32,
+                NUM_SCANLINES as u32,
+            )
+        };
+        let aspect = self.pixel_aspect();
+        if (aspect - 1.0).abs() < f32::EPSILON {
+            return iced::widget::image::Handle::from_rgba(w, h, rgba);
         }
-        let rgba = self.to_rgba();
-        iced::widget::image::Handle::from_rgba(PIXELS_PER_LINE as u32, NUM_SCANLINES as u32, rgba)
+        let out_w = (w as f32 * aspect).round().max(1.0) as u32;
+        iced::widget::image::Handle::from_rgba(out_w, h, resample_nearest(&rgba, w, h, out_w, h))
     }
+}
+
+/// Nearest-neighbour resample of an RGBA buffer to arbitrary dimensions.
+pub fn resample_nearest(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<u8> {
+    if src.is_empty() || sw == 0 || sh == 0 || dw == 0 || dh == 0 {
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity((dw * dh * 4) as usize);
+    for y in 0..dh {
+        let src_y = (y as u64 * sh as u64 / dh as u64).min(sh as u64 - 1) as usize;
+        for x in 0..dw {
+            let src_x = (x as u64 * sw as u64 / dw as u64).min(sw as u64 - 1) as usize;
+            let idx = (src_y * sw as usize + src_x) * 4;
+            out.extend_from_slice(&src[idx..idx + 4]);
+        }
+    }
+    out
 }
 
 // Legacy save struct for deserializing old session files.

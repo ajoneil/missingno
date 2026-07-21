@@ -53,12 +53,13 @@ impl App {
             }
             Message::TakeScreenshot => {
                 let options = self.settings.capture_options();
+                let pixel_aspect = self.presentation_pixel_aspect();
                 // The session captures the current frame whether running or
                 // paused; one path for both shells.
                 if let Some(handle) = self.handle()
                     && let Some(frame) = handle.screenshot()
                 {
-                    let capture = FrameCapture::from_frame(&frame, &options);
+                    let capture = FrameCapture::from_frame(&frame, &options, pixel_aspect);
                     self.record_screenshot(capture);
                 }
             }
@@ -138,12 +139,7 @@ impl App {
                 {
                     let image = match &event.kind {
                         library::activity::EventKind::Screenshot { frame } => {
-                            let (width, height) = frame.dimensions();
-                            let rgba = frame
-                                .rgba
-                                .as_ref()
-                                .map(|r| r.data.clone())
-                                .unwrap_or_else(|| frame.to_rgba());
+                            let (width, height, rgba) = frame.export_image();
                             image::RgbaImage::from_raw(width, height, rgba)
                         }
                         library::activity::EventKind::Print { print } => {
@@ -324,6 +320,16 @@ impl App {
             Game::Loaded(LoadedGame::Debugger(debugger)) => Some(debugger.platform()),
             Game::Loaded(LoadedGame::Emulator(emulator)) => Some(emulator.platform()),
             _ => None,
+        }
+    }
+
+    /// The loaded console's presentation pixel aspect, or square (1.0) when none
+    /// is loaded — recorded on a capture so it renders like the screen.
+    fn presentation_pixel_aspect(&self) -> f32 {
+        match &self.game {
+            Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.technology().pixel_aspect(),
+            Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.technology().pixel_aspect(),
+            _ => 1.0,
         }
     }
 
