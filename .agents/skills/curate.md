@@ -72,10 +72,24 @@ and they trust none of it.
 While the developer plays the current game:
 
 1. `get_game` for the manifest and its open flags, and `find_duplicates` for merge
-   candidates — always, for every game. A duplicate hit is a finding for your note (which
-   entry should absorb which, and why); merging is the developer's call. Same-title hits
-   that are genuinely different products (multicarts, unlicensed re-releases) are worth
-   saying so explicitly, so the developer doesn't re-investigate next time.
+   candidates — always, for every game.
+
+   **A dump-flag title is never a game: fold it in without asking.** An entry titled
+   `… [a]`, `[a2]`, `[h1]`, `[t1]`, `[b]`, `[o1]`, `[!]`, `[fixed]`, or with a
+   cataloguer's descriptor standing in for a name (`[different speed and colors]`),
+   is the base game's dump that an import promoted to its own entry. `merge_game` it
+   into the real entry, then classify what arrived: a `[h]`/`[t]` dump becomes a mod
+   via `mark_hack`, an `[a]`/`[!]` alternate joins the matching release with a
+   `label_artifact`, and a `[b]`/`[o]` defective dump is labelled as such beside the
+   good one. The db should hold one entry per game, with every dump reachable from it.
+
+   **Ask only when genuinely unsure** — when the "duplicate" may be a different
+   product (a multicart, a same-titled game on another platform, a hack of a
+   *different* game wearing this game's name), or when merging would lose a name or
+   author the other entry records and you cannot preserve it. Then put the question
+   in the note and leave both entries alone. Same-title hits that are genuinely
+   different products are worth saying so explicitly, so the developer doesn't
+   re-investigate next time.
 2. **Check every artifact hash, not just one.** An entry's `artifacts` are what the db
    claims this game *is*; nobody re-checks them once imported, so bad groupings persist
    silently. Look up each sha1 and compare the answer against what the entry claims.

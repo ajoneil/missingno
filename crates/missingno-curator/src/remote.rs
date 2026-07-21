@@ -329,6 +329,14 @@ fn tool_definitions() -> Value {
             }), &["key", "release_index", "set"]),
         },
         {
+            "name": "remove_release",
+            "description": "Drop a release that holds nothing — a phantom left behind when its only dump was re-filed as a mod or moved elsewhere. Refuses while the release still carries dumps or sources, so it can never discard evidence.",
+            "inputSchema": object(json!({
+                "key": { "type": "string" },
+                "release_index": { "type": "integer" },
+            }), &["key", "release_index"]),
+        },
+        {
             "name": "move_artifact",
             "description": "Move a dump into another release (by index). Use when a defective dump fabricated a release — an 8K overdump of a 4K game fingerprints as the wrong board and invents a product that never shipped; moving the dump out prunes a release left with nothing.",
             "inputSchema": object(json!({

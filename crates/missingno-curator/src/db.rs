@@ -749,6 +749,26 @@ impl AnyGame {
         .is_some()
     }
 
+    /// Drop a release that holds nothing — a phantom left by re-filing its
+    /// only dump. Refuses while it still carries dumps or sources, so this
+    /// can never quietly discard evidence.
+    pub fn remove_empty_release(&mut self, index: usize) -> Result<(), String> {
+        common!(self, g => {
+            let Some(release) = g.releases.get(index) else {
+                return Err(format!("no release {index}"));
+            };
+            if !release.artifacts.is_empty() || !release.sources.is_empty() {
+                return Err(format!(
+                    "release {index} still holds {} dump(s) and {} source(s)",
+                    release.artifacts.len(),
+                    release.sources.len()
+                ));
+            }
+            g.releases.remove(index);
+            Ok(())
+        })
+    }
+
     /// The broadcast standard one release shipped on (VCS only). Per-release,
     /// not per-game: one entry can hold an NTSC, a PAL and a PAL-M release.
     pub fn set_release_tv_format(&mut self, index: usize, format: TvFormat) -> bool {
@@ -1031,7 +1051,8 @@ fn attach_mod<P: Platform>(
     homepage: Option<String>,
     base_sha1: Option<Sha1>,
 ) -> bool {
-    for release in &mut source.releases {
+    for index in 0..source.releases.len() {
+        let release = &mut source.releases[index];
         let Some(at) = release
             .artifacts
             .iter()
@@ -1040,6 +1061,7 @@ fn attach_mod<P: Platform>(
             continue;
         };
         let artifact = release.artifacts.remove(at);
+        let emptied = release.artifacts.is_empty() && release.sources.is_empty();
         source.mods.push(Mod {
             name,
             category,
@@ -1063,6 +1085,11 @@ fn attach_mod<P: Platform>(
                 artifacts: vec![artifact],
             }],
         });
+        // A release that held only the hack described a product that never
+        // shipped — the same phantom move_artifact prunes.
+        if emptied {
+            source.releases.remove(index);
+        }
         return true;
     }
     false
@@ -1754,6 +1781,76 @@ mod rename_tests {
         );
         assert_eq!(db.entries[at].key(), "gb/old-name");
         assert!(dir.path().join("data/gb/old-name/manifest.ron").is_file());
+    }
+}
+
+#[cfg(test)]
+mod phantom_release_tests {
+    use super::*;
+
+    const A: &str = "0123456789abcdef0123456789abcdef01234567";
+    const B: &str = "89abcdef0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn marking_a_lone_hack_prunes_the_release_it_invented() {
+        let game = Game::<GameBoy>::from_ron(&format!(
+            "(title: \"T\", releases: [\
+               (artifacts: [(sha1: \"{A}\")]),\
+               (publisher: Some(\"a hacker\"), artifacts: [(sha1: \"{B}\")]),\
+             ])"
+        ))
+        .unwrap();
+        let mut game = AnyGame::Gb(game);
+        let attached = match &mut game {
+            AnyGame::Gb(g) => attach_mod(
+                g,
+                B,
+                "Unnamed hack".to_owned(),
+                ModCategory::ContentChange,
+                None,
+                None,
+            ),
+            _ => unreachable!(),
+        };
+        assert!(attached);
+        // The hack's release existed only to hold it.
+        assert_eq!(game.release_lines().len(), 1);
+        assert_eq!(game.artifact_sha1s(), vec![A]);
+    }
+
+    #[test]
+    fn a_release_keeping_other_dumps_survives() {
+        let game = Game::<GameBoy>::from_ron(&format!(
+            "(title: \"T\", releases: [(artifacts: [(sha1: \"{A}\"), (sha1: \"{B}\")])])"
+        ))
+        .unwrap();
+        let mut game = AnyGame::Gb(game);
+        match &mut game {
+            AnyGame::Gb(g) => attach_mod(
+                g,
+                B,
+                "Unnamed hack".to_owned(),
+                ModCategory::ContentChange,
+                None,
+                None,
+            ),
+            _ => unreachable!(),
+        };
+        assert_eq!(game.release_lines().len(), 1);
+        assert_eq!(game.artifact_sha1s(), vec![A]);
+    }
+
+    #[test]
+    fn remove_empty_release_refuses_while_evidence_remains() {
+        let game = Game::<GameBoy>::from_ron(&format!(
+            "(title: \"T\", releases: [(artifacts: [(sha1: \"{A}\")]), ()])"
+        ))
+        .unwrap();
+        let mut game = AnyGame::Gb(game);
+        assert!(game.remove_empty_release(0).unwrap_err().contains("holds"));
+        assert!(game.remove_empty_release(1).is_ok());
+        assert_eq!(game.release_lines().len(), 1);
+        assert!(game.remove_empty_release(9).is_err());
     }
 }
 

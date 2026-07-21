@@ -1842,6 +1842,32 @@ impl Curator {
                     error_result(format!("{key} has no release {index}"))
                 }
             }
+            "remove_release" => {
+                let (Some(key), Some(index)) = (
+                    str_arg("key"),
+                    args.get("release_index")
+                        .and_then(serde_json::Value::as_u64),
+                ) else {
+                    return error_result("missing key or release_index");
+                };
+                let Some(i) = self.find_entry(key) else {
+                    return error_result(format!("no entry {key}"));
+                };
+                let Ok(db) = &mut self.db else {
+                    return error_result("db not loaded");
+                };
+                match db.entries[i].game.remove_empty_release(index as usize) {
+                    Ok(()) => {
+                        db.entries[i].game.clear_curations();
+                        db.entries[i].dirty = true;
+                        if let Err(e) = db.write_entry(i) {
+                            return error_result(format!("removed, but writing {key} failed: {e}"));
+                        }
+                        text_result(format!("release {index} removed from {key}"))
+                    }
+                    Err(e) => error_result(e),
+                }
+            }
             "move_artifact" => {
                 let (Some(key), Some(sha1), Some(to)) = (
                     str_arg("key"),
