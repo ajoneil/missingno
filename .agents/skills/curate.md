@@ -84,8 +84,33 @@ While the developer plays the current game:
    obstacle to work around.
 3. `update_game` to stage what you found. Stage only facts you have a source for; leave
    unknown fields empty rather than guessing. Staged edits clear the curated stamp by
-   design.
-4. **Cover image** (`covers` in update_game — remote URLs only, we host nothing):
+   design. **Record each source as a link in the same call** (`links`:
+   `{name, url, link_type}` — upserts by name): links live in the manifest and survive;
+   notes do not. A description sourced from an AtariAge thread means a link to that thread.
+4. **Descriptions** — the field most likely to accumulate quiet fiction, so it has its own
+   rules:
+   - **Write the facts in your own words; never copy the prose.** The database is CC0;
+     Wikipedia is CC BY-SA, and the two do not compose. Pasting or lightly reshuffling a
+     lead paragraph would silently make the repo's LICENSE untrue for that entry, and
+     nothing in the RON records where the text came from. Facts are free to take;
+     expression is not.
+   - **Gameplay only.** Say what the game is and what the player does. Never restate
+     year, developer, publisher or platform — those are structured fields the UI renders
+     already, so repeating them is pure duplication. (This is exactly why a Wikipedia lead
+     is the wrong shape to lift: its first sentence is nothing but identity facts.)
+   - **Every clause must be traceable to a named source.** Not "mostly sourced with a bit
+     of common knowledge" — the failure mode is a true-sounding fact you actually supplied
+     from memory, which reads identically to a sourced one and survives every review. If
+     you cannot point at where a clause came from, cut the clause.
+   - **Stage a link that backs it.** The source belongs in `links` (`Wiki` for Wikipedia,
+     `Community` for AtariAge/forum pages, `TechnicalReference`, `Guide`, …). No link, no
+     description: an unsourceable description is an assertion nobody can check later.
+   - **A note is not a receipt.** `set_note` writes to an in-memory map in the running app
+     and is never persisted — it vanishes when the curator closes. Anything that must
+     survive the session goes in a field, never in the note.
+   - Two or three sentences. If a game is obscure enough that no source describes its
+     gameplay, leave the field empty and say so — "not found" is a valid result.
+5. **Cover image** (`covers` in update_game — remote URLs only, we host nothing):
    - Commercial games: the curator's "Hasheous: cover & wiki" button (or WebFetch
      `hasheous.org/api/v1/Lookup/ByHash/sha1/<sha1>` yourself and use its
      `…/api/v1/images/<id>` URL) — Hasheous exists to serve frontends. Fallback:
@@ -97,11 +122,11 @@ While the developer plays the current game:
    - Demoscene: the prod's pouet.net page imagery.
    - Never store-CDN URLs (itch/steam image links churn); the store page belongs in
      `sources`, not `covers`.
-5. **Wikipedia**: if the game has an article, stage it (`wikipedia` in update_game — it
+6. **Wikipedia**: if the game has an article, stage it (`wikipedia` in update_game — it
    becomes the game's Wikipedia link). Hasheous often knows it for commercial games;
    otherwise a quick search — but only stage an article that is actually about this game,
    not its series or port.
-6. **Hardware facts**: the curator auto-stages what a fetched/booted Game Boy header
+7. **Hardware facts**: the curator auto-stages what a fetched/booted Game Boy header
    states (SGB/CGB enhancement, mapper) into the release — filling unknowns only, and
    reporting header-vs-db conflicts in the verify status, which you should surface in your
    note. Overrides via update_game when the truth differs from the header: `mapper`
@@ -109,14 +134,16 @@ While the developer plays the current game:
    emulator's board choice; if a VCS playtest shows garbage, the board is the first
    suspect — check the game's known board on AtariAge or in Stella's properties and stage
    the correction, then have the developer replay).
-7. `set_note` with a SHORT summary — three or four lines at most: what you staged, the
+8. `set_note` with a SHORT summary — three or four lines at most: what you staged, the
    single most load-bearing source, and anything to double-check. The developer has your
    chat window open beside the curator; full reasoning, source lists, and caveats belong
-   in the conversation, not the note panel.
-8. If a flag's answer is now established by the staged data and the developer has agreed
+   in the conversation, not the note panel. The note is a live talking point and nothing
+   more — it lives in memory in the running app and is gone when the window closes, so
+   never let it be the only record of something that matters.
+9. If a flag's answer is now established by the staged data and the developer has agreed
    (in conversation or by accepting the related edit), `resolve_flag`; otherwise propose the
    resolution in the note and leave the flag open.
-9. Watch for the queue to advance: check `queue_status` when you finish a game's research;
+10. Watch for the queue to advance: check `queue_status` when you finish a game's research;
    if the developer hasn't accepted yet, deepen the research or answer their questions —
    don't spin on polling, and don't stage anything for the next game to fill the time (see
    *One game at a time*). A quiet queue usually means they are still playing; talking to
@@ -133,6 +160,12 @@ from the curator's Commit button.
 ## Honesty rules
 
 - Never fabricate a developer, date, description, or license. "Not found" is a valid result.
+- **The dangerous claim is the one that feels obvious.** Outright invention is easy to avoid;
+  what actually gets through is a true-sounding fact you supplied from your own knowledge
+  while believing you read it. It reads exactly like a sourced fact, and being usually
+  correct is what makes it survive review. Before staging, check each claim against what the
+  source in front of you actually says — and when the check contradicts you, say so plainly
+  rather than quietly correcting.
 - Distinguish primary sources (the game's own page, its author) from aggregator claims, and
   say which kind each fact came from.
 - If two sources disagree, stage nothing and put the conflict in the note.
