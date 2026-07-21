@@ -585,10 +585,8 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
             let _ = std::fs::create_dir_all(&game_dir);
 
             // Get filename from source
-            let filename = match &manifest.source {
-                Some(super::catalogue::GameSource::HomebrewHub { filename, .. }) => {
-                    filename.clone()
-                }
+            let filename = match manifest.homebrew_source() {
+                Some(missingno_gamedb::Source::HomebrewHub { filename, .. }) => filename.clone(),
                 _ => format!(
                     "{}.{}",
                     title.to_lowercase().replace(' ', "-"),
@@ -607,13 +605,13 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
             let mut entry = super::GameEntry::new(sha1.clone(), title, rom_path);
             entry.header_title = family.and_then(|f| (f.title_from_rom)(&rom_bytes));
             entry.platform = family.map(|f| f.platform);
-            entry.year = manifest.date.clone();
+            entry.year = manifest.primary_date().map(str::to_owned);
             entry.description = manifest.description.clone();
             entry.publisher = manifest.developer.clone();
             super::save_entry(&game_dir, &entry);
             // Use cached cover bytes from the browser if available
-            let slug = match &manifest.source {
-                Some(super::catalogue::GameSource::HomebrewHub { slug, .. }) => Some(slug.clone()),
+            let slug = match manifest.homebrew_source() {
+                Some(missingno_gamedb::Source::HomebrewHub { slug, .. }) => Some(slug.clone()),
                 _ => None,
             };
             let cached_cover = slug.as_ref().and_then(|s| {
@@ -732,8 +730,8 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                     if let Some(entry) = app.catalogue.lookup_slug(&slug)
                         && let Some(url) = entry.download_url()
                     {
-                        let title = entry.manifest.title.clone();
-                        let manifest = entry.manifest.clone();
+                        let title = entry.title.clone();
+                        let manifest = entry.clone();
                         return Task::perform(
                             smol::unblock(move || {
                                 let response = ureq::get(&url)

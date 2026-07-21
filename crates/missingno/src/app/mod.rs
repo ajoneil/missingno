@@ -399,7 +399,7 @@ enum Message {
     Cartridge(CartridgeMessage),
     OpenHomebrewBrowser,
     HomebrewBrowser(library::homebrew_browser::Message),
-    HomebrewDownloaded(String, Vec<u8>, library::catalogue::GameManifest),
+    HomebrewDownloaded(String, Vec<u8>, library::catalogue::CatalogueEntry),
     ScreenshotGallery(library::screenshot_gallery::Message),
 
     // Emulation

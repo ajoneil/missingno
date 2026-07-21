@@ -1,5 +1,7 @@
 [workspace]
 resolver = "3"
+# The gamedb submodule is its own workspace; keep its crates out of this one.
+exclude = ["missingno-gamedb"]
 members = [
     "crates/missingno",
     "crates/missingno-debugger",

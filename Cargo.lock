@@ -2968,6 +2968,7 @@ dependencies = [
  "jiff",
  "libc",
  "missingno-core 0.1.0",
+ "missingno-gamedb",
  "missingno-gb",
  "missingno-gbc",
  "missingno-nes",
@@ -3024,6 +3025,14 @@ dependencies = [
  "rgb",
  "serde_json",
  "tiny_http",
+]
+
+[[package]]
+name = "missingno-gamedb"
+version = "0.1.0"
+dependencies = [
+ "ron",
+ "serde",
 ]
 
 [[package]]

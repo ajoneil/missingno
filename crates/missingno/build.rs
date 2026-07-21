@@ -6,7 +6,7 @@ const CONSOLES: [&str; 3] = ["gb", "gbc", "vcs"];
 
 fn main() {
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
-    let gamedb_dir = manifest_dir.join("../../missingno-gamedb");
+    let gamedb_dir = manifest_dir.join("../../missingno-gamedb/data");
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let archive_path = out_dir.join("gamedb.tar.zst");
 
@@ -19,18 +19,10 @@ fn main() {
     }
 
     if !gamedb_dir.join(CONSOLES[0]).is_dir() {
-        eprintln!(
-            "cargo:warning=Game database not found at {}",
+        panic!(
+            "game database not found at {} — run: git submodule update --init",
             gamedb_dir.display()
         );
-        eprintln!("cargo:warning=Run: git submodule update --init");
-        // Write an empty archive so the build doesn't fail
-        let tar_data = Vec::new();
-        let builder = tar::Builder::new(tar_data);
-        let tar_data = builder.into_inner().unwrap();
-        let compressed = zstd::encode_all(tar_data.as_slice(), 19).unwrap();
-        fs::write(&archive_path, compressed).unwrap();
-        return;
     }
 
     // Build a tar of every console tree, keying entries as {console}/{slug}/{file}.

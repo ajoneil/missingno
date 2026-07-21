@@ -16,6 +16,7 @@ sms = ["dep:missingno-sms"]
 nes = ["dep:missingno-nes", "missingno-nes/morepork"]
 
 [dependencies]
+missingno-gamedb = { path = "../../missingno-gamedb/crates/gamedb" }
 missingno-core = { path = "../missingno-core" }
 missingno-gb = { path = "../missingno-gb", features = ["morepork"] }
 missingno-gbc = { path = "../missingno-gbc", features = ["morepork"] }

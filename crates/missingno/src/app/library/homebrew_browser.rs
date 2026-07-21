@@ -176,7 +176,6 @@ fn entry_card<'a>(
         container(
             text(
                 entry
-                    .manifest
                     .title
                     .chars()
                     .next()
@@ -210,20 +209,20 @@ fn entry_card<'a>(
     };
 
     // Info — padded separately
-    let mut info = column![text(&entry.manifest.title).font(fonts::bold())].spacing(2);
+    let mut info = column![text(&entry.title).font(fonts::bold())].spacing(2);
 
     let mut subtitle_parts = Vec::new();
-    if let Some(dev) = &entry.manifest.developer {
+    if let Some(dev) = &entry.developer {
         subtitle_parts.push(dev.clone());
     }
-    if let Some(date) = &entry.manifest.date {
+    if let Some(date) = entry.primary_date() {
         subtitle_parts.push(activity::release_year(date));
     }
     if !subtitle_parts.is_empty() {
         info = info.push(app_text::detail(subtitle_parts.join(" · ")).color(MUTED));
     }
 
-    if let Some(desc) = &entry.manifest.description {
+    if let Some(desc) = &entry.description {
         let short = if desc.len() > 120 {
             format!("{}…", &desc[..120])
         } else {
@@ -232,8 +231,8 @@ fn entry_card<'a>(
         info = info.push(app_text::detail(short).color(MUTED));
     }
 
-    if !entry.manifest.tags.is_empty() {
-        info = info.push(app_text::detail(entry.manifest.tags.join(", ")).color(MUTED));
+    if !entry.tags.is_empty() {
+        info = info.push(app_text::detail(entry.tags.join(", ")).color(MUTED));
     }
 
     let slug = entry.slug.clone();
@@ -290,31 +289,30 @@ fn entry_detail<'a>(
         iced::widget::Space::new().width(160).height(160).into()
     };
 
-    let mut info =
-        column![text(&entry.manifest.title).size(24.0).font(fonts::bold()),].spacing(s());
+    let mut info = column![text(&entry.title).size(24.0).font(fonts::bold()),].spacing(s());
 
     let mut subtitle_parts = Vec::new();
-    if let Some(dev) = &entry.manifest.developer {
+    if let Some(dev) = &entry.developer {
         subtitle_parts.push(format!("by {dev}"));
     }
-    if let Some(date) = &entry.manifest.date {
+    if let Some(date) = entry.primary_date() {
         subtitle_parts.push(activity::release_year(date));
     }
     if !subtitle_parts.is_empty() {
         info = info.push(text(subtitle_parts.join(" · ")).color(MUTED));
     }
 
-    if !entry.manifest.tags.is_empty() {
-        info = info.push(app_text::detail(entry.manifest.tags.join(", ")).color(MUTED));
+    if !entry.tags.is_empty() {
+        info = info.push(app_text::detail(entry.tags.join(", ")).color(MUTED));
     }
 
-    if let Some(license) = &entry.manifest.license {
+    if let Some(license) = &entry.license {
         info = info.push(app_text::detail(format!("License: {license}")).color(MUTED));
     }
 
     // Links
     let mut links = row![].spacing(m());
-    for link in &entry.manifest.links {
+    for link in &entry.links {
         links = links.push(
             iced::widget::mouse_area(
                 row![icons::m(Icon::Globe), text(&link.name).color(MUTED)]
@@ -325,7 +323,7 @@ fn entry_detail<'a>(
             .interaction(iced::mouse::Interaction::Pointer),
         );
     }
-    if !entry.manifest.links.is_empty() {
+    if !entry.links.is_empty() {
         info = info.push(links);
     }
 
@@ -333,7 +331,7 @@ fn entry_detail<'a>(
     content = content.push(header);
 
     // Description
-    if let Some(desc) = &entry.manifest.description {
+    if let Some(desc) = &entry.description {
         content = content.push(text(desc.clone()));
     }
 

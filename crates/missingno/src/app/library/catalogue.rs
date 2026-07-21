@@ -1,120 +1,177 @@
 //! Bundled game catalogue — loaded from a tar.zst archive compiled into the binary.
 //!
-//! Provides identification (SHA1 → game info) and search (title, tags, source
-//! type) across the console trees the archive ships (Game Boy / Game Boy Color
-//! from No-Intro + gbdev homebrew, Atari VCS from vcs_cart_db).
+//! Manifests are `missingno-gamedb` schema types (game → releases → artifacts),
+//! flattened here into a platform-tagged view the UI can read without generics.
+//! Provides identification (SHA1 → game + release) and search (title, release
+//! titles, tags, source type) across the console trees the archive ships.
 
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use missingno_gamedb::{
+    Artifact, Game, GameBoy, GameBoyColor, GameKind, Link, Platform as DbPlatform, ReleaseStatus,
+    Source, TvFormat, Vcs,
+};
+
+use crate::app::system::TvStandard;
 
 /// The compressed gamedb archive, embedded at compile time.
 static GAMEDB_ARCHIVE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/gamedb.tar.zst"));
 
+const GBDEV_ENTRIES: &str = "https://raw.githubusercontent.com/gbdev/database/master/entries";
+
 // ── Public types ──────────────────────────────────────────────────────
 
-/// A game manifest from the catalogue.
-#[derive(Debug, Clone, Deserialize)]
-pub struct GameManifest {
-    pub title: String,
-    /// Release date — "YYYY-MM-DD" for homebrew, or absent for commercial.
-    #[serde(default)]
-    pub date: Option<String>,
-    #[serde(default, rename = "region")]
-    pub _region: Option<String>,
-    #[serde(default)]
-    pub developer: Option<String>,
-    #[serde(default)]
-    pub publisher: Option<String>,
-    #[serde(default)]
-    pub description: Option<String>,
-    /// Broadcast standard (VCS): carts have no region header, so the DB is
-    /// authoritative and the core only heuristically probes without it.
-    #[serde(default)]
-    pub tv_format: Option<crate::app::system::TvStandard>,
-    /// Cartridge board code (VCS), e.g. "F8", "F6SC" — resolves the bank
-    /// scheme the size heuristic can't tell apart (F8 vs F8SC, 8 KB E0 etc.).
-    #[serde(default)]
-    pub cart_type: Option<String>,
-    #[serde(default)]
-    pub hashes: Vec<String>,
-    #[serde(default)]
-    pub source: Option<GameSource>,
-    #[serde(default)]
-    pub license: Option<String>,
-    #[serde(default)]
-    pub tags: Vec<String>,
-    #[serde(default)]
-    pub screenshots: Vec<String>,
-    #[serde(default)]
-    pub links: Vec<GameLink>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CataloguePlatform {
+    GameBoy,
+    GameBoyColor,
+    Vcs,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub enum GameSource {
-    HomebrewHub { slug: String, filename: String },
-    Url(String),
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct GameLink {
-    pub name: String,
-    pub url: String,
-    #[serde(rename = "link_type")]
-    pub _link_type: LinkType,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub enum LinkType {
-    Wiki,
-    Manual,
-    Source,
-    Speedrun,
-    UnusedContent,
-    TechnicalReference,
-    Guide,
-    Community,
-}
-
-/// An entry in the catalogue with its slug.
+/// A catalogue game, flattened from the schema types.
 #[derive(Debug, Clone)]
 pub struct CatalogueEntry {
+    #[expect(dead_code)]
+    pub platform: CataloguePlatform,
     pub slug: String,
-    pub manifest: GameManifest,
+    pub title: String,
+    #[expect(dead_code)]
+    pub kind: GameKind,
+    pub developer: Option<String>,
+    pub description: Option<String>,
+    pub license: Option<String>,
+    pub tags: Vec<String>,
+    pub links: Vec<Link>,
+    pub covers: Vec<String>,
+    pub screenshots: Vec<String>,
+    pub releases: Vec<CatalogueRelease>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CatalogueRelease {
+    /// Title this release was published under, when it differs from the game's.
+    pub title: Option<String>,
+    #[expect(dead_code)]
+    pub label: Option<String>,
+    pub date: Option<String>,
+    pub publisher: Option<String>,
+    #[expect(dead_code)]
+    pub status: ReleaseStatus,
+    /// Broadcast standard (VCS): carts have no region header, so the DB is
+    /// authoritative and the core only heuristically probes without it.
+    pub tv_format: Option<TvStandard>,
+    /// Cartridge board code (VCS), e.g. "F8", "F6SC" — resolves the bank
+    /// scheme the size heuristic can't tell apart.
+    pub cart_type: Option<String>,
+    pub sources: Vec<Source>,
+    pub artifacts: Vec<Artifact>,
 }
 
 impl CatalogueEntry {
-    /// Whether this is a downloadable homebrew game.
+    /// Whether this game can be obtained from a listed source.
     pub fn is_homebrew(&self) -> bool {
-        self.manifest.source.is_some()
+        self.releases.iter().any(|r| !r.sources.is_empty())
     }
 
-    /// Cover image URL (for homebrew from gbdev). Uses "cover.png" if listed
-    /// in screenshots, otherwise falls back to the first screenshot.
+    /// Release date of the first release (homebrew games have exactly one).
+    pub fn primary_date(&self) -> Option<&str> {
+        self.releases.first().and_then(|r| r.date.as_deref())
+    }
+
+    /// The Homebrew Hub source, if any release has one.
+    pub fn homebrew_source(&self) -> Option<&Source> {
+        self.releases
+            .iter()
+            .flat_map(|r| &r.sources)
+            .find(|s| matches!(s, Source::HomebrewHub { .. }))
+    }
+
+    /// Cover image URL: explicit cover, else first screenshot.
     pub fn download_cover_url(&self) -> Option<String> {
-        let slug = match &self.manifest.source {
-            Some(GameSource::HomebrewHub { slug, .. }) => slug,
-            _ => return None,
-        };
-        let filename = if self.manifest.screenshots.iter().any(|s| s == "cover.png") {
-            "cover.png"
-        } else {
-            self.manifest.screenshots.first().map(|s| s.as_str())?
-        };
-        Some(format!(
-            "https://raw.githubusercontent.com/gbdev/database/master/entries/{slug}/{filename}"
-        ))
+        self.covers
+            .first()
+            .or_else(|| self.screenshots.first())
+            .cloned()
     }
 
-    /// Download URL for homebrew games.
+    /// Direct ROM download URL, in source preference order.
     pub fn download_url(&self) -> Option<String> {
-        match &self.manifest.source {
-            Some(GameSource::HomebrewHub { slug, filename }) => Some(format!(
-                "https://raw.githubusercontent.com/gbdev/database/master/entries/{slug}/{filename}"
-            )),
-            Some(GameSource::Url(url)) => Some(url.clone()),
-            None => None,
-        }
+        self.releases
+            .iter()
+            .flat_map(|r| &r.sources)
+            .find_map(|source| match source {
+                Source::HomebrewHub { slug, filename } => {
+                    Some(format!("{GBDEV_ENTRIES}/{slug}/{filename}"))
+                }
+                Source::Download { url } => Some(url.clone()),
+                Source::Itch { .. } | Source::SteamBundled { .. } => None,
+            })
+    }
+}
+
+// ── Flattening ────────────────────────────────────────────────────────
+
+fn tv_standard(format: TvFormat) -> TvStandard {
+    match format {
+        TvFormat::Ntsc => TvStandard::Ntsc,
+        TvFormat::Pal => TvStandard::Pal,
+        TvFormat::Secam => TvStandard::Secam,
+    }
+}
+
+fn entry_from<P: DbPlatform>(
+    platform: CataloguePlatform,
+    slug: String,
+    game: Game<P>,
+    hardware: impl Fn(&P::ReleaseHardware) -> (Option<TvStandard>, Option<String>),
+) -> CatalogueEntry {
+    CatalogueEntry {
+        platform,
+        slug,
+        title: game.title,
+        kind: game.kind,
+        developer: game.developer,
+        description: game.description,
+        license: game.license,
+        tags: game.tags,
+        links: game.links,
+        covers: game.covers,
+        screenshots: game.screenshots,
+        releases: game
+            .releases
+            .into_iter()
+            .map(|release| {
+                let (tv_format, cart_type) = hardware(&release.hardware);
+                CatalogueRelease {
+                    title: release.title,
+                    label: release.label,
+                    date: release.date.map(|d| d.as_str().to_owned()),
+                    publisher: release.publisher,
+                    status: release.status,
+                    tv_format,
+                    cart_type,
+                    sources: release.sources,
+                    artifacts: release.artifacts,
+                }
+            })
+            .collect(),
+    }
+}
+
+fn parse_entry(console: &str, slug: String, text: &str) -> Option<CatalogueEntry> {
+    match console {
+        "gb" => Game::<GameBoy>::from_ron(text)
+            .ok()
+            .map(|g| entry_from(CataloguePlatform::GameBoy, slug, g, |_| (None, None))),
+        "gbc" => Game::<GameBoyColor>::from_ron(text)
+            .ok()
+            .map(|g| entry_from(CataloguePlatform::GameBoyColor, slug, g, |_| (None, None))),
+        "vcs" => Game::<Vcs>::from_ron(text).ok().map(|g| {
+            entry_from(CataloguePlatform::Vcs, slug, g, |hw| {
+                (hw.tv_format.map(tv_standard), hw.cart_type.clone())
+            })
+        }),
+        _ => None,
     }
 }
 
@@ -124,8 +181,8 @@ impl CatalogueEntry {
 pub struct Catalogue {
     /// All entries, sorted by title.
     entries: Vec<CatalogueEntry>,
-    /// SHA1 hash → index into entries.
-    hash_index: HashMap<String, usize>,
+    /// SHA1 hash → (entry, release) indices.
+    hash_index: HashMap<String, (usize, usize)>,
 }
 
 impl Catalogue {
@@ -133,36 +190,22 @@ impl Catalogue {
     pub fn load() -> Self {
         let mut entries = Vec::new();
 
-        // Decompress
-        let tar_data = match zstd::decode_all(GAMEDB_ARCHIVE) {
-            Ok(data) => data,
-            Err(_) => {
-                return Self {
-                    entries: Vec::new(),
-                    hash_index: HashMap::new(),
-                };
-            }
+        let empty = Self {
+            entries: Vec::new(),
+            hash_index: HashMap::new(),
         };
-
-        // Parse tar
+        let Ok(tar_data) = zstd::decode_all(GAMEDB_ARCHIVE) else {
+            return empty;
+        };
         let mut archive = tar::Archive::new(tar_data.as_slice());
-        let tar_entries = match archive.entries() {
-            Ok(e) => e,
-            Err(_) => {
-                return Self {
-                    entries: Vec::new(),
-                    hash_index: HashMap::new(),
-                };
-            }
+        let Ok(tar_entries) = archive.entries() else {
+            return empty;
         };
 
         for entry in tar_entries.flatten() {
-            let path = match entry.path() {
-                Ok(p) => p.to_path_buf(),
-                Err(_) => continue,
+            let Ok(path) = entry.path().map(|p| p.to_path_buf()) else {
+                continue;
             };
-
-            // We only care about manifest.ron files
             if path
                 .file_name()
                 .map(|f| f != "manifest.ron")
@@ -170,13 +213,14 @@ impl Catalogue {
             {
                 continue;
             }
-
-            let slug = match path.parent().and_then(|p| p.file_name()) {
-                Some(s) => s.to_string_lossy().to_string(),
-                None => continue,
+            let (Some(console), Some(slug)) = (
+                path.iter().next().map(|c| c.to_string_lossy().to_string()),
+                path.parent()
+                    .and_then(|p| p.file_name())
+                    .map(|s| s.to_string_lossy().to_string()),
+            ) else {
+                continue;
             };
-
-            // Read the file content
             let content = {
                 use std::io::Read;
                 let mut s = String::new();
@@ -186,26 +230,19 @@ impl Catalogue {
                 }
                 s
             };
-
-            // Deserialize
-            if let Ok(manifest) = ron::from_str::<GameManifest>(&content) {
-                entries.push(CatalogueEntry { slug, manifest });
+            if let Some(parsed) = parse_entry(&console, slug, &content) {
+                entries.push(parsed);
             }
         }
 
-        // Sort by title
-        entries.sort_by(|a, b| {
-            a.manifest
-                .title
-                .to_lowercase()
-                .cmp(&b.manifest.title.to_lowercase())
-        });
+        entries.sort_by_key(|e| e.title.to_lowercase());
 
-        // Build hash index
         let mut hash_index = HashMap::new();
         for (i, entry) in entries.iter().enumerate() {
-            for hash in &entry.manifest.hashes {
-                hash_index.insert(hash.clone(), i);
+            for (r, release) in entry.releases.iter().enumerate() {
+                for artifact in &release.artifacts {
+                    hash_index.insert(artifact.sha1.as_str().to_owned(), (i, r));
+                }
             }
         }
 
@@ -220,21 +257,22 @@ impl Catalogue {
         self.entries.iter().find(|e| e.slug == slug)
     }
 
-    /// Look up a game by ROM SHA1 hash.
-    pub fn lookup_hash(&self, sha1: &str) -> Option<&CatalogueEntry> {
+    /// Look up a ROM by SHA1 hash: the game and the release the dump belongs to.
+    pub fn lookup_hash(&self, sha1: &str) -> Option<(&CatalogueEntry, &CatalogueRelease)> {
         let sha1_lower = sha1.to_lowercase();
-        self.hash_index.get(&sha1_lower).map(|&i| &self.entries[i])
+        self.hash_index.get(&sha1_lower).map(|&(i, r)| {
+            let entry = &self.entries[i];
+            (entry, &entry.releases[r])
+        })
     }
 
     /// Get all homebrew entries, sorted by year (newest first).
     pub fn homebrew(&self) -> Vec<&CatalogueEntry> {
         let mut results: Vec<_> = self.entries.iter().filter(|e| e.is_homebrew()).collect();
         results.sort_by(|a, b| {
-            b.manifest
-                .date
-                .as_deref()
+            b.primary_date()
                 .unwrap_or("")
-                .cmp(a.manifest.date.as_deref().unwrap_or(""))
+                .cmp(a.primary_date().unwrap_or(""))
         });
         results
     }
@@ -242,35 +280,28 @@ impl Catalogue {
     /// Search homebrew by title substring. Results sorted by year (newest first).
     pub fn search_homebrew(&self, query: &str) -> Vec<&CatalogueEntry> {
         let query_lower = query.to_lowercase();
+        let matches = |text: &str| text.to_lowercase().contains(&query_lower);
         let mut results: Vec<_> = self
             .entries
             .iter()
             .filter(|e| {
-                if !e.is_homebrew() {
-                    return false;
-                }
-                let m = &e.manifest;
-                m.title.to_lowercase().contains(&query_lower)
-                    || m.developer
-                        .as_ref()
-                        .is_some_and(|d| d.to_lowercase().contains(&query_lower))
-                    || m.publisher
-                        .as_ref()
-                        .is_some_and(|p| p.to_lowercase().contains(&query_lower))
-                    || m.description
-                        .as_ref()
-                        .is_some_and(|d| d.to_lowercase().contains(&query_lower))
-                    || m.tags
-                        .iter()
-                        .any(|t| t.to_lowercase().contains(&query_lower))
+                e.is_homebrew()
+                    && (matches(&e.title)
+                        || e.releases
+                            .iter()
+                            .any(|r| r.title.as_deref().is_some_and(matches))
+                        || e.developer.as_deref().is_some_and(matches)
+                        || e.releases
+                            .iter()
+                            .any(|r| r.publisher.as_deref().is_some_and(matches))
+                        || e.description.as_deref().is_some_and(matches)
+                        || e.tags.iter().any(|t| matches(t)))
             })
             .collect();
         results.sort_by(|a, b| {
-            b.manifest
-                .date
-                .as_deref()
+            b.primary_date()
                 .unwrap_or("")
-                .cmp(a.manifest.date.as_deref().unwrap_or(""))
+                .cmp(a.primary_date().unwrap_or(""))
         });
         results
     }
@@ -280,88 +311,47 @@ impl Catalogue {
 mod tests {
     use super::*;
 
-    // The embedded archive stores manifests two levels deep as
-    // {console}/{slug}/manifest.ron; load() must still index them and carry the
-    // VCS-only fields through to lookup.
+    // The embedded archive stores manifests as {console}/{slug}/manifest.ron;
+    // load() must index every release's artifacts and carry the VCS hardware
+    // facts through to hash lookup.
     #[test]
-    fn embedded_catalogue_loads_vcs_fields() {
+    fn embedded_catalogue_resolves_vcs_hardware_per_release() {
         let catalogue = Catalogue::load();
         if catalogue.entries.is_empty() {
             return; // submodule not checked out
         }
-        // "1 Adventure 2 Many" — a VCS entry with NTSC / 4K in the db.
-        let entry = catalogue
-            .lookup_hash("f64aaa03dcdfafde7ddda70c7d0c0e7d2f8f4f70")
-            .expect("known VCS sha1 resolves");
-        assert_eq!(
-            entry.manifest.tv_format,
-            Some(crate::app::system::TvStandard::Ntsc)
-        );
-        assert_eq!(entry.manifest.cart_type.as_deref(), Some("4K"));
-    }
-
-    // A broadcast standard belongs to the cartridge, not the game: two dumps
-    // can share a title and differ in region, and each must resolve to its own.
-    #[test]
-    fn same_title_cartridges_keep_their_own_region() {
-        let catalogue = Catalogue::load();
-        if catalogue.entries.is_empty() {
-            return; // submodule not checked out
-        }
-        // Both are "Pitfall II - Lost Caverns"; only the part number and the
-        // region tell them apart.
-        let usa = catalogue
+        // Pitfall II is one game whose NTSC and PAL cartridges are separate
+        // releases; each hash must resolve to its own release.
+        let (usa_game, usa) = catalogue
             .lookup_hash("920cfbd517764ad3fa6a7425c031bd72dc7d927c")
             .expect("USA Pitfall II resolves");
-        let pal = catalogue
+        let (pal_game, pal) = catalogue
             .lookup_hash("3ee18a1be7155900c2a01a104563657254d3a9a9")
             .expect("PAL Pitfall II resolves");
-        assert_eq!(usa.manifest.title, pal.manifest.title);
-        assert_eq!(
-            usa.manifest.tv_format,
-            Some(crate::app::system::TvStandard::Ntsc)
-        );
-        assert_eq!(
-            pal.manifest.tv_format,
-            Some(crate::app::system::TvStandard::Pal)
-        );
+        assert_eq!(usa_game.title, pal_game.title);
+        assert_eq!(usa.tv_format, Some(TvStandard::Ntsc));
+        assert_eq!(pal.tv_format, Some(TvStandard::Pal));
+        assert_eq!(usa.cart_type.as_deref(), Some("DPC"));
     }
 
-    // Catalogue::load() silently drops manifests that fail to deserialize,
-    // so parse the gamedb source tree directly to surface any bad files.
+    // Catalogue::load() silently drops manifests that fail to deserialize, so
+    // parse the gamedb source tree directly to surface any bad files.
     #[test]
     fn all_gamedb_manifests_parse() {
-        let gamedb =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../missingno-gamedb");
-        if !gamedb.join("gb").is_dir() {
+        let data =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../missingno-gamedb/data");
+        if !data.join("gb").is_dir() {
             return;
         }
-
-        let mut checked = 0;
-        let mut failures = Vec::new();
-        for console in ["gb", "gbc", "vcs"] {
-            let Ok(entries) = std::fs::read_dir(gamedb.join(console)) else {
-                continue;
-            };
-            for dir in entries.flatten() {
-                let manifest = dir.path().join("manifest.ron");
-                if !manifest.is_file() {
-                    continue;
-                }
-                let content = std::fs::read_to_string(&manifest).unwrap();
-                if let Err(e) = ron::from_str::<GameManifest>(&content) {
-                    failures.push(format!("{}: {e}", manifest.display()));
-                }
-                checked += 1;
-            }
-        }
-
-        assert!(checked > 0);
+        let (db, issues) = missingno_gamedb::Database::load(&data).unwrap();
         assert!(
-            failures.is_empty(),
-            "{} manifests failed to parse:\n{}",
-            failures.len(),
-            failures.join("\n")
+            issues.is_empty(),
+            "{} manifests failed to load; first: {:?}",
+            issues.len(),
+            issues.first()
         );
+        assert!(!db.gb.games.is_empty());
+        assert!(!db.gbc.games.is_empty());
+        assert!(!db.vcs.games.is_empty());
     }
 }

@@ -39,9 +39,9 @@ pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<l
                 // else, so re-read it rather than trusting what an older scan
                 // recorded — a correction upstream reaches the library only if
                 // a rescan can revise these.
-                if let Some(cat_entry) = catalogue.lookup_hash(&sha1) {
-                    existing.tv_standard = cat_entry.manifest.tv_format;
-                    existing.cart_type = cat_entry.manifest.cart_type.clone();
+                if let Some((_, release)) = catalogue.lookup_hash(&sha1) {
+                    existing.tv_standard = release.tv_format;
+                    existing.cart_type = release.cart_type.clone();
                 }
                 existing.add_rom_path(path);
                 library::save_entry(&game_dir, &existing);
@@ -52,19 +52,14 @@ pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<l
 
             // Try catalogue first for a good title, fall back to the header
             // title or the file stem.
-            let mut entry = if let Some(cat_entry) = catalogue.lookup_hash(&sha1) {
-                let mut e =
-                    library::GameEntry::new(sha1, cat_entry.manifest.title.clone(), path.clone());
+            let mut entry = if let Some((game, release)) = catalogue.lookup_hash(&sha1) {
+                let mut e = library::GameEntry::new(sha1, game.title.clone(), path.clone());
                 e.platform = Some(family.platform);
-                e.publisher = cat_entry
-                    .manifest
-                    .publisher
-                    .clone()
-                    .or(cat_entry.manifest.developer.clone());
-                e.year = cat_entry.manifest.date.clone();
-                e.description = cat_entry.manifest.description.clone();
-                e.tv_standard = cat_entry.manifest.tv_format;
-                e.cart_type = cat_entry.manifest.cart_type.clone();
+                e.publisher = release.publisher.clone().or(game.developer.clone());
+                e.year = release.date.clone();
+                e.description = game.description.clone();
+                e.tv_standard = release.tv_format;
+                e.cart_type = release.cart_type.clone();
                 e.enrichment_attempted = false; // still want Hasheous for covers
                 e
             } else {
