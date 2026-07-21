@@ -223,6 +223,14 @@ fn tool_definitions() -> Value {
             "inputSchema": object(json!({ "key": { "type": "string" } }), &["key"]),
         },
         {
+            "name": "local_matches",
+            "description": "Games whose ROM dumps hash-match the human's scanned local collection — ideal input for queue_games.",
+            "inputSchema": object(json!({
+                "backlog_only": { "type": "boolean" },
+                "limit": { "type": "integer" },
+            }), &[]),
+        },
+        {
             "name": "queue_status",
             "description": "Current playtest game and remaining queue.",
             "inputSchema": object(json!({}), &[]),

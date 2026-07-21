@@ -746,6 +746,42 @@ impl Curator {
                 self.agent_notes.insert(key.to_owned(), note.to_owned());
                 text_result(format!("note shown on {key}"))
             }
+            "local_matches" => {
+                let Some(index) = &self.rom_index else {
+                    return error_result(
+                        "no ROM dir scanned — the human must press Scan ROM dir first",
+                    );
+                };
+                let Ok(db) = &self.db else {
+                    return error_result("db not loaded");
+                };
+                let backlog_only = args
+                    .get("backlog_only")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(true);
+                let limit = args
+                    .get("limit")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(50) as usize;
+                let lines: Vec<String> = db
+                    .entries
+                    .iter()
+                    .filter(|e| !backlog_only || e.game.curated().is_none())
+                    .filter(|e| {
+                        e.game
+                            .artifact_sha1s()
+                            .iter()
+                            .any(|sha1| index.by_sha1.contains_key(sha1))
+                    })
+                    .take(limit)
+                    .map(|e| format!("{} — {}", e.key(), e.game.title()))
+                    .collect();
+                text_result(if lines.is_empty() {
+                    "no local ROM matches".to_owned()
+                } else {
+                    lines.join("\n")
+                })
+            }
             "queue_status" => {
                 let preview: Vec<&str> = self.queue.iter().take(10).map(String::as_str).collect();
                 text_result(format!(
