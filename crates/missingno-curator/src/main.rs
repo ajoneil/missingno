@@ -166,6 +166,7 @@ impl Curator {
     }
 
     fn new(db_path: PathBuf, rom_dir: Option<PathBuf>, remote: bool) -> (Self, Task<Message>) {
+        let has_rom_dir = rom_dir.is_some();
         let db = Db::load(db_path).map_err(|e| e.to_string());
         let remote_sink = SharedSink::default();
         let endpoint = remote
@@ -197,7 +198,13 @@ impl Curator {
                 remote_sink,
                 _remote: endpoint,
             },
-            Task::none(),
+            // A --rom-dir given at launch (e.g. by an agent starting the
+            // curator) scans immediately; nothing to click.
+            if has_rom_dir {
+                Task::done(Message::ScanRoms)
+            } else {
+                Task::none()
+            },
         )
     }
 
