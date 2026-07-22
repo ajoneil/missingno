@@ -729,7 +729,7 @@ impl Curator {
                                 match verify::classify_signature(&evidence) {
                                     Some(verify::SigFlag::Derived(reason)) => {
                                         lines.push(format!(
-                                            "{short}… DERIVED ({reason}): {evidence} —                                              someone made this; judge and mark_hack"
+                                            "{short}… DERIVED ({reason}): {evidence} —                                              someone made this; judge and mark_mod"
                                         ));
                                     }
                                     Some(verify::SigFlag::Defective(reason)) => {
@@ -1609,7 +1609,7 @@ impl Curator {
                     lines.join("\n")
                 })
             }
-            "mark_hack" => {
+            "mark_mod" => {
                 let (Some(key), Some(sha1)) = (str_arg("key"), str_arg("sha1")) else {
                     return error_result("missing key or sha1");
                 };
@@ -1629,7 +1629,7 @@ impl Curator {
                     return error_result("db not loaded");
                 };
                 let homepage = str_arg("url").map(str::to_owned);
-                match db.mark_hack(i, sha1, title, category, base, homepage) {
+                match db.mark_mod(i, sha1, title, category, base, homepage) {
                     Ok(destination) => {
                         text_result(format!("{sha1} moved out of {key}'s dumps → {destination}"))
                     }

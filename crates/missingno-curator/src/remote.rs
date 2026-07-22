@@ -261,14 +261,14 @@ fn tool_definitions() -> Value {
             }), &[]),
         },
         {
-            "name": "mark_hack",
-            "description": "A hash in an entry turned out to be a hacked/modified dump. Everything except a total conversion becomes a mod ATTACHED to the same game — its own name, homepage link, versions and independent curation; a fan translation is still the same game, exactly as official localizations are releases of it. Only TotalConversion splits into its own derived-work entry. Supply title (the mod's real name) and url (its homepage) whenever known.",
+            "name": "mark_mod",
+            "description": "A hash in an entry turned out to be a modified dump — a mod. Everything except a total conversion becomes a mod ATTACHED to the same game — its own name, homepage link, versions and independent curation; a fan translation is still the same game, exactly as official localizations are releases of it. A Compatibility mod (an NTSC/PAL conversion, a bankswitch re-encoding) is the same game made to run elsewhere. Only TotalConversion splits into its own derived-work entry. Supply title (the mod's real name) and url (its homepage) whenever known.",
             "inputSchema": object(json!({
                 "key": { "type": "string" },
                 "sha1": { "type": "string" },
                 "title": { "type": "string" },
                 "category": { "type": "string",
-                              "enum": ["Translation", "QualityOfLife", "ContentChange", "TotalConversion"] },
+                              "enum": ["Translation", "QualityOfLife", "ContentChange", "Compatibility", "TotalConversion"] },
                 "base_sha1": { "type": "string" },
                 "url": { "type": "string", "description": "the mod's homepage" },
             }), &["key", "sha1"]),
@@ -282,7 +282,7 @@ fn tool_definitions() -> Value {
                 "set": { "type": "object", "properties": {
                     "name": { "type": "string" },
                     "category": { "type": "string",
-                                  "enum": ["Translation", "QualityOfLife", "ContentChange", "TotalConversion"] },
+                                  "enum": ["Translation", "QualityOfLife", "ContentChange", "Compatibility", "TotalConversion"] },
                     "author": { "type": "string" },
                     "url": { "type": "string" },
                     "release_index": { "type": "integer" },
@@ -391,7 +391,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "verify_artifacts",
-            "description": "Check one entry's release dumps against the Hasheous signature database (sequential, rate-limited; can take ~10s). Confirmed originals get Signature evidence recorded on the artifact; DERIVED results (TOSEC [h]/[t]/[tr]/[cr]/[b]/[o] flags) are reported for you to judge and mark_hack — the bracket note is a cataloguer's shorthand, not the mod's real name. 'Unknown' is a result, not an error: homebrew, prototypes and private dumps are usually unsigned. Curations are never touched — verification is evidence about an immutable hash.",
+            "description": "Check one entry's release dumps against the Hasheous signature database (sequential, rate-limited; can take ~10s). Confirmed originals get Signature evidence recorded on the artifact; DERIVED results (TOSEC [h]/[t]/[tr]/[cr]/[b]/[o] flags) are reported for you to judge and mark_mod — the bracket note is a cataloguer's shorthand, not the mod's real name. 'Unknown' is a result, not an error: homebrew, prototypes and private dumps are usually unsigned. Curations are never touched — verification is evidence about an immutable hash.",
             "inputSchema": object(json!({ "key": { "type": "string" } }), &["key"]),
         },
         {

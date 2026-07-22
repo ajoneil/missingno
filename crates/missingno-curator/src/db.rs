@@ -999,10 +999,11 @@ pub fn parse_mod_category(value: &str) -> Result<ModCategory, String> {
         "Translation" => ModCategory::Translation,
         "QualityOfLife" => ModCategory::QualityOfLife,
         "ContentChange" => ModCategory::ContentChange,
+        "Compatibility" => ModCategory::Compatibility,
         "TotalConversion" => ModCategory::TotalConversion,
         other => {
             return Err(format!(
-                "unknown category {other:?}; expected Translation, QualityOfLife,                  ContentChange, or TotalConversion"
+                "unknown category {other:?}; expected Translation, QualityOfLife, ContentChange, Compatibility, or TotalConversion"
             ));
         }
     })
@@ -1346,11 +1347,12 @@ impl Db {
         Ok(())
     }
 
-    /// A dump that turned out to be a hack. Modifications of the game — QoL,
-    /// content changes, translations (a translated game is still the same
-    /// game, exactly as official localizations are releases of it) — attach
-    /// as mods; only total conversions get their own entry.
-    pub fn mark_hack(
+    /// A dump that turned out to be a mod. Modifications of the game — QoL,
+    /// content changes, compatibility conversions, translations (a translated
+    /// game is still the same game, exactly as official localizations are
+    /// releases of it) — attach as mods; only total conversions get their own
+    /// entry.
+    pub fn mark_mod(
         &mut self,
         source: usize,
         sha1: &str,
@@ -1361,7 +1363,7 @@ impl Db {
     ) -> Result<String, String> {
         if !matches!(category, ModCategory::TotalConversion) {
             let source_title = self.entries[source].game.title().to_owned();
-            let name = title.unwrap_or_else(|| format!("Unnamed hack of {source_title}"));
+            let name = title.unwrap_or_else(|| format!("Unnamed mod of {source_title}"));
             let base = self.resolve_base(source, sha1, base_override)?;
             let attached = match &mut self.entries[source].game {
                 AnyGame::Gb(g) => attach_mod(g, sha1, name.clone(), category, homepage, base),
@@ -1714,7 +1716,7 @@ mod link_tests {
 }
 
 #[cfg(test)]
-mod mark_hack_tests {
+mod mark_mod_tests {
     use super::*;
     use missingno_gamedb::ModCategory;
 
@@ -1770,7 +1772,7 @@ mod mark_hack_tests {
         for order in [[HACK_A, HACK_B], [HACK_B, HACK_A]] {
             let (_dir, mut db) = db_with_three_dumps();
             for hack in order {
-                db.mark_hack(
+                db.mark_mod(
                     0,
                     hack,
                     Some(format!("hack {hack}")),
@@ -1791,7 +1793,7 @@ mod mark_hack_tests {
     fn ambiguous_base_refuses_rather_than_guessing() {
         let (_dir, mut db) = db_with_three_dumps();
         let err = db
-            .mark_hack(0, HACK_A, None, ModCategory::ContentChange, None, None)
+            .mark_mod(0, HACK_A, None, ModCategory::ContentChange, None, None)
             .unwrap_err();
         assert!(err.contains("pass base_sha1"), "{err}");
         assert!(
@@ -1803,7 +1805,7 @@ mod mark_hack_tests {
     #[test]
     fn single_candidate_is_used_and_lone_dump_gets_none() {
         let (_dir, mut db) = db_with_three_dumps();
-        db.mark_hack(
+        db.mark_mod(
             0,
             HACK_A,
             None,
@@ -1813,7 +1815,7 @@ mod mark_hack_tests {
         )
         .unwrap();
         // Two dumps left (REAL, HACK_B): marking HACK_B has one candidate.
-        db.mark_hack(0, HACK_B, None, ModCategory::ContentChange, None, None)
+        db.mark_mod(0, HACK_B, None, ModCategory::ContentChange, None, None)
             .unwrap();
         assert_eq!(mod_bases(&db)[1], Some(REAL.to_owned()));
     }
@@ -1822,7 +1824,7 @@ mod mark_hack_tests {
     fn bogus_base_is_rejected_not_stored() {
         let (_dir, mut db) = db_with_three_dumps();
         let err = db
-            .mark_hack(
+            .mark_mod(
                 0,
                 HACK_A,
                 None,
