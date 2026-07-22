@@ -323,6 +323,8 @@ fn tool_definitions() -> Value {
                     "controllers": { "type": "array", "items": { "type": "string",
                         "enum": ["Joystick", "Paddle", "Driving", "Keypad", "Trackball", "BoosterGrip"] },
                         "description": "VCS only. Controllers this release supports; replaces the list. Omit/empty for the default joystick, which most games use; list several when a game supports more than one." },
+                    "cart_type": { "type": "string",
+                        "description": "VCS only. Cartridge board code for this release, e.g. \"F8\", \"F6SC\", \"4K\" — set it per release when the board differs or an import got it wrong." },
                     "regions": { "type": "array", "items": { "type": "string",
                         "enum": ["Japan", "Usa", "Europe", "World", "Taiwan", "Germany",
                                  "France", "China", "Spain", "Italy", "Australia",

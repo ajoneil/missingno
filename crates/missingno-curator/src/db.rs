@@ -887,6 +887,16 @@ impl AnyGame {
         .is_some()
     }
 
+    pub fn set_release_cart_type(&mut self, index: usize, cart_type: &str) -> bool {
+        match self {
+            AnyGame::Vcs(g) => g.releases.get_mut(index).map(|r| {
+                r.hardware.cart_type = Some(cart_type.to_owned());
+            }),
+            _ => None,
+        }
+        .is_some()
+    }
+
     /// Broadcast-standard hint for the session factory (VCS only).
     pub fn tv_hint(&self) -> Option<String> {
         match self {

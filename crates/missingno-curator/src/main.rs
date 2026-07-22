@@ -1921,6 +1921,7 @@ impl Curator {
                     }
                     None => None,
                 };
+                let cart_type = set_str("cart_type").map(str::to_owned);
                 if status.is_none()
                     && title.is_none()
                     && label.is_none()
@@ -1929,6 +1930,7 @@ impl Curator {
                     && regions.is_none()
                     && tv_format.is_none()
                     && controllers.is_none()
+                    && cart_type.is_none()
                 {
                     return error_result("no recognized fields in set");
                 }
@@ -1950,6 +1952,9 @@ impl Curator {
                     let ctrl = controllers.clone().is_some_and(|c| {
                         db.entries[i].game.set_release_controllers(index as usize, c)
                     });
+                    let cart = cart_type.as_deref().is_some_and(|c| {
+                        db.entries[i].game.set_release_cart_type(index as usize, c)
+                    });
                     db.entries[i].game.clear_curations();
                     db.entries[i].dirty = true;
                     if tv_format.is_some() && !tv {
@@ -1957,6 +1962,9 @@ impl Curator {
                     }
                     if controllers.is_some() && !ctrl {
                         return error_result("controllers apply to VCS releases only");
+                    }
+                    if cart_type.is_some() && !cart {
+                        return error_result("cart_type applies to VCS releases only");
                     }
                     if let Err(e) = db.write_entry(i) {
                         return error_result(format!("staged, but writing {key} failed: {e}"));
