@@ -40,6 +40,23 @@ struct Args {
     curator: Option<String>,
 }
 
+/// This process's action-event log: `runtime_dir/curator-events-<pid>.log`.
+/// A client tails it to see accepts/flags live without the long-poll.
+fn event_log_path() -> std::path::PathBuf {
+    missingno_session::attach::runtime_dir().join(format!("curator-events-{}.log", std::process::id()))
+}
+
+fn append_event_log(event: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(event_log_path())
+    {
+        let _ = writeln!(f, "{event}");
+    }
+}
+
 pub fn main() -> iced::Result {
     let args = Args::parse();
     let db_path = args.db_path.clone();
@@ -174,6 +191,9 @@ enum Message {
     Accept {
         recommend: bool,
     },
+    /// Advance past the current queued entry without re-stamping it — for an
+    /// entry already curated to your satisfaction.
+    SkipNext,
     FlagPrompt,
     FlagNote(String),
     SaveFlag,
@@ -868,6 +888,11 @@ impl Curator {
                 }
                 return self.accept_and_next();
             }
+            Message::SkipNext => {
+                if !self.queue.is_empty() {
+                    return self.skip_and_next();
+                }
+            }
             Message::FlagPrompt => {
                 self.flag_note = match self.flag_note {
                     Some(_) => None,
@@ -1119,6 +1144,41 @@ impl Curator {
         Task::none()
     }
 
+    /// Advance past the current queued entry without stamping a curation —
+    /// the entry is already curated and needs no re-blessing. Mirrors
+    /// accept_and_next's queue walk, minus the stamp and the write.
+    fn skip_and_next(&mut self) -> Task<Message> {
+        let Some(key) = self
+            .selected
+            .and_then(|i| self.db.as_ref().ok().map(|db| db.entries[i].key()))
+        else {
+            return Task::none();
+        };
+        self.status = format!("skipped {key}");
+        if self.queue.front() == Some(&key) {
+            self.queue.pop_front();
+        }
+        self.playing = None;
+        self.play_frame = None;
+        while let Some(next_key) = self.queue.front().cloned() {
+            match self.find_entry(&next_key) {
+                Some(next) => {
+                    self.emit_action(format!(
+                        "skipped {key}; now playing {next_key} ({} left in queue)",
+                        self.queue.len()
+                    ));
+                    return self.start_playtest_for(next);
+                }
+                None => {
+                    self.status = format!("queued {next_key} not found — skipped");
+                    self.queue.pop_front();
+                }
+            }
+        }
+        self.emit_action(format!("skipped {key}; queue is empty"));
+        Task::none()
+    }
+
     /// Read the GB-family header from ROM bytes and stage its facts (fills
     /// unknown enhancement flags and the mapper; conflicts go to the status).
     fn stage_header_facts(&mut self, i: usize, rom: &[u8]) {
@@ -1197,6 +1257,10 @@ impl Curator {
 
     /// Tell a waiting agent (or queue for the next wait) what the human did.
     fn emit_action(&mut self, event: String) {
+        // Also append to a per-process event log a client can `tail -f`, so a
+        // chat agent picks up clicks without parking on the wait_for_action
+        // long-poll.
+        append_event_log(&event);
         if self.action_waiters.is_empty() {
             self.action_events.push_back(event);
             if self.action_events.len() > 20 {
@@ -2278,6 +2342,23 @@ impl Curator {
                         top = top.push(button(text("✕")).on_press(Message::FlagPrompt));
                     }
                     None => {
+                        if let Some(c) = entry.game.curations().last() {
+                            top = top.push(
+                                text(format!(
+                                    "✓ curated by {} on {}{}",
+                                    c.by,
+                                    c.date,
+                                    if c.recommended { " ★ recommended" } else { "" },
+                                ))
+                                .size(13),
+                            );
+                            if !self.queue.is_empty() {
+                                top = top.push(
+                                    button(text("Next ▶ (keep as-is)"))
+                                        .on_press(Message::SkipNext),
+                                );
+                            }
+                        }
                         top = top.push(
                             button(text("Accept ✓")).on_press(Message::Accept { recommend: false }),
                         );
