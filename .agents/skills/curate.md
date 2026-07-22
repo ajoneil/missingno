@@ -67,6 +67,9 @@ and they trust none of it.
    - "my collection" → `local_matches` (requires a scanned ROM dir).
    - a search term / platform → `search_games` with `backlog_only: true`.
    - flagged work → `list_flags`.
+   - unmatched local ROMs → the `◆` "new (unmatched ROMs)" records the scan surfaced
+     for local files that match no manifest; work them in the same alphabetical range you
+     cover (see *Homebrew, alt-dumps, and unmatched records* below).
 4. `queue_games` with the ordered keys. The first game auto-fetches (or uses the local dump)
    and starts playing immediately — the developer is now playtesting it.
 
@@ -286,8 +289,10 @@ While the developer plays the current game:
      from memory, which reads identically to a sourced one and survives every review. If
      you cannot point at where a clause came from, cut the clause.
    - **Stage a link that backs it.** The source belongs in `links` (`Wiki` for Wikipedia,
-     `Community` for AtariAge/forum pages, `TechnicalReference`, `Guide`, …). No link, no
-     description: an unsourceable description is an assertion nobody can check later.
+     `Community` for AtariAge/store pages, `Source` for a creator's page, `DownloadPage`/
+     `Download` for freeware ROM links — see *Homebrew* below — `TechnicalReference`,
+     `Guide`, …). No link, no description: an unsourceable description is an assertion
+     nobody can check later.
    - **A note is not a receipt.** `set_note` writes to an in-memory map in the running app
      and is never persisted — it vanishes when the curator closes. Anything that must
      survive the session goes in a field, never in the note.
@@ -350,6 +355,54 @@ curator or treat the exit as a failure unless it actually reported one.
 When the queue empties, summarize the session (games enriched, sources used, flags proposed/
 resolved, anything skipped and why) and remind the developer that the staged work commits
 from the curator's Commit button.
+
+## Homebrew, alt-dumps, and unmatched records
+
+The curator surfaces local ROMs that match no manifest as `◆` "new" records (the
+"new (unmatched ROMs)" filter). They're where homebrew, prototypes, alt dumps and fan
+re-dumps hide. **Sort each into one of these — don't reflexively make a new game:**
+
+- **A new homebrew game** → curate it. Consolidate a multi-build homebrew (many version/
+  region dumps of one game) into a *single* entry: `merge_game` the builds together, split
+  into NTSC/PAL/PAL60 releases, `label_artifact` each dump by version (`v1.3`, `v0.1 (beta)`,
+  `RetroN 77 edition`). `rename_game` the slug to the clean title afterward.
+- **An alt dump / re-dump of a game already curated** (Atari Anthology extracts, `(Alt)`
+  dumps) → `merge_game` the `◆` record into the existing entry, `move_artifact` the dump into
+  the right release, `label_artifact` it (`Atari Anthology`, `alt [a2]`). No new entry.
+- **An official enhanced re-release** (e.g. a modern Atari 2600+ "Enhanced Edition") → a
+  distinct *release* of the original, **not** a fan mod — it's an official product.
+- **A fan re-dump that won't load** (odd size; `failed to construct console from media`) →
+  `split_release` it into its own release so it isn't mislabelled with the retail board
+  (clear `cart_type` to auto-detect with an empty string), then `raise_flag`. Keep the dump;
+  the flag records it's unplayable.
+
+**Sourcing and licensing homebrew:**
+- Most homebrew has **no Wikipedia article** — source the description from the creator's page
+  or the AtariAge store *product* page (read it), never memory.
+- A creator-page link must be for **this** version: a demake's page is not the original's
+  page on another platform. If you could not open the page (cert error, 403), you have not
+  verified it — do not link it.
+- `license` is `Freeware` **only** when the creator released a free ROM and you can cite it
+  (a "binaries for free" page, a free-download announcement). A **paid aftermarket cart with
+  no free ROM** gets `license` left blank — treat it like a commercial game.
+
+**AtariAge is link-only.** Forum threads and store are behind Cloudflare; a headless fetch
+gets a 403 challenge, so no ROM is ever pulled from there — but store the AtariAge **release
+thread** as the creator link regardless. To *read* a Cloudflare-blocked or dead page, fetch it
+through the **Wayback Machine** (`archive.org/wayback/available?url=…`), which is fetchable.
+
+**Freeware download links** (two roles, keep them separate): a `DownloadPage` is a page to
+obtain the ROM (an AtariAge thread with the attachment, a "download here" page — human-
+followed, often not fetchable); a `Download` is a direct fetchable file URL (a `.zip`/`.bin`).
+Some hosts offer only a page (AtariAge); others also a direct file (a creator's
+`wp-content/uploads` zip is usually fetchable even when the site's HTML pages 403). Verify a
+`Download` by fetching it and hash-matching the dump — that also reveals its region.
+
+**Playtest observations are data, not verdicts.** When the developer notes an oddity ("ominous
+music", "flashes a lot"), first check whether it's the game being itself (the 2600 Asteroids
+heartbeat and Video Cube's flicker are retail-normal — a 30-second search settles it) before
+treating it as a hack or a bug. If it *is* abnormal, `raise_flag` — **facts only** (the
+observed behaviour), never a cause hypothesis, repro plan, or "candidate for /investigate".
 
 ## Honesty rules
 
