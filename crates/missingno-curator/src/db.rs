@@ -885,7 +885,8 @@ impl AnyGame {
     pub fn set_release_cart_type(&mut self, index: usize, cart_type: &str) -> bool {
         match self {
             AnyGame::Vcs(g) => g.releases.get_mut(index).map(|r| {
-                r.hardware.cart_type = Some(cart_type.to_owned());
+                // An empty string clears the override back to auto-detect.
+                r.hardware.cart_type = (!cart_type.is_empty()).then(|| cart_type.to_owned());
             }),
             _ => None,
         }
@@ -920,9 +921,11 @@ pub fn parse_link_type(value: &str) -> Result<LinkType, String> {
         "TechnicalReference" => LinkType::TechnicalReference,
         "Guide" => LinkType::Guide,
         "Community" => LinkType::Community,
+        "DownloadPage" => LinkType::DownloadPage,
+        "Download" => LinkType::Download,
         other => {
             return Err(format!(
-                "unknown link_type {other:?}; expected Wiki, Manual, Source, Speedrun,                  UnusedContent, TechnicalReference, Guide, or Community"
+                "unknown link_type {other:?}; expected Wiki, Manual, Source, Speedrun,                  UnusedContent, TechnicalReference, Guide, Community, DownloadPage, or Download"
             ));
         }
     })
