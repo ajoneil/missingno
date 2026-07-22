@@ -247,15 +247,29 @@ While the developer plays the current game:
    dump flag ("[a]", "[!]") is never a release title.
 5. **Descriptions** — the field most likely to accumulate quiet fiction, so it has its own
    rules:
+   - **Read a source before you write a word — order of operations, not a nicety.**
+     Fetch and actually *read* the game's Wikipedia article, its manual, or a prototype
+     writeup *first*; composing the description is the step that comes *after* reading it,
+     never before. Writing from memory while intending to "attach a link later" is the
+     exact failure: the link ends up decorating a description it never sourced, and a
+     from-memory gameplay claim reads identically to a real one. If you have not read a
+     source this turn, you have nothing to write yet — so go read one before writing, don't
+     settle for empty (see the exhaust-sources rule below). A *scanned* manual is still a
+     readable source: WebFetch can't extract its text, but downloading the PDF and opening it
+     with the Read tool renders the pages as images you can read directly, turning a manual
+     you'd otherwise have called unreadable into a primary source.
    - **Write the facts in your own words; never copy the prose.** The database is CC0;
      Wikipedia is CC BY-SA, and the two do not compose. Pasting or lightly reshuffling a
      lead paragraph would silently make the repo's LICENSE untrue for that entry, and
      nothing in the RON records where the text came from. Facts are free to take;
      expression is not.
    - **Gameplay only.** Say what the game is and what the player does. Never restate
-     year, developer, publisher or platform — those are structured fields the UI renders
-     already, so repeating them is pure duplication. (This is exactly why a Wikipedia lead
-     is the wrong shape to lift: its first sentence is nothing but identity facts.)
+     year, developer, publisher, platform, or **controller** — those are all structured
+     fields (`controllers` included) the UI renders already, so repeating them ("one
+     joystick", "uses the paddle") is pure duplication. Describe the *action* a control
+     performs when it is the distinctive mechanic (you dial a knob to aim), not the device
+     itself. (This is also why a Wikipedia lead is the wrong shape to lift: its first
+     sentence is nothing but identity facts.)
    - **Describe the port in front of you, not the arcade game it came from.** A
      conversion's article is mostly about the coin-op, and its facts do not carry over:
      the 2600 Missile Command has one missile base where the arcade has three, and
@@ -274,8 +288,13 @@ While the developer plays the current game:
    - **A note is not a receipt.** `set_note` writes to an in-memory map in the running app
      and is never persisted — it vanishes when the curator closes. Anything that must
      survive the session goes in a field, never in the note.
-   - Two or three sentences. If a game is obscure enough that no source describes its
-     gameplay, leave the field empty and say so — "not found" is a valid result.
+   - Two or three sentences. **Do not settle for an empty description — exhaust the
+     sources first.** An empty field means you stopped researching too early, not that the
+     game is undescribable. Work down: the port's own Wikipedia article → the per-tree
+     catalogue in SOURCES.md (Atarimania for VCS, found via its search, never a guessed id)
+     → the game's **manual**, read as page-images with the Read tool (works even when it is
+     a scan). Only after all of those genuinely come up empty is "not found" a result — and
+     then say so to the developer and leave it flagged, rather than quietly blank.
 6. **Cover image** (`covers` in update_game — remote URLs only, we host nothing):
    - Commercial games: the curator's "Hasheous: cover & wiki" button (or `curl` the
      lookup from step 2 yourself and use the `…/api/v1/images/<id>` URL from its
@@ -291,8 +310,13 @@ While the developer plays the current game:
      `sources`, not `covers`.
 7. **Wikipedia**: if the game has an article, stage it (`wikipedia` in update_game — it
    becomes the game's Wikipedia link). Hasheous often knows it for commercial games;
-   otherwise a quick search — but only stage an article that is actually about this game,
-   not its series or port.
+   otherwise **find it by searching Wikipedia's opensearch API**
+   (`https://en.wikipedia.org/w/api.php?action=opensearch&search=<title>&format=json`) and
+   read the returned titles — never guess a `Foo_(video_game)` URL and treat its 404 as
+   proof no article exists. A 404 on a guessed title says only that the guess was wrong; the
+   real article (or the confirmation that there is none) comes from the search. Only stage an
+   article actually about *this* game, not its series, a same-named TV show, or the arcade
+   original it was ported from.
 8. **Hardware facts**: the curator auto-stages what a fetched/booted Game Boy header
    states (SGB/CGB enhancement, mapper) into the release — filling unknowns only, and
    reporting header-vs-db conflicts in the verify status, which you should surface in your
