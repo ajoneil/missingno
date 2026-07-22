@@ -1375,8 +1375,6 @@ impl Curator {
                 if applied.is_empty() {
                     return error_result("no recognized fields in set");
                 }
-                // Automation touching a curated entry re-opens it for review.
-                entry.game.clear_curations();
                 entry.dirty = true;
                 self.selected = Some(i);
                 // Staged text lives in the manifest, not just in memory: an
@@ -1387,7 +1385,7 @@ impl Curator {
                     return error_result(format!("staged, but writing {key} failed: {e}"));
                 }
                 text_result(format!(
-                    "staged {} on {key}; entry re-opened for review (uncommitted until the curator confirms)",
+                    "staged {} on {key} (uncommitted until the curator confirms)",
                     applied.join(", ")
                 ))
             }
@@ -1625,10 +1623,6 @@ impl Curator {
                     } else if base.is_some() || label.is_some() || date.is_some() {
                         applied.push("(release fields skipped: no such release_index)");
                     }
-                    if !applied.is_empty() {
-                        // Editing the mod un-vouches the mod (not the game).
-                        m.curated.clear();
-                    }
                     applied
                 });
                 match applied {
@@ -1669,7 +1663,7 @@ impl Curator {
                 };
                 match db.split_release(i, sha1, status, title, label, date) {
                     Ok(()) => text_result(format!(
-                        "{sha1} moved into its own {status:?} release of {key}; the entry                          is re-opened for review"
+                        "{sha1} moved into its own {status:?} release of {key}"
                     )),
                     Err(e) => error_result(e),
                 }
@@ -1780,7 +1774,6 @@ impl Curator {
                     let cart = cart_type.as_deref().is_some_and(|c| {
                         db.entries[i].game.set_release_cart_type(index as usize, c)
                     });
-                    db.entries[i].game.clear_curations();
                     db.entries[i].dirty = true;
                     if tv_format.is_some() && !tv {
                         return error_result("tv_format applies to VCS releases only");
@@ -1823,7 +1816,6 @@ impl Curator {
                     label,
                 ) {
                     Ok(message) => {
-                        db.entries[i].game.clear_curations();
                         db.entries[i].dirty = true;
                         if let Err(e) = db.write_entry(i) {
                             return error_result(format!(
@@ -1851,7 +1843,6 @@ impl Curator {
                 };
                 match db.entries[i].game.remove_empty_release(index as usize) {
                     Ok(()) => {
-                        db.entries[i].game.clear_curations();
                         db.entries[i].dirty = true;
                         if let Err(e) = db.write_entry(i) {
                             return error_result(format!("removed, but writing {key} failed: {e}"));

@@ -210,7 +210,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "update_game",
-            "description": "Stage edits to a game. Text fields plus cover image URLs (remote links only — Hasheous, the project's own repo/pouet page, libretro-thumbnails, or Wikimedia; never store CDNs) and a Wikipedia article link. Setting `wikipedia` creates the game's \"Wikipedia\" link by itself — do not also pass one in `links`, or the article ends up listed twice. `remove_links` drops links by name. Edits appear live in the curator UI as uncommitted changes; a curated stamp is cleared.",
+            "description": "Stage edits to a game. Text fields plus cover image URLs (remote links only — Hasheous, the project's own repo/pouet page, libretro-thumbnails, or Wikimedia; never store CDNs) and a Wikipedia article link. Setting `wikipedia` creates the game's \"Wikipedia\" link by itself — do not also pass one in `links`, or the article ends up listed twice. `remove_links` drops links by name. Edits appear live in the curator UI as uncommitted changes until committed; a curated stamp stands (edits happen at the curator's request).",
             "inputSchema": object(json!({
                 "key": { "type": "string" },
                 "set": { "type": "object", "properties": {

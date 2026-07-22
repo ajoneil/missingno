@@ -90,11 +90,6 @@ impl AnyGame {
         });
     }
 
-    /// An automated change un-vouches every curator.
-    pub fn clear_curations(&mut self) {
-        common!(self, g => g.curated.clear());
-    }
-
     pub fn text_field(&self, field: TextField) -> String {
         common!(self, g => match field {
             TextField::Title => g.title.clone(),
@@ -1386,8 +1381,6 @@ impl Db {
             if !attached {
                 return Err(format!("{sha1} is not an artifact of this entry"));
             }
-            // Re-filing a dump changes what the entry claims: un-vouch it.
-            self.entries[source].game.clear_curations();
             self.entries[source].dirty = true;
             self.write_entry(source).map_err(|e| e.to_string())?;
             return Ok(format!(
@@ -1488,7 +1481,6 @@ impl Db {
         }
         .ok_or("artifact vanished mid-operation")?;
 
-        self.entries[source].game.clear_curations();
         self.entries.push(EntryHandle {
             tree,
             slug: slug.clone(),
@@ -1572,8 +1564,6 @@ impl Db {
         let absorbed = self.entries.remove(source);
         let target = if source < target { target - 1 } else { target };
         let (releases, mods) = self.entries[target].game.absorb(absorbed.game)?;
-        // The surviving entry now claims dumps nobody vouched for.
-        self.entries[target].game.clear_curations();
         self.entries[target].dirty = true;
         self.write_entry(target).map_err(|e| e.to_string())?;
 
@@ -1617,8 +1607,6 @@ impl Db {
         if !split {
             return Err(format!("{sha1} is not a release artifact of this entry"));
         }
-        // Reorganising the entry changes what it claims: un-vouch it.
-        self.entries[entry].game.clear_curations();
         self.entries[entry].dirty = true;
         self.write_entry(entry).map_err(|e| e.to_string())?;
         Ok(())
@@ -1637,7 +1625,6 @@ impl Db {
             AnyGame::Gbc(g) => move_artifact_in(g, sha1, to_index),
             AnyGame::Vcs(g) => move_artifact_in(g, sha1, to_index),
         }?;
-        self.entries[entry].game.clear_curations();
         self.entries[entry].dirty = true;
         self.write_entry(entry).map_err(|e| e.to_string())?;
         Ok(emptied)
@@ -2129,8 +2116,8 @@ mod merge_tests {
         assert!(!dir.path().join("data/gb/reissue").exists());
         let keeper = index_of(&db, "keeper");
         assert_eq!(db.entries[keeper].game.artifact_sha1s(), vec![A, B]);
-        // Absorbing dumps nobody vouched for re-opens the entry.
-        assert!(db.entries[keeper].game.curations().is_empty());
+        // Editing at the curator's request preserves their endorsement.
+        assert_eq!(db.entries[keeper].game.curations().len(), 1);
         assert_eq!(db.flags.flags[0].subject, vec!["gb/keeper".to_owned()]);
     }
 
