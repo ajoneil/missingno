@@ -119,6 +119,9 @@ fn tv_standard(format: TvFormat) -> TvStandard {
         // NTSC timing; only the colour encoding is PAL's, and on the VCS that
         // came from a board outside the TIA.
         TvFormat::PalM => TvStandard::Ntsc,
+        // PAL60 is PAL colour on a 60 Hz raster: like PAL-M it runs at NTSC
+        // timing, which is what a PAL60 build was authored for.
+        TvFormat::Pal60 => TvStandard::Ntsc,
         TvFormat::Secam => TvStandard::Secam,
     }
 }

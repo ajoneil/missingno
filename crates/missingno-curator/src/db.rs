@@ -952,11 +952,12 @@ pub fn parse_tv_format(value: &str) -> Result<TvFormat, String> {
     Ok(match value {
         "Ntsc" => TvFormat::Ntsc,
         "Pal" => TvFormat::Pal,
+        "Pal60" => TvFormat::Pal60,
         "PalM" => TvFormat::PalM,
         "Secam" => TvFormat::Secam,
         other => {
             return Err(format!(
-                "unknown tv_format {other:?}; expected Ntsc, Pal, PalM, or Secam"
+                "unknown tv_format {other:?}; expected Ntsc, Pal, Pal60, PalM, or Secam"
             ));
         }
     })

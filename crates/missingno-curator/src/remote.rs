@@ -318,7 +318,7 @@ fn tool_definitions() -> Value {
                     "label": { "type": "string" },
                     "date": { "type": "string" },
                     "publisher": { "type": "string" },
-                    "tv_format": { "type": "string", "enum": ["Ntsc", "Pal", "PalM", "Secam"],
+                    "tv_format": { "type": "string", "enum": ["Ntsc", "Pal", "Pal60", "PalM", "Secam"],
                         "description": "VCS only. PalM is Brazil's PAL-M: PAL colour on System M's 525-line/59.94 Hz raster, so it runs at NTSC timing, not PAL's — never file a Brazilian release as Pal" },
                     "controllers": { "type": "array", "items": { "type": "string",
                         "enum": ["Joystick", "Paddle", "Driving", "Keypad", "Trackball", "BoosterGrip"] },
