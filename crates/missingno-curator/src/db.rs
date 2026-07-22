@@ -972,9 +972,11 @@ pub fn parse_controller(value: &str) -> Result<Controller, String> {
         "Keypad" => Controller::Keypad,
         "Trackball" => Controller::Trackball,
         "BoosterGrip" => Controller::BoosterGrip,
+        "KidVid" => Controller::KidVid,
+        "MindLink" => Controller::MindLink,
         other => {
             return Err(format!(
-                "unknown controller {other:?}; expected Joystick, Paddle, Driving, Keypad, Trackball, or BoosterGrip"
+                "unknown controller {other:?}; expected Joystick, Paddle, Driving, Keypad, Trackball, BoosterGrip, KidVid, or MindLink"
             ));
         }
     })

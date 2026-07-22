@@ -321,7 +321,7 @@ fn tool_definitions() -> Value {
                     "tv_format": { "type": "string", "enum": ["Ntsc", "Pal", "Pal60", "PalM", "Secam"],
                         "description": "VCS only. PalM is Brazil's PAL-M: PAL colour on System M's 525-line/59.94 Hz raster, so it runs at NTSC timing, not PAL's — never file a Brazilian release as Pal" },
                     "controllers": { "type": "array", "items": { "type": "string",
-                        "enum": ["Joystick", "Paddle", "Driving", "Keypad", "Trackball", "BoosterGrip"] },
+                        "enum": ["Joystick", "Paddle", "Driving", "Keypad", "Trackball", "BoosterGrip", "KidVid", "MindLink"] },
                         "description": "VCS only. Controllers this release supports; replaces the list. Omit/empty for the default joystick, which most games use; list several when a game supports more than one." },
                     "cart_type": { "type": "string",
                         "description": "VCS only. Cartridge board code for this release, e.g. \"F8\", \"F6SC\", \"4K\" — set it per release when the board differs or an import got it wrong." },
