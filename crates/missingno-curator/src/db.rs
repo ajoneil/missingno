@@ -1269,6 +1269,9 @@ pub struct EntryHandle {
     pub slug: String,
     pub game: AnyGame,
     pub dirty: bool,
+    /// Discovered from a local ROM that matches no manifest; not on disk until
+    /// curated. Distinguishes an empty starting-point record from a real entry.
+    pub synthetic: bool,
 }
 
 impl EntryHandle {
@@ -1310,6 +1313,7 @@ impl Db {
                     slug: entry.slug.as_str().to_owned(),
                     game: wrap(entry.game),
                     dirty: false,
+                    synthetic: false,
                 });
             }
             Ok(())
@@ -1353,6 +1357,105 @@ impl Db {
         self.flags.save(&self.repo_root)?;
         self.uncommitted += 1;
         Ok(())
+    }
+
+    /// Surface local ROMs that match no manifest as empty in-memory VCS entries —
+    /// one per dump, titled from its filename — so an unknown ROM becomes a
+    /// curatable starting point instead of staying invisible. Idempotent: a hash
+    /// already held by any entry (including one added here) is skipped, so a
+    /// re-scan adds only genuinely new ROMs. Returns how many were added.
+    pub fn add_unmatched_roms(&mut self, index: &crate::verify::RomIndex) -> usize {
+        let mut known: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for e in &self.entries {
+            known.extend(e.game.artifact_sha1s());
+            for m in 0..e.game.mod_lines().len() {
+                for (sha1, _) in e.game.mod_artifacts(m) {
+                    known.insert(sha1);
+                }
+            }
+            if e.tree == TreeId::Vcs {
+                taken.insert(e.slug.clone());
+            }
+        }
+        // Stable order so slugs stay put between scans.
+        let mut roms: Vec<(&String, &PathBuf)> = index.by_sha1.iter().collect();
+        roms.sort_by(|a, b| a.1.cmp(b.1));
+        let mut added = 0;
+        for (sha1, path) in roms {
+            if known.contains(sha1) {
+                continue;
+            }
+            // VCS only for now: current collections are Atari, and detecting an
+            // arbitrary core from an unknown ROM is a separate problem.
+            let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase());
+            if !matches!(ext.as_deref(), Some("a26") | Some("bin")) {
+                continue;
+            }
+            let Ok(parsed) = sha1.parse::<Sha1>() else {
+                continue;
+            };
+            let title = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| sha1.clone());
+            let size = fs::metadata(path).ok().map(|m| m.len());
+            let base = {
+                let s = slugify(&title);
+                if s.is_empty() {
+                    format!("unmatched-{}", &sha1[..8])
+                } else {
+                    s
+                }
+            };
+            let mut slug = base.clone();
+            let mut n = 1;
+            while taken.contains(&slug) {
+                n += 1;
+                slug = format!("{base}-{n}");
+            }
+            taken.insert(slug.clone());
+            known.insert(sha1.clone());
+            let game = Game::<Vcs> {
+                title,
+                kind: GameKind::Game,
+                developer: None,
+                description: None,
+                license: None,
+                tags: Vec::new(),
+                links: Vec::new(),
+                covers: Vec::new(),
+                screenshots: Vec::new(),
+                mod_of: None,
+                mods: Vec::new(),
+                curated: Vec::new(),
+                releases: vec![Release::<Vcs> {
+                    title: None,
+                    label: None,
+                    regions: Vec::new(),
+                    date: None,
+                    publisher: None,
+                    status: ReleaseStatus::Released,
+                    hardware: Default::default(),
+                    sources: Vec::new(),
+                    artifacts: vec![missingno_gamedb::Artifact {
+                        sha1: parsed,
+                        label: None,
+                        size,
+                        verified: Vec::new(),
+                    }],
+                }],
+            };
+            self.entries.push(EntryHandle {
+                tree: TreeId::Vcs,
+                slug,
+                game: AnyGame::Vcs(game),
+                dirty: false,
+                synthetic: true,
+            });
+            added += 1;
+        }
+        added
     }
 
     /// A dump that turned out to be a mod. Modifications of the game — QoL,
@@ -1486,6 +1589,7 @@ impl Db {
             slug: slug.clone(),
             game: hack,
             dirty: true,
+            synthetic: false,
         });
         let new_index = self.entries.len() - 1;
         self.write_entry(source).map_err(|e| e.to_string())?;

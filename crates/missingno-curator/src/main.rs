@@ -96,6 +96,8 @@ struct Curator {
     filter_tree: Option<TreeId>,
     only_backlog: bool,
     only_flagged: bool,
+    /// Show only ROMs discovered locally that match no manifest yet.
+    only_new: bool,
     search: String,
     selected: Option<usize>,
     status: String,
@@ -159,6 +161,7 @@ enum Message {
     FilterTree(TreeChoice),
     OnlyBacklog(bool),
     OnlyFlagged(bool),
+    OnlyNew(bool),
     Search(String),
     Select(usize),
     RecordPlaytest(String),
@@ -264,6 +267,7 @@ impl Curator {
                 filter_tree: None,
                 only_backlog: true,
                 only_flagged: false,
+                only_new: false,
                 search: String::new(),
                 selected: None,
                 status: String::new(),
@@ -314,6 +318,7 @@ impl Curator {
             .iter()
             .enumerate()
             .filter(|(_, e)| self.filter_tree.is_none_or(|t| e.tree == t))
+            .filter(|(_, e)| !self.only_new || e.synthetic)
             .filter(|(_, e)| !self.only_backlog || e.game.curations().is_empty())
             .filter(|(_, e)| {
                 !self.only_flagged || db.flags.open().any(|f| f.subject.contains(&e.key()))
@@ -551,8 +556,19 @@ impl Curator {
                 self.scanning = false;
                 match result {
                     Ok(index) => {
-                        self.status = format!("indexed {} ROM(s) from collection", index.scanned);
-                        self.rom_index = Some(index);
+                        let scanned = index.scanned;
+                        self.rom_index = Some(index.clone());
+                        let added = match &mut self.db {
+                            Ok(db) => db.add_unmatched_roms(&index),
+                            Err(_) => 0,
+                        };
+                        self.status = if added > 0 {
+                            format!(
+                                "indexed {scanned} ROM(s); {added} matched no manifest → new records"
+                            )
+                        } else {
+                            format!("indexed {scanned} ROM(s) from collection")
+                        };
                     }
                     Err(e) => self.status = format!("scan failed: {e}"),
                 }
@@ -563,6 +579,10 @@ impl Curator {
             }
             Message::OnlyBacklog(v) => self.only_backlog = v,
             Message::OnlyFlagged(v) => self.only_flagged = v,
+            Message::OnlyNew(v) => {
+                self.only_new = v;
+                self.selected = None;
+            }
             Message::Search(s) => {
                 self.search = s;
                 self.selected = None;
@@ -2230,6 +2250,9 @@ impl Curator {
             toggler(self.only_flagged)
                 .label("flagged only")
                 .on_toggle(Message::OnlyFlagged),
+            toggler(self.only_new)
+                .label("new (unmatched ROMs)")
+                .on_toggle(Message::OnlyNew),
             text(format!("{} match(es)", visible.len())).size(13),
         ]
         .spacing(8);
@@ -2237,7 +2260,9 @@ impl Curator {
         let mut list = column![].spacing(2);
         for &i in visible.iter().take(LIST_LIMIT) {
             let entry = &db.entries[i];
-            let marker = if entry.game.curations().is_empty() {
+            let marker = if entry.synthetic {
+                "◆ "
+            } else if entry.game.curations().is_empty() {
                 ""
             } else if entry.game.curations().iter().any(|c| c.recommended) {
                 "★ "
