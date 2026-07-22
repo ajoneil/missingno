@@ -107,7 +107,6 @@ struct Curator {
     rom_cache: std::collections::HashMap<String, std::sync::Arc<Vec<u8>>>,
     fetching: bool,
     scanning: bool,
-    booting: bool,
     playing: Option<(String, play::PlaySession)>,
     play_frame: Option<iced::widget::image::Handle>,
     playing_sha1: Option<String>,
@@ -121,10 +120,6 @@ struct Curator {
     play_after_fetch: Option<String>,
     /// entry key → last fetched sha1 (bytes live in rom_cache).
     fetched_sha1: std::collections::HashMap<String, String>,
-    /// entry key → boot note + screenshot.
-    boot_shots: std::collections::HashMap<String, (String, iced::widget::image::Handle)>,
-    /// Multiline editor state for the selected entry's description.
-    description: iced::widget::text_editor::Content,
     /// cover url → fetched preview.
     cover_previews: std::collections::HashMap<String, iced::widget::image::Handle>,
     /// cover urls that failed to fetch (shown as an error instead of silence).
@@ -145,8 +140,6 @@ struct Curator {
     list_visible: bool,
     /// Open red-flag note input for the current entry (None = closed).
     flag_note: Option<String>,
-    /// Open slug-rename input for the current entry (None = closed).
-    slug_edit: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -157,8 +150,6 @@ enum Message {
     PlayEnded(u64),
     StopPlay,
     Pad(u8, bool),
-    Boot(BootSource),
-    Booted(String, Result<BootDone, String>),
     Fetch {
         play_after: bool,
     },
@@ -170,9 +161,6 @@ enum Message {
     OnlyFlagged(bool),
     Search(String),
     Select(usize),
-    Edit(TextField, String),
-    EditReleasePublisher(usize, String),
-    SetArtifactLabel(String, String),
     RecordPlaytest(String),
     ArtifactsVerified {
         key: String,
@@ -183,8 +171,6 @@ enum Message {
         index: usize,
         recommend: bool,
     },
-    DescriptionAction(iced::widget::text_editor::Action),
-    Enrich,
     Enriched(String, Result<Option<verify::HasheousHit>, String>),
     CoverLoaded(String, Option<iced::widget::image::Handle>),
     ConfirmAndNext,
@@ -197,9 +183,6 @@ enum Message {
     FlagPrompt,
     FlagNote(String),
     SaveFlag,
-    SlugPrompt,
-    SlugInput(String),
-    ApplySlug,
     ToggleList,
     CloseRequested,
     OpenLink(String),
@@ -211,12 +194,6 @@ enum Message {
 enum BootSource {
     Cached(String),
     File(PathBuf),
-}
-
-#[derive(Debug, Clone)]
-struct BootDone {
-    note: String,
-    shot: iced::widget::image::Handle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -296,7 +273,6 @@ impl Curator {
                 rom_cache: std::collections::HashMap::new(),
                 fetching: false,
                 scanning: false,
-                booting: false,
                 playing: None,
                 play_frame: None,
                 playing_sha1: None,
@@ -305,8 +281,6 @@ impl Curator {
                 agent_notes: std::collections::HashMap::new(),
                 play_after_fetch: None,
                 fetched_sha1: std::collections::HashMap::new(),
-                boot_shots: std::collections::HashMap::new(),
-                description: iced::widget::text_editor::Content::new(),
                 cover_previews: std::collections::HashMap::new(),
                 cover_failed: std::collections::HashSet::new(),
                 enrich_attempted: std::collections::HashSet::new(),
@@ -319,7 +293,6 @@ impl Curator {
                 recommend_next: false,
                 list_visible: false,
                 flag_note: None,
-                slug_edit: None,
             },
             // A --rom-dir given at launch (e.g. by an agent starting the
             // curator) scans immediately; nothing to click.
@@ -503,62 +476,6 @@ impl Curator {
                     session.set_control(id, pressed);
                 }
             }
-            Message::Boot(source) => {
-                if let (Ok(db), Some(i)) = (&self.db, self.selected) {
-                    let entry = &db.entries[i];
-                    let key = entry.key();
-                    let hint = match entry.tree {
-                        TreeId::Gb => "verify.gb",
-                        TreeId::Gbc => "verify.gbc",
-                        TreeId::Vcs => "verify.a26",
-                    };
-                    let bytes = match &source {
-                        BootSource::Cached(sha1) => self.rom_cache.get(sha1).cloned(),
-                        BootSource::File(path) => std::fs::read(path).ok().map(std::sync::Arc::new),
-                    };
-                    let Some(bytes) = bytes else {
-                        self.status = "no ROM bytes to boot".to_owned();
-                        return Task::none();
-                    };
-                    let dump_sha1 = match &source {
-                        BootSource::Cached(sha1) => sha1.clone(),
-                        BootSource::File(_) => verify::sha1_hex(&bytes),
-                    };
-                    let (tv, cart) = entry.game.hints_for(&dump_sha1);
-                    self.stage_header_facts(i, &bytes);
-                    self.booting = true;
-                    self.verify_status
-                        .insert(key.clone(), "booting (300 frames)…".to_owned());
-                    return Task::perform(
-                        smol::unblock(move || {
-                            verify::boot_check(hint, &bytes, tv, cart, 300).map(|shot| BootDone {
-                                note: format!(
-                                    "boots: {}/{} frames produced a screen ({}×{})",
-                                    shot.frames_seen, shot.frames_run, shot.width, shot.height
-                                ),
-                                shot: iced::widget::image::Handle::from_rgba(
-                                    shot.width,
-                                    shot.height,
-                                    shot.rgba,
-                                ),
-                            })
-                        }),
-                        move |result| Message::Booted(key.clone(), result),
-                    );
-                }
-            }
-            Message::Booted(key, result) => {
-                self.booting = false;
-                match result {
-                    Ok(done) => {
-                        self.verify_status.insert(key.clone(), done.note.clone());
-                        self.boot_shots.insert(key, (done.note, done.shot));
-                    }
-                    Err(e) => {
-                        self.verify_status.insert(key, format!("boot failed: {e}"));
-                    }
-                }
-            }
             Message::Fetch { play_after } => {
                 if let (Ok(db), Some(i)) = (&self.db, self.selected) {
                     let entry = &db.entries[i];
@@ -651,34 +568,6 @@ impl Curator {
                 self.selected = None;
             }
             Message::Select(index) => return self.select(index),
-            Message::DescriptionAction(action) => {
-                self.description.perform(action);
-                if let (Ok(db), Some(i)) = (&mut self.db, self.selected) {
-                    let text = self.description.text();
-                    let text = text.trim_end();
-                    if db.entries[i].game.text_field(TextField::Description) != text {
-                        db.entries[i]
-                            .game
-                            .set_text_field(TextField::Description, text.to_owned());
-                        db.entries[i].dirty = true;
-                    }
-                }
-            }
-            Message::Enrich => {
-                if let (Ok(db), Some(i)) = (&self.db, self.selected) {
-                    let entry = &db.entries[i];
-                    let Some(sha1) = entry.game.artifact_sha1s().into_iter().next() else {
-                        self.status = "no artifact hash to look up".to_owned();
-                        return Task::none();
-                    };
-                    let key = entry.key();
-                    self.enriching = true;
-                    return Task::perform(
-                        smol::unblock(move || verify::hasheous_lookup(&sha1)),
-                        move |result| Message::Enriched(key.clone(), result),
-                    );
-                }
-            }
             Message::Enriched(key, result) => {
                 self.enriching = false;
                 match result {
@@ -827,25 +716,6 @@ impl Curator {
                     }
                 }
             }
-            Message::SetArtifactLabel(sha1, label) => {
-                if let (Ok(db), Some(i)) = (&mut self.db, self.selected)
-                    && db.entries[i].game.set_artifact_label(&sha1, &label)
-                {
-                    db.entries[i].dirty = true;
-                }
-            }
-            Message::EditReleasePublisher(index, value) => {
-                if let (Ok(db), Some(i)) = (&mut self.db, self.selected) {
-                    db.entries[i].game.set_release_publisher(index, value);
-                    db.entries[i].dirty = true;
-                }
-            }
-            Message::Edit(field, value) => {
-                if let (Ok(db), Some(i)) = (&mut self.db, self.selected) {
-                    db.entries[i].game.set_text_field(field, value);
-                    db.entries[i].dirty = true;
-                }
-            }
             Message::ConfirmAndNext => {
                 let visible = self.visible();
                 if let (Ok(db), Some(i)) = (&mut self.db, self.selected) {
@@ -943,35 +813,6 @@ impl Curator {
                     }
                 }
             }
-            Message::SlugPrompt => {
-                self.slug_edit = match self.slug_edit {
-                    Some(_) => None,
-                    None => self
-                        .selected
-                        .and_then(|i| self.db.as_ref().ok().map(|db| db.entries[i].slug.clone())),
-                };
-            }
-            Message::SlugInput(slug) => self.slug_edit = Some(slug),
-            Message::ApplySlug => {
-                let Some(new_slug) = self.slug_edit.take() else {
-                    return Task::none();
-                };
-                let (Ok(db), Some(i)) = (&mut self.db, self.selected) else {
-                    return Task::none();
-                };
-                let old_key = db.entries[i].key();
-                match db.rename_entry(i, new_slug.trim()) {
-                    Ok(new_key) => {
-                        self.rekey_entry(&old_key, &new_key);
-                        self.status = format!("renamed {old_key} → {new_key}");
-                        self.emit_action(format!("renamed {old_key} → {new_key}"));
-                    }
-                    Err(e) => {
-                        self.status = format!("rename failed: {e}");
-                        self.slug_edit = Some(new_slug);
-                    }
-                }
-            }
             Message::CloseRequested => {
                 // Tear down in order on this thread — session first (its worker
                 // and the cpal stream go quietly), then the socket — so the
@@ -1009,20 +850,9 @@ impl Curator {
         Task::none()
     }
 
-    /// Rebuild the description widget from the selected entry's data.
-    fn sync_description(&mut self) {
-        if let (Ok(db), Some(i)) = (&self.db, self.selected) {
-            self.description = iced::widget::text_editor::Content::with_text(
-                &db.entries[i].game.text_field(TextField::Description),
-            );
-        }
-    }
-
-    /// Select an entry: sync the description editor and kick a cover preview.
+    /// Select an entry and kick a cover preview.
     fn select(&mut self, i: usize) -> Task<Message> {
         self.selected = Some(i);
-        self.slug_edit = None;
-        self.sync_description();
         Task::batch([self.load_cover_task(i), self.auto_enrich_task(i)])
     }
 
@@ -1246,9 +1076,6 @@ impl Curator {
         }
         if let Some(v) = self.fetched_sha1.remove(old_key) {
             self.fetched_sha1.insert(new_key.to_owned(), v);
-        }
-        if let Some(v) = self.boot_shots.remove(old_key) {
-            self.boot_shots.insert(new_key.to_owned(), v);
         }
         if self.enrich_attempted.remove(old_key) {
             self.enrich_attempted.insert(new_key.to_owned());
@@ -1559,7 +1386,6 @@ impl Curator {
                 {
                     return error_result(format!("staged, but writing {key} failed: {e}"));
                 }
-                self.sync_description();
                 text_result(format!(
                     "staged {} on {key}; entry re-opened for review (uncommitted until the curator confirms)",
                     applied.join(", ")
@@ -1597,7 +1423,6 @@ impl Curator {
                         } else {
                             playing.as_deref().and_then(|key| self.find_entry(key))
                         };
-                        self.sync_description();
                         text_result(message)
                     }
                     Err(e) => error_result(e),
@@ -2274,13 +2099,11 @@ impl Curator {
             })
             .size(12),
         );
-        line = line.push({
-            let sha1_for_label = sha1.to_owned();
-            text_input("label…", label)
-                .on_input(move |v| Message::SetArtifactLabel(sha1_for_label.clone(), v))
-                .size(12)
-                .width(Length::Fixed(140.0))
-        });
+        if !label.is_empty() {
+            line = line.push(text(label.to_owned()).size(12).width(Length::Fixed(140.0)));
+        } else {
+            line = line.push(Space::new().width(Length::Fixed(140.0)));
+        }
         if let Some(path) = local {
             let file = path
                 .file_name()
@@ -2329,7 +2152,17 @@ impl Curator {
         let mut top = row![].spacing(12).align_y(iced::Alignment::Center);
         match self.selected.and_then(|i| db.entries.get(i)) {
             Some(entry) => {
-                top = top.push(text(entry.game.title().to_owned()).size(22));
+                let mut sub = format!("{} · {:?}", entry.key(), entry.game.kind());
+                if entry.dirty {
+                    sub.push_str(" · uncommitted");
+                }
+                top = top.push(
+                    column![
+                        text(entry.game.title().to_owned()).size(22),
+                        text(sub).size(12),
+                    ]
+                    .spacing(2),
+                );
                 if !self.queue.is_empty() {
                     top = top.push(text(format!("· {} in queue", self.queue.len())).size(13));
                 }
@@ -2442,70 +2275,17 @@ impl Curator {
         let right: Element<'_, Message> = match self.selected {
             Some(i) => {
                 let entry = &db.entries[i];
-                let field = |label: &'static str, field: TextField| {
+                // Read-only labelled value row.
+                let field = |label: &'static str, value: String| -> Element<'_, Message> {
                     row![
-                        text(label).width(Length::Fixed(90.0)).size(14),
-                        text_input("", &entry.game.text_field(field))
-                            .on_input(move |v| Message::Edit(field, v))
+                        text(label).width(Length::Fixed(90.0)).size(13),
+                        text(value).size(14).width(Length::Fill),
                     ]
                     .spacing(8)
-                    .align_y(iced::Alignment::Center)
+                    .into()
                 };
-                let mut editor = column![
-                    text(entry.game.title().to_owned()).size(22),
-                    row![
-                        text(format!(
-                            "{} · {:?}{}{}",
-                            entry.key(),
-                            entry.game.kind(),
-                            if entry.game.curations().is_empty() {
-                                String::new()
-                            } else {
-                                format!(
-                                    " · curated by {}",
-                                    entry
-                                        .game
-                                        .curations()
-                                        .iter()
-                                        .map(|c| format!(
-                                            "{}{} {}",
-                                            c.by,
-                                            if c.recommended { " ★" } else { "" },
-                                            c.date
-                                        ))
-                                        .collect::<Vec<_>>()
-                                        .join(", ")
-                                )
-                            },
-                            if entry.dirty { " · edited" } else { "" },
-                        ))
-                        .size(13),
-                        button(text("✎ rename").size(12))
-                            .style(button::text)
-                            .on_press(Message::SlugPrompt),
-                    ]
-                    .spacing(8)
-                    .align_y(iced::Alignment::Center),
-                ]
-                .spacing(10);
-                if let Some(slug) = &self.slug_edit {
-                    editor = editor.push(
-                        row![
-                            text("Slug").width(Length::Fixed(90.0)).size(14),
-                            text_input("new-slug", slug)
-                                .on_input(Message::SlugInput)
-                                .on_submit(Message::ApplySlug)
-                                .size(13)
-                                .width(Length::Fixed(280.0)),
-                            button(text("Rename").size(13)).on_press(Message::ApplySlug),
-                            button(text("✕").size(13))
-                                .style(button::text)
-                                .on_press(Message::SlugPrompt),
-                        ]
-                        .spacing(8)
-                        .align_y(iced::Alignment::Center),
-                    );
-                }
+                let mut editor = column![].spacing(12);
+
                 if let Some(url) = entry.game.covers().first() {
                     if let Some(preview) = self.cover_previews.get(url) {
                         editor = editor.push(
@@ -2519,77 +2299,55 @@ impl Curator {
                         editor = editor.push(text("cover loading…").size(12));
                     }
                 }
-                editor = editor
-                    .push(field("Title", TextField::Title))
-                    .push(field("Developer", TextField::Developer))
-                    .push(
-                        row![
-                            text("Description").width(Length::Fixed(90.0)).size(14),
-                            iced::widget::text_editor(&self.description)
-                                .placeholder("multi-line description…")
-                                .on_action(Message::DescriptionAction)
-                                .height(Length::Shrink),
-                        ]
-                        .spacing(8),
-                    )
-                    .push(field("License", TextField::License));
-                let tags = entry.game.tags();
-                if !tags.is_empty() {
+
+                let developer = entry.game.text_field(TextField::Developer);
+                if !developer.is_empty() {
+                    editor = editor.push(field("Developer", developer));
+                }
+                let description = entry.game.text_field(TextField::Description);
+                if !description.is_empty() {
                     editor = editor.push(
                         row![
-                            text("Tags").size(13).width(Length::Fixed(90.0)),
-                            text(tags.join(", ")).size(13),
+                            text("Description").width(Length::Fixed(90.0)).size(13),
+                            text(description).size(14).width(Length::Fill),
                         ]
                         .spacing(8),
                     );
                 }
+                let license = entry.game.text_field(TextField::License);
+                if !license.is_empty() {
+                    editor = editor.push(field("License", license));
+                }
+                let tags = entry.game.tags();
+                if !tags.is_empty() {
+                    editor = editor.push(field("Tags", tags.join(", ")));
+                }
+
                 let links = entry.game.links();
                 if !links.is_empty() {
-                    editor = editor.push(text("Links").size(13));
+                    editor = editor.push(text("Links").size(15));
                     for (name, url) in links {
                         editor = editor.push(
-                            row![
-                                button(text(name).size(13))
-                                    .style(button::text)
-                                    .on_press(Message::OpenLink(url.clone())),
-                                text(url).size(12).width(Length::Fill),
-                            ]
-                            .spacing(8)
-                            .align_y(iced::Alignment::Center),
+                            button(text(name).size(13))
+                                .style(button::secondary)
+                                .on_press(Message::OpenLink(url.clone())),
                         );
                     }
                 }
+
                 editor = editor.push(text("Releases").size(16));
                 for (r, line) in entry.game.release_lines().into_iter().enumerate() {
-                    editor = editor.push(
-                        container(
-                            column![
-                                text(line).size(13),
-                                {
-                                    let mut artifacts = column![].spacing(2);
-                                    for (sha1, label) in entry.game.release_artifacts(r) {
-                                        artifacts =
-                                            artifacts.push(self.artifact_row(&sha1, &label));
-                                    }
-                                    artifacts
-                                },
-                                row![
-                                    text("Publisher").size(13).width(Length::Fixed(90.0)),
-                                    text_input("publisher…", &entry.game.release_publisher(r))
-                                        .on_input(move |v| Message::EditReleasePublisher(r, v))
-                                        .size(13)
-                                        .width(Length::Fixed(220.0)),
-                                ]
-                                .spacing(8)
-                                .align_y(iced::Alignment::Center),
-                            ]
-                            .spacing(6),
-                        )
-                        .padding([6, 10])
-                        .style(container::rounded_box),
-                    );
+                    let mut rel = column![text(line).size(13)].spacing(4);
+                    let publisher = entry.game.release_publisher(r);
+                    if !publisher.is_empty() {
+                        rel = rel.push(text(format!("Publisher: {publisher}")).size(12));
+                    }
+                    for (sha1, label) in entry.game.release_artifacts(r) {
+                        rel = rel.push(self.artifact_row(&sha1, &label));
+                    }
+                    editor = editor
+                        .push(container(rel).padding([6, 10]).style(container::rounded_box));
                 }
-                let entry_key = entry.key();
 
                 let mods = entry.game.mod_lines();
                 if !mods.is_empty() {
@@ -2615,9 +2373,8 @@ impl Curator {
                                 row![
                                     Space::new().width(Length::Fixed(16.0)),
                                     button(text(name).size(12))
-                                        .style(button::text)
+                                        .style(button::secondary)
                                         .on_press(Message::OpenLink(url.clone())),
-                                    text(url).size(11).width(Length::Fill),
                                 ]
                                 .spacing(8)
                                 .align_y(iced::Alignment::Center),
@@ -2634,88 +2391,12 @@ impl Curator {
                         }
                     }
                 }
-                editor = editor.push(text("Verify").size(16));
-                if let Some(line) = self.verify_status.get(&entry_key) {
+
+                if let Some(line) = self.verify_status.get(&entry.key()) {
+                    editor = editor.push(text("Verify").size(16));
                     editor = editor.push(text(line.clone()).size(13));
                 }
-                if !entry.game.artifact_sha1s().is_empty() {
-                    editor = editor.push(
-                        button(text("Hasheous: cover & wiki").size(13))
-                            .on_press_maybe((!self.enriching).then_some(Message::Enrich)),
-                    );
-                }
-                if entry.game.download_url().is_some() {
-                    editor = editor.push(button(text("Fetch & hash").size(13)).on_press_maybe(
-                        (!self.fetching).then_some(Message::Fetch { play_after: false }),
-                    ));
-                }
-                if let Some(sha1) = self.fetched_sha1.get(&entry_key) {
-                    editor = editor.push(
-                        button(text("Boot fetched ROM (300 frames)").size(13)).on_press_maybe(
-                            (!self.booting)
-                                .then(|| Message::Boot(BootSource::Cached(sha1.clone()))),
-                        ),
-                    );
-                }
-                match &self.rom_index {
-                    Some(index) => {
-                        for sha1 in entry.game.artifact_sha1s() {
-                            if let Some(path) = index.by_sha1.get(&sha1) {
-                                editor = editor.push(
-                                    row![
-                                        text(format!(
-                                            "local dump {}…: {}",
-                                            &sha1[..12],
-                                            path.display()
-                                        ))
-                                        .size(13)
-                                        .width(Length::Fill),
-                                        button(text("Boot").size(13)).on_press_maybe(
-                                            (!self.booting).then(|| Message::Boot(
-                                                BootSource::File(path.clone())
-                                            )),
-                                        ),
-                                    ]
-                                    .spacing(8),
-                                );
-                            }
-                        }
-                    }
-                    None if self.rom_dir.is_some() => {
-                        editor =
-                            editor.push(text("scan the ROM dir to match local dumps").size(13));
-                    }
-                    None => {}
-                }
-                if let Some((_, shot)) = self.boot_shots.get(&entry_key) {
-                    editor =
-                        editor.push(iced::widget::image(shot.clone()).width(Length::Fixed(320.0)));
-                }
 
-                let related: Vec<_> = db
-                    .flags
-                    .open()
-                    .filter(|f| f.subject.contains(&entry_key))
-                    .collect();
-                if !related.is_empty() {
-                    editor = editor.push(text("Flags").size(16));
-                    for flag in related {
-                        editor = editor.push(
-                            row![
-                                text(flag.note.clone()).size(13).width(Length::Fill),
-                                button(text("Resolve").size(13))
-                                    .on_press(Message::ResolveFlag(flag.id)),
-                            ]
-                            .spacing(8),
-                        );
-                    }
-                }
-                if self.playing.is_none()
-                    && let Some(note) = self.agent_notes.get(&entry_key)
-                {
-                    editor = editor.push(text("Agent notes").size(15));
-                    editor = editor.push(text(note.clone()).size(12));
-                }
                 scrollable(editor.padding(4)).into()
             }
             None => container(text("select an entry")).padding(20).into(),

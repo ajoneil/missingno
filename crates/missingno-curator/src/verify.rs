@@ -197,15 +197,6 @@ impl RomIndex {
     }
 }
 
-/// Synchronous smoke-test: recognize → construct → produce frames → screenshot.
-pub struct BootShot {
-    pub frames_run: usize,
-    pub frames_seen: usize,
-    pub width: u32,
-    pub height: u32,
-    pub rgba: Vec<u8>,
-}
-
 /// Stretch a square-pixel RGBA buffer to the display's pixel aspect (nearest).
 pub fn aspect_corrected(
     width: u32,
@@ -226,41 +217,6 @@ pub fn aspect_corrected(
         }
     }
     (out_width, height, out)
-}
-
-pub fn boot_check(
-    filename_hint: &str,
-    rom: &[u8],
-    tv_standard: Option<String>,
-    cart_type: Option<String>,
-    frames: usize,
-) -> Result<BootShot, String> {
-    let options = missingno_session::factory::LoadOptions {
-        tv_standard,
-        boot_rom: None,
-        cart_type,
-    };
-    let path = Path::new(filename_hint);
-    let mut console = missingno_session::factory::create_console_with(path, rom, &options)
-        .map_err(|e| format!("core rejected ROM: {e}"))?
-        .ok_or("no core recognizes this ROM")?;
-    let pixel_aspect = console.video_out().pixel_aspect();
-    let mut frames_seen = 0;
-    for _ in 0..frames {
-        if console.step_frame().display.is_some() {
-            frames_seen += 1;
-        }
-    }
-    let frame = console.screen_display().resolve_rgba();
-    let (width, height, rgba) =
-        aspect_corrected(frame.width, frame.height, pixel_aspect, &frame.pixels);
-    Ok(BootShot {
-        frames_run: frames,
-        frames_seen,
-        width,
-        height,
-        rgba,
-    })
 }
 
 /// Facts a Game Boy family header states about its cartridge.
