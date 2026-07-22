@@ -55,9 +55,12 @@ and they trust none of it.
 
    **Release, always** — this is a standing exception to the repo's debug-by-default rule. The
    developer playtests through this window, and a debug-build emulator runs too slowly to judge
-   a game by. Pass `--rom-dir` whenever the ask involves the developer's own collection — it
-   auto-scans at startup. Wait for `ui-<pid>.sock` to appear (a cold release build takes several
-   minutes), then connect with the **missingno-remote** MCP server's `attach` tool.
+   a game by. This applies to *every* launch, including **rebuild-and-restart**: when you change
+   curator code and relaunch to apply it, build and run release (`cargo build --release` / the
+   `target/release` binary) — never restart into a debug binary. Pass `--rom-dir` whenever the
+   ask involves the developer's own collection — it auto-scans at startup. Wait for
+   `ui-<pid>.sock` to appear (a cold release build takes several minutes), then connect with the
+   **missingno-remote** MCP server's `attach` tool.
    If more than one UI socket is published, attach to the one whose app is
    `net.andyofniall.missingno-curator`.
 3. Call `status` to see the queue counts, then build the work list:
