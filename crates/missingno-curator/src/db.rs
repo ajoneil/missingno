@@ -1,7 +1,7 @@
 //! The curator's view of the gamedb checkout: typed manifests behind a
 //! platform-agnostic editing surface, plus flags and git state.
 
-use std::{fs, io, path::PathBuf, process::Command};
+use std::{fs, io, path::PathBuf};
 
 use missingno_gamedb::{
     Controller, Date, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Link, LinkType, Mod,
@@ -1625,26 +1625,6 @@ impl Db {
         self.entries[entry].dirty = true;
         self.write_entry(entry).map_err(|e| e.to_string())?;
         Ok(emptied)
-    }
-
-    pub fn commit(&mut self, message: &str) -> Result<String, String> {
-        let run = |args: &[&str]| {
-            let output = Command::new("git")
-                .arg("-C")
-                .arg(&self.repo_root)
-                .args(args)
-                .output()
-                .map_err(|e| e.to_string())?;
-            if output.status.success() {
-                Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-            } else {
-                Err(String::from_utf8_lossy(&output.stderr).into_owned())
-            }
-        };
-        run(&["add", "data", "curation"])?;
-        run(&["commit", "-m", message])?;
-        self.uncommitted = 0;
-        run(&["log", "--oneline", "-1"])
     }
 
     pub fn today() -> Date {

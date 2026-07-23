@@ -1977,25 +1977,6 @@ impl Curator {
                     format!("possible duplicates of {key}:\n{}", lines.join("\n"))
                 })
             }
-            "commit" => {
-                let Some(message) = str_arg("message") else {
-                    return error_result("missing message");
-                };
-                let Ok(db) = &mut self.db else {
-                    return error_result("db not loaded");
-                };
-                if db.uncommitted == 0 {
-                    return error_result("nothing to commit");
-                }
-                match db.commit(message) {
-                    Ok(head) => {
-                        let line = format!("committed: {}", head.trim());
-                        self.status = line.clone();
-                        text_result(line)
-                    }
-                    Err(e) => error_result(format!("commit failed: {e}")),
-                }
-            }
             "queue_status" => {
                 let preview: Vec<&str> = self.queue.iter().take(10).map(String::as_str).collect();
                 text_result(format!(

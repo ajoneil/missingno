@@ -10,7 +10,8 @@ through the queue as they accept.
 stage must carry a source the developer can check; the `curated` stamp is theirs to give (the
 Accept button), never yours. Do not push or edit manifest files directly — all writes
 go through the curator's tools so the developer sees them live and the app owns the working
-tree; the `commit` tool runs only on the developer's say-so.
+tree. Committing is the exception: there is no commit tool — commit the gamedb working
+tree directly with git, and only on the developer's say-so.
 
 **One game at a time — never work ahead of the playtest.** The only game you may write to is
 the one `queue_status` reports as `current`. Curator writes land live in the developer's
@@ -451,9 +452,9 @@ status 0 means the session is over — summarize what was done and stop. Do not 
 curator or treat the exit as a failure unless it actually reported one.
 
 When the queue empties, summarize the session (games enriched, sources used, flags proposed/
-resolved, anything skipped and why). Staged work commits through the `commit` tool — **only
-when the developer asks**, normally at the end of a session, with a real commit message
-describing the batch.
+resolved, anything skipped and why). Staged work is committed directly with git in the
+gamedb repo (`git add data curation && git commit`) — **only when the developer asks**,
+normally at the end of a session, with a real commit message describing the batch.
 
 ## Homebrew, alt-dumps, and unmatched records
 

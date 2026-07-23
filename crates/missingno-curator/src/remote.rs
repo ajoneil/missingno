@@ -189,13 +189,6 @@ fn tool_definitions() -> Value {
     let object = |properties: Value, required: &[&str]| json!({ "type": "object", "properties": properties, "required": required });
     json!([
         {
-            "name": "commit",
-            "description": "Commit the working tree's staged curation edits — only when the developer asks, normally at the end of a session. Write a real commit message describing the batch.",
-            "inputSchema": object(json!({
-                "message": { "type": "string" },
-            }), &["message"]),
-        },
-        {
             "name": "status",
             "description": "Curation queue counts: per-platform backlog, open flags, uncommitted files.",
             "inputSchema": object(json!({}), &[]),
