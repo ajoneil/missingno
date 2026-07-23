@@ -67,6 +67,13 @@ impl PlaySession {
         self.handle
             .set_control(ControlId(id), ControlInput::Digital(pressed));
     }
+
+    /// Shared control layout: 8 is the family's first analog control (the
+    /// VCS paddle); digital-only systems ignore the axis.
+    pub fn set_paddle(&self, position: f32) {
+        self.handle
+            .set_control(ControlId(8), ControlInput::Axis(position));
+    }
 }
 
 /// Block until the session produces a frame (or dies); coalesces a backlog.
@@ -103,26 +110,43 @@ fn button_control(button: gilrs::Button) -> Option<u8> {
     })
 }
 
-/// Gamepad events → (control id, pressed), same stick handling as the emulator.
-pub fn gamepad_worker() -> impl iced::futures::Stream<Item = (u8, bool)> {
+/// A gamepad's contribution to the playtest: a shared-layout button edge, or
+/// the trigger-wound paddle arriving at a new position.
+#[derive(Clone, Copy, Debug)]
+pub enum PadEvent {
+    Button(u8, bool),
+    Paddle(f32),
+}
+
+/// Gamepad events → [`PadEvent`], same stick handling as the emulator; the
+/// analog triggers wind the paddle at squeeze-scaled speed.
+pub fn gamepad_worker() -> impl iced::futures::Stream<Item = PadEvent> {
     iced::stream::channel(64, async move |mut output| {
         let Ok(mut gilrs) = gilrs::Gilrs::new() else {
             return;
         };
         let mut stick = [false; 4]; // up, down, left, right
+        let mut paddle = missingno_iced::PaddleWind::new();
+        let mut last_tick = std::time::Instant::now();
         const DEADZONE: f32 = 0.5;
         loop {
             while let Some(gilrs::Event { event, .. }) = gilrs.next_event() {
                 match event {
                     gilrs::EventType::ButtonPressed(button, ..) => {
                         if let Some(id) = button_control(button) {
-                            let _ = output.send((id, true)).await;
+                            let _ = output.send(PadEvent::Button(id, true)).await;
                         }
                     }
                     gilrs::EventType::ButtonReleased(button, ..) => {
                         if let Some(id) = button_control(button) {
-                            let _ = output.send((id, false)).await;
+                            let _ = output.send(PadEvent::Button(id, false)).await;
                         }
+                    }
+                    gilrs::EventType::ButtonChanged(gilrs::Button::LeftTrigger2, value, ..) => {
+                        paddle.set_left(value);
+                    }
+                    gilrs::EventType::ButtonChanged(gilrs::Button::RightTrigger2, value, ..) => {
+                        paddle.set_right(value);
                     }
                     gilrs::EventType::AxisChanged(axis, value, ..) => {
                         let changes: [(usize, u8, bool); 2] = match axis {
@@ -137,12 +161,17 @@ pub fn gamepad_worker() -> impl iced::futures::Stream<Item = (u8, bool)> {
                         for (slot, id, now) in changes {
                             if stick[slot] != now {
                                 stick[slot] = now;
-                                let _ = output.send((id, now)).await;
+                                let _ = output.send(PadEvent::Button(id, now)).await;
                             }
                         }
                     }
                     _ => {}
                 }
+            }
+            let dt = last_tick.elapsed().as_secs_f32();
+            last_tick = std::time::Instant::now();
+            if let Some(position) = paddle.tick(dt) {
+                let _ = output.send(PadEvent::Paddle(position)).await;
             }
             smol::Timer::after(Duration::from_millis(4)).await;
         }

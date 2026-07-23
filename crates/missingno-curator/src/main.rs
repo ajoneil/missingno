@@ -166,6 +166,7 @@ enum Message {
     PlayEnded(u64),
     StopPlay,
     Pad(u8, bool),
+    Paddle(f32),
     /// Flip a latching console switch (index into the family's switch list).
     ToggleSwitch(usize),
     /// Press a momentary console switch; release follows after a beat.
@@ -244,7 +245,10 @@ impl Curator {
 
     fn subscription(&self) -> iced::Subscription<Message> {
         let mut subscriptions = vec![
-            iced::Subscription::run(play::gamepad_worker).map(|(id, on)| Message::Pad(id, on)),
+            iced::Subscription::run(play::gamepad_worker).map(|event| match event {
+                play::PadEvent::Button(id, on) => Message::Pad(id, on),
+                play::PadEvent::Paddle(position) => Message::Paddle(position),
+            }),
             iced::event::listen_with(|event, _, _| match event {
                 iced::Event::Window(iced::window::Event::CloseRequested) => {
                     Some(Message::CloseRequested)
@@ -489,6 +493,11 @@ impl Curator {
             Message::Pad(id, pressed) => {
                 if let Some((_, session)) = &self.playing {
                     session.set_control(id, pressed);
+                }
+            }
+            Message::Paddle(position) => {
+                if let Some((_, session)) = &self.playing {
+                    session.set_paddle(position);
                 }
             }
             Message::ToggleSwitch(index) => {
@@ -2483,9 +2492,16 @@ impl Curator {
                     pane = pane.push(iced::widget::responsive(move |size| {
                         let (width, height) = screen.fitted_size(size);
                         container(
-                            iced::widget::shader(screen)
-                                .width(Length::Fixed(width))
-                                .height(Length::Fixed(height)),
+                            // Horizontal position over the screen drives the
+                            // paddle, as in the emulator; the triggers wind it.
+                            iced::widget::mouse_area(
+                                iced::widget::shader(screen)
+                                    .width(Length::Fixed(width))
+                                    .height(Length::Fixed(height)),
+                            )
+                            .on_move(move |point| {
+                                Message::Paddle((point.x / width).clamp(0.0, 1.0))
+                            }),
                         )
                         .center(Length::Fill)
                         .into()

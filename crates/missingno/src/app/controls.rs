@@ -119,6 +119,8 @@ pub fn gamepad_subscription() -> Subscription<app::Message> {
             let mut stick_right = false;
             let mut stick_up = false;
             let mut stick_down = false;
+            let mut paddle = missingno_iced::PaddleWind::new();
+            let mut last_tick = std::time::Instant::now();
 
             const DEADZONE: f32 = 0.5;
 
@@ -141,6 +143,23 @@ pub fn gamepad_subscription() -> Subscription<app::Message> {
                                 && let Some(Action::Control(id)) = bindings.find_action(&button_str)
                             {
                                 let _ = sender.try_send(app::Message::SetControl(id, false));
+                            }
+                        }
+                        // An unbound analog trigger winds the paddle
+                        // (differential rate: right up, left down); a trigger
+                        // the user bound to an action keeps that binding.
+                        gilrs::EventType::ButtonChanged(
+                            button @ (gilrs::Button::LeftTrigger2 | gilrs::Button::RightTrigger2),
+                            value,
+                            ..,
+                        ) => {
+                            let bound = gamepad_button_to_string(button)
+                                .is_some_and(|name| bindings.find_action(&name).is_some());
+                            if !bound {
+                                match button {
+                                    gilrs::Button::LeftTrigger2 => paddle.set_left(value),
+                                    _ => paddle.set_right(value),
+                                }
                             }
                         }
                         gilrs::EventType::AxisChanged(axis, value, ..) => match axis {
@@ -177,6 +196,12 @@ pub fn gamepad_subscription() -> Subscription<app::Message> {
                         },
                         _ => {}
                     }
+                }
+
+                let dt = last_tick.elapsed().as_secs_f32();
+                last_tick = std::time::Instant::now();
+                if let Some(position) = paddle.tick(dt) {
+                    let _ = sender.try_send(app::Message::SetAxis(8, position));
                 }
 
                 smol::Timer::after(Duration::from_millis(4)).await;
