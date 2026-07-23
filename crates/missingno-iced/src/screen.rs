@@ -94,6 +94,8 @@ pub struct ScreenView {
     /// CRT-only: draw scanlines at the native line pitch.
     scanlines: bool,
     prev_rgba: Option<Arc<[u8]>>,
+    /// The GPU texture slot this view renders through, stable across frames.
+    texture_key: u64,
 }
 
 impl Clone for ScreenView {
@@ -111,6 +113,7 @@ impl Clone for ScreenView {
             pixel_grid: self.pixel_grid,
             scanlines: self.scanlines,
             prev_rgba: self.prev_rgba.clone(),
+            texture_key: TextureRenderer::allocate_key(),
         }
     }
 }
@@ -133,6 +136,7 @@ impl ScreenView {
             pixel_grid: false,
             scanlines: false,
             prev_rgba: None,
+            texture_key: TextureRenderer::allocate_key(),
         }
     }
 
@@ -299,6 +303,7 @@ impl<Message> shader::Program<Message> for ScreenView {
             _ => current.pixels,
         };
         let renderer = TextureRenderer::with_pixels(width, height, pixels)
+            .key(self.texture_key)
             .overlay(self.overlay())
             .panel_base(self.panel_base_color());
 

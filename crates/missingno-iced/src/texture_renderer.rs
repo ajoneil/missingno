@@ -101,6 +101,18 @@ impl TextureRenderer {
         self.panel_base = base;
         self
     }
+
+    /// Render into a caller-owned texture slot instead of a fresh one, so a
+    /// long-lived owner re-uses one GPU texture across per-draw constructions.
+    pub fn key(mut self, key: u64) -> Self {
+        self.id = key;
+        self
+    }
+
+    /// A key for [`TextureRenderer::key`], unique for the process's lifetime.
+    pub fn allocate_key() -> u64 {
+        NEXT_TEXTURE_ID.fetch_add(1, Ordering::Relaxed)
+    }
 }
 
 impl<Message> shader::Program<Message> for TextureRenderer {
@@ -122,16 +134,43 @@ impl<Message> shader::Program<Message> for TextureRenderer {
                 height: self.height,
                 pixels: self.pixels.clone(),
             }),
+            registry: Mutex::new(None),
         }
     }
 }
 
-#[derive(Debug)]
 pub struct TexturePrimitive {
     id: u64,
     overlay: f32,
     panel_base: [f32; 3],
     state: Mutex<PrimitiveState>,
+    /// Set on first prepare; releases this primitive's claim on its texture
+    /// entry when iced drops the primitive.
+    registry: Mutex<Option<TextureRegistry>>,
+}
+
+impl std::fmt::Debug for TexturePrimitive {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TexturePrimitive")
+            .field("id", &self.id)
+            .field("overlay", &self.overlay)
+            .field("state", &self.state)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for TexturePrimitive {
+    fn drop(&mut self) {
+        if let Some(map) = self.registry.lock().unwrap().take() {
+            let mut textures = map.lock().unwrap();
+            if let Some(data) = textures.get_mut(&self.id) {
+                data.live = data.live.saturating_sub(1);
+                if data.live == 0 {
+                    textures.remove(&self.id);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -146,6 +185,19 @@ enum PrimitiveState {
         height: u32,
         bounds: Rectangle,
     },
+}
+
+impl TexturePrimitive {
+    /// Claim the texture entry on first prepare; `Drop` releases the claim.
+    fn register(&self, pipeline: &TexturePipeline) {
+        let mut registry = self.registry.lock().unwrap();
+        if registry.is_none()
+            && let Some(data) = pipeline.textures.lock().unwrap().get_mut(&self.id)
+        {
+            data.live += 1;
+            *registry = Some(pipeline.textures.clone());
+        }
+    }
 }
 
 impl shader::Primitive for TexturePrimitive {
@@ -175,6 +227,7 @@ impl shader::Primitive for TexturePrimitive {
                 pixels,
             } => {
                 pipeline.ensure_texture(device, self.id, width, height);
+                self.register(pipeline);
 
                 let textures = pipeline.textures.lock().unwrap();
                 let texture_data = textures.get(&self.id).unwrap();
@@ -224,6 +277,7 @@ impl shader::Primitive for TexturePrimitive {
                 bounds: old_bounds,
             } => {
                 pipeline.ensure_texture(device, self.id, width, height);
+                self.register(pipeline);
 
                 if &old_bounds != bounds {
                     pipeline.update_vertices(
@@ -280,12 +334,16 @@ impl shader::Primitive for TexturePrimitive {
     }
 }
 
+type TextureRegistry = Arc<Mutex<HashMap<u64, TextureData>>>;
+
 struct TextureData {
     texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
     vertex_buffer: wgpu::Buffer,
     width: u32,
     height: u32,
+    /// Primitives currently registered against this entry; freed at zero.
+    live: usize,
 }
 
 pub struct TexturePipeline {
@@ -436,6 +494,9 @@ impl TexturePipeline {
                 mapped_at_creation: false,
             });
 
+            // A resize replaces the entry; the primitives already registered
+            // against it keep their claim on the id.
+            let live = textures.get(&id).map(|data| data.live).unwrap_or(0);
             textures.insert(
                 id,
                 TextureData {
@@ -444,6 +505,7 @@ impl TexturePipeline {
                     vertex_buffer,
                     width,
                     height,
+                    live,
                 },
             );
         }
