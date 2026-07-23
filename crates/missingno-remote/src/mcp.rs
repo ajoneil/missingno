@@ -175,7 +175,9 @@ fn tools_list(state: &mut State) -> Value {
             }
             // The window went away mid-session: drop to idle and advertise the
             // idle set rather than reporting the loss here.
-            Err(_) => state.client = None,
+            Err(crate::ui_socket::RequestError::Transport(_)) => state.client = None,
+            // Alive but declined to list — advertise the idle set this turn.
+            Err(crate::ui_socket::RequestError::Answered(_)) => {}
         }
     }
     json!({ "tools": [attach_tool(), detach_tool(), status_tool()] })
@@ -210,7 +212,9 @@ fn forward_or_idle(state: &mut State, name: &str, params: &Value) -> Value {
             .request("tools/call", params.clone());
         return match result {
             Ok(value) => value,
-            Err(error) => {
+            // The window is alive; its tool answered with an error.
+            Err(crate::ui_socket::RequestError::Answered(message)) => error_result(&message),
+            Err(crate::ui_socket::RequestError::Transport(error)) => {
                 state.client = None;
                 error_result(&format!("the app window is gone: {error}"))
             }

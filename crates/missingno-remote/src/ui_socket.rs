@@ -132,6 +132,25 @@ fn probe(path: &Path) -> Probe {
     }
 }
 
+/// Why a request produced no result.
+#[derive(Debug)]
+pub enum RequestError {
+    /// The connection failed — the window is unreachable.
+    Transport(String),
+    /// The window answered with an error frame; the connection is fine.
+    Answered(String),
+}
+
+impl std::fmt::Display for RequestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RequestError::Transport(message) | RequestError::Answered(message) => {
+                f.write_str(message)
+            }
+        }
+    }
+}
+
 /// A connection to a published window. Requests are strictly request/response on
 /// one connection, so ids are assigned locally and answers arrive in order.
 pub struct UiClient {
@@ -169,7 +188,7 @@ impl UiClient {
         };
         let info = client
             .request("ui/info", json!({}))
-            .map_err(AttachError::Failed)?;
+            .map_err(|error| AttachError::Failed(error.to_string()))?;
         client.info = UiInfo {
             path: path.to_path_buf(),
             app: field(&info, "app"),
@@ -188,27 +207,33 @@ impl UiClient {
     }
 
     /// Send one request and read its answer's `result`.
-    pub fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+    pub fn request(&mut self, method: &str, params: Value) -> Result<Value, RequestError> {
+        let transport = |error: std::io::Error| RequestError::Transport(error.to_string());
         let id = self.next_id;
         self.next_id += 1;
         let frame = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
-        writeln!(self.writer, "{frame}").map_err(|error| error.to_string())?;
-        self.writer.flush().map_err(|error| error.to_string())?;
+        writeln!(self.writer, "{frame}").map_err(transport)?;
+        self.writer.flush().map_err(transport)?;
 
         let mut line = String::new();
         match self.reader.read_line(&mut line) {
-            Ok(0) => return Err("the window closed the connection".into()),
+            Ok(0) => {
+                return Err(RequestError::Transport(
+                    "the window closed the connection".into(),
+                ));
+            }
             Ok(_) => {}
-            Err(error) => return Err(error.to_string()),
+            Err(error) => return Err(transport(error)),
         }
-        let response: Value = serde_json::from_str(&line).map_err(|error| error.to_string())?;
+        let response: Value = serde_json::from_str(&line)
+            .map_err(|error| RequestError::Transport(error.to_string()))?;
         if let Some(error) = response.get("error") {
-            return Err(field(error, "message"));
+            return Err(RequestError::Answered(field(error, "message")));
         }
         response
             .get("result")
             .cloned()
-            .ok_or_else(|| "the window answered without a result".to_string())
+            .ok_or_else(|| RequestError::Transport("the window answered without a result".into()))
     }
 }
 
