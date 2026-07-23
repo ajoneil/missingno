@@ -429,9 +429,11 @@ impl Curator {
                         BootSource::File(_) => verify::sha1_hex(&bytes),
                     };
                     let (tv, cart) = entry.game.hints_for(&sha1);
+                    let paddle_mode = entry.game.paddle_for(&sha1);
                     self.stage_header_facts(i, &bytes);
                     match play::start(hint, &bytes, tv, cart) {
-                        Ok(session) => {
+                        Ok(mut session) => {
+                            session.paddle_mode = paddle_mode;
                             let events = session.events.clone();
                             // Full device simulation, as the emulator's Device
                             // mode: persistence plus the technology's overlay
@@ -492,6 +494,13 @@ impl Curator {
             }
             Message::Pad(id, pressed) => {
                 if let Some((_, session)) = &self.playing {
+                    // A paddle game's fire button is the paddle trigger,
+                    // which reads on the joystick-right line.
+                    let id = if session.paddle_mode && (id == 2 || id == 3) {
+                        7
+                    } else {
+                        id
+                    };
                     session.set_control(id, pressed);
                 }
             }
@@ -2489,22 +2498,29 @@ impl Curator {
                     pane = pane.push(switches);
                 }
                 if let Some(screen) = &self.play_screen {
+                    let paddle_mode = self
+                        .playing
+                        .as_ref()
+                        .is_some_and(|(_, session)| session.paddle_mode);
                     pane = pane.push(iced::widget::responsive(move |size| {
                         let (width, height) = screen.fitted_size(size);
-                        container(
-                            // Horizontal position over the screen drives the
-                            // paddle, as in the emulator; the triggers wind it.
-                            iced::widget::mouse_area(
-                                iced::widget::shader(screen)
-                                    .width(Length::Fixed(width))
-                                    .height(Length::Fixed(height)),
-                            )
-                            .on_move(move |point| {
-                                Message::Paddle((point.x / width).clamp(0.0, 1.0))
-                            }),
+                        // Horizontal position over the screen drives the
+                        // paddle, as in the emulator; the triggers wind it.
+                        let mut area = iced::widget::mouse_area(
+                            iced::widget::shader(screen)
+                                .width(Length::Fixed(width))
+                                .height(Length::Fixed(height)),
                         )
-                        .center(Length::Fill)
-                        .into()
+                        .on_move(move |point| {
+                            Message::Paddle((point.x / width).clamp(0.0, 1.0))
+                        });
+                        if paddle_mode {
+                            // Click = the paddle trigger while aiming by pointer.
+                            area = area
+                                .on_press(Message::Pad(7, true))
+                                .on_release(Message::Pad(7, false));
+                        }
+                        container(area).center(Length::Fill).into()
                     }));
                 }
                 let pane_flags: Vec<_> = db

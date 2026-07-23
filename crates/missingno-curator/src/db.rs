@@ -484,6 +484,25 @@ impl AnyGame {
         (self.tv_hint(), self.cart_hint())
     }
 
+    /// Whether the release holding this dump states the paddle — the play
+    /// pane remaps fire to the paddle trigger line when it does.
+    pub fn paddle_for(&self, sha1: &str) -> bool {
+        let AnyGame::Vcs(g) = self else {
+            return false;
+        };
+        let uses_paddle = |r: &Release<Vcs>| {
+            r.hardware
+                .controllers
+                .contains(&missingno_gamedb::platform::Controller::Paddle)
+        };
+        for release in &g.releases {
+            if release.artifacts.iter().any(|a| a.sha1.as_str() == sha1) {
+                return uses_paddle(release);
+            }
+        }
+        g.releases.first().is_some_and(uses_paddle)
+    }
+
     /// Every dump attached to the game's mods, flattened.
     pub fn mod_artifacts(&self, index: usize) -> Vec<(String, String)> {
         common!(self, g => g

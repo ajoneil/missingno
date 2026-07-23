@@ -120,6 +120,7 @@ pub fn gamepad_subscription() -> Subscription<app::Message> {
             let mut stick_up = false;
             let mut stick_down = false;
             let mut paddle = missingno_iced::PaddleWind::new();
+            let mut trigger_floor = [0.0f32; 2];
             let mut last_tick = std::time::Instant::now();
 
             const DEADZONE: f32 = 0.5;
@@ -160,6 +161,25 @@ pub fn gamepad_subscription() -> Subscription<app::Message> {
                                     gilrs::Button::LeftTrigger2 => paddle.set_left(value),
                                     _ => paddle.set_right(value),
                                 }
+                            }
+                        }
+                        // Trigger-as-axis pads: normalise against the lowest
+                        // level seen (0..1 and -1..1 ranges both occur).
+                        gilrs::EventType::AxisChanged(
+                            axis @ (gilrs::Axis::LeftZ | gilrs::Axis::RightZ),
+                            value,
+                            ..,
+                        ) => {
+                            let slot = usize::from(axis == gilrs::Axis::RightZ);
+                            trigger_floor[slot] = trigger_floor[slot].min(value);
+                            let depression = if trigger_floor[slot] < 0.0 {
+                                (value + 1.0) / 2.0
+                            } else {
+                                value
+                            };
+                            match slot {
+                                0 => paddle.set_left(depression),
+                                _ => paddle.set_right(depression),
                             }
                         }
                         gilrs::EventType::AxisChanged(axis, value, ..) => match axis {

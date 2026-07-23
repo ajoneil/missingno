@@ -5,7 +5,7 @@
 
 /// Full-range sweeps per second at a fully squeezed trigger, roughly the wrist
 /// speed of a hard twist on a real paddle.
-const FULL_SQUEEZE_SWEEPS_PER_SEC: f32 = 2.0;
+const FULL_SQUEEZE_SWEEPS_PER_SEC: f32 = 0.8;
 
 /// Trigger depressions below this read as released, so a slightly sticky
 /// trigger doesn't creep the paddle.
@@ -90,10 +90,10 @@ mod tests {
     }
 
     #[test]
-    fn full_squeeze_sweeps_half_range_in_quarter_second() {
+    fn full_squeeze_sweeps_full_range_in_1_25_seconds() {
         let mut wind = PaddleWind::new();
         wind.set_right(1.0);
-        assert_eq!(wind.tick(0.25), Some(1.0));
+        assert_eq!(wind.tick(0.625), Some(1.0));
     }
 
     #[test]

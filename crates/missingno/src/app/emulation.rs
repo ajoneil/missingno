@@ -162,7 +162,9 @@ impl App {
                 self.set_control(ControlId(control), ControlInput::Digital(pressed))
             }
             Message::SetAxis(control, value) => {
-                self.set_control(ControlId(control), ControlInput::Axis(value))
+                // Screen-right maps to the fast-charging end of the pot,
+                // which paddle games read as right.
+                self.set_control(ControlId(control), ControlInput::Axis(1.0 - value))
             }
             Message::ToggleDebugger(debugger_enabled) => {
                 self.debugger_enabled = debugger_enabled;

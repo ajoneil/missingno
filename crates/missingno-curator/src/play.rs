@@ -21,6 +21,9 @@ pub struct PlaySession {
     /// moves into the session, with the level the UI last set for each.
     pub switches: &'static [ConsoleSwitch],
     pub switch_levels: Vec<bool>,
+    /// Paddle release: fire remaps to the paddle trigger line (SWCHA D7,
+    /// electrically the joystick-right switch — control 7).
+    pub paddle_mode: bool,
     /// The `!Send` cpal stream stays on the UI thread, as in the emulator.
     _audio: Option<AudioOutput>,
     pub events: Arc<Mutex<Receiver<SessionEvent>>>,
@@ -57,6 +60,7 @@ pub fn start(
         technology,
         switches,
         switch_levels,
+        paddle_mode: false,
         _audio: audio,
         events: Arc::new(Mutex::new(events)),
     })
@@ -69,10 +73,11 @@ impl PlaySession {
     }
 
     /// Shared control layout: 8 is the family's first analog control (the
-    /// VCS paddle); digital-only systems ignore the axis.
+    /// VCS paddle); digital-only systems ignore the axis. Screen-right maps
+    /// to the fast-charging end of the pot, which paddle games read as right.
     pub fn set_paddle(&self, position: f32) {
         self.handle
-            .set_control(ControlId(8), ControlInput::Axis(position));
+            .set_control(ControlId(8), ControlInput::Axis(1.0 - position));
     }
 }
 
@@ -127,6 +132,7 @@ pub fn gamepad_worker() -> impl iced::futures::Stream<Item = PadEvent> {
         };
         let mut stick = [false; 4]; // up, down, left, right
         let mut paddle = missingno_iced::PaddleWind::new();
+        let mut trigger_floor = [0.0f32; 2];
         let mut last_tick = std::time::Instant::now();
         const DEADZONE: f32 = 0.5;
         loop {
@@ -147,6 +153,22 @@ pub fn gamepad_worker() -> impl iced::futures::Stream<Item = PadEvent> {
                     }
                     gilrs::EventType::ButtonChanged(gilrs::Button::RightTrigger2, value, ..) => {
                         paddle.set_right(value);
+                    }
+                    // Some pads report the analog triggers as axes instead of
+                    // button values; ranges differ per driver (0..1 or -1..1),
+                    // so normalise against the lowest level seen.
+                    gilrs::EventType::AxisChanged(axis @ (gilrs::Axis::LeftZ | gilrs::Axis::RightZ), value, ..) => {
+                        let slot = usize::from(axis == gilrs::Axis::RightZ);
+                        trigger_floor[slot] = trigger_floor[slot].min(value);
+                        let depression = if trigger_floor[slot] < 0.0 {
+                            (value + 1.0) / 2.0
+                        } else {
+                            value
+                        };
+                        match slot {
+                            0 => paddle.set_left(depression),
+                            _ => paddle.set_right(depression),
+                        }
                     }
                     gilrs::EventType::AxisChanged(axis, value, ..) => {
                         let changes: [(usize, u8, bool); 2] = match axis {
