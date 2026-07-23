@@ -8,17 +8,21 @@ through the queue as they accept.
 
 **You are a metadata researcher and queue operator, not the decision-maker.** Every fact you
 stage must carry a source the developer can check; the `curated` stamp is theirs to give (the
-Accept button), never yours. Do not commit, push, or edit manifest files directly — all writes
+Accept button), never yours. Do not push or edit manifest files directly — all writes
 go through the curator's tools so the developer sees them live and the app owns the working
-tree.
+tree; the `commit` tool runs only on the developer's say-so.
 
 **One game at a time — never work ahead of the playtest.** The only game you may write to is
 the one `queue_status` reports as `current`. Curator writes land live in the developer's
 window: staging an edit re-opens that entry for review and a note swaps what the editor
 panel shows, so touching a queued-but-not-current game yanks the UI out from under someone
-who is mid-playtest. Before every `update_game`, `set_note` or `resolve_flag`, confirm the
+who is mid-playtest. Before every `update_game` or `resolve_flag`, confirm the
 key you are about to pass equals the current game. Do not re-queue, `select_game`, or
 `play_game` to move the queue along either: advancing is the developer's Accept, never yours.
+When a side-edit to a non-current entry is genuinely required (the developer asked; a
+sweep touches accepted entries), the edit re-selects that entry in their window —
+**immediately `select_game` back to the current queue game** so they are never left
+staring at the wrong entry mid-playtest.
 
 **Go slow. The playtest is the clock, not your throughput.** This is a session you share with
 someone who is playing a game in front of you — they read what you write and reply to it. The
@@ -50,8 +54,16 @@ and they trust none of it.
    the background from the missingno repo root:
 
    ```
-   cargo run --release -p missingno-curator -- [--rom-dir <dir>]
+   cargo run --release -p missingno-curator -- [--rom-dir <inbox>] [--collection-dir <collection>]
    ```
+
+   `--rom-dir` is the **inbox**: the folder of to-be-curated ROMs that defines the
+   session's work. `--collection-dir` is the **collection** of already-curated ROMs
+   (`<collection>/<tree>/<slug>/`). The scan handles the boundary itself: an inbox file
+   whose hash the collection already holds moves to `<inbox>/duplicates/` (a safety net —
+   the developer empties it, nothing is deleted automatically), and **Accept moves the
+   entry's inbox ROMs into the collection** — no manual archiving step. Entry rows mark
+   inbox dumps `NEW` with a `Play new ▶` button, distinct from collection dumps' `Play ▶`.
 
    **Release, always** — this is a standing exception to the repo's debug-by-default rule. The
    developer playtests through this window, and a debug-build emulator runs too slowly to judge
@@ -70,7 +82,14 @@ and they trust none of it.
    - unmatched local ROMs → the `◆` "new (unmatched ROMs)" records the scan surfaced
      for local files that match no manifest; work them in the same alphabetical range you
      cover (see *Homebrew, alt-dumps, and unmatched records* below).
-4. `queue_games` with the ordered keys. The first game auto-fetches (or uses the local dump)
+4. **Resolve a named ROM to its entry by hash, never by title.** When the ask points at
+   files ("the 4-in-1 rom we have", "we missed X"), `sha1sum` the file and find the entry
+   holding that artifact (grep the manifests) — a dump's entry is routinely filed under a
+   different name than its filename (a TOSEC multicart extract, a reissue's title), and
+   title-matching queues the wrong entry while the actual ask sits elsewhere. The same
+   applies to range sweeps: a local file whose entry sorts outside the range still belongs
+   to the batch.
+5. `queue_games` with the ordered keys. The first game auto-fetches (or uses the local dump)
    and starts playing immediately — the developer is now playtesting it.
 
 ## The loop (per game)
@@ -80,12 +99,26 @@ While the developer plays the current game:
 1. `get_game` for the manifest and its open flags, and `find_duplicates` for merge
    candidates — always, for every game.
 
+   **The unit of work is the game, not the entry — hunt its other names.**
+   `find_duplicates` only catches same-title entries; regional retitlings and re-skins
+   hide under names it cannot see. Harvest alternate titles from every signal you already
+   have — `[aka …]` in signature names, the catalogue page's alternate-title list
+   (Atarimania lists them per game), where a Wikipedia search lands (a redirect to a
+   differently-titled article is a same-game claim worth checking, not noise) — and
+   `search_games` each name. Every hit is handled NOW, in this game's pass — verify the
+   same-game claim against the catalogue and merge (or record why not) before moving on;
+   "that entry comes later alphabetically" is never a reason to defer, because later
+   batches won't know what this one learned.
+   Done right, one entry ends up holding every skin as titled releases (the same game
+   shipped as "Open Sesame", "I Want My Mommy", "Abre-te, Sesamo!" and "Apples and
+   Dolls"); done lazily, four half-entries each get a shallow pass.
+
    **A dump-flag title is never a game: fold it in without asking.** An entry titled
    `… [a]`, `[a2]`, `[h1]`, `[t1]`, `[b]`, `[o1]`, `[!]`, `[fixed]`, or with a
    cataloguer's descriptor standing in for a name (`[different speed and colors]`),
    is the base game's dump that an import promoted to its own entry. `merge_game` it
    into the real entry, then classify what arrived: a `[h]`/`[t]` dump becomes a mod
-   via `mark_hack`, an `[a]`/`[!]` alternate joins the matching release with a
+   via `mark_mod`, an `[a]`/`[!]` alternate joins the matching release with a
    `label_artifact`, and a `[b]`/`[o]` defective dump is labelled as such beside the
    good one. The db should hold one entry per game, with every dump reachable from it.
 
@@ -93,7 +126,7 @@ While the developer plays the current game:
    product (a multicart, a same-titled game on another platform, a hack of a
    *different* game wearing this game's name), or when merging would lose a name or
    author the other entry records and you cannot preserve it. Then put the question
-   in the note and leave both entries alone. Same-title hits that are genuinely
+   to the developer in chat and leave both entries alone. Same-title hits that are genuinely
    different products are worth saying so explicitly, so the developer doesn't
    re-investigate next time.
 2. **Check every artifact hash, not just one.** An entry's `artifacts` are what the db
@@ -106,19 +139,18 @@ While the developer plays the current game:
    gamedb verify-hashes --key <tree>/<slug>
    ```
 
-   which asks per hash, records each answer on the artifact as `verified` evidence, and
-   reports what contradicts the entry. **Never sweep the whole database** — that is
+   which asks per hash and reports what contradicts the entry. The answer is a
+   session-time check reported in chat — **nothing is written into the manifest**; the
+   dump's identity is re-checkable at any time from its hash. **Never sweep the whole database** — that is
    thousands of requests at someone else's API for entries nobody is curating, and the
    command refuses an unbounded run for exactly that reason. Verification is part of
    looking at an entry, not a batch job. (The raw endpoint, when you want one hash by
    hand: `curl -s -H 'accept: application/json'
    https://hasheous.org/api/v1/Lookup/ByHash/sha1/<sha1>`.)
 
-   Evidence is recorded per artifact and carries *how* it was checked — a `Signature`
-   match keeps the name the database returned, which is the thing that distinguishes an
-   original from a hack that hashes perfectly well. A `Playtest` verification is the
-   developer's observation, never yours: record one only when they say so, and never
-   infer it from an entry being accepted.
+   The signature name the database returns is what distinguishes an original from a
+   hack that hashes perfectly well — read it carefully; it is the session's evidence
+   even though it is not persisted.
 
    Its `signature.rom.name` is a TOSEC/No-Intro-style filename, and the bracket flags are
    the signal: `[h]` hack, `[t]` trained, `[tr]` translation, `[cr]` cracked, `[a]`
@@ -143,8 +175,11 @@ While the developer plays the current game:
    playtest booted a hack, that button will fetch the hack's metadata: check which dump
    the entry actually leads with before trusting what it returns.
 
-   When a hash is confirmed to be a hacked or modified dump, `mark_hack` moves it out of
-   the real dumps: everything short of a total conversion — QoL, content changes, fan
+   When a hash is confirmed to be a hacked or modified dump, `mark_mod` moves it out of
+   the real dumps — and this is policy, not a question to put to the developer: a fan
+   NTSC/PAL conversion imported as a *release* (the converter's name standing as
+   publisher) gets `mark_mod`ed as Compatibility without asking, since the converter
+   is an author, not a publisher. everything short of a total conversion — QoL, content changes, fan
    translations (the same game, as official localizations are) — becomes a mod attached to
    that game; supply its real name and homepage `url` when known. Only TotalConversion
    splits into its own entry. Never leave a hack lumped in
@@ -153,7 +188,7 @@ While the developer plays the current game:
    curated independently of their game — note anything you learn about a mod's quality,
    but the endorsement buttons are the developer's.
 
-   **A hack's second dump belongs to that hack, not to a second mod.** `mark_hack`
+   **A hack's second dump belongs to that hack, not to a second mod.** `mark_mod`
    always makes a new mod, so use it only for the first dump of a hack; for anything
    further use `attach_dump_to_mod`: a later build is `as_version: true` with a label
    ("8K", "v2"), while an alternate or defective dump of a build already recorded is
@@ -161,6 +196,14 @@ While the developer plays the current game:
    in the *wrong* mod, so a build mistakenly filed as its own hack folds back in and the
    emptied mod disappears. A bad dump of a hack is that hack's evidence and never a work
    of its own — the same rule as a bad dump of a game.
+
+   **Field altitude: release fields state the product, artifact labels state the dump.**
+   A release's `title` is the name the product shipped under ("Choplifter" for a pirate
+   cart sold under that name; "Wüstenschlacht"), its `label` a real edition descriptor
+   ("Screen Search Console", "Light Green label"). TOSEC quality flags and dump
+   commentary — `[p]`, `[o]`, "bad", "alt", "overdump" — always go on the artifact via
+   `label_artifact`, never into release title/label, where they read as if the cart
+   shipped wearing them.
 
    **Name a mod only what it is actually called.** A documented title goes in verbatim
    ("Adventure SI"). When the hack has no known name, do not dress a dump-flag descriptor
@@ -187,18 +230,20 @@ While the developer plays the current game:
    search and metadata APIs (`advancedsearch.php`, `/metadata/<identifier>`) index the
    2600 hack scene with year and author in the item title, and expose per-file SHA-1 —
    which is how two same-named builds get told apart when the signature database knows
-   neither. Prefer that over guessing which dump is which.
-3. `verify_artifacts` early for entries with several dumps: confirmed originals gain
-   recorded Signature evidence; DERIVED results ([h]/[t]/[tr]/[cr] — someone made these)
-   are your cue to judge and `mark_hack` (find the mod's real name — the TOSEC bracket
+   neither. Prefer that over guessing which dump is which — but **research only: no
+   archive.org URLs go into `links`** (legality undecided; SOURCES.md carries the
+   standing rule).
+3. `verify_artifacts` early for entries with several dumps — the report lands in your
+   session, not the manifest: DERIVED results ([h]/[t]/[tr]/[cr] — someone made these)
+   are your cue to judge and `mark_mod` (find the mod's real name — the TOSEC bracket
    note is not it); DEFECTIVE results ([b]/[o] — a dumper's mistake, no author, never a
-   mod) keep their evidence on the artifact: `label_artifact` them, and if the bad dump
-   fabricated a release (an overdump fingerprinting as the wrong board), `move_artifact`
-   it into the real release so the invented one is pruned. (Prototype)/(Beta) signature
+   mod) get `label_artifact`, and if the bad dump fabricated a release (an overdump
+   fingerprinting as the wrong board), `move_artifact` it into the real release so the
+   invented one is pruned. (Prototype)/(Beta) signature
    names suggest `split_release` — an editorial call: the build gets its own release with
    the right status, keeping a working title, never inheriting the retail date. "Unknown"
-   is a normal result for homebrew and prototypes. Playtest verification is different:
-   only the developer's "✓ works" button records it — never claim a dump was playtested.
+   is a normal result for homebrew and prototypes. Never claim a dump was playtested —
+   playtesting is the developer's activity, and their Accept is its only record.
 
    **A release holding many dumps is usually many releases.** The recurring import
    defect on VCS is one release carrying every dump anyone ever made of a game, stamped
@@ -218,8 +263,12 @@ While the developer plays the current game:
    the section for the tree you are curating before searching the open web**, and add
    to it when a source proves itself: that file is the durable home for per-system
    cataloguing knowledge, not this skill. **Scraping etiquette is binding**: respect robots.txt, touch only documented or
-   normal-user URLs, never probe guessed endpoints or parameters, one request at a time,
-   and stop at the first anti-scraper signal. A blocked source is a fact to note, not an
+   normal-user URLs, one request at a time, and stop at the first anti-scraper signal.
+   **Never fetch a URL you constructed** — not an endpoint, not a page slug, not a
+   listing or index page. Every URL comes from a search result, a link read off a page
+   you already fetched, or a filename convention SOURCES.md explicitly documents as
+   constructible; if you are typing a path from what a site's URLs "usually look like",
+   that is a guess — search instead. A blocked source is a fact to note, not an
    obstacle to work around. **But confirm the block is the site's, not your tool's**: a 403
    from WebFetch often means its user-agent was refused, and the same documented endpoint
    answers a plain `curl` fine. Retrying a documented API with a normal client is not
@@ -234,14 +283,22 @@ While the developer plays the current game:
    out to be something else), `rename_game` changes the slug — it moves the entry on disk
    and re-points flags and the queue, and its reply names the new `tree/slug` key: use
    that key for every later call. Fixing a title does not require renaming; do it when
-   the slug would mislead someone browsing the tree.
+   the slug would mislead someone browsing the tree. **Slug shape**: natural word order —
+   a leading article stays and leads (`the-challenge-of-nexar`, matching the tree's
+   `the-activision-decathlon`), never a cataloguer's sort-suffix
+   (`challenge-of-nexar-the`) and never dropped entirely; strip TV-standard/board
+   suffixes (`-ntsc`, `-pal-4k`) once the entry is the whole game rather than one dump
+   of it. Fix a nonconforming slug as part of curating its entry.
 
    When `find_duplicates` (or a rename that collides) turns up an entry cataloguing the
    *same game* — an unlicensed reissue, a regional retitling — `merge_game` folds one
    into the other: the absorbed entry's releases and mods become the survivor's, its
-   directory goes, and flags follow the surviving key. Dumps the target already holds
+   directory goes, and flags follow the surviving key. The absorbed entry's *title*
+   is not carried anywhere — immediately after a merge, stamp it as `title` on each
+   carried release that lacks one (`update_release`), or the name the reissue shipped
+   under vanishes from the entry. Dumps the target already holds
    are dropped rather than duplicated. **The merge is the developer's call, never
-   yours** — propose it in the note and wait. A shared title alone is not sameness: a
+   yours** — propose it in chat and wait. A shared title alone is not sameness: a
    multicart or an unrelated game with the same name stays its own entry.
 
    A merged-in reissue usually shipped under its own publisher, region and sometimes
@@ -293,18 +350,25 @@ While the developer plays the current game:
      `Download` for freeware ROM links — see *Homebrew* below — `TechnicalReference`,
      `Guide`, …). No link, no description: an unsourceable description is an assertion
      nobody can check later.
-   - **A note is not a receipt.** `set_note` writes to an in-memory map in the running app
-     and is never persisted — it vanishes when the curator closes. Anything that must
-     survive the session goes in a field, never in the note.
    - Two or three sentences. **Do not settle for an empty description — exhaust the
      sources first.** An empty field means you stopped researching too early, not that the
      game is undescribable. Work down: the port's own Wikipedia article → the per-tree
      catalogue in SOURCES.md (Atarimania for VCS, found via its search, never a guessed id)
      → the game's **manual**, read as page-images with the Read tool (works even when it is
-     a scan). Only after all of those genuinely come up empty is "not found" a result — and
-     then say so to the developer and leave it flagged, rather than quietly blank.
+     a scan). For obscure and unlicensed carts with no Compendium scan, **AtariAge often
+     holds the manual as an HTML page** (the "HTML Manual" link off its software page) —
+     the site is Cloudflare-blocked but reads fine through the Wayback Machine, and a
+     Zellers instruction sheet recovered that way beats an empty field. Only after all of
+     those genuinely come up empty is "not found" a result — and then say so to the
+     developer and leave it flagged, rather than quietly blank.
 6. **Cover image** (`covers` in update_game — remote URLs only, we host nothing):
-   - Commercial games: the curator's "Hasheous: cover & wiki" button (or `curl` the
+   - **The curator auto-stages a Hasheous cover (and Wikipedia link) when a game loads** —
+     a good default, but Hasheous groups variants under one record and its wiki mapping
+     can be a different game entirely. So the first move is to VERIFY what's already
+     staged: download the staged cover and *look* at it (the Read tool renders images),
+     and open the staged article. Only go searching for other art when the staged image
+     is wrong or missing — and when it is wrong, say so and clear or replace it.
+   - Commercial games: the auto-staged Hasheous image (or `curl` the
      lookup from step 2 yourself and use the `…/api/v1/images/<id>` URL from its
      `attributes`) — Hasheous exists to serve frontends. Take the image from the record
      of the dump you actually mean: a hack's record carries the hack's art. Fallback:
@@ -332,17 +396,42 @@ While the developer plays the current game:
    (GB/GBC — unlicensed carts lie) and `cart_type` (VCS — no headers, so the db drives the
    emulator's board choice; if a VCS playtest shows garbage, the board is the first
    suspect — check the game's known board on AtariAge or in Stella's properties and stage
-   the correction, then have the developer replay).
-9. `set_note` with a SHORT summary — three or four lines at most: what you staged, the
-   single most load-bearing source, and anything to double-check. The developer has your
-   chat window open beside the curator; full reasoning, source lists, and caveats belong
-   in the conversation, not the note panel. The note is a live talking point and nothing
-   more — it lives in memory in the running app and is gone when the window closes, so
-   never let it be the only record of something that matters.
-10. If a flag's answer is now established by the staged data and the developer has agreed
+   the correction, then have the developer replay). **Controllers stage only on deviation
+   from the platform default** (VCS: joystick) — Paddle, Driving, Keypad and friends get
+   staged because the emulator must plug in the right device; a plain joystick game
+   stages nothing, and an Accept vouches the default. The other staging case is sibling
+   contrast: when one game's releases differ (a joystick conversion beside the paddle
+   original), stage both sides so the difference is visible. **When the required
+   controller is one the emulator doesn't support (VCS: Keypad, KidVid, MindLink),
+   `raise_flag` an EmulationIncompatibility stating the requirement** — staging the
+   controller alone does not surface the gap; the flag is what the emulator work
+   queues on.
+9. **The pre-report checklist — a game is not finished until every row has evidence
+   from THIS pass.** Before reporting, re-read the entry (`get_game`) and confirm you
+   can cite the tool call that satisfied each row:
+   - **description** — a named source you read this pass, every clause traceable;
+   - **covers** — the staged image downloaded and looked at, or an explicit absence
+     reason (fan mock cleared, none exists);
+   - **wikipedia** — a staged article verified to be about *this* game, or the
+     opensearch call that returned empty. Search the PLAIN title (qualifiers in the
+     query text — "Codebreaker Atari" — silently miss parenthetical titles like
+     "Codebreaker (video game)"), and read every returned candidate. "No article
+     exists" may only ever be said with that empty search on record — an unsearched
+     absence claim is fabrication;
+   - **manual** — the Compendium index consulted (and AtariAge-via-Wayback for
+     unlicensed carts), linked or absent-with-reason;
+   - **flags** — unsupported-controller and playtest-oddity checks done.
+   The checklist exists because "I researched a lot" reliably masquerades as "I checked
+   everything": the misses (Carnival's cover, Cosmic Ark's manual, a dozen unsearched
+   wiki claims) were all fields where research petered out without a recorded answer.
+10. **Report in chat** — there is no notes panel, deliberately. Say what you staged, the
+   single most load-bearing source, and anything to double-check, in the conversation
+   where the developer is already talking to you. Anything that must survive the session
+   goes in a manifest field or a flag, never in prose.
+11. If a flag's answer is now established by the staged data and the developer has agreed
    (in conversation or by accepting the related edit), `resolve_flag`; otherwise propose the
-   resolution in the note and leave the flag open.
-11. When you finish a game's research, call `wait_for_action`: it blocks (~50s per call)
+   resolution in chat and leave the flag open.
+12. When you finish a game's research, call `wait_for_action`: it blocks (~50s per call)
    until the developer Accepts (± recommendation) or Flags, and names the game now up.
    On timeout, call it again or answer their questions — don't spin on `queue_status`, and don't stage anything for the next game to fill the time (see
    *One game at a time*). A quiet queue usually means they are still playing; talking to
@@ -353,8 +442,9 @@ status 0 means the session is over — summarize what was done and stop. Do not 
 curator or treat the exit as a failure unless it actually reported one.
 
 When the queue empties, summarize the session (games enriched, sources used, flags proposed/
-resolved, anything skipped and why) and remind the developer that the staged work commits
-from the curator's Commit button.
+resolved, anything skipped and why). Staged work commits through the `commit` tool — **only
+when the developer asks**, normally at the end of a session, with a real commit message
+describing the batch.
 
 ## Homebrew, alt-dumps, and unmatched records
 
@@ -415,4 +505,4 @@ observed behaviour), never a cause hypothesis, repro plan, or "candidate for /in
   rather than quietly correcting.
 - Distinguish primary sources (the game's own page, its author) from aggregator claims, and
   say which kind each fact came from.
-- If two sources disagree, stage nothing and put the conflict in the note.
+- If two sources disagree, stage nothing and put the conflict to the developer in chat.

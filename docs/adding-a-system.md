@@ -290,3 +290,8 @@ until a second family grows the equivalent:
    and the trace CLI follow from the table.
 7. **Convert audio to 44.1 kHz** on the family's side of the seam.
 8. **Accuracy and round-trip tests** committed with the core.
+9. **A gamedb hardware struct**, when the platform's releases vary by board or
+   peripheral. If the platform has swappable controllers, pick one canonical
+   default: the db stages `controllers` only on deviation from it or for
+   sibling-release contrast (the VCS default is the joystick), so an empty
+   list always means "the default" and never "unknown".
