@@ -351,6 +351,11 @@ While the developer plays the current game:
      linked to the arcade game), and where sources disagree about a mechanic, leave the
      detail out rather than pick — an arcade fact in a port's description is wrong in a
      way that reads perfectly.
+   - **Facts, not source commentary.** A description states what the game is and what
+     happened to it; it never quotes or attributes a source's *opinions or theories*
+     ("AtariProtos suspects…", "reviewers called it…" is borderline and only for widely
+     documented reception). The linked source carries its own commentary — the
+     description doesn't relay it.
    - **Every clause must be traceable to a named source.** Not "mostly sourced with a bit
      of common knowledge" — the failure mode is a true-sounding fact you actually supplied
      from memory, which reads identically to a sourced one and survives every review. If

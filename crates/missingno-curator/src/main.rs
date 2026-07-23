@@ -2435,6 +2435,27 @@ impl Curator {
                     }
                 }
 
+                let entry_flags: Vec<_> = db
+                    .flags
+                    .open()
+                    .filter(|f| f.subject.iter().any(|s| *s == entry.key()))
+                    .collect();
+                if !entry_flags.is_empty() {
+                    editor = editor.push(text("Flags").size(16));
+                    for flag in entry_flags {
+                        editor = editor.push(
+                            row![
+                                text(format!("#{} [{:?}] {}", flag.id, flag.kind, flag.note))
+                                    .size(12)
+                                    .width(Length::Fill),
+                                button(text("Resolve").size(12))
+                                    .on_press(Message::ResolveFlag(flag.id)),
+                            ]
+                            .spacing(8),
+                        );
+                    }
+                }
+
                 if let Some(line) = self.verify_status.get(&entry.key()) {
                     editor = editor.push(text("Verify").size(16));
                     editor = editor.push(text(line.clone()).size(13));
@@ -2503,24 +2524,6 @@ impl Curator {
                         }
                         container(area).center(Length::Fill).into()
                     }));
-                }
-                let pane_flags: Vec<_> = db
-                    .flags
-                    .open()
-                    .filter(|f| f.subject.iter().any(|s| s == key))
-                    .collect();
-                if !pane_flags.is_empty() {
-                    pane = pane.push(text("Flags").size(15));
-                    for flag in pane_flags {
-                        pane = pane.push(
-                            row![
-                                text(flag.note.clone()).size(12).width(Length::Fill),
-                                button(text("Resolve").size(12))
-                                    .on_press(Message::ResolveFlag(flag.id)),
-                            ]
-                            .spacing(8),
-                        );
-                    }
                 }
                 let mut body = row![].spacing(16);
                 if let Some(left) = left {
