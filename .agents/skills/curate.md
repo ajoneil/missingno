@@ -92,6 +92,12 @@ and they trust none of it.
 5. `queue_games` with the ordered keys. The first game auto-fetches (or uses the local dump)
    and starts playing immediately — the developer is now playtesting it.
 
+   **`queue_games` replaces the whole queue and starts its first key — it never appends.**
+   Topping up mid-session therefore yanks the current playtest unless the call names the
+   current game first: re-send the current key at the head, then the not-yet-played
+   remainder, then the extension. Extend while the developer plays the game you just
+   finished researching, never between your report and their Accept.
+
 ## The loop (per game)
 
 While the developer plays the current game:
@@ -288,7 +294,10 @@ While the developer plays the current game:
    `the-activision-decathlon`), never a cataloguer's sort-suffix
    (`challenge-of-nexar-the`) and never dropped entirely; strip TV-standard/board
    suffixes (`-ntsc`, `-pal-4k`) once the entry is the whole game rather than one dump
-   of it. Fix a nonconforming slug as part of curating its entry.
+   of it; collapse apostrophe shrapnel (`custers-revenge`, never `custer-s-revenge` —
+   the import splits possessives into a stray `-s-`). Fix a nonconforming slug as part
+   of curating its entry, and remember the collection folder tracks the slug: after a
+   rename of an accepted entry, move `<collection>/<tree>/<old-slug>/` to match.
 
    When `find_duplicates` (or a rename that collides) turns up an entry cataloguing the
    *same game* — an unlicensed reissue, a regional retitling — `merge_game` folds one
