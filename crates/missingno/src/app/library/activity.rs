@@ -233,11 +233,11 @@ impl FrameCapture {
     /// console's presentation aspect, recorded so exports and the gallery match
     /// the screen.
     pub fn from_frame(
-        frame: &crate::app::screen::Frame,
+        frame: &missingno_core::video::Frame,
         options: &CaptureOptions,
         pixel_aspect: f32,
     ) -> Self {
-        use crate::app::screen::Frame;
+        use missingno_core::video::Frame;
         use missingno_gb::frame::{GameBoyScreen, GbFrame, SgbScreen};
         use missingno_gb::ppu::screen::Screen;
 
@@ -275,7 +275,7 @@ impl FrameCapture {
     }
 
     /// A display-ready RGBA capture of a palette-indexed frame.
-    pub fn from_indexed(frame: &crate::app::screen::IndexedFrame, pixel_aspect: f32) -> Self {
+    pub fn from_indexed(frame: &missingno_core::video::IndexedFrame, pixel_aspect: f32) -> Self {
         Self {
             pixels: Vec::new(),
             sgb: None,

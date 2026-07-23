@@ -2958,7 +2958,6 @@ dependencies = [
 name = "missingno"
 version = "26.7.0"
 dependencies = [
- "bytemuck",
  "clap",
  "dirs",
  "gilrs",
@@ -2970,6 +2969,7 @@ dependencies = [
  "missingno-gamedb",
  "missingno-gb",
  "missingno-gbc",
+ "missingno-iced",
  "missingno-nes",
  "missingno-session",
  "missingno-sms",
@@ -3024,6 +3024,7 @@ dependencies = [
  "jiff",
  "missingno-core 0.1.0",
  "missingno-gamedb",
+ "missingno-iced",
  "missingno-session",
  "serde_json",
  "sha1",
@@ -3072,6 +3073,16 @@ dependencies = [
  "missingno-gb",
  "missingno-gbc",
  "png 0.18.1",
+ "rgb",
+]
+
+[[package]]
+name = "missingno-iced"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "iced",
+ "missingno-core 0.1.0",
  "rgb",
 ]
 

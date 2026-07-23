@@ -25,7 +25,6 @@ use crate::app::{
         memory::{self, MemoryPane, MemoryPaneData, MemorySelection},
         screen::{self, ScreenPane},
     },
-    screen::{PalettePolicy, ScreenView},
     system::{Platform, gb},
     ui::{
         fonts,
@@ -42,6 +41,7 @@ use missingno_gb::ppu::types::{
     palette::{Palette, PaletteChoice},
     tiles::TileMapId,
 };
+use missingno_iced::{PalettePolicy, ScreenView};
 
 // Frame-carrying messages are produced once per frame; boxing buys nothing.
 #[allow(clippy::large_enum_variant)]

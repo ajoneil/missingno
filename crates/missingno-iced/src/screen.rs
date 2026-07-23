@@ -5,7 +5,7 @@ use rgb::RGB8;
 
 use missingno_core::video::{ConsoleFrame, DisplayTechnology, LcdPanel};
 
-use super::texture_renderer::{ScreenOverlay, TextureRenderer};
+use crate::texture_renderer::{ScreenOverlay, TextureRenderer};
 
 pub use missingno_core::video::{Frame, IndexedFrame, RgbaFrame};
 
@@ -112,6 +112,12 @@ impl Clone for ScreenView {
             scanlines: self.scanlines,
             prev_rgba: self.prev_rgba.clone(),
         }
+    }
+}
+
+impl Default for ScreenView {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

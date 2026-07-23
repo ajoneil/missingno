@@ -12,7 +12,7 @@ use missingno_gbc::GameBoyColor;
 use missingno_core::video::{ConsoleFrame, RgbaFrame};
 
 use super::{MediaLoad, Platform, SystemConsole};
-use crate::app::screen::PalettePolicy;
+use missingno_iced::PalettePolicy;
 
 /// The Game Boy family's colour policy: the user's monochrome palette plus the
 /// Super Game Boy borders, re-applied to a delivered frame at draw time. This is

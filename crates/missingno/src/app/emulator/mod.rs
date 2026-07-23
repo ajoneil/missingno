@@ -10,7 +10,6 @@ use missingno_session::SessionHandle;
 use crate::app::system::{ConsoleSwitch, Platform, gb};
 use crate::app::{
     self,
-    screen::{Frame, ScreenView},
     system::SystemConsole,
     ui::{
         icons::{self, Icon},
@@ -18,6 +17,7 @@ use crate::app::{
     },
 };
 use missingno_gb::ppu::types::palette::PaletteChoice;
+use missingno_iced::{Frame, ScreenView};
 
 mod panels;
 pub use panels::{CaptureKind, PlayLogEntry, PlayPanel};

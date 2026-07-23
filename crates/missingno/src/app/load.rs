@@ -6,9 +6,9 @@ use missingno_session::SharedSession;
 use rfd::{AsyncFileDialog, FileHandle};
 
 use crate::app::emulator::ConsoleFacts;
-use crate::app::screen::ScreenView;
 use crate::app::system::SystemConsole;
 use crate::app::{self, App, CurrentGame, Game, LoadedGame, Screen, library, system};
+use missingno_iced::ScreenView;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]

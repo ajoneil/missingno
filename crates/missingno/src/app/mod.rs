@@ -19,11 +19,9 @@ pub mod library;
 mod load;
 pub(crate) use load::file_stem_title;
 mod recent;
-mod screen;
 mod session_bridge;
 pub mod settings;
 pub(crate) mod system;
-mod texture_renderer;
 mod ui;
 mod views;
 

@@ -60,6 +60,14 @@ pub enum TextField {
     License,
 }
 
+/// A release's header, split so the shipped title and box label can be styled
+/// apart from the remaining facts.
+pub struct ReleaseLine {
+    pub title: Option<String>,
+    pub label: Option<String>,
+    pub detail: String,
+}
+
 impl AnyGame {
     pub fn title(&self) -> &str {
         common!(self, g => &g.title)
@@ -110,13 +118,11 @@ impl AnyGame {
         });
     }
 
-    /// One display line per release.
-    pub fn release_lines(&self) -> Vec<String> {
-        fn line<P: Platform>(r: &missingno_gamedb::Release<P>, extra: &str) -> String {
+    /// One display line per release, split so the renderer can style the
+    /// shipped title and box label differently from the remaining facts.
+    pub fn release_lines(&self) -> Vec<ReleaseLine> {
+        fn line<P: Platform>(r: &missingno_gamedb::Release<P>, extra: &str) -> ReleaseLine {
             let mut parts = Vec::new();
-            if let Some(title) = &r.title {
-                parts.push(title.clone());
-            }
             if !r.regions.is_empty() {
                 parts.push(
                     r.regions
@@ -125,9 +131,6 @@ impl AnyGame {
                         .collect::<Vec<_>>()
                         .join("/"),
                 );
-            }
-            if let Some(label) = &r.label {
-                parts.push(label.clone());
             }
             if r.status != Default::default() {
                 parts.push(format!("{:?}", r.status));
@@ -141,7 +144,11 @@ impl AnyGame {
             if !extra.is_empty() {
                 parts.push(extra.to_owned());
             }
-            parts.join(" · ")
+            ReleaseLine {
+                title: r.title.clone(),
+                label: r.label.clone(),
+                detail: parts.join(" · "),
+            }
         }
         match self {
             AnyGame::Gb(g) => g
@@ -375,18 +382,6 @@ impl AnyGame {
 
     pub fn mod_names(&self) -> Vec<String> {
         common!(self, g => g.mods.iter().map(|m| m.name.clone()).collect())
-    }
-
-    /// Endorse one attached mod, independently of the game.
-    pub fn stamp_mod_curation(&mut self, index: usize, by: &str, recommended: bool) -> bool {
-        common!(self, g => {
-            let Some(m) = g.mods.get_mut(index) else { return false };
-            m.curated = true;
-            if recommended && !m.recommended_by.iter().any(|id| id == by) {
-                m.recommended_by.push(by.to_owned());
-            }
-            true
-        })
     }
 
     pub fn release_publisher(&self, index: usize) -> String {

@@ -128,7 +128,7 @@ struct Curator {
     fetching: bool,
     scanning: bool,
     playing: Option<(String, play::PlaySession)>,
-    play_frame: Option<iced::widget::image::Handle>,
+    play_screen: Option<missingno_iced::ScreenView>,
     playing_sha1: Option<String>,
     /// Guards frame-loop messages from superseded play sessions.
     play_generation: u64,
@@ -186,10 +186,6 @@ enum Message {
         key: String,
         results: Vec<(String, verify::SigResult)>,
         reply: std::sync::mpsc::Sender<serde_json::Value>,
-    },
-    CurateMod {
-        index: usize,
-        recommend: bool,
     },
     Enriched(String, Result<Option<verify::HasheousHit>, String>),
     CoverLoaded(String, Option<iced::widget::image::Handle>),
@@ -294,7 +290,7 @@ impl Curator {
                 fetching: false,
                 scanning: false,
                 playing: None,
-                play_frame: None,
+                play_screen: None,
                 playing_sha1: None,
                 play_generation: 0,
                 queue: std::collections::VecDeque::new(),
@@ -433,8 +429,15 @@ impl Curator {
                     match play::start(hint, &bytes, tv, cart) {
                         Ok(session) => {
                             let events = session.events.clone();
+                            // Full device simulation, as the emulator's Device
+                            // mode: persistence plus the technology's overlay
+                            // (LCD grid or CRT scanlines — never both).
+                            let mut screen = missingno_iced::ScreenView::new();
+                            screen.set_technology(session.technology);
+                            screen.set_pixel_grid(true);
+                            screen.set_scanlines(true);
                             self.playing = Some((key, session));
-                            self.play_frame = None;
+                            self.play_screen = Some(screen);
                             self.playing_sha1 = Some(sha1);
                             self.play_generation += 1;
                             let generation = self.play_generation;
@@ -452,17 +455,10 @@ impl Curator {
                     return Task::none(); // a superseded session's loop
                 }
                 if let Some((_, session)) = &self.playing {
-                    if let Some(frame) = session.handle.latest_frame() {
-                        let rgba = frame.resolve_rgba();
-                        let (width, height, pixels) = verify::aspect_corrected(
-                            rgba.width,
-                            rgba.height,
-                            session.pixel_aspect,
-                            &rgba.pixels,
-                        );
-                        self.play_frame = Some(iced::widget::image::Handle::from_rgba(
-                            width, height, pixels,
-                        ));
+                    if let (Some(screen), Some(frame)) =
+                        (self.play_screen.as_mut(), session.handle.latest_frame())
+                    {
+                        screen.apply(&frame);
                     }
                     let events = session.events.clone();
                     return Task::perform(
@@ -480,13 +476,13 @@ impl Curator {
             Message::PlayEnded(generation) => {
                 if generation == self.play_generation {
                     self.playing = None;
-                    self.play_frame = None;
+                    self.play_screen = None;
                     self.playing_sha1 = None;
                 }
             }
             Message::StopPlay => {
                 self.playing = None;
-                self.play_frame = None;
+                self.play_screen = None;
                 self.playing_sha1 = None;
                 self.play_generation += 1;
             }
@@ -668,18 +664,6 @@ impl Curator {
                     self.cover_failed.insert(url);
                 }
             },
-            Message::CurateMod { index, recommend } => {
-                if let (Ok(db), Some(i)) = (&mut self.db, self.selected) {
-                    let by = self.curator_name.clone();
-                    if db.entries[i].game.stamp_mod_curation(index, &by, recommend) {
-                        db.entries[i].dirty = true;
-                        match db.write_entry(i) {
-                            Ok(()) => self.status = "mod endorsed".to_owned(),
-                            Err(e) => self.status = format!("write failed: {e}"),
-                        }
-                    }
-                }
-            }
             Message::ArtifactsVerified {
                 key,
                 results,
@@ -790,7 +774,7 @@ impl Curator {
                 // and the cpal stream go quietly), then the socket — so the
                 // process exits 0 and an attached agent sees a clean end.
                 self.playing = None;
-                self.play_frame = None;
+                self.play_screen = None;
                 self._remote = None;
                 return iced::window::latest().and_then(iced::window::close);
             }
@@ -982,7 +966,7 @@ impl Curator {
             self.queue.pop_front();
         }
         self.playing = None;
-        self.play_frame = None;
+        self.play_screen = None;
         let star = if recommended { " ★ recommended" } else { "" };
         while let Some(next_key) = self.queue.front().cloned() {
             match self.find_entry(&next_key) {
@@ -1018,7 +1002,7 @@ impl Curator {
             self.queue.pop_front();
         }
         self.playing = None;
-        self.play_frame = None;
+        self.play_screen = None;
         while let Some(next_key) = self.queue.front().cloned() {
             match self.find_entry(&next_key) {
                 Some(next) => {
@@ -2393,7 +2377,21 @@ impl Curator {
 
                 editor = editor.push(text("Releases").size(16));
                 for (r, line) in entry.game.release_lines().into_iter().enumerate() {
-                    let mut rel = column![text(line).size(13)].spacing(4);
+                    let mut header = row![].spacing(6).align_y(iced::Alignment::Center);
+                    if let Some(title) = line.title {
+                        header = header.push(text(title).size(13).font(iced::Font {
+                            weight: iced::font::Weight::Bold,
+                            ..iced::Font::DEFAULT
+                        }));
+                    }
+                    if let Some(label) = line.label {
+                        header =
+                            header.push(text(format!("({label})")).size(13).style(text::secondary));
+                    }
+                    if !line.detail.is_empty() {
+                        header = header.push(text(line.detail).size(13));
+                    }
+                    let mut rel = column![header].spacing(4);
                     let publisher = entry.game.release_publisher(r);
                     if !publisher.is_empty() {
                         rel = rel.push(text(format!("Publisher: {publisher}")).size(12));
@@ -2412,21 +2410,8 @@ impl Curator {
                 if !mods.is_empty() {
                     editor = editor.push(text("Mods").size(16));
                     for (index, (line, links)) in mods.into_iter().enumerate() {
-                        editor = editor.push(
-                            row![
-                                text(format!("• {line}")).size(13).width(Length::Fill),
-                                button(text("✓").size(12)).on_press(Message::CurateMod {
-                                    index,
-                                    recommend: false,
-                                }),
-                                button(text("★").size(12)).on_press(Message::CurateMod {
-                                    index,
-                                    recommend: true,
-                                }),
-                            ]
-                            .spacing(6)
-                            .align_y(iced::Alignment::Center),
-                        );
+                        editor =
+                            editor.push(text(format!("• {line}")).size(13).width(Length::Fill));
                         for (name, url) in links {
                             editor = editor.push(
                                 row![
@@ -2494,18 +2479,17 @@ impl Curator {
                     }
                     pane = pane.push(switches);
                 }
-                if let Some(frame) = &self.play_frame {
-                    pane = pane.push(
+                if let Some(screen) = &self.play_screen {
+                    pane = pane.push(iced::widget::responsive(move |size| {
+                        let (width, height) = screen.fitted_size(size);
                         container(
-                            iced::widget::image(frame.clone())
-                                .filter_method(iced::widget::image::FilterMethod::Nearest)
-                                .content_fit(iced::ContentFit::Contain)
-                                .width(Length::Fill)
-                                .height(Length::Fill),
+                            iced::widget::shader(screen)
+                                .width(Length::Fixed(width))
+                                .height(Length::Fixed(height)),
                         )
-                        .width(Length::Fill)
-                        .height(Length::Fill),
-                    );
+                        .center(Length::Fill)
+                        .into()
+                    }));
                 }
                 let pane_flags: Vec<_> = db
                     .flags

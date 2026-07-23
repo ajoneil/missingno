@@ -22,12 +22,12 @@ use crate::app::{
         panes::{self, pane, running_placeholder, title_bar, title_bar_with_detail},
         sidebar::tone_color,
     },
-    texture_renderer::TextureRenderer,
     ui::fonts,
 };
 use missingno_core::graphics::{GraphicsView, TileMap, Viewport};
 use missingno_gb::ppu::types::palette::PaletteIndex;
 use missingno_gb::ppu::types::tiles::TileMapId;
+use missingno_iced::TextureRenderer;
 
 pub struct TileMapPane {
     tile_map: TileMapId,

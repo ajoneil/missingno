@@ -9,10 +9,10 @@ use crate::app::{
         self,
         panes::{self, DebuggerPane, PaneContext, PaneMessage, pane, title_bar_with_detail},
     },
-    screen::{Frame, PalettePolicy, ScreenView},
     ui::fonts,
 };
 use missingno_core::video::DisplayTechnology;
+use missingno_iced::{Frame, PalettePolicy, ScreenView};
 use std::sync::Arc;
 
 pub struct ScreenPane {

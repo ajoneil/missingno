@@ -264,28 +264,6 @@ impl RomIndex {
     }
 }
 
-/// Stretch a square-pixel RGBA buffer to the display's pixel aspect (nearest).
-pub fn aspect_corrected(
-    width: u32,
-    height: u32,
-    aspect: f32,
-    pixels: &[u8],
-) -> (u32, u32, Vec<u8>) {
-    if (aspect - 1.0).abs() < 0.01 {
-        return (width, height, pixels.to_vec());
-    }
-    let out_width = ((width as f32) * aspect).round().max(1.0) as u32;
-    let mut out = Vec::with_capacity((out_width * height * 4) as usize);
-    for y in 0..height {
-        let row = &pixels[(y * width * 4) as usize..((y + 1) * width * 4) as usize];
-        for x_out in 0..out_width {
-            let x_src = ((x_out as f32 / aspect) as u32).min(width - 1) as usize;
-            out.extend_from_slice(&row[x_src * 4..x_src * 4 + 4]);
-        }
-    }
-    (out_width, height, out)
-}
-
 /// Facts a Game Boy family header states about its cartridge.
 #[derive(Clone, Debug)]
 pub struct GbHeader {
