@@ -138,9 +138,6 @@ impl AnyGame {
             if let Some(date) = &r.date {
                 parts.push(date.as_str().to_owned());
             }
-            if let Some(publisher) = &r.publisher {
-                parts.push(publisher.clone());
-            }
             if !extra.is_empty() {
                 parts.push(extra.to_owned());
             }
