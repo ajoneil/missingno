@@ -187,6 +187,19 @@ pub struct RomIndex {
     pub duplicates_moved: usize,
 }
 
+/// Move a file across directories, surviving a filesystem boundary: rename
+/// when possible, else copy and remove the source.
+pub fn move_file(from: &Path, to: &Path) -> io::Result<()> {
+    match std::fs::rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
+            std::fs::copy(from, to)?;
+            std::fs::remove_file(from)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 impl RomIndex {
     /// Scan the collection first (its hashes are authoritative), then the
     /// inbox; an inbox file already in the collection moves to
@@ -237,7 +250,7 @@ impl RomIndex {
                     {
                         std::fs::create_dir_all(duplicates)?;
                         let target = duplicates.join(path.file_name().unwrap_or(path.as_os_str()));
-                        if std::fs::rename(&path, &target).is_ok() {
+                        if move_file(&path, &target).is_ok() {
                             self.duplicates_moved += 1;
                         }
                     }

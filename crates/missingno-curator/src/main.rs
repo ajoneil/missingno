@@ -937,10 +937,18 @@ impl Curator {
                 break;
             }
             let target = target_dir.join(rom.path.file_name().unwrap_or(rom.path.as_os_str()));
-            if std::fs::rename(&rom.path, &target).is_ok() {
-                rom.path = target;
-                rom.home = verify::RomHome::Collection;
-                moved += 1;
+            match verify::move_file(&rom.path, &target) {
+                Ok(()) => {
+                    rom.path = target;
+                    rom.home = verify::RomHome::Collection;
+                    moved += 1;
+                }
+                Err(error) => {
+                    self.status = format!(
+                        "collection move FAILED for {}: {error}",
+                        rom.path.display()
+                    );
+                }
             }
         }
         moved
