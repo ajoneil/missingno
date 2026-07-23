@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use iced::futures::SinkExt;
 use missingno_core::system::{ConsoleSwitch, ControlId, ControlInput};
+use missingno_core::video::DisplayTechnology;
 use missingno_session::{
     SessionEvent, SessionHandle, SharedSession, audio_output::AudioOutput, factory,
 };
@@ -14,8 +15,8 @@ pub struct PlaySession {
     /// Owns the session thread; dropping stops the machine.
     _shared: SharedSession,
     pub handle: SessionHandle,
-    /// The display's pixel aspect, applied when frames are shown.
-    pub pixel_aspect: f32,
+    /// The display the console states, driving the screen renderer.
+    pub technology: DisplayTechnology,
     /// The family's latching console switches, captured before the console
     /// moves into the session, with the level the UI last set for each.
     pub switches: &'static [ConsoleSwitch],
@@ -39,7 +40,7 @@ pub fn start(
     let console = factory::create_console_with(std::path::Path::new(filename_hint), rom, &options)
         .map_err(|e| format!("core rejected ROM: {e}"))?
         .ok_or("no core recognizes this ROM")?;
-    let pixel_aspect = console.video_out().pixel_aspect();
+    let technology = console.video_out();
     let switches = console.console_switches();
     let switch_levels = switches.iter().map(|s| s.default_high).collect();
     let (audio, sink) = match AudioOutput::open() {
@@ -53,7 +54,7 @@ pub fn start(
     Ok(PlaySession {
         _shared: shared,
         handle,
-        pixel_aspect,
+        technology,
         switches,
         switch_levels,
         _audio: audio,
