@@ -163,22 +163,62 @@ pub fn hasheous_lookup(sha1: &str) -> Result<Option<HasheousHit>, String> {
     Ok(Some(hit))
 }
 
-/// sha1 → path index over the user's ROM directory.
-#[derive(Default, Debug)]
+/// Which folder a scanned ROM file came from: the inbox is the to-curate
+/// queue, the collection holds ROMs already curated on a previous pass.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RomHome {
+    Inbox,
+    Collection,
+}
+
+#[derive(Clone, Debug)]
+pub struct ScannedRom {
+    pub path: PathBuf,
+    pub home: RomHome,
+}
+
+/// sha1 → file index over the inbox and collection directories.
+#[derive(Default, Clone, Debug)]
 pub struct RomIndex {
-    pub by_sha1: HashMap<String, PathBuf>,
+    pub by_sha1: HashMap<String, ScannedRom>,
     pub scanned: usize,
+    /// Inbox files whose hash the collection already holds, set aside into
+    /// `<inbox>/duplicates/` at scan time rather than deleted.
+    pub duplicates_moved: usize,
 }
 
 impl RomIndex {
-    pub fn scan(dir: &Path) -> io::Result<Self> {
+    /// Scan the collection first (its hashes are authoritative), then the
+    /// inbox; an inbox file already in the collection moves to
+    /// `<inbox>/duplicates/` so the inbox only ever holds new work.
+    pub fn scan(inbox: Option<&Path>, collection: Option<&Path>) -> io::Result<Self> {
         let mut index = Self::default();
+        if let Some(dir) = collection {
+            index.scan_into(dir, RomHome::Collection, None)?;
+        }
+        if let Some(dir) = inbox {
+            let duplicates = dir.join("duplicates");
+            index.scan_into(dir, RomHome::Inbox, Some(&duplicates))?;
+        }
+        Ok(index)
+    }
+
+    fn scan_into(
+        &mut self,
+        dir: &Path,
+        home: RomHome,
+        duplicates: Option<&Path>,
+    ) -> io::Result<()> {
         let mut stack = vec![dir.to_path_buf()];
         while let Some(dir) = stack.pop() {
             for entry in std::fs::read_dir(&dir)? {
                 let entry = entry?;
                 let path = entry.path();
                 if path.is_dir() {
+                    // The set-aside folder is not part of the inbox.
+                    if duplicates.is_some_and(|d| path == *d) {
+                        continue;
+                    }
                     stack.push(path);
                     continue;
                 }
@@ -189,11 +229,25 @@ impl RomIndex {
                 let Ok(bytes) = std::fs::read(&path) else {
                     continue;
                 };
-                index.by_sha1.insert(sha1_hex(&bytes), path);
-                index.scanned += 1;
+                let sha1 = sha1_hex(&bytes);
+                if let Some(existing) = self.by_sha1.get(&sha1) {
+                    if existing.home == RomHome::Collection
+                        && home == RomHome::Inbox
+                        && let Some(duplicates) = duplicates
+                    {
+                        std::fs::create_dir_all(duplicates)?;
+                        let target = duplicates.join(path.file_name().unwrap_or(path.as_os_str()));
+                        if std::fs::rename(&path, &target).is_ok() {
+                            self.duplicates_moved += 1;
+                        }
+                    }
+                    continue;
+                }
+                self.by_sha1.insert(sha1, ScannedRom { path, home });
+                self.scanned += 1;
             }
         }
-        Ok(index)
+        Ok(())
     }
 }
 

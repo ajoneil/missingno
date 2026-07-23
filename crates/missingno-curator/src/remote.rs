@@ -189,6 +189,13 @@ fn tool_definitions() -> Value {
     let object = |properties: Value, required: &[&str]| json!({ "type": "object", "properties": properties, "required": required });
     json!([
         {
+            "name": "commit",
+            "description": "Commit the working tree's staged curation edits — only when the developer asks, normally at the end of a session. Write a real commit message describing the batch.",
+            "inputSchema": object(json!({
+                "message": { "type": "string" },
+            }), &["message"]),
+        },
+        {
             "name": "status",
             "description": "Curation queue counts: per-platform backlog, open flags, uncommitted files.",
             "inputSchema": object(json!({}), &[]),
@@ -218,13 +225,15 @@ fn tool_definitions() -> Value {
                     "developer": { "type": "string" },
                     "description": { "type": "string" },
                     "license": { "type": "string" },
+                    "kind": { "type": "string", "enum": ["Game", "Demo", "Demoscene", "Test"],
+                              "description": "what kind of work the entry is; Test = diagnostic/calibration utility" },
                     "publisher": { "type": "string",
                                    "description": "publisher of the first release (release-level; UI edits others)" },
                     "covers": { "type": "array", "items": { "type": "string" },
                                 "description": "remote image URLs, preference order" },
                     "wikipedia": { "type": "string", "description": "article URL" },
                     "links": { "type": "array",
-                               "description": "durable source receipts: record the page that backed each staged fact (AtariAge thread, author's site, pouet prod, MobyGames…). Upserts by name — re-staging the same source never duplicates. This, not set_note, is where sources survive: notes die with the session, links live in the manifest.",
+                               "description": "durable source receipts: record the page that backed each staged fact (AtariAge thread, author's site, pouet prod, MobyGames…). Upserts by name — re-staging the same source never duplicates. This is where sources survive: chat dies with the session, links live in the manifest.",
                                "items": { "type": "object", "properties": {
                                    "name": { "type": "string" },
                                    "url": { "type": "string" },
@@ -270,7 +279,7 @@ fn tool_definitions() -> Value {
                 "title": { "type": "string" },
                 "category": { "type": "string",
                               "enum": ["Translation", "QualityOfLife", "ContentChange", "Compatibility", "TotalConversion"] },
-                "base_sha1": { "type": "string" },
+                "base_sha1": { "type": "string", "description": "the dump this mod was made from; 'none' when the base is genuinely unknown — never guess one" },
                 "url": { "type": "string", "description": "the mod's homepage" },
             }), &["key", "sha1"]),
         },
@@ -308,7 +317,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "update_release",
-            "description": "Set fields on an existing release: status, title, label, date, publisher, regions, controllers (VCS). `title` is the name this release shipped under when it differs from the game's canonical title (a localized or retitled reissue). `regions` replaces the release's region list; the vocabulary is closed, so a region the list lacks is a schema question, not a free-text value.",
+            "description": "Set fields on an existing release: status, title, label, date, publisher, regions, controllers (VCS). `title` is the name this release shipped under when it differs from the game's canonical title (a localized or retitled reissue). An empty string clears title, label, publisher, or date (a carried-over date that is wrong for this release beats leaving a false one). `regions` replaces the release's region list; the vocabulary is closed, so a region the list lacks is a schema question, not a free-text value.",
             "inputSchema": object(json!({
                 "key": { "type": "string" },
                 "release_index": { "type": "integer" },
@@ -347,10 +356,11 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "remove_release",
-            "description": "Drop a release that holds nothing — a phantom left behind when its only dump was re-filed as a mod or moved elsewhere. Refuses while the release still carries dumps or sources, so it can never discard evidence.",
+            "description": "Drop a release that holds nothing — a phantom left behind when its only dump was re-filed as a mod or moved elsewhere. Refuses while the release still carries dumps or sources unless discard_dumps is true — pass that ONLY on the developer's explicit instruction, because it permanently drops the hashes with the release.",
             "inputSchema": object(json!({
                 "key": { "type": "string" },
                 "release_index": { "type": "integer" },
+                "discard_dumps": { "type": "boolean" },
             }), &["key", "release_index"]),
         },
         {
@@ -373,7 +383,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "merge_game",
-            "description": "Fold a duplicate entry into the one that should survive: `from`'s releases and mods become the target's, its directory is deleted and open flags follow the surviving key. Use when two entries catalogue the same game (an unlicensed reissue, a localized retitling) — not for a genuinely different product that merely shares a title, like a multicart. Dumps the target already holds are dropped rather than duplicated, and the target's curated stamp clears.",
+            "description": "Fold a duplicate entry into the one that should survive: `from`'s releases and mods become the target's, its directory is deleted and open flags follow the surviving key. Use when two entries catalogue the same game (an unlicensed reissue, a localized retitling) — not for a genuinely different product that merely shares a title, like a multicart. Dumps the target already holds are dropped rather than duplicated, and curated stamps from both sides stand on the survivor. Pick the target by identity, not effort: the original release is the entry that survives (a localized reissue or retitled skin folds into the original, never the reverse).",
             "inputSchema": object(json!({
                 "key": { "type": "string" },
                 "from": { "type": "string", "description": "the entry being absorbed; it ceases to exist" },
@@ -406,14 +416,6 @@ fn tool_definitions() -> Value {
             "name": "queue_status",
             "description": "Current playtest game and remaining queue.",
             "inputSchema": object(json!({}), &[]),
-        },
-        {
-            "name": "set_note",
-            "description": "Show the human your reasoning: what you changed, which sources you used, and anything they should double-check. Displayed in the editor next to the Accept button.",
-            "inputSchema": object(json!({
-                "key": { "type": "string" },
-                "note": { "type": "string" },
-            }), &["key", "note"]),
         },
         {
             "name": "select_game",

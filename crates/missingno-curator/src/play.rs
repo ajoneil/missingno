@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, mpsc::Receiver};
 use std::time::Duration;
 
 use iced::futures::SinkExt;
-use missingno_core::system::{ControlId, ControlInput};
+use missingno_core::system::{ConsoleSwitch, ControlId, ControlInput};
 use missingno_session::{
     SessionEvent, SessionHandle, SharedSession, audio_output::AudioOutput, factory,
 };
@@ -16,6 +16,10 @@ pub struct PlaySession {
     pub handle: SessionHandle,
     /// The display's pixel aspect, applied when frames are shown.
     pub pixel_aspect: f32,
+    /// The family's latching console switches, captured before the console
+    /// moves into the session, with the level the UI last set for each.
+    pub switches: &'static [ConsoleSwitch],
+    pub switch_levels: Vec<bool>,
     /// The `!Send` cpal stream stays on the UI thread, as in the emulator.
     _audio: Option<AudioOutput>,
     pub events: Arc<Mutex<Receiver<SessionEvent>>>,
@@ -36,6 +40,8 @@ pub fn start(
         .map_err(|e| format!("core rejected ROM: {e}"))?
         .ok_or("no core recognizes this ROM")?;
     let pixel_aspect = console.video_out().pixel_aspect();
+    let switches = console.console_switches();
+    let switch_levels = switches.iter().map(|s| s.default_high).collect();
     let (audio, sink) = match AudioOutput::open() {
         Some((audio, sink)) => (Some(audio), Some(sink)),
         None => (None, None),
@@ -48,6 +54,8 @@ pub fn start(
         _shared: shared,
         handle,
         pixel_aspect,
+        switches,
+        switch_levels,
         _audio: audio,
         events: Arc::new(Mutex::new(events)),
     })

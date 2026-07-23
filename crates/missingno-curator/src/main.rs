@@ -11,6 +11,7 @@ mod remote;
 mod verify;
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use clap::Parser;
 use iced::widget::{
@@ -27,9 +28,14 @@ struct Args {
     #[arg(default_value = "missingno-gamedb")]
     db_path: PathBuf,
 
-    /// Local ROM collection to hash-match dump-only entries against.
+    /// The inbox: a folder of to-be-curated ROMs to hash-match and queue.
     #[arg(long)]
     rom_dir: Option<PathBuf>,
+
+    /// The curated collection: accepted games' ROMs move here, and inbox
+    /// files already present here are set aside as duplicates at scan.
+    #[arg(long)]
+    collection_dir: Option<PathBuf>,
 
     /// Don't publish the ui-<pid>.sock remote-control socket.
     #[arg(long)]
@@ -43,7 +49,8 @@ struct Args {
 /// This process's action-event log: `runtime_dir/curator-events-<pid>.log`.
 /// A client tails it to see accepts/flags live without the long-poll.
 fn event_log_path() -> std::path::PathBuf {
-    missingno_session::attach::runtime_dir().join(format!("curator-events-{}.log", std::process::id()))
+    missingno_session::attach::runtime_dir()
+        .join(format!("curator-events-{}.log", std::process::id()))
 }
 
 fn append_event_log(event: &str) {
@@ -61,6 +68,7 @@ pub fn main() -> iced::Result {
     let args = Args::parse();
     let db_path = args.db_path.clone();
     let rom_dir = args.rom_dir.clone();
+    let collection_dir = args.collection_dir.clone();
     let remote = !args.no_remote;
     let curator_name = args.curator.clone().unwrap_or_else(|| {
         std::process::Command::new("git")
@@ -76,6 +84,7 @@ pub fn main() -> iced::Result {
             Curator::new(
                 db_path.clone(),
                 rom_dir.clone(),
+                collection_dir.clone(),
                 remote,
                 curator_name.clone(),
             )
@@ -102,9 +111,12 @@ struct Curator {
     selected: Option<usize>,
     status: String,
     rom_dir: Option<PathBuf>,
+    collection_dir: Option<PathBuf>,
     rom_index: Option<std::sync::Arc<RomIndex>>,
     /// entry key → last fetch/verify status line.
     verify_status: std::collections::HashMap<String, String>,
+    /// sha1 → this session's Hasheous verdict (✓name / DERIVED / unknown).
+    session_marks: std::collections::HashMap<String, String>,
     /// sha1 → fetched ROM bytes, kept for boot verification.
     rom_cache: std::collections::HashMap<String, std::sync::Arc<Vec<u8>>>,
     fetching: bool,
@@ -116,8 +128,6 @@ struct Curator {
     play_generation: u64,
     /// Agent-driven curation queue of entry keys; front = current.
     queue: std::collections::VecDeque<String>,
-    /// entry key → the agent's explanation of its edits and sources.
-    agent_notes: std::collections::HashMap<String, String>,
     /// Fetch in flight that should start a playtest when it lands.
     play_after_fetch: Option<String>,
     /// entry key → last fetched sha1 (bytes live in rom_cache).
@@ -140,8 +150,6 @@ struct Curator {
     recommend_next: bool,
     /// The filter/list column; hidden automatically when an agent queues work.
     list_visible: bool,
-    /// Open red-flag note input for the current entry (None = closed).
-    flag_note: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -152,6 +160,10 @@ enum Message {
     PlayEnded(u64),
     StopPlay,
     Pad(u8, bool),
+    /// Flip a latching console switch (index into the family's switch list).
+    ToggleSwitch(usize),
+    /// Press a momentary console switch; release follows after a beat.
+    TapSwitch(u8),
     Fetch {
         play_after: bool,
     },
@@ -164,7 +176,6 @@ enum Message {
     OnlyNew(bool),
     Search(String),
     Select(usize),
-    RecordPlaytest(String),
     ArtifactsVerified {
         key: String,
         results: Vec<(String, verify::SigResult)>,
@@ -183,14 +194,10 @@ enum Message {
     /// Advance past the current queued entry without re-stamping it — for an
     /// entry already curated to your satisfaction.
     SkipNext,
-    FlagPrompt,
-    FlagNote(String),
-    SaveFlag,
     ToggleList,
     CloseRequested,
     OpenLink(String),
     ResolveFlag(u32),
-    Commit,
 }
 
 #[derive(Debug, Clone)]
@@ -252,10 +259,11 @@ impl Curator {
     fn new(
         db_path: PathBuf,
         rom_dir: Option<PathBuf>,
+        collection_dir: Option<PathBuf>,
         remote: bool,
         curator_name: String,
     ) -> (Self, Task<Message>) {
-        let has_rom_dir = rom_dir.is_some();
+        let has_rom_dir = rom_dir.is_some() || collection_dir.is_some();
         let db = Db::load(db_path).map_err(|e| e.to_string());
         let remote_sink = SharedSink::default();
         let endpoint = remote
@@ -272,8 +280,10 @@ impl Curator {
                 selected: None,
                 status: String::new(),
                 rom_dir,
+                collection_dir,
                 rom_index: None,
                 verify_status: std::collections::HashMap::new(),
+                session_marks: std::collections::HashMap::new(),
                 rom_cache: std::collections::HashMap::new(),
                 fetching: false,
                 scanning: false,
@@ -282,7 +292,6 @@ impl Curator {
                 playing_sha1: None,
                 play_generation: 0,
                 queue: std::collections::VecDeque::new(),
-                agent_notes: std::collections::HashMap::new(),
                 play_after_fetch: None,
                 fetched_sha1: std::collections::HashMap::new(),
                 cover_previews: std::collections::HashMap::new(),
@@ -296,7 +305,6 @@ impl Curator {
                 curator_name,
                 recommend_next: false,
                 list_visible: false,
-                flag_note: None,
             },
             // A --rom-dir given at launch (e.g. by an agent starting the
             // curator) scans immediately; nothing to click.
@@ -481,6 +489,27 @@ impl Curator {
                     session.set_control(id, pressed);
                 }
             }
+            Message::ToggleSwitch(index) => {
+                if let Some((_, session)) = &mut self.playing
+                    && let (Some(switch), Some(level)) = (
+                        session.switches.get(index),
+                        session.switch_levels.get_mut(index),
+                    )
+                {
+                    *level = !*level;
+                    let (id, high) = (switch.control.0, *level);
+                    session.set_control(id, high);
+                }
+            }
+            Message::TapSwitch(id) => {
+                if let Some((_, session)) = &self.playing {
+                    session.set_control(id, true);
+                    return Task::perform(
+                        smol::Timer::after(Duration::from_millis(120)),
+                        move |_| Message::Pad(id, false),
+                    );
+                }
+            }
             Message::Fetch { play_after } => {
                 if let (Ok(db), Some(i)) = (&self.db, self.selected) {
                     let entry = &db.entries[i];
@@ -539,12 +568,14 @@ impl Curator {
                 }
             }
             Message::ScanRoms => {
-                if let Some(dir) = self.rom_dir.clone() {
+                if self.rom_dir.is_some() || self.collection_dir.is_some() {
+                    let inbox = self.rom_dir.clone();
+                    let collection = self.collection_dir.clone();
                     self.scanning = true;
-                    self.status = format!("scanning {}…", dir.display());
+                    self.status = "scanning ROM folders…".to_owned();
                     return Task::perform(
                         smol::unblock(move || {
-                            RomIndex::scan(&dir)
+                            RomIndex::scan(inbox.as_deref(), collection.as_deref())
                                 .map(std::sync::Arc::new)
                                 .map_err(|e| e.to_string())
                         }),
@@ -562,13 +593,15 @@ impl Curator {
                             Ok(db) => db.add_unmatched_roms(&index),
                             Err(_) => 0,
                         };
-                        self.status = if added > 0 {
-                            format!(
-                                "indexed {scanned} ROM(s); {added} matched no manifest → new records"
-                            )
-                        } else {
-                            format!("indexed {scanned} ROM(s) from collection")
-                        };
+                        let dupes = index.duplicates_moved;
+                        let mut parts = vec![format!("indexed {scanned} ROM(s)")];
+                        if dupes > 0 {
+                            parts.push(format!("{dupes} inbox duplicate(s) set aside"));
+                        }
+                        if added > 0 {
+                            parts.push(format!("{added} matched no manifest → new records"));
+                        }
+                        self.status = parts.join(" · ");
                     }
                     Err(e) => self.status = format!("scan failed: {e}"),
                 }
@@ -646,95 +679,58 @@ impl Curator {
                 results,
                 reply,
             } => {
+                // The lookup informs the session; nothing is written to the
+                // manifest — the report in chat is the record.
                 let mut lines = Vec::new();
-                let mut recorded = 0;
-                let found = self.find_entry(&key);
-                if let (Ok(db), Some(i)) = (&mut self.db, found) {
-                    for (sha1, outcome) in &results {
-                        let short = &sha1[..12];
-                        match outcome {
-                            verify::SigResult::Found { signature, game } => {
-                                let evidence = signature.clone().unwrap_or_else(|| game.clone());
-                                match verify::classify_signature(&evidence) {
-                                    Some(verify::SigFlag::Derived(reason)) => {
-                                        lines.push(format!(
-                                            "{short}… DERIVED ({reason}): {evidence} —                                              someone made this; judge and mark_mod"
-                                        ));
-                                    }
-                                    Some(verify::SigFlag::Defective(reason)) => {
-                                        // A dumper's mistake, not a work: the
-                                        // evidence IS the record; nothing moves.
-                                        if db.entries[i]
-                                            .game
-                                            .record_signature(sha1, "Hasheous", &evidence)
-                                        {
-                                            recorded += 1;
-                                            db.entries[i].dirty = true;
-                                        }
-                                        lines.push(format!(
-                                            "{short}… DEFECTIVE ({reason}): {evidence} —                                              evidence recorded; label_artifact it, and if it                                              fabricated a release (wrong board from an                                              overdump), move_artifact into the real one"
-                                        ));
-                                    }
-                                    None => {
-                                        if db.entries[i]
-                                            .game
-                                            .record_signature(sha1, "Hasheous", &evidence)
-                                        {
-                                            recorded += 1;
-                                            db.entries[i].dirty = true;
-                                        }
-                                        let lower = evidence.to_lowercase();
-                                        let suggest = if lower.contains("(prototype)")
-                                            || lower.contains("(proto)")
-                                        {
-                                            " — a prototype build: consider split_release                                              (keep any working title it carries)"
-                                        } else if lower.contains("(beta)") {
-                                            " — a beta build: consider split_release"
-                                        } else {
-                                            ""
-                                        };
-                                        lines.push(format!(
-                                            "{short}… confirmed: {evidence}{suggest}"
-                                        ));
-                                    }
+                for (sha1, outcome) in &results {
+                    let short = &sha1[..12];
+                    match outcome {
+                        verify::SigResult::Found { signature, game } => {
+                            let evidence = signature.clone().unwrap_or_else(|| game.clone());
+                            match verify::classify_signature(&evidence) {
+                                Some(verify::SigFlag::Derived(reason)) => {
+                                    self.session_marks
+                                        .insert(sha1.clone(), format!("⚠ derived ({reason})"));
+                                    lines.push(format!(
+                                        "{short}… DERIVED ({reason}): {evidence} —                                          someone made this; judge and mark_mod"
+                                    ));
+                                }
+                                Some(verify::SigFlag::Defective(reason)) => {
+                                    self.session_marks
+                                        .insert(sha1.clone(), format!("⚠ defective ({reason})"));
+                                    lines.push(format!(
+                                        "{short}… DEFECTIVE ({reason}): {evidence} —                                          label_artifact it, and if it fabricated a release                                          (wrong board from an overdump), move_artifact                                          into the real one"
+                                    ));
+                                }
+                                None => {
+                                    self.session_marks
+                                        .insert(sha1.clone(), "✓ Hasheous".to_owned());
+                                    let lower = evidence.to_lowercase();
+                                    let suggest = if lower.contains("(prototype)")
+                                        || lower.contains("(proto)")
+                                    {
+                                        " — a prototype build: consider split_release                                          (keep any working title it carries)"
+                                    } else if lower.contains("(beta)") {
+                                        " — a beta build: consider split_release"
+                                    } else {
+                                        ""
+                                    };
+                                    lines.push(format!("{short}… confirmed: {evidence}{suggest}"));
                                 }
                             }
-                            verify::SigResult::Unknown => {
-                                lines.push(format!("{short}… unknown to the signature database"))
-                            }
-                            verify::SigResult::Failed(e) => {
-                                lines.push(format!("{short}… lookup failed: {e}"))
-                            }
+                        }
+                        verify::SigResult::Unknown => {
+                            self.session_marks
+                                .insert(sha1.clone(), "? unknown".to_owned());
+                            lines.push(format!("{short}… unknown to the signature database"))
+                        }
+                        verify::SigResult::Failed(e) => {
+                            lines.push(format!("{short}… lookup failed: {e}"))
                         }
                     }
-                    if recorded > 0
-                        && let Err(e) = db.write_entry(i)
-                    {
-                        lines.push(format!("write failed: {e}"));
-                    }
-                    self.status = format!(
-                        "verified {key}: {} recorded, {} dumps checked",
-                        recorded,
-                        results.len()
-                    );
-                } else {
-                    lines.push(format!("entry {key} disappeared during verification"));
                 }
+                self.status = format!("verified {key}: {} dumps checked", results.len());
                 let _ = reply.send(text_result(lines.join("\n")));
-            }
-            Message::RecordPlaytest(sha1) => {
-                if let (Ok(db), Some(i)) = (&mut self.db, self.selected) {
-                    let by = self.curator_name.clone();
-                    if db.entries[i].game.record_playtest(&sha1, &by) {
-                        db.entries[i].dirty = true;
-                        match db.write_entry(i) {
-                            Ok(()) => {
-                                self.status = format!("playtest recorded for {}…", &sha1[..12])
-                            }
-                            Err(e) => self.status = format!("write failed: {e}"),
-                        }
-                    }
-                }
             }
             Message::ConfirmAndNext => {
                 let visible = self.visible();
@@ -783,56 +779,6 @@ impl Curator {
                     return self.skip_and_next();
                 }
             }
-            Message::FlagPrompt => {
-                self.flag_note = match self.flag_note {
-                    Some(_) => None,
-                    None => Some(String::new()),
-                };
-            }
-            Message::FlagNote(note) => self.flag_note = Some(note),
-            Message::SaveFlag => {
-                let Some(note) = self.flag_note.take() else {
-                    return Task::none();
-                };
-                if let (Ok(db), Some(i)) = (&mut self.db, self.selected) {
-                    let key = db.entries[i].key();
-                    let flag = missingno_gamedb::Flag {
-                        id: db.flags.next_id(),
-                        kind: missingno_gamedb::FlagKind::Custom,
-                        subject: vec![key.clone()],
-                        note: format!("{}: {note}", self.curator_name),
-                        resolved: None,
-                    };
-                    db.flags.flags.push(flag);
-                    match db.save_flags() {
-                        Ok(()) => self.status = format!("flagged {key}"),
-                        Err(e) => self.status = format!("flag save failed: {e}"),
-                    }
-                    // A flag is "park it and move on": advance without a stamp.
-                    if self.queue.front() == Some(&key) {
-                        self.queue.pop_front();
-                        self.playing = None;
-                        self.play_frame = None;
-                        while let Some(next_key) = self.queue.front().cloned() {
-                            match self.find_entry(&next_key) {
-                                Some(next) => {
-                                    self.emit_action(format!(
-                                        "flagged {key} ({note:?}); now playing {next_key}                                          ({} left in queue)",
-                                        self.queue.len()
-                                    ));
-                                    return self.start_playtest_for(next);
-                                }
-                                None => {
-                                    self.queue.pop_front();
-                                }
-                            }
-                        }
-                        self.emit_action(format!("flagged {key} ({note:?}); queue is empty"));
-                    } else {
-                        self.emit_action(format!("flagged {key} ({note:?})"));
-                    }
-                }
-            }
             Message::CloseRequested => {
                 // Tear down in order on this thread — session first (its worker
                 // and the cpal stream go quietly), then the socket — so the
@@ -854,15 +800,6 @@ impl Curator {
                     match db.save_flags() {
                         Ok(()) => self.status = format!("resolved flag #{id}"),
                         Err(e) => self.status = format!("flag save failed: {e}"),
-                    }
-                }
-            }
-            Message::Commit => {
-                if let Ok(db) = &mut self.db {
-                    let message = format!("Curate: {} file(s) updated", db.uncommitted);
-                    match db.commit(&message) {
-                        Ok(head) => self.status = format!("committed: {}", head.trim()),
-                        Err(e) => self.status = format!("commit failed: {e}"),
                     }
                 }
             }
@@ -933,8 +870,8 @@ impl Curator {
         let boot = 'boot: {
             if let Some(index) = &self.rom_index {
                 for sha1 in entry.game.artifact_sha1s() {
-                    if let Some(path) = index.by_sha1.get(&sha1) {
-                        break 'boot Task::done(Message::Play(BootSource::File(path.clone())));
+                    if let Some(rom) = index.by_sha1.get(&sha1) {
+                        break 'boot Task::done(Message::Play(BootSource::File(rom.path.clone())));
                     }
                 }
             }
@@ -948,6 +885,59 @@ impl Curator {
             Task::none()
         };
         Task::batch([select_task, boot])
+    }
+
+    /// Move the accepted entry's inbox ROMs into the collection
+    /// (`<collection>/<tree>/<slug>/`), so future scans match against them.
+    fn archive_accepted(&mut self, i: usize) -> usize {
+        let (Some(collection), Some(index), Ok(db)) =
+            (&self.collection_dir, &mut self.rom_index, &self.db)
+        else {
+            return 0;
+        };
+        let entry = &db.entries[i];
+        // A game dump lands in <slug>/, a mod's dump in <slug>/mods/.
+        let mut sha1s: Vec<(String, bool)> = entry
+            .game
+            .artifact_sha1s()
+            .into_iter()
+            .map(|sha1| (sha1, false))
+            .collect();
+        for m in 0..entry.game.mod_lines().len() {
+            sha1s.extend(
+                entry
+                    .game
+                    .mod_artifacts(m)
+                    .into_iter()
+                    .map(|(sha1, _)| (sha1, true)),
+            );
+        }
+        let slug_dir = collection.join(entry.tree.dir()).join(&entry.slug);
+        let index = std::sync::Arc::make_mut(index);
+        let mut moved = 0;
+        for (sha1, is_mod) in sha1s {
+            let Some(rom) = index.by_sha1.get_mut(&sha1) else {
+                continue;
+            };
+            if rom.home != verify::RomHome::Inbox {
+                continue;
+            }
+            let target_dir = if is_mod {
+                slug_dir.join("mods")
+            } else {
+                slug_dir.clone()
+            };
+            if std::fs::create_dir_all(&target_dir).is_err() {
+                break;
+            }
+            let target = target_dir.join(rom.path.file_name().unwrap_or(rom.path.as_os_str()));
+            if std::fs::rename(&rom.path, &target).is_ok() {
+                rom.path = target;
+                rom.home = verify::RomHome::Collection;
+                moved += 1;
+            }
+        }
+        moved
     }
 
     fn accept_and_next(&mut self) -> Task<Message> {
@@ -968,7 +958,12 @@ impl Curator {
             }
             (key, recommended)
         };
-        self.status = format!("accepted {key}");
+        let moved = self.archive_accepted(i);
+        self.status = if moved > 0 {
+            format!("accepted {key} · {moved} ROM(s) moved to collection")
+        } else {
+            format!("accepted {key}")
+        };
         if self.queue.front() == Some(&key) {
             self.queue.pop_front();
         }
@@ -1090,9 +1085,6 @@ impl Curator {
         }
         if let Some(v) = self.verify_status.remove(old_key) {
             self.verify_status.insert(new_key.to_owned(), v);
-        }
-        if let Some(v) = self.agent_notes.remove(old_key) {
-            self.agent_notes.insert(new_key.to_owned(), v);
         }
         if let Some(v) = self.fetched_sha1.remove(old_key) {
             self.fetched_sha1.insert(new_key.to_owned(), v);
@@ -1392,6 +1384,21 @@ impl Curator {
                 {
                     applied.push("cart_type");
                 }
+                if let Some(kind) = set.get("kind").and_then(serde_json::Value::as_str) {
+                    let kind = match kind.to_ascii_lowercase().as_str() {
+                        "game" => missingno_gamedb::GameKind::Game,
+                        "demo" => missingno_gamedb::GameKind::Demo,
+                        "demoscene" => missingno_gamedb::GameKind::Demoscene,
+                        "test" => missingno_gamedb::GameKind::Test,
+                        other => {
+                            return error_result(format!(
+                                "unknown kind {other:?}; expected Game, Demo, Demoscene, or Test"
+                            ));
+                        }
+                    };
+                    entry.game.set_kind(kind);
+                    applied.push("kind");
+                }
                 if applied.is_empty() {
                     return error_result("no recognized fields in set");
                 }
@@ -1469,16 +1476,6 @@ impl Curator {
                     }
                     Err(e) => error_result(e),
                 }
-            }
-            "set_note" => {
-                let (Some(key), Some(note)) = (str_arg("key"), str_arg("note")) else {
-                    return error_result("missing key or note");
-                };
-                if self.find_entry(key).is_none() {
-                    return error_result(format!("no entry {key}"));
-                }
-                self.agent_notes.insert(key.to_owned(), note.to_owned());
-                text_result(format!("note shown on {key}"))
             }
             "local_matches" => {
                 let Some(index) = &self.rom_index else {
@@ -1708,10 +1705,11 @@ impl Curator {
                     None => None,
                 };
                 let date = match set_str("date") {
-                    Some(d) => Some(match d.parse::<missingno_gamedb::ReleaseDate>() {
+                    Some("") => Some(None),
+                    Some(d) => Some(Some(match d.parse::<missingno_gamedb::ReleaseDate>() {
                         Ok(d) => d,
                         Err(e) => return error_result(e),
-                    }),
+                    })),
                     None => None,
                 };
                 let Some(i) = self.find_entry(key) else {
@@ -1789,7 +1787,9 @@ impl Curator {
                         db.entries[i].game.set_release_tv_format(index as usize, f)
                     });
                     let ctrl = controllers.clone().is_some_and(|c| {
-                        db.entries[i].game.set_release_controllers(index as usize, c)
+                        db.entries[i]
+                            .game
+                            .set_release_controllers(index as usize, c)
                     });
                     let cart = cart_type.as_deref().is_some_and(|c| {
                         db.entries[i].game.set_release_cart_type(index as usize, c)
@@ -1861,7 +1861,11 @@ impl Curator {
                 let Ok(db) = &mut self.db else {
                     return error_result("db not loaded");
                 };
-                match db.entries[i].game.remove_empty_release(index as usize) {
+                let discard = args
+                    .get("discard_dumps")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                match db.entries[i].game.remove_release(index as usize, discard) {
                     Ok(()) => {
                         db.entries[i].dirty = true;
                         if let Err(e) = db.write_entry(i) {
@@ -1960,6 +1964,25 @@ impl Curator {
                 } else {
                     format!("possible duplicates of {key}:\n{}", lines.join("\n"))
                 })
+            }
+            "commit" => {
+                let Some(message) = str_arg("message") else {
+                    return error_result("missing message");
+                };
+                let Ok(db) = &mut self.db else {
+                    return error_result("db not loaded");
+                };
+                if db.uncommitted == 0 {
+                    return error_result("nothing to commit");
+                }
+                match db.commit(message) {
+                    Ok(head) => {
+                        let line = format!("committed: {}", head.trim());
+                        self.status = line.clone();
+                        text_result(line)
+                    }
+                    Err(e) => error_result(format!("commit failed: {e}")),
+                }
             }
             "queue_status" => {
                 let preview: Vec<&str> = self.queue.iter().take(10).map(String::as_str).collect();
@@ -2101,7 +2124,8 @@ impl Curator {
             .and_then(|index| index.by_sha1.get(sha1));
         let playable = local.is_some() || self.rom_cache.contains_key(sha1);
         let playing_this = self.playing_sha1.as_deref() == Some(sha1);
-        let mut line = row![].spacing(8).align_y(iced::Alignment::Center);
+        let is_new = local.is_some_and(|rom| rom.home == verify::RomHome::Inbox);
+        let mut line = row![].spacing(10).align_y(iced::Alignment::Center);
         line = line.push(
             text(if playing_this {
                 format!("▶ {short}")
@@ -2111,42 +2135,65 @@ impl Curator {
             .size(12),
         );
         if !label.is_empty() {
-            line = line.push(text(label.to_owned()).size(12).width(Length::Fixed(140.0)));
-        } else {
-            line = line.push(Space::new().width(Length::Fixed(140.0)));
+            // Long labels must not push the play button out of the row.
+            let shown: String = if label.chars().count() > 32 {
+                label.chars().take(30).collect::<String>() + "…"
+            } else {
+                label.to_owned()
+            };
+            line = line.push(text(shown).size(12));
         }
-        if let Some(path) = local {
-            let file = path
+        if is_new {
+            line = line.push(container(text("NEW").size(13)).padding([2, 8]).style(
+                |theme: &Theme| {
+                    let palette = theme.extended_palette();
+                    container::Style {
+                        background: Some(palette.danger.strong.color.into()),
+                        text_color: Some(palette.danger.strong.text),
+                        border: iced::border::rounded(4),
+                        ..Default::default()
+                    }
+                },
+            ));
+        }
+        // Session-time Hasheous answer for this hash, shown but never stored.
+        if let Some(mark) = self.session_marks.get(sha1) {
+            let compact = if mark.starts_with('✓') { "✓" } else { mark.as_str() };
+            line = line.push(text(compact.to_owned()).size(11).style(text::secondary));
+        }
+        line = line.push(Space::new().width(Length::Fill));
+        if playable {
+            let (source, play_label) = if let Some(rom) = local {
+                let label = match (playing_this, is_new) {
+                    (true, _) => "playing",
+                    (false, true) => "Play new ▶",
+                    (false, false) => "Play ▶",
+                };
+                (BootSource::File(rom.path.clone()), label)
+            } else {
+                (
+                    BootSource::Cached(sha1.to_owned()),
+                    if playing_this { "playing" } else { "Play ▶" },
+                )
+            };
+            let play = button(text(play_label).size(11))
+                .on_press_maybe((!playing_this).then_some(Message::Play(source)));
+            line = line.push(if is_new {
+                play.style(button::primary)
+            } else {
+                play
+            });
+        }
+        let mut rows = column![line].spacing(2);
+        if let Some(rom) = local {
+            let file = rom
+                .path
                 .file_name()
                 .map(|f| f.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            line = line.push(text(file).size(11).width(Length::Fill));
-        } else {
-            line = line.push(Space::new().width(Length::Fill));
+            rows = rows.push(text(format!("    {file}")).size(11).style(text::secondary));
         }
-        if let (Ok(db), Some(i)) = (&self.db, self.selected) {
-            let marks = db.entries[i].game.verification_marks(sha1);
-            if !marks.is_empty() {
-                line = line.push(text(marks.join(" ")).size(11));
-            }
-        }
-        if playing_this {
-            line = line.push(
-                button(text("✓ works").size(11)).on_press(Message::RecordPlaytest(sha1.to_owned())),
-            );
-        }
-        if playable {
-            let source = if let Some(path) = local {
-                BootSource::File(path.clone())
-            } else {
-                BootSource::Cached(sha1.to_owned())
-            };
-            line = line.push(
-                button(text(if playing_this { "playing" } else { "Play ▶" }).size(11))
-                    .on_press_maybe((!playing_this).then_some(Message::Play(source))),
-            );
-        }
-        line.into()
+        rows.into()
     }
 
     fn view(&self) -> Element<'_, Message> {
@@ -2178,53 +2225,31 @@ impl Curator {
                     top = top.push(text(format!("· {} in queue", self.queue.len())).size(13));
                 }
                 top = top.push(Space::new().width(Length::Fill));
-                match &self.flag_note {
-                    Some(note) => {
-                        top = top.push(
-                            text_input("what's wrong with this entry?", note)
-                                .on_input(Message::FlagNote)
-                                .on_submit(Message::SaveFlag)
-                                .width(Length::Fixed(360.0)),
-                        );
-                        top = top.push(
-                            button(text("Save flag"))
-                                .style(button::danger)
-                                .on_press(Message::SaveFlag),
-                        );
-                        top = top.push(button(text("✕")).on_press(Message::FlagPrompt));
-                    }
-                    None => {
-                        if let Some(c) = entry.game.curations().last() {
-                            top = top.push(
-                                text(format!(
-                                    "✓ curated by {} on {}{}",
-                                    c.by,
-                                    c.date,
-                                    if c.recommended { " ★ recommended" } else { "" },
-                                ))
-                                .size(13),
-                            );
-                            if !self.queue.is_empty() {
-                                top = top.push(
-                                    button(text("Next ▶ (keep as-is)"))
-                                        .on_press(Message::SkipNext),
-                                );
-                            }
-                        }
-                        top = top.push(
-                            button(text("Accept ✓")).on_press(Message::Accept { recommend: false }),
-                        );
-                        top = top.push(
-                            button(text("Accept ★ recommend"))
-                                .on_press(Message::Accept { recommend: true }),
-                        );
-                        top = top.push(
-                            button(text("⚑ Flag"))
-                                .style(button::danger)
-                                .on_press(Message::FlagPrompt),
-                        );
+                if let Some(c) = entry.game.curations().last() {
+                    top = top.push(
+                        text(format!(
+                            "✓ curated by {} on {}{}",
+                            c.by,
+                            c.date,
+                            if c.recommended {
+                                " ★ recommended"
+                            } else {
+                                ""
+                            },
+                        ))
+                        .size(13),
+                    );
+                    if !self.queue.is_empty() {
+                        top = top
+                            .push(button(text("Next ▶ (keep as-is)")).on_press(Message::SkipNext));
                     }
                 }
+                top = top
+                    .push(button(text("Accept ✓")).on_press(Message::Accept { recommend: false }));
+                top = top.push(
+                    button(text("Accept ★ recommend"))
+                        .on_press(Message::Accept { recommend: true }),
+                );
             }
             None => {
                 top = top.push(text("missingno curator").size(22));
@@ -2344,9 +2369,14 @@ impl Curator {
                     editor = editor.push(text("Links").size(15));
                     for (name, url) in links {
                         editor = editor.push(
-                            button(text(name).size(13))
-                                .style(button::secondary)
-                                .on_press(Message::OpenLink(url.clone())),
+                            row![
+                                button(text(name).size(13))
+                                    .style(button::secondary)
+                                    .on_press(Message::OpenLink(url.clone())),
+                                text(url.clone()).size(11).style(text::secondary),
+                            ]
+                            .spacing(8)
+                            .align_y(iced::Alignment::Center),
                         );
                     }
                 }
@@ -2361,8 +2391,11 @@ impl Curator {
                     for (sha1, label) in entry.game.release_artifacts(r) {
                         rel = rel.push(self.artifact_row(&sha1, &label));
                     }
-                    editor = editor
-                        .push(container(rel).padding([6, 10]).style(container::rounded_box));
+                    editor = editor.push(
+                        container(rel)
+                            .padding([6, 10])
+                            .style(container::rounded_box),
+                    );
                 }
 
                 let mods = entry.game.mod_lines();
@@ -2434,6 +2467,23 @@ impl Curator {
                     .align_y(iced::Alignment::Center),
                 ]
                 .spacing(8);
+                if let Some((_, session)) = &self.playing {
+                    let mut switches = row![
+                        button(text("Reset").size(12)).on_press(Message::TapSwitch(0)),
+                        button(text("Select").size(12)).on_press(Message::TapSwitch(1)),
+                    ]
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center);
+                    for (i, switch) in session.switches.iter().enumerate() {
+                        let level = session.switch_levels.get(i).copied().unwrap_or(false);
+                        let position = switch.positions[usize::from(level)];
+                        switches = switches.push(
+                            button(text(format!("{}: {position}", switch.label)).size(12))
+                                .on_press(Message::ToggleSwitch(i)),
+                        );
+                    }
+                    pane = pane.push(switches);
+                }
                 if let Some(frame) = &self.play_frame {
                     pane = pane.push(
                         container(
@@ -2465,11 +2515,6 @@ impl Curator {
                         );
                     }
                 }
-                if let Some(note) = self.agent_notes.get(key) {
-                    pane = pane.push(text("Agent notes").size(15));
-                    pane = pane
-                        .push(scrollable(text(note.clone()).size(13)).height(Length::Fixed(160.0)));
-                }
                 let mut body = row![].spacing(16);
                 if let Some(left) = left {
                     body = body.push(left);
@@ -2496,11 +2541,6 @@ impl Curator {
 
         let mut bottom = row![].spacing(14).align_y(iced::Alignment::Center);
         bottom = bottom.push(text(&self.status).size(12).width(Length::Fill));
-        for tree in TreeId::ALL {
-            bottom =
-                bottom.push(text(format!("{} {}", tree.label(), db.backlog_count(tree))).size(12));
-        }
-        bottom = bottom.push(text(format!("flags {}", db.flags.open().count())).size(12));
         bottom = bottom.push(
             button(
                 text(if self.list_visible {
@@ -2512,21 +2552,6 @@ impl Curator {
             )
             .style(button::text)
             .on_press(Message::ToggleList),
-        );
-        if self.rom_dir.is_some() {
-            let label = match &self.rom_index {
-                Some(index) => format!("rescan ROMs ({})", index.scanned),
-                None => "scan ROM dir".to_owned(),
-            };
-            bottom = bottom.push(
-                button(text(label).size(12))
-                    .style(button::text)
-                    .on_press_maybe((!self.scanning).then_some(Message::ScanRoms)),
-            );
-        }
-        bottom = bottom.push(
-            button(text(format!("Commit ({})", db.uncommitted)).size(12))
-                .on_press_maybe((db.uncommitted > 0).then_some(Message::Commit)),
         );
 
         column![top, body, bottom].spacing(12).padding(12).into()

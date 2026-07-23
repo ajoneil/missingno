@@ -6,7 +6,7 @@ use std::{fs, io, path::PathBuf, process::Command};
 use missingno_gamedb::{
     Controller, Date, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Link, LinkType, Mod,
     ModCategory, ModOf, ModRelease, Platform, Region, Release, ReleaseStatus, Sha1, Slug, Tree,
-    TvFormat, Vcs, Verification, VerificationMethod,
+    TvFormat, Vcs,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -17,8 +17,6 @@ pub enum TreeId {
 }
 
 impl TreeId {
-    pub const ALL: [TreeId; 3] = [TreeId::Gb, TreeId::Gbc, TreeId::Vcs];
-
     pub fn dir(self) -> &'static str {
         match self {
             TreeId::Gb => "gb",
@@ -69,6 +67,10 @@ impl AnyGame {
 
     pub fn kind(&self) -> GameKind {
         common!(self, g => g.kind)
+    }
+
+    pub fn set_kind(&mut self, kind: GameKind) {
+        common!(self, g => g.kind = kind)
     }
 
     pub fn curations(&self) -> &[missingno_gamedb::Curation] {
@@ -134,14 +136,12 @@ impl AnyGame {
             if let Some(date) = &r.date {
                 parts.push(date.as_str().to_owned());
             }
+            if let Some(publisher) = &r.publisher {
+                parts.push(publisher.clone());
+            }
             if !extra.is_empty() {
                 parts.push(extra.to_owned());
             }
-            parts.push(format!(
-                "{} artifact(s), {} source(s)",
-                r.artifacts.len(),
-                r.sources.len()
-            ));
             parts.join(" · ")
         }
         match self {
@@ -182,21 +182,13 @@ impl AnyGame {
         }
     }
 
-    /// First directly-downloadable source URL across releases.
+    /// First directly-downloadable URL: a game-level `Download` link.
     pub fn download_url(&self) -> Option<String> {
-        const GBDEV: &str = "https://raw.githubusercontent.com/gbdev/database/master/entries";
-        let sources = common!(self, g => g
-            .releases
+        common!(self, g => g
+            .links
             .iter()
-            .flat_map(|r| r.sources.clone())
-            .collect::<Vec<_>>());
-        sources.iter().find_map(|s| match s {
-            missingno_gamedb::Source::HomebrewHub { slug, filename } => {
-                Some(format!("{GBDEV}/{slug}/{filename}"))
-            }
-            missingno_gamedb::Source::Download { url } => Some(url.clone()),
-            _ => None,
-        })
+            .find(|l| l.link_type == missingno_gamedb::LinkType::Download)
+            .map(|l| l.url.clone()))
     }
 
     pub fn artifact_sha1s(&self) -> Vec<String> {
@@ -231,17 +223,11 @@ impl AnyGame {
             return false;
         };
         common!(self, g => {
-            let at = g
-                .releases
-                .iter()
-                .position(|r| !r.sources.is_empty())
-                .unwrap_or(0);
-            if let Some(release) = g.releases.get_mut(at) {
+            if let Some(release) = g.releases.get_mut(0) {
                 release.artifacts.push(missingno_gamedb::Artifact {
                     sha1,
                     label: None,
                     size: Some(size),
-                    verified: Vec::new(),
                 });
                 true
             } else {
@@ -392,110 +378,6 @@ impl AnyGame {
             .collect())
     }
 
-    /// Record that a signature database recognised a dump — additive evidence
-    /// about an immutable hash; curations are untouched. Replaces an earlier
-    /// answer from the same database (a refresh proves it still holds).
-    pub fn record_signature(&mut self, sha1: &str, database: &str, entry: &str) -> bool {
-        let evidence = Verification {
-            method: VerificationMethod::Signature {
-                database: database.to_owned(),
-                entry: entry.to_owned(),
-            },
-            date: Db::today(),
-        };
-        common!(self, g => {
-            for release in &mut g.releases {
-                for artifact in &mut release.artifacts {
-                    if artifact.sha1.as_str() != sha1 {
-                        continue;
-                    }
-                    let existing = artifact.verified.iter_mut().find(|v| {
-                        matches!(&v.method, VerificationMethod::Signature { database: d, .. }
-                            if d == database)
-                    });
-                    match existing {
-                        Some(slot) if *slot == evidence => return false,
-                        Some(slot) => *slot = evidence.clone(),
-                        None => artifact.verified.push(evidence.clone()),
-                    }
-                    return true;
-                }
-            }
-            false
-        })
-    }
-
-    /// The developer saw this exact dump run. Never inferred — only the
-    /// explicit button writes it. Mod dumps count: people play hacks.
-    pub fn record_playtest(&mut self, sha1: &str, by: &str) -> bool {
-        let evidence = Verification {
-            method: VerificationMethod::Playtest { by: by.to_owned() },
-            date: Db::today(),
-        };
-        let upsert = |artifact: &mut missingno_gamedb::Artifact| {
-            let existing = artifact
-                .verified
-                .iter_mut()
-                .find(|v| matches!(&v.method, VerificationMethod::Playtest { by: b } if b == by));
-            match existing {
-                Some(slot) => *slot = evidence.clone(),
-                None => artifact.verified.push(evidence.clone()),
-            }
-        };
-        common!(self, g => {
-            for release in &mut g.releases {
-                if let Some(artifact) =
-                    release.artifacts.iter_mut().find(|a| a.sha1.as_str() == sha1)
-                {
-                    upsert(artifact);
-                    return true;
-                }
-            }
-            for game_mod in &mut g.mods {
-                for release in &mut game_mod.releases {
-                    if let Some(artifact) =
-                        release.artifacts.iter_mut().find(|a| a.sha1.as_str() == sha1)
-                    {
-                        upsert(artifact);
-                        return true;
-                    }
-                }
-            }
-            false
-        })
-    }
-
-    /// Short display marks for a dump's recorded verifications.
-    pub fn verification_marks(&self, sha1: &str) -> Vec<String> {
-        let marks = |artifact: &missingno_gamedb::Artifact| {
-            artifact
-                .verified
-                .iter()
-                .map(|v| match &v.method {
-                    VerificationMethod::Signature { database, .. } => format!("✓{database}"),
-                    VerificationMethod::Playtest { by } => format!("▶{by}"),
-                })
-                .collect::<Vec<_>>()
-        };
-        common!(self, g => {
-            for release in &g.releases {
-                if let Some(a) = release.artifacts.iter().find(|a| a.sha1.as_str() == sha1) {
-                    return marks(a);
-                }
-            }
-            for game_mod in &g.mods {
-                for release in &game_mod.releases {
-                    if let Some(a) =
-                        release.artifacts.iter().find(|a| a.sha1.as_str() == sha1)
-                    {
-                        return marks(a);
-                    }
-                }
-            }
-            Vec::new()
-        })
-    }
-
     /// Run an edit against the named attached mod (Mod is platform-shared).
     pub fn edit_mod<R>(&mut self, name: &str, edit: impl FnOnce(&mut Mod) -> R) -> Option<R> {
         common!(self, g => g.mods.iter_mut().find(|m| m.name == name).map(edit))
@@ -548,7 +430,7 @@ impl AnyGame {
                 release.label = (!label.is_empty()).then_some(label);
             }
             if let Some(date) = edits.date {
-                release.date = Some(date);
+                release.date = date;
             }
             if let Some(publisher) = edits.publisher {
                 release.publisher = (!publisher.is_empty()).then_some(publisher);
@@ -775,7 +657,7 @@ impl AnyGame {
                 let release = &mut g.releases[index];
                 if let Some(at) = release.artifacts.iter().position(|a| a.sha1.as_str() == sha1) {
                     let artifact = release.artifacts.remove(at);
-                    if release.artifacts.is_empty() && release.sources.is_empty() {
+                    if release.artifacts.is_empty() {
                         g.releases.remove(index);
                     }
                     taken = Some(artifact);
@@ -818,7 +700,6 @@ impl AnyGame {
                     date: None,
                     base_sha1,
                     patch: None,
-                    sources: Vec::new(),
                     artifacts: vec![artifact],
                 });
                 Ok(format!("{sha1} added to {mod_name:?} as a new version"))
@@ -831,7 +712,6 @@ impl AnyGame {
                         date: None,
                         base_sha1: None,
                         patch: None,
-                        sources: Vec::new(),
                         artifacts: vec![artifact],
                     }),
                 }
@@ -841,18 +721,17 @@ impl AnyGame {
     }
 
     /// Drop a release that holds nothing — a phantom left by re-filing its
-    /// only dump. Refuses while it still carries dumps or sources, so this
-    /// can never quietly discard evidence.
-    pub fn remove_empty_release(&mut self, index: usize) -> Result<(), String> {
+    /// only dump. Refuses while it still carries dumps unless the curator
+    /// explicitly discards them, so evidence never vanishes quietly.
+    pub fn remove_release(&mut self, index: usize, discard_dumps: bool) -> Result<(), String> {
         common!(self, g => {
             let Some(release) = g.releases.get(index) else {
                 return Err(format!("no release {index}"));
             };
-            if !release.artifacts.is_empty() || !release.sources.is_empty() {
+            if !discard_dumps && !release.artifacts.is_empty() {
                 return Err(format!(
-                    "release {index} still holds {} dump(s) and {} source(s)",
-                    release.artifacts.len(),
-                    release.sources.len()
+                    "release {index} still holds {} dump(s); pass discard_dumps to drop them",
+                    release.artifacts.len()
                 ));
             }
             g.releases.remove(index);
@@ -1089,7 +968,6 @@ fn split_hack_from<P: Platform>(
                 publisher: None,
                 status: release.status,
                 hardware: release.hardware.clone(),
-                sources: Vec::new(),
                 artifacts: vec![artifact],
             }],
         });
@@ -1128,7 +1006,6 @@ fn split_release_from<P: Platform>(
             publisher,
             status,
             hardware,
-            sources: Vec::new(),
             artifacts: vec![artifact],
         });
         return true;
@@ -1136,8 +1013,8 @@ fn split_release_from<P: Platform>(
     false
 }
 
-/// Move `sha1` into an existing release; releases left with neither artifacts
-/// nor sources stopped describing anything and are pruned.
+/// Move `sha1` into an existing release; releases left with no artifacts
+/// stopped describing anything and are pruned.
 fn move_artifact_in<P: Platform>(
     source: &mut Game<P>,
     sha1: &str,
@@ -1169,8 +1046,7 @@ fn move_artifact_in<P: Platform>(
         .expect("found above");
     let artifact = source.releases[from].artifacts.remove(pos);
     source.releases[to_index].artifacts.push(artifact);
-    let emptied =
-        source.releases[from].artifacts.is_empty() && source.releases[from].sources.is_empty();
+    let emptied = source.releases[from].artifacts.is_empty();
     if emptied {
         source.releases.remove(from);
     }
@@ -1196,7 +1072,7 @@ fn attach_mod<P: Platform>(
             continue;
         };
         let artifact = release.artifacts.remove(at);
-        let emptied = release.artifacts.is_empty() && release.sources.is_empty();
+        let emptied = release.artifacts.is_empty();
         source.mods.push(Mod {
             name,
             category,
@@ -1216,7 +1092,6 @@ fn attach_mod<P: Platform>(
                 date: None,
                 base_sha1,
                 patch: None,
-                sources: Vec::new(),
                 artifacts: vec![artifact],
             }],
         });
@@ -1230,9 +1105,19 @@ fn attach_mod<P: Platform>(
     false
 }
 
-/// Move `from`'s releases and mods into `into`, skipping dumps already held
-/// and releases those dumps were the whole of. Returns what actually landed.
+/// Move `from`'s releases, mods and curated stamps into `into`, skipping dumps
+/// already held and releases those dumps were the whole of. Returns what landed.
 fn absorb_into<P: Platform>(into: &mut Game<P>, from: Game<P>, held: &[String]) -> (usize, usize) {
+    for stamp in from.curated {
+        match into.curated.iter_mut().find(|c| c.by == stamp.by) {
+            Some(existing) => {
+                if stamp.date > existing.date {
+                    *existing = stamp;
+                }
+            }
+            None => into.curated.push(stamp),
+        }
+    }
     let mut releases = 0;
     for mut release in from.releases {
         let had_artifacts = !release.artifacts.is_empty();
@@ -1262,7 +1147,8 @@ pub struct ReleaseEdits {
     pub status: Option<ReleaseStatus>,
     pub title: Option<String>,
     pub label: Option<String>,
-    pub date: Option<missingno_gamedb::ReleaseDate>,
+    /// Outer None leaves the date; Some(None) clears it (an empty-string edit).
+    pub date: Option<Option<missingno_gamedb::ReleaseDate>>,
     pub publisher: Option<String>,
     pub regions: Option<Vec<Region>>,
 }
@@ -1382,7 +1268,11 @@ impl Db {
             }
         }
         // Stable order so slugs stay put between scans.
-        let mut roms: Vec<(&String, &PathBuf)> = index.by_sha1.iter().collect();
+        let mut roms: Vec<(&String, &PathBuf)> = index
+            .by_sha1
+            .iter()
+            .map(|(sha1, rom)| (sha1, &rom.path))
+            .collect();
         roms.sort_by(|a, b| a.1.cmp(b.1));
         let mut added = 0;
         for (sha1, path) in roms {
@@ -1440,12 +1330,10 @@ impl Db {
                     publisher: None,
                     status: ReleaseStatus::Released,
                     hardware: Default::default(),
-                    sources: Vec::new(),
                     artifacts: vec![missingno_gamedb::Artifact {
                         sha1: parsed,
                         label: None,
                         size,
-                        verified: Vec::new(),
                     }],
                 }],
             };
@@ -1515,6 +1403,10 @@ impl Db {
         match base_override {
             Some(base) => {
                 let base = base.to_ascii_lowercase();
+                // An explicit "unknown" beats forcing a guessed derivation.
+                if base == "none" {
+                    return Ok(None);
+                }
                 if base == hack_sha1 {
                     return Err("base_sha1 is the hack itself".to_owned());
                 }
@@ -1793,7 +1685,7 @@ mod link_tests {
     #[test]
     fn upsert_link_is_idempotent_and_updates() {
         let game = Game::<GameBoy>::from_ron(
-            r#"(title: "T", releases: [(sources: [Download(url: "x")])])"#,
+            r#"(title: "T", releases: [(artifacts: [(sha1: "0123456789abcdef0123456789abcdef01234567")])])"#,
         )
         .unwrap();
         let mut any = AnyGame::Gb(game);
@@ -2163,10 +2055,11 @@ mod phantom_release_tests {
         ))
         .unwrap();
         let mut game = AnyGame::Gb(game);
-        assert!(game.remove_empty_release(0).unwrap_err().contains("holds"));
-        assert!(game.remove_empty_release(1).is_ok());
-        assert_eq!(game.release_lines().len(), 1);
-        assert!(game.remove_empty_release(9).is_err());
+        assert!(game.remove_release(0, false).unwrap_err().contains("holds"));
+        assert!(game.remove_release(0, true).is_ok());
+        assert!(game.remove_release(0, false).is_ok());
+        assert_eq!(game.release_lines().len(), 0);
+        assert!(game.remove_release(9, false).is_err());
     }
 }
 
@@ -2229,6 +2122,30 @@ mod merge_tests {
     }
 
     #[test]
+    fn merge_carries_the_absorbed_entrys_curated_stamps() {
+        let (_dir, mut db) = db_with(&[
+            (
+                "original",
+                &format!("(title: \"T\", releases: [(artifacts: [(sha1: \"{A}\")])])"),
+            ),
+            (
+                "reissue",
+                &format!(
+                    "(title: \"T2\", curated: [(by: \"a\", date: \"2026-07-21\", recommended: true)],\
+                      releases: [(artifacts: [(sha1: \"{B}\")])])"
+                ),
+            ),
+        ]);
+        let (original, reissue) = (index_of(&db, "original"), index_of(&db, "reissue"));
+        db.merge_entry(original, reissue).unwrap();
+
+        let original = index_of(&db, "original");
+        // The vouch follows the game into the surviving entry.
+        assert_eq!(db.entries[original].game.curations().len(), 1);
+        assert_eq!(db.entries[original].game.curations()[0].by, "a");
+    }
+
+    #[test]
     fn merge_drops_dumps_the_target_already_holds() {
         let (_dir, mut db) = db_with(&[
             (
@@ -2267,50 +2184,6 @@ mod merge_tests {
         db.merge_entry(keeper, absorbed).unwrap();
         let keeper = index_of(&db, "keeper");
         assert_eq!(db.entries[keeper].game.artifact_sha1s(), vec![A, B]);
-    }
-}
-
-#[cfg(test)]
-mod verification_tests {
-    use super::*;
-    use missingno_gamedb::VerificationMethod;
-
-    #[test]
-    fn signature_evidence_is_idempotent_and_preserves_curations() {
-        let game = Game::<GameBoy>::from_ron(
-            r#"(
-    title: "T",
-    curated: [(by: "andrew", date: "2026-07-21", recommended: true)],
-    releases: [(artifacts: [(sha1: "0123456789abcdef0123456789abcdef01234567")])],
-)"#,
-        )
-        .unwrap();
-        let mut any = AnyGame::Gb(game);
-        assert!(any.record_signature(
-            "0123456789abcdef0123456789abcdef01234567",
-            "Hasheous",
-            "T (1983)(Someone)(NTSC)"
-        ));
-        // Same evidence again: unchanged, no duplicate.
-        assert!(!any.record_signature(
-            "0123456789abcdef0123456789abcdef01234567",
-            "Hasheous",
-            "T (1983)(Someone)(NTSC)"
-        ));
-        // A different answer from the same database replaces, not stacks.
-        assert!(any.record_signature(
-            "0123456789abcdef0123456789abcdef01234567",
-            "Hasheous",
-            "T (1983)(Someone)(PAL)"
-        ));
-        let AnyGame::Gb(g) = &any else { unreachable!() };
-        let artifact = &g.releases[0].artifacts[0];
-        assert_eq!(artifact.verified.len(), 1);
-        assert!(matches!(
-            &artifact.verified[0].method,
-            VerificationMethod::Signature { entry, .. } if entry.ends_with("(PAL)")
-        ));
-        assert_eq!(g.curated.len(), 1, "verification never clears curations");
     }
 }
 
