@@ -11,7 +11,6 @@ use crate::app::{
     self,
     console::ConsoleColors,
     debugger::{self},
-    screen::iced_color,
     ui::{
         fonts,
         icons::{self, Icon},
@@ -22,6 +21,7 @@ use crate::app::{
 use missingno_core::inspect;
 use missingno_core::system::RunningStatus;
 use missingno_gb::ppu::types::palette::{Palette, PaletteIndex, PaletteMap};
+use missingno_iced::iced_color;
 
 /// Monospace text size for register labels and values.
 const REG: f32 = 14.0;

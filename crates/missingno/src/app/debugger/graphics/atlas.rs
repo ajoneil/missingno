@@ -21,11 +21,11 @@ use crate::app::{
         panes::{self, pane, running_placeholder, title_bar, title_bar_with_detail},
         sidebar::help_tooltip,
     },
-    texture_renderer::TextureRenderer,
     ui::{fonts, palette, sizes::s},
 };
 use missingno_core::graphics::{AtlasRegion, GraphicsView, PaletteSet, TileAtlas};
 use missingno_gb::ppu::types::palette::{Palette, PaletteIndex};
+use missingno_iced::TextureRenderer;
 
 /// Display scale of the atlas texture.
 const SCALE: u32 = 2;

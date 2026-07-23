@@ -17,7 +17,6 @@ use crate::app::{
         graphics::{flipped, stacked_tiles},
         panes::{self, pane, running_placeholder, title_bar_with_detail},
     },
-    texture_renderer::TextureRenderer,
     ui::{
         fonts,
         icons::{self, Icon},
@@ -27,6 +26,7 @@ use crate::app::{
 };
 use missingno_core::graphics::{GraphicsView, Object, ObjectTable, TileAtlas};
 use missingno_gb::ppu::types::palette::PaletteIndex;
+use missingno_iced::TextureRenderer;
 
 /// Thumbnail pixels per source pixel.
 const THUMB_SCALE: u32 = 5;

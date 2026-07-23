@@ -13,7 +13,6 @@ use crate::app::system::Platform;
 use crate::app::{
     self,
     console::ConsoleColors,
-    screen::{Frame, ScreenView},
     ui::{
         fonts, icons, palette,
         sizes::{s, xs},
@@ -25,6 +24,7 @@ use missingno_core::symbols::{Symbol, SymbolTable};
 use missingno_core::system::RunningStatus;
 use missingno_core::waveform::ChannelWave;
 use missingno_gb::ppu::types::palette::PaletteChoice;
+use missingno_iced::{Frame, ScreenView};
 
 use disassembly::DisasmReadout;
 use inspect::DebugView;
