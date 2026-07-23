@@ -73,21 +73,20 @@ impl AnyGame {
         common!(self, g => g.kind = kind)
     }
 
-    pub fn curations(&self) -> &[missingno_gamedb::Curation] {
-        common!(self, g => &g.curated)
+    pub fn curated(&self) -> bool {
+        common!(self, g => g.curated)
     }
 
-    /// Add or refresh one curator's endorsement.
+    pub fn recommended_by(&self) -> &[String] {
+        common!(self, g => &g.recommended_by)
+    }
+
+    /// Mark reviewed; a recommendation adds the curator's identifier once.
     pub fn stamp_curation(&mut self, by: &str, recommended: bool) {
-        let stamp = missingno_gamedb::Curation {
-            by: by.to_owned(),
-            date: Db::today(),
-            recommended,
-        };
         common!(self, g => {
-            match g.curated.iter_mut().find(|c| c.by == stamp.by) {
-                Some(existing) => *existing = stamp.clone(),
-                None => g.curated.push(stamp.clone()),
+            g.curated = true;
+            if recommended && !g.recommended_by.iter().any(|id| id == by) {
+                g.recommended_by.push(by.to_owned());
             }
         });
     }
@@ -345,21 +344,12 @@ impl AnyGame {
             .mods
             .iter()
             .map(|m| {
-                let curations = if m.curated.is_empty() {
+                let curations = if !m.curated {
                     " · unreviewed".to_owned()
+                } else if m.recommended_by.is_empty() {
+                    " · curated".to_owned()
                 } else {
-                    format!(
-                        " · curated by {}",
-                        m.curated
-                            .iter()
-                            .map(|c| format!(
-                                "{}{}",
-                                c.by,
-                                if c.recommended { " ★" } else { "" }
-                            ))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
+                    format!(" · curated · ★ {}", m.recommended_by.join(", "))
                 };
                 (
                     format!(
@@ -389,16 +379,11 @@ impl AnyGame {
 
     /// Endorse one attached mod, independently of the game.
     pub fn stamp_mod_curation(&mut self, index: usize, by: &str, recommended: bool) -> bool {
-        let stamp = missingno_gamedb::Curation {
-            by: by.to_owned(),
-            date: Db::today(),
-            recommended,
-        };
         common!(self, g => {
             let Some(m) = g.mods.get_mut(index) else { return false };
-            match m.curated.iter_mut().find(|c| c.by == stamp.by) {
-                Some(existing) => *existing = stamp.clone(),
-                None => m.curated.push(stamp.clone()),
+            m.curated = true;
+            if recommended && !m.recommended_by.iter().any(|id| id == by) {
+                m.recommended_by.push(by.to_owned());
             }
             true
         })
@@ -959,7 +944,9 @@ fn split_hack_from<P: Platform>(
                 patch: None,
             }),
             mods: Vec::new(),
-            curated: Vec::new(),
+            curated: false,
+            adult: false,
+            recommended_by: Vec::new(),
             releases: vec![Release {
                 title: None,
                 label: None,
@@ -1077,7 +1064,8 @@ fn attach_mod<P: Platform>(
             name,
             category,
             author: None,
-            curated: Vec::new(),
+            curated: false,
+            recommended_by: Vec::new(),
             links: homepage
                 .map(|url| {
                     vec![Link {
@@ -1105,19 +1093,16 @@ fn attach_mod<P: Platform>(
     false
 }
 
-/// Move `from`'s releases, mods and curated stamps into `into`, skipping dumps
+/// Move `from`'s releases, mods and review state into `into`, skipping dumps
 /// already held and releases those dumps were the whole of. Returns what landed.
 fn absorb_into<P: Platform>(into: &mut Game<P>, from: Game<P>, held: &[String]) -> (usize, usize) {
-    for stamp in from.curated {
-        match into.curated.iter_mut().find(|c| c.by == stamp.by) {
-            Some(existing) => {
-                if stamp.date > existing.date {
-                    *existing = stamp;
-                }
-            }
-            None => into.curated.push(stamp),
+    into.curated |= from.curated;
+    for id in from.recommended_by {
+        if !into.recommended_by.contains(&id) {
+            into.recommended_by.push(id);
         }
     }
+    into.adult |= from.adult;
     let mut releases = 0;
     for mut release in from.releases {
         let had_artifacts = !release.artifacts.is_empty();
@@ -1222,7 +1207,7 @@ impl Db {
     pub fn backlog_count(&self, tree: TreeId) -> usize {
         self.entries
             .iter()
-            .filter(|e| e.tree == tree && e.game.curations().is_empty())
+            .filter(|e| e.tree == tree && !e.game.curated())
             .count()
     }
 
@@ -1321,7 +1306,9 @@ impl Db {
                 screenshots: Vec::new(),
                 mod_of: None,
                 mods: Vec::new(),
-                curated: Vec::new(),
+                curated: false,
+                adult: false,
+                recommended_by: Vec::new(),
                 releases: vec![Release::<Vcs> {
                     title: None,
                     label: None,
@@ -2091,7 +2078,7 @@ mod merge_tests {
             (
                 "keeper",
                 &format!(
-                    "(title: \"T\", curated: [(by: \"a\", date: \"2026-07-21\", recommended: true)],\
+                    "(title: \"T\", curated: true, recommended_by: [\"a\"],\
                       releases: [(artifacts: [(sha1: \"{A}\")])])"
                 ),
             ),
@@ -2117,7 +2104,7 @@ mod merge_tests {
         let keeper = index_of(&db, "keeper");
         assert_eq!(db.entries[keeper].game.artifact_sha1s(), vec![A, B]);
         // Editing at the curator's request preserves their endorsement.
-        assert_eq!(db.entries[keeper].game.curations().len(), 1);
+        assert!(db.entries[keeper].game.curated());
         assert_eq!(db.flags.flags[0].subject, vec!["gb/keeper".to_owned()]);
     }
 
@@ -2131,7 +2118,7 @@ mod merge_tests {
             (
                 "reissue",
                 &format!(
-                    "(title: \"T2\", curated: [(by: \"a\", date: \"2026-07-21\", recommended: true)],\
+                    "(title: \"T2\", curated: true, recommended_by: [\"a\"],\
                       releases: [(artifacts: [(sha1: \"{B}\")])])"
                 ),
             ),
@@ -2141,8 +2128,8 @@ mod merge_tests {
 
         let original = index_of(&db, "original");
         // The vouch follows the game into the surviving entry.
-        assert_eq!(db.entries[original].game.curations().len(), 1);
-        assert_eq!(db.entries[original].game.curations()[0].by, "a");
+        assert!(db.entries[original].game.curated());
+        assert_eq!(db.entries[original].game.recommended_by(), ["a"]);
     }
 
     #[test]
@@ -2197,7 +2184,7 @@ mod release_surgery_tests {
             Game::from_ron(
                 r#"(
     title: "Pitfall!",
-    curated: [(by: "andrew", date: "2026-07-21")],
+    curated: true,
     releases: [
         (
             regions: [Usa],

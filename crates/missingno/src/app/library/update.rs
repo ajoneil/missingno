@@ -585,9 +585,9 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
             let _ = std::fs::create_dir_all(&game_dir);
 
             // Get filename from source
-            let filename = match manifest.homebrew_source() {
-                Some(missingno_gamedb::Source::HomebrewHub { filename, .. }) => filename.clone(),
-                _ => format!(
+            let filename = match manifest.homebrew_hub_ref() {
+                Some((_, filename)) => filename,
+                None => format!(
                     "{}.{}",
                     title.to_lowercase().replace(' ', "-"),
                     system::gb::DEFAULT_ROM_EXTENSION
@@ -610,10 +610,7 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
             entry.publisher = manifest.developer.clone();
             super::save_entry(&game_dir, &entry);
             // Use cached cover bytes from the browser if available
-            let slug = match manifest.homebrew_source() {
-                Some(missingno_gamedb::Source::HomebrewHub { slug, .. }) => Some(slug.clone()),
-                _ => None,
-            };
+            let slug = manifest.homebrew_hub_ref().map(|(slug, _)| slug);
             let cached_cover = slug.as_ref().and_then(|s| {
                 if let Screen::HomebrewBrowser { state } = &app.screen {
                     state.cover_bytes.get(s).cloned()

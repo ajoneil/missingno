@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use missingno_gamedb::{
     Artifact, Game, GameBoy, GameBoyColor, GameKind, Link, Platform as DbPlatform, ReleaseStatus,
-    Source, TvFormat, Vcs,
+    TvFormat, Vcs,
 };
 
 use crate::app::system::TvStandard;
@@ -63,14 +63,18 @@ pub struct CatalogueRelease {
     /// Cartridge board code (VCS), e.g. "F8", "F6SC" — resolves the bank
     /// scheme the size heuristic can't tell apart.
     pub cart_type: Option<String>,
-    pub sources: Vec<Source>,
     pub artifacts: Vec<Artifact>,
 }
 
 impl CatalogueEntry {
-    /// Whether this game can be obtained from a listed source.
+    /// Whether this game can be obtained from a listed download link.
     pub fn is_homebrew(&self) -> bool {
-        self.releases.iter().any(|r| !r.sources.is_empty())
+        self.links.iter().any(|l| {
+            matches!(
+                l.link_type,
+                missingno_gamedb::LinkType::Download | missingno_gamedb::LinkType::DownloadPage
+            )
+        })
     }
 
     /// Release date of the first release (homebrew games have exactly one).
@@ -78,12 +82,13 @@ impl CatalogueEntry {
         self.releases.first().and_then(|r| r.date.as_deref())
     }
 
-    /// The Homebrew Hub source, if any release has one.
-    pub fn homebrew_source(&self) -> Option<&Source> {
-        self.releases
-            .iter()
-            .flat_map(|r| &r.sources)
-            .find(|s| matches!(s, Source::HomebrewHub { .. }))
+    /// The Homebrew Hub (slug, filename), recovered from the direct ROM link.
+    pub fn homebrew_hub_ref(&self) -> Option<(String, String)> {
+        self.links.iter().find_map(|l| {
+            let rest = l.url.strip_prefix(GBDEV_ENTRIES)?.strip_prefix('/')?;
+            let (slug, filename) = rest.split_once('/')?;
+            Some((slug.to_owned(), filename.to_owned()))
+        })
     }
 
     /// Cover image URL: explicit cover, else first screenshot.
@@ -94,18 +99,12 @@ impl CatalogueEntry {
             .cloned()
     }
 
-    /// Direct ROM download URL, in source preference order.
+    /// Direct ROM download URL: the first `Download` link.
     pub fn download_url(&self) -> Option<String> {
-        self.releases
+        self.links
             .iter()
-            .flat_map(|r| &r.sources)
-            .find_map(|source| match source {
-                Source::HomebrewHub { slug, filename } => {
-                    Some(format!("{GBDEV_ENTRIES}/{slug}/{filename}"))
-                }
-                Source::Download { url } => Some(url.clone()),
-                Source::Itch { .. } | Source::SteamBundled { .. } => None,
-            })
+            .find(|l| l.link_type == missingno_gamedb::LinkType::Download)
+            .map(|l| l.url.clone())
     }
 }
 
@@ -157,7 +156,6 @@ fn entry_from<P: DbPlatform>(
                     status: release.status,
                     tv_format,
                     cart_type,
-                    sources: release.sources,
                     artifacts: release.artifacts,
                 }
             })

@@ -41,7 +41,7 @@ struct Args {
     #[arg(long)]
     no_remote: bool,
 
-    /// Name recorded on curation stamps (default: git user.name).
+    /// Curator identifier for recommendations (default: git user.name, first word lowercased).
     #[arg(long)]
     curator: Option<String>,
 }
@@ -70,12 +70,18 @@ pub fn main() -> iced::Result {
     let rom_dir = args.rom_dir.clone();
     let collection_dir = args.collection_dir.clone();
     let remote = !args.no_remote;
+    // An identifier ("andy"), not a display name; git's name shrinks to one.
     let curator_name = args.curator.clone().unwrap_or_else(|| {
         std::process::Command::new("git")
             .args(["config", "user.name"])
             .output()
             .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+            .and_then(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .split_whitespace()
+                    .next()
+                    .map(str::to_lowercase)
+            })
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "unknown".to_owned())
     });
@@ -327,7 +333,7 @@ impl Curator {
             .enumerate()
             .filter(|(_, e)| self.filter_tree.is_none_or(|t| e.tree == t))
             .filter(|(_, e)| !self.only_new || e.synthetic)
-            .filter(|(_, e)| !self.only_backlog || e.game.curations().is_empty())
+            .filter(|(_, e)| !self.only_backlog || !e.game.curated())
             .filter(|(_, e)| {
                 !self.only_flagged || db.flags.open().any(|f| f.subject.contains(&e.key()))
             })
@@ -1240,7 +1246,7 @@ impl Curator {
                     if tree.is_some_and(|t| t != e.tree.dir()) {
                         continue;
                     }
-                    if backlog_only && !e.game.curations().is_empty() {
+                    if backlog_only && e.game.curated() {
                         continue;
                     }
                     if !e.game.title().to_lowercase().contains(&query) && !e.slug.contains(&query) {
@@ -1250,11 +1256,7 @@ impl Curator {
                         "{} — {}{}",
                         e.key(),
                         e.game.title(),
-                        if e.game.curations().is_empty() {
-                            ""
-                        } else {
-                            " [curated]"
-                        }
+                        if !e.game.curated() { "" } else { " [curated]" }
                     ));
                     if lines.len() >= limit {
                         break;
@@ -1497,7 +1499,7 @@ impl Curator {
                 let lines: Vec<String> = db
                     .entries
                     .iter()
-                    .filter(|e| !backlog_only || e.game.curations().is_empty())
+                    .filter(|e| !backlog_only || !e.game.curated())
                     .filter(|e| {
                         e.game
                             .artifact_sha1s()
@@ -1951,10 +1953,10 @@ impl Curator {
                             "{} — {}{}",
                             other.key(),
                             other.game.title(),
-                            if other.game.curations().is_empty() {
-                                ""
-                            } else {
+                            if other.game.curated() {
                                 " [curated]"
+                            } else {
+                                ""
                             }
                         )
                     })
@@ -2158,7 +2160,11 @@ impl Curator {
         }
         // Session-time Hasheous answer for this hash, shown but never stored.
         if let Some(mark) = self.session_marks.get(sha1) {
-            let compact = if mark.starts_with('✓') { "✓" } else { mark.as_str() };
+            let compact = if mark.starts_with('✓') {
+                "✓"
+            } else {
+                mark.as_str()
+            };
             line = line.push(text(compact.to_owned()).size(11).style(text::secondary));
         }
         line = line.push(Space::new().width(Length::Fill));
@@ -2225,18 +2231,14 @@ impl Curator {
                     top = top.push(text(format!("· {} in queue", self.queue.len())).size(13));
                 }
                 top = top.push(Space::new().width(Length::Fill));
-                if let Some(c) = entry.game.curations().last() {
+                if entry.game.curated() {
+                    let stars = entry.game.recommended_by().join(", ");
                     top = top.push(
-                        text(format!(
-                            "✓ curated by {} on {}{}",
-                            c.by,
-                            c.date,
-                            if c.recommended {
-                                " ★ recommended"
-                            } else {
-                                ""
-                            },
-                        ))
+                        text(if stars.is_empty() {
+                            "✓ curated".to_owned()
+                        } else {
+                            format!("✓ curated · ★ {stars}")
+                        })
                         .size(13),
                     );
                     if !self.queue.is_empty() {
@@ -2287,9 +2289,9 @@ impl Curator {
             let entry = &db.entries[i];
             let marker = if entry.synthetic {
                 "◆ "
-            } else if entry.game.curations().is_empty() {
+            } else if !entry.game.curated() {
                 ""
-            } else if entry.game.curations().iter().any(|c| c.recommended) {
+            } else if !entry.game.recommended_by().is_empty() {
                 "★ "
             } else {
                 "✓ "
