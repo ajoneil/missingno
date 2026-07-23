@@ -2387,7 +2387,21 @@ impl Curator {
 
                 editor = editor.push(text("Releases").size(16));
                 for (r, line) in entry.game.release_lines().into_iter().enumerate() {
-                    let mut rel = column![text(line).size(13)].spacing(4);
+                    let mut header = row![].spacing(6).align_y(iced::Alignment::Center);
+                    if let Some(title) = line.title {
+                        header = header.push(text(title).size(13).font(iced::Font {
+                            weight: iced::font::Weight::Bold,
+                            ..iced::Font::DEFAULT
+                        }));
+                    }
+                    if let Some(label) = line.label {
+                        header =
+                            header.push(text(format!("({label})")).size(13).style(text::secondary));
+                    }
+                    if !line.detail.is_empty() {
+                        header = header.push(text(line.detail).size(13));
+                    }
+                    let mut rel = column![header].spacing(4);
                     let publisher = entry.game.release_publisher(r);
                     if !publisher.is_empty() {
                         rel = rel.push(text(format!("Publisher: {publisher}")).size(12));
