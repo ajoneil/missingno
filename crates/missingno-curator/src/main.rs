@@ -181,10 +181,6 @@ enum Message {
         results: Vec<(String, verify::SigResult)>,
         reply: std::sync::mpsc::Sender<serde_json::Value>,
     },
-    CurateMod {
-        index: usize,
-        recommend: bool,
-    },
     Enriched(String, Result<Option<verify::HasheousHit>, String>),
     CoverLoaded(String, Option<iced::widget::image::Handle>),
     ConfirmAndNext,
@@ -662,18 +658,6 @@ impl Curator {
                     self.cover_failed.insert(url);
                 }
             },
-            Message::CurateMod { index, recommend } => {
-                if let (Ok(db), Some(i)) = (&mut self.db, self.selected) {
-                    let by = self.curator_name.clone();
-                    if db.entries[i].game.stamp_mod_curation(index, &by, recommend) {
-                        db.entries[i].dirty = true;
-                        match db.write_entry(i) {
-                            Ok(()) => self.status = "mod endorsed".to_owned(),
-                            Err(e) => self.status = format!("write failed: {e}"),
-                        }
-                    }
-                }
-            }
             Message::ArtifactsVerified {
                 key,
                 results,
@@ -2420,21 +2404,8 @@ impl Curator {
                 if !mods.is_empty() {
                     editor = editor.push(text("Mods").size(16));
                     for (index, (line, links)) in mods.into_iter().enumerate() {
-                        editor = editor.push(
-                            row![
-                                text(format!("• {line}")).size(13).width(Length::Fill),
-                                button(text("✓").size(12)).on_press(Message::CurateMod {
-                                    index,
-                                    recommend: false,
-                                }),
-                                button(text("★").size(12)).on_press(Message::CurateMod {
-                                    index,
-                                    recommend: true,
-                                }),
-                            ]
-                            .spacing(6)
-                            .align_y(iced::Alignment::Center),
-                        );
+                        editor =
+                            editor.push(text(format!("• {line}")).size(13).width(Length::Fill));
                         for (name, url) in links {
                             editor = editor.push(
                                 row![

@@ -394,23 +394,6 @@ impl AnyGame {
         common!(self, g => g.mods.iter().map(|m| m.name.clone()).collect())
     }
 
-    /// Endorse one attached mod, independently of the game.
-    pub fn stamp_mod_curation(&mut self, index: usize, by: &str, recommended: bool) -> bool {
-        let stamp = missingno_gamedb::Curation {
-            by: by.to_owned(),
-            date: Db::today(),
-            recommended,
-        };
-        common!(self, g => {
-            let Some(m) = g.mods.get_mut(index) else { return false };
-            match m.curated.iter_mut().find(|c| c.by == stamp.by) {
-                Some(existing) => *existing = stamp.clone(),
-                None => m.curated.push(stamp.clone()),
-            }
-            true
-        })
-    }
-
     pub fn release_publisher(&self, index: usize) -> String {
         common!(self, g => g
             .releases
