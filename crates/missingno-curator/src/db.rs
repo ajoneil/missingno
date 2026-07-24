@@ -4,9 +4,9 @@
 use std::{fs, io, path::PathBuf};
 
 use missingno_gamedb::{
-    Controller, Date, Defect, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Link, LinkType, Mod,
-    ModCategory, ModOf, ModRelease, Platform, Region, Release, ReleaseStatus, Sha1, Slug, Tree,
-    TvFormat, Vcs,
+    Controller, Date, Defect, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Language, Link,
+    LinkType, Mod, ModCategory, ModOf, ModRelease, Platform, Region, Release, ReleaseStatus, Sha1,
+    Slug, Tree, TvFormat, Vcs,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -83,6 +83,10 @@ impl AnyGame {
 
     pub fn curated(&self) -> bool {
         common!(self, g => g.curated)
+    }
+
+    pub fn adult(&self) -> bool {
+        common!(self, g => g.adult)
     }
 
     pub fn recommended_by(&self) -> &[String] {
@@ -271,16 +275,24 @@ impl AnyGame {
         })
     }
 
-    pub fn upsert_link(&mut self, name: &str, url: &str, link_type: LinkType) {
+    pub fn upsert_link(
+        &mut self,
+        name: &str,
+        url: &str,
+        link_type: LinkType,
+        languages: Vec<Language>,
+    ) {
         common!(self, g => {
             if let Some(link) = g.links.iter_mut().find(|l| l.name == name) {
                 link.url = url.to_owned();
                 link.link_type = link_type;
+                link.languages = languages.clone();
             } else {
                 g.links.push(Link {
                     name: name.to_owned(),
                     url: url.to_owned(),
                     link_type,
+                    languages: languages.clone(),
                 });
             }
         });
@@ -288,14 +300,20 @@ impl AnyGame {
 
     /// Convenience alias for the one link every commercial game tends to have.
     pub fn set_wikipedia(&mut self, url: &str) {
-        self.upsert_link("Wikipedia", url, LinkType::Wiki);
+        self.upsert_link("Wikipedia", url, LinkType::Wiki, Vec::new());
     }
 
-    pub fn links(&self) -> Vec<(String, String)> {
+    /// Each link as (name, url, languages) — languages joined for display, empty
+    /// when the link is English (the default).
+    pub fn links(&self) -> Vec<(String, String, String)> {
         common!(self, g => g
             .links
             .iter()
-            .map(|l| (l.name.clone(), l.url.clone()))
+            .map(|l| (
+                l.name.clone(),
+                l.url.clone(),
+                l.languages.iter().map(|lang| lang.label()).collect::<Vec<_>>().join(", "),
+            ))
             .collect())
     }
 
@@ -824,11 +842,32 @@ pub fn parse_link_type(value: &str) -> Result<LinkType, String> {
         "TechnicalReference" => LinkType::TechnicalReference,
         "Guide" => LinkType::Guide,
         "Community" => LinkType::Community,
+        "Store" => LinkType::Store,
         "DownloadPage" => LinkType::DownloadPage,
         "Download" => LinkType::Download,
         other => {
             return Err(format!(
-                "unknown link_type {other:?}; expected Wiki, Manual, Source, Speedrun,                  UnusedContent, TechnicalReference, Guide, Community, DownloadPage, or Download"
+                "unknown link_type {other:?}; expected Wiki, Manual, Source, Speedrun,                  UnusedContent, TechnicalReference, Guide, Community, Store, DownloadPage, or Download"
+            ));
+        }
+    })
+}
+
+/// Parse a language name for a link's `languages` list.
+pub fn parse_language(value: &str) -> Result<Language, String> {
+    Ok(match value {
+        "English" => Language::English,
+        "French" => Language::French,
+        "German" => Language::German,
+        "Spanish" => Language::Spanish,
+        "Italian" => Language::Italian,
+        "Portuguese" => Language::Portuguese,
+        "Dutch" => Language::Dutch,
+        "Japanese" => Language::Japanese,
+        "Swedish" => Language::Swedish,
+        other => {
+            return Err(format!(
+                "unknown language {other:?}; expected English, French, German, Spanish, Italian, Portuguese, Dutch, Japanese, or Swedish"
             ));
         }
     })
@@ -987,6 +1026,7 @@ fn split_hack_from<P: Platform>(
                         name: "Homepage".to_owned(),
                         url,
                         link_type: LinkType::Community,
+                        languages: Vec::new(),
                     }]
                 })
                 .unwrap_or_default(),
@@ -1126,6 +1166,7 @@ fn attach_mod<P: Platform>(
                         name: "Homepage".to_owned(),
                         url,
                         link_type: LinkType::Community,
+                        languages: Vec::new(),
                     }]
                 })
                 .unwrap_or_default(),
@@ -1711,17 +1752,32 @@ mod link_tests {
         )
         .unwrap();
         let mut any = AnyGame::Gb(game);
-        any.upsert_link("AtariAge", "https://atariage.com/a", LinkType::Community);
-        any.upsert_link("AtariAge", "https://atariage.com/a", LinkType::Community);
+        any.upsert_link(
+            "AtariAge",
+            "https://atariage.com/a",
+            LinkType::Community,
+            Vec::new(),
+        );
+        any.upsert_link(
+            "AtariAge",
+            "https://atariage.com/a",
+            LinkType::Community,
+            Vec::new(),
+        );
         assert_eq!(any.links().len(), 1);
         any.upsert_link(
             "AtariAge",
             "https://atariage.com/b",
             LinkType::TechnicalReference,
+            Vec::new(),
         );
         assert_eq!(
             any.links(),
-            vec![("AtariAge".to_owned(), "https://atariage.com/b".to_owned())]
+            vec![(
+                "AtariAge".to_owned(),
+                "https://atariage.com/b".to_owned(),
+                String::new()
+            )]
         );
         any.set_wikipedia("https://en.wikipedia.org/wiki/T");
         any.set_wikipedia("https://en.wikipedia.org/wiki/T");

@@ -1325,12 +1325,27 @@ impl Curator {
                         else {
                             return error_result(format!("link {name:?} needs a link_type"));
                         };
-                        match db::parse_link_type(kind) {
-                            Ok(link_type) => {
-                                staged_links.push((name.to_owned(), url.to_owned(), link_type))
-                            }
+                        let link_type = match db::parse_link_type(kind) {
+                            Ok(link_type) => link_type,
                             Err(e) => return error_result(e),
+                        };
+                        let mut languages = Vec::new();
+                        if let Some(langs) =
+                            link.get("languages").and_then(serde_json::Value::as_array)
+                        {
+                            for lang in langs {
+                                let Some(s) = lang.as_str() else {
+                                    return error_result(format!(
+                                        "link {name:?} languages must be strings"
+                                    ));
+                                };
+                                match db::parse_language(s) {
+                                    Ok(language) => languages.push(language),
+                                    Err(e) => return error_result(e),
+                                }
+                            }
                         }
+                        staged_links.push((name.to_owned(), url.to_owned(), link_type, languages));
                     }
                 }
                 let remove_links: Vec<String> = set
@@ -1349,8 +1364,8 @@ impl Curator {
                 };
                 let entry = &mut db.entries[i];
                 let mut applied = Vec::new();
-                for (name, url, link_type) in &staged_links {
-                    entry.game.upsert_link(name, url, *link_type);
+                for (name, url, link_type, languages) in &staged_links {
+                    entry.game.upsert_link(name, url, *link_type, languages.clone());
                 }
                 if !staged_links.is_empty() {
                     applied.push("links");
@@ -1627,13 +1642,14 @@ impl Curator {
                         applied.push("author");
                     }
                     if let Some(url) = url {
-                        match m.links.iter_mut().find(|l| l.name == "Homepage") {
-                            Some(link) => link.url = url,
-                            None => m.links.push(missingno_gamedb::Link {
+                        m.links.retain(|l| l.name != "Homepage");
+                        if !url.is_empty() {
+                            m.links.push(missingno_gamedb::Link {
                                 name: "Homepage".to_owned(),
                                 url,
                                 link_type: missingno_gamedb::LinkType::Community,
-                            }),
+                                languages: Vec::new(),
+                            });
                         }
                         applied.push("url");
                     }
@@ -2152,36 +2168,6 @@ impl Curator {
             })
             .size(12),
         );
-        if !label.is_empty() {
-            // Long labels must not push the play button out of the row.
-            let shown: String = if label.chars().count() > 32 {
-                label.chars().take(30).collect::<String>() + "…"
-            } else {
-                label.to_owned()
-            };
-            line = line.push(text(shown).size(12));
-        }
-        if let Some(defect) = defect {
-            let bad = matches!(defect, missingno_gamedb::Defect::BadDump);
-            line = line.push(
-                container(text(format!("⚠ {}", defect.label())).size(11))
-                    .padding([2, 8])
-                    .style(move |theme: &Theme| {
-                        let palette = theme.extended_palette();
-                        let pair = if bad {
-                            palette.danger.strong
-                        } else {
-                            palette.secondary.strong
-                        };
-                        container::Style {
-                            background: Some(pair.color.into()),
-                            text_color: Some(pair.text),
-                            border: iced::border::rounded(4),
-                            ..Default::default()
-                        }
-                    }),
-            );
-        }
         if is_new {
             line = line.push(container(text("NEW").size(13)).padding([2, 8]).style(
                 |theme: &Theme| {
@@ -2194,15 +2180,6 @@ impl Curator {
                     }
                 },
             ));
-        }
-        // Session-time Hasheous answer for this hash, shown but never stored.
-        if let Some(mark) = self.session_marks.get(sha1) {
-            let compact = if mark.starts_with('✓') {
-                "✓"
-            } else {
-                mark.as_str()
-            };
-            line = line.push(text(compact.to_owned()).size(11).style(text::secondary));
         }
         line = line.push(Space::new().width(Length::Fill));
         if playable {
@@ -2228,6 +2205,52 @@ impl Curator {
             });
         }
         let mut rows = column![line].spacing(2);
+        // Annotations ride their own line so a label plus a defect badge never
+        // crowd the Play button off the row. A persisted defect already conveys
+        // a "defective" verify result, so the session mark is dropped there.
+        let session_mark = self
+            .session_marks
+            .get(sha1)
+            .filter(|m| !(defect.is_some() && m.contains("defective")));
+        if !label.is_empty() || defect.is_some() || session_mark.is_some() {
+            let mut ann = row![Space::new().width(Length::Fixed(16.0))]
+                .spacing(8)
+                .align_y(iced::Alignment::Center);
+            if !label.is_empty() {
+                let shown: String = if label.chars().count() > 40 {
+                    label.chars().take(38).collect::<String>() + "…"
+                } else {
+                    label.to_owned()
+                };
+                ann = ann.push(text(shown).size(12).style(text::secondary));
+            }
+            if let Some(defect) = defect {
+                let bad = matches!(defect, missingno_gamedb::Defect::BadDump);
+                ann = ann.push(
+                    container(text(format!("⚠ {}", defect.label())).size(11))
+                        .padding([2, 8])
+                        .style(move |theme: &Theme| {
+                            let palette = theme.extended_palette();
+                            let pair = if bad {
+                                palette.danger.strong
+                            } else {
+                                palette.secondary.strong
+                            };
+                            container::Style {
+                                background: Some(pair.color.into()),
+                                text_color: Some(pair.text),
+                                border: iced::border::rounded(4),
+                                ..Default::default()
+                            }
+                        }),
+                );
+            }
+            if let Some(mark) = session_mark {
+                let compact = if mark.starts_with('✓') { "✓" } else { mark.as_str() };
+                ann = ann.push(text(compact.to_owned()).size(11).style(text::secondary));
+            }
+            rows = rows.push(ann);
+        }
         if let Some(rom) = local {
             let file = rom
                 .path
@@ -2254,6 +2277,9 @@ impl Curator {
         match self.selected.and_then(|i| db.entries.get(i)) {
             Some(entry) => {
                 let mut sub = format!("{} · {:?}", entry.key(), entry.game.kind());
+                if entry.game.adult() {
+                    sub.push_str(" · 🔞 adult");
+                }
                 if entry.dirty {
                     sub.push_str(" · uncommitted");
                 }
@@ -2404,17 +2430,20 @@ impl Curator {
                 let links = entry.game.links();
                 if !links.is_empty() {
                     editor = editor.push(text("Links").size(15));
-                    for (name, url) in links {
-                        editor = editor.push(
-                            row![
-                                button(text(name).size(13))
-                                    .style(button::secondary)
-                                    .on_press(Message::OpenLink(url.clone())),
-                                text(url.clone()).size(11).style(text::secondary),
-                            ]
-                            .spacing(8)
-                            .align_y(iced::Alignment::Center),
-                        );
+                    for (name, url, languages) in links {
+                        let mut link_row = row![
+                            button(text(name).size(13))
+                                .style(button::secondary)
+                                .on_press(Message::OpenLink(url.clone())),
+                            text(url.clone()).size(11).style(text::secondary),
+                        ]
+                        .spacing(8)
+                        .align_y(iced::Alignment::Center);
+                        if !languages.is_empty() {
+                            link_row = link_row
+                                .push(text(languages).size(11).style(text::secondary));
+                        }
+                        editor = editor.push(link_row);
                     }
                 }
 
