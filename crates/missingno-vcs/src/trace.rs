@@ -13,10 +13,10 @@
 
 use std::path::Path;
 
+pub use morepork::Trigger;
 use morepork::format::write::MoreporkWriter;
 use morepork::header::{HeaderFieldDef, PixFormat, TraceHeader};
 use morepork::profile::FieldType as WireType;
-pub use morepork::{BootRom, Trigger};
 use sha2::{Digest, Sha256};
 
 use missingno_core::state::{FieldType, Provenance, StateValue, SystemStateSchema, Tier};

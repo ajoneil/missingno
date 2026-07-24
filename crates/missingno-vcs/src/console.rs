@@ -10,8 +10,7 @@ use crate::TvStandard;
 use crate::cartridge::{CartType, Cartridge, CartridgeError};
 use crate::cpu::{Bus, Cpu};
 use crate::riot::Riot;
-pub use crate::tia::Scanline;
-use crate::tia::{Tia, VISIBLE_CLOCKS};
+use crate::tia::{Scanline, Tia, VISIBLE_CLOCKS};
 
 /// One VSYNC-delimited frame. Height is whatever the kernel produced —
 /// there is no hardware frame, only the software's sync pattern.
@@ -228,11 +227,6 @@ impl Vcs {
         self.region
     }
 
-    /// The region-correct 128-colour palette for rendering this console's frames.
-    pub fn palette(&self) -> &'static [(u8, u8, u8); 128] {
-        crate::tia::palette(self.region)
-    }
-
     /// Advance one colour clock as its two half-clocks: the CPU bus access lands
     /// on the high (φ2) half, the TIA render and MOTCK on the low half.
     pub fn step_clock(&mut self) {
@@ -249,7 +243,7 @@ impl Vcs {
     fn step_half_high(&mut self) {
         self.advance_pending_writes();
         if self.tia.beam() % 3 == PHI0_GRID_PHASE {
-            self.cpu.rdy = self.tia.cpu_ready;
+            self.cpu.rdy = self.tia.cpu_ready();
             let mut bus = BoardBus {
                 tia: &mut self.tia,
                 riot: &mut self.riot,

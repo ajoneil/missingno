@@ -1,0 +1,217 @@
+//! The player objects: an 8-bit graphics pattern serialised out of each START
+//! delivery, in NUSIZ copies and 1×/2×/4× stretch, with the GRP double buffer
+//! selected by VDELP and the pattern optionally mirrored by REFP.
+
+use super::counter::{PositionCounter, SERIAL_TAIL, copy_decodes, player_pixel_clocks};
+
+/// The player START latch (decode NOR N1080 → /START N2279): one extra MOTCK
+/// edge on the serialiser tail; missiles and the ball have no such stage.
+const PLAYER_START_LATCH: u8 = 1;
+
+/// Pre-tick ring phase classes whose merged stuff previews the player
+/// serialiser (console-measured: 1× collapses one row per movement cycle,
+/// 2× reshapes its own single row, 4× shows nothing).
+const SEAM_PREVIEW_PHASE_1X: u8 = 1;
+const SEAM_PREVIEW_PHASE_STRETCHED: u8 = 3;
+
+#[derive(Clone)]
+struct Scan {
+    /// MOTCK edges until the serialiser presents bit 0: the player START
+    /// latch plus the select-network tail.
+    lead: u8,
+    bit: u8,
+    clocks_left: u8,
+    // The stretched serial clock divides down from the two-phase grid;
+    // its first pulse lands 1 CLK after START (2x and 4x alike).
+    serial_lag: u8,
+}
+
+#[derive(Clone)]
+pub struct Player {
+    /// GRP double buffer: the live write and its VDEL-delayed copy.
+    pub graphics_new: u8,
+    pub graphics_old: u8,
+    /// VDELP: draw the delayed copy instead of the live write.
+    pub vertical_delay: bool,
+    /// REFP: mirror the 8-bit pattern.
+    pub reflect: bool,
+    pub nusiz: u8,
+    counter: PositionCounter,
+    scan: Option<Scan>,
+}
+
+impl Default for Player {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Player {
+    pub fn new() -> Self {
+        Player {
+            graphics_new: 0,
+            graphics_old: 0,
+            vertical_delay: false,
+            reflect: false,
+            nusiz: 0,
+            counter: PositionCounter::new(),
+            scan: None,
+        }
+    }
+
+    /// RESxx: plant the counter and ground the ring to the strobe. A decode
+    /// already caught in the pending latch is phase-clocked state downstream
+    /// of the counter — it rides through onto the re-phased grid.
+    pub fn reset_position(&mut self) {
+        self.counter.plant();
+    }
+
+    /// Colour-clock position within the line (0..160).
+    pub fn counter(&self) -> u8 {
+        self.counter.position_clk()
+    }
+
+    /// Whether a stuffed pulse merging into this MOTCK visibly previews the
+    /// serialiser. Fires at one ring phase class per stretch mode — the class
+    /// the scan clock derives from (console-measured stuck-train schedules;
+    /// the stretched scan clock's source phase per TIA_HW_Notes). The decap
+    /// sim previews at every class, refuted on silicon. Phases are pre-tick,
+    /// read at the merge instant before this clock's ring advance. At the
+    /// line's final stuff slot a merge catching a 1× scan still in its lead
+    /// does NOT preview — no committing MOTCK edge remains, so the stretched
+    /// pulse reads back the undelivered load (console-measured wrap-seam
+    /// straddle; mid-line lead merges still advance, e.g. the deform drop).
+    pub fn seam_preview_fires(&self, final_stuff_slot: bool) -> bool {
+        let one_x = player_pixel_clocks(self.nusiz) == 1;
+        if final_stuff_slot && one_x && self.scan_in_lead() {
+            return false;
+        }
+        let class = if one_x {
+            SEAM_PREVIEW_PHASE_1X
+        } else {
+            SEAM_PREVIEW_PHASE_STRETCHED
+        };
+        self.counter.ring_phase() == class
+    }
+
+    fn scan_in_lead(&self) -> bool {
+        self.scan.as_ref().is_some_and(|scan| scan.lead > 0)
+    }
+
+    /// One motion clock (MOTCK edge).
+    pub fn tick(&mut self) {
+        self.advance_scan();
+        if self.counter.advance(copy_decodes(self.nusiz), false) {
+            let clocks = player_pixel_clocks(self.nusiz);
+            self.scan = Some(Scan {
+                lead: PLAYER_START_LATCH + SERIAL_TAIL,
+                bit: 0,
+                clocks_left: clocks,
+                serial_lag: if clocks > 1 { 1 } else { 0 },
+            });
+        }
+    }
+
+    fn advance_scan(&mut self) {
+        if let Some(scan) = &mut self.scan {
+            if scan.lead > 0 {
+                scan.lead -= 1;
+                return;
+            }
+            if scan.serial_lag > 0 {
+                scan.serial_lag -= 1;
+                return;
+            }
+            scan.clocks_left -= 1;
+            if scan.clocks_left == 0 {
+                scan.bit += 1;
+                if scan.bit == 8 {
+                    self.scan = None;
+                } else {
+                    scan.clocks_left = player_pixel_clocks(self.nusiz);
+                }
+            }
+        }
+    }
+
+    /// Combinational serialiser output for the current scan state.
+    pub fn output(&self) -> bool {
+        let Some(scan) = &self.scan else {
+            return false;
+        };
+        if scan.lead > 0 || scan.serial_lag > 0 {
+            return false;
+        }
+        let graphics = if self.vertical_delay {
+            self.graphics_old
+        } else {
+            self.graphics_new
+        };
+        let bit = if self.reflect { scan.bit } else { 7 - scan.bit };
+        graphics & (1 << bit) != 0
+    }
+}
+
+/// A player's serialiser scan: MOTCK lead, the walked bit, the per-bit clock
+/// remainder, and the stretched-clock lag.
+#[derive(Clone, Copy)]
+pub(crate) struct ScanState {
+    pub lead: u8,
+    pub bit: u8,
+    pub clocks_left: u8,
+    pub serial_lag: u8,
+}
+
+/// A player object's boundary state.
+#[derive(Clone, Copy)]
+pub(crate) struct PlayerState {
+    pub graphics_new: u8,
+    pub graphics_old: u8,
+    pub vertical_delay: bool,
+    pub reflect: bool,
+    pub nusiz: u8,
+    /// ÷4 position count (0..40).
+    pub position: u8,
+    /// ÷4 ring sub-phase (0..3).
+    pub ring_phase: u8,
+    /// The one-wrap START-pending latch.
+    pub start_pending: bool,
+    pub scan: Option<ScanState>,
+}
+
+impl Player {
+    pub(crate) fn capture(&self) -> PlayerState {
+        PlayerState {
+            graphics_new: self.graphics_new,
+            graphics_old: self.graphics_old,
+            vertical_delay: self.vertical_delay,
+            reflect: self.reflect,
+            nusiz: self.nusiz,
+            position: self.counter.count(),
+            ring_phase: self.counter.ring_phase(),
+            start_pending: self.counter.start_pending(),
+            scan: self.scan.as_ref().map(|s| ScanState {
+                lead: s.lead,
+                bit: s.bit,
+                clocks_left: s.clocks_left,
+                serial_lag: s.serial_lag,
+            }),
+        }
+    }
+
+    pub(crate) fn restore(&mut self, s: &PlayerState) {
+        self.graphics_new = s.graphics_new;
+        self.graphics_old = s.graphics_old;
+        self.vertical_delay = s.vertical_delay;
+        self.reflect = s.reflect;
+        self.nusiz = s.nusiz;
+        self.counter
+            .restore(s.position, s.ring_phase, s.start_pending);
+        self.scan = s.scan.map(|s| Scan {
+            lead: s.lead,
+            bit: s.bit,
+            clocks_left: s.clocks_left,
+            serial_lag: s.serial_lag,
+        });
+    }
+}
