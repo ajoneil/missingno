@@ -302,7 +302,7 @@ fn tool_definitions() -> Value {
                 "key": { "type": "string" },
                 "sha1": { "type": "string" },
                 "status": { "type": "string",
-                            "enum": ["Released", "WorkInProgress", "Beta", "Prototype"] },
+                            "enum": ["Released", "Demo", "WorkInProgress", "Beta", "Prototype"] },
                 "title": { "type": "string" },
                 "label": { "type": "string" },
                 "date": { "type": "string" },
@@ -316,7 +316,7 @@ fn tool_definitions() -> Value {
                 "release_index": { "type": "integer" },
                 "set": { "type": "object", "properties": {
                     "status": { "type": "string",
-                                "enum": ["Released", "WorkInProgress", "Beta", "Prototype"] },
+                                "enum": ["Released", "Demo", "WorkInProgress", "Beta", "Prototype"] },
                     "title": { "type": "string" },
                     "label": { "type": "string" },
                     "date": { "type": "string" },
@@ -367,12 +367,13 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "label_artifact",
-            "description": "Give a dump a short distinguishing label ('alt', 'overdump', 'PAL conversion') so multiple hashes in one release are tellable apart.",
+            "description": "Annotate a dump: give it a benign distinguishing label ('alt', 'PAL conversion') so multiple hashes in one release are tellable apart, and/or record a quality `defect`. `Overdump` ([o]) is padded but still plays; `BadDump` ([b]) is corrupt or truncated and does not. Pass defect \"None\" to clear it. Provide a label, a defect, or both.",
             "inputSchema": object(json!({
                 "key": { "type": "string" },
                 "sha1": { "type": "string" },
                 "label": { "type": "string" },
-            }), &["key", "sha1", "label"]),
+                "defect": { "type": "string", "enum": ["Overdump", "BadDump", "None"] },
+            }), &["key", "sha1"]),
         },
         {
             "name": "merge_game",

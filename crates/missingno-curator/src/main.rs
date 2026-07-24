@@ -194,8 +194,8 @@ enum Message {
     Accept {
         recommend: bool,
     },
-    /// Advance past the current queued entry without re-stamping it — for an
-    /// entry already curated to your satisfaction.
+    /// Advance past the current queued entry without accepting it — skip an
+    /// uncurated entry to defer it for later.
     SkipNext,
     ToggleList,
     CloseRequested,
@@ -372,7 +372,7 @@ impl Curator {
                     // on a mod, and one entry is the polite unit of API load.
                     let mut sha1s = Vec::new();
                     for r in 0..db.entries[i].game.release_lines().len() {
-                        for (sha1, _) in db.entries[i].game.release_artifacts(r) {
+                        for (sha1, _, _) in db.entries[i].game.release_artifacts(r) {
                             sha1s.push(sha1);
                         }
                     }
@@ -607,14 +607,15 @@ impl Curator {
                 self.scanning = false;
                 match result {
                     Ok(index) => {
-                        let scanned = index.scanned;
+                        let (collection, inbox) = (index.collection, index.inbox);
                         self.rom_index = Some(index.clone());
                         let added = match &mut self.db {
                             Ok(db) => db.add_unmatched_roms(&index),
                             Err(_) => 0,
                         };
                         let dupes = index.duplicates_moved;
-                        let mut parts = vec![format!("indexed {scanned} ROM(s)")];
+                        let mut parts =
+                            vec![format!("{collection} in collection · {inbox} in inbox")];
                         if dupes > 0 {
                             parts.push(format!("{dupes} inbox duplicate(s) set aside"));
                         }
@@ -917,7 +918,7 @@ impl Curator {
                     .game
                     .mod_artifacts(m)
                     .into_iter()
-                    .map(|(sha1, _)| (sha1, true)),
+                    .map(|(sha1, _, _)| (sha1, true)),
             );
         }
         let slug_dir = collection.join(entry.tree.dir()).join(&entry.slug);
@@ -1912,23 +1913,42 @@ impl Curator {
                 }
             }
             "label_artifact" => {
-                let (Some(key), Some(sha1), Some(label)) =
-                    (str_arg("key"), str_arg("sha1"), str_arg("label"))
-                else {
-                    return error_result("missing key, sha1, or label");
+                let (Some(key), Some(sha1)) = (str_arg("key"), str_arg("sha1")) else {
+                    return error_result("missing key or sha1");
                 };
+                let label = str_arg("label");
+                let defect = match str_arg("defect").map(db::parse_defect) {
+                    Some(Ok(d)) => Some(d),
+                    Some(Err(e)) => return error_result(e),
+                    None => None,
+                };
+                if label.is_none() && defect.is_none() {
+                    return error_result("provide a label, a defect, or both");
+                }
                 let Some(i) = self.find_entry(key) else {
                     return error_result(format!("no entry {key}"));
                 };
                 let Ok(db) = &mut self.db else {
                     return error_result("db not loaded");
                 };
-                if db.entries[i].game.set_artifact_label(sha1, label) {
-                    db.entries[i].dirty = true;
-                    text_result(format!("labelled {sha1} {label:?}"))
-                } else {
-                    error_result(format!("{sha1} is not an artifact of {key}"))
+                let mut applied = Vec::new();
+                if let Some(label) = label {
+                    if !db.entries[i].game.set_artifact_label(sha1, label) {
+                        return error_result(format!("{sha1} is not an artifact of {key}"));
+                    }
+                    applied.push(format!("label {label:?}"));
                 }
+                if let Some(defect) = defect {
+                    if !db.entries[i].game.set_artifact_defect(sha1, defect) {
+                        return error_result(format!("{sha1} is not an artifact of {key}"));
+                    }
+                    applied.push(match defect {
+                        Some(d) => format!("defect {}", d.label()),
+                        None => "defect cleared".to_owned(),
+                    });
+                }
+                db.entries[i].dirty = true;
+                text_result(format!("{sha1}: {}", applied.join(", ")))
             }
             "find_duplicates" => {
                 let Some(key) = str_arg("key") else {
@@ -2107,9 +2127,14 @@ impl Curator {
         }
     }
 
-    /// One dump's row: playing marker, short hash, label input, local
+    /// One dump's row: playing marker, short hash, label, defect badge, local
     /// filename, and a Play button that switches sessions directly.
-    fn artifact_row(&self, sha1: &str, label: &str) -> Element<'_, Message> {
+    fn artifact_row(
+        &self,
+        sha1: &str,
+        label: &str,
+        defect: Option<missingno_gamedb::Defect>,
+    ) -> Element<'_, Message> {
         let short = format!("{}…", &sha1[..12]);
         let local = self
             .rom_index
@@ -2135,6 +2160,27 @@ impl Curator {
                 label.to_owned()
             };
             line = line.push(text(shown).size(12));
+        }
+        if let Some(defect) = defect {
+            let bad = matches!(defect, missingno_gamedb::Defect::BadDump);
+            line = line.push(
+                container(text(format!("⚠ {}", defect.label())).size(11))
+                    .padding([2, 8])
+                    .style(move |theme: &Theme| {
+                        let palette = theme.extended_palette();
+                        let pair = if bad {
+                            palette.danger.strong
+                        } else {
+                            palette.secondary.strong
+                        };
+                        container::Style {
+                            background: Some(pair.color.into()),
+                            text_color: Some(pair.text),
+                            border: iced::border::rounded(4),
+                            ..Default::default()
+                        }
+                    }),
+            );
         }
         if is_new {
             line = line.push(container(text("NEW").size(13)).padding([2, 8]).style(
@@ -2232,10 +2278,8 @@ impl Curator {
                         })
                         .size(13),
                     );
-                    if !self.queue.is_empty() {
-                        top = top
-                            .push(button(text("Next ▶ (keep as-is)")).on_press(Message::SkipNext));
-                    }
+                } else if !self.queue.is_empty() {
+                    top = top.push(button(text("Skip ▶")).on_press(Message::SkipNext));
                 }
                 top = top
                     .push(button(text("Accept ✓")).on_press(Message::Accept { recommend: false }));
@@ -2395,8 +2439,8 @@ impl Curator {
                     if !publisher.is_empty() {
                         rel = rel.push(text(format!("Publisher: {publisher}")).size(12));
                     }
-                    for (sha1, label) in entry.game.release_artifacts(r) {
-                        rel = rel.push(self.artifact_row(&sha1, &label));
+                    for (sha1, label, defect) in entry.game.release_artifacts(r) {
+                        rel = rel.push(self.artifact_row(&sha1, &label, defect));
                     }
                     editor = editor.push(
                         container(rel)
@@ -2423,11 +2467,11 @@ impl Curator {
                                 .align_y(iced::Alignment::Center),
                             );
                         }
-                        for (sha1, label) in entry.game.mod_artifacts(index) {
+                        for (sha1, label, defect) in entry.game.mod_artifacts(index) {
                             editor = editor.push(
                                 row![
                                     Space::new().width(Length::Fixed(16.0)),
-                                    self.artifact_row(&sha1, &label),
+                                    self.artifact_row(&sha1, &label, defect),
                                 ]
                                 .align_y(iced::Alignment::Center),
                             );

@@ -182,6 +182,10 @@ pub struct ScannedRom {
 pub struct RomIndex {
     pub by_sha1: HashMap<String, ScannedRom>,
     pub scanned: usize,
+    /// Unique-hash ROMs found in the collection (already-curated) directory.
+    pub collection: usize,
+    /// Unique-hash ROMs found in the inbox (still to curate).
+    pub inbox: usize,
     /// Inbox files whose hash the collection already holds, set aside into
     /// `<inbox>/duplicates/` at scan time rather than deleted.
     pub duplicates_moved: usize,
@@ -258,6 +262,10 @@ impl RomIndex {
                 }
                 self.by_sha1.insert(sha1, ScannedRom { path, home });
                 self.scanned += 1;
+                match home {
+                    RomHome::Collection => self.collection += 1,
+                    RomHome::Inbox => self.inbox += 1,
+                }
             }
         }
         Ok(())

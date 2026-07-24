@@ -40,8 +40,9 @@ they did not ask for. Concretely:
   of sequential lookups you do inline.
 - **When a game is done, stop and say so.** Report what you staged, then wait. Silence from the
   developer means they are playing, not that you should find more to do. Don't poll
-  `queue_status` in a loop — `wait_for_action` blocks until they Accept or Flag and tells
-  you which game is now up; that is the wait.
+  `queue_status` in a loop — set up a **Monitor** on the curator's event log at session
+  start (see *Setup*) and let its notifications tell you when they Accept, Flag or skip and
+  which game is now up; that is the wait.
 
 A session where you enrich six games thoroughly, at their pace, beats one where you stage forty
 and they trust none of it.
@@ -76,6 +77,13 @@ and they trust none of it.
    **missingno-remote** MCP server's `attach` tool.
    If more than one UI socket is published, attach to the one whose app is
    `net.andyofniall.missingno-curator`.
+
+   **Then arm the event-log Monitor.** The curator appends every Accept/skip/flag to
+   `<runtime_dir>/curator-events-<pid>.log` (same dir as `ui-<pid>.sock`; `<pid>` is the
+   curator process). Start a persistent `Monitor` tailing it
+   (`tail -n0 -F <runtime_dir>/curator-events-<pid>.log`) so each action arrives as a
+   notification naming the game now up — this is how you wait between games (step 12),
+   instead of parking on `wait_for_action`.
 3. Call `status` to see the queue counts, then build the work list:
    - "my collection" → `local_matches` (requires a scanned ROM dir).
    - a search term / platform → `search_games` with `backlog_only: true`.
@@ -126,8 +134,9 @@ While the developer plays the current game:
    is the base game's dump that an import promoted to its own entry. `merge_game` it
    into the real entry, then classify what arrived: a `[h]`/`[t]` dump becomes a mod
    via `mark_mod`, an `[a]`/`[!]` alternate joins the matching release with a
-   `label_artifact`, and a `[b]`/`[o]` defective dump is labelled as such beside the
-   good one. The db should hold one entry per game, with every dump reachable from it.
+   `label_artifact`, and a `[b]`/`[o]` defective dump gets a `defect` (`BadDump`/`Overdump`)
+   via `label_artifact` beside the good one. The db should hold one entry per game, with
+   every dump reachable from it.
 
    **Ask only when genuinely unsure** — when the "duplicate" may be a different
    product (a multicart, a same-titled game on another platform, a hack of a
@@ -244,9 +253,11 @@ While the developer plays the current game:
    session, not the manifest: DERIVED results ([h]/[t]/[tr]/[cr] — someone made these)
    are your cue to judge and `mark_mod` (find the mod's real name — the TOSEC bracket
    note is not it); DEFECTIVE results ([b]/[o] — a dumper's mistake, no author, never a
-   mod) get `label_artifact`, and if the bad dump fabricated a release (an overdump
-   fingerprinting as the wrong board), `move_artifact` it into the real release so the
-   invented one is pruned. (Prototype)/(Beta) signature
+   mod) get `label_artifact` with a `defect` (`Overdump` for a padded-but-playable [o],
+   `BadDump` for a corrupt/truncated [b]) — the field records the problem distinctly from a
+   benign label and shows as a badge on the dump — and if the bad dump fabricated a release
+   (an overdump fingerprinting as the wrong board), `move_artifact` it into the real release
+   so the invented one is pruned. (Prototype)/(Beta) signature
    names suggest `split_release` — an editorial call: the build gets its own release with
    the right status, keeping a working title, never inheriting the retail date. "Unknown"
    is a normal result for homebrew and prototypes. Never claim a dump was playtested —
@@ -307,9 +318,14 @@ While the developer plays the current game:
    is not carried anywhere — immediately after a merge, stamp it as `title` on each
    carried release that lacks one (`update_release`), or the name the reissue shipped
    under vanishes from the entry. Dumps the target already holds
-   are dropped rather than duplicated. **The merge is the developer's call, never
-   yours** — propose it in chat and wait. A shared title alone is not sameness: a
-   multicart or an unrelated game with the same name stays its own entry.
+   are dropped rather than duplicated. **A mod-shaped entry always merges in — do it
+   without asking.** A separate entry that is really a hack, trainer, NTSC/PAL
+   conversion or fan translation of an already-catalogued game folds into the base
+   (`merge_game` then `mark_mod`) as routine curation; only a `TotalConversion` stays
+   its own derived entry. **Propose-and-wait is reserved for genuinely-unsure merges**:
+   a same-named but *different* product (a multicart, the same title on another
+   platform, a hack of a *different* game wearing this name), or a merge that would lose
+   a name or author you cannot preserve. A shared title alone is not sameness.
 
    A merged-in reissue usually shipped under its own publisher, region and sometimes
    its own name — `update_release` carries `publisher`, `regions` (a closed vocabulary:
@@ -446,11 +462,14 @@ While the developer plays the current game:
 11. If a flag's answer is now established by the staged data and the developer has agreed
    (in conversation or by accepting the related edit), `resolve_flag`; otherwise propose the
    resolution in chat and leave the flag open.
-12. When you finish a game's research, call `wait_for_action`: it blocks (~50s per call)
-   until the developer Accepts (± recommendation) or Flags, and names the game now up.
-   On timeout, call it again or answer their questions — don't spin on `queue_status`, and don't stage anything for the next game to fill the time (see
-   *One game at a time*). A quiet queue usually means they are still playing; talking to
-   them about the game in front of them is the useful move.
+12. When you finish a game's research, **stop and let the event-log Monitor tell you what
+   happens next** (set it up during *Setup*). The curator appends every Accept, skip and
+   flag to `runtime_dir/curator-events-<pid>.log`, and the Monitor delivers each line as a
+   notification naming the game now up — so you never park a tool call waiting. Do not poll
+   `queue_status` in a loop and do not stage anything for the next game to fill the time (see
+   *One game at a time*). A quiet queue usually means they are still playing; talking to them
+   about the game in front of them is the useful move. (`wait_for_action` still exists as a
+   blocking long-poll fallback, but the Monitor is preferred — it doesn't tie up a turn.)
 
 The developer may simply close the curator window: the background process exiting with
 status 0 means the session is over — summarize what was done and stop. Do not restart the

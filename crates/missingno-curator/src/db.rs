@@ -4,7 +4,7 @@
 use std::{fs, io, path::PathBuf};
 
 use missingno_gamedb::{
-    Controller, Date, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Link, LinkType, Mod,
+    Controller, Date, Defect, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Link, LinkType, Mod,
     ModCategory, ModOf, ModRelease, Platform, Region, Release, ReleaseStatus, Sha1, Slug, Tree,
     TvFormat, Vcs,
 };
@@ -230,6 +230,7 @@ impl AnyGame {
                 release.artifacts.push(missingno_gamedb::Artifact {
                     sha1,
                     label: None,
+                    defect: None,
                     size: Some(size),
                 });
                 true
@@ -302,7 +303,7 @@ impl AnyGame {
         common!(self, g => g.tags.clone())
     }
 
-    pub fn release_artifacts(&self, index: usize) -> Vec<(String, String)> {
+    pub fn release_artifacts(&self, index: usize) -> Vec<(String, String, Option<Defect>)> {
         common!(self, g => g
             .releases
             .get(index)
@@ -312,6 +313,7 @@ impl AnyGame {
                 .map(|a| (
                     a.sha1.as_str().to_owned(),
                     a.label.clone().unwrap_or_default(),
+                    a.defect,
                 ))
                 .collect())
             .unwrap_or_default())
@@ -334,6 +336,31 @@ impl AnyGame {
                         release.artifacts.iter_mut().find(|a| a.sha1.as_str() == sha1)
                     {
                         artifact.label = value.clone();
+                        return true;
+                    }
+                }
+            }
+            false
+        })
+    }
+
+    /// Set (or clear, with `None`) a dump's quality defect.
+    pub fn set_artifact_defect(&mut self, sha1: &str, defect: Option<Defect>) -> bool {
+        common!(self, g => {
+            for release in &mut g.releases {
+                if let Some(artifact) =
+                    release.artifacts.iter_mut().find(|a| a.sha1.as_str() == sha1)
+                {
+                    artifact.defect = defect;
+                    return true;
+                }
+            }
+            for game_mod in &mut g.mods {
+                for release in &mut game_mod.releases {
+                    if let Some(artifact) =
+                        release.artifacts.iter_mut().find(|a| a.sha1.as_str() == sha1)
+                    {
+                        artifact.defect = defect;
                         return true;
                     }
                 }
@@ -501,7 +528,7 @@ impl AnyGame {
     }
 
     /// Every dump attached to the game's mods, flattened.
-    pub fn mod_artifacts(&self, index: usize) -> Vec<(String, String)> {
+    pub fn mod_artifacts(&self, index: usize) -> Vec<(String, String, Option<Defect>)> {
         common!(self, g => g
             .mods
             .get(index)
@@ -512,6 +539,7 @@ impl AnyGame {
                 .map(|a| (
                     a.sha1.as_str().to_owned(),
                     a.label.clone().unwrap_or_default(),
+                    a.defect,
                 ))
                 .collect())
             .unwrap_or_default())
@@ -809,12 +837,27 @@ pub fn parse_link_type(value: &str) -> Result<LinkType, String> {
 pub fn parse_release_status(value: &str) -> Result<ReleaseStatus, String> {
     Ok(match value {
         "Released" => ReleaseStatus::Released,
+        "Demo" => ReleaseStatus::Demo,
         "WorkInProgress" => ReleaseStatus::WorkInProgress,
         "Beta" => ReleaseStatus::Beta,
         "Prototype" => ReleaseStatus::Prototype,
         other => {
             return Err(format!(
-                "unknown status {other:?}; expected Released, WorkInProgress, Beta, or Prototype"
+                "unknown status {other:?}; expected Released, Demo, WorkInProgress, Beta, or Prototype"
+            ));
+        }
+    })
+}
+
+/// Parse a defect argument: a name sets it, `"None"`/`""` clears it.
+pub fn parse_defect(value: &str) -> Result<Option<Defect>, String> {
+    Ok(match value {
+        "Overdump" => Some(Defect::Overdump),
+        "BadDump" => Some(Defect::BadDump),
+        "None" | "" => None,
+        other => {
+            return Err(format!(
+                "unknown defect {other:?}; expected Overdump, BadDump, or None"
             ));
         }
     })
@@ -1255,7 +1298,7 @@ impl Db {
         for e in &self.entries {
             known.extend(e.game.artifact_sha1s());
             for m in 0..e.game.mod_lines().len() {
-                for (sha1, _) in e.game.mod_artifacts(m) {
+                for (sha1, _, _) in e.game.mod_artifacts(m) {
                     known.insert(sha1);
                 }
             }
@@ -1331,6 +1374,7 @@ impl Db {
                     artifacts: vec![missingno_gamedb::Artifact {
                         sha1: parsed,
                         label: None,
+                        defect: None,
                         size,
                     }],
                 }],
