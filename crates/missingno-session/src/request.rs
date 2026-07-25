@@ -4,7 +4,7 @@
 //! — but they take the same arguments, so they parse them the same way here.
 
 use missingno_core::inspect::WatchTerm;
-use missingno_core::system::{ControlId, ControlInput};
+use missingno_core::system::{ControlId, ControlInput, ControlRole, ControlSite};
 use serde_json::Value;
 
 /// A hex address, with or without an `0x` prefix.
@@ -63,13 +63,19 @@ pub fn parse_watch_term(value: &Value) -> Result<WatchTerm, String> {
     })
 }
 
-/// A control change: an id plus either an axis position or a digital state.
+/// A control change: where the control sits, what it does, and either an axis
+/// position or a digital state.
 pub fn parse_control(args: &Value) -> Result<(ControlId, ControlInput), String> {
-    let control = args
-        .get("control")
-        .and_then(Value::as_u64)
-        .and_then(|n| u8::try_from(n).ok())
-        .ok_or("'control' must be an integer 0-255")?;
+    let site = args
+        .get("site")
+        .and_then(Value::as_str)
+        .and_then(ControlSite::parse)
+        .ok_or("'site' must be one of: integrated, panel, port0, port1")?;
+    let role = args
+        .get("role")
+        .and_then(Value::as_str)
+        .and_then(ControlRole::parse)
+        .ok_or("'role' must be a control role, e.g. start, action0, up, knob0, toggle1")?;
     let input = match args.get("axis").and_then(Value::as_f64) {
         Some(axis) => ControlInput::Axis(axis as f32),
         None => ControlInput::Digital(
@@ -78,7 +84,7 @@ pub fn parse_control(args: &Value) -> Result<(ControlId, ControlInput), String> 
                 .ok_or("provide 'pressed' (bool) or 'axis' (0.0-1.0)")?,
         ),
     };
-    Ok((ControlId(control), input))
+    Ok((ControlId { site, role }, input))
 }
 
 #[cfg(test)]
@@ -114,14 +120,19 @@ mod tests {
 
     #[test]
     fn control_takes_an_axis_or_a_digital_state() {
-        let (id, input) = parse_control(&json!({ "control": 3, "pressed": true })).unwrap();
-        assert_eq!(id.0, 3);
+        let (id, input) =
+            parse_control(&json!({ "site": "port0", "role": "action1", "pressed": true })).unwrap();
+        assert_eq!(
+            id,
+            ControlId::port(missingno_core::ports::PortId(0), ControlRole::Action(1))
+        );
         assert_eq!(input, ControlInput::Digital(true));
 
-        let (_, axis) = parse_control(&json!({ "control": 0, "axis": 0.5 })).unwrap();
+        let (_, axis) =
+            parse_control(&json!({ "site": "port0", "role": "knob0", "axis": 0.5 })).unwrap();
         assert_eq!(axis, ControlInput::Axis(0.5));
 
-        assert!(parse_control(&json!({ "control": 0 })).is_err());
+        assert!(parse_control(&json!({ "site": "integrated", "role": "start" })).is_err());
         assert!(parse_control(&json!({ "pressed": true })).is_err());
     }
 }

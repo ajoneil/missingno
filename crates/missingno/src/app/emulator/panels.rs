@@ -18,7 +18,7 @@ use super::Message;
 use crate::app::{
     self,
     library::activity,
-    system::ConsoleSwitch,
+    system::PanelControl,
     ui::{
         buttons, fonts,
         icons::{self, Icon},
@@ -82,7 +82,7 @@ pub struct PlayLogEntry<'a> {
 
 /// Everything the panels render from, plus which sections this console offers.
 pub struct PanelContext<'a> {
-    pub switches: &'a [ConsoleSwitch],
+    pub switches: &'a [PanelControl],
     pub switch_levels: &'a [bool],
     pub palette: PaletteChoice,
     pub use_sgb_colors: bool,
@@ -197,11 +197,14 @@ fn section_header_style(_theme: &iced::Theme) -> container::Style {
     }
 }
 
-fn console_body(switches: &[ConsoleSwitch], levels: &[bool]) -> Element<'static, app::Message> {
+fn console_body(switches: &[PanelControl], levels: &[bool]) -> Element<'static, app::Message> {
     let mut col = column![].spacing(m());
     for (index, switch) in switches.iter().enumerate() {
-        let level = levels.get(index).copied().unwrap_or(switch.default_high);
-        let position = switch.positions[level as usize];
+        let Some((positions, default_high)) = switch.toggle() else {
+            continue;
+        };
+        let level = levels.get(index).copied().unwrap_or(default_high);
+        let position = positions[level as usize];
         col = col.push(
             row![
                 text(switch.label).width(Fill),

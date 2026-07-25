@@ -4,7 +4,7 @@
 //! it with no CGB-specific code.
 
 use missingno_core::recording::{Recorder, Recording, ReplayOutcome, replay};
-use missingno_core::system::{ControlId, ControlInput, SystemConsole};
+use missingno_core::system::{ControlId, ControlInput, ControlRole, SystemConsole};
 use missingno_gb::cartridge::Cartridge;
 use missingno_gb::system::GbConsole;
 use missingno_gbc::{Cgb, GameBoyColor};
@@ -17,10 +17,10 @@ fn cgb_console(rom: &str) -> GbConsole<Cgb> {
     GbConsole::new(gbc, |_| None)
 }
 
-const SCRIPT: &[(u64, u8, bool)] = &[
-    (0, 2, true),  // A down
-    (2, 2, false), // A up
-    (4, 0, true),  // Start down
+const SCRIPT: &[(u64, ControlRole, bool)] = &[
+    (0, ControlRole::Action(0), true),
+    (2, ControlRole::Action(0), false),
+    (4, ControlRole::Start, true),
 ];
 
 #[test]
@@ -33,11 +33,12 @@ fn cgb_recording_replays_deterministically() {
 
     let mut recorder = Recorder::start(&mut console, 4).expect("CGB saves state");
     for frame in 0..16u64 {
-        for &(at, control, pressed) in SCRIPT {
+        for &(at, role, pressed) in SCRIPT {
             if at == frame {
+                let control = ControlId::integrated(role);
                 let input = ControlInput::Digital(pressed);
-                console.set_control(ControlId(control), input);
-                recorder.note_input(ControlId(control), input);
+                console.set_control(control, input);
+                recorder.note_input(control, input);
             }
         }
         let produced = console.step_frame().display;

@@ -3,6 +3,7 @@ pub(crate) mod view;
 
 use std::{collections::HashMap, fmt, fs, path::PathBuf};
 
+use missingno_core::system::ControlRole;
 use missingno_gb::ppu::types::palette::PaletteChoice;
 use serde::{Deserialize, Serialize};
 
@@ -14,8 +15,9 @@ use crate::app::library::view::LibraryLayout;
 /// Every bindable action — game controls and emulator controls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Action {
-    /// A shared seam control id (press/release), interpreted per family.
-    Control(u8),
+    /// A control role (press/release), placed on whichever surface of the
+    /// loaded console plays it.
+    Control(ControlRole),
     // Emulator actions (fire once on press)
     Screenshot,
     ToggleFullscreen,
@@ -28,17 +30,18 @@ pub enum Action {
     Replay,
 }
 
-/// The 8 shared game controls in display order (see `ControlId` for the
-/// id convention).
-pub const GAME_CONTROLS: [Action; 8] = [
-    Action::Control(4), // Up
-    Action::Control(5), // Down
-    Action::Control(6), // Left
-    Action::Control(7), // Right
-    Action::Control(2), // A
-    Action::Control(3), // B
-    Action::Control(0), // Start
-    Action::Control(1), // Select
+/// The bindable game-control roles, in display order.
+pub const GAME_CONTROLS: [Action; 10] = [
+    Action::Control(ControlRole::Up),
+    Action::Control(ControlRole::Down),
+    Action::Control(ControlRole::Left),
+    Action::Control(ControlRole::Right),
+    Action::Control(ControlRole::Action(0)),
+    Action::Control(ControlRole::Action(1)),
+    Action::Control(ControlRole::Start),
+    Action::Control(ControlRole::Select),
+    Action::Control(ControlRole::Reset),
+    Action::Control(ControlRole::Pause),
 ];
 
 /// Emulator-level actions, for iteration.
@@ -57,7 +60,7 @@ impl fmt::Display for Action {
         match self {
             // Family-neutral; the bindings UI derives each family's name for
             // a control from the descriptor table.
-            Action::Control(id) => write!(f, "Control {id}"),
+            Action::Control(role) => write!(f, "{}", role.name()),
             Action::Screenshot => write!(f, "Screenshot"),
             Action::ToggleFullscreen => write!(f, "Fullscreen"),
             Action::Pause => write!(f, "Pause"),
@@ -109,16 +112,32 @@ impl Bindings {
             .map(|(k, _)| *k)
     }
 
+    /// Every action bound to a key. A key may carry several control roles —
+    /// Enter works Start, Reset, and Pause — of which at most one is played by
+    /// any one console.
+    pub fn find_actions(&self, key_str: &str) -> Vec<Action> {
+        self.0
+            .iter()
+            .filter(|(_, v)| v.as_str() == key_str)
+            .map(|(k, _)| *k)
+            .collect()
+    }
+
     pub fn default_keyboard() -> Self {
         Self(HashMap::from([
-            (Action::Control(2), "x".to_string()),
-            (Action::Control(3), "z".to_string()),
-            (Action::Control(0), "Enter".to_string()),
-            (Action::Control(1), "Shift".to_string()),
-            (Action::Control(4), "ArrowUp".to_string()),
-            (Action::Control(5), "ArrowDown".to_string()),
-            (Action::Control(6), "ArrowLeft".to_string()),
-            (Action::Control(7), "ArrowRight".to_string()),
+            (Action::Control(ControlRole::Action(0)), "x".to_string()),
+            (Action::Control(ControlRole::Action(1)), "z".to_string()),
+            (Action::Control(ControlRole::Start), "Enter".to_string()),
+            (Action::Control(ControlRole::Reset), "Enter".to_string()),
+            (Action::Control(ControlRole::Pause), "Enter".to_string()),
+            (Action::Control(ControlRole::Select), "Shift".to_string()),
+            (Action::Control(ControlRole::Up), "ArrowUp".to_string()),
+            (Action::Control(ControlRole::Down), "ArrowDown".to_string()),
+            (Action::Control(ControlRole::Left), "ArrowLeft".to_string()),
+            (
+                Action::Control(ControlRole::Right),
+                "ArrowRight".to_string(),
+            ),
             (Action::Screenshot, "F12".to_string()),
             (Action::ToggleFullscreen, "F11".to_string()),
             (Action::Pause, "Space".to_string()),
@@ -131,14 +150,16 @@ impl Bindings {
 
     pub fn default_gamepad() -> Self {
         Self(HashMap::from([
-            (Action::Control(2), "South".to_string()),
-            (Action::Control(3), "East".to_string()),
-            (Action::Control(0), "Start".to_string()),
-            (Action::Control(1), "Select".to_string()),
-            (Action::Control(4), "DPadUp".to_string()),
-            (Action::Control(5), "DPadDown".to_string()),
-            (Action::Control(6), "DPadLeft".to_string()),
-            (Action::Control(7), "DPadRight".to_string()),
+            (Action::Control(ControlRole::Action(0)), "South".to_string()),
+            (Action::Control(ControlRole::Action(1)), "East".to_string()),
+            (Action::Control(ControlRole::Start), "Start".to_string()),
+            (Action::Control(ControlRole::Reset), "Start".to_string()),
+            (Action::Control(ControlRole::Pause), "Start".to_string()),
+            (Action::Control(ControlRole::Select), "Select".to_string()),
+            (Action::Control(ControlRole::Up), "DPadUp".to_string()),
+            (Action::Control(ControlRole::Down), "DPadDown".to_string()),
+            (Action::Control(ControlRole::Left), "DPadLeft".to_string()),
+            (Action::Control(ControlRole::Right), "DPadRight".to_string()),
             // Emulator actions unbound by default on gamepad —
             // no standard convention, user picks what suits their device.
         ]))
@@ -179,18 +200,18 @@ impl From<LegacyKeyBindings> for Bindings {
         // Only migrate the game button bindings — emulator action defaults
         // are added by the caller based on whether this is keyboard or gamepad.
         let mut map = HashMap::new();
-        for (id, value) in [
-            (2, old.a),
-            (3, old.b),
-            (0, old.start),
-            (1, old.select),
-            (4, old.up),
-            (5, old.down),
-            (6, old.left),
-            (7, old.right),
+        for (role, value) in [
+            (ControlRole::Action(0), old.a),
+            (ControlRole::Action(1), old.b),
+            (ControlRole::Start, old.start),
+            (ControlRole::Select, old.select),
+            (ControlRole::Up, old.up),
+            (ControlRole::Down, old.down),
+            (ControlRole::Left, old.left),
+            (ControlRole::Right, old.right),
         ] {
             if !value.is_empty() {
-                map.insert(Action::Control(id), value);
+                map.insert(Action::Control(role), value);
             }
         }
         Bindings(map)
@@ -223,14 +244,14 @@ impl From<LegacyActionBindings> for Bindings {
                 .into_iter()
                 .map(|(action, value)| {
                     let action = match action {
-                        LegacyAction::GbStart => Action::Control(0),
-                        LegacyAction::GbSelect => Action::Control(1),
-                        LegacyAction::GbA => Action::Control(2),
-                        LegacyAction::GbB => Action::Control(3),
-                        LegacyAction::GbUp => Action::Control(4),
-                        LegacyAction::GbDown => Action::Control(5),
-                        LegacyAction::GbLeft => Action::Control(6),
-                        LegacyAction::GbRight => Action::Control(7),
+                        LegacyAction::GbStart => Action::Control(ControlRole::Start),
+                        LegacyAction::GbSelect => Action::Control(ControlRole::Select),
+                        LegacyAction::GbA => Action::Control(ControlRole::Action(0)),
+                        LegacyAction::GbB => Action::Control(ControlRole::Action(1)),
+                        LegacyAction::GbUp => Action::Control(ControlRole::Up),
+                        LegacyAction::GbDown => Action::Control(ControlRole::Down),
+                        LegacyAction::GbLeft => Action::Control(ControlRole::Left),
+                        LegacyAction::GbRight => Action::Control(ControlRole::Right),
                         LegacyAction::Screenshot => Action::Screenshot,
                         LegacyAction::ToggleFullscreen => Action::ToggleFullscreen,
                         LegacyAction::Pause => Action::Pause,
@@ -676,14 +697,26 @@ mod tests {
 
         // Bindings migration
         let keyboard: Bindings = legacy.keyboard_bindings.into();
-        assert_eq!(keyboard.get(Action::Control(2)), Some("x"));
-        assert_eq!(keyboard.get(Action::Control(3)), Some("z"));
-        assert_eq!(keyboard.get(Action::Control(0)), Some("Enter"));
+        assert_eq!(
+            keyboard.get(Action::Control(ControlRole::Action(0))),
+            Some("x")
+        );
+        assert_eq!(
+            keyboard.get(Action::Control(ControlRole::Action(1))),
+            Some("z")
+        );
+        assert_eq!(
+            keyboard.get(Action::Control(ControlRole::Start)),
+            Some("Enter")
+        );
         // Emulator actions not present (added by caller)
         assert_eq!(keyboard.get(Action::Screenshot), None);
 
         let gamepad: Bindings = legacy.gamepad_bindings.into();
-        assert_eq!(gamepad.get(Action::Control(2)), Some("South"));
+        assert_eq!(
+            gamepad.get(Action::Control(ControlRole::Action(0))),
+            Some("South")
+        );
         assert_eq!(gamepad.get(Action::Screenshot), None);
     }
 
@@ -708,11 +741,20 @@ mod tests {
         assert!(file.setup_complete);
         assert_eq!(file.rom_directories, vec![PathBuf::from("/home/test/roms")]);
         let keyboard: Bindings = file.keyboard_bindings.into();
-        assert_eq!(keyboard.get(Action::Control(2)), Some("q"));
-        assert_eq!(keyboard.get(Action::Control(0)), Some("Enter"));
+        assert_eq!(
+            keyboard.get(Action::Control(ControlRole::Action(0))),
+            Some("q")
+        );
+        assert_eq!(
+            keyboard.get(Action::Control(ControlRole::Start)),
+            Some("Enter")
+        );
         assert_eq!(keyboard.get(Action::Screenshot), Some("F12"));
         let gamepad: Bindings = file.gamepad_bindings.into();
-        assert_eq!(gamepad.get(Action::Control(3)), Some("West"));
+        assert_eq!(
+            gamepad.get(Action::Control(ControlRole::Action(1))),
+            Some("West")
+        );
     }
 
     #[test]
@@ -755,29 +797,37 @@ mod tests {
             window_width: Some(1280.0),
             window_height: Some(720.0),
             keyboard_controls: ({
-                Control(2): "x",
-                Control(3): "z",
-                Control(0): "Enter",
-                Control(1): "Shift",
-                Control(4): "ArrowUp",
-                Control(5): "ArrowDown",
-                Control(6): "ArrowLeft",
-                Control(7): "ArrowRight",
+                Control(Action(0)): "x",
+                Control(Action(1)): "z",
+                Control(Start): "Enter",
+                Control(Select): "Shift",
+                Control(Up): "ArrowUp",
+                Control(Down): "ArrowDown",
+                Control(Left): "ArrowLeft",
+                Control(Right): "ArrowRight",
                 Screenshot: "F12",
                 ToggleFullscreen: "F11",
                 Pause: "Space",
             }),
             gamepad_controls: ({
-                Control(2): "South",
-                Control(3): "East",
+                Control(Action(0)): "South",
+                Control(Action(1)): "East",
             }),
         )"#;
 
         let file: SettingsFile = ron::from_str(new_format).unwrap();
         assert!(file.setup_complete);
-        assert_eq!(file.keyboard_controls.get(Action::Control(2)), Some("x"));
+        assert_eq!(
+            file.keyboard_controls
+                .get(Action::Control(ControlRole::Action(0))),
+            Some("x")
+        );
         assert_eq!(file.keyboard_controls.get(Action::Screenshot), Some("F12"));
-        assert_eq!(file.gamepad_controls.get(Action::Control(2)), Some("South"));
+        assert_eq!(
+            file.gamepad_controls
+                .get(Action::Control(ControlRole::Action(0))),
+            Some("South")
+        );
         assert_eq!(file.gamepad_controls.get(Action::Screenshot), None);
         assert!(file.keyboard_bindings.0.is_empty());
         // A file written before the setting existed leaves external clients
@@ -790,7 +840,7 @@ mod tests {
         // Exactly the shape an upgraded install carries: bindings written
         // before save states existed, so the map names no such action.
         let mut saved = Bindings(HashMap::from([
-            (Action::Control(2), "x".to_string()),
+            (Action::Control(ControlRole::Action(0)), "x".to_string()),
             (Action::Screenshot, "F12".to_string()),
             (Action::Pause, "Space".to_string()),
         ]));
@@ -804,7 +854,10 @@ mod tests {
         assert_eq!(saved.get(Action::SaveState), Some("F5"));
         assert_eq!(saved.get(Action::LoadState), Some("F8"));
         // What the user already chose is untouched.
-        assert_eq!(saved.get(Action::Control(2)), Some("x"));
+        assert_eq!(
+            saved.get(Action::Control(ControlRole::Action(0))),
+            Some("x")
+        );
     }
 
     #[test]
@@ -829,13 +882,16 @@ mod tests {
     fn a_cleared_binding_stays_cleared() {
         // The file knew the action and carries no key for it: the user cleared
         // it deliberately, so it must not come back on the next load.
-        let mut saved = Bindings(HashMap::from([(Action::Control(2), "x".to_string())]));
+        let mut saved = Bindings(HashMap::from([(
+            Action::Control(ControlRole::Action(0)),
+            "x".to_string(),
+        )]));
 
         saved.adopt_new_defaults(&Bindings::default_keyboard(), &all_actions());
 
         assert_eq!(saved.get(Action::SaveState), None);
         assert_eq!(saved.get(Action::Pause), None);
-        assert_eq!(saved.get(Action::Control(4)), None);
+        assert_eq!(saved.get(Action::Control(ControlRole::Up)), None);
     }
 
     #[test]

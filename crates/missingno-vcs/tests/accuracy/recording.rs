@@ -5,7 +5,7 @@
 
 use crate::common::rom_path;
 use missingno_core::recording::{Recorder, Recording, ReplayError, ReplayOutcome, replay};
-use missingno_core::system::{ControlId, ControlInput, StateError, SystemConsole};
+use missingno_core::system::{ControlId, ControlInput, ControlRole, StateError, SystemConsole};
 use missingno_vcs::TvStandard;
 use missingno_vcs::debug::create_console;
 
@@ -14,14 +14,13 @@ fn console(relative: &str) -> Box<dyn SystemConsole> {
     create_console(&rom, "test".into(), Some(TvStandard::Ntsc), None).unwrap()
 }
 
-/// Scripted control changes: (frame boundary, control id, pressed). Fire is
-/// control 2; the joystick directions are 4..=7.
-const SCRIPT: &[(u64, u8, bool)] = &[
-    (1, 4, true),  // up
-    (3, 4, false), // up release
-    (3, 2, true),  // fire
-    (6, 2, false), // fire release
-    (7, 6, true),  // left
+/// Scripted changes to the left joystick: (frame boundary, role, pressed).
+const SCRIPT: &[(u64, ControlRole, bool)] = &[
+    (1, ControlRole::Up, true),
+    (3, ControlRole::Up, false),
+    (3, ControlRole::Action(0), true),
+    (6, ControlRole::Action(0), false),
+    (7, ControlRole::Left, true),
 ];
 
 fn record(relative: &str, warmup: usize, frames: u64, interval: u64) -> Recording {
@@ -33,11 +32,12 @@ fn record(relative: &str, warmup: usize, frames: u64, interval: u64) -> Recordin
     let mut recorder = Recorder::start(console.as_mut(), interval).expect("VCS saves state");
 
     for frame in 0..frames {
-        for &(at, control, pressed) in SCRIPT {
+        for &(at, role, pressed) in SCRIPT {
             if at == frame {
+                let control = ControlId::port(missingno_vcs::debug::LEFT_PORT, role);
                 let input = ControlInput::Digital(pressed);
-                console.set_control(ControlId(control), input);
-                recorder.note_input(ControlId(control), input);
+                console.set_control(control, input);
+                recorder.note_input(control, input);
             }
         }
         let produced = console.step_frame().display;
@@ -55,7 +55,7 @@ fn vcs_recording_replays_deterministically() {
         !recording.checks.is_empty(),
         "carries frame-hash checkpoints"
     );
-    assert!(!recording.inputs.is_empty(), "carries the scripted inputs");
+    assert!(!recording.events.is_empty(), "carries the scripted inputs");
 
     let bytes = recording.to_bytes().unwrap();
     let parsed = Recording::from_bytes(&bytes).expect("round-trips through bytes");

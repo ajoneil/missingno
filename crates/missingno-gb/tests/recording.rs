@@ -10,7 +10,7 @@
 use missingno_core::recording::{
     Recorder, Recording, RecordingError, ReplayError, ReplayOutcome, replay,
 };
-use missingno_core::system::{ControlId, ControlInput, StateError, SystemConsole};
+use missingno_core::system::{ControlId, ControlInput, ControlRole, StateError, SystemConsole};
 use missingno_gb::system::GbConsole;
 
 fn dmg_console(rom: &str) -> GbConsole<missingno_gb::Dmg> {
@@ -18,13 +18,13 @@ fn dmg_console(rom: &str) -> GbConsole<missingno_gb::Dmg> {
     GbConsole::new(run.gb, |_| None)
 }
 
-/// Scripted control changes: (frame boundary, control id, pressed).
-const SCRIPT: &[(u64, u8, bool)] = &[
-    (0, 2, true),  // A down
-    (2, 2, false), // A up
-    (3, 0, true),  // Start down
-    (6, 0, false), // Start up
-    (8, 4, true),  // D-pad up down
+/// Scripted control changes: (frame boundary, pad role, pressed).
+const SCRIPT: &[(u64, ControlRole, bool)] = &[
+    (0, ControlRole::Action(0), true),
+    (2, ControlRole::Action(0), false),
+    (3, ControlRole::Start, true),
+    (6, ControlRole::Start, false),
+    (8, ControlRole::Up, true),
 ];
 
 /// Record `frames` frames of the ROM, applying the scripted inputs at their
@@ -39,11 +39,12 @@ fn record(rom: &str, warmup: usize, frames: u64, interval: u64) -> Recording {
         Recorder::start(&mut console, interval).expect("DMG authors a save-state backend");
 
     for frame in 0..frames {
-        for &(at, control, pressed) in SCRIPT {
+        for &(at, role, pressed) in SCRIPT {
             if at == frame {
+                let control = ControlId::integrated(role);
                 let input = ControlInput::Digital(pressed);
-                console.set_control(ControlId(control), input);
-                recorder.note_input(ControlId(control), input);
+                console.set_control(control, input);
+                recorder.note_input(control, input);
             }
         }
         let produced = console.step_frame().display;
@@ -62,7 +63,7 @@ fn dmg_recording_replays_deterministically() {
         "the recording should carry frame-hash checkpoints"
     );
     assert!(
-        !recording.inputs.is_empty(),
+        !recording.events.is_empty(),
         "the recording should carry the scripted inputs"
     );
 

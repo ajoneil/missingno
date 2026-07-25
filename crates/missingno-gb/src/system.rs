@@ -11,12 +11,16 @@ use missingno_core::HighPass;
 use missingno_core::graphics::GraphicsView;
 use missingno_core::inspect;
 use missingno_core::isa::InstructionSet;
+use missingno_core::ports::{
+    ControlDescriptor, ControlKind, PeripheralDescriptor, PeripheralId, PlugError, PortDescriptor,
+    PortId, Provider,
+};
 use missingno_core::state::{StateRecord, SystemStateSchema};
 use missingno_core::state_file::{StateFrame, StateMeta, read_state_file, write_state_file};
 use missingno_core::symbols::{Symbol, SymbolTable};
 use missingno_core::system::{
-    ControlId, ControlInput, DebugView, FrameOutcome, RunningStatus, StateError, StepOutcome,
-    SystemConsole, SystemDebugger,
+    ControlId, ControlInput, ControlRole, ControlSite, DebugView, FrameOutcome, RunningStatus,
+    StateError, StepOutcome, SystemConsole, SystemDebugger,
 };
 use missingno_core::video::{DisplayTechnology, Frame, RawFrame};
 
@@ -299,18 +303,97 @@ fn load_state_into<M: ConsoleUi>(console: &mut Console<M>, bytes: &[u8]) -> Resu
     M::restore_state(console, &record, file.memory, file.frame.as_ref())
 }
 
-/// The inverse of the seam's numeric convention; ids 8+ are not GB controls.
+/// The pad moulded into the console's own case.
+pub const PAD: &[ControlDescriptor] = &[
+    button(ControlRole::Start, "Start"),
+    button(ControlRole::Select, "Select"),
+    button(ControlRole::Action(0), "A"),
+    button(ControlRole::Action(1), "B"),
+    button(ControlRole::Up, "Up"),
+    button(ControlRole::Down, "Down"),
+    button(ControlRole::Left, "Left"),
+    button(ControlRole::Right, "Right"),
+];
+
+const fn button(role: ControlRole, label: &'static str) -> ControlDescriptor {
+    ControlDescriptor {
+        role,
+        label,
+        kind: ControlKind::Button,
+    }
+}
+
+/// The serial socket on the console's left edge.
+pub const LINK_PORT: PortId = PortId(0);
+pub const LINK_DISCONNECTED: PeripheralId = PeripheralId(0);
+pub const LINK_PRINTER: PeripheralId = PeripheralId(1);
+pub const LINK_CABLE: PeripheralId = PeripheralId(2);
+
+/// A printer needs its paper sink and a cable its far end, so both are built by
+/// the host and arrive through [`Console::set_link`] rather than through a plug.
+const LINK_PERIPHERALS: &[PeripheralDescriptor] = &[
+    PeripheralDescriptor {
+        id: LINK_DISCONNECTED,
+        label: "Disconnected",
+        provider: Provider::Console,
+        controls: &[],
+    },
+    PeripheralDescriptor {
+        id: LINK_PRINTER,
+        label: "Game Boy Printer",
+        provider: Provider::Host,
+        controls: &[],
+    },
+    PeripheralDescriptor {
+        id: LINK_CABLE,
+        label: "Link cable",
+        provider: Provider::Host,
+        controls: &[],
+    },
+];
+
+pub const PORTS: &[PortDescriptor] = &[PortDescriptor {
+    port: LINK_PORT,
+    label: "Link port",
+    accepts: LINK_PERIPHERALS,
+}];
+
+fn plug_link<M: ConsoleUi>(
+    console: &mut Console<M>,
+    attached: &mut PeripheralId,
+    port: PortId,
+    peripheral: PeripheralId,
+) -> Result<(), PlugError> {
+    if port != LINK_PORT {
+        return Err(PlugError::UnknownPort);
+    }
+    match LINK_PERIPHERALS.iter().find(|kind| kind.id == peripheral) {
+        None => Err(PlugError::NotAccepted),
+        Some(kind) if kind.provider == Provider::Host => Err(PlugError::HostProvided),
+        Some(_) => {
+            console.set_link(Box::new(crate::serial_transfer::Disconnected::new()));
+            *attached = peripheral;
+            Ok(())
+        }
+    }
+}
+
+/// Every Game Boy control is a button on the integrated pad; nothing else the
+/// seam can name reaches the joypad matrix.
 fn button_for_control(control: ControlId) -> Option<Button> {
-    use crate::joypad::DirectionalPad::*;
-    Some(match control.0 {
-        0 => Button::Start,
-        1 => Button::Select,
-        2 => Button::A,
-        3 => Button::B,
-        4 => Button::DirectionalPad(Up),
-        5 => Button::DirectionalPad(Down),
-        6 => Button::DirectionalPad(Left),
-        7 => Button::DirectionalPad(Right),
+    use crate::joypad::DirectionalPad as Dpad;
+    if control.site != ControlSite::Integrated {
+        return None;
+    }
+    Some(match control.role {
+        ControlRole::Start => Button::Start,
+        ControlRole::Select => Button::Select,
+        ControlRole::Action(0) => Button::A,
+        ControlRole::Action(1) => Button::B,
+        ControlRole::Up => Button::DirectionalPad(Dpad::Up),
+        ControlRole::Down => Button::DirectionalPad(Dpad::Down),
+        ControlRole::Left => Button::DirectionalPad(Dpad::Left),
+        ControlRole::Right => Button::DirectionalPad(Dpad::Right),
         _ => return None,
     })
 }
@@ -320,13 +403,22 @@ fn button_for_control(control: ControlId) -> Option<Button> {
 pub struct GbConsole<M: ConsoleUi> {
     console: Console<M>,
     battery_save: BatterySave,
+    link: PeripheralId,
 }
 
 impl<M: ConsoleUi> GbConsole<M> {
     pub fn new(console: Console<M>, battery_save: BatterySave) -> Self {
+        Self::with_link(console, battery_save, LINK_DISCONNECTED)
+    }
+
+    /// Wrap a console whose link port already carries a host-built peripheral:
+    /// the object went in through [`Console::set_link`], and `link` names which
+    /// kind it was so the port reads back truthfully.
+    pub fn with_link(console: Console<M>, battery_save: BatterySave, link: PeripheralId) -> Self {
         Self {
             console,
             battery_save,
+            link,
         }
     }
 }
@@ -376,6 +468,22 @@ where
         } else {
             Console::release_button(&mut self.console, button);
         }
+    }
+
+    fn integrated_controls(&self) -> &'static [ControlDescriptor] {
+        PAD
+    }
+
+    fn ports(&self) -> &'static [PortDescriptor] {
+        PORTS
+    }
+
+    fn plugged(&self, port: PortId) -> Option<PeripheralId> {
+        (port == LINK_PORT).then_some(self.link)
+    }
+
+    fn plug(&mut self, port: PortId, peripheral: PeripheralId) -> Result<(), PlugError> {
+        plug_link(&mut self.console, &mut self.link, port, peripheral)
     }
 
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
@@ -431,6 +539,7 @@ where
         Box::new(GbDebugger {
             core: Debugger::new(self.console),
             battery_save: self.battery_save,
+            link: self.link,
         })
     }
 }
@@ -439,6 +548,7 @@ where
 pub struct GbDebugger<M: ConsoleUi> {
     core: Debugger<M>,
     battery_save: BatterySave,
+    link: PeripheralId,
 }
 
 impl<M: ConsoleUi> GbDebugger<M> {
@@ -524,6 +634,22 @@ where
         } else {
             self.core.game_boy_mut().release_button(button);
         }
+    }
+
+    fn integrated_controls(&self) -> &'static [ControlDescriptor] {
+        PAD
+    }
+
+    fn ports(&self) -> &'static [PortDescriptor] {
+        PORTS
+    }
+
+    fn plugged(&self, port: PortId) -> Option<PeripheralId> {
+        (port == LINK_PORT).then_some(self.link)
+    }
+
+    fn plug(&mut self, port: PortId, peripheral: PeripheralId) -> Result<(), PlugError> {
+        plug_link(self.core.game_boy_mut(), &mut self.link, port, peripheral)
     }
 
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
@@ -803,6 +929,7 @@ where
         Box::new(GbConsole {
             console: self.core.game_boy_take(),
             battery_save: self.battery_save,
+            link: self.link,
         })
     }
 }

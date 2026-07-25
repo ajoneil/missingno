@@ -10,8 +10,14 @@ use missingno_core::inspect::{
     BitColumn, BitRow, BitTable, Register, RegisterGroup, Row, Section, SectionBlock, Sweep,
     SweepZone, Tone, ValueStyle,
 };
+use missingno_core::ports::{
+    ControlDescriptor, ControlKind, PanelBehaviour, PanelControl, PeripheralDescriptor,
+    PeripheralId, PlugError, PortDescriptor, PortId, Provider,
+};
 use missingno_core::stepping::SteppingSystem;
-use missingno_core::system::{ControlId, ControlInput, DebugView, InspectSnapshot, RunningStatus};
+use missingno_core::system::{
+    ControlId, ControlInput, ControlRole, ControlSite, DebugView, InspectSnapshot, RunningStatus,
+};
 use missingno_core::video::IndexedFrame;
 use rgb::RGB8;
 
@@ -304,6 +310,26 @@ impl SteppingSystem for SmsSystem {
         apply_control(sms, control, input);
     }
 
+    fn ports() -> &'static [PortDescriptor] {
+        PORTS
+    }
+
+    fn plugged(_sms: &Sms, port: PortId) -> Option<PeripheralId> {
+        (port == PAD_PORT).then_some(CONTROL_PAD)
+    }
+
+    fn plug(_sms: &mut Sms, port: PortId, peripheral: PeripheralId) -> Result<(), PlugError> {
+        match (port, peripheral) {
+            (PAD_PORT, CONTROL_PAD) => Ok(()),
+            (PAD_PORT, _) => Err(PlugError::NotAccepted),
+            _ => Err(PlugError::UnknownPort),
+        }
+    }
+
+    fn panel_controls() -> &'static [PanelControl] {
+        PANEL
+    }
+
     fn drain_audio_samples(sms: &mut Sms) -> Vec<(f32, f32)> {
         sms.drain_audio_samples()
     }
@@ -410,23 +436,66 @@ fn cram_palette(cram: &[u8; 32]) -> Arc<[RGB8]> {
 
 /// The family's reading of the shared control ids: the pad maps onto the
 /// port lines, and Start works the console Pause button (an NMI).
+const PAD_PORT: PortId = PortId(0);
+const CONTROL_PAD: PeripheralId = PeripheralId(0);
+
+/// Pause is a button on the console itself, wired to the CPU's NMI rather than
+/// to a controller line.
+pub const PANEL: &[PanelControl] = &[PanelControl {
+    role: ControlRole::Pause,
+    label: "Pause",
+    behaviour: PanelBehaviour::Momentary,
+}];
+
+const PAD_BUTTONS: &[ControlDescriptor] = &[
+    button(ControlRole::Action(0), "Button 1"),
+    button(ControlRole::Action(1), "Button 2"),
+    button(ControlRole::Up, "Up"),
+    button(ControlRole::Down, "Down"),
+    button(ControlRole::Left, "Left"),
+    button(ControlRole::Right, "Right"),
+];
+
+const fn button(role: ControlRole, label: &'static str) -> ControlDescriptor {
+    ControlDescriptor {
+        role,
+        label,
+        kind: ControlKind::Button,
+    }
+}
+
+/// Only the first control pad is wired; the second port is not modelled.
+pub const PORTS: &[PortDescriptor] = &[PortDescriptor {
+    port: PAD_PORT,
+    label: "Control pad",
+    accepts: &[PeripheralDescriptor {
+        id: CONTROL_PAD,
+        label: "Control pad",
+        provider: Provider::Console,
+        controls: PAD_BUTTONS,
+    }],
+}];
+
 fn apply_control(sms: &mut Sms, control: ControlId, input: ControlInput) {
     let ControlInput::Digital(pressed) = input else {
         return;
     };
-    let line = match control.0 {
-        0 => {
-            if pressed {
-                sms.cpu.trigger_nmi();
-            }
-            return;
+    if control.site == ControlSite::Panel {
+        if control.role == ControlRole::Pause && pressed {
+            sms.cpu.trigger_nmi();
         }
-        2 => 0x10, // button 1
-        3 => 0x20, // button 2
-        4 => 0x01, // up
-        5 => 0x02, // down
-        6 => 0x04, // left
-        7 => 0x08, // right
+        return;
+    }
+    if control.site != ControlSite::Port(PAD_PORT) {
+        return;
+    }
+    let line = match control.role {
+        ControlRole::Action(0) => 0x10,
+        ControlRole::Action(1) => 0x20,
+        ControlRole::Up => 0x01,
+        ControlRole::Down => 0x02,
+        ControlRole::Left => 0x04,
+        ControlRole::Right => 0x08,
         _ => return,
     };
     if pressed {

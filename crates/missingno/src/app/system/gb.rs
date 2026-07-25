@@ -5,13 +5,14 @@
 
 use missingno_gb::frame::GbFrame;
 use missingno_gb::ppu::types::palette::{PaletteChoice, PaletteIndex};
-use missingno_gb::system::GbConsole;
+use missingno_gb::system::{GbConsole, LINK_CABLE, LINK_DISCONNECTED, LINK_PRINTER};
 use missingno_gb::{BootRom, GameBoy, cartridge::Cartridge, serial_transfer::SerialLink};
 use missingno_gbc::GameBoyColor;
 
+use missingno_core::ports::PeripheralId;
 use missingno_core::video::{ConsoleFrame, RgbaFrame};
 
-use super::{MediaLoad, Platform, SystemConsole};
+use super::{ControlMap, MediaLoad, Platform, SystemConsole};
 use missingno_iced::PalettePolicy;
 
 /// The Game Boy family's colour policy: the user's monochrome palette plus the
@@ -75,9 +76,9 @@ pub const DEFAULT_ROM_EXTENSION: &str = "gb";
 pub const SAVE_FILTER_NAME: &str = "Game Boy Save";
 pub const SAVE_EXTENSIONS: &[&str] = &["sav"];
 
-/// The family's names for the shared control ids, indexed by id; also the
-/// bindings UI's primary labels.
-pub const CONTROL_LABELS: [&str; 8] = ["Start", "Select", "A", "B", "Up", "Down", "Left", "Right"];
+/// The console's pad and its link port; the Game Boy has no panel controls.
+pub const CONTROLS: ControlMap =
+    ControlMap::new(missingno_gb::system::PAD, missingno_gb::system::PORTS, &[]);
 
 /// The battery-backed contents to persist: raw SRAM plus the wall-clock RTC
 /// tail. The save-file format is frontend policy, so the core takes this as a
@@ -157,26 +158,33 @@ fn matching_boot_rom(boot_rom: Option<BootRom>, cgb_core: bool) -> Option<BootRo
 /// virtual printer sits on the link port by default, staying inert unless a
 /// game prints, with prints landing in the game's folder.
 pub fn create_console(media: MediaLoad) -> Option<Box<dyn SystemConsole>> {
-    struct Boxed;
+    struct Boxed {
+        link: PeripheralId,
+    }
     impl GbLaunch for Boxed {
         type Output = Box<dyn SystemConsole>;
         fn dmg(self, console: GameBoy) -> Self::Output {
-            Box::new(GbConsole::new(console, battery_save))
+            Box::new(GbConsole::with_link(console, battery_save, self.link))
         }
         fn cgb(self, console: GameBoyColor) -> Self::Output {
-            Box::new(GbConsole::new(console, battery_save))
+            Box::new(GbConsole::with_link(console, battery_save, self.link))
         }
     }
-    let link = media.serial_link.take().or_else(|| {
-        media
-            .print_sink
-            .map(|sink| Box::new(crate::printer::GbPrinter::new(sink)) as Box<dyn SerialLink>)
-    });
+    let (link, kind) = match media.serial_link.take() {
+        Some(cable) => (Some(cable), LINK_CABLE),
+        None => match media.print_sink {
+            Some(sink) => (
+                Some(Box::new(crate::printer::GbPrinter::new(sink)) as Box<dyn SerialLink>),
+                LINK_PRINTER,
+            ),
+            None => (None, LINK_DISCONNECTED),
+        },
+    };
     Some(launch(
         media.rom.to_vec(),
         media.save_data,
         media.boot_rom,
         link,
-        Boxed,
+        Boxed { link: kind },
     ))
 }

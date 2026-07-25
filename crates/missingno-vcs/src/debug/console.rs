@@ -3,9 +3,10 @@
 
 use std::time::Duration;
 
+use missingno_core::ports::{PanelControl, PeripheralId, PlugError, PortDescriptor, PortId};
 use missingno_core::state::{StateRecord, SystemStateSchema};
 use missingno_core::system::{
-    ConsoleSwitch, ControlId, ControlInput, FrameOutcome, StateError, SystemConsole, SystemDebugger,
+    ControlId, ControlInput, FrameOutcome, StateError, SystemConsole, SystemDebugger,
 };
 use missingno_core::video::{
     self, DisplayTechnology, Frame as VideoFrame, IndexedFrame, Television,
@@ -18,7 +19,7 @@ use crate::state_schema::vcs_state_schema;
 use crate::tia::VISIBLE_CLOCKS;
 use crate::tv_standard::pixel_aspect;
 
-use super::controls::{CONSOLE_SWITCHES, apply_control};
+use super::controls::{self, apply_control};
 use super::debugger_seam::VcsDebugger;
 use super::frame::{
     FRAME_BUDGET_LINES, VSYNC_LOCK_LINES, blank_frame, frame_interval, indexed_frame,
@@ -106,8 +107,20 @@ impl SystemConsole for VcsConsole {
         apply_control(&mut self.vcs, control, input);
     }
 
-    fn console_switches(&self) -> &'static [ConsoleSwitch] {
-        &CONSOLE_SWITCHES
+    fn panel_controls(&self) -> &'static [PanelControl] {
+        controls::PANEL_CONTROLS
+    }
+
+    fn ports(&self) -> &'static [PortDescriptor] {
+        controls::PORTS
+    }
+
+    fn plugged(&self, port: PortId) -> Option<PeripheralId> {
+        controls::plugged(port)
+    }
+
+    fn plug(&mut self, port: PortId, peripheral: PeripheralId) -> Result<(), PlugError> {
+        controls::plug(port, peripheral)
     }
 
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {

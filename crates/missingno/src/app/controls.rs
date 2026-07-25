@@ -7,6 +7,8 @@ use iced::{
     stream,
 };
 
+use missingno_core::system::ControlRole;
+
 use crate::app;
 use crate::app::settings::{Action, Bindings};
 
@@ -31,27 +33,42 @@ pub fn event_handler(
     match event {
         Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) => {
             let key_str = key_to_string(&key)?;
-            let action = bindings.find_action(&key_str)?;
-            Some(action_to_press_message(action))
+            press_message(&bindings.find_actions(&key_str))
         }
         Event::Keyboard(keyboard::Event::KeyReleased { key, .. }) => {
             let key_str = key_to_string(&key)?;
-            let action = bindings.find_action(&key_str)?;
-            // Only game controls produce release messages
-            if let Action::Control(id) = action {
-                Some(app::Message::SetControl(id, false))
-            } else {
-                None
-            }
+            let roles = control_roles(&bindings.find_actions(&key_str));
+            (!roles.is_empty()).then(|| app::Message::SetControl(roles, false))
         }
         _ => None,
     }
 }
 
-/// Convert an action press into the appropriate app message.
+/// The control roles among a key's bound actions.
+fn control_roles(actions: &[Action]) -> Vec<ControlRole> {
+    actions
+        .iter()
+        .filter_map(|action| match action {
+            Action::Control(role) => Some(*role),
+            _ => None,
+        })
+        .collect()
+}
+
+/// What a key's bound actions do on press: its control roles in one message,
+/// or the single emulator action it works.
+fn press_message(actions: &[Action]) -> Option<app::Message> {
+    let roles = control_roles(actions);
+    if !roles.is_empty() {
+        return Some(app::Message::SetControl(roles, true));
+    }
+    actions.first().copied().map(action_to_press_message)
+}
+
+/// Convert an emulator action press into the appropriate app message.
 fn action_to_press_message(action: Action) -> app::Message {
     match action {
-        Action::Control(id) => app::Message::SetControl(id, true),
+        Action::Control(role) => app::Message::SetControl(vec![role], true),
         // Emulator actions → dedicated messages
         Action::Screenshot => app::Message::TakeScreenshot,
         Action::ToggleFullscreen => app::Message::ToggleFullscreen,
@@ -134,16 +151,18 @@ pub fn gamepad_subscription() -> Subscription<app::Message> {
                     match event {
                         gilrs::EventType::ButtonPressed(button, ..) => {
                             if let Some(button_str) = gamepad_button_to_string(button)
-                                && let Some(action) = bindings.find_action(&button_str)
+                                && let Some(message) =
+                                    press_message(&bindings.find_actions(&button_str))
                             {
-                                let _ = sender.try_send(action_to_press_message(action));
+                                let _ = sender.try_send(message);
                             }
                         }
                         gilrs::EventType::ButtonReleased(button, ..) => {
-                            if let Some(button_str) = gamepad_button_to_string(button)
-                                && let Some(Action::Control(id)) = bindings.find_action(&button_str)
-                            {
-                                let _ = sender.try_send(app::Message::SetControl(id, false));
+                            if let Some(button_str) = gamepad_button_to_string(button) {
+                                let roles = control_roles(&bindings.find_actions(&button_str));
+                                if !roles.is_empty() {
+                                    let _ = sender.try_send(app::Message::SetControl(roles, false));
+                                }
                             }
                         }
                         // An unbound analog trigger winds the paddle
@@ -189,13 +208,17 @@ pub fn gamepad_subscription() -> Subscription<app::Message> {
 
                                 if now_right != stick_right {
                                     stick_right = now_right;
-                                    let _ =
-                                        sender.try_send(app::Message::SetControl(7, stick_right));
+                                    let _ = sender.try_send(app::Message::SetControl(
+                                        vec![ControlRole::Right],
+                                        stick_right,
+                                    ));
                                 }
                                 if now_left != stick_left {
                                     stick_left = now_left;
-                                    let _ =
-                                        sender.try_send(app::Message::SetControl(6, stick_left));
+                                    let _ = sender.try_send(app::Message::SetControl(
+                                        vec![ControlRole::Left],
+                                        stick_left,
+                                    ));
                                 }
                             }
                             gilrs::Axis::LeftStickY => {
@@ -204,12 +227,17 @@ pub fn gamepad_subscription() -> Subscription<app::Message> {
 
                                 if now_up != stick_up {
                                     stick_up = now_up;
-                                    let _ = sender.try_send(app::Message::SetControl(4, stick_up));
+                                    let _ = sender.try_send(app::Message::SetControl(
+                                        vec![ControlRole::Up],
+                                        stick_up,
+                                    ));
                                 }
                                 if now_down != stick_down {
                                     stick_down = now_down;
-                                    let _ =
-                                        sender.try_send(app::Message::SetControl(5, stick_down));
+                                    let _ = sender.try_send(app::Message::SetControl(
+                                        vec![ControlRole::Down],
+                                        stick_down,
+                                    ));
                                 }
                             }
                             _ => {}
@@ -221,7 +249,7 @@ pub fn gamepad_subscription() -> Subscription<app::Message> {
                 let dt = last_tick.elapsed().as_secs_f32();
                 last_tick = std::time::Instant::now();
                 if let Some(position) = paddle.tick(dt) {
-                    let _ = sender.try_send(app::Message::SetAxis(8, position));
+                    let _ = sender.try_send(app::Message::SetAxis(ControlRole::Knob(0), position));
                 }
 
                 smol::Timer::after(Duration::from_millis(4)).await;

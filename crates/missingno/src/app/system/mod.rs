@@ -7,8 +7,9 @@
 
 use std::path::Path;
 
+pub use missingno_core::ports::{ControlDescriptor, PanelControl, PortDescriptor};
 pub use missingno_core::system::{
-    ConsoleSwitch, ControlId, ControlInput, SystemConsole, SystemDebugger,
+    ControlId, ControlInput, ControlRole, SystemConsole, SystemDebugger,
 };
 
 pub mod gb;
@@ -128,14 +129,78 @@ pub struct TraceRequest<'a> {
     pub boot_rom: Option<missingno_gb::BootRom>,
 }
 
+/// A family's control surfaces: the integrated pad, the peripherals its ports
+/// accept, and the console panel. Every table is static, so a binding's role
+/// can be placed on a site — and labelled — without a loaded console.
+#[derive(Clone, Copy)]
+pub struct ControlMap {
+    pub integrated: &'static [ControlDescriptor],
+    pub ports: &'static [PortDescriptor],
+    pub panel: &'static [PanelControl],
+}
+
+impl ControlMap {
+    pub const fn new(
+        integrated: &'static [ControlDescriptor],
+        ports: &'static [PortDescriptor],
+        panel: &'static [PanelControl],
+    ) -> Self {
+        ControlMap {
+            integrated,
+            ports,
+            panel,
+        }
+    }
+
+    /// Where this family plays `role`: the integrated pad first, then the ports
+    /// in order, then the panel. `None` when nothing on the console plays it.
+    pub fn resolve(&self, role: ControlRole) -> Option<ControlId> {
+        if self.integrated.iter().any(|control| control.role == role) {
+            return Some(ControlId::integrated(role));
+        }
+        for port in self.ports {
+            let played = port
+                .accepts
+                .iter()
+                .any(|peripheral| peripheral.controls.iter().any(|c| c.role == role));
+            if played {
+                return Some(ControlId::port(port.port, role));
+            }
+        }
+        self.panel
+            .iter()
+            .any(|control| control.role == role)
+            .then(|| ControlId::panel(role))
+    }
+
+    /// The family's name for `role`, from the surface that plays it.
+    pub fn label(&self, role: ControlRole) -> Option<&'static str> {
+        let on_peripherals = self
+            .ports
+            .iter()
+            .flat_map(|port| port.accepts)
+            .flat_map(|peripheral| peripheral.controls);
+        self.integrated
+            .iter()
+            .chain(on_peripherals)
+            .find(|control| control.role == role)
+            .map(|control| control.label)
+            .or_else(|| {
+                self.panel
+                    .iter()
+                    .find(|control| control.role == role)
+                    .map(|control| control.label)
+            })
+    }
+}
+
 /// A family's registration on the load path: how its media is recognised in
 /// file dialogs, library scans, and ROM loads, and how a console is built.
 pub struct FamilyDescriptor {
     pub platform: Platform,
     pub extensions: &'static [&'static str],
-    /// The family's names for the shared control ids, indexed by id;
-    /// empty string for ids the family ignores.
-    pub control_labels: &'static [&'static str; 8],
+    /// The family's control surfaces, for binding resolution and labelling.
+    pub controls: ControlMap,
     /// Whether path and contents identify this family's media. Predicates
     /// across the table are mutually exclusive; table order sets the
     /// file-dialog filter order, not claim precedence.
@@ -149,6 +214,11 @@ pub struct FamilyDescriptor {
     pub trace: Option<fn(TraceRequest)>,
 }
 
+/// The family registered for a platform.
+pub fn family_of(platform: Platform) -> Option<&'static FamilyDescriptor> {
+    FAMILIES.iter().find(|family| family.platform == platform)
+}
+
 /// The single classification point: the family whose media this is. Media
 /// no family claims is unsupported.
 pub fn family_for(path: &Path, rom: &[u8]) -> Option<&'static FamilyDescriptor> {
@@ -160,7 +230,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
     FamilyDescriptor {
         platform: Platform::GameBoy,
         extensions: gb::ROM_EXTENSIONS,
-        control_labels: &gb::CONTROL_LABELS,
+        controls: gb::CONTROLS,
         is_rom: gb::is_gb_rom,
         title_from_rom: gb::title_from_rom,
         create_console: gb::create_console,
@@ -169,7 +239,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
     FamilyDescriptor {
         platform: Platform::GameBoyColor,
         extensions: gb::GBC_ROM_EXTENSIONS,
-        control_labels: &gb::CONTROL_LABELS,
+        controls: gb::CONTROLS,
         is_rom: gb::is_gbc_rom,
         title_from_rom: gb::title_from_rom,
         // The same factory serves both platforms: the header picks the core.
@@ -179,7 +249,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
     FamilyDescriptor {
         platform: Platform::AtariVcs,
         extensions: vcs::ROM_EXTENSIONS,
-        control_labels: &vcs::CONTROL_LABELS,
+        controls: vcs::CONTROLS,
         is_rom: vcs::is_vcs_rom,
         title_from_rom: |_| None,
         create_console: |media| {
@@ -197,7 +267,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
     FamilyDescriptor {
         platform: Platform::MasterSystem,
         extensions: sms::ROM_EXTENSIONS,
-        control_labels: &sms::CONTROL_LABELS,
+        controls: sms::CONTROLS,
         is_rom: |path, _| sms::is_sms_rom(path),
         title_from_rom: |_| None,
         create_console: |media| sms::create_console(media.rom, media.fallback_title).ok(),
@@ -207,7 +277,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
     FamilyDescriptor {
         platform: Platform::Nes,
         extensions: nes::ROM_EXTENSIONS,
-        control_labels: &nes::CONTROL_LABELS,
+        controls: nes::CONTROLS,
         is_rom: |_, rom| nes::is_nes_rom(rom),
         title_from_rom: |_| None,
         create_console: |media| nes::create_console(media.rom, media.fallback_title).ok(),

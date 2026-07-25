@@ -185,7 +185,7 @@ impl Session {
 
         let mut cursor = ReplayCursor::new();
         for _ in 0..recording.frames {
-            cursor.apply_inputs(&recording, self.debugger.as_mut());
+            cursor.apply_events(&recording, self.debugger.as_mut());
             let produced = self.debugger.run_frame().into_frame();
             if let ReplayStep::Diverged { frame, .. } =
                 cursor.note_frame(&recording, produced.as_ref())

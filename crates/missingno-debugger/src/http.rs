@@ -71,7 +71,10 @@ fn session_route(mut request: Request, client: &SessionHandle) -> Option<Request
             match read_json_body(&mut request).and_then(|body| parse_control(&body)) {
                 Ok((control, input)) => {
                     client.set_control(control, input);
-                    respond_json(request, json!({ "control": control.0 }));
+                    respond_json(
+                        request,
+                        json!({ "site": control.site.name(), "role": control.role.name() }),
+                    );
                 }
                 Err(message) => respond_error(request, 400, &message),
             }

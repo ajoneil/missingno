@@ -228,15 +228,14 @@ fn section_header(label: &'static str) -> Element<'static, app::Message> {
 /// every family reads the control the same way, otherwise one line per
 /// distinct reading prefixed with the families that share it.
 fn control_label(action: Action) -> String {
-    let Action::Control(id) = action else {
+    let Action::Control(role) = action else {
         return action.to_string();
     };
     let mut readings: Vec<(Vec<&str>, &str)> = Vec::new();
     for family in crate::app::system::FAMILIES {
-        let label = family.control_labels[id as usize];
-        if label.is_empty() {
+        let Some(label) = family.controls.label(role) else {
             continue;
-        }
+        };
         match readings.iter_mut().find(|(_, l)| *l == label) {
             Some((families, _)) => families.push(family.platform.short_name()),
             None => readings.push((vec![family.platform.short_name()], label)),

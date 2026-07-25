@@ -248,16 +248,19 @@ dbg_load_state() {
     jq -r 'if .error then .error else "loaded (pc \(.pc // "?"))" end'
 }
 
-# dbg_control <id> <down|up>  — hold or release a console control, for reaching
-# a state the ROM only enters on input. Ids follow the core's control order.
+# dbg_control <site> <role> <down|up>  — hold or release a console control, for
+# reaching a state the ROM only enters on input. Site is integrated/panel/portN,
+# role is start/select/pause/reset/actionN/up/down/left/right/knobN/toggleN.
 dbg_control() {
-  local id="${1:?usage: dbg_control <control-id> <down|up>}"
-  local action="${2:?usage: dbg_control <control-id> <down|up>}"
+  local site="${1:?usage: dbg_control <site> <role> <down|up>}"
+  local role="${2:?usage: dbg_control <site> <role> <down|up>}"
+  local action="${3:?usage: dbg_control <site> <role> <down|up>}"
   local pressed=true
   [ "$action" = "up" ] && pressed=false
   curl -s -X POST "$DBG_URL/control" -H 'Content-Type: application/json' \
-    -d "$(jq -nc --argjson c "$id" --argjson p "$pressed" '{control: $c, pressed: $p}')" |
-    jq -r 'if .error then .error else "control \(.control) \($ARGS.named.a)" end' --arg a "$action"
+    -d "$(jq -nc --arg s "$site" --arg r "$role" --argjson p "$pressed" \
+      '{site: $s, role: $r, pressed: $p}')" |
+    jq -r 'if .error then .error else "control \(.site) \(.role) \($ARGS.named.a)" end' --arg a "$action"
 }
 
 # ── Deprecated gb_* aliases (semantics that map 1:1 to a dbg_* helper) ─────────

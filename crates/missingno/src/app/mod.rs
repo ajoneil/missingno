@@ -420,9 +420,9 @@ enum Message {
     ExportCaptureSaved(usize, Option<rfd::FileHandle>),
 
     /// A digital control (seam control id, pressed).
-    SetControl(u8, bool),
+    SetControl(Vec<missingno_core::system::ControlRole>, bool),
     /// An analog control (seam control id, normalised 0-1).
-    SetAxis(u8, f32),
+    SetAxis(missingno_core::system::ControlRole, f32),
 
     ToggleDebugger(bool),
     CompleteSetup {

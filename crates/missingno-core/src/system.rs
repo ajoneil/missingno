@@ -14,36 +14,153 @@ use crate::cdl::CdlWindow;
 use crate::graphics::GraphicsView;
 use crate::inspect::{MemoryRegion, MemoryWindow, RegisterGroup, Section, Watch, Watchable};
 use crate::isa::InstructionSet;
+use crate::ports::{
+    ControlDescriptor, PanelControl, PeripheralId, PlugError, PortDescriptor, PortId,
+};
 use crate::state::{StateRecord, SystemStateSchema};
 use crate::symbols::{Symbol, SymbolTable};
 use crate::video::{DisplayTechnology, Frame, RawFrame};
 use crate::waveform::ChannelWave;
 
-/// A family-interpreted control identifier. Ids 0-7 mirror the Game Boy
-/// button order so the existing bindings pipeline translates numerically;
-/// analog and family-specific controls take ids from 8 up.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ControlId(pub u8);
+/// Where a control physically lives on the machine.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
+pub enum ControlSite {
+    /// The console's own game controller — the Game Boy's pad.
+    Integrated,
+    /// The console shell: panel buttons and latching switches.
+    Panel,
+    /// The peripheral plugged into a port.
+    Port(PortId),
+}
+
+/// What a control does. Roles rather than numbers, so a binding means the same
+/// thing on every console and follows a peripheral into any port.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
+pub enum ControlRole {
+    Start,
+    Select,
+    /// The console's play/pause button — the Master System's Pause.
+    Pause,
+    /// The console's game-reset button — the VCS's Reset.
+    Reset,
+    /// Action button n: 0 is A / Fire / Button 1, 1 is B / Button 2. A paddle
+    /// pair numbers its buttons the same way.
+    Action(u8),
+    Up,
+    Down,
+    Left,
+    Right,
+    /// Analog knob n on the site's peripheral.
+    Knob(u8),
+    /// Latching panel switch n.
+    Toggle(u8),
+}
+
+/// A control on a running machine: what it does, and where it sits. The
+/// family's descriptors — [`integrated_controls`](SystemConsole::integrated_controls),
+/// [`panel_controls`](SystemConsole::panel_controls), and the controls of the
+/// peripheral plugged into each [`port`](SystemConsole::ports) — state which
+/// ones exist.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ControlId {
+    pub site: ControlSite,
+    pub role: ControlRole,
+}
+
+impl ControlSite {
+    /// The site's spelling on a text surface: `integrated`, `panel`, `port0`.
+    pub fn name(&self) -> String {
+        match self {
+            ControlSite::Integrated => "integrated".to_string(),
+            ControlSite::Panel => "panel".to_string(),
+            ControlSite::Port(port) => format!("port{}", port.0),
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<ControlSite> {
+        match name {
+            "integrated" => Some(ControlSite::Integrated),
+            "panel" => Some(ControlSite::Panel),
+            _ => name
+                .strip_prefix("port")?
+                .parse()
+                .ok()
+                .map(|port| ControlSite::Port(PortId(port))),
+        }
+    }
+}
+
+impl ControlRole {
+    /// The role's spelling on a text surface: `start`, `action0`, `toggle2`.
+    pub fn name(&self) -> String {
+        match self {
+            ControlRole::Start => "start".to_string(),
+            ControlRole::Select => "select".to_string(),
+            ControlRole::Pause => "pause".to_string(),
+            ControlRole::Reset => "reset".to_string(),
+            ControlRole::Action(n) => format!("action{n}"),
+            ControlRole::Up => "up".to_string(),
+            ControlRole::Down => "down".to_string(),
+            ControlRole::Left => "left".to_string(),
+            ControlRole::Right => "right".to_string(),
+            ControlRole::Knob(n) => format!("knob{n}"),
+            ControlRole::Toggle(n) => format!("toggle{n}"),
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<ControlRole> {
+        let numbered = |prefix: &str| name.strip_prefix(prefix).and_then(|n| n.parse().ok());
+        match name {
+            "start" => Some(ControlRole::Start),
+            "select" => Some(ControlRole::Select),
+            "pause" => Some(ControlRole::Pause),
+            "reset" => Some(ControlRole::Reset),
+            "up" => Some(ControlRole::Up),
+            "down" => Some(ControlRole::Down),
+            "left" => Some(ControlRole::Left),
+            "right" => Some(ControlRole::Right),
+            _ => numbered("action")
+                .map(ControlRole::Action)
+                .or_else(|| numbered("knob").map(ControlRole::Knob))
+                .or_else(|| numbered("toggle").map(ControlRole::Toggle)),
+        }
+    }
+}
+
+impl std::fmt::Display for ControlId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {}", self.site.name(), self.role.name())
+    }
+}
+
+impl ControlId {
+    pub const fn integrated(role: ControlRole) -> ControlId {
+        ControlId {
+            site: ControlSite::Integrated,
+            role,
+        }
+    }
+
+    pub const fn panel(role: ControlRole) -> ControlId {
+        ControlId {
+            site: ControlSite::Panel,
+            role,
+        }
+    }
+
+    pub const fn port(port: PortId, role: ControlRole) -> ControlId {
+        ControlId {
+            site: ControlSite::Port(port),
+            role,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ControlInput {
     Digital(bool),
     /// Normalised 0.0-1.0 (paddle knobs, pots).
     Axis(f32),
-}
-
-/// A latching console switch a family exposes for in-play toggling — the
-/// VCS's difficulty and colour switches. Unlike the momentary controls on
-/// the key-binding path, these hold a position the user flips; toggling one
-/// sends its new level through `set_control` as `ControlInput::Digital`.
-#[derive(Clone, Copy, Debug)]
-pub struct ConsoleSwitch {
-    pub control: ControlId,
-    pub label: &'static str,
-    /// Position names for the two levels, `[low, high]`.
-    pub positions: [&'static str; 2],
-    /// The power-on level, matching the core's default switch state.
-    pub default_high: bool,
 }
 
 /// One emulated frame's outcome, as seen by the emu-thread loop.
@@ -194,9 +311,29 @@ pub trait SystemConsole: Send {
     fn reset(&mut self);
     /// Apply an input to a family-interpreted control.
     fn set_control(&mut self, control: ControlId, input: ControlInput);
-    /// Latching console switches shown as in-play toggles (empty for
-    /// families without any).
-    fn console_switches(&self) -> &'static [ConsoleSwitch] {
+    /// The console's controller and expansion ports; empty for a family that
+    /// models none.
+    fn ports(&self) -> &'static [PortDescriptor] {
+        &[]
+    }
+    /// The peripheral currently plugged into `port`.
+    fn plugged(&self, _port: PortId) -> Option<PeripheralId> {
+        None
+    }
+    /// Plug a console-constructible peripheral into a port. A
+    /// [`Provider::Host`](crate::ports::Provider::Host) kind arrives as an
+    /// object from the host instead, and is refused here.
+    fn plug(&mut self, _port: PortId, _peripheral: PeripheralId) -> Result<(), PlugError> {
+        Err(PlugError::UnknownPort)
+    }
+    /// The console's built-in game controller — the Game Boy's pad. Empty for
+    /// a console whose controllers all arrive through ports.
+    fn integrated_controls(&self) -> &'static [ControlDescriptor] {
+        &[]
+    }
+    /// The controls on the console shell: momentary buttons and the latching
+    /// switches the UI renders as in-play toggles.
+    fn panel_controls(&self) -> &'static [PanelControl] {
         &[]
     }
     /// Whether this console renders through a user-selectable monochrome

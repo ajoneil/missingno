@@ -21,6 +21,7 @@ pub mod disasm;
 pub mod graphics;
 pub mod inspect;
 pub mod isa;
+pub mod ports;
 pub mod recording;
 pub mod state;
 pub mod state_file;
@@ -38,6 +39,10 @@ pub use inspect::{
     Watchable,
 };
 pub use isa::{Flow, Instruction, InstructionSet};
+pub use ports::{
+    ControlDescriptor, ControlKind, PanelBehaviour, PanelControl, PeripheralDescriptor,
+    PeripheralId, PlugError, PortDescriptor, PortId, Provider,
+};
 pub use state::{
     FieldDef, FieldType, FrameSpec, PixelFormat, Provenance, StateRecord, StateValue,
     SystemStateSchema, Tier,

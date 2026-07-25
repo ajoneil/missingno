@@ -20,6 +20,7 @@ use iced::widget::{
 use iced::{Element, Length, Task, Theme};
 
 use db::{Db, TextField, TreeId};
+use missingno_core::system::{ControlId, ControlRole};
 use remote::{Bridge, RemoteEndpoint, SharedSink, error_result, text_result};
 use verify::RomIndex;
 #[derive(Parser)]
@@ -165,12 +166,12 @@ enum Message {
     PlayFrame(u64),
     PlayEnded(u64),
     StopPlay,
-    Pad(u8, bool),
+    Pad(ControlId, bool),
     Paddle(f32),
     /// Flip a latching console switch (index into the family's switch list).
     ToggleSwitch(usize),
     /// Press a momentary console switch; release follows after a beat.
-    TapSwitch(u8),
+    TapSwitch(ControlId),
     Fetch {
         play_after: bool,
     },
@@ -492,16 +493,16 @@ impl Curator {
                 self.playing_sha1 = None;
                 self.play_generation += 1;
             }
-            Message::Pad(id, pressed) => {
+            Message::Pad(control, pressed) => {
                 if let Some((_, session)) = &self.playing {
                     // A paddle game's fire button is the paddle trigger,
                     // which reads on the joystick-right line.
-                    let id = if session.paddle_mode && (id == 2 || id == 3) {
-                        7
+                    let control = if session.paddle_mode && control.role == ControlRole::Action(0) {
+                        ControlId::port(play::PLAY_PORT, ControlRole::Right)
                     } else {
-                        id
+                        control
                     };
-                    session.set_control(id, pressed);
+                    session.set_control(control, pressed);
                 }
             }
             Message::Paddle(position) => {
@@ -517,16 +518,16 @@ impl Curator {
                     )
                 {
                     *level = !*level;
-                    let (id, high) = (switch.control.0, *level);
-                    session.set_control(id, high);
+                    let (control, high) = (ControlId::panel(switch.role), *level);
+                    session.set_control(control, high);
                 }
             }
-            Message::TapSwitch(id) => {
+            Message::TapSwitch(control) => {
                 if let Some((_, session)) = &self.playing {
-                    session.set_control(id, true);
+                    session.set_control(control, true);
                     return Task::perform(
                         smol::Timer::after(Duration::from_millis(120)),
-                        move |_| Message::Pad(id, false),
+                        move |_| Message::Pad(control, false),
                     );
                 }
             }
@@ -2596,14 +2597,19 @@ impl Curator {
                 .spacing(8);
                 if let Some((_, session)) = &self.playing {
                     let mut switches = row![
-                        button(text("Reset").size(12)).on_press(Message::TapSwitch(0)),
-                        button(text("Select").size(12)).on_press(Message::TapSwitch(1)),
+                        button(text("Reset").size(12))
+                            .on_press(Message::TapSwitch(ControlId::panel(ControlRole::Reset))),
+                        button(text("Select").size(12))
+                            .on_press(Message::TapSwitch(ControlId::panel(ControlRole::Select))),
                     ]
                     .spacing(8)
                     .align_y(iced::Alignment::Center);
                     for (i, switch) in session.switches.iter().enumerate() {
                         let level = session.switch_levels.get(i).copied().unwrap_or(false);
-                        let position = switch.positions[usize::from(level)];
+                        let Some((positions, _)) = switch.toggle() else {
+                            continue;
+                        };
+                        let position = positions[usize::from(level)];
                         switches = switches.push(
                             button(text(format!("{}: {position}", switch.label)).size(12))
                                 .on_press(Message::ToggleSwitch(i)),
@@ -2628,9 +2634,10 @@ impl Curator {
                         .on_move(move |point| Message::Paddle((point.x / width).clamp(0.0, 1.0)));
                         if paddle_mode {
                             // Click = the paddle trigger while aiming by pointer.
+                            let trigger = ControlId::port(play::PLAY_PORT, ControlRole::Right);
                             area = area
-                                .on_press(Message::Pad(7, true))
-                                .on_release(Message::Pad(7, false));
+                                .on_press(Message::Pad(trigger, true))
+                                .on_release(Message::Pad(trigger, false));
                         }
                         container(area).center(Length::Fill).into()
                     }));

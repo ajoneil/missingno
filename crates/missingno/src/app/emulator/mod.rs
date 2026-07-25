@@ -7,7 +7,7 @@ use iced::{
 
 use missingno_session::SessionHandle;
 
-use crate::app::system::{ConsoleSwitch, Platform, gb};
+use crate::app::system::{PanelControl, Platform, gb};
 use crate::app::{
     self,
     system::SystemConsole,
@@ -51,10 +51,10 @@ pub struct Emulator {
     persistence: bool,
     pixel_grid: bool,
     scanlines: bool,
-    /// The family's latching console switches and their current levels,
+    /// The console's latching panel switches and their current levels,
     /// captured at load so the Console panel renders without reaching into the
     /// session-owned console. Empty for families with none.
-    switches: &'static [ConsoleSwitch],
+    switches: Vec<PanelControl>,
     switch_levels: Vec<bool>,
     /// Whether this console has a selectable monochrome palette (DMG),
     /// captured at load; gates the Display panel's palette rows.
@@ -84,7 +84,7 @@ impl From<Message> for app::Message {
 /// The console properties this shell caches at load, read from the console
 /// once before it moves into the session (which then owns it permanently).
 pub struct ConsoleFacts {
-    pub switches: &'static [ConsoleSwitch],
+    pub switches: Vec<PanelControl>,
     pub monochrome_palette: bool,
     pub supports_sgb: bool,
     pub technology: missingno_core::video::DisplayTechnology,
@@ -93,7 +93,12 @@ pub struct ConsoleFacts {
 impl ConsoleFacts {
     pub fn of(console: &dyn SystemConsole) -> Self {
         Self {
-            switches: console.console_switches(),
+            switches: console
+                .panel_controls()
+                .iter()
+                .filter(|control| control.toggle().is_some())
+                .copied()
+                .collect(),
             monochrome_palette: console.uses_monochrome_palette(),
             supports_sgb: console.supports_sgb(),
             technology: console.video_out(),
@@ -132,7 +137,15 @@ impl Emulator {
         platform: Platform,
         presentation: Presentation,
     ) -> Self {
-        let switches = facts.switches;
+        let switch_levels = facts
+            .switches
+            .iter()
+            .map(|switch| {
+                switch
+                    .toggle()
+                    .is_some_and(|(_, default_high)| default_high)
+            })
+            .collect();
         let mut this = Self {
             handle,
             platform,
@@ -143,8 +156,8 @@ impl Emulator {
             persistence: presentation.persistence,
             pixel_grid: presentation.pixel_grid,
             scanlines: presentation.scanlines,
-            switches,
-            switch_levels: switches.iter().map(|s| s.default_high).collect(),
+            switches: facts.switches,
+            switch_levels,
             monochrome_palette: facts.monochrome_palette,
             supports_sgb: facts.supports_sgb,
             open_panels: Vec::new(),
@@ -223,7 +236,7 @@ impl Emulator {
                     *level = !*level;
                     // Route through the shared control path so it reaches the
                     // session-owned console.
-                    return Task::done(app::Message::SetControl(switch.control.0, *level));
+                    return Task::done(app::Message::SetControl(vec![switch.role], *level));
                 }
             }
             Message::TogglePanel(panel) => {
@@ -259,7 +272,12 @@ impl Emulator {
                 // Horizontal position over the screen drives the first
                 // analog control (the VCS paddle); digital-only systems
                 // ignore the axis.
-                .on_move(move |point| app::Message::SetAxis(8, (point.x / width).clamp(0.0, 1.0))),
+                .on_move(move |point| {
+                    app::Message::SetAxis(
+                        missingno_core::system::ControlRole::Knob(0),
+                        (point.x / width).clamp(0.0, 1.0),
+                    )
+                }),
             )
             .center(Fill)
             .into()
@@ -314,7 +332,7 @@ impl Emulator {
         .into();
 
         let ctx = panels::PanelContext {
-            switches: self.switches,
+            switches: &self.switches,
             switch_levels: &self.switch_levels,
             palette: self.palette,
             use_sgb_colors: self.use_sgb_colors,

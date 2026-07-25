@@ -11,8 +11,14 @@ use missingno_core::inspect::{
     BitColumn, BitRow, BitTable, FlagName, Register, RegisterGroup, Row, Section, SectionBlock,
     Sweep, SweepZone, Tone, ValueStyle,
 };
+use missingno_core::ports::{
+    ControlDescriptor, ControlKind, PeripheralDescriptor, PeripheralId, PlugError, PortDescriptor,
+    PortId, Provider,
+};
 use missingno_core::stepping::SteppingSystem;
-use missingno_core::system::{ControlId, ControlInput, DebugView, InspectSnapshot, RunningStatus};
+use missingno_core::system::{
+    ControlId, ControlInput, ControlRole, ControlSite, DebugView, InspectSnapshot, RunningStatus,
+};
 use missingno_core::video::IndexedFrame;
 use rgb::RGB8;
 
@@ -273,6 +279,22 @@ impl SteppingSystem for NesSystem {
         apply_control(nes, control, input);
     }
 
+    fn ports() -> &'static [PortDescriptor] {
+        PORTS
+    }
+
+    fn plugged(_nes: &Nes, port: PortId) -> Option<PeripheralId> {
+        (port == CONTROLLER_PORT).then_some(CONTROLLER)
+    }
+
+    fn plug(_nes: &mut Nes, port: PortId, peripheral: PeripheralId) -> Result<(), PlugError> {
+        match (port, peripheral) {
+            (CONTROLLER_PORT, CONTROLLER) => Ok(()),
+            (CONTROLLER_PORT, _) => Err(PlugError::NotAccepted),
+            _ => Err(PlugError::UnknownPort),
+        }
+    }
+
     fn drain_audio_samples(nes: &mut Nes) -> Vec<(f32, f32)> {
         nes.drain_audio_samples()
     }
@@ -362,19 +384,57 @@ impl SteppingSystem for NesSystem {
 
 /// The pad maps one-to-one onto the shared control ids and the console's
 /// serial shift order (A, B, Select, Start, Up, Down, Left, Right).
+const CONTROLLER_PORT: PortId = PortId(0);
+const CONTROLLER: PeripheralId = PeripheralId(0);
+
+const CONTROLLER_BUTTONS: &[ControlDescriptor] = &[
+    button(ControlRole::Start, "Start"),
+    button(ControlRole::Select, "Select"),
+    button(ControlRole::Action(0), "A"),
+    button(ControlRole::Action(1), "B"),
+    button(ControlRole::Up, "Up"),
+    button(ControlRole::Down, "Down"),
+    button(ControlRole::Left, "Left"),
+    button(ControlRole::Right, "Right"),
+];
+
+const fn button(role: ControlRole, label: &'static str) -> ControlDescriptor {
+    ControlDescriptor {
+        role,
+        label,
+        kind: ControlKind::Button,
+    }
+}
+
+/// Only the first controller is wired; the second port and the expansion port
+/// are not modelled.
+pub const PORTS: &[PortDescriptor] = &[PortDescriptor {
+    port: CONTROLLER_PORT,
+    label: "Controller 1",
+    accepts: &[PeripheralDescriptor {
+        id: CONTROLLER,
+        label: "Controller",
+        provider: Provider::Console,
+        controls: CONTROLLER_BUTTONS,
+    }],
+}];
+
 fn apply_control(nes: &mut Nes, control: ControlId, input: ControlInput) {
     let ControlInput::Digital(pressed) = input else {
         return;
     };
-    let bit = match control.0 {
-        2 => 0x01, // A
-        3 => 0x02, // B
-        1 => 0x04, // Select
-        0 => 0x08, // Start
-        4 => 0x10, // Up
-        5 => 0x20, // Down
-        6 => 0x40, // Left
-        7 => 0x80, // Right
+    if control.site != ControlSite::Port(CONTROLLER_PORT) {
+        return;
+    }
+    let bit = match control.role {
+        ControlRole::Action(0) => 0x01,
+        ControlRole::Action(1) => 0x02,
+        ControlRole::Select => 0x04,
+        ControlRole::Start => 0x08,
+        ControlRole::Up => 0x10,
+        ControlRole::Down => 0x20,
+        ControlRole::Left => 0x40,
+        ControlRole::Right => 0x80,
         _ => return,
     };
     let mut state = nes.controller();

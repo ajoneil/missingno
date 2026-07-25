@@ -2,13 +2,13 @@
 //! stream that drives it, replayable deterministically.
 //!
 //! A recording is the state framing of [`crate::state_file`] (the initial
-//! machine state, captured through the save-state seam) followed by an
-//! **input trace** — a record sequence in the container vocabulary, kind
-//! `input`: each entry is a hardware-named control change stamped with the
-//! frame boundary it lands on. Replay restores the initial state and re-applies
-//! the input stream at its timestamps while stepping frames; the continuation
-//! is deterministic by construction (identical initial state, identical inputs
-//! at identical boundaries).
+//! machine state, captured through the save-state seam), the port configuration
+//! capture began with, and an **event trace**: control changes and mid-recording
+//! peripheral swaps, each stamped with the frame boundary it lands on. Replay
+//! restores the initial state, re-plugs the ports, and re-applies the event
+//! stream at its timestamps while stepping frames; the continuation is
+//! deterministic by construction (identical initial state, identical peripherals,
+//! identical inputs at identical boundaries).
 //!
 //! ## Why frame index is the timestamp unit
 //!
@@ -25,7 +25,8 @@
 
 use std::hash::{Hash, Hasher};
 
-use crate::system::{ControlId, ControlInput, StateError, SystemConsole};
+use crate::ports::{PeripheralId, PortId};
+use crate::system::{ControlId, ControlInput, ControlRole, ControlSite, StateError, SystemConsole};
 use crate::video::Frame;
 
 /// Magic bytes of a recording file. Distinct from the state file's `MPSV` and
@@ -34,16 +35,95 @@ pub const RECORDING_MAGIC: &[u8; 4] = b"MPRC";
 
 /// Recording-container version. A reader rejects any other value outright — the
 /// effort-wide breaking posture, regenerate rather than migrate.
-pub const RECORDING_VERSION: u8 = 1;
+pub const RECORDING_VERSION: u8 = 2;
 
-/// One input event: a hardware-named control changed to a value at a frame
-/// boundary (frames elapsed since the recording's initial state, applied before
-/// that frame is stepped).
+const EVENT_CONTROL: u8 = 0;
+const EVENT_PLUG: u8 = 1;
+
+const SITE_INTEGRATED: u8 = 0;
+const SITE_PANEL: u8 = 1;
+const SITE_PORT: u8 = 2;
+
+const ROLE_START: u8 = 0;
+const ROLE_SELECT: u8 = 1;
+const ROLE_PAUSE: u8 = 2;
+const ROLE_RESET: u8 = 3;
+const ROLE_ACTION: u8 = 4;
+const ROLE_UP: u8 = 5;
+const ROLE_DOWN: u8 = 6;
+const ROLE_LEFT: u8 = 7;
+const ROLE_RIGHT: u8 = 8;
+const ROLE_KNOB: u8 = 9;
+const ROLE_TOGGLE: u8 = 10;
+
+/// A control on the wire: site tag, site parameter, role tag, role parameter.
+fn write_control(out: &mut Vec<u8>, control: ControlId) {
+    let (site, site_param) = match control.site {
+        ControlSite::Integrated => (SITE_INTEGRATED, 0),
+        ControlSite::Panel => (SITE_PANEL, 0),
+        ControlSite::Port(port) => (SITE_PORT, port.0),
+    };
+    let (role, role_param) = match control.role {
+        ControlRole::Start => (ROLE_START, 0),
+        ControlRole::Select => (ROLE_SELECT, 0),
+        ControlRole::Pause => (ROLE_PAUSE, 0),
+        ControlRole::Reset => (ROLE_RESET, 0),
+        ControlRole::Action(n) => (ROLE_ACTION, n),
+        ControlRole::Up => (ROLE_UP, 0),
+        ControlRole::Down => (ROLE_DOWN, 0),
+        ControlRole::Left => (ROLE_LEFT, 0),
+        ControlRole::Right => (ROLE_RIGHT, 0),
+        ControlRole::Knob(n) => (ROLE_KNOB, n),
+        ControlRole::Toggle(n) => (ROLE_TOGGLE, n),
+    };
+    out.extend_from_slice(&[site, site_param, role, role_param]);
+}
+
+fn read_control(reader: &mut Reader<'_>) -> Result<ControlId, RecordingError> {
+    let site = match (reader.u8()?, reader.u8()?) {
+        (SITE_INTEGRATED, _) => ControlSite::Integrated,
+        (SITE_PANEL, _) => ControlSite::Panel,
+        (SITE_PORT, port) => ControlSite::Port(PortId(port)),
+        _ => return Err(RecordingError::BadEncoding),
+    };
+    let role = match (reader.u8()?, reader.u8()?) {
+        (ROLE_START, _) => ControlRole::Start,
+        (ROLE_SELECT, _) => ControlRole::Select,
+        (ROLE_PAUSE, _) => ControlRole::Pause,
+        (ROLE_RESET, _) => ControlRole::Reset,
+        (ROLE_ACTION, n) => ControlRole::Action(n),
+        (ROLE_UP, _) => ControlRole::Up,
+        (ROLE_DOWN, _) => ControlRole::Down,
+        (ROLE_LEFT, _) => ControlRole::Left,
+        (ROLE_RIGHT, _) => ControlRole::Right,
+        (ROLE_KNOB, n) => ControlRole::Knob(n),
+        (ROLE_TOGGLE, n) => ControlRole::Toggle(n),
+        _ => return Err(RecordingError::BadEncoding),
+    };
+    Ok(ControlId { site, role })
+}
+
+/// One recorded event, stamped with the frame boundary it lands on (frames
+/// elapsed since the recording's initial state, applied before that frame is
+/// stepped).
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct InputRecord {
+pub struct RecordedEvent {
     pub frame: u64,
-    pub control: ControlId,
-    pub input: ControlInput,
+    pub kind: EventKind,
+}
+
+/// What a recorded event changed: an input to a control, or the peripheral a
+/// port carries.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum EventKind {
+    Control {
+        control: ControlId,
+        input: ControlInput,
+    },
+    Plug {
+        port: PortId,
+        peripheral: PeripheralId,
+    },
 }
 
 /// A frame-hash checkpoint, for replay-divergence detection.
@@ -61,8 +141,10 @@ pub struct Recording {
     /// carrying its own system id, ROM fingerprint, and version — so restore
     /// validates the target console for free.
     pub initial_state: Vec<u8>,
-    /// The input trace, in ascending frame order.
-    pub inputs: Vec<InputRecord>,
+    /// The peripherals each port carried when capture began.
+    pub ports: Vec<(PortId, PeripheralId)>,
+    /// The event trace, in ascending frame order.
+    pub events: Vec<RecordedEvent>,
     /// Frame-hash checkpoints captured every [`check_interval`](Self::check_interval)
     /// frames.
     pub checks: Vec<FrameCheck>,
@@ -137,18 +219,34 @@ impl Recording {
         out.extend_from_slice(&self.frames.to_le_bytes());
         out.extend_from_slice(&self.check_interval.to_le_bytes());
 
-        out.extend_from_slice(&len32(self.inputs.len())?.to_le_bytes());
-        for event in &self.inputs {
+        out.push(u8::try_from(self.ports.len()).map_err(|_| RecordingError::TooLarge)?);
+        for (port, peripheral) in &self.ports {
+            out.push(port.0);
+            out.push(peripheral.0);
+        }
+
+        out.extend_from_slice(&len32(self.events.len())?.to_le_bytes());
+        for event in &self.events {
             out.extend_from_slice(&event.frame.to_le_bytes());
-            out.push(event.control.0);
-            match event.input {
-                ControlInput::Digital(pressed) => {
-                    out.push(0);
-                    out.push(pressed as u8);
+            match event.kind {
+                EventKind::Control { control, input } => {
+                    out.push(EVENT_CONTROL);
+                    write_control(&mut out, control);
+                    match input {
+                        ControlInput::Digital(pressed) => {
+                            out.push(0);
+                            out.push(pressed as u8);
+                        }
+                        ControlInput::Axis(value) => {
+                            out.push(1);
+                            out.extend_from_slice(&value.to_le_bytes());
+                        }
+                    }
                 }
-                ControlInput::Axis(value) => {
-                    out.push(1);
-                    out.extend_from_slice(&value.to_le_bytes());
+                EventKind::Plug { port, peripheral } => {
+                    out.push(EVENT_PLUG);
+                    out.push(port.0);
+                    out.push(peripheral.0);
                 }
             }
         }
@@ -185,31 +283,43 @@ impl Recording {
         }
         let check_interval = reader.u64()?;
 
-        // Each event is at least 6 bytes on the wire, but clamp the reserve to
+        let port_count = reader.u8()?;
+        let mut ports = Vec::with_capacity(port_count as usize);
+        for _ in 0..port_count {
+            ports.push((PortId(reader.u8()?), PeripheralId(reader.u8()?)));
+        }
+
+        // Each event is at least 11 bytes on the wire, but clamp the reserve to
         // the bytes actually present so a hostile count cannot force a huge
         // allocation; the loop still errors cleanly on truncation.
-        let input_count = reader.u32()? as usize;
-        let mut inputs = Vec::with_capacity(input_count.min(reader.remaining()));
-        let mut last_input_frame = 0u64;
-        for _ in 0..input_count {
+        let event_count = reader.u32()? as usize;
+        let mut events = Vec::with_capacity(event_count.min(reader.remaining()));
+        let mut last_event_frame = 0u64;
+        for _ in 0..event_count {
             let frame = reader.u64()?;
-            // Inputs land before the frame they stamp is stepped, so a stamp at
+            // Events land before the frame they stamp is stepped, so a stamp at
             // or past the total is dead, and stamps must be ascending.
-            if frame >= frames || frame < last_input_frame {
+            if frame >= frames || frame < last_event_frame {
                 return Err(RecordingError::BadEncoding);
             }
-            last_input_frame = frame;
-            let control = ControlId(reader.u8()?);
-            let input = match reader.u8()? {
-                0 => ControlInput::Digital(reader.u8()? != 0),
-                1 => ControlInput::Axis(reader.f32()?),
+            last_event_frame = frame;
+            let kind = match reader.u8()? {
+                EVENT_CONTROL => {
+                    let control = read_control(&mut reader)?;
+                    let input = match reader.u8()? {
+                        0 => ControlInput::Digital(reader.u8()? != 0),
+                        1 => ControlInput::Axis(reader.f32()?),
+                        _ => return Err(RecordingError::BadEncoding),
+                    };
+                    EventKind::Control { control, input }
+                }
+                EVENT_PLUG => EventKind::Plug {
+                    port: PortId(reader.u8()?),
+                    peripheral: PeripheralId(reader.u8()?),
+                },
                 _ => return Err(RecordingError::BadEncoding),
             };
-            inputs.push(InputRecord {
-                frame,
-                control,
-                input,
-            });
+            events.push(RecordedEvent { frame, kind });
         }
 
         let check_count = reader.u32()? as usize;
@@ -233,7 +343,8 @@ impl Recording {
 
         Ok(Recording {
             initial_state,
-            inputs,
+            ports,
+            events,
             checks,
             frames,
             check_interval,
@@ -295,7 +406,8 @@ impl<'a> Reader<'a> {
 /// reproduces — the recording is self-consistent by construction.
 pub struct Recorder {
     initial_state: Vec<u8>,
-    inputs: Vec<InputRecord>,
+    ports: Vec<(PortId, PeripheralId)>,
+    events: Vec<RecordedEvent>,
     checks: Vec<FrameCheck>,
     frame: u64,
     check_interval: u64,
@@ -319,9 +431,15 @@ impl Recorder {
             None => return Err(StateError::Unsupported),
         };
         console.load_state(&initial_state)?;
+        let ports = console
+            .ports()
+            .iter()
+            .filter_map(|port| Some((port.port, console.plugged(port.port)?)))
+            .collect();
         Ok(Recorder {
             initial_state,
-            inputs: Vec::new(),
+            ports,
+            events: Vec::new(),
             checks: Vec::new(),
             frame: 0,
             check_interval,
@@ -331,10 +449,19 @@ impl Recorder {
     /// Note an input applied at the current frame boundary — call alongside the
     /// matching `console.set_control`.
     pub fn note_input(&mut self, control: ControlId, input: ControlInput) {
-        self.inputs.push(InputRecord {
+        self.note(EventKind::Control { control, input });
+    }
+
+    /// Note a peripheral swapped into a port at the current frame boundary —
+    /// call alongside the matching `console.plug`.
+    pub fn note_plug(&mut self, port: PortId, peripheral: PeripheralId) {
+        self.note(EventKind::Plug { port, peripheral });
+    }
+
+    fn note(&mut self, kind: EventKind) {
+        self.events.push(RecordedEvent {
             frame: self.frame,
-            control,
-            input,
+            kind,
         });
     }
 
@@ -351,14 +478,15 @@ impl Recorder {
         self.frame += 1;
     }
 
-    /// Finalize the recording. An input noted after the last frame stepped (a
+    /// Finalize the recording. An event noted after the last frame stepped (a
     /// press while paused, or between the final frame and the stop) is stamped
     /// on a frame replay never reaches, so the timeline ends without it.
     pub fn finish(mut self) -> Recording {
-        self.inputs.retain(|input| input.frame < self.frame);
+        self.events.retain(|event| event.frame < self.frame);
         Recording {
             initial_state: self.initial_state,
-            inputs: self.inputs,
+            ports: self.ports,
+            events: self.events,
             checks: self.checks,
             frames: self.frame,
             check_interval: self.check_interval,
@@ -427,7 +555,7 @@ pub enum ReplayStep {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ReplayCursor {
     frame: u64,
-    input_cursor: usize,
+    event_cursor: usize,
     check_cursor: usize,
     checks_verified: u64,
 }
@@ -446,14 +574,19 @@ impl ReplayCursor {
         self.checks_verified
     }
 
-    /// Apply every input the recording stamps on the frame about to be stepped.
-    pub fn apply_inputs(&mut self, recording: &Recording, console: &mut dyn SystemConsole) {
-        while let Some(event) = recording.inputs.get(self.input_cursor) {
+    /// Apply every event the recording stamps on the frame about to be stepped.
+    pub fn apply_events(&mut self, recording: &Recording, console: &mut dyn SystemConsole) {
+        while let Some(event) = recording.events.get(self.event_cursor) {
             if event.frame != self.frame {
                 break;
             }
-            console.set_control(event.control, event.input);
-            self.input_cursor += 1;
+            match event.kind {
+                EventKind::Control { control, input } => console.set_control(control, input),
+                EventKind::Plug { port, peripheral } => {
+                    let _ = console.plug(port, peripheral);
+                }
+            }
+            self.event_cursor += 1;
         }
     }
 
@@ -485,14 +618,32 @@ impl ReplayCursor {
     }
 }
 
-/// Restore a recording's initial state into `console`, then drive it frame by
-/// frame — applying the input stream at its timestamps and verifying frame-hash
-/// checkpoints. Deterministic by construction: an identical initial state and
-/// identical inputs at identical boundaries reproduce the recorded run.
+/// Plug the peripherals a recording was captured with, before its first frame.
+/// Returns the entries the console refused — a host-provided peripheral the
+/// seam cannot construct on its own, which replay runs without.
+pub fn apply_port_config(
+    recording: &Recording,
+    console: &mut dyn SystemConsole,
+) -> Vec<(PortId, PeripheralId)> {
+    recording
+        .ports
+        .iter()
+        .filter(|(port, peripheral)| console.plug(*port, *peripheral).is_err())
+        .copied()
+        .collect()
+}
+
+/// Restore a recording's initial state into `console`, plug the peripherals it
+/// was captured with, then drive it frame by frame — applying the event stream
+/// at its timestamps and verifying frame-hash checkpoints. Deterministic by
+/// construction: an identical initial state and identical inputs at identical
+/// boundaries reproduce the recorded run.
 ///
 /// Returns [`ReplayError::State`] if the console rejects the initial state (the
 /// wrong-ROM / version-mismatch cases), or [`ReplayError::Diverged`] with the
-/// frame index the first checkpoint disagreed on.
+/// frame index the first checkpoint disagreed on. A caller that wants to report
+/// the peripherals the console could not supply calls
+/// [`apply_port_config`] itself.
 pub fn replay(
     recording: &Recording,
     console: &mut dyn SystemConsole,
@@ -500,10 +651,11 @@ pub fn replay(
     console
         .load_state(&recording.initial_state)
         .map_err(ReplayError::State)?;
+    apply_port_config(recording, console);
 
     let mut cursor = ReplayCursor::new();
     for _ in 0..recording.frames {
-        cursor.apply_inputs(recording, console);
+        cursor.apply_events(recording, console);
         let produced = console.step_frame().display;
         match cursor.note_frame(recording, produced.as_ref()) {
             ReplayStep::Continue | ReplayStep::Finished => {}
@@ -531,24 +683,36 @@ pub fn replay(
 mod tests {
     use super::*;
 
+    fn control(frame: u64, role: ControlRole, pressed: bool) -> RecordedEvent {
+        RecordedEvent {
+            frame,
+            kind: EventKind::Control {
+                control: ControlId::integrated(role),
+                input: ControlInput::Digital(pressed),
+            },
+        }
+    }
+
     fn sample() -> Recording {
         Recording {
             initial_state: vec![1, 2, 3, 4, 5],
-            inputs: vec![
-                InputRecord {
-                    frame: 0,
-                    control: ControlId(2),
-                    input: ControlInput::Digital(true),
+            ports: vec![(PortId(0), PeripheralId(1)), (PortId(1), PeripheralId(0))],
+            events: vec![
+                control(0, ControlRole::Action(0), true),
+                control(3, ControlRole::Action(0), false),
+                RecordedEvent {
+                    frame: 4,
+                    kind: EventKind::Plug {
+                        port: PortId(0),
+                        peripheral: PeripheralId(2),
+                    },
                 },
-                InputRecord {
-                    frame: 3,
-                    control: ControlId(2),
-                    input: ControlInput::Digital(false),
-                },
-                InputRecord {
+                RecordedEvent {
                     frame: 5,
-                    control: ControlId(8),
-                    input: ControlInput::Axis(0.75),
+                    kind: EventKind::Control {
+                        control: ControlId::port(PortId(1), ControlRole::Knob(0)),
+                        input: ControlInput::Axis(0.75),
+                    },
                 },
             ],
             checks: vec![
@@ -571,6 +735,16 @@ mod tests {
         let recording = sample();
         let bytes = recording.to_bytes().unwrap();
         assert_eq!(Recording::from_bytes(&bytes), Ok(recording));
+    }
+
+    #[test]
+    fn rejects_the_earlier_container() {
+        let mut bytes = sample().to_bytes().unwrap();
+        bytes[4] = 1;
+        assert_eq!(
+            Recording::from_bytes(&bytes),
+            Err(RecordingError::UnsupportedVersion(1))
+        );
     }
 
     #[test]
@@ -611,10 +785,28 @@ mod tests {
     }
 
     #[test]
+    fn rejects_an_unknown_event_kind() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(RECORDING_MAGIC);
+        bytes.push(RECORDING_VERSION);
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&4u64.to_le_bytes());
+        bytes.extend_from_slice(&0u64.to_le_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&0u64.to_le_bytes());
+        bytes.push(0xEE);
+        assert_eq!(
+            Recording::from_bytes(&bytes),
+            Err(RecordingError::BadEncoding)
+        );
+    }
+
+    #[test]
     fn rejects_an_absurd_frame_count() {
         let mut recording = sample();
         recording.frames = MAX_RECORDING_FRAMES + 1;
-        recording.inputs.clear();
+        recording.events.clear();
         recording.checks.clear();
         let bytes = recording.to_bytes().unwrap();
         assert_eq!(
@@ -624,19 +816,11 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_ascending_input_frames() {
+    fn rejects_non_ascending_event_frames() {
         let mut recording = sample();
-        recording.inputs = vec![
-            InputRecord {
-                frame: 5,
-                control: ControlId(2),
-                input: ControlInput::Digital(true),
-            },
-            InputRecord {
-                frame: 2,
-                control: ControlId(2),
-                input: ControlInput::Digital(false),
-            },
+        recording.events = vec![
+            control(5, ControlRole::Start, true),
+            control(2, ControlRole::Start, false),
         ];
         recording.checks.clear();
         let bytes = recording.to_bytes().unwrap();
@@ -650,11 +834,7 @@ mod tests {
     fn rejects_an_event_at_or_past_the_frame_total() {
         let mut recording = sample();
         // frames is 8; an input stamped at 8 is dead — never applied.
-        recording.inputs = vec![InputRecord {
-            frame: 8,
-            control: ControlId(2),
-            input: ControlInput::Digital(true),
-        }];
+        recording.events = vec![control(8, ControlRole::Start, true)];
         recording.checks.clear();
         let bytes = recording.to_bytes().unwrap();
         assert_eq!(
@@ -664,39 +844,58 @@ mod tests {
     }
 
     #[test]
-    fn a_recorder_never_writes_an_input_the_reader_rejects() {
+    fn a_recorder_never_writes_an_event_the_reader_rejects() {
         // A press between the last stepped frame and the stop is stamped on a
         // frame replay never reaches — exactly what the reader refuses above.
         // The writer must not be able to produce that file.
         let mut recorder = Recorder {
             initial_state: vec![1, 2, 3],
-            inputs: Vec::new(),
+            ports: vec![(PortId(0), PeripheralId(1))],
+            events: Vec::new(),
             checks: Vec::new(),
             frame: 0,
             check_interval: 0,
         };
-        recorder.note_input(ControlId(2), ControlInput::Digital(true));
+        let fire = ControlId::port(PortId(0), ControlRole::Action(0));
+        recorder.note_input(fire, ControlInput::Digital(true));
+        recorder.note_plug(PortId(0), PeripheralId(2));
         recorder.note_frame(None);
         // Recording stops here; this press lands past the timeline's end.
-        recorder.note_input(ControlId(2), ControlInput::Digital(false));
+        recorder.note_input(fire, ControlInput::Digital(false));
 
         let recording = recorder.finish();
         assert_eq!(recording.frames, 1);
-        assert!(
-            recording.inputs.iter().all(|i| i.frame < recording.frames),
-            "an input outlived the timeline: {:?}",
-            recording.inputs
+        assert_eq!(recording.ports, vec![(PortId(0), PeripheralId(1))]);
+        assert_eq!(
+            recording.events,
+            vec![
+                RecordedEvent {
+                    frame: 0,
+                    kind: EventKind::Control {
+                        control: fire,
+                        input: ControlInput::Digital(true),
+                    },
+                },
+                RecordedEvent {
+                    frame: 0,
+                    kind: EventKind::Plug {
+                        port: PortId(0),
+                        peripheral: PeripheralId(2),
+                    },
+                },
+            ]
         );
         let bytes = recording.to_bytes().expect("serializes");
-        assert!(
-            Recording::from_bytes(&bytes).is_ok(),
+        assert_eq!(
+            Recording::from_bytes(&bytes),
+            Ok(recording),
             "the writer produced a file its own reader rejects"
         );
     }
 
     #[test]
-    fn a_hostile_input_count_does_not_over_allocate() {
-        // A truncated file claiming u32::MAX inputs must fail cleanly, not try
+    fn a_hostile_event_count_does_not_over_allocate() {
+        // A truncated file claiming u32::MAX events must fail cleanly, not try
         // to reserve billions of entries.
         let mut bytes = Vec::new();
         bytes.extend_from_slice(RECORDING_MAGIC);
@@ -704,7 +903,8 @@ mod tests {
         bytes.extend_from_slice(&0u32.to_le_bytes()); // empty initial state
         bytes.extend_from_slice(&8u64.to_le_bytes()); // frames
         bytes.extend_from_slice(&0u64.to_le_bytes()); // check_interval
-        bytes.extend_from_slice(&u32::MAX.to_le_bytes()); // input_count
+        bytes.push(0); // no port configuration
+        bytes.extend_from_slice(&u32::MAX.to_le_bytes()); // event_count
         assert_eq!(
             Recording::from_bytes(&bytes),
             Err(RecordingError::Truncated)

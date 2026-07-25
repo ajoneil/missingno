@@ -309,7 +309,7 @@ fn recording_captures_agent_driven_input() {
     tool(
         &handle,
         "set_control",
-        json!({ "control": 0, "pressed": true }),
+        json!({ "site": "integrated", "role": "start", "pressed": true }),
     )
     .expect("press");
     tool(&handle, "run", json!({})).expect("run");
@@ -318,7 +318,7 @@ fn recording_captures_agent_driven_input() {
     tool(
         &handle,
         "set_control",
-        json!({ "control": 0, "pressed": false }),
+        json!({ "site": "integrated", "role": "start", "pressed": false }),
     )
     .expect("release");
 
@@ -331,17 +331,21 @@ fn recording_captures_agent_driven_input() {
     let recording =
         missingno_core::recording::Recording::from_bytes(&bytes).expect("a readable recording");
     assert!(
-        recording.inputs.iter().any(|input| input.control.0 == 0),
+        recording.events.iter().any(|event| matches!(
+            event.kind,
+            missingno_core::recording::EventKind::Control { control, .. }
+                if control.role == missingno_core::system::ControlRole::Start
+        )),
         "the agent's press was captured: {:?}",
-        recording.inputs
+        recording.events
     );
     assert!(
         recording
-            .inputs
+            .events
             .iter()
-            .all(|input| input.frame < recording.frames),
-        "every captured input lands on a frame replay steps: {:?}",
-        recording.inputs
+            .all(|event| event.frame < recording.frames),
+        "every captured event lands on a frame replay steps: {:?}",
+        recording.events
     );
 
     let _ = std::fs::remove_dir_all(&dir);

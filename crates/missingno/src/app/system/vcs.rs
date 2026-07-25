@@ -3,17 +3,18 @@
 
 use missingno_vcs::cartridge::CartridgeError;
 
-use super::{SystemConsole, TvStandard};
+use super::{ControlMap, SystemConsole, TvStandard};
 
 pub use missingno_vcs::debug::is_vcs_rom;
 
 pub const ROM_EXTENSIONS: &[&str] = &["a26", "bin"];
 
-/// The family's names for the shared control ids, indexed by id.
-/// Start/Select work the console switches; both buttons fire.
-pub const CONTROL_LABELS: [&str; 8] = [
-    "Reset", "Select", "Fire", "Fire", "Up", "Down", "Left", "Right",
-];
+/// The console panel and the controllers its two jacks take.
+pub const CONTROLS: ControlMap = ControlMap::new(
+    &[],
+    missingno_vcs::debug::PORTS,
+    missingno_vcs::debug::PANEL_CONTROLS,
+);
 
 pub fn create_console(
     rom: &[u8],

@@ -126,18 +126,20 @@ fn machine_tools() -> Vec<Tool> {
         },
         Tool {
             name: "set_control",
-            description: "Drive a console control: control id (0-7 map to the Game Boy button \
-                          order), pressed, or an analog axis 0.0-1.0. Captured into an active \
-                          recording."
+            description: "Drive a console control: where it sits ('integrated', 'panel', \
+                          'port0', 'port1') and what it does ('start', 'select', 'pause', \
+                          'reset', 'action0', 'up', 'knob0', 'toggle1', ...), then pressed or \
+                          an analog axis 0.0-1.0. Captured into an active recording."
                 .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "control": { "type": "integer", "minimum": 0, "maximum": 255 },
+                    "site": { "type": "string" },
+                    "role": { "type": "string" },
                     "pressed": { "type": "boolean" },
                     "axis": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
                 },
-                "required": ["control"],
+                "required": ["site", "role"],
             }),
         },
         Tool {
@@ -880,7 +882,7 @@ fn get_frame(session: &Session) -> ToolOutcome {
 fn set_control(handle: &SessionHandle, args: &Value) -> ToolOutcome {
     let (control, input) = parse_control(args)?;
     handle.set_control(control, input);
-    text(format!("control {} set", control.0))
+    text(format!("control {control} set"))
 }
 
 // --- get_waveforms ------------------------------------------------------------

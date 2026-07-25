@@ -641,7 +641,7 @@ impl ReplayPlayback {
 
     fn apply_inputs(&mut self, machine: &mut Machine) {
         self.cursor
-            .apply_inputs(&self.recording, machine.console_mut());
+            .apply_events(&self.recording, machine.console_mut());
     }
 
     fn note_frame(&mut self, produced: Option<&Frame>) -> ReplayStep {
@@ -1102,7 +1102,8 @@ mod tests {
     fn recording_with(checks: Vec<FrameCheck>, frames: u64) -> Recording {
         Recording {
             initial_state: Vec::new(),
-            inputs: Vec::new(),
+            ports: Vec::new(),
+            events: Vec::new(),
             checks,
             frames,
             check_interval: 0,

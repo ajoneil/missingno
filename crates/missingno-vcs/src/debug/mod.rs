@@ -17,7 +17,7 @@ mod save_state;
 mod sections;
 
 pub use console::create_console;
-pub use controls::{CONSOLE_SWITCHES, PADDLE_CONTROL};
+pub use controls::{LEFT_PORT, PANEL_CONTROLS, PORTS, RIGHT_PORT};
 pub use debugger_seam::VcsSnapshot;
 pub use inspect::VcsInspectState;
 pub use sections::vcs_sidebar_sections;

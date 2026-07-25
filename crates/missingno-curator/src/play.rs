@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex, mpsc::Receiver};
 use std::time::Duration;
 
 use iced::futures::SinkExt;
-use missingno_core::system::{ConsoleSwitch, ControlId, ControlInput};
+use missingno_core::ports::{PanelControl, PortId};
+use missingno_core::system::{ControlId, ControlInput, ControlRole};
 use missingno_core::video::DisplayTechnology;
 use missingno_session::{
     SessionEvent, SessionHandle, SharedSession, audio_output::AudioOutput, factory,
@@ -17,9 +18,9 @@ pub struct PlaySession {
     pub handle: SessionHandle,
     /// The display the console states, driving the screen renderer.
     pub technology: DisplayTechnology,
-    /// The family's latching console switches, captured before the console
+    /// The console's latching panel switches, captured before the console
     /// moves into the session, with the level the UI last set for each.
-    pub switches: &'static [ConsoleSwitch],
+    pub switches: Vec<PanelControl>,
     pub switch_levels: Vec<bool>,
     /// Paddle release: fire remaps to the paddle trigger line (SWCHA D7,
     /// electrically the joystick-right switch — control 7).
@@ -44,8 +45,20 @@ pub fn start(
         .map_err(|e| format!("core rejected ROM: {e}"))?
         .ok_or("no core recognizes this ROM")?;
     let technology = console.video_out();
-    let switches = console.console_switches();
-    let switch_levels = switches.iter().map(|s| s.default_high).collect();
+    let switches: Vec<PanelControl> = console
+        .panel_controls()
+        .iter()
+        .filter(|control| control.toggle().is_some())
+        .copied()
+        .collect();
+    let switch_levels = switches
+        .iter()
+        .map(|switch| {
+            switch
+                .toggle()
+                .is_some_and(|(_, default_high)| default_high)
+        })
+        .collect();
     let (audio, sink) = match AudioOutput::open() {
         Some((audio, sink)) => (Some(audio), Some(sink)),
         None => (None, None),
@@ -66,18 +79,23 @@ pub fn start(
     })
 }
 
+/// The jack the playtest drives — the curator plays VCS media, whose left
+/// controller is the one games read.
+pub const PLAY_PORT: PortId = PortId(0);
+
 impl PlaySession {
-    pub fn set_control(&self, id: u8, pressed: bool) {
+    pub fn set_control(&self, control: ControlId, pressed: bool) {
         self.handle
-            .set_control(ControlId(id), ControlInput::Digital(pressed));
+            .set_control(control, ControlInput::Digital(pressed));
     }
 
-    /// Shared control layout: 8 is the family's first analog control (the
-    /// VCS paddle); digital-only systems ignore the axis. Screen-right maps
-    /// to the fast-charging end of the pot, which paddle games read as right.
+    /// Screen-right maps to the fast-charging end of the pot, which paddle
+    /// games read as right.
     pub fn set_paddle(&self, position: f32) {
-        self.handle
-            .set_control(ControlId(8), ControlInput::Axis(1.0 - position));
+        self.handle.set_control(
+            ControlId::port(PLAY_PORT, ControlRole::Knob(0)),
+            ControlInput::Axis(1.0 - position),
+        );
     }
 }
 
@@ -100,17 +118,19 @@ pub fn await_frame(events: &Arc<Mutex<Receiver<SessionEvent>>>) -> bool {
     }
 }
 
-/// Shared control layout: 0 Start/Reset, 1 Select, 2 A/Fire, 3 B/Fire, 4-7 dpad.
-fn button_control(button: gilrs::Button) -> Option<u8> {
+/// The playtest pad's reading of a gamepad: the console panel's buttons, and
+/// the joystick in the left jack.
+fn button_control(button: gilrs::Button) -> Option<ControlId> {
     Some(match button {
-        gilrs::Button::Start => 0,
-        gilrs::Button::Select => 1,
-        gilrs::Button::South => 2,
-        gilrs::Button::East => 3,
-        gilrs::Button::DPadUp => 4,
-        gilrs::Button::DPadDown => 5,
-        gilrs::Button::DPadLeft => 6,
-        gilrs::Button::DPadRight => 7,
+        gilrs::Button::Start => ControlId::panel(ControlRole::Reset),
+        gilrs::Button::Select => ControlId::panel(ControlRole::Select),
+        gilrs::Button::South | gilrs::Button::East => {
+            ControlId::port(PLAY_PORT, ControlRole::Action(0))
+        }
+        gilrs::Button::DPadUp => ControlId::port(PLAY_PORT, ControlRole::Up),
+        gilrs::Button::DPadDown => ControlId::port(PLAY_PORT, ControlRole::Down),
+        gilrs::Button::DPadLeft => ControlId::port(PLAY_PORT, ControlRole::Left),
+        gilrs::Button::DPadRight => ControlId::port(PLAY_PORT, ControlRole::Right),
         _ => return None,
     })
 }
@@ -119,7 +139,7 @@ fn button_control(button: gilrs::Button) -> Option<u8> {
 /// the trigger-wound paddle arriving at a new position.
 #[derive(Clone, Copy, Debug)]
 pub enum PadEvent {
-    Button(u8, bool),
+    Button(ControlId, bool),
     Paddle(f32),
 }
 
@@ -175,19 +195,22 @@ pub fn gamepad_worker() -> impl iced::futures::Stream<Item = PadEvent> {
                         }
                     }
                     gilrs::EventType::AxisChanged(axis, value, ..) => {
-                        let changes: [(usize, u8, bool); 2] = match axis {
-                            gilrs::Axis::LeftStickX => {
-                                [(3, 7, value > DEADZONE), (2, 6, value < -DEADZONE)]
-                            }
-                            gilrs::Axis::LeftStickY => {
-                                [(0, 4, value > DEADZONE), (1, 5, value < -DEADZONE)]
-                            }
+                        let stick_control = |role| ControlId::port(PLAY_PORT, role);
+                        let changes: [(usize, ControlId, bool); 2] = match axis {
+                            gilrs::Axis::LeftStickX => [
+                                (3, stick_control(ControlRole::Right), value > DEADZONE),
+                                (2, stick_control(ControlRole::Left), value < -DEADZONE),
+                            ],
+                            gilrs::Axis::LeftStickY => [
+                                (0, stick_control(ControlRole::Up), value > DEADZONE),
+                                (1, stick_control(ControlRole::Down), value < -DEADZONE),
+                            ],
                             _ => continue,
                         };
-                        for (slot, id, now) in changes {
+                        for (slot, control, now) in changes {
                             if stick[slot] != now {
                                 stick[slot] = now;
-                                let _ = output.send(PadEvent::Button(id, now)).await;
+                                let _ = output.send(PadEvent::Button(control, now)).await;
                             }
                         }
                     }

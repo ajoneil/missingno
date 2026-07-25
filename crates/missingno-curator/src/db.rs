@@ -569,7 +569,12 @@ impl AnyGame {
 
     /// A conversion that swaps the controller it plays on — a joystick build of
     /// a keypad game. VCS only.
-    pub fn set_mod_controllers(&mut self, name: &str, index: usize, wanted: Vec<Controller>) -> bool {
+    pub fn set_mod_controllers(
+        &mut self,
+        name: &str,
+        index: usize,
+        wanted: Vec<Controller>,
+    ) -> bool {
         self.mod_release(name, index, |r| r.hardware.controllers = wanted.clone())
     }
 
@@ -1584,7 +1589,7 @@ impl Db {
                 kind: GameKind::Game,
                 developer: None,
                 description: None,
-                    tags: Vec::new(),
+                tags: Vec::new(),
                 links: Vec::new(),
                 covers: Vec::new(),
                 screenshots: Vec::new(),

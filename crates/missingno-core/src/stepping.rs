@@ -11,6 +11,9 @@ use std::time::Duration;
 use crate::TvStandard;
 use crate::inspect::{MemoryWindow, RegisterGroup, Section};
 use crate::isa::InstructionSet;
+use crate::ports::{
+    ControlDescriptor, PanelControl, PeripheralId, PlugError, PortDescriptor, PortId,
+};
 use crate::system::{
     ControlId, ControlInput, DebugView, FrameOutcome, InspectSnapshot, RunningStatus, StepOutcome,
     SystemConsole, SystemDebugger,
@@ -53,6 +56,30 @@ pub trait SteppingSystem: 'static {
     fn step_frame(core: &mut Self::Core) -> Option<Self::Frame>;
     fn power_cycle(core: &mut Self::Core);
     fn apply_control(core: &mut Self::Core, control: ControlId, input: ControlInput);
+    /// The system's controller and expansion ports; empty for one that models
+    /// none.
+    fn ports() -> &'static [PortDescriptor] {
+        &[]
+    }
+    /// The peripheral currently plugged into `port`.
+    fn plugged(_core: &Self::Core, _port: PortId) -> Option<PeripheralId> {
+        None
+    }
+    fn plug(
+        _core: &mut Self::Core,
+        _port: PortId,
+        _peripheral: PeripheralId,
+    ) -> Result<(), PlugError> {
+        Err(PlugError::UnknownPort)
+    }
+    /// The system's built-in game controller, if it has one.
+    fn integrated_controls() -> &'static [ControlDescriptor] {
+        &[]
+    }
+    /// The controls on the system's shell: momentary buttons and switches.
+    fn panel_controls() -> &'static [PanelControl] {
+        &[]
+    }
     fn drain_audio_samples(core: &mut Self::Core) -> Vec<(f32, f32)>;
     fn indexed_frame(frame: &Self::Frame) -> IndexedFrame;
     /// What the display shows before the first frame completes.
@@ -112,6 +139,26 @@ impl<S: SteppingSystem> SystemConsole for SteppingConsole<S> {
 
     fn set_control(&mut self, control: ControlId, input: ControlInput) {
         S::apply_control(&mut self.core, control, input);
+    }
+
+    fn ports(&self) -> &'static [PortDescriptor] {
+        S::ports()
+    }
+
+    fn plugged(&self, port: PortId) -> Option<PeripheralId> {
+        S::plugged(&self.core, port)
+    }
+
+    fn plug(&mut self, port: PortId, peripheral: PeripheralId) -> Result<(), PlugError> {
+        S::plug(&mut self.core, port, peripheral)
+    }
+
+    fn integrated_controls(&self) -> &'static [ControlDescriptor] {
+        S::integrated_controls()
+    }
+
+    fn panel_controls(&self) -> &'static [PanelControl] {
+        S::panel_controls()
     }
 
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
@@ -203,6 +250,26 @@ impl<S: SteppingSystem> SystemConsole for SteppingDebugger<S> {
 
     fn set_control(&mut self, control: ControlId, input: ControlInput) {
         S::apply_control(&mut self.core, control, input);
+    }
+
+    fn ports(&self) -> &'static [PortDescriptor] {
+        S::ports()
+    }
+
+    fn plugged(&self, port: PortId) -> Option<PeripheralId> {
+        S::plugged(&self.core, port)
+    }
+
+    fn plug(&mut self, port: PortId, peripheral: PeripheralId) -> Result<(), PlugError> {
+        S::plug(&mut self.core, port, peripheral)
+    }
+
+    fn integrated_controls(&self) -> &'static [ControlDescriptor] {
+        S::integrated_controls()
+    }
+
+    fn panel_controls(&self) -> &'static [PanelControl] {
+        S::panel_controls()
     }
 
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {

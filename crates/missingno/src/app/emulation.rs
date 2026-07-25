@@ -7,7 +7,7 @@ use super::emulator::{ConsoleFacts, Emulator};
 use super::session_bridge::{self, SessionBridge};
 use super::{App, Game, LoadedGame, Message, Notice, PendingAction, library};
 use crate::app::library::activity::FrameCapture;
-use crate::app::system::{ControlId, ControlInput};
+use crate::app::system::{ControlId, ControlInput, ControlRole};
 use crate::app::ui::icons::Icon;
 use missingno_session::audio_output::AudioOutput;
 
@@ -158,13 +158,17 @@ impl App {
             Message::DismissNotice => {
                 self.notice = None;
             }
-            Message::SetControl(control, pressed) => {
-                self.set_control(ControlId(control), ControlInput::Digital(pressed))
+            Message::SetControl(roles, pressed) => {
+                for control in self.resolve_controls(&roles) {
+                    self.set_control(control, ControlInput::Digital(pressed));
+                }
             }
-            Message::SetAxis(control, value) => {
+            Message::SetAxis(role, value) => {
                 // Screen-right maps to the fast-charging end of the pot,
                 // which paddle games read as right.
-                self.set_control(ControlId(control), ControlInput::Axis(1.0 - value))
+                for control in self.resolve_controls(&[role]) {
+                    self.set_control(control, ControlInput::Axis(1.0 - value));
+                }
             }
             Message::ToggleDebugger(debugger_enabled) => {
                 self.debugger_enabled = debugger_enabled;
@@ -467,6 +471,19 @@ impl App {
             Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.reset(),
             _ => {}
         }
+    }
+
+    /// Where the loaded console plays these roles. A role no surface offers
+    /// drops out, so a key bound to several roles drives only the one this
+    /// console has.
+    fn resolve_controls(&self, roles: &[ControlRole]) -> Vec<ControlId> {
+        let Some(family) = self.platform().and_then(crate::app::system::family_of) else {
+            return Vec::new();
+        };
+        roles
+            .iter()
+            .filter_map(|&role| family.controls.resolve(role))
+            .collect()
     }
 
     pub(super) fn set_control(&mut self, control: ControlId, input: ControlInput) {
