@@ -24,7 +24,7 @@ fn dmg_console(rom: &str) -> GbConsole<missingno_gb::Dmg> {
 }
 
 fn frame_hash(frame: &Frame) -> u64 {
-    let rgba = frame.clone().resolve_rgba();
+    let rgba = frame.resolve_rgba();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     rgba.width.hash(&mut hasher);
     rgba.height.hash(&mut hasher);
@@ -112,7 +112,7 @@ fn dmg_save_state_round_trips_animated() {
 fn dmg_save_state_captures_progress() {
     // The state after running differs from a fresh boot — the save carries real
     // progress, not power-on defaults.
-    let mut fresh = dmg_console("blargg/cpu_instrs/individual/06-ld r,r.gb");
+    let fresh = dmg_console("blargg/cpu_instrs/individual/06-ld r,r.gb");
     let boot = fresh.read_state().unwrap();
 
     let mut advanced = dmg_console("blargg/cpu_instrs/individual/06-ld r,r.gb");

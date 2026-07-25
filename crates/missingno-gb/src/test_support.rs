@@ -108,7 +108,21 @@ pub fn rom_path(relative: &str) -> PathBuf {
 pub struct TestRun<M: Model = crate::Dmg> {
     pub gb: Console<M>,
     #[cfg(feature = "morepork")]
-    tracer: Option<Tracer>,
+    tracer: TracerGuard,
+}
+
+/// Owns the run's tracer so an abandoned run still flushes its trace on drop,
+/// without giving `TestRun` itself a `Drop` impl (tests move `gb` out of it).
+#[cfg(feature = "morepork")]
+struct TracerGuard(Option<Tracer>);
+
+#[cfg(feature = "morepork")]
+impl Drop for TracerGuard {
+    fn drop(&mut self) {
+        if let Some(tracer) = self.0.take() {
+            let _ = tracer.finish();
+        }
+    }
 }
 
 impl<M: ConsoleUi> TestRun<M> {
@@ -116,7 +130,7 @@ impl<M: ConsoleUi> TestRun<M> {
     /// string written into the trace metadata (e.g. "DMG-B", "CGB-C").
     pub fn new(gb: Console<M>, _rom_relative: &str, _model_label: &str) -> Self {
         #[cfg(feature = "morepork")]
-        let tracer = try_create_tracer(&gb, _rom_relative, _model_label);
+        let tracer = TracerGuard(try_create_tracer(&gb, _rom_relative, _model_label));
 
         Self {
             gb,
@@ -133,7 +147,7 @@ impl<M: ConsoleUi> TestRun<M> {
     pub fn step(&mut self) -> StepResult {
         #[cfg(feature = "morepork")]
         {
-            if let Some(tracer) = &mut self.tracer {
+            if let Some(tracer) = &mut self.tracer.0 {
                 if tracer.trigger() == crate::trace::Trigger::Tcycle {
                     return self.step_traced_tcycle();
                 }
@@ -142,7 +156,7 @@ impl<M: ConsoleUi> TestRun<M> {
 
             let result = self.gb.step();
 
-            if let Some(tracer) = &mut self.tracer {
+            if let Some(tracer) = &mut self.tracer.0 {
                 tracer.advance(result.tcycles);
                 if result.new_screen {
                     tracer.mark_frame().unwrap();
@@ -159,23 +173,14 @@ impl<M: ConsoleUi> TestRun<M> {
     /// Step one instruction by advancing one dot at a time, capturing at each dot.
     #[cfg(feature = "morepork")]
     fn step_traced_tcycle(&mut self) -> StepResult {
-        crate::trace::step_instruction_tcycle(&mut self.gb, self.tracer.as_mut().unwrap())
+        crate::trace::step_instruction_tcycle(&mut self.gb, self.tracer.0.as_mut().unwrap())
     }
 
     #[allow(unused_mut)]
     pub fn finish(mut self) {
         #[cfg(feature = "morepork")]
-        if let Some(tracer) = self.tracer.take() {
+        if let Some(tracer) = self.tracer.0.take() {
             tracer.finish().unwrap();
-        }
-    }
-}
-
-#[cfg(feature = "morepork")]
-impl<M: Model> Drop for TestRun<M> {
-    fn drop(&mut self) {
-        if let Some(tracer) = self.tracer.take() {
-            let _ = tracer.finish();
         }
     }
 }
