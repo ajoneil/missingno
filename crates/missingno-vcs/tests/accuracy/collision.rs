@@ -17,6 +17,21 @@ fn all_pairs_secam() {
 }
 
 #[test]
+fn blank_gating_ntsc() {
+    common::run_self_test("collision/blank-gating_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn blank_gating_pal() {
+    common::run_self_test("collision/blank-gating_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn blank_gating_secam() {
+    common::run_self_test("collision/blank-gating_secam.a26", TvStandard::Secam);
+}
+
+#[test]
 fn hmove_edge_ntsc() {
     common::run_self_test("collision/hmove-edge_ntsc.a26", TvStandard::Ntsc);
 }
