@@ -1377,7 +1377,6 @@ impl Curator {
                     ("title", TextField::Title),
                     ("developer", TextField::Developer),
                     ("description", TextField::Description),
-                    ("license", TextField::License),
                 ] {
                     if let Some(value) = set.get(field_name).and_then(serde_json::Value::as_str) {
                         entry.game.set_text_field(field, value.to_owned());
@@ -1397,6 +1396,10 @@ impl Curator {
                 if let Some(url) = set.get("wikipedia").and_then(serde_json::Value::as_str) {
                     entry.game.set_wikipedia(url);
                     applied.push("wikipedia");
+                }
+                if let Some(adult) = set.get("adult").and_then(serde_json::Value::as_bool) {
+                    entry.game.set_adult(adult);
+                    applied.push("adult");
                 }
                 if let Some(publisher) = set.get("publisher").and_then(serde_json::Value::as_str) {
                     entry.game.set_release_publisher(0, publisher.to_owned());
@@ -1601,7 +1604,10 @@ impl Curator {
                     Some("none") => Some(None),
                     Some(base) => {
                         let base = base.to_ascii_lowercase();
-                        if !db.entries[i].game.artifact_sha1s().contains(&base) {
+                        let game = &db.entries[i].game;
+                        if !game.artifact_sha1s().contains(&base)
+                            && !game.mod_artifact_sha1s().contains(&base)
+                        {
                             return error_result(format!(
                                 "base_sha1 {base} is not an artifact of {key}"
                             ));
@@ -1627,56 +1633,77 @@ impl Curator {
                 let author = set_str("author").map(str::to_owned);
                 let label = set_str("label").map(str::to_owned);
                 let url = set_str("url").map(str::to_owned);
-                let applied = db.entries[i].game.edit_mod(mod_name, move |m| {
-                    let mut applied = Vec::new();
-                    if let Some(name) = rename {
-                        m.name = name;
-                        applied.push("name");
-                    }
-                    if let Some(category) = category {
-                        m.category = category;
-                        applied.push("category");
-                    }
-                    if let Some(author) = author {
-                        m.author = (!author.is_empty()).then_some(author);
-                        applied.push("author");
-                    }
-                    if let Some(url) = url {
-                        m.links.retain(|l| l.name != "Homepage");
-                        if !url.is_empty() {
-                            m.links.push(missingno_gamedb::Link {
-                                name: "Homepage".to_owned(),
-                                url,
-                                link_type: missingno_gamedb::LinkType::Community,
-                                languages: Vec::new(),
-                            });
+                let tv_format = match set_str("tv_format") {
+                    Some(f) => Some(match db::parse_tv_format(f) {
+                        Ok(f) => f,
+                        Err(e) => return error_result(e),
+                    }),
+                    None => None,
+                };
+                let controllers = match set.get("controllers").and_then(serde_json::Value::as_array)
+                {
+                    Some(list) => {
+                        let mut parsed = Vec::with_capacity(list.len());
+                        for value in list {
+                            let Some(name) = value.as_str() else {
+                                return error_result("controllers must be strings");
+                            };
+                            match db::parse_controller(name) {
+                                Ok(controller) => parsed.push(controller),
+                                Err(e) => return error_result(e),
+                            }
                         }
-                        applied.push("url");
+                        Some(parsed)
                     }
-                    if let Some(release) = m.releases.get_mut(release_index) {
-                        if let Some(base) = base {
-                            release.base_sha1 = base;
-                            applied.push("base_sha1");
-                        }
-                        if let Some(label) = label {
-                            release.label = (!label.is_empty()).then_some(label);
-                            applied.push("label");
-                        }
-                        if let Some(date) = date {
-                            release.date = Some(date);
-                            applied.push("date");
-                        }
-                    } else if base.is_some() || label.is_some() || date.is_some() {
-                        applied.push("(release fields skipped: no such release_index)");
+                    None => None,
+                };
+                let mut applied = match db.entries[i].game.update_mod(
+                    mod_name,
+                    crate::db::ModEdits {
+                        name: rename,
+                        category,
+                        author,
+                        url,
+                        release_index,
+                        base_sha1: base,
+                        label,
+                        date,
+                    },
+                ) {
+                    Some(applied) => applied,
+                    None => return error_result(format!("mod {mod_name:?} vanished mid-edit")),
+                };
+                // A conversion often exists precisely to change these.
+                if let Some(format) = tv_format {
+                    if db.entries[i]
+                        .game
+                        .set_mod_tv_format(mod_name, release_index, format)
+                    {
+                        applied.push("tv_format");
+                    } else {
+                        return error_result("tv_format applies to VCS mods only");
                     }
-                    applied
-                });
+                }
+                if let Some(wanted) = controllers {
+                    if db.entries[i]
+                        .game
+                        .set_mod_controllers(mod_name, release_index, wanted)
+                    {
+                        applied.push("controllers");
+                    } else {
+                        return error_result("controllers apply to VCS mods only");
+                    }
+                }
+                let applied = Some(applied);
                 match applied {
                     Some(applied) if applied.is_empty() => {
                         error_result("no recognized fields in set")
                     }
                     Some(applied) => {
                         db.entries[i].dirty = true;
+                        if let Err(e) = db.write_entry(i) {
+                            return error_result(format!("staged, but writing {key} failed: {e}"));
+                        }
                         text_result(format!("updated mod on {key}: {}", applied.join(", ")))
                     }
                     None => error_result(format!("mod {mod_name:?} vanished mid-edit")),
@@ -1964,6 +1991,9 @@ impl Curator {
                     });
                 }
                 db.entries[i].dirty = true;
+                if let Err(e) = db.write_entry(i) {
+                    return error_result(format!("staged, but writing {key} failed: {e}"));
+                }
                 text_result(format!("{sha1}: {}", applied.join(", ")))
             }
             "find_duplicates" => {
@@ -2422,10 +2452,6 @@ impl Curator {
                         .spacing(8),
                     );
                 }
-                let license = entry.game.text_field(TextField::License);
-                if !license.is_empty() {
-                    editor = editor.push(field("License", license));
-                }
                 let tags = entry.game.tags();
                 if !tags.is_empty() {
                     editor = editor.push(field("Tags", tags.join(", ")));
@@ -2497,6 +2523,15 @@ impl Curator {
                                         .on_press(Message::OpenLink(url.clone())),
                                 ]
                                 .spacing(8)
+                                .align_y(iced::Alignment::Center),
+                            );
+                        }
+                        for version in entry.game.mod_version_lines(index) {
+                            editor = editor.push(
+                                row![
+                                    Space::new().width(Length::Fixed(16.0)),
+                                    text(version).size(12).style(text::secondary),
+                                ]
                                 .align_y(iced::Alignment::Center),
                             );
                         }

@@ -57,7 +57,6 @@ pub enum TextField {
     Title,
     Developer,
     Description,
-    License,
 }
 
 /// A release's header, split so the shipped title and box label can be styled
@@ -89,6 +88,10 @@ impl AnyGame {
         common!(self, g => g.adult)
     }
 
+    pub fn set_adult(&mut self, adult: bool) {
+        common!(self, g => g.adult = adult);
+    }
+
     pub fn recommended_by(&self) -> &[String] {
         common!(self, g => &g.recommended_by)
     }
@@ -108,7 +111,6 @@ impl AnyGame {
             TextField::Title => g.title.clone(),
             TextField::Developer => g.developer.clone().unwrap_or_default(),
             TextField::Description => g.description.clone().unwrap_or_default(),
-            TextField::License => g.license.clone().unwrap_or_default(),
         })
     }
 
@@ -118,7 +120,6 @@ impl AnyGame {
             TextField::Title => g.title = value.clone(),
             TextField::Developer => g.developer = optional.clone(),
             TextField::Description => g.description = optional.clone(),
-            TextField::License => g.license = optional.clone(),
         });
     }
 
@@ -202,6 +203,18 @@ impl AnyGame {
         common!(self, g => g
             .releases
             .iter()
+            .flat_map(|r| &r.artifacts)
+            .map(|a| a.sha1.as_str().to_owned())
+            .collect())
+    }
+
+    /// The dumps held by the entry's mods, which a further derivation can be
+    /// based on: a Supercharger conversion of a hack patches the hack's dump.
+    pub fn mod_artifact_sha1s(&self) -> Vec<String> {
+        common!(self, g => g
+            .mods
+            .iter()
+            .flat_map(|m| &m.releases)
             .flat_map(|r| &r.artifacts)
             .map(|a| a.sha1.as_str().to_owned())
             .collect())
@@ -417,9 +430,165 @@ impl AnyGame {
             .collect())
     }
 
-    /// Run an edit against the named attached mod (Mod is platform-shared).
-    pub fn edit_mod<R>(&mut self, name: &str, edit: impl FnOnce(&mut Mod) -> R) -> Option<R> {
-        common!(self, g => g.mods.iter_mut().find(|m| m.name == name).map(edit))
+    /// One line per version of the mod at `index`: its label, date, and the
+    /// hardware it states where a conversion moved off the game's own.
+    pub fn mod_version_lines(&self, index: usize) -> Vec<String> {
+        fn describe(
+            label: &Option<String>,
+            date: &Option<missingno_gamedb::ReleaseDate>,
+            hw: &str,
+        ) -> String {
+            let mut parts = Vec::new();
+            if let Some(label) = label {
+                parts.push(label.clone());
+            }
+            if let Some(date) = date {
+                parts.push(date.as_str().to_owned());
+            }
+            if !hw.is_empty() {
+                parts.push(hw.to_owned());
+            }
+            if parts.is_empty() {
+                "(unlabelled)".to_owned()
+            } else {
+                parts.join(" · ")
+            }
+        }
+        match self {
+            AnyGame::Vcs(g) => g
+                .mods
+                .get(index)
+                .map(|m| {
+                    m.releases
+                        .iter()
+                        .map(|r| {
+                            let hw = [
+                                r.hardware.tv_format.map(|t| format!("{t:?}")),
+                                r.hardware.cart_type.clone(),
+                                (!r.hardware.controllers.is_empty()).then(|| {
+                                    r.hardware
+                                        .controllers
+                                        .iter()
+                                        .map(|c| format!("{c:?}"))
+                                        .collect::<Vec<_>>()
+                                        .join("/")
+                                }),
+                            ]
+                            .into_iter()
+                            .flatten()
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                            describe(&r.label, &r.date, &hw)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            AnyGame::Gb(g) => g
+                .mods
+                .get(index)
+                .map(|m| {
+                    m.releases
+                        .iter()
+                        .map(|r| describe(&r.label, &r.date, ""))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            AnyGame::Gbc(g) => g
+                .mods
+                .get(index)
+                .map(|m| {
+                    m.releases
+                        .iter()
+                        .map(|r| describe(&r.label, &r.date, ""))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Apply edits to the named attached mod, reporting which fields landed.
+    /// `None` when no mod goes by that name.
+    pub fn update_mod(&mut self, name: &str, edits: ModEdits) -> Option<Vec<&'static str>> {
+        common!(self, g => {
+            let m = g.mods.iter_mut().find(|m| m.name == name)?;
+            let touches_release = edits.touches_release();
+            let mut applied = Vec::new();
+            if let Some(rename) = edits.name {
+                m.name = rename;
+                applied.push("name");
+            }
+            if let Some(category) = edits.category {
+                m.category = category;
+                applied.push("category");
+            }
+            if let Some(author) = edits.author {
+                m.author = (!author.is_empty()).then_some(author);
+                applied.push("author");
+            }
+            if let Some(url) = edits.url {
+                m.links.retain(|l| l.name != "Homepage");
+                if !url.is_empty() {
+                    m.links.push(Link {
+                        name: "Homepage".to_owned(),
+                        url,
+                        link_type: LinkType::Community,
+                        languages: Vec::new(),
+                    });
+                }
+                applied.push("url");
+            }
+            match m.releases.get_mut(edits.release_index) {
+                Some(release) => {
+                    if let Some(base) = edits.base_sha1 {
+                        release.base_sha1 = base;
+                        applied.push("base_sha1");
+                    }
+                    if let Some(label) = edits.label {
+                        release.label = (!label.is_empty()).then_some(label);
+                        applied.push("label");
+                    }
+                    if let Some(date) = edits.date {
+                        release.date = Some(date);
+                        applied.push("date");
+                    }
+                }
+                None if touches_release => {
+                    applied.push("(release fields skipped: no such release_index)");
+                }
+                None => {}
+            }
+            Some(applied)
+        })
+    }
+
+    /// A build that runs on a different standard than the game it patches — an
+    /// NTSC conversion of a PAL cart. VCS only.
+    pub fn set_mod_tv_format(&mut self, name: &str, index: usize, format: TvFormat) -> bool {
+        self.mod_release(name, index, |r| r.hardware.tv_format = Some(format))
+    }
+
+    /// A conversion that swaps the controller it plays on — a joystick build of
+    /// a keypad game. VCS only.
+    pub fn set_mod_controllers(&mut self, name: &str, index: usize, wanted: Vec<Controller>) -> bool {
+        self.mod_release(name, index, |r| r.hardware.controllers = wanted.clone())
+    }
+
+    fn mod_release(
+        &mut self,
+        name: &str,
+        index: usize,
+        edit: impl FnOnce(&mut ModRelease<missingno_gamedb::Vcs>),
+    ) -> bool {
+        match self {
+            AnyGame::Vcs(g) => g
+                .mods
+                .iter_mut()
+                .find(|m| m.name == name)
+                .and_then(|m| m.releases.get_mut(index))
+                .map(edit),
+            _ => None,
+        }
+        .is_some()
     }
 
     pub fn mod_names(&self) -> Vec<String> {
@@ -742,6 +911,7 @@ impl AnyGame {
                     date: None,
                     base_sha1,
                     patch: None,
+                    hardware: Default::default(),
                     artifacts: vec![artifact],
                 });
                 Ok(format!("{sha1} added to {mod_name:?} as a new version"))
@@ -754,6 +924,7 @@ impl AnyGame {
                         date: None,
                         base_sha1: None,
                         patch: None,
+                        hardware: Default::default(),
                         artifacts: vec![artifact],
                     }),
                 }
@@ -1018,7 +1189,6 @@ fn split_hack_from<P: Platform>(
             kind: GameKind::Game,
             developer: None,
             description: None,
-            license: None,
             tags: Vec::new(),
             links: homepage
                 .map(|url| {
@@ -1175,6 +1345,7 @@ fn attach_mod<P: Platform>(
                 date: None,
                 base_sha1,
                 patch: None,
+                hardware: Default::default(),
                 artifacts: vec![artifact],
             }],
         });
@@ -1221,8 +1392,27 @@ fn absorb_into<P: Platform>(into: &mut Game<P>, from: Game<P>, held: &[String]) 
     (releases, mods)
 }
 
-/// Release fields an edit may set; `None` leaves the field as it stands.
+/// Mod fields an edit may set; `None` leaves the field as it stands.
 #[derive(Default)]
+pub struct ModEdits {
+    pub name: Option<String>,
+    pub category: Option<ModCategory>,
+    pub author: Option<String>,
+    pub url: Option<String>,
+    pub release_index: usize,
+    /// Outer None leaves the base; Some(None) clears it.
+    pub base_sha1: Option<Option<Sha1>>,
+    pub label: Option<String>,
+    pub date: Option<missingno_gamedb::ReleaseDate>,
+}
+
+impl ModEdits {
+    fn touches_release(&self) -> bool {
+        self.base_sha1.is_some() || self.label.is_some() || self.date.is_some()
+    }
+}
+
+/// Release fields an edit may set; `None` leaves the field as it stands.
 pub struct ReleaseEdits {
     pub status: Option<ReleaseStatus>,
     pub title: Option<String>,
@@ -1394,8 +1584,7 @@ impl Db {
                 kind: GameKind::Game,
                 developer: None,
                 description: None,
-                license: None,
-                tags: Vec::new(),
+                    tags: Vec::new(),
                 links: Vec::new(),
                 covers: Vec::new(),
                 screenshots: Vec::new(),
@@ -1468,8 +1657,9 @@ impl Db {
         self.split_out_conversion(source, sha1, title, category, base_override, homepage)
     }
 
-    /// The dump a mod derives from: an explicit base must be one of the
-    /// entry's artifacts; without one, a single remaining candidate is used,
+    /// The dump a mod derives from: an explicit base may be any dump the entry
+    /// holds, a release's or another mod's, since a derived work can itself be
+    /// derived from. Without one, a single remaining release dump is used,
     /// none is honestly None, and several is a refusal — never a guess.
     fn resolve_base(
         &self,
@@ -1493,10 +1683,16 @@ impl Db {
                 if base == hack_sha1 {
                     return Err("base_sha1 is the hack itself".to_owned());
                 }
-                if !candidates.contains(&base) {
+                let mod_dumps = self.entries[source].game.mod_artifact_sha1s();
+                if !candidates.contains(&base) && !mod_dumps.contains(&base) {
                     return Err(format!(
                         "base_sha1 {base} is not an artifact of this entry; artifacts: {}",
-                        candidates.join(", ")
+                        candidates
+                            .iter()
+                            .chain(mod_dumps.iter())
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     ));
                 }
                 Ok(Some(base.parse()?))
@@ -1912,6 +2108,32 @@ mod mark_mod_tests {
             .unwrap_err();
         assert!(err.contains("not an artifact"), "{err}");
         assert!(mod_bases(&db).is_empty());
+    }
+
+    // A conversion of a hack patches the hack, so an already-attached mod's
+    // dump is a legitimate base.
+    #[test]
+    fn a_mods_dump_can_be_another_mods_base() {
+        let (_dir, mut db) = db_with_three_dumps();
+        db.mark_mod(
+            0,
+            HACK_A,
+            Some("hack".to_owned()),
+            ModCategory::ContentChange,
+            Some(REAL.to_owned()),
+            None,
+        )
+        .unwrap();
+        db.mark_mod(
+            0,
+            HACK_B,
+            Some("conversion of the hack".to_owned()),
+            ModCategory::Compatibility,
+            Some(HACK_A.to_owned()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(mod_bases(&db)[1], Some(HACK_A.to_owned()));
     }
 }
 

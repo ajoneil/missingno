@@ -306,10 +306,6 @@ fn entry_detail<'a>(
         info = info.push(app_text::detail(entry.tags.join(", ")).color(MUTED));
     }
 
-    if let Some(license) = &entry.license {
-        info = info.push(app_text::detail(format!("License: {license}")).color(MUTED));
-    }
-
     // Links
     let mut links = row![].spacing(m());
     for link in &entry.links {
