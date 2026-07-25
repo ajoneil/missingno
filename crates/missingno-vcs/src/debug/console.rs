@@ -116,11 +116,11 @@ impl SystemConsole for VcsConsole {
     }
 
     fn plugged(&self, port: PortId) -> Option<PeripheralId> {
-        controls::plugged(port)
+        controls::plugged(&self.vcs, port)
     }
 
     fn plug(&mut self, port: PortId, peripheral: PeripheralId) -> Result<(), PlugError> {
-        controls::plug(port, peripheral)
+        controls::plug(&mut self.vcs, port, peripheral)
     }
 
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {

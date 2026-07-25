@@ -248,6 +248,16 @@ impl Tia {
         self.input.set_paddle(index, position);
     }
 
+    /// A paddle reaches this pot pin, closing its charge path.
+    pub fn connect_pot(&mut self, index: usize, position: f32) {
+        self.input.connect_pot(index, position);
+    }
+
+    /// Nothing reaches this pot pin: it never charges.
+    pub fn disconnect_pot(&mut self, index: usize) {
+        self.input.disconnect_pot(index);
+    }
+
     /// A trigger button's state into INPT4/5, true = pressed.
     pub fn set_trigger(&mut self, port: usize, pressed: bool) {
         self.input.set_trigger(port, pressed);

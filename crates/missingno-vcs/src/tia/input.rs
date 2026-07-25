@@ -4,12 +4,38 @@
 /// Full-scale paddle charge time; the readable range games sweep.
 const POT_CHARGE_LINES: f32 = 380.0;
 
-/// One paddle's charge state: knob position (0.0–1.0) and the RC-charge
-/// countdown in scanlines that software times.
+/// One pot pin. A paddle's potentiometer completes the RC path; with an empty
+/// jack behind the pin there is no path at all, so the capacitor never charges.
 #[derive(Clone, Copy)]
-pub(super) struct Pot {
-    pub(super) position: f32,
-    pub(super) countdown: u16,
+pub(super) enum Pot {
+    Disconnected,
+    /// Knob position (0.0–1.0) and the RC-charge countdown in scanlines that
+    /// software times.
+    Knob {
+        position: f32,
+        countdown: u16,
+    },
+}
+
+impl Pot {
+    pub(super) fn position(&self) -> f32 {
+        match self {
+            Pot::Disconnected => 0.0,
+            Pot::Knob { position, .. } => *position,
+        }
+    }
+
+    pub(super) fn countdown(&self) -> u16 {
+        match self {
+            Pot::Disconnected => 0,
+            Pot::Knob { countdown, .. } => *countdown,
+        }
+    }
+}
+
+/// Scanlines of charge a knob at `position` needs before its INPT bit rises.
+fn charge_lines(position: f32) -> u16 {
+    (position.clamp(0.0, 1.0) * POT_CHARGE_LINES) as u16
 }
 
 pub(super) struct InputPorts {
@@ -17,7 +43,6 @@ pub(super) struct InputPorts {
     pub(super) triggers: [bool; 2],
     pub(super) trigger_latch_enabled: bool,
     pub(super) trigger_latches: [bool; 2],
-    /// Paddle knob positions, 0.0 (instant charge) to 1.0 (slowest).
     pub(super) pots: [Pot; 4],
     pub(super) pot_dumped: bool,
 }
@@ -28,10 +53,7 @@ impl InputPorts {
             triggers: [false; 2],
             trigger_latch_enabled: false,
             trigger_latches: [true; 2],
-            pots: [Pot {
-                position: 0.5,
-                countdown: 0,
-            }; 4],
+            pots: [Pot::Disconnected; 4],
             pot_dumped: false,
         }
     }
@@ -45,8 +67,38 @@ impl InputPorts {
         }
     }
 
+    /// Point a knob; a pin with no paddle behind it has none to point.
     pub(super) fn set_paddle(&mut self, index: usize, position: f32) {
-        self.pots[index].position = position.clamp(0.0, 1.0);
+        if let Pot::Knob { position: knob, .. } = &mut self.pots[index] {
+            *knob = position.clamp(0.0, 1.0);
+        }
+    }
+
+    /// A paddle arrives: its capacitor starts discharged, so a charge already
+    /// in progress begins again from this knob's full ramp.
+    pub(super) fn connect_pot(&mut self, index: usize, position: f32) {
+        let position = position.clamp(0.0, 1.0);
+        self.pots[index] = Pot::Knob {
+            position,
+            countdown: charge_lines(position),
+        };
+    }
+
+    pub(super) fn disconnect_pot(&mut self, index: usize) {
+        self.pots[index] = Pot::Disconnected;
+    }
+
+    /// Reseat a pot's charge from a save. Port configuration is not chip state,
+    /// so a pin left open by the current wiring stays open.
+    pub(super) fn restore_pot(&mut self, index: usize, saved: f32, saved_countdown: u16) {
+        if let Pot::Knob {
+            position,
+            countdown,
+        } = &mut self.pots[index]
+        {
+            *position = saved;
+            *countdown = saved_countdown;
+        }
     }
 
     /// VBLANK's two input-port bits: D6 enables the trigger latches, D7
@@ -68,7 +120,13 @@ impl InputPorts {
         let dump = value & 0x80 != 0;
         if self.pot_dumped && !dump {
             for pot in &mut self.pots {
-                pot.countdown = (pot.position.clamp(0.0, 1.0) * POT_CHARGE_LINES) as u16;
+                if let Pot::Knob {
+                    position,
+                    countdown,
+                } = pot
+                {
+                    *countdown = charge_lines(*position);
+                }
             }
         }
         self.pot_dumped = dump;
@@ -78,17 +136,19 @@ impl InputPorts {
     pub(super) fn step_pot_charge(&mut self) {
         if !self.pot_dumped {
             for pot in &mut self.pots {
-                pot.countdown = pot.countdown.saturating_sub(1);
+                if let Pot::Knob { countdown, .. } = pot {
+                    *countdown = countdown.saturating_sub(1);
+                }
             }
         }
     }
 
-    /// INPT0-3's D7: high once that pot's capacitor has charged.
+    /// INPT0-3's D7: high once that pot's capacitor has charged. An open pin
+    /// has no charge path, so it never rises.
     pub(super) fn pot_level(&self, index: usize) -> u8 {
-        if !self.pot_dumped && self.pots[index].countdown == 0 {
-            0x80
-        } else {
-            0x00
+        match self.pots[index] {
+            Pot::Knob { countdown: 0, .. } if !self.pot_dumped => 0x80,
+            _ => 0x00,
         }
     }
 

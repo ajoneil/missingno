@@ -139,11 +139,11 @@ impl SystemConsole for VcsDebugger {
     }
 
     fn plugged(&self, port: PortId) -> Option<PeripheralId> {
-        controls::plugged(port)
+        controls::plugged(self.core.console(), port)
     }
 
     fn plug(&mut self, port: PortId, peripheral: PeripheralId) -> Result<(), PlugError> {
-        controls::plug(port, peripheral)
+        controls::plug(self.core.console_mut(), port, peripheral)
     }
 
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {

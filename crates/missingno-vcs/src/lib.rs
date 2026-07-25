@@ -3,6 +3,7 @@
 pub mod board;
 pub mod cartridge;
 pub mod console;
+pub mod controllers;
 pub use missingno_6502 as cpu;
 pub mod debug;
 pub mod debugger;

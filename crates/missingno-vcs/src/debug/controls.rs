@@ -7,7 +7,8 @@ use missingno_core::ports::{
 };
 use missingno_core::system::{ControlId, ControlInput, ControlRole, ControlSite};
 
-use crate::console::{JoystickDirection, Vcs};
+use crate::console::Vcs;
+use crate::controllers::{ControllerKind, Jack};
 
 /// The console's own buttons and switches. Positions and defaults match the
 /// RIOT's SWCHB state.
@@ -121,48 +122,73 @@ pub const PORTS: &[PortDescriptor] = &[
     },
 ];
 
-/// Both jacks are wired to a joystick; swapping in a paddle pair needs the
-/// per-port peripheral model.
-pub(super) fn plugged(port: PortId) -> Option<PeripheralId> {
-    PORTS.iter().any(|p| p.port == port).then_some(JOYSTICK)
-}
-
-pub(super) fn plug(port: PortId, peripheral: PeripheralId) -> Result<(), PlugError> {
-    if !PORTS.iter().any(|p| p.port == port) {
-        return Err(PlugError::UnknownPort);
-    }
-    if peripheral == JOYSTICK {
-        Ok(())
+/// The jack a port names, if the console has one.
+fn jack(port: PortId) -> Option<Jack> {
+    if port == LEFT_PORT {
+        Some(Jack::Left)
+    } else if port == RIGHT_PORT {
+        Some(Jack::Right)
     } else {
-        Err(PlugError::NotAccepted)
+        None
     }
 }
 
-/// The panel drives the RIOT's console lines; the left jack drives the
-/// joystick, its trigger, and pot 0. The right jack is not wired yet.
+fn peripheral_id(kind: ControllerKind) -> PeripheralId {
+    match kind {
+        ControllerKind::Unplugged => UNPLUGGED,
+        ControllerKind::Joystick => JOYSTICK,
+        ControllerKind::Paddles => PADDLES,
+    }
+}
+
+fn controller_kind(peripheral: PeripheralId) -> Option<ControllerKind> {
+    if peripheral == UNPLUGGED {
+        Some(ControllerKind::Unplugged)
+    } else if peripheral == JOYSTICK {
+        Some(ControllerKind::Joystick)
+    } else if peripheral == PADDLES {
+        Some(ControllerKind::Paddles)
+    } else {
+        None
+    }
+}
+
+pub(super) fn plugged(vcs: &Vcs, port: PortId) -> Option<PeripheralId> {
+    Some(peripheral_id(vcs.plugged(jack(port)?)))
+}
+
+pub(super) fn plug(vcs: &mut Vcs, port: PortId, peripheral: PeripheralId) -> Result<(), PlugError> {
+    let jack = jack(port).ok_or(PlugError::UnknownPort)?;
+    vcs.plug(
+        jack,
+        controller_kind(peripheral).ok_or(PlugError::NotAccepted)?,
+    );
+    Ok(())
+}
+
+/// The panel drives the RIOT's console lines directly; a port's roles go to
+/// whatever is plugged into that jack.
 pub(super) fn apply_control(vcs: &mut Vcs, control: ControlId, input: ControlInput) {
-    match input {
-        ControlInput::Digital(pressed) => match (control.site, control.role) {
-            (ControlSite::Panel, ControlRole::Reset) => vcs.set_console_reset(pressed),
-            (ControlSite::Panel, ControlRole::Select) => vcs.set_console_select(pressed),
-            (ControlSite::Panel, ControlRole::Toggle(switch @ (0 | 1))) => {
-                vcs.set_difficulty(switch as usize, pressed)
-            }
-            (ControlSite::Panel, ControlRole::Toggle(2)) => vcs.set_color_mode(pressed),
-            (ControlSite::Port(LEFT_PORT), role) => match role {
-                ControlRole::Action(0) => vcs.set_fire(pressed),
-                ControlRole::Up => vcs.set_joystick(JoystickDirection::Up, pressed),
-                ControlRole::Down => vcs.set_joystick(JoystickDirection::Down, pressed),
-                ControlRole::Left => vcs.set_joystick(JoystickDirection::Left, pressed),
-                ControlRole::Right => vcs.set_joystick(JoystickDirection::Right, pressed),
-                _ => {}
-            },
-            _ => {}
-        },
-        ControlInput::Axis(value) => {
-            if control == ControlId::port(LEFT_PORT, ControlRole::Knob(0)) {
-                vcs.set_paddle(0, value);
+    match control.site {
+        ControlSite::Panel => apply_panel(vcs, control.role, input),
+        ControlSite::Port(port) => {
+            if let Some(jack) = jack(port) {
+                vcs.set_controller_input(jack, control.role, input);
             }
         }
+        ControlSite::Integrated => {}
+    }
+}
+
+fn apply_panel(vcs: &mut Vcs, role: ControlRole, input: ControlInput) {
+    let ControlInput::Digital(pressed) = input else {
+        return;
+    };
+    match role {
+        ControlRole::Reset => vcs.set_console_reset(pressed),
+        ControlRole::Select => vcs.set_console_select(pressed),
+        ControlRole::Toggle(switch @ (0 | 1)) => vcs.set_difficulty(switch as usize, pressed),
+        ControlRole::Toggle(2) => vcs.set_color_mode(pressed),
+        _ => {}
     }
 }

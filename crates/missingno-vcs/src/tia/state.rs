@@ -114,9 +114,9 @@ impl Tia {
             trigger_latch_enabled: self.input.trigger_latch_enabled,
             trigger_latches: self.input.trigger_latches,
             pot_position: std::array::from_fn(|i| {
-                (self.input.pots[i].position.clamp(0.0, 1.0) * u16::MAX as f32).round() as u16
+                (self.input.pots[i].position().clamp(0.0, 1.0) * u16::MAX as f32).round() as u16
             }),
-            pot_countdown: std::array::from_fn(|i| self.input.pots[i].countdown),
+            pot_countdown: std::array::from_fn(|i| self.input.pots[i].countdown()),
             pot_dumped: self.input.pot_dumped,
         }
     }
@@ -162,8 +162,11 @@ impl Tia {
         self.input.trigger_latch_enabled = s.trigger_latch_enabled;
         self.input.trigger_latches = s.trigger_latches;
         for i in 0..4 {
-            self.input.pots[i].position = s.pot_position[i] as f32 / u16::MAX as f32;
-            self.input.pots[i].countdown = s.pot_countdown[i];
+            self.input.restore_pot(
+                i,
+                s.pot_position[i] as f32 / u16::MAX as f32,
+                s.pot_countdown[i],
+            );
         }
         self.input.pot_dumped = s.pot_dumped;
         self.line = [0; VISIBLE_CLOCKS];

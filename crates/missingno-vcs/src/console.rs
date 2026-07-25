@@ -6,8 +6,11 @@
 //! beam" kernels depend on. WSYNC parks the CPU through the 6502 module's
 //! RDY pin; the TIA raises it again as the beam wraps.
 
+use missingno_core::system::{ControlInput, ControlRole};
+
 use crate::TvStandard;
 use crate::cartridge::{CartType, Cartridge, CartridgeError};
+use crate::controllers::{Controller, ControllerKind, Jack, release_jack};
 use crate::cpu::{Bus, Cpu};
 use crate::riot::Riot;
 use crate::tia::{Scanline, Tia, VISIBLE_CLOCKS};
@@ -18,18 +21,12 @@ pub struct Frame {
     pub lines: Vec<[u8; VISIBLE_CLOCKS]>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum JoystickDirection {
-    Up,
-    Down,
-    Left,
-    Right,
-}
-
 pub struct Vcs {
     pub cpu: Cpu,
     pub tia: Tia,
     pub riot: Riot,
+    /// The two controller jacks, left then right.
+    controllers: [Controller; 2],
     cartridge: Cartridge,
     region: TvStandard,
     pending_tia_writes: [Option<TiaWrite>; MAX_TIA_WRITES_IN_FLIGHT],
@@ -202,10 +199,11 @@ impl Vcs {
     fn with_cartridge(cartridge: Cartridge, region: TvStandard) -> Vcs {
         let mut cpu = Cpu::new();
         cpu.reset();
-        Vcs {
+        let mut vcs = Vcs {
             cpu,
             tia: Tia::new(),
             riot: Riot::new(),
+            controllers: [Controller::Unplugged, Controller::Unplugged],
             cartridge,
             region,
             pending_tia_writes: [None; MAX_TIA_WRITES_IN_FLIGHT],
@@ -219,7 +217,11 @@ impl Vcs {
             sample_accum: 0.0,
             sample_accum_clocks: 0,
             samples: Vec::new(),
+        };
+        for jack in [Jack::Left, Jack::Right] {
+            vcs.plug(jack, ControllerKind::Joystick);
         }
+        vcs
     }
 
     /// The broadcast standard this console is wired to.
@@ -432,35 +434,34 @@ impl Vcs {
     }
 
     /// Power-cycle: fresh chip state, same cartridge (bank state included).
+    /// Flipping the power switch does not unplug the controllers.
     pub fn power_cycle(&mut self) {
+        let plugged = [self.plugged(Jack::Left), self.plugged(Jack::Right)];
         let cartridge = std::mem::replace(&mut self.cartridge, Cartridge::unplugged());
         *self = Vcs::with_cartridge(cartridge, self.region);
-    }
-
-    /// Player-0 joystick direction lines into RIOT port A, active-low.
-    pub fn set_joystick(&mut self, direction: JoystickDirection, pressed: bool) {
-        let bit = match direction {
-            JoystickDirection::Right => 0x80,
-            JoystickDirection::Left => 0x40,
-            JoystickDirection::Down => 0x20,
-            JoystickDirection::Up => 0x10,
-        };
-        if pressed {
-            self.riot.set_pin_a(bit, false);
-        } else {
-            self.riot.set_pin_a(bit, true);
+        for (jack, kind) in [Jack::Left, Jack::Right].into_iter().zip(plugged) {
+            self.plug(jack, kind);
         }
     }
 
-    /// Paddle knob position, 0.0-1.0.
-    pub fn set_paddle(&mut self, index: usize, position: f32) {
-        debug_assert!(index < 4, "the TIA has four pot inputs");
-        self.tia.set_paddle(index, position);
+    /// What is in a controller jack.
+    pub fn plugged(&self, jack: Jack) -> ControllerKind {
+        self.controllers[jack.index()].kind()
     }
 
-    /// Player-0 trigger into TIA INPT4.
-    pub fn set_fire(&mut self, pressed: bool) {
-        self.tia.set_trigger(0, pressed);
+    /// Swap what a jack carries. The departing controller lets go of every line
+    /// it was driving; the arriving one takes up the lines it owns.
+    pub fn plug(&mut self, jack: Jack, kind: ControllerKind) {
+        release_jack(jack, &mut self.riot, &mut self.tia);
+        let controller = Controller::new(kind);
+        controller.connect(jack, &mut self.riot, &mut self.tia);
+        self.controllers[jack.index()] = controller;
+    }
+
+    /// Hand a control to whatever is in the jack; a controller ignores roles
+    /// it has no part for.
+    pub fn set_controller_input(&mut self, jack: Jack, role: ControlRole, input: ControlInput) {
+        self.controllers[jack.index()].apply(jack, role, input, &mut self.riot, &mut self.tia);
     }
 
     /// The console's momentary Game Reset switch (SWCHB bit 0, active-low).
