@@ -947,10 +947,8 @@ impl Curator {
                     moved += 1;
                 }
                 Err(error) => {
-                    self.status = format!(
-                        "collection move FAILED for {}: {error}",
-                        rom.path.display()
-                    );
+                    self.status =
+                        format!("collection move FAILED for {}: {error}", rom.path.display());
                 }
             }
         }
@@ -1365,7 +1363,9 @@ impl Curator {
                 let entry = &mut db.entries[i];
                 let mut applied = Vec::new();
                 for (name, url, link_type, languages) in &staged_links {
-                    entry.game.upsert_link(name, url, *link_type, languages.clone());
+                    entry
+                        .game
+                        .upsert_link(name, url, *link_type, languages.clone());
                 }
                 if !staged_links.is_empty() {
                     applied.push("links");
@@ -2246,7 +2246,11 @@ impl Curator {
                 );
             }
             if let Some(mark) = session_mark {
-                let compact = if mark.starts_with('✓') { "✓" } else { mark.as_str() };
+                let compact = if mark.starts_with('✓') {
+                    "✓"
+                } else {
+                    mark.as_str()
+                };
                 ann = ann.push(text(compact.to_owned()).size(11).style(text::secondary));
             }
             rows = rows.push(ann);
@@ -2440,8 +2444,8 @@ impl Curator {
                         .spacing(8)
                         .align_y(iced::Alignment::Center);
                         if !languages.is_empty() {
-                            link_row = link_row
-                                .push(text(languages).size(11).style(text::secondary));
+                            link_row =
+                                link_row.push(text(languages).size(11).style(text::secondary));
                         }
                         editor = editor.push(link_row);
                     }
@@ -2586,9 +2590,7 @@ impl Curator {
                                 .width(Length::Fixed(width))
                                 .height(Length::Fixed(height)),
                         )
-                        .on_move(move |point| {
-                            Message::Paddle((point.x / width).clamp(0.0, 1.0))
-                        });
+                        .on_move(move |point| Message::Paddle((point.x / width).clamp(0.0, 1.0)));
                         if paddle_mode {
                             // Click = the paddle trigger while aiming by pointer.
                             area = area

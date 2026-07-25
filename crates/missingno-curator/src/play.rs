@@ -157,7 +157,11 @@ pub fn gamepad_worker() -> impl iced::futures::Stream<Item = PadEvent> {
                     // Some pads report the analog triggers as axes instead of
                     // button values; ranges differ per driver (0..1 or -1..1),
                     // so normalise against the lowest level seen.
-                    gilrs::EventType::AxisChanged(axis @ (gilrs::Axis::LeftZ | gilrs::Axis::RightZ), value, ..) => {
+                    gilrs::EventType::AxisChanged(
+                        axis @ (gilrs::Axis::LeftZ | gilrs::Axis::RightZ),
+                        value,
+                        ..,
+                    ) => {
                         let slot = usize::from(axis == gilrs::Axis::RightZ);
                         trigger_floor[slot] = trigger_floor[slot].min(value);
                         let depression = if trigger_floor[slot] < 0.0 {
