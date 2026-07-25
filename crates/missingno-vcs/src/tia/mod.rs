@@ -374,11 +374,38 @@ impl Tia {
             }
         }
 
-        match self.hsync.beam() {
-            // A visible clock whose motion tick is N90-deferred past the wrap
-            // (the line's last pixel) previews it like the merge ghost — the
-            // die shows one serialiser tick per clock (m11 wrap runs).
-            Beam::Pixel(x) => self.render_clock(x, seam.map(|s| s || !motion_clock)),
+        // A clock whose motion tick is N90-deferred past the wrap (the line's
+        // last pixel) previews it like the merge ghost — the die shows one
+        // serialiser tick per clock (m11 wrap runs).
+        let seam = seam.map(|s| s || !motion_clock);
+        let beam = self.hsync.beam();
+        if let Beam::Pixel(x) = beam
+            && x.is_multiple_of(4)
+        {
+            self.playfield.latch_cell();
+        }
+        let px = Pixels {
+            p0: self.movables.pixel(MovableIndex::P0, seam),
+            p1: self.movables.pixel(MovableIndex::P1, seam),
+            m0: self.movables.pixel(MovableIndex::M0, seam),
+            m1: self.movables.pixel(MovableIndex::M1, seam),
+            bl: self.movables.pixel(MovableIndex::Bl, seam),
+            // The playfield cell decode selects nothing outside the visible
+            // counts, so its serial contribution while blanked is low.
+            pf: match beam {
+                Beam::Pixel(x) => self.playfield.pixel(x),
+                Beam::Comb(_) | Beam::Blank => false,
+            },
+        };
+
+        // The collision matrix samples the serial outputs on every clock;
+        // only VBLANK gates it — horizontal blank and the comb do not.
+        if !self.vblank {
+            self.collisions.latch(px);
+        }
+
+        match beam {
+            Beam::Pixel(x) => self.render_clock(x, px),
             // Inside the HMOVE comb: blanked output.
             Beam::Comb(x) => self.line[x as usize] = 0,
             Beam::Blank => {}
@@ -419,21 +446,7 @@ impl Tia {
         });
     }
 
-    fn render_clock(&mut self, x: u8, seam: PerObject<bool>) {
-        if x.is_multiple_of(4) {
-            self.playfield.latch_cell();
-        }
-        let px = Pixels {
-            p0: self.movables.pixel(MovableIndex::P0, seam),
-            p1: self.movables.pixel(MovableIndex::P1, seam),
-            m0: self.movables.pixel(MovableIndex::M0, seam),
-            m1: self.movables.pixel(MovableIndex::M1, seam),
-            bl: self.movables.pixel(MovableIndex::Bl, seam),
-            pf: self.playfield.pixel(x),
-        };
-
-        self.collisions.latch(px);
-
+    fn render_clock(&mut self, x: u8, px: Pixels) {
         let color = if self.vblank {
             0
         } else {
