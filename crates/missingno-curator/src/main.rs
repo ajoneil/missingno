@@ -167,6 +167,10 @@ enum Message {
     PlayEnded(u64),
     StopPlay,
     Pad(ControlId, bool),
+    /// A host gamepad edge, landing in whichever jack the pad is patched into.
+    Gamepad(ControlId, bool),
+    /// Move the gamepad to the other controller jack.
+    SwapPadJack,
     Paddle(f32),
     /// A keypad key edge from the host keyboard: key index, Shift held, pressed.
     PlayKey(u8, bool, bool),
@@ -249,7 +253,7 @@ impl Curator {
     fn subscription(&self) -> iced::Subscription<Message> {
         let mut subscriptions = vec![
             iced::Subscription::run(play::gamepad_worker).map(|event| match event {
-                play::PadEvent::Button(id, on) => Message::Pad(id, on),
+                play::PadEvent::Button(id, on) => Message::Gamepad(id, on),
                 play::PadEvent::Paddle(position) => Message::Paddle(position),
             }),
             // Keyboard events only where no widget took them, so typing into a
@@ -515,6 +519,16 @@ impl Curator {
             Message::Pad(control, pressed) => {
                 if let Some((_, session)) = &self.playing {
                     session.set_control(control, pressed);
+                }
+            }
+            Message::Gamepad(control, pressed) => {
+                if let Some((_, session)) = &self.playing {
+                    session.set_pad_control(control, pressed);
+                }
+            }
+            Message::SwapPadJack => {
+                if let Some((_, session)) = &mut self.playing {
+                    session.swap_pad_jack();
                 }
             }
             Message::Paddle(position) => {
@@ -2621,6 +2635,15 @@ impl Curator {
                     ]
                     .spacing(8)
                     .align_y(iced::Alignment::Center);
+                    let jack = if session.pad_jack == missingno_vcs::debug::RIGHT_PORT {
+                        "right"
+                    } else {
+                        "left"
+                    };
+                    switches = switches.push(
+                        button(text(format!("Pad: {jack} jack")).size(12))
+                            .on_press(Message::SwapPadJack),
+                    );
                     for (i, switch) in session.switches.iter().enumerate() {
                         let level = session.switch_levels.get(i).copied().unwrap_or(false);
                         let Some((positions, _)) = switch.toggle() else {

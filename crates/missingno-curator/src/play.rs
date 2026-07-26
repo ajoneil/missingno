@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use iced::futures::SinkExt;
 use missingno_core::ports::{PanelControl, PeripheralId, PortId};
-use missingno_core::system::{ControlId, ControlInput, ControlRole};
+use missingno_core::system::{ControlId, ControlInput, ControlRole, ControlSite};
 use missingno_core::video::DisplayTechnology;
 use missingno_gamedb::platform::Controller;
 use missingno_session::{
@@ -28,6 +28,9 @@ pub struct PlaySession {
     pub paddles: bool,
     /// The jacks holding a keypad, so host key presses know where to land.
     pub keypads: Vec<PortId>,
+    /// The jack the host gamepad is patched into. A game that reads the right
+    /// controller is only playable with the pad moved there.
+    pub pad_jack: PortId,
     /// The `!Send` cpal stream stays on the UI thread, as in the emulator.
     _audio: Option<AudioOutput>,
     pub events: Arc<Mutex<Receiver<SessionEvent>>>,
@@ -120,19 +123,52 @@ pub fn start(
         switch_levels,
         paddles,
         keypads,
+        pad_jack: PLAY_PORT,
         _audio: audio,
         events: Arc::new(Mutex::new(events)),
     })
 }
 
-/// The jack the playtest drives — the curator plays VCS media, whose left
-/// controller is the one games read.
+/// The jack the playtest starts in — the curator plays VCS media, whose left
+/// controller is the one most games read.
 pub const PLAY_PORT: PortId = PortId(0);
+
+/// What the gamepad holds in a jack, released when it moves to the other one.
+const PAD_ROLES: [ControlRole; 5] = [
+    ControlRole::Up,
+    ControlRole::Down,
+    ControlRole::Left,
+    ControlRole::Right,
+    ControlRole::Action(0),
+];
 
 impl PlaySession {
     pub fn set_control(&self, control: ControlId, pressed: bool) {
         self.handle
             .set_control(control, ControlInput::Digital(pressed));
+    }
+
+    /// A host gamepad control, landing in the jack the pad is patched into.
+    /// The console's own panel switches stay where they are.
+    pub fn set_pad_control(&self, control: ControlId, pressed: bool) {
+        let control = match control.site {
+            ControlSite::Port(_) => ControlId::port(self.pad_jack, control.role),
+            _ => control,
+        };
+        self.set_control(control, pressed);
+    }
+
+    /// Patch the gamepad into the other jack, releasing what it held so a
+    /// direction pressed across the move doesn't stick in the jack it left.
+    pub fn swap_pad_jack(&mut self) {
+        for role in PAD_ROLES {
+            self.set_control(ControlId::port(self.pad_jack, role), false);
+        }
+        self.pad_jack = if self.pad_jack == missingno_vcs::debug::LEFT_PORT {
+            missingno_vcs::debug::RIGHT_PORT
+        } else {
+            missingno_vcs::debug::LEFT_PORT
+        };
     }
 
     /// A host key onto a plugged keypad: the left one unmodified and the right
