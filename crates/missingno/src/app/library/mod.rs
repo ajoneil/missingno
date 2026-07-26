@@ -58,6 +58,10 @@ pub struct GameEntry {
     /// Cartridge board code (VCS), e.g. "F8"; absent falls back to size-detect.
     #[serde(default)]
     pub cart_type: Option<String>,
+    /// Controllers the game needs, when they deviate from its platform's
+    /// default; the loader configures the console's ports from them.
+    #[serde(default)]
+    pub controllers: Vec<missingno_gamedb::Controller>,
     pub publisher: Option<String>,
     pub year: Option<String>,
     pub description: Option<String>,
@@ -80,6 +84,7 @@ impl GameEntry {
             platform: None,
             tv_standard: None,
             cart_type: None,
+            controllers: Vec::new(),
             publisher: None,
             year: None,
             description: None,

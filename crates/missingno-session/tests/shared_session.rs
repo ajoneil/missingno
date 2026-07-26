@@ -211,6 +211,49 @@ fn recording_and_replay_refuse_each_other() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// A recording whose header names a peripheral only the host can build (the
+/// printer on the Game Boy's link port) still replays — but the session says so
+/// rather than dropping the configuration silently.
+#[test]
+fn a_replay_reports_a_peripheral_the_seam_cannot_plug() {
+    use missingno_core::recording::Recording;
+    use missingno_gb::system::{LINK_PORT, LINK_PRINTER};
+
+    let session = shared();
+    let client = session.handle();
+    let events = client.subscribe();
+
+    let state_path =
+        std::env::temp_dir().join(format!("missingno-host-{}.mpsv", std::process::id()));
+    client
+        .save_state(state_path.clone())
+        .expect("gb has a save-state backend");
+    let recording = Recording {
+        initial_state: std::fs::read(&state_path).expect("the state file was written"),
+        ports: vec![(LINK_PORT, LINK_PRINTER)],
+        events: Vec::new(),
+        checks: Vec::new(),
+        frames: 2,
+        check_interval: 0,
+    };
+    let path = std::env::temp_dir().join(format!("missingno-host-{}.mprc", std::process::id()));
+    std::fs::write(&path, recording.to_bytes().expect("encodes")).expect("writes");
+
+    client
+        .play_recording(path.clone())
+        .expect("a host-supplied peripheral does not block the replay");
+    assert!(
+        wait_until(|| drain(&events).iter().any(|event| matches!(
+            event,
+            SessionEvent::Notice(message) if message.contains("cannot supply")
+        ))),
+        "the refused peripheral is reported to every client"
+    );
+
+    let _ = std::fs::remove_file(&state_path);
+    let _ = std::fs::remove_file(&path);
+}
+
 #[test]
 fn stopping_without_a_recording_is_silent() {
     let session = shared();

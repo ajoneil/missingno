@@ -263,6 +263,31 @@ dbg_control() {
     jq -r 'if .error then .error else "control \(.site) \(.role) \($ARGS.named.a)" end' --arg a "$action"
 }
 
+# dbg_ports  — the console's ports, what each carries, and the controls of every
+# peripheral it accepts, spelled the way dbg_control takes them.
+dbg_ports() {
+  curl -s "$DBG_URL/ports" |
+    jq -r '
+      def controls: [.controls[] | .role] | join(" ");
+      (.ports[] |
+        "\(.site)\t\(.label)\tplugged: \(.plugged // "-")",
+        (.options[] | "  \(.id)\t\(.label)\t(\(.provider))\t\(controls)")),
+      (if (.integrated_controls | length) > 0 then
+        "integrated\t" + ([.integrated_controls[] | .role] | join(" ")) else empty end),
+      (if (.panel_controls | length) > 0 then
+        "panel\t" + ([.panel_controls[] | .role] | join(" ")) else empty end)'
+}
+
+# dbg_plug <port> <peripheral>  — swap what a port carries; both are the id or
+# label dbg_ports reports (e.g. dbg_plug port0 Paddles).
+dbg_plug() {
+  local port="${1:?usage: dbg_plug <port> <peripheral>}"
+  local peripheral="${2:?usage: dbg_plug <port> <peripheral>}"
+  curl -s -X POST "$DBG_URL/plug" -H 'Content-Type: application/json' \
+    -d "$(jq -nc --arg p "$port" --arg k "$peripheral" '{port: $p, peripheral: $k}')" |
+    jq -r 'if .error then .error else "port \(.port) carries peripheral \(.peripheral)" end'
+}
+
 # ── Deprecated gb_* aliases (semantics that map 1:1 to a dbg_* helper) ─────────
 
 gb_start() {

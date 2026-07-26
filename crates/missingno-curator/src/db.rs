@@ -701,7 +701,7 @@ impl AnyGame {
     }
 
     /// Whether the release holding this dump states the paddle — the play
-    /// pane remaps fire to the paddle trigger line when it does.
+    /// pane plugs a paddle pair into the jack when it does.
     pub fn paddle_for(&self, sha1: &str) -> bool {
         let AnyGame::Vcs(g) = self else {
             return false;

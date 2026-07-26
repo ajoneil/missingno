@@ -31,6 +31,6 @@ pub mod tools;
 pub use attach::{AttachClient, AttachEndpoint, Publication, SessionInfo};
 pub use session::{DisasmLine, Session, StopReason, validate_watch};
 pub use shared::{
-    AudioSink, ExtractedMachine, MemoryInterest, RunningReadout, SessionEvent, SessionHandle,
-    SharedSession,
+    AudioSink, ControlSurfaces, ExtractedMachine, MemoryInterest, PluggedPort, RunningReadout,
+    SessionEvent, SessionHandle, SharedSession,
 };

@@ -9,11 +9,15 @@ use missingno_core::graphics::{GraphicsView, Object, ObjectTable, PaletteSet, Ti
 use missingno_core::inspect::{
     BitTable, PairMatrix, PixelStrip, Register, Section, SectionBlock, SwatchRow, ValueStyle,
 };
+use missingno_core::ports::{
+    ControlDescriptor, ControlKind, PanelBehaviour, PanelControl, Provider,
+};
+use missingno_core::system::ControlSite;
 use serde_json::{Value, json};
 
-use crate::request::{parse_control, parse_hex_arg, parse_watch_terms};
+use crate::request::{parse_control, parse_hex_arg, parse_plug, parse_watch_terms};
 use crate::session::{Session, StopReason};
-use crate::shared::SessionHandle;
+use crate::shared::{ControlSurfaces, SessionHandle};
 
 /// Cap on a single `read_memory`, so a bad length can't allocate unbounded.
 const MAX_MEMORY_LEN: u32 = 0x1000;
@@ -140,6 +144,30 @@ fn machine_tools() -> Vec<Tool> {
                     "axis": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
                 },
                 "required": ["site", "role"],
+            }),
+        },
+        Tool {
+            name: "list_ports",
+            description: "The machine's input surfaces as JSON: each port, the peripherals it \
+                          accepts and the one plugged in now, plus the console's integrated and \
+                          panel controls. Every control carries the site and role spelling \
+                          set_control takes."
+                .into(),
+            input_schema: empty(),
+        },
+        Tool {
+            name: "plug",
+            description: "Plug a peripheral into a port, naming each by the id or spelling \
+                          list_ports reports. A host-supplied peripheral is refused. Captured \
+                          into an active recording."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "port": { "description": "port number, or its 'port0' spelling" },
+                    "peripheral": { "description": "peripheral id or label" },
+                },
+                "required": ["port", "peripheral"],
             }),
         },
         Tool {
@@ -420,6 +448,11 @@ pub fn call_session_tool(
             status_report(handle, core_name)
         }
         "set_control" => set_control(handle, args),
+        "list_ports" => text(
+            serde_json::to_string_pretty(&surfaces_json(&handle.control_surfaces()))
+                .unwrap_or_else(|error| error.to_string()),
+        ),
+        "plug" => plug(handle, args),
         "save_state" => path_arg(args)
             .and_then(|path| handle.save_state(path))
             .map(|()| vec![Content::Text("state saved".into())]),
@@ -883,6 +916,101 @@ fn set_control(handle: &SessionHandle, args: &Value) -> ToolOutcome {
     let (control, input) = parse_control(args)?;
     handle.set_control(control, input);
     text(format!("control {control} set"))
+}
+
+// --- ports and peripherals ----------------------------------------------------
+
+fn plug(handle: &SessionHandle, args: &Value) -> ToolOutcome {
+    let surfaces = handle.control_surfaces();
+    let (port, peripheral) = parse_plug(&surfaces, args)?;
+    handle.plug(port, peripheral)?;
+    text(format!(
+        "port{} now carries peripheral {}",
+        port.0, peripheral.0
+    ))
+}
+
+/// The machine's input surfaces as JSON, every control spelled the way
+/// `set_control` takes it.
+fn surfaces_json(surfaces: &ControlSurfaces) -> Value {
+    let ports: Vec<Value> = surfaces
+        .ports
+        .iter()
+        .map(|port| {
+            let site = ControlSite::Port(port.descriptor.port);
+            let options: Vec<Value> = port
+                .descriptor
+                .accepts
+                .iter()
+                .map(|peripheral| {
+                    json!({
+                        "id": peripheral.id.0,
+                        "label": peripheral.label,
+                        "provider": match peripheral.provider {
+                            Provider::Console => "console",
+                            Provider::Host => "host",
+                        },
+                        "controls": peripheral
+                            .controls
+                            .iter()
+                            .map(|control| control_json(site, control))
+                            .collect::<Vec<_>>(),
+                    })
+                })
+                .collect();
+            json!({
+                "port": port.descriptor.port.0,
+                "site": site.name(),
+                "label": port.descriptor.label,
+                "plugged": port.plugged.map(|peripheral| peripheral.0),
+                "options": options,
+            })
+        })
+        .collect();
+    json!({
+        "ports": ports,
+        "integrated_controls": surfaces
+            .integrated
+            .iter()
+            .map(|control| control_json(ControlSite::Integrated, control))
+            .collect::<Vec<_>>(),
+        "panel_controls": surfaces
+            .panel
+            .iter()
+            .map(panel_control_json)
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn control_json(site: ControlSite, control: &ControlDescriptor) -> Value {
+    json!({
+        "site": site.name(),
+        "role": control.role.name(),
+        "label": control.label,
+        "kind": match control.kind {
+            ControlKind::Button => "button",
+            ControlKind::Axis => "axis",
+        },
+    })
+}
+
+fn panel_control_json(control: &PanelControl) -> Value {
+    let mut body = json!({
+        "site": ControlSite::Panel.name(),
+        "role": control.role.name(),
+        "label": control.label,
+        "behaviour": match control.behaviour {
+            PanelBehaviour::Momentary => "momentary",
+            PanelBehaviour::Toggle { .. } => "toggle",
+        },
+    });
+    if let Some((positions, default_high)) = control.toggle()
+        && let Some(object) = body.as_object_mut()
+    {
+        object.insert("positions".into(), json!(positions));
+        object.insert("default_high".into(), json!(default_high));
+    }
+    body
 }
 
 // --- get_waveforms ------------------------------------------------------------

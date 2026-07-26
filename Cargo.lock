@@ -3026,6 +3026,7 @@ dependencies = [
  "missingno-gamedb",
  "missingno-iced",
  "missingno-session",
+ "missingno-vcs",
  "serde_json",
  "sha1",
  "smol",

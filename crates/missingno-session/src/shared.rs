@@ -28,7 +28,10 @@ use std::time::{Duration, Instant};
 
 use missingno_core::HighPass;
 use missingno_core::inspect::MemoryWindow;
-use missingno_core::recording::{Recorder, Recording, ReplayCursor, ReplayStep};
+use missingno_core::ports::{
+    ControlDescriptor, PanelControl, PeripheralId, PortDescriptor, PortId,
+};
+use missingno_core::recording::{Recorder, Recording, ReplayCursor, ReplayStep, apply_port_config};
 use missingno_core::system::{
     ControlId, ControlInput, DebugView, RunningStatus, StateError, SystemConsole, SystemDebugger,
 };
@@ -84,6 +87,22 @@ pub enum SessionEvent {
 /// The subscriber senders an emitted event fans out to. Dead senders (a client
 /// dropped its receiver) are pruned on the next emit.
 type Subscribers = Arc<Mutex<Vec<Sender<SessionEvent>>>>;
+
+/// A port as a client sees it: what it accepts, and what is in it now.
+#[derive(Clone, Copy, Debug)]
+pub struct PluggedPort {
+    pub descriptor: PortDescriptor,
+    pub plugged: Option<PeripheralId>,
+}
+
+/// The machine's input surfaces: each port and what it carries, the integrated
+/// game controller, and the console panel.
+#[derive(Clone, Debug)]
+pub struct ControlSurfaces {
+    pub ports: Vec<PluggedPort>,
+    pub integrated: &'static [ControlDescriptor],
+    pub panel: &'static [PanelControl],
+}
 
 /// A span the running panes want peeked each vblank into the memory-window slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -174,6 +193,8 @@ enum Request {
     Pause(Sender<()>),
     Reset,
     SetControl(ControlId, ControlInput),
+    Plug(PortId, PeripheralId, Sender<Result<(), String>>),
+    Surfaces(Sender<ControlSurfaces>),
     SetMemoryInterest(Vec<MemoryInterest>),
     SaveState(PathBuf, Sender<Result<(), String>>),
     LoadState(PathBuf, Sender<Result<(), String>>),
@@ -283,6 +304,28 @@ impl SessionHandle {
     /// recording so a recorded input lands at the frame boundary it happened on.
     pub fn set_control(&self, control: ControlId, input: ControlInput) {
         let _ = self.requests.send(Request::SetControl(control, input));
+    }
+
+    /// Plug a console-constructible peripheral into a port. Applied in arrival
+    /// order like any other command, and noted into an active recording so a
+    /// mid-capture swap replays where it happened. A host-supplied peripheral is
+    /// refused: it arrives as an object from the frontend, not through the seam.
+    pub fn plug(&self, port: PortId, peripheral: PeripheralId) -> Result<(), String> {
+        self.round_trip(|ack| Request::Plug(port, peripheral, ack))
+    }
+
+    /// The machine's ports, what each carries, and its built-in controls.
+    pub fn control_surfaces(&self) -> ControlSurfaces {
+        let (tx, rx) = channel();
+        let empty = || ControlSurfaces {
+            ports: Vec::new(),
+            integrated: &[],
+            panel: &[],
+        };
+        if self.requests.send(Request::Surfaces(tx)).is_err() {
+            return empty();
+        }
+        rx.recv().unwrap_or_else(|_| empty())
     }
 
     /// Set the spans the run loop peeks into the memory-window slot each vblank.
@@ -777,6 +820,18 @@ impl SessionEngine {
                     capture.recorder.note_input(control, input);
                 }
             }
+            Request::Plug(port, peripheral, ack) => {
+                let outcome = self.machine.console_mut().plug(port, peripheral);
+                if outcome.is_ok()
+                    && let Some(capture) = &mut self.capture
+                {
+                    capture.recorder.note_plug(port, peripheral);
+                }
+                let _ = ack.send(outcome.map_err(|error| error.to_string()));
+            }
+            Request::Surfaces(ack) => {
+                let _ = ack.send(self.control_surfaces());
+            }
             Request::SetMemoryInterest(interest) => {
                 self.memory_interest = interest;
                 self.publish_memory_windows();
@@ -931,6 +986,22 @@ impl SessionEngine {
             } else {
                 self.sram_countdown = Some(count);
             }
+        }
+    }
+
+    fn control_surfaces(&self) -> ControlSurfaces {
+        let console = self.machine.console();
+        ControlSurfaces {
+            ports: console
+                .ports()
+                .iter()
+                .map(|descriptor| PluggedPort {
+                    descriptor: *descriptor,
+                    plugged: console.plugged(descriptor.port),
+                })
+                .collect(),
+            integrated: console.integrated_controls(),
+            panel: console.panel_controls(),
         }
     }
 
@@ -1089,7 +1160,18 @@ impl SessionEngine {
             .console_mut()
             .load_state(&recording.initial_state)
             .map_err(|error| format!("replay could not restore: {error}"))?;
+        let refused = apply_port_config(&recording, self.machine.console_mut());
         self.replay = Some(ReplayPlayback::new(recording));
+        if !refused.is_empty() {
+            let missing: Vec<String> = refused
+                .iter()
+                .map(|(port, peripheral)| format!("port {} peripheral {}", port.0, peripheral.0))
+                .collect();
+            self.notice(format!(
+                "Replay: this session cannot supply {} — replaying without it",
+                missing.join(", ")
+            ));
+        }
         Ok(())
     }
 }

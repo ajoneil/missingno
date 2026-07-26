@@ -42,6 +42,7 @@ pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<l
                 if let Some((_, release)) = catalogue.lookup_hash(&sha1) {
                     existing.tv_standard = release.tv_format;
                     existing.cart_type = release.cart_type.clone();
+                    existing.controllers = release.controllers.clone();
                 }
                 existing.add_rom_path(path);
                 library::save_entry(&game_dir, &existing);
@@ -60,6 +61,7 @@ pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<l
                 e.description = game.description.clone();
                 e.tv_standard = release.tv_format;
                 e.cart_type = release.cart_type.clone();
+                e.controllers = release.controllers.clone();
                 e.enrichment_attempted = false; // still want Hasheous for covers
                 e
             } else {

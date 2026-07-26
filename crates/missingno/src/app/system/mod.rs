@@ -7,7 +7,9 @@
 
 use std::path::Path;
 
-pub use missingno_core::ports::{ControlDescriptor, PanelControl, PortDescriptor};
+pub use missingno_core::ports::{
+    ControlDescriptor, PanelControl, PeripheralId, PortDescriptor, PortId,
+};
 pub use missingno_core::system::{
     ControlId, ControlInput, ControlRole, SystemConsole, SystemDebugger,
 };
@@ -209,6 +211,10 @@ pub struct FamilyDescriptor {
     /// one; `None` falls back to the file stem.
     pub title_from_rom: fn(&[u8]) -> Option<String>,
     pub create_console: CreateConsole,
+    /// How this family's ports are configured for a game whose library
+    /// metadata names these controllers. Empty leaves the console's power-on
+    /// configuration.
+    pub port_config: fn(&[missingno_gamedb::Controller]) -> Vec<(PortId, PeripheralId)>,
     /// morepork capture entry point for the `trace` subcommand; `None` for
     /// families without a trace backend.
     pub trace: Option<fn(TraceRequest)>,
@@ -234,6 +240,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         is_rom: gb::is_gb_rom,
         title_from_rom: gb::title_from_rom,
         create_console: gb::create_console,
+        port_config: |_| Vec::new(),
         trace: Some(crate::trace::trace_gb),
     },
     FamilyDescriptor {
@@ -244,6 +251,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         title_from_rom: gb::title_from_rom,
         // The same factory serves both platforms: the header picks the core.
         create_console: gb::create_console,
+        port_config: |_| Vec::new(),
         trace: Some(crate::trace::trace_gb),
     },
     FamilyDescriptor {
@@ -261,6 +269,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
             )
             .ok()
         },
+        port_config: vcs::port_config,
         trace: Some(crate::trace::trace_vcs),
     },
     #[cfg(feature = "sms")]
@@ -271,6 +280,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         is_rom: |path, _| sms::is_sms_rom(path),
         title_from_rom: |_| None,
         create_console: |media| sms::create_console(media.rom, media.fallback_title).ok(),
+        port_config: |_| Vec::new(),
         trace: None,
     },
     #[cfg(feature = "nes")]
@@ -281,6 +291,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         is_rom: |_, rom| nes::is_nes_rom(rom),
         title_from_rom: |_| None,
         create_console: |media| nes::create_console(media.rom, media.fallback_title).ok(),
+        port_config: |_| Vec::new(),
         trace: Some(crate::trace::trace_nes),
     },
 ];

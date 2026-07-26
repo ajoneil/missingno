@@ -22,9 +22,9 @@ pub struct PlaySession {
     /// moves into the session, with the level the UI last set for each.
     pub switches: Vec<PanelControl>,
     pub switch_levels: Vec<bool>,
-    /// Paddle release: fire remaps to the paddle trigger line (SWCHA D7,
-    /// electrically the joystick-right switch — control 7).
-    pub paddle_mode: bool,
+    /// A paddle pair is in the play jack, so the pane aims it with the pointer
+    /// and fires it with a click.
+    pub paddles: bool,
     /// The `!Send` cpal stream stays on the UI thread, as in the emulator.
     _audio: Option<AudioOutput>,
     pub events: Arc<Mutex<Receiver<SessionEvent>>>,
@@ -35,15 +35,23 @@ pub fn start(
     rom: &[u8],
     tv_standard: Option<String>,
     cart_type: Option<String>,
+    paddles: bool,
 ) -> Result<PlaySession, String> {
     let options = factory::LoadOptions {
         tv_standard,
         boot_rom: None,
         cart_type,
     };
-    let console = factory::create_console_with(std::path::Path::new(filename_hint), rom, &options)
-        .map_err(|e| format!("core rejected ROM: {e}"))?
-        .ok_or("no core recognizes this ROM")?;
+    let mut console =
+        factory::create_console_with(std::path::Path::new(filename_hint), rom, &options)
+            .map_err(|e| format!("core rejected ROM: {e}"))?
+            .ok_or("no core recognizes this ROM")?;
+    // Knob input reaches nothing until the pair is in the jack, and the paddle
+    // trigger lands on the direction line it shares on real hardware.
+    let paddles = paddles
+        && console
+            .plug(PLAY_PORT, missingno_vcs::debug::PADDLES)
+            .is_ok();
     let technology = console.video_out();
     let switches: Vec<PanelControl> = console
         .panel_controls()
@@ -73,7 +81,7 @@ pub fn start(
         technology,
         switches,
         switch_levels,
-        paddle_mode: false,
+        paddles,
         _audio: audio,
         events: Arc::new(Mutex::new(events)),
     })

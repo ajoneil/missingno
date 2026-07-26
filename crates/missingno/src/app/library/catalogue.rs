@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 
 use missingno_gamedb::{
-    Artifact, Game, GameBoy, GameBoyColor, GameKind, Link, Platform as DbPlatform, ReleaseStatus,
-    TvFormat, Vcs,
+    Artifact, Controller, Game, GameBoy, GameBoyColor, GameKind, Link, Platform as DbPlatform,
+    ReleaseStatus, TvFormat, Vcs,
 };
 
 use crate::app::system::TvStandard;
@@ -62,6 +62,9 @@ pub struct CatalogueRelease {
     /// Cartridge board code (VCS), e.g. "F8", "F6SC" — resolves the bank
     /// scheme the size heuristic can't tell apart.
     pub cart_type: Option<String>,
+    /// Controllers the release needs, when it deviates from the platform's
+    /// default; the loader configures the console's ports from them.
+    pub controllers: Vec<Controller>,
     pub artifacts: Vec<Artifact>,
 }
 
@@ -128,7 +131,7 @@ fn entry_from<P: DbPlatform>(
     platform: CataloguePlatform,
     slug: String,
     game: Game<P>,
-    hardware: impl Fn(&P::ReleaseHardware) -> (Option<TvStandard>, Option<String>),
+    hardware: impl Fn(&P::ReleaseHardware) -> (Option<TvStandard>, Option<String>, Vec<Controller>),
 ) -> CatalogueEntry {
     CatalogueEntry {
         platform,
@@ -145,7 +148,7 @@ fn entry_from<P: DbPlatform>(
             .releases
             .into_iter()
             .map(|release| {
-                let (tv_format, cart_type) = hardware(&release.hardware);
+                let (tv_format, cart_type, controllers) = hardware(&release.hardware);
                 CatalogueRelease {
                     title: release.title,
                     label: release.label,
@@ -154,6 +157,7 @@ fn entry_from<P: DbPlatform>(
                     status: release.status,
                     tv_format,
                     cart_type,
+                    controllers,
                     artifacts: release.artifacts,
                 }
             })
@@ -163,15 +167,23 @@ fn entry_from<P: DbPlatform>(
 
 fn parse_entry(console: &str, slug: String, text: &str) -> Option<CatalogueEntry> {
     match console {
-        "gb" => Game::<GameBoy>::from_ron(text)
-            .ok()
-            .map(|g| entry_from(CataloguePlatform::GameBoy, slug, g, |_| (None, None))),
-        "gbc" => Game::<GameBoyColor>::from_ron(text)
-            .ok()
-            .map(|g| entry_from(CataloguePlatform::GameBoyColor, slug, g, |_| (None, None))),
+        "gb" => Game::<GameBoy>::from_ron(text).ok().map(|g| {
+            entry_from(CataloguePlatform::GameBoy, slug, g, |_| {
+                (None, None, Vec::new())
+            })
+        }),
+        "gbc" => Game::<GameBoyColor>::from_ron(text).ok().map(|g| {
+            entry_from(CataloguePlatform::GameBoyColor, slug, g, |_| {
+                (None, None, Vec::new())
+            })
+        }),
         "vcs" => Game::<Vcs>::from_ron(text).ok().map(|g| {
             entry_from(CataloguePlatform::Vcs, slug, g, |hw| {
-                (hw.tv_format.map(tv_standard), hw.cart_type.clone())
+                (
+                    hw.tv_format.map(tv_standard),
+                    hw.cart_type.clone(),
+                    hw.controllers.clone(),
+                )
             })
         }),
         _ => None,

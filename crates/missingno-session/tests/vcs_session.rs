@@ -1,12 +1,18 @@
 //! With the `vcs` feature, drive a Session over a minimal Atari VCS ROM through
-//! the same factory the server uses, exercising the sub-instruction tick seam.
+//! the same factory the server uses, exercising the sub-instruction tick seam
+//! and the two controller jacks a VCS is the only current core to have.
 
 #![cfg(feature = "vcs")]
 
 use std::path::Path;
+use std::time::Duration;
 
 use missingno_core::inspect::WatchTerm;
-use missingno_session::{Session, factory};
+use missingno_core::ports::PeripheralId;
+use missingno_core::recording::{EventKind, Recording};
+use missingno_core::system::SystemConsole;
+use missingno_session::{Session, SharedSession, factory};
+use missingno_vcs::debug::{JOYSTICK, LEFT_PORT, PADDLES, RIGHT_PORT};
 
 fn value_term(key: &str, value: u32) -> WatchTerm {
     WatchTerm {
@@ -26,13 +32,28 @@ fn minimal_rom() -> Vec<u8> {
     rom
 }
 
-fn session() -> Session {
-    let rom = minimal_rom();
-    let console = factory::create_console(Path::new("test.a26"), &rom)
+/// A 4 KiB ROM that jumps to its own origin forever. The three-cycle loop does
+/// not divide the scanline, so instruction boundaries walk the frame — a state
+/// save, and so a recording, can start.
+fn looping_rom() -> Vec<u8> {
+    let mut rom: Vec<u8> = (0..0x1000).map(|i| [0x4C, 0x00, 0xF0][i % 3]).collect();
+    rom[0xFFC] = 0x00;
+    rom[0xFFD] = 0xF0;
+    rom
+}
+
+fn console_from(rom: &[u8]) -> Box<dyn SystemConsole> {
+    factory::create_console(Path::new("test.a26"), rom)
         .expect("factory should not error")
-        .expect("vcs factory should claim an .a26 ROM");
-    let debugger = console.into_debugger();
-    Session::new(debugger)
+        .expect("vcs factory should claim an .a26 ROM")
+}
+
+fn console() -> Box<dyn SystemConsole> {
+    console_from(&minimal_rom())
+}
+
+fn session() -> Session {
+    Session::new(console().into_debugger())
 }
 
 /// The beam position from the running-status video summary ("beam N · line M").
@@ -80,4 +101,149 @@ fn vcs_advertises_a_colour_clock_tick_that_steps_one_clock() {
         after == before + 1 || after < before,
         "beam {before} -> {after} should advance by one colour clock"
     );
+}
+
+#[test]
+fn plugging_swaps_what_a_port_carries() {
+    let session = SharedSession::spawn_console(console());
+    let client = session.handle();
+
+    let surfaces = client.control_surfaces();
+    assert_eq!(surfaces.ports.len(), 2, "the VCS has two controller jacks");
+    assert_eq!(
+        surfaces.ports[0].plugged,
+        Some(JOYSTICK),
+        "a VCS powers on with joysticks in both jacks"
+    );
+    assert!(
+        surfaces
+            .panel
+            .iter()
+            .any(|control| control.toggle().is_some()),
+        "the console panel carries latching switches"
+    );
+
+    client
+        .plug(LEFT_PORT, PADDLES)
+        .expect("the left jack takes a paddle pair");
+    assert_eq!(client.control_surfaces().ports[0].plugged, Some(PADDLES));
+    assert_eq!(
+        client.control_surfaces().ports[1].plugged,
+        Some(JOYSTICK),
+        "the other jack is untouched"
+    );
+
+    assert!(
+        client.plug(RIGHT_PORT, PeripheralId(9)).is_err(),
+        "a peripheral the jack does not accept is refused"
+    );
+}
+
+#[test]
+fn a_plug_during_capture_is_recorded_and_replayed() {
+    let rom = looping_rom();
+    let session = SharedSession::spawn_console(console_from(&rom));
+    let client = session.handle();
+    let path = std::env::temp_dir().join(format!("missingno-vcs-plug-{}.mprc", std::process::id()));
+
+    client
+        .start_recording(path.clone())
+        .expect("the VCS has a save-state backend to seed the recording");
+    // A recording seeds itself from a boundary state, which a frame boundary
+    // need not be — so wait for the capture the run loop starts.
+    client.run();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !client.is_recording() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(client.is_recording(), "the capture started");
+    client
+        .plug(LEFT_PORT, PADDLES)
+        .expect("plugged while the capture runs");
+    std::thread::sleep(Duration::from_millis(80));
+    client.pause();
+    client.stop_recording().expect("the recording writes out");
+
+    let bytes = std::fs::read(&path).expect("recording file exists");
+    let recording = Recording::from_bytes(&bytes).expect("a well-formed recording");
+    assert!(
+        recording.ports.contains(&(LEFT_PORT, JOYSTICK)),
+        "the header states the configuration capture began with: {:?}",
+        recording.ports
+    );
+    assert!(
+        recording.events.iter().any(|event| matches!(
+            event.kind,
+            EventKind::Plug { port, peripheral } if port == LEFT_PORT && peripheral == PADDLES
+        )),
+        "the swap was captured: {:?}",
+        recording.events
+    );
+
+    // Replaying reproduces both the header configuration and the swap.
+    let mut replayed = console_from(&rom);
+    missingno_core::recording::replay(&recording, replayed.as_mut())
+        .expect("the recorded timeline replays deterministically");
+    assert_eq!(replayed.plugged(LEFT_PORT), Some(PADDLES));
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[cfg(feature = "tools")]
+#[test]
+fn list_ports_spells_controls_the_way_set_control_takes_them() {
+    use missingno_session::tools;
+    use serde_json::json;
+
+    let session = SharedSession::spawn_console(console());
+    let handle = session.handle();
+    let outcome = tools::call_session_tool(&handle, "Atari VCS", "list_ports", &json!({}))
+        .expect("the machine surface serves list_ports")
+        .expect("list_ports answers");
+    let body = match outcome.first() {
+        Some(tools::Content::Text(text)) => text.clone(),
+        _ => panic!("list_ports answers with text"),
+    };
+    let listing: serde_json::Value = serde_json::from_str(&body).expect("valid JSON");
+
+    let left = &listing["ports"][0];
+    assert_eq!(left["site"], json!("port0"));
+    assert_eq!(left["plugged"], json!(JOYSTICK.0));
+    let joystick = left["options"]
+        .as_array()
+        .expect("options")
+        .iter()
+        .find(|option| option["id"] == json!(JOYSTICK.0))
+        .expect("the jack accepts a joystick");
+    assert_eq!(joystick["provider"], json!("console"));
+    let fire = joystick["controls"]
+        .as_array()
+        .expect("controls")
+        .iter()
+        .find(|control| control["role"] == json!("action0"))
+        .expect("a joystick has a fire button");
+    assert_eq!(fire["site"], json!("port0"));
+    assert_eq!(fire["kind"], json!("button"));
+
+    // A panel toggle states its two positions and its power-on level.
+    let toggle = listing["panel_controls"]
+        .as_array()
+        .expect("panel controls")
+        .iter()
+        .find(|control| control["behaviour"] == json!("toggle"))
+        .expect("the VCS panel latches its difficulty and TV-type switches");
+    assert_eq!(toggle["site"], json!("panel"));
+    assert!(toggle["positions"].as_array().is_some_and(|p| p.len() == 2));
+    assert!(toggle["default_high"].is_boolean());
+
+    // The plug tool takes the ids the listing reports, by number or by label.
+    tools::call_session_tool(
+        &handle,
+        "Atari VCS",
+        "plug",
+        &json!({ "port": "port0", "peripheral": PADDLES.0 }),
+    )
+    .expect("the machine surface serves plug")
+    .expect("paddles plug into the left jack");
+    assert_eq!(handle.control_surfaces().ports[0].plugged, Some(PADDLES));
 }

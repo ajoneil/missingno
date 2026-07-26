@@ -430,11 +430,10 @@ impl Curator {
                         BootSource::File(_) => verify::sha1_hex(&bytes),
                     };
                     let (tv, cart) = entry.game.hints_for(&sha1);
-                    let paddle_mode = entry.game.paddle_for(&sha1);
+                    let paddles = entry.game.paddle_for(&sha1);
                     self.stage_header_facts(i, &bytes);
-                    match play::start(hint, &bytes, tv, cart) {
-                        Ok(mut session) => {
-                            session.paddle_mode = paddle_mode;
+                    match play::start(hint, &bytes, tv, cart, paddles) {
+                        Ok(session) => {
                             let events = session.events.clone();
                             // Full device simulation, as the emulator's Device
                             // mode: persistence plus the technology's overlay
@@ -495,13 +494,6 @@ impl Curator {
             }
             Message::Pad(control, pressed) => {
                 if let Some((_, session)) = &self.playing {
-                    // A paddle game's fire button is the paddle trigger,
-                    // which reads on the joystick-right line.
-                    let control = if session.paddle_mode && control.role == ControlRole::Action(0) {
-                        ControlId::port(play::PLAY_PORT, ControlRole::Right)
-                    } else {
-                        control
-                    };
                     session.set_control(control, pressed);
                 }
             }
@@ -2618,10 +2610,10 @@ impl Curator {
                     pane = pane.push(switches);
                 }
                 if let Some(screen) = &self.play_screen {
-                    let paddle_mode = self
+                    let paddles = self
                         .playing
                         .as_ref()
-                        .is_some_and(|(_, session)| session.paddle_mode);
+                        .is_some_and(|(_, session)| session.paddles);
                     pane = pane.push(iced::widget::responsive(move |size| {
                         let (width, height) = screen.fitted_size(size);
                         // Horizontal position over the screen drives the
@@ -2632,9 +2624,9 @@ impl Curator {
                                 .height(Length::Fixed(height)),
                         )
                         .on_move(move |point| Message::Paddle((point.x / width).clamp(0.0, 1.0)));
-                        if paddle_mode {
-                            // Click = the paddle trigger while aiming by pointer.
-                            let trigger = ControlId::port(play::PLAY_PORT, ControlRole::Right);
+                        if paddles {
+                            // Click = the paddle's trigger while aiming by pointer.
+                            let trigger = ControlId::port(play::PLAY_PORT, ControlRole::Action(0));
                             area = area
                                 .on_press(Message::Pad(trigger, true))
                                 .on_release(Message::Pad(trigger, false));

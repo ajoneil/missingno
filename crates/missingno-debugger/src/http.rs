@@ -11,13 +11,17 @@ use missingno_core::inspect::{
     BitTable, PairMatrix, PixelStrip, Pointer, Register, RegisterPair, Row, Section, SectionBlock,
     SwatchRow, Sweep, Tone, ValueStyle, Watch,
 };
+use missingno_core::ports::{
+    ControlDescriptor, ControlKind, PanelBehaviour, PanelControl, Provider,
+};
+use missingno_core::system::ControlSite;
 use missingno_core::waveform::ChannelWave;
 use serde_json::{Value, json};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
-use missingno_session::request::{parse_control, parse_hex, parse_watch_terms};
+use missingno_session::request::{parse_control, parse_hex, parse_plug, parse_watch_terms};
 use missingno_session::session::{DisasmLine, Session, StopReason};
-use missingno_session::shared::{SessionHandle, SharedSession};
+use missingno_session::shared::{ControlSurfaces, SessionHandle, SharedSession};
 
 /// Cap on a single `/memory` read, so a bad length can't allocate unbounded.
 const MAX_MEMORY_LEN: u32 = 0x1000;
@@ -79,6 +83,22 @@ fn session_route(mut request: Request, client: &SessionHandle) -> Option<Request
                 Err(message) => respond_error(request, 400, &message),
             }
         }
+        (Method::Get, "/ports") => {
+            respond_json(request, surfaces_json(&client.control_surfaces()));
+        }
+        (Method::Post, "/plug") => {
+            let surfaces = client.control_surfaces();
+            match read_json_body(&mut request).and_then(|body| parse_plug(&surfaces, &body)) {
+                Ok((port, peripheral)) => match client.plug(port, peripheral) {
+                    Ok(()) => respond_json(
+                        request,
+                        json!({ "port": port.0, "peripheral": peripheral.0 }),
+                    ),
+                    Err(message) => respond_error(request, 400, &message),
+                },
+                Err(message) => respond_error(request, 400, &message),
+            }
+        }
         (Method::Post, "/state/save") => match read_path_body(&mut request) {
             Ok(path) => match client.save_state(path.clone().into()) {
                 Ok(()) => respond_json(request, json!({ "saved": path })),
@@ -128,6 +148,90 @@ fn loaded_state_json(client: &SessionHandle) -> Value {
 
 fn run_state_json(client: &SessionHandle) -> Value {
     json!({ "running": client.is_running(), "recording": client.is_recording() })
+}
+
+/// The machine's input surfaces: each port with the peripherals it accepts and
+/// the one in it now, plus the console's own controls. Controls carry the site
+/// and role spelling `/control` takes.
+fn surfaces_json(surfaces: &ControlSurfaces) -> Value {
+    let ports: Vec<Value> = surfaces
+        .ports
+        .iter()
+        .map(|port| {
+            let site = ControlSite::Port(port.descriptor.port);
+            let options: Vec<Value> = port
+                .descriptor
+                .accepts
+                .iter()
+                .map(|peripheral| {
+                    json!({
+                        "id": peripheral.id.0,
+                        "label": peripheral.label,
+                        "provider": match peripheral.provider {
+                            Provider::Console => "console",
+                            Provider::Host => "host",
+                        },
+                        "controls": peripheral
+                            .controls
+                            .iter()
+                            .map(|control| control_json(site, control))
+                            .collect::<Vec<_>>(),
+                    })
+                })
+                .collect();
+            json!({
+                "port": port.descriptor.port.0,
+                "site": site.name(),
+                "label": port.descriptor.label,
+                "plugged": port.plugged.map(|peripheral| peripheral.0),
+                "options": options,
+            })
+        })
+        .collect();
+    json!({
+        "ports": ports,
+        "integrated_controls": surfaces
+            .integrated
+            .iter()
+            .map(|control| control_json(ControlSite::Integrated, control))
+            .collect::<Vec<_>>(),
+        "panel_controls": surfaces
+            .panel
+            .iter()
+            .map(panel_control_json)
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn control_json(site: ControlSite, control: &ControlDescriptor) -> Value {
+    json!({
+        "site": site.name(),
+        "role": control.role.name(),
+        "label": control.label,
+        "kind": match control.kind {
+            ControlKind::Button => "button",
+            ControlKind::Axis => "axis",
+        },
+    })
+}
+
+fn panel_control_json(control: &PanelControl) -> Value {
+    let mut body = json!({
+        "site": ControlSite::Panel.name(),
+        "role": control.role.name(),
+        "label": control.label,
+        "behaviour": match control.behaviour {
+            PanelBehaviour::Momentary => "momentary",
+            PanelBehaviour::Toggle { .. } => "toggle",
+        },
+    });
+    if let Some((positions, default_high)) = control.toggle()
+        && let Some(object) = body.as_object_mut()
+    {
+        object.insert("positions".into(), json!(positions));
+        object.insert("default_high".into(), json!(default_high));
+    }
+    body
 }
 
 /// Read a request body as JSON, so the shared argument parsers can take it.

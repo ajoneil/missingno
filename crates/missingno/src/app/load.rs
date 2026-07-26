@@ -90,7 +90,7 @@ fn start_console(
 ) -> Option<String> {
     let family = system::family_for(rom_path, &rom)?;
     let entry = crate::app::library::load_entry(game_dir);
-    let console = (family.create_console)(system::MediaLoad {
+    let mut console = (family.create_console)(system::MediaLoad {
         rom: &rom,
         fallback_title: file_stem_title(rom_path),
         save_data,
@@ -100,6 +100,12 @@ fn start_console(
         serial_link: &mut app.serial_link,
         print_sink: Some(app.print_tx.clone()),
     })?;
+    // The game's catalogued controllers decide what its ports carry: paddle
+    // input is inert until a paddle pair is in the jack.
+    let controllers = entry.map(|entry| entry.controllers).unwrap_or_default();
+    for (port, peripheral) in (family.port_config)(&controllers) {
+        let _ = console.plug(port, peripheral);
+    }
     Some(finish_start(app, console, rom_path, family.platform))
 }
 
