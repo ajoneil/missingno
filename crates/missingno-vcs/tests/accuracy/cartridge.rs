@@ -1,7 +1,7 @@
 //! Cartridge board tests. Each ROM states the board it is wired for — the
 //! suite never infers one from the image, since the board is the subject.
 
-use crate::common::run_self_test_on;
+use crate::common::{run_self_test_image, run_self_test_on};
 use missingno_vcs::{CartType, TvStandard};
 
 #[test]
@@ -637,6 +637,66 @@ fn ar_hazards_secam() {
     run_self_test_on(
         "cartridge/ar-hazards_secam.a26",
         TvStandard::Secam,
+        CartType::Ar,
+    );
+}
+
+/// One 8448-byte Supercharger load unit carrying a single page of program at
+/// `start`, stuffed into RAM bank 0, under the multiload id a later load
+/// request names. Built here rather than shipped: the subject is the container,
+/// and a multi-load game image is a game.
+fn ar_load(id: u8, control: u8, start: u16, program: &[u8]) -> Vec<u8> {
+    const UNIT: usize = 8448;
+    const DATA: usize = 8192;
+    const CHECKSUM_TOTAL: u8 = 0x55;
+    let sum = |bytes: &[u8]| bytes.iter().fold(0u8, |total, &b| total.wrapping_add(b));
+
+    let mut image = vec![0u8; UNIT];
+    image[..program.len()].copy_from_slice(program);
+    let entry = ((start >> 8 & 0x07) as u8) << 2;
+
+    let header = &mut image[DATA..];
+    header[..2].copy_from_slice(&start.to_le_bytes());
+    header[2] = control;
+    header[3] = 1;
+    header[5] = id;
+    header[0x10] = entry;
+    header[4] = CHECKSUM_TOTAL.wrapping_sub(sum(&header[..8]));
+
+    let page = sum(&image[..0x100]);
+    image[DATA + 0x40] = CHECKSUM_TOTAL.wrapping_sub(page).wrapping_sub(entry);
+    image
+}
+
+/// A multi-load container: the boot load asks the BIOS for multiload 1, and the
+/// unit carrying that id — not the next one along — has to be what runs.
+#[test]
+fn ar_multiload_ntsc() {
+    let boot = ar_load(
+        0,
+        0x04,
+        0xF100,
+        &[
+            0xA9, 0x01, // lda #1
+            0x85, 0xFA, // sta $FA
+            0x4C, 0x00, 0xF8, // jmp $F800
+        ],
+    );
+    let decoy = ar_load(9, 0x04, 0xF200, &[0x4C, 0x00, 0xF2]);
+    let asked_for = ar_load(
+        1,
+        0x04,
+        0xF300,
+        &[
+            0xA9, 0xA5, // lda #PASS
+            0x85, 0x80, // sta RESULT
+            0x4C, 0x04, 0xF3, // jmp *
+        ],
+    );
+    run_self_test_image(
+        "cartridge/ar-multiload",
+        &[boot, decoy, asked_for].concat(),
+        TvStandard::Ntsc,
         CartType::Ar,
     );
 }

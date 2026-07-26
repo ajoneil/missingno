@@ -15,6 +15,12 @@ pub enum CartridgeError {
         cart_type: CartType,
         size: usize,
     },
+    /// A Supercharger load unit whose checksums don't settle where the
+    /// container says they must.
+    LoadChecksum {
+        unit: usize,
+        page: Option<usize>,
+    },
 }
 
 impl std::fmt::Display for CartridgeError {
@@ -27,6 +33,13 @@ impl std::fmt::Display for CartridgeError {
                 cart_type.code(),
                 cart_type.image_size()
             ),
+            CartridgeError::LoadChecksum { unit, page: None } => {
+                write!(f, "Supercharger load {unit}: header checksum error")
+            }
+            CartridgeError::LoadChecksum {
+                unit,
+                page: Some(page),
+            } => write!(f, "Supercharger load {unit}: page {page} checksum error"),
         }
     }
 }
@@ -137,6 +150,9 @@ impl CartType {
             0x4000 => CartType::F6,
             0x8000 if has_superchip_signature(rom) => CartType::F4Sc,
             0x8000 => CartType::F4,
+            // A Supercharger container is whole 8448-byte load units — a size
+            // no ROM board shares.
+            size if ar::is_container(size) => CartType::Ar,
             size => return Err(CartridgeError::UnsupportedSize(size)),
         })
     }
@@ -230,6 +246,9 @@ impl CartType {
             // happened to catch, so the tail's length varies; the common dump
             // is one byte short of a full page of it.
             CartType::Dpc => (dpc::IMAGE_SIZE..=self.image_size()).contains(&len),
+            // A Supercharger image is a tape container: one load unit per tape
+            // load, and a multi-load title carries several.
+            CartType::Ar => ar::is_container(len),
             _ => len == self.image_size(),
         }
     }

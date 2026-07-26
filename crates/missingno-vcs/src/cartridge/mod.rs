@@ -236,7 +236,7 @@ impl Cartridge {
             CartType::ThreeF => Board::ThreeF(ThreeF::new(rom)),
             CartType::Fe => Board::Fe(Fe::new(rom)),
             CartType::Dpc => Board::Dpc(Dpc::new(rom, clock_hz)),
-            CartType::Ar => Board::Ar(Ar::new(rom)),
+            CartType::Ar => Board::Ar(Ar::new(rom)?),
             CartType::F0 => Board::F0(F0::new(rom)),
             CartType::Jane => Board::Jane(Jane::new(rom)),
             CartType::Wf8 => Board::Wf8(Wf8::new(rom)),
@@ -471,6 +471,25 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "image is 4096 bytes but a 2K board holds 2048"
+        );
+    }
+
+    #[test]
+    fn whole_supercharger_load_units_name_the_board() {
+        assert_eq!(CartType::infer(&[0u8; ar::IMAGE_SIZE]), Ok(CartType::Ar));
+        assert_eq!(
+            CartType::infer(&vec![0u8; 4 * ar::IMAGE_SIZE]),
+            Ok(CartType::Ar)
+        );
+        // Past the cap, and short of a whole unit, the length names nothing.
+        let beyond = (ar::MAX_LOADS + 1) * ar::IMAGE_SIZE;
+        assert_eq!(
+            CartType::infer(&vec![0u8; beyond]),
+            Err(CartridgeError::UnsupportedSize(beyond))
+        );
+        assert_eq!(
+            CartType::infer(&[0u8; ar::IMAGE_SIZE - 1]),
+            Err(CartridgeError::UnsupportedSize(ar::IMAGE_SIZE - 1))
         );
     }
 }

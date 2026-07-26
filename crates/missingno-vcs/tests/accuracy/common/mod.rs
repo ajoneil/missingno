@@ -54,6 +54,14 @@ fn load(relative: &str, standard: TvStandard, cart_type: CartType) -> Vcs {
         .unwrap_or_else(|e| panic!("failed to load ROM {}: {e:?}", path.display()))
 }
 
+/// Run a self-checking image the test built itself, for a board whose subject
+/// is the container rather than any one program.
+pub fn run_self_test_image(name: &str, image: &[u8], standard: TvStandard, cart_type: CartType) {
+    let vcs = Vcs::new(image, standard, Some(cart_type), DumpFit::Exact)
+        .unwrap_or_else(|e| panic!("failed to load {name}: {e:?}"));
+    poll_verdict(name, vcs);
+}
+
 /// Run a self-checking ROM on a plain 4K board — the suite's unmarked default,
 /// for tests whose subject is not the cartridge.
 pub fn run_self_test(relative: &str, standard: TvStandard) {
@@ -64,8 +72,10 @@ pub fn run_self_test(relative: &str, standard: TvStandard) {
 /// Panics with the failing sub-check code and observed/expected bytes on FAIL,
 /// or after the instruction budget if the ROM never reports a verdict.
 pub fn run_self_test_on(relative: &str, standard: TvStandard, cart_type: CartType) {
-    let mut vcs = load(relative, standard, cart_type);
+    poll_verdict(relative, load(relative, standard, cart_type));
+}
 
+fn poll_verdict(relative: &str, mut vcs: Vcs) {
     for _ in 0..MAX_INSTRUCTIONS {
         vcs.step_instruction();
         match vcs.peek(RESULT) {
