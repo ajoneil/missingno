@@ -194,6 +194,21 @@ fn hmove_strobe_line_secam() {
 }
 
 #[test]
+fn hmove_reset_merge_ntsc() {
+    common::run_self_test("tia-timing/hmove-reset-merge_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn hmove_reset_merge_pal() {
+    common::run_self_test("tia-timing/hmove-reset-merge_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn hmove_reset_merge_secam() {
+    common::run_self_test("tia-timing/hmove-reset-merge_secam.a26", TvStandard::Secam);
+}
+
+#[test]
 fn hmove_rewrite_race_ntsc() {
     common::run_screenshot(
         "tia-timing/hmove-rewrite-race_ntsc.a26",
