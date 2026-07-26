@@ -1935,6 +1935,25 @@ impl Curator {
                     Err(e) => error_result(e),
                 }
             }
+            "add_release" => {
+                let Some(key) = str_arg("key") else {
+                    return error_result("missing key");
+                };
+                let Some(i) = self.find_entry(key) else {
+                    return error_result(format!("no entry {key}"));
+                };
+                let Ok(db) = &mut self.db else {
+                    return error_result("db not loaded");
+                };
+                let index = db.entries[i].game.add_release();
+                db.entries[i].dirty = true;
+                if let Err(e) = db.write_entry(i) {
+                    return error_result(format!("added, but writing {key} failed: {e}"));
+                }
+                text_result(format!(
+                    "release {index} added to {key}; set its fields with update_release"
+                ))
+            }
             "remove_release" => {
                 let (Some(key), Some(index)) = (
                     str_arg("key"),

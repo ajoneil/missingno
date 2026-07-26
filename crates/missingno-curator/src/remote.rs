@@ -357,6 +357,13 @@ fn tool_definitions() -> Value {
             }), &["key", "mod", "sha1"]),
         },
         {
+            "name": "add_release",
+            "description": "Record a release the catalogue knows shipped but holds no dump of — a rare cart whose ROM has never surfaced. Adds an empty release and returns its index; set its publisher, date, title and hardware with update_release. Not for a release you have a dump for: those arrive with the dump.",
+            "inputSchema": object(json!({
+                "key": { "type": "string" },
+            }), &["key"]),
+        },
+        {
             "name": "remove_release",
             "description": "Drop a release that holds nothing — a phantom left behind when its only dump was re-filed as a mod or moved elsewhere. Refuses while the release still carries dumps or sources unless discard_dumps is true — pass that ONLY on the developer's explicit instruction, because it permanently drops the hashes with the release.",
             "inputSchema": object(json!({

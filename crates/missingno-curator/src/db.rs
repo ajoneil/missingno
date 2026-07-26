@@ -954,6 +954,24 @@ impl AnyGame {
     /// Drop a release that holds nothing — a phantom left by re-filing its
     /// only dump. Refuses while it still carries dumps unless the curator
     /// explicitly discards them, so evidence never vanishes quietly.
+    /// Record a release the catalogue knows shipped but holds no dump of —
+    /// a rare cart whose ROM has never surfaced. Returns its index.
+    pub fn add_release(&mut self) -> usize {
+        common!(self, g => {
+            g.releases.push(missingno_gamedb::Release {
+                title: None,
+                label: None,
+                regions: Vec::new(),
+                date: None,
+                publisher: None,
+                status: Default::default(),
+                hardware: Default::default(),
+                artifacts: Vec::new(),
+            });
+            g.releases.len() - 1
+        })
+    }
+
     pub fn remove_release(&mut self, index: usize, discard_dumps: bool) -> Result<(), String> {
         common!(self, g => {
             let Some(release) = g.releases.get(index) else {
