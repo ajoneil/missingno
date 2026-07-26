@@ -196,8 +196,8 @@ fn parse_entry(console: &str, slug: String, text: &str) -> Option<CatalogueEntry
 pub struct Catalogue {
     /// All entries, sorted by title.
     entries: Vec<CatalogueEntry>,
-    /// SHA1 hash → (entry, release) indices.
-    hash_index: HashMap<String, (usize, usize)>,
+    /// SHA1 hash → (entry, release, artifact) indices.
+    hash_index: HashMap<String, (usize, usize, usize)>,
 }
 
 impl Catalogue {
@@ -255,8 +255,8 @@ impl Catalogue {
         let mut hash_index = HashMap::new();
         for (i, entry) in entries.iter().enumerate() {
             for (r, release) in entry.releases.iter().enumerate() {
-                for artifact in &release.artifacts {
-                    hash_index.insert(artifact.sha1.as_str().to_owned(), (i, r));
+                for (a, artifact) in release.artifacts.iter().enumerate() {
+                    hash_index.insert(artifact.sha1.as_str().to_owned(), (i, r, a));
                 }
             }
         }
@@ -272,12 +272,18 @@ impl Catalogue {
         self.entries.iter().find(|e| e.slug == slug)
     }
 
-    /// Look up a ROM by SHA1 hash: the game and the release the dump belongs to.
-    pub fn lookup_hash(&self, sha1: &str) -> Option<(&CatalogueEntry, &CatalogueRelease)> {
+    /// Look up a ROM by SHA1 hash: the game, the release the dump belongs to,
+    /// and the dump itself — a defect is a fact about the one dump, not the
+    /// release.
+    pub fn lookup_hash(
+        &self,
+        sha1: &str,
+    ) -> Option<(&CatalogueEntry, &CatalogueRelease, &Artifact)> {
         let sha1_lower = sha1.to_lowercase();
-        self.hash_index.get(&sha1_lower).map(|&(i, r)| {
+        self.hash_index.get(&sha1_lower).map(|&(i, r, a)| {
             let entry = &self.entries[i];
-            (entry, &entry.releases[r])
+            let release = &entry.releases[r];
+            (entry, release, &release.artifacts[a])
         })
     }
 
@@ -337,10 +343,10 @@ mod tests {
         }
         // Pitfall II is one game whose NTSC and PAL cartridges are separate
         // releases; each hash must resolve to its own release.
-        let (usa_game, usa) = catalogue
+        let (usa_game, usa, _) = catalogue
             .lookup_hash("920cfbd517764ad3fa6a7425c031bd72dc7d927c")
             .expect("USA Pitfall II resolves");
-        let (pal_game, pal) = catalogue
+        let (pal_game, pal, _) = catalogue
             .lookup_hash("3ee18a1be7155900c2a01a104563657254d3a9a9")
             .expect("PAL Pitfall II resolves");
         assert_eq!(usa_game.title, pal_game.title);

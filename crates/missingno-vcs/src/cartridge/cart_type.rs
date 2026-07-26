@@ -17,6 +17,32 @@ pub enum CartridgeError {
     },
 }
 
+impl std::fmt::Display for CartridgeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CartridgeError::UnsupportedSize(size) => write!(f, "unsupported image size {size}"),
+            CartridgeError::WrongSizeForBoard { cart_type, size } => write!(
+                f,
+                "image is {size} bytes but a {} board holds {}",
+                cart_type.code(),
+                cart_type.image_size()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CartridgeError {}
+
+/// How a dump's length relates to the board's silicon.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DumpFit {
+    /// The image is the silicon's contents and nothing else.
+    Exact,
+    /// A catalogued overdump: the image carries padding past the silicon, so
+    /// the stated board's size says where the cartridge ends.
+    Overdump,
+}
+
 /// The board a ROM is wired for. The Atari codes (F8/F6/F4) name the hotspot
 /// ranges that page the 4 KB window; `*Sc` variants add Superchip (SARA) cart
 /// RAM, which a raw dump can't be told from a plain board by size alone.
@@ -115,6 +141,87 @@ impl CartType {
         })
     }
 
+    /// The board a game-db board code names.
+    pub fn from_code(code: &str) -> Option<CartType> {
+        Some(match code {
+            "2K" => CartType::Plain2K,
+            "4K" => CartType::Plain4K,
+            "F8" => CartType::F8,
+            "F8SC" => CartType::F8Sc,
+            "F6" => CartType::F6,
+            "F6SC" => CartType::F6Sc,
+            "F4" => CartType::F4,
+            "F4SC" => CartType::F4Sc,
+            "FA" => CartType::Fa,
+            "FC" => CartType::Fc,
+            "FE" => CartType::Fe,
+            "E0" => CartType::E0,
+            "E7" => CartType::E7,
+            "CV" => CartType::Cv,
+            "UA" => CartType::Ua,
+            "3F" => CartType::ThreeF,
+            "3E" => CartType::ThreeE,
+            "3E+" => CartType::ThreeEPlus,
+            "DPC" => CartType::Dpc,
+            "AR" => CartType::Ar,
+            "F0" => CartType::F0,
+            "JANE" => CartType::Jane,
+            "WF8" => CartType::Wf8,
+            "WD" => CartType::Wd,
+            "0FA0" => CartType::ZeroFa0,
+            "03E0" => CartType::Zero3E0,
+            "0840" => CartType::Zero840,
+            "EF" => CartType::Ef,
+            "DF" => CartType::Df,
+            "BF" => CartType::Bf,
+            "SB" => CartType::Sb,
+            "X07" => CartType::X07,
+            "MDM" => CartType::Mdm,
+            _ => return None,
+        })
+    }
+
+    /// The game-db board code for this board — the inverse of [`from_code`].
+    ///
+    /// [`from_code`]: CartType::from_code
+    pub fn code(self) -> &'static str {
+        match self {
+            CartType::Plain2K => "2K",
+            CartType::Plain4K => "4K",
+            CartType::F8 => "F8",
+            CartType::F8Sc => "F8SC",
+            CartType::F6 => "F6",
+            CartType::F6Sc => "F6SC",
+            CartType::F4 => "F4",
+            CartType::F4Sc => "F4SC",
+            CartType::Fa => "FA",
+            CartType::Fc => "FC",
+            CartType::Fe => "FE",
+            CartType::E0 => "E0",
+            CartType::E7 => "E7",
+            CartType::Cv => "CV",
+            CartType::Ua => "UA",
+            CartType::ThreeF => "3F",
+            CartType::ThreeE => "3E",
+            CartType::ThreeEPlus => "3E+",
+            CartType::Dpc => "DPC",
+            CartType::Ar => "AR",
+            CartType::F0 => "F0",
+            CartType::Jane => "JANE",
+            CartType::Wf8 => "WF8",
+            CartType::Wd => "WD",
+            CartType::ZeroFa0 => "0FA0",
+            CartType::Zero3E0 => "03E0",
+            CartType::Zero840 => "0840",
+            CartType::Ef => "EF",
+            CartType::Df => "DF",
+            CartType::Bf => "BF",
+            CartType::Sb => "SB",
+            CartType::X07 => "X07",
+            CartType::Mdm => "MDM",
+        }
+    }
+
     /// Whether an image is sized for the board. Most boards are exact — a dump
     /// is the silicon's contents and nothing else.
     pub(super) fn accepts(self, len: usize) -> bool {
@@ -128,7 +235,7 @@ impl CartType {
     }
 
     /// The image size the board is wired for.
-    fn image_size(self) -> usize {
+    pub(super) fn image_size(self) -> usize {
         match self {
             CartType::Plain2K => 0x800,
             CartType::Plain4K => 0x1000,

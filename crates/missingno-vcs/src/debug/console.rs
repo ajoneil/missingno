@@ -13,7 +13,7 @@ use missingno_core::video::{
 };
 
 use crate::TvStandard;
-use crate::cartridge::CartridgeError;
+use crate::cartridge::{CartType, CartridgeError, DumpFit};
 use crate::console::Vcs;
 use crate::state_schema::vcs_state_schema;
 use crate::tia::VISIBLE_CLOCKS;
@@ -24,7 +24,7 @@ use super::debugger_seam::VcsDebugger;
 use super::frame::{
     FRAME_BUDGET_LINES, VSYNC_LOCK_LINES, blank_frame, frame_interval, indexed_frame,
 };
-use super::probe::{core_cart_type, probe_tv_standard};
+use super::probe::probe_tv_standard;
 use super::save_state::{load_state_into, rom_fingerprint, save_state_bytes};
 
 pub fn create_console(
@@ -32,18 +32,23 @@ pub fn create_console(
     title: String,
     tv_standard: Option<TvStandard>,
     cart_type: Option<&str>,
+    overdump: bool,
 ) -> Result<Box<dyn SystemConsole>, CartridgeError> {
     // The library's metadata is authoritative; carts carry no region header and
     // the size heuristic can't always name the board, so fall back only when
     // the game-db is silent — then probe the standard from the ROM's own field
     // length. Pacing, aspect, and palette follow the standard.
-    let cart = cart_type.and_then(core_cart_type);
+    let cart = cart_type.and_then(CartType::from_code);
+    let fit = match overdump {
+        true => DumpFit::Overdump,
+        false => DumpFit::Exact,
+    };
     let region = match tv_standard {
         Some(standard) => standard,
-        None => probe_tv_standard(rom, cart),
+        None => probe_tv_standard(rom, cart, fit),
     };
     Ok(Box::new(VcsConsole::new(
-        Vcs::new(rom, region, cart)?,
+        Vcs::new(rom, region, cart, fit)?,
         title,
         rom_fingerprint(rom),
         blank_frame(),
@@ -188,8 +193,8 @@ mod tests {
         rom[0xFFC] = 0x00;
         rom[0xFFD] = 0xF0;
         for standard in [TvStandard::Ntsc, TvStandard::Pal, TvStandard::Secam] {
-            let console =
-                create_console(&rom, "test".into(), Some(standard), None).expect("console builds");
+            let console = create_console(&rom, "test".into(), Some(standard), None, false)
+                .expect("console builds");
             match console.video_out() {
                 DisplayTechnology::Crt {
                     standard: reported,

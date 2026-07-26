@@ -5,6 +5,7 @@
 //! the height — so this also pins the per-frame-dimensions path.
 #![cfg(feature = "morepork")]
 
+use missingno_vcs::DumpFit;
 use missingno_vcs::console::Vcs;
 use missingno_vcs::trace::{TraceScope, Tracer, Trigger, step_instruction_counted};
 
@@ -41,7 +42,7 @@ fn test_rom() -> Vec<u8> {
 #[test]
 fn captures_a_readable_trace_with_emergent_frames() {
     let rom = test_rom();
-    let mut vcs = Vcs::new(&rom, missingno_vcs::TvStandard::Ntsc, None).unwrap();
+    let mut vcs = Vcs::new(&rom, missingno_vcs::TvStandard::Ntsc, None, DumpFit::Exact).unwrap();
 
     let path = std::env::temp_dir().join(format!(
         "missingno-vcs-trace-test-{}.morepork",
@@ -135,7 +136,7 @@ fn full_scope_adds_the_deep_die_state() {
     // The Full scope opts in the schema's Tier-2a fields — the object counters,
     // ring phases, and beam position a gate-level producer would also emit.
     let rom = test_rom();
-    let mut vcs = Vcs::new(&rom, missingno_vcs::TvStandard::Ntsc, None).unwrap();
+    let mut vcs = Vcs::new(&rom, missingno_vcs::TvStandard::Ntsc, None, DumpFit::Exact).unwrap();
     let path = std::env::temp_dir().join(format!(
         "missingno-vcs-trace-full-{}.morepork",
         std::process::id()

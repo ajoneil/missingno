@@ -39,10 +39,11 @@ pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<l
                 // else, so re-read it rather than trusting what an older scan
                 // recorded — a correction upstream reaches the library only if
                 // a rescan can revise these.
-                if let Some((_, release)) = catalogue.lookup_hash(&sha1) {
+                if let Some((_, release, artifact)) = catalogue.lookup_hash(&sha1) {
                     existing.tv_standard = release.tv_format;
                     existing.cart_type = release.cart_type.clone();
                     existing.controllers = release.controllers.clone();
+                    existing.overdump = is_overdump(artifact);
                 }
                 existing.add_rom_path(path);
                 library::save_entry(&game_dir, &existing);
@@ -53,7 +54,7 @@ pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<l
 
             // Try catalogue first for a good title, fall back to the header
             // title or the file stem.
-            let mut entry = if let Some((game, release)) = catalogue.lookup_hash(&sha1) {
+            let mut entry = if let Some((game, release, artifact)) = catalogue.lookup_hash(&sha1) {
                 let mut e = library::GameEntry::new(sha1, game.title.clone(), path.clone());
                 e.platform = Some(family.platform);
                 e.publisher = release.publisher.clone().or(game.developer.clone());
@@ -62,6 +63,7 @@ pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<l
                 e.tv_standard = release.tv_format;
                 e.cart_type = release.cart_type.clone();
                 e.controllers = release.controllers.clone();
+                e.overdump = is_overdump(artifact);
                 e.enrichment_attempted = false; // still want Hasheous for covers
                 e
             } else {
@@ -180,4 +182,10 @@ fn is_rom_file(path: &std::path::Path) -> bool {
                     .iter()
                     .any(|family| family.extensions.contains(&ext))
             })
+}
+
+/// Whether the catalogue records this dump as padded past the cartridge's
+/// silicon; a bad dump is a different problem, and no core tolerates it.
+fn is_overdump(artifact: &missingno_gamedb::Artifact) -> bool {
+    artifact.defect == Some(missingno_gamedb::Defect::Overdump)
 }

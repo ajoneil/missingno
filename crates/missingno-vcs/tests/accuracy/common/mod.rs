@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use missingno_vcs::console::{Frame, Vcs};
 use missingno_vcs::tia::{VISIBLE_CLOCKS, palette, palette_index};
-use missingno_vcs::{CartType, TvStandard};
+use missingno_vcs::{CartType, DumpFit, TvStandard};
 
 /// RESULT convention (see `missingno-vcs-tests/include/result.h`).
 const RESULT: u16 = 0x0080;
@@ -50,7 +50,7 @@ fn load(relative: &str, standard: TvStandard, cart_type: CartType) -> Vcs {
     let path = rom_path(relative);
     let rom = std::fs::read(&path)
         .unwrap_or_else(|e| panic!("failed to read ROM {}: {e}", path.display()));
-    Vcs::new(&rom, standard, Some(cart_type))
+    Vcs::new(&rom, standard, Some(cart_type), DumpFit::Exact)
         .unwrap_or_else(|e| panic!("failed to load ROM {}: {e:?}", path.display()))
 }
 

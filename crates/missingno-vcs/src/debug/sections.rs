@@ -401,9 +401,13 @@ mod tests {
 
     #[test]
     fn cartridge_section_shows_dpc_fetchers() {
-        let cart =
-            crate::cartridge::Cartridge::load(&vec![0u8; 0x2900], Some(CartType::Dpc), 3_579_545.0)
-                .unwrap();
+        let cart = crate::cartridge::Cartridge::load(
+            &vec![0u8; 0x2900],
+            Some(CartType::Dpc),
+            3_579_545.0,
+            crate::cartridge::DumpFit::Exact,
+        )
+        .unwrap();
         let state = VcsInspectState {
             cartridge: cart.inspect(),
             ..Default::default()
@@ -426,9 +430,13 @@ mod tests {
 
     #[test]
     fn cartridge_section_shows_bank_for_banked_boards() {
-        let cart =
-            crate::cartridge::Cartridge::load(&vec![0u8; 0x2000], Some(CartType::F8), 3_579_545.0)
-                .unwrap();
+        let cart = crate::cartridge::Cartridge::load(
+            &vec![0u8; 0x2000],
+            Some(CartType::F8),
+            3_579_545.0,
+            crate::cartridge::DumpFit::Exact,
+        )
+        .unwrap();
         let state = VcsInspectState {
             cartridge: cart.inspect(),
             ..Default::default()

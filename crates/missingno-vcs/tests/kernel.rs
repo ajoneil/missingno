@@ -1,6 +1,7 @@
 //! Headless console tests: a hand-assembled NTSC kernel drives VSYNC /
 //! VBLANK / WSYNC and paints a per-line backdrop gradient.
 
+use missingno_vcs::DumpFit;
 use missingno_vcs::console::Vcs;
 
 #[path = "support/asm.rs"]
@@ -60,7 +61,13 @@ fn gradient_kernel() -> Vec<u8> {
 
 #[test]
 fn gradient_kernel_produces_ntsc_frames() {
-    let mut vcs = Vcs::new(&gradient_kernel(), missingno_vcs::TvStandard::Ntsc, None).unwrap();
+    let mut vcs = Vcs::new(
+        &gradient_kernel(),
+        missingno_vcs::TvStandard::Ntsc,
+        None,
+        DumpFit::Exact,
+    )
+    .unwrap();
 
     // The first frame is the ragged power-on one; judge the second.
     let _ = vcs.step_frame(1000).expect("first frame");
@@ -91,7 +98,13 @@ fn gradient_kernel_produces_ntsc_frames() {
 
 #[test]
 fn frames_keep_coming() {
-    let mut vcs = Vcs::new(&gradient_kernel(), missingno_vcs::TvStandard::Ntsc, None).unwrap();
+    let mut vcs = Vcs::new(
+        &gradient_kernel(),
+        missingno_vcs::TvStandard::Ntsc,
+        None,
+        DumpFit::Exact,
+    )
+    .unwrap();
     for _ in 0..5 {
         let frame = vcs.step_frame(1000).expect("steady stream of frames");
         assert_eq!(frame.lines.len(), 259);
@@ -104,7 +117,13 @@ fn budget_guard_returns_none_without_vsync() {
     let mut asm = Asm::new(0xF000);
     let spin = asm.here();
     asm.jmp_abs(spin);
-    let mut vcs = Vcs::new(&asm.into_rom(), missingno_vcs::TvStandard::Ntsc, None).unwrap();
+    let mut vcs = Vcs::new(
+        &asm.into_rom(),
+        missingno_vcs::TvStandard::Ntsc,
+        None,
+        DumpFit::Exact,
+    )
+    .unwrap();
     assert!(vcs.step_frame(400).is_none());
 }
 
@@ -122,7 +141,13 @@ fn debugger_breakpoints_and_peek_are_side_effect_free() {
     let rom = asm.into_rom();
 
     let mut debugger = Debugger::new(
-        missingno_vcs::console::Vcs::new(&rom, missingno_vcs::TvStandard::Ntsc, None).unwrap(),
+        missingno_vcs::console::Vcs::new(
+            &rom,
+            missingno_vcs::TvStandard::Ntsc,
+            None,
+            DumpFit::Exact,
+        )
+        .unwrap(),
     );
     debugger.set_breakpoint(target);
     let (_, stop) = debugger.run();
@@ -167,7 +192,13 @@ fn silent_waveform_holds_audv_as_a_steady_level() {
     let spin = asm.here();
     asm.jmp_abs(spin);
 
-    let mut vcs = Vcs::new(&asm.into_rom(), missingno_vcs::TvStandard::Ntsc, None).unwrap();
+    let mut vcs = Vcs::new(
+        &asm.into_rom(),
+        missingno_vcs::TvStandard::Ntsc,
+        None,
+        DumpFit::Exact,
+    )
+    .unwrap();
     for _ in 0..262 * 228 {
         vcs.step_clock();
     }
@@ -195,7 +226,13 @@ fn audio_produces_samples_at_the_seam_rate() {
     let spin = asm.here();
     asm.jmp_abs(spin);
 
-    let mut vcs = Vcs::new(&asm.into_rom(), missingno_vcs::TvStandard::Ntsc, None).unwrap();
+    let mut vcs = Vcs::new(
+        &asm.into_rom(),
+        missingno_vcs::TvStandard::Ntsc,
+        None,
+        DumpFit::Exact,
+    )
+    .unwrap();
     // One NTSC frame's worth of clocks ≈ 262 × 228; expect ~735 samples.
     for _ in 0..262 * 228 {
         vcs.step_clock();
@@ -229,7 +266,13 @@ fn wave_capture_records_per_channel_dac_codes() {
     let spin = asm.here();
     asm.jmp_abs(spin);
 
-    let mut vcs = Vcs::new(&asm.into_rom(), missingno_vcs::TvStandard::Ntsc, None).unwrap();
+    let mut vcs = Vcs::new(
+        &asm.into_rom(),
+        missingno_vcs::TvStandard::Ntsc,
+        None,
+        DumpFit::Exact,
+    )
+    .unwrap();
     // Disabled by default: no windows.
     assert!(vcs.channel_waves().is_none());
 

@@ -183,7 +183,7 @@ impl Cartridge {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{CartType, Cartridge};
+    use super::super::{CartType, Cartridge, DumpFit};
 
     const CLOCK: f32 = 3_579_545.0;
 
@@ -193,7 +193,7 @@ mod tests {
         for (i, bank) in rom.chunks_mut(0x1000).enumerate() {
             bank.fill(i as u8);
         }
-        let cart = Cartridge::load(&rom, Some(CartType::F8), CLOCK).unwrap();
+        let cart = Cartridge::load(&rom, Some(CartType::F8), CLOCK, DumpFit::Exact).unwrap();
         assert_eq!(cart.rom_len(), 0x2000);
         // Both banks readable regardless of which is paged in.
         assert_eq!(cart.peek_rom(0), 0);
@@ -204,7 +204,8 @@ mod tests {
     #[test]
     fn superchip_ram_round_trips_through_the_linear_view() {
         let cart_image = vec![0u8; 0x2000];
-        let mut cart = Cartridge::load(&cart_image, Some(CartType::F8Sc), CLOCK).unwrap();
+        let mut cart =
+            Cartridge::load(&cart_image, Some(CartType::F8Sc), CLOCK, DumpFit::Exact).unwrap();
         assert_eq!(cart.ram_len(), 0x80);
         // The Superchip write port is the low half of the window.
         cart.write_access(0x1000, 0x77, 0);
@@ -214,7 +215,13 @@ mod tests {
 
     #[test]
     fn wd_board_exposes_its_scratch_ram() {
-        let cart = Cartridge::load(&vec![0u8; 0x2000], Some(CartType::Wd), CLOCK).unwrap();
+        let cart = Cartridge::load(
+            &vec![0u8; 0x2000],
+            Some(CartType::Wd),
+            CLOCK,
+            DumpFit::Exact,
+        )
+        .unwrap();
         // The Wickstead board's 64-byte scratch RAM is a plainly accessible
         // store, so it contributes a bank-complete `cart ram` region.
         assert_eq!(cart.ram_len(), 0x40);
@@ -231,7 +238,7 @@ mod tests {
         for (i, bank) in rom.chunks_mut(0x1000).enumerate() {
             bank.fill(i as u8);
         }
-        let mut cart = Cartridge::load(&rom, Some(CartType::Fa), CLOCK).unwrap();
+        let mut cart = Cartridge::load(&rom, Some(CartType::Fa), CLOCK, DumpFit::Exact).unwrap();
         // Read above the 512-byte cart-RAM window at the base of the window, so
         // the byte comes from the paged ROM bank.
         const ROM_READ: u16 = 0x1200;
@@ -243,7 +250,8 @@ mod tests {
         let state = cart.bank_state();
         assert_eq!(state, vec![2u8], "the selected bank is captured");
 
-        let mut restored = Cartridge::load(&rom, Some(CartType::Fa), CLOCK).unwrap();
+        let mut restored =
+            Cartridge::load(&rom, Some(CartType::Fa), CLOCK, DumpFit::Exact).unwrap();
         assert_eq!(restored.peek(ROM_READ), 0);
         restored.restore_bank_state(&state);
         assert_eq!(restored.peek(ROM_READ), 2, "the FA bank restores");
@@ -251,7 +259,13 @@ mod tests {
 
     #[test]
     fn a_plain_board_exposes_no_synthetic_stores() {
-        let cart = Cartridge::load(&vec![0u8; 0x1000], Some(CartType::Plain4K), CLOCK).unwrap();
+        let cart = Cartridge::load(
+            &vec![0u8; 0x1000],
+            Some(CartType::Plain4K),
+            CLOCK,
+            DumpFit::Exact,
+        )
+        .unwrap();
         // A plain board is fully visible through the window, so it contributes
         // no synthetic ROM or RAM region.
         assert_eq!(cart.ram_len(), 0);

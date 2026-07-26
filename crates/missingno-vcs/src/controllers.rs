@@ -303,9 +303,9 @@ impl Keypad {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TvStandard;
     use crate::console::Vcs;
     use crate::tia::registers::VBLANK;
+    use crate::{DumpFit, TvStandard};
 
     const SWCHA: u16 = 0x0280;
     const SWACNT: u16 = 0x0281;
@@ -317,7 +317,7 @@ mod tests {
         let mut rom = vec![0xEA; 0x1000];
         rom[0xFFC] = 0x00;
         rom[0xFFD] = 0xF0;
-        Vcs::new(&rom, TvStandard::Ntsc, None).unwrap()
+        Vcs::new(&rom, TvStandard::Ntsc, None, DumpFit::Exact).unwrap()
     }
 
     fn press(vcs: &mut Vcs, jack: Jack, role: ControlRole) {
@@ -456,7 +456,7 @@ mod tests {
         rom[..program.len()].copy_from_slice(&program);
         rom[0xFFC] = 0x00;
         rom[0xFFD] = 0xF0;
-        Vcs::new(&rom, TvStandard::Ntsc, None).unwrap()
+        Vcs::new(&rom, TvStandard::Ntsc, None, DumpFit::Exact).unwrap()
     }
 
     /// Run the cart's scan setup to its spin, confirming port A holds it.

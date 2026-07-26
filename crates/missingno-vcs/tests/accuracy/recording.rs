@@ -11,7 +11,7 @@ use missingno_vcs::debug::create_console;
 
 fn console(relative: &str) -> Box<dyn SystemConsole> {
     let rom = std::fs::read(rom_path(relative)).unwrap();
-    create_console(&rom, "test".into(), Some(TvStandard::Ntsc), None).unwrap()
+    create_console(&rom, "test".into(), Some(TvStandard::Ntsc), None, false).unwrap()
 }
 
 /// Scripted changes to the left joystick: (frame boundary, role, pressed).

@@ -448,9 +448,11 @@ impl Curator {
                         BootSource::File(_) => verify::sha1_hex(&bytes),
                     };
                     let (tv, cart) = entry.game.hints_for(&sha1);
+                    let overdump =
+                        entry.game.defect_for(&sha1) == Some(missingno_gamedb::Defect::Overdump);
                     let controllers = entry.game.controllers_for(&sha1);
                     self.stage_header_facts(i, &bytes);
-                    match play::start(hint, &bytes, tv, cart, &controllers) {
+                    match play::start(hint, &bytes, tv, cart, overdump, &controllers) {
                         Ok(session) => {
                             let events = session.events.clone();
                             // Full device simulation, as the emulator's Device

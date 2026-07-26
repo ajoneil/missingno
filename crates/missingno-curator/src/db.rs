@@ -700,6 +700,23 @@ impl AnyGame {
         (self.tv_hint(), self.cart_hint())
     }
 
+    /// The quality problem catalogued against one dump, wherever it hangs: a
+    /// release's artifact or a mod's.
+    pub fn defect_for(&self, sha1: &str) -> Option<Defect> {
+        common!(self, g => g
+            .releases
+            .iter()
+            .flat_map(|r| &r.artifacts)
+            .chain(
+                g.mods
+                    .iter()
+                    .flat_map(|m| &m.releases)
+                    .flat_map(|r| &r.artifacts),
+            )
+            .find(|a| a.sha1.as_str() == sha1)
+            .and_then(|a| a.defect))
+    }
+
     /// The controllers the release holding this dump states — what the play
     /// pane puts in the jacks before the game boots.
     pub fn controllers_for(&self, sha1: &str) -> Vec<missingno_gamedb::platform::Controller> {

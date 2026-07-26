@@ -108,6 +108,9 @@ pub struct MediaLoad<'a> {
     pub tv_standard: Option<TvStandard>,
     /// Cartridge board code from the library entry (VCS), e.g. "F8".
     pub cart_type: Option<String>,
+    /// The library entry records this dump as an overdump: padded past the
+    /// cartridge's silicon, which the VCS loads on the stated board anyway.
+    pub overdump: bool,
     /// Link-cable connection, borrowed mutably so only the family that owns
     /// the concept takes it.
     pub serial_link: &'a mut Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
@@ -116,8 +119,8 @@ pub struct MediaLoad<'a> {
     pub print_sink: Option<crate::printer::PrintSink>,
 }
 
-/// Build a console from loaded media; `None` when the media fails to parse.
-pub type CreateConsole = fn(MediaLoad) -> Option<Box<dyn SystemConsole>>;
+/// Build a console from loaded media; `Err` carries what the core objected to.
+pub type CreateConsole = fn(MediaLoad) -> Result<Box<dyn SystemConsole>, String>;
 
 /// A morepork capture request, dispatched through the family table by the
 /// `trace` subcommand.
@@ -266,8 +269,9 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
                 media.fallback_title,
                 media.tv_standard,
                 media.cart_type.as_deref(),
+                media.overdump,
             )
-            .ok()
+            .map_err(|error| error.to_string())
         },
         port_config: vcs::port_config,
         trace: Some(crate::trace::trace_vcs),
@@ -279,7 +283,10 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         controls: sms::CONTROLS,
         is_rom: |path, _| sms::is_sms_rom(path),
         title_from_rom: |_| None,
-        create_console: |media| sms::create_console(media.rom, media.fallback_title).ok(),
+        create_console: |media| {
+            sms::create_console(media.rom, media.fallback_title)
+                .map_err(|error| format!("{error:?}"))
+        },
         port_config: |_| Vec::new(),
         trace: None,
     },
@@ -290,7 +297,10 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         controls: nes::CONTROLS,
         is_rom: |_, rom| nes::is_nes_rom(rom),
         title_from_rom: |_| None,
-        create_console: |media| nes::create_console(media.rom, media.fallback_title).ok(),
+        create_console: |media| {
+            nes::create_console(media.rom, media.fallback_title)
+                .map_err(|error| format!("{error:?}"))
+        },
         port_config: |_| Vec::new(),
         trace: Some(crate::trace::trace_nes),
     },

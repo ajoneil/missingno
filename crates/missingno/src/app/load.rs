@@ -79,16 +79,16 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
 }
 
 /// Build the console for a ROM and wrap it for the active mode (debugger or
-/// emulator), storing it in `app.game`. Returns the game's title; `None`
-/// when no family claims the media or it fails to parse.
+/// emulator), storing it in `app.game`. Returns the game's title; `Err`
+/// when no family claims the media, or the core it belongs to refused it.
 fn start_console(
     app: &mut App,
     rom: Vec<u8>,
     save_data: Option<Vec<u8>>,
     rom_path: &std::path::Path,
     game_dir: &std::path::Path,
-) -> Option<String> {
-    let family = system::family_for(rom_path, &rom)?;
+) -> Result<String, String> {
+    let family = system::family_for(rom_path, &rom).ok_or("unsupported ROM")?;
     let entry = crate::app::library::load_entry(game_dir);
     let mut console = (family.create_console)(system::MediaLoad {
         rom: &rom,
@@ -97,6 +97,7 @@ fn start_console(
         boot_rom: app.boot_rom.clone(),
         tv_standard: entry.as_ref().and_then(|e| e.tv_standard),
         cart_type: entry.as_ref().and_then(|e| e.cart_type.clone()),
+        overdump: entry.as_ref().is_some_and(|e| e.overdump),
         serial_link: &mut app.serial_link,
         print_sink: Some(app.print_tx.clone()),
     })?;
@@ -106,7 +107,7 @@ fn start_console(
     for (port, peripheral) in (family.port_config)(&controllers) {
         let _ = console.plug(port, peripheral);
     }
-    Some(finish_start(app, console, rom_path, family.platform))
+    Ok(finish_start(app, console, rom_path, family.platform))
 }
 
 pub(crate) fn file_stem_title(rom_path: &std::path::Path) -> String {
@@ -202,10 +203,13 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
 
     let save_data = library::activity::load_current_sram(&game_dir);
     let initial_sram = save_data.clone();
-    let Some(cartridge_title) = start_console(app, rom, save_data, &rom_path, &game_dir) else {
-        eprintln!("unsupported ROM: {}", rom_path.display());
-        app.game = Game::Unloaded;
-        return Task::none();
+    let cartridge_title = match start_console(app, rom, save_data, &rom_path, &game_dir) {
+        Ok(title) => title,
+        Err(error) => {
+            eprintln!("{}: {error}", rom_path.display());
+            app.game = Game::Unloaded;
+            return Task::none();
+        }
     };
 
     // Start play session
@@ -254,10 +258,13 @@ pub fn play_with_save(app: &mut App, activity_filename: &str) -> Task<app::Messa
 
     let save_data = library::activity::load_sram_from(&game_dir, activity_filename);
     let initial_sram = save_data.clone();
-    let Some(cartridge_title) = start_console(app, rom, save_data, &rom_path, &game_dir) else {
-        eprintln!("unsupported ROM: {}", rom_path.display());
-        app.game = Game::Unloaded;
-        return Task::none();
+    let cartridge_title = match start_console(app, rom, save_data, &rom_path, &game_dir) {
+        Ok(title) => title,
+        Err(error) => {
+            eprintln!("{}: {error}", rom_path.display());
+            app.game = Game::Unloaded;
+            return Task::none();
+        }
     };
 
     if let Some(current) = &mut app.current_game {
@@ -336,10 +343,13 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
     let cover = library::load_cover(&game_dir).map(iced::widget::image::Handle::from_bytes);
 
     // Create cartridge and start emulation
-    let Some(cartridge_title) = start_console(app, rom, save_data, &rom_path, &game_dir) else {
-        eprintln!("unsupported ROM: {}", rom_path.display());
-        app.game = Game::Unloaded;
-        return Task::none();
+    let cartridge_title = match start_console(app, rom, save_data, &rom_path, &game_dir) {
+        Ok(title) => title,
+        Err(error) => {
+            eprintln!("{}: {error}", rom_path.display());
+            app.game = Game::Unloaded;
+            return Task::none();
+        }
     };
 
     let session = library::activity::SessionFile::new(Timestamp::now(), None);

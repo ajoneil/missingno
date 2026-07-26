@@ -1,12 +1,11 @@
 //! Reading a ROM's hardware assumptions when the library's metadata is silent:
-//! which broadcast standard its kernel was written for, and which board a
-//! game-db code names.
+//! which broadcast standard its kernel was written for.
 
 use missingno_core::video::{self, Television};
 
 use crate::console::Vcs;
 use crate::tia::VISIBLE_CLOCKS;
-use crate::{CartType, TvStandard};
+use crate::{CartType, DumpFit, TvStandard};
 
 use super::frame::{FRAME_BUDGET_LINES, VSYNC_LOCK_LINES};
 
@@ -18,8 +17,12 @@ const NTSC_PAL_FIELD_THRESHOLD: usize = 287;
 /// field: a PAL field runs ~50 lines longer than NTSC. The standard only scales
 /// the master clock, not the kernel's line count, so a provisional NTSC build
 /// reads the field length truthfully.
-pub(super) fn probe_tv_standard(rom: &[u8], cart_type: Option<CartType>) -> TvStandard {
-    let Ok(mut vcs) = Vcs::new(rom, TvStandard::Ntsc, cart_type) else {
+pub(super) fn probe_tv_standard(
+    rom: &[u8],
+    cart_type: Option<CartType>,
+    fit: DumpFit,
+) -> TvStandard {
+    let Ok(mut vcs) = Vcs::new(rom, TvStandard::Ntsc, cart_type, fit) else {
         return TvStandard::Ntsc;
     };
     let mut tv = Television::<VISIBLE_CLOCKS>::new(VSYNC_LOCK_LINES);
@@ -61,47 +64,6 @@ fn classify_fields(fields: &[usize]) -> TvStandard {
     }
 }
 
-/// Parse a game-db board code into the core's board type; codes the core can't
-/// build yet return `None`, leaving `Cartridge::load` to size-detect.
-pub(super) fn core_cart_type(code: &str) -> Option<CartType> {
-    match code {
-        "2K" => Some(CartType::Plain2K),
-        "4K" => Some(CartType::Plain4K),
-        "F8" => Some(CartType::F8),
-        "F8SC" => Some(CartType::F8Sc),
-        "F6" => Some(CartType::F6),
-        "F6SC" => Some(CartType::F6Sc),
-        "F4" => Some(CartType::F4),
-        "F4SC" => Some(CartType::F4Sc),
-        "FA" => Some(CartType::Fa),
-        "FC" => Some(CartType::Fc),
-        "FE" => Some(CartType::Fe),
-        "E0" => Some(CartType::E0),
-        "E7" => Some(CartType::E7),
-        "CV" => Some(CartType::Cv),
-        "UA" => Some(CartType::Ua),
-        "3F" => Some(CartType::ThreeF),
-        "3E" => Some(CartType::ThreeE),
-        "3E+" => Some(CartType::ThreeEPlus),
-        "DPC" => Some(CartType::Dpc),
-        "AR" => Some(CartType::Ar),
-        "F0" => Some(CartType::F0),
-        "JANE" => Some(CartType::Jane),
-        "WF8" => Some(CartType::Wf8),
-        "WD" => Some(CartType::Wd),
-        "0FA0" => Some(CartType::ZeroFa0),
-        "03E0" => Some(CartType::Zero3E0),
-        "0840" => Some(CartType::Zero840),
-        "EF" => Some(CartType::Ef),
-        "DF" => Some(CartType::Df),
-        "BF" => Some(CartType::Bf),
-        "SB" => Some(CartType::Sb),
-        "X07" => Some(CartType::X07),
-        "MDM" => Some(CartType::Mdm),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,7 +86,7 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/accuracy/roms/cartridge/bank-f8_ntsc.a26");
         assert_eq!(
-            probe_tv_standard(&std::fs::read(&path).unwrap(), None),
+            probe_tv_standard(&std::fs::read(&path).unwrap(), None, DumpFit::Exact),
             TvStandard::Ntsc
         );
     }

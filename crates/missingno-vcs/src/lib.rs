@@ -14,5 +14,5 @@ pub mod tia;
 #[cfg(feature = "morepork")]
 pub mod trace;
 pub mod tv_standard;
-pub use cartridge::CartType;
+pub use cartridge::{CartType, DumpFit};
 pub use tv_standard::TvStandard;

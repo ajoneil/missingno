@@ -221,7 +221,13 @@ pub(crate) fn trace_vcs(request: TraceRequest) {
         (request.rom, request.profile, request.output, request.cycles);
     eprintln!("limit: {cycle_limit} CPU cycles");
 
-    let mut vcs = Vcs::new(rom, missingno_vcs::TvStandard::Ntsc, None).unwrap_or_else(|e| {
+    let mut vcs = Vcs::new(
+        rom,
+        missingno_vcs::TvStandard::Ntsc,
+        None,
+        missingno_vcs::DumpFit::Exact,
+    )
+    .unwrap_or_else(|e| {
         eprintln!("error: failed to load VCS ROM: {e:?}");
         process::exit(1);
     });

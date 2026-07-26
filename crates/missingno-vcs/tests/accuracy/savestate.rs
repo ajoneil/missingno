@@ -10,6 +10,7 @@
 use crate::common::rom_path;
 use missingno_core::state_file::{StateMeta, read_state_file, write_state_file};
 use missingno_core::system::StateError;
+use missingno_vcs::DumpFit;
 use missingno_vcs::console::{Frame, Vcs};
 use missingno_vcs::debug::create_console;
 use missingno_vcs::snapshot::{capture_memory, read_state, restore};
@@ -20,7 +21,7 @@ const FRAME_LINE_BUDGET: usize = 400;
 
 fn load(relative: &str, cart: CartType) -> Vcs {
     let rom = std::fs::read(rom_path(relative)).unwrap();
-    Vcs::new(&rom, TvStandard::Ntsc, Some(cart)).unwrap()
+    Vcs::new(&rom, TvStandard::Ntsc, Some(cart), DumpFit::Exact).unwrap()
 }
 
 fn owned_memory(vcs: &Vcs) -> Vec<(String, Vec<u8>)> {
@@ -150,7 +151,7 @@ fn read_state_validates_against_the_schema() {
 
 fn boundary_console(relative: &str) -> Box<dyn missingno_core::system::SystemDebugger> {
     let rom = std::fs::read(rom_path(relative)).unwrap();
-    let console = create_console(&rom, "test".into(), Some(TvStandard::Ntsc), None).unwrap();
+    let console = create_console(&rom, "test".into(), Some(TvStandard::Ntsc), None, false).unwrap();
     let mut dbg = console.into_debugger();
     // Step instructions to settle and land on an instruction boundary.
     for _ in 0..20_000 {
@@ -165,7 +166,7 @@ fn seam_save_and_load_round_trips() {
     let bytes = a.save_state().expect("save at an instruction boundary");
 
     let rom = std::fs::read(rom_path("tia-render/draw-delay_ntsc.a26")).unwrap();
-    let console = create_console(&rom, "test".into(), Some(TvStandard::Ntsc), None).unwrap();
+    let console = create_console(&rom, "test".into(), Some(TvStandard::Ntsc), None, false).unwrap();
     let mut b = console.into_debugger();
     b.load_state(&bytes).expect("load a matching state");
 }

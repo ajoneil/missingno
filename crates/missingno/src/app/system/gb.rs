@@ -157,7 +157,7 @@ fn matching_boot_rom(boot_rom: Option<BootRom>, cgb_core: bool) -> Option<BootRo
 /// core. The serial link is a Game Boy peripheral, so it is taken here; a
 /// virtual printer sits on the link port by default, staying inert unless a
 /// game prints, with prints landing in the game's folder.
-pub fn create_console(media: MediaLoad) -> Option<Box<dyn SystemConsole>> {
+pub fn create_console(media: MediaLoad) -> Result<Box<dyn SystemConsole>, String> {
     struct Boxed {
         link: PeripheralId,
     }
@@ -180,7 +180,7 @@ pub fn create_console(media: MediaLoad) -> Option<Box<dyn SystemConsole>> {
             None => (None, LINK_DISCONNECTED),
         },
     };
-    Some(launch(
+    Ok(launch(
         media.rom.to_vec(),
         media.save_data,
         media.boot_rom,

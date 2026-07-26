@@ -35,6 +35,7 @@ pub fn create_console(
     title: String,
     tv_standard: Option<TvStandard>,
     cart_type: Option<&str>,
+    overdump: bool,
 ) -> Result<Box<dyn SystemConsole>, CartridgeError> {
-    missingno_vcs::debug::create_console(rom, title, tv_standard, cart_type)
+    missingno_vcs::debug::create_console(rom, title, tv_standard, cart_type, overdump)
 }

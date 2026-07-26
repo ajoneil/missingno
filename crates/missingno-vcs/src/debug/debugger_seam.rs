@@ -357,9 +357,9 @@ impl SystemDebugger for VcsDebugger {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TvStandard;
     use crate::console::Vcs;
     use crate::debug::frame::blank_frame;
+    use crate::{DumpFit, TvStandard};
 
     fn f8_test_rom() -> Vec<u8> {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn snapshot_register_groups_match_live() {
-        let mut vcs = Vcs::new(&f8_test_rom(), TvStandard::Ntsc, None).unwrap();
+        let mut vcs = Vcs::new(&f8_test_rom(), TvStandard::Ntsc, None, DumpFit::Exact).unwrap();
         for _ in 0..64 {
             vcs.step_instruction();
         }
@@ -399,7 +399,7 @@ mod tests {
 
     #[test]
     fn snapshot_sidebar_sections_match_live() {
-        let vcs = Vcs::new(&f8_test_rom(), TvStandard::Ntsc, None).unwrap();
+        let vcs = Vcs::new(&f8_test_rom(), TvStandard::Ntsc, None, DumpFit::Exact).unwrap();
         let mut debugger = VcsDebugger::new(
             crate::debugger::Debugger::new(vcs),
             "test".to_string(),

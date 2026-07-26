@@ -32,7 +32,7 @@ pub mod zero_fa0;
 mod cart_type;
 mod stores;
 
-pub use cart_type::{CartType, CartridgeError};
+pub use cart_type::{CartType, CartridgeError, DumpFit};
 
 use ar::Ar;
 use atari::Atari;
@@ -169,14 +169,30 @@ impl Cartridge {
     /// `clock_hz` is the rate the console will step the board at. A board with
     /// a clock of its own — the DPC's oscillator — needs it to convert its own
     /// free-running rate into those steps; every other board ignores it.
+    ///
+    /// `fit` grants tolerance for a catalogued overdump: the stated board says
+    /// where its silicon ends, so an image longer than that is loaded as the
+    /// board and the padding dropped. Without a stated board there is nothing
+    /// to slice to, so the image is read whole and its size names the board.
     pub fn load(
         rom: &[u8],
         cart_type: Option<CartType>,
         clock_hz: f32,
+        fit: DumpFit,
     ) -> Result<Cartridge, CartridgeError> {
-        let cart_type = match cart_type {
-            Some(cart_type) => cart_type,
-            None => CartType::infer(rom)?,
+        let Some(cart_type) = cart_type else {
+            return Ok(Cartridge {
+                board: Cartridge::build(rom, CartType::infer(rom)?, clock_hz)?,
+            });
+        };
+        let rom = match fit {
+            // A Supercharger image is a fastload container rather than the
+            // board's contents, and a multi-load one is several of them, so its
+            // length is no board size to trim to.
+            DumpFit::Overdump if cart_type != CartType::Ar => {
+                rom.get(..cart_type.image_size()).unwrap_or(rom)
+            }
+            _ => rom,
         };
         Ok(Cartridge {
             board: Cartridge::build(rom, cart_type, clock_hz)?,
@@ -372,5 +388,89 @@ impl Cartridge {
             Board::ThreeEPlus(board) => board.peek(address),
             Board::Fe(board) => board.peek(address),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CLOCK: f32 = 3_579_545.0;
+
+    /// A 4 KB image whose second half is padding a dumper appended.
+    fn padded_2k() -> Vec<u8> {
+        let mut rom = vec![0xAA; 0x1000];
+        rom[0x800..].fill(0xFF);
+        rom
+    }
+
+    #[test]
+    fn overdump_loads_the_stated_board_and_drops_the_padding() {
+        let mut cart = Cartridge::load(
+            &padded_2k(),
+            Some(CartType::Plain2K),
+            CLOCK,
+            DumpFit::Overdump,
+        )
+        .unwrap();
+        // A 2K board leaves A11 unwired, so both halves of the window answer
+        // from the same 2 KB — never from the padding.
+        assert_eq!(cart.read(0xF000, 0), Some(0xAA));
+        assert_eq!(cart.read(0xF800, 0), Some(0xAA));
+    }
+
+    #[test]
+    fn an_oversized_image_without_the_flag_is_still_refused() {
+        assert_eq!(
+            Cartridge::load(&padded_2k(), Some(CartType::Plain2K), CLOCK, DumpFit::Exact).err(),
+            Some(CartridgeError::WrongSizeForBoard {
+                cart_type: CartType::Plain2K,
+                size: 0x1000,
+            })
+        );
+    }
+
+    #[test]
+    fn the_flag_does_not_excuse_an_undersized_image() {
+        assert_eq!(
+            Cartridge::load(
+                &vec![0u8; 0x800],
+                Some(CartType::F8),
+                CLOCK,
+                DumpFit::Overdump
+            )
+            .err(),
+            Some(CartridgeError::WrongSizeForBoard {
+                cart_type: CartType::F8,
+                size: 0x800,
+            })
+        );
+    }
+
+    #[test]
+    fn without_a_stated_board_the_image_is_read_whole() {
+        // Nothing states where the silicon ends, so the length names the board
+        // and every byte belongs to it.
+        let mut cart = Cartridge::load(&padded_2k(), None, CLOCK, DumpFit::Overdump).unwrap();
+        assert_eq!(cart.read(0xF800, 0), Some(0xFF));
+    }
+
+    #[test]
+    fn the_flag_is_inert_on_an_exact_image() {
+        let rom: Vec<u8> = (0..0x800).map(|i| i as u8).collect();
+        let mut cart =
+            Cartridge::load(&rom, Some(CartType::Plain2K), CLOCK, DumpFit::Overdump).unwrap();
+        assert_eq!(cart.read(0xF7FF, 0), Some(0xFF));
+    }
+
+    #[test]
+    fn a_wrong_size_names_the_board_and_both_sizes() {
+        let error = Cartridge::load(&padded_2k(), Some(CartType::Plain2K), CLOCK, DumpFit::Exact)
+            .err()
+            .unwrap();
+        assert_eq!(
+            error.to_string(),
+            "image is 4096 bytes but a 2K board holds 2048"
+        );
     }
 }

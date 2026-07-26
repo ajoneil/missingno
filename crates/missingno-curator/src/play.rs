@@ -60,12 +60,14 @@ pub fn start(
     rom: &[u8],
     tv_standard: Option<String>,
     cart_type: Option<String>,
+    overdump: bool,
     controllers: &[Controller],
 ) -> Result<PlaySession, String> {
     let options = factory::LoadOptions {
         tv_standard,
         boot_rom: None,
         cart_type,
+        overdump,
     };
     let mut console =
         factory::create_console_with(std::path::Path::new(filename_hint), rom, &options)

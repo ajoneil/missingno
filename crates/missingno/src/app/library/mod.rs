@@ -58,6 +58,10 @@ pub struct GameEntry {
     /// Cartridge board code (VCS), e.g. "F8"; absent falls back to size-detect.
     #[serde(default)]
     pub cart_type: Option<String>,
+    /// The catalogue records this dump as an overdump: padded past the
+    /// cartridge's silicon, so the stated board says where it ends.
+    #[serde(default)]
+    pub overdump: bool,
     /// Controllers the game needs, when they deviate from its platform's
     /// default; the loader configures the console's ports from them.
     #[serde(default)]
@@ -84,6 +88,7 @@ impl GameEntry {
             platform: None,
             tv_standard: None,
             cart_type: None,
+            overdump: false,
             controllers: Vec::new(),
             publisher: None,
             year: None,

@@ -9,7 +9,7 @@
 use missingno_core::system::{ControlInput, ControlRole};
 
 use crate::TvStandard;
-use crate::cartridge::{CartType, Cartridge, CartridgeError};
+use crate::cartridge::{CartType, Cartridge, CartridgeError, DumpFit};
 use crate::controllers::{Controller, ControllerKind, Jack, release_jack};
 use crate::cpu::{Bus, Cpu};
 use crate::riot::Riot;
@@ -188,10 +188,11 @@ impl Vcs {
         rom: &[u8],
         region: TvStandard,
         cart_type: Option<CartType>,
+        fit: DumpFit,
     ) -> Result<Vcs, CartridgeError> {
         let clock_hz = crate::tv_standard::master_clock_hz(region);
         Ok(Vcs::with_cartridge(
-            Cartridge::load(rom, cart_type, clock_hz)?,
+            Cartridge::load(rom, cart_type, clock_hz, fit)?,
             region,
         ))
     }

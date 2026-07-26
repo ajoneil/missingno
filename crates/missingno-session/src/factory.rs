@@ -30,6 +30,10 @@ pub struct LoadOptions {
     /// A cartridge board override ("F8", "F6SC", …); `None` lets the core
     /// size-detect. Read by the Atari VCS core, whose carts have no header.
     pub cart_type: Option<String>,
+    /// The catalogue records this dump as an overdump, so the image runs past
+    /// the cartridge's silicon and the stated board says where it ends. Read
+    /// by the Atari VCS core.
+    pub overdump: bool,
 }
 
 /// A registered core: how its media is recognised, and how a console is built.
@@ -118,6 +122,7 @@ mod vcs {
             title_for(path),
             standard,
             options.cart_type.as_deref(),
+            options.overdump,
         )
         .ok()
     }

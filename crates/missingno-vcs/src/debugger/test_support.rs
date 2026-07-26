@@ -2,7 +2,7 @@
 //! debugger over one.
 
 use crate::TvStandard;
-use crate::cartridge::CartType;
+use crate::cartridge::{CartType, DumpFit};
 use crate::console::Vcs;
 use crate::debugger::Debugger;
 
@@ -17,7 +17,9 @@ pub(super) fn bank_stamped(size: usize) -> Vec<u8> {
 }
 
 pub(super) fn debugger(rom: &[u8], cart_type: CartType) -> Debugger {
-    Debugger::new(Vcs::new(rom, TvStandard::Ntsc, Some(cart_type)).expect("valid image"))
+    Debugger::new(
+        Vcs::new(rom, TvStandard::Ntsc, Some(cart_type), DumpFit::Exact).expect("valid image"),
+    )
 }
 
 /// Write a 6507 reset vector pointing at `$F000` into a 4 KB bank image.
