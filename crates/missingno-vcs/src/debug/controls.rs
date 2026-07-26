@@ -55,6 +55,7 @@ pub const RIGHT_PORT: PortId = PortId(1);
 pub const UNPLUGGED: PeripheralId = PeripheralId(0);
 pub const JOYSTICK: PeripheralId = PeripheralId(1);
 pub const PADDLES: PeripheralId = PeripheralId(2);
+pub const KEYPAD: PeripheralId = PeripheralId(3);
 
 const JOYSTICK_CONTROLS: &[ControlDescriptor] = &[
     button(ControlRole::Action(0), "Fire"),
@@ -78,6 +79,22 @@ const PADDLE_CONTROLS: &[ControlDescriptor] = &[
         kind: ControlKind::Axis,
     },
     button(ControlRole::Action(1), "Paddle 2 Button"),
+];
+
+/// The keyboard controller's 12 keys, row-major from its top left.
+const KEYPAD_CONTROLS: &[ControlDescriptor] = &[
+    button(ControlRole::Key(0), "1"),
+    button(ControlRole::Key(1), "2"),
+    button(ControlRole::Key(2), "3"),
+    button(ControlRole::Key(3), "4"),
+    button(ControlRole::Key(4), "5"),
+    button(ControlRole::Key(5), "6"),
+    button(ControlRole::Key(6), "7"),
+    button(ControlRole::Key(7), "8"),
+    button(ControlRole::Key(8), "9"),
+    button(ControlRole::Key(9), "*"),
+    button(ControlRole::Key(10), "0"),
+    button(ControlRole::Key(11), "#"),
 ];
 
 const fn button(role: ControlRole, label: &'static str) -> ControlDescriptor {
@@ -106,6 +123,12 @@ const CONTROLLERS: &[PeripheralDescriptor] = &[
         label: "Paddles",
         provider: Provider::Console,
         controls: PADDLE_CONTROLS,
+    },
+    PeripheralDescriptor {
+        id: KEYPAD,
+        label: "Keypad",
+        provider: Provider::Console,
+        controls: KEYPAD_CONTROLS,
     },
 ];
 
@@ -138,6 +161,7 @@ fn peripheral_id(kind: ControllerKind) -> PeripheralId {
         ControllerKind::Unplugged => UNPLUGGED,
         ControllerKind::Joystick => JOYSTICK,
         ControllerKind::Paddles => PADDLES,
+        ControllerKind::Keypad => KEYPAD,
     }
 }
 
@@ -148,6 +172,8 @@ fn controller_kind(peripheral: PeripheralId) -> Option<ControllerKind> {
         Some(ControllerKind::Joystick)
     } else if peripheral == PADDLES {
         Some(ControllerKind::Paddles)
+    } else if peripheral == KEYPAD {
+        Some(ControllerKind::Keypad)
     } else {
         None
     }

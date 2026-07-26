@@ -700,23 +700,19 @@ impl AnyGame {
         (self.tv_hint(), self.cart_hint())
     }
 
-    /// Whether the release holding this dump states the paddle — the play
-    /// pane plugs a paddle pair into the jack when it does.
-    pub fn paddle_for(&self, sha1: &str) -> bool {
+    /// The controllers the release holding this dump states — what the play
+    /// pane puts in the jacks before the game boots.
+    pub fn controllers_for(&self, sha1: &str) -> Vec<missingno_gamedb::platform::Controller> {
         let AnyGame::Vcs(g) = self else {
-            return false;
+            return Vec::new();
         };
-        let uses_paddle = |r: &Release<Vcs>| {
-            r.hardware
-                .controllers
-                .contains(&missingno_gamedb::platform::Controller::Paddle)
-        };
+        let stated = |r: &Release<Vcs>| r.hardware.controllers.clone();
         for release in &g.releases {
             if release.artifacts.iter().any(|a| a.sha1.as_str() == sha1) {
-                return uses_paddle(release);
+                return stated(release);
             }
         }
-        g.releases.first().is_some_and(uses_paddle)
+        g.releases.first().map(stated).unwrap_or_default()
     }
 
     /// Every dump attached to the game's mods, flattened.

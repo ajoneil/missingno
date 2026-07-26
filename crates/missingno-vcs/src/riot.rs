@@ -108,6 +108,12 @@ impl Riot {
         self.pa7_edge(before);
     }
 
+    /// Port A's pin levels as a peripheral sees them: the output register
+    /// where DDR selects output, the pulled-up external level where it does not.
+    pub fn port_a_level(&self) -> u8 {
+        self.port_a.level()
+    }
+
     /// A port-B pin driven from outside (console switches).
     pub fn set_pin_b(&mut self, mask: u8, high: bool) {
         if high {

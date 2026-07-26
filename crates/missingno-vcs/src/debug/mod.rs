@@ -17,7 +17,9 @@ mod save_state;
 mod sections;
 
 pub use console::create_console;
-pub use controls::{JOYSTICK, LEFT_PORT, PADDLES, PANEL_CONTROLS, PORTS, RIGHT_PORT, UNPLUGGED};
+pub use controls::{
+    JOYSTICK, KEYPAD, LEFT_PORT, PADDLES, PANEL_CONTROLS, PORTS, RIGHT_PORT, UNPLUGGED,
+};
 pub use debugger_seam::VcsSnapshot;
 pub use inspect::VcsInspectState;
 pub use sections::vcs_sidebar_sections;

@@ -258,6 +258,12 @@ impl Tia {
         self.input.disconnect_pot(index);
     }
 
+    /// A controller holds this pot pin at a level — a keypad column, pulled up
+    /// by the controller and grounded through a pressed key.
+    pub fn drive_pot(&mut self, index: usize, low: bool) {
+        self.input.drive_pot(index, low);
+    }
+
     /// A trigger button's state into INPT4/5, true = pressed.
     pub fn set_trigger(&mut self, port: usize, pressed: bool) {
         self.input.set_trigger(port, pressed);

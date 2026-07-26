@@ -246,6 +246,7 @@ impl Vcs {
         self.advance_pending_writes();
         if self.tia.beam() % 3 == PHI0_GRID_PHASE {
             self.cpu.rdy = self.tia.cpu_ready();
+            let port_a_before = self.riot.port_a_level();
             let mut bus = BoardBus {
                 tia: &mut self.tia,
                 riot: &mut self.riot,
@@ -255,6 +256,17 @@ impl Vcs {
             };
             self.cpu.step_cycle(&mut bus);
             self.riot.tick();
+            if self.riot.port_a_level() != port_a_before {
+                self.refresh_controllers();
+            }
+        }
+    }
+
+    /// Port A's pin levels moved, so anything scanned from them — a keypad's
+    /// rows — re-derives what it drives.
+    fn refresh_controllers(&mut self) {
+        for jack in [Jack::Left, Jack::Right] {
+            self.controllers[jack.index()].refresh(jack, &self.riot, &mut self.tia);
         }
     }
 

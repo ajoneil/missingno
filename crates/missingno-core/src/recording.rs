@@ -55,6 +55,7 @@ const ROLE_LEFT: u8 = 7;
 const ROLE_RIGHT: u8 = 8;
 const ROLE_KNOB: u8 = 9;
 const ROLE_TOGGLE: u8 = 10;
+const ROLE_KEY: u8 = 11;
 
 /// A control on the wire: site tag, site parameter, role tag, role parameter.
 fn write_control(out: &mut Vec<u8>, control: ControlId) {
@@ -75,6 +76,7 @@ fn write_control(out: &mut Vec<u8>, control: ControlId) {
         ControlRole::Right => (ROLE_RIGHT, 0),
         ControlRole::Knob(n) => (ROLE_KNOB, n),
         ControlRole::Toggle(n) => (ROLE_TOGGLE, n),
+        ControlRole::Key(n) => (ROLE_KEY, n),
     };
     out.extend_from_slice(&[site, site_param, role, role_param]);
 }
@@ -98,6 +100,7 @@ fn read_control(reader: &mut Reader<'_>) -> Result<ControlId, RecordingError> {
         (ROLE_RIGHT, _) => ControlRole::Right,
         (ROLE_KNOB, n) => ControlRole::Knob(n),
         (ROLE_TOGGLE, n) => ControlRole::Toggle(n),
+        (ROLE_KEY, n) => ControlRole::Key(n),
         _ => return Err(RecordingError::BadEncoding),
     };
     Ok(ControlId { site, role })
@@ -735,6 +738,22 @@ mod tests {
         let recording = sample();
         let bytes = recording.to_bytes().unwrap();
         assert_eq!(Recording::from_bytes(&bytes), Ok(recording));
+    }
+
+    #[test]
+    fn keypad_keys_round_trip_on_the_wire_and_as_text() {
+        let mut recording = sample();
+        recording.events = (0..12)
+            .map(|key| control(u64::from(key), ControlRole::Key(key), key % 2 == 0))
+            .collect();
+        recording.checks.clear();
+        recording.frames = 12;
+        let bytes = recording.to_bytes().unwrap();
+        assert_eq!(Recording::from_bytes(&bytes), Ok(recording));
+        for key in 0..12u8 {
+            let role = ControlRole::Key(key);
+            assert_eq!(ControlRole::parse(&role.name()), Some(role));
+        }
     }
 
     #[test]

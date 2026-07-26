@@ -6,6 +6,7 @@ const POT_CHARGE_LINES: f32 = 380.0;
 
 /// One pot pin. A paddle's potentiometer completes the RC path; with an empty
 /// jack behind the pin there is no path at all, so the capacitor never charges.
+/// A keypad instead holds the pin at a logic level through its own pull-up.
 #[derive(Clone, Copy)]
 pub(super) enum Pot {
     Disconnected,
@@ -15,20 +16,25 @@ pub(super) enum Pot {
         position: f32,
         countdown: u16,
     },
+    /// Held by the controller rather than swept: low while it grounds the pin,
+    /// otherwise pulled up.
+    Driven {
+        low: bool,
+    },
 }
 
 impl Pot {
     pub(super) fn position(&self) -> f32 {
         match self {
-            Pot::Disconnected => 0.0,
             Pot::Knob { position, .. } => *position,
+            _ => 0.0,
         }
     }
 
     pub(super) fn countdown(&self) -> u16 {
         match self {
-            Pot::Disconnected => 0,
             Pot::Knob { countdown, .. } => *countdown,
+            _ => 0,
         }
     }
 }
@@ -88,6 +94,11 @@ impl InputPorts {
         self.pots[index] = Pot::Disconnected;
     }
 
+    /// A controller holding the pin at a level instead of sweeping it.
+    pub(super) fn drive_pot(&mut self, index: usize, low: bool) {
+        self.pots[index] = Pot::Driven { low };
+    }
+
     /// Reseat a pot's charge from a save. Port configuration is not chip state,
     /// so a pin left open by the current wiring stays open.
     pub(super) fn restore_pot(&mut self, index: usize, saved: f32, saved_countdown: u16) {
@@ -144,10 +155,15 @@ impl InputPorts {
     }
 
     /// INPT0-3's D7: high once that pot's capacitor has charged. An open pin
-    /// has no charge path, so it never rises.
+    /// has no charge path, so it never rises; a driven pin follows its level,
+    /// and the dump grounds either way.
     pub(super) fn pot_level(&self, index: usize) -> u8 {
+        if self.pot_dumped {
+            return 0x00;
+        }
         match self.pots[index] {
-            Pot::Knob { countdown: 0, .. } if !self.pot_dumped => 0x80,
+            Pot::Knob { countdown: 0, .. } => 0x80,
+            Pot::Driven { low } if !low => 0x80,
             _ => 0x00,
         }
     }

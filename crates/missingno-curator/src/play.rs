@@ -5,9 +5,10 @@ use std::sync::{Arc, Mutex, mpsc::Receiver};
 use std::time::Duration;
 
 use iced::futures::SinkExt;
-use missingno_core::ports::{PanelControl, PortId};
+use missingno_core::ports::{PanelControl, PeripheralId, PortId};
 use missingno_core::system::{ControlId, ControlInput, ControlRole};
 use missingno_core::video::DisplayTechnology;
+use missingno_gamedb::platform::Controller;
 use missingno_session::{
     SessionEvent, SessionHandle, SharedSession, audio_output::AudioOutput, factory,
 };
@@ -25,9 +26,33 @@ pub struct PlaySession {
     /// A paddle pair is in the play jack, so the pane aims it with the pointer
     /// and fires it with a click.
     pub paddles: bool,
+    /// The jacks holding a keypad, so host key presses know where to land.
+    pub keypads: Vec<PortId>,
     /// The `!Send` cpal stream stays on the UI thread, as in the emulator.
     _audio: Option<AudioOutput>,
     pub events: Arc<Mutex<Receiver<SessionEvent>>>,
+}
+
+/// What each jack gets from the controllers the db states. A keypad game wants
+/// one in each jack unless it also states the joystick, the arrangement
+/// keypad-plus-joystick titles use: stick left, keypad right. A paddle game
+/// takes the pair in the jack the pane drives.
+fn jack_peripherals(stated: &[Controller]) -> [PeripheralId; 2] {
+    let has = |controller| stated.contains(&controller);
+    if has(Controller::Keypad) {
+        if has(Controller::Joystick) {
+            [missingno_vcs::debug::JOYSTICK, missingno_vcs::debug::KEYPAD]
+        } else {
+            [missingno_vcs::debug::KEYPAD; 2]
+        }
+    } else if has(Controller::Paddle) {
+        [
+            missingno_vcs::debug::PADDLES,
+            missingno_vcs::debug::JOYSTICK,
+        ]
+    } else {
+        [missingno_vcs::debug::JOYSTICK; 2]
+    }
 }
 
 pub fn start(
@@ -35,7 +60,7 @@ pub fn start(
     rom: &[u8],
     tv_standard: Option<String>,
     cart_type: Option<String>,
-    paddles: bool,
+    controllers: &[Controller],
 ) -> Result<PlaySession, String> {
     let options = factory::LoadOptions {
         tv_standard,
@@ -46,12 +71,22 @@ pub fn start(
         factory::create_console_with(std::path::Path::new(filename_hint), rom, &options)
             .map_err(|e| format!("core rejected ROM: {e}"))?
             .ok_or("no core recognizes this ROM")?;
-    // Knob input reaches nothing until the pair is in the jack, and the paddle
-    // trigger lands on the direction line it shares on real hardware.
-    let paddles = paddles
-        && console
-            .plug(PLAY_PORT, missingno_vcs::debug::PADDLES)
-            .is_ok();
+    // Knob and key input reach nothing until the peripheral is in the jack, and
+    // a paddle trigger lands on the direction line it shares on real hardware.
+    let mut plugged = [missingno_vcs::debug::JOYSTICK; 2];
+    for (jack, peripheral) in jack_peripherals(controllers).into_iter().enumerate() {
+        let port = PortId(jack as u8);
+        if console.plug(port, peripheral).is_ok() {
+            plugged[jack] = peripheral;
+        }
+    }
+    let paddles = plugged[PLAY_PORT.0 as usize] == missingno_vcs::debug::PADDLES;
+    let keypads = plugged
+        .iter()
+        .enumerate()
+        .filter(|&(_, &peripheral)| peripheral == missingno_vcs::debug::KEYPAD)
+        .map(|(jack, _)| PortId(jack as u8))
+        .collect();
     let technology = console.video_out();
     let switches: Vec<PanelControl> = console
         .panel_controls()
@@ -82,6 +117,7 @@ pub fn start(
         switches,
         switch_levels,
         paddles,
+        keypads,
         _audio: audio,
         events: Arc::new(Mutex::new(events)),
     })
@@ -95,6 +131,19 @@ impl PlaySession {
     pub fn set_control(&self, control: ControlId, pressed: bool) {
         self.handle
             .set_control(control, ControlInput::Digital(pressed));
+    }
+
+    /// A host key onto a plugged keypad: the left one unmodified and the right
+    /// with Shift, except that a lone keypad answers either way.
+    pub fn set_key(&self, key: u8, shift: bool, pressed: bool) {
+        let port = match self.keypads.as_slice() {
+            [only] => *only,
+            _ if shift => missingno_vcs::debug::RIGHT_PORT,
+            _ => missingno_vcs::debug::LEFT_PORT,
+        };
+        if self.keypads.contains(&port) {
+            self.set_control(ControlId::port(port, ControlRole::Key(key)), pressed);
+        }
     }
 
     /// Screen-right maps to the fast-charging end of the pot, which paddle
@@ -139,6 +188,31 @@ fn button_control(button: gilrs::Button) -> Option<ControlId> {
         gilrs::Button::DPadDown => ControlId::port(PLAY_PORT, ControlRole::Down),
         gilrs::Button::DPadLeft => ControlId::port(PLAY_PORT, ControlRole::Left),
         gilrs::Button::DPadRight => ControlId::port(PLAY_PORT, ControlRole::Right),
+        _ => return None,
+    })
+}
+
+/// A host key onto a keypad key, row-major from the pad's top left. Digits sit
+/// where they read, on the top row or the numpad; the numpad's `*` and `/`
+/// carry `*` and `#`, and where there is no numpad the two keys past the digit
+/// row (`-` and `=`) stand in for them.
+pub fn keypad_key(key: &iced::keyboard::Key) -> Option<u8> {
+    let iced::keyboard::Key::Character(text) = key else {
+        return None;
+    };
+    Some(match text.as_str() {
+        "1" => 0,
+        "2" => 1,
+        "3" => 2,
+        "4" => 3,
+        "5" => 4,
+        "6" => 5,
+        "7" => 6,
+        "8" => 7,
+        "9" => 8,
+        "*" | "-" => 9,
+        "0" => 10,
+        "/" | "=" => 11,
         _ => return None,
     })
 }

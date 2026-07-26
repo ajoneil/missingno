@@ -54,6 +54,9 @@ pub enum ControlRole {
     Knob(u8),
     /// Latching panel switch n.
     Toggle(u8),
+    /// Key n of a matrix keypad, row-major from its top-left: the VCS
+    /// keyboard controller's 0-8 are 1-9, then 9 = `*`, 10 = 0, 11 = `#`.
+    Key(u8),
 }
 
 /// A control on a running machine: what it does, and where it sits. The
@@ -105,6 +108,7 @@ impl ControlRole {
             ControlRole::Right => "right".to_string(),
             ControlRole::Knob(n) => format!("knob{n}"),
             ControlRole::Toggle(n) => format!("toggle{n}"),
+            ControlRole::Key(n) => format!("key{n}"),
         }
     }
 
@@ -122,7 +126,8 @@ impl ControlRole {
             _ => numbered("action")
                 .map(ControlRole::Action)
                 .or_else(|| numbered("knob").map(ControlRole::Knob))
-                .or_else(|| numbered("toggle").map(ControlRole::Toggle)),
+                .or_else(|| numbered("toggle").map(ControlRole::Toggle))
+                .or_else(|| numbered("key").map(ControlRole::Key)),
         }
     }
 }

@@ -168,6 +168,8 @@ enum Message {
     StopPlay,
     Pad(ControlId, bool),
     Paddle(f32),
+    /// A keypad key edge from the host keyboard: key index, Shift held, pressed.
+    PlayKey(u8, bool, bool),
     /// Flip a latching console switch (index into the family's switch list).
     ToggleSwitch(usize),
     /// Press a momentary console switch; release follows after a beat.
@@ -250,10 +252,26 @@ impl Curator {
                 play::PadEvent::Button(id, on) => Message::Pad(id, on),
                 play::PadEvent::Paddle(position) => Message::Paddle(position),
             }),
-            iced::event::listen_with(|event, _, _| match event {
-                iced::Event::Window(iced::window::Event::CloseRequested) => {
+            // Keyboard events only where no widget took them, so typing into a
+            // field never reaches the keypad in the playtest's jack.
+            iced::event::listen_with(|event, status, _| match (event, status) {
+                (iced::Event::Window(iced::window::Event::CloseRequested), _) => {
                     Some(Message::CloseRequested)
                 }
+                (
+                    iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                        key, modifiers, ..
+                    }),
+                    iced::event::Status::Ignored,
+                ) => play::keypad_key(&key).map(|n| Message::PlayKey(n, modifiers.shift(), true)),
+                (
+                    iced::Event::Keyboard(iced::keyboard::Event::KeyReleased {
+                        key,
+                        modifiers,
+                        ..
+                    }),
+                    iced::event::Status::Ignored,
+                ) => play::keypad_key(&key).map(|n| Message::PlayKey(n, modifiers.shift(), false)),
                 _ => None,
             }),
         ];
@@ -430,9 +448,9 @@ impl Curator {
                         BootSource::File(_) => verify::sha1_hex(&bytes),
                     };
                     let (tv, cart) = entry.game.hints_for(&sha1);
-                    let paddles = entry.game.paddle_for(&sha1);
+                    let controllers = entry.game.controllers_for(&sha1);
                     self.stage_header_facts(i, &bytes);
-                    match play::start(hint, &bytes, tv, cart, paddles) {
+                    match play::start(hint, &bytes, tv, cart, &controllers) {
                         Ok(session) => {
                             let events = session.events.clone();
                             // Full device simulation, as the emulator's Device
@@ -500,6 +518,11 @@ impl Curator {
             Message::Paddle(position) => {
                 if let Some((_, session)) = &self.playing {
                     session.set_paddle(position);
+                }
+            }
+            Message::PlayKey(key, shift, pressed) => {
+                if let Some((_, session)) = &self.playing {
+                    session.set_key(key, shift, pressed);
                 }
             }
             Message::ToggleSwitch(index) => {
