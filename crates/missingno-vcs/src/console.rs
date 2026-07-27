@@ -67,6 +67,11 @@ const TIA_PF_WRITE_HC: u8 = TIA_WRITE_HC + 2;
 const TIA_STROBE_RISE_HC: u8 = TIA_WRITE_HC - 2;
 /// RSYNC's counter reset lands the wrap 3.5 colour clocks after the write end.
 const TIA_RSYNC_HC: u8 = TIA_WRITE_HC + 7;
+/// RSYNC's decoded level rises two colour clocks before that wrap (rise 144 →
+/// wrap 146, rise 147 → wrap 149). While it is up it grounds N2057, the audio
+/// tap's sampling clock, so a commit falling in that window is held and lands
+/// after the restart instead.
+const RSYNC_ASSERT_HC: u8 = 4;
 /// Reset-strobe countdown milestone: the scan-kill leads the counter plant by
 /// one half-clock. The START-decode hold engages at the write's enqueue — the
 /// decoded strobe level grips the divider wrap preceding the plant
@@ -302,7 +307,11 @@ impl Vcs {
         for slot in &mut self.pending_tia_writes {
             if let Some(write) = slot {
                 write.hc_until_effective -= 1;
-                if write.hc_until_effective == RESET_KILL_HC {
+                if write.hc_until_effective == RSYNC_ASSERT_HC
+                    && u16::from(write.register) == crate::tia::registers::RSYNC
+                {
+                    self.tia.rsync_assert();
+                } else if write.hc_until_effective == RESET_KILL_HC {
                     // The missile reset's scan-kill leads its plant.
                     match u16::from(write.register) {
                         crate::tia::registers::RESM0 => self.tia.missile_reset_kill(0),

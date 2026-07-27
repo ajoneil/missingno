@@ -43,12 +43,16 @@ pub const VISIBLE_CLOCKS: usize = 160;
 const LATE_HBLANK_CLOCKS: u16 = HBLANK_CLOCKS + 8;
 /// SHB's latched reset absorbs a WSYNC set through the wrap's first CPU cycle.
 const WSYNC_RESET_HOLD_CLOCKS: u8 = 3;
-/// The audio two-phase tick positions (colour clock within the line): phase0
-/// is the sample window (divider compare, feedback/tap/hold latches), phase1
-/// the commit window (noise shift lands, pulse captures, output updates).
-/// The 72/156 (phase0) and 112/116 (phase1) splits are the die-measured values.
-const AUDIO_PHASE0: [u16; 2] = [9, 81];
-const AUDIO_PHASE1: [u16; 2] = [37, 149];
+/// The audio tick positions (colour clock within the line). The sample clock
+/// (N1421) holds the divider compare and the feedback/tap/hold decodes; the
+/// commit clock (N325) lands the noise shift and the pulse capture. Against
+/// N232, the line-start clear, the sample holds at CC 8/80 (a 72/156 line
+/// split) and the commit becomes visible at 36/148 (112/116); each reads one
+/// higher here because the decode runs before the counter advances.
+/// N232 clears the decode's stage bank per line, so an RSYNC restart replays the
+/// positions it had not yet passed.
+const AUDIO_SAMPLE: [u16; 2] = [9, 81];
+const AUDIO_COMMIT: [u16; 2] = [37, 149];
 
 pub(crate) mod registers {
     pub const VSYNC: u16 = 0x00;
@@ -205,8 +209,14 @@ pub struct Tia {
     seam_lookahead: PerObject<bool>,
 
     audio: [Channel; 2],
+    /// RSYNC's decoded level, up from two colour clocks before its wrap. While
+    /// it holds it grounds the audio tap's sampling clock (N2057).
+    rsync_asserted: bool,
+    /// A commit whose window closed under that hold, waiting for the restart to
+    /// supply the edge. (N1468's fall landing at CC 0 of the new line)
+    audio_commit_held: bool,
     /// Per-channel DAC-code capture for the debugger's waveform scope. `None`
-    /// when no consumer wants it: the phase1 tap is then one branch with no
+    /// when no consumer wants it: the commit tap is then one branch with no
     /// allocation.
     wave_capture: Option<[WaveRing; 2]>,
 
@@ -236,6 +246,8 @@ impl Tia {
             motion: MotionSequencer::new(),
             seam_lookahead: PerObject::splat(false),
             audio: [Channel::new(), Channel::new()],
+            rsync_asserted: false,
+            audio_commit_held: false,
             wave_capture: None,
             input: InputPorts::new(),
             line: [0; VISIBLE_CLOCKS],
@@ -430,23 +442,42 @@ impl Tia {
         // The audio circuits clock twice per scanline (~31.4 kHz), each tick a
         // two-phase pair.
         let position = self.hsync.position();
-        if AUDIO_PHASE0.contains(&position) {
-            self.audio[0].phase0();
-            self.audio[1].phase0();
-        } else if AUDIO_PHASE1.contains(&position) {
-            self.audio[0].phase1();
-            self.audio[1].phase1();
-            // Tap each channel's DAC conductance once the commit settles. Inert
-            // (one branch, no allocation) unless a consumer enabled capture.
-            if let Some(rings) = &mut self.wave_capture {
-                rings[0].push(self.audio[0].conductance());
-                rings[1].push(self.audio[1].conductance());
+        if AUDIO_SAMPLE.contains(&position) {
+            self.audio[0].sample();
+            self.audio[1].sample();
+        } else if AUDIO_COMMIT.contains(&position) {
+            // RSYNC holding N2057 down defers this commit past the restart.
+            match self.rsync_asserted {
+                true => self.audio_commit_held = true,
+                false => self.commit_audio(),
             }
         }
 
         if self.hsync.advance(self.motion.extension_armed()) {
             self.end_line();
         }
+    }
+
+    /// The commit phase on both channels, plus the debugger's DAC tap once the
+    /// commit settles (inert — one branch, no allocation — unless a consumer
+    /// enabled capture).
+    fn commit_audio(&mut self) {
+        self.audio[0].commit_phase();
+        self.audio[1].commit_phase();
+        if let Some(rings) = &mut self.wave_capture {
+            rings[0].push(self.audio[0].conductance());
+            rings[1].push(self.audio[1].conductance());
+        }
+    }
+
+    /// Whether the commit decode is satisfied but its bank clock has not yet
+    /// arrived: the N2057 period (4 CLK) ending at a commit slot. A reset in that
+    /// window supplies the missing edge; before it, the commit is simply lost.
+    fn audio_commit_armed(&self) -> bool {
+        let position = self.hsync.position();
+        AUDIO_COMMIT
+            .iter()
+            .any(|&slot| (slot.saturating_sub(3)..slot).contains(&position))
     }
 
     /// The HSync-counter wrap: one mechanism with two triggers — the
@@ -469,6 +500,11 @@ impl Tia {
             self.mux.compose(x, px)
         };
         self.line[x as usize] = color & 0xFE;
+    }
+
+    /// RSYNC's decoded level going up, two colour clocks before its wrap.
+    pub(crate) fn rsync_assert(&mut self) {
+        self.rsync_asserted = true;
     }
 
     /// The reset strobe's address-decoded rise, a clock before the fall.
@@ -506,7 +542,17 @@ impl Tia {
                 // gets a short line — undrawn pixels never left the gun.
                 let drawn = self.hsync.columns_drawn();
                 self.line[drawn..].fill(0);
+                // The restart supplies the edge N2057 was denied: a commit whose
+                // window closed under the hold, or one whose decode was already
+                // satisfied and waiting, lands now. Earlier in the line the
+                // pending commit has no decode yet and is simply lost.
+                let deferred = self.audio_commit_held || self.audio_commit_armed();
+                self.rsync_asserted = false;
+                self.audio_commit_held = false;
                 self.end_line();
+                if deferred {
+                    self.commit_audio();
+                }
             }
             NUSIZ0 => {
                 objects.p0.nusiz = value;

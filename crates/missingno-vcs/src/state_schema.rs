@@ -351,13 +351,13 @@ pub fn boundary_fields() -> Vec<FieldDef> {
         fields.push(FieldDef::boundary(pulse, U8, "apu").help("4-bit pulse counter"));
         fields.push(FieldDef::boundary(noise, U8, "apu").help("5-bit noise LFSR"));
         fields.push(
-            FieldDef::boundary(en, Bool, "apu").help("divider clock-enable latched at phase0"),
+            FieldDef::boundary(en, Bool, "apu").help("divider clock-enable latched at sample"),
         );
-        fields.push(FieldDef::boundary(fb, Bool, "apu").help("noise shift-in latched at phase0"));
+        fields.push(FieldDef::boundary(fb, Bool, "apu").help("noise shift-in latched at sample"));
         fields.push(FieldDef::boundary(tap, Bool, "apu").help("buffered noise tap (N2536)"));
         fields.push(
             FieldDef::boundary(adv, Bool, "apu")
-                .help("pulse-hold decision latched at phase0 (N1530)"),
+                .help("pulse-hold decision latched at sample (N1530)"),
         );
     }
 

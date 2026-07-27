@@ -2,8 +2,9 @@
 //! 4-bit pulse counter and a 5-bit noise LFSR, both gated by an AUDF ÷(N+1)
 //! divider, with the AUDC register split into a pulse-feedback selector (high
 //! 2 bits) and a pulse-hold/noise-chain gate (low 2 bits). Each audio tick is
-//! a two-phase pair: phase0 samples from pre-tick state, phase1 commits. The
-//! waveforms emerge from the structure; there are no per-mode tables.
+//! a two-phase pair: the sample phase reads pre-tick state, the commit phase
+//! writes it back. The waveforms emerge from the structure; there are no
+//! per-mode tables.
 
 /// The 5-bit noise LFSR; bit j holds n_j — bit 4 the newest (shift-in) end,
 /// bit 0 the oldest. Feedback n2 ⊕ n0 gives the inserted-bit recurrence
@@ -98,15 +99,21 @@ impl AudfDivider {
         AudfDivider { count: 0 }
     }
 
-    fn tick(&mut self, audf: u8) -> bool {
-        let enable = self.count == audf & 0x1F;
-        // Five bits wide, so lowering AUDF under a running count wraps the
-        // counter round to meet it rather than stranding it.
-        self.count = match enable {
+    /// The comparator, read in the sample window and latched as the
+    /// clock-enable. (N1703 samples it into N2008)
+    fn compare(&self, audf: u8) -> bool {
+        self.count == audf & 0x1F
+    }
+
+    /// The next-state load, a window later than the compare that produced it:
+    /// the match reloads to 0, anything else counts up. Five bits wide, so
+    /// lowering AUDF under a running count wraps the counter round to meet it
+    /// rather than stranding it. (N2591 gates the loads)
+    fn load_next(&mut self, matched: bool) {
+        self.count = match matched {
             true => 0,
             false => (self.count + 1) & 0x1F,
         };
-        enable
     }
 }
 
@@ -118,14 +125,14 @@ pub struct Channel {
     divider: AudfDivider,
     pulse: PulseCounter,
     noise: NoiseCounter,
-    /// The divider's clock-enable, latched at phase0 for phase1.
+    /// The divider's clock-enable, latched at sample for commit.
     enable: bool,
-    /// The noise shift-in, sampled at phase0 from pre-tick state.
+    /// The noise shift-in, taken at sample from pre-tick state.
     noise_feedback: bool,
-    /// The pre-shift oldest noise bit, latched at phase0 — the buffered tap
+    /// The pre-shift oldest noise bit, latched at sample — the buffered tap
     /// the pulse-side feedback and hold decodes read. (N2536 half-stage)
     noise_tap: bool,
-    /// The pulse-hold decision, latched at phase0. (N1530)
+    /// The pulse-hold decision, latched at sample. (N1530)
     advance: bool,
 }
 
@@ -151,11 +158,11 @@ impl Channel {
         }
     }
 
-    /// phase0 — the sample phase: the divider compares, and the noise
+    /// The sample phase (N1421): the divider compares, and the noise
     /// shift-in, the noise tap, and the pulse-hold decision all latch from
     /// pre-tick state.
-    pub fn phase0(&mut self) {
-        self.enable = self.divider.tick(self.frequency);
+    pub fn sample(&mut self) {
+        self.enable = self.divider.compare(self.frequency);
         if !self.enable {
             return;
         }
@@ -180,10 +187,13 @@ impl Channel {
         self.noise_feedback = escape || silence || (tap ^ self.noise.oldest());
     }
 
-    /// phase1 — the commit phase: the noise shift lands, then the pulse
+    /// The commit phase (N325): the noise shift lands, then the pulse
     /// captures its AUDC-selected feedback from pre-advance values and the
     /// latched tap.
-    pub fn phase1(&mut self) {
+    pub fn commit_phase(&mut self) {
+        // The counter loads its next state here, a window after the compare that
+        // produced it, so a line reset between the two drops this tick's advance.
+        self.divider.load_next(self.enable);
         if !self.enable {
             return;
         }
@@ -219,7 +229,7 @@ impl Channel {
 }
 
 /// One audio channel's boundary state: the AUDC/AUDF/AUDV registers, the
-/// counters (divider count, pulse and noise shift registers), and the phase0
+/// counters (divider count, pulse and noise shift registers), and the sample
 /// latches held between an audio tick's sample and commit halves.
 #[derive(Clone, Copy)]
 pub(crate) struct ChannelState {
@@ -296,15 +306,15 @@ mod tests {
     use super::*;
 
     /// Drive a channel at AUDF=0 (enable every tick) and collect the pulse
-    /// LSB (the die output node) sampled after each phase1, for `n` ticks.
+    /// LSB (the die output node) read after each commit, for `n` ticks.
     fn run(control: u8, n: usize) -> Vec<u8> {
         let mut ch = Channel::new();
         ch.control = control;
         ch.volume = 0x0F;
         let mut out = Vec::with_capacity(n);
         for _ in 0..n {
-            ch.phase0();
-            ch.phase1();
+            ch.sample();
+            ch.commit_phase();
             out.push(ch.pulse.lsb() as u8);
         }
         out
@@ -391,12 +401,12 @@ mod tests {
         ch.control = 0x00;
         ch.volume = 0x0F;
         for _ in 0..8 {
-            ch.phase0();
-            ch.phase1();
+            ch.sample();
+            ch.commit_phase();
         }
         for _ in 0..50 {
-            ch.phase0();
-            ch.phase1();
+            ch.sample();
+            ch.commit_phase();
             assert_eq!(ch.conductance(), 0x0F);
         }
     }
@@ -427,8 +437,8 @@ mod tests {
         ch.volume = 0x0F;
         let mut out = Vec::new();
         for _ in 0..100 {
-            ch.phase0();
-            ch.phase1();
+            ch.sample();
+            ch.commit_phase();
             out.push(ch.pulse.lsb() as u8);
         }
         assert_eq!(period(&out), Some(4));
