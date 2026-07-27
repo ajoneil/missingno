@@ -32,6 +32,36 @@ fn blank_gating_secam() {
 }
 
 #[test]
+fn blanked_reset_ntsc() {
+    common::run_self_test("collision/blanked-reset_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn blanked_reset_pal() {
+    common::run_self_test("collision/blanked-reset_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn blanked_reset_secam() {
+    common::run_self_test("collision/blanked-reset_secam.a26", TvStandard::Secam);
+}
+
+#[test]
+fn copy_adjacency_ntsc() {
+    common::run_self_test("collision/copy-adjacency_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn copy_adjacency_pal() {
+    common::run_self_test("collision/copy-adjacency_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn copy_adjacency_secam() {
+    common::run_self_test("collision/copy-adjacency_secam.a26", TvStandard::Secam);
+}
+
+#[test]
 fn hmove_edge_ntsc() {
     common::run_self_test("collision/hmove-edge_ntsc.a26", TvStandard::Ntsc);
 }
