@@ -1516,6 +1516,33 @@ impl Curator {
                     Err(e) => error_result(e),
                 }
             }
+            "split_game" => {
+                let (Some(key), Some(title)) = (str_arg("key"), str_arg("title")) else {
+                    return error_result("missing key or title");
+                };
+                let Some(release_index) = args
+                    .get("release_index")
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|i| i as usize)
+                else {
+                    return error_result("missing release_index");
+                };
+                let Some(i) = self.find_entry(key) else {
+                    return error_result(format!("no entry {key}"));
+                };
+                let slug = str_arg("slug").map(str::to_owned);
+                let Ok(db) = &mut self.db else {
+                    return error_result("db not loaded");
+                };
+                match db.split_game(i, release_index, title, slug.as_deref()) {
+                    // The split appends, so no index the window holds moves —
+                    // the playtest stays on the entry the release left.
+                    Ok(new_key) => text_result(format!(
+                        "release {release_index} of {key} split out → {new_key}"
+                    )),
+                    Err(e) => error_result(e),
+                }
+            }
             "rename_game" => {
                 let (Some(key), Some(new_slug)) = (str_arg("key"), str_arg("new_slug")) else {
                     return error_result("missing key or new_slug");

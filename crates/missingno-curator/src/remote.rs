@@ -400,6 +400,16 @@ fn tool_definitions() -> Value {
             }), &["key", "from"]),
         },
         {
+            "name": "split_game",
+            "description": "The inverse of merge_game: an import lumped two different games into one entry, so a release moves out whole and becomes an entry of its own, keeping its publisher, date, regions and hardware. Mods whose base dump leaves travel with it. Use when a release turns out to be an unrelated game sharing a title — not for a pre-retail build of the same game, which is split_release. Returns the new tree/slug key.",
+            "inputSchema": object(json!({
+                "key": { "type": "string" },
+                "release_index": { "type": "integer", "description": "the release to move out" },
+                "title": { "type": "string", "description": "the new entry's title — the game's real name, not the one the lumped entry wore" },
+                "slug": { "type": "string", "description": "optional slug; derived from the title when omitted" },
+            }), &["key", "release_index", "title"]),
+        },
+        {
             "name": "rename_game",
             "description": "Change an entry's slug (its directory name and tree/slug key). Moves the manifest on disk and re-points open flags and the play queue; curations stand, since the game's content is unchanged. Use the returned new key afterwards. Slugs are lowercase alphanumerics, '-' or '_'.",
             "inputSchema": object(json!({

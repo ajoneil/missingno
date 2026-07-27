@@ -1262,6 +1262,53 @@ fn split_hack_from<P: Platform>(
     None
 }
 
+/// Take a release out of an entry and make it an entry of its own: an import
+/// that lumped two unrelated games together is undone by moving one out whole,
+/// keeping its publisher, date and hardware. Mods based on a dump that leaves
+/// travel with it.
+fn split_game_from<P: Platform>(
+    source: &mut Game<P>,
+    release_index: usize,
+    title: String,
+) -> Result<Game<P>, String> {
+    if release_index >= source.releases.len() {
+        return Err(format!(
+            "no release {release_index}; entry has {}",
+            source.releases.len()
+        ));
+    }
+    if source.releases.len() == 1 {
+        return Err("that is the entry's only release — rename it instead".to_owned());
+    }
+    let release = source.releases.remove(release_index);
+    let moved: Vec<&Sha1> = release.artifacts.iter().map(|a| &a.sha1).collect();
+    let (mods, kept) = source.mods.drain(..).partition(|m: &Mod<P>| {
+        !m.releases.is_empty()
+            && m.releases.iter().all(|r| {
+                r.base_sha1
+                    .as_ref()
+                    .is_some_and(|base| moved.contains(&base))
+            })
+    });
+    source.mods = kept;
+    Ok(Game {
+        title,
+        kind: GameKind::Game,
+        developer: None,
+        description: None,
+        tags: Vec::new(),
+        links: Vec::new(),
+        covers: Vec::new(),
+        screenshots: Vec::new(),
+        mod_of: None,
+        mods,
+        curated: false,
+        adult: source.adult,
+        recommended_by: Vec::new(),
+        releases: vec![release],
+    })
+}
+
 /// Move `sha1` into its own release (a pre-retail build, say), inheriting the
 /// source release's hardware and publisher — but not its date: a prototype's
 /// date is not the retail date.
@@ -1807,6 +1854,71 @@ impl Db {
         Ok(format!("{}/{slug}", tree.dir()))
     }
 
+    /// The inverse of `merge_entry`: one entry catalogued two different games,
+    /// so a release moves out whole and becomes an entry of its own.
+    pub fn split_game(
+        &mut self,
+        source: usize,
+        release_index: usize,
+        title: &str,
+        slug: Option<&str>,
+    ) -> Result<String, String> {
+        let tree = self.entries[source].tree;
+        let slug = match slug {
+            Some(slug) => {
+                let slug: Slug = slug.parse()?;
+                if self
+                    .entries
+                    .iter()
+                    .any(|e| e.tree == tree && e.slug == slug.as_str())
+                {
+                    return Err(format!("{}/{slug} already exists", tree.dir()));
+                }
+                slug.as_str().to_owned()
+            }
+            None => self.free_slug(tree, title),
+        };
+        let split = match &mut self.entries[source].game {
+            AnyGame::Gb(g) => split_game_from(g, release_index, title.to_owned()).map(AnyGame::Gb),
+            AnyGame::Gbc(g) => {
+                split_game_from(g, release_index, title.to_owned()).map(AnyGame::Gbc)
+            }
+            AnyGame::Vcs(g) => {
+                split_game_from(g, release_index, title.to_owned()).map(AnyGame::Vcs)
+            }
+        }?;
+        self.entries.push(EntryHandle {
+            tree,
+            slug: slug.clone(),
+            game: split,
+            dirty: true,
+            synthetic: false,
+        });
+        let new_index = self.entries.len() - 1;
+        self.entries[source].dirty = true;
+        self.write_entry(source).map_err(|e| e.to_string())?;
+        self.write_entry(new_index).map_err(|e| e.to_string())?;
+        Ok(format!("{}/{slug}", tree.dir()))
+    }
+
+    /// A slug for `title` that no entry in the tree has taken yet.
+    fn free_slug(&self, tree: TreeId, title: &str) -> String {
+        let taken: std::collections::HashSet<&str> = self
+            .entries
+            .iter()
+            .filter(|e| e.tree == tree)
+            .map(|e| e.slug.as_str())
+            .collect();
+        let base = slugify(title);
+        let mut slug = base.clone();
+        let mut n = 1;
+        while taken.contains(slug.as_str()) {
+            n += 1;
+            slug = format!("{base}-{n}");
+        }
+        slug
+    }
+
     /// Rename an entry's slug: move its directory and re-point flags at the
     /// new key. The manifest's content is untouched, so curations stand.
     pub fn rename_entry(&mut self, index: usize, new_slug: &str) -> Result<String, String> {
@@ -1968,7 +2080,9 @@ mod tests {
         let db = Db::load(repo).expect("gamedb loads");
         assert!(db.entries.len() > 8000, "{}", db.entries.len());
         assert!(db.flags.open().count() > 2000);
-        assert!(db.backlog_count(TreeId::Vcs) > 4000);
+        // A floor far below the current backlog: curating and merging shrink
+        // it every session, so a tight bound would fail on progress alone.
+        assert!(db.backlog_count(TreeId::Vcs) > 1000);
     }
 }
 
@@ -2600,5 +2714,87 @@ mod release_surgery_tests {
         assert_eq!(g.releases.len(), 1);
         assert_eq!(g.releases[0].artifacts.len(), 3);
         assert_eq!(g.releases[0].hardware.cart_type.as_deref(), Some("4K"));
+    }
+
+    fn two_games_in_one_entry() -> AnyGame {
+        AnyGame::Vcs(
+            Game::from_ron(
+                r#"(
+    title: "Labyrinth",
+    mods: [
+        (
+            name: "Hack of the reissue",
+            category: ContentChange,
+            releases: [(
+                base_sha1: Some("8d52548063ba852f47ae0d0d8b7f6c847bb5f5b0"),
+                artifacts: [(sha1: "b2a5f9c1e04d7d3f6c1b8e2a4d7f0c3b6e9a2d5f")],
+            )],
+        ),
+        (
+            name: "Hack of the homebrew",
+            category: ContentChange,
+            releases: [(
+                base_sha1: Some("a10308a3f1051068c908d1e29fd57de5b911d31d"),
+                artifacts: [(sha1: "c3b6e9a2d5f8b1e4d7a0c3f6b9e2d5a8c1f4b7e0")],
+            )],
+        ),
+    ],
+    releases: [
+        (
+            regions: [Germany],
+            date: Some("1983"),
+            publisher: Some("Quelle"),
+            hardware: (tv_format: Some(Pal), cart_type: Some("4K")),
+            artifacts: [(sha1: "8d52548063ba852f47ae0d0d8b7f6c847bb5f5b0")],
+        ),
+        (
+            date: Some("2006"),
+            publisher: Some("Bill Collins"),
+            status: WorkInProgress,
+            hardware: (tv_format: Some(Ntsc), cart_type: Some("4K")),
+            artifacts: [(sha1: "a10308a3f1051068c908d1e29fd57de5b911d31d")],
+        ),
+    ],
+)"#,
+            )
+            .unwrap(),
+        )
+    }
+
+    #[test]
+    fn split_game_carries_the_release_whole_and_takes_its_mods() {
+        let mut any = two_games_in_one_entry();
+        let AnyGame::Vcs(g) = &mut any else {
+            unreachable!()
+        };
+        let split = split_game_from(g, 1, "Labyrinth".to_owned()).unwrap();
+        assert_eq!(g.releases.len(), 1, "the rebrand stays behind");
+        assert_eq!(g.releases[0].publisher.as_deref(), Some("Quelle"));
+        assert_eq!(split.releases.len(), 1);
+        assert_eq!(split.releases[0].publisher.as_deref(), Some("Bill Collins"));
+        assert_eq!(
+            split.releases[0].date.as_ref().map(ToString::to_string),
+            Some("2006".to_owned())
+        );
+        assert_eq!(split.releases[0].status, ReleaseStatus::WorkInProgress);
+        assert!(
+            split.mod_of.is_none(),
+            "neither game derives from the other"
+        );
+        assert_eq!(g.mods.len(), 1);
+        assert_eq!(g.mods[0].name, "Hack of the reissue");
+        assert_eq!(split.mods.len(), 1, "a mod follows the dump it patches");
+        assert_eq!(split.mods[0].name, "Hack of the homebrew");
+    }
+
+    #[test]
+    fn split_game_refuses_the_only_release() {
+        let mut any = pitfall_like();
+        let AnyGame::Vcs(g) = &mut any else {
+            unreachable!()
+        };
+        g.releases.truncate(1);
+        assert!(split_game_from(g, 0, "Anything".to_owned()).is_err());
+        assert!(split_game_from(g, 4, "Anything".to_owned()).is_err());
     }
 }
