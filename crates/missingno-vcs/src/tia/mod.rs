@@ -524,6 +524,14 @@ impl Tia {
         }
     }
 
+    /// The reset strobe's address-decoded rise, a clock before the fall.
+    pub(crate) fn player_reset_rise(&mut self, which: usize) {
+        match which {
+            0 => self.movables.p0.reset_rise(),
+            _ => self.movables.p1.reset_rise(),
+        }
+    }
+
     /// The reset strobe's leading scan-kill, one clock before it applies.
     pub(crate) fn missile_reset_kill(&mut self, which: usize) {
         match which {

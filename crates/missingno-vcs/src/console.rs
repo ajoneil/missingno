@@ -172,10 +172,13 @@ impl Bus for BoardBus<'_> {
                 data,
                 hc_until_effective: hc,
             });
-            // The missile reset's decoded strobe level holds the START decode
-            // from the bus cycle's tail through the plant, gripping the
-            // divider wrap before it (PAL-console-measured window −3..0).
+            // A reset's decoded strobe level holds the START decode from the
+            // bus cycle's tail through the plant, gripping the divider wrap
+            // before it (PAL-console-measured: missile window −3..0; player
+            // via the merge-delivery leg-3 wrap-spanning kill).
             match u16::from(register) {
+                RESP0 => self.tia.player_reset_rise(0),
+                RESP1 => self.tia.player_reset_rise(1),
                 RESM0 => self.tia.missile_reset_rise(0),
                 RESM1 => self.tia.missile_reset_rise(1),
                 _ => {}

@@ -47,6 +47,21 @@ fn blanked_reset_secam() {
 }
 
 #[test]
+fn merge_delivery_ntsc() {
+    common::run_self_test("collision/merge-delivery_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn merge_delivery_pal() {
+    common::run_self_test("collision/merge-delivery_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn merge_delivery_secam() {
+    common::run_self_test("collision/merge-delivery_secam.a26", TvStandard::Secam);
+}
+
+#[test]
 fn resbl_kill_ntsc() {
     common::run_self_test("collision/resbl-kill_ntsc.a26", TvStandard::Ntsc);
 }

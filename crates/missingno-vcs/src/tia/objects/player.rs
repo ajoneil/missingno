@@ -38,6 +38,11 @@ pub struct Player {
     pub nusiz: u8,
     counter: PositionCounter,
     scan: Option<Scan>,
+    /// The reset strobe's decoded level holds the wrap decode (no catch, no
+    /// delivery) from its rise until the counter plant re-phases the ring
+    /// (PAL console merge-delivery leg 3: a level spanning the delivery wrap
+    /// kills that line's scan).
+    reset_decode_hold: bool,
 }
 
 impl Default for Player {
@@ -56,7 +61,14 @@ impl Player {
             nusiz: 0,
             counter: PositionCounter::new(),
             scan: None,
+            reset_decode_hold: false,
         }
+    }
+
+    /// RESPx's address-decoded rise: the strobe level disturbs the START
+    /// decode ahead of the plant.
+    pub fn reset_rise(&mut self) {
+        self.reset_decode_hold = true;
     }
 
     /// RESxx: plant the counter and ground the ring to the strobe. A decode
@@ -64,6 +76,7 @@ impl Player {
     /// of the counter — it rides through onto the re-phased grid.
     pub fn reset_position(&mut self) {
         self.counter.plant();
+        self.reset_decode_hold = false;
     }
 
     /// Colour-clock position within the line (0..160).
@@ -107,7 +120,10 @@ impl Player {
     /// One motion clock (MOTCK edge).
     pub fn tick(&mut self) {
         self.advance_scan();
-        if self.counter.advance(copy_decodes(self.nusiz), false) {
+        if self
+            .counter
+            .advance(copy_decodes(self.nusiz), self.reset_decode_hold)
+        {
             let clocks = player_pixel_clocks(self.nusiz);
             self.scan = Some(Scan {
                 lead: PLAYER_START_LATCH + SERIAL_TAIL,
@@ -182,6 +198,7 @@ pub(crate) struct PlayerState {
     pub ring_phase: u8,
     /// The one-wrap START-pending latch.
     pub start_pending: bool,
+    pub reset_decode_hold: bool,
     pub scan: Option<ScanState>,
 }
 
@@ -196,6 +213,7 @@ impl Player {
             position: self.counter.count(),
             ring_phase: self.counter.ring_phase(),
             start_pending: self.counter.start_pending(),
+            reset_decode_hold: self.reset_decode_hold,
             scan: self.scan.as_ref().map(|s| ScanState {
                 lead: s.lead,
                 bit: s.bit,
@@ -213,6 +231,7 @@ impl Player {
         self.nusiz = s.nusiz;
         self.counter
             .restore(s.position, s.ring_phase, s.start_pending);
+        self.reset_decode_hold = s.reset_decode_hold;
         self.scan = s.scan.map(|s| Scan {
             lead: s.lead,
             bit: s.bit,

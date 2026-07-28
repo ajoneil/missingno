@@ -231,6 +231,13 @@ pub fn boundary_fields() -> Vec<FieldDef> {
         fields.push(FieldDef::boundary(pend, Bool, "tia").help("one-wrap START-pending latch"));
     }
 
+    // Player reset-decode grip.
+    for hold in ["p0_reset_hold", "p1_reset_hold"] {
+        fields.push(
+            FieldDef::boundary(hold, Bool, "tia").help("reset strobe gripping the START decode"),
+        );
+    }
+
     // Player serialiser scan (nullable — absent between draws).
     for (active, lead, bit, clocks, lag) in [
         (

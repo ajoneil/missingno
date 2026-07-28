@@ -146,7 +146,8 @@ fn write_player(r: &mut StateRecord, o: &str, p: &crate::tia::objects::PlayerSta
         .set(field(o, "nusiz"), p.nusiz)
         .set(field(o, "position"), p.position)
         .set(field(o, "ring_phase"), p.ring_phase)
-        .set(field(o, "start_pending"), p.start_pending);
+        .set(field(o, "start_pending"), p.start_pending)
+        .set(field(o, "reset_hold"), p.reset_decode_hold);
     match &p.scan {
         Some(s) => {
             r.set(field(o, "scan_active"), true)
@@ -282,6 +283,7 @@ static FIELD_NAMES: &[(&str, &str, &str)] = &[
     ("p0", "position", "p0_position"),
     ("p0", "ring_phase", "p0_ring_phase"),
     ("p0", "start_pending", "p0_start_pending"),
+    ("p0", "reset_hold", "p0_reset_hold"),
     ("p0", "scan_active", "p0_scan_active"),
     ("p0", "scan_lead", "p0_scan_lead"),
     ("p0", "scan_bit", "p0_scan_bit"),
@@ -295,6 +297,7 @@ static FIELD_NAMES: &[(&str, &str, &str)] = &[
     ("p1", "position", "p1_position"),
     ("p1", "ring_phase", "p1_ring_phase"),
     ("p1", "start_pending", "p1_start_pending"),
+    ("p1", "reset_hold", "p1_reset_hold"),
     ("p1", "scan_active", "p1_scan_active"),
     ("p1", "scan_lead", "p1_scan_lead"),
     ("p1", "scan_bit", "p1_scan_bit"),
@@ -564,6 +567,7 @@ fn parse_player(r: &StateRecord, o: &str) -> Result<crate::tia::objects::PlayerS
         position: u8_of(r, field(o, "position"))?,
         ring_phase: u8_of(r, field(o, "ring_phase"))?,
         start_pending: bool_of(r, field(o, "start_pending"))?,
+        reset_decode_hold: bool_of(r, field(o, "reset_hold"))?,
         scan,
     })
 }
