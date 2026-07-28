@@ -90,7 +90,8 @@ fn write_tia(r: &mut StateRecord, t: &TiaState) {
         .set("bl_ring_phase", t.ball.ring_phase)
         .set("bl_start_pending", t.ball.start_pending)
         .set("bl_gate_lead", t.ball.gate_lead)
-        .set("bl_gate_width", t.ball.gate_width_left);
+        .set("bl_gate_width", t.ball.gate_width_left)
+        .set("bl_gate_unshown", t.ball.gate_start_unshown);
 
     // HMOVE engine.
     let objs = ["p0", "p1", "m0", "m1", "bl"];
@@ -173,6 +174,7 @@ fn write_missile(r: &mut StateRecord, o: &str, m: &crate::tia::objects::MissileS
         .set(field(o, "start_pending"), m.start_pending)
         .set(field(o, "gate_lead"), m.gate_lead)
         .set(field(o, "gate_width"), m.gate_width_left)
+        .set(field(o, "gate_unshown"), m.gate_start_unshown)
         .set(field(o, "reset_hold"), m.reset_decode_hold);
 }
 
@@ -306,6 +308,7 @@ static FIELD_NAMES: &[(&str, &str, &str)] = &[
     ("m0", "start_pending", "m0_start_pending"),
     ("m0", "gate_lead", "m0_gate_lead"),
     ("m0", "gate_width", "m0_gate_width"),
+    ("m0", "gate_unshown", "m0_gate_unshown"),
     ("m0", "reset_hold", "m0_reset_hold"),
     ("m1", "enabled", "m1_enabled"),
     ("m1", "locked", "m1_locked"),
@@ -315,6 +318,7 @@ static FIELD_NAMES: &[(&str, &str, &str)] = &[
     ("m1", "start_pending", "m1_start_pending"),
     ("m1", "gate_lead", "m1_gate_lead"),
     ("m1", "gate_width", "m1_gate_width"),
+    ("m1", "gate_unshown", "m1_gate_unshown"),
     ("m1", "reset_hold", "m1_reset_hold"),
     ("ch0", "control", "ch0_control"),
     ("ch0", "frequency", "ch0_frequency"),
@@ -506,6 +510,7 @@ fn parse_tia(r: &StateRecord) -> Result<TiaState, StateError> {
             start_pending: bool_of(r, "bl_start_pending")?,
             gate_lead: u8_of(r, "bl_gate_lead")?,
             gate_width_left: u8_of(r, "bl_gate_width")?,
+            gate_start_unshown: bool_of(r, "bl_gate_unshown")?,
         },
         playfield: PlayfieldState {
             pf0: u8_of(r, "pf0")?,
@@ -577,6 +582,7 @@ fn parse_missile(
         start_pending: bool_of(r, field(o, "start_pending"))?,
         gate_lead: u8_of(r, field(o, "gate_lead"))?,
         gate_width_left: u8_of(r, field(o, "gate_width"))?,
+        gate_start_unshown: bool_of(r, field(o, "gate_unshown"))?,
         reset_decode_hold: bool_of(r, field(o, "reset_hold"))?,
     })
 }

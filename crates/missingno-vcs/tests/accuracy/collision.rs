@@ -47,6 +47,21 @@ fn blanked_reset_secam() {
 }
 
 #[test]
+fn resbl_kill_ntsc() {
+    common::run_self_test("collision/resbl-kill_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn resbl_kill_pal() {
+    common::run_self_test("collision/resbl-kill_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn resbl_kill_secam() {
+    common::run_self_test("collision/resbl-kill_secam.a26", TvStandard::Secam);
+}
+
+#[test]
 fn copy_adjacency_ntsc() {
     common::run_self_test("collision/copy-adjacency_ntsc.a26", TvStandard::Ntsc);
 }

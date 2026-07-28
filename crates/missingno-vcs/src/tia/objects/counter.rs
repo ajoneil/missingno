@@ -141,6 +141,9 @@ impl PositionCounter {
 pub(super) struct WidthGate {
     lead: u8,
     width_left: u8,
+    /// START delivered, no pixel of this scan sampled yet (PAL resbl-kill
+    /// capture: the kill erases a pixel landing on the kill clock itself).
+    start_unshown: bool,
 }
 
 impl WidthGate {
@@ -148,6 +151,7 @@ impl WidthGate {
         WidthGate {
             lead: 0,
             width_left: 0,
+            start_unshown: false,
         }
     }
 
@@ -156,6 +160,7 @@ impl WidthGate {
         if self.lead > 0 {
             self.lead -= 1;
         } else {
+            self.start_unshown = false;
             self.width_left = self.width_left.saturating_sub(1);
         }
     }
@@ -164,6 +169,7 @@ impl WidthGate {
     pub(super) fn start(&mut self, width: u8) {
         self.lead = SERIAL_TAIL;
         self.width_left = width;
+        self.start_unshown = true;
     }
 
     /// Lit once the tail has burned and width remains.
@@ -175,11 +181,13 @@ impl WidthGate {
         self.lead > 0
     }
 
-    /// A reset strobe clears an unlit scan still in its tail.
+    /// A reset strobe clears a scan that has not yet shown a pixel — through
+    /// the tail and the first-lit clock alike (PAL resbl-kill capture).
     pub(super) fn kill(&mut self) {
-        if self.lead > 0 {
+        if self.lead > 0 || self.start_unshown {
             self.lead = 0;
             self.width_left = 0;
+            self.start_unshown = false;
         }
     }
 
@@ -191,9 +199,14 @@ impl WidthGate {
         self.width_left
     }
 
-    pub(super) fn restore(&mut self, lead: u8, width_left: u8) {
+    pub(super) fn start_unshown(&self) -> bool {
+        self.start_unshown
+    }
+
+    pub(super) fn restore(&mut self, lead: u8, width_left: u8, start_unshown: bool) {
         self.lead = lead;
         self.width_left = width_left;
+        self.start_unshown = start_unshown;
     }
 }
 

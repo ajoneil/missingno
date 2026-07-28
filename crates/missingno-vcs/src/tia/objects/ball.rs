@@ -86,6 +86,8 @@ pub(crate) struct BallState {
     pub start_pending: bool,
     pub gate_lead: u8,
     pub gate_width_left: u8,
+    /// START delivered, no pixel of this scan sampled yet.
+    pub gate_start_unshown: bool,
 }
 
 impl Ball {
@@ -100,6 +102,7 @@ impl Ball {
             start_pending: self.counter.start_pending(),
             gate_lead: self.gate.lead(),
             gate_width_left: self.gate.width_left(),
+            gate_start_unshown: self.gate.start_unshown(),
         }
     }
 
@@ -110,6 +113,7 @@ impl Ball {
         self.width_exponent = s.width_exponent;
         self.counter
             .restore(s.position, s.ring_phase, s.start_pending);
-        self.gate.restore(s.gate_lead, s.gate_width_left);
+        self.gate
+            .restore(s.gate_lead, s.gate_width_left, s.gate_start_unshown);
     }
 }

@@ -272,12 +272,26 @@ pub fn boundary_fields() -> Vec<FieldDef> {
     }
 
     // Missile width gate and reset-decode hold.
-    for (lead, width, hold) in [
-        ("m0_gate_lead", "m0_gate_width", "m0_reset_hold"),
-        ("m1_gate_lead", "m1_gate_width", "m1_reset_hold"),
+    for (lead, width, unshown, hold) in [
+        (
+            "m0_gate_lead",
+            "m0_gate_width",
+            "m0_gate_unshown",
+            "m0_reset_hold",
+        ),
+        (
+            "m1_gate_lead",
+            "m1_gate_width",
+            "m1_gate_unshown",
+            "m1_reset_hold",
+        ),
     ] {
         fields.push(FieldDef::boundary(lead, U8, "tia").help("width-gate select-network lead"));
         fields.push(FieldDef::boundary(width, U8, "tia").help("lit width remaining"));
+        fields.push(
+            FieldDef::boundary(unshown, Bool, "tia")
+                .help("START delivered, no pixel of this scan sampled yet"),
+        );
         fields.push(
             FieldDef::boundary(hold, Bool, "tia").help("reset strobe gripping the START decode"),
         );
@@ -287,6 +301,10 @@ pub fn boundary_fields() -> Vec<FieldDef> {
     fields
         .push(FieldDef::boundary("bl_gate_lead", U8, "tia").help("width-gate select-network lead"));
     fields.push(FieldDef::boundary("bl_gate_width", U8, "tia").help("lit width remaining"));
+    fields.push(
+        FieldDef::boundary("bl_gate_unshown", Bool, "tia")
+            .help("START delivered, no pixel of this scan sampled yet"),
+    );
 
     // HMOVE per-object more-movement latches and captured HM values.
     for m in [

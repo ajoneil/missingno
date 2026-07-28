@@ -120,6 +120,8 @@ pub(crate) struct MissileState {
     /// Width-gate select-network lead and remaining lit width.
     pub gate_lead: u8,
     pub gate_width_left: u8,
+    /// START delivered, no pixel of this scan sampled yet.
+    pub gate_start_unshown: bool,
     pub reset_decode_hold: bool,
 }
 
@@ -134,6 +136,7 @@ impl Missile {
             start_pending: self.counter.start_pending(),
             gate_lead: self.gate.lead(),
             gate_width_left: self.gate.width_left(),
+            gate_start_unshown: self.gate.start_unshown(),
             reset_decode_hold: self.reset_decode_hold,
         }
     }
@@ -144,7 +147,8 @@ impl Missile {
         self.nusiz = s.nusiz;
         self.counter
             .restore(s.position, s.ring_phase, s.start_pending);
-        self.gate.restore(s.gate_lead, s.gate_width_left);
+        self.gate
+            .restore(s.gate_lead, s.gate_width_left, s.gate_start_unshown);
         self.reset_decode_hold = s.reset_decode_hold;
     }
 }
