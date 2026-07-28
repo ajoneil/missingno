@@ -72,20 +72,21 @@ impl Player {
     }
 
     /// Whether a stuffed pulse merging into this MOTCK delivers its second
-    /// advance ahead of the next sample. Fires at one ring phase class per
-    /// stretch mode — the class the scan clock derives from (console-measured
-    /// stuck-train schedules; the stretched scan clock's source phase per
-    /// TIA_HW_Notes). The decap sim fires at every class, refuted on silicon.
-    /// Phases are pre-edge, read at the merge instant before this clock's ring
-    /// advance. At the line's final stuff slot a merge catching a 1× scan
-    /// still in its lead delivers late (console-measured wrap-seam straddle;
-    /// mid-line lead merges deliver early, e.g. the deform drop).
-    pub fn merge_delivery_fires(&self, final_stuff_slot: bool) -> bool {
-        let one_x = player_pixel_clocks(self.nusiz) == 1;
-        if final_stuff_slot && one_x && self.scan_in_lead() {
-            return false;
+    /// advance ahead of the next sample. A scan still in its first serial
+    /// cell takes the transfer at any ring phase; a counting scan only at
+    /// the class its scan clock derives from (PAL captures, both rigs:
+    /// stuck-train + straddle sweeps; the stretched source phase per
+    /// TIA_HW_Notes). The decap sim fires at every class, refuted on
+    /// silicon. State is pre-edge, read at the merge instant.
+    pub fn merge_delivery_fires(&self) -> bool {
+        if self
+            .scan
+            .as_ref()
+            .is_some_and(|scan| scan.lead > 0 || scan.bit == 0)
+        {
+            return true;
         }
-        let class = if one_x {
+        let class = if player_pixel_clocks(self.nusiz) == 1 {
             MERGE_DELIVERY_PHASE_1X
         } else {
             MERGE_DELIVERY_PHASE_STRETCHED
@@ -93,8 +94,14 @@ impl Player {
         self.counter.ring_phase() == class
     }
 
-    fn scan_in_lead(&self) -> bool {
-        self.scan.as_ref().is_some_and(|scan| scan.lead > 0)
+    /// Whether the merge's second transfer would carry the serialiser off
+    /// bit 0 before bit 0 was sampled — the transfer is then consumed by
+    /// the latch chain: no advance, no subsume (PAL captures: the lead-1
+    /// hold, line-end and mid-line alike).
+    pub fn merge_second_transfer_blocked(&self) -> bool {
+        self.scan.as_ref().is_some_and(|scan| {
+            scan.lead == 1 && scan.serial_lag == 0 && scan.clocks_left == 1 && scan.bit == 0
+        })
     }
 
     /// One motion clock (MOTCK edge).

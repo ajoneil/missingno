@@ -109,13 +109,6 @@ impl HSyncCounter {
         (self.position + 1) % CLOCKS_PER_LINE >= self.hblank_release
     }
 
-    /// Whether this colour clock is the line's last stuff slot — the final
-    /// H@1 of the line-fixed grid (stuff slots sit at position ≡ 1 mod 4;
-    /// die-measured drift cadence).
-    pub(crate) fn final_stuff_slot(&self) -> bool {
-        self.position % 4 == 1 && self.position + 4 >= CLOCKS_PER_LINE
-    }
-
     /// Force the line back to its start (the SHB wrap, or an RSYNC strobe).
     pub(crate) fn reset_line(&mut self) {
         self.position = 0;

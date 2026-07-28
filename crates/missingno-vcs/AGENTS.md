@@ -142,10 +142,12 @@ pipeline: per-object ÷4 divider rings with wrap-grid decode and a one-wrap pend
 START latch, the HSync counter spine, and the HMOVE engine (three-stage SEC
 two-phase shift; a live stuff merging into a firing MOTCK stretches the object's
 clock pulse — modelled as a committed second advance that subsumes the object's
-next MOTCK edge, phase-gated per object: the player delivers early only at its
-scan clock's source class, the missile at every class but the ring's pulse class,
-the ball at every class; all console-measured, and the missile and ball genuinely
-differ despite sharing the width gate). Each colour clock samples the pixel and
+next MOTCK edge: a player scan in its first serial cell takes it at any ring
+phase, a counting player scan only at its scan clock's source class, the missile
+at every class but the ring's pulse class, the ball at every class — and no
+transfer carries the serialiser off an unsampled bit 0 (blocked ⇒ no subsume);
+all console-measured across two capture campaigns, and the missile and ball
+genuinely differ despite sharing the width gate). Each colour clock samples the pixel and
 collision matrix before its MOTCK edge fires — the die's 160 rises per line run
 x=−1..158, more than a colour clock ahead of the pixel they move — so no render
 reads a pending tick. `src/riot.rs` has the

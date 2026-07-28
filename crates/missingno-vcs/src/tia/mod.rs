@@ -381,12 +381,13 @@ impl Tia {
         // below.
         let motion_clock = self.hsync.motck_fires();
         let mut merged = PerObject::splat(false);
+        let mut merge_blocked = PerObject::splat(false);
         if let Some(ticks) = self.motion.step(self.hsync.phase()) {
             for (which, ticked) in ticks.iter() {
                 if ticked {
                     if motion_clock {
-                        let final_slot = self.hsync.final_stuff_slot();
-                        merged[which] = self.movables.merge_delivery_fires(which, final_slot);
+                        merged[which] = self.movables.merge_delivery_fires(which);
+                        merge_blocked[which] = self.movables.merge_second_transfer_blocked(which);
                     } else {
                         self.movables.tick(which);
                     }
@@ -431,7 +432,8 @@ impl Tia {
         // it (Sim2600 live-seam: an advance delivered in clock 4k of a merged pulse
         // first shows at column 4k+2), so each clock's edge fires after its sample.
         // A merged pulse commits its second transfer here too and its stretched
-        // high subsumes the object's next rise.
+        // high subsumes the object's next rise — unless the bit-0 guard consumes
+        // the transfer, which then also leaves no subsume.
         if motion_clock {
             for which in MOVABLES {
                 if self.subsume_next_edge[which] {
@@ -439,7 +441,7 @@ impl Tia {
                 } else {
                     self.movables.tick(which);
                 }
-                if merged[which] {
+                if merged[which] && !merge_blocked[which] {
                     self.movables.tick(which);
                     self.subsume_next_edge[which] = true;
                 }

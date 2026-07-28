@@ -69,17 +69,28 @@ impl Movables {
         }
     }
 
-    /// A merged stuff delivers its second advance before the next sample only
-    /// at phase classes the object's clocking derives from: the player at its
-    /// scan clock's class, the missile at every class but the pulse class, the
-    /// ball at every class.
-    pub(super) fn merge_delivery_fires(&self, which: MovableIndex, final_stuff_slot: bool) -> bool {
+    /// A merged stuff delivers its second advance before the next sample: a
+    /// player scan in its first serial cell at any ring phase, a counting
+    /// player scan at its scan clock's class, the missile at every class but
+    /// the pulse class, the ball at every class.
+    pub(super) fn merge_delivery_fires(&self, which: MovableIndex) -> bool {
         match which {
-            MovableIndex::P0 => self.p0.merge_delivery_fires(final_stuff_slot),
-            MovableIndex::P1 => self.p1.merge_delivery_fires(final_stuff_slot),
+            MovableIndex::P0 => self.p0.merge_delivery_fires(),
+            MovableIndex::P1 => self.p1.merge_delivery_fires(),
             MovableIndex::M0 => self.m0.merge_delivery_fires(),
             MovableIndex::M1 => self.m1.merge_delivery_fires(),
             MovableIndex::Bl => true,
+        }
+    }
+
+    /// Whether a firing merge's second transfer is consumed without effect
+    /// (the player's bit-0 presentation guard; missiles and the ball have no
+    /// such stage).
+    pub(super) fn merge_second_transfer_blocked(&self, which: MovableIndex) -> bool {
+        match which {
+            MovableIndex::P0 => self.p0.merge_second_transfer_blocked(),
+            MovableIndex::P1 => self.p1.merge_second_transfer_blocked(),
+            MovableIndex::M0 | MovableIndex::M1 | MovableIndex::Bl => false,
         }
     }
 }
