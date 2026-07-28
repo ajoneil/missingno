@@ -5,11 +5,11 @@
 use super::COUNTER_RANGE;
 use super::counter::{NusizMode, PositionCounter, WidthGate, copy_decodes};
 
-/// The one pre-tick ring phase where the MISSILE's merged stuff previews
-/// nothing — the ring's pulse class, the complement of the 1× player's gate
-/// (console-measured: the missile's w2 dash stays full there; the ball's
-/// truncates, so the ball previews at every class).
-const MISSILE_SEAM_INERT_PHASE: u8 = 1;
+/// The one pre-edge ring phase where the MISSILE's merged stuff delivers its
+/// second advance late — the ring's pulse class, the complement of the 1×
+/// player's gate (console-measured: the missile's w2 dash stays full there;
+/// the ball's truncates, so the ball delivers early at every class).
+const MISSILE_MERGE_INERT_PHASE: u8 = 1;
 
 #[derive(Clone)]
 pub struct Missile {
@@ -100,10 +100,11 @@ impl Missile {
         }
     }
 
-    /// Whether a stuffed pulse merging into this MOTCK visibly previews the
-    /// width gate (pre-tick phase, read at the merge instant).
-    pub fn seam_preview_fires(&self) -> bool {
-        self.counter.ring_phase() != MISSILE_SEAM_INERT_PHASE
+    /// Whether a stuffed pulse merging into this MOTCK delivers its second
+    /// advance ahead of the next sample (pre-edge phase, read at the merge
+    /// instant).
+    pub fn merge_delivery_fires(&self) -> bool {
+        self.counter.ring_phase() != MISSILE_MERGE_INERT_PHASE
     }
 }
 

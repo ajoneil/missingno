@@ -101,18 +101,17 @@ impl HSyncCounter {
         false
     }
 
-    /// Whether MOTCK reaches the objects this clock: the HB gate opens one
-    /// colour clock ahead of the pixel window (N90's measured per-line edges
-    /// run x=−1..158 — one rise on the last blank clock, none on the last
-    /// visible one).
+    /// Whether MOTCK reaches the objects this clock: N90's 160 measured rises
+    /// sit at the pixel boundaries x=0..159 (Sim2600 live-seam), each firing
+    /// after its clock's sample — `position + 1` names the pixel this clock's
+    /// rise opens.
     pub(crate) fn motck_fires(&self) -> bool {
         (self.position + 1) % CLOCKS_PER_LINE >= self.hblank_release
     }
 
     /// Whether this colour clock is the line's last stuff slot — the final
     /// H@1 of the line-fixed grid (stuff slots sit at position ≡ 1 mod 4;
-    /// die-measured drift cadence), with no committing MOTCK edge remaining
-    /// before the wrap.
+    /// die-measured drift cadence).
     pub(crate) fn final_stuff_slot(&self) -> bool {
         self.position % 4 == 1 && self.position + 4 >= CLOCKS_PER_LINE
     }

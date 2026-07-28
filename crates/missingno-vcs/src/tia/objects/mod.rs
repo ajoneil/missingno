@@ -23,7 +23,7 @@ pub(crate) use missile::MissileState;
 pub(crate) use player::{PlayerState, ScanState};
 pub(crate) use playfield::PlayfieldState;
 
-use super::motion::{MovableIndex, PerObject};
+use super::motion::MovableIndex;
 
 /// Visible clocks per line — the objects' colour-clock position space.
 pub const COUNTER_RANGE: u8 = 160;
@@ -69,55 +69,17 @@ impl Movables {
         }
     }
 
-    /// One tick ahead of the live state — the merged pulse's early window.
-    fn peek(&self, which: MovableIndex) -> bool {
+    /// A merged stuff delivers its second advance before the next sample only
+    /// at phase classes the object's clocking derives from: the player at its
+    /// scan clock's class, the missile at every class but the pulse class, the
+    /// ball at every class.
+    pub(super) fn merge_delivery_fires(&self, which: MovableIndex, final_stuff_slot: bool) -> bool {
         match which {
-            MovableIndex::P0 => {
-                let mut ghost = self.p0.clone();
-                ghost.tick();
-                ghost.output()
-            }
-            MovableIndex::P1 => {
-                let mut ghost = self.p1.clone();
-                ghost.tick();
-                ghost.output()
-            }
-            MovableIndex::M0 => {
-                let mut ghost = self.m0.clone();
-                ghost.tick();
-                ghost.output()
-            }
-            MovableIndex::M1 => {
-                let mut ghost = self.m1.clone();
-                ghost.tick();
-                ghost.output()
-            }
-            MovableIndex::Bl => {
-                let mut ghost = self.bl.clone();
-                ghost.tick();
-                ghost.output()
-            }
-        }
-    }
-
-    /// A merged stuff previews the serialiser only at phase classes its
-    /// clocking derives from: the player at its scan clock's class, the
-    /// missile at every class but the pulse class, the ball at every class.
-    pub(super) fn seam_preview_fires(&self, which: MovableIndex, final_stuff_slot: bool) -> bool {
-        match which {
-            MovableIndex::P0 => self.p0.seam_preview_fires(final_stuff_slot),
-            MovableIndex::P1 => self.p1.seam_preview_fires(final_stuff_slot),
-            MovableIndex::M0 => self.m0.seam_preview_fires(),
-            MovableIndex::M1 => self.m1.seam_preview_fires(),
+            MovableIndex::P0 => self.p0.merge_delivery_fires(final_stuff_slot),
+            MovableIndex::P1 => self.p1.merge_delivery_fires(final_stuff_slot),
+            MovableIndex::M0 => self.m0.merge_delivery_fires(),
+            MovableIndex::M1 => self.m1.merge_delivery_fires(),
             MovableIndex::Bl => true,
-        }
-    }
-
-    pub(super) fn pixel(&self, which: MovableIndex, seam: PerObject<bool>) -> bool {
-        if seam[which] {
-            self.peek(which)
-        } else {
-            self.output(which)
         }
     }
 }

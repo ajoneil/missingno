@@ -52,16 +52,6 @@ impl<T: Copy> PerObject<T> {
         }
     }
 
-    pub(super) fn map<U>(self, mut f: impl FnMut(T) -> U) -> PerObject<U> {
-        PerObject {
-            p0: f(self.p0),
-            p1: f(self.p1),
-            m0: f(self.m0),
-            m1: f(self.m1),
-            bl: f(self.bl),
-        }
-    }
-
     pub(super) fn iter(&self) -> impl Iterator<Item = (MovableIndex, T)> + '_ {
         MOVABLES.into_iter().map(|which| (which, self[which]))
     }

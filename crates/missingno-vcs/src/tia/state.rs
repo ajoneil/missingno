@@ -36,7 +36,7 @@ pub(crate) struct TiaState {
     pub hblank_ext_pending_active: bool,
     pub hblank_ext_pending: u8,
     pub hblank_ext_armed: bool,
-    pub seam_lookahead: [bool; 5],
+    pub subsume_next_edge: [bool; 5],
     pub collisions: [u8; 8],
     pub player0: PlayerState,
     pub player1: PlayerState,
@@ -101,7 +101,7 @@ impl Tia {
             hblank_ext_pending_active: self.motion.extension_pending.is_some(),
             hblank_ext_pending: self.motion.extension_pending.unwrap_or(0),
             hblank_ext_armed: self.motion.extension_armed,
-            seam_lookahead: flatten(&self.seam_lookahead),
+            subsume_next_edge: flatten(&self.subsume_next_edge),
             collisions: self.collisions.0,
             player0: self.movables.p0.capture(),
             player1: self.movables.p1.capture(),
@@ -148,7 +148,7 @@ impl Tia {
         unflatten(&mut self.motion.captured_hm_values, s.mot_captured_hm);
         self.motion.extension_pending = s.hblank_ext_pending_active.then_some(s.hblank_ext_pending);
         self.motion.extension_armed = s.hblank_ext_armed;
-        unflatten(&mut self.seam_lookahead, s.seam_lookahead);
+        unflatten(&mut self.subsume_next_edge, s.subsume_next_edge);
         self.collisions.0 = s.collisions;
         self.movables.p0.restore(&s.player0);
         self.movables.p1.restore(&s.player1);

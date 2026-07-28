@@ -8,11 +8,11 @@ use super::counter::{PositionCounter, SERIAL_TAIL, copy_decodes, player_pixel_cl
 /// edge on the serialiser tail; missiles and the ball have no such stage.
 const PLAYER_START_LATCH: u8 = 1;
 
-/// Pre-tick ring phase classes whose merged stuff previews the player
-/// serialiser (console-measured: 1× collapses one row per movement cycle,
-/// 2× reshapes its own single row, 4× shows nothing).
-const SEAM_PREVIEW_PHASE_1X: u8 = 1;
-const SEAM_PREVIEW_PHASE_STRETCHED: u8 = 3;
+/// Pre-edge ring phase classes whose merged stuff delivers its second advance
+/// ahead of the sample (console-measured: 1× collapses one row per movement
+/// cycle, 2× reshapes its own single row, 4× shows nothing).
+const MERGE_DELIVERY_PHASE_1X: u8 = 1;
+const MERGE_DELIVERY_PHASE_STRETCHED: u8 = 3;
 
 #[derive(Clone)]
 struct Scan {
@@ -71,25 +71,24 @@ impl Player {
         self.counter.position_clk()
     }
 
-    /// Whether a stuffed pulse merging into this MOTCK visibly previews the
-    /// serialiser. Fires at one ring phase class per stretch mode — the class
-    /// the scan clock derives from (console-measured stuck-train schedules;
-    /// the stretched scan clock's source phase per TIA_HW_Notes). The decap
-    /// sim previews at every class, refuted on silicon. Phases are pre-tick,
-    /// read at the merge instant before this clock's ring advance. At the
-    /// line's final stuff slot a merge catching a 1× scan still in its lead
-    /// does NOT preview — no committing MOTCK edge remains, so the stretched
-    /// pulse reads back the undelivered load (console-measured wrap-seam
-    /// straddle; mid-line lead merges still advance, e.g. the deform drop).
-    pub fn seam_preview_fires(&self, final_stuff_slot: bool) -> bool {
+    /// Whether a stuffed pulse merging into this MOTCK delivers its second
+    /// advance ahead of the next sample. Fires at one ring phase class per
+    /// stretch mode — the class the scan clock derives from (console-measured
+    /// stuck-train schedules; the stretched scan clock's source phase per
+    /// TIA_HW_Notes). The decap sim fires at every class, refuted on silicon.
+    /// Phases are pre-edge, read at the merge instant before this clock's ring
+    /// advance. At the line's final stuff slot a merge catching a 1× scan
+    /// still in its lead delivers late (console-measured wrap-seam straddle;
+    /// mid-line lead merges deliver early, e.g. the deform drop).
+    pub fn merge_delivery_fires(&self, final_stuff_slot: bool) -> bool {
         let one_x = player_pixel_clocks(self.nusiz) == 1;
         if final_stuff_slot && one_x && self.scan_in_lead() {
             return false;
         }
         let class = if one_x {
-            SEAM_PREVIEW_PHASE_1X
+            MERGE_DELIVERY_PHASE_1X
         } else {
-            SEAM_PREVIEW_PHASE_STRETCHED
+            MERGE_DELIVERY_PHASE_STRETCHED
         };
         self.counter.ring_phase() == class
     }

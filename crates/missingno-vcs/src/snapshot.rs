@@ -98,7 +98,7 @@ fn write_tia(r: &mut StateRecord, t: &TiaState) {
         r.set(hm_field(o), t.mot_hm_values[i]);
         r.set(more_field(o), t.mot_more_movement[i]);
         r.set(cap_field(o), t.mot_captured_hm[i]);
-        r.set(seam_field(o), t.seam_lookahead[i]);
+        r.set(subsume_field(o), t.subsume_next_edge[i]);
     }
     r.set("mot_arm_stage", t.mot_arm_stage)
         .set("mot_just_strobed", t.mot_just_strobed)
@@ -260,13 +260,13 @@ fn cap_field(o: &str) -> &'static str {
         _ => "mot_cap_bl",
     }
 }
-fn seam_field(o: &str) -> &'static str {
+fn subsume_field(o: &str) -> &'static str {
     match o {
-        "p0" => "seam_p0",
-        "p1" => "seam_p1",
-        "m0" => "seam_m0",
-        "m1" => "seam_m1",
-        _ => "seam_bl",
+        "p0" => "subsume_p0",
+        "p1" => "subsume_p1",
+        "m0" => "subsume_m0",
+        "m1" => "subsume_m1",
+        _ => "subsume_bl",
     }
 }
 
@@ -452,12 +452,12 @@ fn parse_tia(r: &StateRecord) -> Result<TiaState, StateError> {
     let mut mot_hm_values = [0u8; 5];
     let mut mot_more_movement = [false; 5];
     let mut mot_captured_hm = [0u8; 5];
-    let mut seam_lookahead = [false; 5];
+    let mut subsume_next_edge = [false; 5];
     for (i, o) in objs.iter().enumerate() {
         mot_hm_values[i] = u8_of(r, hm_field(o))?;
         mot_more_movement[i] = bool_of(r, more_field(o))?;
         mot_captured_hm[i] = u8_of(r, cap_field(o))?;
-        seam_lookahead[i] = bool_of(r, seam_field(o))?;
+        subsume_next_edge[i] = bool_of(r, subsume_field(o))?;
     }
     let mut collisions = [0u8; 8];
     for (i, cx) in ["cx0", "cx1", "cx2", "cx3", "cx4", "cx5", "cx6", "cx7"]
@@ -490,7 +490,7 @@ fn parse_tia(r: &StateRecord) -> Result<TiaState, StateError> {
         hblank_ext_pending_active: bool_of(r, "hblank_ext_active")?,
         hblank_ext_pending: u8_of(r, "hblank_ext_pending")?,
         hblank_ext_armed: bool_of(r, "hblank_ext_armed")?,
-        seam_lookahead,
+        subsume_next_edge,
         collisions,
         player0: parse_player(r, "p0")?,
         player1: parse_player(r, "p1")?,

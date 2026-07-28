@@ -201,12 +201,12 @@ pub struct Tia {
     collisions: Collisions,
 
     motion: MotionSequencer,
-    /// A merged live stuff stretches the object's motion-clock high through
-    /// the stuff slot; the serialiser shows the NEXT clock's output one clock
-    /// early, at the ring phase classes each object's clocking derives from
-    /// (console-measured: the w1 dot swallows on a final-leading-slot merge
-    /// and widens on a wrap-slot merge; nothing persists to the next line).
-    seam_lookahead: PerObject<bool>,
+    /// A merged live stuff stretches the object's clock node (NOR of MOTCK
+    /// and the stuff, N90/N1118) high across the clock boundary: the second
+    /// transfer has already committed, so the next MOTCK rise is the same
+    /// pulse and delivers no advance (Sim2600 live-seam: 145 rises deliver
+    /// 160 advances on a strobe line).
+    subsume_next_edge: PerObject<bool>,
 
     audio: [Channel; 2],
     /// RSYNC's decoded level, up from two colour clocks before its wrap. While
@@ -244,7 +244,7 @@ impl Tia {
             mux: ColorMux::new(),
             collisions: Collisions::new(),
             motion: MotionSequencer::new(),
-            seam_lookahead: PerObject::splat(false),
+            subsume_next_edge: PerObject::splat(false),
             audio: [Channel::new(), Channel::new()],
             rsync_asserted: false,
             audio_commit_held: false,
@@ -375,20 +375,18 @@ impl Tia {
         self.motion.step_extension_decode();
 
         // A stuffed motion pulse ORs onto the object's own motion-clock node:
-        // coincident with a firing MOTCK it merges into one stretched pulse
-        // (no extra advance, but the serialiser shows the next clock's output
-        // one clock early); while MOTCK is gated the stuff is the pulse that
-        // moves the object.
-        let seam = self.seam_lookahead;
-        self.seam_lookahead = PerObject::splat(false);
+        // while MOTCK is gated the stuff is the standalone pulse that moves
+        // the object, landing ahead of the sample; coincident with a firing
+        // MOTCK it merges into one stretched pulse, handled at the edge phase
+        // below.
         let motion_clock = self.hsync.motck_fires();
+        let mut merged = PerObject::splat(false);
         if let Some(ticks) = self.motion.step(self.hsync.phase()) {
             for (which, ticked) in ticks.iter() {
                 if ticked {
                     if motion_clock {
                         let final_slot = self.hsync.final_stuff_slot();
-                        self.seam_lookahead[which] =
-                            self.movables.seam_preview_fires(which, final_slot);
+                        merged[which] = self.movables.merge_delivery_fires(which, final_slot);
                     } else {
                         self.movables.tick(which);
                     }
@@ -396,16 +394,6 @@ impl Tia {
             }
         }
 
-        if motion_clock {
-            for which in MOVABLES {
-                self.movables.tick(which);
-            }
-        }
-
-        // A clock whose motion tick is N90-deferred past the wrap (the line's
-        // last pixel) previews it like the merge ghost — the die shows one
-        // serialiser tick per clock (m11 wrap runs).
-        let seam = seam.map(|s| s || !motion_clock);
         let beam = self.hsync.beam();
         if let Beam::Pixel(x) = beam
             && x.is_multiple_of(4)
@@ -413,11 +401,11 @@ impl Tia {
             self.playfield.latch_cell();
         }
         let px = Pixels {
-            p0: self.movables.pixel(MovableIndex::P0, seam),
-            p1: self.movables.pixel(MovableIndex::P1, seam),
-            m0: self.movables.pixel(MovableIndex::M0, seam),
-            m1: self.movables.pixel(MovableIndex::M1, seam),
-            bl: self.movables.pixel(MovableIndex::Bl, seam),
+            p0: self.movables.output(MovableIndex::P0),
+            p1: self.movables.output(MovableIndex::P1),
+            m0: self.movables.output(MovableIndex::M0),
+            m1: self.movables.output(MovableIndex::M1),
+            bl: self.movables.output(MovableIndex::Bl),
             // The playfield cell decode selects nothing outside the visible
             // counts, so its serial contribution while blanked is low.
             pf: match beam {
@@ -437,6 +425,24 @@ impl Tia {
             // Inside the HMOVE comb: blanked output.
             Beam::Comb(x) => self.line[x as usize] = 0,
             Beam::Blank => {}
+        }
+
+        // The MOTCK rises sit at the pixel boundaries (N90's 160 per line,
+        // Sim2600 live-seam), so each clock's edge fires after its sample. A
+        // merged pulse commits its second transfer here too and its stretched
+        // high subsumes the object's next rise.
+        if motion_clock {
+            for which in MOVABLES {
+                if self.subsume_next_edge[which] {
+                    self.subsume_next_edge[which] = false;
+                } else {
+                    self.movables.tick(which);
+                }
+                if merged[which] {
+                    self.movables.tick(which);
+                    self.subsume_next_edge[which] = true;
+                }
+            }
         }
 
         // The audio circuits clock twice per scanline (~31.4 kHz), each tick a

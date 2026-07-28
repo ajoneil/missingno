@@ -140,11 +140,14 @@ commits at the strobe's rise and the RESxx resets at its release — ground any 
 write-timing number the same way before adding it. `src/tia/` holds the pixel
 pipeline: per-object ÷4 divider rings with wrap-grid decode and a one-wrap pending
 START latch, the HSync counter spine, and the HMOVE engine (three-stage SEC
-two-phase shift; a live stuff absorbs into a firing MOTCK with a one-clock seam
-lookahead on the following render, phase-gated per object — the player previews
-only at its scan clock's source class, the missile at every class but the ring's
-pulse class, the ball at every class; all console-measured, and the missile and
-ball genuinely differ despite sharing the width gate). `src/riot.rs` has the
+two-phase shift; a live stuff merging into a firing MOTCK stretches the object's
+clock pulse — modelled as a committed second advance that subsumes the object's
+next MOTCK edge, phase-gated per object: the player delivers early only at its
+scan clock's source class, the missile at every class but the ring's pulse class,
+the ball at every class; all console-measured, and the missile and ball genuinely
+differ despite sharing the width gate). Each colour clock samples the pixel and
+collision matrix before its MOTCK edge fires — the die's rises sit at the pixel
+boundaries — so no render reads a pending tick. `src/riot.rs` has the
 timer/ports. The
 frontend drives it through the `app/system/` seam described in
 `docs/adding-a-system.md`.

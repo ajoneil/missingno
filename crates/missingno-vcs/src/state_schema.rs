@@ -307,11 +307,17 @@ pub fn boundary_fields() -> Vec<FieldDef> {
     ] {
         fields.push(FieldDef::boundary(c, U8, "tia").help("HM value captured at the last H@2"));
     }
-    // Per-object motion-clock seam lookahead.
-    for s in ["seam_p0", "seam_p1", "seam_m0", "seam_m1", "seam_bl"] {
+    // Per-object merged-pulse edge subsumption.
+    for s in [
+        "subsume_p0",
+        "subsume_p1",
+        "subsume_m0",
+        "subsume_m1",
+        "subsume_bl",
+    ] {
         fields.push(
             FieldDef::boundary(s, Bool, "tia")
-                .help("merged-stuff serialiser preview for the next clock"),
+                .help("merged-stuff pulse still high; the next MOTCK rise delivers no advance"),
         );
     }
 

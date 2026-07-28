@@ -10,9 +10,10 @@
 const COUNTS: u8 = 40;
 
 /// MOTCK edges from a START delivery to the serialiser's first output — the
-/// measured select-network tail (the scan register begins its walk on the
-/// delivery edge; the first lit pixel follows two edges later).
-pub(super) const SERIAL_TAIL: u8 = 2;
+/// select-network tail (Sim2600 live-seam park calibration: first lit column
+/// = delivery column + 2; the sample precedes its clock's edge, so one model
+/// edge realises it).
+pub(super) const SERIAL_TAIL: u8 = 1;
 
 /// The main-copy START decode: the counter's wrap (count 39).
 pub(super) const MAIN_DECODE: u8 = COUNTS - 1;
