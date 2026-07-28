@@ -146,8 +146,9 @@ next MOTCK edge, phase-gated per object: the player delivers early only at its
 scan clock's source class, the missile at every class but the ring's pulse class,
 the ball at every class; all console-measured, and the missile and ball genuinely
 differ despite sharing the width gate). Each colour clock samples the pixel and
-collision matrix before its MOTCK edge fires — the die's rises sit at the pixel
-boundaries — so no render reads a pending tick. `src/riot.rs` has the
+collision matrix before its MOTCK edge fires — the die's 160 rises per line run
+x=−1..158, more than a colour clock ahead of the pixel they move — so no render
+reads a pending tick. `src/riot.rs` has the
 timer/ports. The
 frontend drives it through the `app/system/` seam described in
 `docs/adding-a-system.md`.

@@ -101,10 +101,10 @@ impl HSyncCounter {
         false
     }
 
-    /// Whether MOTCK reaches the objects this clock: N90's 160 measured rises
-    /// sit at the pixel boundaries x=0..159 (Sim2600 live-seam), each firing
-    /// after its clock's sample — `position + 1` names the pixel this clock's
-    /// rise opens.
+    /// Whether MOTCK reaches the objects this clock: the die's 160 rises per line
+    /// run x=−1..158 — one on the last blank clock, none in pixel 159's (Sim2600
+    /// live-seam, N90/N1118) — and this window is that train. `position + 1`
+    /// names the pixel at which this clock's advance first shows.
     pub(crate) fn motck_fires(&self) -> bool {
         (self.position + 1) % CLOCKS_PER_LINE >= self.hblank_release
     }

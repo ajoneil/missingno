@@ -427,9 +427,10 @@ impl Tia {
             Beam::Blank => {}
         }
 
-        // The MOTCK rises sit at the pixel boundaries (N90's 160 per line,
-        // Sim2600 live-seam), so each clock's edge fires after its sample. A
-        // merged pulse commits its second transfer here too and its stretched
+        // A rise moves the object more than a colour clock before the pixel shows
+        // it (Sim2600 live-seam: an advance delivered in clock 4k of a merged pulse
+        // first shows at column 4k+2), so each clock's edge fires after its sample.
+        // A merged pulse commits its second transfer here too and its stretched
         // high subsumes the object's next rise.
         if motion_clock {
             for which in MOVABLES {
