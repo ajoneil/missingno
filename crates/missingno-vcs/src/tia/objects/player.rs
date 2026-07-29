@@ -88,14 +88,16 @@ impl Player {
     /// advance ahead of the next sample. At 1×, a scan that has not yet
     /// presented bit 0 takes the transfer at any ring phase, then the class
     /// gate (PAL console, merge-delivery latch legs). Stretched modes: the
-    /// lead and serial-lag stages take it at any phase; through the scan's
-    /// first three bits a cell's first clock takes it only on the odd-index
-    /// cell — the ÷2 stretch stage gating the transfer (PAL console: six
-    /// latch ROM profiles and the priority-extinguish leg, video and latch
-    /// coherent in one flash); after that, the class gate (stretched source
-    /// phase per TIA_HW_Notes). The three-bit scope is console-measured with
-    /// its mechanism open. The decap sim fires at every class, refuted on
-    /// silicon. State is pre-edge, read at the merge instant.
+    /// lead and serial-lag stages take it at any phase; at 2×, through the
+    /// scan's first three bits a cell's first clock takes it only on the
+    /// odd-index cell — the ÷2 stretch stage gating the transfer (PAL
+    /// console: six latch ROM profiles and the priority-extinguish leg,
+    /// video and latch agreeing on both surfaces); otherwise the class gate
+    /// (stretched source phase per TIA_HW_Notes). The three-bit scope is
+    /// console-measured with its mechanism open; at 4× every candidate
+    /// clause is observation-equivalent, so the class gate alone stands.
+    /// The decap sim fires at every class, refuted on silicon. State is
+    /// pre-edge, read at the merge instant.
     pub fn merge_delivery_fires(&self) -> bool {
         let pixel_clocks = player_pixel_clocks(self.nusiz);
         let class = if pixel_clocks == 1 {
@@ -113,7 +115,10 @@ impl Player {
         if scan.lead > 0 || scan.serial_lag > 0 {
             return true;
         }
-        if scan.bit < 3 && scan.clocks_left == pixel_clocks {
+        // The odd-cell grant is the ÷2 stretch stage's; it has no 4×
+        // counterpart (single mask leg, ph1 dead — netlist-traced), and
+        // every 4× candidate clause is observation-equivalent there.
+        if pixel_clocks == 2 && scan.bit < 3 && scan.clocks_left == pixel_clocks {
             return scan.bit % 2 == 1;
         }
         at_class
