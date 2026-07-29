@@ -85,28 +85,38 @@ impl Player {
     }
 
     /// Whether a stuffed pulse merging into this MOTCK delivers its second
-    /// advance ahead of the next sample. A scan that has not yet presented
-    /// bit 0's first pixel takes the transfer at any ring phase; once shown,
-    /// only the class its scan clock derives from (PAL captures: 1× via the
-    /// merge-delivery latch legs; 2×/4× via the stuck-stretch union render —
-    /// the die adds the unshown-window cells and deletes none; the stretched
-    /// source phase per TIA_HW_Notes). The decap sim fires at every class,
-    /// refuted on silicon. State is pre-edge, read at the merge instant.
+    /// advance ahead of the next sample. At 1×, a scan that has not yet
+    /// presented bit 0 takes the transfer at any ring phase, then the class
+    /// gate (PAL console, merge-delivery latch legs). Stretched modes: the
+    /// lead and serial-lag stages take it at any phase; through the scan's
+    /// first three bits a cell's first clock takes it only on the odd-index
+    /// cell — the ÷2 stretch stage gating the transfer (PAL console: six
+    /// latch ROM profiles and the priority-extinguish leg, video and latch
+    /// coherent in one flash); after that, the class gate (stretched source
+    /// phase per TIA_HW_Notes). The three-bit scope is console-measured with
+    /// its mechanism open. The decap sim fires at every class, refuted on
+    /// silicon. State is pre-edge, read at the merge instant.
     pub fn merge_delivery_fires(&self) -> bool {
         let pixel_clocks = player_pixel_clocks(self.nusiz);
-        if self.scan.as_ref().is_some_and(|scan| {
-            scan.lead > 0
-                || scan.serial_lag > 0
-                || (scan.bit == 0 && scan.clocks_left == pixel_clocks)
-        }) {
-            return true;
-        }
         let class = if pixel_clocks == 1 {
             MERGE_DELIVERY_PHASE_1X
         } else {
             MERGE_DELIVERY_PHASE_STRETCHED
         };
-        self.counter.ring_phase() == class
+        let at_class = self.counter.ring_phase() == class;
+        let Some(scan) = &self.scan else {
+            return at_class;
+        };
+        if pixel_clocks == 1 {
+            return scan.lead > 0 || scan.bit == 0 || at_class;
+        }
+        if scan.lead > 0 || scan.serial_lag > 0 {
+            return true;
+        }
+        if scan.bit < 3 && scan.clocks_left == pixel_clocks {
+            return scan.bit % 2 == 1;
+        }
+        at_class
     }
 
     /// Whether the merge's second transfer would carry the serialiser off
