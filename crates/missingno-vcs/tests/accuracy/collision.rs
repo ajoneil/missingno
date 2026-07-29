@@ -63,7 +63,10 @@ fn merge_delivery_secam() {
 
 #[test]
 fn merge_delivery_stretch_ntsc() {
-    common::run_self_test("collision/merge-delivery-stretch_ntsc.a26", TvStandard::Ntsc);
+    common::run_self_test(
+        "collision/merge-delivery-stretch_ntsc.a26",
+        TvStandard::Ntsc,
+    );
 }
 
 #[test]
@@ -73,7 +76,10 @@ fn merge_delivery_stretch_pal() {
 
 #[test]
 fn merge_delivery_stretch_secam() {
-    common::run_self_test("collision/merge-delivery-stretch_secam.a26", TvStandard::Secam);
+    common::run_self_test(
+        "collision/merge-delivery-stretch_secam.a26",
+        TvStandard::Secam,
+    );
 }
 
 #[test]
@@ -88,7 +94,10 @@ fn merge_delivery_train_pal() {
 
 #[test]
 fn merge_delivery_train_secam() {
-    common::run_self_test("collision/merge-delivery-train_secam.a26", TvStandard::Secam);
+    common::run_self_test(
+        "collision/merge-delivery-train_secam.a26",
+        TvStandard::Secam,
+    );
 }
 
 #[test]
