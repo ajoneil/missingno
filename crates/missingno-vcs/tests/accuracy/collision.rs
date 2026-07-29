@@ -93,6 +93,27 @@ fn merge_delivery_train_pal() {
 }
 
 #[test]
+fn merge_delivery_replant_ntsc() {
+    common::run_self_test(
+        "collision/merge-delivery-replant_ntsc.a26",
+        TvStandard::Ntsc,
+    );
+}
+
+#[test]
+fn merge_delivery_replant_pal() {
+    common::run_self_test("collision/merge-delivery-replant_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn merge_delivery_replant_secam() {
+    common::run_self_test(
+        "collision/merge-delivery-replant_secam.a26",
+        TvStandard::Secam,
+    );
+}
+
+#[test]
 fn merge_delivery_train_secam() {
     common::run_self_test(
         "collision/merge-delivery-train_secam.a26",
