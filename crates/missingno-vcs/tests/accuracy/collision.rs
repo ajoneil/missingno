@@ -62,6 +62,36 @@ fn merge_delivery_secam() {
 }
 
 #[test]
+fn merge_delivery_stretch_ntsc() {
+    common::run_self_test("collision/merge-delivery-stretch_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn merge_delivery_stretch_pal() {
+    common::run_self_test("collision/merge-delivery-stretch_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn merge_delivery_stretch_secam() {
+    common::run_self_test("collision/merge-delivery-stretch_secam.a26", TvStandard::Secam);
+}
+
+#[test]
+fn merge_delivery_train_ntsc() {
+    common::run_self_test("collision/merge-delivery-train_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn merge_delivery_train_pal() {
+    common::run_self_test("collision/merge-delivery-train_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn merge_delivery_train_secam() {
+    common::run_self_test("collision/merge-delivery-train_secam.a26", TvStandard::Secam);
+}
+
+#[test]
 fn resbl_kill_ntsc() {
     common::run_self_test("collision/resbl-kill_ntsc.a26", TvStandard::Ntsc);
 }

@@ -317,6 +317,33 @@ fn hmove_stuck_player_secam() {
 }
 
 #[test]
+fn hmove_stuck_straddle_ntsc() {
+    common::run_screenshot(
+        "tia-timing/hmove-stuck-straddle_ntsc.a26",
+        "tia-timing/hmove-stuck-straddle_ntsc.png",
+        TvStandard::Ntsc,
+    );
+}
+
+#[test]
+fn hmove_stuck_straddle_pal() {
+    common::run_screenshot(
+        "tia-timing/hmove-stuck-straddle_pal.a26",
+        "tia-timing/hmove-stuck-straddle_pal.png",
+        TvStandard::Pal,
+    );
+}
+
+#[test]
+fn hmove_stuck_straddle_secam() {
+    common::run_screenshot(
+        "tia-timing/hmove-stuck-straddle_secam.a26",
+        "tia-timing/hmove-stuck-straddle_secam.png",
+        TvStandard::Secam,
+    );
+}
+
+#[test]
 fn hmove_stuck_release_ntsc() {
     common::run_screenshot(
         "tia-timing/hmove-stuck-release_ntsc.a26",
