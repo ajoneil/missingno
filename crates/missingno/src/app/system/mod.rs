@@ -10,9 +10,7 @@ use std::path::Path;
 pub use missingno_core::ports::{
     ControlDescriptor, PanelControl, PeripheralId, PortDescriptor, PortId,
 };
-pub use missingno_core::system::{
-    ControlId, ControlInput, ControlRole, SystemConsole, SystemDebugger,
-};
+pub use missingno_core::system::{ControlId, ControlInput, SystemConsole, SystemDebugger};
 
 pub mod gb;
 #[cfg(feature = "nes")]
@@ -26,7 +24,7 @@ pub mod vcs;
 /// platform strings are mapped into it, and display always goes through
 /// [`Platform::name`]. Variants are never cfg-gated — a library entry
 /// written by a fuller build must still parse.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Platform {
     GameBoy,
     GameBoyColor,
@@ -44,17 +42,6 @@ impl Platform {
             Platform::AtariVcs => "Atari VCS",
             Platform::MasterSystem => "Sega Master System",
             Platform::Nes => "Nintendo Entertainment System",
-        }
-    }
-
-    /// Short name for compact UI (bindings rows, badges).
-    pub fn short_name(self) -> &'static str {
-        match self {
-            Platform::GameBoy => "GB",
-            Platform::GameBoyColor => "GBC",
-            Platform::AtariVcs => "VCS",
-            Platform::MasterSystem => "SMS",
-            Platform::Nes => "NES",
         }
     }
 
@@ -135,8 +122,8 @@ pub struct TraceRequest<'a> {
 }
 
 /// A family's control surfaces: the integrated pad, the peripherals its ports
-/// accept, and the console panel. Every table is static, so a binding's role
-/// can be placed on a site — and labelled — without a loaded console.
+/// accept, and the console panel. Every table is static, so the settings UI
+/// renders a system's bindable controls without a loaded console.
 #[derive(Clone, Copy)]
 pub struct ControlMap {
     pub integrated: &'static [ControlDescriptor],
@@ -156,47 +143,6 @@ impl ControlMap {
             panel,
         }
     }
-
-    /// Where this family plays `role`: the integrated pad first, then the ports
-    /// in order, then the panel. `None` when nothing on the console plays it.
-    pub fn resolve(&self, role: ControlRole) -> Option<ControlId> {
-        if self.integrated.iter().any(|control| control.role == role) {
-            return Some(ControlId::integrated(role));
-        }
-        for port in self.ports {
-            let played = port
-                .accepts
-                .iter()
-                .any(|peripheral| peripheral.controls.iter().any(|c| c.role == role));
-            if played {
-                return Some(ControlId::port(port.port, role));
-            }
-        }
-        self.panel
-            .iter()
-            .any(|control| control.role == role)
-            .then(|| ControlId::panel(role))
-    }
-
-    /// The family's name for `role`, from the surface that plays it.
-    pub fn label(&self, role: ControlRole) -> Option<&'static str> {
-        let on_peripherals = self
-            .ports
-            .iter()
-            .flat_map(|port| port.accepts)
-            .flat_map(|peripheral| peripheral.controls);
-        self.integrated
-            .iter()
-            .chain(on_peripherals)
-            .find(|control| control.role == role)
-            .map(|control| control.label)
-            .or_else(|| {
-                self.panel
-                    .iter()
-                    .find(|control| control.role == role)
-                    .map(|control| control.label)
-            })
-    }
 }
 
 /// A family's registration on the load path: how its media is recognised in
@@ -204,11 +150,11 @@ impl ControlMap {
 pub struct FamilyDescriptor {
     pub platform: Platform,
     pub extensions: &'static [&'static str],
-    /// The family's control surfaces, for binding resolution and labelling.
+    /// The family's control surfaces, for the bindings UI.
     pub controls: ControlMap,
     /// Whether path and contents identify this family's media. Predicates
-    /// across the table are mutually exclusive; table order sets the
-    /// file-dialog filter order, not claim precedence.
+    /// across the table are mutually exclusive, so table order is registration
+    /// order, not claim precedence.
     pub is_rom: fn(&Path, &[u8]) -> bool,
     /// Title carried in the media's header, for families whose media has
     /// one; `None` falls back to the file stem.
@@ -234,7 +180,24 @@ pub fn family_for(path: &Path, rom: &[u8]) -> Option<&'static FamilyDescriptor> 
     FAMILIES.iter().find(|family| (family.is_rom)(path, rom))
 }
 
-/// Every registered family, in file-dialog filter order.
+/// The registered families in the order they are listed to the user: by display
+/// name, so the table's own order stays free to mean what it means.
+pub fn families_by_name() -> Vec<&'static FamilyDescriptor> {
+    let mut families: Vec<&'static FamilyDescriptor> = FAMILIES.iter().collect();
+    families.sort_by_key(|family| family.platform.name());
+    families
+}
+
+/// The registered platforms in display order.
+pub fn platforms_by_name() -> Vec<Platform> {
+    families_by_name()
+        .into_iter()
+        .map(|family| family.platform)
+        .collect()
+}
+
+/// Every registered family, in registration order. Everything the user sees
+/// sorts by name; nothing depends on this order.
 pub static FAMILIES: &[FamilyDescriptor] = &[
     FamilyDescriptor {
         platform: Platform::GameBoy,

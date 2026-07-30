@@ -13,9 +13,7 @@ use super::ui::{
     sizes::{l, s},
     text,
 };
-use super::{
-    App, DetailSubScreen, Fullscreen, Game, LoadedGame, Message, Screen, controls, settings,
-};
+use super::{App, DetailSubScreen, Fullscreen, Message, Screen, controls, settings};
 
 mod cartridge;
 mod emulator;
@@ -23,26 +21,6 @@ mod library;
 mod shell;
 
 impl App {
-    /// The display technology of the currently loaded console, if any — used to
-    /// show only the matching cosmetic overlay option in settings.
-    fn current_technology(&self) -> Option<missingno_core::video::DisplayTechnology> {
-        match &self.game {
-            Game::Loaded(LoadedGame::Emulator(emu)) => Some(emu.technology()),
-            Game::Loaded(LoadedGame::Debugger(dbg)) => Some(dbg.technology()),
-            _ => None,
-        }
-    }
-
-    /// Whether the loaded game supports SGB enhancements: `Some` once a game
-    /// whose support is known is loaded, `None` when none is (so the settings
-    /// screen keeps the global SGB preference reachable).
-    fn current_sgb_support(&self) -> Option<bool> {
-        match &self.game {
-            Game::Loaded(LoadedGame::Emulator(emu)) => Some(emu.supports_sgb()),
-            _ => None,
-        }
-    }
-
     pub fn view(&self) -> Element<'_, Message> {
         // First-boot setup
         if !self.settings.setup_complete {
@@ -61,6 +39,7 @@ impl App {
             (
                 Screen::Settings {
                     section,
+                    controls,
                     listening_for,
                     ..
                 },
@@ -68,10 +47,9 @@ impl App {
             ) => settings::view::view(
                 &self.settings,
                 *section,
+                controls,
                 *listening_for,
                 &self.cartridge_rw.detected_devices,
-                self.current_technology(),
-                self.current_sgb_support(),
             ),
             (
                 Screen::ViewingGame {
@@ -147,15 +125,9 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        let listening_for = self.listening_for();
-        let listening_keyboard = matches!(
-            listening_for,
-            Some(settings::view::ListeningFor::Keyboard(_))
-        );
-        let listening_gamepad = matches!(
-            listening_for,
-            Some(settings::view::ListeningFor::Gamepad(_))
-        );
+        let listening_surface = self.listening_for().map(|listening| listening.surface);
+        let listening_keyboard = listening_surface == Some(settings::Surface::Keyboard);
+        let listening_gamepad = listening_surface == Some(settings::Surface::Gamepad);
 
         Subscription::batch([
             if listening_keyboard {

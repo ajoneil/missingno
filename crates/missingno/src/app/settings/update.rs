@@ -1,6 +1,6 @@
 use iced::Task;
 
-use crate::app::{self, Game, LoadedGame, controls, library};
+use crate::app::{self, Game, LoadedGame, library};
 
 pub(in crate::app) fn handle(
     app: &mut app::App,
@@ -133,6 +133,33 @@ pub(in crate::app) fn handle(
                 app.cartridge_rw.known_ports.clear();
             }
         }
+        super::view::Message::SelectControlsPage(page) => {
+            if let app::Screen::Settings {
+                ref mut controls,
+                ref mut listening_for,
+                ..
+            } = app.screen
+            {
+                controls.page = page;
+                *listening_for = None;
+            }
+        }
+        super::view::Message::SelectControllerTab(platform, peripheral) => {
+            if let app::Screen::Settings {
+                ref mut controls,
+                ref mut listening_for,
+                ..
+            } = app.screen
+            {
+                controls.controller_tabs.insert(platform, peripheral);
+                *listening_for = None;
+            }
+        }
+        super::view::Message::SetPointerKnob(platform, drives) => {
+            app.settings.controls.set_pointer_knob(platform, drives);
+            app.settings.save();
+            app.push_routing();
+        }
         super::view::Message::StartListening(target) => {
             if let app::Screen::Settings {
                 ref mut listening_for,
@@ -143,55 +170,35 @@ pub(in crate::app) fn handle(
             }
         }
         super::view::Message::CaptureBinding(key_str) => {
-            let target = if let app::Screen::Settings {
-                ref mut listening_for,
-                ..
-            } = app.screen
-            {
-                listening_for.take()
-            } else {
-                None
-            };
-            if let Some(target) = target {
-                match target {
-                    super::view::ListeningFor::Keyboard(action) => {
-                        app.settings.keyboard_bindings.set(action, key_str);
-                    }
-                    super::view::ListeningFor::Gamepad(action) => {
-                        app.settings.gamepad_bindings.set(action, key_str);
-                    }
+            if let Some(listening) = take_listening(app) {
+                match listening.target {
+                    super::view::BindingTarget::Emulator(action) => app
+                        .settings
+                        .controls
+                        .set_emulator(listening.surface, action, key_str),
+                    super::view::BindingTarget::System(platform, slot) => app
+                        .settings
+                        .controls
+                        .set_system(platform, listening.surface, slot, key_str),
                 }
                 app.settings.save();
-                controls::update_bindings(
-                    &app.settings.keyboard_bindings,
-                    &app.settings.gamepad_bindings,
-                );
+                app.push_routing();
             }
         }
         super::view::Message::ClearBinding => {
-            let target = if let app::Screen::Settings {
-                ref mut listening_for,
-                ..
-            } = app.screen
-            {
-                listening_for.take()
-            } else {
-                None
-            };
-            if let Some(target) = target {
-                match target {
-                    super::view::ListeningFor::Keyboard(action) => {
-                        app.settings.keyboard_bindings.0.remove(&action);
-                    }
-                    super::view::ListeningFor::Gamepad(action) => {
-                        app.settings.gamepad_bindings.0.remove(&action);
-                    }
+            if let Some(listening) = take_listening(app) {
+                match listening.target {
+                    super::view::BindingTarget::Emulator(action) => app
+                        .settings
+                        .controls
+                        .clear_emulator(listening.surface, action),
+                    super::view::BindingTarget::System(platform, slot) => app
+                        .settings
+                        .controls
+                        .clear_system(platform, listening.surface, slot),
                 }
                 app.settings.save();
-                controls::update_bindings(
-                    &app.settings.keyboard_bindings,
-                    &app.settings.gamepad_bindings,
-                );
+                app.push_routing();
             }
         }
         super::view::Message::CancelCapture => {
@@ -203,9 +210,13 @@ pub(in crate::app) fn handle(
                 *listening_for = None;
             }
         }
-        super::view::Message::ResetBindings => {
-            app.settings.keyboard_bindings = super::Bindings::default_keyboard();
-            app.settings.gamepad_bindings = super::Bindings::default_gamepad();
+        super::view::Message::ResetBindings(page) => {
+            match page {
+                super::view::ControlsPage::Emulator => app.settings.controls.reset_emulator(),
+                super::view::ControlsPage::System(platform) => {
+                    app.settings.controls.reset_system(platform)
+                }
+            }
             app.settings.save();
             if let app::Screen::Settings {
                 ref mut listening_for,
@@ -214,12 +225,20 @@ pub(in crate::app) fn handle(
             {
                 *listening_for = None;
             }
-            controls::update_bindings(
-                &app.settings.keyboard_bindings,
-                &app.settings.gamepad_bindings,
-            );
+            app.push_routing();
         }
     }
 
     Task::none()
+}
+
+/// Take the binding the settings screen is waiting on, ending the capture.
+fn take_listening(app: &mut app::App) -> Option<super::view::ListeningFor> {
+    match app.screen {
+        app::Screen::Settings {
+            ref mut listening_for,
+            ..
+        } => listening_for.take(),
+        _ => None,
+    }
 }

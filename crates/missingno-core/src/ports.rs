@@ -16,7 +16,7 @@ use crate::system::ControlRole;
 pub struct PortId(pub u8);
 
 /// A family-interpreted peripheral kind id, unique within the family.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PeripheralId(pub u8);
 
 /// Who constructs the peripheral when it is plugged.

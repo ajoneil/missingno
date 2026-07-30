@@ -65,20 +65,15 @@ const JOYSTICK_CONTROLS: &[ControlDescriptor] = &[
     button(ControlRole::Right, "Right"),
 ];
 
-/// A pair of paddles shares one jack: two knobs and two buttons.
+/// One paddle of the pair a jack carries; the second stays off the frontend's
+/// surfaces by choice, though the console reads it.
 const PADDLE_CONTROLS: &[ControlDescriptor] = &[
     ControlDescriptor {
         role: ControlRole::Knob(0),
-        label: "Paddle 1 Knob",
+        label: "Paddle Knob",
         kind: ControlKind::Axis,
     },
-    button(ControlRole::Action(0), "Paddle 1 Button"),
-    ControlDescriptor {
-        role: ControlRole::Knob(1),
-        label: "Paddle 2 Knob",
-        kind: ControlKind::Axis,
-    },
-    button(ControlRole::Action(1), "Paddle 2 Button"),
+    button(ControlRole::Action(0), "Paddle Button"),
 ];
 
 /// The keyboard controller's 12 keys, row-major from its top left.

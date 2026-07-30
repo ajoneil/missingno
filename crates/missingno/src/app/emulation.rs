@@ -1,15 +1,50 @@
+use std::collections::HashMap;
 use std::time::Instant;
 
 use iced::Task;
+use missingno_core::ports::PanelControl;
+use missingno_core::system::ControlRole;
 use missingno_session::{ExtractedMachine, SessionEvent, SessionHandle, SharedSession};
 
 use super::emulator::{ConsoleFacts, Emulator};
 use super::session_bridge::{self, SessionBridge};
 use super::{App, Game, LoadedGame, Message, Notice, PendingAction, library};
+use crate::app::controls;
 use crate::app::library::activity::FrameCapture;
-use crate::app::system::{ControlId, ControlInput, ControlRole};
+use crate::app::system::{ControlId, ControlInput};
 use crate::app::ui::icons::Icon;
 use missingno_session::audio_output::AudioOutput;
+
+/// The positions the machine's latching panel switches sit in. The emulation
+/// layer holds them rather than a shell, so a bound key, the play screen's
+/// Console panel, and a debugger session all work the same switches.
+#[derive(Default, Clone)]
+pub(in crate::app) struct SwitchLevels(HashMap<ControlRole, bool>);
+
+impl SwitchLevels {
+    /// Take up a machine's switches where it powers them on.
+    pub(in crate::app) fn seat(&mut self, panel: &[PanelControl]) {
+        self.0 = panel
+            .iter()
+            .filter_map(|control| {
+                let (_, default_high) = control.toggle()?;
+                Some((control.role, default_high))
+            })
+            .collect();
+    }
+
+    /// Where this switch sits, for the panel rendering it.
+    pub(in crate::app) fn level(&self, role: ControlRole) -> Option<bool> {
+        self.0.get(&role).copied()
+    }
+
+    /// Move a switch to its other position, returning where it now sits.
+    fn flip(&mut self, role: ControlRole) -> Option<bool> {
+        let level = self.0.get_mut(&role)?;
+        *level = !*level;
+        Some(*level)
+    }
+}
 
 impl App {
     /// A fresh client handle onto the current game's session, if one is loaded.
@@ -158,18 +193,45 @@ impl App {
             Message::DismissNotice => {
                 self.notice = None;
             }
-            Message::SetControl(roles, pressed) => {
-                for control in self.resolve_controls(&roles) {
-                    self.set_control(control, ControlInput::Digital(pressed));
+            Message::SetControl(worked, pressed) => {
+                for actuation in worked {
+                    match actuation {
+                        controls::Actuation::Hold(control) => {
+                            self.set_control(control, ControlInput::Digital(pressed))
+                        }
+                        // The switch stays where the press left it, so the
+                        // release works nothing.
+                        controls::Actuation::Flip(role) if pressed => {
+                            if let Some(level) = self.flip_switch(role) {
+                                self.set_control(
+                                    ControlId::panel(role),
+                                    ControlInput::Digital(level),
+                                );
+                            }
+                        }
+                        controls::Actuation::Flip(_) => {}
+                    }
                 }
             }
-            Message::SetAxis(role, value) => {
+            Message::SetAxis(control, value) => {
                 // Screen-right maps to the fast-charging end of the pot,
                 // which paddle games read as right.
-                for control in self.resolve_controls(&[role]) {
-                    self.set_control(control, ControlInput::Axis(1.0 - value));
+                self.set_control(control, ControlInput::Axis(1.0 - value));
+            }
+            Message::PlugPeripheral(port, peripheral) => {
+                if let Some(handle) = self.handle() {
+                    match handle.plug(port, peripheral) {
+                        // What a port carries decides which controls exist, so
+                        // the event handlers need it re-read before the next key.
+                        Ok(()) => {
+                            self.control_surfaces = Some(handle.control_surfaces());
+                            self.push_routing();
+                        }
+                        Err(error) => self.show_notice(Notice::text(error)),
+                    }
                 }
             }
+            Message::AssignDevice(source, port) => self.assign_device(source, port),
             Message::ToggleDebugger(debugger_enabled) => {
                 self.debugger_enabled = debugger_enabled;
                 self.toggle_debugger_mode(debugger_enabled);
@@ -195,6 +257,9 @@ impl App {
 
         let palette = self.settings.palette;
         let presentation = self.settings.presentation();
+        // The same console crosses the handoff, so its switches stay where the
+        // user left them; the fresh session would otherwise re-seat them.
+        let switch_levels = self.switch_levels.clone();
         let rom_path = self
             .current_game
             .as_ref()
@@ -261,6 +326,8 @@ impl App {
             }
         }
 
+        self.switch_levels = switch_levels;
+
         if was_running {
             self.run();
         }
@@ -274,6 +341,7 @@ impl App {
         self.audio_output = audio;
         self.attach_session_bridge();
         self.publish_session();
+        self.seat_input_devices();
     }
 
     /// Stop publishing. An endpoint holds a handle onto one session, so it must
@@ -321,7 +389,7 @@ impl App {
     pub(super) fn publish_session(&mut self) {}
 
     /// The platform of the loaded game, if one is loaded.
-    fn platform(&self) -> Option<crate::app::system::Platform> {
+    pub(super) fn platform(&self) -> Option<crate::app::system::Platform> {
         match &self.game {
             Game::Loaded(LoadedGame::Debugger(debugger)) => Some(debugger.platform()),
             Game::Loaded(LoadedGame::Emulator(emulator)) => Some(emulator.platform()),
@@ -453,6 +521,7 @@ impl App {
         self.unpublish_session();
         self.session = None;
         self.audio_output = None;
+        self.seat_input_devices();
     }
 
     pub(super) fn pause(&mut self) {
@@ -473,23 +542,16 @@ impl App {
         }
     }
 
-    /// Where the loaded console plays these roles. A role no surface offers
-    /// drops out, so a key bound to several roles drives only the one this
-    /// console has.
-    fn resolve_controls(&self, roles: &[ControlRole]) -> Vec<ControlId> {
-        let Some(family) = self.platform().and_then(crate::app::system::family_of) else {
-            return Vec::new();
-        };
-        roles
-            .iter()
-            .filter_map(|&role| family.controls.resolve(role))
-            .collect()
-    }
-
     pub(super) fn set_control(&mut self, control: ControlId, input: ControlInput) {
         if let Some(handle) = self.handle() {
             handle.set_control(control, input);
         }
+    }
+
+    /// Move a latching panel switch to its other position, returning the level
+    /// it now sits at.
+    fn flip_switch(&mut self, role: ControlRole) -> Option<bool> {
+        self.switch_levels.flip(role)
     }
 
     fn record_screenshot(&mut self, capture: FrameCapture) {
@@ -570,5 +632,29 @@ impl App {
             });
             library::activity::write_session(&current.game_dir, session);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use missingno_vcs::debug::PANEL_CONTROLS;
+
+    #[test]
+    fn switches_seat_where_the_console_powers_them_on_and_flip_from_there() {
+        let mut levels = SwitchLevels::default();
+        levels.seat(PANEL_CONTROLS);
+
+        // The VCS powers up on colour with both difficulties at B.
+        assert_eq!(levels.level(ControlRole::Toggle(2)), Some(true));
+        assert_eq!(levels.level(ControlRole::Toggle(0)), Some(false));
+        // Momentary buttons are not switches, so nothing tracks them.
+        assert_eq!(levels.level(ControlRole::Reset), None);
+
+        assert_eq!(levels.flip(ControlRole::Toggle(2)), Some(false));
+        assert_eq!(levels.level(ControlRole::Toggle(2)), Some(false));
+        assert_eq!(levels.flip(ControlRole::Toggle(2)), Some(true));
+        // A role this machine has no switch for moves nothing.
+        assert_eq!(levels.flip(ControlRole::Toggle(7)), None);
     }
 }

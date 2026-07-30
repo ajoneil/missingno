@@ -751,6 +751,12 @@ impl App {
             AppScreen::Settings { section, .. } => *section,
             _ => crate::app::settings::view::Section::default(),
         };
+        let settings_controls = match &self.screen {
+            AppScreen::Settings { controls, .. } => controls.clone(),
+            _ => Default::default(),
+        };
+        let settings_pointer_knob =
+            crate::app::settings::view::page_pointer_knob(settings_controls.page, &self.settings);
         let viewing_sha1 = self.viewing_sha1().map(str::to_string);
         let (detail_has_rom, detail_game_loaded, detail_cartridge_actions) =
             match viewing_sha1.as_deref() {
@@ -770,6 +776,28 @@ impl App {
             &self.screen,
             AppScreen::HomebrewBrowser { state } if state.selected_slug.is_some()
         );
+        // The Controllers pick lists exist only while that panel is open on the
+        // play screen.
+        let controllers = match &self.game {
+            Game::Loaded(LoadedGame::Emulator(emulator))
+                if matches!(screen, Screen::Emulator)
+                    && emulator.shows_panel(crate::app::emulator::PlayPanel::Controllers) =>
+            {
+                let seating = self.controller_seating();
+                (!seating.ports.is_empty()).then_some(seating)
+            }
+            _ => None,
+        };
+        // The Display panel's rows likewise exist only while it is open.
+        let display = match &self.game {
+            Game::Loaded(LoadedGame::Emulator(emulator))
+                if matches!(screen, Screen::Emulator)
+                    && emulator.shows_panel(crate::app::emulator::PlayPanel::Display) =>
+            {
+                Some(emulator.display_options())
+            }
+            _ => None,
+        };
         UiContext {
             screen,
             running: self.running(),
@@ -779,6 +807,9 @@ impl App {
             confirm_accept_label: self.pending_action.as_ref().map(confirm_accept_label),
             games,
             settings_section,
+            settings_controls,
+            settings_pointer_knob,
+            settings_display: self.settings.display_options(),
             allow_external_clients: self.settings.allow_external_clients,
             allow_ui_automation: self.settings.allow_ui_automation,
             library_layout: self.settings.library_layout,
@@ -790,6 +821,8 @@ impl App {
             detail_game_loaded,
             detail_cartridge_actions,
             flash_in_progress,
+            controllers,
+            display,
         }
     }
 

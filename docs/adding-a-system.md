@@ -199,9 +199,11 @@ headless factory and the GUI.
 The core seam is system-agnostic; the GUI still needs a per-family registration
 for media handling. Each family registers one `FamilyDescriptor` in the
 `FAMILIES` table (`app/system/mod.rs`): a `Platform` variant (the canonical
-platform identity — its `name()` / `short_name()` are the only display strings,
-and external platform descriptions map into the enum rather than showing raw),
-`extensions`, `control_labels` (the family's names for the shared control ids),
+platform identity — its `name()` is the only display string, and external
+platform descriptions map into the enum rather than showing raw), `extensions`,
+`controls` (a `ControlMap` bundling the family's integrated, port, and panel
+descriptors, which the bindings UI iterates), a `port_config` hook (what the
+jacks carry for a game whose library metadata names controllers),
 an `is_rom` predicate (mutually exclusive across the table), an optional
 `title_from_rom` header hook, a `create_console` factory taking a `MediaLoad`,
 and an optional `trace` entry point for the `trace` subcommand. The file dialog,

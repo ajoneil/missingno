@@ -54,7 +54,15 @@ pub const EMULATOR_STEP: &str = "emulator.step";
 pub const EMULATOR_STEP_OVER: &str = "emulator.step_over";
 
 const GAME_PREFIX: &str = "library.game.";
+const CONTROLLERS_PREFIX: &str = "emulator.controllers.";
+const DISPLAY_PREFIX: &str = "emulator.display.";
 const SECTION_PREFIX: &str = "settings.section.";
+const SETTINGS_DISPLAY_PREFIX: &str = "settings.display.";
+const CONTROLS_PREFIX: &str = "settings.controls.";
+const CONTROLS_PAGE_PREFIX: &str = "settings.controls.page.";
+const CONTROLS_TAB_PREFIX: &str = "settings.controls.tab.";
+const CONTROLS_BINDING_PREFIX: &str = "settings.controls.binding.";
+const CONTROLS_OPTION_PREFIX: &str = "settings.controls.option.";
 
 /// The id for a library game entry, keyed by its sha1.
 pub fn game(sha1: &str) -> String {
@@ -74,4 +82,77 @@ pub fn section(name: &str) -> String {
 /// The section name back out of a `settings.section.<name>` id.
 pub fn section_name(id: &str) -> Option<&str> {
     id.strip_prefix(SECTION_PREFIX)
+}
+
+/// Whether `id` names something inside the Controls section, whose elements the
+/// section itself enumerates from the showing page.
+pub fn is_controls(id: &str) -> bool {
+    id.starts_with(CONTROLS_PREFIX)
+}
+
+/// The id for a Controls page selector entry, keyed by its page name
+/// (`emulator`, `game_boy`).
+pub fn controls_page(page: &str) -> String {
+    format!("{CONTROLS_PAGE_PREFIX}{page}")
+}
+
+/// The id for the Controllers block's controller-type tab, keyed by
+/// `atari_vcs.peripheral3`.
+pub fn controls_tab(tab: &str) -> String {
+    format!("{CONTROLS_TAB_PREFIX}{tab}")
+}
+
+/// The id for a binding button, keyed by the control it binds and the input
+/// surface it binds it on: `atari_vcs.peripheral3.key4.keyboard`.
+pub fn controls_binding(binding: &str) -> String {
+    format!("{CONTROLS_BINDING_PREFIX}{binding}")
+}
+
+/// The id for a Controls section switch that sets something other than a
+/// binding, keyed `atari_vcs.pointer_knob`.
+pub fn controls_option(option: &str) -> String {
+    format!("{CONTROLS_OPTION_PREFIX}{option}")
+}
+
+/// The id for the showing Controls page's reset-to-defaults button.
+pub fn controls_reset(page: &str) -> String {
+    format!("{CONTROLS_PREFIX}reset.{page}")
+}
+
+/// Whether `id` names a pick list of the play screen's Controllers section,
+/// whose elements that section enumerates from the running machine.
+pub fn is_controllers(id: &str) -> bool {
+    id.starts_with(CONTROLLERS_PREFIX)
+}
+
+/// The id for a port's controller-type pick list.
+pub fn controllers_port(port: missingno_core::ports::PortId) -> String {
+    format!("{CONTROLLERS_PREFIX}port{}", port.0)
+}
+
+/// The id for a host device's port pick list, keyed `keyboard` / `gamepad0`.
+pub fn controllers_device(device: &str) -> String {
+    format!("{CONTROLLERS_PREFIX}device.{device}")
+}
+
+/// Whether `id` names a control of the play screen's Display panel, whose rows
+/// that panel enumerates from the running console.
+pub fn is_display(id: &str) -> bool {
+    id.starts_with(DISPLAY_PREFIX)
+}
+
+/// The id for a Display panel row, keyed by its group-qualified name
+/// (`effects.persistence`, `game_boy.palette.original`).
+pub fn display_row(row: &str) -> String {
+    format!("{DISPLAY_PREFIX}{row}")
+}
+
+/// Whether `id` names a row of the settings Display section.
+pub fn is_settings_display(id: &str) -> bool {
+    id.starts_with(SETTINGS_DISPLAY_PREFIX)
+}
+
+/// The id for a settings Display row, keyed the same way as the panel's.
+pub fn settings_display_row(row: &str) -> String {
+    format!("{SETTINGS_DISPLAY_PREFIX}{row}")
 }

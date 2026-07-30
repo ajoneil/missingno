@@ -15,6 +15,10 @@ pub fn horizontal_rule() -> Element<'static, Message> {
     iced::widget::rule::horizontal(1).into()
 }
 
+pub fn vertical_rule() -> Element<'static, Message> {
+    iced::widget::rule::vertical(1).into()
+}
+
 pub fn menu_divider() -> Element<'static, Message> {
     iced::widget::rule::horizontal(1)
         .style(|_: &iced::Theme| iced::widget::rule::Style {

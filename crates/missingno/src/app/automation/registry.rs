@@ -10,7 +10,7 @@ use crate::app::library::homebrew_browser;
 use crate::app::library::screenshot_gallery;
 use crate::app::library::view::{self as library_view, LibraryLayout};
 use crate::app::settings::view as settings_view;
-use crate::app::{CartridgeMessage, DetailMessage, Message, debugger, load};
+use crate::app::{CartridgeMessage, DetailMessage, Message, debugger, emulator, load};
 
 /// Which screen owns the action bar / on-screen controls right now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +46,14 @@ pub struct UiContext {
     /// and labelling game ids.
     pub games: Vec<(String, String)>,
     pub settings_section: settings_view::Section,
+    /// Which page the Controls section shows, and the controller type its
+    /// Controllers block has tabbed to — together they decide which rows are on
+    /// screen.
+    pub settings_controls: settings_view::ControlsState,
+    /// Where the pointer switch stands on the system the Controls section shows.
+    pub settings_pointer_knob: bool,
+    /// The Display section's rows, as the settings screen offers them.
+    pub settings_display: settings_view::DisplayOptions,
     pub allow_external_clients: bool,
     pub allow_ui_automation: bool,
     pub library_layout: LibraryLayout,
@@ -63,13 +71,20 @@ pub struct UiContext {
     pub detail_cartridge_actions: bool,
     /// Whether a cartridge flash is mid-write (no exit button is offered then).
     pub flash_in_progress: bool,
+    /// The play screen's Controllers section while it is on screen: the ports and
+    /// the host devices playing them, whose pick lists it enumerates.
+    pub controllers: Option<emulator::Controllers>,
+    /// The play screen's Display panel while it is on screen: the options the
+    /// running console offers, whose rows it enumerates.
+    pub display: Option<settings_view::DisplayOptions>,
 }
 
-const SECTIONS: [(&str, settings_view::Section); 4] = [
+const SECTIONS: [(&str, settings_view::Section); 5] = [
     ("general", settings_view::Section::General),
     ("display", settings_view::Section::Display),
     ("controls", settings_view::Section::Controls),
     ("hardware", settings_view::Section::Hardware),
+    ("developer", settings_view::Section::Developer),
 ];
 
 fn section_from_name(name: &str) -> Option<settings_view::Section> {
@@ -204,15 +219,90 @@ pub fn enumerate(ctx: &UiContext) -> Vec<String> {
                 ids.push(ids::EMULATOR_STEP.to_string());
                 ids.push(ids::EMULATOR_STEP_OVER.to_string());
             }
+            ids.extend(
+                controllers_elements(ctx)
+                    .into_iter()
+                    .map(|element| element.id),
+            );
+            ids.extend(display_elements(ctx).into_iter().map(|element| element.id));
             ids
         }
         Screen::Settings => {
             let mut ids = vec![ids::SETTINGS_BACK.to_string()];
             ids.extend(SECTIONS.iter().map(|(name, _)| ids::section(name)));
-            ids.push(ids::SETTINGS_EXTERNAL_CLIENTS.to_string());
-            ids.push(ids::SETTINGS_UI_AUTOMATION.to_string());
+            if ctx.settings_section == settings_view::Section::Controls {
+                ids.extend(controls_elements(ctx).into_iter().map(|element| element.id));
+            }
+            if ctx.settings_section == settings_view::Section::Display {
+                ids.extend(
+                    settings_display_elements(ctx)
+                        .into_iter()
+                        .map(|element| element.id),
+                );
+            }
+            if ctx.settings_section == settings_view::Section::Developer {
+                ids.push(ids::SETTINGS_EXTERNAL_CLIENTS.to_string());
+                ids.push(ids::SETTINGS_UI_AUTOMATION.to_string());
+            }
             ids
         }
+    }
+}
+
+/// The Controls section's pressable elements for the page it is showing.
+fn controls_elements(ctx: &UiContext) -> Vec<settings_view::ControlsElement> {
+    settings_view::controls_elements(&ctx.settings_controls, ctx.settings_pointer_knob)
+}
+
+fn controls_element(ctx: &UiContext, id: &str) -> Option<settings_view::ControlsElement> {
+    controls_elements(ctx)
+        .into_iter()
+        .find(|element| element.id == id)
+}
+
+/// The Display section's rows, as the settings screen names them.
+fn settings_display_elements(ctx: &UiContext) -> Vec<settings_view::DisplayElement> {
+    settings_view::display_elements(&ctx.settings_display, ids::settings_display_row)
+}
+
+/// The Display panel's rows, empty unless it is on screen.
+fn display_elements(ctx: &UiContext) -> Vec<settings_view::DisplayElement> {
+    match &ctx.display {
+        Some(options) => settings_view::display_elements(options, ids::display_row),
+        None => Vec::new(),
+    }
+}
+
+/// The role and label of a display row, on either surface that offers it.
+fn display_described(
+    elements: Vec<settings_view::DisplayElement>,
+    id: &str,
+) -> Option<(UiKind, String)> {
+    elements
+        .into_iter()
+        .find(|element| element.id == id)
+        .map(|element| {
+            let kind = if element.toggle {
+                UiKind::Toggle
+            } else {
+                UiKind::Button
+            };
+            (kind, element.label)
+        })
+}
+
+fn display_activation(elements: Vec<settings_view::DisplayElement>, id: &str) -> Option<Message> {
+    elements
+        .into_iter()
+        .find(|element| element.id == id)
+        .map(|element| element.message.into())
+}
+
+/// The Controllers section's pick lists, empty unless it is on screen.
+fn controllers_elements(ctx: &UiContext) -> Vec<emulator::ControllersElement> {
+    match &ctx.controllers {
+        Some(controllers) => emulator::controllers_elements(controllers),
+        None => Vec::new(),
     }
 }
 
@@ -244,6 +334,27 @@ pub fn describe(ctx: &UiContext, id: &str) -> Option<(UiKind, String)> {
             }
             (UiKind::Button, label)
         });
+    }
+    if ids::is_controls(id) {
+        return controls_element(ctx, id).map(|element| {
+            let kind = match element.toggle {
+                true => UiKind::Toggle,
+                false => UiKind::Button,
+            };
+            (kind, element.label)
+        });
+    }
+    if ids::is_controllers(id) {
+        return controllers_elements(ctx)
+            .into_iter()
+            .find(|element| element.id == id)
+            .map(|element| (UiKind::Button, element.label));
+    }
+    if ids::is_settings_display(id) {
+        return display_described(settings_display_elements(ctx), id);
+    }
+    if ids::is_display(id) {
+        return display_described(display_elements(ctx), id);
     }
     let described = match id {
         ids::ACTION_BAR_MENU => (UiKind::Button, "Open menu".to_string()),
@@ -345,6 +456,15 @@ pub(in crate::app) fn activation(ctx: &UiContext, id: &str) -> Option<Message> {
         return section_from_name(name)
             .map(|section| settings_view::Message::SelectSection(section).into());
     }
+    if ids::is_controls(id) {
+        return controls_element(ctx, id).map(|element| element.message.into());
+    }
+    if ids::is_settings_display(id) {
+        return display_activation(settings_display_elements(ctx), id);
+    }
+    if ids::is_display(id) {
+        return display_activation(display_elements(ctx), id);
+    }
     let message = match id {
         ids::ACTION_BAR_MENU | ids::DETAIL_MENU => Message::ToggleMenu,
         ids::ACTION_BAR_BACK => match ctx.screen {
@@ -426,6 +546,7 @@ pub(in crate::app) fn text_change(_ctx: &UiContext, id: &str, text: String) -> O
 #[cfg(test)]
 mod tests {
     use super::*;
+    use missingno_gb::ppu::types::palette::PaletteChoice;
 
     fn library_ctx() -> UiContext {
         UiContext {
@@ -440,6 +561,18 @@ mod tests {
                 ("def456".to_string(), "Tetris".to_string()),
             ],
             settings_section: settings_view::Section::General,
+            settings_controls: settings_view::ControlsState::default(),
+            settings_pointer_knob: true,
+            settings_display: settings_view::DisplayOptions {
+                effects: settings_view::Effects {
+                    persistence: true,
+                    scanlines: true,
+                    pixel_grid: true,
+                },
+                technology: None,
+                sgb_colors: Some(true),
+                palette: Some(PaletteChoice::default()),
+            },
             allow_external_clients: false,
             allow_ui_automation: false,
             library_layout: LibraryLayout::Grid,
@@ -450,6 +583,69 @@ mod tests {
             detail_game_loaded: true,
             detail_cartridge_actions: true,
             flash_in_progress: false,
+            controllers: None,
+            display: None,
+        }
+    }
+
+    /// A Game Boy as the Display panel sees it: an LCD screen, and a monochrome
+    /// game whose cartridge asks for Super Game Boy colours.
+    fn dmg_display() -> settings_view::DisplayOptions {
+        settings_view::DisplayOptions {
+            technology: Some(missingno_core::video::DisplayTechnology::Lcd {
+                native: (160, 144),
+                panel: missingno_core::video::LcdPanel::PassiveStn,
+                pixel_aspect: 1.0,
+            }),
+            sgb_colors: Some(false),
+            palette: Some(PaletteChoice::default()),
+            ..library_ctx().settings_display
+        }
+    }
+
+    /// A VCS as the Display panel sees it: a CRT, and no colour choice to make.
+    fn vcs_display() -> settings_view::DisplayOptions {
+        settings_view::DisplayOptions {
+            technology: Some(missingno_core::video::DisplayTechnology::Crt {
+                standard: missingno_core::tv::TvStandard::Ntsc,
+                pixel_aspect: 12.0 / 7.0,
+            }),
+            sgb_colors: None,
+            palette: None,
+            ..library_ctx().settings_display
+        }
+    }
+
+    /// A VCS as the play screen sees it: both jacks with the controllers they
+    /// take, and the keyboard playing the right one. A connected pad cannot be
+    /// fabricated here — only gilrs mints its id — so the keyboard stands alone.
+    fn vcs_controllers() -> emulator::Controllers {
+        use missingno_core::ports::Provider;
+        use missingno_vcs::debug::{JOYSTICK, PORTS, RIGHT_PORT};
+
+        emulator::Controllers {
+            ports: PORTS
+                .iter()
+                .map(|port| emulator::PortSeat {
+                    port: port.port,
+                    label: port.label,
+                    choices: port
+                        .accepts
+                        .iter()
+                        .filter(|peripheral| peripheral.provider == Provider::Console)
+                        .map(|peripheral| emulator::ControllerChoice {
+                            peripheral: peripheral.id,
+                            label: peripheral.label,
+                        })
+                        .collect(),
+                    plugged: Some(JOYSTICK),
+                })
+                .collect(),
+            devices: vec![emulator::DeviceSeat {
+                source: crate::app::controls::InputSource::Keyboard,
+                name: "Keyboard".to_string(),
+                port: RIGHT_PORT,
+            }],
         }
     }
 
@@ -481,6 +677,59 @@ mod tests {
                     }
                 }
             }
+        }
+        // Every settings section renders its own controls.
+        for (_, section) in SECTIONS {
+            ctxs.push(UiContext {
+                screen: Screen::Settings,
+                settings_section: section,
+                ..base.clone()
+            });
+        }
+        // Each Controls page renders its own rows, and the Controllers tab
+        // decides which controller type's rows those are.
+        for page in settings_view::controls_pages() {
+            ctxs.push(UiContext {
+                screen: Screen::Settings,
+                settings_section: settings_view::Section::Controls,
+                settings_controls: settings_view::ControlsState {
+                    page,
+                    ..Default::default()
+                },
+                ..base.clone()
+            });
+        }
+        for family in crate::app::system::FAMILIES {
+            for port in family.controls.ports {
+                for peripheral in port.accepts {
+                    ctxs.push(UiContext {
+                        screen: Screen::Settings,
+                        settings_section: settings_view::Section::Controls,
+                        settings_controls: settings_view::ControlsState {
+                            page: settings_view::ControlsPage::System(family.platform),
+                            controller_tabs: settings_view::ControllerTabs::from([(
+                                family.platform,
+                                peripheral.id,
+                            )]),
+                        },
+                        ..base.clone()
+                    });
+                }
+            }
+        }
+        // The play screen with the Controllers section showing.
+        ctxs.push(UiContext {
+            screen: Screen::Emulator,
+            controllers: Some(vcs_controllers()),
+            ..base.clone()
+        });
+        // The play screen with the Display panel showing, on each screen type.
+        for display in [dmg_display(), vcs_display()] {
+            ctxs.push(UiContext {
+                screen: Screen::Emulator,
+                display: Some(display),
+                ..base.clone()
+            });
         }
         // The modal confirmation dialog masks whatever is beneath it.
         ctxs.push(UiContext {
@@ -522,11 +771,12 @@ mod tests {
     #[test]
     fn every_enumerated_id_is_actionable() {
         // Pick-lists are registered for their bounds; a client opens them by
-        // other means, so they legitimately answer neither verb.
+        // other means, so they legitimately answer neither verb. The Controllers
+        // section is pick lists throughout.
         let pickers = [ids::LIBRARY_FILTER, ids::LIBRARY_SORT];
         for ctx in every_screen() {
             for id in enumerate(&ctx) {
-                if pickers.contains(&id.as_str()) {
+                if pickers.contains(&id.as_str()) || ids::is_controllers(&id) {
                     continue;
                 }
                 let is_text = matches!(describe(&ctx, &id), Some((UiKind::TextInput, _)));
@@ -545,6 +795,186 @@ mod tests {
                 }
             }
         }
+    }
+
+    // Two elements sharing an id would collide in the bounds walk, so no screen
+    // may list one twice.
+    #[test]
+    fn enumerated_ids_are_unique() {
+        for ctx in every_screen() {
+            let ids = enumerate(&ctx);
+            let unique: std::collections::HashSet<&String> = ids.iter().collect();
+            assert_eq!(unique.len(), ids.len(), "duplicate id on {:?}", ctx.screen);
+        }
+    }
+
+    // The Controllers section lists a pick list per port and one per host device,
+    // named as the port descriptors and the drivers name them. It is on screen
+    // only while the panel is open, so nothing is listed without it.
+    #[test]
+    fn the_controllers_section_lists_each_port_and_device() {
+        let mut ctx = library_ctx();
+        ctx.screen = Screen::Emulator;
+        assert!(
+            enumerate(&ctx).iter().all(|id| !ids::is_controllers(id)),
+            "Controllers ids listed with the panel closed"
+        );
+
+        ctx.controllers = Some(vcs_controllers());
+        let ids = enumerate(&ctx);
+        let port = "emulator.controllers.port1";
+        let keyboard = "emulator.controllers.device.keyboard";
+        assert!(ids.contains(&port.to_string()));
+        assert!(ids.contains(&keyboard.to_string()));
+        assert_eq!(
+            describe(&ctx, port).map(|(_, label)| label),
+            Some("Choose the Right controller".to_string())
+        );
+        assert_eq!(
+            describe(&ctx, keyboard).map(|(_, label)| label),
+            Some("Choose the port Keyboard plays".to_string())
+        );
+    }
+
+    // The Display panel lists the effects the running console's screen shows and
+    // the colour options its games carry — nothing for another screen type. It is
+    // on screen only while the panel is open.
+    #[test]
+    fn the_display_panel_lists_the_running_screens_options() {
+        let mut ctx = library_ctx();
+        ctx.screen = Screen::Emulator;
+        assert!(
+            enumerate(&ctx).iter().all(|id| !ids::is_display(id)),
+            "Display ids listed with the panel closed"
+        );
+
+        ctx.display = Some(dmg_display());
+        let listed = enumerate(&ctx);
+        let grid = "emulator.display.effects.pixel_grid";
+        assert!(listed.contains(&"emulator.display.effects.persistence".to_string()));
+        assert!(listed.contains(&grid.to_string()));
+        assert!(!listed.contains(&"emulator.display.effects.scanlines".to_string()));
+        assert!(listed.contains(&"emulator.display.game_boy.sgb_colors".to_string()));
+        assert!(listed.contains(&"emulator.display.game_boy.palette.original".to_string()));
+        assert_eq!(
+            describe(&ctx, grid),
+            Some((UiKind::Toggle, "Pixel grid".to_string()))
+        );
+        assert!(matches!(
+            activation(&ctx, grid),
+            Some(Message::Settings(settings_view::Message::SetPixelGrid(
+                false
+            )))
+        ));
+
+        ctx.display = Some(vcs_display());
+        let listed = enumerate(&ctx);
+        assert!(listed.contains(&"emulator.display.effects.scanlines".to_string()));
+        assert!(!listed.contains(&grid.to_string()));
+        assert!(listed.iter().all(|id| !id.contains("game_boy")));
+    }
+
+    // The settings Display section lists every effect whatever is loaded — the
+    // captions there say which screens each reaches — plus the colour group.
+    #[test]
+    fn the_display_settings_list_every_effect() {
+        let mut ctx = library_ctx();
+        ctx.screen = Screen::Settings;
+        ctx.settings_section = settings_view::Section::Display;
+        let listed = enumerate(&ctx);
+        for row in ["persistence", "scanlines", "pixel_grid"] {
+            assert!(listed.contains(&format!("settings.display.effects.{row}")));
+        }
+        let sgb = "settings.display.game_boy.sgb_colors";
+        assert!(listed.contains(&sgb.to_string()));
+        assert_eq!(
+            describe(&ctx, sgb),
+            Some((UiKind::Toggle, "Super Game Boy colours".to_string()))
+        );
+        let palette = "settings.display.game_boy.palette.greyscale";
+        assert_eq!(
+            describe(&ctx, palette),
+            Some((UiKind::Button, "Use the Greyscale palette".to_string()))
+        );
+
+        ctx.settings_section = settings_view::Section::General;
+        assert!(
+            enumerate(&ctx)
+                .iter()
+                .all(|id| !ids::is_settings_display(id)),
+            "Display rows listed from another section"
+        );
+    }
+
+    // The Controllers block's rows are the tabbed controller type's own controls,
+    // named as its descriptor names them, and listed once however many ports take
+    // that type. A knob has no binding of its own — what turns it does.
+    #[test]
+    fn a_controller_tab_lists_the_controllers_own_controls() {
+        use missingno_vcs::debug::{KEYPAD, PADDLES};
+
+        let vcs_page = |peripheral| UiContext {
+            screen: Screen::Settings,
+            settings_section: settings_view::Section::Controls,
+            settings_controls: settings_view::ControlsState {
+                page: settings_view::ControlsPage::System(crate::app::system::Platform::AtariVcs),
+                controller_tabs: settings_view::ControllerTabs::from([(
+                    crate::app::system::Platform::AtariVcs,
+                    peripheral,
+                )]),
+            },
+            ..library_ctx()
+        };
+
+        let ctx = vcs_page(KEYPAD);
+        let key = "settings.controls.binding.atari_vcs.peripheral3.key4.keyboard";
+        let listed = enumerate(&ctx);
+        assert!(listed.contains(&key.to_string()));
+        assert_eq!(listed.iter().filter(|id| *id == key).count(), 1);
+        assert_eq!(
+            describe(&ctx, key).map(|(_, label)| label),
+            Some("Bind Keypad 5 on the keyboard".to_string())
+        );
+
+        let ctx = vcs_page(PADDLES);
+        let listed = enumerate(&ctx);
+        // Nothing binds the knob itself; each way of winding it does, and the
+        // pointer is a switch beside them.
+        assert!(!listed.contains(
+            &"settings.controls.binding.atari_vcs.peripheral2.knob0.keyboard".to_string()
+        ));
+        let clockwise = "settings.controls.binding.atari_vcs.peripheral2.knob0.clockwise.gamepad";
+        assert!(listed.contains(&clockwise.to_string()));
+        assert_eq!(
+            describe(&ctx, clockwise).map(|(_, label)| label),
+            Some("Bind Paddles Knob clockwise on the controller".to_string())
+        );
+        let pointer = "settings.controls.option.atari_vcs.pointer_knob";
+        assert!(listed.contains(&pointer.to_string()));
+        assert_eq!(
+            describe(&ctx, pointer),
+            Some((UiKind::Toggle, "Turn the knob with the pointer".to_string()))
+        );
+    }
+
+    // Every latching panel switch binds like any other control.
+    #[test]
+    fn the_console_switches_are_bindable() {
+        let ctx = UiContext {
+            screen: Screen::Settings,
+            settings_section: settings_view::Section::Controls,
+            settings_controls: settings_view::ControlsState {
+                page: settings_view::ControlsPage::System(crate::app::system::Platform::AtariVcs),
+                ..Default::default()
+            },
+            ..library_ctx()
+        };
+        let tv_type = "settings.controls.binding.atari_vcs.panel.toggle2.keyboard";
+        assert!(enumerate(&ctx).contains(&tv_type.to_string()));
+        assert_eq!(
+            describe(&ctx, tv_type).map(|(_, label)| label),
+            Some("Bind TV Type on the keyboard".to_string())
+        );
     }
 
     #[test]

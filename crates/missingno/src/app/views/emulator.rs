@@ -30,7 +30,12 @@ impl App {
                 LoadedGame::Debugger(debugger) => debugger.view(),
                 LoadedGame::Emulator(emulator) => {
                     let play_log = self.build_play_log();
-                    emulator.view(fullscreen, &play_log)
+                    emulator.view(
+                        fullscreen,
+                        &play_log,
+                        &self.controller_seating(),
+                        &self.switch_levels,
+                    )
                 }
             },
             _ => text::label("No game loaded").into(),

@@ -4,7 +4,7 @@
 use missingno_core::ports::{PeripheralId, PortId};
 use missingno_gamedb::Controller;
 use missingno_vcs::cartridge::CartridgeError;
-use missingno_vcs::debug::{LEFT_PORT, PADDLES};
+use missingno_vcs::debug::{JOYSTICK, KEYPAD, LEFT_PORT, PADDLES, RIGHT_PORT};
 
 use super::{ControlMap, SystemConsole, TvStandard};
 
@@ -19,11 +19,20 @@ pub const CONTROLS: ControlMap = ControlMap::new(
     missingno_vcs::debug::PANEL_CONTROLS,
 );
 
-/// A paddle game wants the paddle pair in the left jack: knob input is inert
-/// until one is plugged. Everything else plays on the joysticks a VCS powers
-/// on with.
+/// What the jacks carry for a game the catalogue describes: key and knob input
+/// is inert until the peripheral is plugged. A keypad game wants one in each
+/// jack unless it also states the joystick, the arrangement keypad-plus-joystick
+/// titles use — stick left, keypad right. Everything else plays on the joysticks
+/// a VCS powers on with.
 pub fn port_config(controllers: &[Controller]) -> Vec<(PortId, PeripheralId)> {
-    if controllers.contains(&Controller::Paddle) {
+    let stated = |controller| controllers.contains(&controller);
+    if stated(Controller::Keypad) {
+        if stated(Controller::Joystick) {
+            vec![(LEFT_PORT, JOYSTICK), (RIGHT_PORT, KEYPAD)]
+        } else {
+            vec![(LEFT_PORT, KEYPAD), (RIGHT_PORT, KEYPAD)]
+        }
+    } else if stated(Controller::Paddle) {
         vec![(LEFT_PORT, PADDLES)]
     } else {
         Vec::new()

@@ -115,13 +115,14 @@ pub enum SystemFilter {
 }
 
 impl SystemFilter {
-    /// Picker options: "All systems" followed by every registered family's platform.
+    /// Picker options: "All systems" followed by every registered platform,
+    /// alphabetically.
     pub fn all_options() -> Vec<SystemFilter> {
         std::iter::once(SystemFilter::All)
             .chain(
-                crate::app::system::FAMILIES
-                    .iter()
-                    .map(|family| SystemFilter::System(family.platform)),
+                crate::app::system::platforms_by_name()
+                    .into_iter()
+                    .map(SystemFilter::System),
             )
             .collect()
     }

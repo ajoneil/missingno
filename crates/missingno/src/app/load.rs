@@ -39,7 +39,7 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
             all_extensions.dedup();
             let mut dialog =
                 AsyncFileDialog::new().add_filter("All supported ROMs", &all_extensions);
-            for family in system::FAMILIES {
+            for family in system::families_by_name() {
                 dialog = dialog.add_filter(family.platform.name(), family.extensions);
             }
             if let Some(dir) = app.recent_games.most_recent_dir() {

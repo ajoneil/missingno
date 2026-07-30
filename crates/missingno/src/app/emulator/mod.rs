@@ -7,9 +7,11 @@ use iced::{
 
 use missingno_session::SessionHandle;
 
+use crate::app::emulation::SwitchLevels;
 use crate::app::system::{PanelControl, Platform, gb};
 use crate::app::{
-    self,
+    self, controls,
+    settings::view::{DisplayOptions, Effects},
     system::SystemConsole,
     ui::{
         icons::{self, Icon},
@@ -20,7 +22,10 @@ use missingno_gb::ppu::types::palette::PaletteChoice;
 use missingno_iced::{Frame, ScreenView};
 
 mod panels;
-pub use panels::{CaptureKind, PlayLogEntry, PlayPanel};
+pub use panels::{
+    CaptureKind, ControllerChoice, Controllers, DeviceSeat, PlayLogEntry, PlayPanel, PortSeat,
+};
+pub(in crate::app) use panels::{ControllersElement, controllers_elements};
 
 /// The frontend's display-presentation choices, keyed to the console's stated
 /// technology by the renderer. Grid and scanlines are mutually exclusive there,
@@ -51,11 +56,10 @@ pub struct Emulator {
     persistence: bool,
     pixel_grid: bool,
     scanlines: bool,
-    /// The console's latching panel switches and their current levels,
-    /// captured at load so the Console panel renders without reaching into the
-    /// session-owned console. Empty for families with none.
+    /// The console's latching panel switches, captured at load so the Console
+    /// panel renders without reaching into the session-owned console; where
+    /// they sit is the emulation layer's. Empty for families with none.
     switches: Vec<PanelControl>,
-    switch_levels: Vec<bool>,
     /// Whether this console has a selectable monochrome palette (DMG),
     /// captured at load; gates the Display panel's palette rows.
     monochrome_palette: bool,
@@ -137,15 +141,6 @@ impl Emulator {
         platform: Platform,
         presentation: Presentation,
     ) -> Self {
-        let switch_levels = facts
-            .switches
-            .iter()
-            .map(|switch| {
-                switch
-                    .toggle()
-                    .is_some_and(|(_, default_high)| default_high)
-            })
-            .collect();
         let mut this = Self {
             handle,
             platform,
@@ -157,7 +152,6 @@ impl Emulator {
             pixel_grid: presentation.pixel_grid,
             scanlines: presentation.scanlines,
             switches: facts.switches,
-            switch_levels,
             monochrome_palette: facts.monochrome_palette,
             supports_sgb: facts.supports_sgb,
             open_panels: Vec::new(),
@@ -206,9 +200,23 @@ impl Emulator {
         self.screen_view.technology()
     }
 
-    /// Whether the loaded game enables Super Game Boy enhancements.
-    pub fn supports_sgb(&self) -> bool {
-        self.supports_sgb
+    /// The display options the play panel offers for this console: the effects
+    /// its screen shows, and the colour choices its games carry.
+    pub fn display_options(&self) -> DisplayOptions {
+        let sgb_overriding = self.supports_sgb && self.use_sgb_colors;
+        DisplayOptions {
+            effects: Effects {
+                persistence: self.persistence,
+                scanlines: self.scanlines,
+                pixel_grid: self.pixel_grid,
+            },
+            technology: Some(self.technology()),
+            sgb_colors: (self.monochrome_palette && self.supports_sgb)
+                .then_some(self.use_sgb_colors),
+            // The SGB palette overrides the monochrome one, so the picker it
+            // would silently ignore is not offered.
+            palette: (self.monochrome_palette && !sgb_overriding).then_some(self.palette),
+        }
     }
 
     /// Update the displayed frame from the session's latest-frame slot.
@@ -230,13 +238,13 @@ impl Emulator {
             Message::ScreenHovered => self.screen_hovered = true,
             Message::ScreenUnhovered => self.screen_hovered = false,
             Message::ToggleSwitch(index) => {
-                if let (Some(level), Some(switch)) =
-                    (self.switch_levels.get_mut(index), self.switches.get(index))
-                {
-                    *level = !*level;
-                    // Route through the shared control path so it reaches the
-                    // session-owned console.
-                    return Task::done(app::Message::SetControl(vec![switch.role], *level));
+                if let Some(switch) = self.switches.get(index) {
+                    // The same path a key bound to the switch takes: the
+                    // emulation layer moves it and tells the console.
+                    return Task::done(app::Message::SetControl(
+                        vec![controls::Actuation::Flip(switch.role)],
+                        true,
+                    ));
                 }
             }
             Message::TogglePanel(panel) => {
@@ -255,10 +263,17 @@ impl Emulator {
         self.refresh_palette_policy();
     }
 
+    /// Whether this panel is open, so automation enumerates only what shows.
+    pub fn shows_panel(&self, panel: PlayPanel) -> bool {
+        self.open_panels.contains(&panel)
+    }
+
     pub fn view(
         &self,
         fullscreen: bool,
         play_log: &[panels::PlayLogEntry],
+        controllers: &Controllers,
+        switch_levels: &SwitchLevels,
     ) -> Element<'_, app::Message> {
         let screen: Element<'_, app::Message> = responsive(|size| {
             let (width, height) = self.screen_view.fitted_size(size);
@@ -269,14 +284,15 @@ impl Emulator {
                         .width(Length::Fixed(width))
                         .height(Length::Fixed(height)),
                 )
-                // Horizontal position over the screen drives the first
-                // analog control (the VCS paddle); digital-only systems
-                // ignore the axis.
-                .on_move(move |point| {
-                    app::Message::SetAxis(
-                        missingno_core::system::ControlRole::Knob(0),
-                        (point.x / width).clamp(0.0, 1.0),
-                    )
+                // Horizontal position over the screen turns the first knob of
+                // the port the keyboard plays (the VCS paddle), unless the
+                // system's pointer switch is off; digital-only systems ignore
+                // the axis.
+                .on_move(move |point| match controls::pointer_knob(0) {
+                    Some(control) => {
+                        app::Message::SetAxis(control, (point.x / width).clamp(0.0, 1.0))
+                    }
+                    None => app::Message::None,
                 }),
             )
             .center(Fill)
@@ -333,17 +349,14 @@ impl Emulator {
 
         let ctx = panels::PanelContext {
             switches: &self.switches,
-            switch_levels: &self.switch_levels,
-            palette: self.palette,
-            use_sgb_colors: self.use_sgb_colors,
-            supports_sgb: self.supports_sgb,
-            monochrome_palette: self.monochrome_palette,
-            persistence: self.persistence,
-            pixel_grid: self.pixel_grid,
-            scanlines: self.scanlines,
-            technology: self.technology(),
+            switch_levels,
+            controllers,
+            display: self.display_options(),
             play_log,
             has_console: !self.switches.is_empty(),
+            // Only a console with a port that takes a controller of its own has
+            // anything to plug or reassign.
+            has_controllers: !controllers.ports.is_empty(),
             // The Display panel now carries options for every system, so it is
             // available whenever a console is running.
             has_display: true,

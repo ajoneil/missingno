@@ -154,6 +154,17 @@ struct App {
     library_search: String,
     /// Live library system filter. Transient, like `library_search`.
     library_filter: library::store::SystemFilter,
+    /// The running machine's ports and built-in controls, cached at load and
+    /// after every plug so input events resolve against what is plugged now.
+    control_surfaces: Option<missingno_session::ControlSurfaces>,
+    /// Which host device drives which console port, keyed by the ids this
+    /// session's input events carry; seeded from what the settings remember.
+    port_assignments: controls::PortAssignments,
+    /// The gamepads the host has connected, in connection order.
+    gamepads: Vec<controls::ConnectedPad>,
+    /// Where the machine's latching panel switches sit, seated at load and
+    /// worked by both the Console panel and the keys bound to them.
+    switch_levels: emulation::SwitchLevels,
 }
 
 /// Cartridge reader/writer polling state (device detection and active-dump progress).
@@ -206,6 +217,186 @@ impl App {
 
     #[cfg(not(unix))]
     fn reconcile_automation(&mut self) {}
+
+    /// Hand the input event handlers the routing state for the machine and the
+    /// bindings as they now stand.
+    fn push_routing(&self) {
+        use settings::Surface;
+        let platform = self.platform();
+        let system = |surface| {
+            platform
+                .map(|platform| self.settings.controls.system_map(platform, surface))
+                .unwrap_or_default()
+        };
+        controls::publish(controls::Routing {
+            emulator_keyboard: self.settings.controls.emulator_map(Surface::Keyboard),
+            emulator_gamepad: self.settings.controls.emulator_map(Surface::Gamepad),
+            system_keyboard: system(Surface::Keyboard),
+            system_gamepad: system(Surface::Gamepad),
+            surfaces: self.control_surfaces.clone(),
+            assignments: self.port_assignments.clone(),
+            pointer_drives_knob: platform
+                .is_none_or(|platform| self.settings.controls.pointer_knob(platform)),
+            ..controls::Routing::default()
+        });
+    }
+
+    /// Seat the host devices on a machine that has just come up: read what its
+    /// ports carry, then put each device back on the port this system last saw
+    /// it play.
+    fn seat_input_devices(&mut self) {
+        self.control_surfaces = self.handle().map(|handle| handle.control_surfaces());
+        let panel = self
+            .control_surfaces
+            .as_ref()
+            .map(|surfaces| surfaces.panel)
+            .unwrap_or_default();
+        self.switch_levels.seat(panel);
+        self.port_assignments = self.seated_assignments();
+        self.push_routing();
+    }
+
+    /// The machine's first port — where a device with nothing recorded plays.
+    fn first_port(&self) -> missingno_core::ports::PortId {
+        self.control_surfaces
+            .as_ref()
+            .and_then(controls::first_port)
+            .unwrap_or(missingno_core::ports::PortId(0))
+    }
+
+    /// Where the connected devices sit on the loaded machine: the ports this
+    /// system remembers them on, and its first port for anything it has never
+    /// seen. Pads are matched by identity, so a pad that was unplugged and
+    /// plugged back in returns to its own port.
+    fn seated_assignments(&self) -> controls::PortAssignments {
+        let first = self.first_port();
+        let remembered = self
+            .platform()
+            .and_then(|platform| self.settings.controls.assignments(platform));
+
+        let mut gamepads = HashMap::new();
+        let mut occurrences: HashMap<&settings::GamepadIdentity, usize> = HashMap::new();
+        for pad in &self.gamepads {
+            let occurrence = occurrences.entry(&pad.identity).or_insert(0);
+            if let Some(remembered) = remembered
+                && let Some(port) = remembered.port_for(&pad.identity, *occurrence)
+            {
+                gamepads.insert(pad.id, port);
+            }
+            *occurrence += 1;
+        }
+
+        controls::PortAssignments {
+            keyboard: remembered
+                .and_then(|remembered| remembered.keyboard)
+                .unwrap_or(first),
+            gamepads,
+        }
+    }
+
+    /// The machine's controller ports and the host devices playing them, as the
+    /// play screen's Controllers section shows them. A port whose peripherals
+    /// the host supplies, or which carries no controls at all, is not a
+    /// controller jack and is left out — the Game Boy's link socket.
+    fn controller_seating(&self) -> emulator::Controllers {
+        use missingno_core::ports::Provider;
+
+        let Some(surfaces) = &self.control_surfaces else {
+            return emulator::Controllers::default();
+        };
+        let ports: Vec<emulator::PortSeat> = surfaces
+            .ports
+            .iter()
+            .filter(|plugged| {
+                plugged.descriptor.accepts.iter().any(|peripheral| {
+                    peripheral.provider == Provider::Console && !peripheral.controls.is_empty()
+                })
+            })
+            .map(|plugged| emulator::PortSeat {
+                port: plugged.descriptor.port,
+                label: plugged.descriptor.label,
+                // Unplugged is a console-built peripheral with no controls, so
+                // it stands among the choices; a host-supplied one cannot.
+                choices: plugged
+                    .descriptor
+                    .accepts
+                    .iter()
+                    .filter(|peripheral| peripheral.provider == Provider::Console)
+                    .map(|peripheral| emulator::ControllerChoice {
+                        peripheral: peripheral.id,
+                        label: peripheral.label,
+                    })
+                    .collect(),
+                plugged: plugged.plugged,
+            })
+            .collect();
+
+        let first = self.first_port();
+        let devices = std::iter::once(emulator::DeviceSeat {
+            source: controls::InputSource::Keyboard,
+            name: "Keyboard".to_string(),
+            port: self.port_assignments.keyboard,
+        })
+        .chain(self.gamepads.iter().map(|pad| {
+            emulator::DeviceSeat {
+                source: controls::InputSource::Gamepad(pad.id),
+                name: pad.identity.name.clone(),
+                port: self
+                    .port_assignments
+                    .gamepads
+                    .get(&pad.id)
+                    .copied()
+                    .unwrap_or(first),
+            }
+        }))
+        .collect();
+
+        emulator::Controllers { ports, devices }
+    }
+
+    /// Point a host device at a port, for this session and for the next time
+    /// this system is played.
+    fn assign_device(
+        &mut self,
+        source: controls::InputSource,
+        port: missingno_core::ports::PortId,
+    ) {
+        let platform = self.platform();
+        match source {
+            controls::InputSource::Keyboard => {
+                self.port_assignments.keyboard = port;
+                if let Some(platform) = platform {
+                    self.settings.controls.set_keyboard_port(platform, port);
+                }
+            }
+            controls::InputSource::Gamepad(id) => {
+                let default = self.first_port();
+                self.port_assignments.gamepads.insert(id, port);
+                if let (Some(platform), Some((identity, occurrence))) =
+                    (platform, self.pad_seat(id))
+                {
+                    self.settings
+                        .controls
+                        .set_gamepad_port(platform, identity, occurrence, port, default);
+                }
+            }
+        }
+        self.settings.save();
+        self.push_routing();
+    }
+
+    /// How a connected pad is remembered: its identity, and how many identical
+    /// twins connected before it.
+    fn pad_seat(&self, id: gilrs::GamepadId) -> Option<(settings::GamepadIdentity, usize)> {
+        let pad = self.gamepads.iter().find(|pad| pad.id == id)?;
+        let occurrence = self
+            .gamepads
+            .iter()
+            .take_while(|earlier| earlier.id != id)
+            .filter(|earlier| earlier.identity == pad.identity)
+            .count();
+        Some((pad.identity.clone(), occurrence))
+    }
 
     /// Stamp the current session's end time and flush it to disk.
     fn end_current_session(&mut self) {
@@ -279,6 +470,9 @@ enum Screen {
     },
     Settings {
         section: settings::view::Section,
+        /// Which page the Controls section shows, and the controller each of its
+        /// port blocks has tabbed to.
+        controls: settings::view::ControlsState,
         listening_for: Option<settings::view::ListeningFor>,
         previous_screen: Box<Screen>,
         was_running: bool,
@@ -419,10 +613,25 @@ enum Message {
     /// was chosen.
     ExportCaptureSaved(usize, Option<rfd::FileHandle>),
 
-    /// A digital control (seam control id, pressed).
-    SetControl(Vec<missingno_core::system::ControlRole>, bool),
-    /// An analog control (seam control id, normalised 0-1).
-    SetAxis(missingno_core::system::ControlRole, f32),
+    /// What an input event works on the running machine, at the given level; a
+    /// release works no latching switch.
+    SetControl(Vec<controls::Actuation>, bool),
+    /// An analog control, normalised 0-1.
+    SetAxis(missingno_core::system::ControlId, f32),
+    /// The pads the host reports, as a freshly started subscription sees them:
+    /// its ids are its own, so this replaces the roster rather than adding to
+    /// it.
+    GamepadRoster(Vec<controls::ConnectedPad>),
+    /// A host gamepad appeared, with the name its driver reports.
+    GamepadConnected(gilrs::GamepadId, settings::GamepadIdentity),
+    GamepadDisconnected(gilrs::GamepadId),
+    /// Put a controller type in a console port, from the play screen.
+    PlugPeripheral(
+        missingno_core::ports::PortId,
+        missingno_core::ports::PeripheralId,
+    ),
+    /// Point a host input device at a console port.
+    AssignDevice(controls::InputSource, missingno_core::ports::PortId),
 
     ToggleDebugger(bool),
     CompleteSetup {
@@ -518,12 +727,13 @@ impl App {
             recording: false,
             library_search: String::new(),
             library_filter: library::store::SystemFilter::default(),
+            control_surfaces: None,
+            port_assignments: controls::PortAssignments::default(),
+            gamepads: Vec::new(),
+            switch_levels: emulation::SwitchLevels::default(),
         };
 
-        controls::update_bindings(
-            &app.settings.keyboard_bindings,
-            &app.settings.gamepad_bindings,
-        );
+        app.push_routing();
 
         app.reconcile_automation();
 
@@ -586,9 +796,43 @@ impl App {
             | Message::DismissNotice
             | Message::SetControl(..)
             | Message::SetAxis(..)
+            | Message::PlugPeripheral(..)
+            | Message::AssignDevice(..)
             | Message::ToggleDebugger(_) => return self.handle_emulation_message(message),
 
             Message::Session(bridge) => return self.handle_session_bridge(bridge),
+
+            Message::GamepadRoster(pads) => {
+                let present: Vec<_> = pads.iter().map(|pad| pad.id).collect();
+                let lifted = controls::release_missing_pads(&present);
+                self.gamepads = pads;
+                self.port_assignments = self.seated_assignments();
+                self.push_routing();
+                if let Some(lifted) = lifted {
+                    return Task::done(lifted);
+                }
+            }
+            Message::GamepadConnected(id, identity) => {
+                match self.gamepads.iter_mut().find(|pad| pad.id == id) {
+                    // A reused id is a different pad, or the same one under a
+                    // name its driver now reports differently.
+                    Some(pad) => pad.identity = identity,
+                    None => self.gamepads.push(controls::ConnectedPad { id, identity }),
+                }
+                // The pad may be one this system remembers, so re-seat rather
+                // than leaving it on the first port.
+                self.port_assignments = self.seated_assignments();
+                self.push_routing();
+            }
+            Message::GamepadDisconnected(id) => {
+                let lifted = controls::release_source(controls::InputSource::Gamepad(id));
+                self.gamepads.retain(|pad| pad.id != id);
+                self.port_assignments.gamepads.remove(&id);
+                self.push_routing();
+                if let Some(lifted) = lifted {
+                    return Task::done(lifted);
+                }
+            }
 
             Message::Automation(msg) => return automation::update::handle(self, msg),
 
@@ -721,6 +965,7 @@ impl App {
                     std::mem::replace(&mut self.screen, Screen::Library { hovered_game: None });
                 self.screen = Screen::Settings {
                     section: settings::view::Section::default(),
+                    controls: settings::view::ControlsState::default(),
                     listening_for: None,
                     previous_screen: Box::new(previous),
                     was_running,
