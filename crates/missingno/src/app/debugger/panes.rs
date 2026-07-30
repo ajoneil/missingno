@@ -294,7 +294,7 @@ pub static VCS_PANE_REGISTRY: &[PaneDescriptor] = &[
 /// seam's named regions and side-effect-free peeks while paused.
 const MEMORY_DESCRIPTOR: PaneDescriptor = PaneDescriptor {
     kind: DebuggerPane::Memory,
-    icon: Icon::CircuitBoard,
+    icon: Icon::MemoryStick,
     label: "Memory",
     instanceable: true,
     construct: || Box::new(MemoryPane::new()),
@@ -304,7 +304,7 @@ const MEMORY_DESCRIPTOR: PaneDescriptor = PaneDescriptor {
 /// through the seam's instruction set, or shows raw bytes where there is none.
 const DISASSEMBLY_DESCRIPTOR: PaneDescriptor = PaneDescriptor {
     kind: DebuggerPane::Disassembly,
-    icon: Icon::FileText,
+    icon: Icon::Terminal,
     label: "Disassembly",
     instanceable: false,
     construct: || Box::new(DisassemblyPane::new()),
@@ -348,7 +348,7 @@ pub static PANE_REGISTRY: &[PaneDescriptor] = &[
 /// per-channel waveforms. Reads the seam's [`ChannelWave`]s while capture is on.
 const AUDIO_DESCRIPTOR: PaneDescriptor = PaneDescriptor {
     kind: DebuggerPane::Audio,
-    icon: Icon::Sliders,
+    icon: Icon::Speaker,
     label: "Audio",
     instanceable: false,
     construct: || Box::new(AudioScopePane::new()),

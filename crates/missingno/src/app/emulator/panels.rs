@@ -461,7 +461,7 @@ fn playlog_body(entries: &[PlayLogEntry]) -> Element<'static, app::Message> {
                 image(entry.handle.clone()).width(Fill),
                 row![
                     app_text::detail(caption).color(MUTED).width(Fill),
-                    buttons::subtle(icons::m(Icon::Download))
+                    buttons::subtle(icons::m(Icon::Save))
                         .on_press(app::Message::ExportCapture(entry.event_index)),
                 ]
                 .align_y(Center),

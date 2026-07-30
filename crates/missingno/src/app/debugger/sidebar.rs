@@ -734,9 +734,9 @@ fn column_header(column: &inspect::BitColumn) -> Element<'static, app::Message> 
 fn concept_icon(concept: inspect::Concept) -> Icon {
     match concept {
         inspect::Concept::VBlank => Icon::Monitor,
-        inspect::Concept::VideoStatus => Icon::Eye,
+        inspect::Concept::VideoStatus => Icon::Flag,
         inspect::Concept::Timer => Icon::Clock,
-        inspect::Concept::Serial => Icon::Wifi,
+        inspect::Concept::Serial => Icon::Link,
         inspect::Concept::Input => Icon::Gamepad,
     }
 }

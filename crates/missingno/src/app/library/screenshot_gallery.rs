@@ -260,7 +260,7 @@ fn controls_panel(state: &GalleryState) -> Element<'_, app::Message> {
         .push(app::automation::tag(
             app::automation::ids::GALLERY_EXPORT,
             buttons::primary(
-                row![icons::m(Icon::Download), "Export PNG"]
+                row![icons::m(Icon::Save), "Export PNG"]
                     .spacing(s())
                     .align_y(Center),
             )

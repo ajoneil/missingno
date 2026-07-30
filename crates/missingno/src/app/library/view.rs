@@ -208,7 +208,7 @@ fn toolbar<'a>(
         crate::app::automation::tag(
             crate::app::automation::ids::LIBRARY_VIEW_LIST,
             layout_button(
-                Icon::Menu,
+                Icon::List,
                 layout == LibraryLayout::List,
                 LibraryLayout::List
             ),

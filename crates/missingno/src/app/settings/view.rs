@@ -1151,7 +1151,7 @@ fn general_section(settings: &super::Settings) -> Element<'_, app::Message> {
         directories = directories.push(
             row![
                 container(path_view).width(Fill),
-                buttons::danger(icons::m(Icon::Close))
+                buttons::danger(icons::m(Icon::Trash))
                     .on_press(Message::RemoveRomDirectory(i).into()),
             ]
             .spacing(s())

@@ -21,7 +21,9 @@ pub enum Icon {
     Expand,
     Eye,
     FileText,
+    Flag,
     FolderOpen,
+    Forward,
     Front,
     Gamepad,
     GameBoy,
@@ -32,10 +34,18 @@ pub enum Icon {
     Image,
     Info,
     Globe,
+    Link,
+    List,
+    MemoryStick,
     Menu,
     Monitor,
     Play,
+    Reload,
+    Save,
     Sliders,
+    Speaker,
+    Terminal,
+    Trash,
     Warning,
     Wifi,
 }
@@ -59,7 +69,9 @@ fn icon_data(icon: Icon) -> Handle {
         Icon::Expand => Handle::from_memory(include_bytes!("pixelarticons/expand.svg")),
         Icon::Eye => Handle::from_memory(include_bytes!("pixelarticons/eye.svg")),
         Icon::FileText => Handle::from_memory(include_bytes!("pixelarticons/file-text.svg")),
+        Icon::Flag => Handle::from_memory(include_bytes!("pixelarticons/flag.svg")),
         Icon::FolderOpen => Handle::from_memory(include_bytes!("pixelarticons/folder.svg")),
+        Icon::Forward => Handle::from_memory(include_bytes!("pixelarticons/forward.svg")),
         Icon::Front => Handle::from_memory(include_bytes!("pixelarticons/chevron-right.svg")),
         Icon::Gamepad => Handle::from_memory(include_bytes!("pixelarticons/gamepad.svg")),
         Icon::GameBoy => Handle::from_memory(include_bytes!("missingno.svg")),
@@ -69,11 +81,19 @@ fn icon_data(icon: Icon) -> Handle {
         Icon::Human => Handle::from_memory(include_bytes!("pixelarticons/human.svg")),
         Icon::Image => Handle::from_memory(include_bytes!("pixelarticons/image.svg")),
         Icon::Globe => Handle::from_memory(include_bytes!("pixelarticons/globe.svg")),
+        Icon::Link => Handle::from_memory(include_bytes!("pixelarticons/link.svg")),
+        Icon::List => Handle::from_memory(include_bytes!("pixelarticons/bulletlist.svg")),
+        Icon::MemoryStick => Handle::from_memory(include_bytes!("pixelarticons/memory-stick.svg")),
         Icon::Menu => Handle::from_memory(include_bytes!("pixelarticons/menu.svg")),
         Icon::Info => Handle::from_memory(include_bytes!("pixelarticons/info-box.svg")),
         Icon::Monitor => Handle::from_memory(include_bytes!("pixelarticons/monitor.svg")),
         Icon::Play => Handle::from_memory(include_bytes!("pixelarticons/play.svg")),
+        Icon::Reload => Handle::from_memory(include_bytes!("pixelarticons/reload.svg")),
+        Icon::Save => Handle::from_memory(include_bytes!("pixelarticons/save.svg")),
         Icon::Sliders => Handle::from_memory(include_bytes!("pixelarticons/sliders.svg")),
+        Icon::Speaker => Handle::from_memory(include_bytes!("pixelarticons/volume-2.svg")),
+        Icon::Terminal => Handle::from_memory(include_bytes!("pixelarticons/terminal.svg")),
+        Icon::Trash => Handle::from_memory(include_bytes!("pixelarticons/trash.svg")),
         Icon::Warning => Handle::from_memory(include_bytes!("pixelarticons/warning-diamond.svg")),
         Icon::Wifi => Handle::from_memory(include_bytes!("pixelarticons/wifi.svg")),
     }
@@ -116,7 +136,7 @@ pub fn xl<'a>(icon: Icon) -> Svg<'a, Theme> {
 }
 
 pub fn breakpoint_enabled() -> Svg<'static, Theme> {
-    m(Icon::Warning).style(|theme: &Theme, _state| Style {
+    m(Icon::Circle).style(|theme: &Theme, _state| Style {
         color: Some(theme.extended_palette().danger.strong.color),
     })
 }

@@ -83,7 +83,7 @@ impl App {
                 items = items.push(menu_divider());
                 items = items.push(menu_item_danger(
                     ids::MENU_REMOVE_GAME,
-                    Icon::Close,
+                    Icon::Trash,
                     "Remove Game",
                     Message::Detail(DetailMessage::RemoveGame),
                 ));
@@ -102,14 +102,14 @@ impl App {
                 if self.debugger_enabled {
                     items = items.push(menu_item(
                         ids::MENU_STEP_FRAME,
-                        Icon::Play,
+                        Icon::Forward,
                         "Step Frame",
                         debugger::Message::StepFrame.into(),
                     ));
                 }
                 items = items.push(menu_item_danger(
                     ids::MENU_RESET,
-                    Icon::Close,
+                    Icon::Reload,
                     "Reset",
                     Message::Reset,
                 ));
