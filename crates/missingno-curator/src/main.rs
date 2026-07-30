@@ -1453,9 +1453,10 @@ impl Curator {
                         "demo" => missingno_gamedb::GameKind::Demo,
                         "demoscene" => missingno_gamedb::GameKind::Demoscene,
                         "test" => missingno_gamedb::GameKind::Test,
+                        "tool" => missingno_gamedb::GameKind::Tool,
                         other => {
                             return error_result(format!(
-                                "unknown kind {other:?}; expected Game, Demo, Demoscene, or Test"
+                                "unknown kind {other:?}; expected Game, Demo, Demoscene, Test or Tool"
                             ));
                         }
                     };
@@ -1849,6 +1850,22 @@ impl Curator {
                     }
                     None => None,
                 };
+                let languages = match set.get("languages").and_then(serde_json::Value::as_array) {
+                    Some(list) => {
+                        let mut parsed = Vec::with_capacity(list.len());
+                        for value in list {
+                            let Some(name) = value.as_str() else {
+                                return error_result("languages must be strings");
+                            };
+                            match db::parse_language(name) {
+                                Ok(language) => parsed.push(language),
+                                Err(e) => return error_result(e),
+                            }
+                        }
+                        Some(parsed)
+                    }
+                    None => None,
+                };
                 let tv_format = match set_str("tv_format") {
                     Some(f) => Some(match db::parse_tv_format(f) {
                         Ok(f) => f,
@@ -1880,6 +1897,7 @@ impl Curator {
                     && date.is_none()
                     && publisher.is_none()
                     && regions.is_none()
+                    && languages.is_none()
                     && tv_format.is_none()
                     && controllers.is_none()
                     && cart_type.is_none()
@@ -1896,6 +1914,7 @@ impl Curator {
                     date,
                     publisher,
                     regions,
+                    languages,
                 };
                 if db.entries[i].game.update_release(index as usize, edits) {
                     let tv = tv_format.is_some_and(|f| {

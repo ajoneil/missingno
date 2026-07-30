@@ -616,6 +616,9 @@ impl AnyGame {
             if let Some(regions) = edits.regions {
                 release.regions = regions;
             }
+            if let Some(languages) = edits.languages {
+                release.languages = languages;
+            }
             if let Some(status) = edits.status {
                 release.status = status;
             }
@@ -962,6 +965,7 @@ impl AnyGame {
                 title: None,
                 label: None,
                 regions: Vec::new(),
+                languages: Vec::new(),
                 date: None,
                 publisher: None,
                 status: Default::default(),
@@ -1251,6 +1255,7 @@ fn split_hack_from<P: Platform>(
                 title: None,
                 label: None,
                 regions: Vec::new(),
+                languages: Vec::new(),
                 date: None,
                 publisher: None,
                 status: release.status,
@@ -1332,10 +1337,12 @@ fn split_release_from<P: Platform>(
         let hardware = source.releases[at].hardware.clone();
         let publisher = source.releases[at].publisher.clone();
         let regions = source.releases[at].regions.clone();
+        let languages = source.releases[at].languages.clone();
         source.releases.push(Release {
             title,
             label,
             regions,
+            languages,
             date,
             publisher,
             status,
@@ -1504,6 +1511,7 @@ pub struct ReleaseEdits {
     pub date: Option<Option<missingno_gamedb::ReleaseDate>>,
     pub publisher: Option<String>,
     pub regions: Option<Vec<Region>>,
+    pub languages: Option<Vec<Language>>,
 }
 
 pub struct EntryHandle {
@@ -1680,6 +1688,7 @@ impl Db {
                     title: None,
                     label: None,
                     regions: Vec::new(),
+                    languages: Vec::new(),
                     date: None,
                     publisher: None,
                     status: ReleaseStatus::Released,
