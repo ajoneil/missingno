@@ -1794,8 +1794,11 @@ impl Curator {
                 match renamed {
                     Ok(new_key) => {
                         self.rekey_entry(&old_key, &new_key);
+                        // The collection folder is named for the slug, so it
+                        // has to follow or the entry's ROMs are orphaned.
+                        let moved = self.move_collection_dir(&old_key, &new_key);
                         text_result(format!(
-                            "{old_key} renamed → {new_key}; use the new key from now on"
+                            "{old_key} renamed → {new_key}{moved}; use the new key from now on"
                         ))
                     }
                     Err(e) => error_result(e),
