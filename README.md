@@ -1,6 +1,6 @@
 # Missingno
 
-A Game Boy emulator and debugger written in Rust, focused on hardware accuracy and helping you manage, preserve, and discover games.
+A multi-system emulator and debugger written in Rust, focused on hardware accuracy and helping you manage, preserve, and discover games. Emulates the Game Boy, Game Boy Color, and Atari VCS (2600).
 
 ![Debugger screenshot](screenshots/debugger.png)
 

@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=Missingno
-Comment=Game Boy emulator and debugger
+Comment=Multi-system emulator and debugger
 Exec=missingno %f
 Icon=net.andyofniall.missingno
 Terminal=false
