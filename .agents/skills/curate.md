@@ -78,28 +78,25 @@ game immediately afterwards**.
    range sweeps: a local file whose entry sorts outside the range still belongs to the batch.
 5. `queue_games` with the ordered keys. The first game starts playing immediately.
 
-   **`queue_games` replaces the whole queue and starts its first key — it never appends.**
-   Topping up mid-session therefore yanks the current playtest unless the call names the
-   current game first: re-send the current key at the head, then the not-yet-played
-   remainder, then the extension. Extend while the developer plays the game you just
-   finished researching, never between your report and their Accept.
+   **Top up with `extend_queue`, which appends and leaves the playtest alone.**
+   `queue_games` replaces the whole queue and restarts its first key, so it is for setting a
+   queue up, never for extending one.
 
 ## The loop (per game)
 
 While the developer plays the current game:
 
-1. `get_game` for the manifest and its open flags, and `find_duplicates` for merge
+1. `get_game` for the manifest and its open flags, and `related_entries` for merge
    candidates — always, for every game.
 
    **The unit of work is the game, not the entry — hunt its other names.**
    `find_duplicates` only catches same-title entries; regional retitlings and re-skins hide
    under names it cannot see, and titles that normalise differently slip past it entirely.
 
-   **Start by listing the tree for the game's own slug prefix** (`ls data/<tree>/<slug>*`).
-   That is what surfaces the siblings a title search cannot: slug-suffixed splits
-   (`-ntsc`, `-pal`, `-f0`), dump-flag entries (`-a`), and hacks filed as games. Read each
-   one's title before folding it in — **a hack names itself, not its base**, so an adjacent
-   slug may belong to a different game entirely.
+   `related_entries` is what surfaces the siblings a title search cannot: slug-suffixed
+   splits (`-ntsc`, `-pal`, `-f0`), dump-flag entries (`-a`), and hacks filed as games. It
+   says why each one matched. Read the titles before folding anything in — **a hack names
+   itself, not its base**, so an adjacent slug may belong to a different game entirely.
 
    Then harvest alternate titles from every signal you have — `[aka …]` in signature names, the
    catalogue page's alternate-title list, where a Wikipedia search lands (a redirect to a
@@ -119,12 +116,11 @@ While the developer plays the current game:
    question in chat, leave both entries alone, and say when a same-title hit is a different
    product so nobody re-investigates it.
 2. **Check every artifact hash, not just one.** An entry's `artifacts` are what the db claims
-   the game *is*, and nobody re-checks them once imported. Look up each sha1 and compare the
-   answer against what the entry claims.
-
-   ```
-   gamedb verify-hashes --key <tree>/<slug>
-   ```
+   the game *is*, and nobody re-checks them once imported. `verify_artifacts` walks the
+   entry; `identify_dump` answers one hash in full — where it sits, the signature name,
+   publisher/year/country, **byte size**, cover and any mapped article. The size is what
+   tells a padded overdump from a genuine variant. `dump_info` is the offline half: which
+   release or mod holds a hash, and its local file.
 
    The answer is a session-time check reported in chat — **nothing is written into the
    manifest**. Verify the entry in front of you; the command refuses an unbounded run.
@@ -244,9 +240,9 @@ While the developer plays the current game:
    chat does not. Name links bare — `Manual`, not `Manual (Atari Compendium)`; qualify only
    to tell several of a kind apart.
 
-   `rename_game` changes the slug when a title correction leaves it wrong; it moves the entry
-   on disk, re-points flags and the queue, and returns the new `tree/slug` key — use that key
-   afterwards. **Slug shape**: natural word order, a leading article stays and leads, never a
+   `retitle` sets the title and, given a slug, renames the entry and moves its collection
+   folder in one call; `rename_game` is the slug alone. Both return the new `tree/slug` key —
+   use it afterwards. **Slug shape**: natural word order, a leading article stays and leads, never a
    sort-suffix; strip TV-standard and board suffixes once the entry is the whole game rather
    than one dump of it; collapse the import's apostrophe shrapnel rather than leaving a stray
    `-s-`. After renaming an accepted entry, move
@@ -313,8 +309,10 @@ While the developer plays the current game:
 7. **Cover image** (`covers` — remote URLs only, we host nothing):
    - **The curator auto-stages a Hasheous cover and Wikipedia link when a game loads.**
      Hasheous groups variants under one record, so the staged image is regularly a different
-     *platform's* box, or the same art cropped free of any platform marking. **Download it
-     and look at it** before keeping it; when it is wrong, say so and replace it.
+     *platform's* box, or the same art cropped free of any platform marking. Run
+     `cover_candidates` — it fetches what is staged, what Hasheous holds and the libretro
+     boxart, and reports each one's pixel size, so a crop or a wrong-platform box shows as a
+     mismatch. **Then download the one you mean and look at it.**
    - Commercial games: the Hasheous image (`…/api/v1/images/<id>` from the lookup's
      `attributes`), taking it from the record of the dump you actually mean — a hack's record
      carries the hack's art. Fallback: `thumbnails.libretro.com`, then a Wikipedia article's
@@ -354,9 +352,10 @@ While the developer plays the current game:
    - **flags** — unsupported-controller and playtest-oddity checks done.
 11. **Report in chat** — there is no notes panel, deliberately. Say what you staged, the
    single most load-bearing source, and anything to double-check. Anything that must survive
-   the session goes in a manifest field or a flag, never in prose.
-12. If a flag's answer is now established and the developer has agreed, `resolve_flag`;
-   otherwise propose the resolution in chat and leave it open.
+   the session goes in a manifest field or a flag, never in prose. `session_changes` lists
+   every mutating call made, so the end-of-session summary is read off a record.
+12. If a flag's work is done, `resolve_flag` — which **deletes** it. A flag is future work,
+   not a record; git carries the history.
 13. When a game's research is done, **stop and let the Monitor tell you what happens next.**
    Do not poll `queue_status`, and do not stage anything for the next game to fill the time.
    A quiet queue usually means they are still playing; talking to them about the game in

@@ -33,6 +33,96 @@ pub fn fetch(url: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("read failed: {e}"))
 }
 
+/// Pixel size read straight out of a PNG or JPEG header, so a cover can be
+/// compared without decoding it. A cropped scan and a full one differ here,
+/// and a tiny image is usually a thumbnail rather than a box scan.
+pub fn image_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") && bytes.len() >= 24 {
+        let w = u32::from_be_bytes(bytes[16..20].try_into().ok()?);
+        let h = u32::from_be_bytes(bytes[20..24].try_into().ok()?);
+        return Some((w, h));
+    }
+    if bytes.starts_with(b"\xff\xd8") {
+        let mut i = 2;
+        while i + 9 < bytes.len() {
+            if bytes[i] != 0xff {
+                i += 1;
+                continue;
+            }
+            let marker = bytes[i + 1];
+            // SOFn carries the frame size; skip the arithmetic-coded and
+            // restart-interval markers that share the range.
+            if (0xc0..=0xcf).contains(&marker) && !matches!(marker, 0xc4 | 0xc8 | 0xcc) {
+                let h = u16::from_be_bytes([bytes[i + 5], bytes[i + 6]]) as u32;
+                let w = u16::from_be_bytes([bytes[i + 7], bytes[i + 8]]) as u32;
+                return Some((w, h));
+            }
+            let len = u16::from_be_bytes([bytes[i + 2], bytes[i + 3]]) as usize;
+            i += 2 + len.max(2);
+        }
+    }
+    None
+}
+
+/// One candidate cover, fetched and measured so it can be compared before
+/// staging: the wrong platform's box and a cropped variant of the same art
+/// both show up as a size mismatch.
+#[derive(Debug, Clone)]
+pub struct CoverCandidate {
+    pub source: String,
+    pub url: String,
+    pub dimensions: Option<(u32, u32)>,
+    pub bytes: usize,
+    pub error: Option<String>,
+}
+
+/// libretro-thumbnails is keyed by No-Intro filename, which is exactly what a
+/// signature name gives us once its extension and any bracket flags are gone.
+pub fn libretro_boxart_url(system: &str, signature_name: &str) -> Option<String> {
+    fn encode(s: &str) -> String {
+        s.chars()
+            .map(|c| match c {
+                ' ' => "%20".to_owned(),
+                '\'' => "%27".to_owned(),
+                '&' => "%26".to_owned(),
+                c => c.to_string(),
+            })
+            .collect()
+    }
+    let stem = signature_name
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(signature_name)
+        .trim();
+    if stem.is_empty() || stem.contains('[') {
+        return None;
+    }
+    Some(format!(
+        "https://thumbnails.libretro.com/{}/Named_Boxarts/{}.png",
+        encode(system),
+        encode(stem)
+    ))
+}
+
+pub fn measure_cover(source: &str, url: String) -> CoverCandidate {
+    match fetch(&url) {
+        Ok(bytes) => CoverCandidate {
+            source: source.to_owned(),
+            dimensions: image_dimensions(&bytes),
+            bytes: bytes.len(),
+            url,
+            error: None,
+        },
+        Err(e) => CoverCandidate {
+            source: source.to_owned(),
+            url,
+            dimensions: None,
+            bytes: 0,
+            error: Some(e),
+        },
+    }
+}
+
 const ROM_EXTENSIONS: [&str; 5] = ["gb", "gbc", "a26", "bin", "rom"];
 
 const HASHEOUS: &str = "https://hasheous.org/api/v1";
@@ -46,6 +136,14 @@ pub struct HasheousHit {
     pub signature_name: Option<String>,
     pub cover_url: Option<String>,
     pub wikipedia_url: Option<String>,
+    /// What the signature entry says about the *release*, which is thinner
+    /// than a catalogue but is per-dump rather than per-game.
+    pub signature_publisher: Option<String>,
+    pub signature_year: Option<String>,
+    pub signature_country: Option<String>,
+    /// Byte size the signature database records for this dump — the number
+    /// that tells a padded overdump from a variant.
+    pub rom_size: Option<u64>,
 }
 
 /// What a TOSEC bracket flag says about a dump. Derived works were made by
@@ -140,6 +238,20 @@ pub fn hasheous_lookup(sha1: &str) -> Result<Option<HasheousHit>, String> {
         .as_str()
         .filter(|s| !s.is_empty())
         .map(str::to_owned);
+    hit.rom_size = body["signature"]["rom"]["size"].as_u64();
+    let sig_game = &body["signature"]["game"];
+    let non_empty = |v: &serde_json::Value| {
+        v.as_str()
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_owned)
+    };
+    hit.signature_publisher = non_empty(&sig_game["publisher"]);
+    hit.signature_year = non_empty(&sig_game["year"]);
+    hit.signature_country = sig_game["country"]
+        .as_object()
+        .map(|c| c.values().filter_map(|v| v.as_str()).collect::<Vec<_>>())
+        .filter(|names| !names.is_empty())
+        .map(|names| names.join(", "));
     if let Some(attributes) = body["attributes"].as_array() {
         for attr in attributes {
             if attr["attributeName"].as_str() == Some("Logo")

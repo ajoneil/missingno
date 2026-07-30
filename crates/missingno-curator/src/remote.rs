@@ -151,7 +151,11 @@ fn dispatch(sink: &SharedSink, name: &str, args: Value) -> Result<Value, String>
     .map_err(|_| "curator UI gone")?;
     // The long-poll parks its reply until the human acts; everything else
     // answers promptly or is stuck.
-    let timeout = if matches!(name, "wait_for_action" | "verify_artifacts") {
+    // Anything that reaches the network needs longer than a UI round trip.
+    let timeout = if matches!(
+        name,
+        "wait_for_action" | "verify_artifacts" | "identify_dump" | "cover_candidates"
+    ) {
         Duration::from_secs(55)
     } else {
         REPLY_TIMEOUT
@@ -457,7 +461,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "resolve_flag",
-            "description": "Mark a curation flag resolved (the data now reflects the decision).",
+            "description": "Clear a flag once its work is done — this deletes it. A flag is future work, not a record: git carries the history.",
             "inputSchema": object(json!({ "id": { "type": "integer" } }), &["id"]),
         },
         {
@@ -468,6 +472,45 @@ fn tool_definitions() -> Value {
                 "note": { "type": "string", "description": "the issue and the context needed to act on it later" },
                 "kind": { "type": "string", "description": "flag kind; defaults to EmulationIncompatibility" },
             }), &["key", "note"]),
+        },
+        {
+            "name": "related_entries",
+            "description": "Entries that may be the same game — run this for every game, before find_duplicates. Catches what title matching cannot: slug-suffixed splits (-ntsc, -pal, -f0), dump-flag entries (-a), and hacks filed as games, plus same-title and title-contains matches. Each result says why it matched. Read the titles before folding anything in: a hack names itself, not its base, so an adjacent slug can belong to a different game.",
+            "inputSchema": object(json!({ "key": { "type": "string" } }), &["key"]),
+        },
+        {
+            "name": "identify_dump",
+            "description": "Everything known about one hash in a single call: where it sits in the database, the signature database's per-dump name and its publisher/year/country/size, the cover image Hasheous holds for it, and any mapped Wikipedia article. The signature name carries the TOSEC bracket flags that identify a hack, a bad dump or an overdump; the size is what tells a padded overdump from a genuine variant.",
+            "inputSchema": object(json!({ "sha1": { "type": "string" } }), &["sha1"]),
+        },
+        {
+            "name": "dump_info",
+            "description": "Where a hash lives: which entry and release (or mod) holds it, and the local file and byte size if the ROM dirs have been scanned. Offline — use identify_dump for the signature database.",
+            "inputSchema": object(json!({ "sha1": { "type": "string" } }), &["sha1"]),
+        },
+        {
+            "name": "cover_candidates",
+            "description": "Fetch every candidate cover for a game — what is already staged, what Hasheous holds for its lead dump, and the libretro-thumbnails boxart — and report each one's pixel size and byte count so they can be compared before staging. Hasheous groups variants under one record, so its image is regularly another platform's box or the same art cropped free of its platform banner; a size mismatch is the tell. Still download and look at the one you keep.",
+            "inputSchema": object(json!({ "key": { "type": "string" } }), &["key"]),
+        },
+        {
+            "name": "session_changes",
+            "description": "Every mutating tool call made this session, in order, with what each returned. Use it to write the end-of-session summary off a record rather than from memory.",
+            "inputSchema": object(json!({}), &[]),
+        },
+        {
+            "name": "extend_queue",
+            "description": "Append games to the end of the queue without touching the current playtest. Use this to top up mid-session — queue_games replaces the whole queue and restarts its first key, which yanks the game the developer is playing.",
+            "inputSchema": object(json!({ "keys": { "type": "array", "items": { "type": "string" } } }), &["keys"]),
+        },
+        {
+            "name": "retitle",
+            "description": "Set a game's title and, when the slug should follow it, rename the entry and move its collection folder in one call. Reply names the new tree/slug key — use it for every later call. Take the title from the box or manual cover: the import titles entries from a No-Intro/TOSEC filename, which carries taglines, ad copy, dump flags and publisher qualifiers that are not the name.",
+            "inputSchema": object(json!({
+                "key": { "type": "string" },
+                "title": { "type": "string" },
+                "slug": { "type": "string", "description": "new slug, when the title change should move the entry too" },
+            }), &["key", "title"]),
         },
         {
             "name": "update_flag",

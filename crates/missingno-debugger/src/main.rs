@@ -1,5 +1,6 @@
 //! `missingno-debugger [<rom>] [--port N] [--mcp] [--allow-attach] [--boot-rom
-//! PATH]`: recognise the ROM through the core registry, put its console under
+//! PATH] [--cart-type CODE] [--tv-standard STD] [--overdump]`: recognise the
+//! ROM through the core registry, put its console under
 //! the debugger, and serve it — over HTTP by default, or as an MCP tool server
 //! over stdio with `--mcp`. With `--mcp` and no ROM, the MCP server starts idle
 //! and loads a ROM or attaches to a running session on request, so one static
@@ -16,8 +17,8 @@ use missingno_session::factory::{self, LoadOptions};
 /// Matches the GUI crate's headless server default.
 const DEFAULT_PORT: u16 = 3333;
 
-const USAGE: &str =
-    "usage: missingno-debugger [<rom>] [--port N] [--mcp] [--allow-attach] [--boot-rom PATH]";
+const USAGE: &str = "usage: missingno-debugger [<rom>] [--port N] [--mcp] [--allow-attach] \
+     [--boot-rom PATH] [--cart-type CODE] [--tv-standard ntsc|pal|secam] [--overdump]";
 
 struct Args {
     rom: Option<PathBuf>,
@@ -25,6 +26,11 @@ struct Args {
     mcp: bool,
     allow_attach: bool,
     boot_rom: Option<PathBuf>,
+    /// A VCS board code. Carts carry no header, so a bankswitched image the
+    /// core cannot size-detect will not load at all without this.
+    cart_type: Option<String>,
+    tv_standard: Option<String>,
+    overdump: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -33,6 +39,9 @@ fn parse_args() -> Result<Args, String> {
     let mut mcp = false;
     let mut allow_attach = false;
     let mut boot_rom = None;
+    let mut cart_type = None;
+    let mut tv_standard = None;
+    let mut overdump = false;
     let mut iter = std::env::args().skip(1);
     while let Some(argument) = iter.next() {
         match argument.as_str() {
@@ -45,6 +54,13 @@ fn parse_args() -> Result<Args, String> {
             "--boot-rom" => {
                 boot_rom = Some(PathBuf::from(iter.next().ok_or("--boot-rom needs a path")?));
             }
+            "--cart-type" => {
+                cart_type = Some(iter.next().ok_or("--cart-type needs a board code")?);
+            }
+            "--tv-standard" => {
+                tv_standard = Some(iter.next().ok_or("--tv-standard needs a value")?);
+            }
+            "--overdump" => overdump = true,
             "--mcp" => mcp = true,
             "--allow-attach" => allow_attach = true,
             "-h" | "--help" => return Err(USAGE.to_string()),
@@ -62,6 +78,9 @@ fn parse_args() -> Result<Args, String> {
         mcp,
         allow_attach,
         boot_rom,
+        cart_type,
+        tv_standard,
+        overdump,
     })
 }
 
@@ -88,9 +107,19 @@ fn run() -> Result<(), String> {
     };
     let options = LoadOptions {
         boot_rom,
-        ..LoadOptions::default()
+        cart_type: args.cart_type.clone(),
+        tv_standard: args.tv_standard.clone(),
+        overdump: args.overdump,
     };
-    let console = factory::create_console_with(&rom_path, &rom, &options)?
+    let console = factory::create_console_with(&rom_path, &rom, &options)
+        .map_err(|e| match args.cart_type {
+            // Size-detection is what fails on a bankswitched VCS image, and
+            // the message alone does not say the board can be supplied.
+            None => {
+                format!("{e} — if this is a bankswitched cart, name its board with --cart-type")
+            }
+            Some(_) => e,
+        })?
         .ok_or_else(|| format!("no core recognises {}", rom_path.display()))?;
     let debugger = console.into_debugger();
     let session = SharedSession::spawn(debugger);

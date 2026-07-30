@@ -4,9 +4,9 @@
 use std::{fs, io, path::PathBuf};
 
 use missingno_gamedb::{
-    Controller, Date, Defect, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Language, Link,
-    LinkType, Mod, ModCategory, ModOf, ModRelease, Platform, Region, Release, ReleaseStatus, Sha1,
-    Slug, Tree, TvFormat, Vcs,
+    Controller, Defect, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Language, Link, LinkType,
+    Mod, ModCategory, ModOf, ModRelease, Platform, Region, Release, ReleaseStatus, Sha1, Slug,
+    Tree, TvFormat, Vcs,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -2034,6 +2034,17 @@ impl Db {
         label: Option<String>,
         date: Option<missingno_gamedb::ReleaseDate>,
     ) -> Result<(), String> {
+        // Splitting a release's only dump moves it sideways and leaves an
+        // empty release behind: what the caller wants is update_release.
+        for r in 0..self.entries[entry].game.release_lines().len() {
+            let dumps = self.entries[entry].game.release_artifacts(r);
+            if dumps.len() == 1 && dumps[0].0.eq_ignore_ascii_case(sha1) {
+                return Err(format!(
+                    "{sha1} is the only dump of release {r} — splitting it would leave that \
+                     release empty. Use update_release to change its status, title or label."
+                ));
+            }
+        }
         let split = match &mut self.entries[entry].game {
             AnyGame::Gb(g) => split_release_from(g, sha1, status, title, label, date),
             AnyGame::Gbc(g) => split_release_from(g, sha1, status, title, label, date),
@@ -2045,6 +2056,89 @@ impl Db {
         self.entries[entry].dirty = true;
         self.write_entry(entry).map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    /// Entries that may be the same game as this one. Title normalisation
+    /// alone misses the two commonest shapes — an entry split by slug suffix
+    /// (`-ntsc`, `-pal`, `-a`) and a hack filed under its own name — so this
+    /// also walks slug prefixes in both directions and reports why each
+    /// candidate matched, since an adjacent slug is often a different game.
+    pub fn related_entries(&self, entry: usize) -> Vec<(String, String, &'static str, bool)> {
+        let this = &self.entries[entry];
+        let (tree, slug) = (this.tree, this.slug.as_str());
+        let mut needles = vec![missingno_gamedb::normalized_title(this.game.title())];
+        for release_title in this.game.release_titles() {
+            needles.push(missingno_gamedb::normalized_title(&release_title));
+        }
+        needles.retain(|n| !n.is_empty());
+        let title_lower = this.game.title().to_lowercase();
+
+        let mut out = Vec::new();
+        for other in &self.entries {
+            if other.tree != tree || other.slug == slug {
+                continue;
+            }
+            let reason = if other.slug.starts_with(&format!("{slug}-")) {
+                "slug suffix"
+            } else if slug.starts_with(&format!("{}-", other.slug)) {
+                "slug prefix"
+            } else if needles.contains(&missingno_gamedb::normalized_title(other.game.title()))
+                || other
+                    .game
+                    .release_titles()
+                    .iter()
+                    .any(|rt| needles.contains(&missingno_gamedb::normalized_title(rt)))
+            {
+                "same title"
+            } else if title_lower.len() >= 4
+                && other.game.title().to_lowercase().contains(&title_lower)
+            {
+                "title contains"
+            } else {
+                continue;
+            };
+            out.push((
+                other.key(),
+                other.game.title().to_owned(),
+                reason,
+                other.game.curated(),
+            ));
+        }
+        out
+    }
+
+    /// Where a hash sits in the database: its entry, and whether it is a
+    /// release dump or belongs to a mod.
+    pub fn find_dump(&self, sha1: &str) -> Option<(String, String, String)> {
+        for entry in &self.entries {
+            for r in 0..entry.game.release_lines().len() {
+                for (hash, label, _) in entry.game.release_artifacts(r) {
+                    if hash.eq_ignore_ascii_case(sha1) {
+                        let what = if label.is_empty() {
+                            format!("release {r}")
+                        } else {
+                            format!("release {r} ({label})")
+                        };
+                        return Some((entry.key(), entry.game.title().to_owned(), what));
+                    }
+                }
+            }
+            for (m, name) in entry.game.mod_names().into_iter().enumerate() {
+                if entry
+                    .game
+                    .mod_artifacts(m)
+                    .iter()
+                    .any(|(h, _, _)| h.eq_ignore_ascii_case(sha1))
+                {
+                    return Some((
+                        entry.key(),
+                        entry.game.title().to_owned(),
+                        format!("mod \"{name}\""),
+                    ));
+                }
+            }
+        }
+        None
     }
 
     /// Move a dump into another release; returns whether the source release
@@ -2064,14 +2158,6 @@ impl Db {
         self.write_entry(entry).map_err(|e| e.to_string())?;
         Ok(emptied)
     }
-
-    pub fn today() -> Date {
-        jiff::Zoned::now()
-            .date()
-            .to_string()
-            .parse()
-            .expect("jiff civil date is YYYY-MM-DD")
-    }
 }
 
 #[cfg(test)]
@@ -2088,10 +2174,23 @@ mod tests {
         }
         let db = Db::load(repo).expect("gamedb loads");
         assert!(db.entries.len() > 8000, "{}", db.entries.len());
-        assert!(db.flags.open().count() > 2000);
         // A floor far below the current backlog: curating and merging shrink
         // it every session, so a tight bound would fail on progress alone.
         assert!(db.backlog_count(TreeId::Vcs) > 1000);
+
+        // A flag is future work, so it has to name work someone can reach:
+        // every subject resolves to an entry that still exists.
+        let keys: std::collections::HashSet<String> = db.entries.iter().map(|e| e.key()).collect();
+        for flag in db.flags.open() {
+            assert!(!flag.subject.is_empty(), "flag #{} names no entry", flag.id);
+            for subject in &flag.subject {
+                assert!(
+                    keys.contains(subject),
+                    "flag #{} points at missing entry {subject}",
+                    flag.id
+                );
+            }
+        }
     }
 }
 
@@ -2317,7 +2416,6 @@ mod rename_tests {
             kind: missingno_gamedb::FlagKind::Custom,
             subject: vec!["gb/old-name".to_owned(), "gb/other".to_owned()],
             note: "check title".to_owned(),
-            resolved: None,
         });
         let new_key = db.rename_entry(0, "new-name").unwrap();
         assert_eq!(new_key, "gb/new-name");
@@ -2566,7 +2664,6 @@ mod merge_tests {
             kind: missingno_gamedb::FlagKind::Custom,
             subject: vec!["gb/reissue".to_owned()],
             note: "same game?".to_owned(),
-            resolved: None,
         });
         let (keeper, reissue) = (index_of(&db, "keeper"), index_of(&db, "reissue"));
         db.merge_entry(keeper, reissue).unwrap();

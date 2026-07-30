@@ -124,6 +124,9 @@ struct Curator {
     verify_status: std::collections::HashMap<String, String>,
     /// sha1 → this session's Hasheous verdict (✓name / DERIVED / unknown).
     session_marks: std::collections::HashMap<String, String>,
+    /// Every mutating tool call this session, so the end-of-session report is
+    /// read off a record rather than reconstructed from memory.
+    session_log: Vec<String>,
     /// sha1 → fetched ROM bytes, kept for boot verification.
     rom_cache: std::collections::HashMap<String, std::sync::Arc<Vec<u8>>>,
     fetching: bool,
@@ -196,6 +199,11 @@ enum Message {
         reply: std::sync::mpsc::Sender<serde_json::Value>,
     },
     Enriched(String, Result<Option<verify::HasheousHit>, String>),
+    /// A tool whose answer needed the network, ready to send back verbatim.
+    ToolText {
+        text: String,
+        reply: std::sync::mpsc::Sender<serde_json::Value>,
+    },
     CoverLoaded(String, Option<iced::widget::image::Handle>),
     ConfirmAndNext,
     Accept {
@@ -313,6 +321,7 @@ impl Curator {
                 rom_index: None,
                 verify_status: std::collections::HashMap::new(),
                 session_marks: std::collections::HashMap::new(),
+                session_log: Vec::new(),
                 rom_cache: std::collections::HashMap::new(),
                 fetching: false,
                 scanning: false,
@@ -414,6 +423,155 @@ impl Curator {
                             key: key.clone(),
                             results,
                             reply: reply.clone(),
+                        },
+                    );
+                }
+                if call.name == "identify_dump" {
+                    let Some(sha1) = call.args.get("sha1").and_then(serde_json::Value::as_str)
+                    else {
+                        let _ = call.reply.send(error_result("missing sha1"));
+                        return Task::none();
+                    };
+                    let sha1 = sha1.to_owned();
+                    let reply = call.reply.clone();
+                    let local = self
+                        .db
+                        .as_ref()
+                        .ok()
+                        .and_then(|db| db.find_dump(&sha1))
+                        .map(|(key, title, what)| format!("in db: {key} ({title}) — {what}"))
+                        .unwrap_or_else(|| "in db: not found".to_owned());
+                    self.status = format!("identifying {sha1}…");
+                    return Task::perform(
+                        smol::unblock({
+                            let sha1 = sha1.clone();
+                            move || verify::hasheous_lookup(&sha1)
+                        }),
+                        move |hit| {
+                            let mut lines = vec![local.clone()];
+                            match hit {
+                                Ok(Some(hit)) => {
+                                    lines.push(format!("name: {}", hit.name));
+                                    if let Some(s) = &hit.signature_name {
+                                        lines.push(format!("signature: {s}"));
+                                    }
+                                    if let Some(n) = hit.rom_size {
+                                        lines.push(format!("signature size: {n} bytes"));
+                                    }
+                                    for (what, v) in [
+                                        ("publisher", &hit.signature_publisher),
+                                        ("year", &hit.signature_year),
+                                        ("country", &hit.signature_country),
+                                    ] {
+                                        if let Some(v) = v {
+                                            lines.push(format!("signature {what}: {v}"));
+                                        }
+                                    }
+                                    if let Some(u) = &hit.cover_url {
+                                        lines.push(format!("cover: {u}"));
+                                    }
+                                    if let Some(u) = &hit.wikipedia_url {
+                                        lines.push(format!("wikipedia (mapped): {u}"));
+                                    }
+                                }
+                                Ok(None) => lines.push(
+                                    "signature: unknown to the signature database — usually \
+                                     homebrew, a prototype or a private dump"
+                                        .to_owned(),
+                                ),
+                                Err(e) => lines.push(format!("lookup failed: {e}")),
+                            }
+                            Message::ToolText {
+                                text: lines.join("\n"),
+                                reply: reply.clone(),
+                            }
+                        },
+                    );
+                }
+                if call.name == "cover_candidates" {
+                    let Some(key) = call.args.get("key").and_then(serde_json::Value::as_str) else {
+                        let _ = call.reply.send(error_result("missing key"));
+                        return Task::none();
+                    };
+                    let Some(i) = self.find_entry(key) else {
+                        let _ = call.reply.send(error_result(format!("no entry {key}")));
+                        return Task::none();
+                    };
+                    let Ok(db) = &self.db else {
+                        let _ = call.reply.send(error_result("db not loaded"));
+                        return Task::none();
+                    };
+                    let staged: Vec<String> = db.entries[i].game.covers();
+                    let system = match db.entries[i].tree {
+                        db::TreeId::Vcs => "Atari - 2600",
+                        db::TreeId::Gb => "Nintendo - Game Boy",
+                        db::TreeId::Gbc => "Nintendo - Game Boy Color",
+                    };
+                    // The first dump of a release is regularly an unrecognised
+                    // alt, so offer every release dump and take the first the
+                    // signature database knows.
+                    let dumps: Vec<String> = (0..db.entries[i].game.release_lines().len())
+                        .flat_map(|r| db.entries[i].game.release_artifacts(r))
+                        .map(|(sha1, _, _)| sha1)
+                        .collect();
+                    let reply = call.reply.clone();
+                    self.status = format!("gathering covers for {key}…");
+                    return Task::perform(
+                        smol::unblock(move || {
+                            let mut out: Vec<verify::CoverCandidate> = staged
+                                .iter()
+                                .map(|u| verify::measure_cover("staged", u.clone()))
+                                .collect();
+                            for sha1 in dumps.iter().take(6) {
+                                let Ok(Some(hit)) = verify::hasheous_lookup(sha1) else {
+                                    continue;
+                                };
+                                if let Some(u) = hit.cover_url
+                                    && !out.iter().any(|c| c.url == u)
+                                {
+                                    out.push(verify::measure_cover("hasheous", u));
+                                }
+                                if let Some(name) = hit.signature_name
+                                    && let Some(u) = verify::libretro_boxart_url(system, &name)
+                                    && !out.iter().any(|c| c.url == u)
+                                {
+                                    out.push(verify::measure_cover("libretro", u));
+                                }
+                                break;
+                            }
+                            out
+                        }),
+                        move |candidates| {
+                            let mut lines = Vec::new();
+                            for c in &candidates {
+                                let size = match c.dimensions {
+                                    Some((w, h)) => format!("{w}x{h}"),
+                                    None => "?".to_owned(),
+                                };
+                                match &c.error {
+                                    Some(e) => {
+                                        lines.push(format!("{}: {} — {e}", c.source, c.url));
+                                    }
+                                    None => lines.push(format!(
+                                        "{}: {size}, {} bytes — {}",
+                                        c.source, c.bytes, c.url
+                                    )),
+                                }
+                            }
+                            if lines.is_empty() {
+                                lines.push("no cover candidates found".to_owned());
+                            }
+                            lines.push(String::new());
+                            lines.push(
+                                "Download and LOOK at the one you keep: same-size art may be \
+                                 another platform's box, and a smaller image is often the same \
+                                 scan cropped free of its platform banner."
+                                    .to_owned(),
+                            );
+                            Message::ToolText {
+                                text: lines.join("\n"),
+                                reply: reply.clone(),
+                            }
                         },
                     );
                 }
@@ -715,6 +873,9 @@ impl Curator {
                     self.cover_failed.insert(url);
                 }
             },
+            Message::ToolText { text, reply } => {
+                let _ = reply.send(text_result(text));
+            }
             Message::ArtifactsVerified {
                 key,
                 results,
@@ -835,11 +996,9 @@ impl Curator {
             Message::ToggleList => self.list_visible = !self.list_visible,
             Message::ResolveFlag(id) => {
                 if let Ok(db) = &mut self.db {
-                    if let Some(flag) = db.flags.flags.iter_mut().find(|f| f.id == id) {
-                        flag.resolved = Some(Db::today());
-                    }
+                    db.flags.flags.retain(|f| f.id != id);
                     match db.save_flags() {
-                        Ok(()) => self.status = format!("resolved flag #{id}"),
+                        Ok(()) => self.status = format!("cleared flag #{id}"),
                         Err(e) => self.status = format!("flag save failed: {e}"),
                     }
                 }
@@ -1121,6 +1280,23 @@ impl Curator {
         });
     }
 
+    /// Keep the collection folder tracking the slug after a rename; the
+    /// accepted entry's ROMs live under `<collection>/<tree>/<slug>/`.
+    fn move_collection_dir(&self, old_key: &str, new_key: &str) -> String {
+        let Some(root) = &self.collection_dir else {
+            return String::new();
+        };
+        let from = root.join(old_key);
+        if !from.is_dir() {
+            return String::new();
+        }
+        let to = root.join(new_key);
+        match std::fs::rename(&from, &to) {
+            Ok(()) => format!(", collection folder moved to {}", to.display()),
+            Err(e) => format!(", but moving {} failed: {e}", from.display()),
+        }
+    }
+
     fn rekey_entry(&mut self, old_key: &str, new_key: &str) {
         for key in self.queue.iter_mut().filter(|k| *k == old_key) {
             *key = new_key.to_owned();
@@ -1172,6 +1348,32 @@ impl Curator {
     ) -> (serde_json::Value, Task<Message>) {
         let str_arg = |k: &str| args.get(k).and_then(serde_json::Value::as_str);
         match name {
+            "extend_queue" => {
+                let Some(keys) = args.get("keys").and_then(serde_json::Value::as_array) else {
+                    return (error_result("missing keys array"), Task::none());
+                };
+                let mut added = Vec::new();
+                let mut missing = Vec::new();
+                for key in keys.iter().filter_map(serde_json::Value::as_str) {
+                    if self.find_entry(key).is_none() {
+                        missing.push(key.to_owned());
+                    } else if self.queue.iter().any(|q| q == key) {
+                        continue;
+                    } else {
+                        self.queue.push_back(key.to_owned());
+                        added.push(key.to_owned());
+                    }
+                }
+                let mut note = format!(
+                    "appended {} game(s); {} now queued, playtest untouched",
+                    added.len(),
+                    self.queue.len()
+                );
+                if !missing.is_empty() {
+                    note.push_str(&format!("; not found: {missing:?}"));
+                }
+                (text_result(note), Task::none())
+            }
             "queue_games" => {
                 let Some(keys) = args.get("keys").and_then(serde_json::Value::as_array) else {
                     return (error_result("missing keys array"), Task::none());
@@ -1238,6 +1440,37 @@ impl Curator {
     }
 
     fn run_tool(&mut self, name: &str, args: &serde_json::Value) -> serde_json::Value {
+        let result = self.run_tool_inner(name, args);
+        // Read-only tools would only pad the session record.
+        const READ_ONLY: &[&str] = &[
+            "status",
+            "search_games",
+            "get_game",
+            "queue_status",
+            "local_matches",
+            "find_duplicates",
+            "related_entries",
+            "dump_info",
+            "session_changes",
+            "list_flags",
+            "identify_dump",
+            "cover_candidates",
+        ];
+        if !READ_ONLY.contains(&name) && result["isError"] != serde_json::Value::Bool(true) {
+            let subject = args
+                .get("key")
+                .or_else(|| args.get("sha1"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("-");
+            let summary = result["content"][0]["text"].as_str().unwrap_or("");
+            let summary = summary.lines().next().unwrap_or("");
+            self.session_log
+                .push(format!("{name} {subject}: {summary}"));
+        }
+        result
+    }
+
+    fn run_tool_inner(&mut self, name: &str, args: &serde_json::Value) -> serde_json::Value {
         let str_arg = |k: &str| args.get(k).and_then(serde_json::Value::as_str);
         // Names match list_flags' lowercased Debug spelling of the variant.
         fn flag_kind_from_str(s: &str) -> Option<missingno_gamedb::FlagKind> {
@@ -2187,6 +2420,118 @@ impl Curator {
                     lines.join("\n")
                 })
             }
+            "retitle" => {
+                let (Some(key), Some(title)) = (str_arg("key"), str_arg("title")) else {
+                    return error_result("missing key or title");
+                };
+                let Some(i) = self.find_entry(key) else {
+                    return error_result(format!("no entry {key}"));
+                };
+                let old_key = key.to_owned();
+                {
+                    let Ok(db) = &mut self.db else {
+                        return error_result("db not loaded");
+                    };
+                    db.entries[i]
+                        .game
+                        .set_text_field(db::TextField::Title, title.to_owned());
+                    db.entries[i].dirty = true;
+                    if let Err(e) = db.write_entry(i) {
+                        return error_result(format!("writing {old_key} failed: {e}"));
+                    }
+                }
+                let slug_now = old_key.rsplit('/').next().unwrap_or_default();
+                let Some(new_slug) = str_arg("slug").filter(|s| *s != slug_now) else {
+                    return text_result(format!("{old_key} retitled to {title:?}"));
+                };
+                let renamed = {
+                    let Ok(db) = &mut self.db else {
+                        return error_result("db not loaded");
+                    };
+                    db.rename_entry(i, new_slug)
+                };
+                match renamed {
+                    Ok(new_key) => {
+                        self.rekey_entry(&old_key, &new_key);
+                        let moved = self.move_collection_dir(&old_key, &new_key);
+                        text_result(format!(
+                            "{old_key} retitled to {title:?} and renamed → {new_key}{moved}; \
+                             use the new key from now on"
+                        ))
+                    }
+                    Err(e) => error_result(format!("retitled, but rename failed: {e}")),
+                }
+            }
+            "related_entries" => {
+                let Some(key) = str_arg("key") else {
+                    return error_result("missing key");
+                };
+                let Some(i) = self.find_entry(key) else {
+                    return error_result(format!("no entry {key}"));
+                };
+                let Ok(db) = &self.db else {
+                    return error_result("db not loaded");
+                };
+                let found = db.related_entries(i);
+                if found.is_empty() {
+                    return text_result(format!("no related entries for {key}"));
+                }
+                let lines: Vec<String> = found
+                    .iter()
+                    .map(|(k, title, reason, curated)| {
+                        format!(
+                            "{k} — {title} [{reason}]{}",
+                            if *curated { " (curated)" } else { "" }
+                        )
+                    })
+                    .collect();
+                text_result(format!(
+                    "{}\n\nRead each title before folding it in: a hack names itself, not its \
+                     base, so an adjacent slug may belong to a different game.",
+                    lines.join("\n")
+                ))
+            }
+            "dump_info" => {
+                let Some(sha1) = str_arg("sha1") else {
+                    return error_result("missing sha1");
+                };
+                let mut out = Vec::new();
+                match self.db.as_ref().ok().and_then(|db| db.find_dump(sha1)) {
+                    Some((key, title, what)) => {
+                        out.push(format!("in db: {key} ({title}) — {what}"));
+                    }
+                    None => out.push("in db: not found".to_owned()),
+                }
+                match self
+                    .rom_index
+                    .as_ref()
+                    .and_then(|index| index.by_sha1.get(sha1))
+                {
+                    Some(rom) => {
+                        let size = std::fs::metadata(&rom.path).map(|m| m.len()).unwrap_or(0);
+                        out.push(format!(
+                            "local: {} ({size} bytes, {})",
+                            rom.path.display(),
+                            match rom.home {
+                                verify::RomHome::Inbox => "inbox",
+                                verify::RomHome::Collection => "collection",
+                            }
+                        ));
+                    }
+                    None => out.push(
+                        "local: not in the scanned ROM dirs — size cannot be checked, so an \
+                         overdump cannot be told from a variant by size alone"
+                            .to_owned(),
+                    ),
+                }
+                text_result(out.join("\n"))
+            }
+            "session_changes" => {
+                if self.session_log.is_empty() {
+                    return text_result("nothing staged this session");
+                }
+                text_result(self.session_log.join("\n"))
+            }
             "resolve_flag" => {
                 let Some(id) = args.get("id").and_then(serde_json::Value::as_u64) else {
                     return error_result("missing id");
@@ -2194,15 +2539,13 @@ impl Curator {
                 let Ok(db) = &mut self.db else {
                     return error_result("db not loaded");
                 };
-                let Some(flag) = db.flags.flags.iter_mut().find(|f| f.id == id as u32) else {
+                let before = db.flags.flags.len();
+                db.flags.flags.retain(|f| f.id != id as u32);
+                if db.flags.flags.len() == before {
                     return error_result(format!("no flag #{id}"));
-                };
-                if flag.resolved.is_some() {
-                    return error_result(format!("flag #{id} already resolved"));
                 }
-                flag.resolved = Some(Db::today());
                 match db.save_flags() {
-                    Ok(()) => text_result(format!("flag #{id} resolved")),
+                    Ok(()) => text_result(format!("flag #{id} cleared")),
                     Err(e) => error_result(format!("flag save failed: {e}")),
                 }
             }
@@ -2259,7 +2602,6 @@ impl Curator {
                     kind,
                     subject: vec![key.to_owned()],
                     note: note.to_owned(),
-                    resolved: None,
                 });
                 match db.save_flags() {
                     Ok(()) => text_result(format!("raised flag #{id} [{kind:?}] on {key}")),
