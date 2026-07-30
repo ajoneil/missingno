@@ -688,9 +688,12 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // Source texels spanned by one screen pixel in each axis.
     let scale = tex_size * fwidth(input.tex_coords);
 
-    // Remap the fractional part: hold at 0 for most of the texel,
-    // then ramp linearly across one screen pixel at the boundary.
-    let sharp = clamp((frac - (vec2(1.0) - scale)) / scale, vec2(0.0), vec2(1.0));
+    // Remap the fractional part: flat across the pixel interior, ramping
+    // linearly across one screen pixel centred on the source-pixel boundary —
+    // frac 0.5, halfway between texel centres. Centring the ramp there keeps
+    // every pixel at its true footprint; a ramp at the end of the interval
+    // shifts the picture half a source pixel and halves the edge rows/columns.
+    let sharp = clamp((frac - vec2(0.5)) / scale + vec2(0.5), vec2(0.0), vec2(1.0));
 
     let snapped = (texel_floor + vec2(0.5) + sharp) / tex_size;
     let plain = textureSample(texture, texture_sampler, snapped);
@@ -713,17 +716,18 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         // that exposes the pale panel base — the grid is where pixels aren't.
         // Point-sample THIS cell's colour at its centre (a physical pixel is one
         // flat colour — no cross-cell bilinear inside the aperture), and blend
-        // to the panel base across the border. The cell centre sits at frac 0.5;
-        // its edges (frac 0 and 1) are the matrix gap.
-        let cell_centre = (texel_floor + vec2(0.5)) / tex_size;
+        // to the panel base across the border. The fragment's cell is the source
+        // pixel under it; boundaries sit at frac 0.5 (halfway between texel
+        // centres), cell centres at frac 0 and 1.
+        let cell = floor(input.tex_coords * tex_size);
+        let cell_centre = (cell + vec2(0.5)) / tex_size;
         let cell_color = textureSample(texture, texture_sampler, cell_centre).rgb;
-        let d = abs(frac - vec2(0.5));
         let aperture = vec2(APERTURE_FRACTION * 0.5);
         // The matrix band has half-width 0.5 - aperture each side of the cell
         // boundary. Blend to the base only in proportion to the band's true
         // area — any wider ramp washes the whole picture toward the base.
         let g = vec2(0.5) - aperture;
-        let boundary_dist = vec2(0.5) - d;
+        let boundary_dist = abs(frac - vec2(0.5));
         let px = max(scale, vec2(0.0001));
         // Hairline regime (band thinner than a screen pixel): snap each line to
         // the nearest pixel row/column at constant strength. Free-phase coverage
@@ -781,16 +785,38 @@ mod tests {
         t * t * (3.0 - 2.0 * t)
     }
 
+    // ── Sharp-bilinear mirror ────────────────────────────────────────────
+
+    /// CPU mirror of the shader's sharp-bilinear remap: the blend weight toward
+    /// the next texel at shader `frac`, for a `scale`-texel screen pixel.
+    fn sharp_remap(frac: f32, scale: f32) -> f32 {
+        ((frac - 0.5) / scale + 0.5).clamp(0.0, 1.0)
+    }
+
+    #[test]
+    fn sharp_transition_is_centred_on_the_pixel_boundary() {
+        // The 50/50 blend lands exactly on the source-pixel boundary (frac 0.5,
+        // halfway between texel centres), so every pixel keeps its true screen
+        // footprint. An end-of-interval ramp shifts the picture half a source
+        // pixel and renders the edge rows and columns at half size.
+        let scale = 0.1;
+        assert_eq!(sharp_remap(0.5, scale), 0.5);
+        // Flat interiors outside a one-screen-pixel band around the boundary.
+        assert_eq!(sharp_remap(0.5 - scale * 0.51, scale), 0.0);
+        assert_eq!(sharp_remap(0.5 + scale * 0.51, scale), 1.0);
+        assert_eq!(sharp_remap(0.0, scale), 0.0);
+        assert_eq!(sharp_remap(1.0, scale), 1.0);
+    }
+
     // ── LCD aperture mirrors ─────────────────────────────────────────────
 
-    /// CPU mirror of the shader's hard-edged aperture membership at intra-cell
-    /// position `frac` (per axis): 1 inside the lit pixel, 0 in the matrix
-    /// border. The aperture is centred on the cell (`frac` 0.5), spanning
-    /// `APERTURE_FRACTION` of the pitch, so its edges sit at `0.5 ± aperture`.
+    /// CPU mirror of the shader's hard-edged aperture membership at shader
+    /// `frac` (per axis): 1 inside the lit pixel, 0 in the matrix border. Pixel
+    /// boundaries sit at `frac` 0.5, so the matrix band spans `0.5 ± g` and the
+    /// aperture is everything nearer a cell centre (`frac` 0 or 1).
     fn aperture_inside(frac: f32) -> f32 {
-        let aperture = APERTURE_FRACTION * 0.5;
-        let d = (frac - 0.5).abs();
-        if d <= aperture { 1.0 } else { 0.0 }
+        let g = 0.5 - APERTURE_FRACTION * 0.5;
+        if (frac - 0.5).abs() < g { 0.0 } else { 1.0 }
     }
 
     /// The one-axis lit fraction of a cell — the share of intra-cell positions
@@ -810,14 +836,14 @@ mod tests {
         base * (1.0 - inside) + cell * inside
     }
 
-    /// CPU mirror of the shader's matrix coverage at intra-cell position `frac`
-    /// for a `scale`-texel screen pixel (one axis): pixel-snapped constant
-    /// strength while the band is a hairline, box-filter coverage once zoomed
-    /// wide enough to resolve its edges.
+    /// CPU mirror of the shader's matrix coverage at shader `frac` for a
+    /// `scale`-texel screen pixel (one axis): pixel-snapped constant strength
+    /// while the band is a hairline, box-filter coverage once zoomed wide
+    /// enough to resolve its edges.
     fn matrix_coverage(frac: f32, scale: f32) -> f32 {
         let aperture = APERTURE_FRACTION * 0.5;
         let g = 0.5 - aperture;
-        let boundary_dist = 0.5 - (frac - 0.5).abs();
+        let boundary_dist = (frac - 0.5).abs();
         let px = scale.max(0.0001);
         if 2.0 * g < px {
             if boundary_dist < px * 0.5 {
@@ -1012,16 +1038,16 @@ mod tests {
     fn aperture_coverage_is_crisp_at_high_zoom_and_proportional_when_thin() {
         // Deep zoom (tiny footprint): full base on the boundary, zero at the
         // cell centre, half-covered exactly at the aperture edge.
-        assert_eq!(matrix_coverage(0.0, 0.001), 1.0);
-        assert_eq!(matrix_coverage(0.5, 0.001), 0.0);
-        let edge = 0.5 - APERTURE_FRACTION * 0.5;
+        assert_eq!(matrix_coverage(0.5, 0.001), 1.0);
+        assert_eq!(matrix_coverage(0.0, 0.001), 0.0);
+        let edge = APERTURE_FRACTION * 0.5;
         assert!((matrix_coverage(edge, 0.001) - 0.5).abs() < 0.01);
         // Matrix thinner than a screen pixel: the boundary fragment shows the
         // band's share of its footprint, not full base.
         let g = 0.5 - APERTURE_FRACTION * 0.5;
         let scale = 0.167;
         let expect = (2.0 * g) / scale;
-        assert!((matrix_coverage(0.0, scale) - expect).abs() < 0.01);
+        assert!((matrix_coverage(0.5, scale) - expect).abs() < 0.01);
     }
 
     #[test]
@@ -1031,12 +1057,12 @@ mod tests {
         // a darkened sample of the picture.
         let cell = 0.1;
         let base = 0.9;
-        assert_eq!(aperture_color(0.5, cell, base), cell); // cell centre
-        assert_eq!(aperture_color(0.0, cell, base), base); // cell edge = gap
-        assert_eq!(aperture_color(1.0, cell, base), base);
+        assert_eq!(aperture_color(0.0, cell, base), cell); // cell centre
+        assert_eq!(aperture_color(1.0, cell, base), cell);
+        assert_eq!(aperture_color(0.5, cell, base), base); // pixel boundary = gap
         // The border is the light base, brighter than the darkened pixel — the
         // inverse of the old dark-line overlay.
-        assert!(aperture_color(0.0, cell, base) > aperture_color(0.5, cell, base));
+        assert!(aperture_color(0.5, cell, base) > aperture_color(0.0, cell, base));
     }
 
     #[test]
