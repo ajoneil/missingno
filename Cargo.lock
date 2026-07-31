@@ -2958,7 +2958,7 @@ dependencies = [
 
 [[package]]
 name = "missingno"
-version = "26.7.0"
+version = "26.8.0"
 dependencies = [
  "clap",
  "dirs",

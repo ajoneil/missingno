@@ -15,15 +15,21 @@
   <description>
     <p>
       Missingno is an emulator for the Game Boy, Game Boy Color, and Atari VCS
-      (2600), with an integrated debugger. Manage your game library with
-      automatic cover art, play history tracking, and save management. Play with
-      keyboard or controller support, fullscreen mode, and multiple display
-      palettes.
+      (2600). It is built around faithful models of the original hardware:
+      games look, sound, and behave as they do on the real machines, with
+      display options that recreate the look of the original LCD and CRT
+      screens.
     </p>
     <p>
-      The built-in debugger provides code disassembly with breakpoints, CPU state
-      inspection, VRAM visualization, audio channel inspection, and an interrupt
-      viewer.
+      The library manages your collection: cover art and metadata are fetched
+      automatically, play sessions and screenshots are recorded, and saves are
+      managed and backed up. Homebrew games can be browsed and downloaded from
+      Homebrew Hub, and physical cartridges read and written with a GBxCart RW.
+    </p>
+    <p>
+      The integrated debugger works across every supported system, with
+      disassembly, breakpoints, and live inspection of CPU, video, and audio
+      state.
     </p>
   </description>
 
@@ -35,28 +41,28 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.7/screenshots/library.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.8/screenshots/library.png</image>
       <caption>Game library with cover art and play history</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.7/screenshots/game-details.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.8/screenshots/game-details.png</image>
       <caption>Game details with activity log and save and screenshot management</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.7/screenshots/gameplay.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.8/screenshots/gameplay.png</image>
       <caption>Playing a Game Boy game with Super Game Boy colours</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.7/screenshots/homebrew.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.8/screenshots/homebrew.png</image>
       <caption>Browse and download homebrew games from Homebrew Hub</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.7/screenshots/cartridge.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.8/screenshots/cartridge.png</image>
       <caption>Read and write physical Game Boy cartridges with a GBxCart RW</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.7/screenshots/debugger.png</image>
-      <caption>The integrated debugger showing CPU state, disassembly, and sprites</caption>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.8/screenshots/debugger.png</image>
+      <caption>The debugger stepping an Atari VCS game: CPU and TIA state, disassembly, and audio channels</caption>
     </screenshot>
   </screenshots>
 
@@ -72,6 +78,19 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="26.8" date="2026-08-01">
+      <description>
+        <ul>
+          <li>Atari VCS (2600) support</li>
+          <li>Save states and input recording with deterministic replay</li>
+          <li>Game Boy Printer emulation, a persistent MBC3 real-time clock, and IPS/BPS softpatching</li>
+          <li>Authentic display rendering: LCD pixel grid, CRT scanlines, and inter-frame blending</li>
+          <li>The debugger now covers every system, with new memory, graphics, and per-channel audio panes</li>
+          <li>Library search, sorting, and system filters, with a compact list view</li>
+          <li>Performance and responsiveness improvements</li>
+        </ul>
+      </description>
+    </release>
     <release version="26.7" date="2026-07-04">
       <description>
         <ul>
