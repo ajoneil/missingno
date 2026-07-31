@@ -179,6 +179,7 @@ fn run_gambatte_hex_test_cgb(rom_path: &str) {
 /// `MOREPORK_PROFILE`; writes to `receipts/traces/`. Not a pass/fail test.
 #[cfg(feature = "morepork")]
 #[test]
+#[ignore = "manual capture harness; run with --ignored and MOREPORK_CAPTURE_ROM set"]
 fn morepork_capture() {
     let rom = std::env::var("MOREPORK_CAPTURE_ROM")
         .expect("set MOREPORK_CAPTURE_ROM to a ROM path relative to the gbc roms dir");

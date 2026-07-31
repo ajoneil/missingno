@@ -40,10 +40,10 @@ MOREPORK_PROFILE=1 MOREPORK_TRIGGER=tcycle cargo test -p missingno-gb --features
 The test runner captures at every T-cycle (`MOREPORK_TRIGGER=tcycle`) or every instruction (the default). `MOREPORK_SCOPE=full` adds the schema's Tier-2a deep state. Traces are written even when tests fail.
 
 ### Missingno CGB trace
-The CGB core has its own `morepork` feature (`missingno-gbc`), captured through a dedicated `morepork_capture` test driven by an env var rather than a test-name filter:
+The CGB core has its own `morepork` feature (`missingno-gbc`), captured through a dedicated `morepork_capture` test driven by an env var rather than a test-name filter. The test is `#[ignore]`d (it isn't pass/fail), so pass `--ignored`:
 ```bash
 MOREPORK_PROFILE=1 MOREPORK_CAPTURE_ROM=<rom-relative-to-gbc-roms-dir> \
-  cargo test -p missingno-gbc --features morepork -- morepork_capture
+  cargo test -p missingno-gbc --features morepork -- morepork_capture --ignored
 # Uses load_cgb_rom_traced; writes to receipts/traces/<rom_name>.morepork
 ```
 
