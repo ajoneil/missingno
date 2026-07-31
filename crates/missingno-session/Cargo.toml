@@ -21,7 +21,7 @@ sms = ["dep:missingno-sms"]
 tools = ["dep:png"]
 
 [dependencies]
-cpal = { version = "0.17", optional = true }
+cpal = { version = "0.18", optional = true }
 rtrb = { version = "0.3", optional = true }
 missingno-core = { path = "../missingno-core" }
 missingno-gb = { path = "../missingno-gb", optional = true }

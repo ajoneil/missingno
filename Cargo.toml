@@ -38,7 +38,7 @@ default-members = [
 version = "0.1.0"
 
 [workspace.dependencies]
-bitflags = "2.11.1"
+bitflags = "2.13.1"
 rgb = "0.8.53"
 
 [profile.release]

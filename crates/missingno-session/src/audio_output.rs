@@ -40,7 +40,7 @@ impl AudioOutput {
 
         let stream = device
             .build_output_stream(
-                &config,
+                config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                     for frame in data.chunks_exact_mut(2) {
                         let (left, right) = consumer.pop().unwrap_or((0.0, 0.0));
