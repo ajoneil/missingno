@@ -1,14 +1,14 @@
 //! Game Boy Printer emulation, attached to the link port whenever no other
 //! link is in use. It stays inert until a game speaks the printer protocol
 //! (an idle printer answers like an unplugged cable), so it can always be
-//! connected. Completed prints are handed to the frontend to log against the
+//! connected. Completed prints are handed to the app to log against the
 //! current play session.
 
 use std::sync::mpsc::Sender;
 
 use missingno_gb::serial_transfer::SerialLink;
 
-/// A finished print handed up to the frontend: 160 wide, self-sized height,
+/// A finished print handed up to the app: 160 wide, self-sized height,
 /// one grayscale byte per pixel (row-major).
 pub struct CompletedPrint {
     pub width: u32,

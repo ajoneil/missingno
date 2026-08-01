@@ -305,7 +305,7 @@ impl PersistedAssignments {
     }
 }
 
-/// Every binding the frontend holds: the emulator actions, one slot map per
+/// Every binding the app holds: the emulator actions, one slot map per
 /// system, and which host device played which port on each.
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ControlsSettings {
@@ -482,7 +482,7 @@ const GAMEPAD_CLUSTER: &[(ControlRole, &str)] = &[
 ];
 
 /// The keypad's 12 keys, row-major, on a 3×4 block of the typing keyboard that
-/// keeps the pad's geometry. A frontend convention, following Stella's.
+/// keeps the pad's geometry. An app convention, following Stella's.
 const KEYPAD_KEYS: [&str; 12] = ["1", "2", "3", "q", "w", "e", "a", "s", "d", "z", "x", "c"];
 
 /// The pad's triggers wind a knob, squeeze depth setting the speed.
@@ -732,7 +732,7 @@ pub struct Settings {
     /// processes (an agent driving the debugger).
     pub allow_external_clients: bool,
     /// Whether the app publishes a UI-automation socket for clients in other
-    /// processes (an agent enumerating and driving the frontend).
+    /// processes (an agent enumerating and driving the app).
     pub allow_ui_automation: bool,
     pub library_sort: SortKey,
     pub library_layout: LibraryLayout,

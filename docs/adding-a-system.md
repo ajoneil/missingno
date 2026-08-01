@@ -25,7 +25,7 @@ Don't confuse the two kinds of "new system":
   associated const and hook documents the exact hardware divergence it exists
   to carry.
 - **A new family entirely** (Master System, NES, a future Game Gear) — a new
-  core crate plus a frontend family registration. The rest of this document is
+  core crate plus an app family registration. The rest of this document is
   about this axis.
 
 ## The invariant contract every core owes
@@ -77,7 +77,7 @@ emulator screen, and the session's run loop need. Optional surfaces —
 (the DMG palette picker), `audio_coupling` (the board's high-pass) — default to
 absent, so a family declares only what its hardware has.
 
-### `SystemDebugger` → the whole debugger, both frontends
+### `SystemDebugger` → the whole debugger, headless and GUI
 
 Implement it and two debuggers light up with no further per-core code:
 
@@ -92,7 +92,7 @@ Implement it and two debuggers light up with no further per-core code:
   a family cannot (and need not) add a bespoke pane.
 
 Concretely, each debugger surface is one seam method, and filling it turns that
-surface on across both frontends:
+surface on across both debuggers:
 
 | Seam method(s) | Debugger surface it buys |
 |---|---|
@@ -141,11 +141,11 @@ is hosted with no per-core code — and every client of that session comes with 
 a hardware fact the core states, never a presentation coefficient. `Lcd { native,
 panel, pixel_aspect }` names the panel class (`PassiveStn` for the DMG's slow
 passive-matrix STN, `ActiveTft` for the CGB's faster TFT); `Crt { standard,
-pixel_aspect }` names the broadcast standard. The single frontend screen
+pixel_aspect }` names the broadcast standard. The app's single screen
 renderer (`crates/missingno/app/src/app/screen.rs`) keys its persistence blend and
 its cosmetic overlay (an LCD pixel grid vs. CRT scanlines) off that technology,
 and aspect-fits by the stated `pixel_aspect`. State the technology and the
-console renders authentically; the coefficients stay frontend policy.
+console renders authentically; the coefficients stay app policy.
 
 ### `SystemStateSchema` → save states, traces, and recordings
 
@@ -194,7 +194,7 @@ family implements the seam once (in `missingno-gb`'s `system.rs`, as
 `GbConsole<M>`, generic over its `Model`) — consumed unchanged by both the
 headless factory and the GUI.
 
-## The frontend family axis: `app/system/`
+## The app family axis: `app/system/`
 
 The core seam is system-agnostic; the GUI still needs a per-family registration
 for media handling. Each family registers one `FamilyDescriptor` in the
@@ -286,7 +286,7 @@ until a second family grows the equivalent:
    recordings follow.
 5. **The debugger surfaces** you have — `sidebar_sections`, `instruction_set`,
    the graphics/audio capture hooks — each of which lights up its pane and tool.
-6. **Frontend registration** — a `FamilyDescriptor` in `FAMILIES`
+6. **App registration** — a `FamilyDescriptor` in `FAMILIES`
    (`app/system/mod.rs`) with its `Platform` variant, a `pane_family()`, and a
    default layout. Dialogs, loading, library scanning, badges, the bindings UI,
    and the trace CLI follow from the table.

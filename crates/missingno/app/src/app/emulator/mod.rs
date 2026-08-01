@@ -27,7 +27,7 @@ pub use panels::{
 };
 pub(in crate::app) use panels::{ControllersElement, controllers_elements};
 
-/// The frontend's display-presentation choices, keyed to the console's stated
+/// The app's display-presentation choices, keyed to the console's stated
 /// technology by the renderer. Grid and scanlines are mutually exclusive there,
 /// so both can be carried unconditionally.
 #[derive(Clone, Copy)]
@@ -161,7 +161,7 @@ impl Emulator {
         this
     }
 
-    /// Push the frontend's presentation choices onto the renderer.
+    /// Push the app's presentation choices onto the renderer.
     fn apply_presentation(&mut self) {
         self.screen_view.set_persistence(self.persistence);
         self.screen_view.set_pixel_grid(self.pixel_grid);

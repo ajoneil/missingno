@@ -20,7 +20,7 @@ pub use missingno_gbc::CgbSnapshot;
 
 /// How each model resolves the debugger's render palettes and its CGB
 /// register view — the model-specific, iced-adjacent slice of inspection that
-/// stays frontend-side.
+/// stays app-side.
 pub trait GbColors: Model {
     fn colors(console: &Console<Self>, user_palette: &Palette) -> ConsoleColors;
 }

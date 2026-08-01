@@ -1,4 +1,4 @@
-//! The UI-automation socket host: this process publishes its own frontend on a
+//! The UI-automation socket host: this process publishes its own UI on a
 //! Unix socket, so an external agent can enumerate and drive the window. It
 //! speaks the same newline-delimited JSON-RPC the session attach socket does;
 //! the one handshake method is `ui/info`.

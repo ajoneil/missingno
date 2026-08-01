@@ -19,7 +19,7 @@ pub fn tools() -> Vec<Tool> {
     vec![
         Tool {
             name: "status",
-            description: "The frontend's current screen, window size and scale, and whether a \
+            description: "The app's current screen, window size and scale, and whether a \
                           game is loaded and running. UI coverage is partial."
                 .into(),
             input_schema: empty(),

@@ -159,7 +159,7 @@ pub trait Pane {
     /// Point the screen pane at the technology the core states, so a freshly
     /// opened screen renders at the right aspect and persistence.
     fn set_technology(&mut self, _technology: DisplayTechnology) {}
-    /// Install the frontend colour policy on the screen pane's renderer.
+    /// Install the app's colour policy on the screen pane's renderer.
     fn set_palette_policy(&mut self, _policy: Option<Box<dyn PalettePolicy>>) {}
     /// The live screen state, so it can carry across a debugger↔emulator
     /// toggle. Only the screen pane has one.

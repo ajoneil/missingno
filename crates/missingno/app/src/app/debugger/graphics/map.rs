@@ -136,7 +136,7 @@ impl std::fmt::Display for MapChoice {
 }
 
 /// Composite the map into RGBA bytes: each cell's resolved atlas index, tile
-/// index, flips, and palette, coloured through the frontend's DMG palette or
+/// index, flips, and palette, coloured through the app's DMG palette or
 /// the CGB CRAM background palettes.
 fn compose(map: &TileMap, graphics: &GraphicsView, colors: &ConsoleColors) -> (u32, u32, Vec<u8>) {
     let default_atlas = graphics.atlases.get(map.atlas as usize);

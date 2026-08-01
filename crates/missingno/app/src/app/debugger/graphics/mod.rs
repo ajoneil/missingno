@@ -3,7 +3,7 @@
 //! vocabulary a core decodes its video memory into. One pane body serves every
 //! family that fills a [`GraphicsView`]; the Game Boy family is the only one
 //! wired today (CGB included). Structure and palette indices come from the
-//! view; the frontend's DMG palette / CGB CRAM colours come from the pane's
+//! view; the app's DMG palette / CGB CRAM colours come from the pane's
 //! [`ConsoleColors`] context, exactly as the retired bespoke panes resolved them.
 //!
 //! [`GraphicsView`]: missingno_core::graphics::GraphicsView

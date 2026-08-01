@@ -1,7 +1,7 @@
 //! The Game Boy family's load-path registration: media recognition, control
 //! labels, and the console factory over the crate's seam implementation. The
 //! header picks the core; the serial link, printer, boot ROM, and battery-save
-//! format are frontend policy wired in here.
+//! format are app policy wired in here.
 
 use missingno_gb::frame::GbFrame;
 use missingno_gb::ppu::types::palette::{PaletteChoice, PaletteIndex};
@@ -81,7 +81,7 @@ pub const CONTROLS: ControlMap =
     ControlMap::new(missingno_gb::system::PAD, missingno_gb::system::PORTS, &[]);
 
 /// The battery-backed contents to persist: raw SRAM plus the wall-clock RTC
-/// tail. The save-file format is frontend policy, so the core takes this as a
+/// tail. The save-file format is app policy, so the core takes this as a
 /// hook rather than owning a clock.
 fn battery_save(cartridge: &Cartridge) -> Option<Vec<u8>> {
     if !cartridge.has_battery() {

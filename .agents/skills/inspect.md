@@ -203,7 +203,7 @@ GB watchable keys include `bus-read`/`bus-write`/`dma-read`/`dma-write` (address
 
 ## Understanding pixel values
 
-Sections and graphics carry the hardware's own values: GB shade/palette indices run **0 = lightest to 3 = darkest**; the test harness maps them to greyscale as `0→0xFF … 3→0x00`. `/frame/bitmap` is post-palette resolved RGBA (the frontend's palette choice applied on GB; hardware palettes on CGB/VCS).
+Sections and graphics carry the hardware's own values: GB shade/palette indices run **0 = lightest to 3 = darkest**; the test harness maps them to greyscale as `0→0xFF … 3→0x00`. `/frame/bitmap` is post-palette resolved RGBA (the configured DMG palette applied on GB; hardware palettes on CGB/VCS).
 
 ## Scope discipline
 

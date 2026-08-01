@@ -152,5 +152,5 @@ collision matrix before its MOTCK edge fires — the die's 160 rises per line ru
 x=−1..158, more than a colour clock ahead of the pixel they move — so no render
 reads a pending tick. `src/riot.rs` has the
 timer/ports. The
-frontend drives it through the `app/system/` seam described in
+app drives it through the `app/system/` seam described in
 `docs/adding-a-system.md`.

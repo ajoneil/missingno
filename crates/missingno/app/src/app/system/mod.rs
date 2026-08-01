@@ -19,7 +19,7 @@ pub mod nes;
 pub mod sms;
 pub mod vcs;
 
-/// The platforms the frontend knows, one per family descriptor. The
+/// The platforms the app knows, one per family descriptor. The
 /// canonical platform identity for library metadata: external sources'
 /// platform strings are mapped into it, and display always goes through
 /// [`Platform::name`]. Variants are never cfg-gated — a library entry
