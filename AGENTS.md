@@ -123,7 +123,7 @@ The shared skill-system rules above apply to every core. Each core's **ground-tr
 | Game Boy Color | `missingno-gbc` | `crates/systems/gbc/AGENTS.md` — no gate-level sim; hardware test-ROM values lead |
 | Atari VCS | `missingno-vcs` | `crates/systems/vcs/AGENTS.md` — Sim2600 (CPU+TIA) + datasheet/schematics (RIOT); behavioural VCS emulators last |
 
-CGB is a superset of DMG, so its doc builds on the DMG base; the VCS core shares no silicon with the Game Boy and stands alone. Adding a core = one row here plus an `AGENTS.md` beside its crate. The crate docs auto-load when you work in that subtree.
+CGB is a superset of DMG, so its doc builds on the DMG base; the VCS core shares no silicon with the Game Boy and stands alone. Adding a core = one row here plus an `AGENTS.md` beside its crate. Shared chip crates carry the same kind of doc (`crates/hardware/<chip>/AGENTS.md` — the chip's own conformance oracle and references); in-system, the console's doc outranks the chip's. The crate docs auto-load when you work in that subtree.
 
 ## Investigation hygiene
 
