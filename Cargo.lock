@@ -3149,6 +3149,7 @@ dependencies = [
 name = "missingno-z80"
 version = "26.9.0"
 dependencies = [
+ "missingno-core 26.9.0",
  "serde",
  "serde_json",
 ]

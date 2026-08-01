@@ -290,6 +290,10 @@ impl SteppingSystem for SmsSystem {
         sms.peek(address)
     }
 
+    fn instruction_set() -> Option<&'static dyn missingno_core::isa::InstructionSet> {
+        Some(&missingno_z80::Z80)
+    }
+
     fn step_instruction(sms: &mut Sms) {
         sms.step_instruction();
     }

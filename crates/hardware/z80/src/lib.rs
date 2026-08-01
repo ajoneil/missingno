@@ -15,7 +15,11 @@
 
 mod apply;
 pub mod decode;
+pub mod disasm;
 mod execute;
+pub mod isa;
+
+pub use isa::Z80;
 
 pub mod flags {
     pub const CARRY: u8 = 0x01;
