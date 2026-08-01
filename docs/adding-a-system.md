@@ -7,10 +7,10 @@ claim here is checkable against the trait it names — trust the seams, but veri
 signatures against the source before building on them.
 
 The seam vocabulary and its behavioural traits live in **`missingno-core`**
-(`crates/missingno-core/src/`); the session component that hosts a machine and
+(`crates/missingno/core/src/`); the session component that hosts a machine and
 serves every client lives in **`missingno-session`**; the servers that publish it
 live in **`missingno-debugger`**; the GUI's family-registration layer lives in
-**`crates/missingno/src/app/system/`**. Those four locations recur throughout.
+**`crates/missingno/app/src/app/system/`**. Those four locations recur throughout.
 
 ## Two different axes
 
@@ -142,7 +142,7 @@ a hardware fact the core states, never a presentation coefficient. `Lcd { native
 panel, pixel_aspect }` names the panel class (`PassiveStn` for the DMG's slow
 passive-matrix STN, `ActiveTft` for the CGB's faster TFT); `Crt { standard,
 pixel_aspect }` names the broadcast standard. The single frontend screen
-renderer (`crates/missingno/src/app/screen.rs`) keys its persistence blend and
+renderer (`crates/missingno/app/src/app/screen.rs`) keys its persistence blend and
 its cosmetic overlay (an LCD pixel grid vs. CRT scanlines) off that technology,
 and aspect-fits by the stated `pixel_aspect`. State the technology and the
 console renders authentically; the coefficients stay frontend policy.
@@ -163,7 +163,7 @@ the same field vocabulary:
   wrong version.
 - **Traces** — the `MPRK` trace container: columns are the schema's fields
   (Tier-1, or Tier-2a with the deep scope) plus a small bridge-owned observation
-  set. `crates/missingno-gb/src/trace.rs` is the worked bridge; there is no
+  set. `crates/systems/gb/src/trace.rs` is the worked bridge; there is no
   per-suite field catalogue.
 - **Recordings** — the `MPRC` recording (`recording.rs`): an initial save state
   plus a frame-indexed input trace with periodic frame-hash checkpoints.

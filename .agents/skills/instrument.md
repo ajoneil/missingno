@@ -11,7 +11,7 @@ The caller sent you a Question (hypothesis), Context (where to instrument), and 
 ## Before you start
 
 1. **Read the hypothesis.** The caller should have told you what they're testing and why. If the request is vague ("add some logging"), ask for a specific hypothesis before proceeding.
-2. **Consider existing data sources first.** Before adding code instrumentation, check whether the question can be answered without modifying code — the per-core source hierarchy is `crates/missingno-<core>/AGENTS.md`. In particular:
+2. **Consider existing data sources first.** Before adding code instrumentation, check whether the question can be answered without modifying code — the per-core source hierarchy is `crates/systems/<core>/AGENTS.md`. In particular:
    - **The core's primary reference** may already document the expected behaviour (DMG: the DMG Timing Specification) — then you don't need to measure missingno to confirm the hardware expectation, only to find where it diverges. If the reference is silent on a detail its gate-level sim could measure, flag the gap in your report.
    - **morepork**: If the hypothesis can be tested by examining state at instruction boundaries, a capture may answer it. Capture with `MOREPORK_PROFILE=1`, then `morepork query <file> --where pc=0x0150 --context 5` / `--last 20`; `morepork render <file> -o <dir>` for visual PPU output. Reference traces are behavioural, not ground truth — prefer SameBoy, then DocBoy, then gambatte (VCS: Stella → Gopher2600 → MAME).
    - **Hardware timing data** (`receipts/resources/gb-timing-data/campaigns/`): a campaign's CSV data may directly answer the hypothesis — check what's available.

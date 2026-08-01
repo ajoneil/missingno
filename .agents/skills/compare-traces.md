@@ -4,7 +4,7 @@ Compare and inspect execution traces between missingno and reference emulators (
 
 ## Adapter preference
 
-The reference emulators are all **behavioural** — none is die-derived, so none is ground truth. They show *where* execution diverges; *why* comes from the hardware, never from matching another emulator. The preferred order is per-core (see the target core's `crates/missingno-<core>/AGENTS.md`): **Game Boy (DMG/CGB) — SameBoy → DocBoy → gambatte** (why-source: the DMG Timing Specification, gb-ctr, race pairs); **Atari 2600 (VCS) — Stella → Gopher2600 → MAME** (why-source: Sim2600 for CPU/TIA, the schematics + 6532 datasheet for RIOT). Fall back down the order when the preferred emulator has no passing trace for the test, and state the reason in the receipt (e.g. "no SameBoy pass trace for blargg/halt_bug; using DocBoy"). Don't silently treat any single emulator's behaviour as the hardware's.
+The reference emulators are all **behavioural** — none is die-derived, so none is ground truth. They show *where* execution diverges; *why* comes from the hardware, never from matching another emulator. The preferred order is per-core (see the target core's `crates/systems/<core>/AGENTS.md`): **Game Boy (DMG/CGB) — SameBoy → DocBoy → gambatte** (why-source: the DMG Timing Specification, gb-ctr, race pairs); **Atari 2600 (VCS) — Stella → Gopher2600 → MAME** (why-source: Sim2600 for CPU/TIA, the schematics + 6532 datasheet for RIOT). Fall back down the order when the preferred emulator has no passing trace for the test, and state the reason in the receipt (e.g. "no SameBoy pass trace for blargg/halt_bug; using DocBoy"). Don't silently treat any single emulator's behaviour as the hardware's.
 
 ## When to use
 
@@ -249,7 +249,7 @@ When the full diff is too noisy, narrow the comparison to a specific region:
 
 ### Data sources for context
 
-When interpreting trace data, cross-reference the core's other data sources (hierarchy: `crates/missingno-<core>/AGENTS.md`) — notably hardware timing campaigns (`receipts/resources/gb-timing-data/campaigns/`; check what's available before assuming results exist) and, for 1-dot discrepancies, the race-pairs report (`receipts/resources/gb-propagation-delay-analysis/output/race_pairs_report.md`). Note when a Slowpeek sweep would provide a definitive measurement no existing source covers.
+When interpreting trace data, cross-reference the core's other data sources (hierarchy: `crates/systems/<core>/AGENTS.md`) — notably hardware timing campaigns (`receipts/resources/gb-timing-data/campaigns/`; check what's available before assuming results exist) and, for 1-dot discrepancies, the race-pairs report (`receipts/resources/gb-propagation-delay-analysis/output/race_pairs_report.md`). Note when a Slowpeek sweep would provide a definitive measurement no existing source covers.
 
 ## Limitations — suggest improvements
 

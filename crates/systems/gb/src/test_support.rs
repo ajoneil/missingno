@@ -1,0 +1,541 @@
+//! Shared test helpers for accuracy/integration tests.
+//!
+//! Enabled by the `test-support` feature. Exposes a [`System`] trait
+//! implemented by both `GameBoy` and downstream system crates (e.g.
+//! `missingno-gbc`'s `GameBoyColor`), and runner/utility functions
+//! generic over that trait so test ROMs and helpers can be reused
+//! across systems.
+//!
+//! ROM paths are resolved relative to this crate's `CARGO_MANIFEST_DIR`,
+//! so downstream crates can call [`rom_path`] / [`load_rom`] and pick
+//! up ROMs from `crates/systems/gb/tests/accuracy/roms/`.
+
+use std::path::{Path, PathBuf};
+
+use crate::{
+    BootRom, Console, GameBoy, Model, cartridge::Cartridge, cpu::Cpu, execute::StepResult,
+    interrupts, ppu::screen::Screen,
+};
+
+use crate::system::ConsoleUi;
+
+#[cfg(feature = "morepork")]
+use crate::trace::{TraceScope, Tracer};
+
+/// Common interface for a Game Boy–family console runnable under the
+/// shared accuracy test helpers. Implemented by `GameBoy` here and by
+/// downstream systems (e.g. `GameBoyColor`).
+/// Common interface for a Game Boy–family console runnable under the
+/// shared accuracy test helpers. Implemented by `GameBoy` here and by
+/// downstream systems (e.g. `GameBoyColor`).
+///
+/// `screen()` deliberately isn't on this trait — the DMG screen stores
+/// 2-bit shade indices while the CGB screen stores RGB pixels, so
+/// callers needing screenshot comparison go through the concrete type.
+pub trait System {
+    fn step(&mut self) -> StepResult;
+    fn read(&self, address: u16) -> u8;
+    fn cpu(&self) -> &Cpu;
+    fn cpu_mut(&mut self) -> &mut Cpu;
+    fn drain_serial_output(&mut self) -> Vec<u8>;
+    fn interrupts(&self) -> &interrupts::Registers;
+    /// True while a CGB double-speed switch holds the CPU stopped in its
+    /// settling blackout (a self-resuming STOP). Defaults false for systems
+    /// without a speed switch.
+    fn speed_switch_in_progress(&self) -> bool {
+        false
+    }
+    /// True while a VRAM DMA holds the CPU (the bus master's hold, not a
+    /// software STOP/HALT). Defaults false for systems without one.
+    fn vram_dma_holds_cpu(&self) -> bool {
+        false
+    }
+    /// Peek a contiguous range of memory, bypassing bus conflicts and
+    /// PPU mode gating. Used by tests that decode assertion records
+    /// from WRAM after the test has halted.
+    fn peek_range(&self, start: u16, len: u16) -> Vec<u8>;
+    /// Drain accumulated audio samples (stereo, f32 pairs). Used by
+    /// gambatte audio tests to check whether the test ROM produced
+    /// any sound (`_outaudio1`) or was silent (`_outaudio0`).
+    fn drain_audio_samples(&mut self) -> Vec<(f32, f32)>;
+}
+
+impl<M: Model> System for Console<M> {
+    fn step(&mut self) -> StepResult {
+        Console::<M>::step(self)
+    }
+    fn read(&self, address: u16) -> u8 {
+        Console::<M>::read(self, address)
+    }
+    fn cpu(&self) -> &Cpu {
+        Console::<M>::cpu(self)
+    }
+    fn cpu_mut(&mut self) -> &mut Cpu {
+        Console::<M>::cpu_mut(self)
+    }
+    fn drain_serial_output(&mut self) -> Vec<u8> {
+        Console::<M>::drain_serial_output(self)
+    }
+    fn interrupts(&self) -> &interrupts::Registers {
+        Console::<M>::interrupts(self)
+    }
+    fn speed_switch_in_progress(&self) -> bool {
+        Console::<M>::speed_switch_in_progress(self)
+    }
+    fn vram_dma_holds_cpu(&self) -> bool {
+        Console::<M>::vram_dma_holds_cpu(self)
+    }
+    fn peek_range(&self, start: u16, len: u16) -> Vec<u8> {
+        Console::<M>::peek_range(self, start, len)
+    }
+    fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
+        Console::<M>::drain_audio_samples(self)
+    }
+}
+
+pub fn rom_path(relative: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/accuracy/roms")
+        .join(relative)
+}
+
+/// A test run wrapping a `GameBoy` and an optional trace writer.
+///
+/// When the `morepork` feature is enabled and the `MOREPORK_PROFILE` env var
+/// is set (any value enables capture — the column set comes from the state
+/// schema, not a named profile), each `step()` captures state into a native
+/// `.morepork` trace file under `receipts/traces/`.
+pub struct TestRun<M: Model = crate::Dmg> {
+    pub gb: Console<M>,
+    #[cfg(feature = "morepork")]
+    tracer: TracerGuard,
+}
+
+/// Owns the run's tracer so an abandoned run still flushes its trace on drop,
+/// without giving `TestRun` itself a `Drop` impl (tests move `gb` out of it).
+#[cfg(feature = "morepork")]
+struct TracerGuard(Option<Tracer>);
+
+#[cfg(feature = "morepork")]
+impl Drop for TracerGuard {
+    fn drop(&mut self) {
+        if let Some(tracer) = self.0.take() {
+            let _ = tracer.finish();
+        }
+    }
+}
+
+impl<M: ConsoleUi> TestRun<M> {
+    /// Wrap a console for a traced run. `model_label` is the hardware-model
+    /// string written into the trace metadata (e.g. "DMG-B", "CGB-C").
+    pub fn new(gb: Console<M>, _rom_relative: &str, _model_label: &str) -> Self {
+        #[cfg(feature = "morepork")]
+        let tracer = TracerGuard(try_create_tracer(&gb, _rom_relative, _model_label));
+
+        Self {
+            gb,
+            #[cfg(feature = "morepork")]
+            tracer,
+        }
+    }
+
+    /// Step one instruction, capturing trace state if active.
+    ///
+    /// For tcycle-triggered profiles, this steps dot-by-dot and captures
+    /// state at every T-cycle. For instruction-triggered profiles, it
+    /// captures once before the instruction executes.
+    pub fn step(&mut self) -> StepResult {
+        #[cfg(feature = "morepork")]
+        {
+            if let Some(tracer) = &mut self.tracer.0 {
+                if tracer.trigger() == crate::trace::Trigger::Tcycle {
+                    return self.step_traced_tcycle();
+                }
+                tracer.capture(&self.gb).unwrap();
+            }
+
+            let result = self.gb.step();
+
+            if let Some(tracer) = &mut self.tracer.0 {
+                tracer.advance(result.tcycles);
+                if result.new_screen {
+                    tracer.mark_frame().unwrap();
+                }
+            }
+
+            return result;
+        }
+
+        #[cfg(not(feature = "morepork"))]
+        self.gb.step()
+    }
+
+    /// Step one instruction by advancing one dot at a time, capturing at each dot.
+    #[cfg(feature = "morepork")]
+    fn step_traced_tcycle(&mut self) -> StepResult {
+        crate::trace::step_instruction_tcycle(&mut self.gb, self.tracer.0.as_mut().unwrap())
+    }
+
+    #[allow(unused_mut)]
+    pub fn finish(mut self) {
+        #[cfg(feature = "morepork")]
+        if let Some(tracer) = self.tracer.0.take() {
+            tracer.finish().unwrap();
+        }
+    }
+}
+
+impl<M: ConsoleUi> System for TestRun<M> {
+    fn step(&mut self) -> StepResult {
+        TestRun::step(self)
+    }
+    fn read(&self, address: u16) -> u8 {
+        self.gb.read(address)
+    }
+    fn cpu(&self) -> &Cpu {
+        self.gb.cpu()
+    }
+    fn cpu_mut(&mut self) -> &mut Cpu {
+        self.gb.cpu_mut()
+    }
+    fn drain_serial_output(&mut self) -> Vec<u8> {
+        self.gb.drain_serial_output()
+    }
+    fn interrupts(&self) -> &interrupts::Registers {
+        self.gb.interrupts()
+    }
+    fn speed_switch_in_progress(&self) -> bool {
+        self.gb.speed_switch_in_progress()
+    }
+    fn vram_dma_holds_cpu(&self) -> bool {
+        self.gb.vram_dma_holds_cpu()
+    }
+    fn peek_range(&self, start: u16, len: u16) -> Vec<u8> {
+        self.gb.peek_range(start, len)
+    }
+    fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
+        self.gb.drain_audio_samples()
+    }
+}
+
+/// Build a schema-driven tracer when capture is requested. Capture is enabled by
+/// `MOREPORK_PROFILE` (any value, kept for muscle memory); `MOREPORK_TRIGGER`
+/// (`tcycle`/`instruction`, default instruction) sets the cadence and
+/// `MOREPORK_SCOPE` (`full`/`observable`, default observable) the tier depth. The
+/// column set and its typing come from the console model's state schema.
+#[cfg(feature = "morepork")]
+fn try_create_tracer<M: ConsoleUi>(
+    gb: &Console<M>,
+    rom_relative: &str,
+    model_label: &str,
+) -> Option<Tracer> {
+    std::env::var("MOREPORK_PROFILE").ok()?;
+
+    // Unset falls back to the documented default; an explicit but unrecognized
+    // value is a harness misconfiguration, not a silent default — fail loudly.
+    let trigger = match std::env::var("MOREPORK_TRIGGER").as_deref() {
+        Ok("tcycle") => crate::trace::Trigger::Tcycle,
+        Ok("instruction") => crate::trace::Trigger::Instruction,
+        Err(_) => crate::trace::Trigger::Instruction,
+        Ok(other) => {
+            panic!("MOREPORK_TRIGGER: unknown value {other:?} (expected `tcycle` or `instruction`)")
+        }
+    };
+    let scope = match std::env::var("MOREPORK_SCOPE").as_deref() {
+        Ok("full") => TraceScope::Full,
+        Ok("observable") => TraceScope::Observable,
+        Err(_) => TraceScope::Observable,
+        Ok(other) => {
+            panic!("MOREPORK_SCOPE: unknown value {other:?} (expected `full` or `observable`)")
+        }
+    };
+
+    let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../receipts/traces");
+    std::fs::create_dir_all(&output_dir).unwrap();
+
+    let rom_stem = Path::new(rom_relative)
+        .file_stem()
+        .unwrap()
+        .to_string_lossy();
+    let output_path = output_dir.join(format!("{rom_stem}.morepork"));
+
+    eprintln!("morepork: writing {}", output_path.display());
+
+    let mut tracer = Tracer::create(
+        &output_path,
+        gb,
+        trigger,
+        scope,
+        crate::trace::BootRom::Skip,
+        model_label,
+    )
+    .unwrap_or_else(|e| panic!("Failed to create tracer: {e}"));
+
+    tracer.mark_frame().unwrap();
+
+    Some(tracer)
+}
+
+pub fn load_rom(relative: &str) -> TestRun<crate::Dmg> {
+    let path = rom_path(relative);
+    let rom = std::fs::read(&path)
+        .unwrap_or_else(|e| panic!("Failed to read ROM {}: {e}", path.display()));
+    let boot_rom = try_load_boot_rom();
+    let mut gb = GameBoy::new(Cartridge::new(rom, None), boot_rom);
+    run_boot_rom(&mut gb);
+    TestRun::new(gb, relative, "DMG-B")
+}
+
+pub fn load_rom_with_boot_rom(relative: &str, boot_rom: Box<[u8; 256]>) -> TestRun<crate::Dmg> {
+    let gb = GameBoy::new(
+        Cartridge::new(std::fs::read(rom_path(relative)).unwrap(), None),
+        Some(BootRom::Dmg(boot_rom)),
+    );
+    TestRun::new(gb, relative, "DMG-B")
+}
+
+/// Try to load the DMG boot ROM from the path in `DMG_BOOT_ROM`.
+/// Returns None if the env var is unset or the file can't be read.
+/// The boot ROM cannot be distributed with the repo for legal reasons.
+pub fn try_load_boot_rom() -> Option<BootRom> {
+    let path = std::env::var("DMG_BOOT_ROM").ok()?;
+    let data = std::fs::read(&path).ok()?;
+    let boxed: Box<[u8; 256]> = data.into_boxed_slice().try_into().ok()?;
+    Some(BootRom::Dmg(boxed))
+}
+
+/// Drive a mapped boot ROM to the cartridge handoff at PC=0x0100. A no-op
+/// when no boot ROM is mapped (the CPU is already post-boot at 0x0100).
+pub fn run_boot_rom<M: Model>(gb: &mut Console<M>) {
+    if gb.cpu().ir_address != 0x0000 {
+        return;
+    }
+    for _ in 0..10_000_000 {
+        gb.step();
+        if gb.cpu().ir_address == 0x0100 {
+            return;
+        }
+    }
+    panic!(
+        "Boot ROM did not reach 0x0100 within 10M steps — does the ROM have a valid Nintendo logo?"
+    );
+}
+
+/// Run the emulator until the serial output contains any of the given needle strings,
+/// or until an infinite loop is detected at a frame boundary, or until a timeout is reached.
+pub fn run_until_serial_match<S: System>(
+    s: &mut S,
+    needles: &[&str],
+    timeout_frames: u32,
+) -> String {
+    let mut output = String::new();
+    for _ in 0..timeout_frames {
+        while !s.step().new_screen {}
+        let bytes = s.drain_serial_output();
+        if !bytes.is_empty() {
+            output.push_str(&String::from_utf8_lossy(&bytes));
+            if needles.iter().any(|needle| output.contains(needle)) {
+                return output;
+            }
+        }
+        if is_infinite_loop(s) {
+            return output;
+        }
+    }
+    output
+}
+
+/// Run the emulator for a fixed number of frames.
+pub fn run_frames<S: System>(s: &mut S, frames: u32) {
+    for _ in 0..frames {
+        while !s.step().new_screen {}
+    }
+}
+
+/// Run the emulator for a fixed number of T-cycles. Unlike
+/// [`run_frames`], doesn't depend on the LCD producing frames — used
+/// by gambatte tests which finish after a fixed cycle count (the
+/// gambatte testrunner runs for 1,053,360 T-cycles, equal to 15 LCD
+/// frames at single speed).
+pub fn run_for_tcycles<S: System>(s: &mut S, max_tcycles: u32) {
+    let mut total: u32 = 0;
+    while total < max_tcycles {
+        let result = s.step();
+        total = total.saturating_add(result.tcycles);
+    }
+}
+
+/// Run the emulator until it enters an infinite loop, or until a timeout (in frames) is reached.
+pub fn run_until_infinite_loop<S: System>(s: &mut S, timeout_frames: u32) -> bool {
+    for _ in 0..timeout_frames {
+        while !s.step().new_screen {}
+        if is_infinite_loop(s) {
+            return true;
+        }
+    }
+    // Per-instruction scan for HALT-based completion loops
+    for _ in 0..70224 {
+        s.step();
+        if is_infinite_loop(s) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Run the emulator until `LD B,B` (opcode 0x40) is about to execute in
+/// ROM/WRAM, or until a timeout.
+pub fn run_until_breakpoint<S: System>(s: &mut S, timeout_frames: u32) -> bool {
+    for _ in 0..timeout_frames {
+        loop {
+            let pc = s.cpu().ir_address;
+            // A 0x40 fetched from I/O space (e.g. DIV during `call rDIV`) is the
+            // register value being executed, not the LD B,B completion marker.
+            if pc < 0xFF00 && s.read(pc) == 0x40 {
+                return true;
+            }
+            if s.step().new_screen {
+                break;
+            }
+        }
+    }
+    false
+}
+
+/// Run the emulator until opcode 0xED (undefined) is about to execute, or until
+/// an infinite loop is detected, or until a timeout.
+pub fn run_until_undefined_opcode<S: System>(s: &mut S, timeout_frames: u32) -> bool {
+    for _ in 0..timeout_frames {
+        loop {
+            let pc = s.cpu().ir_address;
+            if s.read(pc) == 0xED {
+                return true;
+            }
+            if is_infinite_loop(s) {
+                return true;
+            }
+            if s.step().new_screen {
+                break;
+            }
+        }
+    }
+    false
+}
+
+/// Run the emulator instruction-by-instruction (no LCD frame
+/// assumption) until an infinite loop is detected or the instruction
+/// budget is exhausted.
+///
+/// Use this for tests that don't enable the LCD — frame-based runners
+/// hang in the inner `while !step().new_screen {}` loop when no frame
+/// is ever produced.
+pub fn run_until_infinite_loop_no_lcd<S: System>(s: &mut S, max_instructions: u32) -> bool {
+    for _ in 0..max_instructions {
+        s.step();
+        if is_infinite_loop(s) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Check if the CPU is stuck in a known completion loop.
+pub fn is_infinite_loop<S: System>(s: &S) -> bool {
+    let pc = s.cpu().ir_address;
+    if s.read(pc) == 0x18 && s.read(pc.wrapping_add(1)) == 0xFE {
+        return true;
+    }
+    if s.read(pc.wrapping_sub(1)) == 0x18 && s.read(pc) == 0xFE {
+        return true;
+    }
+    if s.read(pc) == 0x40
+        && s.read(pc.wrapping_add(1)) == 0x18
+        && s.read(pc.wrapping_add(2)) == 0xFE
+    {
+        return true;
+    }
+
+    if s.cpu().halt.state != crate::cpu::HaltState::Running
+        && !s.speed_switch_in_progress()
+        && !s.vram_dma_holds_cpu()
+    {
+        if s.interrupts().enabled.is_empty() {
+            return true;
+        }
+
+        if s.read(pc.wrapping_sub(1)) == 0x76 {
+            for offset in 0u16..4 {
+                let addr = pc.wrapping_add(offset);
+                if s.read(addr) == 0x18 {
+                    let rel = s.read(addr.wrapping_add(1)) as i8;
+                    let target = addr.wrapping_add(2).wrapping_add(rel as u16);
+                    if target <= pc.wrapping_sub(1) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    false
+}
+
+pub fn check_mooneye_pass(cpu: &Cpu) -> bool {
+    cpu.b == 3 && cpu.c == 5 && cpu.d == 8 && cpu.e == 13 && cpu.h == 21 && cpu.l == 34
+}
+
+pub fn format_registers(cpu: &Cpu) -> String {
+    format!(
+        "B={} C={} D={} E={} H={} L={} (expected: B=3 C=5 D=8 E=13 H=21 L=34)",
+        cpu.b, cpu.c, cpu.d, cpu.e, cpu.h, cpu.l
+    )
+}
+
+pub fn format_wram_dump<S: System>(s: &S, start: u16, len: u16) -> String {
+    let mut out = String::new();
+    let mut offset: u16 = 0;
+    while offset < len {
+        let row_addr = start.wrapping_add(offset);
+        out.push_str(&format!("\n  ${row_addr:04X}:"));
+        for i in 0..16 {
+            if offset + i >= len {
+                break;
+            }
+            out.push_str(&format!(" {:02X}", s.read(row_addr.wrapping_add(i))));
+        }
+        offset = offset.wrapping_add(16);
+    }
+    out
+}
+
+/// Convert a Screen to a flat greyscale pixel buffer using dmg-acid2 reference palette:
+/// PaletteIndex 0 → 0xFF, 1 → 0xAA, 2 → 0x55, 3 → 0x00
+pub fn screen_to_greyscale(screen: &Screen) -> Vec<u8> {
+    const GREYSCALE: [u8; 4] = [0xFF, 0xAA, 0x55, 0x00];
+    (0..144u8)
+        .flat_map(|y| (0..160u8).map(move |x| GREYSCALE[screen.pixel(x, y).0 as usize]))
+        .collect()
+}
+
+/// Load a reference PNG as a flat greyscale pixel buffer (values 0x00-0xFF).
+pub fn load_reference_png(relative: &str) -> Vec<u8> {
+    let path = rom_path(relative);
+    let file = std::fs::File::open(&path)
+        .unwrap_or_else(|e| panic!("Failed to open reference image {}: {e}", path.display()));
+    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+    decoder.set_transformations(png::Transformations::EXPAND);
+    let mut reader = decoder.read_info().unwrap();
+    let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut buf).unwrap();
+
+    let width = info.width as usize;
+    let height = info.height as usize;
+    let stride = match info.color_type {
+        png::ColorType::Grayscale => 1,
+        png::ColorType::Rgb => 3,
+        png::ColorType::Rgba => 4,
+        other => panic!("Unsupported PNG color type: {other:?}"),
+    };
+
+    (0..width * height).map(|i| buf[i * stride]).collect()
+}

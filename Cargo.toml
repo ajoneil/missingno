@@ -3,39 +3,39 @@ resolver = "3"
 # The gamedb submodule is its own workspace; keep its crates out of this one.
 exclude = ["missingno-gamedb"]
 members = [
-    "crates/missingno",
-    "crates/missingno-curator",
-    "crates/missingno-debugger",
-    "crates/missingno-remote",
-    "crates/missingno-session",
-    "crates/missingno-gb",
-    "crates/missingno-gbc",
-    "crates/missingno-core",
-    "crates/missingno-iced",
-    "crates/missingno-6502",
-    "crates/missingno-nes",
-    "crates/missingno-sms",
-    "crates/missingno-vcs",
+    "crates/missingno/app",
+    "crates/missingno/curator",
+    "crates/missingno/debugger",
+    "crates/missingno/remote",
+    "crates/missingno/session",
+    "crates/missingno/core",
+    "crates/missingno/iced",
+    "crates/systems/gb",
+    "crates/systems/gbc",
+    "crates/systems/nes",
+    "crates/systems/sms",
+    "crates/systems/vcs",
+    "crates/hardware/6502",
 ]
 # The shipping set; the immature cores build only via -p.
 default-members = [
-    "crates/missingno",
-    "crates/missingno-curator",
-    "crates/missingno-debugger",
-    "crates/missingno-remote",
-    "crates/missingno-session",
-    "crates/missingno-gb",
-    "crates/missingno-gbc",
-    "crates/missingno-core",
-    "crates/missingno-iced",
-    "crates/missingno-6502",
-    "crates/missingno-vcs",
+    "crates/missingno/app",
+    "crates/missingno/curator",
+    "crates/missingno/debugger",
+    "crates/missingno/remote",
+    "crates/missingno/session",
+    "crates/missingno/core",
+    "crates/missingno/iced",
+    "crates/systems/gb",
+    "crates/systems/gbc",
+    "crates/systems/vcs",
+    "crates/hardware/6502",
 ]
 
-# One version for every library crate, so they cannot drift apart. The app sets
-# its own — it ships to people and versions by calendar.
+# One version for every crate, app included: the calendar release number of the
+# release currently in development.
 [workspace.package]
-version = "0.1.0"
+version = "26.9.0"
 
 [workspace.dependencies]
 bitflags = "2.13.1"

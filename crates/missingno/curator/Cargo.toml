@@ -1,0 +1,22 @@
+[package]
+name = "missingno-curator"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.6.4", features = ["derive"] }
+iced = { version = "0.14.0", features = ["smol", "image", "wgpu"] }
+gilrs = "0.11"
+jiff = "0.2"
+missingno-core = { path = "../core" }
+missingno-iced = { path = "../iced" }
+missingno-gamedb = { path = "../../../missingno-gamedb/crates/gamedb" }
+missingno-session = { path = "../session", features = ["tools", "audio-output"] }
+missingno-vcs = { path = "../../systems/vcs" }
+serde_json = "1"
+sha1 = "0.11"
+smol = "2"
+ureq = "3"
+
+[dev-dependencies]
+tempfile = "3"

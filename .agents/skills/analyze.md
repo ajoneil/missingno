@@ -22,7 +22,7 @@ The caller provides:
 ## Process
 
 1. **Re-read the data source and summary.md.** Do not work from memory. Read the actual files.
-1b. **Match the observation against the core's primary references** (hierarchy: `crates/missingno-<core>/AGENTS.md`). For DMG PPU behaviour, the DMG Timing Specification: if the observed behaviour contradicts the spec, the emulator is wrong (default assumption); if the spec is silent on a detail a dmg-sim run could cover, flag a spec gap in your conclusion. For non-PPU subsystems, gb-ctr. For one-dot discrepancies, check `receipts/resources/gb-propagation-delay-analysis/output/race_pairs_report.md` — a match between measured behaviour and a known signal race is strong evidence for the hypothesis.
+1b. **Match the observation against the core's primary references** (hierarchy: `crates/systems/<core>/AGENTS.md`). For DMG PPU behaviour, the DMG Timing Specification: if the observed behaviour contradicts the spec, the emulator is wrong (default assumption); if the spec is silent on a detail a dmg-sim run could cover, flag a spec gap in your conclusion. For non-PPU subsystems, gb-ctr. For one-dot discrepancies, check `receipts/resources/gb-propagation-delay-analysis/output/race_pairs_report.md` — a match between measured behaviour and a known signal race is strong evidence for the hypothesis.
 2. **State what the data shows.** Extract the specific measurements or findings relevant to the active hypothesis. Be concrete — cite values, line numbers in log files, specific statements from research docs.
 3. **Compare against expectations.** What did the hypothesis predict? What did the data show? Where do they match and where do they diverge?
 4. **Update the model.** Based on the comparison:

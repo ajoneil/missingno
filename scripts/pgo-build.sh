@@ -23,8 +23,8 @@ if [ "${PGO:-1}" = "0" ]; then
     exit 0
 fi
 
-GB_ROMS=crates/missingno-gb/tests/accuracy/roms
-GBC_ROMS=crates/missingno-gbc/tests/accuracy/roms
+GB_ROMS=crates/systems/gb/tests/accuracy/roms
+GBC_ROMS=crates/systems/gbc/tests/accuracy/roms
 
 # Training set: spread across both cores — PPU-heavy (acid), CPU-heavy
 # (cpu_instrs), APU-heavy (dmg_sound), and KEY1 double-speed (-ds) workloads.

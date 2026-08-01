@@ -1,0 +1,19 @@
+[package]
+name = "missingno-gbc"
+version.workspace = true
+authors = ["Andrew O'Neil <andy@andyofniall.net>"]
+edition = "2024"
+license = "MIT"
+
+[features]
+test-support = ["missingno-gb/test-support"]
+morepork = ["missingno-gb/morepork"]
+
+[dependencies]
+missingno-gb = { path = "../gb" }
+missingno-core = { path = "../../missingno/core" }
+rgb = { workspace = true }
+
+[dev-dependencies]
+missingno-gbc = { path = ".", features = ["test-support"] }
+png = "0.18"

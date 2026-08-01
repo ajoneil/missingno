@@ -10,14 +10,14 @@
 #   ./scripts/sim2600-observe.sh <rom> [half_clocks] [output_dir] [extra_wires]
 #
 # Examples:
-#   ./scripts/sim2600-observe.sh crates/missingno-vcs/tests/accuracy/roms/harness/sanity_ntsc.a26 3000
+#   ./scripts/sim2600-observe.sh crates/systems/vcs/tests/accuracy/roms/harness/sanity_ntsc.a26 3000
 #   ./scripts/sim2600-observe.sh path/to/game.a26 45000 receipts/traces/sim2600 cpu:SYNC,tia:BL_lowCtrl
 #
 # Output: <output_dir>/<rom_name>.vcd  (open with GTKWave)
 #
 # IMPORTANT: Sim2600's 6532/RIOT is a behavioural emulation (emuPIA), NOT a
 # netlist — its state is not gate-level ground truth. Observe CPU and TIA wires
-# here; ground RIOT timing on the datasheet/schematics (crates/missingno-vcs/AGENTS.md).
+# here; ground RIOT timing on the datasheet/schematics (crates/systems/vcs/AGENTS.md).
 #
 # Sim2600 is transistor-level and slow: ~40000 half-clocks before the first
 # visible pixel (minutes). Default is 2000 half-clocks (reset + early execution).

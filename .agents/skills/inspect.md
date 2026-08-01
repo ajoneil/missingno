@@ -81,7 +81,7 @@ The user will decide whether to extend the debugger or fall back to `/instrument
 ### Starting and stopping
 
 ```bash
-dbg_start crates/missingno-gb/tests/accuracy/roms/dmg-acid2/dmg-acid2.gb
+dbg_start crates/systems/gb/tests/accuracy/roms/dmg-acid2/dmg-acid2.gb
 # Prints: ready (pid 12345)
 dbg_ensure          # Returns 0 if server is running, 1 if not
 dbg_stop            # Kills the server cleanly
@@ -97,7 +97,7 @@ The machine then starts at PC 0x0000 in the boot ROM rather than at the post-boo
 
 ### ROM paths
 
-Test ROMs live under `crates/missingno-gb/tests/accuracy/roms/` and `crates/missingno-vcs/tests/accuracy/roms/`. Always verify the path exists before starting the server.
+Test ROMs live under `crates/systems/gb/tests/accuracy/roms/` and `crates/systems/vcs/tests/accuracy/roms/`. Always verify the path exists before starting the server.
 
 **CGB ROMs** auto-detect from the header and serve on the CGB core; its sections/graphics carry the CGB extras (VRAM bank 1 atlas, CRAM palettes, KEY1/VBK/HDMA rows).
 
@@ -227,7 +227,7 @@ dbg_step_ticks 60   # "should be near the sprite..." — no, use a watch
 ### Correct pattern
 ```bash
 . scripts/debugger.sh
-dbg_start crates/missingno-gb/tests/accuracy/roms/dmg-acid2/dmg-acid2.gb
+dbg_start crates/systems/gb/tests/accuracy/roms/dmg-acid2/dmg-acid2.gb
 dbg_step_frame 10
 dbg_watch '{"terms":[{"key":"scanline","value":60},{"key":"ppu-mode","value":3}]}'
 dbg_run_until_watch          # lands at scanline 60, Mode 3

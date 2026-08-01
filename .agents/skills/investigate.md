@@ -106,7 +106,7 @@ The core loop:
 - Classify the problem type and write it in summary.md.
 
 **For compatibility investigations:**
-- After capturing the baseline, **check available data sources before generating new data.** The ordered source hierarchy — and how to use each source, including the core's gate-level sim — is the target core's methodology doc (`crates/missingno-<core>/AGENTS.md`); read it and dispatch `/research` for documentary sources. Then:
+- After capturing the baseline, **check available data sources before generating new data.** The ordered source hierarchy — and how to use each source, including the core's gate-level sim — is the target core's methodology doc (`crates/systems/<core>/AGENTS.md`); read it and dispatch `/research` for documentary sources. Then:
   1. **`/compare-traces`**: Invoke to find the exact divergence point between missingno and a reference emulator. The reference emulators are all behavioural — they localise *where* execution diverges, but the *why* comes from the hardware, not from matching an emulator. For small focused tests, direct diff is productive. For larger tests, use individual trace inspection (`morepork query`, `morepork render`) to understand behavior.
   2. **`/inspect`** (debugger): Fall back when you need sub-dot observation, internal pipeline state, or information that traces can't provide.
 - **When `/compare-traces` is not enough:** If the trace comparison can't answer the question (e.g. you need internal pipeline state, sub-dot phase timing, or the reference emulator has no trace available), invoke `/inspect` for targeted observation at the divergence point that `/compare-traces` identified.
@@ -118,7 +118,7 @@ The core loop:
 
 ### 2. Understand the domain and research correct behavior
 
-- Identify the target core first, and read its methodology doc (`crates/missingno-<core>/AGENTS.md`) — the ground-truth hierarchy is per-core and decides which sources `/research` should consult.
+- Identify the target core first, and read its methodology doc (`crates/systems/<core>/AGENTS.md`) — the ground-truth hierarchy is per-core and decides which sources `/research` should consult.
 - Identify the hardware subsystem. Use `/research` to fill knowledge gaps — frame questions as "what does the hardware do?" not "what does emulator X do?"
 - Use `/research` any time you're uncertain about expected behavior — not just at the start.
 - Pass research results through `/analyze` before updating summary.md.

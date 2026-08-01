@@ -2958,7 +2958,7 @@ dependencies = [
 
 [[package]]
 name = "missingno"
-version = "26.8.0"
+version = "26.9.0"
 dependencies = [
  "clap",
  "dirs",
@@ -2967,7 +2967,7 @@ dependencies = [
  "image",
  "jiff",
  "libc",
- "missingno-core 0.1.0",
+ "missingno-core 26.9.0",
  "missingno-gamedb",
  "missingno-gb",
  "missingno-gbc",
@@ -2992,19 +2992,11 @@ dependencies = [
 
 [[package]]
 name = "missingno-6502"
-version = "0.1.0"
+version = "26.9.0"
 dependencies = [
- "missingno-core 0.1.0",
+ "missingno-core 26.9.0",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "missingno-core"
-version = "0.1.0"
-dependencies = [
- "rgb",
- "serde",
 ]
 
 [[package]]
@@ -3017,14 +3009,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "missingno-core"
+version = "26.9.0"
+dependencies = [
+ "rgb",
+ "serde",
+]
+
+[[package]]
 name = "missingno-curator"
-version = "0.1.0"
+version = "26.9.0"
 dependencies = [
  "clap",
  "gilrs",
  "iced",
  "jiff",
- "missingno-core 0.1.0",
+ "missingno-core 26.9.0",
  "missingno-gamedb",
  "missingno-iced",
  "missingno-session",
@@ -3038,9 +3038,9 @@ dependencies = [
 
 [[package]]
 name = "missingno-debugger"
-version = "0.1.0"
+version = "26.9.0"
 dependencies = [
- "missingno-core 0.1.0",
+ "missingno-core 26.9.0",
  "missingno-session",
  "rgb",
  "serde_json",
@@ -3057,10 +3057,10 @@ dependencies = [
 
 [[package]]
 name = "missingno-gb"
-version = "0.1.0"
+version = "26.9.0"
 dependencies = [
  "bitflags 2.13.1",
- "missingno-core 0.1.0",
+ "missingno-core 26.9.0",
  "missingno-gb",
  "morepork",
  "png 0.18.1",
@@ -3070,9 +3070,9 @@ dependencies = [
 
 [[package]]
 name = "missingno-gbc"
-version = "0.1.0"
+version = "26.9.0"
 dependencies = [
- "missingno-core 0.1.0",
+ "missingno-core 26.9.0",
  "missingno-gb",
  "missingno-gbc",
  "png 0.18.1",
@@ -3081,20 +3081,20 @@ dependencies = [
 
 [[package]]
 name = "missingno-iced"
-version = "0.1.0"
+version = "26.9.0"
 dependencies = [
  "bytemuck",
  "iced",
- "missingno-core 0.1.0",
+ "missingno-core 26.9.0",
  "rgb",
 ]
 
 [[package]]
 name = "missingno-nes"
-version = "0.1.0"
+version = "26.9.0"
 dependencies = [
  "missingno-6502",
- "missingno-core 0.1.0",
+ "missingno-core 26.9.0",
  "morepork",
  "rgb",
  "sha2 0.11.0",
@@ -3102,18 +3102,18 @@ dependencies = [
 
 [[package]]
 name = "missingno-remote"
-version = "0.1.0"
+version = "26.9.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "missingno-session"
-version = "0.1.0"
+version = "26.9.0"
 dependencies = [
  "cpal",
  "libc",
- "missingno-core 0.1.0",
+ "missingno-core 26.9.0",
  "missingno-gb",
  "missingno-gbc",
  "missingno-nes",
@@ -3126,9 +3126,9 @@ dependencies = [
 
 [[package]]
 name = "missingno-sms"
-version = "0.1.0"
+version = "26.9.0"
 dependencies = [
- "missingno-core 0.1.0",
+ "missingno-core 26.9.0",
  "rgb",
  "serde",
  "serde_json",
@@ -3136,10 +3136,10 @@ dependencies = [
 
 [[package]]
 name = "missingno-vcs"
-version = "0.1.0"
+version = "26.9.0"
 dependencies = [
  "missingno-6502",
- "missingno-core 0.1.0",
+ "missingno-core 26.9.0",
  "morepork",
  "png 0.18.1",
  "rgb",
@@ -3153,7 +3153,7 @@ source = "git+https://github.com/ajoneil/morepork?branch=main#96bf93d266730cb68f
 dependencies = [
  "arrow",
  "flate2",
- "missingno-core 0.1.0 (git+https://github.com/ajoneil/missingno?branch=main)",
+ "missingno-core 0.1.0",
  "serde",
  "serde_json",
  "sha2 0.10.9",
