@@ -1,8 +1,9 @@
 //! SingleStepTests 65x02 oracle sweep: per-cycle bus activity and final
-//! state for all 256 opcodes. Data is fetched (not committed) — run
-//! `scripts/fetch-single-step-tests.sh`, or set `SINGLE_STEP_TESTS_DIR`.
+//! state for all 256 opcodes. Data is fetched (not committed) — the sweep
+//! sparse-clones the oracle on first run, or honours `SINGLE_STEP_TESTS_DIR`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use missingno_6502::{Bus, Cpu};
 use serde::Deserialize;
@@ -54,15 +55,57 @@ impl Bus for FlatBus {
     }
 }
 
-fn data_dir(variant: &str) -> Option<PathBuf> {
+fn data_dir(variant: &str) -> PathBuf {
     if let Ok(dir) = std::env::var("SINGLE_STEP_TESTS_DIR") {
-        return Some(PathBuf::from(dir).join(variant).join("v1"));
+        return PathBuf::from(dir).join(variant).join("v1");
     }
-    let default = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../receipts/resources/single-step-tests")
-        .join(variant)
-        .join("v1");
-    default.is_dir().then_some(default)
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/single-step-tests");
+    let dir = root.join(variant).join("v1");
+    if !dir.is_dir() {
+        fetch_oracle(&root);
+    }
+    dir
+}
+
+/// Sparse-clones the 65x02 oracle sets and records the fetched commit.
+fn fetch_oracle(root: &Path) {
+    let git = |args: &[&str], cwd: Option<&Path>| {
+        let mut command = Command::new("git");
+        command.args(args);
+        if let Some(cwd) = cwd {
+            command.current_dir(cwd);
+        }
+        let ran = command.status().map(|status| status.success());
+        assert!(
+            ran.unwrap_or(false),
+            "git {} failed — clone https://github.com/SingleStepTests/65x02 into {} \
+             (sparse: 6502/v1 nes6502/v1), or set SINGLE_STEP_TESTS_DIR",
+            args.join(" "),
+            root.display(),
+        );
+    };
+    if !root.is_dir() {
+        git(
+            &[
+                "clone",
+                "--depth",
+                "1",
+                "--filter=blob:none",
+                "--sparse",
+                "https://github.com/SingleStepTests/65x02",
+                &root.display().to_string(),
+            ],
+            None,
+        );
+    }
+    git(&["sparse-checkout", "set", "6502/v1", "nes6502/v1"], Some(root));
+    git(&["checkout", "--", "."], Some(root));
+    let head = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(root)
+        .output()
+        .expect("git rev-parse");
+    std::fs::write(root.join("FETCHED_COMMIT"), head.stdout).expect("record fetched commit");
 }
 
 fn run_case(case: &Case, decimal: bool) -> Result<(), String> {
@@ -150,9 +193,7 @@ fn run_file(path: &PathBuf, decimal: bool) -> (usize, usize, Vec<String>) {
 }
 
 fn sweep(variant: &str, decimal: bool) {
-    let Some(dir) = data_dir(variant) else {
-        panic!("oracle data missing: run scripts/fetch-single-step-tests.sh");
-    };
+    let dir = data_dir(variant);
     let mut total_passed = 0usize;
     let mut bad_files = Vec::new();
     for opcode in 0..=0xFFu8 {
@@ -182,13 +223,11 @@ fn sweep(variant: &str, decimal: bool) {
 }
 
 #[test]
-#[ignore = "needs fetched oracle data; run via scripts/fetch-single-step-tests.sh"]
 fn single_step_sweep() {
     sweep("6502", true);
 }
 
 #[test]
-#[ignore = "needs fetched oracle data; run via scripts/fetch-single-step-tests.sh"]
 fn single_step_sweep_nes6502() {
     sweep("nes6502", false);
 }

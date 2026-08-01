@@ -9,3 +9,4 @@ scripts/.test-baseline-*
 net.andyofniall.missingno
 __pycache__
 *.pyc
+crates/hardware/*/tests/single-step-tests

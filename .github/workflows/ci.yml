@@ -36,8 +36,8 @@ jobs:
       - name: CGB suite
         run: cargo test -p missingno-gbc
 
-  # VCS core: the 6502 sweep runs against the SingleStepTests oracle
-  # (fetched, not committed — 1.2 GB of per-cycle JSON).
+  # VCS core: the 6502 and Z80 sweeps run against the SingleStepTests
+  # oracles (per-cycle JSON, gigabytes; the harnesses fetch them on first run).
   vcs-core:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -47,16 +47,12 @@ jobs:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Fetch SingleStepTests oracle
-        run: ./scripts/fetch-single-step-tests.sh
       - name: 6502-family oracle sweeps
-        run: cargo test -p missingno-6502 -- --include-ignored
+        run: cargo test -p missingno-6502
       - name: VCS tests
         run: cargo test -p missingno-vcs
-      - name: Fetch SingleStepTests z80 oracle
-        run: ./scripts/fetch-single-step-tests-z80.sh
       - name: Z80 oracle sweep
-        run: cargo test -p missingno-z80 -- --include-ignored
+        run: cargo test -p missingno-z80
       - name: SMS tests
         run: cargo test -p missingno-sms
 

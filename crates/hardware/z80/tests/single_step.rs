@@ -1,10 +1,11 @@
 //! SingleStepTests Z80 oracle sweep: per-T-state bus activity, port
 //! transactions, and final CPU state for every opcode (including the CB,
 //! ED, DD, FD, DDCB, and FDCB prefixes). Data is fetched (not committed) —
-//! run `scripts/fetch-single-step-tests-z80.sh`, or set
+//! the sweep sparse-clones the oracle on first run, or honours
 //! `SINGLE_STEP_TESTS_Z80_DIR`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use missingno_z80::{Bus, Cpu, InterruptMode, Pins};
 use serde::Deserialize;
@@ -257,13 +258,57 @@ fn run_case(case: &Case) -> Result<(), String> {
     }
 }
 
-fn data_dir() -> Option<PathBuf> {
+fn data_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("SINGLE_STEP_TESTS_Z80_DIR") {
-        return Some(PathBuf::from(dir));
+        return PathBuf::from(dir);
     }
-    let default = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../receipts/resources/single-step-tests-z80/v1");
-    default.is_dir().then_some(default)
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/single-step-tests");
+    let dir = root.join("v1");
+    if !dir.is_dir() {
+        fetch_oracle(&root);
+    }
+    dir
+}
+
+/// Sparse-clones the Z80 oracle set and records the fetched commit.
+fn fetch_oracle(root: &Path) {
+    let git = |args: &[&str], cwd: Option<&Path>| {
+        let mut command = Command::new("git");
+        command.args(args);
+        if let Some(cwd) = cwd {
+            command.current_dir(cwd);
+        }
+        let ran = command.status().map(|status| status.success());
+        assert!(
+            ran.unwrap_or(false),
+            "git {} failed — clone https://github.com/SingleStepTests/z80 into {} \
+             (sparse: v1), or set SINGLE_STEP_TESTS_Z80_DIR",
+            args.join(" "),
+            root.display(),
+        );
+    };
+    if !root.is_dir() {
+        git(
+            &[
+                "clone",
+                "--depth",
+                "1",
+                "--filter=blob:none",
+                "--sparse",
+                "https://github.com/SingleStepTests/z80",
+                &root.display().to_string(),
+            ],
+            None,
+        );
+    }
+    git(&["sparse-checkout", "set", "v1"], Some(root));
+    git(&["checkout", "--", "."], Some(root));
+    let head = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(root)
+        .output()
+        .expect("git rev-parse");
+    std::fs::write(root.join("FETCHED_COMMIT"), head.stdout).expect("record fetched commit");
 }
 
 fn run_file(path: &PathBuf) -> (usize, usize, Vec<String>) {
@@ -287,11 +332,8 @@ fn run_file(path: &PathBuf) -> (usize, usize, Vec<String>) {
 }
 
 #[test]
-#[ignore = "needs fetched oracle data; run via scripts/fetch-single-step-tests-z80.sh"]
 fn single_step_sweep() {
-    let Some(dir) = data_dir() else {
-        panic!("oracle data missing: run scripts/fetch-single-step-tests-z80.sh");
-    };
+    let dir = data_dir();
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
         .expect("readable test dir")
         .filter_map(|entry| entry.ok().map(|e| e.path()))
