@@ -55,8 +55,10 @@ jobs:
         run: cargo test -p missingno-vcs
       - name: Fetch SingleStepTests z80 oracle
         run: ./scripts/fetch-single-step-tests-z80.sh
-      - name: SMS tests + Z80 oracle sweep
-        run: cargo test -p missingno-sms -- --include-ignored
+      - name: Z80 oracle sweep
+        run: cargo test -p missingno-z80 -- --include-ignored
+      - name: SMS tests
+        run: cargo test -p missingno-sms
 
   # The GUI crate compiles headlessly but needs audio/input/dialog system
   # libraries present to build on Linux.

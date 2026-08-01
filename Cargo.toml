@@ -16,6 +16,7 @@ members = [
     "crates/systems/sms",
     "crates/systems/vcs",
     "crates/hardware/6502",
+    "crates/hardware/z80",
 ]
 # The shipping set; the immature cores build only via -p.
 default-members = [
@@ -30,6 +31,7 @@ default-members = [
     "crates/systems/gbc",
     "crates/systems/vcs",
     "crates/hardware/6502",
+    "crates/hardware/z80",
 ]
 
 # One version for every crate, app included: the calendar release number of the

@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use missingno_sms::cpu::{Bus, Cpu, InterruptMode, Pins};
+use missingno_z80::{Bus, Cpu, InterruptMode, Pins};
 use serde::Deserialize;
 
 #[derive(Deserialize)]

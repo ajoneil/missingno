@@ -5,8 +5,5 @@ edition = "2024"
 
 [dependencies]
 missingno-core = { path = "../../missingno/core" }
+missingno-z80 = { path = "../../hardware/z80" }
 rgb = { workspace = true }
-
-[dev-dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"

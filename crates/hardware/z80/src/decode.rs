@@ -3,8 +3,8 @@
 //! Every opcode splits into octal fields `x`(7-6) `y`(5-3) `z`(2-0), with
 //! `p`(y>>1) and `q`(y&1); the instruction groups key off these.
 
-use super::flags;
-use super::{Cpu, InterruptMode};
+use crate::flags;
+use crate::{Cpu, InterruptMode};
 
 #[derive(Clone, Copy)]
 pub(super) struct Fields {
@@ -103,7 +103,7 @@ impl Cpu {
         }
     }
 
-    pub(super) fn reg(&self, r: super::decode::Reg) -> u8 {
+    pub(super) fn reg(&self, r: crate::decode::Reg) -> u8 {
         use Reg::*;
         match r {
             B => self.b,
@@ -120,7 +120,7 @@ impl Cpu {
         }
     }
 
-    pub(super) fn set_reg(&mut self, r: super::decode::Reg, value: u8) {
+    pub(super) fn set_reg(&mut self, r: crate::decode::Reg, value: u8) {
         use Reg::*;
         match r {
             B => self.b = value,

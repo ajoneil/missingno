@@ -4,8 +4,9 @@
 //! units, so instruction-granular timing is the current resolution —
 //! refining the catch-up to the VDP-port membrane is later accuracy work.
 
+use missingno_z80::{Bus, Cpu};
+
 use crate::cartridge::{Cartridge, CartridgeError};
-use crate::cpu::{Bus, Cpu};
 use crate::psg::Psg;
 use crate::vdp::{Frame, Vdp};
 

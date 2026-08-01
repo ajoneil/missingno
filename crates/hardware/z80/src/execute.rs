@@ -1,8 +1,8 @@
 //! Instruction dispatch: algorithmic decode over the octal opcode fields,
 //! shared across the base table and the CB/ED/DD/FD/DDCB/FDCB prefixes.
 
-use super::decode::{AluOp, Fields, INT_MODE, Reg, RotOp};
-use super::{Bus, Cpu};
+use crate::decode::{AluOp, Fields, INT_MODE, Reg, RotOp};
+use crate::{Bus, Cpu};
 
 /// Which register pair the H/L slot and (HL) memory operand resolve to.
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -1,7 +1,7 @@
 //! Pure register/flag mutations — the operation half of each instruction.
 
-use super::decode::{AluOp, RotOp};
-use super::{Cpu, flags};
+use crate::decode::{AluOp, RotOp};
+use crate::{Cpu, flags};
 
 fn parity(value: u8) -> u8 {
     if value.count_ones().is_multiple_of(2) {
