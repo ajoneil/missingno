@@ -42,6 +42,8 @@ pub mod rendering;
 mod scan;
 pub mod screen;
 mod span;
+#[cfg(debug_assertions)]
+mod span_shadow;
 pub mod stat_interrupt;
 pub mod types;
 pub mod video_control;
@@ -512,9 +514,39 @@ impl<P: PpuModel> Ppu<P> {
         self.mode()
     }
 
+    /// Dots the arming has proven inert are still standing: the caller skips
+    /// this dot's PPU dispatch whole.
+    pub(crate) fn span_armed(&self) -> bool {
+        self.span.armed()
+    }
+
+    /// Spend one armed dot without running it. Its divider and LX arithmetic is
+    /// owed to the next [`Ppu::sync_span`].
+    pub(crate) fn defer_dot(&mut self) -> bool {
+        if !self.span.defer_dot() {
+            return false;
+        }
+        #[cfg(debug_assertions)]
+        self.span.step_shadow(&self.video, self.model.stat_shadow());
+        true
+    }
+
+    /// Bring LX and the divider phase up to the current dot. Every other cell a
+    /// span touches is constant across it, so this is the whole materialisation.
+    pub fn sync_span(&mut self) {
+        if self.span.deferred() == 0 {
+            return;
+        }
+        let dots = self.span.take_deferred();
+        self.video.materialize_dots(dots);
+        #[cfg(debug_assertions)]
+        self.span.compare_shadow(&self.video);
+    }
+
     /// Leave the span before driving edges outside the normal dot cadence (the
     /// speed-switch blackout).
     pub fn suspend_span(&mut self) {
+        self.sync_span();
         self.span.invalidate();
     }
 
@@ -579,11 +611,24 @@ impl<P: PpuModel> Ppu<P> {
     /// synchroniser captures on the M-boundary fall instead — see
     /// `eval_synced` in the fall path.
     pub fn tick_clock_domain_capture(&mut self) {
-        if P::HAS_CLOCK_DOMAIN_SYNC {
-            let drawing = self.mode() == Mode::Drawing;
-            self.model
-                .tick_clock_domain(drawing, self.drawing_fall_stage);
+        if !P::HAS_CLOCK_DOMAIN_SYNC {
+            return;
         }
+        // Both inputs are low on every slept dot, so one in-span capture takes
+        // the pair to its fixed point and later ones rewrite it. The capture
+        // *before* the span may have latched drawing through the XYMU dot-fall
+        // lag, so the first boundary inside it still has to run.
+        if self.span.clock_domain_settled() {
+            debug_assert!(
+                self.mode() != Mode::Drawing && !self.drawing_fall_stage,
+                "a sleeping dot drove the clock-domain capture"
+            );
+            return;
+        }
+        let drawing = self.mode() == Mode::Drawing;
+        self.model
+            .tick_clock_domain(drawing, self.drawing_fall_stage);
+        self.span.note_clock_domain_captured();
     }
 
     /// Double-speed M-boundary fall on the half-dot edge that carries no PPU
@@ -592,6 +637,17 @@ impl<P: PpuModel> Ppu<P> {
     /// only register-path edges can race here). The WY/WX/LCDC.5/LCDC.2
     /// crossing does not — it captures at the M-cycle's last PPU fall instead.
     pub fn capture_register_sync_standalone(&mut self) -> bool {
+        // A relatch of inputs the span holds fixed: the LYC synchroniser sees
+        // the LY it captured last, and the enables cell cannot have moved
+        // without a write waking the span.
+        if self.span.armed() {
+            debug_assert!(
+                self.span
+                    .quiet(self.video.stat.ly_eq_lyc(), self.video.vblank()),
+                "a sleeping dot moved the register-sync inputs"
+            );
+            return false;
+        }
         // This is an M-cycle boundary, so the LYC crossing's resolved edge
         // lands here too.
         if P::LYC_CROSSING.is_synced() {

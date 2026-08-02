@@ -152,6 +152,7 @@ impl<M: ConsoleUi> TestRun<M> {
                     return self.step_traced_tcycle();
                 }
                 self.gb.sync_audio();
+                self.gb.sync_ppu();
                 tracer.capture(&self.gb).unwrap();
             }
 

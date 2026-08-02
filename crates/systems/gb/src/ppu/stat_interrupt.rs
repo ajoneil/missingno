@@ -5,7 +5,7 @@ use crate::ppu::DffBit;
 use bitflags::bitflags;
 
 bitflags! {
-    #[derive(Copy, Clone, PartialEq, Eq)]
+    #[derive(Copy, Clone, Debug, PartialEq, Eq)]
     pub struct InterruptFlags: u8 {
         const DUMMY                = 0b10000000;
         const CURRENT_LINE_COMPARE = 0b01000000;
@@ -47,6 +47,7 @@ impl Default for InterruptFlags {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatInterrupt {
     /// LYC register ($FF45).
     pub(in crate::ppu) lyc: u8,

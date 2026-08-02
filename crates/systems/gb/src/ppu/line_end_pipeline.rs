@@ -10,6 +10,7 @@ pub(in crate::ppu) enum LineEndEdge {
     None,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LineEndPipeline {
     /// NYPE DFF. D signalled when RUTU fires; Q (LINE_END, delayed) captured on
     /// TALU rising, feeds POPU/MYTA/MEDA.

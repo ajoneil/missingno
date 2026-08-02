@@ -1,5 +1,6 @@
 //! WUVU/VENA divider cascade clocked off XOTA.
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Dividers {
     /// WUVU.Q — 2-dot period (half M-cycle).
     pub(in crate::ppu) half_mcycle: bool,
@@ -34,6 +35,25 @@ impl Dividers {
     /// XUPY = WUVU.Q — scan-counter / OAM-pipeline clock.
     pub(in crate::ppu) fn scan_clock(&self) -> bool {
         self.half_mcycle
+    }
+
+    /// Run the cascade forward over `dots` XOTA edges in one step, and return
+    /// the TALU rises they carry. WUVU toggles on every edge, VENA captures on
+    /// the toggle that leaves WUVU low, and TALU↑ is a capture entered low.
+    pub(in crate::ppu) fn advance_dots(&mut self, dots: u32) -> u32 {
+        let captures = if self.half_mcycle {
+            dots.div_ceil(2)
+        } else {
+            dots / 2
+        };
+        let rises = if self.mcycle {
+            captures / 2
+        } else {
+            captures.div_ceil(2)
+        };
+        self.half_mcycle ^= dots % 2 == 1;
+        self.mcycle ^= captures % 2 == 1;
+        rises
     }
 
     pub(in crate::ppu) fn vid_rst(&mut self) {

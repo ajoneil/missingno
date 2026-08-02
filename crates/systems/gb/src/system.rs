@@ -441,6 +441,7 @@ where
             }
         }
         console.sync_audio();
+        console.sync_ppu();
         FrameOutcome {
             display: Some(SystemConsole::screen_display(self)),
             sram_dirty,

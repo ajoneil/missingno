@@ -559,6 +559,7 @@ impl<M: Model> Debugger<M> {
     pub fn step(&mut self) -> Option<M::Screen> {
         let screen = self.step_free();
         self.game_boy.sync_audio();
+        self.game_boy.sync_ppu();
         screen
     }
 
@@ -616,6 +617,7 @@ impl<M: Model> Debugger<M> {
     pub fn step_tcycle(&mut self) -> Option<M::Screen> {
         let screen = self.step_tcycle_free();
         self.game_boy.sync_audio();
+        self.game_boy.sync_ppu();
         screen
     }
 
@@ -669,6 +671,7 @@ impl<M: Model> Debugger<M> {
             self.step_frame_watched()
         };
         self.game_boy.sync_audio();
+        self.game_boy.sync_ppu();
         screen
     }
 

@@ -867,6 +867,16 @@ impl<M: Model> Console<M> {
         self.chassis.audio.materialize();
     }
 
+    /// Synchronize the PPU ahead of an observation that reaches LX or the
+    /// divider phase — the save-state and morepork `dot_position` columns, the
+    /// debugger's pipeline views, the CGB STOP phase. Everything else a span
+    /// touches is constant across it, so an ordinary bus read (LY and STAT
+    /// polls included) needs no sync. Placed like [`Console::sync_audio`], at
+    /// the last `&mut self` point dominating each `&self` observation.
+    pub fn sync_ppu(&mut self) {
+        self.chassis.ppu.sync_span();
+    }
+
     /// CPU T-cycles advanced per PPU dot (1 single speed, 2 CGB double speed).
     pub fn cpu_steps_per_dot(&self) -> u8 {
         self.model.cpu_steps_per_dot()

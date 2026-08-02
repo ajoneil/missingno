@@ -6,6 +6,15 @@ impl<M: Model> Console<M> {
     /// PPU rising-edge advance and its interrupt readback: pixel output,
     /// VBlank IF, the STAT edge, and the CPU's interrupt-state refresh.
     pub(super) fn ppu_rise_edge(&mut self) -> (bool, Option<ppu::PixelOutput>) {
+        // An armed dot's rise body is a fixed point and its outputs are all
+        // constants, so the PPU is not entered at all. The CPU's own interrupt
+        // readback is not PPU work and still runs.
+        if self.chassis.ppu.span_armed() {
+            let triggered = self.chassis.interrupts.triggered();
+            self.chassis.cpu.update_interrupt_state(triggered);
+            return (false, None);
+        }
+
         let oam_bus = self.chassis.dma.oam_bus_owner();
         let ppu_result = self
             .chassis
@@ -83,6 +92,12 @@ impl<M: Model> Console<M> {
         match ppu {
             Edge::Rise => self.ppu_rise_edge(),
             Edge::Fall => {
+                // The armed dot is spent here, without the divider chain: the
+                // FF44 ripple below cannot fire on a constant LY, and the fall's
+                // outputs are the defaults `apply_ppu_fall` would consume.
+                if self.chassis.ppu.defer_dot() {
+                    return (false, None);
+                }
                 // A dot fall on a CPU rise (double speed only): an LY tick on
                 // the read's own T2 rise sits 3 half-edges before the latch,
                 // inside the mux ripple — stash LY_old for the latch's AND. A

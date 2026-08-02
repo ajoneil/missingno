@@ -2,6 +2,7 @@
 
 use crate::dma::OamBusOwner;
 
+use super::video_control::DotAdvance;
 use super::{Ppu, PpuModel, PpuTickResult, TileSelGlitch, screen};
 
 impl<P: PpuModel> Ppu<P> {
@@ -16,6 +17,10 @@ impl<P: PpuModel> Ppu<P> {
         vram: &P::Vram,
         oam_bus: OamBusOwner,
     ) -> PpuTickResult<P::Pixel> {
+        // The callers only enter off an armed dot, so what the span deferred is
+        // owed here before anything reads the counters.
+        self.sync_span();
+
         if !self.control().video_enabled() {
             return PpuTickResult::default();
         }
@@ -51,6 +56,8 @@ impl<P: PpuModel> Ppu<P> {
     ) -> PpuTickResult<P::Pixel> {
         let mut result = PpuTickResult::default();
 
+        self.sync_span();
+
         // XYMU's dot-fall crossing stage captures the pre-edge value: the
         // AVAP-fall set races it and reaches the CRAM lock a dot late. A dot the
         // span slept left XYMU low, so only a live dot has to resolve it.
@@ -72,15 +79,8 @@ impl<P: PpuModel> Ppu<P> {
             return result;
         }
 
-        // XUPY = WUVU.Q; tick_dot returns previous WUVU.Q so scan_clock_rising = !was.
-        let scan_clock_rising = !self.video.tick_dot();
+        let advance = self.advance_dot(&mut result);
 
-        let talu_rising = self.advance_dividers(&mut result);
-
-        if self.span.take_armed_dot() {
-            self.sleep_dot();
-            return result;
-        }
         if self.span_sleepable() {
             self.span.arm(self.video.dots_to_line_end());
             self.sleep_dot();
@@ -92,8 +92,8 @@ impl<P: PpuModel> Ppu<P> {
             is_mcycle,
             mcycle_last_fall,
             oam_bus,
-            scan_clock_rising,
-            talu_rising,
+            advance.scan_clock_rising,
+            advance.talu_rising,
             &mut result,
         );
 
@@ -190,33 +190,14 @@ impl<P: PpuModel> Ppu<P> {
         self.video.stat.prime_baselines(legs, conditions);
     }
 
-    /// Returns `true` if a TALU↑ DFF capture happened in this fall (drives the SUKO
-    /// pulse-width filter regime in the caller).
-    fn advance_dividers(&mut self, result: &mut PpuTickResult<P::Pixel>) -> bool {
-        if !self.video.dividers.half_mcycle_fell() {
-            return false;
-        }
+    /// The divider chain and everything downstream of its edges: the frame and
+    /// scanline resets RUTU's rise carries, and the VBlank IF POPU's does.
+    fn advance_dot(&mut self, result: &mut PpuTickResult<P::Pixel>) -> DotAdvance {
+        let advance = self.video.advance_dot(self.model.stat_shadow());
 
-        let vena_was = self.video.dividers.tick_mcycle();
-        let vena_now = self.video.dividers.mcycle();
-        let popu_was = self.video.vblank();
-
-        let mut scanline_boundary = false;
-        let talu_rising = !vena_was && vena_now;
-        if talu_rising {
-            // VENA↑ = TALU↑: ROPO captures PALY; NYPE captures POPU/MYTA; LX advances.
-            self.video.update_ly_comparison(self.model.stat_shadow());
-            self.video.stat.latch_comparison();
-            self.video.on_lx_counter_clock_rise();
-            self.video.update_ly_comparison(self.model.stat_shadow());
-        }
-        if vena_was && !vena_now {
-            // VENA↓ = SONO↑ = TALU↓: RUTU captures SANU; LY advances.
-            scanline_boundary = self.video.on_lx_counter_clock_fall();
-            self.video.update_ly_comparison(self.model.stat_shadow());
-        }
-
-        if scanline_boundary && let Some(rendering) = self.pixel_pipeline.as_mut() {
+        if advance.scanline_boundary
+            && let Some(rendering) = self.pixel_pipeline.as_mut()
+        {
             let ly = self.video.ly();
             if ly == screen::NUM_SCANLINES {
                 self.frame_number = self.frame_number.wrapping_add(1);
@@ -228,12 +209,11 @@ impl<P: PpuModel> Ppu<P> {
             }
         }
 
-        // POPU↑ → VYPU → LOPE: VBlank IF.
-        if self.video.vblank() && !popu_was {
+        if advance.vblank_rose {
             result.request_vblank = true;
         }
 
-        talu_rising
+        advance
     }
 
     fn run_ppu_clock_fall(

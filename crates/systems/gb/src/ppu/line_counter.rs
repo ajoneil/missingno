@@ -9,11 +9,13 @@ use crate::ppu::line_end_pipeline::LineEndEdge;
 /// LX value SANU decodes as scanline-end (113 = last dot before the RUTU pulse).
 const SANU_DECODE_LX: u8 = 113;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LineCounter {
     pub x: LineCounterX,
     pub y: LineCounterY,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LineCounterX {
     pub(in crate::ppu) value: u8,
     /// RUTU DFF. D = SANU (LX==113 decode); Q captured each TALU-fall, holds LX
@@ -21,6 +23,7 @@ pub struct LineCounterX {
     pub(in crate::ppu) line_end: DffBit,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LineCounterY {
     pub(in crate::ppu) value: u8,
     pub(in crate::ppu) vblank: bool,
@@ -109,6 +112,18 @@ impl LineCounterX {
     /// SANU = LX==113 decode; cached for RUTU on next falling edge.
     pub(in crate::ppu) fn detect_line_end(&mut self) {
         self.line_end.write(self.value == SANU_DECODE_LX);
+    }
+
+    /// Run the ripple forward over `rises` TALU↑ edges in one step. MUDE is
+    /// released throughout — RUTU's rise is the edge a span ends on — so every
+    /// rise advances, and the last one leaves SANU decoded.
+    pub(in crate::ppu) fn advance_rises(&mut self, rises: u32) {
+        debug_assert!(!self.line_end.output(), "MUDE held LX across a deferral");
+        if rises == 0 {
+            return;
+        }
+        self.value += rises as u8;
+        self.detect_line_end();
     }
 
     pub(in crate::ppu) fn vid_rst(&mut self) {

@@ -368,6 +368,8 @@ impl Model for Cgb {
         if !self.key1_armed {
             return false;
         }
+        // The mux settle is placed against the dot phase, which a span defers.
+        chassis.ppu.sync_span();
         let entry_dot_phase = chassis.ppu.dot_in_mcycle_phase();
 
         // The clock-mux settle is bus-coupled, and only the upward swap

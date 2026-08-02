@@ -86,6 +86,10 @@ impl<M: Model> Console<M> {
     /// this held advance fired; `elapsed` is the master edges already drained
     /// (an anchor difference).
     fn held_dot_advance(&mut self, dot: Edge, elapsed: u64) -> PhaseResult {
+        // Held edges are not the normal dot cadence, so neither span model
+        // describes them.
+        self.chassis.ppu.suspend_span();
+
         let double_speed = self.double_speed_active();
         let steps_per_dot = self.model.cpu_steps_per_dot() as u64;
         let mcycle_edges = (8 / steps_per_dot).max(1);
@@ -101,10 +105,6 @@ impl<M: Model> Console<M> {
             self.chassis.ppu.tick_clock_domain_capture();
             self.tick_cpu_clock_mcycle();
         }
-
-        // Held edges are not the normal dot cadence, so neither span model
-        // describes them.
-        self.chassis.ppu.suspend_span();
 
         let (new_screen, pixel) = match dot {
             Edge::Rise => {

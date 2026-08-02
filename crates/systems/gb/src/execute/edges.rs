@@ -58,12 +58,12 @@ impl<M: Model> Console<M> {
         self.chassis.clock.advance(CpuGate::Running);
 
         let fall = self.fall_cpu_pre(dot_work);
-        let video_result = if has_dot_fall {
+        let video_result = if has_dot_fall && !self.chassis.ppu.defer_dot() {
             Some(self.ppu_fall_edge(fall.mcycle_boundary, fall.tcycle))
         } else {
             None
         };
-        let (new_screen, pixel) = self.fall_cpu_post(fall, video_result, dot_work);
+        let (new_screen, pixel) = self.fall_cpu_post(fall, video_result, dot_work, has_dot_fall);
 
         // Only the ÷1 fall carries a dot edge for the onset settle to ride; the
         // set-settle rides every master edge.
@@ -248,15 +248,17 @@ impl<M: Model> Console<M> {
     /// CPU work on a falling edge after its PPU fall: STAT-sync capture, the
     /// read latch and write commit, the HDMA trigger, the fall path's IF
     /// requests, and the DMA/timer ticks. `video_result` is the PPU fall's
-    /// output, `None` on the double-speed CPU T-cycle that carries no PPU fall.
+    /// output, `None` on the double-speed CPU T-cycle that carries no PPU fall
+    /// and on a dot the span deferred; `has_dot_fall` is the schedule's own
+    /// answer, which the deferral does not change.
     fn fall_cpu_post(
         &mut self,
         fall: FallEdge,
         video_result: Option<ppu::PpuTickResult<<M::Ppu as ppu::PpuModel>::Pixel>>,
         dot_work: bool,
+        has_dot_fall: bool,
     ) -> (bool, Option<ppu::PixelOutput>) {
-        let standalone_stat =
-            self.capture_standalone_stat_sync(video_result.is_some(), fall.mcycle_boundary);
+        let standalone_stat = self.capture_standalone_stat_sync(has_dot_fall, fall.mcycle_boundary);
 
         if fall.tcycle.as_u8() == 2 {
             self.sample_mid_cupa_lock();

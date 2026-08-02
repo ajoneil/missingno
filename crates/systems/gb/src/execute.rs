@@ -168,9 +168,11 @@ impl<M: Model> Console<M> {
         let schedule = self.chassis.clock.tcycle_schedule();
         let rise = self.tcycle_rise(schedule);
         self.sync_audio();
+        self.sync_ppu();
         after_phase(self, &rise);
         let fall = self.tcycle_fall(schedule);
         self.sync_audio();
+        self.sync_ppu();
         after_phase(self, &fall);
         rise.new_screen || fall.new_screen
     }
