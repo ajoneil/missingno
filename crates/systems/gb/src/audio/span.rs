@@ -44,24 +44,12 @@ pub struct SpanPredictor {
     /// The KEY1 regime the span was armed in. It fixes the tick cadence and the
     /// DIV-APU tap, and a speed switch invalidates, so it holds span-wide.
     double_speed: bool,
-    /// A shadow copy predicts and asserts but never skips: it is the slow-path
-    /// reference the reconstruction is compared against.
-    shadow: bool,
     last_div_counter: u16,
     expected_div_counter: u16,
     expected_t_index: u8,
 }
 
 impl SpanPredictor {
-    /// A predictor that arms and asserts but never claims a skip.
-    #[cfg(debug_assertions)]
-    pub(super) fn shadow() -> Self {
-        Self {
-            shadow: true,
-            ..Self::default()
-        }
-    }
-
     /// Whether this tick falls inside a proven-inert span. Clock inputs that
     /// deviate from the prediction — the blackout's held edges, a DIV write, a
     /// speed switch — drop the span instead of being asserted on.
@@ -117,7 +105,7 @@ impl SpanPredictor {
     pub(super) fn arm(&mut self, inert_ticks: u32, div_counter: u16, t_index: u8, ds: bool) {
         self.inert_ticks = inert_ticks.min(SPAN_CAP);
         self.double_speed = ds;
-        self.skipping = !self.shadow && self.inert_ticks >= THRESHOLD;
+        self.skipping = self.inert_ticks >= THRESHOLD;
         self.skipped = 0;
         self.expect_after(div_counter, t_index);
     }

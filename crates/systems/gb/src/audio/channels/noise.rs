@@ -14,7 +14,6 @@ pub enum Register {
 }
 
 #[derive(Clone)]
-#[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
 pub struct NoiseChannel {
     pub enabled: Enabled,
     pub volume_and_envelope: VolumeAndEnvelope,
@@ -395,7 +394,6 @@ impl Control {
 }
 
 #[derive(Clone)]
-#[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
 pub struct FrequencyAndRandomness(pub u8);
 
 impl FrequencyAndRandomness {
