@@ -414,6 +414,21 @@ impl<P: PpuModel> Rendering<P> {
         self.oam_mode_locked() || self.scan.scan_capture_pending()
     }
 
+    /// The pipeline's legs of the onset-contention signal set, read together.
+    /// The vertical-blank leg belongs to the line counter and is not set here.
+    pub(super) fn onset_signals(&self) -> super::OnsetSignals {
+        let rendering = self.hblank.rendering_active();
+        let mode2_bit = rendering || self.scan.mode2_active();
+        let mut signals = super::OnsetSignals::empty();
+        signals.set(super::OnsetSignals::RENDERING, rendering);
+        signals.set(super::OnsetSignals::MODE2_BIT, mode2_bit);
+        signals.set(
+            super::OnsetSignals::OAM_LOCK,
+            mode2_bit || self.scan.scan_capture_pending(),
+        );
+        signals
+    }
+
     /// OAM locked by an active blocking mode (BESU/ACYL or XYMU), without the
     /// RUTU pre-onset window — a write landing before BESU is not blocked.
     pub(super) fn oam_mode_locked(&self) -> bool {

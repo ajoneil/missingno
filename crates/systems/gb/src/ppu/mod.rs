@@ -4,6 +4,7 @@ use dividers::Dividers;
 use line_counter::{LineCounter, LineCounterX, LineCounterY};
 use line_end_pipeline::LineEndPipeline;
 use memory::{Oam, OamAddress};
+use onset_settle::{OnsetSettles, OnsetSignals};
 use registers::{BackgroundViewportPosition, Window};
 use rendering::Rendering;
 use types::control::{Control, ControlFlags};
@@ -34,6 +35,7 @@ mod line_end_pipeline;
 pub mod memory;
 pub mod model;
 mod oam_corruption;
+mod onset_settle;
 mod register_io;
 pub mod registers;
 pub mod rendering;
@@ -153,27 +155,9 @@ pub struct Ppu<P: PpuModel> {
     /// CUPA↑ → XODO↓: set on LCDC.7 0→1 in the rise-edge staged write, consumed in the same fall.
     pub(super) lcd_on_init_pending: bool,
     pub(super) oam_corruption: oam_corruption::OamCorruption,
-    /// not_if1 mode-2 bit (bit1, WUGA) bus settling: master-half-edges left of the PRE
-    /// hold after a bit1 0→1 (BESU) transition, plus the bit1 value at the prior half-edge
-    /// to detect that edge. The contending bus reads the pre-transition 0 while settling.
-    mode2_settle: u8,
-    prev_mode2: bool,
-    mode3_settle: u8,
-    prev_mode3: bool,
-    /// The STAT mode bits just before the mode-3 onset — XYMU's rise drives
-    /// both OR-tree bits through the contended driver, so an onset-window read
-    /// sees this snapshot (mode 2 on a scanned line, mode 0 on the enable line).
-    mode3_onset_pre_stat: u8,
-    /// Mode-1 (POPU) onset hold: the mode bit reaches the STAT read view slower
-    /// than ROPO's coincidence clear, so a double-speed FF41 read landing in
-    /// the onset window sees the pre-onset mode with the live coincidence.
-    mode1_settle: u8,
-    prev_mode1: bool,
-    /// OAM read-lock onset hold: master half-edges left of the PRE (accessible)
-    /// hold after the RUTU onset, plus oam_locked() at the prior half-edge to
-    /// detect that 0→1. The OAM gate has no companion-driver settle of its own.
-    oam_onset_settle: u8,
-    prev_oam_locked: bool,
+    /// The contended buses a double-speed CPU read resolves against while a
+    /// mode-signal onset settles.
+    onset_settles: OnsetSettles,
     /// XYMU as of the last dot fall — the CRAM lock's view of mode 3. The
     /// AVAP-fall set races the same-fall capture, so it lands a dot late.
     drawing_fall_stage: bool,
@@ -238,15 +222,7 @@ impl<P: PpuModel> Ppu<P> {
             frame_number: 0,
             lcd_on_init_pending: false,
             oam_corruption: oam_corruption::OamCorruption::default(),
-            mode2_settle: 0,
-            prev_mode2: false,
-            mode3_settle: 0,
-            prev_mode3: false,
-            mode3_onset_pre_stat: 0,
-            mode1_settle: 0,
-            prev_mode1: false,
-            oam_onset_settle: 0,
-            prev_oam_locked: false,
+            onset_settles: OnsetSettles::default(),
             drawing_fall_stage: false,
             model: P::default(),
         }
@@ -373,15 +349,7 @@ impl<P: PpuModel> Ppu<P> {
             frame_number: 0,
             lcd_on_init_pending: false,
             oam_corruption: oam_corruption::OamCorruption::default(),
-            mode2_settle: 0,
-            prev_mode2: false,
-            mode3_settle: 0,
-            prev_mode3: false,
-            mode3_onset_pre_stat: 0,
-            mode1_settle: 0,
-            prev_mode1: false,
-            oam_onset_settle: 0,
-            prev_oam_locked: false,
+            onset_settles: OnsetSettles::default(),
             drawing_fall_stage: false,
             model: P::default(),
         };
@@ -399,18 +367,6 @@ impl<P: PpuModel> Ppu<P> {
         }
         ppu
     }
-}
-
-/// One master half-edge of an onset contention hold: a `false`→`true` of `cur`
-/// (re)arms `counter` to `reload`, otherwise it drains toward zero. `prev`
-/// tracks `cur` across edges to detect the onset.
-fn tick_settle(counter: &mut u8, prev: &mut bool, cur: bool, reload: u8) {
-    if cur && !*prev {
-        *counter = reload;
-    } else if *counter > 0 {
-        *counter -= 1;
-    }
-    *prev = cur;
 }
 
 impl<P: PpuModel> Ppu<P> {
@@ -464,92 +420,53 @@ impl<P: PpuModel> Ppu<P> {
             .is_some_and(|r| r.sprite_on_line(sprites_enabled))
     }
 
-    /// Master half-edges the mode-2 `not_if1` bus holds PRE after a BESU 0→1 — the
-    /// slow companion-driver contention resolves within ~1 dot.
-    const MODE2_NOT_IF1_SETTLE: u8 = 2;
-
-    /// The mode-3 (XYMU) bus holds PRE after a rendering 0→1 (AVAP↑/XYMU↓) onset —
-    /// the symmetric counterpart to `not_if1`, for the mode-2→3 onset contention.
-    const MODE3_ONSET_SETTLE: u8 = 2;
-    const MODE1_ONSET_SETTLE: u8 = 2;
-
-    /// The OAM read-lock holds PRE (accessible) after the RUTU onset before ACYL
-    /// settles the gate closed — the OAM analogue of the not_if1 hold.
-    const OAM_ONSET_SETTLE: u8 = 4;
-
-    /// Live STAT mode-2 bit (bit1): rendering (XYMU) or OAM scan (ACYL/BESU).
-    fn live_mode2_bit(&self) -> bool {
-        self.pixel_pipeline
-            .as_ref()
-            .is_some_and(|r| r.rendering_active() || r.scan_mode2_active())
+    /// The mode signals as of this master half-edge; the vertical-blank leg is
+    /// the line counter's, the rest the pixel pipeline's.
+    fn live_onset_signals(&self) -> OnsetSignals {
+        let mut signals = match self.pixel_pipeline.as_ref() {
+            Some(rendering) => rendering.onset_signals(),
+            None => OnsetSignals::empty(),
+        };
+        signals.set(OnsetSignals::VERTICAL_BLANK, self.video.vblank());
+        signals
     }
 
-    /// Advance the onset contention holds one master half-edge. Each onset 0→1
-    /// (re)arms its hold (mode-2 not_if1, mode-3 XYMU, OAM read-lock); it drains
-    /// one edge at a time.
+    /// Advance the onset contention holds one master half-edge.
     pub fn tick_onset_settles(&mut self) {
-        if self.is_rendering() && !self.prev_mode3 {
-            self.mode3_onset_pre_stat = ((self.prev_mode2 as u8) << 1) | (self.prev_mode1 as u8);
-        }
-        let mode2 = self.live_mode2_bit();
-        tick_settle(
-            &mut self.mode2_settle,
-            &mut self.prev_mode2,
-            mode2,
-            Self::MODE2_NOT_IF1_SETTLE,
-        );
-        let mode3 = self.is_rendering();
-        tick_settle(
-            &mut self.mode3_settle,
-            &mut self.prev_mode3,
-            mode3,
-            Self::MODE3_ONSET_SETTLE,
-        );
-        let oam = self.oam_locked();
-        tick_settle(
-            &mut self.oam_onset_settle,
-            &mut self.prev_oam_locked,
-            oam,
-            Self::OAM_ONSET_SETTLE,
-        );
-        let mode1 = self.video.vblank();
-        tick_settle(
-            &mut self.mode1_settle,
-            &mut self.prev_mode1,
-            mode1,
-            Self::MODE1_ONSET_SETTLE,
-        );
+        let live = self.live_onset_signals();
+        self.onset_settles.advance(live);
     }
 
     /// The mode-3 (XYMU) bit holds its pre-onset 0 (PRE) while the AVAP↑ contention
     /// settles — a double-speed read landing in this window reads the pre-transition
     /// mode 2, not the post-onset mode 3.
     pub fn in_mode3_onset_settle(&self) -> bool {
-        self.mode3_settle > 0
+        self.onset_settles.in_rendering_onset()
     }
 
     /// The STAT bits an onset-window read resolves to (both XYMU-driven bits
     /// held at their pre-onset values).
     pub fn mode3_onset_pre_stat(&self) -> u8 {
-        self.mode3_onset_pre_stat
+        self.onset_settles.rendering_onset_pre_stat()
     }
 
     /// The mode-1 (POPU) bit holds its pre-onset 0 while the VBlank-entry
     /// contention settles; the coincidence bit (ROPO, shallower) resolves live.
     pub fn in_mode1_onset_settle(&self) -> bool {
-        self.mode1_settle > 0
+        self.onset_settles.in_vertical_blank_onset()
     }
 
     /// The OAM read-lock holds its pre-onset accessible value while the RUTU onset
     /// settles — a double-speed read landing in this window reads accessible.
     pub fn in_oam_onset_settle(&self) -> bool {
-        self.oam_onset_settle > 0
+        self.onset_settles.in_oam_lock_onset()
     }
 
     /// The mode-2 bit a CPU read latches: the contending `not_if1` bus holds the
     /// pre-transition 0 (PRE) while settling, the live value once resolved.
     pub fn stat_mode2_bus(&self) -> bool {
-        self.mode2_settle == 0 && self.live_mode2_bit()
+        self.onset_settles.mode2_bit_settled()
+            && self.live_onset_signals().contains(OnsetSignals::MODE2_BIT)
     }
 }
 
