@@ -901,13 +901,17 @@ impl Model for Cgb {
     }
 
     fn vram_dma_edge(&mut self, chassis: &mut Chassis<Self>, mode: Mode) {
+        let in_hblank = mode == Mode::HorizontalBlank;
+        if self.vram_dma.inert() && !chassis.cpu.is_halted() && !chassis.cpu.is_stopped() {
+            self.vram_dma.settle_inert(in_hblank);
+            return;
+        }
         let cpu_halted = chassis.cpu.is_halted();
         // The engine thaws at the IF rise, ahead of the CPU's halt-exit latency
         // (a wake-coincident block is decided before the first fetch and the
         // dispatch pick); the taken-clear waits for the CPU's own resume.
         let engine_gated = (cpu_halted && !chassis.cpu.irq_latched()) || chassis.cpu.is_stopped();
         let master_edge = chassis.clock.master_edge();
-        let in_hblank = mode == Mode::HorizontalBlank;
         let entry_edge = in_hblank && !self.vram_dma.arb.prev_view_hblank;
         self.vram_dma.arb.prev_view_hblank = in_hblank;
         if cpu_halted {

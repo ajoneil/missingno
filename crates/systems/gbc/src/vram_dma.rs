@@ -243,6 +243,40 @@ impl VramDma {
     /// edges — the A-pair variants' entries at thaw+66/+74 bracket it.
     pub(crate) const WAKE_TENURE_TICKS: u8 = 36;
 
+    /// Whether the engine has nothing to arbitrate: no transfer bytes, no block
+    /// or its setup/readiness cells, no pend or grant, no halt view to unwind,
+    /// and no timer cell counting. Every conditional in the fall edge is then
+    /// unreachable — including the ones whose `Countdown` step is the condition —
+    /// so the edge reduces to `settle_inert`. The caller adds the CPU's own
+    /// gate, which the engine does not hold.
+    pub(crate) fn inert(&self) -> bool {
+        self.cursor.remaining == 0
+            && self.block.remaining == 0
+            && !self.block.setup_cells.active()
+            && !self.block.ready_in.active()
+            && !self.block.arm_ready_probation
+            && !self.arb.pend
+            && !self.arb.pend_granted
+            && !self.arb.prev_cpu_halted
+            && !self.arb.armed_this_fall
+            && !self.arb.halt_wake_blind.active()
+            && !self.arb.wake_pend_blind.active()
+            && !self.arb.wake_tenure.active()
+    }
+
+    /// The whole of the fall edge under `inert`: the mode-0 view the entry
+    /// detector compares against, the halt counter, the taken-clear outside
+    /// mode 0, and the two zeroed budgets.
+    pub(crate) fn settle_inert(&mut self, in_hblank: bool) {
+        self.arb.prev_view_hblank = in_hblank;
+        self.arb.halted_falls = 0;
+        if !in_hblank {
+            self.block.taken = false;
+        }
+        self.cursor.quota = 0;
+        self.block.seize_falls = 0;
+    }
+
     /// Whether a byte may move this M-cycle: a GDMA runs while bytes remain; a
     /// latched HBlank block runs to completion regardless of the live `mode`
     /// (the block sequencer, once started, does not consult the arming flag).
