@@ -15,6 +15,12 @@ const SPAN_CAP: u32 = 4096;
 /// adversarial content pays one compare per tick and nothing else.
 pub(super) const THRESHOLD: u32 = 16;
 
+/// Floor on the wait before predicting again after a sub-threshold
+/// prediction. Write-dense content re-zeroes the event list for stretches;
+/// re-walking it every few ticks costs more than the coverage the wait
+/// forgoes (tuned on the double-speed worst case).
+const PREDICTION_BACKOFF: u32 = 16;
+
 /// Shared-prescaler phase carrying CALO↑ (chN_1mhz↑) — the 1 MHz clock the
 /// pulse dividers count on and the one `jeso` flips with.
 pub(super) const CLOCK_RISE_PHASE: u8 = 2;
@@ -44,6 +50,8 @@ pub struct SpanPredictor {
     /// The KEY1 regime the span was armed in. It fixes the tick cadence and the
     /// DIV-APU tap, and a speed switch invalidates, so it holds span-wide.
     double_speed: bool,
+    /// Ticks left before predicting again after a zero prediction.
+    cooldown: u32,
     last_div_counter: u16,
     expected_div_counter: u16,
     expected_t_index: u8,
@@ -56,6 +64,7 @@ impl SpanPredictor {
     pub(super) fn consume(&mut self, div_counter: u16, t_index: u8) -> Consumed {
         self.skipped_last_tick = false;
         if self.inert_ticks == 0 {
+            self.cooldown = self.cooldown.saturating_sub(1);
             return Consumed::Miss;
         }
         if div_counter != self.expected_div_counter || t_index != self.expected_t_index {
@@ -73,8 +82,17 @@ impl SpanPredictor {
         Consumed::Skipped
     }
 
-    pub(super) fn armed(&self) -> bool {
-        self.inert_ticks > 0
+    /// Whether a fresh prediction is due: no span in flight and no backoff
+    /// standing from a recent sub-threshold prediction.
+    pub(super) fn ready_to_arm(&self) -> bool {
+        self.inert_ticks == 0 && self.cooldown == 0
+    }
+
+    /// A prediction came back below the skip threshold: hold off re-walking
+    /// the event list until past the predicted event (or the backoff floor,
+    /// whichever is later) — a sub-threshold span yields no skips anyway.
+    pub(super) fn hold_off(&mut self, ticks: u32) {
+        self.cooldown = ticks.max(PREDICTION_BACKOFF);
     }
 
     /// The dot fall belonging to a skipped rise is skipped with it.

@@ -406,13 +406,17 @@ impl<A: ApuSpec> Audio<A> {
                 self.last_mix
             );
         }
-        if !self.span.armed() {
+        if self.span.ready_to_arm() {
             debug_assert_eq!(
                 self.channel_clock.counter, self.channels.ch4.mhz_prescaler.counter,
                 "the channel clock and CH4 prescaler share one phase"
             );
             let inert = span::predict_inert_ticks(self, div_counter, t_index, double_speed);
-            self.span.arm(inert, div_counter, t_index, double_speed);
+            if inert < span::THRESHOLD {
+                self.span.hold_off(inert);
+            } else {
+                self.span.arm(inert, div_counter, t_index, double_speed);
+            }
         }
     }
 
