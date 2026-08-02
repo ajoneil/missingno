@@ -1,51 +1,124 @@
 //! Inert-span prediction: how many upcoming APU ticks the event model proves
 //! produce neither a frame-sequencer strobe nor a change to the mixed output.
 //!
-//! Every bound here is a lower bound — a span may end earlier than the first
-//! real event, never later.
+//! A span also has to be *reconstructible*: the prediction is 0 whenever a
+//! channel carries pipeline residue the materialisation does not model, so
+//! every armed span lands on state closed forms can reproduce exactly.
 
+use super::channels::{TriggerReload, noise::NoiseChannel, wave::WaveChannel};
 use super::{ApuSpec, Audio, DIV_APU_BIT};
 
 /// Longest span the predictor will claim.
 const SPAN_CAP: u32 = 4096;
+
+/// Shortest span worth skipping: below it the slow path runs to the event, so
+/// adversarial content pays one compare per tick and nothing else.
+pub(super) const THRESHOLD: u32 = 16;
+
+/// What a tick's span lookup resolved to.
+pub(super) enum Consumed {
+    /// Outside any span — the slow path owns this tick.
+    Miss,
+    /// Inside a span the predictor claimed but is not skipping.
+    Inert,
+    /// Inside a skipped span: the tick's work is deferred to materialisation.
+    Skipped,
+}
 
 /// The prediction in flight, and the clock inputs the next tick must carry for
 /// it to hold.
 #[derive(Clone, Default)]
 pub struct SpanPredictor {
     inert_ticks: u32,
+    /// Ticks skipped so far in this span, awaiting materialisation.
+    skipped: u32,
+    skipping: bool,
+    skipped_last_tick: bool,
+    /// A shadow copy predicts and asserts but never skips: it is the slow-path
+    /// reference the reconstruction is compared against.
+    shadow: bool,
+    entry_t_index: u8,
+    last_div_counter: u16,
+    last_t_index: u8,
     expected_div_counter: u16,
     expected_t_index: u8,
 }
 
 impl SpanPredictor {
+    /// A predictor that arms and asserts but never claims a skip.
+    #[cfg(debug_assertions)]
+    pub(super) fn shadow() -> Self {
+        Self {
+            shadow: true,
+            ..Self::default()
+        }
+    }
+
     /// Whether this tick falls inside a proven-inert span. Clock inputs that
     /// deviate from the prediction — the blackout's held edges, a DIV write, a
     /// speed switch — drop the span instead of being asserted on.
-    pub(super) fn consume(&mut self, div_counter: u16, t_index: u8) -> bool {
+    pub(super) fn consume(&mut self, div_counter: u16, t_index: u8) -> Consumed {
+        self.skipped_last_tick = false;
         if self.inert_ticks == 0 {
-            return false;
+            return Consumed::Miss;
         }
         if div_counter != self.expected_div_counter || t_index != self.expected_t_index {
             self.inert_ticks = 0;
-            return false;
+            return Consumed::Miss;
         }
         self.inert_ticks -= 1;
         self.expect_after(div_counter, t_index);
-        true
+        if !self.skipping {
+            return Consumed::Inert;
+        }
+        if self.skipped == 0 {
+            self.entry_t_index = t_index;
+        }
+        self.skipped += 1;
+        self.last_div_counter = div_counter;
+        self.last_t_index = t_index;
+        self.skipped_last_tick = true;
+        Consumed::Skipped
     }
 
     pub(super) fn armed(&self) -> bool {
         self.inert_ticks > 0
     }
 
+    /// The dot fall belonging to a skipped rise is skipped with it.
+    pub(super) fn skipped_last_tick(&self) -> bool {
+        self.skipped_last_tick
+    }
+
+    /// Ticks skipped and not yet reconstructed.
+    pub(super) fn skipped(&self) -> u32 {
+        self.skipped
+    }
+
     /// Drop the prediction: an unpredictable mutation landed.
     pub(super) fn invalidate(&mut self) {
         self.inert_ticks = 0;
+        self.skipped_last_tick = false;
+    }
+
+    /// The skipped run to reconstruct: `(ticks, t_index of the first, and the
+    /// clock inputs of the last)`.
+    pub(super) fn take_skipped(&mut self) -> (u32, u8, u16, u8) {
+        let run = (
+            self.skipped,
+            self.entry_t_index,
+            self.last_div_counter,
+            self.last_t_index,
+        );
+        self.skipped = 0;
+        self.invalidate();
+        run
     }
 
     pub(super) fn arm(&mut self, inert_ticks: u32, div_counter: u16, t_index: u8) {
         self.inert_ticks = inert_ticks.min(SPAN_CAP);
+        self.skipping = !self.shadow && self.inert_ticks >= THRESHOLD;
+        self.skipped = 0;
         self.expect_after(div_counter, t_index);
     }
 
@@ -66,6 +139,16 @@ impl SpanPredictor {
 /// `target` lands on (1..=4).
 fn ticks_to_t_index(t_index: u8, target: u8) -> u32 {
     ((target + 4 - t_index - 1) % 4) as u32 + 1
+}
+
+/// How many of the `ticks` starting at T-index `first` carry `target`.
+pub(super) fn t_index_count(first: u8, target: u8, ticks: u32) -> u32 {
+    let offset = ((target + 4 - first) % 4) as u32;
+    if offset >= ticks {
+        0
+    } else {
+        (ticks - offset).div_ceil(4)
+    }
 }
 
 /// Inert ticks following the tick carrying `(div_counter, t_index)` — the min
@@ -95,7 +178,16 @@ pub(super) fn predict_inert_ticks<A: ApuSpec>(
         span = span.min(ticks_to_t_index(t_index, 0) + (steps - 1) * 4 - 1);
     }
 
-    if ch.ch1.enabled.enabled && ch.ch1.dac_enabled() {
+    // A divider reload in flight moves the duty pipeline off its steady cadence.
+    if ch.ch1.pending_reload != TriggerReload::Idle
+        || ch.ch1.divider_load_settle
+        || ch.ch2.pending_reload != TriggerReload::Idle
+        || ch.ch2.divider_load_settle
+    {
+        return 0;
+    }
+
+    if ch.ch1.enabled.enabled {
         span = span.min(ticks_to_duty_change(
             t_index,
             ch.ch1.divider.counter,
@@ -103,12 +195,10 @@ pub(super) fn predict_inert_ticks<A: ApuSpec>(
             ch.ch1.wave_duty_position,
             ch.ch1.ch1_frst,
             ch.ch1.pwm_latch,
-            ch.ch1.pending_reload != super::channels::TriggerReload::Idle
-                || ch.ch1.divider_load_settle,
             |position| ch.ch1.duty_bit(position),
         ));
     }
-    if ch.ch2.enabled.enabled && ch.ch2.dac_enabled() {
+    if ch.ch2.enabled.enabled {
         span = span.min(ticks_to_duty_change(
             t_index,
             ch.ch2.divider.counter,
@@ -116,17 +206,18 @@ pub(super) fn predict_inert_ticks<A: ApuSpec>(
             ch.ch2.wave_duty_position,
             ch.ch2.ch2_frst,
             ch.ch2.pwm_latch,
-            ch.ch2.pending_reload != super::channels::TriggerReload::Idle
-                || ch.ch2.divider_load_settle,
             |position| ch.ch2.duty_bit(position),
         ));
     }
-    if ch.ch3.enabled.enabled && ch.ch3.dac_enabled {
-        span = span.min(ticks_to_wave_step(&ch.ch3));
+    span = span.min(ticks_to_wave_step(&ch.ch3));
+    if span == 0 {
+        return 0;
     }
-    if ch.ch4.enabled.enabled && ch.ch4.dac_enabled() {
-        span = span.min(ticks_to_lfsr_shift(&ch.ch4));
-    }
+    span = span.min(ticks_to_noise_output_change(
+        &ch.ch4,
+        (t_index + 1) & 0b11,
+        span.min(SPAN_CAP),
+    ));
 
     span.min(SPAN_CAP)
 }
@@ -149,7 +240,9 @@ fn ticks_to_frame_sequencer_strobe<A: ApuSpec>(
 }
 
 /// Ticks to the next pulse-divider overflow whose latched duty bit differs from
-/// the one driving the DAC now.
+/// the one driving the DAC now. A disabled channel's divider is frozen, so this
+/// is asked only of a running one — which the DAC-off write path guarantees is
+/// also a contributing one.
 #[allow(clippy::too_many_arguments)]
 fn ticks_to_duty_change(
     t_index: u8,
@@ -158,14 +251,10 @@ fn ticks_to_duty_change(
     position: u8,
     frst: bool,
     latch: bool,
-    reload_in_flight: bool,
     duty_bit: impl Fn(u8) -> bool,
 ) -> u32 {
     // The divider clocks at CALO↑, once per M-cycle.
     let to_first_clock = ticks_to_t_index(t_index, 1);
-    if reload_in_flight {
-        return to_first_clock - 1;
-    }
     let counter = counter & 0x7FF;
     let period = period & 0x7FF;
     // duwo/dome capture the pre-advance duty step, so an overflow with the step
@@ -182,10 +271,13 @@ fn ticks_to_duty_change(
 }
 
 /// Ticks to CH3's next divider overflow — the head of the chain that steps the
-/// wave position and relatches the sample byte a few ticks later.
-fn ticks_to_wave_step(ch3: &super::channels::wave::WaveChannel) -> u32 {
+/// wave position and relatches the sample byte a few ticks later. The whole
+/// chain is a span-ender whether or not CH3 reaches the mix: its residue is
+/// what materialisation cannot reconstruct, and a wave-RAM read observes the
+/// position either way.
+fn ticks_to_wave_step(ch3: &WaveChannel) -> u32 {
     let sync = &ch3.trigger_sync;
-    if sync.bit_latch || sync.armed || sync.restart {
+    if sync.bit_latch || sync.armed || sync.restart || sync.self_clear {
         return 0;
     }
     let latch = &ch3.wave_data_latch;
@@ -203,27 +295,124 @@ fn ticks_to_wave_step(ch3: &super::channels::wave::WaveChannel) -> u32 {
     to_first_rise + (ch3.frequency_timer as u32 - 1) * 2 - 1
 }
 
-/// Ticks to CH4's next LFSR shift: the tapped divider bit's next rise, over the
-/// slowest cadence the divisor code can produce.
-fn ticks_to_lfsr_shift(ch4: &super::channels::noise::NoiseChannel) -> u32 {
+/// CH4's divider chain, walked at its own `ch4_1mhz` cadence (4 T per chain
+/// tick) from a reference tick.
+pub(super) struct NoiseChain {
+    /// Ticks past the reference tick that the pending chain tick lands on.
+    pub offset: u32,
+    pub prescaler: u8,
+    pub jeso: bool,
+    pub divisor_code: u8,
+}
+
+impl NoiseChain {
+    /// The chain as seen from the tick before the one carrying `entry_t_index`,
+    /// whose `jeso`, prescaler and subcounter are that tick's post-state.
+    pub(super) fn new(ch4: &NoiseChannel, entry_t_index: u8) -> Self {
+        // A subcounter already at 0 reloads on the very next tick.
+        let offset = (ch4.divider_subcounter as u32).max(1);
+        // `jeso` flips on each ch4_1mhz↑ (T-index 1) — exactly one of the four
+        // ticks leading to a chain tick, so it alternates chain tick to chain
+        // tick once the first flip is placed.
+        let flipped = t_index_count(entry_t_index, 1, offset) == 1;
+        Self {
+            offset,
+            prescaler: ch4.prescaler,
+            jeso: ch4.jeso ^ flipped,
+            divisor_code: ch4.frequency_and_randomness.divisor_code(),
+        }
+    }
+
+    /// Take the pending chain tick, returning whether `gary` let the divider
+    /// through on it.
+    pub(super) fn step(&mut self) -> bool {
+        if self.prescaler == 0b111 {
+            self.prescaler = !self.divisor_code & 0b111;
+        } else if !self.jeso {
+            self.prescaler = (self.prescaler + 1) & 0b111;
+        }
+        self.prescaler == 0b111
+    }
+
+    /// Move on to the following chain tick (4 T later, one `jeso` flip on).
+    pub(super) fn advance(&mut self) {
+        self.offset += 4;
+        self.jeso = !self.jeso;
+    }
+
+    /// T-cycles between divider increments once the chain is cycling: `gary`
+    /// stands for one chain tick every `code` kanu steps (8 T each), and code 0
+    /// pins the prescaler terminal so every chain tick passes.
+    pub(super) fn increment_cadence(divisor_code: u8) -> u32 {
+        if divisor_code == 0 {
+            4
+        } else {
+            8 * divisor_code as u32
+        }
+    }
+}
+
+/// Divider increments from `divider` to the one whose tap edge rises, given the
+/// tapped level standing now.
+pub(super) fn increments_to_tap_rise(divider: u16, prev_tap: bool, shift: u8) -> u32 {
+    let period = 1u32 << (shift + 1);
+    let half = 1u32 << shift;
+    let next = divider.wrapping_add(1) as u32 & 0x3fff;
+    if !prev_tap && (next >> shift) & 1 == 1 {
+        return 1;
+    }
+    let ahead = (half + period - (next & (period - 1))) % period;
+    if ahead == 0 { 1 + period } else { 1 + ahead }
+}
+
+/// Ticks to the first LFSR shift that flips bit 0 while CH4 reaches the mix.
+/// Shifts that leave bit 0 alone are inaudible, and every shift is inaudible
+/// while the channel is silent — the LFSR is caught up at materialisation.
+fn ticks_to_noise_output_change(ch4: &NoiseChannel, entry_t_index: u8, bound: u32) -> u32 {
     if ch4.sync_delay > 0 {
+        // The whole chain is frozen; nothing to predict past the thaw.
         return ch4.sync_delay as u32;
+    }
+    if !ch4.enabled.enabled {
+        return u32::MAX;
     }
     let shift = ch4.frequency_and_randomness.clock_shift();
     if shift >= 14 {
+        // The tapped bit is above the 14-bit divider — it never rises.
         return u32::MAX;
     }
-    let mask = (1u32 << (shift + 1)) - 1;
-    let half = 1u32 << shift;
-    let phase = ch4.divider as u32 & mask;
-    let mut increments = (half.wrapping_sub(phase)) & mask;
-    if increments == 0 {
-        increments = mask + 1;
+    let mut chain = NoiseChain::new(ch4, entry_t_index);
+    let Some(first) = first_increment(&mut chain, bound) else {
+        return u32::MAX;
+    };
+    let cadence = NoiseChain::increment_cadence(chain.divisor_code);
+    let rise_period = 1u32 << (shift + 1);
+    let mut increment = increments_to_tap_rise(ch4.divider, ch4.prev_tap, shift);
+    let mut lfsr = ch4.lfsr;
+    let mut skip_first = ch4.skip_first_clock;
+    let short_mode = ch4.frequency_and_randomness.short_mode();
+    loop {
+        let offset = first + (increment - 1) * cadence;
+        if offset > bound {
+            return u32::MAX;
+        }
+        if skip_first {
+            skip_first = false;
+        } else if super::channels::noise::shift_lfsr(&mut lfsr, short_mode) {
+            return offset - 1;
+        }
+        increment += rise_period;
     }
-    // gary lets the divider through once per 4 T on code 0, once per 8·code
-    // otherwise; the subcounter's remaining count bounds the first one.
-    let code = ch4.frequency_and_randomness.divisor_code() as u32;
-    let cadence = if code == 0 { 4 } else { 8 * code };
-    let to_first = (ch4.divider_subcounter as u32).max(1);
-    to_first + (increments - 1) * cadence - 1
+}
+
+/// Ticks to the chain's next divider increment, walking the divisor prescaler
+/// up to its terminal.
+pub(super) fn first_increment(chain: &mut NoiseChain, bound: u32) -> Option<u32> {
+    while chain.offset <= bound {
+        if chain.step() {
+            return Some(chain.offset);
+        }
+        chain.advance();
+    }
+    None
 }

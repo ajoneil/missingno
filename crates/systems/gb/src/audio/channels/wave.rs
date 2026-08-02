@@ -32,6 +32,7 @@ pub enum Register {
 /// as a one-`ch3_2mhz`-cycle pulse on `restart` that drives the
 /// divider load network.
 #[derive(Clone, Default)]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
 pub struct TriggerSync {
     /// `gavu` — NR34 d7 captured at apu_wr ↑.
     pub bit_latch: bool,
@@ -50,6 +51,7 @@ pub struct TriggerSync {
 /// `wave_data_latch` strobe, plus the AZET extension that holds the
 /// prior T-cycle's latched value.
 #[derive(Clone, Default)]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
 pub struct WaveDataLatch {
     /// `busa` — captures `ch3_frst` on apu_4mhz ↑.
     pub sync_1: bool,
@@ -68,6 +70,7 @@ pub struct WaveDataLatch {
 }
 
 #[derive(Clone)]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
 pub struct WaveChannel {
     pub enabled: Enabled,
     pub dac_enabled: bool,
@@ -403,6 +406,7 @@ impl WaveChannel {
 }
 
 #[derive(Clone)]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
 pub struct Volume(pub u8);
 impl Volume {
     pub fn volume(&self) -> f32 {

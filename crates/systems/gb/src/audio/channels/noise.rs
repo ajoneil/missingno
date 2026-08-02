@@ -14,6 +14,7 @@ pub enum Register {
 }
 
 #[derive(Clone)]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
 pub struct NoiseChannel {
     pub enabled: Enabled,
     pub volume_and_envelope: VolumeAndEnvelope,
@@ -306,16 +307,7 @@ impl NoiseChannel {
     }
 
     fn clock_lfsr(&mut self) {
-        let old_bit0 = self.lfsr & 1;
-        let xor_result = old_bit0 ^ ((self.lfsr >> 1) & 1);
-        self.lfsr >>= 1;
-        self.lfsr |= xor_result << 14;
-        // 7-bit width mode
-        if self.frequency_and_randomness.short_mode() {
-            self.lfsr &= !(1 << 6);
-            self.lfsr |= xor_result << 6;
-        }
-        if self.lfsr & 1 != old_bit0 {
+        if shift_lfsr(&mut self.lfsr, self.frequency_and_randomness.short_mode()) {
             self.output_dirty = true;
         }
     }
@@ -365,6 +357,21 @@ impl NoiseChannel {
     }
 }
 
+/// One Galois shift of the 15-bit register, folding the feedback back into
+/// bit 6 as well in 7-bit width mode. Returns whether bit 0 — the only bit the
+/// DAC sees — changed.
+pub(crate) fn shift_lfsr(lfsr: &mut u16, short_mode: bool) -> bool {
+    let old_bit0 = *lfsr & 1;
+    let feedback = old_bit0 ^ ((*lfsr >> 1) & 1);
+    *lfsr >>= 1;
+    *lfsr |= feedback << 14;
+    if short_mode {
+        *lfsr &= !(1 << 6);
+        *lfsr |= feedback << 6;
+    }
+    *lfsr & 1 != old_bit0
+}
+
 struct Control(pub u8);
 
 impl Control {
@@ -388,6 +395,7 @@ impl Control {
 }
 
 #[derive(Clone)]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
 pub struct FrequencyAndRandomness(pub u8);
 
 impl FrequencyAndRandomness {

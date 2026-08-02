@@ -3,6 +3,7 @@
 /// latch and the down-counter; the NRx4 enable-rising extra clock and the
 /// trigger-coincident MAX→MAX-1 fixup are corpus-pinned hardware glitches.
 #[derive(Clone, Default)]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
 pub struct LengthCounter<const MAX: u16> {
     pub enabled: bool,
     pub counter: u16,

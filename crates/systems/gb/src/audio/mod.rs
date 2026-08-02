@@ -7,11 +7,14 @@ use missingno_core::waveform::{ChannelWave, WaveRing};
 use volume::Volume;
 
 pub mod channels;
+mod materialize;
 pub mod registers;
+#[cfg(debug_assertions)]
+mod shadow;
 pub mod span;
 pub mod volume;
 
-use span::SpanPredictor;
+use span::{Consumed, SpanPredictor};
 
 /// Static, per-console APU properties. Each is a compile-time fact the DMG and
 /// CGB silicon fix differently, so the console-specific runtime setters and
@@ -108,6 +111,10 @@ pub struct Audio<A: ApuSpec> {
     wave_capture: Option<[WaveRing; 4]>,
     // Ticks the event model proves produce no strobe and no mix change.
     span: SpanPredictor,
+    // Slow-path copy driven through a skipped span, compared field-for-field
+    // when the span materialises.
+    #[cfg(debug_assertions)]
+    shadow: Option<Box<Audio<A>>>,
     _spec: PhantomData<A>,
 }
 
@@ -161,6 +168,8 @@ impl<A: ApuSpec> Audio<A> {
             sample_buffer: Vec::new(),
             wave_capture: None,
             span: SpanPredictor::default(),
+            #[cfg(debug_assertions)]
+            shadow: None,
             _spec: PhantomData,
         }
     }
@@ -203,6 +212,8 @@ impl<A: ApuSpec> Audio<A> {
             sample_buffer: Vec::new(),
             wave_capture: None,
             span: SpanPredictor::default(),
+            #[cfg(debug_assertions)]
+            shadow: None,
             _spec: PhantomData,
         }
     }
@@ -259,12 +270,17 @@ impl<A: ApuSpec> Audio<A> {
 
     /// Observation surfaces synchronize here: APU state is exact for the
     /// caller's instant from this call until the next tick.
-    pub fn materialize(&mut self) {}
+    pub fn materialize(&mut self) {
+        if self.span.skipped() > 0 {
+            self.materialize_span();
+        }
+    }
 
     /// Drop the span prediction — an unpredictable mutation landed, or the
     /// caller is about to drive edges the predictor's clock model does not
     /// describe (the speed-switch blackout).
     pub fn suspend_span(&mut self) {
+        self.materialize();
         self.span.invalidate();
     }
 
@@ -279,13 +295,21 @@ impl<A: ApuSpec> Audio<A> {
         let double_speed = A::DOUBLE_SPEED && double_speed;
         // The predictor models the powered single-speed regime; elsewhere it
         // claims nothing.
-        #[allow(unused_variables)]
-        let predicted_inert = if self.enabled && !double_speed {
+        let consumed = if self.enabled && !double_speed {
             self.span.consume(div_counter, t_index)
         } else {
             self.span.invalidate();
-            false
+            Consumed::Miss
         };
+        if let Consumed::Skipped = consumed {
+            #[cfg(debug_assertions)]
+            self.shadow_tcycle(div_counter, t_index, double_speed);
+            return;
+        }
+        // The tick that leaves a span reconstructs it before doing its own work.
+        self.materialize();
+        #[allow(unused_variables)]
+        let predicted_inert = matches!(consumed, Consumed::Inert);
         #[cfg(debug_assertions)]
         let mix_at_entry = self.last_mix;
         let div_apu_bit = if double_speed {
@@ -404,6 +428,8 @@ impl<A: ApuSpec> Audio<A> {
     /// CH3 `foba` arm capture, clocked by `apu_phi↑` (the CPU M-cycle boundary).
     /// Gated by APU power, like the per-dot tick's `apu_reset_n`.
     pub fn mcycle_boundary(&mut self) {
+        #[cfg(debug_assertions)]
+        self.shadow_mcycle_boundary();
         if self.enabled {
             self.channels.ch3.arm_trigger();
         }
@@ -443,6 +469,12 @@ impl<A: ApuSpec> Audio<A> {
     /// mid-T-cycle). Drives CH3's BUSA and AZUS DFFs.
     pub fn fall_sync(&mut self) {
         if !self.enabled {
+            return;
+        }
+        // The fall belonging to a skipped rise is skipped with it.
+        if self.span.skipped_last_tick() {
+            #[cfg(debug_assertions)]
+            self.shadow_fall_sync();
             return;
         }
         self.channels.ch3.fall_sync();
@@ -734,6 +766,8 @@ impl<A: ApuSpec> Audio<A> {
             sample_buffer: Vec::new(),
             wave_capture: None,
             span: SpanPredictor::default(),
+            #[cfg(debug_assertions)]
+            shadow: None,
             _spec: PhantomData,
         }
     }

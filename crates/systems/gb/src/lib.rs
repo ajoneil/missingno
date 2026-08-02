@@ -860,8 +860,9 @@ impl<M: Model> Console<M> {
     /// Synchronize the APU ahead of an observation that reaches it through a
     /// shared borrow — the register/PCM/wave-RAM read paths, the debugger views
     /// and the snapshot capture are all `&self`, so the sync runs at the last
-    /// `&mut self` point that dominates them: the two CPU bus read edges, every
-    /// public step boundary, and the trace hook.
+    /// `&mut self` point that dominates them: the two CPU bus read edges, the
+    /// run→observe boundaries (a completed frame, a debugger step), and the
+    /// trace hook. A free-running frame never syncs mid-flight.
     pub fn sync_audio(&mut self) {
         self.chassis.audio.materialize();
     }

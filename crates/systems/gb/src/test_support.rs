@@ -151,6 +151,7 @@ impl<M: ConsoleUi> TestRun<M> {
                 if tracer.trigger() == crate::trace::Trigger::Tcycle {
                     return self.step_traced_tcycle();
                 }
+                self.gb.sync_audio();
                 tracer.capture(&self.gb).unwrap();
             }
 

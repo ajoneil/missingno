@@ -557,6 +557,14 @@ impl<M: Model> Debugger<M> {
     }
 
     pub fn step(&mut self) -> Option<M::Screen> {
+        let screen = self.step_free();
+        self.game_boy.sync_audio();
+        screen
+    }
+
+    /// One instruction without the audio sync — the run loops below own their
+    /// own exit boundary.
+    fn step_free(&mut self) -> Option<M::Screen> {
         let result = self.step_logged();
         self.tcycle_count += result.tcycles as u64;
         if result.new_screen {
@@ -606,6 +614,12 @@ impl<M: Model> Debugger<M> {
     }
 
     pub fn step_tcycle(&mut self) -> Option<M::Screen> {
+        let screen = self.step_tcycle_free();
+        self.game_boy.sync_audio();
+        screen
+    }
+
+    fn step_tcycle_free(&mut self) -> Option<M::Screen> {
         self.tcycle_count += 1;
         if self.game_boy.step_tcycle() {
             Some(self.game_boy.screen().clone())
@@ -649,16 +663,18 @@ impl<M: Model> Debugger<M> {
 
     pub fn step_frame(&mut self) -> Option<M::Screen> {
         self.last_watchpoint_hit = None;
-        if self.watchpoints.is_empty() {
+        let screen = if self.watchpoints.is_empty() {
             self.step_frame_simple()
         } else {
             self.step_frame_watched()
-        }
+        };
+        self.game_boy.sync_audio();
+        screen
     }
 
     fn step_frame_simple(&mut self) -> Option<M::Screen> {
         loop {
-            let screen = self.step();
+            let screen = self.step_free();
             if screen.is_some() || self.breakpoint_triggered() {
                 return screen;
             }
@@ -701,7 +717,7 @@ impl<M: Model> Debugger<M> {
 
     fn step_frame_watched_dots(&mut self) -> Option<M::Screen> {
         loop {
-            let screen = self.step_tcycle();
+            let screen = self.step_tcycle_free();
 
             if let Some(hit) = self.check_watchpoints(&[]) {
                 self.last_watchpoint_hit = Some(hit);

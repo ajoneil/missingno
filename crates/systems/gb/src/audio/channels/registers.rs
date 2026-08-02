@@ -5,6 +5,7 @@ pub enum EnvelopeDirection {
 }
 
 #[derive(Copy, Clone)]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
 pub struct WaveformAndInitialLength(pub u8);
 impl WaveformAndInitialLength {
     pub fn waveform(&self) -> u8 {
@@ -17,6 +18,7 @@ impl WaveformAndInitialLength {
 }
 
 #[derive(Copy, Clone)]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
 pub struct VolumeAndEnvelope(pub u8);
 
 impl VolumeAndEnvelope {
@@ -69,6 +71,7 @@ impl PeriodHighAndControl {
 }
 
 #[derive(Copy, Clone)]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
 pub struct Signed11(pub u16);
 
 impl Signed11 {
@@ -114,6 +117,7 @@ impl From<i16> for Signed11 {
 /// stages — the silicon-level realisation of "low two bits of the
 /// frequency timer are NOT modified".
 #[derive(Clone, Default)]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
 pub struct Prescaler {
     pub counter: u8,
 }
@@ -150,6 +154,7 @@ impl Prescaler {
 /// subset-of-stages distinction. The pulse channels drive `counter`
 /// directly from their `tcycle` bodies.
 #[derive(Clone, Default)]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
 pub struct PeriodDivider {
     pub counter: u16,
 }

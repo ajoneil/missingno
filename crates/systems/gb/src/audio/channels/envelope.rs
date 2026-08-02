@@ -6,6 +6,7 @@ use super::registers::EnvelopeDirection;
 /// live in the channel register and are passed in per operation. The
 /// enable-bug arm is used by the two pulse channels; CH4 never sets it.
 #[derive(Clone, Default)]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
 pub struct Envelope {
     pub volume: u8,
     pub timer: u8,

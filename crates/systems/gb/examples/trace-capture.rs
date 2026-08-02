@@ -42,6 +42,7 @@ fn main() {
     .expect("create tracer");
 
     for _ in 0..256 {
+        gb.sync_audio();
         tracer.capture(&gb).expect("capture");
         gb.step();
     }
