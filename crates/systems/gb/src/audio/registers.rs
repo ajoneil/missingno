@@ -121,6 +121,7 @@ impl<A: ApuSpec> Audio<A> {
         internal_counter: u16,
         double_speed: bool,
     ) {
+        self.materialize();
         let double_speed = A::DOUBLE_SPEED && double_speed;
         if !self.enabled {
             match register {

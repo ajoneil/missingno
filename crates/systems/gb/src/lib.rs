@@ -140,6 +140,12 @@ pub fn shared_oam_dma_write_conflict_byte(src_byte: u8, cpu_value: u8, dma_sourc
     }
 }
 
+/// Whether a read of `address` observes live APU state: the audio register
+/// file, wave RAM, and the CGB PCM taps.
+pub(crate) fn observes_audio(address: u16) -> bool {
+    matches!(address, 0xFF10..=0xFF3F | 0xFF76 | 0xFF77)
+}
+
 /// The per-console divergences from the shared SM83 silicon — the entire
 /// catalogue of how DMG and CGB differ in the step loop and memory map.
 /// Everything not listed here is the same silicon and lives in [`Console`].
@@ -849,6 +855,15 @@ impl<M: Model> Console<M> {
 
     pub fn audio(&self) -> &Audio<M::Apu> {
         &self.chassis.audio
+    }
+
+    /// Synchronize the APU ahead of an observation that reaches it through a
+    /// shared borrow — the register/PCM/wave-RAM read paths, the debugger views
+    /// and the snapshot capture are all `&self`, so the sync runs at the last
+    /// `&mut self` point that dominates them: the two CPU bus read edges, every
+    /// public step boundary, and the trace hook.
+    pub fn sync_audio(&mut self) {
+        self.chassis.audio.materialize();
     }
 
     /// CPU T-cycles advanced per PPU dot (1 single speed, 2 CGB double speed).

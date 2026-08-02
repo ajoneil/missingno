@@ -81,6 +81,7 @@ impl<M: Model> Console<M> {
 
         self.resolve_stop(tcycles);
         self.manage_dma_hold();
+        self.sync_audio();
 
         let sram_dirty = self.chassis.external.cartridge.take_sram_dirty();
         StepResult {
@@ -167,8 +168,10 @@ impl<M: Model> Console<M> {
     ) -> bool {
         let schedule = self.chassis.clock.tcycle_schedule();
         let rise = self.tcycle_rise(schedule);
+        self.sync_audio();
         after_phase(self, &rise);
         let fall = self.tcycle_fall(schedule);
+        self.sync_audio();
         after_phase(self, &fall);
         rise.new_screen || fall.new_screen
     }
@@ -179,6 +182,7 @@ impl<M: Model> Console<M> {
     pub fn step_tcycle(&mut self) -> bool {
         let new_screen = self.execute_tcycle();
         self.chassis.cpu.take_instruction_boundary();
+        self.sync_audio();
         new_screen
     }
 }

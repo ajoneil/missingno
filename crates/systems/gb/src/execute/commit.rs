@@ -6,6 +6,9 @@ impl<M: Model> Console<M> {
     /// propagates combinationally to the latch edge in `commit_read_latch`.
     pub(super) fn apply_read_drive_enable(&mut self) {
         if let Some(address) = self.chassis.cpu_bus.pending_read() {
+            if crate::observes_audio(address) {
+                self.sync_audio();
+            }
             let value = self.bus_value_at_drive_enable(address);
             // OAM read lock at the drive enable: the grant view tobe↑ samples
             // before this fall's PPU advance applies any lock onset.
@@ -53,6 +56,9 @@ impl<M: Model> Console<M> {
     pub(super) fn commit_read_latch(&mut self, ly_at_latch: Option<u8>) {
         if let BusAction::Read { address } = &self.chassis.cpu.bus.last_bus_action {
             let address = *address;
+            if crate::observes_audio(address) {
+                self.sync_audio();
+            }
             // Double speed: the LY tick can land mid-M on the read's own dot
             // fall (no CPU fall carries it), so the ripple LY_old arrives from
             // the tick edge instead of the pre-fall sample.
