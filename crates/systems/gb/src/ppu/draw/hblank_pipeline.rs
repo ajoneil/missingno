@@ -2,7 +2,6 @@
 
 /// WODU = AND2(XUGU, !FEPO) (combinational); VOGA captures it on ALET rising; WEGO clears XYMU.
 /// `rendering_active` is true during Mode 3 (opposite polarity to hardware's active-low XYMU).
-#[derive(Hash)]
 pub(in crate::ppu) struct HblankPipeline {
     /// XYMU NOR-latch (inverted polarity).
     rendering_active: bool,

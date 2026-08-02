@@ -21,19 +21,9 @@ impl<P: PpuModel> Ppu<P> {
         }
 
         if self.span.asleep() {
-            #[cfg(debug_assertions)]
-            self.verify_sleeping_rise(vram, oam_bus);
             return PpuTickResult::default();
         }
 
-        self.run_rise(vram, oam_bus)
-    }
-
-    pub(super) fn run_rise(
-        &mut self,
-        vram: &P::Vram,
-        oam_bus: OamBusOwner,
-    ) -> PpuTickResult<P::Pixel> {
         let mut result = PpuTickResult::default();
 
         self.registers.palettes.clear_capture_coincident_old();
@@ -85,22 +75,17 @@ impl<P: PpuModel> Ppu<P> {
 
         let talu_rising = self.advance_dividers(&mut result);
 
-        if self.span_sleepable() {
-            #[cfg(debug_assertions)]
-            self.verify_sleeping_fall(
-                is_mcycle,
-                mcycle_last_fall,
-                oam_bus,
-                scan_clock_rising,
-                talu_rising,
+        if self.span.take_armed_dot() {
+            debug_assert!(
+                self.span_sleepable(),
+                "the armed span outlived the eligibility it was armed on"
             );
-            // Rendering and the scan chain are both parked here, so the STAT
-            // mode bits are POPU alone.
-            self.span.sleep(if self.video.vblank() {
-                super::rendering::Mode::VerticalBlank
-            } else {
-                super::rendering::Mode::HorizontalBlank
-            });
+            self.sleep_dot();
+            return result;
+        }
+        if self.span_sleepable() {
+            self.span.arm(self.video.dots_to_line_end());
+            self.sleep_dot();
             return result;
         }
         self.span.wake();
@@ -128,8 +113,18 @@ impl<P: PpuModel> Ppu<P> {
         result
     }
 
+    /// Rendering and the scan chain are both parked on a sleeping dot, so the
+    /// STAT mode bits are POPU alone.
+    fn sleep_dot(&mut self) {
+        self.span.sleep(if self.video.vblank() {
+            super::rendering::Mode::VerticalBlank
+        } else {
+            super::rendering::Mode::HorizontalBlank
+        });
+    }
+
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn run_fall(
+    fn run_fall(
         &mut self,
         is_mcycle: bool,
         mcycle_last_fall: bool,

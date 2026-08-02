@@ -13,7 +13,7 @@ pub(in crate::ppu) const OFF_SCREEN_SPRITE_X: u8 = 168;
 /// since the counter freezes at 39 (bits 3/4 don't reach this gate's input).
 const FETO_SCAN_DONE_DECODE: u8 = 0b100111;
 
-#[derive(Clone, Copy, Hash)]
+#[derive(Clone, Copy)]
 pub(in crate::ppu) struct SpriteStoreEntry {
     /// OAM sprite number (0-39).
     pub(in crate::ppu) oam_index: u8,
@@ -23,7 +23,6 @@ pub(in crate::ppu) struct SpriteStoreEntry {
     pub(in crate::ppu) x: u8,
 }
 
-#[derive(Hash)]
 pub(in crate::ppu) struct SpriteStore {
     pub(in crate::ppu) entries: [SpriteStoreEntry; MAX_SPRITES_PER_LINE],
     pub(in crate::ppu) count: u8,
@@ -79,7 +78,6 @@ impl SpriteStore {
 
 /// YFEL-FONY 6-bit scan counter with combinational Y comparator. Clocked by GAVA = OR2(XUPY, FETO);
 /// freezes at 39 when FETO holds GAVA high.
-#[derive(Hash)]
 pub(in crate::ppu) struct ScanCounter {
     entry: u8,
     /// GAVA held high by FETO; counter frozen at 39.

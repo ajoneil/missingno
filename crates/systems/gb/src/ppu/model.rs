@@ -19,7 +19,6 @@ use super::types::sprites::{self, ObjAttr};
 /// The BG/OBJ shifter outputs feeding the pixel mux on a given dot. `bg_cell`
 /// is the per-tile BG data riding the shifter beyond the two bitplanes — `()`
 /// on the DMG, the BG map attribute on the CGB (palette / priority / bank).
-#[derive(Hash)]
 pub struct PixelMux<C> {
     pub bg_lo: u8,
     pub bg_hi: u8,
@@ -32,7 +31,7 @@ pub struct PixelMux<C> {
 
 /// One decoded background-shifter stage for inspection: the 2-bit colour number
 /// and, on the CGB, the tile's BG palette index (0-7); DMG leaves the palette 0.
-#[derive(Clone, Copy, Debug, Hash)]
+#[derive(Clone, Copy, Debug)]
 pub struct BgFifoCell {
     pub color: u8,
     pub palette: u8,
@@ -41,7 +40,7 @@ pub struct BgFifoCell {
 /// One decoded object-FIFO stage for inspection: the 2-bit colour (0 =
 /// transparent), the palette selector (DMG OBP0/OBP1 = 0/1; CGB OBP0-7), and the
 /// BG-over-OBJ priority bit.
-#[derive(Clone, Copy, Debug, Hash)]
+#[derive(Clone, Copy, Debug)]
 pub struct ObjFifoCell {
     pub color: u8,
     pub palette: u8,
@@ -66,7 +65,6 @@ pub fn obj_fifo_cells_from(low: u8, high: u8, palette: [u8; 3], priority: u8) ->
 
 /// Cartridge header bytes the boot-ROM handoff HLE consults: the CGB flag, and
 /// the title + licensee a CGB hashes to pick a DMG-compatibility palette.
-#[derive(Hash)]
 pub struct CartridgeBootHeader {
     pub is_cgb: bool,
     /// $0134-$0143.
@@ -80,7 +78,7 @@ pub struct CartridgeBootHeader {
 /// The hardware that differs between the DMG and CGB PPUs. The shared pipeline
 /// resolves a pixel by calling [`PpuModel::resolve`]; the result is the final
 /// framebuffer pixel for that console.
-pub trait PpuModel: Default + std::hash::Hash {
+pub trait PpuModel: Default {
     /// The DMG window-X comparator (NUKO) drives the §6.1 PANY BG drain-detector
     /// slip whenever the window is armed (REJO), even with WIN_EN off — an
     /// armed-but-disabled 1-dot BG slip. The CGB suppresses that coupling: its
@@ -107,7 +105,7 @@ pub trait PpuModel: Default + std::hash::Hash {
 
     /// Per-tile BG data riding the shifter beyond the two bitplanes: `()` on the
     /// DMG (the BG map has no attribute), the BG map attribute byte on the CGB.
-    type BgCell: Copy + Default + std::hash::Hash;
+    type BgCell: Copy + Default;
 
     /// The framebuffer pixel this PPU emits — DMG a 2-bit shade index, CGB RGB555.
     type Pixel: Copy;
@@ -156,7 +154,7 @@ pub trait PpuModel: Default + std::hash::Hash {
     /// 1-bit OBP-select; the CGB resolves by OAM index with a 3-bit palette. The
     /// whole FIFO is opaque to the shared pipeline — only the neutral operations
     /// below cross the seam.
-    type ObjFifo: Default + std::hash::Hash;
+    type ObjFifo: Default;
 
     /// SACU shift toward the LCD.
     fn obj_shift(fifo: &mut Self::ObjFifo);
@@ -345,7 +343,6 @@ pub trait PpuModel: Default + std::hash::Hash {
 /// 2-bit shade. The DMG screen stores `shade` directly; the CGB DMG-compatibility
 /// path indexes the winning layer's CRAM palette by it (OBJ uses `palette` as the
 /// OBP0/OBP1 slot). (XULA/WOXA → NULY → POKA priority.)
-#[derive(Hash)]
 pub enum DmgPixel {
     Background { shade: u8 },
     Object { palette: u8, shade: u8 },
@@ -389,7 +386,7 @@ pub fn resolve_shade<C>(mux: &PixelMux<C>, regs: &PipelineRegisters) -> u8 {
 }
 
 /// The original Game Boy PPU: a 2-bit shade per pixel, no colour memory.
-#[derive(Default, Hash)]
+#[derive(Default)]
 pub struct DmgPpu {
     /// The STAT-IRQ block reads the cells combinationally — the synchroniser is
     /// a ZST.

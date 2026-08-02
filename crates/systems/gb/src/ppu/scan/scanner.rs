@@ -7,7 +7,6 @@ use crate::ppu::memory::Oam;
 use super::oam_scan::{ScanCounter, SpriteStore};
 
 /// Scan counter, BESU latch, BYBA/DOBA pipeline, and 10-entry sprite store. AVAP signals Mode 2→3.
-#[derive(Hash)]
 pub(in crate::ppu) struct SpriteScanner {
     /// YFEL-FONY 6-bit scan counter + Y comparator.
     counter: ScanCounter,
@@ -28,7 +27,6 @@ pub(in crate::ppu) struct SpriteScanner {
     sprites: SpriteStore,
 }
 
-#[derive(Hash)]
 pub(in crate::ppu) struct ScanSignals {
     /// AVAP — scan complete (Mode 2→3).
     pub(in crate::ppu) avap: bool,

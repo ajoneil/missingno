@@ -3,7 +3,7 @@ use missingno_gb::ppu::memory::{Vram, VramAddress, VramBank};
 /// A CGB BG map attribute byte (VRAM bank 1, one per tile-map cell): bits 2-0
 /// BG palette, bit 3 tile VRAM bank, bit 5 X-flip, bit 6 Y-flip, bit 7 BG-to-OBJ
 /// priority (bit 4 unused). Rides the BG shifter across its tile's 8 pixels.
-#[derive(Copy, Clone, Default, Hash)]
+#[derive(Copy, Clone, Default)]
 pub struct BgAttribute(pub u8);
 
 impl BgAttribute {

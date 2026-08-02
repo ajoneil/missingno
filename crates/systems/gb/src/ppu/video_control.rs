@@ -5,7 +5,6 @@ use crate::ppu::line_counter::LineCounter;
 use crate::ppu::line_end_pipeline::{LineEndEdge, LineEndPipeline};
 use crate::ppu::stat_interrupt::{StatInterrupt, StatShadow};
 
-#[derive(Hash)]
 pub struct VideoControl {
     pub dividers: Dividers,
     pub lines: LineCounter,
@@ -41,6 +40,15 @@ impl VideoControl {
 
     pub fn line_end_active(&self) -> bool {
         self.lines.line_end_active()
+    }
+
+    pub(in crate::ppu) fn line_end_settled(&self) -> bool {
+        self.line_end.settled()
+    }
+
+    /// Dots until the next line-end pulse — the edge no span survives.
+    pub(in crate::ppu) fn dots_to_line_end(&self) -> u32 {
+        self.lines.dots_to_line_end(&self.dividers)
     }
 
     pub fn dot_position(&self) -> u8 {

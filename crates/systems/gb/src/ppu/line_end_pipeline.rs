@@ -3,14 +3,13 @@
 
 use crate::ppu::DffBit;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::ppu) enum LineEndEdge {
     Rising,
     Falling,
     None,
 }
 
-#[derive(Hash)]
 pub struct LineEndPipeline {
     /// NYPE DFF. D signalled when RUTU fires; Q (LINE_END, delayed) captured on
     /// TALU rising, feeds POPU/MYTA/MEDA.
@@ -37,6 +36,13 @@ impl LineEndPipeline {
             (true, false) => LineEndEdge::Falling,
             _ => LineEndEdge::None,
         }
+    }
+
+    /// NYPE holds low at both stages, so no capture can still drive POPU, MYTA
+    /// or MEDA. The line-end pulse reaches them one and three TALU cycles after
+    /// RUTU takes it, so a span may not start while either stage is high.
+    pub(in crate::ppu) fn settled(&self) -> bool {
+        !self.line_end_pending.pending() && !self.line_end_pending.output()
     }
 
     /// Capture NERU into MEDA on NYPE-falling; latch vsync_committed on first 0→1.

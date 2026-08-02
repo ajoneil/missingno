@@ -3,7 +3,6 @@
 use crate::ppu::DrawnPixel;
 
 /// TOBA = AND2(WUSA, SACU) gates pixel emit; cp_pad waveform (SEMU = OR2(TOBA, POVA)) is not modelled.
-#[derive(Hash)]
 pub(in crate::ppu) struct LcdControl {
     /// WUSA nor_latch: set by XAJO (PX bits 0&3, first at PX=9), cleared by WEGO=OR2(VID_RST, VOGA).
     pixel_gate: bool,

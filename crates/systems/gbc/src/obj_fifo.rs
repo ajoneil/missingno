@@ -2,7 +2,7 @@
 /// per-pixel source slot (the OAM-scan store index = OAM-priority rank). When OPRI
 /// selects CGB priority, a lower-slot object's pixel overwrites a higher one;
 /// otherwise stages fill only when transparent (DMG fetch-order).
-#[derive(Default, Hash)]
+#[derive(Default)]
 pub struct CgbObjShifter {
     low: u8,
     high: u8,

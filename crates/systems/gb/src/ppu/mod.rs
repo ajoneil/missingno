@@ -42,8 +42,6 @@ pub mod rendering;
 mod scan;
 pub mod screen;
 mod span;
-#[cfg(debug_assertions)]
-mod span_shadow;
 pub mod stat_interrupt;
 pub mod types;
 pub mod video_control;
@@ -533,6 +531,8 @@ impl<P: PpuModel> Ppu<P> {
     fn span_sleepable(&self) -> bool {
         self.registers.register_write_settle == 0
             && !self.video.line_end_active()
+            && self.video.line_end_settled()
+            && self.video.stat.comparison_settled()
             && self
                 .span
                 .quiet(self.video.stat.ly_eq_lyc(), self.video.vblank())
@@ -751,10 +751,6 @@ impl<P: PpuModel> Ppu<P> {
         if self.span.asleep() {
             return false;
         }
-        self.check_stat_edge_body()
-    }
-
-    pub(super) fn check_stat_edge_body(&mut self) -> bool {
         if !self.control().video_enabled() {
             return false;
         }

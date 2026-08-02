@@ -112,7 +112,6 @@ pub struct PipelineSnapshot {
     pub scan_done_prev: bool,
 }
 
-#[derive(Hash)]
 pub struct Rendering<P: PpuModel> {
     /// FEPO → WODU → VOGA → WEGO → clears XYMU.
     hblank: HblankPipeline,

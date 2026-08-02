@@ -2,7 +2,6 @@
 //!
 //! RYCE = AND2(!SUDA, SOBU); TAKA is the sprite-fetch-running NAND-latch.
 //! TAKA carries over across scanlines until VEKU clears it.
-#[derive(Hash)]
 pub(in crate::ppu) struct SpriteTrigger {
     /// SOBU captures TEKY on ALET rising.
     sobu: bool,

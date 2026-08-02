@@ -3,18 +3,17 @@
 //! `y.value` is the internal counter (0-153); `y.value_register()` is CPU-visible $FF44 (MYTA-smoothed).
 
 use crate::ppu::DffBit;
+use crate::ppu::dividers::Dividers;
 use crate::ppu::line_end_pipeline::LineEndEdge;
 
 /// LX value SANU decodes as scanline-end (113 = last dot before the RUTU pulse).
 const SANU_DECODE_LX: u8 = 113;
 
-#[derive(Hash)]
 pub struct LineCounter {
     pub x: LineCounterX,
     pub y: LineCounterY,
 }
 
-#[derive(Hash)]
 pub struct LineCounterX {
     pub(in crate::ppu) value: u8,
     /// RUTU DFF. D = SANU (LX==113 decode); Q captured each TALU-fall, holds LX
@@ -22,7 +21,6 @@ pub struct LineCounterX {
     pub(in crate::ppu) line_end: DffBit,
 }
 
-#[derive(Hash)]
 pub struct LineCounterY {
     pub(in crate::ppu) value: u8,
     pub(in crate::ppu) vblank: bool,
@@ -80,6 +78,23 @@ impl LineCounter {
     pub(in crate::ppu) fn vid_rst(&mut self) {
         self.x.vid_rst();
         self.y.vid_rst();
+    }
+
+    /// Dots until RUTU captures a set SANU. LX advances one per TALU↑, which is
+    /// the fall leaving WUVU low and VENA high; SANU decodes it, and the TALU↓
+    /// two dots later captures it. Prediction only — nothing here advances.
+    pub(in crate::ppu) fn dots_to_line_end(&self, dividers: &Dividers) -> u32 {
+        let to_talu_fall = 4 - dividers.half_mcycle as u32 - 2 * dividers.mcycle() as u32;
+        if self.x.line_end.pending() {
+            debug_assert!(
+                to_talu_fall <= 2,
+                "SANU decoded with its capture edge more than an M-cycle away"
+            );
+            return to_talu_fall;
+        }
+        let to_talu_rise = (to_talu_fall + 1) % 4 + 1;
+        let advances = u32::from(SANU_DECODE_LX).saturating_sub(1 + u32::from(self.x.value));
+        to_talu_rise + 4 * advances + 2
     }
 }
 

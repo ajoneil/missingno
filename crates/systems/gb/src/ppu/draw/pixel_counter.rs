@@ -3,7 +3,6 @@
 /// XUGU NAND5 decode: PX bits 0+1+2+5+7 = 167.
 const TERMINAL_MASK: u8 = 0b1010_0111;
 
-#[derive(Hash)]
 pub(in crate::ppu) struct PixelCounter(u8);
 
 impl PixelCounter {

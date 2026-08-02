@@ -5,7 +5,7 @@ use crate::ppu::DffBit;
 use bitflags::bitflags;
 
 bitflags! {
-    #[derive(Copy, Clone, PartialEq, Eq, Hash)]
+    #[derive(Copy, Clone, PartialEq, Eq)]
     pub struct InterruptFlags: u8 {
         const DUMMY                = 0b10000000;
         const CURRENT_LINE_COMPARE = 0b01000000;
@@ -47,7 +47,6 @@ impl Default for InterruptFlags {
     }
 }
 
-#[derive(Hash)]
 pub struct StatInterrupt {
     /// LYC register ($FF45).
     pub(in crate::ppu) lyc: u8,
@@ -110,6 +109,13 @@ impl StatInterrupt {
     /// LYC-match arm of the STAT-interrupt edge detector.
     pub(in crate::ppu) fn ly_eq_lyc(&self) -> bool {
         self.comparison.output()
+    }
+
+    /// PALY already reads as ROPO holds it, so the next TALU↑ capture rewrites
+    /// what is there. LY's MYTA smoothing moves PALY a TALU cycle before ROPO
+    /// takes it, so a span may not start across that pair.
+    pub(in crate::ppu) fn comparison_settled(&self) -> bool {
+        self.comparison.pending() == self.comparison.output()
     }
 
     pub(in crate::ppu) fn lyc(&self) -> u8 {
@@ -399,7 +405,7 @@ impl StatInterrupt {
 
 /// Gate-prop arrival time of each SUKO source leg at the AO2222 inputs, in ps from
 /// the triggering TALU↑.
-#[derive(Copy, Clone, Hash)]
+#[derive(Copy, Clone)]
 struct LegArrival {
     rising_ps: u16,
     falling_ps: u16,

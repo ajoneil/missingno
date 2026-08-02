@@ -6,7 +6,7 @@ use crate::ppu::{DffBit, DffLatch, NorLatch, PipelineRegisters, PpuModel, VideoC
 /// by call order within that fall — SARY reads before the capture, XOFO / the
 /// NUKO WX slave / the scan Y-comparator after — so no pending/output DFF pair is
 /// needed. DMG reads the live cells and never builds this.
-#[derive(Clone, Copy, Hash)]
+#[derive(Clone, Copy)]
 struct CrossedWindowRegisters {
     wy: u8,
     wx: u8,
@@ -40,7 +40,6 @@ use super::fine_scroll::FineScroll;
 /// - PYNU nor_latch: S=NUNU, R=XOFO; re-evaluated on both edges.
 /// - REJO nor_latch: S=SARY.q, R=REPU (vblank); re-evaluated on both edges.
 /// - NUNY = AND2(PYNU, NOPA_n). MOSU↑ fires on NUNY 0→1.
-#[derive(Hash)]
 pub(in crate::ppu) struct WindowControl {
     /// Window-hit (RYDY nor3 + PUKU feedback). Set on NUNY rise; cleared by PORY during cascade restart.
     rydy: NorLatch,

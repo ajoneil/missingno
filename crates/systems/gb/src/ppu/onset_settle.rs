@@ -7,7 +7,7 @@ use bitflags::bitflags;
 bitflags! {
     /// The mode signals a contending CPU read resolves against, sampled
     /// together once per master half-edge.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Hash)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
     pub(super) struct OnsetSignals: u8 {
         /// not_if1's mode-2 bit (WUGA): OAM scan (ACYL) or rendering (XYMU).
         const MODE2_BIT = 1 << 0;
@@ -50,7 +50,7 @@ const OAM_LOCK_SETTLE: u8 = 4;
 
 /// The onset contention holds, advanced together once per master half-edge:
 /// the master half-edges each contended bus has left to hold its PRE value.
-#[derive(Default, Hash)]
+#[derive(Default)]
 pub(super) struct OnsetSettles {
     mode2_bit: u8,
     rendering: u8,

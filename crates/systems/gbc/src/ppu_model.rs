@@ -12,7 +12,7 @@ use crate::screen::Color555;
 use crate::vram::{BgAttribute, CgbVram};
 
 /// The CGB FF41/FF45 synchroniser DFFs feeding the STAT-IRQ block.
-#[derive(Default, Hash)]
+#[derive(Default)]
 pub struct SyncedStatCells {
     enables: InterruptFlags,
     lyc: u8,
@@ -40,7 +40,7 @@ impl StatShadow for SyncedStatCells {
 /// `dmg_compat` marks a DMG cartridge running on the CGB: the boot palette is
 /// installed in CRAM and the DMG palette registers (BGP/OBP) index it. `opri`
 /// is OPRI ($FF6C): false = CGB object priority (by OAM index), true = DMG (by X).
-#[derive(Default, Hash)]
+#[derive(Default)]
 pub struct CgbPpu {
     bg_cram: ColorRam,
     obj_cram: ColorRam,
@@ -63,7 +63,7 @@ pub struct CgbPpu {
 /// The CGB TILE_SEL reset glitch cell: an LCDC.4-clearing write reaches the
 /// tile-data addressing at the crossing-capture dot, so a bitplane read on that
 /// dot returns the tile index byte instead of VRAM data. Live for one dot.
-#[derive(Default, Hash)]
+#[derive(Default)]
 pub struct TileSelResetGlitch {
     pending: bool,
     active: bool,
