@@ -108,10 +108,8 @@ impl DotSpan {
         self.asleep = false;
     }
 
-    /// A full dot ran: record the STAT conditions its evaluation latched and
-    /// the mode it settled on.
-    pub(super) fn settle(&mut self, mode: Mode, ly_eq_lyc: bool, vblank: bool) {
-        self.mode = mode;
+    /// A full dot ran: record the STAT conditions its evaluation latched.
+    pub(super) fn settle(&mut self, ly_eq_lyc: bool, vblank: bool) {
         self.ly_eq_lyc = ly_eq_lyc;
         self.vblank = vblank;
     }

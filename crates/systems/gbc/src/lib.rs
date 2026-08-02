@@ -781,9 +781,6 @@ impl Model for Cgb {
             self.wram[i] = value;
             return true;
         }
-        // CRAM, OPRI and the VRAM bank all reach PPU-visible state from here,
-        // never through `write_register`.
-        ppu.note_span_write();
         match address {
             0xFEA0..=0xFEFF => {
                 self.extra_oam[Self::extra_oam_index(address)] = value;

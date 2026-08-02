@@ -52,8 +52,10 @@ impl<P: PpuModel> Ppu<P> {
         let mut result = PpuTickResult::default();
 
         // XYMU's dot-fall crossing stage captures the pre-edge value: the
-        // AVAP-fall set races it and reaches the CRAM lock a dot late.
-        self.drawing_fall_stage = self.mode() == super::rendering::Mode::Drawing;
+        // AVAP-fall set races it and reaches the CRAM lock a dot late. A dot the
+        // span slept left XYMU low, so only a live dot has to resolve it.
+        self.drawing_fall_stage =
+            !self.span.asleep() && self.mode() == super::rendering::Mode::Drawing;
 
         // XODO↓ collapses to this fall; subsequent tick_dot is WUVU's first toggle.
         if self.lcd_on_init_pending {
@@ -76,10 +78,6 @@ impl<P: PpuModel> Ppu<P> {
         let talu_rising = self.advance_dividers(&mut result);
 
         if self.span.take_armed_dot() {
-            debug_assert!(
-                self.span_sleepable(),
-                "the armed span outlived the eligibility it was armed on"
-            );
             self.sleep_dot();
             return result;
         }
@@ -104,11 +102,8 @@ impl<P: PpuModel> Ppu<P> {
         if is_mcycle && mcycle_last_fall {
             self.span.note_crossings_captured();
         }
-        self.span.settle(
-            self.mode(),
-            self.video.stat.ly_eq_lyc(),
-            self.video.vblank(),
-        );
+        self.span
+            .settle(self.video.stat.ly_eq_lyc(), self.video.vblank());
 
         result
     }

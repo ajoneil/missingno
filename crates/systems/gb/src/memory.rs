@@ -361,7 +361,6 @@ impl<M: Model> Chassis<M> {
         match ppu::memory::MappedAddress::map(dest) {
             ppu::memory::MappedAddress::Oam(address) => self.ppu.write_oam(address, byte),
             ppu::memory::MappedAddress::Vram(address) => {
-                self.ppu.note_span_write();
                 self.vram_bus.vram.cpu_write(address, byte)
             }
         }
@@ -756,10 +755,7 @@ impl<M: Model> Console<M> {
         match address {
             MappedAddress::External(addr) => self.chassis.external.write(addr, value),
             MappedAddress::HighRam(offset) => self.chassis.high_ram.write(offset, value),
-            MappedAddress::Vram(address) => {
-                self.chassis.ppu.note_span_write();
-                self.chassis.vram_bus.vram.cpu_write(address, value)
-            }
+            MappedAddress::Vram(address) => self.chassis.vram_bus.vram.cpu_write(address, value),
             MappedAddress::Oam(address) => self.chassis.ppu.write_oam(address, value),
             MappedAddress::JoypadRegister => {
                 self.model.on_joypad_write(value);

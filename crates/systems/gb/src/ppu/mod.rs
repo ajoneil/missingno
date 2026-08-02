@@ -512,12 +512,6 @@ impl<P: PpuModel> Ppu<P> {
         self.mode()
     }
 
-    /// A write reached PPU-visible state. CRAM, OPRI, the VRAM bank and the
-    /// OAM/VRAM stores all land here without passing through `write_register`.
-    pub fn note_span_write(&mut self) {
-        self.span.invalidate();
-    }
-
     /// Leave the span before driving edges outside the normal dot cadence (the
     /// speed-switch blackout).
     pub fn suspend_span(&mut self) {
@@ -685,7 +679,6 @@ impl<P: PpuModel> Ppu<P> {
     }
 
     pub fn write_oam(&mut self, address: OamAddress, value: u8) {
-        self.note_span_write();
         self.oam.write(address, value);
     }
 }
