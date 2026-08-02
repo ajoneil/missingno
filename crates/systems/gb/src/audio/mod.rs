@@ -283,9 +283,8 @@ impl<A: ApuSpec> Audio<A> {
         // the DMG monomorphization folds this to false and dead-codes every
         // double-speed branch below (and inside the channels).
         let double_speed = A::DOUBLE_SPEED && double_speed;
-        // The predictor models the powered single-speed regime; elsewhere it
-        // claims nothing.
-        let consumed = if self.enabled && !double_speed {
+        // The predictor models the powered APU; unpowered it claims nothing.
+        let consumed = if self.enabled {
             self.span.consume(div_counter, t_index)
         } else {
             self.span.invalidate();
@@ -407,9 +406,13 @@ impl<A: ApuSpec> Audio<A> {
                 self.last_mix
             );
         }
-        if !self.span.armed() && !double_speed {
-            let inert = span::predict_inert_ticks(self, div_counter, t_index);
-            self.span.arm(inert, div_counter, t_index);
+        if !self.span.armed() {
+            debug_assert_eq!(
+                self.channel_clock.counter, self.channels.ch4.mhz_prescaler.counter,
+                "the channel clock and CH4 prescaler share one phase"
+            );
+            let inert = span::predict_inert_ticks(self, div_counter, t_index, double_speed);
+            self.span.arm(inert, div_counter, t_index, double_speed);
         }
     }
 

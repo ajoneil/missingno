@@ -8,33 +8,46 @@ use super::channels::noise::{NoiseChannel, shift_lfsr};
 use super::channels::pulse::PulseChannel;
 use super::channels::pulse_sweep::PulseSweepChannel;
 use super::channels::wave::WaveChannel;
-use super::span::{NoiseChain, increments_to_tap_rise, t_index_count};
-use super::{ApuSpec, Audio, DIV_APU_BIT, T_CYCLES_PER_SAMPLE};
+use super::span::{
+    CLOCK_RISE_PHASE, NoiseChain, SWEEP_STEP_PHASE, increments_to_tap_rise, phase_count,
+};
+use super::{ApuSpec, Audio, DIV_APU_BIT, DIV_APU_BIT_DOUBLE, T_CYCLES_PER_SAMPLE};
+
+/// Where the shared prescaler stands `ticks` calls on. It advances once per
+/// call in both regimes and neither `channel_clock` nor CH4's `mhz_prescaler`
+/// is touched while a span is in flight.
+fn prescaler_phase(counter: u8, ticks: u32) -> u8 {
+    ((counter as u32 + ticks) & 0b11) as u8
+}
 
 impl<A: ApuSpec> Audio<A> {
     /// Advance the whole APU across the ticks the fast path skipped.
     #[cold]
     pub(super) fn materialize_span(&mut self) {
-        let (ticks, entry_t_index, last_div_counter, last_t_index) = self.span.take_skipped();
+        let (ticks, last_div_counter, double_speed) = self.span.take_skipped();
         if ticks == 0 {
             return;
         }
-        let calo_rises = t_index_count(entry_t_index, 1, ticks);
-        let clock_phase_ones = t_index_count(entry_t_index, 0, ticks);
+        debug_assert_eq!(
+            self.channel_clock.counter, self.channels.ch4.mhz_prescaler.counter,
+            "the channel clock and CH4 prescaler share one phase"
+        );
+        let entry_phase = prescaler_phase(self.channel_clock.counter, 1);
+        let calo_rises = phase_count(entry_phase, CLOCK_RISE_PHASE, ticks);
+        let clock_phase_ones = phase_count(entry_phase, SWEEP_STEP_PHASE, ticks);
 
         advance_pulse_sweep(&mut self.channels.ch1, calo_rises, clock_phase_ones);
         advance_pulse(&mut self.channels.ch2, calo_rises);
         advance_wave(&mut self.channels.ch3, ticks);
-        let noise_dirty = advance_noise(
-            &mut self.channels.ch4,
-            ticks,
-            entry_t_index,
-            last_t_index,
-            calo_rises,
-        );
+        let noise_dirty = advance_noise(&mut self.channels.ch4, ticks, entry_phase, calo_rises);
 
-        self.channel_clock.counter = (last_t_index + 1) & 0b11;
-        self.prev_div_apu_bit = last_div_counter & DIV_APU_BIT != 0;
+        self.channel_clock.counter = prescaler_phase(self.channel_clock.counter, ticks);
+        let tap = if A::DOUBLE_SPEED && double_speed {
+            DIV_APU_BIT_DOUBLE
+        } else {
+            DIV_APU_BIT
+        };
+        self.prev_div_apu_bit = last_div_counter & tap != 0;
         self.advance_mixer(ticks, noise_dirty);
     }
 
@@ -187,18 +200,17 @@ fn advance_wave(ch3: &mut WaveChannel, ticks: u32) {
 fn advance_noise(
     ch4: &mut NoiseChannel,
     ticks: u32,
-    entry_t_index: u8,
-    last_t_index: u8,
+    entry_phase: u8,
     calo_rises: u32,
 ) -> Option<u32> {
-    ch4.mhz_prescaler.counter = (last_t_index + 1) & 0b11;
+    ch4.mhz_prescaler.counter = prescaler_phase(ch4.mhz_prescaler.counter, ticks);
     if ch4.sync_delay > 0 {
         // The chain is frozen for the whole span; only the hold counts down.
         ch4.jeso ^= calo_rises % 2 == 1;
         ch4.sync_delay -= ticks as u16;
         return None;
     }
-    let mut chain = NoiseChain::new(ch4, entry_t_index);
+    let mut chain = NoiseChain::new(ch4, entry_phase);
     let cadence = NoiseChain::increment_cadence(chain.divisor_code);
     let mut last_chain_tick = None;
     let mut first_increment = None;
