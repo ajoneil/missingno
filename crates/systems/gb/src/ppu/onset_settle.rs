@@ -7,7 +7,7 @@ use bitflags::bitflags;
 bitflags! {
     /// The mode signals a contending CPU read resolves against, sampled
     /// together once per master half-edge.
-    #[derive(Clone, Copy, PartialEq, Eq, Default)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Hash)]
     pub(super) struct OnsetSignals: u8 {
         /// not_if1's mode-2 bit (WUGA): OAM scan (ACYL) or rendering (XYMU).
         const MODE2_BIT = 1 << 0;
@@ -17,6 +17,17 @@ bitflags! {
         const OAM_LOCK = 1 << 2;
         /// POPU — mode 1.
         const VERTICAL_BLANK = 1 << 3;
+    }
+}
+
+impl OnsetSignals {
+    /// The signal set a dot with no scan, no rendering and no RUTU drives.
+    pub(super) fn of_vblank(vblank: bool) -> Self {
+        if vblank {
+            OnsetSignals::VERTICAL_BLANK
+        } else {
+            OnsetSignals::empty()
+        }
     }
 }
 
@@ -39,7 +50,7 @@ const OAM_LOCK_SETTLE: u8 = 4;
 
 /// The onset contention holds, advanced together once per master half-edge:
 /// the master half-edges each contended bus has left to hold its PRE value.
-#[derive(Default)]
+#[derive(Default, Hash)]
 pub(super) struct OnsetSettles {
     mode2_bit: u8,
     rendering: u8,
@@ -89,6 +100,13 @@ impl OnsetSettles {
             VERTICAL_BLANK_SETTLE,
         );
         self.previous = live;
+    }
+
+    /// Nothing to arm and nothing to drain on a sleeping dot: the pipeline legs
+    /// are all low there, so POPU is the only live signal, and it has already
+    /// been sampled with every hold run out.
+    pub(super) fn settled_at(&self, vblank: bool) -> bool {
+        self.previous == OnsetSignals::of_vblank(vblank) && self.all_settled()
     }
 
     fn all_settled(&self) -> bool {

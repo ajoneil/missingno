@@ -4,7 +4,7 @@ use bitflags::bitflags;
 
 use crate::ppu::types::tiles::TileIndex;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Hash)]
 pub struct Sprite {
     pub position: Position,
     pub tile: TileIndex,
@@ -23,7 +23,7 @@ impl Default for Sprite {
 
 impl Sprite {}
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Hash)]
 pub struct Position {
     pub x: u8,
     pub y: u8,
@@ -51,7 +51,7 @@ impl Position {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Hash)]
 pub struct Attributes(pub u8);
 
 bitflags! {
@@ -64,7 +64,7 @@ bitflags! {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Hash)]
 pub enum Priority {
     Sprite,
     Background,
@@ -72,7 +72,7 @@ pub enum Priority {
 
 /// The per-pixel OBJ attribute riding the sprite shifter: the palette selector
 /// (DMG OBP0/OBP1 ∈ {0,1}; CGB OBP0-7 ∈ 0..8) and the BG-priority bit.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Hash)]
 pub struct ObjAttr {
     pub palette: u8,
     pub priority: bool,
@@ -116,10 +116,10 @@ impl Attributes {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct SpriteId(pub u8);
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub enum SpriteSize {
     Single,
     Double,

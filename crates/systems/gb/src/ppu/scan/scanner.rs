@@ -7,6 +7,7 @@ use crate::ppu::memory::Oam;
 use super::oam_scan::{ScanCounter, SpriteStore};
 
 /// Scan counter, BESU latch, BYBA/DOBA pipeline, and 10-entry sprite store. AVAP signals Mode 2→3.
+#[derive(Hash)]
 pub(in crate::ppu) struct SpriteScanner {
     /// YFEL-FONY 6-bit scan counter + Y comparator.
     counter: ScanCounter,
@@ -27,6 +28,7 @@ pub(in crate::ppu) struct SpriteScanner {
     sprites: SpriteStore,
 }
 
+#[derive(Hash)]
 pub(in crate::ppu) struct ScanSignals {
     /// AVAP — scan complete (Mode 2→3).
     pub(in crate::ppu) avap: bool,
@@ -94,6 +96,19 @@ impl SpriteScanner {
 
     pub(in crate::ppu) fn scan_counter_entry(&self) -> u8 {
         self.counter.entry()
+    }
+
+    /// The whole chain is parked: no capture pending (RUTU low, CATU clear),
+    /// BESU deasserted, the counter frozen on its FETO decode, and BYBA/DOBA
+    /// both holding scan-done — so a scan tick rewrites what is already there.
+    pub(in crate::ppu) fn chain_idle(&self) -> bool {
+        !self.scanning
+            && !self.mode2_active
+            && !self.rutu
+            && !self.catu
+            && self.counter.frozen()
+            && self.scan_done.pending()
+            && self.scan_done.output()
     }
 
     pub(in crate::ppu) fn scan_done_flag(&self) -> bool {

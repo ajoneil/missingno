@@ -1,7 +1,7 @@
 use crate::ppu::DffBit;
 
 /// ROXY NOR-latch: gates SACU until the fine counter matches SCX & 7. One-shot per line.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Roxy {
     Gating,
     Done,
@@ -15,6 +15,7 @@ enum Roxy {
 /// Known divergence: POVA is modelled as a single-tick rising-edge pulse rather than hardware's
 /// ~1-dot level-AND; the missing SEMU=OR2(TOBA, POVA) contribution is not wired because cp_pad
 /// is not modelled. Benign at the ROXY-clear consumer.
+#[derive(Hash)]
 pub(in crate::ppu) struct FineScroll {
     /// 3-bit counter (0–7).
     pub(in crate::ppu) count: u8,

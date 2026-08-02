@@ -8,6 +8,7 @@
 //! Downstream TEVO feeds (PANY drain-detector, SUZU window-restart, TAVE startup, temp-latch
 //! enable) are collapsed and fired behaviourally from `rendering.rs` / `window_control.rs`;
 //! observation-equivalent at the TEVO→NYXU→load-into consumer boundary.
+#[derive(Hash)]
 pub(in crate::ppu) struct FetchCascade {
     /// ALET-clocked DFF.
     nyka: bool,

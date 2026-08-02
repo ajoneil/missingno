@@ -5,7 +5,7 @@ use crate::ppu::DffBit;
 use bitflags::bitflags;
 
 bitflags! {
-    #[derive(Copy, Clone, PartialEq, Eq)]
+    #[derive(Copy, Clone, PartialEq, Eq, Hash)]
     pub struct InterruptFlags: u8 {
         const DUMMY                = 0b10000000;
         const CURRENT_LINE_COMPARE = 0b01000000;
@@ -47,6 +47,7 @@ impl Default for InterruptFlags {
     }
 }
 
+#[derive(Hash)]
 pub struct StatInterrupt {
     /// LYC register ($FF45).
     pub(in crate::ppu) lyc: u8,
@@ -398,7 +399,7 @@ impl StatInterrupt {
 
 /// Gate-prop arrival time of each SUKO source leg at the AO2222 inputs, in ps from
 /// the triggering TALU↑.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Hash)]
 struct LegArrival {
     rising_ps: u16,
     falling_ps: u16,

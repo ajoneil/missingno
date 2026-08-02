@@ -4,11 +4,13 @@ use super::types::palette::Palettes;
 use super::types::sprites::SpriteSize;
 use super::types::tiles::TileAddressMode;
 
+#[derive(Hash)]
 pub struct BackgroundViewportPosition {
     pub x: DffLatch,
     pub y: DffLatch,
 }
 
+#[derive(Hash)]
 pub struct Window {
     pub y: u8,
     pub x: DffLatch,
@@ -18,7 +20,7 @@ pub struct Window {
 /// pre-write value on a CPU write site and holds it for `hold` falls so the
 /// BG/OBJ resolve still sees OLD, then clears. The base hold of 1 covers the
 /// same fall's tick; CGB's clock-domain write lag (e.g. VYXE/RAJY) adds one more.
-#[derive(Default)]
+#[derive(Default, Hash)]
 pub(in crate::ppu) struct OldOverlay {
     value: Option<bool>,
     hold: u8,
@@ -82,6 +84,7 @@ impl TileSelGlitch for () {
 }
 
 /// CPU → pixel pipeline register file (DFF bank). DFF8/DFF9 write-conflict behaviour during Mode 3 is specific to this group.
+#[derive(Hash)]
 pub struct PipelineRegisters {
     pub control: Control,
     /// DFF9 latch for full LCDC byte. `write_immediate`-only (no delayed LCDC

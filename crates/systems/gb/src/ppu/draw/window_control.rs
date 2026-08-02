@@ -6,7 +6,7 @@ use crate::ppu::{DffBit, DffLatch, NorLatch, PipelineRegisters, PpuModel, VideoC
 /// by call order within that fall — SARY reads before the capture, XOFO / the
 /// NUKO WX slave / the scan Y-comparator after — so no pending/output DFF pair is
 /// needed. DMG reads the live cells and never builds this.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Hash)]
 struct CrossedWindowRegisters {
     wy: u8,
     wx: u8,
@@ -40,6 +40,7 @@ use super::fine_scroll::FineScroll;
 /// - PYNU nor_latch: S=NUNU, R=XOFO; re-evaluated on both edges.
 /// - REJO nor_latch: S=SARY.q, R=REPU (vblank); re-evaluated on both edges.
 /// - NUNY = AND2(PYNU, NOPA_n). MOSU↑ fires on NUNY 0→1.
+#[derive(Hash)]
 pub(in crate::ppu) struct WindowControl {
     /// Window-hit (RYDY nor3 + PUKU feedback). Set on NUNY rise; cleared by PORY during cascade restart.
     rydy: NorLatch,
@@ -128,12 +129,38 @@ impl WindowControl {
         self.nuko_wx = if synced { self.synced.wx } else { wx };
     }
 
-    fn capture_sary(&mut self, regs: &PipelineRegisters, video: &VideoControl, synced: bool) {
-        let wy_match = if synced {
+    /// SARY's D input: `LCDC.5 ∧ (LY == WY)`, read live on the DMG and through
+    /// the M-boundary crossing on the CGB, where REPU also gates it.
+    fn wy_match(&self, regs: &PipelineRegisters, video: &VideoControl, synced: bool) -> bool {
+        if synced {
             !self.vblank_at_last_capture && self.synced.enabled && video.ly() == self.synced.wy
         } else {
             regs.control.window_enabled() && video.ly() == regs.window.y
-        };
+        }
+    }
+
+    /// REJO's fall-phase view (PANY) already holds the latch output this fall's
+    /// copy would rewrite.
+    pub(in crate::ppu) fn rejo_settled(&self) -> bool {
+        self.rejo_at_roco == self.rejo.output()
+    }
+
+    /// SARY already holds the match its next TALU↑ capture would write, with
+    /// REPU's POPU copy current — so both the capture and REJO's update rewrite
+    /// what is there. LY advances inside a span, so this is the WY-match ender.
+    pub(in crate::ppu) fn sary_settled(
+        &self,
+        regs: &PipelineRegisters,
+        video: &VideoControl,
+        synced: bool,
+    ) -> bool {
+        (self.sary.output() != 0) == self.wy_match(regs, video, synced)
+            && self.vblank_at_last_capture == video.vblank()
+            && self.sary.pending().is_none()
+    }
+
+    fn capture_sary(&mut self, regs: &PipelineRegisters, video: &VideoControl, synced: bool) {
+        let wy_match = self.wy_match(regs, video, synced);
         self.vblank_at_last_capture = video.vblank();
         self.sary.write(if wy_match { 1 } else { 0 });
         self.sary.tick();

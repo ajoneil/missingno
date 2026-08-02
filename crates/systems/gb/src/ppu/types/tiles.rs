@@ -2,7 +2,7 @@ use core::fmt;
 
 use super::palette::PaletteIndex;
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct TileBlockId(pub u8);
 
 impl fmt::Display for TileBlockId {
@@ -11,7 +11,7 @@ impl fmt::Display for TileBlockId {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Hash)]
 pub struct TileBlock {
     pub data: [u8; 0x800],
 }
@@ -31,10 +31,10 @@ impl TileBlock {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Hash)]
 pub struct TileIndex(pub u8);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Hash)]
 pub struct Tile {
     data: [u8; 16],
 }
@@ -49,7 +49,7 @@ impl Tile {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TileAddressMode {
     Block2Block1,
     Block0Block1,
@@ -77,7 +77,7 @@ impl fmt::Display for TileAddressMode {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Hash)]
 pub struct TileMap {
     pub data: [TileIndex; 0x400],
 }

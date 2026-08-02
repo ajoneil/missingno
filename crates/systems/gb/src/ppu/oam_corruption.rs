@@ -5,13 +5,14 @@
 use super::{Ppu, PpuModel};
 
 /// Read corruption takes priority over write if both are armed in the same M-cycle.
+#[derive(Hash)]
 pub(super) enum OamBugKind {
     Read,
     Write,
 }
 
 /// `armed = Some` means a CUFE pulse fired in the BOWA→MOPA window.
-#[derive(Default)]
+#[derive(Default, Hash)]
 pub(crate) struct OamCorruption {
     pub(super) armed: Option<OamBugKind>,
 }

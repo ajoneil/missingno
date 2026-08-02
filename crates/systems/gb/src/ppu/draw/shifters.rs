@@ -3,6 +3,7 @@
 /// Two 8-bit BgwPipeA/BgwPipeB shifters; zero fills in from bit 0 on every SACU edge.
 /// `cell` is the per-tile BG attribute (CGB) held across the tile's 8 pixels — the
 /// bitplanes shift, the cell does not. `()` on the DMG carries nothing.
+#[derive(Hash)]
 pub(in crate::ppu) struct BgShifter<C> {
     low: u8,
     high: u8,
@@ -51,7 +52,7 @@ impl<C: Copy + Default> BgShifter<C> {
 /// 1-bit OBP-select palette, priority) collapsed into u8 fields, resolving
 /// overlaps by fetch order (an incoming pixel fills only a transparent stage).
 /// The CGB's wider FIFO lives in `missingno-gbc` behind [`PpuModel::ObjFifo`].
-#[derive(Default)]
+#[derive(Default, Hash)]
 pub struct ObjShifter {
     low: u8,
     high: u8,

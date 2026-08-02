@@ -3,13 +3,14 @@
 
 use crate::ppu::DffBit;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(in crate::ppu) enum LineEndEdge {
     Rising,
     Falling,
     None,
 }
 
+#[derive(Hash)]
 pub struct LineEndPipeline {
     /// NYPE DFF. D signalled when RUTU fires; Q (LINE_END, delayed) captured on
     /// TALU rising, feeds POPU/MYTA/MEDA.

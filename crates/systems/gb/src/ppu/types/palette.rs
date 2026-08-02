@@ -2,12 +2,12 @@ use std::fmt;
 
 use rgb::RGB8;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Hash)]
 pub struct Palette {
     colors: [RGB8; 4],
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Hash)]
 pub struct PaletteIndex(pub u8);
 
 impl Palette {
@@ -47,7 +47,7 @@ impl Palette {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Default, Hash)]
 pub enum PaletteChoice {
     #[default]
     Green,
@@ -77,6 +77,7 @@ impl fmt::Display for PaletteChoice {
     }
 }
 
+#[derive(Hash)]
 pub struct PaletteMap(pub u8);
 
 impl PaletteMap {
@@ -94,7 +95,7 @@ use super::super::DffLatch;
 /// BGP NURA-combiner recovery state. While `active`, a BGP CUPA on a
 /// dot where the LCD has already emitted a pixel produces the OR
 /// overlay on the cp_pad sample; otherwise the new value lands clean.
-#[derive(Default)]
+#[derive(Default, Hash)]
 pub(in crate::ppu) struct BgpRecovery {
     /// OR(prior, new) presented on the cp_pad sample when a same-tick
     /// BGP write engages the recovery overlap.
@@ -160,6 +161,7 @@ impl BgpRecovery {
     }
 }
 
+#[derive(Hash)]
 pub struct Palettes {
     pub background: DffLatch,
     pub sprite0: DffLatch,
@@ -176,7 +178,7 @@ pub struct Palettes {
     pub(in crate::ppu) sprite1_coincident_old: Option<u8>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Hash)]
 pub struct DeferredBgpWrite {
     pub value: u8,
     pub ticks_remaining: u8,

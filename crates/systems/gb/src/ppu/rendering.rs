@@ -112,6 +112,7 @@ pub struct PipelineSnapshot {
     pub scan_done_prev: bool,
 }
 
+#[derive(Hash)]
 pub struct Rendering<P: PpuModel> {
     /// FEPO → WODU → VOGA → WEGO → clears XYMU.
     hblank: HblankPipeline,
@@ -235,6 +236,16 @@ impl<P: PpuModel> Rendering<P> {
         if P::SCX_CROSSING.is_synced() {
             self.synced_scx = regs.background_viewport.x.output();
         }
+    }
+
+    /// Nothing on the pixel side can move on this dot: XYMU is low so the whole
+    /// mode-3 datapath is gated out, the OAM scan chain is parked, and both
+    /// window latches hold the values their next capture would rewrite.
+    pub(super) fn span_inert(&self, regs: &PipelineRegisters, video: &VideoControl) -> bool {
+        !self.hblank.rendering_active()
+            && self.scan.chain_idle()
+            && self.window.rejo_settled()
+            && self.window.sary_settled(regs, video, Self::window_synced())
     }
 
     /// XYMU rendering latch; `true` during Mode 3 (opposite polarity to spec's active-low XYMU).

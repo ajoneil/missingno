@@ -3,6 +3,7 @@ use crate::ppu::{PipelineRegisters, PpuModel, VideoControl, memory::Vram};
 use super::super::types::tiles::{TileBlockId, TileIndex, TileMapId};
 use super::shifters::BgShifter;
 
+#[derive(Hash)]
 pub(in crate::ppu) struct TileFetcher<P: PpuModel> {
     /// LAXU/MESU/NYVA 3-bit ripple counter (0-5). Clocked by LEBO on PPU rise; saturates at 5 (MOCE freezes LEBO).
     /// VRAM reads happen on the PPU fall at counter 0/2/4. Reset by TAVE (pipe load) or window trigger.

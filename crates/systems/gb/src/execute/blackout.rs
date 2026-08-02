@@ -102,6 +102,10 @@ impl<M: Model> Console<M> {
             self.tick_cpu_clock_mcycle();
         }
 
+        // Held edges are not the normal dot cadence, so neither span model
+        // describes them.
+        self.chassis.ppu.suspend_span();
+
         let (new_screen, pixel) = match dot {
             Edge::Rise => {
                 let r = self.ppu_rise_edge();

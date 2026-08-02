@@ -43,6 +43,7 @@ impl<P: PpuModel> Ppu<P> {
         halt_wake_active: bool,
         edge_carries_dot_fall: bool,
     ) -> bool {
+        self.note_span_write();
         let is_drawing = self.is_rendering();
 
         match register {

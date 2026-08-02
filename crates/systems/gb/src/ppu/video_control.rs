@@ -5,6 +5,7 @@ use crate::ppu::line_counter::LineCounter;
 use crate::ppu::line_end_pipeline::{LineEndEdge, LineEndPipeline};
 use crate::ppu::stat_interrupt::{StatInterrupt, StatShadow};
 
+#[derive(Hash)]
 pub struct VideoControl {
     pub dividers: Dividers,
     pub lines: LineCounter,

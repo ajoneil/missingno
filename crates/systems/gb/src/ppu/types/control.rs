@@ -3,7 +3,7 @@ use super::{sprites::SpriteSize, tiles::TileAddressMode, tiles::TileMapId};
 use bitflags::bitflags;
 
 bitflags! {
-    #[derive(Copy, Clone)]
+    #[derive(Copy, Clone, Hash)]
     pub struct ControlFlags: u8 {
         const VIDEO_ENABLE                 = 0b10000000;
         const WINDOW_TILE_MAP              = 0b01000000;
@@ -16,7 +16,7 @@ bitflags! {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Hash)]
 pub struct Control(ControlFlags);
 
 impl Default for Control {

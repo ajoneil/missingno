@@ -41,6 +41,9 @@ pub mod registers;
 pub mod rendering;
 mod scan;
 pub mod screen;
+mod span;
+#[cfg(debug_assertions)]
+mod span_shadow;
 pub mod stat_interrupt;
 pub mod types;
 pub mod video_control;
@@ -161,6 +164,8 @@ pub struct Ppu<P: PpuModel> {
     /// XYMU as of the last dot fall — the CRAM lock's view of mode 3. The
     /// AVAP-fall set races the same-fall capture, so it lands a dot late.
     drawing_fall_stage: bool,
+    /// Dots whose edge bodies are proven inert, skipped whole.
+    pub(in crate::ppu) span: span::DotSpan,
     /// The console's colour hardware (CRAM, OPRI, …); the DMG impl is a unit.
     pub(super) model: P,
 }
@@ -224,6 +229,7 @@ impl<P: PpuModel> Ppu<P> {
             oam_corruption: oam_corruption::OamCorruption::default(),
             onset_settles: OnsetSettles::default(),
             drawing_fall_stage: false,
+            span: span::DotSpan::default(),
             model: P::default(),
         }
     }
@@ -351,6 +357,7 @@ impl<P: PpuModel> Ppu<P> {
             oam_corruption: oam_corruption::OamCorruption::default(),
             onset_settles: OnsetSettles::default(),
             drawing_fall_stage: false,
+            span: span::DotSpan::default(),
             model: P::default(),
         };
         let shadow = ppu.model.stat_shadow_mut();
@@ -433,6 +440,14 @@ impl<P: PpuModel> Ppu<P> {
 
     /// Advance the onset contention holds one master half-edge.
     pub fn tick_onset_settles(&mut self) {
+        if self.span.asleep() && self.onset_settles.settled_at(self.video.vblank()) {
+            debug_assert_eq!(
+                self.live_onset_signals(),
+                OnsetSignals::of_vblank(self.video.vblank()),
+                "a sleeping dot drove an onset signal"
+            );
+            return;
+        }
         let live = self.live_onset_signals();
         self.onset_settles.advance(live);
     }
@@ -486,6 +501,45 @@ impl<P: PpuModel> Ppu<P> {
             (true, false) => Mode::OamScan,
             (true, true) => Mode::Drawing,
         }
+    }
+
+    /// The mode this fall's readers take — the HDMA trigger's only PPU input.
+    /// A sleeping dot holds the mode its last full fall settled on: every mode
+    /// transition is downstream of RUTU, which ends the span.
+    pub fn pre_fall_mode(&self) -> Mode {
+        if self.span.asleep() {
+            debug_assert_eq!(self.span.mode(), self.mode(), "sleeping dot changed mode");
+            return self.span.mode();
+        }
+        self.mode()
+    }
+
+    /// A write reached PPU-visible state. CRAM, OPRI, the VRAM bank and the
+    /// OAM/VRAM stores all land here without passing through `write_register`.
+    pub fn note_span_write(&mut self) {
+        self.span.invalidate();
+    }
+
+    /// Leave the span before driving edges outside the normal dot cadence (the
+    /// speed-switch blackout).
+    pub fn suspend_span(&mut self) {
+        self.span.invalidate();
+    }
+
+    /// Every edge body this dot would run rewrites what is already there: the
+    /// pixel and scan chains are parked, no register write is still settling,
+    /// RUTU is low, and the STAT condition vector reads as the last evaluation
+    /// latched it.
+    fn span_sleepable(&self) -> bool {
+        self.registers.register_write_settle == 0
+            && !self.video.line_end_active()
+            && self
+                .span
+                .quiet(self.video.stat.ly_eq_lyc(), self.video.vblank())
+            && self
+                .pixel_pipeline
+                .as_ref()
+                .is_some_and(|rendering| rendering.span_inert(&self.registers, &self.video))
     }
 
     /// Configure the PPU model from the cartridge at post-boot (DMG-compat on
@@ -631,6 +685,7 @@ impl<P: PpuModel> Ppu<P> {
     }
 
     pub fn write_oam(&mut self, address: OamAddress, value: u8) {
+        self.note_span_write();
         self.oam.write(address, value);
     }
 }
@@ -693,6 +748,13 @@ impl<P: PpuModel> Ppu<P> {
     /// LALU edge detect: fires on SUKO 0→1, with the pulse-width filter applied on
     /// TALU↑ evaluations (callable off-TALU; pulse-width filter is skipped).
     pub fn check_stat_edge(&mut self) -> bool {
+        if self.span.asleep() {
+            return false;
+        }
+        self.check_stat_edge_body()
+    }
+
+    pub(super) fn check_stat_edge_body(&mut self) -> bool {
         if !self.control().video_enabled() {
             return false;
         }

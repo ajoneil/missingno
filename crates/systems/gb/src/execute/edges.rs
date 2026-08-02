@@ -235,7 +235,7 @@ impl<M: Model> Console<M> {
             _ => None,
         };
 
-        let pre_fall_mode = self.chassis.ppu.mode();
+        let pre_fall_mode = self.chassis.ppu.pre_fall_mode();
 
         FallEdge {
             tcycle,

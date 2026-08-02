@@ -8,7 +8,7 @@ use super::super::scan::oam_scan::SpriteStoreEntry;
 use super::super::types::sprites::{self, SpriteId, SpriteSize};
 use super::super::types::tiles::{TileAddressMode, TileIndex};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SpriteFetchPhase {
     /// BG fetcher frozen; 6-dot sprite data read. WUTY fires at counter=5 on the same dot as tile data HIGH read.
     FetchingData,
@@ -17,6 +17,7 @@ pub enum SpriteFetchPhase {
 /// 6-dot sprite data fetch. Collapses the 3-bit ripple counter (TOXE/TULY/TESE) into a u8,
 /// the fetch-done decode (WUTY) into the counter==5 return, and the 16 sprite temp-latch cells
 /// into `tile_data_low` / `tile_data_high`.
+#[derive(Hash)]
 pub(in crate::ppu) struct SpriteFetch {
     pub(in crate::ppu) entry: SpriteStoreEntry,
     /// Used to set the per-slot fetched-flag at WUTY↑.
@@ -164,6 +165,7 @@ impl SpriteFetch {
 }
 
 /// FEPO (sprite X match) freezes SACU; the fetch runs; SACU resumes on the next dot.
+#[derive(Hash)]
 pub(in crate::ppu) enum SpriteState {
     Idle,
     Fetching(SpriteFetch),

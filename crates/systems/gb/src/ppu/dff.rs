@@ -1,5 +1,6 @@
 /// DFF register cell: holds output and an optional pending value resolved after
 /// `commit_in` ticks (1 = the next tick — the default mid-Mode-3 write).
+#[derive(Hash)]
 pub struct DffLatch {
     pub(super) output: u8,
     pub(super) pending: Option<u8>,
@@ -79,6 +80,7 @@ impl DffLatch {
 /// Single-bit DFF: bool analogue of `DffLatch`. `write` drives the D input,
 /// `tick` captures D→Q on the clock edge, `output` reads Q. Edge detection
 /// derives from `output()` around `tick()`.
+#[derive(Hash)]
 pub struct DffBit {
     pending: bool,
     output: bool,
@@ -112,6 +114,7 @@ impl DffBit {
 
 /// Combinational NOR-latch (cross-coupled NOR pair; no clock).
 /// Use for RYDY, PYNU, REJO, XYMU, WUSA. Use `DffLatch` for clocked DFFs.
+#[derive(Hash)]
 pub struct NorLatch {
     output: bool,
 }

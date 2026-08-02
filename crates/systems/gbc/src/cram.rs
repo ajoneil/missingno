@@ -3,6 +3,7 @@ use crate::screen::Color555;
 /// One CGB colour-palette RAM (BG or OBJ): 8 palettes × 4 colours × 2 bytes,
 /// addressed by a 6-bit index that auto-increments on data writes (BCPS/OCPS
 /// bit 7). Data writes during mode 3 are dropped but still advance the index.
+#[derive(Hash)]
 pub struct ColorRam {
     data: [u8; 64],
     index: u8,
@@ -91,7 +92,7 @@ impl ColorRam {
 /// A CGB colour-palette RAM port. BCPS/BCPD ($FF68/9) address BG palettes;
 /// OCPS/OCPD ($FF6A/B) address OBJ palettes. Index ports are always accessible;
 /// data ports are blocked while the PPU renders (mode 3).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Hash)]
 pub enum ColorRegister {
     BackgroundIndex,
     BackgroundData,

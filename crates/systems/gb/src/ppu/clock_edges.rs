@@ -16,11 +16,25 @@ impl<P: PpuModel> Ppu<P> {
         vram: &P::Vram,
         oam_bus: OamBusOwner,
     ) -> PpuTickResult<P::Pixel> {
-        let mut result = PpuTickResult::default();
-
         if !self.control().video_enabled() {
-            return result;
+            return PpuTickResult::default();
         }
+
+        if self.span.asleep() {
+            #[cfg(debug_assertions)]
+            self.verify_sleeping_rise(vram, oam_bus);
+            return PpuTickResult::default();
+        }
+
+        self.run_rise(vram, oam_bus)
+    }
+
+    pub(super) fn run_rise(
+        &mut self,
+        vram: &P::Vram,
+        oam_bus: OamBusOwner,
+    ) -> PpuTickResult<P::Pixel> {
+        let mut result = PpuTickResult::default();
 
         self.registers.palettes.clear_capture_coincident_old();
 
@@ -58,9 +72,11 @@ impl<P: PpuModel> Ppu<P> {
         }
 
         if !self.control().video_enabled() {
+            self.span.invalidate();
             return self.handle_lcd_off(is_mcycle, result);
         }
         if self.pixel_pipeline.is_none() {
+            self.span.invalidate();
             return result;
         }
 
@@ -68,6 +84,60 @@ impl<P: PpuModel> Ppu<P> {
         let scan_clock_rising = !self.video.tick_dot();
 
         let talu_rising = self.advance_dividers(&mut result);
+
+        if self.span_sleepable() {
+            #[cfg(debug_assertions)]
+            self.verify_sleeping_fall(
+                is_mcycle,
+                mcycle_last_fall,
+                oam_bus,
+                scan_clock_rising,
+                talu_rising,
+            );
+            // Rendering and the scan chain are both parked here, so the STAT
+            // mode bits are POPU alone.
+            self.span.sleep(if self.video.vblank() {
+                super::rendering::Mode::VerticalBlank
+            } else {
+                super::rendering::Mode::HorizontalBlank
+            });
+            return result;
+        }
+        self.span.wake();
+
+        self.run_fall(
+            is_mcycle,
+            mcycle_last_fall,
+            oam_bus,
+            scan_clock_rising,
+            talu_rising,
+            &mut result,
+        );
+
+        // The register crossings have captured on this M-boundary fall, so
+        // every write since the last one has reached the IRQ block.
+        if is_mcycle && mcycle_last_fall {
+            self.span.note_crossings_captured();
+        }
+        self.span.settle(
+            self.mode(),
+            self.video.stat.ly_eq_lyc(),
+            self.video.vblank(),
+        );
+
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn run_fall(
+        &mut self,
+        is_mcycle: bool,
+        mcycle_last_fall: bool,
+        oam_bus: OamBusOwner,
+        scan_clock_rising: bool,
+        talu_rising: bool,
+        result: &mut PpuTickResult<P::Pixel>,
+    ) {
         self.registers.tick_on_master_clock_fall(
             self.mode2_active(),
             P::BGP_WRITE_RACE,
@@ -79,7 +149,7 @@ impl<P: PpuModel> Ppu<P> {
             scan_clock_rising,
             talu_rising,
             mcycle_last_fall,
-            &mut result,
+            result,
         );
         // The FF45→IRQ-block crossing captures on its resolved edge; the synced
         // LYC lands in the next TALU↑. The DS double-capture (this last-fall and
@@ -109,12 +179,11 @@ impl<P: PpuModel> Ppu<P> {
         if edge {
             result.request_stat = true;
         }
-
-        result
     }
 
     /// VID_RST deasserts at XOTA rising (= our fall); dividers reset, WUVU then VENA ramp.
     pub(super) fn initialize_lcd_on(&mut self) {
+        self.span.invalidate();
         self.video.vid_rst();
         // ROPO is not VID_RST-reset; PALY is combinational so recompute now.
         self.video.update_ly_comparison(self.model.stat_shadow());
