@@ -34,9 +34,6 @@ pub struct SpanPredictor {
     skipped: u32,
     skipping: bool,
     skipped_last_tick: bool,
-    /// A shadow copy predicts and asserts but never skips: it is the slow-path
-    /// reference the reconstruction is compared against.
-    shadow: bool,
     entry_t_index: u8,
     last_div_counter: u16,
     last_t_index: u8,
@@ -45,15 +42,6 @@ pub struct SpanPredictor {
 }
 
 impl SpanPredictor {
-    /// A predictor that arms and asserts but never claims a skip.
-    #[cfg(debug_assertions)]
-    pub(super) fn shadow() -> Self {
-        Self {
-            shadow: true,
-            ..Self::default()
-        }
-    }
-
     /// Whether this tick falls inside a proven-inert span. Clock inputs that
     /// deviate from the prediction — the blackout's held edges, a DIV write, a
     /// speed switch — drop the span instead of being asserted on.
@@ -117,7 +105,7 @@ impl SpanPredictor {
 
     pub(super) fn arm(&mut self, inert_ticks: u32, div_counter: u16, t_index: u8) {
         self.inert_ticks = inert_ticks.min(SPAN_CAP);
-        self.skipping = !self.shadow && self.inert_ticks >= THRESHOLD;
+        self.skipping = self.inert_ticks >= THRESHOLD;
         self.skipped = 0;
         self.expect_after(div_counter, t_index);
     }

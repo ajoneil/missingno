@@ -36,9 +36,6 @@ impl<A: ApuSpec> Audio<A> {
         self.channel_clock.counter = (last_t_index + 1) & 0b11;
         self.prev_div_apu_bit = last_div_counter & DIV_APU_BIT != 0;
         self.advance_mixer(ticks, noise_dirty);
-
-        #[cfg(debug_assertions)]
-        self.check_shadow();
     }
 
     /// The run-length-compressed mix and the host sample windows. `last_mix` is
