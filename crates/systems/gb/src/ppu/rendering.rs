@@ -20,7 +20,7 @@ use super::draw::sprite_fetch::{SpriteFetch, SpriteState};
 use super::draw::sprite_trigger::SpriteTrigger;
 use super::draw::window_control::WindowControl;
 use super::scan::oam_scan::OFF_SCREEN_SPRITE_X;
-use super::scan::scanner::SpriteScanner;
+use super::scan::scanner::{ScanSignals, SpriteScanner};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -565,13 +565,12 @@ impl<P: PpuModel> Rendering<P> {
         };
 
         // BYBA/AVAP co-locate on this XUPY-rising fall.
-        let scan = self.scan.advance_scan(
-            scan_clock_rising,
-            video.ly(),
-            scan_sprite_height,
-            oam,
-            oam_bus,
-        );
+        let scan = if scan_clock_rising {
+            self.scan
+                .advance_scan(video.ly(), scan_sprite_height, oam, oam_bus)
+        } else {
+            ScanSignals::HELD
+        };
         if scan.avap {
             // Mode 3 begins on AVAP-fall; AJUJ pulse asserts alongside mode3↑ for write-permit.
             self.hblank.pulse_ajuj_on_avap_fall();

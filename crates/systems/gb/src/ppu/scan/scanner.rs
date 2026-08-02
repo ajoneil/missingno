@@ -32,6 +32,11 @@ pub(in crate::ppu) struct ScanSignals {
     pub(in crate::ppu) avap: bool,
 }
 
+impl ScanSignals {
+    /// XUPY low: the scan chain holds, so no AVAP.
+    pub(in crate::ppu) const HELD: Self = Self { avap: false };
+}
+
 impl SpriteScanner {
     pub(in crate::ppu) fn new() -> Self {
         Self {
@@ -151,19 +156,15 @@ impl SpriteScanner {
         catu_captures
     }
 
-    /// XUPY rising: counter tick + BYBA/DOBA capture + AVAP detection.
+    /// XUPY rising: counter tick + BYBA/DOBA capture + AVAP detection. The
+    /// caller gates the call on that edge; off it the chain holds (`HELD`).
     pub(in crate::ppu) fn advance_scan(
         &mut self,
-        scan_clock_rising: bool,
         ly: u8,
         sprite_height: u8,
         oam: &Oam,
         oam_bus: OamBusOwner,
     ) -> ScanSignals {
-        if !scan_clock_rising {
-            return ScanSignals { avap: false };
-        }
-
         // CARE (sprite save) requires BESU; on the LCD-on first line BESU never
         // sets, so the store stays empty though the counter still advances.
         if self.mode2_active {
