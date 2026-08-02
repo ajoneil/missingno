@@ -16,6 +16,7 @@ pub mod wave;
 /// enabling case (fdis 1→0) freezes the load tick for the +1 first overflow;
 /// a re-trigger of a running channel reloads with no +1.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(debug_assertions, derive(Debug))]
 pub enum TriggerReload {
     #[default]
     Idle,
@@ -24,6 +25,7 @@ pub enum TriggerReload {
 }
 
 #[derive(Clone, Default)]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
 pub struct Channels {
     pub ch1: PulseSweepChannel,
     pub ch2: PulseChannel,
@@ -127,6 +129,7 @@ impl Channels {
 }
 
 #[derive(Copy, Clone)]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
 pub struct Enabled {
     pub enabled: bool,
     pub output_left: bool,

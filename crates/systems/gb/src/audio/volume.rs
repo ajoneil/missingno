@@ -1,4 +1,5 @@
 #[derive(Copy, Clone)]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
 pub struct Volume(pub u8);
 
 impl Volume {

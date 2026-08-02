@@ -23,6 +23,7 @@ pub enum Register {
 }
 
 #[derive(Clone)]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
 pub struct PulseChannel {
     pub enabled: Enabled,
     pub waveform_and_initial_length: WaveformAndInitialLength,

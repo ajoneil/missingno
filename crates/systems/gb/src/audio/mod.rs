@@ -9,6 +9,8 @@ use volume::Volume;
 pub mod channels;
 mod materialize;
 pub mod registers;
+#[cfg(debug_assertions)]
+mod shadow;
 pub mod span;
 pub mod volume;
 
@@ -109,6 +111,10 @@ pub struct Audio<A: ApuSpec> {
     wave_capture: Option<[WaveRing; 4]>,
     // Ticks the event model proves produce no strobe and no mix change.
     span: SpanPredictor,
+    // Slow-path copy driven through a skipped span, compared field-for-field
+    // when the span materialises.
+    #[cfg(debug_assertions)]
+    shadow: Option<Box<Audio<A>>>,
     _spec: PhantomData<A>,
 }
 
@@ -162,6 +168,8 @@ impl<A: ApuSpec> Audio<A> {
             sample_buffer: Vec::new(),
             wave_capture: None,
             span: SpanPredictor::default(),
+            #[cfg(debug_assertions)]
+            shadow: None,
             _spec: PhantomData,
         }
     }
@@ -204,6 +212,8 @@ impl<A: ApuSpec> Audio<A> {
             sample_buffer: Vec::new(),
             wave_capture: None,
             span: SpanPredictor::default(),
+            #[cfg(debug_assertions)]
+            shadow: None,
             _spec: PhantomData,
         }
     }
@@ -291,6 +301,8 @@ impl<A: ApuSpec> Audio<A> {
             Consumed::Miss
         };
         if let Consumed::Skipped = consumed {
+            #[cfg(debug_assertions)]
+            self.shadow_tcycle(div_counter, t_index, double_speed);
             return;
         }
         // The tick that leaves a span reconstructs it before doing its own work.
@@ -419,6 +431,8 @@ impl<A: ApuSpec> Audio<A> {
     /// CH3 `foba` arm capture, clocked by `apu_phi↑` (the CPU M-cycle boundary).
     /// Gated by APU power, like the per-dot tick's `apu_reset_n`.
     pub fn mcycle_boundary(&mut self) {
+        #[cfg(debug_assertions)]
+        self.shadow_mcycle_boundary();
         if self.enabled {
             self.channels.ch3.arm_trigger();
         }
@@ -462,6 +476,8 @@ impl<A: ApuSpec> Audio<A> {
         }
         // The fall belonging to a skipped rise is skipped with it.
         if self.span.skipped_last_tick() {
+            #[cfg(debug_assertions)]
+            self.shadow_fall_sync();
             return;
         }
         self.channels.ch3.fall_sync();
@@ -753,6 +769,8 @@ impl<A: ApuSpec> Audio<A> {
             sample_buffer: Vec::new(),
             wave_capture: None,
             span: SpanPredictor::default(),
+            #[cfg(debug_assertions)]
+            shadow: None,
             _spec: PhantomData,
         }
     }

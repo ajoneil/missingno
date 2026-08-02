@@ -24,6 +24,7 @@ pub enum Register {
 }
 
 #[derive(Clone)]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
 pub struct PulseSweepChannel {
     pub enabled: Enabled,
     pub sweep: Sweep,
@@ -541,6 +542,7 @@ pub enum SweepDirection {
 }
 
 #[derive(Clone)]
+#[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
 pub struct Sweep(pub u8);
 
 impl Sweep {
