@@ -8,7 +8,10 @@ use volume::Volume;
 
 pub mod channels;
 pub mod registers;
+pub mod span;
 pub mod volume;
+
+use span::SpanPredictor;
 
 /// Static, per-console APU properties. Each is a compile-time fact the DMG and
 /// CGB silicon fix differently, so the console-specific runtime setters and
@@ -103,6 +106,8 @@ pub struct Audio<A: ApuSpec> {
     // when no consumer wants it: the per-sample tap is then one branch with no
     // allocation. `Some` allocates the four rings once, at enable.
     wave_capture: Option<[WaveRing; 4]>,
+    // Ticks the event model proves produce no strobe and no mix change.
+    span: SpanPredictor,
     _spec: PhantomData<A>,
 }
 
@@ -155,6 +160,7 @@ impl<A: ApuSpec> Audio<A> {
             sample_accum_count: 0,
             sample_buffer: Vec::new(),
             wave_capture: None,
+            span: SpanPredictor::default(),
             _spec: PhantomData,
         }
     }
@@ -196,6 +202,7 @@ impl<A: ApuSpec> Audio<A> {
             sample_accum_count: 0,
             sample_buffer: Vec::new(),
             wave_capture: None,
+            span: SpanPredictor::default(),
             _spec: PhantomData,
         }
     }
@@ -254,6 +261,13 @@ impl<A: ApuSpec> Audio<A> {
     /// caller's instant from this call until the next tick.
     pub fn materialize(&mut self) {}
 
+    /// Drop the span prediction — an unpredictable mutation landed, or the
+    /// caller is about to drive edges the predictor's clock model does not
+    /// describe (the speed-switch blackout).
+    pub fn suspend_span(&mut self) {
+        self.span.invalidate();
+    }
+
     /// One T-cycle of APU work, called at every master-clock rise.
     /// `apu_reset_n` is NR52 bit 7 — the channels' prescaler DFFs
     /// honour it as an async-reset, so we still call each tcycle
@@ -263,6 +277,17 @@ impl<A: ApuSpec> Audio<A> {
         // the DMG monomorphization folds this to false and dead-codes every
         // double-speed branch below (and inside the channels).
         let double_speed = A::DOUBLE_SPEED && double_speed;
+        // The predictor models the powered single-speed regime; elsewhere it
+        // claims nothing.
+        #[allow(unused_variables)]
+        let predicted_inert = if self.enabled && !double_speed {
+            self.span.consume(div_counter, t_index)
+        } else {
+            self.span.invalidate();
+            false
+        };
+        #[cfg(debug_assertions)]
+        let mix_at_entry = self.last_mix;
         let div_apu_bit = if double_speed {
             DIV_APU_BIT_DOUBLE
         } else {
@@ -359,6 +384,20 @@ impl<A: ApuSpec> Audio<A> {
                     ring.push(code);
                 }
             }
+        }
+
+        #[cfg(debug_assertions)]
+        if predicted_inert {
+            debug_assert!(!fs_fire, "inert span crossed a frame-sequencer strobe");
+            debug_assert!(
+                self.last_mix == mix_at_entry,
+                "inert span crossed a mix change: {mix_at_entry:?} -> {:?}",
+                self.last_mix
+            );
+        }
+        if !self.span.armed() && !double_speed {
+            let inert = span::predict_inert_ticks(self, div_counter, t_index);
+            self.span.arm(inert, div_counter, t_index);
         }
     }
 
@@ -458,6 +497,7 @@ impl<A: ApuSpec> Audio<A> {
     /// `old_counter` — the PRE-switch speed on the speed-switch path.
     pub fn on_div_write(&mut self, old_counter: u16, double_speed: bool) {
         self.materialize();
+        self.span.invalidate();
         let double_speed = A::DOUBLE_SPEED && double_speed;
         let div_apu_bit = if double_speed {
             DIV_APU_BIT_DOUBLE
@@ -483,6 +523,7 @@ impl<A: ApuSpec> Audio<A> {
     /// blackout and reinstated from the parity at resume.
     pub fn on_speed_switch(&mut self, to_double: bool) {
         self.materialize();
+        self.span.invalidate();
         if to_double {
             self.div_apu_double_parity = !self.div_apu_double_parity;
         }
@@ -492,6 +533,7 @@ impl<A: ApuSpec> Audio<A> {
     /// Blackout resume: apply the tap-retune slip for the current →double parity.
     pub fn on_speed_resume(&mut self) {
         self.materialize();
+        self.span.invalidate();
         self.div_apu_switch_lag = self.div_apu_double_parity;
     }
 
@@ -505,6 +547,7 @@ impl<A: ApuSpec> Audio<A> {
     /// per-sample tap inert.
     pub fn set_wave_capture(&mut self, on: bool) {
         self.materialize();
+        self.span.invalidate();
         match (on, self.wave_capture.is_some()) {
             (true, false) => {
                 self.wave_capture =
@@ -690,6 +733,7 @@ impl<A: ApuSpec> Audio<A> {
             sample_accum_count: 0,
             sample_buffer: Vec::new(),
             wave_capture: None,
+            span: SpanPredictor::default(),
             _spec: PhantomData,
         }
     }

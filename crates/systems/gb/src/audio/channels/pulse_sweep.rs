@@ -515,6 +515,12 @@ impl PulseSweepChannel {
         self.volume_and_envelope.0 & 0xf8 != 0
     }
 
+    /// The bit `duwo` would capture at duty step `position`.
+    pub fn duty_bit(&self, position: u8) -> bool {
+        let duty = self.waveform_and_initial_length.waveform() as usize;
+        DUTY_TABLE[duty][(position % 8) as usize] != 0
+    }
+
     pub fn digital_sample(&self) -> u8 {
         if !self.enabled.enabled {
             return 0;

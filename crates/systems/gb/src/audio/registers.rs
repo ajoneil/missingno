@@ -122,6 +122,7 @@ impl<A: ApuSpec> Audio<A> {
         double_speed: bool,
     ) {
         self.materialize();
+        self.span.invalidate();
         let double_speed = A::DOUBLE_SPEED && double_speed;
         if !self.enabled {
             match register {

@@ -105,6 +105,9 @@ impl<M: Model> Console<M> {
         let (new_screen, pixel) = match dot {
             Edge::Rise => {
                 let r = self.ppu_rise_edge();
+                // Held edges pin `t_index` and skip the M-boundary, so the APU's
+                // span model does not describe them.
+                self.chassis.audio.suspend_span();
                 self.chassis
                     .audio
                     .tcycle(self.chassis.timers.internal_counter(), 0, double_speed);

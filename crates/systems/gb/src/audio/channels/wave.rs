@@ -445,6 +445,7 @@ impl<A: ApuSpec> Audio<A> {
     /// `ChannelPosition` coupling they always commit.
     pub fn write_wave_ram(&mut self, offset: u8, value: u8) {
         self.materialize();
+        self.span.invalidate();
         let ch3 = &mut self.channels.ch3;
         if !ch3.enabled.enabled {
             ch3.ram[offset as usize] = value;
