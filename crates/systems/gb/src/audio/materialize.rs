@@ -34,12 +34,12 @@ impl<A: ApuSpec> Audio<A> {
         );
         let entry_phase = prescaler_phase(self.channel_clock.counter, 1);
         let calo_rises = phase_count(entry_phase, CLOCK_RISE_PHASE, ticks);
-        let clock_phase_ones = phase_count(entry_phase, SWEEP_STEP_PHASE, ticks);
+        let ajer_rises = phase_count(entry_phase, SWEEP_STEP_PHASE, ticks);
 
-        advance_pulse_sweep(&mut self.channels.ch1, calo_rises, clock_phase_ones);
+        advance_pulse_sweep(&mut self.channels.ch1, calo_rises, ajer_rises);
         advance_pulse(&mut self.channels.ch2, calo_rises);
         advance_wave(&mut self.channels.ch3, ticks);
-        let noise_dirty = advance_noise(&mut self.channels.ch4, ticks, entry_phase, calo_rises);
+        let noise_flip_at = advance_noise(&mut self.channels.ch4, ticks, entry_phase, calo_rises);
 
         self.channel_clock.counter = prescaler_phase(self.channel_clock.counter, ticks);
         let tap = if A::DOUBLE_SPEED && double_speed {
@@ -48,14 +48,14 @@ impl<A: ApuSpec> Audio<A> {
             DIV_APU_BIT
         };
         self.prev_div_apu_bit = last_div_counter & tap != 0;
-        self.advance_mixer(ticks, noise_dirty);
+        self.advance_mixer(ticks, noise_flip_at);
     }
 
     /// The run-length-compressed mix and the host sample windows. `last_mix` is
     /// constant across the span by construction, so each window's fold is one
     /// integer product; the only flush inside the span is the one a silent
     /// CH4's LFSR provokes, which changes nothing but the run partition.
-    fn advance_mixer(&mut self, ticks: u32, noise_dirty: Option<u32>) {
+    fn advance_mixer(&mut self, ticks: u32, noise_flip_at: Option<u32>) {
         let period = T_CYCLES_PER_SAMPLE as f64;
         let counter = self.sample_counter as f64;
         let dac_codes = self.channels.dac_codes();
@@ -87,7 +87,7 @@ impl<A: ApuSpec> Audio<A> {
         }
         self.sample_counter = (counter + ticks as f64 - (window - 1) as f64 * period) as f32;
 
-        match noise_dirty.filter(|&at| at > consumed) {
+        match noise_flip_at.filter(|&at| at > consumed) {
             Some(at) => {
                 self.mix_run += at - 1 - consumed;
                 self.flush_mix_run();
@@ -101,13 +101,13 @@ impl<A: ApuSpec> Audio<A> {
 /// CH1: the sweep hold and adder counter run whatever the channel's state; the
 /// divider only runs while it is enabled (and so contributing — a DAC-off write
 /// disables the channel).
-fn advance_pulse_sweep(ch1: &mut PulseSweepChannel, calo_rises: u32, clock_phase_ones: u32) {
+fn advance_pulse_sweep(ch1: &mut PulseSweepChannel, calo_rises: u32, ajer_rises: u32) {
     ch1.sweep_load_hold = ch1
         .sweep_load_hold
         .saturating_sub(calo_rises.min(255) as u8);
     if ch1.sweep_calc_steps > 0 {
         // The predictor ends the span before the counter saturates.
-        ch1.sweep_calc_steps -= clock_phase_ones as u8;
+        ch1.sweep_calc_steps -= ajer_rises as u8;
         debug_assert!(ch1.sweep_calc_steps > 0);
     }
     if !ch1.enabled.enabled {
@@ -267,15 +267,15 @@ fn advance_noise(
     let rise_period = 1u32 << (shift + 1);
     let rises = 1 + (increments - first_rise) / rise_period;
     let short_mode = ch4.frequency_and_randomness.short_mode();
-    let mut dirty_at = None;
+    let mut flip_at = None;
     for rise in 0..rises {
         if ch4.skip_first_clock {
             ch4.skip_first_clock = false;
             continue;
         }
         if shift_lfsr(&mut ch4.lfsr, short_mode) {
-            dirty_at = Some(first_increment + (first_rise - 1 + rise * rise_period) * cadence);
+            flip_at = Some(first_increment + (first_rise - 1 + rise * rise_period) * cadence);
         }
     }
-    dirty_at
+    flip_at
 }

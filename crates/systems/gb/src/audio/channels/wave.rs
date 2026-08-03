@@ -444,8 +444,7 @@ impl<A: ApuSpec> Audio<A> {
     /// both half-T edges of T=3 of the `wave_ram_wr` pulse. Under
     /// `ChannelPosition` coupling they always commit.
     pub fn write_wave_ram(&mut self, offset: u8, value: u8) {
-        self.materialize();
-        self.span.invalidate();
+        self.suspend_span();
         let ch3 = &mut self.channels.ch3;
         if !ch3.enabled.enabled {
             ch3.ram[offset as usize] = value;

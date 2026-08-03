@@ -519,8 +519,7 @@ impl<A: ApuSpec> Audio<A> {
     /// ticks the frame sequencer. `double_speed` is the speed in effect for
     /// `old_counter` — the PRE-switch speed on the speed-switch path.
     pub fn on_div_write(&mut self, old_counter: u16, double_speed: bool) {
-        self.materialize();
-        self.span.invalidate();
+        self.suspend_span();
         let double_speed = A::DOUBLE_SPEED && double_speed;
         let div_apu_bit = if double_speed {
             DIV_APU_BIT_DOUBLE
@@ -545,8 +544,7 @@ impl<A: ApuSpec> Audio<A> {
     /// present when the →double count is odd); the active slip is dropped for the
     /// blackout and reinstated from the parity at resume.
     pub fn on_speed_switch(&mut self, to_double: bool) {
-        self.materialize();
-        self.span.invalidate();
+        self.suspend_span();
         if to_double {
             self.div_apu_double_parity = !self.div_apu_double_parity;
         }
@@ -555,8 +553,7 @@ impl<A: ApuSpec> Audio<A> {
 
     /// Blackout resume: apply the tap-retune slip for the current →double parity.
     pub fn on_speed_resume(&mut self) {
-        self.materialize();
-        self.span.invalidate();
+        self.suspend_span();
         self.div_apu_switch_lag = self.div_apu_double_parity;
     }
 
@@ -569,8 +566,7 @@ impl<A: ApuSpec> Audio<A> {
     /// four rings once and starts each fresh; disabling frees them, leaving the
     /// per-sample tap inert.
     pub fn set_wave_capture(&mut self, on: bool) {
-        self.materialize();
-        self.span.invalidate();
+        self.suspend_span();
         match (on, self.wave_capture.is_some()) {
             (true, false) => {
                 self.wave_capture =

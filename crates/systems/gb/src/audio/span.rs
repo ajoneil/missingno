@@ -1,6 +1,11 @@
 //! Inert-span prediction: how many upcoming APU ticks the event model proves
 //! produce neither a frame-sequencer strobe nor a change to the mixed output.
 //!
+//! A skipped tick runs no channel body at all. What it owed — the dividers, the
+//! LFSR, the prescaler phase, the mix run and the host sample windows — is
+//! deferred to [`super::materialize`], which every observation surface and every
+//! unpredictable mutation runs first, so no reader ever sees a stale cell.
+//!
 //! A span also has to be *reconstructible*: the prediction is 0 whenever a
 //! channel carries pipeline residue the materialisation does not model, so
 //! every armed span lands on state closed forms can reproduce exactly.
@@ -32,7 +37,8 @@ pub(super) const SWEEP_STEP_PHASE: u8 = 1;
 pub(super) enum Consumed {
     /// Outside any span — the slow path owns this tick.
     Miss,
-    /// Inside a span the predictor claimed but is not skipping.
+    /// Inside a span the predictor claimed but is not skipping. Only a
+    /// sub-threshold arm produces it, and `hold_off` takes those instead.
     Inert,
     /// Inside a skipped span: the tick's work is deferred to materialisation.
     Skipped,
@@ -143,18 +149,12 @@ impl SpanPredictor {
     }
 }
 
-/// Ticks ahead of the tick carrying `t_index` that the next tick carrying
-/// `target` lands on (1..=4). Single speed only — at ÷2 the delivered index
-/// steps in twos.
-fn ticks_to_t_index(t_index: u8, target: u8) -> u32 {
-    ((target + 4 - t_index - 1) % 4) as u32 + 1
-}
-
-/// Ticks ahead of the tick leaving the shared prescaler at `phase` that the
-/// next tick reaching `target` lands on (1..=4). The prescaler advances once
-/// per tick in both regimes, so this is the speed-independent M-phase clock.
-fn ticks_to_phase(phase: u8, target: u8) -> u32 {
-    ((target + 4 - phase - 1) % 4) as u32 + 1
+/// Ticks ahead of the tick reading `now` that the next tick reading `target`
+/// lands on (1..=4), for a mod-4 count stepping once per tick. That is the
+/// shared prescaler in both regimes, and `t_index` at single speed only — at ÷2
+/// the delivered index steps in twos.
+fn ticks_until(now: u8, target: u8) -> u32 {
+    ((target + 4 - now - 1) % 4) as u32 + 1
 }
 
 /// How many of the `ticks` starting at prescaler phase `entry` reach `target`.
@@ -168,7 +168,9 @@ pub(super) fn phase_count(entry: u8, target: u8, ticks: u32) -> u32 {
 }
 
 /// Inert ticks following the tick carrying `(div_counter, t_index)` — the min
-/// over every span-ending event. The APU must be powered.
+/// over every span-ending event: the frame-sequencer strobe, the sweep adder's
+/// saturation, either pulse's next duty-bit change, CH3's next divider overflow,
+/// and CH4's next audible LFSR shift. The APU must be powered.
 pub(super) fn predict_inert_ticks<A: ApuSpec>(
     audio: &Audio<A>,
     div_counter: u16,
@@ -195,7 +197,7 @@ pub(super) fn predict_inert_ticks<A: ApuSpec>(
     // `enabled` when it saturates on an overflow.
     if ch.ch1.sweep_calc_steps > 0 {
         let steps = ch.ch1.sweep_calc_steps as u32;
-        span = span.min(ticks_to_phase(clock_phase, SWEEP_STEP_PHASE) + (steps - 1) * 4 - 1);
+        span = span.min(ticks_until(clock_phase, SWEEP_STEP_PHASE) + (steps - 1) * 4 - 1);
     }
 
     // A divider reload in flight moves the duty pipeline off its steady cadence.
@@ -233,6 +235,8 @@ pub(super) fn predict_inert_ticks<A: ApuSpec>(
     if span == 0 {
         return 0;
     }
+    // The chain walk is anchored on the next tick, which leaves the shared
+    // prescaler one phase on from this one.
     span = span.min(ticks_to_noise_output_change(
         &ch.ch4,
         (clock_phase + 1) & 0b11,
@@ -271,7 +275,7 @@ fn ticks_to_frame_sequencer_strobe<A: ApuSpec>(
     let (to_increment, ticks_per_increment) = if double_speed {
         (if t_index >= 2 { 1 } else { 2 }, 2)
     } else {
-        (ticks_to_t_index(t_index, 0), 4)
+        (ticks_until(t_index, 0), 4)
     };
     to_increment + (increments - 1) * ticks_per_increment - 1
 }
@@ -291,7 +295,7 @@ fn ticks_to_duty_change(
     duty_bit: impl Fn(u8) -> bool,
 ) -> u32 {
     // The divider clocks at CALO↑, once per M-cycle.
-    let to_first_clock = ticks_to_phase(phase, CLOCK_RISE_PHASE);
+    let to_first_clock = ticks_until(phase, CLOCK_RISE_PHASE);
     let counter = counter & 0x7FF;
     let period = period & 0x7FF;
     // duwo/dome capture the pre-advance duty step, so an overflow with the step
