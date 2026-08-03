@@ -9,10 +9,10 @@ use crate::texture_renderer::{ScreenOverlay, TextureRenderer};
 
 pub use missingno_core::video::{Frame, IndexedFrame, RgbaFrame};
 
-/// Fraction of the previous frame retained in the persistence blend, per display
-/// class. Fitted to taste, not measured panel response: passive STN keeps the
-/// strong blend flicker-blending games rely on, active TFT settles lighter, and
-/// CRT phosphor lighter still.
+/// Fraction of the accumulator retained each frame, per display class — the
+/// decay rate of a pixel's trail. Fitted to taste, not measured panel response:
+/// passive STN keeps the strong blend flicker-blending games rely on, active TFT
+/// settles lighter, and CRT phosphor lighter still.
 const STN_PERSISTENCE: f32 = 0.5;
 const TFT_PERSISTENCE: f32 = 0.25;
 const CRT_PERSISTENCE: f32 = 0.2;
@@ -52,12 +52,11 @@ fn default_technology() -> DisplayTechnology {
     }
 }
 
-/// A reflective panel's unlit "paper" tone for a frame with no monochrome
-/// palette to source one from — the CGB, SGB-coloured DMG frames, and any
-/// future RGBA-native LCD. An unpowered CGB screen reads as a mid grey-green,
-/// well below white — the reflective TFT returns far less light than paper;
-/// eyeballed, not measured.
-const CGB_REFLECTIVE_BASE: RGB8 = RGB8::new(0x90, 0x96, 0x88);
+/// The colour a colour panel's inter-pixel matrix shows: the opaque mask between
+/// RGB subpixels, near-black rather than any aggregate panel tone. It stands in
+/// wherever a frame states no unlit tone of its own — the CGB, SGB-coloured DMG
+/// frames, and any future RGBA-native LCD.
+const SUBPIXEL_MATRIX: RGB8 = RGB8::new(0x16, 0x16, 0x16);
 
 /// The one colour decision the frontend owns for a family whose frames arrive as
 /// device-native indices — the Game Boy's monochrome palette and Super Game Boy
@@ -66,12 +65,29 @@ const CGB_REFLECTIVE_BASE: RGB8 = RGB8::new(0x90, 0x96, 0x88);
 pub trait PalettePolicy: Send {
     fn resolve(&self, frame: &dyn ConsoleFrame) -> RgbaFrame;
     fn clone_box(&self) -> Box<dyn PalettePolicy>;
-    /// The reflective panel's unlit paper tone — the base the LCD aperture grid
-    /// exposes between pixels. For the Game Boy this is the palette's lightest
-    /// shade, the colour an off pixel shows. `None` when the policy's frames
-    /// aren't drawn from a monochrome palette (SGB colours), so no shade names
-    /// the paper tone and the neutral reflective base applies.
+    /// The unlit panel tone the inter-pixel matrix exposes. `None` when the
+    /// policy's frames aren't drawn from a monochrome palette (SGB colours), so
+    /// nothing there names the panel and the subpixel matrix applies.
     fn panel_base(&self) -> Option<RGB8>;
+    /// Per-pixel level in 0..1 along the panel's transmission axis, for a
+    /// display whose persistence accumulates in response domain rather than in
+    /// colour. `None` where the frame states no such axis.
+    fn response_levels(&self, _frame: &dyn ConsoleFrame) -> Option<Box<[f32]>> {
+        None
+    }
+    /// The colour a response level shows, through the panel's gradient. Only
+    /// reached for a policy that states [`PalettePolicy::response_levels`].
+    fn level_color(&self, _level: f32) -> RGB8 {
+        SUBPIXEL_MATRIX
+    }
+}
+
+/// The retained image the display's persistence decays: response levels where
+/// the colour policy states a transmission axis, plain colour otherwise.
+#[derive(Clone)]
+enum PersistenceHistory {
+    Levels(Box<[f32]>),
+    Rgba(Arc<[u8]>),
 }
 
 /// The single screen renderer, driven by the [`DisplayTechnology`] the core
@@ -93,7 +109,7 @@ pub struct ScreenView {
     pixel_grid: bool,
     /// CRT-only: draw scanlines at the native line pitch.
     scanlines: bool,
-    prev_rgba: Option<Arc<[u8]>>,
+    history: Option<PersistenceHistory>,
     /// The GPU texture slot this view renders through, stable across frames.
     texture_key: u64,
 }
@@ -112,7 +128,7 @@ impl Clone for ScreenView {
             persistence: self.persistence,
             pixel_grid: self.pixel_grid,
             scanlines: self.scanlines,
-            prev_rgba: self.prev_rgba.clone(),
+            history: self.history.clone(),
             texture_key: TextureRenderer::allocate_key(),
         }
     }
@@ -135,7 +151,7 @@ impl ScreenView {
             persistence: true,
             pixel_grid: false,
             scanlines: false,
-            prev_rgba: None,
+            history: None,
             texture_key: TextureRenderer::allocate_key(),
         }
     }
@@ -154,6 +170,9 @@ impl ScreenView {
 
     pub fn set_persistence(&mut self, persistence: bool) {
         self.persistence = persistence;
+        if !persistence {
+            self.history = None;
+        }
     }
 
     pub fn set_pixel_grid(&mut self, pixel_grid: bool) {
@@ -169,15 +188,14 @@ impl ScreenView {
         overlay_for(&self.technology, self.pixel_grid, self.scanlines)
     }
 
-    /// The reflective panel base the LCD aperture grid shows between pixels, as
-    /// linear RGB in 0..1. A device-native index frame drawn from the Game
-    /// Boy's monochrome palette takes that palette's lightest shade as the
-    /// panel's paper tone; every other frame — resolved RGBA (the CGB) or SGB
-    /// colours — has no such palette and takes the neutral reflective base.
+    /// The colour the LCD's inter-pixel matrix shows, as linear RGB in 0..1. A
+    /// device-native index frame drawn from the Game Boy's monochrome palette
+    /// takes that palette's unlit panel tone; every other frame — resolved RGBA
+    /// (the CGB) or SGB colours — has none and takes the subpixel matrix.
     fn panel_base_color(&self) -> [f32; 3] {
         let rgb = match (&self.palette_policy, self.console_frame.is_some()) {
-            (Some(policy), true) => policy.panel_base().unwrap_or(CGB_REFLECTIVE_BASE),
-            _ => CGB_REFLECTIVE_BASE,
+            (Some(policy), true) => policy.panel_base().unwrap_or(SUBPIXEL_MATRIX),
+            _ => SUBPIXEL_MATRIX,
         };
         [
             rgb.r as f32 / 255.0,
@@ -245,7 +263,6 @@ impl ScreenView {
     }
 
     pub fn apply(&mut self, frame: &Frame) {
-        self.prev_rgba = Some(self.current_frame().pixels);
         match frame {
             Frame::Console(console_frame) => {
                 self.console_frame = Some(console_frame.clone_box());
@@ -263,6 +280,79 @@ impl ScreenView {
                 self.indexed = Some(indexed.clone());
             }
         }
+        self.accumulate_persistence();
+    }
+
+    /// Decay the retained image toward the newly delivered frame, so a pixel's
+    /// trail fades over several frames rather than exactly one. A history in a
+    /// different domain, or of a different size, is reseeded rather than mixed.
+    fn accumulate_persistence(&mut self) {
+        if !self.persistence {
+            self.history = None;
+            return;
+        }
+        let weight = persistence_weight(&self.technology);
+        let incoming = self.delivered_history();
+        self.history = Some(match (self.history.take(), incoming) {
+            (Some(PersistenceHistory::Levels(prev)), PersistenceHistory::Levels(current))
+                if prev.len() == current.len() =>
+            {
+                PersistenceHistory::Levels(
+                    current
+                        .iter()
+                        .zip(prev.iter())
+                        .map(|(&c, &p)| c * (1.0 - weight) + p * weight)
+                        .collect(),
+                )
+            }
+            (Some(PersistenceHistory::Rgba(prev)), PersistenceHistory::Rgba(current))
+                if prev.len() == current.len() =>
+            {
+                PersistenceHistory::Rgba(persistence_blend(&current, &prev, weight))
+            }
+            (_, incoming) => incoming,
+        });
+    }
+
+    /// The delivered frame in the domain its display accumulates in: response
+    /// levels where the colour policy states them, resolved colour otherwise.
+    fn delivered_history(&self) -> PersistenceHistory {
+        if let (Some(policy), Some(frame)) = (&self.palette_policy, &self.console_frame)
+            && let Some(levels) = policy.response_levels(frame.as_ref())
+        {
+            return PersistenceHistory::Levels(levels);
+        }
+        PersistenceHistory::Rgba(self.current_frame().pixels)
+    }
+
+    /// The pixels this draw shows: the retained image read back through the
+    /// *current* palette, so a palette change repaints without a new frame; the
+    /// delivered frame verbatim where persistence is off.
+    fn displayed_frame(&self) -> RgbaFrame {
+        let (width, height) = self.dimensions();
+        let pixels = (width * height) as usize;
+        match (&self.history, &self.palette_policy) {
+            (Some(PersistenceHistory::Levels(levels)), Some(policy)) if levels.len() == pixels => {
+                let mut rgba = Vec::with_capacity(pixels * 4);
+                for &level in levels.iter() {
+                    let color = policy.level_color(level);
+                    rgba.extend_from_slice(&[color.r, color.g, color.b, 255]);
+                }
+                RgbaFrame {
+                    width,
+                    height,
+                    pixels: rgba.into(),
+                }
+            }
+            (Some(PersistenceHistory::Rgba(retained)), _) if retained.len() == pixels * 4 => {
+                RgbaFrame {
+                    width,
+                    height,
+                    pixels: retained.clone(),
+                }
+            }
+            _ => self.current_frame(),
+        }
     }
 
     /// Widget dimensions filling the available space at the screen's true aspect.
@@ -273,8 +363,8 @@ impl ScreenView {
     }
 }
 
-/// Blend the current frame over the previous one, retaining `weight` of the
-/// previous — the display's slow pixel response.
+/// Decay the retained image toward the delivered frame, keeping `weight` of what
+/// was retained — the display's slow pixel response.
 fn persistence_blend(current: &[u8], prev: &[u8], weight: f32) -> Arc<[u8]> {
     current
         .iter()
@@ -294,15 +384,8 @@ impl<Message> shader::Program<Message> for ScreenView {
         cursor: iced::mouse::Cursor,
         bounds: iced::Rectangle,
     ) -> Self::Primitive {
-        let current = self.current_frame();
-        let (width, height) = (current.width, current.height);
-        let pixels: Arc<[u8]> = match &self.prev_rgba {
-            Some(prev) if self.persistence && prev.len() == current.pixels.len() => {
-                persistence_blend(&current.pixels, prev, persistence_weight(&self.technology))
-            }
-            _ => current.pixels,
-        };
-        let renderer = TextureRenderer::with_pixels(width, height, pixels)
+        let shown = self.displayed_frame();
+        let renderer = TextureRenderer::with_pixels(shown.width, shown.height, shown.pixels)
             .key(self.texture_key)
             .overlay(self.overlay())
             .panel_base(self.panel_base_color());
@@ -327,8 +410,9 @@ mod tests {
         }
     }
 
-    /// A palette policy whose paper tone is a fixed colour, standing in for the
-    /// Game Boy's lightest palette shade.
+    /// A palette policy whose unlit tone is a fixed colour, standing in for the
+    /// Game Boy's. Its gradient is the identity on grey, so a level reads back
+    /// as itself.
     struct StubPolicy(RGB8);
     impl PalettePolicy for StubPolicy {
         fn resolve(&self, frame: &dyn ConsoleFrame) -> RgbaFrame {
@@ -340,10 +424,19 @@ mod tests {
         fn panel_base(&self) -> Option<RGB8> {
             Some(self.0)
         }
+        fn response_levels(&self, frame: &dyn ConsoleFrame) -> Option<Box<[f32]>> {
+            let level = frame.as_any().downcast_ref::<StubFrame>()?.0;
+            Some(vec![level; 160 * 144].into())
+        }
+        fn level_color(&self, level: f32) -> RGB8 {
+            let tone = (level.clamp(0.0, 1.0) * 255.0).round() as u8;
+            RGB8::new(tone, tone, tone)
+        }
     }
 
-    /// A minimal device-native frame, standing in for a delivered DMG frame.
-    struct StubFrame;
+    /// A minimal device-native frame at one uniform response level, standing in
+    /// for a delivered DMG frame.
+    struct StubFrame(f32);
     impl ConsoleFrame for StubFrame {
         fn as_any(&self) -> &dyn std::any::Any {
             self
@@ -352,7 +445,7 @@ mod tests {
             RgbaFrame::blank(160, 144)
         }
         fn clone_box(&self) -> Box<dyn ConsoleFrame> {
-            Box::new(StubFrame)
+            Box::new(StubFrame(self.0))
         }
     }
 
@@ -361,10 +454,10 @@ mod tests {
         let mut view = ScreenView::new();
         view.set_technology(lcd(LcdPanel::PassiveStn));
         view.set_palette_policy(Some(Box::new(StubPolicy(RGB8::new(0x7b, 0x82, 0x10)))));
-        view.apply(&Frame::Console(Box::new(StubFrame)));
+        view.apply(&Frame::Console(Box::new(StubFrame(0.25))));
 
-        // A device-native (index) frame plus a policy: the reflective base is
-        // the policy's paper tone, normalized to 0..1.
+        // A device-native (index) frame plus a policy: the matrix colour is the
+        // policy's unlit panel tone, normalized to 0..1.
         let base = view.panel_base_color();
         assert!((base[0] - 0x7b as f32 / 255.0).abs() < 1e-6);
         assert!((base[1] - 0x82 as f32 / 255.0).abs() < 1e-6);
@@ -372,10 +465,10 @@ mod tests {
     }
 
     #[test]
-    fn panel_base_is_the_reflective_tone_for_resolved_rgba() {
+    fn panel_base_is_the_subpixel_matrix_for_resolved_rgba() {
         // A core delivering resolved RGBA (the CGB) has no monochrome palette,
-        // so the base is the reflective grey-green constant — even if a policy
-        // is installed, since no index frame reaches it.
+        // so the gaps are the near-black subpixel mask — even if a policy is
+        // installed, since no index frame reaches it.
         let mut view = ScreenView::new();
         view.set_technology(lcd(LcdPanel::ActiveTft));
         view.set_palette_policy(Some(Box::new(StubPolicy(RGB8::new(0, 0, 0)))));
@@ -383,11 +476,13 @@ mod tests {
 
         let base = view.panel_base_color();
         let expected = [
-            CGB_REFLECTIVE_BASE.r as f32 / 255.0,
-            CGB_REFLECTIVE_BASE.g as f32 / 255.0,
-            CGB_REFLECTIVE_BASE.b as f32 / 255.0,
+            SUBPIXEL_MATRIX.r as f32 / 255.0,
+            SUBPIXEL_MATRIX.g as f32 / 255.0,
+            SUBPIXEL_MATRIX.b as f32 / 255.0,
         ];
         assert_eq!(base, expected);
+        // Well below any lit colour, so it reads as a gap rather than a wash.
+        assert!(base.iter().all(|channel| *channel < 0.1));
     }
 
     #[test]
@@ -465,6 +560,40 @@ mod tests {
             overlay_for(&lcd(LcdPanel::PassiveStn), false, true),
             ScreenOverlay::None
         );
+    }
+
+    #[test]
+    fn response_persistence_leaves_a_multi_frame_tail() {
+        // A lit pixel followed by three dark frames still reads above a tenth of
+        // its level: the accumulator decays geometrically, where the old
+        // one-frame blend had dropped it to the incoming frame by now.
+        let mut view = ScreenView::new();
+        view.set_technology(lcd(LcdPanel::PassiveStn));
+        view.set_palette_policy(Some(Box::new(StubPolicy(RGB8::new(0, 0, 0)))));
+        view.apply(&Frame::Console(Box::new(StubFrame(1.0))));
+        for _ in 0..3 {
+            view.apply(&Frame::Console(Box::new(StubFrame(0.0))));
+        }
+
+        let shown = view.displayed_frame();
+        assert!(
+            shown.pixels[0] as f32 / 255.0 >= 0.1,
+            "tail decayed to {}",
+            shown.pixels[0]
+        );
+        // Still decaying, not held.
+        assert!(shown.pixels[0] < 255);
+    }
+
+    #[test]
+    fn persistence_off_holds_no_history() {
+        let mut view = ScreenView::new();
+        view.set_technology(lcd(LcdPanel::PassiveStn));
+        view.set_palette_policy(Some(Box::new(StubPolicy(RGB8::new(0, 0, 0)))));
+        view.set_persistence(false);
+        view.apply(&Frame::Console(Box::new(StubFrame(1.0))));
+        view.apply(&Frame::Console(Box::new(StubFrame(0.0))));
+        assert!(view.history.is_none());
     }
 
     #[test]

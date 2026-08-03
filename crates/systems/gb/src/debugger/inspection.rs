@@ -593,6 +593,8 @@ impl ReadInstructionMemory for inspect::MemoryWindow {
 /// The palette-independent colour data published while the core runs, so the
 /// running panes can rebuild their render palettes with the live user palette
 /// (which can change mid-run on DMG).
+// One snapshot per vblank; boxing the CGB arrays would just add a hop.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub enum ColorSnapshot {
     Dmg {

@@ -5,14 +5,17 @@ use rgb::RGB8;
 #[derive(Clone, Copy)]
 pub struct Palette {
     colors: [RGB8; 4],
+    /// The reflective panel's unlit tone — what an undriven cell shows, which on
+    /// a real DMG is lighter and yellower than the lightest lit shade.
+    disabled: RGB8,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct PaletteIndex(pub u8);
 
 impl Palette {
-    pub const fn new(colors: [RGB8; 4]) -> Self {
-        Self { colors }
+    pub const fn new(colors: [RGB8; 4], disabled: RGB8) -> Self {
+        Self { colors, disabled }
     }
 
     pub const MONOCHROME_GREEN: Self = Self {
@@ -22,6 +25,8 @@ impl Palette {
             RGB8::new(0x39, 0x59, 0x4a),
             RGB8::new(0x2f, 0x41, 0x39),
         ],
+        // BGB-measured DMG unlit-panel tone.
+        disabled: RGB8::new(0x94, 0x8a, 0x04),
     };
 
     pub const POCKET: Self = Self {
@@ -31,6 +36,8 @@ impl Palette {
             RGB8::new(0x4d, 0x53, 0x3c),
             RGB8::new(0x1b, 0x1b, 0x1b),
         ],
+        // BGB-measured MGB unlit-panel tone.
+        disabled: RGB8::new(0xc2, 0xcf, 0xa8),
     };
 
     pub const CLASSIC: Self = Self {
@@ -40,10 +47,17 @@ impl Palette {
             RGB8::new(0x55, 0x55, 0x55),
             RGB8::new(0x00, 0x00, 0x00),
         ],
+        // Synthetic palette: no panel of its own, so the lightest shade stands in.
+        disabled: RGB8::new(0xff, 0xff, 0xff),
     };
 
     pub fn color(&self, index: PaletteIndex) -> RGB8 {
         self.colors[index.0 as usize]
+    }
+
+    /// The tone an undriven cell shows — the stop below shade 0.
+    pub fn disabled(&self) -> RGB8 {
+        self.disabled
     }
 }
 

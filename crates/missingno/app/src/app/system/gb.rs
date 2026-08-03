@@ -3,8 +3,8 @@
 //! header picks the core; the serial link, printer, boot ROM, and battery-save
 //! format are app policy wired in here.
 
-use missingno_gb::frame::GbFrame;
-use missingno_gb::ppu::types::palette::{PaletteChoice, PaletteIndex};
+use missingno_gb::frame::{self, GameBoyScreen, GbFrame};
+use missingno_gb::ppu::types::palette::{Palette, PaletteChoice, PaletteIndex};
 use missingno_gb::system::{GbConsole, LINK_CABLE, LINK_DISCONNECTED, LINK_PRINTER};
 use missingno_gb::{BootRom, GameBoy, cartridge::Cartridge, serial_transfer::SerialLink};
 use missingno_gbc::GameBoyColor;
@@ -40,11 +40,66 @@ impl PalettePolicy for GbPalettePolicy {
     }
 
     fn panel_base(&self) -> Option<rgb::RGB8> {
-        // The lightest palette shade is the panel's unlit paper — what the
-        // reflective LCD shows through the inter-pixel matrix. SGB colours
-        // don't draw from this palette, so no shade names the paper tone.
-        (!self.use_sgb_colors).then(|| self.palette.palette().color(PaletteIndex(0)))
+        // The unlit panel is what the reflective LCD shows through the
+        // inter-pixel matrix. SGB colours don't draw from this palette, so no
+        // tone there names the panel.
+        (!self.use_sgb_colors).then(|| self.palette.palette().disabled())
     }
+
+    fn response_levels(&self, frame: &dyn ConsoleFrame) -> Option<Box<[f32]>> {
+        if self.use_sgb_colors {
+            return None;
+        }
+        let frame = frame.as_any().downcast_ref::<GbFrame>()?;
+        if matches!(frame, GbFrame::GameBoy(GameBoyScreen::Off)) {
+            // An off LCD drives no cell: the whole panel sits at the unlit level.
+            let pixels = (frame::NATIVE_SIZE.0 * frame::NATIVE_SIZE.1) as usize;
+            return Some(vec![0.0; pixels].into());
+        }
+        let shades = frame.shades()?;
+        Some(
+            shades
+                .iter()
+                .map(|&shade| (shade as f32 + 1.0) / SHADE_LEVELS as f32)
+                .collect(),
+        )
+    }
+
+    fn level_color(&self, level: f32) -> rgb::RGB8 {
+        let stops = gradient_stops(self.palette.palette());
+        let last = stops.len() - 1;
+        let position = level.clamp(0.0, 1.0) * last as f32;
+        let lower = (position as usize).min(last);
+        let upper = (lower + 1).min(last);
+        let fraction = position - lower as f32;
+        let between = |a: u8, b: u8| {
+            (a as f32 + (b as f32 - a as f32) * fraction)
+                .round()
+                .clamp(0.0, 255.0) as u8
+        };
+        rgb::RGB8::new(
+            between(stops[lower].r, stops[upper].r),
+            between(stops[lower].g, stops[upper].g),
+            between(stops[lower].b, stops[upper].b),
+        )
+    }
+}
+
+/// Lit shades on the panel's transmission axis; the unlit panel sits one step
+/// below the lightest of them, at level 0.
+const SHADE_LEVELS: u8 = 4;
+
+/// The gradient a response level is read through: the unlit panel then the four
+/// lit shades, evenly spaced. The even spacing is a tuned assumption — the shade
+/// tones are measured, their positions along the response curve are not.
+fn gradient_stops(palette: &Palette) -> [rgb::RGB8; 5] {
+    [
+        palette.disabled(),
+        palette.color(PaletteIndex(0)),
+        palette.color(PaletteIndex(1)),
+        palette.color(PaletteIndex(2)),
+        palette.color(PaletteIndex(3)),
+    ]
 }
 
 /// The Game Boy colour policy for a chosen palette and SGB-colours setting.
@@ -187,4 +242,78 @@ pub fn create_console(media: MediaLoad) -> Result<Box<dyn SystemConsole>, String
         link,
         Boxed { link: kind },
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use missingno_gb::ppu::screen::Screen;
+
+    fn policy(use_sgb_colors: bool) -> GbPalettePolicy {
+        GbPalettePolicy {
+            palette: PaletteChoice::Green,
+            use_sgb_colors,
+        }
+    }
+
+    #[test]
+    fn levels_land_on_the_five_gradient_stops() {
+        let policy = policy(false);
+        let palette = PaletteChoice::Green.palette();
+        assert_eq!(policy.level_color(0.0), palette.disabled());
+        assert_eq!(policy.level_color(0.25), palette.color(PaletteIndex(0)));
+        assert_eq!(policy.level_color(0.5), palette.color(PaletteIndex(1)));
+        assert_eq!(policy.level_color(0.75), palette.color(PaletteIndex(2)));
+        assert_eq!(policy.level_color(1.0), palette.color(PaletteIndex(3)));
+    }
+
+    #[test]
+    fn a_level_between_stops_is_their_mix() {
+        let policy = policy(false);
+        let palette = PaletteChoice::Green.palette();
+        let (a, b) = (
+            palette.color(PaletteIndex(0)),
+            palette.color(PaletteIndex(1)),
+        );
+        let mid = policy.level_color(0.375);
+        assert_eq!(mid.r, ((a.r as f32 + b.r as f32) / 2.0).round() as u8);
+        assert_eq!(mid.g, ((a.g as f32 + b.g as f32) / 2.0).round() as u8);
+        assert_eq!(mid.b, ((a.b as f32 + b.b as f32) / 2.0).round() as u8);
+    }
+
+    #[test]
+    fn a_driven_screen_states_one_level_per_shade() {
+        // A driven display's shade 0 sits one step above the unlit panel.
+        let frame = GbFrame::GameBoy(GameBoyScreen::Display(Screen::default()));
+        let levels = policy(false).response_levels(&frame).unwrap();
+        assert_eq!(levels.len(), 160 * 144);
+        assert!(levels.iter().all(|&level| level == 0.25));
+        assert_eq!(
+            policy(false).level_color(levels[0]),
+            PaletteChoice::Green.palette().color(PaletteIndex(0))
+        );
+    }
+
+    #[test]
+    fn an_off_screen_sits_at_the_unlit_level() {
+        // No cell is driven with the LCD off, so the whole panel reads the
+        // unlit tone — below shade 0, not equal to it.
+        let frame = GbFrame::GameBoy(GameBoyScreen::Off);
+        let levels = policy(false).response_levels(&frame).unwrap();
+        assert_eq!(levels.len(), 160 * 144);
+        assert!(levels.iter().all(|&level| level == 0.0));
+        assert_eq!(
+            policy(false).level_color(0.0),
+            PaletteChoice::Green.palette().disabled()
+        );
+    }
+
+    #[test]
+    fn sgb_coloured_frames_state_no_response_axis() {
+        // SGB colours don't come from the monochrome palette, so there is no
+        // transmission axis to accumulate along.
+        let frame = GbFrame::GameBoy(GameBoyScreen::Off);
+        assert!(policy(true).response_levels(&frame).is_none());
+        assert!(policy(true).panel_base().is_none());
+    }
 }

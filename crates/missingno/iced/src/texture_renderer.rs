@@ -11,16 +11,26 @@ static NEXT_TEXTURE_ID: AtomicU64 = AtomicU64::new(0);
 /// the same ramp.
 pub const OVERLAY_ONSET_PX: f32 = 3.0;
 pub const OVERLAY_FULL_PX: f32 = 6.0;
-/// The LCD grid is a pixel *aperture*, not a darkening laid on top. Both Game
-/// Boy panels are reflective (no backlight): the unlit state is the pale panel
-/// base, pixels darken against it, and the inter-pixel matrix is a border that
-/// exposes that light base — so a fragment either lands inside a lit pixel or in
-/// the base-coloured gap. `APERTURE_FRACTION` is the fraction of the cell pitch,
-/// per axis, that the lit pixel fills; the remaining border is the reflective
-/// base. 0.97 keeps the matrix a hairline so the base tone reads as structure
-/// without washing the colours toward it (linear coverage 0.97/axis, 0.94 of
-/// area). Shared with the fragment shader.
-const APERTURE_FRACTION: f32 = 0.97;
+/// The LCD grid is a pixel *aperture*, not a darkening laid on top: a fragment
+/// either lands inside a lit pixel or in the inter-pixel matrix, which shows the
+/// panel behind it. `MATRIX_FRACTION` is the share of the cell pitch, per axis,
+/// that the matrix takes; `APERTURE_FRACTION` is the lit remainder. Both paths
+/// spend the same energy on the matrix, so the two agree in the mean. Shared
+/// with the fragment shader.
+const MATRIX_FRACTION: f32 = 1.0 / PRESCALE_MAX as f32;
+const APERTURE_FRACTION: f32 = 1.0 - MATRIX_FRACTION;
+/// The strongest blend toward the matrix colour a rendered line reaches. The
+/// physical fraction conserves below it; past it a larger screen keeps delicate
+/// hairlines instead of saturated lines — a perceptual cap, not panel physics.
+const MATRIX_CONTRAST: f32 = 0.5;
+/// The grid is composed at an integer prescale — one console pixel per N×N
+/// texels, matrix baked into the last row and column — so its spacing is
+/// perfectly periodic whatever the window size. The matrix width is this cap's
+/// reciprocal, so at the cap the band exactly fills its one edge texel, and
+/// past it the band spans at least one screen pixel — the analytic aperture
+/// takes over at the same strength and the handoff is seamless. One integer
+/// tunes the grid: raising it thins the matrix.
+const PRESCALE_MAX: u32 = 20;
 
 /// CRT scanlines are not a darkening laid over the picture — the beam *emits*
 /// each source row as a bright line with a soft vertical falloff, and the gaps
@@ -63,6 +73,14 @@ impl ScreenOverlay {
             ScreenOverlay::Scanlines => 2.0,
         }
     }
+}
+
+/// The integer prescale the LCD matrix composes at for a widget showing `scale`
+/// screen pixels per console pixel, or `None` past [`PRESCALE_MAX`] where the
+/// analytic aperture shader takes over.
+fn prescale_factor(scale: f32) -> Option<u32> {
+    let factor = scale.max(1.0).ceil() as u32;
+    (factor <= PRESCALE_MAX).then_some(factor)
 }
 
 /// Reusable GPU texture renderer for pixel-based graphics
@@ -127,7 +145,7 @@ impl<Message> shader::Program<Message> for TextureRenderer {
     ) -> Self::Primitive {
         TexturePrimitive {
             id: self.id,
-            overlay: self.overlay.shader_mode(),
+            overlay: self.overlay,
             panel_base: self.panel_base,
             state: Mutex::new(PrimitiveState::Pending {
                 width: self.width,
@@ -141,7 +159,7 @@ impl<Message> shader::Program<Message> for TextureRenderer {
 
 pub struct TexturePrimitive {
     id: u64,
-    overlay: f32,
+    overlay: ScreenOverlay,
     panel_base: [f32; 3],
     state: Mutex<PrimitiveState>,
     /// Set on first prepare; releases this primitive's claim on its texture
@@ -188,6 +206,33 @@ enum PrimitiveState {
 }
 
 impl TexturePrimitive {
+    /// The prescale this draw composes the matrix at: the widget's zoom rounded
+    /// up, and only for the LCD grid — every other overlay renders single-pass.
+    fn prescale(
+        &self,
+        width: u32,
+        height: u32,
+        bounds: &Rectangle,
+        viewport: &shader::Viewport,
+    ) -> Option<u32> {
+        if self.overlay != ScreenOverlay::PixelGrid {
+            return None;
+        }
+        let physical = viewport.scale_factor();
+        let per_source = (bounds.width * physical / width.max(1) as f32)
+            .max(bounds.height * physical / height.max(1) as f32);
+        prescale_factor(per_source)
+    }
+
+    /// The overlay the final pass draws: none once the matrix is baked into the
+    /// intermediate, since the grid is already in the picture it samples.
+    fn final_overlay(&self, prescale: Option<u32>) -> f32 {
+        match prescale {
+            Some(_) => ScreenOverlay::None.shader_mode(),
+            None => self.overlay.shader_mode(),
+        }
+    }
+
     /// Claim the texture entry on first prepare; `Drop` releases the claim.
     fn register(&self, pipeline: &TexturePipeline) {
         let mut registry = self.registry.lock().unwrap();
@@ -253,6 +298,8 @@ impl shader::Primitive for TexturePrimitive {
                 );
 
                 drop(textures);
+                let prescale = self.prescale(width, height, bounds, viewport);
+                pipeline.ensure_intermediate(device, self.id, prescale);
                 // Use prepare()'s bounds (screen-space) not draw()'s bounds
                 // (content-space), so the texture renders at the correct
                 // position when inside a scrollable.
@@ -261,9 +308,10 @@ impl shader::Primitive for TexturePrimitive {
                     self.id,
                     *bounds,
                     viewport,
-                    self.overlay,
+                    self.final_overlay(prescale),
                     self.panel_base,
                 );
+                pipeline.update_compose_vertices(queue, self.id, self.panel_base);
 
                 *state = PrimitiveState::Prepared {
                     width,
@@ -279,16 +327,19 @@ impl shader::Primitive for TexturePrimitive {
                 pipeline.ensure_texture(device, self.id, width, height);
                 self.register(pipeline);
 
+                let prescale = self.prescale(width, height, bounds, viewport);
+                pipeline.ensure_intermediate(device, self.id, prescale);
                 if &old_bounds != bounds {
                     pipeline.update_vertices(
                         queue,
                         self.id,
                         *bounds,
                         viewport,
-                        self.overlay,
+                        self.final_overlay(prescale),
                         self.panel_base,
                     );
                 }
+                pipeline.update_compose_vertices(queue, self.id, self.panel_base);
                 *state = PrimitiveState::Prepared {
                     width,
                     height,
@@ -310,6 +361,35 @@ impl shader::Primitive for TexturePrimitive {
             return;
         };
 
+        // Compose the console frame and its inter-pixel matrix at the integer
+        // prescale first; the final pass then resamples that to the widget.
+        if let Some(intermediate) = &texture_data.intermediate {
+            let mut compose_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("lcd_matrix_compose_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &intermediate.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            compose_pass.set_pipeline(&pipeline.compose_pipeline);
+            compose_pass.set_bind_group(0, &texture_data.bind_group, &[]);
+            compose_pass.set_vertex_buffer(0, intermediate.vertex_buffer.slice(..));
+            compose_pass.draw(0..6, 0..1);
+        }
+
+        let sampled = match &texture_data.intermediate {
+            Some(intermediate) => &intermediate.bind_group,
+            None => &texture_data.bind_group,
+        };
+
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("texture_renderer_pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -328,7 +408,7 @@ impl shader::Primitive for TexturePrimitive {
 
         render_pass.set_scissor_rect(viewport.x, viewport.y, viewport.width, viewport.height);
         render_pass.set_pipeline(&pipeline.render_pipeline);
-        render_pass.set_bind_group(0, &texture_data.bind_group, &[]);
+        render_pass.set_bind_group(0, sampled, &[]);
         render_pass.set_vertex_buffer(0, texture_data.vertex_buffer.slice(..));
         render_pass.draw(0..6, 0..1);
     }
@@ -344,14 +424,30 @@ struct TextureData {
     height: u32,
     /// Primitives currently registered against this entry; freed at zero.
     live: usize,
+    /// The prescaled compose target, present only while the LCD grid path runs.
+    intermediate: Option<Intermediate>,
+}
+
+/// The console frame at `prescale`× with the inter-pixel matrix baked in — what
+/// the final pass resamples to the widget.
+struct Intermediate {
+    view: wgpu::TextureView,
+    bind_group: wgpu::BindGroup,
+    vertex_buffer: wgpu::Buffer,
+    prescale: u32,
 }
 
 pub struct TexturePipeline {
     render_pipeline: wgpu::RenderPipeline,
+    compose_pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     textures: Arc<Mutex<HashMap<u64, TextureData>>>,
 }
+
+/// The format the matrix is composed into: the same unorm space the console
+/// frame arrives in, so the extra pass costs no colour conversion.
+const INTERMEDIATE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 impl shader::Pipeline for TexturePipeline {
     fn new(device: &wgpu::Device, _queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
@@ -437,8 +533,46 @@ impl shader::Pipeline for TexturePipeline {
             cache: None,
         });
 
+        let compose_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("lcd_matrix_compose_pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader_module,
+                entry_point: Some("vs_compose"),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<ComposeVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![
+                        0 => Float32x2,
+                        1 => Float32x3,
+                        2 => Float32,
+                    ],
+                }],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader_module,
+                entry_point: Some("fs_compose"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: INTERMEDIATE_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
         Self {
             render_pipeline,
+            compose_pipeline,
             bind_group_layout,
             sampler,
             textures: Arc::new(Mutex::new(HashMap::new())),
@@ -506,9 +640,106 @@ impl TexturePipeline {
                     width,
                     height,
                     live,
+                    intermediate: None,
                 },
             );
         }
+    }
+
+    /// Hold an intermediate at the requested prescale, reusing the existing one
+    /// where the factor is unchanged; `None` drops it and returns the entry to
+    /// the single-pass path.
+    fn ensure_intermediate(&self, device: &wgpu::Device, id: u64, prescale: Option<u32>) {
+        let mut textures = self.textures.lock().unwrap();
+        let Some(data) = textures.get_mut(&id) else {
+            return;
+        };
+        let Some(prescale) = prescale else {
+            data.intermediate = None;
+            return;
+        };
+        if data
+            .intermediate
+            .as_ref()
+            .is_some_and(|held| held.prescale == prescale)
+        {
+            return;
+        }
+
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("lcd_matrix_intermediate"),
+            size: wgpu::Extent3d {
+                width: data.width * prescale,
+                height: data.height * prescale,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: INTERMEDIATE_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("lcd_matrix_intermediate_bind_group"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("lcd_matrix_compose_vertex_buffer"),
+            size: std::mem::size_of::<[ComposeVertex; 6]>() as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        data.intermediate = Some(Intermediate {
+            view,
+            bind_group,
+            vertex_buffer,
+            prescale,
+        });
+    }
+
+    /// The compose pass's full-target quad, carrying the matrix colour and the
+    /// prescale the fragment rule needs.
+    fn update_compose_vertices(&self, queue: &wgpu::Queue, id: u64, matrix_color: [f32; 3]) {
+        let textures = self.textures.lock().unwrap();
+        let Some(intermediate) = textures
+            .get(&id)
+            .and_then(|data| data.intermediate.as_ref())
+        else {
+            return;
+        };
+
+        let prescale = intermediate.prescale as f32;
+        let corner = |position: [f32; 2]| ComposeVertex {
+            position,
+            matrix_color,
+            prescale,
+        };
+        let vertices = [
+            corner([-1.0, 1.0]),
+            corner([1.0, 1.0]),
+            corner([-1.0, -1.0]),
+            corner([-1.0, -1.0]),
+            corner([1.0, 1.0]),
+            corner([1.0, -1.0]),
+        ];
+        queue.write_buffer(
+            &intermediate.vertex_buffer,
+            0,
+            bytemuck::cast_slice(&vertices),
+        );
     }
 
     fn update_vertices(
@@ -592,6 +823,14 @@ struct Vertex {
     panel_base: [f32; 3],
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct ComposeVertex {
+    position: [f32; 2],
+    matrix_color: [f32; 3],
+    prescale: f32,
+}
+
 /// A WGSL float literal for `value` — always carrying a decimal point so it
 /// types as `f32` in the shader.
 fn wgsl_f32(value: f32) -> String {
@@ -610,6 +849,8 @@ fn shader_source() -> String {
         .replace("__OVERLAY_ONSET_PX__", &wgsl_f32(OVERLAY_ONSET_PX))
         .replace("__OVERLAY_FULL_PX__", &wgsl_f32(OVERLAY_FULL_PX))
         .replace("__APERTURE_FRACTION__", &wgsl_f32(APERTURE_FRACTION))
+        .replace("__MATRIX_FRACTION__", &wgsl_f32(MATRIX_FRACTION))
+        .replace("__MATRIX_CONTRAST__", &wgsl_f32(MATRIX_CONTRAST))
         .replace("__BEAM_SIGMA_MIN__", &wgsl_f32(BEAM_SIGMA_MIN))
         .replace("__BEAM_SIGMA_MAX__", &wgsl_f32(BEAM_SIGMA_MAX))
         .replace("__BEAM_NORM__", &wgsl_f32(BEAM_NORM))
@@ -636,6 +877,8 @@ struct VertexOutput {
 const OVERLAY_ONSET_PX: f32 = __OVERLAY_ONSET_PX__;
 const OVERLAY_FULL_PX: f32 = __OVERLAY_FULL_PX__;
 const APERTURE_FRACTION: f32 = __APERTURE_FRACTION__;
+const MATRIX_FRACTION: f32 = __MATRIX_FRACTION__;
+const MATRIX_CONTRAST: f32 = __MATRIX_CONTRAST__;
 const BEAM_SIGMA_MIN: f32 = __BEAM_SIGMA_MIN__;
 const BEAM_SIGMA_MAX: f32 = __BEAM_SIGMA_MAX__;
 const BEAM_NORM: f32 = __BEAM_NORM__;
@@ -656,6 +899,49 @@ var texture: texture_2d<f32>;
 
 @group(0) @binding(1)
 var texture_sampler: sampler;
+
+struct ComposeInput {
+    @location(0) position: vec2<f32>,
+    @location(1) matrix_color: vec3<f32>,
+    @location(2) prescale: f32,
+}
+
+struct ComposeOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) @interpolate(flat) matrix_color: vec3<f32>,
+    @location(1) @interpolate(flat) prescale: f32,
+}
+
+@vertex
+fn vs_compose(input: ComposeInput) -> ComposeOutput {
+    var output: ComposeOutput;
+    output.position = vec4<f32>(input.position, 0.0, 1.0);
+    output.matrix_color = input.matrix_color;
+    output.prescale = input.prescale;
+    return output;
+}
+
+// One console pixel becomes an N×N block of texels whose last row and column
+// carry the inter-pixel matrix. Their coverage is MATRIX_FRACTION * N up to the
+// MATRIX_CONTRAST cap — below it the block's mean is the source pixel mixed
+// with MATRIX_FRACTION of matrix per axis, the same energy the analytic
+// aperture spends; past it the line holds at the cap instead of saturating.
+// The boundary falls exactly between texels, so the edge is crisp with no
+// snapping error, and the grid is perfectly periodic whatever the final
+// resample does.
+@fragment
+fn fs_compose(input: ComposeOutput) -> @location(0) vec4<f32> {
+    let prescale = input.prescale;
+    let texel = floor(input.position.xy);
+    let cell = floor(texel / prescale);
+    let source = textureLoad(texture, vec2<i32>(cell), 0);
+
+    let within = texel - cell * prescale;
+    let coverage = min(MATRIX_CONTRAST, MATRIX_FRACTION * prescale);
+    let edge = step(vec2(prescale - 1.0), within) * coverage;
+    let matrix = edge.x + edge.y - edge.x * edge.y;
+    return vec4<f32>(mix(source.rgb, input.matrix_color, matrix), source.a);
+}
 
 fn beam_luma(rgb: vec3<f32>) -> f32 {
     return dot(rgb, BEAM_LUMA);
@@ -741,7 +1027,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let half_px = px * 0.5;
         let overlap = min(boundary_dist + half_px, g) - max(boundary_dist - half_px, -g);
         let box_cover = clamp(overlap / px, vec2(0.0), vec2(1.0));
-        let matrix_cover = select(box_cover, hairline, 2.0 * g < px);
+        let matrix_cover = min(select(box_cover, hairline, 2.0 * g < px), vec2(MATRIX_CONTRAST));
         let inside = vec2(1.0) - matrix_cover;
         let lit = mix(input.panel_base, cell_color, inside.x * inside.y);
         // Below the onset the pixels are too few screen pixels apart to resolve
@@ -839,13 +1125,13 @@ mod tests {
     /// CPU mirror of the shader's matrix coverage at shader `frac` for a
     /// `scale`-texel screen pixel (one axis): pixel-snapped constant strength
     /// while the band is a hairline, box-filter coverage once zoomed wide
-    /// enough to resolve its edges.
+    /// enough to resolve its edges, both held under the contrast cap.
     fn matrix_coverage(frac: f32, scale: f32) -> f32 {
         let aperture = APERTURE_FRACTION * 0.5;
         let g = 0.5 - aperture;
         let boundary_dist = (frac - 0.5).abs();
         let px = scale.max(0.0001);
-        if 2.0 * g < px {
+        let uncapped = if 2.0 * g < px {
             if boundary_dist < px * 0.5 {
                 (2.0 * g / px).min(1.0)
             } else {
@@ -855,7 +1141,163 @@ mod tests {
             let half_px = px * 0.5;
             let overlap = (boundary_dist + half_px).min(g) - (boundary_dist - half_px).max(-g);
             (overlap / px).clamp(0.0, 1.0)
+        };
+        uncapped.min(MATRIX_CONTRAST)
+    }
+
+    // ── Prescaled compose mirrors ────────────────────────────────────────
+
+    /// CPU mirror of the compose rule's per-axis matrix coverage for texel
+    /// `within` of a cell composed at `prescale`.
+    fn compose_edge_coverage(within: u32, prescale: u32) -> f32 {
+        if within + 1 == prescale {
+            (MATRIX_FRACTION * prescale as f32).min(MATRIX_CONTRAST)
+        } else {
+            0.0
         }
+    }
+
+    /// The mean matrix share across one axis of a composed cell.
+    fn compose_axis_mean(prescale: u32) -> f32 {
+        (0..prescale)
+            .map(|within| compose_edge_coverage(within, prescale))
+            .sum::<f32>()
+            / prescale as f32
+    }
+
+    /// The mean matrix share across a whole composed cell, with the corner
+    /// texels' two bands unioned rather than double-counted.
+    fn compose_block_mean(prescale: u32) -> f32 {
+        let mut total = 0.0;
+        for i in 0..prescale {
+            for j in 0..prescale {
+                let (x, y) = (
+                    compose_edge_coverage(i, prescale),
+                    compose_edge_coverage(j, prescale),
+                );
+                total += x + y - x * y;
+            }
+        }
+        total / (prescale * prescale) as f32
+    }
+
+    /// Screen-space centre of cell `cell`'s matrix line under the two-stage
+    /// path: the last texel of the cell in the intermediate, resampled to a
+    /// widget showing `scale` screen pixels per console pixel.
+    fn composed_line_centre(cell: u32, scale: f32, prescale: u32) -> f32 {
+        let texel_centre = (cell * prescale + prescale - 1) as f32 + 0.5;
+        texel_centre * scale / prescale as f32
+    }
+
+    /// The single-pass hairline placement: the cell boundary snaps to whichever
+    /// screen pixel contains it.
+    fn snapped_line_centre(cell: u32, scale: f32) -> f32 {
+        (cell as f32 * scale).floor() + 0.5
+    }
+
+    /// The prescale where a line's blend reaches the contrast cap; below it the
+    /// physical fraction conserves exactly.
+    fn contrast_knee() -> u32 {
+        (MATRIX_CONTRAST / MATRIX_FRACTION) as u32
+    }
+
+    #[test]
+    fn composed_cells_spend_the_matrix_share_per_axis() {
+        // Every cell gives the matrix MATRIX_FRACTION of its pitch per axis —
+        // the same energy the analytic aperture spends — until the line's blend
+        // reaches the contrast cap; past the knee it holds at the cap instead
+        // of saturating, deliberately under-spending the physical fraction.
+        for prescale in 1..=PRESCALE_MAX {
+            let mean = compose_axis_mean(prescale);
+            let expect = (MATRIX_FRACTION * prescale as f32).min(MATRIX_CONTRAST) / prescale as f32;
+            assert!(
+                (mean - expect).abs() < 1e-6,
+                "axis mean {mean} at prescale {prescale} vs {expect}"
+            );
+            if prescale <= contrast_knee() {
+                assert!(
+                    (mean - MATRIX_FRACTION).abs() < 1e-6,
+                    "axis mean {mean} at prescale {prescale} vs {MATRIX_FRACTION}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_prescale_cap_is_where_the_band_fills_its_texel() {
+        // The compose rule holds the band's full energy only while it fits the
+        // one texel it lands on; one step past the cap it would saturate and
+        // thin, which is exactly where the analytic band reaches a full screen
+        // pixel and takes over at the same strength.
+        assert!(MATRIX_FRACTION * PRESCALE_MAX as f32 <= 1.0 + 1e-6);
+        assert!(MATRIX_FRACTION * (PRESCALE_MAX + 1) as f32 > 1.0);
+    }
+
+    #[test]
+    fn composed_cells_match_the_analytic_matrix_area() {
+        // In two dimensions the union of the two bands is what the analytic
+        // path's lit area leaves over, so the two paths agree in the mean below
+        // the contrast knee.
+        let analytic = 1.0 - APERTURE_FRACTION * APERTURE_FRACTION;
+        for prescale in 1..=contrast_knee() {
+            let mean = compose_block_mean(prescale);
+            assert!(
+                (mean - analytic).abs() < 1e-6,
+                "block mean {mean} at prescale {prescale} vs {analytic}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_capped_handoff_matches_across_the_prescale_seam() {
+        // At the prescale cap a composed line is one texel at the contrast cap;
+        // just past it the analytic band is one screen pixel at the same cap —
+        // per-axis matrix means agree, so a resize across the seam doesn't
+        // visibly re-weight the grid.
+        let composed = compose_axis_mean(PRESCALE_MAX);
+        let analytic = MATRIX_FRACTION * MATRIX_CONTRAST;
+        assert!(
+            (composed - analytic).abs() < 1e-6,
+            "composed {composed} vs analytic {analytic}"
+        );
+    }
+
+    #[test]
+    fn composed_lines_are_evenly_spaced_where_snapping_alternated() {
+        // At a fractional zoom the composed grid is perfectly periodic — the
+        // intermediate is periodic and a uniform resample cannot quantise it —
+        // where the single-pass hairline snapped to alternating 4 and 5 pixel
+        // gaps.
+        let scale = 4.4;
+        let prescale = prescale_factor(scale).unwrap();
+        assert_eq!(prescale, 5);
+
+        for cell in 0..20 {
+            let gap = composed_line_centre(cell + 1, scale, prescale)
+                - composed_line_centre(cell, scale, prescale);
+            assert!(
+                (gap - scale).abs() < 0.2,
+                "gap {gap} at cell {cell} vs {scale}"
+            );
+        }
+
+        let snapped: Vec<f32> = (0..20)
+            .map(|cell| snapped_line_centre(cell + 1, scale) - snapped_line_centre(cell, scale))
+            .collect();
+        assert!(snapped.iter().any(|gap| (gap - 4.0).abs() < 1e-6));
+        assert!(snapped.iter().any(|gap| (gap - 5.0).abs() < 1e-6));
+    }
+
+    #[test]
+    fn prescale_covers_every_zoom_up_to_its_cap() {
+        // A window smaller than the console still composes, at one texel per
+        // pixel; past the cap the analytic path takes over.
+        assert_eq!(prescale_factor(0.5), Some(1));
+        assert_eq!(prescale_factor(1.0), Some(1));
+        assert_eq!(prescale_factor(2.0), Some(2));
+        assert_eq!(prescale_factor(2.1), Some(3));
+        assert_eq!(prescale_factor(PRESCALE_MAX as f32), Some(PRESCALE_MAX));
+        assert_eq!(prescale_factor(PRESCALE_MAX as f32 + 0.1), None);
     }
 
     // ── CRT beam-emission mirrors ────────────────────────────────────────
@@ -981,26 +1423,31 @@ mod tests {
     #[test]
     fn aperture_lit_fraction_matches_the_constant() {
         // The lit pixel covers APERTURE_FRACTION of the cell per axis, leaving
-        // the rest as matrix border — so the 2D lit area is that squared.
+        // MATRIX_FRACTION as matrix border — so the 2D lit area is that squared.
         let lit = lit_fraction();
         assert!(
             (lit - APERTURE_FRACTION).abs() < 1e-3,
             "one-axis lit fraction {lit} vs {APERTURE_FRACTION}"
         );
-        // The border is a thin minority of the cell — pixels nearly touch.
-        assert!(APERTURE_FRACTION > 0.8 && APERTURE_FRACTION < 1.0);
+        assert_eq!(APERTURE_FRACTION, 1.0 - MATRIX_FRACTION);
+        // The border is a minority of the cell — pixels still dominate it.
+        assert!(MATRIX_FRACTION > 0.0 && MATRIX_FRACTION < 0.5);
         let area = APERTURE_FRACTION * APERTURE_FRACTION;
-        assert!(area > 0.75, "lit area coverage {area}");
+        assert!(
+            (area - (1.0 - MATRIX_FRACTION).powi(2)).abs() < 1e-6,
+            "lit area coverage {area}"
+        );
     }
 
     #[test]
     fn aperture_blend_conserves_energy_at_every_scale() {
         // The anti-aliased blend must show the base in exact proportion to the
-        // matrix's true area — at any display scale, the mean lit fraction
-        // across a cell stays APERTURE_FRACTION. (The former smoothstep ramp
-        // spanned a full screen pixel inward from the aperture edge, blending
-        // far more base than the matrix's area and washing black toward grey.)
-        for scale in [0.0002, 0.02, 0.067, 0.167, 0.33] {
+        // matrix's true area — the mean lit fraction across a cell stays
+        // APERTURE_FRACTION wherever the contrast cap doesn't bind. (The former
+        // smoothstep ramp spanned a full screen pixel inward from the aperture
+        // edge, blending far more base than the matrix's area and washing black
+        // toward grey.)
+        for scale in [0.1, 0.15, 0.33] {
             let n = 100_000;
             let lit: f32 = (0..n)
                 .map(|i| 1.0 - matrix_coverage((i as f32 + 0.5) / n as f32, scale))
@@ -1014,15 +1461,37 @@ mod tests {
     }
 
     #[test]
+    fn past_the_cap_the_matrix_deliberately_under_spends() {
+        // Where a line would exceed the contrast cap — deep zoom, box interior
+        // or strong hairline — coverage holds at the cap and the matrix spends
+        // less than its physical fraction: large screens keep hairlines rather
+        // than saturated lines.
+        for scale in [0.0002, 0.02, 0.067] {
+            let n = 100_000;
+            let mut matrix = 0.0f32;
+            for i in 0..n {
+                let cover = matrix_coverage((i as f32 + 0.5) / n as f32, scale);
+                assert!(cover <= MATRIX_CONTRAST + 1e-6, "cover {cover} over cap");
+                matrix += cover;
+            }
+            let mean = matrix / n as f32;
+            assert!(
+                mean < MATRIX_FRACTION,
+                "mean {mean} at scale {scale} should under-spend {MATRIX_FRACTION}"
+            );
+        }
+    }
+
+    #[test]
     fn hairline_lines_have_phase_invariant_strength() {
         // In the hairline regime every rendered line carries the same coverage
         // wherever the cell boundary falls relative to the pixel grid — a
         // phase-modulated peak beats against the pixel grid as visible moiré
         // at non-integer scales.
-        for scale in [0.1_f32, 0.133, 0.2] {
-            let g = 0.5 - APERTURE_FRACTION * 0.5;
+        let g = 0.5 - APERTURE_FRACTION * 0.5;
+        for scale in [2.5 * g, 3.0 * g, 4.0 * g, 6.0 * g] {
             assert!(2.0 * g < scale, "not hairline at scale {scale}");
-            let expect = 2.0 * g / scale;
+            let expect = (2.0 * g / scale).min(MATRIX_CONTRAST);
             let n = 10_000;
             for i in 0..n {
                 let cover = matrix_coverage((i as f32 + 0.5) / n as f32, scale);
@@ -1036,17 +1505,17 @@ mod tests {
 
     #[test]
     fn aperture_coverage_is_crisp_at_high_zoom_and_proportional_when_thin() {
-        // Deep zoom (tiny footprint): full base on the boundary, zero at the
+        // Deep zoom (tiny footprint): capped base on the boundary, zero at the
         // cell centre, half-covered exactly at the aperture edge.
-        assert_eq!(matrix_coverage(0.5, 0.001), 1.0);
+        assert_eq!(matrix_coverage(0.5, 0.001), MATRIX_CONTRAST);
         assert_eq!(matrix_coverage(0.0, 0.001), 0.0);
         let edge = APERTURE_FRACTION * 0.5;
-        assert!((matrix_coverage(edge, 0.001) - 0.5).abs() < 0.01);
+        assert!((matrix_coverage(edge, 0.001) - 0.5f32.min(MATRIX_CONTRAST)).abs() < 0.01);
         // Matrix thinner than a screen pixel: the boundary fragment shows the
-        // band's share of its footprint, not full base.
+        // band's share of its footprint, up to the cap.
         let g = 0.5 - APERTURE_FRACTION * 0.5;
-        let scale = 0.167;
-        let expect = (2.0 * g) / scale;
+        let scale = 3.0 * g;
+        let expect = ((2.0 * g) / scale).min(MATRIX_CONTRAST);
         assert!((matrix_coverage(0.5, scale) - expect).abs() < 0.01);
     }
 
@@ -1066,15 +1535,27 @@ mod tests {
     }
 
     #[test]
-    fn aperture_degrades_to_plain_below_threshold() {
-        // The shader mixes plain→aperture by the visibility ramp, so below the
-        // onset (weight 0) the grid path is the plain sharp picture, and at full
-        // threshold it is entirely the aperture model.
-        assert_eq!(overlay_visibility(OVERLAY_ONSET_PX), 0.0);
-        assert_eq!(overlay_visibility(2.9), 0.0);
-        assert_eq!(overlay_visibility(OVERLAY_FULL_PX), 1.0);
-        let partial = overlay_visibility((OVERLAY_ONSET_PX + OVERLAY_FULL_PX) / 2.0);
-        assert!(partial > 0.0 && partial < 1.0);
+    fn the_grid_never_fades_out() {
+        // Every zoom the visibility ramp used to fade the grid through is now
+        // composed instead, so the grid stays legible right down to 2× rather
+        // than vanishing — energy conservation, not a threshold.
+        assert!(prescale_factor(1.0).is_some());
+        assert!(prescale_factor(OVERLAY_ONSET_PX).is_some());
+        assert!(prescale_factor(OVERLAY_FULL_PX).is_some());
+        // Where the analytic aperture does run it is far past the ramp, so its
+        // fade is saturated wherever it is selected.
+        assert!(PRESCALE_MAX as f32 > OVERLAY_FULL_PX);
+        assert_eq!(overlay_visibility(PRESCALE_MAX as f32), 1.0);
+    }
+
+    #[test]
+    fn the_analytic_aperture_only_runs_in_the_box_regime() {
+        // A matrix band of MATRIX_FRACTION spans at least one screen pixel
+        // wherever the analytic path is selected, so its hairline branch — kept
+        // for the invariant it pins — is unreachable on the grid path.
+        let g = 0.5 - APERTURE_FRACTION * 0.5;
+        let widest_analytic_footprint = 1.0 / PRESCALE_MAX as f32;
+        assert!(2.0 * g >= widest_analytic_footprint);
     }
 
     #[test]
@@ -1111,5 +1592,7 @@ mod tests {
         assert!(source.contains(&format!(
             "const APERTURE_FRACTION: f32 = {APERTURE_FRACTION};"
         )));
+        assert!(source.contains(&format!("const MATRIX_FRACTION: f32 = {MATRIX_FRACTION};")));
+        assert!(source.contains(&format!("const MATRIX_CONTRAST: f32 = {MATRIX_CONTRAST};")));
     }
 }

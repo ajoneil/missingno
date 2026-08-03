@@ -33,9 +33,9 @@ use crate::{BgAttribute, Cgb, GameBoyColor, VramDmaStatus};
 /// The 8 corrected display palettes of one CGB palette RAM.
 pub fn cram_palettes(color: impl Fn(u8, u8) -> Color555) -> [Palette; 8] {
     std::array::from_fn(|palette| {
-        Palette::new(std::array::from_fn(|index| {
-            color(palette as u8, index as u8).to_corrected_rgb8()
-        }))
+        let colors = [0, 1, 2, 3].map(|index| color(palette as u8, index).to_corrected_rgb8());
+        // A CRAM palette states no unlit tone of its own; entry 0 stands in.
+        Palette::new(colors, colors[0])
     })
 }
 

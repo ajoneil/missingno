@@ -3,6 +3,8 @@ use missingno_gb::ppu::types::palette::Palette;
 
 /// The colours the debugger panes draw with: the user-selected palette on
 /// DMG, the corrected CRAM palettes on CGB.
+// One per pane render; boxing the CGB arrays would just add a hop.
+#[allow(clippy::large_enum_variant)]
 pub enum ConsoleColors {
     Dmg {
         palette: Palette,

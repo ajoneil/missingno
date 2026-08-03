@@ -46,13 +46,35 @@ impl GbFrame {
         }
     }
 
+    /// The driven display's per-pixel shade indices, row-major. `None` where no
+    /// shade drives the pixels — the LCD off (undriven cells, not shade 0), or
+    /// an SGB frame.
+    pub fn shades(&self) -> Option<Vec<u8>> {
+        match self {
+            GbFrame::GameBoy(GameBoyScreen::Display(screen)) => {
+                let pixels = screen::PIXELS_PER_LINE as usize * screen::NUM_SCANLINES as usize;
+                let mut shades = Vec::with_capacity(pixels);
+                for y in 0..screen::NUM_SCANLINES {
+                    for x in 0..screen::PIXELS_PER_LINE {
+                        shades.push(screen.pixel(x, y).0);
+                    }
+                }
+                Some(shades)
+            }
+            GbFrame::GameBoy(GameBoyScreen::Off) | GbFrame::Sgb(_) => None,
+        }
+    }
+
     fn to_pixels(&self, palette: &Palette, use_sgb_colors: bool) -> Vec<u8> {
         match self {
             GbFrame::GameBoy(GameBoyScreen::Display(screen)) => {
                 screen_to_pixels(screen, palette, None, use_sgb_colors)
             }
+            // An off LCD drives no cell: the whole panel shows the unlit tone.
             GbFrame::GameBoy(GameBoyScreen::Off) => {
-                screen_to_pixels(&Screen::default(), palette, None, use_sgb_colors)
+                let unlit = palette.disabled();
+                let pixels = screen::PIXELS_PER_LINE as usize * screen::NUM_SCANLINES as usize;
+                [unlit.r, unlit.g, unlit.b, 255].repeat(pixels)
             }
             GbFrame::Sgb(SgbScreen::Display(screen, sgb)) => {
                 screen_to_pixels(screen, palette, Some(sgb), use_sgb_colors)
