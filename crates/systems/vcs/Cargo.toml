@@ -17,3 +17,7 @@ sha2 = { version = "0.11" }
 
 [dev-dependencies]
 png = "0.18"
+
+[[example]]
+name = "trace-from-state"
+required-features = ["morepork"]

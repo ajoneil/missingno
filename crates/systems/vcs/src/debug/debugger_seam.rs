@@ -34,6 +34,11 @@ use super::sections::vcs_sidebar_sections;
 const WINDOW_BEHIND: u16 = 128;
 const WINDOW_LEN: u16 = 512;
 
+/// A kernel that never completes a frame must not stall a trace capture: bound
+/// it at the frame budget's worth of CPU cycles (76 per scanline).
+#[cfg(feature = "morepork")]
+const CAPTURE_BUDGET_CYCLES: usize = super::frame::FRAME_BUDGET_LINES * 76;
+
 /// The per-frame snapshot for the running view.
 pub struct VcsSnapshot {
     pub state: VcsInspectState,
@@ -341,6 +346,43 @@ impl SystemDebugger for VcsDebugger {
                 self.inspect.beam, self.inspect.scanline
             ),
             frame,
+        }
+    }
+
+    fn capture_trace(&mut self, path: &std::path::Path) -> Option<VideoFrame> {
+        #[cfg(feature = "morepork")]
+        {
+            use crate::trace::{TraceScope, Tracer, Trigger};
+
+            let mut tracer = Tracer::create_hashed(
+                path,
+                self.rom_sha256.clone(),
+                self.core.console().tv_standard(),
+                Trigger::Cycle,
+                TraceScope::Full,
+            )
+            .ok()?;
+            let vcs = self.core.console_mut();
+            let mut cycles = 0u16;
+            let mut frame = None;
+            for _ in 0..CAPTURE_BUDGET_CYCLES {
+                tracer.capture(vcs, cycles).ok()?;
+                vcs.step_cpu_cycle();
+                cycles = 1;
+                if let Some(completed) = vcs.take_frame() {
+                    frame = Some(completed);
+                    break;
+                }
+            }
+            let frame = frame?;
+            tracer.mark_frame(Some(&frame)).ok()?;
+            tracer.finish().ok()?;
+            self.display(Some(frame))
+        }
+        #[cfg(not(feature = "morepork"))]
+        {
+            let _ = path;
+            None
         }
     }
 

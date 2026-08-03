@@ -143,9 +143,6 @@ impl Tracer {
         trigger: Trigger,
         scope: TraceScope,
     ) -> Result<Tracer, morepork::Error> {
-        let schema = vcs_state_schema();
-        let (columns, field_defs) = build_columns(schema, scope);
-
         let rom_sha256 = {
             let mut hasher = Sha256::new();
             hasher.update(rom);
@@ -155,6 +152,20 @@ impl Tracer {
                 .map(|b| format!("{b:02x}"))
                 .collect::<String>()
         };
+        Tracer::create_hashed(path, rom_sha256, region, trigger, scope)
+    }
+
+    /// [`Tracer::create`] for a caller that holds the ROM's hash but not its
+    /// bytes (the seam debugger fingerprints the ROM at load and drops it).
+    pub fn create_hashed(
+        path: impl AsRef<Path>,
+        rom_sha256: String,
+        region: TvStandard,
+        trigger: Trigger,
+        scope: TraceScope,
+    ) -> Result<Tracer, morepork::Error> {
+        let schema = vcs_state_schema();
+        let (columns, field_defs) = build_columns(schema, scope);
 
         let field_names: Vec<String> = field_defs.iter().map(|d| d.name.clone()).collect();
 
