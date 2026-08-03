@@ -5,26 +5,12 @@ use crate::ppu::line_counter::LineCounter;
 use crate::ppu::line_end_pipeline::{LineEndEdge, LineEndPipeline};
 use crate::ppu::stat_interrupt::{StatInterrupt, StatShadow};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VideoControl {
     pub dividers: Dividers,
     pub lines: LineCounter,
     pub stat: StatInterrupt,
     /// NYPE LINE_END redistribution DFF — produces LineEndEdge for POPU/MYTA dispatch.
     pub line_end: LineEndPipeline,
-}
-
-/// What one dot fall's divider chain moved — the edges the PPU hangs the rest
-/// of its fall on.
-pub(in crate::ppu) struct DotAdvance {
-    /// XUPY 0→1: the OAM scan chain's clock.
-    pub scan_clock_rising: bool,
-    /// TALU↑ ran, so ROPO relatched and LX advanced.
-    pub talu_rising: bool,
-    /// RUTU rose on this fall's TALU↓.
-    pub scanline_boundary: bool,
-    /// POPU 0→1 — the VBlank IF source.
-    pub vblank_rose: bool,
 }
 
 impl VideoControl {
@@ -86,44 +72,6 @@ impl VideoControl {
     /// XOTA rising: toggle WUVU. Returns previous WUVU.Q.
     pub fn tick_dot(&mut self) -> bool {
         self.dividers.tick_dot()
-    }
-
-    /// One dot fall of the divider chain and everything it clocks: WUVU
-    /// toggles, VENA captures on the toggle that leaves WUVU low, and VENA's
-    /// own edges drive NYPE, the LX/LY ripples and the LYC comparator.
-    pub(in crate::ppu) fn advance_dot(&mut self, shadow: &impl StatShadow) -> DotAdvance {
-        // XUPY = WUVU.Q; tick_dot returns previous WUVU.Q so scan_clock_rising = !was.
-        let mut advance = DotAdvance {
-            scan_clock_rising: !self.tick_dot(),
-            talu_rising: false,
-            scanline_boundary: false,
-            vblank_rose: false,
-        };
-        if !self.dividers.half_mcycle_fell() {
-            return advance;
-        }
-
-        let vena_was = self.dividers.tick_mcycle();
-        let vena_now = self.dividers.mcycle();
-        let popu_was = self.vblank();
-
-        advance.talu_rising = !vena_was && vena_now;
-        if advance.talu_rising {
-            // VENA↑ = TALU↑: ROPO captures PALY; NYPE captures POPU/MYTA; LX advances.
-            self.update_ly_comparison(shadow);
-            self.stat.latch_comparison();
-            self.on_lx_counter_clock_rise();
-            self.update_ly_comparison(shadow);
-        }
-        if vena_was && !vena_now {
-            // VENA↓ = SONO↑ = TALU↓: RUTU captures SANU; LY advances.
-            advance.scanline_boundary = self.on_lx_counter_clock_fall();
-            self.update_ly_comparison(shadow);
-        }
-
-        // POPU↑ → VYPU → LOPE: VBlank IF.
-        advance.vblank_rose = self.vblank() && !popu_was;
-        advance
     }
 
     /// Run the chain forward over the `dots` a span deferred. RUTU is low

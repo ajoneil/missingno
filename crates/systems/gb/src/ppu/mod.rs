@@ -42,8 +42,6 @@ pub mod rendering;
 mod scan;
 pub mod screen;
 mod span;
-#[cfg(debug_assertions)]
-mod span_shadow;
 pub mod stat_interrupt;
 pub mod types;
 pub mod video_control;
@@ -523,12 +521,7 @@ impl<P: PpuModel> Ppu<P> {
     /// Spend one armed dot without running it. Its divider and LX arithmetic is
     /// owed to the next [`Ppu::sync_span`].
     pub(crate) fn defer_dot(&mut self) -> bool {
-        if !self.span.defer_dot() {
-            return false;
-        }
-        #[cfg(debug_assertions)]
-        self.span.step_shadow(&self.video, self.model.stat_shadow());
-        true
+        self.span.defer_dot()
     }
 
     /// Bring LX and the divider phase up to the current dot. Every other cell a
@@ -539,8 +532,6 @@ impl<P: PpuModel> Ppu<P> {
         }
         let dots = self.span.take_deferred();
         self.video.materialize_dots(dots);
-        #[cfg(debug_assertions)]
-        self.span.compare_shadow(&self.video);
     }
 
     /// Leave the span before driving edges outside the normal dot cadence (the
@@ -611,24 +602,25 @@ impl<P: PpuModel> Ppu<P> {
     /// synchroniser captures on the M-boundary fall instead — see
     /// `eval_synced` in the fall path.
     pub fn tick_clock_domain_capture(&mut self) {
-        if !P::HAS_CLOCK_DOMAIN_SYNC {
-            return;
+        if P::HAS_CLOCK_DOMAIN_SYNC {
+            let drawing = self.mode() == Mode::Drawing;
+            self.model
+                .tick_clock_domain(drawing, self.drawing_fall_stage);
+            self.span.note_clock_domain_captured();
         }
-        // Both inputs are low on every slept dot, so one in-span capture takes
-        // the pair to its fixed point and later ones rewrite it. The capture
-        // *before* the span may have latched drawing through the XYMU dot-fall
-        // lag, so the first boundary inside it still has to run.
-        if self.span.clock_domain_settled() {
-            debug_assert!(
-                self.mode() != Mode::Drawing && !self.drawing_fall_stage,
-                "a sleeping dot drove the clock-domain capture"
-            );
-            return;
-        }
-        let drawing = self.mode() == Mode::Drawing;
-        self.model
-            .tick_clock_domain(drawing, self.drawing_fall_stage);
-        self.span.note_clock_domain_captured();
+    }
+
+    /// The CGB clock-domain pair holds the (not drawing, not drawing) fixed
+    /// point a sleeping dot cannot move it off: both its inputs are low on
+    /// every slept dot, so one in-span capture settles it and later ones
+    /// rewrite what is there.
+    pub(crate) fn clock_domain_settled(&self) -> bool {
+        let settled = self.span.clock_domain_settled();
+        debug_assert!(
+            !settled || (self.mode() != Mode::Drawing && !self.drawing_fall_stage),
+            "a sleeping dot drove the clock-domain capture"
+        );
+        settled
     }
 
     /// Double-speed M-boundary fall on the half-dot edge that carries no PPU

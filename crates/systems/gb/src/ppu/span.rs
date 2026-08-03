@@ -12,13 +12,6 @@
 
 use super::rendering::Mode;
 
-#[cfg(debug_assertions)]
-use super::span_shadow::SpanShadow;
-#[cfg(debug_assertions)]
-use super::stat_interrupt::StatShadow;
-#[cfg(debug_assertions)]
-use super::video_control::VideoControl;
-
 /// One line — the recurrence of the line-end pulse the arming predicts.
 const SPAN_CAP: u32 = 456;
 
@@ -53,8 +46,6 @@ pub(in crate::ppu) struct DotSpan {
     /// The mode a sleeping dot's readers take. Every mode transition is
     /// downstream of RUTU, which ends the span.
     mode: Mode,
-    #[cfg(debug_assertions)]
-    shadow: Option<SpanShadow>,
 }
 
 impl Default for DotSpan {
@@ -68,8 +59,6 @@ impl Default for DotSpan {
             ly_eq_lyc: false,
             vblank: false,
             mode: Mode::HorizontalBlank,
-            #[cfg(debug_assertions)]
-            shadow: None,
         }
     }
 }
@@ -162,19 +151,5 @@ impl DotSpan {
     pub(super) fn settle(&mut self, ly_eq_lyc: bool, vblank: bool) {
         self.ly_eq_lyc = ly_eq_lyc;
         self.vblank = vblank;
-    }
-
-    #[cfg(debug_assertions)]
-    pub(super) fn step_shadow(&mut self, video: &VideoControl, stat: &impl StatShadow) {
-        self.shadow
-            .get_or_insert_with(|| SpanShadow::seed(video))
-            .step(video, stat);
-    }
-
-    #[cfg(debug_assertions)]
-    pub(super) fn compare_shadow(&mut self, video: &VideoControl) {
-        if let Some(shadow) = self.shadow.take() {
-            shadow.compare(video);
-        }
     }
 }

@@ -79,7 +79,6 @@ impl DffLatch {
 /// Single-bit DFF: bool analogue of `DffLatch`. `write` drives the D input,
 /// `tick` captures D→Q on the clock edge, `output` reads Q. Edge detection
 /// derives from `output()` around `tick()`.
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DffBit {
     pending: bool,
     output: bool,

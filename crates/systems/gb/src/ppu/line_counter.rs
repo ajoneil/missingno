@@ -9,13 +9,11 @@ use crate::ppu::line_end_pipeline::LineEndEdge;
 /// LX value SANU decodes as scanline-end (113 = last dot before the RUTU pulse).
 const SANU_DECODE_LX: u8 = 113;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LineCounter {
     pub x: LineCounterX,
     pub y: LineCounterY,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LineCounterX {
     pub(in crate::ppu) value: u8,
     /// RUTU DFF. D = SANU (LX==113 decode); Q captured each TALU-fall, holds LX
@@ -23,7 +21,6 @@ pub struct LineCounterX {
     pub(in crate::ppu) line_end: DffBit,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LineCounterY {
     pub(in crate::ppu) value: u8,
     pub(in crate::ppu) vblank: bool,

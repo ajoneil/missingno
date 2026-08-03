@@ -63,7 +63,11 @@ impl<M: Model> Console<M> {
         } else {
             None
         };
-        let (new_screen, pixel) = self.fall_cpu_post(fall, video_result, dot_work, has_dot_fall);
+        // The ÷2 bare fall's standalone STAT-sync capture: keyed to the
+        // schedule, not to whether the PPU fall ran, since a deferred dot is
+        // still a dot whose fall this T-cycle carries.
+        let standalone_stat = self.capture_standalone_stat_sync(has_dot_fall, fall.mcycle_boundary);
+        let (new_screen, pixel) = self.fall_cpu_post(fall, video_result, dot_work, standalone_stat);
 
         // Only the ÷1 fall carries a dot edge for the onset settle to ride; the
         // set-settle rides every master edge.
@@ -249,17 +253,14 @@ impl<M: Model> Console<M> {
     /// read latch and write commit, the HDMA trigger, the fall path's IF
     /// requests, and the DMA/timer ticks. `video_result` is the PPU fall's
     /// output, `None` on the double-speed CPU T-cycle that carries no PPU fall
-    /// and on a dot the span deferred; `has_dot_fall` is the schedule's own
-    /// answer, which the deferral does not change.
+    /// and on a dot the span deferred.
     fn fall_cpu_post(
         &mut self,
         fall: FallEdge,
         video_result: Option<ppu::PpuTickResult<<M::Ppu as ppu::PpuModel>::Pixel>>,
         dot_work: bool,
-        has_dot_fall: bool,
+        standalone_stat: bool,
     ) -> (bool, Option<ppu::PixelOutput>) {
-        let standalone_stat = self.capture_standalone_stat_sync(has_dot_fall, fall.mcycle_boundary);
-
         if fall.tcycle.as_u8() == 2 {
             self.sample_mid_cupa_lock();
         }
@@ -377,7 +378,13 @@ impl<M: Model> Console<M> {
 
         self.chassis.cpu_bus.clear_activity();
 
-        self.chassis.ppu.tick_clock_domain_capture();
+        // The CGB clock-domain sample. One capture inside a span takes the
+        // pair to its sleeping fixed point; the boundary before the span may
+        // have latched drawing through the XYMU dot-fall lag, so that first
+        // one still has to run.
+        if !self.chassis.ppu.clock_domain_settled() {
+            self.chassis.ppu.tick_clock_domain_capture();
+        }
 
         self.tick_cpu_clock_mcycle();
 

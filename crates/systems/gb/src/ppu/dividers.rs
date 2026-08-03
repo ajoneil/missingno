@@ -1,6 +1,5 @@
 //! WUVU/VENA divider cascade clocked off XOTA.
 
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Dividers {
     /// WUVU.Q — 2-dot period (half M-cycle).
     pub(in crate::ppu) half_mcycle: bool,
