@@ -658,6 +658,8 @@ enum Message {
     HideCursorTick,
     CloseRequested,
 
+    /// Raise the transient status-line toast with an outcome to report.
+    ShowNotice(String),
     /// Time out the transient status-line toast.
     DismissNotice,
 
@@ -807,6 +809,7 @@ impl App {
             | Message::Replay
             | Message::ExportCapture(_)
             | Message::ExportCaptureSaved(..)
+            | Message::ShowNotice(_)
             | Message::DismissNotice
             | Message::SetControl(..)
             | Message::SetAxis(..)

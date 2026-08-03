@@ -190,6 +190,9 @@ impl App {
                 }
             }
             Message::ExportCaptureSaved(_, None) => {}
+            Message::ShowNotice(message) => {
+                self.show_notice(Notice::text(message));
+            }
             Message::DismissNotice => {
                 self.notice = None;
             }

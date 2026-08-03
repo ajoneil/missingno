@@ -526,16 +526,21 @@ impl Debugger {
                 })
             }
             Message::CaptureFrameTo(path) => {
+                let shown = path.display().to_string();
                 let captured = self.handle.with_session(move |s| {
                     let captured = s.debugger_mut().capture_trace(&path).is_some();
                     // The capture steps a frame; drop its audio (paused, no sink).
                     let _ = s.drain_audio_samples();
                     captured
                 });
-                if captured {
-                    self.refresh_paused();
-                }
-                Task::none()
+                let notice = match captured {
+                    true => {
+                        self.refresh_paused();
+                        format!("Trace captured to {shown}")
+                    }
+                    false => "Trace capture failed: this core has no capture backend".to_string(),
+                };
+                Task::done(app::Message::ShowNotice(notice))
             }
 
             Message::SetBreakpoint(address) => {
