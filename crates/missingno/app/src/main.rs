@@ -78,6 +78,13 @@ fn load_boot_rom(path: Option<PathBuf>) -> Option<BootRom> {
 }
 
 fn main() -> iced::Result {
+    // Under gamescope, winit's X11 backend guesses a huge scale factor from the
+    // panel's physical size; pin 1:1 unless the user already overrode it.
+    if app::running_under_gamescope() && std::env::var_os("WINIT_X11_SCALE_FACTOR").is_none() {
+        // SAFETY: no other threads exist yet.
+        unsafe { std::env::set_var("WINIT_X11_SCALE_FACTOR", "1") };
+    }
+
     let args = Args::parse();
 
     if let Some(command) = args.command {

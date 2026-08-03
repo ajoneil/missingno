@@ -33,6 +33,12 @@ use missingno_session::AttachEndpoint;
 // Cartridge reader/writer hardware support
 use crate::cartridge_rw;
 
+/// Gamescope scales a window's picture to the output but clamps the pointer to
+/// the window's own extent, so only a fullscreen window keeps them aligned.
+pub(crate) fn running_under_gamescope() -> bool {
+    std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|desktop| desktop == "gamescope")
+}
+
 pub fn run(
     rom_path: Option<PathBuf>,
     debugger: bool,
@@ -68,6 +74,7 @@ pub fn run(
     })
     .window(window::Settings {
         size: iced::Size::new(window_width, window_height),
+        fullscreen: running_under_gamescope(),
         min_size: Some(iced::Size::new(1000.0, 700.0)),
         platform_specific: window::settings::PlatformSpecific {
             application_id: "net.andyofniall.missingno".to_string(),
@@ -696,7 +703,14 @@ impl App {
             screen: Screen::Library { hovered_game: None },
             game: Game::Unloaded,
             debugger_enabled: debugger,
-            fullscreen: Fullscreen::Windowed,
+            fullscreen: if running_under_gamescope() {
+                Fullscreen::Active {
+                    cursor_hidden: false,
+                    last_mouse_move: Instant::now(),
+                }
+            } else {
+                Fullscreen::Windowed
+            },
             action_bar: ActionBar::new(),
             audio_output: None,
             session: None,
