@@ -362,6 +362,19 @@ fn generic_tools(session: &Session) -> Vec<Tool> {
             description: "The current resolved screen as a PNG image.".into(),
             input_schema: empty(),
         },
+        Tool {
+            name: "capture_trace",
+            description: "Step one frame while writing a .morepork execution trace to a \
+                          filesystem path. Errors on a core without a capture backend."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "trace file to write" },
+                },
+                "required": ["path"],
+            }),
+        },
     ];
 
     // Sub-instruction stepping is advertised only when the core names a tick
@@ -570,6 +583,7 @@ fn call_generic(session: &mut Session, name: &str, args: &Value) -> Option<ToolO
         "remove_watch" => watch_edit(session, args, false),
         "list_watches" => text(watches_text(session)),
         "get_frame" => get_frame(session),
+        "capture_trace" => capture_trace(session, args),
         _ => return None,
     };
     Some(outcome)
@@ -899,6 +913,21 @@ fn watches_text(session: &Session) -> String {
         .map(|watch| stop_text(&StopReason::Watch(watch.clone())))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn capture_trace(session: &mut Session, args: &Value) -> ToolOutcome {
+    let path = path_arg(args)?;
+    let captured = session.debugger_mut().capture_trace(&path).is_some();
+    // The capture steps a frame while every client is paused: drop its audio.
+    let _ = session.drain_audio_samples();
+    match captured {
+        true => text(format!("captured one frame to {}", path.display())),
+        false => Err(
+            "capture failed: this core has no trace-capture backend, or the frame \
+                      never completed"
+                .into(),
+        ),
+    }
 }
 
 fn get_frame(session: &Session) -> ToolOutcome {

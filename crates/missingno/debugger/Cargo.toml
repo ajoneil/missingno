@@ -19,8 +19,9 @@ gb = ["missingno-session/gb"]
 vcs = ["missingno-session/vcs"]
 nes = ["missingno-session/nes"]
 sms = ["missingno-session/sms"]
-# The MCP-over-stdio transport, over the session's agent tool surface.
-mcp = ["missingno-session/tools"]
+# The MCP-over-stdio transport, over the session's agent tool surface, with
+# the cores' trace-capture backends behind the capture_trace tool.
+mcp = ["missingno-session/tools", "missingno-session/morepork"]
 
 [dependencies]
 missingno-core = { path = "../core" }

@@ -19,6 +19,14 @@ sms = ["dep:missingno-sms"]
 # The agent tool surface and the attach endpoint that publishes it. Pulls a
 # PNG encoder for the frame tool.
 tools = ["dep:png"]
+# Trace-capture backends for the capture_trace tool: the morepork engine on
+# whichever cores are enabled.
+morepork = [
+    "missingno-gb?/morepork",
+    "missingno-gbc?/morepork",
+    "missingno-vcs?/morepork",
+    "missingno-nes?/morepork",
+]
 
 [dependencies]
 cpal = { version = "0.18", optional = true }
