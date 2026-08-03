@@ -84,7 +84,7 @@ impl LineCounter {
     /// the fall leaving WUVU low and VENA high; SANU decodes it, and the TALU↓
     /// two dots later captures it. Prediction only — nothing here advances.
     pub(in crate::ppu) fn dots_to_line_end(&self, dividers: &Dividers) -> u32 {
-        let to_talu_fall = 4 - dividers.half_mcycle as u32 - 2 * dividers.mcycle() as u32;
+        let to_talu_fall = 4 - dividers.half_mcycle as u32 - 2 * dividers.mcycle as u32;
         if self.x.line_end.pending() {
             debug_assert!(
                 to_talu_fall <= 2,
@@ -92,6 +92,7 @@ impl LineCounter {
             );
             return to_talu_fall;
         }
+        // TALU's rise sits two dots off its fall, in the same 1..=4 window.
         let to_talu_rise = (to_talu_fall + 1) % 4 + 1;
         let advances = u32::from(SANU_DECODE_LX).saturating_sub(1 + u32::from(self.x.value));
         to_talu_rise + 4 * advances + 2

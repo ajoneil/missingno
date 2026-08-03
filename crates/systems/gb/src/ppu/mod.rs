@@ -534,7 +534,8 @@ impl<P: PpuModel> Ppu<P> {
         self.video.materialize_dots(dots);
     }
 
-    /// Leave the span before driving edges outside the normal dot cadence (the
+    /// Settle what the span owes and drop it — a register write landed, or the
+    /// caller is about to drive edges outside the normal dot cadence (the
     /// speed-switch blackout).
     pub fn suspend_span(&mut self) {
         self.sync_span();

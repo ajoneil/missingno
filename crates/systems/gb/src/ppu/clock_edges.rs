@@ -16,8 +16,9 @@ impl<P: PpuModel> Ppu<P> {
         vram: &P::Vram,
         oam_bus: OamBusOwner,
     ) -> PpuTickResult<P::Pixel> {
-        // The callers only enter off an armed dot, so what the span deferred is
-        // owed here, before anything reads the counters.
+        // A caller reaches this only on a dot the span did not defer, so what
+        // earlier deferrals owe is settled here, before anything reads the
+        // counters.
         self.sync_span();
 
         if !self.control().video_enabled() {
@@ -55,8 +56,9 @@ impl<P: PpuModel> Ppu<P> {
     ) -> PpuTickResult<P::Pixel> {
         let mut result = PpuTickResult::default();
 
-        // The callers only enter off an armed dot, so what the span deferred is
-        // owed here, before anything reads the counters.
+        // A caller reaches this only on a dot the span did not defer, so what
+        // earlier deferrals owe is settled here, before anything reads the
+        // counters.
         self.sync_span();
 
         // XYMU's dot-fall crossing stage captures the pre-edge value: the

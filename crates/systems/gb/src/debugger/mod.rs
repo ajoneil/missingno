@@ -563,8 +563,8 @@ impl<M: Model> Debugger<M> {
         screen
     }
 
-    /// One instruction without the audio sync — the run loops below own their
-    /// own exit boundary.
+    /// One instruction without the observation syncs — the run loops below own
+    /// their own exit boundary.
     fn step_free(&mut self) -> Option<M::Screen> {
         let result = self.step_logged();
         self.tcycle_count += result.tcycles as u64;
@@ -621,6 +621,7 @@ impl<M: Model> Debugger<M> {
         screen
     }
 
+    /// One T-cycle without the observation syncs, for the same reason.
     fn step_tcycle_free(&mut self) -> Option<M::Screen> {
         self.tcycle_count += 1;
         if self.game_boy.step_tcycle() {

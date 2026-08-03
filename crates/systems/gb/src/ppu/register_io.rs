@@ -43,8 +43,7 @@ impl<P: PpuModel> Ppu<P> {
         halt_wake_active: bool,
         edge_carries_dot_fall: bool,
     ) -> bool {
-        self.sync_span();
-        self.span.invalidate();
+        self.suspend_span();
         let is_drawing = self.is_rendering();
 
         match register {
