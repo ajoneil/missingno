@@ -295,10 +295,6 @@ impl<A: ApuSpec> Audio<A> {
         }
         // The tick that leaves a span reconstructs it before doing its own work.
         self.materialize();
-        #[allow(unused_variables)]
-        let predicted_inert = matches!(consumed, Consumed::Inert);
-        #[cfg(debug_assertions)]
-        let mix_at_entry = self.last_mix;
         let div_apu_bit = if double_speed {
             DIV_APU_BIT_DOUBLE
         } else {
@@ -397,15 +393,6 @@ impl<A: ApuSpec> Audio<A> {
             }
         }
 
-        #[cfg(debug_assertions)]
-        if predicted_inert {
-            debug_assert!(!fs_fire, "inert span crossed a frame-sequencer strobe");
-            debug_assert!(
-                self.last_mix == mix_at_entry,
-                "inert span crossed a mix change: {mix_at_entry:?} -> {:?}",
-                self.last_mix
-            );
-        }
         if self.span.ready_to_arm() {
             debug_assert_eq!(
                 self.channel_clock.counter, self.channels.ch4.mhz_prescaler.counter,

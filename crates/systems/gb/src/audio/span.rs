@@ -37,9 +37,6 @@ pub(super) const SWEEP_STEP_PHASE: u8 = 1;
 pub(super) enum Consumed {
     /// Outside any span — the slow path owns this tick.
     Miss,
-    /// Inside a span the predictor claimed but is not skipping. Only a
-    /// sub-threshold arm produces it, and `hold_off` takes those instead.
-    Inert,
     /// Inside a skipped span: the tick's work is deferred to materialisation.
     Skipped,
 }
@@ -51,7 +48,6 @@ pub struct SpanPredictor {
     inert_ticks: u32,
     /// Ticks skipped so far in this span, awaiting materialisation.
     skipped: u32,
-    skipping: bool,
     skipped_last_tick: bool,
     /// The KEY1 regime the span was armed in. It fixes the tick cadence and the
     /// DIV-APU tap, and a speed switch invalidates, so it holds span-wide.
@@ -79,9 +75,6 @@ impl SpanPredictor {
         }
         self.inert_ticks -= 1;
         self.expect_after(div_counter, t_index);
-        if !self.skipping {
-            return Consumed::Inert;
-        }
         self.skipped += 1;
         self.last_div_counter = div_counter;
         self.skipped_last_tick = true;
@@ -126,10 +119,11 @@ impl SpanPredictor {
         run
     }
 
+    /// Callers arm only at or above [`THRESHOLD`]; shorter predictions go to
+    /// `hold_off` instead, so every armed span skips.
     pub(super) fn arm(&mut self, inert_ticks: u32, div_counter: u16, t_index: u8, ds: bool) {
         self.inert_ticks = inert_ticks.min(SPAN_CAP);
         self.double_speed = ds;
-        self.skipping = self.inert_ticks >= THRESHOLD;
         self.skipped = 0;
         self.expect_after(div_counter, t_index);
     }
