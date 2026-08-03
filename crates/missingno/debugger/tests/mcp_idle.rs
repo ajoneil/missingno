@@ -19,8 +19,9 @@ fn write_minimal_rom() -> std::path::PathBuf {
 }
 
 /// Run the idle MCP server over the given request lines, returning the response
-/// object for each request id, in the order the server emitted them.
-fn exchange(lines: &[Value]) -> Vec<Value> {
+/// object for each request id in the order the server emitted them, and the
+/// methods of the notifications interleaved between them.
+fn exchange(lines: &[Value]) -> (Vec<Value>, Vec<String>) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_missingno-debugger"))
         .arg("--mcp")
         .stdin(Stdio::piped())
@@ -39,12 +40,18 @@ fn exchange(lines: &[Value]) -> Vec<Value> {
     child.stdin.take();
 
     let stdout = child.stdout.take().expect("child stdout");
-    let responses: Vec<Value> = BufReader::new(stdout)
-        .lines()
-        .map(|line| serde_json::from_str(&line.expect("stdout line")).expect("valid JSON-RPC"))
-        .collect();
+    let mut responses = Vec::new();
+    let mut notifications = Vec::new();
+    for line in BufReader::new(stdout).lines() {
+        let message: Value =
+            serde_json::from_str(&line.expect("stdout line")).expect("valid JSON-RPC");
+        match message.get("id") {
+            Some(_) => responses.push(message),
+            None => notifications.push(message["method"].as_str().unwrap_or("").to_string()),
+        }
+    }
     child.wait().expect("child exits");
-    responses
+    (responses, notifications)
 }
 
 /// The names of the tools in a `tools/list` result.
@@ -70,7 +77,7 @@ fn idle_server_loads_a_rom_and_ejects() {
     let rom = write_minimal_rom();
     let rom = rom.to_str().unwrap();
 
-    let responses = exchange(&[
+    let (responses, notifications) = exchange(&[
         json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
         json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }),
         json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call",
@@ -86,8 +93,13 @@ fn idle_server_loads_a_rom_and_ejects() {
         json!({ "jsonrpc": "2.0", "id": 9, "method": "shutdown" }),
     ]);
 
-    // One response per request, in id order.
+    // One response per request, in id order; load_rom and eject each swap the
+    // tool set, so each also announces the change.
     assert_eq!(responses.len(), 9);
+    assert_eq!(
+        notifications, ["notifications/tools/list_changed"; 2],
+        "load_rom and eject each notify"
+    );
 
     // initialize: the server names itself idle before any ROM is loaded.
     let name = responses[0]["result"]["serverInfo"]["name"]
@@ -138,7 +150,7 @@ fn set_breakpoint_rejects_a_synthetic_address() {
     let rom = write_minimal_rom();
     let rom = rom.to_str().unwrap();
 
-    let responses = exchange(&[
+    let (responses, _) = exchange(&[
         json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
         json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call",
                 "params": { "name": "load_rom", "arguments": { "path": rom } } }),
