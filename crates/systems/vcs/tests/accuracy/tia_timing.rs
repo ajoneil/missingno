@@ -644,6 +644,21 @@ fn reset_same_line_secam() {
 }
 
 #[test]
+fn resp_restrobe_ntsc() {
+    common::run_self_test("tia-timing/resp-restrobe_ntsc.a26", TvStandard::Ntsc);
+}
+
+#[test]
+fn resp_restrobe_pal() {
+    common::run_self_test("tia-timing/resp-restrobe_pal.a26", TvStandard::Pal);
+}
+
+#[test]
+fn resp_restrobe_secam() {
+    common::run_self_test("tia-timing/resp-restrobe_secam.a26", TvStandard::Secam);
+}
+
+#[test]
 fn rsync_ntsc() {
     common::run_self_test("tia-timing/rsync_ntsc.a26", TvStandard::Ntsc);
 }
