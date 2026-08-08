@@ -17,6 +17,15 @@ const ROM_BANK_SIZE: usize = 0x800;
 const RAM_BANK_SIZE: usize = 0x400;
 /// Stella's ceiling for the scheme, and more than any image uses.
 const RAM_BANKS: usize = 32;
+/// The bank number is the whole latched byte, so the scheme reaches 256 banks.
+const MAX_ROM_BANKS: usize = 256;
+
+/// Whether an image is a whole number of ROM banks within the scheme's reach.
+/// Unlike the commercial boards, 3E has no one size: the image says how many
+/// banks the cart carries.
+pub fn holds(len: usize) -> bool {
+    len.is_multiple_of(ROM_BANK_SIZE) && (1..=MAX_ROM_BANKS).contains(&(len / ROM_BANK_SIZE))
+}
 
 const ROM_HOTSPOT: u16 = 0x3F;
 const RAM_HOTSPOT: u16 = 0x3E;

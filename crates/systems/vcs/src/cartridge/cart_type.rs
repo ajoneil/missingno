@@ -5,7 +5,7 @@
 //! The one exception is the Superchip, whose RAM shadows the bottom of every
 //! bank and leaves a readable mark in the image.
 
-use super::{ar, atari, dpc};
+use super::{ar, atari, dpc, three_e};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum CartridgeError {
@@ -27,12 +27,14 @@ impl std::fmt::Display for CartridgeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CartridgeError::UnsupportedSize(size) => write!(f, "unsupported image size {size}"),
-            CartridgeError::WrongSizeForBoard { cart_type, size } => write!(
-                f,
-                "image is {size} bytes but a {} board holds {}",
-                cart_type.code(),
-                cart_type.image_size()
-            ),
+            CartridgeError::WrongSizeForBoard { cart_type, size } => match cart_type.image_size() {
+                Some(holds) => write!(
+                    f,
+                    "image is {size} bytes but a {} board holds {holds}",
+                    cart_type.code()
+                ),
+                None => write!(f, "image is {size} bytes, no {} image", cart_type.code()),
+            },
             CartridgeError::LoadChecksum { unit, page: None } => {
                 write!(f, "Supercharger load {unit}: header checksum error")
             }
@@ -245,17 +247,22 @@ impl CartType {
             // A DPC dump ends with however much of the RNG stream the dumper
             // happened to catch, so the tail's length varies; the common dump
             // is one byte short of a full page of it.
-            CartType::Dpc => (dpc::IMAGE_SIZE..=self.image_size()).contains(&len),
+            CartType::Dpc => self
+                .image_size()
+                .is_some_and(|with_tail| (dpc::IMAGE_SIZE..=with_tail).contains(&len)),
             // A Supercharger image is a tape container: one load unit per tape
             // load, and a multi-load title carries several.
             CartType::Ar => ar::is_container(len),
-            _ => len == self.image_size(),
+            CartType::ThreeE => three_e::holds(len),
+            _ => self.image_size() == Some(len),
         }
     }
 
-    /// The image size the board is wired for.
-    pub(super) fn image_size(self) -> usize {
-        match self {
+    /// The image size the board is wired for, where its wiring fixes one. A
+    /// board that sizes itself from the image has none, so a longer image is
+    /// not padding there is anywhere to trim back to.
+    pub(super) fn image_size(self) -> Option<usize> {
+        Some(match self {
             CartType::Plain2K => 0x800,
             CartType::Plain4K => 0x1000,
             CartType::F8
@@ -275,17 +282,18 @@ impl CartType {
             CartType::Cv => 0x800,
             // 8 KB program + 2 KB display, and the dumper's trailing RNG stream.
             CartType::Dpc => 0x2900,
-            CartType::Ar => ar::IMAGE_SIZE,
             CartType::F0 => 0x10000,
             CartType::Jane => 0x4000,
             CartType::Wf8
             | CartType::Wd
             | CartType::ZeroFa0
             | CartType::Zero3E0
-            | CartType::ThreeE
             | CartType::ThreeEPlus => 0x2000,
             CartType::Fc => 0x8000,
-        }
+            // A Supercharger container holds as many tape loads as the title
+            // needs, and a 3E image as many banks as the cart carries.
+            CartType::Ar | CartType::ThreeE => return None,
+        })
     }
 }
 

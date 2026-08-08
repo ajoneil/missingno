@@ -186,12 +186,13 @@ impl Cartridge {
             });
         };
         let rom = match fit {
-            // A Supercharger image is a fastload container rather than the
-            // board's contents, and a multi-load one is several of them, so its
-            // length is no board size to trim to.
-            DumpFit::Overdump if cart_type != CartType::Ar => {
-                rom.get(..cart_type.image_size()).unwrap_or(rom)
-            }
+            // A board that sizes itself from the image — a Supercharger
+            // fastload container, a 3E cart's bank count — states no length for
+            // the padding to be trimmed back to.
+            DumpFit::Overdump => match cart_type.image_size() {
+                Some(size) => rom.get(..size).unwrap_or(rom),
+                None => rom,
+            },
             _ => rom,
         };
         Ok(Cartridge {
@@ -472,6 +473,38 @@ mod tests {
             error.to_string(),
             "image is 4096 bytes but a 2K board holds 2048"
         );
+    }
+
+    #[test]
+    fn a_3e_image_is_as_many_banks_as_the_cart_carries() {
+        // 240 banks — no power of two, and far past the eight the commercial
+        // boards stop at.
+        let banks = 240;
+        let rom: Vec<u8> = (0..banks).flat_map(|bank| [bank as u8; 0x800]).collect();
+        let mut cart =
+            Cartridge::load(&rom, Some(CartType::ThreeE), CLOCK, DumpFit::Exact).unwrap();
+        // The upper half is the last bank, whatever the lower half shows.
+        assert_eq!(cart.read(0xF800, 0), Some(banks as u8 - 1));
+        for bank in [0, 17, banks - 1] {
+            // `sta $3F` arms the latch; the next cycle's A12 rise clocks the
+            // bank number the bus still carries.
+            cart.write_access(0x003F, bank as u8, 0);
+            cart.read(0xF800, bank as u8);
+            assert_eq!(cart.read(0xF000, 0), Some(bank as u8));
+        }
+    }
+
+    #[test]
+    fn a_3e_image_short_of_a_whole_bank_is_refused() {
+        let error = Cartridge::load(
+            &vec![0u8; 0x900],
+            Some(CartType::ThreeE),
+            CLOCK,
+            DumpFit::Exact,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.to_string(), "image is 2304 bytes, no 3E image");
     }
 
     #[test]
