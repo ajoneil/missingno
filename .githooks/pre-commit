@@ -1,0 +1,7 @@
+#!/bin/sh
+# Formatting is a commit gate: a clean `cargo fmt --check` or no commit.
+if ! cargo fmt --check >/dev/null 2>&1; then
+    echo "pre-commit: cargo fmt --check failed - run 'cargo fmt' and re-stage." >&2
+    cargo fmt --check 2>/dev/null | head -20 >&2
+    exit 1
+fi
