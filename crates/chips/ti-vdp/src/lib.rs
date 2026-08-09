@@ -53,17 +53,17 @@ const SPRITE_TERMINATOR: u8 = 0xD0;
 
 /// One DRAM memory cycle is two dots = four XTAL periods; 171 per line.
 const XTALS_PER_CYCLE: u64 = 4;
-/// CPU windows in an active non-text line come every 16 memory cycles,
-/// eleven per line, the line's remaining 11 cycles forming the short gap
-/// (171 = 10x16 + 11). The schedule's rotation against hsync is
-/// unmeasured on silicon; the gap sits at the table's wrap.
-const CYCLES_PER_WINDOW: u64 = 16;
-const WINDOWS_PER_LINE: u64 = 11;
-/// A window services the pending access only if the request latched this
-/// many crystal periods before the transfer instant — the cross-domain
-/// latch margin, anchored against the canonical map (exact 228-bit
-/// up-to-rotation compare, hardware-measured).
-const SERVICE_MARGIN_XTALS: u64 = 12;
+/// The eleven CPU windows of an active non-text line, as memory-cycle
+/// start positions. The spacings (16,16,16,16,15,16,15,13,16,16,16,
+/// summing 171) are the schedule the SC-3000's canonical map traces out;
+/// its rotation against hsync is unmeasured, so the origin is a free
+/// convention.
+const WINDOW_START_CYCLES: [u64; 11] = [0, 16, 32, 48, 64, 79, 95, 110, 123, 139, 155];
+/// A window takes the pending access only if the request latched this
+/// many crystal periods before the window opens; the transfer then
+/// occupies the window's memory cycle, committing at its end, and a
+/// newer request replaces the data in flight until that commit.
+const LATCH_MARGIN_XTALS: u64 = 12;
 
 /// A CPU-port VRAM access waiting for its memory slot.
 enum PendingAccess {
@@ -247,23 +247,25 @@ impl Vdp {
         }
     }
 
-    /// The earliest CPU window whose transfer instant sits at least the
-    /// latch margin after now.
+    /// The commit instant of the earliest CPU window that opens at least
+    /// the latch margin after now.
     fn next_window(&self) -> u64 {
-        let margin = SERVICE_MARGIN_XTALS;
-        let span = CYCLES_PER_WINDOW * XTALS_PER_CYCLE;
-        let line = XTALS_PER_LINE as u64;
         let phase = self.xtal_in_line as u64;
-        let earliest = phase + margin;
-        let index = earliest.div_ceil(span);
-        let target = if index < WINDOWS_PER_LINE {
-            index * span
-        } else if line >= earliest {
-            line
-        } else {
-            line + span
-        };
-        self.xtal_total + (target - phase)
+        let earliest = phase + LATCH_MARGIN_XTALS;
+        let line = XTALS_PER_LINE as u64;
+        let start = WINDOW_START_CYCLES
+            .iter()
+            .map(|&c| c * XTALS_PER_CYCLE)
+            .find(|&w| w >= earliest)
+            .unwrap_or_else(|| {
+                let next_line_first = line + WINDOW_START_CYCLES[0] * XTALS_PER_CYCLE;
+                if next_line_first >= earliest {
+                    next_line_first
+                } else {
+                    line + WINDOW_START_CYCLES[1] * XTALS_PER_CYCLE
+                }
+            });
+        self.xtal_total + (start + XTALS_PER_CYCLE - phase)
     }
 
     fn complete(&mut self, access: PendingAccess) {
