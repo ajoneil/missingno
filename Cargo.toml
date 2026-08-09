@@ -16,6 +16,7 @@ members = [
     "crates/systems/sms",
     "crates/systems/vcs",
     "crates/chips/mos-6502",
+    "crates/chips/ti-vdp",
     "crates/chips/zilog-z80",
 ]
 # The shipping set; the immature cores build only via -p.
@@ -31,6 +32,7 @@ default-members = [
     "crates/systems/gbc",
     "crates/systems/vcs",
     "crates/chips/mos-6502",
+    "crates/chips/ti-vdp",
     "crates/chips/zilog-z80",
 ]
 

@@ -1,0 +1,10 @@
+[package]
+name = "missingno-ti-vdp"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+missingno-core = { path = "../../missingno/core" }
+
+[dev-dependencies]
+missingno-zilog-z80 = { path = "../zilog-z80" }

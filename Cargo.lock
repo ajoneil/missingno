@@ -3134,6 +3134,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "missingno-ti-vdp"
+version = "26.9.0"
+dependencies = [
+ "missingno-core 26.9.0",
+ "missingno-zilog-z80",
+]
+
+[[package]]
 name = "missingno-vcs"
 version = "26.9.0"
 dependencies = [
