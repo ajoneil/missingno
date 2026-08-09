@@ -1,5 +1,7 @@
-//! Instruction dispatch: algorithmic decode over the octal opcode fields,
-//! shared across the base table and the CB/ED/DD/FD/DDCB/FDCB prefixes.
+//! Atomic instruction dispatch for the groups the sequencer does not plan:
+//! the DD/FD index prefixes and everything reached through them (the indexed
+//! main table, DDCB/FDCB, and the ED table under an index prefix), plus HALT.
+//! Decode is algorithmic over the octal opcode fields throughout.
 
 use crate::decode::{AluOp, Fields, INT_MODE, Reg, RotOp};
 use crate::{Bus, Cpu};
@@ -51,14 +53,6 @@ pub(super) fn real_reg(idx: u8) -> Reg {
 impl Cpu {
     pub(super) fn execute(&mut self, bus: &mut impl Bus, opcode: u8) {
         match opcode {
-            0xCB => {
-                let sub = self.opcode_fetch(bus);
-                self.execute_cb(bus, sub, Index::Hl);
-            }
-            0xED => {
-                let sub = self.opcode_fetch(bus);
-                self.execute_ed(bus, sub);
-            }
             0xDD => self.execute_prefixed(bus, Index::Ix),
             0xFD => self.execute_prefixed(bus, Index::Iy),
             _ => self.execute_main(bus, opcode, Index::Hl),
@@ -386,10 +380,8 @@ impl Cpu {
                     self.wz = address;
                     self.pc = address;
                 }
-                1 => {
-                    let sub = self.opcode_fetch(bus);
-                    self.execute_cb(bus, sub, Index::Hl);
-                }
+                // y == 1 is the CB prefix, which the sequencer plans itself.
+                1 => unreachable!(),
                 2 => {
                     let port_lo = self.imm8(bus);
                     let port = ((self.a as u16) << 8) | port_lo as u16;
@@ -518,36 +510,6 @@ impl Cpu {
                 self.dec8(value)
             };
             self.set_reg(reg, result);
-        }
-    }
-
-    fn execute_cb(&mut self, bus: &mut impl Bus, opcode: u8, _index: Index) {
-        let f = Fields::new(opcode);
-        if f.z == 6 {
-            let address = self.hl();
-            let value = self.mem_read(bus, address);
-            self.internal(1);
-            match f.x {
-                0 => {
-                    let result = self.rotate(RotOp::from_index(f.y), value);
-                    self.mem_write(bus, address, result);
-                }
-                1 => self.bit(f.y, value, (self.wz >> 8) as u8),
-                2 => self.mem_write(bus, address, value & !(1 << f.y)),
-                _ => self.mem_write(bus, address, value | (1 << f.y)),
-            }
-        } else {
-            let reg = real_reg(f.z);
-            let value = self.reg(reg);
-            match f.x {
-                0 => {
-                    let result = self.rotate(RotOp::from_index(f.y), value);
-                    self.set_reg(reg, result);
-                }
-                1 => self.bit(f.y, value, value),
-                2 => self.set_reg(reg, value & !(1 << f.y)),
-                _ => self.set_reg(reg, value | (1 << f.y)),
-            }
         }
     }
 

@@ -9,12 +9,13 @@
 //! `step` runs a whole instruction and returns its T-state count so a
 //! console can advance the VDP by the matching number of dots.
 //!
-//! Granularity limit: the unprefixed main table walks its own T-states, each
-//! bus access landing on the tick its pins assert. The CB/ED/DD/FD prefixes,
-//! HALT's re-fetch loop and interrupt acceptance still execute atomically on
-//! the T that latches their opcode, handing the remaining T-states back as
-//! already-recorded padding — a board interleaving other chips between ticks
-//! sees those instructions' accesses bunched at that tick.
+//! Granularity limit: the unprefixed main table and the CB and ED prefixes
+//! walk their own T-states, each bus access landing on the tick its pins
+//! assert. The DD/FD index prefixes (and DDCB/FDCB), HALT's re-fetch loop and
+//! interrupt acceptance still execute atomically on the T that latches their
+//! opcode, handing the remaining T-states back as already-recorded padding —
+//! a board interleaving other chips between ticks sees those instructions'
+//! accesses bunched at that tick.
 //!
 //! Interrupt entry (NMI, IM 0/1/2 maskable) implements the documented
 //! acceptance semantics, but the SingleStepTests set contains no interrupt
@@ -248,7 +249,7 @@ impl Cpu {
 
     /// Advance one T-state. A sequenced instruction records exactly this
     /// T-state's bus snapshot and fires any bus call it carries; an
-    /// unsequenced one (a prefix, HALT's re-fetch, an accepted interrupt)
+    /// unsequenced one (an index prefix, HALT's re-fetch, an accepted interrupt)
     /// records its remainder at once and hands those T-states back one per
     /// call, touching neither bus nor trace.
     pub fn tick(&mut self, bus: &mut impl Bus) {

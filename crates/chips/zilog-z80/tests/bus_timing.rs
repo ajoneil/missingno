@@ -57,9 +57,10 @@ impl Bus for ProbeBus {
     }
 }
 
-/// Runs one instruction a tick at a time, returning the bus calls it made,
-/// the T-state count, and the tick each pin-asserted trace entry sits on.
-fn probe(program: &[u8], prepare: impl FnOnce(&mut Cpu)) -> (Vec<Call>, usize, Vec<Call>) {
+/// Runs one instruction a tick at a time, returning the retired CPU, the bus
+/// calls it made, the T-state count, and the tick each pin-asserted trace
+/// entry sits on.
+fn probe(program: &[u8], prepare: impl FnOnce(&mut Cpu)) -> (Cpu, Vec<Call>, usize, Vec<Call>) {
     let mut cpu = Cpu::new();
     cpu.pc = 0x0000;
     prepare(&mut cpu);
@@ -92,15 +93,21 @@ fn probe(program: &[u8], prepare: impl FnOnce(&mut Cpu)) -> (Vec<Call>, usize, V
         })
         .collect();
 
-    (bus.calls, ticks, asserted)
+    (cpu, bus.calls, ticks, asserted)
 }
 
 /// The per-T contract: call `n` arrives on the tick recording the `n`th
 /// pin-asserted `BusCycle`.
 fn sequenced(program: &[u8], prepare: impl FnOnce(&mut Cpu)) -> (Vec<Call>, usize) {
-    let (calls, ticks, asserted) = probe(program, prepare);
-    assert_eq!(calls, asserted, "bus calls vs pin-asserted T-states");
+    let (_, calls, ticks) = sequenced_state(program, prepare);
     (calls, ticks)
+}
+
+/// As `sequenced`, also handing back the CPU the instruction retired into.
+fn sequenced_state(program: &[u8], prepare: impl FnOnce(&mut Cpu)) -> (Cpu, Vec<Call>, usize) {
+    let (cpu, calls, ticks, asserted) = probe(program, prepare);
+    assert_eq!(calls, asserted, "bus calls vs pin-asserted T-states");
+    (cpu, calls, ticks)
 }
 
 #[test]
@@ -232,11 +239,9 @@ fn exchange_stack_top() {
     );
 }
 
-/// The prefixes still execute atomically at the T that latches their opcode —
-/// the stated limit the main table no longer has.
 #[test]
-fn prefixed_accesses_still_bunch_at_the_opcode_tick() {
-    let (calls, ticks, _) = probe(&[0xCB, 0x46], |cpu| {
+fn test_bit_at_hl() {
+    let (calls, ticks) = sequenced(&[0xCB, 0x46], |cpu| {
         cpu.h = 0x12;
         cpu.l = 0x34;
     });
@@ -245,8 +250,125 @@ fn prefixed_accesses_still_bunch_at_the_opcode_tick() {
         calls,
         [
             (1, Access::MemRead, 0x0000),
+            (5, Access::MemRead, 0x0001),
+            (9, Access::MemRead, 0x1234),
+        ]
+    );
+}
+
+#[test]
+fn set_bit_at_hl() {
+    let (calls, ticks) = sequenced(&[0xCB, 0xCE], |cpu| {
+        cpu.h = 0x12;
+        cpu.l = 0x34;
+    });
+    assert_eq!(ticks, 15);
+    assert_eq!(
+        calls,
+        [
+            (1, Access::MemRead, 0x0000),
+            (5, Access::MemRead, 0x0001),
+            (9, Access::MemRead, 0x1234),
+            (13, Access::MemWrite, 0x1234),
+        ]
+    );
+}
+
+#[test]
+fn block_transfer() {
+    let (calls, ticks) = sequenced(&[0xED, 0xA0], |cpu| {
+        cpu.h = 0x12;
+        cpu.l = 0x34;
+        cpu.d = 0x23;
+        cpu.e = 0x45;
+        cpu.b = 0x00;
+        cpu.c = 0x02;
+    });
+    assert_eq!(ticks, 16);
+    assert_eq!(
+        calls,
+        [
+            (1, Access::MemRead, 0x0000),
+            (5, Access::MemRead, 0x0001),
+            (9, Access::MemRead, 0x1234),
+            (12, Access::MemWrite, 0x2345),
+        ]
+    );
+}
+
+/// A repeating iteration adds its five internal T-states and rewinds PC over
+/// the two opcode bytes, so the next fetch runs the same instruction again.
+#[test]
+fn repeating_block_transfer_iteration() {
+    let (cpu, calls, ticks) = sequenced_state(&[0xED, 0xB0], |cpu| {
+        cpu.h = 0x12;
+        cpu.l = 0x34;
+        cpu.d = 0x23;
+        cpu.e = 0x45;
+        cpu.b = 0x00;
+        cpu.c = 0x02;
+    });
+    assert_eq!(ticks, 21);
+    assert_eq!(
+        calls,
+        [
+            (1, Access::MemRead, 0x0000),
+            (5, Access::MemRead, 0x0001),
+            (9, Access::MemRead, 0x1234),
+            (12, Access::MemWrite, 0x2345),
+        ]
+    );
+    assert_eq!(cpu.pc, 0x0000);
+}
+
+#[test]
+fn input_from_bc_port() {
+    let (calls, ticks) = sequenced(&[0xED, 0x40], |cpu| {
+        cpu.b = 0x12;
+        cpu.c = 0x34;
+    });
+    assert_eq!(ticks, 12);
+    assert_eq!(
+        calls,
+        [
+            (1, Access::MemRead, 0x0000),
+            (5, Access::MemRead, 0x0001),
+            (10, Access::IoRead, 0x1234),
+        ]
+    );
+}
+
+#[test]
+fn rotate_digits_right() {
+    let (calls, ticks) = sequenced(&[0xED, 0x67], |cpu| {
+        cpu.h = 0x12;
+        cpu.l = 0x34;
+    });
+    assert_eq!(ticks, 18);
+    assert_eq!(
+        calls,
+        [
+            (1, Access::MemRead, 0x0000),
+            (5, Access::MemRead, 0x0001),
+            (9, Access::MemRead, 0x1234),
+            (16, Access::MemWrite, 0x1234),
+        ]
+    );
+}
+
+/// The index prefixes still execute atomically at the T that latches their
+/// opcode — the stated limit the sequenced groups no longer have.
+#[test]
+fn index_prefixed_accesses_still_bunch_at_the_opcode_tick() {
+    let (_, calls, ticks, _) = probe(&[0xDD, 0x7E, 0x05], |cpu| cpu.ix = 0x1230);
+    assert_eq!(ticks, 19);
+    assert_eq!(
+        calls,
+        [
+            (1, Access::MemRead, 0x0000),
             (3, Access::MemRead, 0x0001),
-            (3, Access::MemRead, 0x1234),
+            (3, Access::MemRead, 0x0002),
+            (3, Access::MemRead, 0x1235),
         ]
     );
 }

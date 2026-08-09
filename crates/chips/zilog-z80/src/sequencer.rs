@@ -2,7 +2,7 @@
 //! a machine-cycle runner carrying each cycle's fixed per-T schedule, and an
 //! instruction plan above it, consulted only at cycle boundaries.
 
-use crate::decode::{AluOp, Fields, Reg, RotOp};
+use crate::decode::{AluOp, Fields, INT_MODE, Reg, RotOp};
 use crate::execute::real_reg;
 use crate::{Bus, Cpu, Pins};
 
@@ -28,12 +28,23 @@ impl Cycle {
     }
 }
 
-/// Where the instruction is: M1 in flight, or a chosen body part-way through
-/// its machine cycles.
+/// Where the instruction is: M1 in flight, a prefix's second M1 in flight, or
+/// a chosen body part-way through its machine cycles.
 #[derive(Clone, Copy)]
 enum Plan {
     OpcodeFetch,
+    PrefixFetch { prefix: Prefix },
     Body { body: Body, step: u8 },
+}
+
+/// The prefix whose second opcode fetch is in flight — each is its own
+/// instruction table.
+#[derive(Clone, Copy)]
+enum Prefix {
+    /// CB: rotates, shifts, BIT/RES/SET.
+    Bit,
+    /// ED: the extended table, including the block instructions.
+    Extended,
 }
 
 /// The instruction's remainder after M1, grouped by execution shape rather
@@ -75,9 +86,13 @@ enum Body {
         increment: bool,
     },
     LoadAccumulatorAbsolute,
-    LoadPairAbsolute,
+    LoadPairAbsolute {
+        pair: u8,
+    },
     StoreAccumulatorAbsolute,
-    StorePairAbsolute,
+    StorePairAbsolute {
+        value: u16,
+    },
     JumpRelative {
         taken: bool,
     },
@@ -100,12 +115,68 @@ enum Body {
         write: bool,
     },
     ExchangeStackTop,
+    /// A CB operation on (HL): read, one internal T-state, then test or
+    /// write back.
+    BitOperation {
+        address: u16,
+        effect: BitEffect,
+    },
+    /// IN r,(C) / OUT (C),r — the port is BC, and the F/0 forms name no
+    /// register.
+    PortIndirect {
+        write: bool,
+        register: Option<Reg>,
+    },
+    /// RRD/RLD: the nibble shuffle between A and (HL).
+    RotateDigits {
+        address: u16,
+        right: bool,
+    },
+    Block {
+        kind: Block,
+        increment: bool,
+        repeat: bool,
+    },
 }
 
 #[derive(Clone, Copy)]
 enum PopDest {
     Pair(u8),
     ProgramCounter,
+}
+
+/// What a CB-prefixed opcode does to its operand byte.
+#[derive(Clone, Copy)]
+enum BitEffect {
+    Rotate(RotOp),
+    Test(u8),
+    Reset(u8),
+    Set(u8),
+}
+
+impl BitEffect {
+    fn from_fields(f: Fields) -> Self {
+        match f.x {
+            0 => BitEffect::Rotate(RotOp::from_index(f.y)),
+            1 => BitEffect::Test(f.y),
+            2 => BitEffect::Reset(f.y),
+            _ => BitEffect::Set(f.y),
+        }
+    }
+}
+
+/// The four block-instruction shapes, each stepping its pointers by ±1 and
+/// optionally re-running until its terminating condition.
+#[derive(Clone, Copy)]
+enum Block {
+    /// LDI/LDD/LDIR/LDDR.
+    Transfer,
+    /// CPI/CPD/CPIR/CPDR.
+    Compare,
+    /// INI/IND/INIR/INDR.
+    Input,
+    /// OUTI/OUTD/OTIR/OTDR.
+    Output,
 }
 
 /// The in-flight instruction: one machine cycle, its T index, the plan above
@@ -144,10 +215,11 @@ impl Sequencer {
     }
 }
 
-/// The opcodes the sequencer does not yet plan: the prefixes, whose remainders
-/// run through the atomic executor, and HALT, whose re-fetch loop does.
+/// The opcodes the sequencer does not yet plan: the index prefixes, whose
+/// remainders run through the atomic executor, and HALT, whose re-fetch loop
+/// does.
 fn unsequenced(opcode: u8) -> bool {
-    matches!(opcode, 0xCB | 0xDD | 0xED | 0xFD | 0x76)
+    matches!(opcode, 0xDD | 0xFD | 0x76)
 }
 
 impl Cpu {
@@ -240,12 +312,41 @@ impl Cpu {
         match seq.plan {
             Plan::OpcodeFetch => {
                 let opcode = seq.latched;
-                if unsequenced(opcode) {
-                    self.execute(bus, opcode);
-                    return None;
+                match opcode {
+                    // A prefix spends its own M1 fetching the opcode that
+                    // names the instruction.
+                    0xCB => {
+                        seq.plan = Plan::PrefixFetch {
+                            prefix: Prefix::Bit,
+                        };
+                        Some(Cycle::OpcodeFetch)
+                    }
+                    0xED => {
+                        seq.plan = Plan::PrefixFetch {
+                            prefix: Prefix::Extended,
+                        };
+                        Some(Cycle::OpcodeFetch)
+                    }
+                    _ if unsequenced(opcode) => {
+                        self.execute(bus, opcode);
+                        None
+                    }
+                    _ => {
+                        seq.plan = Plan::Body {
+                            body: self.plan_instruction(opcode),
+                            step: 0,
+                        };
+                        self.next_cycle(bus, seq)
+                    }
                 }
+            }
+            Plan::PrefixFetch { prefix } => {
+                let opcode = seq.latched;
                 seq.plan = Plan::Body {
-                    body: self.plan_instruction(opcode),
+                    body: match prefix {
+                        Prefix::Bit => self.plan_bit(opcode),
+                        Prefix::Extended => self.plan_extended(opcode),
+                    },
                     step: 0,
                 };
                 self.next_cycle(bus, seq)
@@ -352,7 +453,7 @@ impl Cpu {
                     None
                 }
             },
-            Body::LoadPairAbsolute => match step {
+            Body::LoadPairAbsolute { pair } => match step {
                 0 => Some(self.read_at_pc()),
                 1 => {
                     seq.take_low();
@@ -370,7 +471,7 @@ impl Cpu {
                     Some(Cycle::MemRead { address: self.wz })
                 }
                 _ => {
-                    self.set_pair(2, u16::from_le_bytes([seq.held, seq.latched]));
+                    self.set_pair(pair, u16::from_le_bytes([seq.held, seq.latched]));
                     None
                 }
             },
@@ -390,7 +491,7 @@ impl Cpu {
                 }
                 _ => None,
             },
-            Body::StorePairAbsolute => match step {
+            Body::StorePairAbsolute { value } => match step {
                 0 => Some(self.read_at_pc()),
                 1 => {
                     seq.take_low();
@@ -401,12 +502,12 @@ impl Cpu {
                     self.wz = seq.operand.wrapping_add(1);
                     Some(Cycle::MemWrite {
                         address: seq.operand,
-                        data: self.l,
+                        data: value as u8,
                     })
                 }
                 3 => Some(Cycle::MemWrite {
                     address: self.wz,
-                    data: self.h,
+                    data: (value >> 8) as u8,
                 }),
                 _ => None,
             },
@@ -555,6 +656,174 @@ impl Cpu {
                 }
                 _ => None,
             },
+            Body::BitOperation { address, effect } => match step {
+                0 => Some(Cycle::MemRead { address }),
+                1 => Some(Cycle::Internal { length: 1 }),
+                2 => {
+                    // BIT's undocumented X/Y come from WZ's high byte.
+                    let xy = (self.wz >> 8) as u8;
+                    self.bit_effect(effect, seq.latched, xy)
+                        .map(|data| Cycle::MemWrite { address, data })
+                }
+                _ => None,
+            },
+            Body::PortIndirect { write, register } => match step {
+                0 => {
+                    let port = self.bc();
+                    self.wz = port.wrapping_add(1);
+                    if write {
+                        let data = register.map_or(0, |r| self.reg(r));
+                        Some(Cycle::IoWrite { port, data })
+                    } else {
+                        Some(Cycle::IoRead { port })
+                    }
+                }
+                _ => {
+                    if !write {
+                        self.set_input_flags(seq.latched);
+                        if let Some(r) = register {
+                            self.set_reg(r, seq.latched);
+                        }
+                    }
+                    None
+                }
+            },
+            Body::RotateDigits { address, right } => match step {
+                0 => Some(Cycle::MemRead { address }),
+                1 => Some(Cycle::Internal { length: 4 }),
+                2 => {
+                    let m = seq.latched;
+                    let (written, a) = if right {
+                        ((m >> 4) | (self.a << 4), (self.a & 0xF0) | (m & 0x0F))
+                    } else {
+                        ((m << 4) | (self.a & 0x0F), (self.a & 0xF0) | (m >> 4))
+                    };
+                    self.a = a;
+                    self.set_input_flags(a);
+                    self.wz = address.wrapping_add(1);
+                    Some(Cycle::MemWrite {
+                        address,
+                        data: written,
+                    })
+                }
+                _ => None,
+            },
+            Body::Block {
+                kind,
+                increment,
+                repeat,
+            } => self.run_block(seq, kind, increment, repeat, step),
+        }
+    }
+
+    /// Schedule the machine cycle at `step` of a block instruction. A
+    /// repeating one ends on an extra internal cycle and rewinds PC over its
+    /// two opcode bytes, so the next fetch runs the same plan again.
+    fn run_block(
+        &mut self,
+        seq: &mut Sequencer,
+        kind: Block,
+        increment: bool,
+        repeat: bool,
+        step: u8,
+    ) -> Option<Cycle> {
+        let delta = if increment { 1u16 } else { 1u16.wrapping_neg() };
+        match kind {
+            Block::Transfer => match step {
+                0 => Some(Cycle::MemRead { address: self.hl() }),
+                1 => Some(Cycle::MemWrite {
+                    address: self.de(),
+                    data: seq.latched,
+                }),
+                2 => Some(Cycle::Internal { length: 2 }),
+                3 => {
+                    self.set_hl(self.hl().wrapping_add(delta));
+                    self.set_de(self.de().wrapping_add(delta));
+                    self.set_bc(self.bc().wrapping_sub(1));
+                    let remaining = self.bc() != 0;
+                    self.block_transfer_flags(seq.latched, remaining);
+                    (repeat && remaining).then_some(Cycle::Internal { length: 5 })
+                }
+                _ => self.repeat_iteration(),
+            },
+            Block::Compare => match step {
+                0 => Some(Cycle::MemRead { address: self.hl() }),
+                1 => Some(Cycle::Internal { length: 5 }),
+                2 => {
+                    self.set_hl(self.hl().wrapping_add(delta));
+                    self.set_bc(self.bc().wrapping_sub(1));
+                    let remaining = self.bc() != 0;
+                    let found = self.a == seq.latched;
+                    self.block_compare_flags(seq.latched, remaining);
+                    self.wz = self.wz.wrapping_add(delta);
+                    (repeat && remaining && !found).then_some(Cycle::Internal { length: 5 })
+                }
+                _ => self.repeat_iteration(),
+            },
+            Block::Input => match step {
+                0 => Some(Cycle::Internal { length: 1 }),
+                1 => {
+                    seq.operand = self.bc();
+                    Some(Cycle::IoRead { port: seq.operand })
+                }
+                2 => {
+                    self.wz = seq.operand.wrapping_add(delta);
+                    Some(Cycle::MemWrite {
+                        address: self.hl(),
+                        data: seq.latched,
+                    })
+                }
+                3 => {
+                    self.b = self.b.wrapping_sub(1);
+                    self.set_hl(self.hl().wrapping_add(delta));
+                    let port_term = self.c.wrapping_add(delta as u8);
+                    let repeating = repeat && self.b != 0;
+                    self.block_io_flags(seq.latched, self.b, port_term, repeating);
+                    repeating.then_some(Cycle::Internal { length: 5 })
+                }
+                _ => self.repeat_iteration(),
+            },
+            Block::Output => match step {
+                0 => Some(Cycle::Internal { length: 1 }),
+                1 => Some(Cycle::MemRead { address: self.hl() }),
+                2 => {
+                    self.b = self.b.wrapping_sub(1);
+                    seq.operand = self.bc();
+                    Some(Cycle::IoWrite {
+                        port: seq.operand,
+                        data: seq.latched,
+                    })
+                }
+                3 => {
+                    self.set_hl(self.hl().wrapping_add(delta));
+                    self.wz = seq.operand.wrapping_add(delta);
+                    let repeating = repeat && self.b != 0;
+                    self.block_io_flags(seq.latched, self.b, self.l, repeating);
+                    repeating.then_some(Cycle::Internal { length: 5 })
+                }
+                _ => self.repeat_iteration(),
+            },
+        }
+    }
+
+    fn repeat_iteration(&mut self) -> Option<Cycle> {
+        self.pc = self.pc.wrapping_sub(2);
+        self.wz = self.pc.wrapping_add(1);
+        self.repeat_flag_xy();
+        None
+    }
+
+    /// Apply a CB operation to `value`, returning the byte to write back —
+    /// `None` for BIT, which only tests. `xy` sources its undocumented flags.
+    fn bit_effect(&mut self, effect: BitEffect, value: u8, xy: u8) -> Option<u8> {
+        match effect {
+            BitEffect::Rotate(op) => Some(self.rotate(op, value)),
+            BitEffect::Test(index) => {
+                self.bit(index, value, xy);
+                None
+            }
+            BitEffect::Reset(index) => Some(value & !(1 << index)),
+            BitEffect::Set(index) => Some(value | (1 << index)),
         }
     }
 
@@ -669,7 +938,7 @@ impl Cpu {
                         data: self.a,
                     }
                 }
-                2 => Body::StorePairAbsolute,
+                2 => Body::StorePairAbsolute { value: self.hl() },
                 _ => Body::StoreAccumulatorAbsolute,
             }
         } else {
@@ -690,7 +959,7 @@ impl Cpu {
                         dest: Reg::A,
                     }
                 }
-                2 => Body::LoadPairAbsolute,
+                2 => Body::LoadPairAbsolute { pair: 2 },
                 _ => Body::LoadAccumulatorAbsolute,
             }
         }
@@ -844,6 +1113,116 @@ impl Cpu {
                     jump: Some(target),
                 }
             }
+        }
+    }
+}
+
+/// The prefixed tables, planned once their own opcode fetch has latched: CB's
+/// bit operations and ED's extended group.
+impl Cpu {
+    fn plan_bit(&mut self, opcode: u8) -> Body {
+        let f = Fields::new(opcode);
+        let effect = BitEffect::from_fields(f);
+        if f.z == 6 {
+            return Body::BitOperation {
+                address: self.hl(),
+                effect,
+            };
+        }
+        let reg = real_reg(f.z);
+        let value = self.reg(reg);
+        if let Some(result) = self.bit_effect(effect, value, value) {
+            self.set_reg(reg, result);
+        }
+        Body::Complete
+    }
+
+    fn plan_extended(&mut self, opcode: u8) -> Body {
+        let f = Fields::new(opcode);
+        match (f.x, f.z) {
+            (1, 0) => Body::PortIndirect {
+                write: false,
+                register: (f.y != 6).then(|| real_reg(f.y)),
+            },
+            (1, 1) => Body::PortIndirect {
+                write: true,
+                register: (f.y != 6).then(|| real_reg(f.y)),
+            },
+            (1, 2) => {
+                let hl = self.hl();
+                self.wz = hl.wrapping_add(1);
+                let rp = self.pair(f.p);
+                let result = if f.q == 0 {
+                    self.sbc16(hl, rp)
+                } else {
+                    self.adc16(hl, rp)
+                };
+                self.set_hl(result);
+                Body::InternalPad { length: 7 }
+            }
+            (1, 3) => {
+                if f.q == 0 {
+                    Body::StorePairAbsolute {
+                        value: self.pair(f.p),
+                    }
+                } else {
+                    Body::LoadPairAbsolute { pair: f.p }
+                }
+            }
+            (1, 4) => {
+                let a = self.a;
+                self.a = 0;
+                self.sub8(a, 0, true);
+                Body::Complete
+            }
+            (1, 5) => {
+                self.iff1 = self.iff2;
+                Body::Pop {
+                    dest: PopDest::ProgramCounter,
+                    lead: 0,
+                }
+            }
+            (1, 6) => {
+                self.im = INT_MODE[(f.y & 3) as usize];
+                Body::Complete
+            }
+            (1, _) => self.plan_extended_group7(f.y),
+            (2, _) if f.y >= 4 && f.z <= 3 => Body::Block {
+                kind: match f.z {
+                    0 => Block::Transfer,
+                    1 => Block::Compare,
+                    2 => Block::Input,
+                    _ => Block::Output,
+                },
+                increment: f.y & 1 == 0,
+                repeat: f.y >= 6,
+            },
+            _ => Body::Complete,
+        }
+    }
+
+    /// ED z=7: the I/R transfers and the digit rotates.
+    fn plan_extended_group7(&mut self, y: u8) -> Body {
+        match y {
+            0 => {
+                self.i = self.a;
+                Body::InternalPad { length: 1 }
+            }
+            1 => {
+                self.r = self.a;
+                Body::InternalPad { length: 1 }
+            }
+            2 | 3 => {
+                self.a = if y == 2 { self.i } else { self.r };
+                self.set_ld_a_ir_flags(self.a, self.iff2);
+                self.p = true;
+                Body::InternalPad { length: 1 }
+            }
+            4 | 5 => Body::RotateDigits {
+                address: self.hl(),
+                right: y == 4,
+            },
+            _ => Body::Complete,
         }
     }
 }
