@@ -72,17 +72,21 @@ Board clocking is one principle: **the board ticks at its crystal, and
 every chip is a client at its divisor**. The VCS's single 3.58 MHz crystal
 is the colour clock (÷1) and the CPU (÷3); the SG-1000's 10.74 MHz crystal
 feeds the VDP's dots (÷2) and the CPU (÷3); the Game Boy's 4.19 MHz
-crystal is its master clock. How literally an implementation steps the
-crystal grid is a per-core choice defended in its methodology doc — the
-VCS walks every colour clock and fires the CPU on its phase; the Game Boy
-dispatches both clock domains from one master-edge counter; a coarser
-stepping (batching another chip's share of the grid between CPU ticks) is
-admissible only where the core's evidence tier can't check finer — but the
-observable contract is the same: every bus access lands against a world
-advanced to its instant on the shared grid. A second crystal is a separate
-clock domain; syncing domains happens on the board, outside any chip.
-(The NES and SMS cores are unvetted first passes — do not read their
-current interleaves as defended choices.)
+crystal is its master clock. **The model is always the crystal grid.**
+Stepping coarser than the grid is never a modelling stance — it is an
+optimization, admissible only where the batch is observably equivalent to
+walking the grid. The Game Boy is the worked example: semantically
+per-master-edge, mechanically batched by inert-span predictors that skip
+only across proven fixed points and materialise before any observation.
+The VCS simply walks every colour clock. A core's evidence tier bounds
+what it may *claim* about sub-grain ordering (unverified orderings are
+stated abstractions, not silicon fact) — it never licenses a coarser
+mechanism that forecloses finer tests later; a non-equivalent batch is a
+limitation to burn down, stated in the methodology doc with its failing
+or staged tests named. A second crystal is a separate clock domain;
+syncing domains happens on the board, outside any chip. (The NES and SMS
+cores are unvetted first passes — do not read their current interleaves
+as defended choices.)
 
 ## The two seam traits, and what they buy
 
