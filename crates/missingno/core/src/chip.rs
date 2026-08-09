@@ -32,6 +32,7 @@ pub trait ClockedCpu<B> {
 /// Carried-fraction division of one clock grid into another: a client
 /// running at `numerator/denominator` of the master is owed `advance()`
 /// ticks as the master moves, the sub-tick residue carried exactly.
+#[derive(Clone)]
 pub struct ClockRatio {
     numerator: u64,
     denominator: u64,
@@ -54,6 +55,14 @@ impl ClockRatio {
         self.remainder = due % self.denominator;
         due / self.denominator
     }
+
+    /// Master ticks until the `n`th client tick from now, for callers that
+    /// advance a whole span at once and need to know where inside it the
+    /// client ticks land.
+    pub fn ticks_until(&self, n: u64) -> u64 {
+        assert!(n > 0);
+        (n * self.denominator - self.remainder).div_ceil(self.numerator)
+    }
 }
 
 #[cfg(test)]
@@ -67,6 +76,30 @@ mod tests {
         assert_eq!(ratio.advance(1), 2);
         let more: u64 = (0..100).map(|_| ratio.advance(7)).sum();
         assert_eq!(3 + more, 702 * 3 / 2);
+    }
+
+    #[test]
+    fn lookahead_matches_stepping() {
+        let mut ratio = ClockRatio::new(44_100, 4_194_304);
+        for _ in 0..2_000 {
+            let ahead = ratio.ticks_until(1);
+            for _ in 1..ahead {
+                assert_eq!(ratio.advance(1), 0);
+            }
+            assert_eq!(ratio.advance(1), 1);
+        }
+    }
+
+    #[test]
+    fn lookahead_spans_many_client_ticks() {
+        let ratio = ClockRatio::new(44_100, 4_194_304);
+        for n in 1..1_000u64 {
+            let mut stepped = ratio.clone();
+            let at = ratio.ticks_until(n);
+            assert_eq!(stepped.advance(at), n);
+            let mut short = ratio.clone();
+            assert_eq!(short.advance(at - 1), n - 1);
+        }
     }
 
     #[test]

@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 use channels::registers::Prescaler;
 use channels::wave::WaveRamCoupling;
 use channels::{Channels, noise, pulse, pulse_sweep, wave};
+use missingno_core::ClockRatio;
 use missingno_core::waveform::{ChannelWave, WaveRing};
 use volume::Volume;
 
@@ -48,9 +49,12 @@ pub enum Register {
     Channel4(noise::Register),
 }
 
-const SAMPLE_RATE: f32 = 44100.0;
-const T_CYCLES_PER_SECOND: f32 = 4_194_304.0;
-const T_CYCLES_PER_SAMPLE: f32 = T_CYCLES_PER_SECOND / SAMPLE_RATE;
+const SAMPLE_RATE: u32 = 44_100;
+const T_CYCLES_PER_SECOND: u32 = 4_194_304;
+
+fn sample_clock() -> ClockRatio {
+    ClockRatio::new(SAMPLE_RATE as u64, T_CYCLES_PER_SECOND as u64)
+}
 
 /// Waveform-capture ring depth: one frame-window of output samples. A DMG frame
 /// is ~738 samples at 44.1 kHz (70224 T-cycles ÷ ~95.1 T/sample); 800 holds one
@@ -88,7 +92,7 @@ pub struct Audio<A: ApuSpec> {
     pub(crate) div_apu_double_parity: bool,
     pub(crate) div_apu_switch_lag: bool,
     pub(crate) fs_edge_predelay: bool,
-    sample_counter: f32,
+    sample_clock: ClockRatio,
     // Digital channel sums accumulate as integers; fold_pending() applies
     // the DAC scale and NR50 volume when either changes or a window closes.
     pending_left: i32,
@@ -150,7 +154,7 @@ impl<A: ApuSpec> Audio<A> {
             div_apu_double_parity: false,
             div_apu_switch_lag: false,
             fs_edge_predelay: false,
-            sample_counter: 0.0,
+            sample_clock: sample_clock(),
             pending_left: 0,
             pending_right: 0,
             pending_count: 0,
@@ -192,7 +196,7 @@ impl<A: ApuSpec> Audio<A> {
             div_apu_double_parity: false,
             div_apu_switch_lag: false,
             fs_edge_predelay: false,
-            sample_counter: 0.0,
+            sample_clock: sample_clock(),
             pending_left: 0,
             pending_right: 0,
             pending_count: 0,
@@ -371,9 +375,7 @@ impl<A: ApuSpec> Audio<A> {
         }
 
         // Push the box-filtered average when the host sample window closes.
-        self.sample_counter += 1.0;
-        if self.sample_counter >= T_CYCLES_PER_SAMPLE {
-            self.sample_counter -= T_CYCLES_PER_SAMPLE;
+        if self.sample_clock.advance(1) > 0 {
             self.fold_pending();
             let count = self.sample_accum_count as f32;
             self.sample_buffer.push((
@@ -574,7 +576,7 @@ impl<A: ApuSpec> Audio<A> {
                     label: WAVE_LABELS[i],
                     levels: rings[i].to_vec(),
                     depth_bits: 4,
-                    rate: SAMPLE_RATE as u32,
+                    rate: SAMPLE_RATE,
                     active: active[i],
                 })
                 .collect(),
@@ -728,7 +730,7 @@ impl<A: ApuSpec> Audio<A> {
             div_apu_double_parity: false,
             div_apu_switch_lag: false,
             fs_edge_predelay: false,
-            sample_counter: 0.0,
+            sample_clock: sample_clock(),
             pending_left: 0,
             pending_right: 0,
             pending_count: 0,

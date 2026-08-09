@@ -11,7 +11,7 @@ use super::channels::wave::WaveChannel;
 use super::span::{
     CLOCK_RISE_PHASE, NoiseChain, SWEEP_STEP_PHASE, increments_to_tap_rise, phase_count,
 };
-use super::{ApuSpec, Audio, DIV_APU_BIT, DIV_APU_BIT_DOUBLE, T_CYCLES_PER_SAMPLE};
+use super::{ApuSpec, Audio, DIV_APU_BIT, DIV_APU_BIT_DOUBLE};
 
 /// Where the shared prescaler stands `ticks` calls on. It advances once per
 /// call in both regimes and neither `channel_clock` nor CH4's `mhz_prescaler`
@@ -56,17 +56,16 @@ impl<A: ApuSpec> Audio<A> {
     /// integer product; the only flush inside the span is the one a silent
     /// CH4's LFSR provokes, which changes nothing but the run partition.
     fn advance_mixer(&mut self, ticks: u32, noise_flip_at: Option<u32>) {
-        let period = T_CYCLES_PER_SAMPLE as f64;
-        let counter = self.sample_counter as f64;
         let dac_codes = self.channels.dac_codes();
         let mut consumed = 0;
-        let mut window = 1u32;
+        let mut window = 1u64;
         loop {
-            // The window closes on the first tick whose counter reaches it.
-            let close = (window as f64 * period - counter).ceil() as u32;
-            if close > ticks {
+            // The window closes on the first tick whose count reaches it.
+            let close = self.sample_clock.ticks_until(window);
+            if close > ticks as u64 {
                 break;
             }
+            let close = close as u32;
             self.mix_run += close - consumed;
             consumed = close;
             self.fold_pending();
@@ -85,7 +84,8 @@ impl<A: ApuSpec> Audio<A> {
             }
             window += 1;
         }
-        self.sample_counter = (counter + ticks as f64 - (window - 1) as f64 * period) as f32;
+        let closed = self.sample_clock.advance(ticks as u64);
+        debug_assert_eq!(closed, window - 1, "a window closed outside the walk");
 
         match noise_flip_at.filter(|&at| at > consumed) {
             Some(at) => {
