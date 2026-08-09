@@ -917,6 +917,33 @@ fn bank_3e_secam() {
 }
 
 #[test]
+fn bank_3e_wide_ntsc() {
+    run_self_test_on(
+        "cartridge/bank-3e-wide_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::ThreeE,
+    );
+}
+
+#[test]
+fn bank_3e_wide_pal() {
+    run_self_test_on(
+        "cartridge/bank-3e-wide_pal.a26",
+        TvStandard::Pal,
+        CartType::ThreeE,
+    );
+}
+
+#[test]
+fn bank_3e_wide_secam() {
+    run_self_test_on(
+        "cartridge/bank-3e-wide_secam.a26",
+        TvStandard::Secam,
+        CartType::ThreeE,
+    );
+}
+
+#[test]
 fn bank_3ep_ntsc() {
     run_self_test_on(
         "cartridge/bank-3ep_ntsc.a26",
@@ -938,6 +965,33 @@ fn bank_3ep_pal() {
 fn bank_3ep_secam() {
     run_self_test_on(
         "cartridge/bank-3ep_secam.a26",
+        TvStandard::Secam,
+        CartType::ThreeEPlus,
+    );
+}
+
+#[test]
+fn bank_3ep_wide_ntsc() {
+    run_self_test_on(
+        "cartridge/bank-3ep-wide_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::ThreeEPlus,
+    );
+}
+
+#[test]
+fn bank_3ep_wide_pal() {
+    run_self_test_on(
+        "cartridge/bank-3ep-wide_pal.a26",
+        TvStandard::Pal,
+        CartType::ThreeEPlus,
+    );
+}
+
+#[test]
+fn bank_3ep_wide_secam() {
+    run_self_test_on(
+        "cartridge/bank-3ep-wide_secam.a26",
         TvStandard::Secam,
         CartType::ThreeEPlus,
     );

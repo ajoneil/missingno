@@ -5,7 +5,7 @@
 //! The one exception is the Superchip, whose RAM shadows the bottom of every
 //! bank and leaves a readable mark in the image.
 
-use super::{ar, atari, dpc, three_e};
+use super::{ar, atari, dpc, three_e, three_e_plus};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum CartridgeError {
@@ -254,6 +254,7 @@ impl CartType {
             // load, and a multi-load title carries several.
             CartType::Ar => ar::is_container(len),
             CartType::ThreeE => three_e::holds(len),
+            CartType::ThreeEPlus => three_e_plus::holds(len),
             _ => self.image_size() == Some(len),
         }
     }
@@ -284,15 +285,11 @@ impl CartType {
             CartType::Dpc => 0x2900,
             CartType::F0 => 0x10000,
             CartType::Jane => 0x4000,
-            CartType::Wf8
-            | CartType::Wd
-            | CartType::ZeroFa0
-            | CartType::Zero3E0
-            | CartType::ThreeEPlus => 0x2000,
+            CartType::Wf8 | CartType::Wd | CartType::ZeroFa0 | CartType::Zero3E0 => 0x2000,
             CartType::Fc => 0x8000,
             // A Supercharger container holds as many tape loads as the title
-            // needs, and a 3E image as many banks as the cart carries.
-            CartType::Ar | CartType::ThreeE => return None,
+            // needs, and a 3E or 3E+ image as many banks as the cart carries.
+            CartType::Ar | CartType::ThreeE | CartType::ThreeEPlus => return None,
         })
     }
 }

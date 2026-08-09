@@ -17,8 +17,18 @@ const SEGMENTS: usize = 4;
 const SEGMENT_SIZE: usize = 0x400;
 const ROM_BANK_SIZE: usize = 0x400;
 const RAM_BANK_SIZE: usize = 0x200;
-/// Stella's ceiling for the scheme, and more than any image uses.
-const RAM_BANKS: usize = 32;
+/// The bank field reaches 64 RAM banks as well, and every one is real memory.
+const RAM_BANKS: usize = 64;
+
+/// The hotspot value's bank field is six bits, so the scheme reaches 64 banks.
+const MAX_ROM_BANKS: usize = 64;
+
+/// Whether an image is a whole number of ROM banks within the bank field's
+/// reach. As on 3E, the board has no one size: the image says how many banks
+/// the cart carries.
+pub fn holds(len: usize) -> bool {
+    len.is_multiple_of(ROM_BANK_SIZE) && (1..=MAX_ROM_BANKS).contains(&(len / ROM_BANK_SIZE))
+}
 
 const ROM_HOTSPOT: u16 = 0x3F;
 const RAM_HOTSPOT: u16 = 0x3E;
