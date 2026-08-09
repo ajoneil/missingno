@@ -122,6 +122,11 @@ pub struct Vdp {
     frame_flag: bool,
     coincidence_flag: bool,
     fifth_sprite_flag: bool,
+    /// XTAL instant of the most recent F / 5S set. A clearing read whose
+    /// access strobe contains the instant resolves clear-dominant: the
+    /// read reports the pre-set value and its clear swallows the set.
+    frame_flag_set_at: u64,
+    fifth_sprite_set_at: u64,
     /// Status low five bits: latched fifth-sprite index while the flag is
     /// set, otherwise the scanner's stop position from the last line.
     sprite_field: u8,
@@ -147,6 +152,8 @@ impl Vdp {
             frame_flag: false,
             coincidence_flag: false,
             fifth_sprite_flag: false,
+            frame_flag_set_at: 0,
+            fifth_sprite_set_at: 0,
             sprite_field: 0,
             xtal_in_line: 0,
             line: 0,
@@ -218,6 +225,7 @@ impl Vdp {
         }
         if self.line == ACTIVE_LINES {
             self.frame_flag = true;
+            self.frame_flag_set_at = self.xtal_total;
         }
     }
 
@@ -264,10 +272,13 @@ impl Vdp {
     pub fn read_status(&mut self) -> u8 {
         self.awaiting_second_byte = false;
         let mut value = self.sprite_field & 0x1F;
-        if self.frame_flag {
+        // F and 5S sets landing inside the read's strobe lose to its
+        // clear (dynamic-node contention): the read reports the pre-set
+        // value and the clear below swallows the set. C is set-dominant.
+        if self.frame_flag && !self.set_in_read_strobe(self.frame_flag_set_at) {
             value |= status::FRAME;
         }
-        if self.fifth_sprite_flag {
+        if self.fifth_sprite_flag && !self.set_in_read_strobe(self.fifth_sprite_set_at) {
             value |= status::FIFTH_SPRITE;
         }
         if self.coincidence_flag {
@@ -277,6 +288,12 @@ impl Vdp {
         self.fifth_sprite_flag = false;
         self.coincidence_flag = false;
         value
+    }
+
+    /// Whether a set at `set_at` landed inside this read's access strobe
+    /// (the T-state whose crystal periods have just elapsed).
+    fn set_in_read_strobe(&self, set_at: u64) -> bool {
+        self.xtal_total - set_at < XTALS_PER_TSTATE as u64
     }
 
     fn fill_read_buffer(&mut self) {
@@ -375,6 +392,7 @@ impl Vdp {
                 // is clear, and the first capture holds until a read.
                 if !self.frame_flag && !self.fifth_sprite_flag {
                     self.fifth_sprite_flag = true;
+                    self.fifth_sprite_set_at = self.xtal_total;
                     self.sprite_field = index;
                 }
             }

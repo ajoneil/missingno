@@ -90,26 +90,15 @@ mod sprites {
     vdp_test!(y_position, "sprites/y-position.sg");
 }
 
-// The staged pair asserts the ~1 T status set/read annihilation races,
-// which this model does not yet carry; VDP-side, tracked in the SG-1000
-// roadmap.
 mod timing {
     vdp_test!(_4k_sweep, "timing/4k-sweep.sg");
-    vdp_test!(
-        _5s_race,
-        "timing/5s-race.sg",
-        staged = "needs VDP-side status set/read race modelling"
-    );
+    vdp_test!(_5s_race, "timing/5s-race.sg");
     vdp_test!(blank_burst, "timing/blank-burst.sg");
     vdp_test!(blank_sweep, "timing/blank-sweep.sg");
     vdp_test!(border_sweep, "timing/border-sweep.sg");
     vdp_test!(c_race, "timing/c-race.sg");
     vdp_test!(cadence_8match, "timing/cadence-8match.sg");
-    vdp_test!(
-        f_race,
-        "timing/f-race.sg",
-        staged = "needs VDP-side status set/read race modelling"
-    );
+    vdp_test!(f_race, "timing/f-race.sg");
     vdp_test!(gi_burst, "timing/gi-burst.sg");
     vdp_test!(gii_sweep, "timing/gii-sweep.sg");
     vdp_test!(line0_sweep, "timing/line0-sweep.sg");

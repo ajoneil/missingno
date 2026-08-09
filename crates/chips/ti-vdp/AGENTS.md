@@ -66,9 +66,6 @@ harness asserts on the block only.
   hsync is unmeasured (free convention), only Graphics I with display on
   is map-constrained, and non-rendering time is modelled as every cycle
   claimable.
-- **No status set/read race modelling.** The staged (`#[ignore]`)
-  `f-race`/`5s-race` pair asserts ~1 T set/read annihilation windows the
-  status path does not yet carry.
 - **Digital core only.** Colour output stops at the TI colour indices;
   composite encoding, analog levels, and the 9929A's Y/R-Y/B-Y outputs are
   presentation/frontend territory.
