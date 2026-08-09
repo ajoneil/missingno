@@ -1,13 +1,20 @@
-//! Zilog NMOS Z80 core, driven a whole instruction per `step`.
+//! Zilog NMOS Z80 core, driven one T-state per `tick`.
 //!
-//! Granularity: the core executes one instruction at a time, but records
-//! its bus activity at T-state resolution. Each machine cycle (opcode
-//! fetch, memory read/write, I/O read/write, internal delay) appends the
-//! per-T-state address/data/control-pin snapshots the SingleStepTests
-//! oracle samples between cycles, using the oracle's simplified memory
-//! timing (MREQ/RD/WR pulse for a single T-state). `step` returns the
-//! T-state count so the console can advance the VDP by the matching number
-//! of dots; `bus_trace` exposes the recorded snapshots for verification.
+//! The core records its bus activity at T-state resolution. Each machine
+//! cycle (opcode fetch, memory read/write, I/O read/write, internal delay)
+//! appends the per-T-state address/data/control-pin snapshots the
+//! SingleStepTests oracle samples between cycles, using the oracle's
+//! simplified memory timing (MREQ/RD/WR pulse for a single T-state).
+//! `bus_trace` exposes the snapshots recorded for the current instruction;
+//! `step` runs a whole instruction and returns its T-state count so a
+//! console can advance the VDP by the matching number of dots.
+//!
+//! Granularity limit: the seam is per-T, but intra-instruction bus timing is
+//! not yet. Every instruction still executes atomically on the T that leaves
+//! the instruction boundary — its bus accesses all land on that tick and the
+//! remaining T-states are handed back as already-recorded padding. Until the
+//! per-T sequencer conversion lands, a board interleaving other chips between
+//! ticks sees an instruction's accesses bunched at its first T.
 //!
 //! Interrupt entry (NMI, IM 0/1/2 maskable) implements the documented
 //! acceptance semantics, but the SingleStepTests set contains no interrupt
@@ -139,6 +146,9 @@ pub struct Cpu {
     irq_line: bool,
     last_address: u16,
     trace: Vec<BusCycle>,
+    /// T-states of the in-flight instruction already recorded in `trace` but
+    /// not yet handed back by `tick` — zero at an instruction boundary.
+    recorded_ahead: u32,
 }
 
 impl Default for Cpu {
@@ -185,6 +195,7 @@ impl Cpu {
             irq_line: false,
             last_address: 0,
             trace: Vec::new(),
+            recorded_ahead: 0,
         }
     }
 
@@ -196,7 +207,7 @@ impl Cpu {
         self.irq_line = asserted;
     }
 
-    /// The bus snapshots recorded during the most recent `step`.
+    /// The bus snapshots recorded for the most recent instruction.
     pub fn bus_trace(&self) -> &[BusCycle] {
         &self.trace
     }
@@ -223,19 +234,35 @@ impl Cpu {
         [self.h, self.l] = value.to_be_bytes();
     }
 
-    /// Execute one instruction (or accept a pending interrupt). Returns the
-    /// number of T-states consumed.
-    pub fn step(&mut self, bus: &mut impl Bus) -> u32 {
-        self.trace.clear();
+    /// Between instructions — the debugger's stepping boundary, and where
+    /// interrupts are sampled.
+    pub fn at_instruction_boundary(&self) -> bool {
+        self.recorded_ahead == 0
+    }
 
+    /// Advance one T-state. Leaving the boundary runs the whole instruction
+    /// (or accepts a pending interrupt) at once and records its T-states; the
+    /// rest of them are consumed one per call, touching neither bus nor trace,
+    /// and the boundary re-arms when they run out.
+    pub fn tick(&mut self, bus: &mut impl Bus) {
+        if self.recorded_ahead > 0 {
+            self.recorded_ahead -= 1;
+            return;
+        }
+        self.trace.clear();
+        self.begin_instruction(bus);
+        self.recorded_ahead = (self.trace.len() as u32).saturating_sub(1);
+    }
+
+    fn begin_instruction(&mut self, bus: &mut impl Bus) {
         if self.nmi_pending {
             self.nmi_pending = false;
             self.accept_nmi(bus);
-            return self.trace.len() as u32;
+            return;
         }
         if self.irq_line && self.iff1 && !self.ei_pending {
             self.accept_irq(bus);
-            return self.trace.len() as u32;
+            return;
         }
 
         self.ei_pending = false;
@@ -246,7 +273,7 @@ impl Cpu {
             let pc = self.pc;
             self.opcode_fetch(bus);
             self.pc = pc;
-            return self.trace.len() as u32;
+            return;
         }
 
         self.flags_touched = false;
@@ -254,10 +281,21 @@ impl Cpu {
         let opcode = self.opcode_fetch(bus);
         self.execute(bus, opcode);
         self.q = if self.flags_touched { self.f } else { 0 };
+    }
+
+    /// Run to the next instruction boundary. Returns the number of T-states
+    /// consumed.
+    pub fn step(&mut self, bus: &mut impl Bus) -> u32 {
+        if self.at_instruction_boundary() {
+            self.tick(bus);
+        }
+        while !self.at_instruction_boundary() {
+            self.tick(bus);
+        }
         self.trace.len() as u32
     }
 
-    fn tick(&mut self, address: u16, data: Option<u8>, pins: Pins) {
+    fn record(&mut self, address: u16, data: Option<u8>, pins: Pins) {
         self.last_address = address;
         self.trace.push(BusCycle {
             address,
@@ -277,53 +315,53 @@ impl Cpu {
     /// M1: fetch the opcode at PC, drive the refresh address, bump R.
     fn opcode_fetch(&mut self, bus: &mut impl Bus) -> u8 {
         let pc = self.pc;
-        self.tick(pc, None, Pins::IDLE);
-        self.tick(pc, None, Pins::MEM_READ);
+        self.record(pc, None, Pins::IDLE);
+        self.record(pc, None, Pins::MEM_READ);
         let opcode = bus.read(pc);
         self.pc = pc.wrapping_add(1);
         let refresh = self.refresh_address();
-        self.tick(refresh, Some(opcode), Pins::IDLE);
-        self.tick(refresh, None, Pins::IDLE);
+        self.record(refresh, Some(opcode), Pins::IDLE);
+        self.record(refresh, None, Pins::IDLE);
         self.inc_r();
         opcode
     }
 
     fn mem_read(&mut self, bus: &mut impl Bus, address: u16) -> u8 {
-        self.tick(address, None, Pins::IDLE);
-        self.tick(address, None, Pins::MEM_READ);
+        self.record(address, None, Pins::IDLE);
+        self.record(address, None, Pins::MEM_READ);
         let data = bus.read(address);
-        self.tick(address, Some(data), Pins::IDLE);
+        self.record(address, Some(data), Pins::IDLE);
         data
     }
 
     fn mem_write(&mut self, bus: &mut impl Bus, address: u16, data: u8) {
-        self.tick(address, None, Pins::IDLE);
-        self.tick(address, Some(data), Pins::MEM_WRITE);
+        self.record(address, None, Pins::IDLE);
+        self.record(address, Some(data), Pins::MEM_WRITE);
         bus.write(address, data);
-        self.tick(address, None, Pins::IDLE);
+        self.record(address, None, Pins::IDLE);
     }
 
     fn io_read(&mut self, bus: &mut impl Bus, port: u16) -> u8 {
-        self.tick(port, None, Pins::IDLE);
-        self.tick(port, None, Pins::IDLE);
-        self.tick(port, None, Pins::IO_READ);
+        self.record(port, None, Pins::IDLE);
+        self.record(port, None, Pins::IDLE);
+        self.record(port, None, Pins::IO_READ);
         let data = bus.input(port);
-        self.tick(port, Some(data), Pins::IDLE);
+        self.record(port, Some(data), Pins::IDLE);
         data
     }
 
     fn io_write(&mut self, bus: &mut impl Bus, port: u16, data: u8) {
-        self.tick(port, None, Pins::IDLE);
-        self.tick(port, None, Pins::IDLE);
-        self.tick(port, Some(data), Pins::IO_WRITE);
+        self.record(port, None, Pins::IDLE);
+        self.record(port, None, Pins::IDLE);
+        self.record(port, Some(data), Pins::IO_WRITE);
         bus.output(port, data);
-        self.tick(port, None, Pins::IDLE);
+        self.record(port, None, Pins::IDLE);
     }
 
     /// `count` internal T-states, holding the last driven address.
     fn internal(&mut self, count: u32) {
         for _ in 0..count {
-            self.tick(self.last_address, None, Pins::IDLE);
+            self.record(self.last_address, None, Pins::IDLE);
         }
     }
 
@@ -353,8 +391,8 @@ impl Cpu {
         self.halted = false;
         self.iff1 = false;
         let pc = self.pc;
-        self.tick(pc, None, Pins::IDLE);
-        self.tick(pc, None, Pins::IDLE);
+        self.record(pc, None, Pins::IDLE);
+        self.record(pc, None, Pins::IDLE);
         self.inc_r();
         self.internal(1);
         self.push16(bus, pc);
@@ -384,5 +422,15 @@ impl Cpu {
                 self.wz = target;
             }
         }
+    }
+}
+
+impl<B: Bus> missingno_core::ClockedCpu<B> for Cpu {
+    fn tick(&mut self, bus: &mut B) {
+        Cpu::tick(self, bus);
+    }
+
+    fn at_instruction_boundary(&self) -> bool {
+        Cpu::at_instruction_boundary(self)
     }
 }

@@ -3,7 +3,7 @@
 Chip-specific methodology for the shared Zilog NMOS Z80 core. The shared
 skill-system rules and workflow discipline live in the repository-root
 `AGENTS.md`. This crate is *silicon without a board*: it models the CPU
-(instruction-stepped, with bus activity recorded at T-state resolution,
+(T-state-stepped, with bus activity recorded at T-state resolution,
 including WZ/MEMPTR and the Q flag latch) and leaves board wiring — memory
 maps, I/O decoding, wait states — to its consumers (the SMS core today, SG-1000
 next).
@@ -42,6 +42,14 @@ emulator's behaviour for hardware fact.
   limit stated: consumers that decode timing finer than whole machine cycles
   (wait-state insertion, refresh-cycle observation) need the model extended
   first, not worked around.
+- **Atomic-at-first-T instruction timing.** The chip is stepped per T-state at
+  the seam (`tick`, `at_instruction_boundary`, `ClockedCpu`), but every
+  instruction still executes atomically on the T that leaves the instruction
+  boundary: all of its bus accesses land on that tick, and the remaining
+  T-states are handed back as already-recorded padding. Traces and `step`
+  results are unaffected; a board that interleaves other chips between ticks
+  sees an instruction's accesses bunched at its first T until the per-T
+  sequencer conversion replaces this fallback.
 - **Interrupt entry timing.** NMI and IM 0/1/2 acceptance implement the
   documented semantics, but the oracle contains no interrupt cases, so
   cycle-level interrupt timing is **unverified**. Console work that depends on
