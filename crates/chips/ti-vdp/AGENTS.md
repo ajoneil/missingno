@@ -51,13 +51,24 @@ harness asserts on the block only.
 
 ## Stated abstractions
 
-- **Per-T CPU↔VDP interleaving; no canonical slot schedule.** The testbench
-  advances the VDP one Z80 T-state at a time, ahead of each CPU tick, so a
-  port access lands at its true T offset within the instruction. The staged
-  (`#[ignore]`) `timing/` tests now fail on the VDP side: the sweeps and
-  bursts assert the SC-3000's phase-indexed canonical slot map, which this
-  model does not yet schedule, and the status-read races turn on VRAM-access
-  slots the same schedule defines. Un-staging them is VDP slot-schedule work.
+- **Per-T CPU↔VDP interleaving.** The testbench advances the VDP one Z80
+  T-state at a time, ahead of each CPU tick, so a port access lands at its
+  true T offset within the instruction.
+- **CPU-access schedule: run lengths at the short end of the measured
+  family.** The rendering-line schedule (eleven runs, starts spaced
+  16,16,16,16,15,16,15,13,16,16,16 memory cycles, lengths
+  1,1,1,1,1,2,5,4,1,1,1) and the service rule (claim at the first access
+  cycle after the request; transfer locked +17 XTAL, flag released +15
+  XTAL from that cycle's start) are pinned exactly by the SC-3000's two
+  canonical maps — but the maps determine run lengths only up to a common
+  additive constant in {0,1,2,3}. The model adopts +0 (19 CPU cycles per
+  line, the corpus's documented budget). The schedule's rotation against
+  hsync is unmeasured (free convention), only Graphics I with display on
+  is map-constrained, and non-rendering time is modelled as every cycle
+  claimable.
+- **No status set/read race modelling.** The staged (`#[ignore]`)
+  `f-race`/`5s-race` pair asserts ~1 T set/read annihilation windows the
+  status path does not yet carry.
 - **Digital core only.** Colour output stops at the TI colour indices;
   composite encoding, analog levels, and the 9929A's Y/R-Y/B-Y outputs are
   presentation/frontend territory.

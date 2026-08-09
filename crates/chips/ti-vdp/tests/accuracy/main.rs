@@ -90,18 +90,11 @@ mod sprites {
     vdp_test!(y_position, "sprites/y-position.sg");
 }
 
-// The staged tests assert hardware truths this VDP model does not yet
-// schedule: the phase-indexed canonical slot map (gate 06 checksums the
-// measured map against the SC-3000's), and the ~1 T status set/read
-// annihilation races. The testbench now interleaves per Z80 T-state, so
-// their accesses already land at their true offsets — what remains is
-// VDP-side, tracked in the SG-1000 roadmap.
+// The staged pair asserts the ~1 T status set/read annihilation races,
+// which this model does not yet carry; VDP-side, tracked in the SG-1000
+// roadmap.
 mod timing {
-    vdp_test!(
-        _4k_sweep,
-        "timing/4k-sweep.sg",
-        staged = "needs the VDP's phase-indexed canonical slot schedule"
-    );
+    vdp_test!(_4k_sweep, "timing/4k-sweep.sg");
     vdp_test!(
         _5s_race,
         "timing/5s-race.sg",
@@ -117,60 +110,20 @@ mod timing {
         "timing/f-race.sg",
         staged = "needs VDP-side status set/read race modelling"
     );
-    vdp_test!(
-        gi_burst,
-        "timing/gi-burst.sg",
-        staged = "needs the VDP's phase-indexed canonical slot schedule"
-    );
-    vdp_test!(
-        gii_sweep,
-        "timing/gii-sweep.sg",
-        staged = "needs the VDP's phase-indexed canonical slot schedule"
-    );
-    vdp_test!(
-        line0_sweep,
-        "timing/line0-sweep.sg",
-        staged = "needs the VDP's phase-indexed canonical slot schedule"
-    );
-    vdp_test!(
-        line187_sweep,
-        "timing/line187-sweep.sg",
-        staged = "needs the VDP's phase-indexed canonical slot schedule"
-    );
-    vdp_test!(
-        line96_sweep,
-        "timing/line96-sweep.sg",
-        staged = "needs the VDP's phase-indexed canonical slot schedule"
-    );
+    vdp_test!(gi_burst, "timing/gi-burst.sg");
+    vdp_test!(gii_sweep, "timing/gii-sweep.sg");
+    vdp_test!(line0_sweep, "timing/line0-sweep.sg");
+    vdp_test!(line187_sweep, "timing/line187-sweep.sg");
+    vdp_test!(line96_sweep, "timing/line96-sweep.sg");
     vdp_test!(m1_split_sweep, "timing/m1-split-sweep.sg");
-    vdp_test!(
-        match_sweep,
-        "timing/match-sweep.sg",
-        staged = "needs the VDP's phase-indexed canonical slot schedule"
-    );
-    vdp_test!(
-        mc_sweep,
-        "timing/mc-sweep.sg",
-        staged = "needs the VDP's phase-indexed canonical slot schedule"
-    );
-    vdp_test!(
-        phase_sweep,
-        "timing/phase-sweep.sg",
-        staged = "needs the VDP's phase-indexed canonical slot schedule"
-    );
-    vdp_test!(
-        satkill_sweep,
-        "timing/satkill-sweep.sg",
-        staged = "needs the VDP's phase-indexed canonical slot schedule"
-    );
+    vdp_test!(match_sweep, "timing/match-sweep.sg");
+    vdp_test!(mc_sweep, "timing/mc-sweep.sg");
+    vdp_test!(phase_sweep, "timing/phase-sweep.sg");
+    vdp_test!(satkill_sweep, "timing/satkill-sweep.sg");
     vdp_test!(text_burst, "timing/text-burst.sg");
     vdp_test!(text_sweep, "timing/text-sweep.sg");
     vdp_test!(undoc_all_sweep, "timing/undoc-all-sweep.sg");
-    vdp_test!(
-        undoc_bmc_sweep,
-        "timing/undoc-bmc-sweep.sg",
-        staged = "needs the VDP's phase-indexed canonical slot schedule"
-    );
+    vdp_test!(undoc_bmc_sweep, "timing/undoc-bmc-sweep.sg");
     vdp_test!(undoc_bt_sweep, "timing/undoc-bt-sweep.sg");
     vdp_test!(undoc_tmc_sweep, "timing/undoc-tmc-sweep.sg");
 }

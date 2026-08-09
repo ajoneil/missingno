@@ -1,14 +1,15 @@
 //! Texas Instruments TMS9918A-family Video Display Processor.
 //!
 //! The digital core of the TMS9918A (NTSC) / TMS9929A (PAL): the register
-//! file, the VRAM engine with its read-ahead buffer, the status flags and
-//! interrupt line, and the per-line sprite scanner. Consumers wire the two
-//! CPU-facing ports (mode low = data, mode high = control) and advance the
-//! raster with `tick`; one dot is one pixel clock (342 dots per line).
+//! file, the VRAM engine with its read-ahead buffer and CPU-access memory
+//! schedule, the status flags and interrupt line, and the per-line sprite
+//! scanner. Consumers wire the two CPU-facing ports (mode low = data,
+//! mode high = control) and advance the raster with `tick`, one crystal
+//! period at a time.
 //!
 //! Ground truth is the hardware-endorsed test corpus run by
 //! `tests/accuracy/` — see `AGENTS.md` for the hierarchy and the stated
-//! abstractions (instruction-granular interleaving; digital core only).
+//! abstractions.
 
 const VRAM_SIZE: usize = 0x4000;
 /// The crystal is the board's master grid: 3 XTAL periods per CPU
@@ -52,23 +53,51 @@ mod status {
 const SPRITE_TERMINATOR: u8 = 0xD0;
 
 /// One DRAM memory cycle is two dots = four XTAL periods; 171 per line.
-const XTALS_PER_CYCLE: u64 = 4;
-/// The eleven CPU windows of an active non-text line, as memory-cycle
-/// start positions. The spacings (16,16,16,16,15,16,15,13,16,16,16,
-/// summing 171) are the schedule the SC-3000's canonical map traces out;
-/// its rotation against hsync is unmeasured, so the origin is a free
-/// convention.
-const WINDOW_START_CYCLES: [u64; 11] = [0, 16, 32, 48, 64, 79, 95, 110, 123, 139, 155];
-/// A window takes the pending access only if the request latched this
-/// many crystal periods before the window opens; the transfer then
-/// occupies the window's memory cycle, committing at its end, and a
-/// newer request replaces the data in flight until that commit.
-const LATCH_MARGIN_XTALS: u64 = 12;
+const CYCLES_PER_LINE: usize = 171;
+/// The eleven runs of consecutive CPU-access memory cycles on an active
+/// non-text line, as run-start positions — starts spaced
+/// 16,16,16,16,15,16,15,13,16,16,16 cycles (sum 171), the lattice both
+/// silicon maps trace out. The rotation against hsync is unmeasured, so
+/// the origin is a free convention.
+const RUN_START_CYCLES: [usize; 11] = [0, 16, 32, 48, 64, 79, 95, 110, 123, 139, 155];
+/// Run lengths, shortest of the map-equivalent family (19 CPU cycles per
+/// line, the documented CPU-cycle budget).
+const RUN_LENGTH_CYCLES: [usize; 11] = [1, 1, 1, 1, 1, 2, 5, 4, 1, 1, 1];
+/// The servicing cycle samples the transfer register this long after its
+/// own start...
+const TRANSFER_LOCK_XTALS: u64 = 17;
+/// ...and the request flag clears this long after, so a request landing
+/// in the gap both supplies the in-flight data and queues itself.
+const FLAG_RELEASE_XTALS: u64 = 15;
 
-/// A CPU-port VRAM access waiting for its memory slot.
-enum PendingAccess {
-    Write { address: u16, value: u8 },
-    Refill { address: u16 },
+/// Whether each memory cycle of a rendering line is a CPU-access cycle.
+const ACCESS_CYCLES: [bool; CYCLES_PER_LINE] = {
+    let mut map = [false; CYCLES_PER_LINE];
+    let mut run = 0;
+    while run < RUN_START_CYCLES.len() {
+        let mut offset = 0;
+        while offset < RUN_LENGTH_CYCLES[run] {
+            map[RUN_START_CYCLES[run] + offset] = true;
+            offset += 1;
+        }
+        run += 1;
+    }
+    map
+};
+
+/// Direction and data of a CPU port transfer.
+#[derive(Clone, Copy)]
+enum PortTransfer {
+    Write(u8),
+    Refill,
+}
+
+/// The access a CPU-access cycle has claimed: the address latched at
+/// claim, and the cycle's lock and release instants.
+struct InFlightAccess {
+    address: u16,
+    lock_at: u64,
+    release_at: u64,
 }
 
 pub struct Vdp {
@@ -81,9 +110,14 @@ pub struct Vdp {
     /// Set between the first and second control-port bytes.
     awaiting_second_byte: bool,
     read_buffer: u8,
-    /// The in-flight CPU access and the dot it will be serviced at; a new
-    /// request before then replaces it — the first byte dies.
-    pending: Option<(u64, PendingAccess)>,
+    /// Re-latched by every CPU request; the servicing cycle samples it at
+    /// its lock instant, so a newer request steals an in-flight cycle.
+    port_transfer: PortTransfer,
+    /// Latched by the request that raised the flag; replacements leave it
+    /// holding — a superseded access keeps the first address.
+    pending_address: u16,
+    pending_flag: bool,
+    in_flight: Option<InFlightAccess>,
 
     frame_flag: bool,
     coincidence_flag: bool,
@@ -106,7 +140,10 @@ impl Vdp {
             address: 0,
             awaiting_second_byte: false,
             read_buffer: 0,
-            pending: None,
+            port_transfer: PortTransfer::Refill,
+            pending_address: 0,
+            pending_flag: false,
+            in_flight: None,
             frame_flag: false,
             coincidence_flag: false,
             fifth_sprite_flag: false,
@@ -125,12 +162,6 @@ impl Vdp {
     pub fn tick(&mut self, xtals: u32) {
         for _ in 0..xtals {
             self.xtal_total += 1;
-            if let Some((ready, _)) = self.pending
-                && self.xtal_total >= ready
-            {
-                let (_, access) = self.pending.take().unwrap();
-                self.complete(access);
-            }
             self.xtal_in_line += 1;
             if self.xtal_in_line == XTALS_PER_LINE {
                 self.xtal_in_line = 0;
@@ -140,7 +171,42 @@ impl Vdp {
                 }
                 self.enter_line();
             }
+            self.service_port();
         }
+    }
+
+    /// The claim → release → lock events of the CPU port at this instant.
+    fn service_port(&mut self) {
+        if self.xtal_in_line.is_multiple_of(4)
+            && self.pending_flag
+            && self.in_flight.is_none()
+            && self.cycle_accessible((self.xtal_in_line / 4) as usize)
+        {
+            self.in_flight = Some(InFlightAccess {
+                address: self.pending_address,
+                lock_at: self.xtal_total + TRANSFER_LOCK_XTALS,
+                release_at: self.xtal_total + FLAG_RELEASE_XTALS,
+            });
+        }
+        if let Some(access) = &self.in_flight {
+            if self.xtal_total == access.release_at {
+                self.pending_flag = false;
+            }
+            if self.xtal_total == access.lock_at {
+                let address = access.address;
+                self.in_flight = None;
+                self.complete(address);
+            }
+        }
+    }
+
+    /// Rendering lines confine CPU access to the run schedule; everywhere
+    /// else every memory cycle is claimable.
+    fn cycle_accessible(&self, cycle: usize) -> bool {
+        let rendering = self.registers[1] & r1::DISPLAY_ENABLE != 0
+            && self.registers[1] & r1::M1 == 0
+            && self.line < ACTIVE_LINES;
+        !rendering || ACCESS_CYCLES[cycle]
     }
 
     fn enter_line(&mut self) {
@@ -182,7 +248,7 @@ impl Vdp {
         // A write loads the read-ahead buffer with the written value.
         self.read_buffer = value;
         let address = self.address;
-        self.request(PendingAccess::Write { address, value });
+        self.request(address, PortTransfer::Write(value));
         self.increment_address();
     }
 
@@ -190,7 +256,7 @@ impl Vdp {
         self.awaiting_second_byte = false;
         let value = self.read_buffer;
         let address = self.address;
-        self.request(PendingAccess::Refill { address });
+        self.request(address, PortTransfer::Refill);
         self.increment_address();
         value
     }
@@ -215,65 +281,27 @@ impl Vdp {
 
     fn fill_read_buffer(&mut self) {
         let address = self.address;
-        self.request(PendingAccess::Refill { address });
+        self.request(address, PortTransfer::Refill);
         self.increment_address();
     }
 
-    /// CPU accesses on an active non-text display line wait for the next
-    /// CPU slot in the memory schedule; everywhere else the port is free.
-    fn request(&mut self, access: PendingAccess) {
-        if let Some((ready, pending)) = &mut self.pending
-            && self.xtal_total < *ready
-        {
-            // The first request's address stays latched; the newcomer
-            // re-latches only data and direction, so the serviced access
-            // carries the first address with the last value.
-            let address = match *pending {
-                PendingAccess::Write { address, .. } | PendingAccess::Refill { address } => address,
-            };
-            *pending = match access {
-                PendingAccess::Write { value, .. } => PendingAccess::Write { address, value },
-                PendingAccess::Refill { .. } => PendingAccess::Refill { address },
-            };
-            return;
-        }
-        let restricted = self.registers[1] & r1::DISPLAY_ENABLE != 0
-            && self.registers[1] & r1::M1 == 0
-            && self.line < ACTIVE_LINES;
-        if restricted {
-            self.pending = Some((self.next_window(), access));
-        } else {
-            self.complete(access);
+    /// Every CPU access re-latches direction and data; the address only
+    /// latches with the request that raises the flag, so a superseded
+    /// access carries the first address with the last value.
+    fn request(&mut self, address: u16, transfer: PortTransfer) {
+        self.port_transfer = transfer;
+        if !self.pending_flag {
+            self.pending_address = address;
+            self.pending_flag = true;
         }
     }
 
-    /// The commit instant of the earliest CPU window that opens at least
-    /// the latch margin after now.
-    fn next_window(&self) -> u64 {
-        let phase = self.xtal_in_line as u64;
-        let earliest = phase + LATCH_MARGIN_XTALS;
-        let line = XTALS_PER_LINE as u64;
-        let start = WINDOW_START_CYCLES
-            .iter()
-            .map(|&c| c * XTALS_PER_CYCLE)
-            .find(|&w| w >= earliest)
-            .unwrap_or_else(|| {
-                let next_line_first = line + WINDOW_START_CYCLES[0] * XTALS_PER_CYCLE;
-                if next_line_first >= earliest {
-                    next_line_first
-                } else {
-                    line + WINDOW_START_CYCLES[1] * XTALS_PER_CYCLE
-                }
-            });
-        self.xtal_total + (start + XTALS_PER_CYCLE - phase)
-    }
-
-    fn complete(&mut self, access: PendingAccess) {
-        match access {
-            PendingAccess::Write { address, value } => {
+    fn complete(&mut self, address: u16) {
+        match self.port_transfer {
+            PortTransfer::Write(value) => {
                 self.vram[self.physical(address)] = value;
             }
-            PendingAccess::Refill { address } => {
+            PortTransfer::Refill => {
                 self.read_buffer = self.vram[self.physical(address)];
             }
         }
