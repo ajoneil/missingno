@@ -68,18 +68,18 @@ ticking). Cycle counts are call counts; the bus trait stays per-chip (a
 6502 has `read`/`write`, a Z80 adds ports), and execution decode stays
 per-crate per `isa`'s charter.
 
-Two board compositions are in service; pick per the core's evidence, and
-either way the world advances *between* CPU ticks so every bus access lands
-against its true instant:
-
-- **Clock-master** (the VCS): the video clock owns time and the CPU is its
-  client at an integer divisor — the colour clock steps, and the CPU tick
-  fires on its phase (`beam % 3`). Most faithful when the video chip's
-  schedule is the best-evidenced clock on the board.
-- **CPU-tick-master + follow** (the NES; the SG-1000 testbench): each CPU
-  tick is followed by the other chips' share of dots (integer or carried
-  fraction). Simplest when the CPU's T is the natural quantum of the
-  board's evidence.
+Board clocking is one principle: **the board ticks at its crystal, and
+every chip is a client at its divisor**. The VCS's single 3.58 MHz crystal
+is the colour clock (÷1) and the CPU (÷3); the SG-1000's 10.74 MHz crystal
+feeds the VDP's dots (÷2) and the CPU (÷3); the Game Boy's 4.19 MHz
+crystal is its master clock. How literally an implementation steps the
+crystal grid is a per-core choice defended in its methodology doc — the
+VCS walks every colour clock and fires the CPU on its phase, while the NES
+batches a CPU tick's worth of PPU dots and a testbench may carry a dot
+fraction per T — but the observable contract is the same: every bus access
+lands against a world advanced to its instant on the shared grid. A second
+crystal is a separate clock domain; syncing domains happens on the board,
+outside any chip.
 
 ## The two seam traits, and what they buy
 
