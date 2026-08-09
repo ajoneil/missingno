@@ -28,3 +28,54 @@ pub trait ClockedCpu<B> {
         false
     }
 }
+
+/// Carried-fraction division of one clock grid into another: a client
+/// running at `numerator/denominator` of the master is owed `advance()`
+/// ticks as the master moves, the sub-tick residue carried exactly.
+pub struct ClockRatio {
+    numerator: u64,
+    denominator: u64,
+    remainder: u64,
+}
+
+impl ClockRatio {
+    pub fn new(numerator: u64, denominator: u64) -> Self {
+        assert!(numerator > 0 && denominator > 0);
+        ClockRatio {
+            numerator,
+            denominator,
+            remainder: 0,
+        }
+    }
+
+    /// Client ticks due after the master advances `master_ticks`.
+    pub fn advance(&mut self, master_ticks: u64) -> u64 {
+        let due = self.remainder + master_ticks * self.numerator;
+        self.remainder = due % self.denominator;
+        due / self.denominator
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ClockRatio;
+
+    #[test]
+    fn three_dots_per_two_tstates() {
+        let mut ratio = ClockRatio::new(3, 2);
+        assert_eq!(ratio.advance(1), 1);
+        assert_eq!(ratio.advance(1), 2);
+        let more: u64 = (0..100).map(|_| ratio.advance(7)).sum();
+        assert_eq!(3 + more, 702 * 3 / 2);
+    }
+
+    #[test]
+    fn residue_never_lost() {
+        let mut ratio = ClockRatio::new(3, 2);
+        let mut due = 0;
+        for _ in 0..1000 {
+            due += ratio.advance(1);
+        }
+        assert_eq!(due, 1500);
+    }
+}

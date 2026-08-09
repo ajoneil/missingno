@@ -34,7 +34,7 @@ pub mod video;
 pub mod waveform;
 
 pub use analog::{HighPass, OnePoleHighPass, RcHighPass};
-pub use chip::ClockedCpu;
+pub use chip::{ClockRatio, ClockedCpu};
 pub use disasm::{ReadMemory, Row};
 pub use inspect::{
     FlagName, MemoryRegion, Register, RegisterGroup, ValueStyle, Watch, WatchParam, WatchTerm,

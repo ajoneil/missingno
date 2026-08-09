@@ -3,6 +3,7 @@
 //! 3 dots per 2 T-states after each instruction). Not a console — the ROMs
 //! confine themselves to the envelope every host machine shares.
 
+use missingno_core::ClockRatio;
 use missingno_ti_vdp::{Standard, Vdp};
 use missingno_zilog_z80::{Bus, Cpu};
 use std::path::Path;
@@ -88,12 +89,11 @@ fn run(rom: &str, budget_frames: u64) -> Verdict {
 
     let budget = budget_frames * TSTATES_PER_FRAME;
     let mut tstates: u64 = 0;
-    let mut dots_run: u64 = 0;
+    let mut dots = ClockRatio::new(3, 2);
     while tstates < budget {
-        tstates += cpu.step(&mut board) as u64;
-        let dots_due = tstates * 3 / 2;
-        board.vdp.tick((dots_due - dots_run) as u32);
-        dots_run = dots_due;
+        let step_tstates = cpu.step(&mut board) as u64;
+        tstates += step_tstates;
+        board.vdp.tick(dots.advance(step_tstates) as u32);
         cpu.set_irq(board.vdp.interrupt_asserted());
 
         let result = board.ram[0];
