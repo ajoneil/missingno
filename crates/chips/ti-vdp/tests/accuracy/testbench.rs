@@ -1,12 +1,11 @@
 //! The SG-1000 common-subset testbench: Z80 + 1 KB RAM + 32 KB cartridge +
 //! the VDP, interleaved one Z80 T-state at a time — the VDP advances by that
-//! T's dots (3 per 2 T-states) before the CPU ticks, so a port access lands
+//! T's three crystal periods before the CPU ticks, so a port access lands
 //! against a VDP that has already reached the instant it fires on. Not a
 //! console — the ROMs confine themselves to the envelope every host machine
 //! shares.
 
-use missingno_core::ClockRatio;
-use missingno_ti_vdp::{Standard, Vdp};
+use missingno_ti_vdp::{Standard, Vdp, XTALS_PER_TSTATE};
 use missingno_zilog_z80::{Bus, Cpu};
 use std::path::Path;
 
@@ -90,9 +89,8 @@ fn run(rom: &str, budget_frames: u64) -> Verdict {
     let mut cpu = Cpu::new();
 
     let budget = budget_frames * TSTATES_PER_FRAME;
-    let mut dots = ClockRatio::new(3, 2);
     for _ in 0..budget {
-        board.vdp.tick(dots.advance(1) as u32);
+        board.vdp.tick(XTALS_PER_TSTATE);
         cpu.tick(&mut board);
         cpu.set_irq(board.vdp.interrupt_asserted());
 

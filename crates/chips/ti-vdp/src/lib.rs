@@ -11,7 +11,10 @@
 //! abstractions (instruction-granular interleaving; digital core only).
 
 const VRAM_SIZE: usize = 0x4000;
-pub const DOTS_PER_LINE: u32 = 342;
+/// The crystal is the board's master grid: 3 XTAL periods per CPU
+/// T-state, 2 per dot, 684 per line.
+pub const XTALS_PER_TSTATE: u32 = 3;
+const XTALS_PER_LINE: u32 = 684;
 /// Display lines per frame (the sprite scanner's active range).
 const ACTIVE_LINES: u16 = 192;
 
@@ -48,9 +51,19 @@ mod status {
 /// Sprite attribute Y value that terminates the scan.
 const SPRITE_TERMINATOR: u8 = 0xD0;
 
-/// Dots between CPU-access slots in the memory schedule of an active
-/// non-text display line (one slot per 16 memory cycles of 2 dots).
-const SLOT_PERIOD: u64 = 32;
+/// One DRAM memory cycle is two dots = four XTAL periods; 171 per line.
+const XTALS_PER_CYCLE: u64 = 4;
+/// CPU windows in an active non-text line come every 16 memory cycles,
+/// eleven per line, the line's remaining 11 cycles forming the short gap
+/// (171 = 10x16 + 11). The schedule's rotation against hsync is
+/// unmeasured on silicon; the gap sits at the table's wrap.
+const CYCLES_PER_WINDOW: u64 = 16;
+const WINDOWS_PER_LINE: u64 = 11;
+/// A window services the pending access only if the request latched this
+/// many crystal periods before the transfer instant — the cross-domain
+/// latch margin, anchored against the canonical map (exact 228-bit
+/// up-to-rotation compare, hardware-measured).
+const SERVICE_MARGIN_XTALS: u64 = 12;
 
 /// A CPU-port VRAM access waiting for its memory slot.
 enum PendingAccess {
@@ -79,9 +92,9 @@ pub struct Vdp {
     /// set, otherwise the scanner's stop position from the last line.
     sprite_field: u8,
 
-    dot: u32,
+    xtal_in_line: u32,
     line: u16,
-    dots_total: u64,
+    xtal_total: u64,
 }
 
 impl Vdp {
@@ -98,9 +111,9 @@ impl Vdp {
             coincidence_flag: false,
             fifth_sprite_flag: false,
             sprite_field: 0,
-            dot: 0,
+            xtal_in_line: 0,
             line: 0,
-            dots_total: 0,
+            xtal_total: 0,
         }
     }
 
@@ -108,19 +121,19 @@ impl Vdp {
         self.frame_flag && self.registers[1] & r1::INTERRUPT_ENABLE != 0
     }
 
-    /// Advance the raster by `dots` pixel clocks.
-    pub fn tick(&mut self, dots: u32) {
-        for _ in 0..dots {
-            self.dots_total += 1;
+    /// Advance the raster by `xtals` crystal periods.
+    pub fn tick(&mut self, xtals: u32) {
+        for _ in 0..xtals {
+            self.xtal_total += 1;
             if let Some((ready, _)) = self.pending
-                && self.dots_total >= ready
+                && self.xtal_total >= ready
             {
                 let (_, access) = self.pending.take().unwrap();
                 self.complete(access);
             }
-            self.dot += 1;
-            if self.dot == DOTS_PER_LINE {
-                self.dot = 0;
+            self.xtal_in_line += 1;
+            if self.xtal_in_line == XTALS_PER_LINE {
+                self.xtal_in_line = 0;
                 self.line += 1;
                 if self.line == self.standard.lines_per_frame() {
                     self.line = 0;
@@ -210,7 +223,7 @@ impl Vdp {
     /// CPU slot in the memory schedule; everywhere else the port is free.
     fn request(&mut self, access: PendingAccess) {
         if let Some((ready, pending)) = &mut self.pending
-            && self.dots_total < *ready
+            && self.xtal_total < *ready
         {
             // The first request's address stays latched; the newcomer
             // re-latches only data and direction, so the serviced access
@@ -228,15 +241,29 @@ impl Vdp {
             && self.registers[1] & r1::M1 == 0
             && self.line < ACTIVE_LINES;
         if restricted {
-            // Slots sit at fixed positions in the line (10 slot periods
-            // plus the schedule's short gap: 171 cycles = 10x16 + 11), so
-            // the wait is to the next in-line slot, line-locked.
-            let next_slot = (self.dot as u64 / SLOT_PERIOD + 1) * SLOT_PERIOD;
-            let wait = next_slot.min(DOTS_PER_LINE as u64) - self.dot as u64;
-            self.pending = Some((self.dots_total + wait, access));
+            self.pending = Some((self.next_window(), access));
         } else {
             self.complete(access);
         }
+    }
+
+    /// The earliest CPU window whose transfer instant sits at least the
+    /// latch margin after now.
+    fn next_window(&self) -> u64 {
+        let margin = SERVICE_MARGIN_XTALS;
+        let span = CYCLES_PER_WINDOW * XTALS_PER_CYCLE;
+        let line = XTALS_PER_LINE as u64;
+        let phase = self.xtal_in_line as u64;
+        let earliest = phase + margin;
+        let index = earliest.div_ceil(span);
+        let target = if index < WINDOWS_PER_LINE {
+            index * span
+        } else if line >= earliest {
+            line
+        } else {
+            line + span
+        };
+        self.xtal_total + (target - phase)
     }
 
     fn complete(&mut self, access: PendingAccess) {
