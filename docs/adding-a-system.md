@@ -74,12 +74,15 @@ is the colour clock (÷1) and the CPU (÷3); the SG-1000's 10.74 MHz crystal
 feeds the VDP's dots (÷2) and the CPU (÷3); the Game Boy's 4.19 MHz
 crystal is its master clock. How literally an implementation steps the
 crystal grid is a per-core choice defended in its methodology doc — the
-VCS walks every colour clock and fires the CPU on its phase, while the NES
-batches a CPU tick's worth of PPU dots and a testbench may carry a dot
-fraction per T — but the observable contract is the same: every bus access
-lands against a world advanced to its instant on the shared grid. A second
-crystal is a separate clock domain; syncing domains happens on the board,
-outside any chip.
+VCS walks every colour clock and fires the CPU on its phase; the Game Boy
+dispatches both clock domains from one master-edge counter; a coarser
+stepping (batching another chip's share of the grid between CPU ticks) is
+admissible only where the core's evidence tier can't check finer — but the
+observable contract is the same: every bus access lands against a world
+advanced to its instant on the shared grid. A second crystal is a separate
+clock domain; syncing domains happens on the board, outside any chip.
+(The NES and SMS cores are unvetted first passes — do not read their
+current interleaves as defended choices.)
 
 ## The two seam traits, and what they buy
 
