@@ -180,11 +180,23 @@ fn unprefixed(address: u16, r: &mut Reader, op: u8, idx: Idx) -> Disassembly {
                     let d = r.byte() as i8;
                     let target = address.wrapping_add(r.len() as u16).wrapping_add(d as u16);
                     let (mnemonic, flow) = match f.y {
-                        2 => (format!("djnz ${target:04x}"), Flow::Branch { target: Some(target as u32) }),
-                        3 => (format!("jr ${target:04x}"), Flow::Jump { target: Some(target as u32) }),
+                        2 => (
+                            format!("djnz ${target:04x}"),
+                            Flow::Branch {
+                                target: Some(target as u32),
+                            },
+                        ),
+                        3 => (
+                            format!("jr ${target:04x}"),
+                            Flow::Jump {
+                                target: Some(target as u32),
+                            },
+                        ),
                         y => (
                             format!("jr {},${target:04x}", CC[y as usize - 4]),
-                            Flow::Branch { target: Some(target as u32) },
+                            Flow::Branch {
+                                target: Some(target as u32),
+                            },
                         ),
                     };
                     flowed(r, mnemonic, flow)
@@ -217,12 +229,20 @@ fn unprefixed(address: u16, r: &mut Reader, op: u8, idx: Idx) -> Disassembly {
             },
             4 | 5 => {
                 let verb = if f.z == 4 { "inc" } else { "dec" };
-                let operand = if f.y == 6 { mem(r, idx) } else { reg(f.y, idx).into() };
+                let operand = if f.y == 6 {
+                    mem(r, idx)
+                } else {
+                    reg(f.y, idx).into()
+                };
                 seq(r, format!("{verb} {operand}"))
             }
             6 => {
                 // `ld (ix+d),n` reads the displacement before the literal.
-                let operand = if f.y == 6 { mem(r, idx) } else { reg(f.y, idx).into() };
+                let operand = if f.y == 6 {
+                    mem(r, idx)
+                } else {
+                    reg(f.y, idx).into()
+                };
                 let n = r.byte();
                 seq(r, format!("ld {operand},${n:02x}"))
             }
@@ -246,7 +266,11 @@ fn unprefixed(address: u16, r: &mut Reader, op: u8, idx: Idx) -> Disassembly {
             (y, z) => seq(r, format!("ld {},{}", reg(y, idx), reg(z, idx))),
         },
         2 => {
-            let operand = if f.z == 6 { mem(r, idx) } else { reg(f.z, idx).into() };
+            let operand = if f.z == 6 {
+                mem(r, idx)
+            } else {
+                reg(f.z, idx).into()
+            };
             seq(r, alu(f.y, &operand))
         }
         _ => match f.z {
@@ -263,13 +287,21 @@ fn unprefixed(address: u16, r: &mut Reader, op: u8, idx: Idx) -> Disassembly {
                 flowed(
                     r,
                     format!("jp {},${word:04x}", CC[f.y as usize]),
-                    Flow::Branch { target: Some(word as u32) },
+                    Flow::Branch {
+                        target: Some(word as u32),
+                    },
                 )
             }
             3 => match f.y {
                 0 => {
                     let word = r.word();
-                    flowed(r, format!("jp ${word:04x}"), Flow::Jump { target: Some(word as u32) })
+                    flowed(
+                        r,
+                        format!("jp ${word:04x}"),
+                        Flow::Jump {
+                            target: Some(word as u32),
+                        },
+                    )
                 }
                 2 => {
                     let n = r.byte();
@@ -291,14 +323,22 @@ fn unprefixed(address: u16, r: &mut Reader, op: u8, idx: Idx) -> Disassembly {
                 flowed(
                     r,
                     format!("call {},${word:04x}", CC[f.y as usize]),
-                    Flow::Call { target: Some(word as u32) },
+                    Flow::Call {
+                        target: Some(word as u32),
+                    },
                 )
             }
             5 => match (f.q, f.p) {
                 (0, p) => seq(r, format!("push {}", rp2(p, idx))),
                 (_, 0) => {
                     let word = r.word();
-                    flowed(r, format!("call ${word:04x}"), Flow::Call { target: Some(word as u32) })
+                    flowed(
+                        r,
+                        format!("call ${word:04x}"),
+                        Flow::Call {
+                            target: Some(word as u32),
+                        },
+                    )
                 }
                 // p=1..3 are the DD/ED/FD prefixes, intercepted earlier.
                 _ => seq(r, "noni"),
@@ -309,7 +349,13 @@ fn unprefixed(address: u16, r: &mut Reader, op: u8, idx: Idx) -> Disassembly {
             }
             _ => {
                 let target = (f.y as u32) * 8;
-                flowed(r, format!("rst ${target:02x}"), Flow::Call { target: Some(target) })
+                flowed(
+                    r,
+                    format!("rst ${target:02x}"),
+                    Flow::Call {
+                        target: Some(target),
+                    },
+                )
             }
         },
     }
@@ -378,7 +424,10 @@ fn ed(r: &mut Reader) -> Disassembly {
                 1 => flowed(r, "reti".into(), Flow::Return),
                 _ => flowed(r, "retn".into(), Flow::Return),
             },
-            6 => seq(r, format!("im {}", ["0", "0/1", "1", "2"][(f.y & 3) as usize])),
+            6 => seq(
+                r,
+                format!("im {}", ["0", "0/1", "1", "2"][(f.y & 3) as usize]),
+            ),
             _ => match f.y {
                 0 => seq(r, "ld i,a"),
                 1 => seq(r, "ld r,a"),
@@ -451,13 +500,33 @@ mod tests {
     #[test]
     fn control_flow_classification() {
         let flow = |bytes: &[u8]| disassemble(0, bytes).flow;
-        assert!(matches!(flow(&[0xc3, 0x00, 0x40]), Flow::Jump { target: Some(0x4000) }));
+        assert!(matches!(
+            flow(&[0xc3, 0x00, 0x40]),
+            Flow::Jump {
+                target: Some(0x4000)
+            }
+        ));
         assert!(matches!(flow(&[0xe9]), Flow::Jump { target: None }));
         assert!(matches!(flow(&[0xdd, 0xe9]), Flow::Jump { target: None }));
-        assert!(matches!(flow(&[0xca, 0x00, 0x40]), Flow::Branch { target: Some(0x4000) }));
+        assert!(matches!(
+            flow(&[0xca, 0x00, 0x40]),
+            Flow::Branch {
+                target: Some(0x4000)
+            }
+        ));
         assert!(matches!(flow(&[0x10, 0x10]), Flow::Branch { .. }));
-        assert!(matches!(flow(&[0xcd, 0x00, 0x40]), Flow::Call { target: Some(0x4000) }));
-        assert!(matches!(flow(&[0xc4, 0x00, 0x40]), Flow::Call { target: Some(0x4000) }));
+        assert!(matches!(
+            flow(&[0xcd, 0x00, 0x40]),
+            Flow::Call {
+                target: Some(0x4000)
+            }
+        ));
+        assert!(matches!(
+            flow(&[0xc4, 0x00, 0x40]),
+            Flow::Call {
+                target: Some(0x4000)
+            }
+        ));
         assert!(matches!(flow(&[0xff]), Flow::Call { target: Some(0x38) }));
         assert!(matches!(flow(&[0xc9]), Flow::Return));
         assert!(matches!(flow(&[0xd8]), Flow::Return));
@@ -482,8 +551,14 @@ mod tests {
         assert_eq!(text(&[0xed, 0xbb]), "otdr");
         assert_eq!(text(&[0xed, 0x47]), "ld i,a");
         assert_eq!(text(&[0xed, 0x5f]), "ld a,r");
-        assert_eq!(dis(0, &[0xed, 0x43, 0x34, 0x12]), ("ld ($1234),bc".into(), 4));
-        assert_eq!(dis(0, &[0xed, 0x7b, 0x34, 0x12]), ("ld sp,($1234)".into(), 4));
+        assert_eq!(
+            dis(0, &[0xed, 0x43, 0x34, 0x12]),
+            ("ld ($1234),bc".into(), 4)
+        );
+        assert_eq!(
+            dis(0, &[0xed, 0x7b, 0x34, 0x12]),
+            ("ld sp,($1234)".into(), 4)
+        );
         assert_eq!(text(&[0xed, 0x44]), "neg");
         assert_eq!(text(&[0xed, 0x42]), "sbc hl,bc");
         assert_eq!(text(&[0xed, 0x6a]), "adc hl,hl");
@@ -503,7 +578,10 @@ mod tests {
         assert_eq!(dis(0, &[0xdd, 0x21, 0x34, 0x12]), ("ld ix,$1234".into(), 4));
         assert_eq!(dis(0, &[0xfd, 0x21, 0x34, 0x12]), ("ld iy,$1234".into(), 4));
         assert_eq!(dis(0, &[0xdd, 0x34, 0x05]), ("inc (ix+$05)".into(), 3));
-        assert_eq!(dis(0, &[0xdd, 0x36, 0x05, 0x42]), ("ld (ix+$05),$42".into(), 4));
+        assert_eq!(
+            dis(0, &[0xdd, 0x36, 0x05, 0x42]),
+            ("ld (ix+$05),$42".into(), 4)
+        );
         assert_eq!(dis(0, &[0xdd, 0x66, 0xfb]), ("ld h,(ix-$05)".into(), 3));
         assert_eq!(dis(0, &[0xdd, 0x75, 0x00]), ("ld (ix+$00),l".into(), 3));
         assert_eq!(dis(0, &[0xdd, 0x86, 0x7f]), ("add a,(ix+$7f)".into(), 3));
@@ -515,7 +593,10 @@ mod tests {
         assert_eq!(dis(0, &[0xdd, 0xe3]), ("ex (sp),ix".into(), 2));
         assert_eq!(dis(0, &[0xdd, 0xeb]), ("ex de,hl".into(), 2));
         assert_eq!(dis(0, &[0xdd, 0xf9]), ("ld sp,ix".into(), 2));
-        assert_eq!(dis(0, &[0xdd, 0x22, 0x00, 0xc0]), ("ld ($c000),ix".into(), 4));
+        assert_eq!(
+            dis(0, &[0xdd, 0x22, 0x00, 0xc0]),
+            ("ld ($c000),ix".into(), 4)
+        );
         // A prefix followed by another prefix drops as a standalone noni.
         assert_eq!(dis(0, &[0xdd, 0xdd]), ("noni".into(), 1));
         assert_eq!(dis(0, &[0xdd, 0xed]), ("noni".into(), 1));
@@ -524,12 +605,30 @@ mod tests {
 
     #[test]
     fn ddcb_displacement_first() {
-        assert_eq!(dis(0, &[0xdd, 0xcb, 0x05, 0x46]), ("bit 0,(ix+$05)".into(), 4));
-        assert_eq!(dis(0, &[0xdd, 0xcb, 0x05, 0x7e]), ("bit 7,(ix+$05)".into(), 4));
-        assert_eq!(dis(0, &[0xdd, 0xcb, 0x05, 0x06]), ("rlc (ix+$05)".into(), 4));
-        assert_eq!(dis(0, &[0xdd, 0xcb, 0x05, 0x00]), ("rlc (ix+$05),b".into(), 4));
-        assert_eq!(dis(0, &[0xfd, 0xcb, 0xff, 0xc6]), ("set 0,(iy-$01)".into(), 4));
-        assert_eq!(dis(0, &[0xfd, 0xcb, 0x00, 0x97]), ("res 2,(iy+$00),a".into(), 4));
+        assert_eq!(
+            dis(0, &[0xdd, 0xcb, 0x05, 0x46]),
+            ("bit 0,(ix+$05)".into(), 4)
+        );
+        assert_eq!(
+            dis(0, &[0xdd, 0xcb, 0x05, 0x7e]),
+            ("bit 7,(ix+$05)".into(), 4)
+        );
+        assert_eq!(
+            dis(0, &[0xdd, 0xcb, 0x05, 0x06]),
+            ("rlc (ix+$05)".into(), 4)
+        );
+        assert_eq!(
+            dis(0, &[0xdd, 0xcb, 0x05, 0x00]),
+            ("rlc (ix+$05),b".into(), 4)
+        );
+        assert_eq!(
+            dis(0, &[0xfd, 0xcb, 0xff, 0xc6]),
+            ("set 0,(iy-$01)".into(), 4)
+        );
+        assert_eq!(
+            dis(0, &[0xfd, 0xcb, 0x00, 0x97]),
+            ("res 2,(iy+$00),a".into(), 4)
+        );
     }
 
     #[test]

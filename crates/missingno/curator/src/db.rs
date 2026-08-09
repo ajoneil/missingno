@@ -2168,7 +2168,8 @@ mod tests {
     // curator's editing surface and the flag file round-trips.
     #[test]
     fn real_gamedb_loads() {
-        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../missingno-gamedb");
+        let repo =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../missingno-gamedb");
         if !repo.join("data/gb").is_dir() {
             return;
         }
