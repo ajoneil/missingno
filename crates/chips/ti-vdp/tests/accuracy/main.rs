@@ -34,6 +34,7 @@ mod harness {
 mod registers {
     vdp_test!(midframe_base, "registers/midframe-base.sg");
     vdp_test!(midframe_blank, "registers/midframe-blank.sg");
+    vdp_test!(midframe_size, "registers/midframe-size.sg");
     vdp_test!(
         midframe_sprite_pattern,
         "registers/midframe-sprite-pattern.sg"
@@ -51,6 +52,7 @@ mod vram {
     vdp_test!(access_windows, "vram/access-windows.sg");
     vdp_test!(addr_autoinc, "vram/addr-autoinc.sg");
     vdp_test!(addr_wrap, "vram/addr-wrap.sg");
+    vdp_test!(drop_semantics, "vram/drop-semantics.sg");
     vdp_test!(latch_reset, "vram/latch-reset.sg");
     vdp_test!(read_ahead, "vram/read-ahead.sg");
     // Two 1800-frame retention waits: the sidecar budget is 4200 frames.
@@ -61,6 +63,7 @@ mod vram {
 mod status {
     vdp_test!(_5s_gating, "status/5s-gating.sg");
     vdp_test!(_5s_overwrite, "status/5s-overwrite.sg");
+    vdp_test!(c_gating, "status/c-gating.sg");
     vdp_test!(_5s_relatch, "status/5s-relatch.sg");
     vdp_test!(fifth_sprite, "status/fifth-sprite.sg");
     vdp_test!(frame_flag, "status/frame-flag.sg");
@@ -80,6 +83,7 @@ mod sprites {
     vdp_test!(mag_grid, "sprites/mag-grid.sg");
     vdp_test!(mode_gating, "sprites/mode-gating.sg");
     vdp_test!(name_mask, "sprites/name-mask.sg");
+    vdp_test!(phantom_line, "sprites/phantom-line.sg");
     vdp_test!(size_mag, "sprites/size-mag.sg");
     vdp_test!(tag_bits, "sprites/tag-bits.sg");
     vdp_test!(terminator, "sprites/terminator.sg");

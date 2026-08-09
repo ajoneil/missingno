@@ -209,10 +209,19 @@ impl Vdp {
     /// CPU accesses on an active non-text display line wait for the next
     /// CPU slot in the memory schedule; everywhere else the port is free.
     fn request(&mut self, access: PendingAccess) {
-        if let Some((ready, _)) = self.pending
-            && self.dots_total < ready
+        if let Some((ready, pending)) = &mut self.pending
+            && self.dots_total < *ready
         {
-            self.pending = Some((ready, access));
+            // The first request's address stays latched; the newcomer
+            // re-latches only data and direction, so the serviced access
+            // carries the first address with the last value.
+            let address = match *pending {
+                PendingAccess::Write { address, .. } | PendingAccess::Refill { address } => address,
+            };
+            *pending = match access {
+                PendingAccess::Write { value, .. } => PendingAccess::Write { address, value },
+                PendingAccess::Refill { .. } => PendingAccess::Refill { address },
+            };
             return;
         }
         let restricted = self.registers[1] & r1::DISPLAY_ENABLE != 0
