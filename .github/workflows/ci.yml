@@ -48,11 +48,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: 6502-family oracle sweeps
-        run: cargo test -p missingno-6502
+        run: cargo test -p missingno-mos-6502
       - name: VCS tests
         run: cargo test -p missingno-vcs
       - name: Z80 oracle sweep
-        run: cargo test -p missingno-z80
+        run: cargo test -p missingno-zilog-z80
       - name: SMS tests
         run: cargo test -p missingno-sms
 

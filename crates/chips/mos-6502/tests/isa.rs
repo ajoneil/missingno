@@ -1,9 +1,9 @@
 //! The `InstructionSet` front end must render exactly what the disassembler
 //! renders, and classify control flow the way step-over expects.
 
-use missingno_6502::disasm;
-use missingno_6502::isa::Mos6502;
 use missingno_core::isa::{Flow, InstructionSet};
+use missingno_mos_6502::disasm;
+use missingno_mos_6502::isa::Mos6502;
 
 const ADDRESS: u32 = 0x0600;
 

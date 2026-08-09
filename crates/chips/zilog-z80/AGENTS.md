@@ -1,4 +1,4 @@
-# missingno-z80 — chip methodology
+# missingno-zilog-z80 — chip methodology
 
 Chip-specific methodology for the shared Zilog NMOS Z80 core. The shared
 skill-system rules and workflow discipline live in the repository-root

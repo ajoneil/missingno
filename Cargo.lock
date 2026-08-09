@@ -2991,15 +2991,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "missingno-6502"
-version = "26.9.0"
-dependencies = [
- "missingno-core 26.9.0",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "missingno-core"
 version = "0.1.0"
 source = "git+https://github.com/ajoneil/missingno?branch=main#d09139bc48173d4d968ae940b7717cf8615ed284"
@@ -3090,11 +3081,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "missingno-mos-6502"
+version = "26.9.0"
+dependencies = [
+ "missingno-core 26.9.0",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "missingno-nes"
 version = "26.9.0"
 dependencies = [
- "missingno-6502",
  "missingno-core 26.9.0",
+ "missingno-mos-6502",
  "morepork",
  "rgb",
  "sha2 0.11.0",
@@ -3129,7 +3129,7 @@ name = "missingno-sms"
 version = "26.9.0"
 dependencies = [
  "missingno-core 26.9.0",
- "missingno-z80",
+ "missingno-zilog-z80",
  "rgb",
 ]
 
@@ -3137,8 +3137,8 @@ dependencies = [
 name = "missingno-vcs"
 version = "26.9.0"
 dependencies = [
- "missingno-6502",
  "missingno-core 26.9.0",
+ "missingno-mos-6502",
  "morepork",
  "png 0.18.1",
  "rgb",
@@ -3146,7 +3146,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "missingno-z80"
+name = "missingno-zilog-z80"
 version = "26.9.0"
 dependencies = [
  "missingno-core 26.9.0",

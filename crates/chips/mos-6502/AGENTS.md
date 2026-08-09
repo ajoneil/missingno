@@ -1,4 +1,4 @@
-# missingno-6502 — chip methodology
+# missingno-mos-6502 — chip methodology
 
 Chip-specific methodology for the shared NMOS 6502-family core. The shared
 skill-system rules and workflow discipline live in the repository-root

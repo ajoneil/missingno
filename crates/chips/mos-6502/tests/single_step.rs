@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use missingno_6502::{Bus, Cpu};
+use missingno_mos_6502::{Bus, Cpu};
 use serde::Deserialize;
 
 #[derive(Deserialize)]

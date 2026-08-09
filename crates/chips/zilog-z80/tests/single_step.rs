@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use missingno_z80::{Bus, Cpu, InterruptMode, Pins};
+use missingno_zilog_z80::{Bus, Cpu, InterruptMode, Pins};
 use serde::Deserialize;
 
 #[derive(Deserialize)]

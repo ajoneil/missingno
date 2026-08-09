@@ -67,7 +67,7 @@ impl InspectSnapshot for VcsSnapshot {
         Some(self.state.pc as u32)
     }
     fn instruction_set(&self) -> Option<&dyn InstructionSet> {
-        Some(&missingno_6502::Mos6502)
+        Some(&missingno_mos_6502::Mos6502)
     }
     fn channel_waves(&self) -> Option<Vec<missingno_core::waveform::ChannelWave>> {
         self.channel_waves.clone()

@@ -6,7 +6,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use missingno_6502::disasm;
 use missingno_core::inspect::{
     BitColumn, BitRow, BitTable, FlagName, Register, RegisterGroup, Row, Section, SectionBlock,
     Sweep, SweepZone, Tone, ValueStyle,
@@ -20,6 +19,7 @@ use missingno_core::system::{
     ControlId, ControlInput, ControlRole, ControlSite, DebugView, InspectSnapshot, RunningStatus,
 };
 use missingno_core::video::IndexedFrame;
+use missingno_mos_6502::disasm;
 use rgb::RGB8;
 
 use crate::console::Nes;
@@ -256,7 +256,7 @@ impl SteppingSystem for NesSystem {
     }
 
     fn instruction_set() -> Option<&'static dyn missingno_core::isa::InstructionSet> {
-        Some(&missingno_6502::isa::Mos6502)
+        Some(&missingno_mos_6502::isa::Mos6502)
     }
 
     fn step_instruction(nes: &mut Nes) {

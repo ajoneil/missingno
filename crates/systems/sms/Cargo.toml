@@ -5,5 +5,5 @@ edition = "2024"
 
 [dependencies]
 missingno-core = { path = "../../missingno/core" }
-missingno-z80 = { path = "../../hardware/z80" }
+missingno-zilog-z80 = { path = "../../chips/zilog-z80" }
 rgb = { workspace = true }

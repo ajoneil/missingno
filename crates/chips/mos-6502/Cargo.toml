@@ -1,5 +1,5 @@
 [package]
-name = "missingno-6502"
+name = "missingno-mos-6502"
 version.workspace = true
 edition = "2024"
 

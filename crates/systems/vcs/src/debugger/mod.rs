@@ -9,9 +9,9 @@ mod test_support;
 
 use std::collections::BTreeSet;
 
-use missingno_6502::Mos6502;
 use missingno_core::inspect;
 use missingno_core::isa::InstructionSet;
+use missingno_mos_6502::Mos6502;
 
 use crate::console::{Frame, Vcs};
 use watch::{WatchCondition, watch_from_condition, watch_to_condition};

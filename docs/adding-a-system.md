@@ -236,7 +236,7 @@ Filling the seam buys the subsystems above; these stay a family's own work:
    machinery downstream is shared.
 3. **The instruction set, if the CPU is new** — implement `InstructionSet`
    (`missingno-core`'s `isa.rs`) for decode-for-display, or reuse a shared one
-   (`missingno-6502` serves the VCS and NES).
+   (`missingno-mos-6502` serves the VCS and NES).
 4. **The graphics and audio decode backends** — `graphics()` and
    `channel_waves()` are the family's per-vblank decode into the shared
    `GraphicsView` / `ChannelWave` vocabulary.

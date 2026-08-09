@@ -3,7 +3,7 @@
 //! the interleave is cycle-granular. OAM DMA freezes the CPU for the
 //! 513-cycle transfer while the PPU keeps running.
 
-use missingno_6502::{Bus, Cpu};
+use missingno_mos_6502::{Bus, Cpu};
 
 use crate::apu::Apu;
 use crate::cartridge::{Cartridge, CartridgeError};
