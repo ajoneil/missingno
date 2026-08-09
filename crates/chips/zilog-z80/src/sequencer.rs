@@ -2,9 +2,8 @@
 //! a machine-cycle runner carrying each cycle's fixed per-T schedule, and an
 //! instruction plan above it, consulted only at cycle boundaries.
 
-use crate::decode::{AluOp, Fields, INT_MODE, Reg, RotOp};
-use crate::execute::real_reg;
-use crate::{Bus, Cpu, Pins};
+use crate::decode::{AluOp, Fields, INT_MODE, Index, Reg, RotOp, real_reg, reg_at};
+use crate::{Bus, Cpu, InterruptMode, Pins};
 
 /// One machine cycle. Each kind owns the per-T-state bus snapshots it records
 /// and the T at which its pins assert.
@@ -45,6 +44,8 @@ enum Prefix {
     Bit,
     /// ED: the extended table, including the block instructions.
     Extended,
+    /// DD/FD: the main table again, with IX or IY substituted for HL.
+    Indexed { index: Index },
 }
 
 /// The instruction's remainder after M1, grouped by execution shape rather
@@ -65,6 +66,7 @@ enum Body {
     },
     LoadPairImmediate {
         pair: u8,
+        index: Index,
     },
     StoreImmediate {
         address: u16,
@@ -88,6 +90,7 @@ enum Body {
     LoadAccumulatorAbsolute,
     LoadPairAbsolute {
         pair: u8,
+        index: Index,
     },
     StoreAccumulatorAbsolute,
     StorePairAbsolute {
@@ -114,7 +117,10 @@ enum Body {
     PortImmediate {
         write: bool,
     },
-    ExchangeStackTop,
+    ExchangeStackTop {
+        value: u16,
+        index: Index,
+    },
     /// A CB operation on (HL): read, one internal T-state, then test or
     /// write back.
     BitOperation {
@@ -137,12 +143,53 @@ enum Body {
         increment: bool,
         repeat: bool,
     },
+    /// An operand at (IX/IY + d): the displacement read, its padding, and the
+    /// operation the effective address feeds.
+    Indexed {
+        base: u16,
+        op: IndexedOp,
+    },
+    /// DDCB/FDCB: displacement and sub-opcode arrive as plain reads, then the
+    /// operation writes its result back to memory (and, undocumented, to a
+    /// named register).
+    IndexBit {
+        base: u16,
+    },
+    /// A halted CPU's re-fetch period, which leaves PC where it stands.
+    HaltRefetch {
+        pc: u16,
+    },
+    AcceptNmi,
+    AcceptIrq {
+        mode: InterruptMode,
+    },
 }
 
 #[derive(Clone, Copy)]
 enum PopDest {
-    Pair(u8),
+    Pair { pair: u8, index: Index },
     ProgramCounter,
+}
+
+/// What an (IX/IY + d) effective address feeds once its displacement byte has
+/// been read.
+#[derive(Clone, Copy)]
+enum IndexedOp {
+    Load {
+        dest: Reg,
+    },
+    Store {
+        data: u8,
+    },
+    Alu {
+        op: AluOp,
+    },
+    ReadModifyWrite {
+        increment: bool,
+    },
+    /// LD (IX+d),n — the immediate follows the displacement, and its padding
+    /// falls between the two reads and the write.
+    StoreImmediate,
 }
 
 /// What a CB-prefixed opcode does to its operand byte.
@@ -206,6 +253,20 @@ impl Sequencer {
         }
     }
 
+    /// A body no opcode fetch introduced — an interrupt entry or HALT's
+    /// re-fetch. Its caller names the opening cycle and applies whatever the
+    /// entry settles up front, so the body's own steps start at 1.
+    fn entering(cycle: Cycle, body: Body) -> Self {
+        Sequencer {
+            cycle,
+            t: 0,
+            plan: Plan::Body { body, step: 1 },
+            latched: 0,
+            held: 0,
+            operand: 0,
+        }
+    }
+
     fn take_low(&mut self) {
         self.operand = self.latched as u16;
     }
@@ -213,13 +274,6 @@ impl Sequencer {
     fn take_high(&mut self) {
         self.operand |= (self.latched as u16) << 8;
     }
-}
-
-/// The opcodes the sequencer does not yet plan: the index prefixes, whose
-/// remainders run through the atomic executor, and HALT, whose re-fetch loop
-/// does.
-fn unsequenced(opcode: u8) -> bool {
-    matches!(opcode, 0xDD | 0xFD | 0x76)
 }
 
 impl Cpu {
@@ -277,17 +331,6 @@ impl Cpu {
         }
     }
 
-    /// Run every T-state of one machine cycle back to back, returning the byte
-    /// a read cycle latched. The atomic executor's machine cycles and the
-    /// sequencer's therefore share one schedule.
-    pub(super) fn run_cycle(&mut self, bus: &mut impl Bus, cycle: Cycle) -> u8 {
-        let mut latch = 0;
-        for t in 0..cycle.length() {
-            self.tick_cycle(bus, cycle, t, &mut latch);
-        }
-        latch
-    }
-
     /// Advance the sequenced instruction by one T-state. Returns false once it
     /// has retired.
     pub(super) fn tick_sequencer(&mut self, bus: &mut impl Bus, seq: &mut Sequencer) -> bool {
@@ -296,7 +339,7 @@ impl Cpu {
         if seq.t < seq.cycle.length() {
             return true;
         }
-        match self.next_cycle(bus, seq) {
+        match self.next_cycle(seq) {
             Some(cycle) => {
                 seq.cycle = cycle;
                 seq.t = 0;
@@ -308,48 +351,44 @@ impl Cpu {
 
     /// At a machine-cycle boundary: apply what the completed cycle enables and
     /// choose the next one, or `None` to retire the instruction.
-    fn next_cycle(&mut self, bus: &mut impl Bus, seq: &mut Sequencer) -> Option<Cycle> {
+    fn next_cycle(&mut self, seq: &mut Sequencer) -> Option<Cycle> {
         match seq.plan {
             Plan::OpcodeFetch => {
                 let opcode = seq.latched;
                 match opcode {
                     // A prefix spends its own M1 fetching the opcode that
                     // names the instruction.
-                    0xCB => {
-                        seq.plan = Plan::PrefixFetch {
-                            prefix: Prefix::Bit,
-                        };
-                        Some(Cycle::OpcodeFetch)
-                    }
-                    0xED => {
-                        seq.plan = Plan::PrefixFetch {
-                            prefix: Prefix::Extended,
-                        };
-                        Some(Cycle::OpcodeFetch)
-                    }
-                    _ if unsequenced(opcode) => {
-                        self.execute(bus, opcode);
-                        None
-                    }
+                    0xCB => self.fetch_prefixed(seq, Prefix::Bit),
+                    0xED => self.fetch_prefixed(seq, Prefix::Extended),
+                    0xDD => self.fetch_indexed(seq, Index::Ix),
+                    0xFD => self.fetch_indexed(seq, Index::Iy),
                     _ => {
                         seq.plan = Plan::Body {
-                            body: self.plan_instruction(opcode),
+                            body: self.plan_instruction(opcode, Index::Hl),
                             step: 0,
                         };
-                        self.next_cycle(bus, seq)
+                        self.next_cycle(seq)
                     }
                 }
             }
             Plan::PrefixFetch { prefix } => {
                 let opcode = seq.latched;
-                seq.plan = Plan::Body {
-                    body: match prefix {
-                        Prefix::Bit => self.plan_bit(opcode),
-                        Prefix::Extended => self.plan_extended(opcode),
+                let body = match prefix {
+                    Prefix::Bit => self.plan_bit(opcode),
+                    Prefix::Extended => self.plan_extended(opcode),
+                    Prefix::Indexed { index } => match opcode {
+                        // The last index prefix of a run names the register.
+                        0xDD => return self.fetch_indexed(seq, Index::Ix),
+                        0xFD => return self.fetch_indexed(seq, Index::Iy),
+                        0xED => return self.fetch_prefixed(seq, Prefix::Extended),
+                        0xCB => Body::IndexBit {
+                            base: index.base(self),
+                        },
+                        _ => self.plan_instruction(opcode, index),
                     },
-                    step: 0,
                 };
-                self.next_cycle(bus, seq)
+                seq.plan = Plan::Body { body, step: 0 };
+                self.next_cycle(seq)
             }
             Plan::Body { body, step } => {
                 seq.plan = Plan::Body {
@@ -359,6 +398,18 @@ impl Cpu {
                 self.run_body(seq, body, step)
             }
         }
+    }
+
+    fn fetch_prefixed(&mut self, seq: &mut Sequencer, prefix: Prefix) -> Option<Cycle> {
+        seq.plan = Plan::PrefixFetch { prefix };
+        Some(Cycle::OpcodeFetch)
+    }
+
+    fn fetch_indexed(&mut self, seq: &mut Sequencer, index: Index) -> Option<Cycle> {
+        // The prefix byte completes as a non-flag-modifying step, clearing the
+        // Q shadow that SCF/CCF fold into their X/Y flags.
+        self.q = 0;
+        self.fetch_prefixed(seq, Prefix::Indexed { index })
     }
 
     /// Schedule the machine cycle at `step` of `body`, first applying the
@@ -384,7 +435,7 @@ impl Cpu {
                     None
                 }
             },
-            Body::LoadPairImmediate { pair } => match step {
+            Body::LoadPairImmediate { pair, index } => match step {
                 0 => Some(self.read_at_pc()),
                 1 => {
                     seq.take_low();
@@ -392,7 +443,7 @@ impl Cpu {
                 }
                 _ => {
                     seq.take_high();
-                    self.set_pair(pair, seq.operand);
+                    self.set_pair(pair, index, seq.operand);
                     None
                 }
             },
@@ -453,7 +504,7 @@ impl Cpu {
                     None
                 }
             },
-            Body::LoadPairAbsolute { pair } => match step {
+            Body::LoadPairAbsolute { pair, index } => match step {
                 0 => Some(self.read_at_pc()),
                 1 => {
                     seq.take_low();
@@ -471,7 +522,7 @@ impl Cpu {
                     Some(Cycle::MemRead { address: self.wz })
                 }
                 _ => {
-                    self.set_pair(pair, u16::from_le_bytes([seq.held, seq.latched]));
+                    self.set_pair(pair, index, u16::from_le_bytes([seq.held, seq.latched]));
                     None
                 }
             },
@@ -600,7 +651,7 @@ impl Cpu {
                 _ => {
                     let value = u16::from_le_bytes([seq.held, seq.latched]);
                     match dest {
-                        PopDest::Pair(p) => self.set_pair2(p, value),
+                        PopDest::Pair { pair, index } => self.set_stack_pair(pair, index, value),
                         PopDest::ProgramCounter => {
                             self.wz = value;
                             self.pc = value;
@@ -629,7 +680,7 @@ impl Cpu {
                     None
                 }
             },
-            Body::ExchangeStackTop => match step {
+            Body::ExchangeStackTop { value, index } => match step {
                 0 => Some(Cycle::MemRead { address: self.sp }),
                 1 => {
                     seq.held = seq.latched;
@@ -643,14 +694,14 @@ impl Cpu {
                 }
                 3 => Some(Cycle::MemWrite {
                     address: self.sp.wrapping_add(1),
-                    data: self.h,
+                    data: (value >> 8) as u8,
                 }),
                 4 => Some(Cycle::MemWrite {
                     address: self.sp,
-                    data: self.l,
+                    data: value as u8,
                 }),
                 5 => {
-                    self.set_pair(2, seq.operand);
+                    self.set_pair(2, index, seq.operand);
                     self.wz = seq.operand;
                     Some(Cycle::Internal { length: 2 })
                 }
@@ -713,6 +764,165 @@ impl Cpu {
                 increment,
                 repeat,
             } => self.run_block(seq, kind, increment, repeat, step),
+            Body::Indexed { base, op } => self.run_indexed(seq, base, op, step),
+            Body::IndexBit { base } => self.run_index_bit(seq, base, step),
+            Body::HaltRefetch { pc } => {
+                self.pc = pc;
+                None
+            }
+            Body::AcceptNmi => match step {
+                1 => {
+                    self.inc_r();
+                    Some(Cycle::Internal { length: 1 })
+                }
+                2 => Some(self.push_byte((self.pc >> 8) as u8)),
+                3 => Some(self.push_byte(self.pc as u8)),
+                _ => {
+                    self.pc = 0x0066;
+                    self.wz = 0x0066;
+                    None
+                }
+            },
+            Body::AcceptIrq { mode } => match step {
+                1 => Some(self.push_byte((self.pc >> 8) as u8)),
+                2 => Some(self.push_byte(self.pc as u8)),
+                3 => match mode {
+                    InterruptMode::Mode2 => {
+                        // The vector's low byte comes from the device; the
+                        // oracle-silent entry drives $FF.
+                        seq.operand = u16::from_be_bytes([self.i, 0xFF]);
+                        Some(Cycle::MemRead {
+                            address: seq.operand,
+                        })
+                    }
+                    _ => {
+                        self.pc = 0x0038;
+                        self.wz = 0x0038;
+                        None
+                    }
+                },
+                4 => {
+                    seq.held = seq.latched;
+                    Some(Cycle::MemRead {
+                        address: seq.operand.wrapping_add(1),
+                    })
+                }
+                _ => {
+                    let target = u16::from_le_bytes([seq.held, seq.latched]);
+                    self.pc = target;
+                    self.wz = target;
+                    None
+                }
+            },
+        }
+    }
+
+    /// Schedule the machine cycle at `step` of an (IX/IY + d) operand: the
+    /// displacement read forms the address, then the operation runs against
+    /// it.
+    fn run_indexed(
+        &mut self,
+        seq: &mut Sequencer,
+        base: u16,
+        op: IndexedOp,
+        step: u8,
+    ) -> Option<Cycle> {
+        match step {
+            0 => Some(self.read_at_pc()),
+            1 => {
+                seq.operand = base.wrapping_add(seq.latched as i8 as u16);
+                self.wz = seq.operand;
+                match op {
+                    IndexedOp::StoreImmediate => Some(self.read_at_pc()),
+                    _ => Some(Cycle::Internal { length: 5 }),
+                }
+            }
+            _ => {
+                let address = seq.operand;
+                match op {
+                    IndexedOp::Load { dest } => match step {
+                        2 => Some(Cycle::MemRead { address }),
+                        _ => {
+                            self.set_reg(dest, seq.latched);
+                            None
+                        }
+                    },
+                    IndexedOp::Store { data } => match step {
+                        2 => Some(Cycle::MemWrite { address, data }),
+                        _ => None,
+                    },
+                    IndexedOp::Alu { op } => match step {
+                        2 => Some(Cycle::MemRead { address }),
+                        _ => {
+                            self.alu(op, seq.latched);
+                            None
+                        }
+                    },
+                    IndexedOp::ReadModifyWrite { increment } => match step {
+                        2 => Some(Cycle::MemRead { address }),
+                        3 => Some(Cycle::Internal { length: 1 }),
+                        4 => {
+                            let data = if increment {
+                                self.inc8(seq.latched)
+                            } else {
+                                self.dec8(seq.latched)
+                            };
+                            Some(Cycle::MemWrite { address, data })
+                        }
+                        _ => None,
+                    },
+                    IndexedOp::StoreImmediate => match step {
+                        2 => {
+                            seq.held = seq.latched;
+                            Some(Cycle::Internal { length: 2 })
+                        }
+                        3 => Some(Cycle::MemWrite {
+                            address,
+                            data: seq.held,
+                        }),
+                        _ => None,
+                    },
+                }
+            }
+        }
+    }
+
+    /// Schedule the machine cycle at `step` of a DDCB/FDCB operation. Its
+    /// displacement and sub-opcode arrive as ordinary reads — neither is an
+    /// M1, so neither refreshes.
+    fn run_index_bit(&mut self, seq: &mut Sequencer, base: u16, step: u8) -> Option<Cycle> {
+        match step {
+            0 => Some(self.read_at_pc()),
+            1 => {
+                seq.operand = base.wrapping_add(seq.latched as i8 as u16);
+                self.wz = seq.operand;
+                Some(self.read_at_pc())
+            }
+            2 => {
+                seq.held = seq.latched;
+                Some(Cycle::Internal { length: 2 })
+            }
+            3 => Some(Cycle::MemRead {
+                address: seq.operand,
+            }),
+            4 => Some(Cycle::Internal { length: 1 }),
+            5 => {
+                let f = Fields::new(seq.held);
+                let address = seq.operand;
+                let effect = BitEffect::from_fields(f);
+                // BIT's undocumented X/Y come from the effective address.
+                let result = self.bit_effect(effect, seq.latched, (address >> 8) as u8)?;
+                // The undocumented forms also drop the result into the
+                // register the opcode names.
+                if f.z != 6 {
+                    self.set_reg(real_reg(f.z), result);
+                }
+                Some(Cycle::MemWrite {
+                    address,
+                    data: result,
+                })
+            }
+            _ => None,
         }
     }
 
@@ -848,20 +1058,48 @@ impl Cpu {
     }
 }
 
-/// Instruction planning: the unprefixed table's octal-field groups, choosing
-/// each opcode's execution shape and applying whatever it settles at dispatch.
+/// The entry sequences no opcode introduces: interrupt acceptance and the
+/// re-fetch a halted CPU repeats until one arrives.
 impl Cpu {
-    fn plan_instruction(&mut self, opcode: u8) -> Body {
+    pub(super) fn accept_nmi(&mut self) -> Sequencer {
+        self.halted = false;
+        self.iff1 = false;
+        // Acknowledge holds PC on the address bus.
+        self.last_address = self.pc;
+        Sequencer::entering(Cycle::Internal { length: 2 }, Body::AcceptNmi)
+    }
+
+    pub(super) fn accept_irq(&mut self) -> Sequencer {
+        self.halted = false;
+        self.iff1 = false;
+        self.iff2 = false;
+        self.inc_r();
+        let mode = self.im;
+        Sequencer::entering(Cycle::Internal { length: 2 }, Body::AcceptIrq { mode })
+    }
+
+    /// A halted CPU re-fetches its successor byte each period without
+    /// advancing PC; execution resumes when an interrupt lands.
+    pub(super) fn halt_refetch(&mut self) -> Sequencer {
+        Sequencer::entering(Cycle::OpcodeFetch, Body::HaltRefetch { pc: self.pc })
+    }
+}
+
+/// Instruction planning: the main table's octal-field groups, choosing each
+/// opcode's execution shape and applying whatever it settles at dispatch.
+/// `index` is what an index prefix substituted for HL, `Index::Hl` unprefixed.
+impl Cpu {
+    fn plan_instruction(&mut self, opcode: u8, index: Index) -> Body {
         let f = Fields::new(opcode);
         match f.x {
-            0 => self.plan_x0(f),
-            1 => self.plan_x1(f),
-            2 => self.plan_x2(f),
-            _ => self.plan_x3(f),
+            0 => self.plan_x0(f, index),
+            1 => self.plan_x1(f, index),
+            2 => self.plan_x2(f, index),
+            _ => self.plan_x3(f, index),
         }
     }
 
-    fn plan_x0(&mut self, f: Fields) -> Body {
+    fn plan_x0(&mut self, f: Fields, index: Index) -> Body {
         match f.z {
             0 => match f.y {
                 0 => Body::Complete,
@@ -878,30 +1116,36 @@ impl Cpu {
             },
             1 => {
                 if f.q == 0 {
-                    Body::LoadPairImmediate { pair: f.p }
+                    Body::LoadPairImmediate { pair: f.p, index }
                 } else {
-                    let base = self.hl();
+                    let base = index.base(self);
                     self.wz = base.wrapping_add(1);
-                    let sum = self.add16(base, self.pair(f.p));
-                    self.set_pair(2, sum);
+                    let sum = self.add16(base, self.pair(f.p, index));
+                    self.set_pair(2, index, sum);
                     Body::InternalPad { length: 7 }
                 }
             }
-            2 => self.plan_load_group(f),
+            2 => self.plan_load_group(f, index),
             3 => {
-                let value = self.pair(f.p);
+                let value = self.pair(f.p, index);
                 let delta = if f.q == 0 { 1u16 } else { 0u16.wrapping_sub(1) };
-                self.set_pair(f.p, value.wrapping_add(delta));
+                self.set_pair(f.p, index, value.wrapping_add(delta));
                 Body::InternalPad { length: 2 }
             }
-            4 => self.plan_inc_dec(f.y, true),
-            5 => self.plan_inc_dec(f.y, false),
+            4 => self.plan_inc_dec(f.y, index, true),
+            5 => self.plan_inc_dec(f.y, index, false),
             6 => {
                 if f.y == 6 {
-                    Body::StoreImmediate { address: self.hl() }
+                    match index {
+                        Index::Hl => Body::StoreImmediate { address: self.hl() },
+                        _ => Body::Indexed {
+                            base: index.base(self),
+                            op: IndexedOp::StoreImmediate,
+                        },
+                    }
                 } else {
                     Body::LoadImmediate {
-                        dest: real_reg(f.y),
+                        dest: reg_at(f.y, index),
                     }
                 }
             }
@@ -921,7 +1165,7 @@ impl Cpu {
         }
     }
 
-    fn plan_load_group(&mut self, f: Fields) -> Body {
+    fn plan_load_group(&mut self, f: Fields, index: Index) -> Body {
         if f.q == 0 {
             match f.p {
                 0 => {
@@ -938,7 +1182,9 @@ impl Cpu {
                         data: self.a,
                     }
                 }
-                2 => Body::StorePairAbsolute { value: self.hl() },
+                2 => Body::StorePairAbsolute {
+                    value: index.base(self),
+                },
                 _ => Body::StoreAccumulatorAbsolute,
             }
         } else {
@@ -959,20 +1205,26 @@ impl Cpu {
                         dest: Reg::A,
                     }
                 }
-                2 => Body::LoadPairAbsolute { pair: 2 },
+                2 => Body::LoadPairAbsolute { pair: 2, index },
                 _ => Body::LoadAccumulatorAbsolute,
             }
         }
     }
 
-    fn plan_inc_dec(&mut self, y: u8, increment: bool) -> Body {
+    fn plan_inc_dec(&mut self, y: u8, index: Index, increment: bool) -> Body {
         if y == 6 {
-            return Body::ReadModifyWrite {
-                address: self.hl(),
-                increment,
+            return match index {
+                Index::Hl => Body::ReadModifyWrite {
+                    address: self.hl(),
+                    increment,
+                },
+                _ => Body::Indexed {
+                    base: index.base(self),
+                    op: IndexedOp::ReadModifyWrite { increment },
+                },
             };
         }
-        let reg = real_reg(y);
+        let reg = reg_at(y, index);
         let value = self.reg(reg);
         let result = if increment {
             self.inc8(value)
@@ -983,39 +1235,65 @@ impl Cpu {
         Body::Complete
     }
 
-    fn plan_x1(&mut self, f: Fields) -> Body {
+    fn plan_x1(&mut self, f: Fields, index: Index) -> Body {
+        if f.y == 6 && f.z == 6 {
+            self.halted = true;
+            return Body::Complete;
+        }
+        // A memory operand suppresses IX/IY half-register substitution on
+        // the paired register.
         if f.z == 6 {
-            Body::Load {
-                address: self.hl(),
-                dest: real_reg(f.y),
+            let dest = real_reg(f.y);
+            match index {
+                Index::Hl => Body::Load {
+                    address: self.hl(),
+                    dest,
+                },
+                _ => Body::Indexed {
+                    base: index.base(self),
+                    op: IndexedOp::Load { dest },
+                },
             }
         } else if f.y == 6 {
-            Body::Store {
-                address: self.hl(),
-                data: self.reg(real_reg(f.z)),
+            let data = self.reg(real_reg(f.z));
+            match index {
+                Index::Hl => Body::Store {
+                    address: self.hl(),
+                    data,
+                },
+                _ => Body::Indexed {
+                    base: index.base(self),
+                    op: IndexedOp::Store { data },
+                },
             }
         } else {
-            let value = self.reg(real_reg(f.z));
-            self.set_reg(real_reg(f.y), value);
+            let value = self.reg(reg_at(f.z, index));
+            self.set_reg(reg_at(f.y, index), value);
             Body::Complete
         }
     }
 
-    fn plan_x2(&mut self, f: Fields) -> Body {
+    fn plan_x2(&mut self, f: Fields, index: Index) -> Body {
         let op = AluOp::from_index(f.y);
         if f.z == 6 {
-            Body::AluIndirect {
-                address: self.hl(),
-                op,
+            match index {
+                Index::Hl => Body::AluIndirect {
+                    address: self.hl(),
+                    op,
+                },
+                _ => Body::Indexed {
+                    base: index.base(self),
+                    op: IndexedOp::Alu { op },
+                },
             }
         } else {
-            let value = self.reg(real_reg(f.z));
+            let value = self.reg(reg_at(f.z, index));
             self.alu(op, value);
             Body::Complete
         }
     }
 
-    fn plan_x3(&mut self, f: Fields) -> Body {
+    fn plan_x3(&mut self, f: Fields, index: Index) -> Body {
         match f.z {
             0 => {
                 if self.condition(f.y) {
@@ -1030,7 +1308,7 @@ impl Cpu {
             1 => {
                 if f.q == 0 {
                     Body::Pop {
-                        dest: PopDest::Pair(f.p),
+                        dest: PopDest::Pair { pair: f.p, index },
                         lead: 0,
                     }
                 } else {
@@ -1049,11 +1327,11 @@ impl Cpu {
                             Body::Complete
                         }
                         2 => {
-                            self.pc = self.hl();
+                            self.pc = index.base(self);
                             Body::Complete
                         }
                         _ => {
-                            self.sp = self.hl();
+                            self.sp = index.base(self);
                             Body::InternalPad { length: 2 }
                         }
                     }
@@ -1068,7 +1346,11 @@ impl Cpu {
                 1 => unreachable!(),
                 2 => Body::PortImmediate { write: true },
                 3 => Body::PortImmediate { write: false },
-                4 => Body::ExchangeStackTop,
+                4 => Body::ExchangeStackTop {
+                    value: index.base(self),
+                    index,
+                },
+                // EX DE,HL names HL even under an index prefix.
                 5 => {
                     std::mem::swap(&mut self.d, &mut self.h);
                     std::mem::swap(&mut self.e, &mut self.l);
@@ -1092,7 +1374,7 @@ impl Cpu {
             5 => {
                 if f.q == 0 {
                     Body::Push {
-                        value: self.pair2(f.p),
+                        value: self.stack_pair(f.p, index),
                         jump: None,
                     }
                 } else if f.p == 0 {
@@ -1118,7 +1400,8 @@ impl Cpu {
 }
 
 /// The prefixed tables, planned once their own opcode fetch has latched: CB's
-/// bit operations and ED's extended group.
+/// bit operations and ED's extended group. Neither substitutes an index — an
+/// index prefix ahead of ED only spends its own M1.
 impl Cpu {
     fn plan_bit(&mut self, opcode: u8) -> Body {
         let f = Fields::new(opcode);
@@ -1151,7 +1434,7 @@ impl Cpu {
             (1, 2) => {
                 let hl = self.hl();
                 self.wz = hl.wrapping_add(1);
-                let rp = self.pair(f.p);
+                let rp = self.pair(f.p, Index::Hl);
                 let result = if f.q == 0 {
                     self.sbc16(hl, rp)
                 } else {
@@ -1163,10 +1446,13 @@ impl Cpu {
             (1, 3) => {
                 if f.q == 0 {
                     Body::StorePairAbsolute {
-                        value: self.pair(f.p),
+                        value: self.pair(f.p, Index::Hl),
                     }
                 } else {
-                    Body::LoadPairAbsolute { pair: f.p }
+                    Body::LoadPairAbsolute {
+                        pair: f.p,
+                        index: Index::Hl,
+                    }
                 }
             }
             (1, 4) => {

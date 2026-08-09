@@ -1,7 +1,9 @@
 //! The SG-1000 common-subset testbench: Z80 + 1 KB RAM + 32 KB cartridge +
-//! the VDP, interleaved at instruction granularity (the VDP advances by
-//! 3 dots per 2 T-states after each instruction). Not a console — the ROMs
-//! confine themselves to the envelope every host machine shares.
+//! the VDP, interleaved one Z80 T-state at a time — the VDP advances by that
+//! T's dots (3 per 2 T-states) before the CPU ticks, so a port access lands
+//! against a VDP that has already reached the instant it fires on. Not a
+//! console — the ROMs confine themselves to the envelope every host machine
+//! shares.
 
 use missingno_core::ClockRatio;
 use missingno_ti_vdp::{Standard, Vdp};
@@ -88,14 +90,15 @@ fn run(rom: &str, budget_frames: u64) -> Verdict {
     let mut cpu = Cpu::new();
 
     let budget = budget_frames * TSTATES_PER_FRAME;
-    let mut tstates: u64 = 0;
     let mut dots = ClockRatio::new(3, 2);
-    while tstates < budget {
-        let step_tstates = cpu.step(&mut board) as u64;
-        tstates += step_tstates;
-        board.vdp.tick(dots.advance(step_tstates) as u32);
+    for _ in 0..budget {
+        board.vdp.tick(dots.advance(1) as u32);
+        cpu.tick(&mut board);
         cpu.set_irq(board.vdp.interrupt_asserted());
 
+        if !cpu.at_instruction_boundary() {
+            continue;
+        }
         let result = board.ram[0];
         if result == RESULT_PASS || result == RESULT_FAIL {
             return Verdict {

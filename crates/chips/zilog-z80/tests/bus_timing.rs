@@ -3,7 +3,7 @@
 //! drives whole instructions, so it cannot see where inside one an access
 //! lands; this probe counts ticks and watches the calls arrive.
 
-use missingno_zilog_z80::{Bus, Cpu};
+use missingno_zilog_z80::{Bus, Cpu, InterruptMode};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Access {
@@ -356,19 +356,90 @@ fn rotate_digits_right() {
     );
 }
 
-/// The index prefixes still execute atomically at the T that latches their
-/// opcode — the stated limit the sequenced groups no longer have.
+/// An index prefix spends its own M1, and the displacement's five internal
+/// T-states separate it from the operand read.
 #[test]
-fn index_prefixed_accesses_still_bunch_at_the_opcode_tick() {
-    let (_, calls, ticks, _) = probe(&[0xDD, 0x7E, 0x05], |cpu| cpu.ix = 0x1230);
+fn load_a_from_index_displacement() {
+    let (calls, ticks) = sequenced(&[0xDD, 0x7E, 0x05], |cpu| cpu.ix = 0x1230);
     assert_eq!(ticks, 19);
     assert_eq!(
         calls,
         [
             (1, Access::MemRead, 0x0000),
-            (3, Access::MemRead, 0x0001),
-            (3, Access::MemRead, 0x0002),
-            (3, Access::MemRead, 0x1235),
+            (5, Access::MemRead, 0x0001),
+            (9, Access::MemRead, 0x0002),
+            (17, Access::MemRead, 0x1235),
         ]
     );
+}
+
+/// DDCB reads its displacement and sub-opcode as plain memory cycles, then
+/// pads before the read-modify-write on the effective address.
+#[test]
+fn set_bit_at_index_displacement() {
+    let (cpu, calls, ticks) = sequenced_state(&[0xDD, 0xCB, 0x05, 0xC6], |cpu| cpu.ix = 0x1230);
+    assert_eq!(ticks, 23);
+    assert_eq!(
+        calls,
+        [
+            (1, Access::MemRead, 0x0000),
+            (5, Access::MemRead, 0x0001),
+            (9, Access::MemRead, 0x0002),
+            (12, Access::MemRead, 0x0003),
+            (17, Access::MemRead, 0x1235),
+            (21, Access::MemWrite, 0x1235),
+        ]
+    );
+    assert_eq!(cpu.wz, 0x1235);
+}
+
+/// A halted CPU spends each period on a 4-T re-fetch that leaves PC where it
+/// stands, with the instruction boundary observable between them.
+#[test]
+fn halt_refetch_cadence() {
+    let mut cpu = Cpu::new();
+    cpu.pc = 0x0000;
+    let mut bus = ProbeBus::new(&[0x76]);
+
+    let mut boundaries = Vec::new();
+    for tick in 0..16 {
+        bus.tick = tick;
+        cpu.tick(&mut bus);
+        if cpu.at_instruction_boundary() {
+            boundaries.push(tick);
+        }
+    }
+
+    assert!(cpu.halted);
+    assert_eq!(cpu.pc, 0x0001);
+    assert_eq!(boundaries, [3, 7, 11, 15]);
+    assert_eq!(
+        bus.calls,
+        [
+            (1, Access::MemRead, 0x0000),
+            (5, Access::MemRead, 0x0001),
+            (9, Access::MemRead, 0x0001),
+            (13, Access::MemRead, 0x0001),
+        ]
+    );
+}
+
+/// IM 1 acceptance pushes PC over two write cycles before vectoring to $0038.
+/// The entry is oracle-silent, so this pins the T-states the crate records,
+/// not a measured hardware sequence.
+#[test]
+fn interrupt_mode1_acceptance() {
+    let (cpu, calls, ticks) = sequenced_state(&[0x00], |cpu| {
+        cpu.sp = 0x2000;
+        cpu.im = InterruptMode::Mode1;
+        cpu.iff1 = true;
+        cpu.set_irq(true);
+    });
+    assert_eq!(ticks, 8);
+    assert_eq!(
+        calls,
+        [(3, Access::MemWrite, 0x1FFF), (6, Access::MemWrite, 0x1FFE),]
+    );
+    assert_eq!(cpu.pc, 0x0038);
+    assert!(!cpu.iff1);
 }

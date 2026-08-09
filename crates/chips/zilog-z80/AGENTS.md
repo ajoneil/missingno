@@ -42,17 +42,10 @@ emulator's behaviour for hardware fact.
   limit stated: consumers that decode timing finer than whole machine cycles
   (wait-state insertion, refresh-cycle observation) need the model extended
   first, not worked around.
-- **Atomic-at-first-T instruction timing — the unconverted groups only.** The
-  unprefixed main table and the **CB and ED prefixes** (block instructions
-  included) walk their own T-states: each bus access fires on the tick whose
-  recorded `BusCycle` asserts the matching pins (pinned by
-  `tests/bus_timing.rs`). The **DD, FD, DDCB and FDCB prefixes**, the **HALT
-  re-fetch loop**, and **interrupt acceptance** still execute atomically on the
-  T that latches their opcode: all of their bus accesses land on that tick, and
-  the remaining T-states are handed back as already-recorded padding. Traces
-  and `step` results are unaffected; a board that interleaves other chips
-  between ticks sees those instructions' accesses bunched at that tick until
-  the remaining groups convert.
+- **No WAIT input.** The core has no `/WAIT` pin: every machine cycle runs its
+  nominal T-states, so a consumer whose board inserts wait states (the SMS VDP
+  slot contention, a slow cartridge) must model that outside the chip until the
+  pin exists.
 - **Interrupt entry timing.** NMI and IM 0/1/2 acceptance implement the
   documented semantics, but the oracle contains no interrupt cases, so
   cycle-level interrupt timing is **unverified**. Console work that depends on

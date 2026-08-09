@@ -51,13 +51,13 @@ harness asserts on the block only.
 
 ## Stated abstractions
 
-- **Instruction-granular CPU↔VDP interleaving.** The testbench advances the
-  VDP between whole CPU instructions (the Z80 crate exposes no
-  sub-instruction bus timing yet). The corpus's `timing/` tier asserts
-  hardware-measured sub-instruction contention and race behaviour that an
-  instruction-granular executor cannot represent — those tests are staged
-  (`#[ignore]`) with their blocking granularity named, not tuned around.
-  Un-staging them is CPU-membrane work, not VDP work.
+- **Per-T CPU↔VDP interleaving; no canonical slot schedule.** The testbench
+  advances the VDP one Z80 T-state at a time, ahead of each CPU tick, so a
+  port access lands at its true T offset within the instruction. The staged
+  (`#[ignore]`) `timing/` tests now fail on the VDP side: the sweeps and
+  bursts assert the SC-3000's phase-indexed canonical slot map, which this
+  model does not yet schedule, and the status-read races turn on VRAM-access
+  slots the same schedule defines. Un-staging them is VDP slot-schedule work.
 - **Digital core only.** Colour output stops at the TI colour indices;
   composite encoding, analog levels, and the 9929A's Y/R-Y/B-Y outputs are
   presentation/frontend territory.
