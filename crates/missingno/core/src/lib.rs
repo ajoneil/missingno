@@ -17,6 +17,7 @@
 
 pub mod analog;
 pub mod cdl;
+pub mod chip;
 pub mod disasm;
 pub mod graphics;
 pub mod inspect;
@@ -33,6 +34,7 @@ pub mod video;
 pub mod waveform;
 
 pub use analog::{HighPass, OnePoleHighPass, RcHighPass};
+pub use chip::ClockedCpu;
 pub use disasm::{ReadMemory, Row};
 pub use inspect::{
     FlagName, MemoryRegion, Register, RegisterGroup, ValueStyle, Watch, WatchParam, WatchTerm,

@@ -42,7 +42,7 @@ pub fn read_state(vcs: &Vcs) -> StateRecord {
         .set("s", cpu.s)
         .set("p", cpu.p)
         .set("pc", cpu.pc)
-        .set("cpu_halted", cpu.halted())
+        .set("cpu_halted", cpu.jammed())
         .set("last_bus_value", vcs.last_bus_value());
 
     write_tia(&mut r, &tia);

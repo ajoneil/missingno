@@ -263,7 +263,7 @@ impl Vcs {
                 pending_tia_writes: &mut self.pending_tia_writes,
                 last_bus_value: &mut self.last_bus_value,
             };
-            self.cpu.step_cycle(&mut bus);
+            self.cpu.tick(&mut bus);
             self.riot.tick();
             if self.riot.port_a_level() != port_a_before {
                 self.refresh_controllers();
@@ -535,13 +535,13 @@ impl Vcs {
     /// Run to the next instruction boundary. A WSYNC-parked opcode fetch
     /// waits here until the beam wraps and the TIA releases RDY.
     pub fn step_instruction(&mut self) {
-        if self.cpu.halted() {
+        if self.cpu.jammed() {
             return;
         }
         while self.cpu.at_instruction_boundary() {
             self.step_clock();
         }
-        while !self.cpu.at_instruction_boundary() && !self.cpu.halted() {
+        while !self.cpu.at_instruction_boundary() && !self.cpu.jammed() {
             self.step_clock();
         }
     }

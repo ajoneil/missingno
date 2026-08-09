@@ -142,7 +142,7 @@ impl Cpu {
     }
 
     /// True after a JAM opcode: only reset recovers.
-    pub fn halted(&self) -> bool {
+    pub fn jammed(&self) -> bool {
         matches!(self.state, State::Halted)
     }
 
@@ -162,7 +162,7 @@ impl Cpu {
         self.state = if halted { State::Halted } else { State::Fetch };
     }
 
-    pub fn step_cycle(&mut self, bus: &mut impl Bus) {
+    pub fn tick(&mut self, bus: &mut impl Bus) {
         match self.state {
             State::Fetch => self.fetch_cycle(bus),
             State::Exec(exec) => self.exec_cycle(bus, exec),
@@ -818,5 +818,19 @@ impl Cpu {
             _ => base_hi,
         };
         u16::from_le_bytes([sum as u8, hi])
+    }
+}
+
+impl<B: Bus> missingno_core::ClockedCpu<B> for Cpu {
+    fn tick(&mut self, bus: &mut B) {
+        Cpu::tick(self, bus);
+    }
+
+    fn at_instruction_boundary(&self) -> bool {
+        Cpu::at_instruction_boundary(self)
+    }
+
+    fn jammed(&self) -> bool {
+        Cpu::jammed(self)
     }
 }

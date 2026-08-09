@@ -109,7 +109,7 @@ impl Nes {
             controller_strobe: &mut self.controller_strobe,
             pending_oam_dma: &mut self.pending_oam_dma,
         };
-        self.cpu.step_cycle(&mut bus);
+        self.cpu.tick(&mut bus);
         self.after_cpu_cycle();
 
         if let Some(page) = self.pending_oam_dma.take() {
@@ -160,13 +160,13 @@ impl Nes {
 
     /// Run to the next instruction boundary.
     pub fn step_instruction(&mut self) {
-        if self.cpu.halted() {
+        if self.cpu.jammed() {
             return;
         }
         while self.cpu.at_instruction_boundary() {
             self.step_cycle();
         }
-        while !self.cpu.at_instruction_boundary() && !self.cpu.halted() {
+        while !self.cpu.at_instruction_boundary() && !self.cpu.jammed() {
             self.step_cycle();
         }
     }

@@ -95,11 +95,11 @@ struct Column {
 /// counterpart of [`Vcs::step_instruction`].
 pub fn step_instruction_counted(vcs: &mut Vcs) -> u16 {
     let mut cycles = 0u16;
-    while vcs.at_instruction_boundary() && !vcs.cpu.halted() {
+    while vcs.at_instruction_boundary() && !vcs.cpu.jammed() {
         vcs.step_cpu_cycle();
         cycles += 1;
     }
-    while !vcs.at_instruction_boundary() && !vcs.cpu.halted() {
+    while !vcs.at_instruction_boundary() && !vcs.cpu.jammed() {
         vcs.step_cpu_cycle();
         cycles += 1;
     }

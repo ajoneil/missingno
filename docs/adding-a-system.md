@@ -57,6 +57,30 @@ must provide:
 7. **Committable test oracles in CI from day one** — accuracy claims live
    in tests.
 
+### CPU chips: the `ClockedCpu` contract and the two board compositions
+
+A CPU that lives in `crates/chips/` implements `missingno-core`'s
+`ClockedCpu<B>`: the board drives it **one T of its own clock per call**
+(`tick`), the chip reports `at_instruction_boundary()` (the debugger's
+stepping unit and the save-state restore point) and `jammed()` (permanently
+fetch-stopped — a halted-but-resumable CPU is *not* jammed and keeps
+ticking). Cycle counts are call counts; the bus trait stays per-chip (a
+6502 has `read`/`write`, a Z80 adds ports), and execution decode stays
+per-crate per `isa`'s charter.
+
+Two board compositions are in service; pick per the core's evidence, and
+either way the world advances *between* CPU ticks so every bus access lands
+against its true instant:
+
+- **Clock-master** (the VCS): the video clock owns time and the CPU is its
+  client at an integer divisor — the colour clock steps, and the CPU tick
+  fires on its phase (`beam % 3`). Most faithful when the video chip's
+  schedule is the best-evidenced clock on the board.
+- **CPU-tick-master + follow** (the NES; the SG-1000 testbench): each CPU
+  tick is followed by the other chips' share of dots (integer or carried
+  fraction). Simplest when the CPU's T is the natural quantum of the
+  board's evidence.
+
 ## The two seam traits, and what they buy
 
 The whole seam is two object-safe traits in `missingno-core`'s `system.rs`.

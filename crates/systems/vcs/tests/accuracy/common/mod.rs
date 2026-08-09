@@ -88,12 +88,12 @@ fn poll_verdict(relative: &str, mut vcs: Vcs) {
             ),
             _ => {}
         }
-        if vcs.cpu.halted() {
+        if vcs.cpu.jammed() {
             break;
         }
     }
 
-    if vcs.cpu.halted() {
+    if vcs.cpu.jammed() {
         panic!(
             "{relative}: CPU halted (JAM) before any verdict (RESULT=0x{:02X})",
             vcs.peek(RESULT)

@@ -62,11 +62,11 @@ fn resolve_emitter(name: &str, profile: &Profile) -> Result<Emitter, morepork::E
 /// consumed. The tracing counterpart of [`Nes::step_instruction`].
 pub fn step_instruction_counted(nes: &mut Nes) -> u16 {
     let mut cycles = 0u16;
-    while nes.cpu.at_instruction_boundary() && !nes.cpu.halted() {
+    while nes.cpu.at_instruction_boundary() && !nes.cpu.jammed() {
         nes.step_cycle();
         cycles += 1;
     }
-    while !nes.cpu.at_instruction_boundary() && !nes.cpu.halted() {
+    while !nes.cpu.at_instruction_boundary() && !nes.cpu.jammed() {
         nes.step_cycle();
         cycles += 1;
     }

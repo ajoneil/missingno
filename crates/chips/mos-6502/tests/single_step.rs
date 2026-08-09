@@ -98,7 +98,10 @@ fn fetch_oracle(root: &Path) {
             None,
         );
     }
-    git(&["sparse-checkout", "set", "6502/v1", "nes6502/v1"], Some(root));
+    git(
+        &["sparse-checkout", "set", "6502/v1", "nes6502/v1"],
+        Some(root),
+    );
     git(&["checkout", "--", "."], Some(root));
     let head = Command::new("git")
         .args(["rev-parse", "HEAD"])
@@ -127,9 +130,9 @@ fn run_case(case: &Case, decimal: bool) -> Result<(), String> {
     }
 
     for _ in 0..case.cycles.len() {
-        cpu.step_cycle(&mut bus);
+        cpu.tick(&mut bus);
     }
-    if !cpu.at_instruction_boundary() && !cpu.halted() {
+    if !cpu.at_instruction_boundary() && !cpu.jammed() {
         return Err(format!("did not finish in {} cycles", case.cycles.len()));
     }
 
@@ -240,8 +243,8 @@ fn lda_immediate_smoke() {
     bus.memory[0x0200] = 0xA9; // LDA #$80
     bus.memory[0x0201] = 0x80;
     cpu.pc = 0x0200;
-    cpu.step_cycle(&mut bus);
-    cpu.step_cycle(&mut bus);
+    cpu.tick(&mut bus);
+    cpu.tick(&mut bus);
     assert!(cpu.at_instruction_boundary());
     assert_eq!(cpu.a, 0x80);
     assert_eq!(cpu.p & 0x80, 0x80);
