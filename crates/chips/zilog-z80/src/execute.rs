@@ -44,7 +44,7 @@ fn reg_at(idx: u8, index: Index) -> Reg {
 }
 
 /// The plain (unsubstituted) register for an operand index.
-fn real_reg(idx: u8) -> Reg {
+pub(super) fn real_reg(idx: u8) -> Reg {
     reg_at(idx, Index::Hl)
 }
 
@@ -102,6 +102,24 @@ impl Cpu {
             },
             _ => self.sp = value,
         }
+    }
+
+    /// The unprefixed table's register pairs — no IX/IY substitution, so the
+    /// sequencer never carries an index.
+    pub(super) fn pair(&self, p: u8) -> u16 {
+        self.get_rp(p, Index::Hl)
+    }
+
+    pub(super) fn set_pair(&mut self, p: u8, value: u16) {
+        self.set_rp(p, Index::Hl, value);
+    }
+
+    pub(super) fn pair2(&self, p: u8) -> u16 {
+        self.get_rp2(p, Index::Hl)
+    }
+
+    pub(super) fn set_pair2(&mut self, p: u8, value: u16) {
+        self.set_rp2(p, Index::Hl, value);
     }
 
     fn get_rp2(&self, p: u8, index: Index) -> u16 {

@@ -9,12 +9,12 @@
 //! `step` runs a whole instruction and returns its T-state count so a
 //! console can advance the VDP by the matching number of dots.
 //!
-//! Granularity limit: the seam is per-T, but intra-instruction bus timing is
-//! not yet. Every instruction still executes atomically on the T that leaves
-//! the instruction boundary — its bus accesses all land on that tick and the
-//! remaining T-states are handed back as already-recorded padding. Until the
-//! per-T sequencer conversion lands, a board interleaving other chips between
-//! ticks sees an instruction's accesses bunched at its first T.
+//! Granularity limit: the unprefixed main table walks its own T-states, each
+//! bus access landing on the tick its pins assert. The CB/ED/DD/FD prefixes,
+//! HALT's re-fetch loop and interrupt acceptance still execute atomically on
+//! the T that latches their opcode, handing the remaining T-states back as
+//! already-recorded padding — a board interleaving other chips between ticks
+//! sees those instructions' accesses bunched at that tick.
 //!
 //! Interrupt entry (NMI, IM 0/1/2 maskable) implements the documented
 //! acceptance semantics, but the SingleStepTests set contains no interrupt
@@ -25,6 +25,9 @@ pub mod decode;
 pub mod disasm;
 mod execute;
 pub mod isa;
+mod sequencer;
+
+use sequencer::{Cycle, Sequencer};
 
 pub use isa::Z80;
 
@@ -149,6 +152,8 @@ pub struct Cpu {
     /// T-states of the in-flight instruction already recorded in `trace` but
     /// not yet handed back by `tick` — zero at an instruction boundary.
     recorded_ahead: u32,
+    /// The instruction walking its T-states, absent between instructions.
+    sequencer: Option<Sequencer>,
 }
 
 impl Default for Cpu {
@@ -196,6 +201,7 @@ impl Cpu {
             last_address: 0,
             trace: Vec::new(),
             recorded_ahead: 0,
+            sequencer: None,
         }
     }
 
@@ -237,32 +243,53 @@ impl Cpu {
     /// Between instructions — the debugger's stepping boundary, and where
     /// interrupts are sampled.
     pub fn at_instruction_boundary(&self) -> bool {
-        self.recorded_ahead == 0
+        self.sequencer.is_none() && self.recorded_ahead == 0
     }
 
-    /// Advance one T-state. Leaving the boundary runs the whole instruction
-    /// (or accepts a pending interrupt) at once and records its T-states; the
-    /// rest of them are consumed one per call, touching neither bus nor trace,
-    /// and the boundary re-arms when they run out.
+    /// Advance one T-state. A sequenced instruction records exactly this
+    /// T-state's bus snapshot and fires any bus call it carries; an
+    /// unsequenced one (a prefix, HALT's re-fetch, an accepted interrupt)
+    /// records its remainder at once and hands those T-states back one per
+    /// call, touching neither bus nor trace.
     pub fn tick(&mut self, bus: &mut impl Bus) {
         if self.recorded_ahead > 0 {
             self.recorded_ahead -= 1;
             return;
         }
-        self.trace.clear();
-        self.begin_instruction(bus);
-        self.recorded_ahead = (self.trace.len() as u32).saturating_sub(1);
+        if self.sequencer.is_none() {
+            self.trace.clear();
+        }
+        let recorded = self.trace.len();
+        self.advance(bus);
+        self.recorded_ahead = (self.trace.len() - recorded) as u32 - 1;
     }
 
-    fn begin_instruction(&mut self, bus: &mut impl Bus) {
+    fn advance(&mut self, bus: &mut impl Bus) {
+        let mut sequencer = match self.sequencer.take() {
+            Some(sequencer) => sequencer,
+            None => match self.begin_instruction(bus) {
+                Some(sequencer) => sequencer,
+                None => return,
+            },
+        };
+        if self.tick_sequencer(bus, &mut sequencer) {
+            self.sequencer = Some(sequencer);
+        } else {
+            self.q = if self.flags_touched { self.f } else { 0 };
+        }
+    }
+
+    /// Sample interrupts and start M1, or run one of the entry sequences that
+    /// have no sequencer plan yet.
+    fn begin_instruction(&mut self, bus: &mut impl Bus) -> Option<Sequencer> {
         if self.nmi_pending {
             self.nmi_pending = false;
             self.accept_nmi(bus);
-            return;
+            return None;
         }
         if self.irq_line && self.iff1 && !self.ei_pending {
             self.accept_irq(bus);
-            return;
+            return None;
         }
 
         self.ei_pending = false;
@@ -273,14 +300,12 @@ impl Cpu {
             let pc = self.pc;
             self.opcode_fetch(bus);
             self.pc = pc;
-            return;
+            return None;
         }
 
         self.flags_touched = false;
         self.p = false;
-        let opcode = self.opcode_fetch(bus);
-        self.execute(bus, opcode);
-        self.q = if self.flags_touched { self.f } else { 0 };
+        Some(Sequencer::fetching())
     }
 
     /// Run to the next instruction boundary. Returns the number of T-states
@@ -314,54 +339,33 @@ impl Cpu {
 
     /// M1: fetch the opcode at PC, drive the refresh address, bump R.
     fn opcode_fetch(&mut self, bus: &mut impl Bus) -> u8 {
-        let pc = self.pc;
-        self.record(pc, None, Pins::IDLE);
-        self.record(pc, None, Pins::MEM_READ);
-        let opcode = bus.read(pc);
-        self.pc = pc.wrapping_add(1);
-        let refresh = self.refresh_address();
-        self.record(refresh, Some(opcode), Pins::IDLE);
-        self.record(refresh, None, Pins::IDLE);
-        self.inc_r();
-        opcode
+        self.run_cycle(bus, Cycle::OpcodeFetch)
     }
 
     fn mem_read(&mut self, bus: &mut impl Bus, address: u16) -> u8 {
-        self.record(address, None, Pins::IDLE);
-        self.record(address, None, Pins::MEM_READ);
-        let data = bus.read(address);
-        self.record(address, Some(data), Pins::IDLE);
-        data
+        self.run_cycle(bus, Cycle::MemRead { address })
     }
 
     fn mem_write(&mut self, bus: &mut impl Bus, address: u16, data: u8) {
-        self.record(address, None, Pins::IDLE);
-        self.record(address, Some(data), Pins::MEM_WRITE);
-        bus.write(address, data);
-        self.record(address, None, Pins::IDLE);
+        self.run_cycle(bus, Cycle::MemWrite { address, data });
     }
 
     fn io_read(&mut self, bus: &mut impl Bus, port: u16) -> u8 {
-        self.record(port, None, Pins::IDLE);
-        self.record(port, None, Pins::IDLE);
-        self.record(port, None, Pins::IO_READ);
-        let data = bus.input(port);
-        self.record(port, Some(data), Pins::IDLE);
-        data
+        self.run_cycle(bus, Cycle::IoRead { port })
     }
 
     fn io_write(&mut self, bus: &mut impl Bus, port: u16, data: u8) {
-        self.record(port, None, Pins::IDLE);
-        self.record(port, None, Pins::IDLE);
-        self.record(port, Some(data), Pins::IO_WRITE);
-        bus.output(port, data);
-        self.record(port, None, Pins::IDLE);
+        self.run_cycle(bus, Cycle::IoWrite { port, data });
+    }
+
+    fn internal_tick(&mut self) {
+        self.record(self.last_address, None, Pins::IDLE);
     }
 
     /// `count` internal T-states, holding the last driven address.
     fn internal(&mut self, count: u32) {
         for _ in 0..count {
-            self.record(self.last_address, None, Pins::IDLE);
+            self.internal_tick();
         }
     }
 
