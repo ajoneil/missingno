@@ -68,39 +68,28 @@ mod registers {
         write_destroys_address,
         "registers/write-destroys-address.sg"
     );
-    // Hardware-PRIMARY mid-frame scenes (see the modes note): the oracles
-    // disagree on the seam line, so only the SC-3000 capture can derive a
-    // reference.
+    // Hardware-PRIMARY mid-frame scenes (see the modes note). The three
+    // seam subjects stay staged: silicon shows sub-line effects (m2's seam
+    // at column 8, backdrop's at 232, m1's disturbed transition row) that
+    // the line-granular renderer cannot carry yet.
     vdp_screenshot!(
         midframe_backdrop,
         "registers/midframe-backdrop.sg",
-        staged = "hardware-PRIMARY; awaits capture-derived reference"
+        staged = "seam is sub-line on silicon; line-granular renderer"
     );
     vdp_screenshot!(
         midframe_m1,
         "registers/midframe-m1.sg",
-        staged = "hardware-PRIMARY; awaits capture-derived reference"
+        staged = "silicon steps at row 99 with a disturbed row 98; seam model open"
     );
     vdp_screenshot!(
         midframe_m2,
         "registers/midframe-m2.sg",
-        staged = "hardware-PRIMARY; awaits capture-derived reference"
+        staged = "seam is sub-line on silicon; line-granular renderer"
     );
-    vdp_screenshot!(
-        midframe_mask,
-        "registers/midframe-mask.sg",
-        staged = "hardware-PRIMARY; awaits capture-derived reference"
-    );
-    vdp_screenshot!(
-        midframe_mode,
-        "registers/midframe-mode.sg",
-        staged = "hardware-PRIMARY; awaits capture-derived reference"
-    );
-    vdp_screenshot!(
-        midframe_name,
-        "registers/midframe-name.sg",
-        staged = "hardware-PRIMARY; awaits capture-derived reference"
-    );
+    vdp_screenshot!(midframe_mask, "registers/midframe-mask.sg");
+    vdp_screenshot!(midframe_mode, "registers/midframe-mode.sg");
+    vdp_screenshot!(midframe_name, "registers/midframe-name.sg");
 }
 
 mod vram {
@@ -136,48 +125,24 @@ mod interrupt {
 mod modes {
     vdp_screenshot!(backdrop_zero, "modes/backdrop-zero.sg");
     vdp_screenshot!(blank, "modes/blank.sg");
-    // The committed reference photographs the pre-redesign scene (blessed
-    // 2026-08-02; ROM redesigned 2026-08-13), and consensus cannot re-bless
-    // it: mame and gearsystem collapse the pattern fetch under R4=$04, the
-    // SY mechanism silicon refuted. Awaits its own SC-3000 capture.
-    vdp_screenshot!(
-        gii_mask_pattern,
-        "modes/gii-mask-pattern.sg",
-        staged = "reference is the pre-redesign scene; redesigned scene awaits hardware capture"
-    );
+    vdp_screenshot!(gii_mask_pattern, "modes/gii-mask-pattern.sg");
     vdp_screenshot!(gii_shrunken, "modes/gii-shrunken.sg");
     vdp_screenshot!(graphic1, "modes/graphic1.sg");
     vdp_screenshot!(graphic2, "modes/graphic2.sg");
     vdp_screenshot!(multicolor, "modes/multicolor.sg");
     vdp_screenshot!(table_overlap, "modes/table-overlap.sg");
-    // Hardware-PRIMARY subjects (`bless: never` in the corpus): consensus
-    // may not bless their references, so each waits for a capture-derived
-    // one. Running a staged test explicitly with TIVDP_DUMP_FRAMES dumps
-    // our frame for adjudication against the SC-3000 capture.
-    vdp_screenshot!(
-        text,
-        "modes/text.sg",
-        staged = "hardware-PRIMARY; border-width conflict unadjudicated"
-    );
-    vdp_screenshot!(
-        gii_mask_colour,
-        "modes/gii-mask-colour.sg",
-        staged = "hardware-PRIMARY; awaits capture-derived reference"
-    );
+    // Hardware-PRIMARY subjects: consensus may not bless their references.
+    // Where our frame matched the SC-3000 capture through the corpus's
+    // arbiter, that frame is pinned as the reference; the rest stay staged
+    // (an explicit run with TIVDP_DUMP_FRAMES dumps frames to adjudicate).
+    vdp_screenshot!(text, "modes/text.sg");
+    vdp_screenshot!(gii_mask_colour, "modes/gii-mask-colour.sg");
+    vdp_screenshot!(undoc_bitmap_text, "modes/undoc-bitmap-text.sg");
+    vdp_screenshot!(undoc_text_multicolor, "modes/undoc-text-multicolor.sg");
     vdp_screenshot!(
         undoc_bitmap_multicolor,
         "modes/undoc-bitmap-multicolor.sg",
-        staged = "hardware-PRIMARY; awaits capture-derived reference"
-    );
-    vdp_screenshot!(
-        undoc_bitmap_text,
-        "modes/undoc-bitmap-text.sg",
-        staged = "hardware-PRIMARY; awaits capture-derived reference"
-    );
-    vdp_screenshot!(
-        undoc_text_multicolor,
-        "modes/undoc-text-multicolor.sg",
-        staged = "hardware-PRIMARY; awaits capture-derived reference"
+        staged = "closest candidate but unmatched residual; awaits the >=3px scene redesign"
     );
 }
 
