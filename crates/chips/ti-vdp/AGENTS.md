@@ -88,10 +88,10 @@ harness asserts on the block only.
   back. Mid-line and mid-frame register seams are therefore quantised to
   the line; every corpus subject that would pin them finer (the midline-*
   and midframe-* scenes) is still awaiting its hardware capture, and the
-  renderer refines when those land. Two adopted conventions inside the
-  measured freedom: the text-mode side borders use the community's
-  symmetric 8-pixel split (TI's asymmetric 6/10 is the live border-width
-  conflict, unadjudicated); Graphics II pattern fetches follow R3's AND
+  renderer refines when those land. The text-mode side borders are the
+  Data Manual's asymmetric 6/10 split, measured on silicon (the 2026-08-13
+  text capture: 5.84/9.93/240.22; the community's symmetric 8/8 refuted by
+  ~2 px per side). Graphics II pattern fetches follow R3's AND
   mask with R4 contributing only the half select — the silicon-adjudicated
   reading (gii-mask-pattern/gii-mask-colour), which mame and gearsystem
   get wrong (they collapse the thirds under a masking R4), so consensus

@@ -69,9 +69,10 @@ mod status {
 /// Sprite attribute Y value that terminates the scan.
 const SPRITE_TERMINATOR: u8 = 0xD0;
 
-/// Text-family modes show 40 six-pixel cells inside backdrop margins. The
-/// community gives a symmetric split; TI's asymmetric 6/10 is unadjudicated.
-const TEXT_MARGIN: usize = 8;
+/// Text-family modes show 40 six-pixel cells inside backdrop margins,
+/// split 6 left / 10 right — the Data Manual's asymmetric split, measured
+/// on silicon (5.84/9.93); the community's symmetric 8/8 is refuted.
+const TEXT_MARGIN: usize = 6;
 
 /// Composited colour indices for the active area, one row per display
 /// line. 0 survives only where every plane is transparent (the
@@ -671,11 +672,14 @@ impl Vdp {
                 }
             }
             Mode::BitmapMulticolor => {
+                // R3's mask governs this fetch too (silicon:
+                // undoc-bitmap-multicolor); bitmap text alone is unmasked.
                 let table = self.bitmap_third_table(line / 64);
+                let mask = (((self.registers[3] as u16 & 0x7F) << 6) | 0x3F) & 0x7FF;
                 for col in 0..32u16 {
                     let name = self.vram_cell(name_base + cell_row * 32 + col) as u16;
-                    let byte =
-                        self.vram_cell(table + name * 8 + (cell_row & 3) * 2 + row_in_cell / 4);
+                    let offset = (name * 8 + (cell_row & 3) * 2 + row_in_cell / 4) & mask;
+                    let byte = self.vram_cell(table + offset);
                     self.paint_blocks(&mut pixels, col as usize * 8, byte);
                 }
             }
