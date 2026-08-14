@@ -63,7 +63,9 @@ mod vram {
 mod status {
     vdp_test!(_5s_gating, "status/5s-gating.sg");
     vdp_test!(_5s_overwrite, "status/5s-overwrite.sg");
+    vdp_test!(c_blank, "status/c-blank.sg");
     vdp_test!(c_gating, "status/c-gating.sg");
+    vdp_test!(c_mag, "status/c-mag.sg");
     vdp_test!(_5s_relatch, "status/5s-relatch.sg");
     vdp_test!(fifth_sprite, "status/fifth-sprite.sg");
     vdp_test!(frame_flag, "status/frame-flag.sg");
@@ -95,8 +97,14 @@ mod timing {
     vdp_test!(_5s_race, "timing/5s-race.sg");
     vdp_test!(blank_burst, "timing/blank-burst.sg");
     vdp_test!(blank_sweep, "timing/blank-sweep.sg");
+    vdp_test!(border_burst, "timing/border-burst.sg");
     vdp_test!(border_sweep, "timing/border-sweep.sg");
     vdp_test!(c_race, "timing/c-race.sg");
+    vdp_test!(
+        cadence_4match,
+        "timing/cadence-4match.sg",
+        staged = "live sprite pre-processing counter unmodelled"
+    );
     vdp_test!(cadence_8match, "timing/cadence-8match.sg");
     vdp_test!(f_race, "timing/f-race.sg");
     vdp_test!(gi_burst, "timing/gi-burst.sg");
@@ -107,8 +115,34 @@ mod timing {
     vdp_test!(m1_split_sweep, "timing/m1-split-sweep.sg");
     vdp_test!(match_sweep, "timing/match-sweep.sg");
     vdp_test!(mc_sweep, "timing/mc-sweep.sg");
+    vdp_test!(
+        onset_burst,
+        "timing/onset-burst.sg",
+        staged = "pre-display fetch schedule turn-on unmodelled"
+    );
+    vdp_test!(phantom_burst, "timing/phantom-burst.sg");
     vdp_test!(phase_sweep, "timing/phase-sweep.sg");
     vdp_test!(satkill_sweep, "timing/satkill-sweep.sg");
+    vdp_test!(
+        scan_cadence,
+        "timing/scan-cadence.sg",
+        staged = "live sprite pre-processing counter unmodelled"
+    );
+    vdp_test!(
+        steal_raw,
+        "timing/steal-raw.sg",
+        staged = "steal AND residue unmodelled"
+    );
+    vdp_test!(
+        steal_sweep,
+        "timing/steal-sweep.sg",
+        staged = "steal AND residue unmodelled"
+    );
+    vdp_test!(
+        steal15_sweep,
+        "timing/steal15-sweep.sg",
+        staged = "steal AND residue unmodelled"
+    );
     vdp_test!(text_burst, "timing/text-burst.sg");
     vdp_test!(text_sweep, "timing/text-sweep.sg");
     vdp_test!(undoc_all_sweep, "timing/undoc-all-sweep.sg");
