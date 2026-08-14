@@ -32,6 +32,11 @@ mod harness {
 }
 
 mod registers {
+    // Anchor-development vehicle: a screenshot subject whose PASS latches
+    // after two swept frames; the value here is the TRACE, which lets the
+    // phase-anchor's F-edge sweep be debugged against a model that
+    // reproduces the race (a racing status read swallows the flags).
+    vdp_test!(midline_name_sweep, "registers/midline-name-sweep.sg");
     vdp_test!(midframe_base, "registers/midframe-base.sg");
     vdp_test!(midframe_blank, "registers/midframe-blank.sg");
     vdp_test!(midframe_size, "registers/midframe-size.sg");
@@ -101,11 +106,7 @@ mod timing {
     vdp_test!(border_sweep, "timing/border-sweep.sg");
     vdp_test!(c_race, "timing/c-race.sg");
     // Sidecar budget 1400: ~550 frames of sweep + the per-cell map compare.
-    vdp_test!(
-        cadence_4match,
-        "timing/cadence-4match.sg",
-        staged = "live pre-processing counter in progress"
-    );
+    vdp_test!(cadence_4match, "timing/cadence-4match.sg", frames = 1600);
     vdp_test!(cadence_8match, "timing/cadence-8match.sg");
     vdp_test!(f_race, "timing/f-race.sg");
     vdp_test!(gi_burst, "timing/gi-burst.sg");
@@ -121,11 +122,7 @@ mod timing {
     vdp_test!(phase_sweep, "timing/phase-sweep.sg");
     vdp_test!(satkill_sweep, "timing/satkill-sweep.sg");
     // Sidecar budget 1400: ~550 frames of sweep + the per-cell map compare.
-    vdp_test!(
-        scan_cadence,
-        "timing/scan-cadence.sg",
-        staged = "live pre-processing counter in progress"
-    );
+    vdp_test!(scan_cadence, "timing/scan-cadence.sg", frames = 1600);
     vdp_test!(steal_raw, "timing/steal-raw.sg");
     vdp_test!(steal_sweep, "timing/steal-sweep.sg");
     vdp_test!(steal15_sweep, "timing/steal15-sweep.sg");

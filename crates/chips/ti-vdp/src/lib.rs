@@ -77,6 +77,42 @@ const TRANSFER_SETTLE_XTALS: u64 = 2;
 /// model's quantum while the schedule rotation stays a free convention).
 const SCHEDULE_WARM_UP_LINES: u16 = 3;
 
+/// The sprite pre-processing lattice, locked to the run schedule: entry 0
+/// lands with the counter reset at the length-4 run's start, entries 1-7
+/// burst one per memory cycle behind it, and entries 8-31 step three per
+/// 16-cycle run period across the eight regular length-1 runs — 9 entries
+/// per 48 cycles exactly.
+const SCAN_RESET_CYCLE: usize = 110;
+const SCAN_BURST_CYCLES: std::ops::RangeInclusive<usize> = 112..=118;
+/// Burst steps land one XTAL later in their cycle than steady steps and
+/// present the counter immediately — the silicon map ramps cleanly
+/// through the burst, boundary texture appearing only from 7-to-8 on.
+const SCAN_BURST_XTAL: u32 = 3;
+const SCAN_STEP_RUNS: [usize; 8] = [123, 139, 155, 0, 16, 32, 48, 64];
+const SCAN_STEP_OFFSET_CYCLES: [usize; 3] = [0, 4, 8];
+/// Which memory cycles advance the scanner in the steady regime.
+const SCAN_STEP_CYCLES: [bool; CYCLES_PER_LINE] = {
+    let mut map = [false; CYCLES_PER_LINE];
+    let mut run = 0;
+    while run < SCAN_STEP_RUNS.len() {
+        let mut offset = 0;
+        while offset < SCAN_STEP_OFFSET_CYCLES.len() {
+            map[SCAN_STEP_RUNS[run] + SCAN_STEP_OFFSET_CYCLES[offset]] = true;
+            offset += 1;
+        }
+        run += 1;
+    }
+    map
+};
+/// The lattice instant within its memory cycle; silicon pins it only to a
+/// 5-XTAL window, this value reproduces the measured boundary cells.
+const SCAN_STEP_XTAL: u32 = 2;
+/// After an increment the field spends this long not presenting the
+/// counter: bits 4/3 read 0 throughout; bits 2..0 hold the old value's low
+/// bits at the first instant, all-ones through the middle, and the new
+/// value's low bits at the last.
+const SCAN_WINDOW_XTALS: u64 = 5;
+
 /// Whether each memory cycle of a rendering line is a CPU-access cycle.
 const ACCESS_CYCLES: [bool; CYCLES_PER_LINE] = {
     let mut map = [false; CYCLES_PER_LINE];
@@ -138,9 +174,15 @@ pub struct Vdp {
     /// read reports the pre-set value and its clear swallows the set.
     frame_flag_set_at: u64,
     fifth_sprite_set_at: u64,
-    /// Status low five bits: latched fifth-sprite index while the flag is
-    /// set, otherwise the scanner's stop position from the last line.
+    /// Latched fifth-sprite index, presented while 5S is set.
     sprite_field: u8,
+    /// The pre-processing scanner's live progress: last SAT entry handled,
+    /// where this line's ramp ends, and the latest step (instant + the
+    /// value it replaced) for the boundary window.
+    scan_counter: u8,
+    scan_stop: u8,
+    scan_stepped_at: u64,
+    scan_step_from: u8,
 
     xtal_in_line: u32,
     line: u16,
@@ -168,6 +210,10 @@ impl Vdp {
             frame_flag_set_at: 0,
             fifth_sprite_set_at: 0,
             sprite_field: 0,
+            scan_counter: 31,
+            scan_stop: 31,
+            scan_stepped_at: 0,
+            scan_step_from: 31,
             xtal_in_line: 0,
             line: 0,
             xtal_total: 0,
@@ -185,7 +231,7 @@ impl Vdp {
     /// The status byte as it stands, disturbing nothing — no flag clear, no
     /// latch reset, and no read strobe for a set to lose to.
     pub fn peek_status(&self) -> u8 {
-        let mut value = self.sprite_field & 0x1F;
+        let mut value = self.scanned_field();
         if self.frame_flag {
             value |= status::FRAME;
         }
@@ -231,7 +277,74 @@ impl Vdp {
                 }
                 self.enter_line();
             }
+            self.scan_lattice();
             self.service_port();
+        }
+    }
+
+    /// Advance the pre-processing scanner at its lattice instants. M1 gates
+    /// rendering, never the scanner, so only blanking stops it.
+    fn scan_lattice(&mut self) {
+        if self.registers[1] & r1::DISPLAY_ENABLE == 0 {
+            return;
+        }
+        let sub = self.xtal_in_line % 4;
+        if sub != SCAN_STEP_XTAL && sub != SCAN_BURST_XTAL {
+            return;
+        }
+        let cycle = (self.xtal_in_line / 4) as usize;
+        // From the reset on, a line's lattice tail belongs to the NEXT
+        // line's scan; the scanner serves display lines plus the phantom
+        // pass, so the counter holds its stop through the border.
+        let scanned_line = if cycle >= SCAN_RESET_CYCLE {
+            self.line < ACTIVE_LINES || self.line == self.standard.lines_per_frame() - 1
+        } else {
+            self.line <= ACTIVE_LINES
+        };
+        if !scanned_line {
+            return;
+        }
+        if sub == SCAN_BURST_XTAL {
+            if SCAN_BURST_CYCLES.contains(&cycle) && self.scan_counter < self.scan_stop {
+                self.scan_step_from = self.scan_counter;
+                self.scan_counter += 1;
+            }
+        } else if cycle == SCAN_RESET_CYCLE {
+            self.scan_step_from = self.scan_counter;
+            self.scan_counter = 0;
+            self.scan_stepped_at = self.xtal_total;
+        } else if SCAN_STEP_CYCLES[cycle] && self.scan_counter < self.scan_stop {
+            self.scan_step_from = self.scan_counter;
+            self.scan_counter += 1;
+            self.scan_stepped_at = self.xtal_total;
+        }
+    }
+
+    /// Status low five bits: the latched fifth-sprite index while 5S is
+    /// set, otherwise the scanner's counter — live, except inside the
+    /// boundary window around each step. The 7-to-8 step reads inverted
+    /// mid-window and whole at the trailing edge (measured; cause open).
+    fn scanned_field(&self) -> u8 {
+        if self.fifth_sprite_flag {
+            return self.sprite_field & 0x1F;
+        }
+        let elapsed = self.xtal_total - self.scan_stepped_at;
+        if elapsed >= SCAN_WINDOW_XTALS {
+            return self.scan_counter;
+        }
+        let carry_step = self.scan_step_from == 7 && self.scan_counter == 8;
+        if elapsed == 0 {
+            self.scan_step_from & 7
+        } else if elapsed == SCAN_WINDOW_XTALS - 1 {
+            if carry_step {
+                self.scan_counter
+            } else {
+                self.scan_counter & 7
+            }
+        } else if carry_step {
+            0b11000
+        } else {
+            7
         }
     }
 
@@ -326,7 +439,7 @@ impl Vdp {
 
     pub fn read_status(&mut self) -> u8 {
         self.awaiting_second_byte = false;
-        let mut value = self.sprite_field & 0x1F;
+        let mut value = self.scanned_field();
         // F and 5S sets landing inside the read's strobe lose to its
         // clear (dynamic-node contention): the read reports the pre-set
         // value and the clear below swallows the set. C is set-dominant.
@@ -471,9 +584,7 @@ impl Vdp {
             }
         }
 
-        if !self.fifth_sprite_flag {
-            self.sprite_field = stop_index;
-        }
+        self.scan_stop = stop_index;
     }
 
     fn render_sprite_row(&mut self, entry: u16, row: u8, occupied: &mut [bool; 256]) {

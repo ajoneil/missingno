@@ -69,6 +69,19 @@ harness asserts on the block only.
   already running (the measured turn-on seam sits ~2.6 lines before
   display line 0; the model wakes at the line boundary, the sub-line
   position being free with the rotation convention).
+- **Sprite pre-processing: live counter, boundary-latched effects.** Status
+  bits 0-4 present the scanner's progress live — counter reset with entry 0
+  at the length-4 run, entries 1-7 one per memory cycle behind it, entries
+  8-31 three per 16-cycle run period across the eight regular length-1
+  runs, held at the stop through the long runs and the border. Steady steps
+  carry the measured boundary-window texture (bits 4/3 blank, low bits old
+  → all-ones → new; the 7-to-8 carry's inverted cell reproduced as
+  measured, cause open); the burst presents cleanly. The scan's match
+  effects — 5S, C, the stop latch — still apply at the line boundary: an
+  abstraction the race tests currently endorse, to revisit if a test pins
+  per-entry effect instants. The lattice's base offset inside the run
+  period and its sub-cycle instants are adopted within the maps' measured
+  freedom, like the schedule rotation.
 - **Digital core only.** Colour output stops at the TI colour indices;
   composite encoding, analog levels, and the 9929A's Y/R-Y/B-Y outputs are
   presentation/frontend territory.
