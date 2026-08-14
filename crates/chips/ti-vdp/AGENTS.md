@@ -54,15 +54,17 @@ harness asserts on the block only.
 - **Per-T CPU↔VDP interleaving.** The testbench advances the VDP one Z80
   T-state at a time, ahead of each CPU tick, so a port access lands at its
   true T offset within the instruction.
-- **CPU-access schedule: run lengths at the short end of the measured
-  family.** The rendering-line schedule (eleven runs, starts spaced
-  16,16,16,16,15,16,15,13,16,16,16 memory cycles, lengths
+- **CPU-access schedule.** The rendering-line schedule (eleven runs,
+  starts spaced 16,16,16,16,15,16,15,13,16,16,16 memory cycles, lengths
   1,1,1,1,1,2,5,4,1,1,1) and the service rule (claim at the first access
   cycle after the request; transfer locked +17 XTAL, flag released +15
   XTAL from that cycle's start) are pinned exactly by the SC-3000's two
-  canonical maps — but the maps determine run lengths only up to a common
-  additive constant in {0,1,2,3}. The model adopts +0 (19 CPU cycles per
-  line, the corpus's documented budget). The schedule's rotation against
+  canonical maps. The lengths' apparent +t freedom is a reparametrisation,
+  not a measurement gap (corpus desk answer 2026-08-14: lengths L+t with
+  the reference instants shifted 4t XTAL is the same observable model,
+  byte-identical on every burst map, and no CPU-side instrument can reach
+  the gap that would separate them) — this is the model in its natural
+  gauge. The schedule's rotation against
   hsync is unmeasured (free convention), only Graphics I with display on
   is map-constrained, and non-rendering time is modelled as every cycle
   claimable — except the last three frame lines, where the schedule is
@@ -76,12 +78,16 @@ harness asserts on the block only.
   runs, held at the stop through the long runs and the border. Steady steps
   carry the measured boundary-window texture (bits 4/3 blank, low bits old
   → all-ones → new; the 7-to-8 carry's inverted cell reproduced as
-  measured, cause open); the burst presents cleanly. The scan's match
-  effects — 5S, C, the stop latch — still apply at the line boundary: an
-  abstraction the race tests currently endorse, to revisit if a test pins
-  per-entry effect instants. The lattice's base offset inside the run
-  period and its sub-cycle instants are adopted within the maps' measured
-  freedom, like the schedule rotation.
+  measured, cause open); the burst presents cleanly. While 5S is set the
+  latched index masks the live counter at every intra-line phase —
+  silicon-corroborated (cadence-8match sweeps its read mid-active across
+  all 228 phases), not an adopted convention. The scan's match effects —
+  5S, C, the stop latch — still apply at the line boundary: an
+  abstraction the race tests currently endorse, to be adjudicated by the
+  corpus's queued set-instant probes (coinciding low/high 5S bands are
+  this abstraction's signature; separated bands refute it). The lattice's
+  base offset inside the run period and its sub-cycle instants are
+  adopted within the maps' measured freedom, like the schedule rotation.
 - **Line-granular rendering.** The frame renderer composites each display
   line at its line boundary from the registers and VRAM as they then stand —
   the pattern plane by mode, then the line's displayed sprites front to
