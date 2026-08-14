@@ -115,11 +115,7 @@ mod timing {
     vdp_test!(m1_split_sweep, "timing/m1-split-sweep.sg");
     vdp_test!(match_sweep, "timing/match-sweep.sg");
     vdp_test!(mc_sweep, "timing/mc-sweep.sg");
-    vdp_test!(
-        onset_burst,
-        "timing/onset-burst.sg",
-        staged = "pre-display fetch schedule turn-on unmodelled"
-    );
+    vdp_test!(onset_burst, "timing/onset-burst.sg");
     vdp_test!(phantom_burst, "timing/phantom-burst.sg");
     vdp_test!(phase_sweep, "timing/phase-sweep.sg");
     vdp_test!(satkill_sweep, "timing/satkill-sweep.sg");

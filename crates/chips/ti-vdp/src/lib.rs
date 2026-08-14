@@ -72,6 +72,10 @@ const FLAG_RELEASE_XTALS: u64 = 15;
 /// A port write needs this long to settle; a lock sampling sooner sees
 /// the register mid-transition and each bit resolves as old AND new.
 const TRANSFER_SETTLE_XTALS: u64 = 2;
+/// The fetch schedule wakes this many lines before display line 0 (the
+/// measured turn-on seam sits ~2.6 lines before; the line boundary is the
+/// model's quantum while the schedule rotation stays a free convention).
+const SCHEDULE_WARM_UP_LINES: u16 = 3;
 
 /// Whether each memory cycle of a rendering line is a CPU-access cycle.
 const ACCESS_CYCLES: [bool; CYCLES_PER_LINE] = {
@@ -256,12 +260,14 @@ impl Vdp {
         }
     }
 
-    /// Rendering lines confine CPU access to the run schedule; everywhere
-    /// else every memory cycle is claimable.
+    /// Rendering lines and the pre-display warm-up tail confine CPU access
+    /// to the run schedule; everywhere else every memory cycle is claimable.
     fn cycle_accessible(&self, cycle: usize) -> bool {
+        let scheduled_line = self.line < ACTIVE_LINES
+            || self.line >= self.standard.lines_per_frame() - SCHEDULE_WARM_UP_LINES;
         let rendering = self.registers[1] & r1::DISPLAY_ENABLE != 0
             && self.registers[1] & r1::M1 == 0
-            && self.line < ACTIVE_LINES;
+            && scheduled_line;
         !rendering || ACCESS_CYCLES[cycle]
     }
 

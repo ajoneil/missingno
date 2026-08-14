@@ -65,7 +65,10 @@ harness asserts on the block only.
   line, the corpus's documented budget). The schedule's rotation against
   hsync is unmeasured (free convention), only Graphics I with display on
   is map-constrained, and non-rendering time is modelled as every cycle
-  claimable.
+  claimable — except the last three frame lines, where the schedule is
+  already running (the measured turn-on seam sits ~2.6 lines before
+  display line 0; the model wakes at the line boundary, the sub-line
+  position being free with the rotation convention).
 - **Digital core only.** Colour output stops at the TI colour indices;
   composite encoding, analog levels, and the 9929A's Y/R-Y/B-Y outputs are
   presentation/frontend territory.
