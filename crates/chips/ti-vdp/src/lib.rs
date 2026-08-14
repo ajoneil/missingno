@@ -165,6 +165,46 @@ impl Vdp {
         self.frame_flag && self.registers[1] & r1::INTERRUPT_ENABLE != 0
     }
 
+    pub fn registers(&self) -> &[u8; 8] {
+        &self.registers
+    }
+
+    /// The status byte as it stands, disturbing nothing — no flag clear, no
+    /// latch reset, and no read strobe for a set to lose to.
+    pub fn peek_status(&self) -> u8 {
+        let mut value = self.sprite_field & 0x1F;
+        if self.frame_flag {
+            value |= status::FRAME;
+        }
+        if self.fifth_sprite_flag {
+            value |= status::FIFTH_SPRITE;
+        }
+        if self.coincidence_flag {
+            value |= status::COINCIDENCE;
+        }
+        value
+    }
+
+    pub fn line(&self) -> u16 {
+        self.line
+    }
+
+    pub fn dot(&self) -> u16 {
+        (self.xtal_in_line / 2) as u16
+    }
+
+    pub fn address(&self) -> u16 {
+        self.address
+    }
+
+    pub fn awaiting_second_byte(&self) -> bool {
+        self.awaiting_second_byte
+    }
+
+    pub fn read_buffer(&self) -> u8 {
+        self.read_buffer
+    }
+
     /// Advance the raster by `xtals` crystal periods.
     pub fn tick(&mut self, xtals: u32) {
         for _ in 0..xtals {

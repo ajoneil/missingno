@@ -3,8 +3,16 @@ name = "missingno-ti-vdp"
 version.workspace = true
 edition = "2024"
 
+[features]
+morepork = ["dep:morepork", "dep:sha2"]
+
 [dependencies]
 missingno-core = { path = "../../missingno/core" }
+# The trace format lives in its own repo (cloned into receipts/); the capture
+# sourced from the public repo so a fresh clone resolves without credentials;
+# local morepork iteration lands by pushing there and `cargo update -p morepork`.
+morepork = { git = "https://github.com/ajoneil/morepork", branch = "main", optional = true }
+sha2 = { version = "0.11", optional = true }
 
 [dev-dependencies]
 missingno-zilog-z80 = { path = "../zilog-z80" }

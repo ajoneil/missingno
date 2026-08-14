@@ -9,6 +9,9 @@ use missingno_ti_vdp::{Standard, Vdp, XTALS_PER_TSTATE};
 use missingno_zilog_z80::{Bus, Cpu};
 use std::path::Path;
 
+#[cfg(feature = "morepork")]
+mod trace;
+
 const RAM_BASE: u16 = 0xC000;
 const RAM_MASK: usize = 0x3FF;
 
@@ -23,6 +26,8 @@ pub struct Board {
     cart: Vec<u8>,
     ram: [u8; RAM_MASK + 1],
     pub vdp: Vdp,
+    #[cfg(feature = "morepork")]
+    ram_write: Option<(u16, u8)>,
 }
 
 impl Bus for Board {
@@ -39,6 +44,10 @@ impl Bus for Board {
     fn write(&mut self, address: u16, data: u8) {
         if address >= RAM_BASE {
             self.ram[address as usize & RAM_MASK] = data;
+            #[cfg(feature = "morepork")]
+            {
+                self.ram_write = Some((address, data));
+            }
         }
     }
 
@@ -85,8 +94,12 @@ fn run(rom: &str, budget_frames: u64) -> Verdict {
         cart,
         ram: [0; RAM_MASK + 1],
         vdp: Vdp::new(Standard::Ntsc),
+        #[cfg(feature = "morepork")]
+        ram_write: None,
     };
     let mut cpu = Cpu::new();
+    #[cfg(feature = "morepork")]
+    let mut tracer = trace::Tracer::create(rom, &cpu, &board);
 
     let budget = budget_frames * TSTATES_PER_FRAME;
     for _ in 0..budget {
@@ -97,8 +110,16 @@ fn run(rom: &str, budget_frames: u64) -> Verdict {
         if !cpu.at_instruction_boundary() {
             continue;
         }
+        #[cfg(feature = "morepork")]
+        if let Some(tracer) = &mut tracer {
+            tracer.capture(&cpu, &mut board);
+        }
         let result = board.ram[0];
         if result == RESULT_PASS || result == RESULT_FAIL {
+            #[cfg(feature = "morepork")]
+            if let Some(tracer) = tracer.take() {
+                tracer.finish(&board.ram);
+            }
             return Verdict {
                 passed: result == RESULT_PASS,
                 code: board.ram[1],
@@ -106,6 +127,10 @@ fn run(rom: &str, budget_frames: u64) -> Verdict {
                 expected: board.ram[3],
             };
         }
+    }
+    #[cfg(feature = "morepork")]
+    if let Some(tracer) = tracer.take() {
+        tracer.finish(&board.ram);
     }
     panic!("{rom}: no verdict within {budget_frames} frames");
 }

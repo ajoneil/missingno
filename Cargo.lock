@@ -1467,7 +1467,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2111,7 +2111,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.58.0",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -2992,8 +2992,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-core"
-version = "0.1.0"
-source = "git+https://github.com/ajoneil/missingno?branch=main#d09139bc48173d4d968ae940b7717cf8615ed284"
+version = "26.9.0"
 dependencies = [
  "rgb",
  "serde",
@@ -3002,6 +3001,7 @@ dependencies = [
 [[package]]
 name = "missingno-core"
 version = "26.9.0"
+source = "git+https://github.com/ajoneil/missingno?branch=main#a4159f47ce7ef6f9c3d5402a8c58b18940045adc"
 dependencies = [
  "rgb",
  "serde",
@@ -3139,6 +3139,8 @@ version = "26.9.0"
 dependencies = [
  "missingno-core 26.9.0",
  "missingno-zilog-z80",
+ "morepork",
+ "sha2 0.11.0",
 ]
 
 [[package]]
@@ -3165,11 +3167,11 @@ dependencies = [
 [[package]]
 name = "morepork"
 version = "0.1.0"
-source = "git+https://github.com/ajoneil/morepork?branch=main#96bf93d266730cb68f4f0de1360c25618f9afdce"
+source = "git+https://github.com/ajoneil/morepork?branch=main#67cfdc8d3146a21823eec11efc5b0e294d7a6ceb"
 dependencies = [
  "arrow",
  "flate2",
- "missingno-core 0.1.0",
+ "missingno-core 26.9.0 (git+https://github.com/ajoneil/missingno?branch=main)",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -4582,7 +4584,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5155,7 +5157,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6029,7 +6031,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
