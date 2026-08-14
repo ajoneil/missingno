@@ -69,6 +69,9 @@ const TRANSFER_LOCK_XTALS: u64 = 17;
 /// ...and the request flag clears this long after, so a request landing
 /// in the gap both supplies the in-flight data and queues itself.
 const FLAG_RELEASE_XTALS: u64 = 15;
+/// A port write needs this long to settle; a lock sampling sooner sees
+/// the register mid-transition and each bit resolves as old AND new.
+const TRANSFER_SETTLE_XTALS: u64 = 2;
 
 /// Whether each memory cycle of a rendering line is a CPU-access cycle.
 const ACCESS_CYCLES: [bool; CYCLES_PER_LINE] = {
@@ -113,6 +116,10 @@ pub struct Vdp {
     /// Re-latched by every CPU request; the servicing cycle samples it at
     /// its lock instant, so a newer request steals an in-flight cycle.
     port_transfer: PortTransfer,
+    /// The transfer being replaced, and when: a lock sampling within the
+    /// settle window merges the two.
+    prior_transfer: PortTransfer,
+    transfer_written_at: u64,
     /// Latched by the request that raised the flag; replacements leave it
     /// holding — a superseded access keeps the first address.
     pending_address: u16,
@@ -146,6 +153,8 @@ impl Vdp {
             awaiting_second_byte: false,
             read_buffer: 0,
             port_transfer: PortTransfer::Refill,
+            prior_transfer: PortTransfer::Refill,
+            transfer_written_at: 0,
             pending_address: 0,
             pending_flag: false,
             in_flight: None,
@@ -346,15 +355,30 @@ impl Vdp {
     /// latches with the request that raises the flag, so a superseded
     /// access carries the first address with the last value.
     fn request(&mut self, address: u16, transfer: PortTransfer) {
+        self.prior_transfer = self.port_transfer;
         self.port_transfer = transfer;
+        self.transfer_written_at = self.xtal_total;
         if !self.pending_flag {
             self.pending_address = address;
             self.pending_flag = true;
         }
     }
 
+    /// The transfer as the lock samples it: settled, the latest value;
+    /// mid-transition, writes merge bitwise old AND new. A direction bit
+    /// mid-flip is unmeasured — the latest transfer wins.
+    fn locked_transfer(&self) -> PortTransfer {
+        if self.xtal_total - self.transfer_written_at >= TRANSFER_SETTLE_XTALS {
+            return self.port_transfer;
+        }
+        match (self.prior_transfer, self.port_transfer) {
+            (PortTransfer::Write(old), PortTransfer::Write(new)) => PortTransfer::Write(old & new),
+            (_, latest) => latest,
+        }
+    }
+
     fn complete(&mut self, address: u16) {
-        match self.port_transfer {
+        match self.locked_transfer() {
             PortTransfer::Write(value) => {
                 self.vram[self.physical(address)] = value;
             }

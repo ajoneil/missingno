@@ -128,21 +128,9 @@ mod timing {
         "timing/scan-cadence.sg",
         staged = "live sprite pre-processing counter unmodelled"
     );
-    vdp_test!(
-        steal_raw,
-        "timing/steal-raw.sg",
-        staged = "steal AND residue unmodelled"
-    );
-    vdp_test!(
-        steal_sweep,
-        "timing/steal-sweep.sg",
-        staged = "steal AND residue unmodelled"
-    );
-    vdp_test!(
-        steal15_sweep,
-        "timing/steal15-sweep.sg",
-        staged = "steal AND residue unmodelled"
-    );
+    vdp_test!(steal_raw, "timing/steal-raw.sg");
+    vdp_test!(steal_sweep, "timing/steal-sweep.sg");
+    vdp_test!(steal15_sweep, "timing/steal15-sweep.sg");
     vdp_test!(text_burst, "timing/text-burst.sg");
     vdp_test!(text_sweep, "timing/text-sweep.sg");
     vdp_test!(undoc_all_sweep, "timing/undoc-all-sweep.sg");
