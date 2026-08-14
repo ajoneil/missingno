@@ -23,6 +23,24 @@ macro_rules! vdp_test {
     };
 }
 
+/// A screenshot subject: PASS latches once the scene is up, then the next
+/// complete frame must match the blessed `_ntsc.png` reference exactly.
+macro_rules! vdp_screenshot {
+    ($name:ident, $path:literal) => {
+        #[test]
+        fn $name() {
+            crate::testbench::assert_screenshot($path);
+        }
+    };
+    ($name:ident, $path:literal, staged = $reason:literal) => {
+        #[test]
+        #[ignore = $reason]
+        fn $name() {
+            crate::testbench::assert_screenshot($path);
+        }
+    };
+}
+
 mod testbench;
 
 mod harness {
@@ -82,6 +100,25 @@ mod interrupt {
     vdp_test!(int_line, "interrupt/int-line.sg");
 }
 
+mod modes {
+    vdp_screenshot!(backdrop_zero, "modes/backdrop-zero.sg");
+    vdp_screenshot!(blank, "modes/blank.sg");
+    // The committed reference photographs the pre-redesign scene (blessed
+    // 2026-08-02; ROM redesigned 2026-08-13), and consensus cannot re-bless
+    // it: mame and gearsystem collapse the pattern fetch under R4=$04, the
+    // SY mechanism silicon refuted. Awaits its own SC-3000 capture.
+    vdp_screenshot!(
+        gii_mask_pattern,
+        "modes/gii-mask-pattern.sg",
+        staged = "reference is the pre-redesign scene; redesigned scene awaits hardware capture"
+    );
+    vdp_screenshot!(gii_shrunken, "modes/gii-shrunken.sg");
+    vdp_screenshot!(graphic1, "modes/graphic1.sg");
+    vdp_screenshot!(graphic2, "modes/graphic2.sg");
+    vdp_screenshot!(multicolor, "modes/multicolor.sg");
+    vdp_screenshot!(table_overlap, "modes/table-overlap.sg");
+}
+
 mod sprites {
     vdp_test!(coincidence, "sprites/coincidence.sg");
     vdp_test!(ec_geometry, "sprites/ec-geometry.sg");
@@ -95,6 +132,8 @@ mod sprites {
     vdp_test!(tag_bits, "sprites/tag-bits.sg");
     vdp_test!(terminator, "sprites/terminator.sg");
     vdp_test!(y_position, "sprites/y-position.sg");
+    vdp_screenshot!(ghost, "sprites/ghost.sg");
+    vdp_screenshot!(priority, "sprites/priority.sg");
 }
 
 mod timing {

@@ -34,13 +34,30 @@ impl Standard {
     }
 }
 
+mod r0 {
+    pub const M3: u8 = 0x02;
+}
+
 mod r1 {
     pub const RAM_16K: u8 = 0x80;
     pub const DISPLAY_ENABLE: u8 = 0x40;
     pub const INTERRUPT_ENABLE: u8 = 0x20;
     pub const M1: u8 = 0x10;
+    pub const M2: u8 = 0x08;
     pub const SIZE_16: u8 = 0x02;
     pub const MAG: u8 = 0x01;
+}
+
+/// The M1/M2/M3 selection, the community-documented combinations included.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Mode {
+    GraphicsI,
+    GraphicsII,
+    Multicolor,
+    Text,
+    BitmapText,
+    BitmapMulticolor,
+    TextMulticolor,
 }
 
 mod status {
@@ -51,6 +68,15 @@ mod status {
 
 /// Sprite attribute Y value that terminates the scan.
 const SPRITE_TERMINATOR: u8 = 0xD0;
+
+/// Text-family modes show 40 six-pixel cells inside backdrop margins. The
+/// community gives a symmetric split; TI's asymmetric 6/10 is unadjudicated.
+const TEXT_MARGIN: usize = 8;
+
+/// Composited colour indices for the active area, one row per display
+/// line. 0 survives only where every plane is transparent (the
+/// external-video pass-through) and presents as black.
+pub struct Frame(pub [[u8; 256]; ACTIVE_LINES as usize]);
 
 /// One DRAM memory cycle is two dots = four XTAL periods; 171 per line.
 const CYCLES_PER_LINE: usize = 171;
@@ -184,6 +210,9 @@ pub struct Vdp {
     scan_stepped_at: u64,
     scan_step_from: u8,
 
+    frame: Frame,
+    frames_completed: u64,
+
     xtal_in_line: u32,
     line: u16,
     xtal_total: u64,
@@ -214,6 +243,8 @@ impl Vdp {
             scan_stop: 31,
             scan_stepped_at: 0,
             scan_step_from: 31,
+            frame: Frame([[0; 256]; ACTIVE_LINES as usize]),
+            frames_completed: 0,
             xtal_in_line: 0,
             line: 0,
             xtal_total: 0,
@@ -262,6 +293,31 @@ impl Vdp {
 
     pub fn read_buffer(&self) -> u8 {
         self.read_buffer
+    }
+
+    pub fn frame(&self) -> &Frame {
+        &self.frame
+    }
+
+    /// Count of completed active areas — increments as the raster leaves
+    /// display line 191, when every row of `frame` is this frame's.
+    pub fn frames_completed(&self) -> u64 {
+        self.frames_completed
+    }
+
+    pub fn mode(&self) -> Mode {
+        let m1 = self.registers[1] & r1::M1 != 0;
+        let m2 = self.registers[1] & r1::M2 != 0;
+        let m3 = self.registers[0] & r0::M3 != 0;
+        match (m1, m2, m3) {
+            (false, false, false) => Mode::GraphicsI,
+            (false, false, true) => Mode::GraphicsII,
+            (false, true, false) => Mode::Multicolor,
+            (true, false, false) => Mode::Text,
+            (true, false, true) => Mode::BitmapText,
+            (false, true, true) => Mode::BitmapMulticolor,
+            (true, true, _) => Mode::TextMulticolor,
+        }
     }
 
     /// Advance the raster by `xtals` crystal periods.
@@ -389,11 +445,20 @@ impl Vdp {
         // line after the last (counts, never renders); F rises at the same
         // boundary, after that pass, so the phantom scan sees the old flag.
         if self.line <= ACTIVE_LINES {
-            self.scan_sprites();
+            let mut pixels = if self.line < ACTIVE_LINES {
+                Some(self.render_pattern_line())
+            } else {
+                None
+            };
+            self.scan_sprites(pixels.as_mut());
+            if let Some(pixels) = pixels {
+                self.frame.0[self.line as usize] = pixels;
+            }
         }
         if self.line == ACTIVE_LINES {
             self.frame_flag = true;
             self.frame_flag_set_at = self.xtal_total;
+            self.frames_completed += 1;
         }
     }
 
@@ -530,6 +595,139 @@ impl Vdp {
         self.vram[self.physical(address)]
     }
 
+    fn name_table_base(&self) -> u16 {
+        (self.registers[2] as u16 & 0x0F) * 0x400
+    }
+
+    /// A transparent pixel falls through to the backdrop; a transparent
+    /// backdrop stays 0 (the external-video plane, presented black).
+    fn over_backdrop(&self, colour: u8) -> u8 {
+        if colour != 0 {
+            colour
+        } else {
+            self.registers[7] & 0x0F
+        }
+    }
+
+    /// The pattern-table base a bitmap-family third selects: the half from
+    /// R4's high base bit, the second and third tables gated by its low bits.
+    fn bitmap_third_table(&self, third: u16) -> u16 {
+        let half = ((self.registers[4] as u16) & 0x04) << 11;
+        let table = match third {
+            1 if self.registers[4] & 0x01 != 0 => 1,
+            2 if self.registers[4] & 0x02 != 0 => 2,
+            _ => 0,
+        };
+        half + table * 0x800
+    }
+
+    /// The pattern plane for the line being entered — registers and VRAM as
+    /// they stand at the line boundary (the model's rendering quantum).
+    fn render_pattern_line(&self) -> [u8; 256] {
+        let backdrop = self.registers[7] & 0x0F;
+        let mut pixels = [backdrop; 256];
+        if self.registers[1] & r1::DISPLAY_ENABLE == 0 {
+            return pixels;
+        }
+        let line = self.line;
+        let cell_row = line / 8;
+        let row_in_cell = line % 8;
+        let name_base = self.name_table_base();
+        let pattern_base = (self.registers[4] as u16 & 0x07) * 0x800;
+
+        match self.mode() {
+            Mode::GraphicsI => {
+                let colour_base = self.registers[3] as u16 * 0x40;
+                for col in 0..32u16 {
+                    let name = self.vram_cell(name_base + cell_row * 32 + col) as u16;
+                    let bits = self.vram_cell(pattern_base + name * 8 + row_in_cell);
+                    let colours = self.vram_cell(colour_base + name / 8);
+                    self.paint_cell(&mut pixels, col as usize * 8, bits, colours);
+                }
+            }
+            Mode::GraphicsII => {
+                // R3's AND mask governs both fetches — the pattern fetch
+                // follows R3 (silicon: gii-mask-pattern, gii-mask-colour);
+                // R4 contributes only the half select here.
+                let colour_half = ((self.registers[3] as u16) & 0x80) << 6;
+                let colour_mask = ((self.registers[3] as u16 & 0x7F) << 6) | 0x3F;
+                let pattern_half = ((self.registers[4] as u16) & 0x04) << 11;
+                let pattern_mask = colour_mask;
+                let third = (line / 64) * 256;
+                for col in 0..32u16 {
+                    let name = self.vram_cell(name_base + cell_row * 32 + col) as u16;
+                    let offset = (third + name) * 8 + row_in_cell;
+                    let bits = self.vram_cell(pattern_half | (offset & pattern_mask));
+                    let colours = self.vram_cell(colour_half | (offset & colour_mask));
+                    self.paint_cell(&mut pixels, col as usize * 8, bits, colours);
+                }
+            }
+            Mode::Multicolor => {
+                for col in 0..32u16 {
+                    let name = self.vram_cell(name_base + cell_row * 32 + col) as u16;
+                    let byte = self
+                        .vram_cell(pattern_base + name * 8 + (cell_row & 3) * 2 + row_in_cell / 4);
+                    self.paint_blocks(&mut pixels, col as usize * 8, byte);
+                }
+            }
+            Mode::BitmapMulticolor => {
+                let table = self.bitmap_third_table(line / 64);
+                for col in 0..32u16 {
+                    let name = self.vram_cell(name_base + cell_row * 32 + col) as u16;
+                    let byte =
+                        self.vram_cell(table + name * 8 + (cell_row & 3) * 2 + row_in_cell / 4);
+                    self.paint_blocks(&mut pixels, col as usize * 8, byte);
+                }
+            }
+            Mode::Text | Mode::BitmapText => {
+                let colours = self.registers[7];
+                let table = if self.mode() == Mode::BitmapText {
+                    self.bitmap_third_table(line / 64)
+                } else {
+                    pattern_base
+                };
+                for col in 0..40u16 {
+                    let name = self.vram_cell(name_base + cell_row * 40 + col) as u16;
+                    let bits = self.vram_cell(table + name * 8 + row_in_cell);
+                    for bit in 0..6 {
+                        let lit = bits & (0x80 >> bit) != 0;
+                        let colour = if lit { colours >> 4 } else { colours & 0x0F };
+                        pixels[TEXT_MARGIN + col as usize * 6 + bit] = self.over_backdrop(colour);
+                    }
+                }
+            }
+            Mode::TextMulticolor => {
+                // No table reads: 40 columns of four text-colour pixels then
+                // two of backdrop, all from R7.
+                let text = self.registers[7] >> 4;
+                for col in 0..40 {
+                    for bit in 0..4 {
+                        pixels[TEXT_MARGIN + col * 6 + bit] = self.over_backdrop(text);
+                    }
+                }
+            }
+        }
+        pixels
+    }
+
+    /// Eight pattern pixels from one bits/colours byte pair.
+    fn paint_cell(&self, pixels: &mut [u8; 256], x: usize, bits: u8, colours: u8) {
+        for bit in 0..8 {
+            let lit = bits & (0x80 >> bit) != 0;
+            let colour = if lit { colours >> 4 } else { colours & 0x0F };
+            pixels[x + bit] = self.over_backdrop(colour);
+        }
+    }
+
+    /// A multicolor byte: two 4x4 blocks, high nibble left.
+    fn paint_blocks(&self, pixels: &mut [u8; 256], x: usize, byte: u8) {
+        for (half, colour) in [(0, byte >> 4), (4, byte & 0x0F)] {
+            for bit in 0..4 {
+                pixels[x + half + bit] = self.over_backdrop(colour);
+            }
+        }
+    }
+
     fn sprite_attribute_base(&self) -> u16 {
         (self.registers[5] as u16 & 0x7F) * 0x80
     }
@@ -538,7 +736,7 @@ impl Vdp {
         (self.registers[6] as u16 & 0x07) * 0x800
     }
 
-    fn scan_sprites(&mut self) {
+    fn scan_sprites(&mut self, mut pixels: Option<&mut [u8; 256]>) {
         let r1 = self.registers[1];
         if r1 & r1::DISPLAY_ENABLE == 0 {
             return;
@@ -555,6 +753,7 @@ impl Vdp {
 
         let attributes = self.sprite_attribute_base();
         let mut occupied = [false; 256];
+        let mut painted = [false; 256];
         let mut matched = 0u8;
         let mut stop_index = 31u8;
 
@@ -580,14 +779,27 @@ impl Vdp {
                 }
             }
             if matched <= 4 && rendered {
-                self.render_sprite_row(entry, row >> (magnified as u8), &mut occupied);
+                self.render_sprite_row(
+                    entry,
+                    row >> (magnified as u8),
+                    &mut occupied,
+                    &mut painted,
+                    pixels.as_deref_mut(),
+                );
             }
         }
 
         self.scan_stop = stop_index;
     }
 
-    fn render_sprite_row(&mut self, entry: u16, row: u8, occupied: &mut [bool; 256]) {
+    fn render_sprite_row(
+        &mut self,
+        entry: u16,
+        row: u8,
+        occupied: &mut [bool; 256],
+        painted: &mut [bool; 256],
+        mut pixels: Option<&mut [u8; 256]>,
+    ) {
         let r1 = self.registers[1];
         let magnified = r1 & r1::MAG != 0;
         let size16 = r1 & r1::SIZE_16 != 0;
@@ -596,6 +808,7 @@ impl Vdp {
         let name = self.vram_cell(entry + 2);
         let tag = self.vram_cell(entry + 3);
         let early_clock = tag & 0x80 != 0;
+        let colour = tag & 0x0F;
         let origin = x as i32 - if early_clock { 32 } else { 0 };
 
         let pattern = self.sprite_pattern_base();
@@ -624,6 +837,15 @@ impl Vdp {
                     self.coincidence_flag = true;
                 }
                 *cell = true;
+                // A transparent sprite pixel collides but masks nothing;
+                // among painters the frontmost wins.
+                if colour != 0
+                    && !painted[px as usize]
+                    && let Some(pixels) = pixels.as_deref_mut()
+                {
+                    pixels[px as usize] = colour;
+                    painted[px as usize] = true;
+                }
             }
         }
     }

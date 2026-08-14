@@ -82,6 +82,23 @@ harness asserts on the block only.
   per-entry effect instants. The lattice's base offset inside the run
   period and its sub-cycle instants are adopted within the maps' measured
   freedom, like the schedule rotation.
-- **Digital core only.** Colour output stops at the TI colour indices;
-  composite encoding, analog levels, and the 9929A's Y/R-Y/B-Y outputs are
-  presentation/frontend territory.
+- **Line-granular rendering.** The frame renderer composites each display
+  line at its line boundary from the registers and VRAM as they then stand —
+  the pattern plane by mode, then the line's displayed sprites front to
+  back. Mid-line and mid-frame register seams are therefore quantised to
+  the line; every corpus subject that would pin them finer (the midline-*
+  and midframe-* scenes) is still awaiting its hardware capture, and the
+  renderer refines when those land. Two adopted conventions inside the
+  measured freedom: the text-mode side borders use the community's
+  symmetric 8-pixel split (TI's asymmetric 6/10 is the live border-width
+  conflict, unadjudicated); Graphics II pattern fetches follow R3's AND
+  mask with R4 contributing only the half select — the silicon-adjudicated
+  reading (gii-mask-pattern/gii-mask-colour), which mame and gearsystem
+  get wrong (they collapse the thirds under a masking R4), so consensus
+  cannot bless scenes that exercise it.
+- **Digital core only.** Colour output stops at the TI colour indices; a
+  frame pixel of 0 means every plane was transparent (the external-video
+  pass-through) and presents as black. Composite encoding, analog levels,
+  and the 9929A's Y/R-Y/B-Y outputs are presentation/frontend territory —
+  the canonical datasheet RGB palette lives in the test harness, not the
+  chip.

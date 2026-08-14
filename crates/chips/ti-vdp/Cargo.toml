@@ -16,3 +16,4 @@ sha2 = { version = "0.11", optional = true }
 
 [dev-dependencies]
 missingno-zilog-z80 = { path = "../zilog-z80" }
+png = "0.18"

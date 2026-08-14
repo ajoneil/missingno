@@ -3140,6 +3140,7 @@ dependencies = [
  "missingno-core 26.9.0",
  "missingno-zilog-z80",
  "morepork",
+ "png 0.18.1",
  "sha2 0.11.0",
 ]
 
