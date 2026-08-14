@@ -47,8 +47,12 @@ emulator's behaviour for hardware fact.
   slot contention, a slow cartridge) must model that outside the chip until the
   pin exists.
 - **Interrupt entry timing.** NMI and IM 0/1/2 acceptance implement the
-  documented semantics, but the oracle contains no interrupt cases, so
-  cycle-level interrupt timing is **unverified**. Console work that depends on
-  it (the SMS/SG-1000 VDP line interrupt) must bring its own evidence — test
-  ROMs measured on hardware — and flag the gap to the user rather than tuning
-  to a test.
+  documented semantics, but the oracle contains no interrupt cases, so the
+  cycle-level acceptance sequence is **unverified**. The /INT sample point
+  follows the Zilog UM: the line is sampled at the rising edge of an
+  instruction's final T-state, so a halted CPU wakes on its 4 T refetch
+  grid and the wake phase follows the halt's entry phase
+  (`tests/halt_wake.rs`). Console work that depends on finer acceptance
+  timing (the SMS/SG-1000 VDP line interrupt) must bring its own
+  evidence — test ROMs measured on hardware — and flag the gap to the user
+  rather than tuning to a test.

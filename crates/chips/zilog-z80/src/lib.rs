@@ -144,6 +144,10 @@ pub struct Cpu {
     flags_touched: bool,
     nmi_pending: bool,
     irq_line: bool,
+    /// /INT as sampled at the rising edge of an instruction's final
+    /// T-state (the documented sample point) — what acceptance consults,
+    /// one T earlier than the boundary itself.
+    irq_sampled: bool,
     last_address: u16,
     trace: Vec<BusCycle>,
     /// The instruction walking its T-states, absent between instructions.
@@ -192,6 +196,7 @@ impl Cpu {
             flags_touched: false,
             nmi_pending: false,
             irq_line: false,
+            irq_sampled: false,
             last_address: 0,
             trace: Vec::new(),
             sequencer: None,
@@ -252,6 +257,9 @@ impl Cpu {
         if self.tick_sequencer(bus, &mut sequencer) {
             self.sequencer = Some(sequencer);
         } else {
+            // The line cannot move within a T-state, so capturing at
+            // retirement reads the final T's rising edge.
+            self.irq_sampled = self.irq_line;
             self.q = if self.flags_touched { self.f } else { 0 };
         }
     }
@@ -263,7 +271,7 @@ impl Cpu {
             self.nmi_pending = false;
             return self.accept_nmi();
         }
-        if self.irq_line && self.iff1 && !self.ei_pending {
+        if self.irq_sampled && self.iff1 && !self.ei_pending {
             return self.accept_irq();
         }
 

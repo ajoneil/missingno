@@ -429,15 +429,35 @@ fn halt_refetch_cadence() {
 /// not a measured hardware sequence.
 #[test]
 fn interrupt_mode1_acceptance() {
-    let (cpu, calls, ticks) = sequenced_state(&[0x00], |cpu| {
-        cpu.sp = 0x2000;
-        cpu.im = InterruptMode::Mode1;
-        cpu.iff1 = true;
-        cpu.set_irq(true);
-    });
+    let mut cpu = Cpu::new();
+    cpu.pc = 0x0000;
+    cpu.sp = 0x2000;
+    cpu.im = InterruptMode::Mode1;
+    cpu.iff1 = true;
+    cpu.set_irq(true);
+    let mut bus = ProbeBus::new(&[0x00]);
+
+    // The line is sampled at the rising edge of an instruction's final
+    // T-state, so acceptance follows the NOP that carries the sample.
+    for tick in 0..4 {
+        bus.tick = tick;
+        cpu.tick(&mut bus);
+    }
+    assert!(cpu.at_instruction_boundary());
+    bus.calls.clear();
+
+    let mut ticks = 0;
+    loop {
+        bus.tick = ticks;
+        cpu.tick(&mut bus);
+        ticks += 1;
+        if cpu.at_instruction_boundary() {
+            break;
+        }
+    }
     assert_eq!(ticks, 8);
     assert_eq!(
-        calls,
+        bus.calls,
         [(3, Access::MemWrite, 0x1FFF), (6, Access::MemWrite, 0x1FFE),]
     );
     assert_eq!(cpu.pc, 0x0038);
