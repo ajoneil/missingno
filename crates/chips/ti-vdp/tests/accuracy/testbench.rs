@@ -188,7 +188,12 @@ pub fn assert_screenshot(rom: &str) {
         dump_frame(&dir, rom, frame);
     }
 
-    let reference = load_reference(rom);
+    let Some(reference) = load_reference(rom) else {
+        // Hardware-PRIMARY subjects run staged until a capture-derived
+        // reference lands; running one explicitly still dumps its frame
+        // above for adjudication against the SC-3000 capture.
+        panic!("{rom}: no blessed reference committed");
+    };
     let mut mismatches = 0usize;
     for (y, row) in frame.0.iter().enumerate() {
         for (x, &index) in row.iter().enumerate() {
@@ -224,11 +229,14 @@ fn dump_frame(dir: &str, rom: &str, frame: &missingno_ti_vdp::Frame) {
     writer.write_image_data(&data).unwrap();
 }
 
-fn load_reference(rom: &str) -> Vec<[u8; 3]> {
+fn load_reference(rom: &str) -> Option<Vec<[u8; 3]>> {
     let stem = rom.strip_suffix(".sg").unwrap_or(rom);
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/accuracy/roms")
         .join(format!("{stem}_ntsc.png"));
+    if !path.exists() {
+        return None;
+    }
     let file = std::fs::File::open(&path)
         .unwrap_or_else(|e| panic!("opening reference {}: {e}", path.display()));
     let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
@@ -247,9 +255,10 @@ fn load_reference(rom: &str) -> Vec<[u8; 3]> {
         png::ColorType::Rgba => 4,
         other => panic!("unsupported reference colour type: {other:?}"),
     };
-    (0..256 * 192)
+    let rgb = (0..256 * 192)
         .map(|i| [buf[i * stride], buf[i * stride + 1], buf[i * stride + 2]])
-        .collect()
+        .collect();
+    Some(rgb)
 }
 
 pub fn assert_pass_within(rom: &str, budget_frames: u64) {

@@ -68,6 +68,39 @@ mod registers {
         write_destroys_address,
         "registers/write-destroys-address.sg"
     );
+    // Hardware-PRIMARY mid-frame scenes (see the modes note): the oracles
+    // disagree on the seam line, so only the SC-3000 capture can derive a
+    // reference.
+    vdp_screenshot!(
+        midframe_backdrop,
+        "registers/midframe-backdrop.sg",
+        staged = "hardware-PRIMARY; awaits capture-derived reference"
+    );
+    vdp_screenshot!(
+        midframe_m1,
+        "registers/midframe-m1.sg",
+        staged = "hardware-PRIMARY; awaits capture-derived reference"
+    );
+    vdp_screenshot!(
+        midframe_m2,
+        "registers/midframe-m2.sg",
+        staged = "hardware-PRIMARY; awaits capture-derived reference"
+    );
+    vdp_screenshot!(
+        midframe_mask,
+        "registers/midframe-mask.sg",
+        staged = "hardware-PRIMARY; awaits capture-derived reference"
+    );
+    vdp_screenshot!(
+        midframe_mode,
+        "registers/midframe-mode.sg",
+        staged = "hardware-PRIMARY; awaits capture-derived reference"
+    );
+    vdp_screenshot!(
+        midframe_name,
+        "registers/midframe-name.sg",
+        staged = "hardware-PRIMARY; awaits capture-derived reference"
+    );
 }
 
 mod vram {
@@ -117,6 +150,35 @@ mod modes {
     vdp_screenshot!(graphic2, "modes/graphic2.sg");
     vdp_screenshot!(multicolor, "modes/multicolor.sg");
     vdp_screenshot!(table_overlap, "modes/table-overlap.sg");
+    // Hardware-PRIMARY subjects (`bless: never` in the corpus): consensus
+    // may not bless their references, so each waits for a capture-derived
+    // one. Running a staged test explicitly with TIVDP_DUMP_FRAMES dumps
+    // our frame for adjudication against the SC-3000 capture.
+    vdp_screenshot!(
+        text,
+        "modes/text.sg",
+        staged = "hardware-PRIMARY; border-width conflict unadjudicated"
+    );
+    vdp_screenshot!(
+        gii_mask_colour,
+        "modes/gii-mask-colour.sg",
+        staged = "hardware-PRIMARY; awaits capture-derived reference"
+    );
+    vdp_screenshot!(
+        undoc_bitmap_multicolor,
+        "modes/undoc-bitmap-multicolor.sg",
+        staged = "hardware-PRIMARY; awaits capture-derived reference"
+    );
+    vdp_screenshot!(
+        undoc_bitmap_text,
+        "modes/undoc-bitmap-text.sg",
+        staged = "hardware-PRIMARY; awaits capture-derived reference"
+    );
+    vdp_screenshot!(
+        undoc_text_multicolor,
+        "modes/undoc-text-multicolor.sg",
+        staged = "hardware-PRIMARY; awaits capture-derived reference"
+    );
 }
 
 mod sprites {

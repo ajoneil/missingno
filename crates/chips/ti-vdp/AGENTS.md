@@ -96,6 +96,15 @@ harness asserts on the block only.
   reading (gii-mask-pattern/gii-mask-colour), which mame and gearsystem
   get wrong (they collapse the thirds under a masking R4), so consensus
   cannot bless scenes that exercise it.
+- **The shrunken-table sprite anomaly is unmodelled.** In TI's shrunken
+  Graphics II configuration silicon duplicates and displaces sprites once
+  more than eight are on screen (TI documents the symptom; the 2026-08-14
+  SC-3000 capture of gii-shrunken observed it — sprites absent from design
+  positions, apparitions at fixed columns). No emulator models it and its
+  mechanism is unattributed pending the corpus's dedicated probe scene; the
+  affected cells of that scene are hardware-PRIMARY and no consensus
+  reference can cover them. The model renders the documented sprite path
+  and states this gap rather than guessing a mechanism.
 - **Digital core only.** Colour output stops at the TI colour indices; a
   frame pixel of 0 means every plane was transparent (the external-video
   pass-through) and presents as black. Composite encoding, analog levels,
