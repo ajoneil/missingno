@@ -79,6 +79,28 @@ const TEXT_MARGIN: usize = 6;
 /// external-video pass-through) and presents as black.
 pub struct Frame(pub [[u8; 256]; ACTIVE_LINES as usize]);
 
+/// Raster placement — the counter-to-picture alignment, the same freedom
+/// as the schedule rotation, calibrated against midline-name's silicon
+/// seam (row 98, source column 16 at that ROM's write phase): picture row
+/// N emits during counter line N-1 (row 0 during the frame's last line,
+/// coherent with the schedule already running before display line 0),
+/// pixel 0 at this XTAL offset. The seam's cell quantisation pins the
+/// offset to [24, 40); midframe-m2's independent seam validates it.
+const ACTIVE_START_XTALS: u32 = 32;
+const XTALS_PER_ACTIVE: u32 = 512;
+
+/// One latched fetch: `end_x - start_x` pixels drawn MSB-first from
+/// `bits`, lit pixels in `fg`, unlit in `bg`; colour 0 falls through to
+/// the live backdrop at emission.
+#[derive(Clone, Copy)]
+struct Segment {
+    bits: u8,
+    fg: u8,
+    bg: u8,
+    start_x: usize,
+    end_x: usize,
+}
+
 /// One DRAM memory cycle is two dots = four XTAL periods; 171 per line.
 const CYCLES_PER_LINE: usize = 171;
 /// The eleven runs of consecutive CPU-access memory cycles on an active
@@ -213,6 +235,12 @@ pub struct Vdp {
 
     frame: Frame,
     frames_completed: u64,
+    /// The in-flight row: pixels composited as the raster passes, the
+    /// line-latched sprite plane of the row being emitted (0 = no sprite
+    /// pixel), and the current fetch segment.
+    line_pixels: [u8; 256],
+    sprite_line: [u8; 256],
+    segment: Segment,
 
     xtal_in_line: u32,
     line: u16,
@@ -246,6 +274,15 @@ impl Vdp {
             scan_step_from: 31,
             frame: Frame([[0; 256]; ACTIVE_LINES as usize]),
             frames_completed: 0,
+            line_pixels: [0; 256],
+            sprite_line: [0; 256],
+            segment: Segment {
+                bits: 0,
+                fg: 0,
+                bg: 0,
+                start_x: 0,
+                end_x: 0,
+            },
             xtal_in_line: 0,
             line: 0,
             xtal_total: 0,
@@ -336,6 +373,53 @@ impl Vdp {
             }
             self.scan_lattice();
             self.service_port();
+            self.raster_dot();
+        }
+    }
+
+    /// Emit the dot under the raster: the fetch segment latches from the
+    /// live registers at its own instant, transparency resolves against
+    /// the live backdrop per dot — mid-line writes land at their
+    /// silicon-measured granularities (R7 per pixel, tables and mode bits
+    /// per cell; sprites stay line-latched).
+    fn raster_dot(&mut self) {
+        let row = if self.line + 1 == self.standard.lines_per_frame() {
+            0
+        } else {
+            self.line + 1
+        };
+        if row >= ACTIVE_LINES {
+            return;
+        }
+        let Some(offset) = self.xtal_in_line.checked_sub(ACTIVE_START_XTALS) else {
+            return;
+        };
+        if offset >= XTALS_PER_ACTIVE || !offset.is_multiple_of(2) {
+            return;
+        }
+        let x = (offset / 2) as usize;
+        if x == 0 || x >= self.segment.end_x {
+            self.segment = self.latch_segment(row, x);
+        }
+        self.line_pixels[x] = if self.registers[1] & r1::DISPLAY_ENABLE == 0 {
+            self.registers[7] & 0x0F
+        } else if self.sprite_line[x] != 0 {
+            self.sprite_line[x]
+        } else {
+            let bit = x - self.segment.start_x;
+            let lit = bit < 8 && self.segment.bits & (0x80 >> bit) != 0;
+            let colour = if lit {
+                self.segment.fg
+            } else {
+                self.segment.bg
+            };
+            self.over_backdrop(colour)
+        };
+        if x == 255 {
+            self.frame.0[row as usize] = self.line_pixels;
+            if row == ACTIVE_LINES - 1 {
+                self.frames_completed += 1;
+            }
         }
     }
 
@@ -446,20 +530,23 @@ impl Vdp {
         // line after the last (counts, never renders); F rises at the same
         // boundary, after that pass, so the phantom scan sees the old flag.
         if self.line <= ACTIVE_LINES {
-            let mut pixels = if self.line < ACTIVE_LINES {
-                Some(self.render_pattern_line())
-            } else {
-                None
-            };
-            self.scan_sprites(pixels.as_mut());
-            if let Some(pixels) = pixels {
-                self.frame.0[self.line as usize] = pixels;
-            }
+            self.scan_sprites();
+        }
+        // The row emitting during this counter line (the calibrated raster
+        // placement) gets its sprite plane painted now; its effects keep
+        // their own corroborated boundary above.
+        let row = if self.line + 1 == self.standard.lines_per_frame() {
+            0
+        } else {
+            self.line + 1
+        };
+        if row < ACTIVE_LINES {
+            self.sprite_line = [0; 256];
+            self.paint_sprites(row);
         }
         if self.line == ACTIVE_LINES {
             self.frame_flag = true;
             self.frame_flag_set_at = self.xtal_total;
-            self.frames_completed += 1;
         }
     }
 
@@ -622,29 +709,73 @@ impl Vdp {
         half + table * 0x800
     }
 
-    /// The pattern plane for the line being entered — registers and VRAM as
-    /// they stand at the line boundary (the model's rendering quantum).
-    fn render_pattern_line(&self) -> [u8; 256] {
-        let backdrop = self.registers[7] & 0x0F;
-        let mut pixels = [backdrop; 256];
-        if self.registers[1] & r1::DISPLAY_ENABLE == 0 {
-            return pixels;
-        }
-        let line = self.line;
+    /// The fetch segment covering pixel `x`, latched from the live
+    /// registers and VRAM at this instant — mid-line register writes take
+    /// effect from the next segment (silicon: R2 and M2 cell-quantised).
+    fn latch_segment(&self, row: u16, x: usize) -> Segment {
+        let line = row;
         let cell_row = line / 8;
         let row_in_cell = line % 8;
         let name_base = self.name_table_base();
         let pattern_base = (self.registers[4] as u16 & 0x07) * 0x800;
+        let mode = self.mode();
 
-        match self.mode() {
+        if matches!(mode, Mode::Text | Mode::BitmapText | Mode::TextMulticolor) {
+            let (left, right) = (TEXT_MARGIN, TEXT_MARGIN + 240);
+            if x < left || x >= right {
+                let end_x = if x < left { left } else { 256 };
+                return Segment {
+                    bits: 0,
+                    fg: 0,
+                    bg: 0,
+                    start_x: x,
+                    end_x,
+                };
+            }
+            let col = (x - left) / 6;
+            let start_x = left + col * 6;
+            let end_x = start_x + 6;
+            return match mode {
+                // No table reads: four text-colour pixels then two of
+                // backdrop, all from R7.
+                Mode::TextMulticolor => Segment {
+                    bits: 0b1111_0000,
+                    fg: self.registers[7] >> 4,
+                    bg: 0,
+                    start_x,
+                    end_x,
+                },
+                _ => {
+                    let table = if mode == Mode::BitmapText {
+                        self.bitmap_third_table(line / 64)
+                    } else {
+                        pattern_base
+                    };
+                    let name = self.vram_cell(name_base + cell_row * 40 + col as u16) as u16;
+                    Segment {
+                        bits: self.vram_cell(table + name * 8 + row_in_cell),
+                        fg: self.registers[7] >> 4,
+                        // The 0-pixel colour is R7's low nibble — the
+                        // backdrop register itself, so it rides the live
+                        // per-dot resolution.
+                        bg: 0,
+                        start_x,
+                        end_x,
+                    }
+                }
+            };
+        }
+
+        let col = (x / 8) as u16;
+        let start_x = col as usize * 8;
+        let end_x = start_x + 8;
+        let name = self.vram_cell(name_base + cell_row * 32 + col) as u16;
+        let (bits, fg, bg) = match mode {
             Mode::GraphicsI => {
                 let colour_base = self.registers[3] as u16 * 0x40;
-                for col in 0..32u16 {
-                    let name = self.vram_cell(name_base + cell_row * 32 + col) as u16;
-                    let bits = self.vram_cell(pattern_base + name * 8 + row_in_cell);
-                    let colours = self.vram_cell(colour_base + name / 8);
-                    self.paint_cell(&mut pixels, col as usize * 8, bits, colours);
-                }
+                let bits = self.vram_cell(pattern_base + name * 8 + row_in_cell);
+                let colours = self.vram_cell(colour_base + name / 8);
+                (bits, colours >> 4, colours & 0x0F)
             }
             Mode::GraphicsII => {
                 // R3's AND mask governs both fetches — the pattern fetch
@@ -654,81 +785,33 @@ impl Vdp {
                 let colour_mask = ((self.registers[3] as u16 & 0x7F) << 6) | 0x3F;
                 let pattern_half = ((self.registers[4] as u16) & 0x04) << 11;
                 let pattern_mask = colour_mask;
-                let third = (line / 64) * 256;
-                for col in 0..32u16 {
-                    let name = self.vram_cell(name_base + cell_row * 32 + col) as u16;
-                    let offset = (third + name) * 8 + row_in_cell;
-                    let bits = self.vram_cell(pattern_half | (offset & pattern_mask));
-                    let colours = self.vram_cell(colour_half | (offset & colour_mask));
-                    self.paint_cell(&mut pixels, col as usize * 8, bits, colours);
-                }
+                let offset = ((line / 64) * 256 + name) * 8 + row_in_cell;
+                let bits = self.vram_cell(pattern_half | (offset & pattern_mask));
+                let colours = self.vram_cell(colour_half | (offset & colour_mask));
+                (bits, colours >> 4, colours & 0x0F)
             }
             Mode::Multicolor => {
-                for col in 0..32u16 {
-                    let name = self.vram_cell(name_base + cell_row * 32 + col) as u16;
-                    let byte = self
-                        .vram_cell(pattern_base + name * 8 + (cell_row & 3) * 2 + row_in_cell / 4);
-                    self.paint_blocks(&mut pixels, col as usize * 8, byte);
-                }
+                let byte =
+                    self.vram_cell(pattern_base + name * 8 + (cell_row & 3) * 2 + row_in_cell / 4);
+                (0b1111_0000, byte >> 4, byte & 0x0F)
             }
             Mode::BitmapMulticolor => {
                 // R3's mask governs this fetch too (silicon:
                 // undoc-bitmap-multicolor); bitmap text alone is unmasked.
                 let table = self.bitmap_third_table(line / 64);
                 let mask = (((self.registers[3] as u16 & 0x7F) << 6) | 0x3F) & 0x7FF;
-                for col in 0..32u16 {
-                    let name = self.vram_cell(name_base + cell_row * 32 + col) as u16;
-                    let offset = (name * 8 + (cell_row & 3) * 2 + row_in_cell / 4) & mask;
-                    let byte = self.vram_cell(table + offset);
-                    self.paint_blocks(&mut pixels, col as usize * 8, byte);
-                }
+                let offset = (name * 8 + (cell_row & 3) * 2 + row_in_cell / 4) & mask;
+                let byte = self.vram_cell(table + offset);
+                (0b1111_0000, byte >> 4, byte & 0x0F)
             }
-            Mode::Text | Mode::BitmapText => {
-                let colours = self.registers[7];
-                let table = if self.mode() == Mode::BitmapText {
-                    self.bitmap_third_table(line / 64)
-                } else {
-                    pattern_base
-                };
-                for col in 0..40u16 {
-                    let name = self.vram_cell(name_base + cell_row * 40 + col) as u16;
-                    let bits = self.vram_cell(table + name * 8 + row_in_cell);
-                    for bit in 0..6 {
-                        let lit = bits & (0x80 >> bit) != 0;
-                        let colour = if lit { colours >> 4 } else { colours & 0x0F };
-                        pixels[TEXT_MARGIN + col as usize * 6 + bit] = self.over_backdrop(colour);
-                    }
-                }
-            }
-            Mode::TextMulticolor => {
-                // No table reads: 40 columns of four text-colour pixels then
-                // two of backdrop, all from R7.
-                let text = self.registers[7] >> 4;
-                for col in 0..40 {
-                    for bit in 0..4 {
-                        pixels[TEXT_MARGIN + col * 6 + bit] = self.over_backdrop(text);
-                    }
-                }
-            }
-        }
-        pixels
-    }
-
-    /// Eight pattern pixels from one bits/colours byte pair.
-    fn paint_cell(&self, pixels: &mut [u8; 256], x: usize, bits: u8, colours: u8) {
-        for bit in 0..8 {
-            let lit = bits & (0x80 >> bit) != 0;
-            let colour = if lit { colours >> 4 } else { colours & 0x0F };
-            pixels[x + bit] = self.over_backdrop(colour);
-        }
-    }
-
-    /// A multicolor byte: two 4x4 blocks, high nibble left.
-    fn paint_blocks(&self, pixels: &mut [u8; 256], x: usize, byte: u8) {
-        for (half, colour) in [(0, byte >> 4), (4, byte & 0x0F)] {
-            for bit in 0..4 {
-                pixels[x + half + bit] = self.over_backdrop(colour);
-            }
+            _ => unreachable!(),
+        };
+        Segment {
+            bits,
+            fg,
+            bg,
+            start_x,
+            end_x,
         }
     }
 
@@ -740,7 +823,7 @@ impl Vdp {
         (self.registers[6] as u16 & 0x07) * 0x800
     }
 
-    fn scan_sprites(&mut self, mut pixels: Option<&mut [u8; 256]>) {
+    fn scan_sprites(&mut self) {
         let r1 = self.registers[1];
         if r1 & r1::DISPLAY_ENABLE == 0 {
             return;
@@ -757,7 +840,6 @@ impl Vdp {
 
         let attributes = self.sprite_attribute_base();
         let mut occupied = [false; 256];
-        let mut painted = [false; 256];
         let mut matched = 0u8;
         let mut stop_index = 31u8;
 
@@ -783,27 +865,48 @@ impl Vdp {
                 }
             }
             if matched <= 4 && rendered {
-                self.render_sprite_row(
-                    entry,
-                    row >> (magnified as u8),
-                    &mut occupied,
-                    &mut painted,
-                    pixels.as_deref_mut(),
-                );
+                self.render_sprite_row(entry, row >> (magnified as u8), &mut occupied, false);
             }
         }
 
         self.scan_stop = stop_index;
     }
 
-    fn render_sprite_row(
-        &mut self,
-        entry: u16,
-        row: u8,
-        occupied: &mut [bool; 256],
-        painted: &mut [bool; 256],
-        mut pixels: Option<&mut [u8; 256]>,
-    ) {
+    /// Paint `row`'s displayed sprites into the emission plane — the same
+    /// walk as the effects scan, latching nothing: 5S, C and the stop
+    /// latch keep their own corroborated line boundary.
+    fn paint_sprites(&mut self, row: u16) {
+        let r1 = self.registers[1];
+        if r1 & r1::DISPLAY_ENABLE == 0 || r1 & r1::M1 != 0 {
+            return;
+        }
+        let magnified = r1 & r1::MAG != 0;
+        let size16 = r1 & r1::SIZE_16 != 0;
+        let pattern_rows = if size16 { 16u8 } else { 8 };
+        let height = pattern_rows << (magnified as u8);
+
+        let attributes = self.sprite_attribute_base();
+        let mut occupied = [false; 256];
+        let mut matched = 0u8;
+
+        for index in 0..32u8 {
+            let entry = attributes + index as u16 * 4;
+            let y = self.vram_cell(entry);
+            if y == SPRITE_TERMINATOR {
+                break;
+            }
+            let sprite_row = (row as u8).wrapping_sub(y.wrapping_add(1));
+            if sprite_row >= height {
+                continue;
+            }
+            matched += 1;
+            if matched <= 4 {
+                self.render_sprite_row(entry, sprite_row >> (magnified as u8), &mut occupied, true);
+            }
+        }
+    }
+
+    fn render_sprite_row(&mut self, entry: u16, row: u8, occupied: &mut [bool; 256], paint: bool) {
         let r1 = self.registers[1];
         let magnified = r1 & r1::MAG != 0;
         let size16 = r1 & r1::SIZE_16 != 0;
@@ -835,7 +938,7 @@ impl Vdp {
                     continue;
                 }
                 let cell = &mut occupied[px as usize];
-                if *cell {
+                if *cell && !paint {
                     // Coincidence counts every sprite pixel, transparent
                     // colour included, and is not gated by F.
                     self.coincidence_flag = true;
@@ -843,12 +946,8 @@ impl Vdp {
                 *cell = true;
                 // A transparent sprite pixel collides but masks nothing;
                 // among painters the frontmost wins.
-                if colour != 0
-                    && !painted[px as usize]
-                    && let Some(pixels) = pixels.as_deref_mut()
-                {
-                    pixels[px as usize] = colour;
-                    painted[px as usize] = true;
+                if paint && colour != 0 && self.sprite_line[px as usize] == 0 {
+                    self.sprite_line[px as usize] = colour;
                 }
             }
         }

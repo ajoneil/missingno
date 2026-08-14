@@ -85,11 +85,21 @@ mod registers {
     vdp_screenshot!(
         midframe_m2,
         "registers/midframe-m2.sg",
-        staged = "seam is sub-line on silicon; line-granular renderer"
+        staged = "seam lands two cells late; whether mode bits latch at the fetch stage is open"
     );
     vdp_screenshot!(midframe_mask, "registers/midframe-mask.sg");
     vdp_screenshot!(midframe_mode, "registers/midframe-mode.sg");
     vdp_screenshot!(midframe_name, "registers/midframe-name.sg");
+    // Sub-line seam subjects: the raster placement is calibrated against
+    // midline-name's silicon seam (row 98, source column 16); these stay
+    // staged until a capture-derived reference exists for the current
+    // corpus builds.
+    vdp_screenshot!(midline_name, "registers/midline-name.sg");
+    vdp_screenshot!(
+        midline_backdrop,
+        "registers/midline-backdrop.sg",
+        staged = "free-run build unphotographed; R7 drift validation vehicle"
+    );
 }
 
 mod vram {

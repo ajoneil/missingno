@@ -1064,9 +1064,10 @@ impl Cpu {
     pub(super) fn accept_nmi(&mut self) -> Sequencer {
         self.halted = false;
         self.iff1 = false;
-        // Acknowledge holds PC on the address bus.
+        // Acknowledge holds PC on the address bus. Documented totals: the
+        // acknowledge cycle then two pushes — 11 T-states.
         self.last_address = self.pc;
-        Sequencer::entering(Cycle::Internal { length: 2 }, Body::AcceptNmi)
+        Sequencer::entering(Cycle::Internal { length: 4 }, Body::AcceptNmi)
     }
 
     pub(super) fn accept_irq(&mut self) -> Sequencer {
@@ -1075,7 +1076,9 @@ impl Cpu {
         self.iff2 = false;
         self.inc_r();
         let mode = self.im;
-        Sequencer::entering(Cycle::Internal { length: 2 }, Body::AcceptIrq { mode })
+        // Documented totals: 13 T-states to the IM 1 vector, 19 for the
+        // IM 2 table read, from the wait-stretched acknowledge cycle.
+        Sequencer::entering(Cycle::Internal { length: 7 }, Body::AcceptIrq { mode })
     }
 
     /// A halted CPU re-fetches its successor byte each period without

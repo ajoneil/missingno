@@ -88,13 +88,21 @@ harness asserts on the block only.
   this abstraction's signature; separated bands refute it). The lattice's
   base offset inside the run period and its sub-cycle instants are
   adopted within the maps' measured freedom, like the schedule rotation.
-- **Line-granular rendering.** The frame renderer composites each display
-  line at its line boundary from the registers and VRAM as they then stand —
-  the pattern plane by mode, then the line's displayed sprites front to
-  back. Mid-line and mid-frame register seams are therefore quantised to
-  the line; every corpus subject that would pin them finer (the midline-*
-  and midframe-* scenes) is still awaiting its hardware capture, and the
-  renderer refines when those land. The text-mode side borders are the
+- **Sub-line rendering: the incremental raster pipeline.** The renderer
+  follows the raster: each character cell latches its name, pattern and
+  colours from the live registers and VRAM at the cell's instant, and
+  each dot resolves transparency against the live backdrop — mid-line
+  writes land at their silicon-measured granularities (R7 per pixel, the
+  table bases and mode bits per cell; sprites and M1's schedule coupling
+  stay line-latched). The raster placement — picture row N emits during
+  counter line N−1, pixel 0 at a fixed XTAL offset — is a calibrated
+  convention like the schedule rotation: midline-name's silicon seam
+  (row 98, column 16 at that ROM's write phase) pins it to a 16-XTAL
+  band, and the interrupt-anchored write instants ride the Z80's
+  documented acceptance timing. Open: midframe-m2's seam lands two cells
+  late (whether mode bits latch at the fetch stage, ahead of emission,
+  needs an anchored M2 sweep); midframe-m1's disturbed transition row is
+  unattributed on silicon. The text-mode side borders are the
   Data Manual's asymmetric 6/10 split, measured on silicon (the 2026-08-13
   text capture: 5.84/9.93/240.22; the community's symmetric 8/8 refuted by
   ~2 px per side). Graphics II pattern fetches follow R3's AND

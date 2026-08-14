@@ -455,10 +455,13 @@ fn interrupt_mode1_acceptance() {
             break;
         }
     }
-    assert_eq!(ticks, 8);
+    assert_eq!(ticks, 13);
     assert_eq!(
         bus.calls,
-        [(3, Access::MemWrite, 0x1FFF), (6, Access::MemWrite, 0x1FFE),]
+        [
+            (8, Access::MemWrite, 0x1FFF),
+            (11, Access::MemWrite, 0x1FFE),
+        ]
     );
     assert_eq!(cpu.pc, 0x0038);
     assert!(!cpu.iff1);
