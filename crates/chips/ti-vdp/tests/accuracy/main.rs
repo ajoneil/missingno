@@ -171,10 +171,20 @@ mod sprites {
     vdp_test!(y_position, "sprites/y-position.sg");
     vdp_screenshot!(ghost, "sprites/ghost.sg");
     vdp_screenshot!(priority, "sprites/priority.sg");
+    // Hardware-PRIMARY (bless: never): silicon drops late sprites in the
+    // shrunken configuration with a graded, SAT-indexed gradient no
+    // emulator renders; the anomaly is a stated model gap.
+    vdp_screenshot!(
+        shrunken_dup,
+        "sprites/shrunken-dup.sg",
+        staged = "shrunken-table drop anomaly unmodelled; hardware-PRIMARY, no blessable reference"
+    );
 }
 
 mod timing {
     vdp_test!(_4k_sweep, "timing/4k-sweep.sg");
+    // Sidecar budget 1400: ~550 frames of sweep + the per-cell map compare.
+    vdp_test!(_5s_instant_low, "timing/5s-instant-low.sg", frames = 1600);
     vdp_test!(_5s_race, "timing/5s-race.sg");
     vdp_test!(blank_burst, "timing/blank-burst.sg");
     vdp_test!(blank_sweep, "timing/blank-sweep.sg");
@@ -193,14 +203,18 @@ mod timing {
     vdp_test!(m1_split_sweep, "timing/m1-split-sweep.sg");
     vdp_test!(match_sweep, "timing/match-sweep.sg");
     vdp_test!(mc_sweep, "timing/mc-sweep.sg");
+    vdp_test!(onset_blank, "timing/onset-blank.sg");
     vdp_test!(onset_burst, "timing/onset-burst.sg");
     vdp_test!(phantom_burst, "timing/phantom-burst.sg");
     vdp_test!(phase_sweep, "timing/phase-sweep.sg");
     vdp_test!(satkill_sweep, "timing/satkill-sweep.sg");
     // Sidecar budget 1400: ~550 frames of sweep + the per-cell map compare.
     vdp_test!(scan_cadence, "timing/scan-cadence.sg", frames = 1600);
+    vdp_test!(steal_and, "timing/steal-and.sg");
+    vdp_test!(steal_prime, "timing/steal-prime.sg");
     vdp_test!(steal_raw, "timing/steal-raw.sg");
     vdp_test!(steal_sweep, "timing/steal-sweep.sg");
+    vdp_test!(steal15_raw, "timing/steal15-raw.sg");
     vdp_test!(steal15_sweep, "timing/steal15-sweep.sg");
     vdp_test!(text_burst, "timing/text-burst.sg");
     vdp_test!(text_sweep, "timing/text-sweep.sg");
