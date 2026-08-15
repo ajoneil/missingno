@@ -1,8 +1,9 @@
 //! The tile atlas pane: a family's decoded tile grid, coloured by the palette
 //! the use-site would apply. Frontend-shaded atlases (DMG) resolve through the
-//! user palette; core-owned atlases (CGB) preview in neutral greyscale by
-//! default, with a picker over the named CRAM palettes, and a selector across
-//! the atlases (the CGB VRAM banks).
+//! user palette; core-owned atlases (CGB CRAM, the TMS9918A's datasheet
+//! colours) get a picker over their named palettes, previewing in neutral
+//! greyscale where four shades can stand in for the depth, and a selector
+//! across the atlases (the CGB VRAM banks, the SG-1000's sprite generator).
 
 use std::fmt;
 
@@ -17,7 +18,7 @@ use crate::app::{
     self,
     console::ConsoleColors,
     debugger::{
-        graphics::{ATLAS_COLUMNS, atlas_span_texture, atlas_texture},
+        graphics::{ATLAS_COLUMNS, IndexColors, atlas_span_texture, atlas_texture},
         panes::{self, pane, running_placeholder, title_bar, title_bar_with_detail},
         sidebar::help_tooltip,
     },
@@ -29,6 +30,10 @@ use missingno_iced::TextureRenderer;
 
 /// Display scale of the atlas texture.
 const SCALE: u32 = 2;
+
+/// The neutral preview spans four shades, so it can only stand in for an atlas
+/// of that depth; a deeper one previews through its own first palette.
+const GREYSCALE_BITS: u8 = 2;
 
 pub struct TileAtlasPane {
     selected_atlas: usize,
@@ -77,7 +82,7 @@ impl TileAtlasPane {
     fn content<'a>(
         &'a self,
         graphics: &GraphicsView,
-        colors: &ConsoleColors,
+        colors: Option<&ConsoleColors>,
         close: iced::widget::pane_grid::Pane,
     ) -> iced::widget::pane_grid::Content<'a, app::Message> {
         if graphics.atlases.is_empty() {
@@ -87,13 +92,12 @@ impl TileAtlasPane {
         // renders with its picker, rather than stranding on a bare placeholder.
         let atlas = &graphics.atlases[self.displayed_atlas(graphics)];
 
-        let resolve = self.tile_resolver(atlas, colors);
+        let Some(resolve) = self.tile_resolver(atlas, colors) else {
+            return running_placeholder("Tiles", close);
+        };
         let body = region_layout(atlas, resolve.as_ref());
 
-        pane(
-            self.title_bar(graphics, atlas.palettes.clone(), close),
-            body,
-        )
+        pane(self.title_bar(graphics, atlas, close), body)
     }
 
     /// The atlas index actually shown: the stored selection clamped to a live
@@ -102,29 +106,37 @@ impl TileAtlasPane {
         self.selected_atlas.min(graphics.atlases.len() - 1)
     }
 
-    /// The palette index → colour map for `atlas`: the user's DMG shades for a
-    /// frontend-shaded atlas, or the picked CRAM palette (greyscale when none)
-    /// for a core-owned one.
-    fn tile_resolver(&self, atlas: &TileAtlas, colors: &ConsoleColors) -> Box<dyn Fn(u8) -> RGB8> {
+    /// The palette index → colour map for `atlas`: the user's shades for a
+    /// frontend-shaded atlas (`None` when the family states none), or the
+    /// picked palette for a core-owned one.
+    fn tile_resolver(
+        &self,
+        atlas: &TileAtlas,
+        colors: Option<&ConsoleColors>,
+    ) -> Option<IndexColors> {
         match &atlas.palettes {
             PaletteSet::FrontendShades => {
-                let palette = *colors.tiles_palette();
-                Box::new(move |index| palette.color(PaletteIndex(index)))
+                let palette = *colors?.tiles_palette();
+                Some(Box::new(move |index| palette.color(PaletteIndex(index))))
             }
             PaletteSet::Owned(named) => {
-                let chosen = self
+                let picked = self
                     .selected_palette
                     .checked_sub(1)
-                    .and_then(|i| named.get(i))
-                    .cloned();
-                Box::new(move |index| match &chosen {
+                    .and_then(|i| named.get(i));
+                let chosen = match picked {
+                    Some(palette) => Some(palette.clone()),
+                    None if atlas.depth_bits > GREYSCALE_BITS => named.first().cloned(),
+                    None => None,
+                };
+                Some(Box::new(move |index| match &chosen {
                     Some(named) => named
                         .colors
                         .get(index as usize)
                         .copied()
                         .unwrap_or(RGB8::new(0, 0, 0)),
                     None => Palette::CLASSIC.color(PaletteIndex(index)),
-                })
+                }))
             }
         }
     }
@@ -132,7 +144,7 @@ impl TileAtlasPane {
     fn title_bar<'a>(
         &self,
         graphics: &GraphicsView,
-        palettes: PaletteSet,
+        atlas: &TileAtlas,
         close: iced::widget::pane_grid::Pane,
     ) -> iced::widget::pane_grid::TitleBar<'a, app::Message> {
         let atlas_picker = (graphics.atlases.len() > 1).then(|| {
@@ -151,17 +163,24 @@ impl TileAtlasPane {
             })
         });
 
-        let palette_picker = match palettes {
+        let palette_picker = match &atlas.palettes {
             PaletteSet::Owned(named) => {
-                let mut choices = vec![Choice {
-                    index: 0,
-                    label: "Greyscale".into(),
-                }];
+                let mut choices: Vec<Choice> = (atlas.depth_bits <= GREYSCALE_BITS)
+                    .then(|| Choice {
+                        index: 0,
+                        label: "Greyscale".into(),
+                    })
+                    .into_iter()
+                    .collect();
                 choices.extend(named.iter().enumerate().map(|(index, named)| Choice {
                     index: index + 1,
                     label: named.label.clone(),
                 }));
-                let selected = choices.get(self.selected_palette).cloned();
+                let selected = choices
+                    .iter()
+                    .find(|choice| choice.index == self.selected_palette)
+                    .or_else(|| choices.first())
+                    .cloned();
                 Some(picker(choices, selected, close, |choice| {
                     Message::SelectPalette(choice.index)
                 }))
@@ -253,12 +272,9 @@ impl panes::Pane for TileAtlasPane {
         ctx: Option<&panes::PaneContext<'_>>,
         id: iced::widget::pane_grid::Pane,
     ) -> iced::widget::pane_grid::Content<'a, app::Message> {
-        match (
-            ctx.and_then(|ctx| ctx.graphics),
-            ctx.and_then(|ctx| ctx.colors),
-        ) {
-            (Some(graphics), Some(colors)) => self.content(graphics, colors, id),
-            _ => running_placeholder("Tiles", id),
+        match ctx.and_then(|ctx| ctx.graphics) {
+            Some(graphics) => self.content(graphics, ctx.and_then(|ctx| ctx.colors), id),
+            None => running_placeholder("Tiles", id),
         }
     }
 

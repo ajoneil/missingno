@@ -108,6 +108,9 @@ pub struct Sg1000 {
     /// Per-channel DAC codes for the debugger's scope, present only while a
     /// consumer wants them.
     wave_capture: Option<[WaveRing; PSG_CHANNELS]>,
+    /// Whether a consumer wants the VDP's memory decoded into the debugger's
+    /// graphics surfaces; the walk runs only while it does.
+    graphics_capture: bool,
     /// VDP frames already handed out; `take_frame` compares against the
     /// VDP's counter so nothing frame-sized moves on the tick path.
     frames_seen: u64,
@@ -181,6 +184,7 @@ impl Sg1000 {
             sample_clock: 0.0,
             audio: Vec::new(),
             wave_capture: None,
+            graphics_capture: false,
             frames_seen: 0,
         })
     }
@@ -260,6 +264,17 @@ impl Sg1000 {
             (false, true) => self.wave_capture = None,
             _ => {}
         }
+    }
+
+    /// Enable or disable the VDP's decode into the debugger's graphics
+    /// surfaces. Nothing is retained: the decode runs at the instant it is
+    /// asked for, so the flag only says whether to run it at all.
+    pub fn set_graphics_capture(&mut self, on: bool) {
+        self.graphics_capture = on;
+    }
+
+    pub fn graphics_capture(&self) -> bool {
+        self.graphics_capture
     }
 
     /// The four channels' captured waveforms, or `None` when capture is off.

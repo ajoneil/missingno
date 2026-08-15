@@ -18,14 +18,13 @@ use crate::app::{
     self,
     console::ConsoleColors,
     debugger::{
-        graphics::{flipped, wrapping_parts},
+        graphics::{IndexColors, PaletteRole, flipped, index_colors, wrapping_parts},
         panes::{self, pane, running_placeholder, title_bar, title_bar_with_detail},
         sidebar::tone_color,
     },
     ui::fonts,
 };
 use missingno_core::graphics::{GraphicsView, TileMap, Viewport};
-use missingno_gb::ppu::types::palette::PaletteIndex;
 use missingno_gb::ppu::types::tiles::TileMapId;
 use missingno_iced::TextureRenderer;
 
@@ -58,7 +57,7 @@ impl TileMapPane {
     fn content<'a>(
         &'a self,
         graphics: &GraphicsView,
-        colors: &ConsoleColors,
+        colors: Option<&ConsoleColors>,
         close: pane_grid::Pane,
     ) -> pane_grid::Content<'a, app::Message> {
         if graphics.maps.is_empty() {
@@ -136,9 +135,12 @@ impl std::fmt::Display for MapChoice {
 }
 
 /// Composite the map into RGBA bytes: each cell's resolved atlas index, tile
-/// index, flips, and palette, coloured through the app's DMG palette or
-/// the CGB CRAM background palettes.
-fn compose(map: &TileMap, graphics: &GraphicsView, colors: &ConsoleColors) -> (u32, u32, Vec<u8>) {
+/// index, flips, and palette, coloured through the shared index resolver.
+fn compose(
+    map: &TileMap,
+    graphics: &GraphicsView,
+    colors: Option<&ConsoleColors>,
+) -> (u32, u32, Vec<u8>) {
     let default_atlas = graphics.atlases.get(map.atlas as usize);
     let (tile_w, tile_h) = default_atlas
         .map(|atlas| (atlas.tile_width as usize, atlas.tile_height as usize))
@@ -147,6 +149,19 @@ fn compose(map: &TileMap, graphics: &GraphicsView, colors: &ConsoleColors) -> (u
     let rows = map.rows as usize;
     let width = (cols * tile_w) as u32;
     let height = (rows * tile_h) as u32;
+
+    // A cell's atlas and palette selector fix its colours, so each cell's
+    // resolver is built once rather than per pixel.
+    let cell_colors: Vec<Option<IndexColors>> = (0..rows)
+        .flat_map(|row| (0..cols).map(move |col| (col, row)))
+        .map(|(col, row)| {
+            let entry = map.entry(col as u16, row as u16)?;
+            let atlas = graphics
+                .atlases
+                .get(entry.atlas.unwrap_or(map.atlas) as usize)?;
+            index_colors(atlas, entry.palette, PaletteRole::Background, colors)
+        })
+        .collect();
 
     let mut pixels = Vec::with_capacity(width as usize * height as usize * 4);
     for tile_row in 0..rows {
@@ -167,7 +182,8 @@ fn compose(map: &TileMap, graphics: &GraphicsView, colors: &ConsoleColors) -> (u
                                 entry.flip_y,
                             );
                             let index = atlas.pixel(entry.tile as usize, sx, sy)?;
-                            Some(cell_color(colors, entry.palette, index))
+                            let resolve = cell_colors[tile_row * cols + tile_col].as_ref()?;
+                            Some(resolve(index))
                         })
                         .unwrap_or(rgb::RGB8::new(0, 0, 0));
                     pixels.extend_from_slice(&[color.r, color.g, color.b, 255]);
@@ -176,18 +192,6 @@ fn compose(map: &TileMap, graphics: &GraphicsView, colors: &ConsoleColors) -> (u
         }
     }
     (width, height, pixels)
-}
-
-/// One map cell's colour: the DMG user palette, or the CGB CRAM background
-/// palette the cell's attribute selects.
-fn cell_color(colors: &ConsoleColors, palette: Option<u8>, index: u8) -> rgb::RGB8 {
-    let index = PaletteIndex(index);
-    match colors {
-        ConsoleColors::Dmg { palette } => palette.color(index),
-        ConsoleColors::Cgb { background, .. } => {
-            background[palette.unwrap_or(0).min(7) as usize].color(index)
-        }
-    }
 }
 
 /// The on-screen viewports drawn over the map. A wrapping region (the GB
@@ -263,12 +267,9 @@ impl panes::Pane for TileMapPane {
         ctx: Option<&panes::PaneContext<'_>>,
         id: pane_grid::Pane,
     ) -> pane_grid::Content<'a, app::Message> {
-        match (
-            ctx.and_then(|ctx| ctx.graphics),
-            ctx.and_then(|ctx| ctx.colors),
-        ) {
-            (Some(graphics), Some(colors)) => self.content(graphics, colors, id),
-            _ => running_placeholder("Tile Map", id),
+        match ctx.and_then(|ctx| ctx.graphics) {
+            Some(graphics) => self.content(graphics, ctx.and_then(|ctx| ctx.colors), id),
+            None => running_placeholder("Tile Map", id),
         }
     }
 

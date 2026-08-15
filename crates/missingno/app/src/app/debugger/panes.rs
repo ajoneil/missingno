@@ -287,9 +287,9 @@ pub static SG1000_FAMILY: Family = Family {
     default_layout: sg1000_default_layout,
 };
 
-/// The SG-1000 presents the screen, the two generic code/data panes and the
-/// audio scope over its PSG; its Z80, VDP, and PSG register state lives in the
-/// sidebar.
+/// The SG-1000 presents the screen, the two generic code/data panes, the VDP's
+/// three graphics surfaces and the audio scope over its PSG; its Z80, VDP, and
+/// PSG register state lives in the sidebar.
 #[cfg(feature = "sg1000")]
 pub static SG1000_PANE_REGISTRY: &[PaneDescriptor] = &[
     PaneDescriptor {
@@ -301,6 +301,9 @@ pub static SG1000_PANE_REGISTRY: &[PaneDescriptor] = &[
     },
     MEMORY_DESCRIPTOR,
     DISASSEMBLY_DESCRIPTOR,
+    TILES_DESCRIPTOR,
+    TILE_MAP_DESCRIPTOR,
+    SPRITES_DESCRIPTOR,
     AUDIO_DESCRIPTOR,
 ];
 
@@ -347,29 +350,37 @@ pub static PANE_REGISTRY: &[PaneDescriptor] = &[
     },
     MEMORY_DESCRIPTOR,
     DISASSEMBLY_DESCRIPTOR,
-    PaneDescriptor {
-        kind: DebuggerPane::Tiles,
-        icon: Icon::Grid,
-        label: "Tiles",
-        instanceable: true,
-        construct: || Box::new(TileAtlasPane::new()),
-    },
-    PaneDescriptor {
-        kind: DebuggerPane::TileMap,
-        icon: Icon::Image,
-        label: "Tile Map",
-        instanceable: true,
-        construct: || Box::new(TileMapPane::new(TileMapId(0))),
-    },
-    PaneDescriptor {
-        kind: DebuggerPane::Sprites,
-        icon: Icon::Human,
-        label: "Sprites",
-        instanceable: false,
-        construct: || Box::new(ObjectTablePane::new()),
-    },
+    TILES_DESCRIPTOR,
+    TILE_MAP_DESCRIPTOR,
+    SPRITES_DESCRIPTOR,
     AUDIO_DESCRIPTOR,
 ];
+
+/// The three graphics surfaces, registered for every family whose core decodes
+/// its video memory into the seam's [`GraphicsView`].
+const TILES_DESCRIPTOR: PaneDescriptor = PaneDescriptor {
+    kind: DebuggerPane::Tiles,
+    icon: Icon::Grid,
+    label: "Tiles",
+    instanceable: true,
+    construct: || Box::new(TileAtlasPane::new()),
+};
+
+const TILE_MAP_DESCRIPTOR: PaneDescriptor = PaneDescriptor {
+    kind: DebuggerPane::TileMap,
+    icon: Icon::Image,
+    label: "Tile Map",
+    instanceable: true,
+    construct: || Box::new(TileMapPane::new(TileMapId(0))),
+};
+
+const SPRITES_DESCRIPTOR: PaneDescriptor = PaneDescriptor {
+    kind: DebuggerPane::Sprites,
+    icon: Icon::Human,
+    label: "Sprites",
+    instanceable: false,
+    construct: || Box::new(ObjectTablePane::new()),
+};
 
 /// The generic audio scope: registered for every family whose core captures
 /// per-channel waveforms. Reads the seam's [`ChannelWave`]s while capture is on.
@@ -916,22 +927,24 @@ mod tests {
 
     #[cfg(feature = "sg1000")]
     #[test]
-    fn sg1000_registers_the_audio_scope() {
+    fn sg1000_registers_the_scope_and_the_graphics_surfaces() {
         let audio = audio_in(SG1000_PANE_REGISTRY).expect("audio pane registered");
         assert_eq!(audio.label, "Audio");
+        // The VDP fills all three graphics surfaces, so all three are on the
+        // rail, carrying the same labels a saved Game Boy layout uses.
+        assert_graphics_panes(SG1000_PANE_REGISTRY);
     }
 
-    #[test]
-    fn graphics_panes_keep_their_labels() {
-        // The generic graphics panes keep their kinds and labels; the two tile
-        // maps collapse into one instanceable "Tile Map" kind.
+    /// The three graphics panes as a family registers them: same kinds, same
+    /// labels, the two tile maps collapsed into one instanceable "Tile Map".
+    fn assert_graphics_panes(registry: &[PaneDescriptor]) {
         let expected = [
             (DebuggerPane::Tiles, "Tiles", true),
             (DebuggerPane::TileMap, "Tile Map", true),
             (DebuggerPane::Sprites, "Sprites", false),
         ];
         for (kind, label, instanceable) in expected {
-            let descriptor = PANE_REGISTRY
+            let descriptor = registry
                 .iter()
                 .find(|descriptor| descriptor.kind == kind)
                 .expect("graphics pane registered");
@@ -939,6 +952,11 @@ mod tests {
             assert_eq!(descriptor.instanceable, instanceable);
             assert_eq!(kind.to_string(), label);
         }
+    }
+
+    #[test]
+    fn graphics_panes_keep_their_labels() {
+        assert_graphics_panes(PANE_REGISTRY);
     }
 
     #[test]

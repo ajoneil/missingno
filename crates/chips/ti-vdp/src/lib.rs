@@ -11,7 +11,7 @@
 //! `tests/accuracy/` — see `AGENTS.md` for the hierarchy and the stated
 //! abstractions.
 
-const VRAM_SIZE: usize = 0x4000;
+pub const VRAM_SIZE: usize = 0x4000;
 /// The crystal is the board's master grid: 3 XTAL periods per CPU
 /// T-state, 2 per dot, 684 per line.
 pub const XTALS_PER_TSTATE: u32 = 3;
@@ -93,7 +93,7 @@ mod status {
 }
 
 /// Sprite attribute Y value that terminates the scan.
-const SPRITE_TERMINATOR: u8 = 0xD0;
+pub const SPRITE_TERMINATOR: u8 = 0xD0;
 
 /// Text-family modes show 40 six-pixel cells inside backdrop margins,
 /// split 6 left / 10 right — the Data Manual's asymmetric split, measured
@@ -363,6 +363,13 @@ impl Vdp {
 
     pub fn registers(&self) -> &[u8; 8] {
         &self.registers
+    }
+
+    /// The DRAM as it stands, disturbing nothing — cells in physical order, so
+    /// a logical pointer value reaches its byte through
+    /// [`vram_cell`](Self::vram_cell) rather than by indexing this.
+    pub fn vram(&self) -> &[u8; VRAM_SIZE] {
+        &self.vram
     }
 
     /// The status byte as it stands, disturbing nothing — no flag clear, no
@@ -796,12 +803,38 @@ impl Vdp {
         }
     }
 
-    fn vram_cell(&self, address: u16) -> u8 {
+    /// The byte a pointer value reaches, disturbing nothing — the renderer's
+    /// own fetch, so an inspecting consumer reads what the raster reads.
+    pub fn vram_cell(&self, address: u16) -> u8 {
         self.vram[self.physical(address)]
     }
 
-    fn name_table_base(&self) -> u16 {
+    pub fn name_table_base(&self) -> u16 {
         (self.registers[2] as u16 & 0x0F) * 0x400
+    }
+
+    /// The pattern generator base R4 selects, outside the bitmap family.
+    pub fn pattern_table_base(&self) -> u16 {
+        (self.registers[4] as u16 & 0x07) * 0x800
+    }
+
+    /// The colour table base R3 selects in Graphics I, where one byte colours
+    /// a group of eight patterns.
+    pub fn colour_table_base(&self) -> u16 {
+        self.registers[3] as u16 * 0x40
+    }
+
+    /// Graphics II's two fetches for a tile row `offset` — pattern byte then
+    /// colour byte. R3's AND mask governs both (silicon: gii-mask-pattern,
+    /// gii-mask-colour); R4 contributes only the pattern half select.
+    pub fn graphics_ii_cells(&self, offset: u16) -> (u8, u8) {
+        let mask = ((self.registers[3] as u16 & 0x7F) << 6) | 0x3F;
+        let colour_half = ((self.registers[3] as u16) & 0x80) << 6;
+        let pattern_half = ((self.registers[4] as u16) & 0x04) << 11;
+        (
+            self.vram_cell(pattern_half | (offset & mask)),
+            self.vram_cell(colour_half | (offset & mask)),
+        )
     }
 
     /// A transparent pixel falls through to the backdrop; a transparent
@@ -834,7 +867,7 @@ impl Vdp {
         let cell_row = line / 8;
         let row_in_cell = line % 8;
         let name_base = self.name_table_base();
-        let pattern_base = (self.registers[4] as u16 & 0x07) * 0x800;
+        let pattern_base = self.pattern_table_base();
         let mode = self.mode();
 
         if matches!(mode, Mode::Text | Mode::BitmapText | Mode::TextMulticolor) {
@@ -889,22 +922,13 @@ impl Vdp {
         let name = self.vram_cell(name_base + cell_row * 32 + col) as u16;
         let (bits, fg, bg) = match mode {
             Mode::GraphicsI => {
-                let colour_base = self.registers[3] as u16 * 0x40;
                 let bits = self.vram_cell(pattern_base + name * 8 + row_in_cell);
-                let colours = self.vram_cell(colour_base + name / 8);
+                let colours = self.vram_cell(self.colour_table_base() + name / 8);
                 (bits, colours >> 4, colours & 0x0F)
             }
             Mode::GraphicsII => {
-                // R3's AND mask governs both fetches — the pattern fetch
-                // follows R3 (silicon: gii-mask-pattern, gii-mask-colour);
-                // R4 contributes only the half select here.
-                let colour_half = ((self.registers[3] as u16) & 0x80) << 6;
-                let colour_mask = ((self.registers[3] as u16 & 0x7F) << 6) | 0x3F;
-                let pattern_half = ((self.registers[4] as u16) & 0x04) << 11;
-                let pattern_mask = colour_mask;
                 let offset = ((line / 64) * 256 + name) * 8 + row_in_cell;
-                let bits = self.vram_cell(pattern_half | (offset & pattern_mask));
-                let colours = self.vram_cell(colour_half | (offset & colour_mask));
+                let (bits, colours) = self.graphics_ii_cells(offset);
                 (bits, colours >> 4, colours & 0x0F)
             }
             Mode::Multicolor => {
@@ -932,12 +956,18 @@ impl Vdp {
         }
     }
 
-    fn sprite_attribute_base(&self) -> u16 {
+    pub fn sprite_attribute_base(&self) -> u16 {
         (self.registers[5] as u16 & 0x7F) * 0x80
     }
 
-    fn sprite_pattern_base(&self) -> u16 {
+    pub fn sprite_pattern_base(&self) -> u16 {
         (self.registers[6] as u16 & 0x07) * 0x800
+    }
+
+    /// Whether R1's SIZE bit selects 16×16 sprites — four consecutive
+    /// generators — rather than 8×8.
+    pub fn sprites_16x16(&self) -> bool {
+        self.registers[1] & r1::SIZE_16 != 0
     }
 
     fn scan_sprites(&mut self) {

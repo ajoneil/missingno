@@ -1,10 +1,10 @@
 //! The debugger's graphics surfaces — the tile atlas, tile map, and object
 //! table panes — rendered from the system-agnostic [`missingno_core::graphics`]
 //! vocabulary a core decodes its video memory into. One pane body serves every
-//! family that fills a [`GraphicsView`]; the Game Boy family is the only one
-//! wired today (CGB included). Structure and palette indices come from the
-//! view; the app's DMG palette / CGB CRAM colours come from the pane's
-//! [`ConsoleColors`] context, exactly as the retired bespoke panes resolved them.
+//! family that fills a [`GraphicsView`]. Structure and palette indices come
+//! from the view; the colours come from the family's [`ConsoleColors`] context
+//! where the frontend owns them, and from the atlas's own named palettes where
+//! the core does — so a family that states no colour context still renders.
 //!
 //! [`GraphicsView`]: missingno_core::graphics::GraphicsView
 //! [`ConsoleColors`]: crate::app::console::ConsoleColors
@@ -13,11 +13,76 @@ pub mod atlas;
 pub mod map;
 pub mod objects;
 
-use missingno_core::graphics::TileAtlas;
+use missingno_core::graphics::{PaletteSet, TileAtlas};
+use missingno_gb::ppu::types::palette::PaletteIndex;
 use rgb::RGB8;
+
+use crate::app::console::ConsoleColors;
 
 /// Tiles per row in an atlas texture — the retired Tiles pane's 16-wide block.
 pub const ATLAS_COLUMNS: usize = 16;
+
+/// An index no palette covers.
+const UNPALETTED: RGB8 = RGB8::new(0, 0, 0);
+
+/// One use-site's palette index → colour map.
+pub type IndexColors = Box<dyn Fn(u8) -> RGB8>;
+
+/// Which of a family's render palettes a use-site draws from, where the
+/// frontend owns them — the two banks the Game Boy family keeps apart.
+#[derive(Clone, Copy)]
+pub enum PaletteRole {
+    Background,
+    Objects,
+}
+
+/// How an atlas's indices become colours: the family's render palettes where
+/// the frontend holds them, the core's own named palettes where it does not.
+/// `None` when neither can answer, which is the pane's placeholder case.
+pub fn index_colors(
+    atlas: &TileAtlas,
+    palette: Option<u8>,
+    role: PaletteRole,
+    colors: Option<&ConsoleColors>,
+) -> Option<IndexColors> {
+    match (colors, &atlas.palettes) {
+        // A frontend holding the family's palettes applies them, and applies
+        // the bank the use-site names — which an atlas's palette list, shared
+        // between both banks, cannot state.
+        (Some(colors), _) => Some(family_colors(colors, role, palette)),
+        (None, PaletteSet::Owned(named)) => {
+            let chosen = named.get(palette.unwrap_or(0) as usize).cloned();
+            Some(Box::new(move |index| match &chosen {
+                Some(palette) => palette
+                    .colors
+                    .get(index as usize)
+                    .copied()
+                    .unwrap_or(UNPALETTED),
+                None => UNPALETTED,
+            }))
+        }
+        (None, PaletteSet::FrontendShades) => None,
+    }
+}
+
+/// The Game Boy family's resolution: the user's DMG shades, or the CRAM bank
+/// the use-site draws from at the selector's palette.
+fn family_colors(colors: &ConsoleColors, role: PaletteRole, palette: Option<u8>) -> IndexColors {
+    let palette = match colors {
+        ConsoleColors::Dmg { palette } => *palette,
+        ConsoleColors::Cgb {
+            background,
+            objects,
+        } => {
+            let bank = match role {
+                PaletteRole::Background => background,
+                PaletteRole::Objects => objects,
+            };
+            bank[palette.unwrap_or(0).min(bank.len() as u8 - 1) as usize]
+        }
+    };
+    Box::new(move |index| palette.color(PaletteIndex(index)))
+}
 
 /// RGBA bytes for a whole atlas laid out `columns` tiles wide (row-major over
 /// pixels), each palette index coloured by `resolve`. Returns `(width, height,

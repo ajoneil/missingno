@@ -14,7 +14,7 @@ use crate::app::{
     self,
     console::ConsoleColors,
     debugger::{
-        graphics::{flipped, stacked_tiles},
+        graphics::{PaletteRole, flipped, index_colors, stacked_tiles},
         panes::{self, pane, running_placeholder, title_bar_with_detail},
     },
     ui::{
@@ -25,7 +25,6 @@ use crate::app::{
     },
 };
 use missingno_core::graphics::{GraphicsView, Object, ObjectTable, TileAtlas};
-use missingno_gb::ppu::types::palette::PaletteIndex;
 use missingno_iced::TextureRenderer;
 
 /// Thumbnail pixels per source pixel.
@@ -62,7 +61,7 @@ impl ObjectTablePane {
     fn content<'a>(
         &'a self,
         graphics: &GraphicsView,
-        colors: &ConsoleColors,
+        colors: Option<&ConsoleColors>,
         close: pane_grid::Pane,
     ) -> pane_grid::Content<'a, app::Message> {
         let Some(table) = &graphics.objects else {
@@ -70,7 +69,12 @@ impl ObjectTablePane {
         };
 
         let height = table.object_height;
-        let size = format!("8×{height}");
+        let width = graphics
+            .atlases
+            .get(table.atlas as usize)
+            .map(|atlas| atlas.tile_width)
+            .unwrap_or(height);
+        let size = format!("{width}×{height}");
         let visible = table
             .objects
             .iter()
@@ -127,11 +131,12 @@ fn card<'a>(
     object: &Object,
     graphics: &GraphicsView,
     table: &ObjectTable,
-    colors: &ConsoleColors,
+    colors: Option<&ConsoleColors>,
 ) -> Option<Element<'a, app::Message>> {
     let atlas = graphics
         .atlases
         .get(object.bank.unwrap_or(table.atlas) as usize)?;
+    let resolve = index_colors(atlas, object.palette, PaletteRole::Objects, colors)?;
 
     let left = column![
         iced::widget::text(format!("{}", object.index))
@@ -143,20 +148,24 @@ fn card<'a>(
     .spacing(xs())
     .align_x(iced::Alignment::Center);
 
-    let right = column![thumbnail(object, atlas, table, colors), position(object)]
-        .spacing(xs())
-        .width(60);
+    let right = column![
+        thumbnail(object, atlas, table, resolve.as_ref()),
+        position(object)
+    ]
+    .spacing(xs())
+    .width(60);
 
     Some(row![left, right].spacing(xs()).into())
 }
 
-/// The object thumbnail: a single 8×8 tile or an 8×16 two-tile stack, flips
-/// applied, coloured through the DMG user palette or the CGB CRAM OBJ palette.
+/// The object thumbnail: a single tile or a two-tile stack where the object is
+/// taller than the atlas's tiles, flips applied, coloured by the resolver its
+/// palette selects.
 fn thumbnail<'a>(
     object: &Object,
     atlas: &TileAtlas,
     table: &ObjectTable,
-    colors: &ConsoleColors,
+    resolve: &dyn Fn(u8) -> rgb::RGB8,
 ) -> Element<'a, app::Message> {
     let tile_w = atlas.tile_width;
     let tile_h = atlas.tile_height;
@@ -176,7 +185,7 @@ fn thumbnail<'a>(
             for x in 0..tile_w {
                 let (sx, sy) = flipped(x, y, tile_w, tile_h, object.flip_x, object.flip_y);
                 let index = atlas.pixel(slot as usize, sx, sy).unwrap_or(0);
-                let color = object_color(colors, object.palette, index);
+                let color = resolve(index);
                 pixels.extend_from_slice(&[color.r, color.g, color.b, 255]);
             }
         }
@@ -187,18 +196,6 @@ fn thumbnail<'a>(
         .width((width * THUMB_SCALE) as f32)
         .height((height * THUMB_SCALE) as f32)
         .into()
-}
-
-/// An object pixel's colour: the DMG user palette, or the CGB CRAM OBJ palette
-/// the object's attribute selects.
-fn object_color(colors: &ConsoleColors, palette: Option<u8>, index: u8) -> rgb::RGB8 {
-    let index = PaletteIndex(index);
-    match colors {
-        ConsoleColors::Dmg { palette } => palette.color(index),
-        ConsoleColors::Cgb { objects, .. } => {
-            objects[palette.unwrap_or(0).min(7) as usize].color(index)
-        }
-    }
 }
 
 fn position<'a>(object: &Object) -> Element<'a, app::Message> {
@@ -240,12 +237,9 @@ impl panes::Pane for ObjectTablePane {
         ctx: Option<&panes::PaneContext<'_>>,
         id: pane_grid::Pane,
     ) -> pane_grid::Content<'a, app::Message> {
-        match (
-            ctx.and_then(|ctx| ctx.graphics),
-            ctx.and_then(|ctx| ctx.colors),
-        ) {
-            (Some(graphics), Some(colors)) => self.content(graphics, colors, id),
-            _ => running_placeholder("Sprites", id),
+        match ctx.and_then(|ctx| ctx.graphics) {
+            Some(graphics) => self.content(graphics, ctx.and_then(|ctx| ctx.colors), id),
+            None => running_placeholder("Sprites", id),
         }
     }
 

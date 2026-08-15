@@ -3,9 +3,12 @@
 //! view (refreshed after every step) and the per-frame snapshot the running
 //! view renders from.
 
+pub mod graphics;
+
 use std::sync::Arc;
 use std::time::Duration;
 
+use missingno_core::graphics::GraphicsView;
 use missingno_core::inspect::{
     BitColumn, BitRow, BitTable, Register, RegisterGroup, Row, Section, SectionBlock, Sweep,
     SweepZone, Tone, ValueStyle,
@@ -414,6 +417,14 @@ impl SteppingSystem for Sg1000System {
 
     fn channel_waves(sg: &Sg1000) -> Option<Vec<ChannelWave>> {
         sg.channel_waves()
+    }
+
+    fn set_graphics_capture(sg: &mut Sg1000, on: bool) {
+        sg.set_graphics_capture(on);
+    }
+
+    fn graphics_view(sg: &Sg1000) -> Option<GraphicsView> {
+        graphics::graphics_view(sg)
     }
 
     fn register_groups(state: &Sg1000InspectState) -> Vec<RegisterGroup> {

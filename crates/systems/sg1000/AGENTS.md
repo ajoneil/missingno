@@ -108,6 +108,29 @@ strobed it — and moves the /INT sample point along with it.
   through is the canonical datasheet palette, the same one the chip crate's
   screenshot harness stamps. Index 0 — every plane transparent, the
   external-video input — presents as black.
+- **The debugger's graphics decode states the pattern, not the raster.** The
+  surfaces the panes read are decoded from the live registers and VRAM at the
+  instant the decode runs — a mid-frame mode or table change shows as the
+  state after it, exactly as the vocabulary says of a sampled register.
+  Within that:
+  - **Colour is resolved into the pattern atlas.** The colour table fixes a
+    pattern's two colours at the pattern's own index (per group of eight in
+    Graphics I, per pattern row in Graphics II), so the atlas ships TI colour
+    indices rather than pattern bits, and index 0 keeps its transparent
+    meaning.
+  - **A sprite's colour rides its object entry.** The attribute owns the
+    colour, not the pattern, so sprite patterns stay one bit deep and each
+    object's palette selector is its colour nibble, over a two-entry palette
+    per TI colour.
+  - **MAG is not modelled in the panes.** Magnification is a display-time
+    doubling; the object table states the pattern size R1's SIZE bit selects
+    and the panes draw that.
+  - **Multicolor patterns show whole.** The display takes only the byte pair
+    a cell's map row selects, each byte painting two 4×4 blocks; the atlas
+    shows all eight bytes instead, one two-colour row each, so the map
+    composite in that mode is not the screen.
+  - **Undocumented mode combinations fall back to the Graphics I layout.**
+    Nothing states their table geometry; the sidebar still names the mode.
 - **Both joystick sites are modelled as ports.** Player 1's stick is wired
   directly to the board rather than to a connector, but it reads through the
   same multiplexer pair as player 2's, so both appear as control-pad ports.

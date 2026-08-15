@@ -158,3 +158,9 @@ harness asserts on the block only.
   and the 9929A's Y/R-Y/B-Y outputs are presentation/frontend territory —
   the canonical datasheet RGB palette lives in the test harness, not the
   chip.
+- **Inspection reads the renderer's own fetch.** `vram_cell` (a logical
+  pointer value through the 4K/16K permutation), `vram` (the DRAM in
+  physical order) and the table bases R2-R6 select are public and
+  side-effect free: nothing latches, no flag clears, no port request is
+  raised. A consumer decoding VRAM sees exactly what the raster sees,
+  because it calls the same fetch the raster does.
