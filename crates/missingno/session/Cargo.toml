@@ -16,6 +16,7 @@ gb = ["dep:missingno-gb", "dep:missingno-gbc"]
 vcs = ["dep:missingno-vcs"]
 nes = ["dep:missingno-nes"]
 sms = ["dep:missingno-sms"]
+sg1000 = ["dep:missingno-sg1000"]
 # The agent tool surface and the attach endpoint that publishes it. Pulls a
 # PNG encoder for the frame tool.
 tools = ["dep:png"]
@@ -37,6 +38,7 @@ missingno-gbc = { path = "../../systems/gbc", optional = true }
 missingno-vcs = { path = "../../systems/vcs", optional = true }
 missingno-nes = { path = "../../systems/nes", optional = true }
 missingno-sms = { path = "../../systems/sms", optional = true }
+missingno-sg1000 = { path = "../../systems/sg1000", optional = true }
 serde_json = "1"
 png = { version = "0.18", optional = true }
 

@@ -46,7 +46,7 @@ pub struct CoreFactory {
 /// The file stem as a display title, falling back to a generic name. The
 /// Game Boy family reads its title from the cartridge header, so only the
 /// stem-titled cores use this.
-#[cfg(any(feature = "vcs", feature = "nes", feature = "sms"))]
+#[cfg(any(feature = "vcs", feature = "nes", feature = "sms", feature = "sg1000"))]
 fn title_for(path: &Path) -> String {
     path.file_stem()
         .and_then(|s| s.to_str())
@@ -192,6 +192,31 @@ mod sms {
     }
 }
 
+#[cfg(feature = "sg1000")]
+mod sg1000 {
+    use super::*;
+    use missingno_core::stepping::SteppingConsole;
+    use missingno_core::system::SystemConsole;
+    use missingno_sg1000::console::Sg1000;
+    use missingno_sg1000::debug::Sg1000System;
+
+    pub fn create(
+        path: &Path,
+        rom: &[u8],
+        _options: &LoadOptions,
+    ) -> Option<Box<dyn SystemConsole>> {
+        let sg1000 = Sg1000::new(rom).ok()?;
+        Some(Box::new(SteppingConsole::<Sg1000System>::new(
+            sg1000,
+            title_for(path),
+        )))
+    }
+
+    pub fn is_rom(path: &Path, _rom: &[u8]) -> bool {
+        missingno_sg1000::debug::is_sg1000_rom(path)
+    }
+}
+
 /// Every registered core, in claim order.
 pub static FACTORIES: &[CoreFactory] = &[
     #[cfg(feature = "gb")]
@@ -217,6 +242,12 @@ pub static FACTORIES: &[CoreFactory] = &[
         name: "Master System",
         is_rom: sms::is_rom,
         create: sms::create,
+    },
+    #[cfg(feature = "sg1000")]
+    CoreFactory {
+        name: "SG-1000",
+        is_rom: sg1000::is_rom,
+        create: sg1000::create,
     },
 ];
 

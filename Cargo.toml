@@ -13,6 +13,7 @@ members = [
     "crates/systems/gb",
     "crates/systems/gbc",
     "crates/systems/nes",
+    "crates/systems/sg1000",
     "crates/systems/sms",
     "crates/systems/vcs",
     "crates/chips/mos-6502",

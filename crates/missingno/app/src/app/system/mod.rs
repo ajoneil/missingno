@@ -15,6 +15,8 @@ pub use missingno_core::system::{ControlId, ControlInput, SystemConsole, SystemD
 pub mod gb;
 #[cfg(feature = "nes")]
 pub mod nes;
+#[cfg(feature = "sg1000")]
+pub mod sg1000;
 #[cfg(feature = "sms")]
 pub mod sms;
 pub mod vcs;
@@ -31,6 +33,7 @@ pub enum Platform {
     AtariVcs,
     MasterSystem,
     Nes,
+    Sg1000,
 }
 
 impl Platform {
@@ -42,6 +45,7 @@ impl Platform {
             Platform::AtariVcs => "Atari VCS",
             Platform::MasterSystem => "Sega Master System",
             Platform::Nes => "Nintendo Entertainment System",
+            Platform::Sg1000 => "SG-1000",
         }
     }
 
@@ -57,6 +61,8 @@ impl Platform {
             Some(Platform::AtariVcs)
         } else if text.contains("master system") {
             Some(Platform::MasterSystem)
+        } else if text.contains("sg-1000") || text.contains("sg1000") {
+            Some(Platform::Sg1000)
         } else if text.contains("nintendo entertainment system") || text.contains("famicom") {
             Some(Platform::Nes)
         } else {
@@ -248,6 +254,20 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         title_from_rom: |_| None,
         create_console: |media| {
             sms::create_console(media.rom, media.fallback_title)
+                .map_err(|error| format!("{error:?}"))
+        },
+        port_config: |_| Vec::new(),
+        trace: None,
+    },
+    #[cfg(feature = "sg1000")]
+    FamilyDescriptor {
+        platform: Platform::Sg1000,
+        extensions: sg1000::ROM_EXTENSIONS,
+        controls: sg1000::CONTROLS,
+        is_rom: |path, _| sg1000::is_sg1000_rom(path),
+        title_from_rom: |_| None,
+        create_console: |media| {
+            sg1000::create_console(media.rom, media.fallback_title)
                 .map_err(|error| format!("{error:?}"))
         },
         port_config: |_| Vec::new(),

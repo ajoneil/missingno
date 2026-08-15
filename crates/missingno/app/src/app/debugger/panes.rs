@@ -220,6 +220,8 @@ static PANE_FAMILIES: &[&Family] = &[
     &VCS_FAMILY,
     #[cfg(feature = "sms")]
     &SMS_FAMILY,
+    #[cfg(feature = "sg1000")]
+    &SG1000_FAMILY,
     #[cfg(feature = "nes")]
     &NES_FAMILY,
 ];
@@ -266,6 +268,29 @@ pub static SMS_FAMILY: Family = Family {
 /// VDP, mapper, and PSG state lives in the sidebar.
 #[cfg(feature = "sms")]
 pub static SMS_PANE_REGISTRY: &[PaneDescriptor] = &[
+    PaneDescriptor {
+        kind: DebuggerPane::Screen,
+        icon: Icon::Monitor,
+        label: "Screen",
+        instanceable: false,
+        construct: || Box::new(ScreenPane::new()),
+    },
+    MEMORY_DESCRIPTOR,
+    DISASSEMBLY_DESCRIPTOR,
+];
+
+#[cfg(feature = "sg1000")]
+pub static SG1000_FAMILY: Family = Family {
+    platforms: &[Platform::Sg1000],
+    registry: SG1000_PANE_REGISTRY,
+    layout_key: "sg1000",
+    default_layout: sg1000_default_layout,
+};
+
+/// The SG-1000 presents the screen and the two generic code/data panes; its
+/// Z80, VDP, and PSG state lives in the sidebar.
+#[cfg(feature = "sg1000")]
+pub static SG1000_PANE_REGISTRY: &[PaneDescriptor] = &[
     PaneDescriptor {
         kind: DebuggerPane::Screen,
         icon: Icon::Monitor,
@@ -451,6 +476,13 @@ fn gb_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
 /// CPU/PPU state lives in the sidebar.
 #[cfg(feature = "nes")]
 fn nes_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
+    disassembly_screen_memory_layout()
+}
+
+/// The SG-1000 starts with the disassembly beside the screen, memory below —
+/// its CPU/VDP/PSG state lives in the sidebar.
+#[cfg(feature = "sg1000")]
+fn sg1000_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
     disassembly_screen_memory_layout()
 }
 

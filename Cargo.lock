@@ -2974,6 +2974,7 @@ dependencies = [
  "missingno-iced",
  "missingno-nes",
  "missingno-session",
+ "missingno-sg1000",
  "missingno-sms",
  "missingno-vcs",
  "open",
@@ -3117,11 +3118,23 @@ dependencies = [
  "missingno-gb",
  "missingno-gbc",
  "missingno-nes",
+ "missingno-sg1000",
  "missingno-sms",
  "missingno-vcs",
  "png 0.18.1",
  "rtrb",
  "serde_json",
+]
+
+[[package]]
+name = "missingno-sg1000"
+version = "26.9.0"
+dependencies = [
+ "missingno-core 26.9.0",
+ "missingno-ti-psg",
+ "missingno-ti-vdp",
+ "missingno-zilog-z80",
+ "rgb",
 ]
 
 [[package]]

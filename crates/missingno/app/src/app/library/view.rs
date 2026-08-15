@@ -765,6 +765,7 @@ fn cartridge_for(platform: Option<Platform>, size: f32) -> Element<'static, app:
         }
         Some(Platform::Nes) => include_bytes!("../../app/ui/icons/cartridges/nes.svg"),
         Some(Platform::MasterSystem) => include_bytes!("../../app/ui/icons/cartridges/sms.svg"),
+        Some(Platform::Sg1000) => include_bytes!("../../app/ui/icons/cartridges/sg1000.svg"),
         Some(Platform::AtariVcs) => include_bytes!("../../app/ui/icons/cartridges/vcs.svg"),
         None => include_bytes!("../../app/ui/icons/cartridges/generic.svg"),
     };

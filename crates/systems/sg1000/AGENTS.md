@@ -1,0 +1,126 @@
+# missingno-sg1000 — system methodology
+
+System methodology for the Sega SG-1000. The shared skill-system rules and
+workflow discipline live in the repository-root `AGENTS.md`. This crate is a
+*board, not silicon*: the chips are finished elsewhere — the Z80 in
+`missingno-zilog-z80`, the TMS9918A in `missingno-ti-vdp`, the SN76489AN in
+`missingno-ti-psg` — and what lives here is the wiring between them. Decode
+(two halves of one 74LS139), a kilobyte of mirrored work RAM, the two
+joystick multiplexers, the pause switch on /NMI, and the crystal that ties
+the three chips to one grid.
+
+**This doc outranks the chip docs in-system.** When a question is about the
+board, adjudicate here; when it is about a chip's internals, that chip's
+`AGENTS.md` leads and this one defers.
+
+## Ground-truth hierarchy
+
+1. **Enri's traced schematics** — hand-drawn from a real board, the primary
+   source for every wiring fact this crate encodes: the 74LS139 halves and
+   what they decode, the TMM2009's brought-out address lines, the joystick
+   bit assignments and their pull-ups, VDP INT → Z80 /INT with IM 1, the
+   pause switch on /NMI, and the cartridge edge. Consolidated with citations
+   in `receipts/research/sg1000-board-facts.md`; the pages themselves are
+   archived under `receipts/resources/sg1000-docs/`.
+2. **The `barbeque/sg1000` ("Soggy-1000") KiCad recreation** — an
+   independent re-trace, built and tested against real cartridges. It is the
+   citable topology where Enri's scan resolution defeats a junction (the /M1
+   transistor on the PSG select), and a corroborating second opinion
+   elsewhere. Its own additions (a reset button, a memory mapper in the
+   unused `$00-$3F` block) are Soggy's, not the SG-1000's.
+3. **TI device documentation** — the TMS9918A data manual and the SN76489AN
+   manual, for pin-level facts the board sheets assume.
+4. **MAME** — reference material only, attributed by name, never hardware
+   fact. Everything sourced only to MAME is flagged as such below.
+
+There is **no gate-level oracle for this board** and no hardware captures of
+a running SG-1000 in the tree. Where a board question has no answer in the
+tiers above, escalate to the user rather than adopting an emulator's
+behaviour as fact.
+
+## The conformance tier
+
+The chip crate's hardware-endorsed `.sg` corpus — adjudicated on a Japanese
+NTSC SC-3000 — is the only measured oracle this core can reach, and
+`tests/board.rs` runs a slice of it through the whole console instead of
+through the chip crate's testbench. The real board map satisfies the ROMs'
+assumptions (1 KB work RAM, the RESULT block at `$C000`, VDP data `$BE` /
+control `$BF`, IM 1 on the VDP interrupt) by construction, so a corpus ROM
+that passes in the testbench and fails here is a statement about the board
+model. The corpus does not exercise the PSG or the joystick ports at all;
+those two smoke tests pin the board's own behaviour instead.
+
+## The timing model
+
+The 10.738635 MHz crystal is the grid, exactly as in the chip crate's
+testbench: **the VDP advances three crystal periods and the PSG one CLOCK
+per Z80 T-state, with the VDP ahead of the CPU's tick**, so a port access
+lands against a VDP that has already reached the instant it fires on. /INT
+is sampled from the VDP after each T-state. Nothing here batches per
+instruction — the interleave is per-T from day one, and the earlier
+first-pass cores' instruction-granular loops are explicitly not precedent.
+
+The PSG's READY sits on the /WAIT net and is answered through the Z80's
+`Bus::wait_requested`, so an `OUT` to the PSG stretches the very cycle that
+strobed it — and moves the /INT sample point along with it.
+
+## Stated abstractions
+
+- **An undriven bus reads `0xFF`.** No consulted source says what the data
+  bus settles to when nothing drives it: `$8000-$BFFF` with no second ROM,
+  the whole `$00-$3F` I/O block, and reads from the PSG's block. The value
+  is **MAME's** empty-slot behaviour, adopted as a modelling choice.
+- **A PSG read does not stall.** `/CS PSG` is qualified by nothing but
+  /IORQ, so an `IN` from `$40-$7F` asserts the select on real hardware; the
+  SN76489AN has no data outputs, and whether READY falls for a read /CE is
+  a **documented silence**. This model leaves reads unstalled and returns an
+  undriven bus.
+- **The /M1 transistor needs no code.** A PNP transistor forces the PSG
+  select inactive whenever /M1 is low — the only Z80 cycle with /M1 and
+  /IORQ both low being an interrupt acknowledge. The modelled acknowledge
+  never touches port space and READY can only be low inside the stretched
+  `OUT` itself, so the protection holds vacuously. If the acknowledge cycle
+  ever grows a bus surface, this becomes real wiring.
+- **Flat cartridges only.** The cart is a ROM image: a power-of-two image
+  inside `/EXM2` repeats through `$0000-$7FFF` (the documented no-decoder
+  multi-ROM boards mirror exactly this way), a larger image runs flat into
+  `$8000-$BFFF`, and anything past the two windows is rejected. Not
+  supported, and named: **Othello** and **The Castle** cart RAM at `$8000`,
+  the Taiwanese **Dahjee** RAM expanders, **Terebi Oekaki**'s tablet, the
+  SC-3000 Survivors **multicarts**, and the `/DSRAM` route by which a cart
+  disables the console's own RAM. A game probing `$8000-$BFFF` for cart RAM
+  reads `0xFF` and will misbehave. The gamedb `cart_type` field, carried
+  through `LoadOptions`/`MediaLoad`, is the intended selector when these
+  land. A combined 16 KB dump of an 8 K + 8 K board is a known limitation:
+  the halves must be dumped per region to mirror correctly.
+- **1 KB of work RAM — the SG-1000 proper.** The SG-1000 II and SC-3000
+  fit 2 KB, which the documented machine-detection routine distinguishes by
+  reading the mirror. A variant seam belongs here when those machines do.
+- **`CON` is held released.** `$DD` bit 4 is a real line on the cartridge
+  edge and the keyboard connector whose **function no source explains**; it
+  reads 1, along with the three unconnected multiplexer inputs above it.
+  MAME takes those four bits from its expansion slot instead — tertiary.
+- **Colour indices resolved through the datasheet palette.** The VDP stops
+  at TI colour indices; the 16-entry RGB table this crate presents them
+  through is the canonical datasheet palette, the same one the chip crate's
+  screenshot harness stamps. Index 0 — every plane transparent, the
+  external-video input — presents as black.
+- **Both joystick sites are modelled as ports.** Player 1's stick is wired
+  directly to the board rather than to a connector, but it reads through the
+  same multiplexer pair as player 2's, so both appear as control-pad ports.
+- **Deterministic power-on.** The chips seed themselves; the board adds
+  zeroed work RAM and released joystick lines. Real hardware's RAM contents
+  at power-on are unmeasured.
+
+## Out of scope
+
+- **SG-1000 II and SC-3000.** The II is documented only for its 2 KB of RAM;
+  its pause control and whether its I/O block is this multiplexer pair or
+  the SC-3000's 8255 are **not established** by anything consulted. The
+  SC-3000 replaces the joystick block with an 8255 PPI and a keyboard
+  matrix, and splits `$C0-$FF` to make room for expansion.
+- **The SK-1100 keyboard, the SF-7000 disk unit, and the arcade variant of
+  the joystick ports** — the arcade board's `$DC`/`$DD` map is a different
+  machine's and must not be applied here.
+- **The analog stages.** The PSG's output network and the VDP's composite
+  encoding are frontend territory; the console states its board and stops.
