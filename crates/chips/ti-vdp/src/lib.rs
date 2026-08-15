@@ -156,11 +156,34 @@ const SCAN_STEP_CYCLES: [bool; CYCLES_PER_LINE] = {
 /// The lattice instant within its memory cycle; silicon pins it only to a
 /// 5-XTAL window, this value reproduces the measured boundary cells.
 const SCAN_STEP_XTAL: u32 = 2;
+/// The fifth-match hold releases here — between the counter's 13th and
+/// 14th steps; the two measured plateau lengths (fifth matches at entries
+/// 15 and 31) both pin this cycle, the sub-cycle instant being free.
+const SCAN_HOLD_RELEASE_CYCLE: usize = 153;
 /// After an increment the field spends this long not presenting the
 /// counter: bits 4/3 read 0 throughout; bits 2..0 hold the old value's low
 /// bits at the first instant, all-ones through the middle, and the new
 /// value's low bits at the last.
 const SCAN_WINDOW_XTALS: u64 = 5;
+
+/// Where a line's pre-processing ramp ends and why: the full 32-entry
+/// walk, a terminator's own index, or the fifth match's — only the
+/// fifth-match halt arms the field hold.
+#[derive(Clone, Copy)]
+enum ScanStop {
+    FullWalk,
+    Terminator(u8),
+    FifthMatch(u8),
+}
+
+impl ScanStop {
+    fn index(self) -> u8 {
+        match self {
+            ScanStop::FullWalk => 31,
+            ScanStop::Terminator(index) | ScanStop::FifthMatch(index) => index,
+        }
+    }
+}
 
 /// Whether each memory cycle of a rendering line is a CPU-access cycle.
 const ACCESS_CYCLES: [bool; CYCLES_PER_LINE] = {
@@ -229,9 +252,14 @@ pub struct Vdp {
     /// where this line's ramp ends, and the latest step (instant + the
     /// value it replaced) for the boundary window.
     scan_counter: u8,
-    scan_stop: u8,
+    scan_stop: ScanStop,
     scan_stepped_at: u64,
     scan_step_from: u8,
+    /// The fifth-match event arms a hold on the presented field; it
+    /// survives the next reset and drops at the release cycle of the
+    /// first scan with no event.
+    field_hold: Option<u8>,
+    fifth_match_this_scan: bool,
 
     frame: Frame,
     frames_completed: u64,
@@ -269,9 +297,11 @@ impl Vdp {
             fifth_sprite_set_at: 0,
             sprite_field: 0,
             scan_counter: 31,
-            scan_stop: 31,
+            scan_stop: ScanStop::FullWalk,
             scan_stepped_at: 0,
             scan_step_from: 31,
+            field_hold: None,
+            fifth_match_this_scan: false,
             frame: Frame([[0; 256]; ACTIVE_LINES as usize]),
             frames_completed: 0,
             line_pixels: [0; 256],
@@ -446,28 +476,48 @@ impl Vdp {
             return;
         }
         if sub == SCAN_BURST_XTAL {
-            if SCAN_BURST_CYCLES.contains(&cycle) && self.scan_counter < self.scan_stop {
+            if SCAN_BURST_CYCLES.contains(&cycle) && self.scan_counter < self.scan_stop.index() {
                 self.scan_step_from = self.scan_counter;
                 self.scan_counter += 1;
+                self.arm_hold_at_stop();
             }
         } else if cycle == SCAN_RESET_CYCLE {
             self.scan_step_from = self.scan_counter;
             self.scan_counter = 0;
             self.scan_stepped_at = self.xtal_total;
-        } else if SCAN_STEP_CYCLES[cycle] && self.scan_counter < self.scan_stop {
+            self.fifth_match_this_scan = false;
+        } else if cycle == SCAN_HOLD_RELEASE_CYCLE {
+            if !self.fifth_match_this_scan {
+                self.field_hold = None;
+            }
+        } else if SCAN_STEP_CYCLES[cycle] && self.scan_counter < self.scan_stop.index() {
             self.scan_step_from = self.scan_counter;
             self.scan_counter += 1;
             self.scan_stepped_at = self.xtal_total;
+            self.arm_hold_at_stop();
+        }
+    }
+
+    fn arm_hold_at_stop(&mut self) {
+        if let ScanStop::FifthMatch(index) = self.scan_stop
+            && self.scan_counter == index
+        {
+            self.field_hold = Some(index);
+            self.fifth_match_this_scan = true;
         }
     }
 
     /// Status low five bits: the latched fifth-sprite index while 5S is
-    /// set, otherwise the scanner's counter — live, except inside the
-    /// boundary window around each step. The 7-to-8 step reads inverted
-    /// mid-window and whole at the trailing edge (measured; cause open).
+    /// set, the armed fifth-match hold next, otherwise the scanner's
+    /// counter — live, except inside the boundary window around each step.
+    /// The 7-to-8 step reads inverted mid-window and whole at the trailing
+    /// edge (measured; cause open).
     fn scanned_field(&self) -> u8 {
         if self.fifth_sprite_flag {
             return self.sprite_field & 0x1F;
+        }
+        if let Some(held) = self.field_hold {
+            return held;
         }
         let elapsed = self.xtal_total - self.scan_stepped_at;
         if elapsed >= SCAN_WINDOW_XTALS {
@@ -841,13 +891,13 @@ impl Vdp {
         let attributes = self.sprite_attribute_base();
         let mut occupied = [false; 256];
         let mut matched = 0u8;
-        let mut stop_index = 31u8;
+        let mut stop = ScanStop::FullWalk;
 
         for index in 0..32u8 {
             let entry = attributes + index as u16 * 4;
             let y = self.vram_cell(entry);
             if y == SPRITE_TERMINATOR {
-                stop_index = index;
+                stop = ScanStop::Terminator(index);
                 break;
             }
             let row = (self.line as u8).wrapping_sub(y.wrapping_add(1));
@@ -857,19 +907,22 @@ impl Vdp {
             matched += 1;
             if matched == 5 {
                 // The data manual's gate is real: 5S only latches while F
-                // is clear, and the first capture holds until a read.
+                // is clear, and the first capture holds until a read. The
+                // scan itself halts here whatever the flags say.
                 if !self.frame_flag && !self.fifth_sprite_flag {
                     self.fifth_sprite_flag = true;
                     self.fifth_sprite_set_at = self.xtal_total;
                     self.sprite_field = index;
                 }
+                stop = ScanStop::FifthMatch(index);
+                break;
             }
-            if matched <= 4 && rendered {
+            if rendered {
                 self.render_sprite_row(entry, row >> (magnified as u8), &mut occupied, false);
             }
         }
 
-        self.scan_stop = stop_index;
+        self.scan_stop = stop;
     }
 
     /// Paint `row`'s displayed sprites into the emission plane — the same
