@@ -78,16 +78,25 @@ harness asserts on the block only.
   runs, held at the stop through the long runs and the border. Steady steps
   carry the measured boundary-window texture (bits 4/3 blank, low bits old
   → all-ones → new; the 7-to-8 carry's inverted cell reproduced as
-  measured, cause open); the burst presents cleanly. While 5S is set the
-  latched index masks the live counter at every intra-line phase —
-  silicon-corroborated (cadence-8match sweeps its read mid-active across
-  all 228 phases), not an adopted convention. The scan's match effects —
-  5S, C, the stop latch — still apply at the line boundary: an
-  abstraction the race tests currently endorse, to be adjudicated by the
-  corpus's queued set-instant probes (coinciding low/high 5S bands are
-  this abstraction's signature; separated bands refute it). The lattice's
-  base offset inside the run period and its sub-cycle instants are
-  adopted within the maps' measured freedom, like the schedule rotation.
+  measured, cause open); the burst presents cleanly. The scan halts at
+  the fifth match's own entry — measured directly (the entry-15 scene
+  shows no field value above 15 in 456 cells) — as it does at a
+  terminator's. The fifth-match event arms a hold on the presented field
+  that neither the 5S-clearing read (the freeze does not belong to the
+  flag: the field holds through the clear at all 228 phases) nor the
+  next scan's reset releases; it drops at the release cycle — between
+  the counter's 13th and 14th steps, pinned by the two live-ruler
+  scenes' plateau lengths, the sub-cycle instant free — of the first
+  scan with no event. A terminator halt arms nothing (its plateau ends
+  at the reset). While 5S is set the flag-held capture presents above
+  the hold (the first capture wins until a read). 5S's set instant is
+  boundary-latched — corroborated on three fifth-match entry positions
+  (4, 15, 31) whose visibility bands coincide at one corrected phase —
+  but C's is not: the corpus measured C live at the generating pixel
+  (c-instant/c-instant-x, recorders), so the model's line-boundary C is
+  a stated divergence awaiting an asserting test. The lattice's base
+  offset inside the run period and its sub-cycle instants are adopted
+  within the maps' measured freedom, like the schedule rotation.
 - **Sub-line rendering: the incremental raster pipeline.** The renderer
   follows the raster: each character cell latches its name, pattern and
   colours from the live registers and VRAM at the cell's instant, and
@@ -111,14 +120,21 @@ harness asserts on the block only.
   get wrong (they collapse the thirds under a masking R4), so consensus
   cannot bless scenes that exercise it.
 - **The shrunken-table sprite anomaly is unmodelled.** In TI's shrunken
-  Graphics II configuration silicon duplicates and displaces sprites once
-  more than eight are on screen (TI documents the symptom; the 2026-08-14
-  SC-3000 capture of gii-shrunken observed it — sprites absent from design
-  positions, apparitions at fixed columns). No emulator models it and its
-  mechanism is unattributed pending the corpus's dedicated probe scene; the
-  affected cells of that scene are hardware-PRIMARY and no consensus
-  reference can cover them. The model renders the documented sprite path
-  and states this gap rather than guessing a mechanism.
+  Graphics II configuration silicon degrades late sprites once more than
+  eight are on screen. The corpus's ladder and reversal captures pin the
+  shape: onset at the TENTH sprite; the damage is attached to SAT index 9
+  (an eleventh renders full while 9 stays reduced) and graded across three
+  consecutive indices — index 9 exactly one pale steady line, 10 all lines
+  at reduced flickering duty, 11 nothing; the gradient follows the SAT
+  walk, not screen position (a reversed table renders clean at the same
+  screen positions); and reversal exposes duplicate images of the last
+  four entries at +64 and +128 lines — the Graphics II third boundaries —
+  that no emulator renders. The mechanism is unattributed (the corpus's
+  full-table and compact controls are queued); the affected captures are
+  hardware-PRIMARY and no consensus reference can cover them
+  (sprites/shrunken-dup stays a staged bless-never subject). The model
+  renders the documented sprite path and states this gap rather than
+  guessing a mechanism.
 - **Digital core only.** Colour output stops at the TI colour indices; a
   frame pixel of 0 means every plane was transparent (the external-video
   pass-through) and presents as black. Composite encoding, analog levels,
