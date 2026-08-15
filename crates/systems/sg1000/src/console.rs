@@ -92,8 +92,9 @@ pub struct Sg1000 {
     board: Board,
     sample_clock: f32,
     audio: Vec<(f32, f32)>,
+    /// VDP frames already handed out; `take_frame` compares against the
+    /// VDP's counter so nothing frame-sized moves on the tick path.
     frames_seen: u64,
-    pending_frame: Option<Frame>,
 }
 
 struct Board {
@@ -164,7 +165,6 @@ impl Sg1000 {
             sample_clock: 0.0,
             audio: Vec::new(),
             frames_seen: 0,
-            pending_frame: None,
         })
     }
 
@@ -184,12 +184,6 @@ impl Sg1000 {
         self.board.psg.tick();
         self.cpu.tick(&mut self.board);
         self.cpu.set_irq(self.board.vdp.interrupt_asserted());
-
-        let completed = self.board.vdp.frames_completed();
-        if completed != self.frames_seen {
-            self.frames_seen = completed;
-            self.pending_frame = Some(Frame(self.board.vdp.frame().0));
-        }
 
         self.sample_clock += 1.0;
         while self.sample_clock >= TSTATES_PER_SAMPLE {
@@ -211,15 +205,20 @@ impl Sg1000 {
     pub fn step_frame(&mut self, budget_tstates: u32) -> Option<Frame> {
         for _ in 0..budget_tstates {
             self.tick();
-            if let Some(frame) = self.pending_frame.take() {
-                return Some(frame);
+            if self.board.vdp.frames_completed() != self.frames_seen {
+                return self.take_frame();
             }
         }
         None
     }
 
+    /// The completed frame not yet handed out, copied once at consumption.
     pub fn take_frame(&mut self) -> Option<Frame> {
-        self.pending_frame.take()
+        let completed = self.board.vdp.frames_completed();
+        (completed != self.frames_seen).then(|| {
+            self.frames_seen = completed;
+            Frame(self.board.vdp.frame().0)
+        })
     }
 
     /// Accumulated 44.1 kHz stereo samples since the last drain.
@@ -245,7 +244,6 @@ impl Sg1000 {
         self.sample_clock = 0.0;
         self.audio.clear();
         self.frames_seen = 0;
-        self.pending_frame = None;
     }
 
     pub fn apply_control(&mut self, control: ControlId, input: ControlInput) {
