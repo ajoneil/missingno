@@ -4,10 +4,10 @@
 //! units, so instruction-granular timing is the current resolution —
 //! refining the catch-up to the VDP-port membrane is later accuracy work.
 
+use missingno_ti_psg::{Psg, Variant};
 use missingno_zilog_z80::{Bus, Cpu};
 
 use crate::cartridge::{Cartridge, CartridgeError};
-use crate::psg::Psg;
 use crate::vdp::{Frame, Vdp};
 
 /// 44.1 kHz output from the 3.579545 MHz CPU/PSG clock.
@@ -99,7 +99,7 @@ impl Sms {
         Ok(Sms {
             cpu: Cpu::new(),
             vdp: Vdp::new(),
-            psg: Psg::new(),
+            psg: Psg::new(Variant::SegaIntegrated),
             cartridge: Cartridge::load(rom)?,
             ram: Box::new([0; 0x2000]),
             memory_control: 0,
@@ -179,7 +179,7 @@ impl Sms {
     pub fn power_cycle(&mut self) {
         self.cpu = Cpu::new();
         self.vdp = Vdp::new();
-        self.psg = Psg::new();
+        self.psg = Psg::new(Variant::SegaIntegrated);
         *self.ram = [0; 0x2000];
         self.memory_control = 0;
         self.io_control = 0;

@@ -16,6 +16,7 @@ members = [
     "crates/systems/sms",
     "crates/systems/vcs",
     "crates/chips/mos-6502",
+    "crates/chips/ti-psg",
     "crates/chips/ti-vdp",
     "crates/chips/zilog-z80",
 ]
@@ -32,6 +33,7 @@ default-members = [
     "crates/systems/gbc",
     "crates/systems/vcs",
     "crates/chips/mos-6502",
+    "crates/chips/ti-psg",
     "crates/chips/ti-vdp",
     "crates/chips/zilog-z80",
 ]

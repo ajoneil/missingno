@@ -49,9 +49,9 @@ pub struct SmsInspectState {
     pub vdp_status: u8,
     pub vdp_registers: [u8; 11],
     pub banks: [u8; 3],
-    /// SN76489 PSG: three tone periods + the noise seed, the four 4-bit
-    /// attenuations, and the noise-control byte.
-    pub psg_periods: [u16; 4],
+    /// SN76489 PSG: the three tone periods, the four 4-bit attenuations, and
+    /// the noise-control byte.
+    pub psg_periods: [u16; 3],
     pub psg_volumes: [u8; 4],
     pub psg_noise: u8,
     /// Raw bytes at the program counter, hex-dumped until a Z80
@@ -395,9 +395,9 @@ impl SteppingSystem for SmsSystem {
             vdp_status: sms.vdp.peek_status(),
             vdp_registers: sms.vdp.registers,
             banks,
-            psg_periods: sms.psg.periods,
-            psg_volumes: sms.psg.volumes,
-            psg_noise: sms.psg.noise_control,
+            psg_periods: sms.psg.tone_periods(),
+            psg_volumes: sms.psg.attenuations(),
+            psg_noise: sms.psg.noise_control(),
             code_window,
             frame: frame_count,
         }
@@ -516,7 +516,7 @@ mod tests {
     #[test]
     fn psg_section_reports_registers_and_audibility() {
         let mut state = SmsInspectState::default();
-        state.psg_periods = [0x1FE, 0, 0, 0];
+        state.psg_periods = [0x1FE, 0, 0];
         // Tone 0 audible (attenuation 0), the rest muted at $F.
         state.psg_volumes = [0x00, 0x0F, 0x0F, 0x0F];
         state.psg_noise = 0x05;

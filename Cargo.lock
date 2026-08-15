@@ -3129,9 +3129,14 @@ name = "missingno-sms"
 version = "26.9.0"
 dependencies = [
  "missingno-core 26.9.0",
+ "missingno-ti-psg",
  "missingno-zilog-z80",
  "rgb",
 ]
+
+[[package]]
+name = "missingno-ti-psg"
+version = "26.9.0"
 
 [[package]]
 name = "missingno-ti-vdp"

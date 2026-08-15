@@ -1,0 +1,4 @@
+[package]
+name = "missingno-ti-psg"
+version.workspace = true
+edition = "2024"
