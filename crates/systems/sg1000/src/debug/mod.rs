@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use missingno_core::graphics::GraphicsView;
 use missingno_core::inspect::{
-    BitColumn, BitRow, BitTable, Register, RegisterGroup, Row, Section, SectionBlock, Sweep,
-    SweepZone, Tone, ValueStyle,
+    BitColumn, BitRow, BitTable, ColorSwatch, Concept, Detail, Register, RegisterGroup, Row,
+    Section, SectionBlock, SwatchRow, Sweep, SweepZone, Tone, ValueStyle,
 };
 use missingno_core::ports::{
     ControlDescriptor, ControlKind, PanelBehaviour, PanelControl, PeripheralDescriptor,
@@ -23,7 +23,7 @@ use missingno_core::system::{
 };
 use missingno_core::video::IndexedFrame;
 use missingno_core::waveform::ChannelWave;
-use missingno_ti_vdp::{ACTIVE_LINES, Frame, Standard, VISIBLE_WIDTH};
+use missingno_ti_vdp::{ACTIVE_LINES, Frame, Mode, Standard, VISIBLE_WIDTH, Vdp};
 use rgb::RGB8;
 
 use crate::console::{JOY1, JOY2, Sg1000};
@@ -43,6 +43,26 @@ const PIXEL_ASPECT: f32 = 8.0 / 7.0;
 const DOTS_PER_LINE: u32 = 342;
 
 const CODE_WINDOW_ROWS: usize = 10;
+
+/// The clock the Z80 and the PSG's CLOCK pin share.
+const CLOCK_HZ: f32 = 3_579_545.0;
+/// The tone counter divides the input clock by 32 per period count.
+const TONE_DIVISOR: f32 = 32.0;
+/// What a zero period register counts, on the discrete part this board fits.
+const ZERO_PERIOD_COUNT: u16 = 0x400;
+/// The attenuator ladder's nominal step.
+const DECIBELS_PER_STEP: u8 = 2;
+/// The attenuation that switches a channel off.
+const MUTE_ATTENUATION: u8 = 0x0F;
+/// The PSG's fourth channel.
+const NOISE_CHANNEL: usize = 3;
+
+/// R1's magnification bit; SIZE has an accessor of its own on the chip.
+const R1_MAG: u8 = 0x01;
+/// R7's backdrop colour sits in its low nibble.
+const BACKDROP_MASK: u8 = 0x0F;
+/// The status register's low five bits carry the sprite-scan counter.
+const SCAN_COUNTER_MASK: u8 = 0x1F;
 
 /// The canonical TI datasheet palette. The chip stops at colour indices, so
 /// resolving them to RGB is presentation policy the console states; index 0 is
@@ -66,6 +86,42 @@ const TI_PALETTE: [[u8; 3]; 16] = [
     [255, 255, 255],
 ];
 
+/// What the chip's own accessors make of the register file: the mode R0/R1
+/// select, the five table bases R2-R6 point at, and R1's sprite geometry.
+#[derive(Clone)]
+pub struct VdpLayout {
+    pub mode: Mode,
+    pub name_table: u16,
+    pub pattern_table: u16,
+    pub colour_table: u16,
+    pub sprite_attributes: u16,
+    pub sprite_patterns: u16,
+    pub sprites_16x16: bool,
+    pub magnified: bool,
+}
+
+impl VdpLayout {
+    fn of(vdp: &Vdp) -> VdpLayout {
+        VdpLayout {
+            mode: vdp.mode(),
+            name_table: vdp.name_table_base(),
+            pattern_table: vdp.pattern_table_base(),
+            colour_table: vdp.colour_table_base(),
+            sprite_attributes: vdp.sprite_attribute_base(),
+            sprite_patterns: vdp.sprite_pattern_base(),
+            sprites_16x16: vdp.sprites_16x16(),
+            magnified: vdp.registers()[1] & R1_MAG != 0,
+        }
+    }
+}
+
+impl Default for VdpLayout {
+    /// What a power-on chip reads: its register file is zeroed.
+    fn default() -> VdpLayout {
+        VdpLayout::of(&Vdp::new(Standard::Ntsc))
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct Sg1000InspectState {
     pub a: u8,
@@ -81,6 +137,7 @@ pub struct Sg1000InspectState {
     pub dot: u16,
     pub vdp_status: u8,
     pub vdp_registers: [u8; 8],
+    pub vdp_layout: VdpLayout,
     /// SN76489AN: the three tone periods, the four 4-bit attenuations, and the
     /// noise-control byte.
     pub psg_periods: [u16; 3],
@@ -154,114 +211,255 @@ fn sg1000_sidebar_sections(state: &Sg1000InspectState) -> Vec<Section> {
     sections
 }
 
-/// The SN76489AN: three tone channels and one noise channel. Each channel
-/// shows its period (or the noise-control byte) and 4-bit attenuation, with an
-/// audibility pip — attenuation $F fully mutes, so anything below it is audible.
+/// The SN76489AN: three tone channels and one noise channel, each with an
+/// audibility pip — attenuation $F fully mutes, so anything below it is
+/// audible. The period and attenuation rows carry the arithmetic a reader
+/// would otherwise do by hand.
 fn psg_section(state: &Sg1000InspectState) -> Section {
-    let tone = |i: usize, label: &'static str, per_label, per_help, att_label, att_help| {
-        SectionBlock::Rows(vec![
-            Row::flag(label, state.psg_volumes[i] != 0x0F).help("tone audible — attenuation < $F"),
-            Row::value(per_label, format!("{:03X}", state.psg_periods[i])).help(per_help),
-            Row::value(att_label, format!("{:X}", state.psg_volumes[i])).help(att_help),
-        ])
-    };
-    let audible = (0..4).filter(|&i| state.psg_volumes[i] != 0x0F).count();
+    let audible = state
+        .psg_volumes
+        .iter()
+        .filter(|&&attenuation| attenuation != MUTE_ATTENUATION)
+        .count();
     Section {
         name: "PSG",
         summary: format!("{audible}/4 audible"),
         active: None,
         detail: None,
         blocks: vec![
-            tone(
-                0,
-                "t0",
-                "per0",
-                "tone 0 period (10-bit)",
-                "att0",
-                "tone 0 attenuation ($F = mute)",
-            ),
+            tone_rows(state, 0),
             SectionBlock::Rule,
-            tone(
-                1,
-                "t1",
-                "per1",
-                "tone 1 period (10-bit)",
-                "att1",
-                "tone 1 attenuation ($F = mute)",
-            ),
+            tone_rows(state, 1),
             SectionBlock::Rule,
-            tone(
-                2,
-                "t2",
-                "per2",
-                "tone 2 period (10-bit)",
-                "att2",
-                "tone 2 attenuation ($F = mute)",
-            ),
+            tone_rows(state, 2),
             SectionBlock::Rule,
-            SectionBlock::Rows(vec![
-                Row::flag("noise", state.psg_volumes[3] != 0x0F)
-                    .help("noise audible — attenuation < $F"),
-                Row::value("nctl", format!("{:X}", state.psg_noise))
-                    .help("noise feedback mode & shift rate"),
-                Row::value("att3", format!("{:X}", state.psg_volumes[3]))
-                    .help("noise attenuation ($F = mute)"),
-            ]),
+            noise_rows(state),
         ],
     }
 }
 
+/// One tone channel: the period register with the tone it produces, and the
+/// attenuation with its place on the ladder.
+fn tone_rows(state: &Sg1000InspectState, channel: usize) -> SectionBlock {
+    let period = state.psg_periods[channel];
+    let attenuation = state.psg_volumes[channel];
+    SectionBlock::Rows(vec![
+        Row::flag(
+            format!("tone {}", channel + 1),
+            attenuation != MUTE_ATTENUATION,
+        )
+        .help("channel audible — attenuation below $F"),
+        Row::value(format!("per{}", channel + 1), tone_label(period))
+            .help("10-bit period register; the tone is the 3.579545 MHz clock ÷ 32n"),
+        Row::value(
+            format!("att{}", channel + 1),
+            attenuation_label(attenuation),
+        )
+        .help("attenuator — 2 dB a step, $F switching the channel off"),
+    ])
+}
+
+/// The noise channel: what its feedback network and its counter's rate are
+/// set to, and the same attenuator as a tone channel's.
+fn noise_rows(state: &Sg1000InspectState) -> SectionBlock {
+    let attenuation = state.psg_volumes[NOISE_CHANNEL];
+    SectionBlock::Rows(vec![
+        Row::flag("noise", attenuation != MUTE_ATTENUATION)
+            .help("channel audible — attenuation below $F"),
+        Row::value("mode", noise_mode(state.psg_noise))
+            .help("feedback network (noise control bit 2)"),
+        Row::value("rate", noise_rate(state.psg_noise))
+            .help("shift rate (noise control bits 0-1) — a fixed division, or tone 3's period"),
+        Row::value("att4", attenuation_label(attenuation))
+            .help("attenuator — 2 dB a step, $F switching the channel off"),
+    ])
+}
+
+/// A period register beside the tone it produces.
+fn tone_label(period: u16) -> String {
+    format!(
+        "${period:03X} ({} Hz)",
+        tone_frequency(period).round() as u32
+    )
+}
+
+/// The ÷16 prescaler feeds a counter that reloads `n` and toggles its
+/// flip-flop each borrow, so the tone is the input clock over 32n.
+fn tone_frequency(period: u16) -> f32 {
+    let count = if period == 0 {
+        ZERO_PERIOD_COUNT
+    } else {
+        period
+    };
+    CLOCK_HZ / (TONE_DIVISOR * f32::from(count))
+}
+
+/// An attenuation register beside the attenuation it sets.
+fn attenuation_label(attenuation: u8) -> String {
+    if attenuation >= MUTE_ATTENUATION {
+        format!("${attenuation:X} (off)")
+    } else if attenuation == 0 {
+        format!("${attenuation:X} (0 dB)")
+    } else {
+        format!("${attenuation:X} (-{} dB)", attenuation * DECIBELS_PER_STEP)
+    }
+}
+
+fn noise_mode(control: u8) -> &'static str {
+    if control & 0x04 != 0 {
+        "white"
+    } else {
+        "periodic"
+    }
+}
+
+fn noise_rate(control: u8) -> &'static str {
+    match control & 0x03 {
+        0 => "clock ÷ 512",
+        1 => "clock ÷ 1024",
+        2 => "clock ÷ 2048",
+        _ => "tone 3",
+    }
+}
+
+/// The TMS9918A at register level: where the raster stands, what the status
+/// latches hold, the five tables R2-R6 point at, and the backdrop R7 paints.
 fn vdp_section(state: &Sg1000InspectState) -> Section {
+    let layout = &state.vdp_layout;
     let registers = state
         .vdp_registers
         .iter()
         .enumerate()
         .map(|(index, &value)| Row::value(format!("r{index}"), format!("{value:02X}")))
         .collect();
-    // The active display occupies the first 192 lines; the border and vblank
-    // share the rest. The dot cycle within a line carries no named zones.
-    let lines_per_frame = Standard::Ntsc.lines_per_frame() as u32;
-    let line = Sweep::new("line", state.line as u32, lines_per_frame)
-        .zones(vec![
-            SweepZone {
-                name: "active",
-                end: ACTIVE_LINES as u32,
-                tone: Tone::Rendering,
-            },
-            SweepZone {
-                name: "blank",
-                end: lines_per_frame,
-                tone: Tone::Idle,
-            },
-        ])
-        .help("VDP scanline — 0..191 active display, then border and vblank");
+    // The dot cycle within a line carries no named zones.
     let dot =
         Sweep::new("dot", state.dot as u32, DOTS_PER_LINE).help("VDP dot within the scanline");
     Section {
         name: "VDP",
         summary: format!("line {} · dot {}", state.line, state.dot),
         active: None,
-        detail: None,
+        detail: Some(mode_detail(layout.mode)),
         blocks: vec![
-            SectionBlock::Sweeps(vec![line, dot]),
+            SectionBlock::Sweeps(vec![line_sweep(state.line), dot]),
             SectionBlock::Rule,
             SectionBlock::Table(status_table(state.vdp_status)),
             SectionBlock::Rows(vec![
-                Row::value("5th", format!("{:02}", state.vdp_status & 0x1F))
-                    .help("sprite number the scanner stopped at"),
+                Row::value(
+                    "scan",
+                    format!("{:02}", state.vdp_status & SCAN_COUNTER_MASK),
+                )
+                .help("sprite-scan counter (status bits 0-4) — the entry the scan halted on"),
             ]),
+            SectionBlock::Rule,
+            SectionBlock::Rows(table_rows(layout)),
+            SectionBlock::Rule,
+            SectionBlock::Rows(vec![
+                Row::flag("16x16", layout.sprites_16x16)
+                    .help("R1 SIZE — four generators to a sprite"),
+                Row::flag("magnified", layout.magnified)
+                    .help("R1 MAG — sprites drawn at double size"),
+            ]),
+            SectionBlock::Rule,
+            backdrop_swatches(state.vdp_registers[7]),
             SectionBlock::Rule,
             SectionBlock::Rows(registers),
         ],
     }
 }
 
-/// The status register's three flags; the low five bits carry the number of
-/// the sprite the scan halted on.
+/// The line counter across the frame. The visible raster is not contiguous in
+/// counter order — the top border rides the wrap — so the border shows as two
+/// zones with the blanking lines between them.
+fn line_sweep(line: u16) -> Sweep {
+    let lines_per_frame = Standard::Ntsc.lines_per_frame() as u32;
+    let display = ACTIVE_LINES as u32;
+    let bottom = display + Standard::Ntsc.bottom_border() as u32;
+    let top = lines_per_frame - Standard::Ntsc.top_border() as u32;
+    Sweep::new("line", line as u32, lines_per_frame)
+        .zones(vec![
+            SweepZone {
+                name: "display",
+                end: display,
+                tone: Tone::Rendering,
+            },
+            SweepZone {
+                name: "border",
+                end: bottom,
+                tone: Tone::Idle,
+            },
+            SweepZone {
+                name: "blank",
+                end: top,
+                tone: Tone::Active,
+            },
+            SweepZone {
+                name: "border",
+                end: lines_per_frame,
+                tone: Tone::Idle,
+            },
+        ])
+        .help("VDP line counter — 192 display lines, the borders, and the blanking between them")
+}
+
+/// The mode as the heading's accent. The four the Data Manual defines have a
+/// stated table layout; the M1/M2/M3 combinations it leaves out have none, so
+/// they carry no accent.
+fn mode_detail(mode: Mode) -> Detail {
+    let (text, tone) = match mode {
+        Mode::GraphicsI => ("Graphics I", Tone::Rendering),
+        Mode::GraphicsII => ("Graphics II", Tone::Rendering),
+        Mode::Multicolor => ("Multicolor", Tone::Rendering),
+        Mode::Text => ("Text", Tone::Rendering),
+        Mode::BitmapText => ("Bitmap Text", Tone::Neutral),
+        Mode::BitmapMulticolor => ("Bitmap Multicolor", Tone::Neutral),
+        Mode::TextMulticolor => ("Text Multicolor", Tone::Neutral),
+    };
+    Detail {
+        text: text.to_string(),
+        tone,
+    }
+}
+
+/// Where the five tables sit in VRAM — the addresses R2-R6 select.
+fn table_rows(layout: &VdpLayout) -> Vec<Row> {
+    vec![
+        Row::value("name", address(layout.name_table)).help("name table base (R2)"),
+        Row::value("pattern", address(layout.pattern_table))
+            .help("pattern generator base (R4); the bitmap modes take only its half select"),
+        Row::value("colour", address(layout.colour_table))
+            .help("colour table base (R3); the bitmap modes mask their fetches with R3 instead"),
+        Row::value("sprite attr", address(layout.sprite_attributes))
+            .help("sprite attribute table base (R5)"),
+        Row::value("sprite gen", address(layout.sprite_patterns))
+            .help("sprite generator base (R6)"),
+    ]
+}
+
+fn address(base: u16) -> String {
+    format!("${base:04X}")
+}
+
+/// The backdrop R7's low nibble selects, resolved through the datasheet
+/// palette the console presents indices with.
+fn backdrop_swatches(r7: u8) -> SectionBlock {
+    let index = r7 & BACKDROP_MASK;
+    SectionBlock::Swatches(vec![SwatchRow::Colors {
+        label: "backdrop".to_string(),
+        colors: vec![ColorSwatch {
+            color: ti_colour(index),
+            raw: Some(index as u16),
+        }],
+    }])
+}
+
+/// The status register's three flags; the low five bits carry the sprite-scan
+/// counter, which is a number rather than a bit and sits in its own row.
 fn status_table(status: u8) -> BitTable {
     BitTable {
         columns: vec![
-            BitColumn::plain("f"),
+            // F is the chip's vertical-blank interrupt source.
+            BitColumn::concept("f", Concept::VBlank),
             BitColumn::plain("5s"),
             BitColumn::plain("c"),
         ],
@@ -403,6 +601,7 @@ impl SteppingSystem for Sg1000System {
             dot: sg.vdp().dot(),
             vdp_status: sg.vdp().peek_status(),
             vdp_registers: *sg.vdp().registers(),
+            vdp_layout: VdpLayout::of(sg.vdp()),
             psg_periods: sg.psg().tone_periods(),
             psg_volumes: sg.psg().attenuations(),
             psg_noise: sg.psg().noise_control(),
@@ -453,10 +652,12 @@ impl SteppingSystem for Sg1000System {
 }
 
 fn ti_palette() -> Arc<[RGB8]> {
-    TI_PALETTE
-        .iter()
-        .map(|&[r, g, b]| RGB8::new(r, g, b))
-        .collect()
+    (0..TI_PALETTE.len() as u8).map(ti_colour).collect()
+}
+
+fn ti_colour(index: u8) -> RGB8 {
+    let [r, g, b] = TI_PALETTE[index as usize & 0x0F];
+    RGB8::new(r, g, b)
 }
 
 const CONTROL_PAD: PeripheralId = PeripheralId(0);
@@ -511,19 +712,9 @@ pub const PORTS: &[PortDescriptor] = &[
 mod tests {
     use super::*;
 
-    #[test]
-    fn psg_section_reports_registers_and_audibility() {
-        let mut state = Sg1000InspectState {
-            psg_periods: [0x1FE, 0, 0],
-            // Tone 0 audible (attenuation 0), the rest muted at $F.
-            psg_volumes: [0x00, 0x0F, 0x0F, 0x0F],
-            ..Sg1000InspectState::default()
-        };
-        state.psg_noise = 0x05;
-        let section = psg_section(&state);
-        assert_eq!(section.name, "PSG");
-
-        let rows: Vec<&Row> = section
+    /// Every label/value row a section carries, blocks flattened.
+    fn rows(section: &Section) -> Vec<&Row> {
+        section
             .blocks
             .iter()
             .filter_map(|block| match block {
@@ -531,17 +722,73 @@ mod tests {
                 _ => None,
             })
             .flatten()
-            .collect();
+            .collect()
+    }
+
+    fn value_of<'a>(rows: &[&'a Row], label: &str) -> Option<&'a str> {
+        rows.iter()
+            .find(|row| row.label == label)
+            .map(|row| row.value.as_str())
+    }
+
+    /// A chip whose register file has been written through the control port.
+    fn vdp_with(registers: [u8; 8]) -> Vdp {
+        let mut vdp = Vdp::new(Standard::Ntsc);
+        for (index, &value) in registers.iter().enumerate() {
+            vdp.write_control(value);
+            vdp.write_control(0x80 | index as u8);
+        }
+        vdp
+    }
+
+    #[test]
+    fn tone_frequency_is_the_clock_over_thirty_two_counts() {
+        // 3.579545 MHz / (32 · 254) = 440.4 Hz.
+        assert_eq!(tone_frequency(0x0FE).round() as u32, 440);
+        assert_eq!(tone_frequency(0x1FE).round() as u32, 219);
+        // A zero register counts as $400: 3.579545 MHz / (32 · 1024).
+        assert_eq!(tone_frequency(0).round() as u32, 109);
+    }
+
+    #[test]
+    fn attenuation_reads_as_decibels() {
+        assert_eq!(attenuation_label(0x0), "$0 (0 dB)");
+        assert_eq!(attenuation_label(0x1), "$1 (-2 dB)");
+        assert_eq!(attenuation_label(0x5), "$5 (-10 dB)");
+        assert_eq!(attenuation_label(0xF), "$F (off)");
+    }
+
+    #[test]
+    fn psg_section_pairs_registers_with_their_arithmetic() {
+        let state = Sg1000InspectState {
+            psg_periods: [0x0FE, 0x1FE, 0],
+            // Tone 1 audible (attenuation 0), the rest muted at $F.
+            psg_volumes: [0x00, 0x0F, 0x0F, 0x0F],
+            psg_noise: 0x05,
+            ..Sg1000InspectState::default()
+        };
+        let section = psg_section(&state);
+        assert_eq!(section.name, "PSG");
+        assert_eq!(section.summary, "1/4 audible");
+
+        let rows = rows(&section);
+        assert_eq!(value_of(&rows, "per1"), Some("$0FE (440 Hz)"));
+        assert_eq!(value_of(&rows, "att1"), Some("$0 (0 dB)"));
+        assert_eq!(value_of(&rows, "per2"), Some("$1FE (219 Hz)"));
+        assert_eq!(value_of(&rows, "att2"), Some("$F (off)"));
+        // Noise control $05: white feedback, the input clock over 1024.
+        assert_eq!(value_of(&rows, "mode"), Some("white"));
+        assert_eq!(value_of(&rows, "rate"), Some("clock ÷ 1024"));
         assert_eq!(
-            rows.iter().find(|r| r.label == "per0").map(|r| &r.value),
-            Some(&"1FE".to_string())
-        );
-        assert_eq!(
-            rows.iter().find(|r| r.label == "t0").and_then(|r| r.active),
+            rows.iter()
+                .find(|row| row.label == "tone 1")
+                .and_then(|row| row.active),
             Some(true)
         );
         assert_eq!(
-            rows.iter().find(|r| r.label == "t1").and_then(|r| r.active),
+            rows.iter()
+                .find(|row| row.label == "tone 2")
+                .and_then(|row| row.active),
             Some(false)
         );
     }
@@ -553,25 +800,50 @@ mod tests {
             ..Sg1000InspectState::default()
         };
         let section = vdp_section(&state);
-        let rows: Vec<&Row> = section
-            .blocks
-            .iter()
-            .filter_map(|block| match block {
-                SectionBlock::Rows(rows) => Some(rows),
-                _ => None,
-            })
-            .flatten()
-            .collect();
+        let rows = rows(&section);
         for (index, value) in ["00", "60", "0E", "FF", "03", "76", "03", "01"]
             .into_iter()
             .enumerate()
         {
-            let label = format!("r{index}");
+            assert_eq!(value_of(&rows, &format!("r{index}")), Some(value));
+        }
+    }
+
+    #[test]
+    fn vdp_section_shows_the_tables_the_registers_select() {
+        let vdp = vdp_with([0x00, 0x63, 0x0E, 0xFF, 0x03, 0x76, 0x03, 0x01]);
+        let state = Sg1000InspectState {
+            vdp_registers: *vdp.registers(),
+            vdp_layout: VdpLayout::of(&vdp),
+            ..Sg1000InspectState::default()
+        };
+        let section = vdp_section(&state);
+        let rows = rows(&section);
+        assert_eq!(value_of(&rows, "name"), Some("$3800"));
+        assert_eq!(value_of(&rows, "pattern"), Some("$1800"));
+        assert_eq!(value_of(&rows, "colour"), Some("$3FC0"));
+        assert_eq!(value_of(&rows, "sprite attr"), Some("$3B00"));
+        assert_eq!(value_of(&rows, "sprite gen"), Some("$1800"));
+        // R1 $63 selects 16×16 sprites, magnified, in Graphics I.
+        assert_eq!(
+            section.detail.as_ref().map(|detail| detail.text.as_str()),
+            Some("Graphics I")
+        );
+        for label in ["16x16", "magnified"] {
             assert_eq!(
-                rows.iter().find(|r| r.label == label).map(|r| &r.value),
-                Some(&value.to_string())
+                rows.iter()
+                    .find(|row| row.label == label)
+                    .and_then(|row| row.active),
+                Some(true)
             );
         }
+    }
+
+    #[test]
+    fn the_sidebar_names_the_cpu_and_both_chips() {
+        let sections = sg1000_sidebar_sections(&Sg1000InspectState::default());
+        let names: Vec<&str> = sections.iter().map(|section| section.name).collect();
+        assert_eq!(names, ["CPU", "VDP", "PSG"]);
     }
 
     #[test]
