@@ -133,6 +133,13 @@ has published. All are **pending hardware**.
   exists for either variant**, and how the Sega-integrated part's four
   transistor-pile DACs sum on their common node is unresolved even at die
   level. The normalisation point is a convention, not a measurement.
+- **`dac_codes()` reports amplitude, not the attenuation register.** Per
+  channel it is the attenuation complemented (`$F` mute reads 0, no
+  attenuation reads 15) while the generator conducts, and 0 while it does
+  not — the code the current-mode DAC is handed, sharing `level()`'s
+  conduction predicate so the two cannot disagree. Turning a code into a
+  voltage is the 2 dB per step ladder's job, and stays with the DAC and the
+  frontend.
 - **Shift-register cycle lengths follow from the taps.** With the tap
   constants above, white noise repeats after 32767 shifts on `DiscreteTi`
   (the 15-bit register's maximal length) and **57337** on `SegaIntegrated` —

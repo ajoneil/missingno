@@ -19,6 +19,7 @@ use missingno_core::system::{
     ControlId, ControlInput, ControlRole, DebugView, InspectSnapshot, RunningStatus,
 };
 use missingno_core::video::IndexedFrame;
+use missingno_core::waveform::ChannelWave;
 use missingno_ti_vdp::{ACTIVE_LINES, Frame, Standard, VISIBLE_WIDTH};
 use rgb::RGB8;
 
@@ -405,6 +406,14 @@ impl SteppingSystem for Sg1000System {
             code_window,
             frame: frame_count,
         }
+    }
+
+    fn set_wave_capture(sg: &mut Sg1000, on: bool) {
+        sg.set_wave_capture(on);
+    }
+
+    fn channel_waves(sg: &Sg1000) -> Option<Vec<ChannelWave>> {
+        sg.channel_waves()
     }
 
     fn register_groups(state: &Sg1000InspectState) -> Vec<RegisterGroup> {

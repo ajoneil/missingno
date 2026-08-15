@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use crate::TvStandard;
+use crate::graphics::GraphicsView;
 use crate::inspect::{MemoryWindow, RegisterGroup, Section};
 use crate::isa::InstructionSet;
 use crate::ports::{
@@ -19,6 +20,7 @@ use crate::system::{
     SystemConsole, SystemDebugger,
 };
 use crate::video::{DisplayTechnology, Frame, IndexedFrame};
+use crate::waveform::ChannelWave;
 
 /// Bytes captured before the program counter — enough for the disassembly's
 /// backward sweep — and the total span, its remainder covering the forward
@@ -89,6 +91,21 @@ pub trait SteppingSystem: 'static {
     fn step_over_target(core: &Self::Core) -> Option<u16>;
     /// Rebuild the typed inspection state from the core (peek-only).
     fn inspect(core: &Self::Core, frame_count: u64) -> Self::InspectState;
+    /// Enable or disable the core's per-vblank graphics decode. The flag lives
+    /// in the core, so the paused and running views read one producer.
+    fn set_graphics_capture(_core: &mut Self::Core, _on: bool) {}
+    /// The decoded graphics surfaces, or `None` when the family decodes none or
+    /// capture is off.
+    fn graphics_view(_core: &Self::Core) -> Option<GraphicsView> {
+        None
+    }
+    /// Enable or disable the core's per-channel waveform capture.
+    fn set_wave_capture(_core: &mut Self::Core, _on: bool) {}
+    /// The captured per-channel waveforms, or `None` when the family captures
+    /// none or capture is off.
+    fn channel_waves(_core: &Self::Core) -> Option<Vec<ChannelWave>> {
+        None
+    }
     /// The register groups this system exposes for the schema-driven view.
     fn register_groups(_state: &Self::InspectState) -> Vec<RegisterGroup> {
         Vec::new()
@@ -349,6 +366,22 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
         }
     }
 
+    fn set_wave_capture(&mut self, on: bool) {
+        S::set_wave_capture(&mut self.core, on);
+    }
+
+    fn channel_waves(&self) -> Option<Vec<ChannelWave>> {
+        S::channel_waves(&self.core)
+    }
+
+    fn set_graphics_capture(&mut self, on: bool) {
+        S::set_graphics_capture(&mut self.core, on);
+    }
+
+    fn graphics(&self) -> Option<GraphicsView> {
+        S::graphics_view(&self.core)
+    }
+
     fn set_breakpoint(&mut self, address: u32) {
         self.breakpoints.insert(address as u16);
     }
@@ -399,6 +432,8 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
                 bytes,
             },
             instruction_set: S::instruction_set(),
+            graphics: S::graphics_view(&self.core),
+            waves: S::channel_waves(&self.core),
         })
     }
 
@@ -417,13 +452,16 @@ impl<S: SteppingSystem> SystemDebugger for SteppingDebugger<S> {
 
 /// Wraps a family's per-frame snapshot with the shared running-view fuel the
 /// stepping seam captures generically: the program counter, a PC-anchored
-/// memory window, and the instruction set. The family's own state stays
-/// reachable through `family_state` for its typed panes.
+/// memory window, the instruction set, and whatever the core's capture hooks
+/// yielded. The family's own state stays reachable through `family_state` for
+/// its typed panes.
 struct SteppingSnapshot {
     inner: DebugView,
     pc: u16,
     memory: MemoryWindow,
     instruction_set: Option<&'static dyn InstructionSet>,
+    graphics: Option<GraphicsView>,
+    waves: Option<Vec<ChannelWave>>,
 }
 
 impl InspectSnapshot for SteppingSnapshot {
@@ -447,5 +485,11 @@ impl InspectSnapshot for SteppingSnapshot {
     }
     fn instruction_set(&self) -> Option<&dyn InstructionSet> {
         self.instruction_set
+    }
+    fn channel_waves(&self) -> Option<Vec<ChannelWave>> {
+        self.waves.clone()
+    }
+    fn graphics(&self) -> Option<&GraphicsView> {
+        self.graphics.as_ref()
     }
 }

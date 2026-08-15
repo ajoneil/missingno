@@ -348,19 +348,38 @@ impl Psg {
         self.busy_clocks == 0
     }
 
+    /// Whether a channel's generator is driving its attenuator: a tone's
+    /// frequency flip-flop high, or the bit leaving the shift register set.
+    fn conducting(&self, channel: usize) -> bool {
+        match channel {
+            NOISE_CHANNEL => self.noise.output_bit(),
+            tone => self.tones[tone].output,
+        }
+    }
+
     /// The output buffer sums the three tone generators and the noise
     /// generator, here normalised to all four conducting unattenuated.
     pub fn level(&self) -> f32 {
         let mut sum = 0.0;
-        for channel in 0..TONE_CHANNELS {
-            if self.tones[channel].output {
+        for channel in 0..CHANNELS {
+            if self.conducting(channel) {
                 sum += amplitude(self.volumes[channel]);
             }
         }
-        if self.noise.output_bit() {
-            sum += amplitude(self.volumes[NOISE_CHANNEL]);
-        }
         sum / CHANNELS as f32
+    }
+
+    /// Per channel, the amplitude code it hands its DAC: the attenuation
+    /// complemented while the channel conducts, zero otherwise. The 2 dB per
+    /// step the ladder turns each code into is the DAC's, not the code's.
+    pub fn dac_codes(&self) -> [u8; CHANNELS] {
+        std::array::from_fn(|channel| {
+            if self.conducting(channel) {
+                MUTE - self.volumes[channel]
+            } else {
+                0
+            }
+        })
     }
 
     /// The three 10-bit period registers.
@@ -708,6 +727,53 @@ mod tests {
         let one = psg.level();
         psg.write(0xB0);
         assert!((psg.level() - 2.0 * one).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_muted_channel_codes_zero() {
+        let mut psg = discrete();
+        psg.write(0x9F);
+        assert!(tone0(&psg));
+        assert_eq!(psg.dac_codes()[0], 0);
+    }
+
+    #[test]
+    fn an_unattenuated_conducting_channel_codes_full_scale() {
+        let psg = discrete();
+        assert_eq!(psg.attenuations()[0], 0);
+        assert!(tone0(&psg));
+        assert_eq!(psg.dac_codes()[0], 15);
+    }
+
+    #[test]
+    fn a_tone_code_follows_its_flip_flop() {
+        let mut psg = discrete();
+        psg.write(0x83);
+        psg.write(0x00);
+        assert!(tone0(&psg));
+        assert_eq!(psg.dac_codes()[0], 15);
+        clocks_until_change(&mut psg, tone0, 64);
+        assert_eq!(psg.dac_codes()[0], 0);
+        clocks_until_change(&mut psg, tone0, 64);
+        assert_eq!(psg.dac_codes()[0], 15);
+    }
+
+    #[test]
+    fn the_noise_code_follows_the_bit_leaving_the_shift_register() {
+        let mut psg = discrete();
+        psg.write(0xE4);
+        let (mut set, mut cleared) = (false, false);
+        for _ in 0..16 * 512 * 8 {
+            psg.tick();
+            let conducting = shift_register(&psg) & 1 != 0;
+            assert_eq!(
+                psg.dac_codes()[NOISE_CHANNEL],
+                if conducting { 15 } else { 0 }
+            );
+            set |= conducting;
+            cleared |= !conducting;
+        }
+        assert!(set && cleared, "the output bit never took both values");
     }
 
     #[test]

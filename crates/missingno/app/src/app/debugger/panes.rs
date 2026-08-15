@@ -287,8 +287,9 @@ pub static SG1000_FAMILY: Family = Family {
     default_layout: sg1000_default_layout,
 };
 
-/// The SG-1000 presents the screen and the two generic code/data panes; its
-/// Z80, VDP, and PSG state lives in the sidebar.
+/// The SG-1000 presents the screen, the two generic code/data panes and the
+/// audio scope over its PSG; its Z80, VDP, and PSG register state lives in the
+/// sidebar.
 #[cfg(feature = "sg1000")]
 pub static SG1000_PANE_REGISTRY: &[PaneDescriptor] = &[
     PaneDescriptor {
@@ -300,6 +301,7 @@ pub static SG1000_PANE_REGISTRY: &[PaneDescriptor] = &[
     },
     MEMORY_DESCRIPTOR,
     DISASSEMBLY_DESCRIPTOR,
+    AUDIO_DESCRIPTOR,
 ];
 
 pub static VCS_PANE_REGISTRY: &[PaneDescriptor] = &[
@@ -910,6 +912,13 @@ mod tests {
         }
         // The pane's kind resolves back to that stable label.
         assert_eq!(DebuggerPane::Audio.to_string(), "Audio");
+    }
+
+    #[cfg(feature = "sg1000")]
+    #[test]
+    fn sg1000_registers_the_audio_scope() {
+        let audio = audio_in(SG1000_PANE_REGISTRY).expect("audio pane registered");
+        assert_eq!(audio.label, "Audio");
     }
 
     #[test]

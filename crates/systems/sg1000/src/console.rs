@@ -6,6 +6,7 @@
 
 use missingno_core::ports::PortId;
 use missingno_core::system::{ControlId, ControlInput, ControlRole, ControlSite};
+use missingno_core::waveform::{ChannelWave, WaveRing};
 use missingno_ti_psg::{Psg, Variant};
 use missingno_ti_vdp::{Frame, Standard, Vdp, XTALS_PER_TSTATE};
 use missingno_zilog_z80::{Bus, Cpu};
@@ -20,7 +21,19 @@ const RAM_MASK: usize = RAM_SIZE - 1;
 const RAM_BASE: u16 = 0xC000;
 
 /// 44.1 kHz output from the 3.579545 MHz CPU/PSG clock.
-const TSTATES_PER_SAMPLE: f32 = 3_579_545.0 / 44_100.0;
+const SAMPLE_RATE: u32 = 44_100;
+const TSTATES_PER_SAMPLE: f32 = 3_579_545.0 / SAMPLE_RATE as f32;
+
+const PSG_CHANNELS: usize = 4;
+/// The attenuation that switches a channel off.
+const MUTE_ATTENUATION: u8 = 0x0F;
+/// Width of the amplitude code each channel hands its DAC.
+const PSG_CODE_BITS: u8 = 4;
+/// Waveform-capture ring depth: one frame-window of output samples with
+/// headroom — an NTSC frame is ~736 samples at 44.1 kHz.
+const WAVE_CAPTURE_SAMPLES: usize = 800;
+/// The channels' display names, in capture order.
+const WAVE_LABELS: [&str; PSG_CHANNELS] = ["Tone 1", "Tone 2", "Tone 3", "Noise"];
 
 /// A6 and A7 are the only address lines the I/O half of the '139 decodes, so
 /// each select covers a whole $40 block and everything inside it aliases.
@@ -92,6 +105,9 @@ pub struct Sg1000 {
     board: Board,
     sample_clock: f32,
     audio: Vec<(f32, f32)>,
+    /// Per-channel DAC codes for the debugger's scope, present only while a
+    /// consumer wants them.
+    wave_capture: Option<[WaveRing; PSG_CHANNELS]>,
     /// VDP frames already handed out; `take_frame` compares against the
     /// VDP's counter so nothing frame-sized moves on the tick path.
     frames_seen: u64,
@@ -164,6 +180,7 @@ impl Sg1000 {
             },
             sample_clock: 0.0,
             audio: Vec::new(),
+            wave_capture: None,
             frames_seen: 0,
         })
     }
@@ -190,6 +207,11 @@ impl Sg1000 {
             self.sample_clock -= TSTATES_PER_SAMPLE;
             let level = self.board.psg.level();
             self.audio.push((level, level));
+            if let Some(rings) = &mut self.wave_capture {
+                for (ring, code) in rings.iter_mut().zip(self.board.psg.dac_codes()) {
+                    ring.push(code);
+                }
+            }
         }
     }
 
@@ -226,6 +248,37 @@ impl Sg1000 {
         std::mem::take(&mut self.audio)
     }
 
+    /// Enable or disable per-channel waveform capture. Enabling allocates the
+    /// four rings once and starts each fresh; disabling frees them, leaving the
+    /// sample tap inert.
+    pub fn set_wave_capture(&mut self, on: bool) {
+        match (on, self.wave_capture.is_some()) {
+            (true, false) => {
+                self.wave_capture =
+                    Some(std::array::from_fn(|_| WaveRing::new(WAVE_CAPTURE_SAMPLES)));
+            }
+            (false, true) => self.wave_capture = None,
+            _ => {}
+        }
+    }
+
+    /// The four channels' captured waveforms, or `None` when capture is off.
+    pub fn channel_waves(&self) -> Option<Vec<ChannelWave>> {
+        let rings = self.wave_capture.as_ref()?;
+        let attenuations = self.board.psg.attenuations();
+        Some(
+            (0..PSG_CHANNELS)
+                .map(|channel| ChannelWave {
+                    label: WAVE_LABELS[channel],
+                    levels: rings[channel].to_vec(),
+                    depth_bits: PSG_CODE_BITS,
+                    rate: SAMPLE_RATE,
+                    active: attenuations[channel] != MUTE_ATTENUATION,
+                })
+                .collect(),
+        )
+    }
+
     /// Side-effect-free bus read for inspection.
     pub fn peek(&self, address: u16) -> u8 {
         if address < RAM_BASE {
@@ -243,6 +296,9 @@ impl Sg1000 {
         self.board.ram = [0; RAM_SIZE];
         self.sample_clock = 0.0;
         self.audio.clear();
+        if let Some(rings) = &mut self.wave_capture {
+            rings.iter_mut().for_each(WaveRing::clear);
+        }
         self.frames_seen = 0;
     }
 
