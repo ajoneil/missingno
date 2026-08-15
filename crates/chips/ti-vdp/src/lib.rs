@@ -16,8 +16,14 @@ const VRAM_SIZE: usize = 0x4000;
 /// T-state, 2 per dot, 684 per line.
 pub const XTALS_PER_TSTATE: u32 = 3;
 const XTALS_PER_LINE: u32 = 684;
-/// Display lines per frame (the sprite scanner's active range).
-const ACTIVE_LINES: u16 = 192;
+
+/// The display area: the window the planes are resolved in.
+pub const ACTIVE_WIDTH: u16 = 256;
+pub const ACTIVE_LINES: u16 = 192;
+/// The backdrop border around it, side dots per the Data Manual.
+pub const LEFT_BORDER: u16 = 13;
+pub const RIGHT_BORDER: u16 = 15;
+pub const VISIBLE_WIDTH: u16 = LEFT_BORDER + ACTIVE_WIDTH + RIGHT_BORDER;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Standard {
@@ -31,6 +37,26 @@ impl Standard {
             Standard::Ntsc => 262,
             Standard::Pal => 313,
         }
+    }
+
+    /// Border lines above the display area; the 9929A's split is derived,
+    /// no TI document giving its 313-line breakdown.
+    pub fn top_border(self) -> u16 {
+        match self {
+            Standard::Ntsc => 27,
+            Standard::Pal => 51,
+        }
+    }
+
+    pub fn bottom_border(self) -> u16 {
+        match self {
+            Standard::Ntsc => 24,
+            Standard::Pal => 51,
+        }
+    }
+
+    pub fn visible_lines(self) -> u16 {
+        self.top_border() + ACTIVE_LINES + self.bottom_border()
     }
 }
 
@@ -74,10 +100,15 @@ const SPRITE_TERMINATOR: u8 = 0xD0;
 /// on silicon (5.84/9.93); the community's symmetric 8/8 is refuted.
 const TEXT_MARGIN: usize = 6;
 
-/// Composited colour indices for the active area, one row per display
-/// line. 0 survives only where every plane is transparent (the
-/// external-video pass-through) and presents as black.
-pub struct Frame(pub [[u8; 256]; ACTIVE_LINES as usize]);
+/// The visible raster — the display area inside its backdrop border — as
+/// composited colour indices, row-major. 0 survives only where every plane
+/// is transparent (the external-video pass-through) and presents as black.
+#[derive(Clone)]
+pub struct Frame {
+    pub pixels: Vec<u8>,
+    pub width: u16,
+    pub height: u16,
+}
 
 /// Raster placement — the counter-to-picture alignment, the same freedom
 /// as the schedule rotation, calibrated against midline-name's silicon
@@ -87,7 +118,10 @@ pub struct Frame(pub [[u8; 256]; ACTIVE_LINES as usize]);
 /// pixel 0 at this XTAL offset. The seam's cell quantisation pins the
 /// offset to [24, 40); midframe-m2's independent seam validates it.
 const ACTIVE_START_XTALS: u32 = 32;
-const XTALS_PER_ACTIVE: u32 = 512;
+/// The whole visible span sits inside one counter line, so a counter line
+/// carries a complete scanline: left border, display area, right border.
+const VISIBLE_START_XTALS: u32 = ACTIVE_START_XTALS - LEFT_BORDER as u32 * 2;
+const XTALS_PER_VISIBLE: u32 = VISIBLE_WIDTH as u32 * 2;
 
 /// One latched fetch: `end_x - start_x` pixels drawn MSB-first from
 /// `bits`, lit pixels in `fg`, unlit in `bg`; colour 0 falls through to
@@ -266,7 +300,7 @@ pub struct Vdp {
     /// The in-flight row: pixels composited as the raster passes, the
     /// line-latched sprite plane of the row being emitted (0 = no sprite
     /// pixel), and the current fetch segment.
-    line_pixels: [u8; 256],
+    line_pixels: [u8; VISIBLE_WIDTH as usize],
     sprite_line: [u8; 256],
     segment: Segment,
 
@@ -302,9 +336,13 @@ impl Vdp {
             scan_step_from: 31,
             field_hold: None,
             fifth_match_this_scan: false,
-            frame: Frame([[0; 256]; ACTIVE_LINES as usize]),
+            frame: Frame {
+                pixels: vec![0; VISIBLE_WIDTH as usize * standard.visible_lines() as usize],
+                width: VISIBLE_WIDTH,
+                height: standard.visible_lines(),
+            },
             frames_completed: 0,
-            line_pixels: [0; 256],
+            line_pixels: [0; VISIBLE_WIDTH as usize],
             sprite_line: [0; 256],
             segment: Segment {
                 bits: 0,
@@ -367,8 +405,8 @@ impl Vdp {
         &self.frame
     }
 
-    /// Count of completed active areas — increments as the raster leaves
-    /// display line 191, when every row of `frame` is this frame's.
+    /// Count of completed visible rasters — increments as the raster leaves
+    /// the bottom border, when every row of `frame` is this frame's.
     pub fn frames_completed(&self) -> u64 {
         self.frames_completed
     }
@@ -413,43 +451,72 @@ impl Vdp {
     /// silicon-measured granularities (R7 per pixel, tables and mode bits
     /// per cell; sprites stay line-latched).
     fn raster_dot(&mut self) {
-        let row = if self.line + 1 == self.standard.lines_per_frame() {
+        let Some(offset) = self.xtal_in_line.checked_sub(VISIBLE_START_XTALS) else {
+            return;
+        };
+        if offset >= XTALS_PER_VISIBLE || !offset.is_multiple_of(2) {
+            return;
+        }
+        let visible_x = (offset / 2) as usize;
+        let picture_row = if self.line + 1 == self.standard.lines_per_frame() {
             0
         } else {
             self.line + 1
         };
-        if row >= ACTIVE_LINES {
-            return;
-        }
-        let Some(offset) = self.xtal_in_line.checked_sub(ACTIVE_START_XTALS) else {
+        let Some(frame_row) = self.frame_row(picture_row) else {
             return;
         };
-        if offset >= XTALS_PER_ACTIVE || !offset.is_multiple_of(2) {
-            return;
-        }
-        let x = (offset / 2) as usize;
-        if x == 0 || x >= self.segment.end_x {
-            self.segment = self.latch_segment(row, x);
-        }
-        self.line_pixels[x] = if self.registers[1] & r1::DISPLAY_ENABLE == 0 {
-            self.registers[7] & 0x0F
-        } else if self.sprite_line[x] != 0 {
-            self.sprite_line[x]
-        } else {
-            let bit = x - self.segment.start_x;
-            let lit = bit < 8 && self.segment.bits & (0x80 >> bit) != 0;
-            let colour = if lit {
-                self.segment.fg
-            } else {
-                self.segment.bg
-            };
-            self.over_backdrop(colour)
+
+        let active_x = (picture_row < ACTIVE_LINES)
+            .then(|| visible_x.wrapping_sub(LEFT_BORDER as usize))
+            .filter(|&x| x < ACTIVE_WIDTH as usize);
+        self.line_pixels[visible_x] = match active_x {
+            // The backdrop is the only plane that reaches the border, and
+            // no fetch belongs to a border dot.
+            None => self.registers[7] & 0x0F,
+            Some(x) => {
+                if x == 0 || x >= self.segment.end_x {
+                    self.segment = self.latch_segment(picture_row, x);
+                }
+                if self.registers[1] & r1::DISPLAY_ENABLE == 0 {
+                    self.registers[7] & 0x0F
+                } else if self.sprite_line[x] != 0 {
+                    self.sprite_line[x]
+                } else {
+                    let bit = x - self.segment.start_x;
+                    let lit = bit < 8 && self.segment.bits & (0x80 >> bit) != 0;
+                    let colour = if lit {
+                        self.segment.fg
+                    } else {
+                        self.segment.bg
+                    };
+                    self.over_backdrop(colour)
+                }
+            }
         };
-        if x == 255 {
-            self.frame.0[row as usize] = self.line_pixels;
-            if row == ACTIVE_LINES - 1 {
+        if visible_x == VISIBLE_WIDTH as usize - 1 {
+            let start = frame_row as usize * VISIBLE_WIDTH as usize;
+            self.frame.pixels[start..start + VISIBLE_WIDTH as usize]
+                .copy_from_slice(&self.line_pixels);
+            if frame_row == self.frame.height - 1 {
                 self.frames_completed += 1;
             }
+        }
+    }
+
+    /// Where a picture row lands in the visible raster: the top border rides
+    /// the counter wrap, then the display area, then the bottom border;
+    /// everything else is blanking.
+    fn frame_row(&self, picture_row: u16) -> Option<u16> {
+        let top = self.standard.top_border();
+        let first_top_row = self.standard.lines_per_frame() - top;
+        if picture_row >= first_top_row {
+            Some(picture_row - first_top_row)
+        } else if picture_row < ACTIVE_LINES + self.standard.bottom_border() {
+            // The display area and the bottom border run contiguously.
+            Some(top + picture_row)
+        } else {
+            None
         }
     }
 

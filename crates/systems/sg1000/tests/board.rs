@@ -73,12 +73,7 @@ fn a_graphics_scene_reaches_a_non_blank_frame() {
     let frame = console
         .step_frame(2 * TSTATES_PER_FRAME as u32)
         .expect("a frame completes once the scene is up");
-    let lit = frame
-        .0
-        .iter()
-        .flatten()
-        .filter(|&&index| index != 0)
-        .count();
+    let lit = frame.pixels.iter().filter(|&&index| index != 0).count();
     assert!(lit > 0, "the scene renders something");
 }
 

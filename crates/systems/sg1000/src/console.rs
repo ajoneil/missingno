@@ -200,7 +200,7 @@ impl Sg1000 {
         }
     }
 
-    /// Run T-states until the raster leaves the active area, bounded so
+    /// Run T-states until the raster leaves the visible picture, bounded so
     /// runaway code cannot stall the caller.
     pub fn step_frame(&mut self, budget_tstates: u32) -> Option<Frame> {
         for _ in 0..budget_tstates {
@@ -217,7 +217,7 @@ impl Sg1000 {
         let completed = self.board.vdp.frames_completed();
         (completed != self.frames_seen).then(|| {
             self.frames_seen = completed;
-            Frame(self.board.vdp.frame().0)
+            self.board.vdp.frame().clone()
         })
     }
 

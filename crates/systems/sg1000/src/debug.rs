@@ -19,7 +19,7 @@ use missingno_core::system::{
     ControlId, ControlInput, ControlRole, DebugView, InspectSnapshot, RunningStatus,
 };
 use missingno_core::video::IndexedFrame;
-use missingno_ti_vdp::Frame;
+use missingno_ti_vdp::{ACTIVE_LINES, Frame, Standard, VISIBLE_WIDTH};
 use rgb::RGB8;
 
 use crate::console::{JOY1, JOY2, Sg1000};
@@ -35,11 +35,8 @@ const TSTATES_PER_FRAME: u32 = 228 * 262;
 /// calibratable stage.
 const PIXEL_ASPECT: f32 = 8.0 / 7.0;
 
-/// The raster as the VDP counts it, and the active window inside it.
+/// Dots per counter line; the chip states the windows inside the raster.
 const DOTS_PER_LINE: u32 = 342;
-const LINES_PER_FRAME: u32 = 262;
-const PIXELS_PER_LINE: u32 = 256;
-const ACTIVE_LINES: u32 = 192;
 
 const CODE_WINDOW_ROWS: usize = 10;
 
@@ -219,16 +216,17 @@ fn vdp_section(state: &Sg1000InspectState) -> Section {
         .collect();
     // The active display occupies the first 192 lines; the border and vblank
     // share the rest. The dot cycle within a line carries no named zones.
-    let line = Sweep::new("line", state.line as u32, LINES_PER_FRAME)
+    let lines_per_frame = Standard::Ntsc.lines_per_frame() as u32;
+    let line = Sweep::new("line", state.line as u32, lines_per_frame)
         .zones(vec![
             SweepZone {
                 name: "active",
-                end: ACTIVE_LINES,
+                end: ACTIVE_LINES as u32,
                 tone: Tone::Rendering,
             },
             SweepZone {
                 name: "blank",
-                end: LINES_PER_FRAME,
+                end: lines_per_frame,
                 tone: Tone::Idle,
             },
         ])
@@ -349,15 +347,19 @@ impl SteppingSystem for Sg1000System {
 
     fn indexed_frame(frame: &Frame) -> IndexedFrame {
         IndexedFrame {
-            width: PIXELS_PER_LINE,
-            height: ACTIVE_LINES,
-            pixels: frame.0.as_flattened().into(),
+            width: frame.width as u32,
+            height: frame.height as u32,
+            pixels: frame.pixels.as_slice().into(),
             palette: ti_palette(),
         }
     }
 
     fn blank_frame() -> IndexedFrame {
-        IndexedFrame::blank(PIXELS_PER_LINE, ACTIVE_LINES, ti_palette())
+        IndexedFrame::blank(
+            VISIBLE_WIDTH as u32,
+            Standard::Ntsc.visible_lines() as u32,
+            ti_palette(),
+        )
     }
 
     fn step_over_target(sg: &Sg1000) -> Option<u16> {

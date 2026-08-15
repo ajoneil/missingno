@@ -100,6 +100,9 @@ strobed it — and moves the /INT sample point along with it.
   edge and the keyboard connector whose **function no source explains**; it
   reads 1, along with the three unconnected multiplexer inputs above it.
   MAME takes those four bits from its expansion slot instead — tertiary.
+- **The picture is the VDP's visible raster.** The console hands out what
+  the chip emits — the 256×192 display area inside its live backdrop
+  border, 284×243 on NTSC — so the presented picture is 4:3.
 - **Colour indices resolved through the datasheet palette.** The VDP stops
   at TI colour indices; the 16-entry RGB table this crate presents them
   through is the canonical datasheet palette, the same one the chip crate's

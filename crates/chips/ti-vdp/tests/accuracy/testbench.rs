@@ -5,7 +5,9 @@
 //! console — the ROMs confine themselves to the envelope every host machine
 //! shares.
 
-use missingno_ti_vdp::{Standard, Vdp, XTALS_PER_TSTATE};
+use missingno_ti_vdp::{
+    ACTIVE_LINES, ACTIVE_WIDTH, Frame, LEFT_BORDER, Standard, Vdp, XTALS_PER_TSTATE,
+};
 use missingno_zilog_z80::{Bus, Cpu};
 use std::path::Path;
 
@@ -165,9 +167,22 @@ const TI_PALETTE: [[u8; 3]; 16] = [
 
 const MAX_REPORTED_MISMATCHES: usize = 16;
 
+/// The display area of a visible raster, row-major — the crop the blessed
+/// references and the dumps for capture adjudication are both stated in.
+fn active_area(frame: &Frame) -> Vec<u8> {
+    let width = frame.width as usize;
+    let top = Standard::Ntsc.top_border() as usize;
+    (0..ACTIVE_LINES as usize)
+        .flat_map(|y| {
+            let start = (top + y) * width + LEFT_BORDER as usize;
+            frame.pixels[start..start + ACTIVE_WIDTH as usize].to_vec()
+        })
+        .collect()
+}
+
 /// Run a screenshot subject to its PASS verdict (the scene is up and stays
 /// up once the verdict latches), capture the next complete frame, and diff
-/// it against the blessed 256x192 reference pixel-exactly.
+/// its display area against the blessed 256x192 reference pixel-exactly.
 pub fn assert_screenshot(rom: &str) {
     let (mut board, verdict) = run(rom, DEFAULT_BUDGET_FRAMES);
     assert!(
@@ -182,10 +197,10 @@ pub fn assert_screenshot(rom: &str) {
     while board.vdp.frames_completed() < captured_at {
         board.vdp.tick(XTALS_PER_TSTATE);
     }
-    let frame = board.vdp.frame();
+    let active = active_area(board.vdp.frame());
 
     if let Ok(dir) = std::env::var("TIVDP_DUMP_FRAMES") {
-        dump_frame(&dir, rom, frame);
+        dump_frame(&dir, rom, &active);
     }
 
     let Some(reference) = load_reference(rom) else {
@@ -195,24 +210,23 @@ pub fn assert_screenshot(rom: &str) {
         panic!("{rom}: no blessed reference committed");
     };
     let mut mismatches = 0usize;
-    for (y, row) in frame.0.iter().enumerate() {
-        for (x, &index) in row.iter().enumerate() {
-            let actual = TI_PALETTE[index as usize];
-            let expected = reference[y * 256 + x];
-            if actual != expected {
-                if mismatches < MAX_REPORTED_MISMATCHES {
-                    eprintln!("{rom}: pixel ({x},{y}) got {actual:?} expected {expected:?}");
-                }
-                mismatches += 1;
+    for (i, &index) in active.iter().enumerate() {
+        let actual = TI_PALETTE[index as usize];
+        let expected = reference[i];
+        if actual != expected {
+            if mismatches < MAX_REPORTED_MISMATCHES {
+                let (x, y) = (i % 256, i / 256);
+                eprintln!("{rom}: pixel ({x},{y}) got {actual:?} expected {expected:?}");
             }
+            mismatches += 1;
         }
     }
     assert_eq!(mismatches, 0, "{rom}: {mismatches} pixel mismatches");
 }
 
-/// `TIVDP_DUMP_FRAMES=<dir>` writes each captured frame through the
+/// `TIVDP_DUMP_FRAMES=<dir>` writes each captured display area through the
 /// canonical palette — the working tool for diffing a divergent scene.
-fn dump_frame(dir: &str, rom: &str, frame: &missingno_ti_vdp::Frame) {
+fn dump_frame(dir: &str, rom: &str, active: &[u8]) {
     let stem = Path::new(rom).file_stem().unwrap().to_string_lossy();
     let path = Path::new(dir).join(format!("{stem}_missingno.png"));
     std::fs::create_dir_all(dir).unwrap();
@@ -221,10 +235,8 @@ fn dump_frame(dir: &str, rom: &str, frame: &missingno_ti_vdp::Frame) {
     encoder.set_color(png::ColorType::Rgb);
     let mut writer = encoder.write_header().unwrap();
     let mut data = Vec::with_capacity(256 * 192 * 3);
-    for row in &frame.0 {
-        for &index in row {
-            data.extend_from_slice(&TI_PALETTE[index as usize]);
-        }
+    for &index in active {
+        data.extend_from_slice(&TI_PALETTE[index as usize]);
     }
     writer.write_image_data(&data).unwrap();
 }

@@ -119,6 +119,23 @@ harness asserts on the block only.
   reading (gii-mask-pattern/gii-mask-colour), which mame and gearsystem
   get wrong (they collapse the thirds under a masking R4), so consensus
   cannot bless scenes that exercise it.
+  The emitted frame is the whole visible raster rather than the display
+  area: 13 dots of border left and 15 right, 27 lines above and 24 below
+  the 256×192 window (NTSC, Data Manual Table 3-3), painted from the live
+  backdrop — the only plane that reaches the border, so a mid-line R7 write
+  splits it where the raster stands and no fetch belongs to a border dot.
+  The frame counter increments as the raster leaves the bottom border; F's
+  instant is a separate hardware fact and stays at the end of display line
+  191. **No capture has adjudicated a border pixel**: the screenshot
+  harness crops to the display area, and the blessed references and the
+  dumps for adjudication are both stated in that crop. The 9929A's split is
+  **derived, not documented** — no TI document breaks down its 313 lines,
+  so holding NTSC's 19 non-visible lines leaves 102 border lines, halved
+  51/51 for want of a measurement. Fitting the whole visible span inside
+  one counter line needs the pixel-0 offset at 26 XTAL or more; the
+  calibrated 32 leaves 6 XTAL of slack, and a recalibration to the bottom
+  of the measured [24, 40) band would have to take the left border from the
+  previous line's tail instead.
 - **The shrunken-table sprite anomaly is unmodelled.** In TI's shrunken
   Graphics II configuration silicon degrades late sprites once more than
   eight are on screen. The corpus's ladder and reversal captures pin the
