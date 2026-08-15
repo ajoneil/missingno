@@ -45,6 +45,12 @@ pub trait Bus {
     fn write(&mut self, address: u16, data: u8);
     fn input(&mut self, port: u16) -> u8;
     fn output(&mut self, port: u16, data: u8);
+    /// The /WAIT line as the board drives it, read at each sample edge — so a
+    /// device whose not-ready condition begins with the access itself
+    /// stretches that same cycle.
+    fn wait_requested(&self) -> bool {
+        false
+    }
 }
 
 /// The control pins the oracle samples: RD, WR, MREQ, IORQ.

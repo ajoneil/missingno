@@ -25,6 +25,17 @@ impl Cycle {
             Cycle::Internal { length } => length,
         }
     }
+
+    /// Whether this T-state's falling edge samples /WAIT: the transfer
+    /// cycle's access tick, which is the Zilog UM's T2 for M1 and memory
+    /// cycles and the automatically inserted TW for I/O cycles.
+    fn samples_wait_after(self, t: u8) -> bool {
+        match self {
+            Cycle::OpcodeFetch | Cycle::MemRead { .. } | Cycle::MemWrite { .. } => t == 1,
+            Cycle::IoRead { .. } | Cycle::IoWrite { .. } => t == 2,
+            Cycle::Internal { .. } => false,
+        }
+    }
 }
 
 /// Where the instruction is: M1 in flight, a prefix's second M1 in flight, or
@@ -239,6 +250,9 @@ pub(crate) struct Sequencer {
     held: u8,
     /// The instruction's immediate operand or effective address.
     operand: u16,
+    /// Inside the wait chain the last sample opened: the next T-state is a
+    /// wait state rather than the schedule's own.
+    waiting: bool,
 }
 
 impl Sequencer {
@@ -250,6 +264,7 @@ impl Sequencer {
             latched: 0,
             held: 0,
             operand: 0,
+            waiting: false,
         }
     }
 
@@ -264,6 +279,7 @@ impl Sequencer {
             latched: 0,
             held: 0,
             operand: 0,
+            waiting: false,
         }
     }
 
@@ -334,7 +350,17 @@ impl Cpu {
     /// Advance the sequenced instruction by one T-state. Returns false once it
     /// has retired.
     pub(super) fn tick_sequencer(&mut self, bus: &mut impl Bus, seq: &mut Sequencer) -> bool {
+        if seq.waiting {
+            // A wait state holds the bus and samples again at its own falling
+            // edge; the cycle's schedule resumes where it stopped.
+            self.internal_tick();
+            seq.waiting = bus.wait_requested();
+            return true;
+        }
         self.tick_cycle(bus, seq.cycle, seq.t, &mut seq.latched);
+        if seq.cycle.samples_wait_after(seq.t) {
+            seq.waiting = bus.wait_requested();
+        }
         seq.t += 1;
         if seq.t < seq.cycle.length() {
             return true;
