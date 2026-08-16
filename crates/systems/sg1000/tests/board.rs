@@ -5,7 +5,7 @@
 
 use missingno_core::ports::PortId;
 use missingno_core::system::{ControlId, ControlInput, ControlRole, ControlSite};
-use missingno_sg1000::console::Sg1000;
+use missingno_sg1000::console::{Sg1000, TSTATES_PER_FRAME};
 
 /// The chip crate's corpus: the same self-checking `.sg` ROMs, driven here by
 /// a real board map instead of the testbench's common-subset envelope.
@@ -19,11 +19,10 @@ const RESULT_BLOCK: u16 = 0xC000;
 const RESULT_PASS: u8 = 0xA5;
 const RESULT_FAIL: u8 = 0x5A;
 
-const TSTATES_PER_FRAME: u64 = 228 * 262;
 /// The chip crate's default: the timing sweeps run ~550 frames to a verdict.
 const BUDGET_FRAMES: u64 = 1200;
 /// No Z80 instruction is shorter than four T-states.
-const INSTRUCTION_BUDGET: u64 = BUDGET_FRAMES * TSTATES_PER_FRAME / 4;
+const INSTRUCTION_BUDGET: u64 = BUDGET_FRAMES * TSTATES_PER_FRAME as u64 / 4;
 
 /// Run a corpus ROM to its verdict on the console, panicking on FAIL.
 fn run_to_verdict(rom: &str) -> Sg1000 {
@@ -71,7 +70,7 @@ fn frame_flag_races_resolve_on_the_board() {
 fn a_graphics_scene_reaches_a_non_blank_frame() {
     let mut console = run_to_verdict("modes/graphic1.sg");
     let frame = console
-        .step_frame(2 * TSTATES_PER_FRAME as u32)
+        .step_frame(2 * TSTATES_PER_FRAME)
         .expect("a frame completes once the scene is up");
     let lit = frame.pixels.iter().filter(|&&index| index != 0).count();
     assert!(lit > 0, "the scene renders something");

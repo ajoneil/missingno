@@ -7,11 +7,18 @@
 use missingno_core::ports::PortId;
 use missingno_core::system::{ControlId, ControlInput, ControlRole, ControlSite};
 use missingno_core::waveform::{ChannelWave, WaveRing};
-use missingno_ti_psg::{Psg, Variant};
-use missingno_ti_vdp::{Frame, Standard, Vdp, XTALS_PER_TSTATE};
+use missingno_ti_psg::{MUTE_ATTENUATION, Psg, Variant};
+use missingno_ti_vdp::{Frame, Standard, Vdp};
 use missingno_zilog_z80::{Bus, Cpu};
 
 use crate::cartridge::{Cartridge, CartridgeError, UNDRIVEN};
+
+/// The board is cut for NTSC: a TMS9918A, and a 262-line frame.
+pub(crate) const STANDARD: Standard = Standard::Ntsc;
+/// The 10.738635 MHz crystal over the 3.579545 MHz the Z80 runs at.
+const XTALS_PER_TSTATE: u32 = 3;
+/// One frame on that grid: 262 lines of 228 T-states.
+pub const TSTATES_PER_FRAME: u32 = 228 * 262;
 
 /// The TMM2009 work RAM: 1 KB with only A0-A9 brought out, selected across the
 /// whole top 16 KB, so it repeats every kilobyte to $FFFF.
@@ -20,13 +27,14 @@ const RAM_MASK: usize = RAM_SIZE - 1;
 /// Where `/CS WRAM` takes over from the cartridge selects.
 const RAM_BASE: u16 = 0xC000;
 
-/// 44.1 kHz output from the 3.579545 MHz CPU/PSG clock.
+/// The clock the Z80 and the PSG's CLOCK pin share, the crystal divided by
+/// three.
+pub(crate) const CLOCK_HZ: f32 = 3_579_545.0;
+/// 44.1 kHz output from that clock.
 const SAMPLE_RATE: u32 = 44_100;
-const TSTATES_PER_SAMPLE: f32 = 3_579_545.0 / SAMPLE_RATE as f32;
+const TSTATES_PER_SAMPLE: f32 = CLOCK_HZ / SAMPLE_RATE as f32;
 
 const PSG_CHANNELS: usize = 4;
-/// The attenuation that switches a channel off.
-const MUTE_ATTENUATION: u8 = 0x0F;
 /// Width of the amplitude code each channel hands its DAC.
 const PSG_CODE_BITS: u8 = 4;
 /// Waveform-capture ring depth: one frame-window of output samples with
@@ -125,13 +133,21 @@ struct Board {
     joy_dd: u8,
 }
 
-impl Bus for Board {
-    fn read(&mut self, address: u16) -> u8 {
+impl Board {
+    /// The memory map the '139's first half decodes: the cartridge selects
+    /// below `/CS WRAM`, the work RAM mirrored above it.
+    fn memory(&self, address: u16) -> u8 {
         if address < RAM_BASE {
             self.cart.read(address)
         } else {
             self.ram[address as usize & RAM_MASK]
         }
+    }
+}
+
+impl Bus for Board {
+    fn read(&mut self, address: u16) -> u8 {
+        self.memory(address)
     }
 
     /// Nothing below the RAM select is writable: no SG-1000 cart in this cut
@@ -176,7 +192,7 @@ impl Sg1000 {
             board: Board {
                 cart: Cartridge::load(rom)?,
                 ram: [0; RAM_SIZE],
-                vdp: Vdp::new(Standard::Ntsc),
+                vdp: Vdp::new(STANDARD),
                 psg: Psg::new(Variant::DiscreteTi),
                 joy_dc: RELEASED,
                 joy_dd: RELEASED,
@@ -228,23 +244,25 @@ impl Sg1000 {
 
     /// Run T-states until the raster leaves the visible picture, bounded so
     /// runaway code cannot stall the caller.
-    pub fn step_frame(&mut self, budget_tstates: u32) -> Option<Frame> {
+    pub fn step_frame(&mut self, budget_tstates: u32) -> Option<&Frame> {
         for _ in 0..budget_tstates {
             self.tick();
             if self.board.vdp.frames_completed() != self.frames_seen {
-                return self.take_frame();
+                break;
             }
         }
-        None
+        self.take_frame()
     }
 
-    /// The completed frame not yet handed out, copied once at consumption.
-    pub fn take_frame(&mut self) -> Option<Frame> {
+    /// The completed frame not yet handed out, borrowed from the chip that
+    /// rendered it so nothing frame-sized is copied on the way out.
+    pub fn take_frame(&mut self) -> Option<&Frame> {
         let completed = self.board.vdp.frames_completed();
-        (completed != self.frames_seen).then(|| {
-            self.frames_seen = completed;
-            self.board.vdp.frame().clone()
-        })
+        if completed == self.frames_seen {
+            return None;
+        }
+        self.frames_seen = completed;
+        Some(self.board.vdp.frame())
     }
 
     /// Accumulated 44.1 kHz stereo samples since the last drain.
@@ -296,17 +314,13 @@ impl Sg1000 {
 
     /// Side-effect-free bus read for inspection.
     pub fn peek(&self, address: u16) -> u8 {
-        if address < RAM_BASE {
-            self.board.cart.read(address)
-        } else {
-            self.board.ram[address as usize & RAM_MASK]
-        }
+        self.board.memory(address)
     }
 
     /// Power-cycle: fresh chip state, same cartridge and the same lines held.
     pub fn power_cycle(&mut self) {
         self.cpu = Cpu::new();
-        self.board.vdp = Vdp::new(Standard::Ntsc);
+        self.board.vdp.reset();
         self.board.psg = Psg::new(Variant::DiscreteTi);
         self.board.ram = [0; RAM_SIZE];
         self.sample_clock = 0.0;

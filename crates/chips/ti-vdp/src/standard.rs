@@ -1,8 +1,10 @@
 //! The broadcast standard and the raster geometry it fixes.
 
-/// The crystal is the board's master grid: 3 XTAL periods per CPU
-/// T-state, 2 per dot, 684 per line.
-pub const XTALS_PER_TSTATE: u32 = 3;
+use crate::Vdp;
+
+/// The crystal is the board's master grid: 2 XTAL periods per dot, 684 per
+/// line. How many a host's CPU takes for a T-state is that board's fact.
+pub(crate) const XTALS_PER_TSTATE: u32 = 3;
 pub(crate) const XTALS_PER_LINE: u32 = 684;
 
 /// The display area: the window the planes are resolved in.
@@ -47,5 +49,12 @@ impl Standard {
 
     pub fn visible_lines(self) -> u16 {
         self.top_border() + ACTIVE_LINES + self.bottom_border()
+    }
+}
+
+impl Vdp {
+    /// The standard this part is cut for, and so the raster it counts.
+    pub fn standard(&self) -> Standard {
+        self.standard
     }
 }

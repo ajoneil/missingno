@@ -5,9 +5,7 @@
 //! console — the ROMs confine themselves to the envelope every host machine
 //! shares.
 
-use missingno_ti_vdp::{
-    ACTIVE_LINES, ACTIVE_WIDTH, Frame, LEFT_BORDER, PALETTE, Standard, Vdp, XTALS_PER_TSTATE,
-};
+use missingno_ti_vdp::{ACTIVE_LINES, ACTIVE_WIDTH, Frame, LEFT_BORDER, PALETTE, Standard, Vdp};
 use missingno_zilog_z80::{Bus, Cpu};
 use std::path::Path;
 
@@ -20,6 +18,8 @@ const RAM_MASK: usize = 0x3FF;
 const RESULT_PASS: u8 = 0xA5;
 const RESULT_FAIL: u8 = 0x5A;
 
+/// The envelope's crystal against its Z80: 10.738635 MHz over 3.579545 MHz.
+const XTALS_PER_TSTATE: u32 = 3;
 const TSTATES_PER_FRAME: u64 = 228 * 262;
 /// Generous default: the timing sweeps run ~550 frames to their verdict.
 const DEFAULT_BUDGET_FRAMES: u64 = 1200;

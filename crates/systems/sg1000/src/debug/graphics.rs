@@ -149,14 +149,14 @@ fn view(vdp: &Vdp) -> GraphicsView {
 fn ti_colours() -> PaletteSet {
     PaletteSet::Owned(Arc::from([NamedPalette {
         label: "TI colours".into(),
-        colors: super::ti_palette().to_vec(),
+        colors: super::palette::ti_palette().to_vec(),
     }]))
 }
 
 /// One two-entry palette per TI colour: a sprite pattern bit is transparent or
 /// the colour its attribute names.
 fn sprite_colours() -> PaletteSet {
-    let palette = super::ti_palette();
+    let palette = super::palette::ti_palette();
     let named = (0..palette.len())
         .map(|colour| NamedPalette {
             label: format!("Colour {colour:X}"),

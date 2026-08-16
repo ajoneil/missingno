@@ -25,7 +25,6 @@ pub use render::{Frame, PALETTE};
 pub use sprites::SPRITE_TERMINATOR;
 pub use standard::{
     ACTIVE_LINES, ACTIVE_WIDTH, LEFT_BORDER, RIGHT_BORDER, Standard, VISIBLE_WIDTH,
-    XTALS_PER_TSTATE,
 };
 pub use vram::VRAM_SIZE;
 
