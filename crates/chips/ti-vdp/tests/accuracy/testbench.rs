@@ -6,7 +6,7 @@
 //! shares.
 
 use missingno_ti_vdp::{
-    ACTIVE_LINES, ACTIVE_WIDTH, Frame, LEFT_BORDER, Standard, Vdp, XTALS_PER_TSTATE,
+    ACTIVE_LINES, ACTIVE_WIDTH, Frame, LEFT_BORDER, PALETTE, Standard, Vdp, XTALS_PER_TSTATE,
 };
 use missingno_zilog_z80::{Bus, Cpu};
 use std::path::Path;
@@ -142,29 +142,6 @@ pub fn assert_pass(rom: &str) {
     assert_pass_within(rom, DEFAULT_BUDGET_FRAMES);
 }
 
-/// The canonical datasheet palette every capture pipeline stamps (TI defines
-/// colours as analog levels; RGB is presentation policy, tests-side only).
-/// Index 0 is the all-planes-transparent pass-through and presents as black,
-/// so RGB equality is colour-index equality for every rendered pixel.
-const TI_PALETTE: [[u8; 3]; 16] = [
-    [0, 0, 0],
-    [0, 0, 0],
-    [33, 200, 66],
-    [94, 220, 120],
-    [84, 85, 237],
-    [125, 118, 252],
-    [212, 82, 77],
-    [66, 235, 245],
-    [252, 85, 84],
-    [255, 121, 120],
-    [212, 193, 84],
-    [230, 206, 128],
-    [33, 176, 59],
-    [201, 91, 186],
-    [204, 204, 204],
-    [255, 255, 255],
-];
-
 const MAX_REPORTED_MISMATCHES: usize = 16;
 
 /// The display area of a visible raster, row-major — the crop the blessed
@@ -211,7 +188,7 @@ pub fn assert_screenshot(rom: &str) {
     };
     let mut mismatches = 0usize;
     for (i, &index) in active.iter().enumerate() {
-        let actual = TI_PALETTE[index as usize];
+        let actual = PALETTE[index as usize];
         let expected = reference[i];
         if actual != expected {
             if mismatches < MAX_REPORTED_MISMATCHES {
@@ -225,7 +202,7 @@ pub fn assert_screenshot(rom: &str) {
 }
 
 /// `TIVDP_DUMP_FRAMES=<dir>` writes each captured display area through the
-/// canonical palette — the working tool for diffing a divergent scene.
+/// chip's canonical palette — the working tool for diffing a divergent scene.
 fn dump_frame(dir: &str, rom: &str, active: &[u8]) {
     let stem = Path::new(rom).file_stem().unwrap().to_string_lossy();
     let path = Path::new(dir).join(format!("{stem}_missingno.png"));
@@ -236,7 +213,7 @@ fn dump_frame(dir: &str, rom: &str, active: &[u8]) {
     let mut writer = encoder.write_header().unwrap();
     let mut data = Vec::with_capacity(256 * 192 * 3);
     for &index in active {
-        data.extend_from_slice(&TI_PALETTE[index as usize]);
+        data.extend_from_slice(&PALETTE[index as usize]);
     }
     writer.write_image_data(&data).unwrap();
 }

@@ -7,7 +7,6 @@ edition = "2024"
 morepork = ["dep:morepork", "dep:sha2"]
 
 [dependencies]
-missingno-core = { path = "../../missingno/core" }
 # The trace format lives in its own repo (cloned into receipts/); the capture
 # sourced from the public repo so a fresh clone resolves without credentials;
 # local morepork iteration lands by pushing there and `cargo update -p morepork`.

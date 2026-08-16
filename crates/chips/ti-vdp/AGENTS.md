@@ -100,9 +100,10 @@ harness asserts on the block only.
 - **Digital core only.** Colour output stops at the TI colour indices; a
   frame pixel of 0 means every plane was transparent (the external-video
   pass-through) and presents as black. Composite encoding, analog levels,
-  and the 9929A's Y/R-Y/B-Y outputs are presentation/frontend territory —
-  the canonical datasheet RGB palette lives in the test harness, not the
-  chip.
+  and the 9929A's Y/R-Y/B-Y outputs are presentation/frontend territory.
+  The crate exports the canonical datasheet RGB table (`PALETTE`) as
+  reference data for consumers that must stamp one; nothing in the model
+  reads it.
 - **Inspection reads the renderer's own fetch.** `vram_cell` (a logical
   pointer value through the 4K/16K permutation), `vram` (the DRAM in
   physical order) and the table bases R2-R6 select are public and
