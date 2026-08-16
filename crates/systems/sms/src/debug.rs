@@ -12,8 +12,8 @@ use missingno_core::inspect::{
 };
 use missingno_core::machine::Machine;
 use missingno_core::ports::{
-    ControlDescriptor, ControlKind, PanelBehaviour, PanelControl, PeripheralDescriptor,
-    PeripheralId, PlugError, PortDescriptor, PortId, Provider,
+    ControlDescriptor, PanelBehaviour, PanelControl, PeripheralDescriptor, PeripheralId, PlugError,
+    PortDescriptor, PortId, Provider,
 };
 use missingno_core::system::{
     ControlId, ControlInput, ControlRole, ControlSite, DebugView, InspectSnapshot, RunningStatus,

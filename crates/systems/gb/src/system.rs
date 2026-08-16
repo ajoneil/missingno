@@ -17,8 +17,8 @@ use missingno_core::machine::{
     BoundaryState, CoreRun, CoreStop, Machine, MachineConsole, StateIdentity, StopSet,
 };
 use missingno_core::ports::{
-    ControlDescriptor, ControlKind, PeripheralDescriptor, PeripheralId, PlugError, PortDescriptor,
-    PortId, Provider,
+    ControlDescriptor, PeripheralDescriptor, PeripheralId, PlugError, PortDescriptor, PortId,
+    Provider,
 };
 use missingno_core::state::{StateRecord, SystemStateSchema};
 use missingno_core::state_file::StateFrame;

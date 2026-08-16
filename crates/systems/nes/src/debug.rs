@@ -13,8 +13,8 @@ use missingno_core::inspect::{
 };
 use missingno_core::machine::Machine;
 use missingno_core::ports::{
-    ControlDescriptor, ControlKind, PeripheralDescriptor, PeripheralId, PlugError, PortDescriptor,
-    PortId, Provider,
+    ControlDescriptor, PeripheralDescriptor, PeripheralId, PlugError, PortDescriptor, PortId,
+    Provider,
 };
 use missingno_core::system::{
     ControlId, ControlInput, ControlRole, ControlSite, DebugView, InspectSnapshot, RunningStatus,

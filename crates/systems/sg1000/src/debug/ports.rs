@@ -2,8 +2,8 @@
 //! presents, and the pause switch on the console's own shell.
 
 use missingno_core::ports::{
-    ControlDescriptor, ControlKind, PanelBehaviour, PanelControl, PeripheralDescriptor,
-    PeripheralId, PortDescriptor, PortId, Provider,
+    ControlDescriptor, PanelBehaviour, PanelControl, PeripheralDescriptor, PeripheralId,
+    PortDescriptor, PortId, Provider,
 };
 use missingno_core::system::ControlRole;
 
