@@ -1,7 +1,8 @@
 //! The object table pane: a family's sprite/OAM entries as cards — each an
 //! index, a priority indicator, the composed thumbnail (single tile or the
-//! 8×16 two-tile stack, with flips applied), and the screen-space position.
-//! An "on-screen only" toggle hides objects parked off the visible area.
+//! 8×16 two-tile stack, with flips applied), and the raw table coordinates,
+//! each tinted by how much of that axis lands on screen. An "on-screen only"
+//! toggle hides objects parked off the visible area.
 
 use iced::{
     Element,
@@ -24,7 +25,7 @@ use crate::app::{
         sizes::{s, xs},
     },
 };
-use missingno_core::graphics::{GraphicsView, Object, ObjectTable, TileAtlas};
+use missingno_core::graphics::{Coverage, GraphicsView, Object, ObjectTable, TileAtlas};
 use missingno_iced::TextureRenderer;
 
 /// Thumbnail pixels per source pixel.
@@ -125,8 +126,8 @@ impl ObjectTablePane {
     }
 }
 
-/// One object's card: index and priority icon beside the thumbnail and its
-/// screen-space position. `None` when the object's pattern atlas is absent.
+/// One object's card: index and priority icon beside the thumbnail and its raw
+/// table position. `None` when the object's pattern atlas is absent.
 fn card<'a>(
     object: &Object,
     graphics: &GraphicsView,
@@ -199,15 +200,15 @@ fn thumbnail<'a>(
 }
 
 fn position<'a>(object: &Object) -> Element<'a, app::Message> {
-    let tint = if object.on_screen {
-        palette::GREEN
-    } else {
-        palette::RED
+    let tint = |coverage| match coverage {
+        Coverage::Full => palette::GREEN,
+        Coverage::Partial => palette::PEACH,
+        Coverage::Off => palette::RED,
     };
     rich_text![
-        span(object.x).color(tint),
+        span(object.x).color(tint(object.coverage_x)),
         span(",").color(palette::MUTED),
-        span(object.y).color(tint),
+        span(object.y).color(tint(object.coverage_y)),
     ]
     .font(fonts::monospace())
     .size(13.0)

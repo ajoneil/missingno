@@ -15,8 +15,8 @@
 use std::sync::Arc;
 
 use missingno_core::graphics::{
-    AtlasRegion, GraphicsView, MapEntry, NamedPalette, Object, ObjectTable, PaletteSet, TileAtlas,
-    TileMap,
+    AtlasRegion, Coverage, GraphicsView, MapEntry, NamedPalette, Object, ObjectTable, PaletteSet,
+    TileAtlas, TileMap,
 };
 use missingno_ti_vdp::{ACTIVE_LINES, ACTIVE_WIDTH, Mode, SPRITE_TERMINATOR, Vdp};
 
@@ -329,8 +329,10 @@ fn sprite_atlas(vdp: &Vdp) -> TileAtlas {
     }
 }
 
-/// The 32-entry sprite attribute table in screen space. The scan stops at the
-/// first terminator, so entries from there on list without displaying.
+/// The 32-entry sprite attribute table, coordinates raw as the table holds
+/// them, with the screen relation in the coverages. The scan stops at the first
+/// terminator, so entries from there on list without displaying. Magnification
+/// doubles the displayed size and is not modelled in the coverages.
 fn object_table(vdp: &Vdp) -> ObjectTable {
     let base = vdp.sprite_attribute_base();
     let large = vdp.sprites_16x16();
@@ -347,23 +349,29 @@ fn object_table(vdp: &Vdp) -> ObjectTable {
             let x = vdp.vram_cell(entry + 1);
             let name = vdp.vram_cell(entry + 2) as u16;
             let tag = vdp.vram_cell(entry + 3);
-            let x = x as i16
+            let shifted_x = x as i16
                 - if tag & EARLY_CLOCK != 0 {
                     EARLY_CLOCK_DOTS
                 } else {
                     0
                 };
-            let y = sprite_y(y);
+            let line = sprite_y(y);
+            let coverage_x = Coverage::of_span(shifted_x as i32, size as u32, ACTIVE_WIDTH as u32);
+            let coverage_y = Coverage::of_span(line as i32, size as u32, ACTIVE_LINES as u32);
             Object {
                 index,
-                x,
-                y,
+                x: x as u16,
+                y: y as u16,
                 tile: if large {
                     name / LARGE_SPRITE_PATTERNS
                 } else {
                     name
                 },
-                on_screen: index < scanned && on_raster(x, y, size),
+                coverage_x,
+                coverage_y,
+                on_screen: index < scanned
+                    && coverage_x != Coverage::Off
+                    && coverage_y != Coverage::Off,
                 palette: Some(tag & SPRITE_COLOUR),
                 bank: None,
                 flip_x: false,
@@ -400,13 +408,6 @@ fn sprite_size(large: bool) -> u8 {
     } else {
         SMALL_SPRITE_SIZE
     }
-}
-
-/// Whether any of a sprite's pixels fall inside the display area. Magnification
-/// doubles the displayed size and is not modelled here.
-fn on_raster(x: i16, y: i16, size: u8) -> bool {
-    let size = size as i16;
-    x + size > 0 && x < ACTIVE_WIDTH as i16 && y + size > 0 && y < ACTIVE_LINES as i16
 }
 
 #[cfg(test)]
@@ -526,24 +527,35 @@ mod tests {
         assert!(table.objects[1].on_screen);
         assert!(!table.objects[2].on_screen);
         assert!(!table.objects[3].on_screen);
-        // The chip's Y sits one line above the sprite's first displayed line.
-        assert_eq!(table.objects[0].y, 17);
+        // The table's Y byte reaches the object raw; the display relation is
+        // the coverage's job.
+        assert_eq!(table.objects[0].y, 16);
+        assert_eq!(table.objects[0].coverage_y, Coverage::Full);
     }
 
     #[test]
     fn early_clock_shifts_a_sprite_left() {
+        // Two entries at the same X near the left edge; only the first is
+        // early-clocked, so only its span leaves the display area.
         let vdp = vdp_with(
             &[(5, 0x00)],
             &[
                 (0x0000, 16),
-                (0x0001, 40),
+                (0x0001, 28),
                 (0x0002, 0),
                 (0x0003, EARLY_CLOCK | 0x0A),
-                (0x0004, SPRITE_TERMINATOR),
+                (0x0004, 16),
+                (0x0005, 28),
+                (0x0006, 0),
+                (0x0007, 0x0A),
+                (0x0008, SPRITE_TERMINATOR),
             ],
         );
         let table = object_table(&vdp);
-        assert_eq!(table.objects[0].x, 40 - EARLY_CLOCK_DOTS);
+        assert_eq!(table.objects[0].x, 28);
+        assert_eq!(table.objects[0].coverage_x, Coverage::Partial);
+        assert_eq!(table.objects[1].x, 28);
+        assert_eq!(table.objects[1].coverage_x, Coverage::Full);
         // The attribute's colour nibble rides the object's palette selector.
         assert_eq!(table.objects[0].palette, Some(0x0A));
         assert!(table.objects[0].on_screen);

@@ -30,19 +30,6 @@ pub struct Position {
 }
 
 impl Position {
-    pub fn on_screen_x(&self) -> bool {
-        (1..168).contains(&self.x)
-    }
-
-    pub fn on_screen_y(&self, size: SpriteSize) -> bool {
-        let min = match size {
-            SpriteSize::Single => 9,
-            SpriteSize::Double => 1,
-        };
-
-        (min..160).contains(&self.y)
-    }
-
     pub fn on_line(&self, line: u8, size: SpriteSize) -> bool {
         let first_line = self.y as i16 - 16;
         let line_after = first_line + size.height() as i16;

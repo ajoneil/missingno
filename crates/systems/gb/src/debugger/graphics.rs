@@ -7,12 +7,13 @@
 //! snapshot (running) so the two agree by construction.
 
 use missingno_core::graphics::{
-    AtlasRegion, GraphicsView, MapEntry, Object, ObjectTable, PaletteSet, TileAtlas, TileMap,
-    Viewport,
+    AtlasRegion, Coverage, GraphicsView, MapEntry, Object, ObjectTable, PaletteSet, TileAtlas,
+    TileMap, Viewport,
 };
 use missingno_core::inspect::Tone;
 
 use crate::ppu::memory::{VramBank, VramView};
+use crate::ppu::screen::{NUM_SCANLINES, PIXELS_PER_LINE};
 use crate::ppu::types::sprites::SpriteId;
 use crate::ppu::types::tiles::{TileAddressMode, TileBlockId, TileIndex, TileMapId};
 
@@ -20,6 +21,9 @@ use super::inspection::PpuSource;
 
 /// Addressable tiles per VRAM bank: three 128-tile blocks in address order.
 pub const TILES_PER_BANK: usize = 384;
+
+/// Sprites are eight pixels wide in both LCDC.2 sizes.
+const SPRITE_WIDTH: u32 = 8;
 
 /// The three tile-data blocks a VRAM bank holds, in address order — the
 /// LCDC.4-addressing building blocks the map indices resolve through. Named as
@@ -116,24 +120,31 @@ pub fn map_viewports(ppu: &dyn PpuSource, map: TileMapId) -> Vec<Viewport> {
     viewports
 }
 
-/// The 40-entry OAM object table in screen space (the −8/−16 hardware offset
-/// applied). `cgb` selects the per-entry CGB attributes (palette 0-7, VRAM
-/// bank) versus DMG (frontend palette, no bank). Sprites always address the
-/// 0x8000 (`Block0Block1`) pattern space, so `Object.tile` is a direct bank-0
-/// atlas index; 8×16 composition (top `tile&FE`, bottom `tile|01`) is a
-/// generic pane concern keyed off `object_height`.
+/// The 40-entry OAM object table, coordinates raw as OAM holds them (the +8/+16
+/// encoding) with the screen relation in the coverages. `cgb` selects the
+/// per-entry CGB attributes (palette 0-7, VRAM bank) versus DMG (frontend
+/// palette, no bank). Sprites always address the 0x8000 (`Block0Block1`)
+/// pattern space, so `Object.tile` is a direct bank-0 atlas index; 8×16
+/// composition (top `tile&FE`, bottom `tile|01`) is a generic pane concern
+/// keyed off `object_height`.
 pub fn object_table(ppu: &dyn PpuSource, cgb: bool) -> ObjectTable {
     let size = ppu.control().sprite_size();
     let objects = (0..40u8)
         .map(|index| {
             let sprite = ppu.sprite(SpriteId(index));
             let attributes = sprite.attributes;
+            let (x, y) = (sprite.position.x as u16, sprite.position.y as u16);
+            let coverage_x = Coverage::of_span(x as i32 - 8, SPRITE_WIDTH, PIXELS_PER_LINE as u32);
+            let coverage_y =
+                Coverage::of_span(y as i32 - 16, size.height() as u32, NUM_SCANLINES as u32);
             Object {
                 index,
-                x: sprite.position.x as i16 - 8,
-                y: sprite.position.y as i16 - 16,
+                x,
+                y,
                 tile: sprite.tile.0 as u16,
-                on_screen: sprite.position.on_screen_x() && sprite.position.on_screen_y(size),
+                coverage_x,
+                coverage_y,
+                on_screen: coverage_x != Coverage::Off && coverage_y != Coverage::Off,
                 palette: cgb.then(|| attributes.color_palette()),
                 bank: cgb.then(|| attributes.vram_bank()),
                 flip_x: attributes.flip_x(),
@@ -269,9 +280,12 @@ mod tests {
         }
         let objects = view.objects.expect("OAM present");
         assert_eq!(objects.objects.len(), 40);
-        // A default sprite (Y=0, X=0) lands at screen (−8, −16); DMG carries no
-        // per-object palette or bank.
-        assert_eq!((objects.objects[0].x, objects.objects[0].y), (-8, -16));
+        // A default sprite (Y=0, X=0) reaches the seam raw, its span entirely
+        // off the top-left; DMG carries no per-object palette or bank.
+        assert_eq!((objects.objects[0].x, objects.objects[0].y), (0, 0));
+        assert_eq!(objects.objects[0].coverage_x, Coverage::Off);
+        assert_eq!(objects.objects[0].coverage_y, Coverage::Off);
+        assert!(!objects.objects[0].on_screen);
         assert!(objects.objects[0].palette.is_none());
         assert!(objects.objects[0].bank.is_none());
     }

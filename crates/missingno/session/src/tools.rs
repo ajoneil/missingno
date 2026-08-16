@@ -5,7 +5,9 @@
 //! endpoint publishes the identical functions for a remote one, so both clients
 //! see one surface.
 
-use missingno_core::graphics::{GraphicsView, Object, ObjectTable, PaletteSet, TileAtlas};
+use missingno_core::graphics::{
+    Coverage, GraphicsView, Object, ObjectTable, PaletteSet, TileAtlas,
+};
 use missingno_core::inspect::{
     BitTable, PairMatrix, PixelStrip, Register, Section, SectionBlock, SwatchRow, ValueStyle,
 };
@@ -1250,7 +1252,8 @@ fn get_objects(session: &mut Session, args: &Value) -> ToolOutcome {
     }
 }
 
-/// The object table as text: one row per entry.
+/// The object table as text: one row per entry, coordinates raw as the
+/// hardware's table holds them.
 fn objects_table(table: &ObjectTable) -> String {
     let mut out = format!(
         "{}: {} objects, 8×{} sprites\n",
@@ -1258,10 +1261,10 @@ fn objects_table(table: &ObjectTable) -> String {
         table.objects.len(),
         table.object_height
     );
-    out.push_str("idx    x    y  tile  pal bank flip pri  on\n");
+    out.push_str("idx raw_x raw_y  tile  pal bank flip pri  on\n");
     for object in &table.objects {
         out.push_str(&format!(
-            "{:>3} {:>4} {:>4} {:>5}  {:>3} {:>4}  {:>2} {:>3}  {}\n",
+            "{:>3} {:>5} {:>5} {:>5}  {:>3} {:>4}  {:>2} {:>3}  {}\n",
             object.index,
             object.x,
             object.y,
@@ -1285,11 +1288,13 @@ fn object_detail(graphics: &GraphicsView, table: &ObjectTable, index: usize) -> 
         ));
     };
     let mut out = format!(
-        "object {}:\n  x={} y={} tile={} palette={} bank={} flip_x={} flip_y={} \
-         priority={} on_screen={}\n",
+        "object {}:\n  raw_x={} raw_y={} coverage={},{} tile={} palette={} bank={} \
+         flip_x={} flip_y={} priority={} on_screen={}\n",
         object.index,
         object.x,
         object.y,
+        coverage(object.coverage_x),
+        coverage(object.coverage_y),
         object.tile,
         opt(object.palette),
         opt(object.bank),
@@ -1346,6 +1351,14 @@ fn opt(value: Option<u8>) -> String {
     value
         .map(|value| value.to_string())
         .unwrap_or_else(|| "-".into())
+}
+
+fn coverage(coverage: Coverage) -> &'static str {
+    match coverage {
+        Coverage::Full => "full",
+        Coverage::Partial => "partial",
+        Coverage::Off => "off",
+    }
 }
 
 fn flips(flip_x: bool, flip_y: bool) -> String {
@@ -1927,9 +1940,11 @@ mod tests {
             object_height: 16,
             objects: vec![Object {
                 index: 0,
-                x: -8,
-                y: -16,
+                x: 0,
+                y: 0,
                 tile: 2,
+                coverage_x: Coverage::Off,
+                coverage_y: Coverage::Partial,
                 on_screen: false,
                 palette: Some(3),
                 bank: None,
@@ -1941,7 +1956,7 @@ mod tests {
         let listing = objects_table(&table);
         assert!(listing.contains("OAM"));
         assert!(listing.contains("8×16"));
-        assert!(listing.contains("-8"));
+        assert!(listing.contains("raw_x"));
         assert!(listing.contains("beh")); // priority: behind background
 
         let graphics = GraphicsView {
@@ -1955,6 +1970,7 @@ mod tests {
         };
         assert!(body.contains("object 0"));
         assert!(body.contains("palette=3"));
+        assert!(body.contains("coverage=off,partial"));
         // 8×16 stacks tile 2 (the top &!1 slot, index-1 fill) over tile 3.
         assert!(body.contains("sprite (8×16)"));
         assert_eq!(body.matches('░').count(), 8 * 8); // tile 2 fills the top slot

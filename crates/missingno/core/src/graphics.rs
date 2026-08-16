@@ -213,15 +213,44 @@ pub struct ObjectTable {
     pub objects: Vec<Object>,
 }
 
+/// How much of an object's span lies inside the visible area on one axis.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Coverage {
+    Full,
+    Partial,
+    Off,
+}
+
+impl Coverage {
+    /// Classify the span `[start, start + len)` against the visible `[0, extent)`.
+    pub fn of_span(start: i32, len: u32, extent: u32) -> Self {
+        let end = start.saturating_add_unsigned(len);
+        let extent = extent as i32;
+        if start >= 0 && end <= extent {
+            Coverage::Full
+        } else if end <= 0 || start >= extent {
+            Coverage::Off
+        } else {
+            Coverage::Partial
+        }
+    }
+}
+
 /// One object/sprite.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Object {
     pub index: u8,
-    /// Screen-space, with the hardware coordinate offset already applied by the
-    /// core builder (GB −8 / −16); a consumer just plots.
-    pub x: i16,
-    pub y: i16,
+    /// The raw table values as the hardware stores them (GB OAM's +8/+16
+    /// encoding, the TMS9918's one-line-above Y); the coverage fields carry the
+    /// relation to the screen.
+    pub x: u16,
+    pub y: u16,
     pub tile: u16,
+    pub coverage_x: Coverage,
+    pub coverage_y: Coverage,
+    /// Displayed by the raster — the core's verdict, which can be stricter than
+    /// the coverages (the TMS9918 stops scanning at the sprite-attribute
+    /// terminator, so later entries never display).
     pub on_screen: bool,
     /// Core-owned palette selector; `None` where frontend-owned (DMG) or absent.
     pub palette: Option<u8>,
@@ -307,6 +336,20 @@ mod tests {
         assert_eq!(a.pixel(0, 8, 0), None); // x out of range
         assert_eq!(a.pixel(0, 0, 8), None); // y out of range
         assert_eq!(a.pixel(1, 0, 0), None); // no such tile
+    }
+
+    #[test]
+    fn coverage_classifies_a_span_against_the_visible_extent() {
+        assert_eq!(Coverage::of_span(0, 8, 160), Coverage::Full);
+        assert_eq!(Coverage::of_span(152, 8, 160), Coverage::Full);
+        // Hanging off the left edge, then the right.
+        assert_eq!(Coverage::of_span(-1, 8, 160), Coverage::Partial);
+        assert_eq!(Coverage::of_span(153, 8, 160), Coverage::Partial);
+        // Entirely outside on either side.
+        assert_eq!(Coverage::of_span(-8, 8, 160), Coverage::Off);
+        assert_eq!(Coverage::of_span(160, 8, 160), Coverage::Off);
+        // A span wider than the visible area covers it without being inside it.
+        assert_eq!(Coverage::of_span(-4, 200, 160), Coverage::Partial);
     }
 
     #[test]
