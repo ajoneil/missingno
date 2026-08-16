@@ -220,7 +220,6 @@ static PANE_FAMILIES: &[&Family] = &[
     &VCS_FAMILY,
     #[cfg(feature = "sms")]
     &SMS_FAMILY,
-    #[cfg(feature = "sg1000")]
     &SG1000_FAMILY,
     #[cfg(feature = "nes")]
     &NES_FAMILY,
@@ -279,7 +278,6 @@ pub static SMS_PANE_REGISTRY: &[PaneDescriptor] = &[
     DISASSEMBLY_DESCRIPTOR,
 ];
 
-#[cfg(feature = "sg1000")]
 pub static SG1000_FAMILY: Family = Family {
     platforms: &[Platform::Sg1000],
     registry: SG1000_PANE_REGISTRY,
@@ -290,7 +288,6 @@ pub static SG1000_FAMILY: Family = Family {
 /// The SG-1000 presents the screen, the two generic code/data panes, the VDP's
 /// three graphics surfaces and the audio scope over its PSG; its Z80, VDP, and
 /// PSG register state lives in the sidebar.
-#[cfg(feature = "sg1000")]
 pub static SG1000_PANE_REGISTRY: &[PaneDescriptor] = &[
     PaneDescriptor {
         kind: DebuggerPane::Screen,
@@ -494,7 +491,6 @@ fn nes_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
 
 /// The SG-1000 starts with the disassembly beside the screen, memory below —
 /// its CPU/VDP/PSG state lives in the sidebar.
-#[cfg(feature = "sg1000")]
 fn sg1000_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
     disassembly_screen_memory_layout()
 }
@@ -925,7 +921,6 @@ mod tests {
         assert_eq!(DebuggerPane::Audio.to_string(), "Audio");
     }
 
-    #[cfg(feature = "sg1000")]
     #[test]
     fn sg1000_registers_the_scope_and_the_graphics_surfaces() {
         let audio = audio_in(SG1000_PANE_REGISTRY).expect("audio pane registered");

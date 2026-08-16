@@ -14,8 +14,6 @@ path = "src/main.rs"
 sms = ["dep:missingno-sms"]
 # NES / Famicom support; off until it is ready to be public.
 nes = ["dep:missingno-nes", "missingno-nes/morepork"]
-# Sega SG-1000 support; off until it is ready to be public.
-sg1000 = ["dep:missingno-sg1000"]
 
 [dependencies]
 missingno-gamedb = { path = "../../../missingno-gamedb/crates/gamedb" }
@@ -24,7 +22,7 @@ missingno-iced = { path = "../iced" }
 missingno-gb = { path = "../../systems/gb", features = ["morepork"] }
 missingno-gbc = { path = "../../systems/gbc", features = ["morepork"] }
 missingno-nes = { path = "../../systems/nes", optional = true }
-missingno-sg1000 = { path = "../../systems/sg1000", optional = true }
+missingno-sg1000 = { path = "../../systems/sg1000" }
 missingno-sms = { path = "../../systems/sms", optional = true }
 missingno-vcs = { path = "../../systems/vcs", features = ["morepork"] }
 missingno-session = { path = "../session", default-features = false, features = ["tools", "audio-output"] }

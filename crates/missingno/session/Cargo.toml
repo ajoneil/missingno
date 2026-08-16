@@ -11,7 +11,7 @@ audio-output = ["dep:cpal", "dep:rtrb"]
 # header picks the core at construction — so `gb` pulls the shared base (gb)
 # and the colour superset (gbc) together; there is no meaningful gb-without-gbc
 # split for a build that must still run dual-mode media.
-default = ["gb", "vcs"]
+default = ["gb", "vcs", "sg1000"]
 gb = ["dep:missingno-gb", "dep:missingno-gbc"]
 vcs = ["dep:missingno-vcs"]
 nes = ["dep:missingno-nes"]

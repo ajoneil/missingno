@@ -32,6 +32,7 @@ default-members = [
     "crates/missingno/iced",
     "crates/systems/gb",
     "crates/systems/gbc",
+    "crates/systems/sg1000",
     "crates/systems/vcs",
     "crates/chips/mos-6502",
     "crates/chips/ti-psg",

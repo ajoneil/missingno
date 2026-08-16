@@ -14,7 +14,7 @@ path = "src/main.rs"
 # header picks the core at construction — so `gb` pulls the shared base (gb)
 # and the colour superset (gbc) together; there is no meaningful gb-without-gbc
 # split for a build that must still run dual-mode media.
-default = ["gb", "vcs"]
+default = ["gb", "vcs", "sg1000"]
 gb = ["missingno-session/gb"]
 vcs = ["missingno-session/vcs"]
 nes = ["missingno-session/nes"]

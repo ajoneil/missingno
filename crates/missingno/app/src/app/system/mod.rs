@@ -15,7 +15,6 @@ pub use missingno_core::system::{ControlId, ControlInput, SystemConsole, SystemD
 pub mod gb;
 #[cfg(feature = "nes")]
 pub mod nes;
-#[cfg(feature = "sg1000")]
 pub mod sg1000;
 #[cfg(feature = "sms")]
 pub mod sms;
@@ -259,7 +258,6 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         port_config: |_| Vec::new(),
         trace: None,
     },
-    #[cfg(feature = "sg1000")]
     FamilyDescriptor {
         platform: Platform::Sg1000,
         extensions: sg1000::ROM_EXTENSIONS,
