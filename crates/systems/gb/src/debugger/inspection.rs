@@ -1,20 +1,18 @@
 //! Read-only inspection views of the console for the debugger panes.
 //!
-//! When paused, panes borrow the live console directly. When the core runs on
-//! the emulation thread, the UI can't touch it, so each vblank the thread
-//! copies the pane-relevant state into a [`GbSnapshot`] and publishes it. The
-//! panes render through the [`CpuSource`]/[`PpuSource`] traits (and
-//! [`ReadInstructionMemory`]), so one pane body serves both a live source
-//! (`Cpu`, `Ppu`, `Console`) and its snapshot counterpart.
+//! The UI cannot touch the core while it runs on the emulation thread, so the
+//! seam copies the pane-relevant state into a [`GbSnapshot`] and the panes
+//! render from that. The section builders read the
+//! [`CpuSource`]/[`PpuSource`] traits (and the pane's disassembly reads
+//! [`ReadInstructionMemory`]), so one body serves a capture and the live
+//! console the tests hold it against.
 
 use std::sync::Arc;
 
 use missingno_core::cdl::CdlWindow;
-use missingno_core::graphics::GraphicsView;
 use missingno_core::inspect;
 use missingno_core::symbols::SymbolTable;
-use missingno_core::system::InspectSnapshot;
-use missingno_core::waveform::ChannelWave;
+use missingno_core::system::{InspectSnapshot, RunningStatus};
 
 use crate::audio::{
     ApuSpec, Audio,
@@ -586,25 +584,6 @@ impl AudioView {
 }
 
 // --- Memory window -----------------------------------------------------------
-
-/// Bytes captured before PC — covers `addresses_before`'s 128-byte sweep.
-const WINDOW_BEHIND: u16 = 128;
-/// Total span; the remainder ahead of PC covers the forward disassembly.
-const WINDOW_LEN: u16 = 512;
-
-/// A copied span of address space around PC, big enough for the instructions
-/// pane's backward sweep and forward disassembly, captured with the CPU's
-/// 16-bit address wrap.
-fn capture_memory_window<M: Model>(console: &Console<M>, pc: u16) -> inspect::MemoryWindow {
-    let base = pc.wrapping_sub(WINDOW_BEHIND);
-    let bytes = (0..WINDOW_LEN)
-        .map(|i| console.read(base.wrapping_add(i)))
-        .collect();
-    inspect::MemoryWindow {
-        base: base as u32,
-        bytes,
-    }
-}
 
 /// Reads through the captured window with the CPU's 16-bit wrap; addresses
 /// outside the span return open-bus `0xFF` (the pane never sweeps past it).
@@ -1268,6 +1247,7 @@ pub fn dmg_sidebar_sections(
 /// A per-vblank copy of the model-shared debugger state, taken on the
 /// emulation thread while the core runs there. The CGB build wraps this with
 /// its extra register view.
+#[derive(Clone)]
 pub struct GbSnapshot {
     pub cpu: CpuView,
     pub ppu: PpuView,
@@ -1277,16 +1257,9 @@ pub struct GbSnapshot {
     pub colors: ColorSnapshot,
     pub switchable_rom_bank: Option<u16>,
     pub cartridge: CartridgeView,
-    pub memory: inspect::MemoryWindow,
     pub symbols: Arc<SymbolTable>,
     pub cdl: CdlWindow,
     pub frame: u64,
-    /// The per-channel waveform windows, captured when the APU's wave capture
-    /// is enabled. `None` otherwise.
-    pub channel_waves: Option<Vec<ChannelWave>>,
-    /// The decoded graphics surfaces, captured when graphics capture is enabled.
-    /// `None` otherwise.
-    pub graphics: Option<GraphicsView>,
 }
 
 impl GbSnapshot {
@@ -1296,7 +1269,6 @@ impl GbSnapshot {
         frame: u64,
         symbols: Arc<SymbolTable>,
         cdl: CdlWindow,
-        graphics: Option<GraphicsView>,
     ) -> Self {
         Self {
             cpu: CpuView::capture(console.cpu()),
@@ -1307,12 +1279,28 @@ impl GbSnapshot {
             colors,
             switchable_rom_bank: console.cartridge().switchable_rom_bank(),
             cartridge: console.cartridge().inspect(),
-            memory: capture_memory_window(console, console.cpu().ir_address),
             symbols,
             cdl,
             frame,
-            channel_waves: console.channel_waves(),
-            graphics,
+        }
+    }
+
+    /// This capture stamped with the UI's frame counter.
+    pub fn at_frame(&self, frame: u64) -> Self {
+        Self {
+            frame,
+            ..self.clone()
+        }
+    }
+
+    /// The one-line summary the frontend shows while the core runs.
+    pub fn running_status(&self, frame: u64) -> RunningStatus {
+        RunningStatus {
+            pc: self.cpu.ir_address.into(),
+            sp: self.cpu.stack_pointer.into(),
+            video_label: "PPU",
+            video_summary: format!("{} · ly {}", mode_label(self.ppu.mode), self.ppu.ly),
+            frame,
         }
     }
 }
@@ -1337,9 +1325,6 @@ impl InspectSnapshot for GbSnapshot {
             &self.cartridge,
         )
     }
-    fn memory_window(&self) -> Option<&inspect::MemoryWindow> {
-        Some(&self.memory)
-    }
     fn pc(&self) -> Option<u32> {
         Some(self.cpu.ir_address as u32)
     }
@@ -1357,12 +1342,6 @@ impl InspectSnapshot for GbSnapshot {
     }
     fn instruction_set(&self) -> Option<&dyn missingno_core::isa::InstructionSet> {
         Some(&crate::isa::Sm83)
-    }
-    fn channel_waves(&self) -> Option<Vec<ChannelWave>> {
-        self.channel_waves.clone()
-    }
-    fn graphics(&self) -> Option<&GraphicsView> {
-        self.graphics.as_ref()
     }
 }
 
@@ -1431,17 +1410,9 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_carries_capture_windows_when_enabled() {
+    fn capture_windows_fill_when_enabled() {
         let console = ran_console(true);
-        let snapshot = GbSnapshot::capture(
-            &console,
-            ColorSnapshot::Dmg { sgb: false },
-            0,
-            Arc::new(SymbolTable::default()),
-            CdlWindow::default(),
-            None,
-        );
-        let waves = snapshot.channel_waves().expect("capture enabled");
+        let waves = console.channel_waves().expect("capture enabled");
         assert_eq!(waves.len(), 4);
         for wave in &waves {
             assert_eq!(wave.rate, 44100);
@@ -1450,57 +1421,8 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_has_no_windows_when_capture_disabled() {
-        let console = ran_console(false);
-        let snapshot = GbSnapshot::capture(
-            &console,
-            ColorSnapshot::Dmg { sgb: false },
-            0,
-            Arc::new(SymbolTable::default()),
-            CdlWindow::default(),
-            None,
-        );
-        assert!(snapshot.channel_waves().is_none());
-    }
-
-    #[test]
-    fn graphics_view_live_matches_snapshot_source() {
-        use crate::debugger::graphics::dmg_graphics_view;
-        use crate::system::ConsoleUi;
-        let mut console = ran_console(false);
-        console.set_graphics_capture(true);
-        let live = dmg_graphics_view(console.ppu(), console.vram());
-        // The running snapshot decodes graphics through the same path.
-        let snapshot = crate::Dmg::snapshot(
-            &console,
-            0,
-            Arc::new(SymbolTable::default()),
-            CdlWindow::default(),
-        );
-        assert_eq!(snapshot.graphics(), Some(&live));
-    }
-
-    #[test]
-    fn snapshot_graphics_gated_by_flag() {
-        use crate::system::ConsoleUi;
-        let mut console = ran_console(false);
-        console.set_graphics_capture(false);
-        let off = crate::Dmg::snapshot(
-            &console,
-            0,
-            Arc::new(SymbolTable::default()),
-            CdlWindow::default(),
-        );
-        assert!(off.graphics().is_none());
-
-        console.set_graphics_capture(true);
-        let on = crate::Dmg::snapshot(
-            &console,
-            0,
-            Arc::new(SymbolTable::default()),
-            CdlWindow::default(),
-        );
-        assert!(on.graphics().is_some());
+    fn no_capture_windows_when_disabled() {
+        assert!(ran_console(false).channel_waves().is_none());
     }
 
     #[test]
@@ -1513,7 +1435,6 @@ mod tests {
             0,
             Arc::new(SymbolTable::default()),
             CdlWindow::default(),
-            None,
         );
         assert_eq!(
             format!("{live:?}"),
@@ -1542,7 +1463,6 @@ mod tests {
             0,
             Arc::new(SymbolTable::default()),
             CdlWindow::default(),
-            None,
         );
         assert_eq!(
             format!("{live:?}"),

@@ -3,13 +3,11 @@ use std::path::Path;
 
 use crate::{
     Console, Dmg, Model,
-    cpu::instructions::Instruction,
     cpu_bus::{BusAccess, BusAccessKind},
     isa::Sm83,
     ppu::{self, rendering::Mode},
 };
 use cdl::CodeDataLog;
-use instructions::InstructionsIterator;
 use std::sync::Arc;
 use symbols::SymbolTable;
 
@@ -19,6 +17,7 @@ pub mod inspection;
 pub mod instructions;
 use missingno_core::inspect;
 use missingno_core::isa::InstructionSet;
+use missingno_core::machine::StopSet;
 use missingno_core::symbols;
 
 // Synthetic address bases above the real bus, where the debugger exposes
@@ -471,6 +470,33 @@ fn watch_from_condition(condition: &WatchCondition) -> inspect::Watch {
     inspect::Watch { terms }
 }
 
+/// The watch conditions a console can name. `wram-bank` is meaningful only on
+/// one that banks work RAM (CGB); a flat-WRAM console (DMG) never pages it, so
+/// the key is dropped there. The two buckets are keyed by that capability, not
+/// by the model type — a plain generic-fn static would be shared across all
+/// monomorphizations.
+pub fn watchables(banks_work_ram: bool) -> &'static [inspect::Watchable] {
+    use std::sync::OnceLock;
+    fn build(banks_work_ram: bool) -> Vec<inspect::Watchable> {
+        WATCHABLES
+            .iter()
+            .filter(|spec| banks_work_ram || spec.key != WRAM_BANK_KEY)
+            .map(|spec| inspect::Watchable {
+                key: spec.key,
+                label: spec.label,
+                param: spec.param,
+            })
+            .collect()
+    }
+    static WITH_WRAM: OnceLock<Vec<inspect::Watchable>> = OnceLock::new();
+    static WITHOUT_WRAM: OnceLock<Vec<inspect::Watchable>> = OnceLock::new();
+    if banks_work_ram {
+        WITH_WRAM.get_or_init(|| build(true))
+    } else {
+        WITHOUT_WRAM.get_or_init(|| build(false))
+    }
+}
+
 /// A single term is its condition; several terms are their conjunction.
 fn watch_to_condition(watch: &inspect::Watch) -> Option<WatchCondition> {
     let mut conditions = Vec::with_capacity(watch.terms.len());
@@ -548,10 +574,6 @@ impl<M: Model> Debugger<M> {
         &mut self.game_boy
     }
 
-    pub fn game_boy_take(self) -> Console<M> {
-        self.game_boy
-    }
-
     pub fn tcycle_count(&self) -> u64 {
         self.tcycle_count
     }
@@ -602,9 +624,7 @@ impl<M: Model> Debugger<M> {
         let after = self.game_boy.cpu().ir_address;
         if after != instruction_end {
             let bank_after = self.game_boy.cartridge().switchable_rom_bank();
-            let to_subroutine =
-                matches!(opcode, 0xcd | 0xc4 | 0xcc | 0xd4 | 0xdc) || opcode & 0xc7 == 0xc7;
-            let bits = if to_subroutine {
+            let bits = if crate::cpu::instructions::calls_subroutine(opcode) {
                 cdl::JUMP_TARGET | cdl::SUB_ENTRY_POINT
             } else {
                 cdl::JUMP_TARGET
@@ -631,36 +651,18 @@ impl<M: Model> Debugger<M> {
         }
     }
 
-    pub fn step_over(&mut self) -> Option<M::Screen> {
-        let mut it = InstructionsIterator::new(self.game_boy.cpu().ir_address, &self.game_boy);
-        Instruction::decode(&mut it);
-        let next_address = it.address.unwrap();
-
-        let temp_breakpoint = if self.breakpoints.contains(&next_address) {
-            None
-        } else {
-            self.breakpoints.insert(next_address);
-            Some(next_address)
-        };
-
+    /// Run frames until the program counter reaches `address` — a call's return
+    /// address — or a breakpoint or watch stops it first, carrying out the
+    /// newest screen completed on the way.
+    pub fn run_to(&mut self, address: u16) -> Option<M::Screen> {
+        let temporary = self.breakpoints.insert(address);
         let mut last_screen = None;
-
-        loop {
-            let screen = self.step_frame();
-            match screen {
-                Some(screen) => {
-                    last_screen = Some(screen);
-                }
-                None => {
-                    break;
-                }
-            }
+        while let Some(screen) = self.step_frame() {
+            last_screen = Some(screen);
         }
-
-        if let Some(temp_breakpoint) = temp_breakpoint {
-            self.breakpoints.remove(&temp_breakpoint);
+        if temporary {
+            self.breakpoints.remove(&address);
         }
-
         last_screen
     }
 
@@ -1005,46 +1007,27 @@ impl<M: Model> Debugger<M> {
     }
 
     pub fn watchables(&self) -> &'static [inspect::Watchable] {
-        use std::sync::OnceLock;
-        // `wram-bank` is meaningful only on a console that banks work RAM (CGB);
-        // a flat-WRAM console (DMG) never pages it, so it is dropped from the
-        // list there. The two buckets are keyed by that capability, not by the
-        // model type — a plain generic-fn static would be shared across all
-        // monomorphizations.
-        fn build(banks_wram: bool) -> Vec<inspect::Watchable> {
-            WATCHABLES
-                .iter()
-                .filter(|spec| banks_wram || spec.key != WRAM_BANK_KEY)
-                .map(|spec| inspect::Watchable {
-                    key: spec.key,
-                    label: spec.label,
-                    param: spec.param,
-                })
-                .collect()
-        }
-        static WITH_WRAM: OnceLock<Vec<inspect::Watchable>> = OnceLock::new();
-        static WITHOUT_WRAM: OnceLock<Vec<inspect::Watchable>> = OnceLock::new();
-        if self.game_boy.model().wram_image().is_some() {
-            WITH_WRAM.get_or_init(|| build(true))
-        } else {
-            WITHOUT_WRAM.get_or_init(|| build(false))
-        }
+        watchables(self.game_boy.model().wram_image().is_some())
+    }
+
+    /// Take the seam's stop stores as this engine's own, translating each watch
+    /// into the condition it evaluates. Called once per run, so a
+    /// per-instruction check costs no allocation.
+    pub fn load_stops(&mut self, stops: &StopSet) {
+        self.breakpoints = stops.pc.iter().map(|&address| address as u16).collect();
+        self.watchpoints = stops
+            .watches
+            .iter()
+            .filter_map(watch_to_condition)
+            .collect();
     }
 
     pub fn add_watch(&mut self, watch: inspect::Watch) {
-        if let Some(condition) = watch_to_condition(&watch) {
-            self.add_watchpoint(condition);
+        if let Some(condition) = watch_to_condition(&watch)
+            && !self.watchpoints.contains(&condition)
+        {
+            self.watchpoints.push(condition);
         }
-    }
-
-    pub fn remove_watch(&mut self, watch: inspect::Watch) {
-        if let Some(condition) = watch_to_condition(&watch) {
-            self.remove_watchpoint(&condition);
-        }
-    }
-
-    pub fn watches(&self) -> Vec<inspect::Watch> {
-        self.watchpoints.iter().map(watch_from_condition).collect()
     }
 
     pub fn last_watch_hit(&self) -> Option<inspect::Watch> {
@@ -1066,24 +1049,6 @@ impl<M: Model> Debugger<M> {
 
     pub fn clear_breakpoint(&mut self, address: u16) {
         self.breakpoints.remove(&address);
-    }
-
-    pub fn watchpoints(&self) -> &[WatchCondition] {
-        &self.watchpoints
-    }
-
-    pub fn add_watchpoint(&mut self, condition: WatchCondition) {
-        if !self.watchpoints.contains(&condition) {
-            self.watchpoints.push(condition);
-        }
-    }
-
-    pub fn remove_watchpoint(&mut self, condition: &WatchCondition) {
-        self.watchpoints.retain(|w| w != condition);
-    }
-
-    pub fn clear_watchpoints(&mut self) {
-        self.watchpoints.clear();
     }
 
     /// Capture a full T-cycle trace of one frame to a .morepork file. The full
@@ -1568,12 +1533,12 @@ mod tests {
     }
 
     #[test]
-    fn step_over_runs_a_call_to_completion() {
+    fn run_to_carries_a_call_to_its_return_address() {
         let mut debugger = Debugger::new(traced_program_console());
         debugger.step(); // NOP
         debugger.step(); // JP → at the CALL
         assert_eq!(debugger.game_boy().cpu().ir_address, 0x0150);
-        debugger.step_over();
+        debugger.run_to(0x0153);
         assert_eq!(debugger.game_boy().cpu().ir_address, 0x0153);
         assert!(debugger.breakpoints().is_empty());
     }

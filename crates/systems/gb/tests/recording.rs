@@ -11,11 +11,11 @@ use missingno_core::recording::{
     Recorder, Recording, RecordingError, ReplayError, ReplayOutcome, replay,
 };
 use missingno_core::system::{ControlId, ControlInput, ControlRole, StateError, SystemConsole};
-use missingno_gb::system::GbConsole;
+use missingno_gb::system::{GbConsole, create_console};
 
 fn dmg_console(rom: &str) -> GbConsole<missingno_gb::Dmg> {
     let run = missingno_gb::test_support::load_rom(rom);
-    GbConsole::new(run.gb, |_| None)
+    create_console(run.gb, |_| None)
 }
 
 /// Scripted control changes: (frame boundary, pad role, pressed).

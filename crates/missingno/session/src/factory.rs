@@ -59,7 +59,7 @@ mod gb {
     use super::*;
     use missingno_core::system::SystemConsole;
     use missingno_gb::cartridge::Cartridge;
-    use missingno_gb::system::GbConsole;
+    use missingno_gb::system::create_console;
     use missingno_gb::{BootRom, GameBoy, media};
     use missingno_gbc::GameBoyColor;
 
@@ -79,12 +79,12 @@ mod gb {
         let cartridge = Cartridge::new(rom.to_vec(), None);
         let boot_rom = boot_rom_for(options, cartridge.is_cgb());
         Some(if cartridge.is_cgb() {
-            Box::new(GbConsole::new(
+            Box::new(create_console(
                 GameBoyColor::new(cartridge, boot_rom),
                 no_battery,
             ))
         } else {
-            Box::new(GbConsole::new(
+            Box::new(create_console(
                 GameBoy::new(cartridge, boot_rom),
                 no_battery,
             ))

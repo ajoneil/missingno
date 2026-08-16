@@ -17,7 +17,7 @@ use missingno_core::state_file::read_state_file;
 use missingno_core::system::{StateError, SystemConsole};
 use missingno_core::video::Frame;
 use missingno_gb::cartridge::Cartridge;
-use missingno_gb::system::GbConsole;
+use missingno_gb::system::{GbConsole, create_console};
 use missingno_gb::{Dmg, GameBoy};
 use missingno_gbc::{Cgb, GameBoyColor};
 
@@ -27,7 +27,7 @@ fn cgb_console(rom: &str) -> GbConsole<Cgb> {
     let rom = std::fs::read(format!("{path}{rom}")).expect("ROM present");
     let mut gbc = GameBoyColor::new(Cartridge::new(rom, None), None);
     missingno_gb::test_support::run_boot_rom(&mut gbc);
-    GbConsole::new(gbc, |_| None)
+    create_console(gbc, |_| None)
 }
 
 fn cgb_acid2() -> GbConsole<Cgb> {
@@ -37,7 +37,7 @@ fn cgb_acid2() -> GbConsole<Cgb> {
 fn dmg_console() -> GbConsole<Dmg> {
     // A synthetic all-NOP DMG cartridge — enough to produce a DMG save state.
     let gb = GameBoy::new(Cartridge::new(vec![0u8; 0x8000], None), None);
-    GbConsole::new(gb, |_| None)
+    create_console(gb, |_| None)
 }
 
 fn frame_hash(frame: &Frame) -> u64 {
@@ -193,7 +193,7 @@ fn cgb_scratch_and_extra_oam_round_trip_deterministically() {
         ]);
         let mut gbc = GameBoyColor::new(Cartridge::new(rom, None), None);
         missingno_gb::test_support::run_boot_rom(&mut gbc);
-        GbConsole::new(gbc, |_| None)
+        create_console(gbc, |_| None)
     }
 
     let mut console = build();
@@ -259,7 +259,7 @@ fn cgb_refuses_a_double_speed_save() {
     ]);
     let mut gbc = GameBoyColor::new(Cartridge::new(rom, None), None);
     missingno_gb::test_support::run_boot_rom(&mut gbc);
-    let mut console = GbConsole::new(gbc, |_| None);
+    let mut console = create_console(gbc, |_| None);
 
     for _ in 0..5 {
         console.step_frame();

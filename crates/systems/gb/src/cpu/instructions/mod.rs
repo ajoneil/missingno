@@ -99,6 +99,12 @@ impl Instruction {
     }
 }
 
+/// Whether this opcode enters a subroutine — the CALLs, conditional or not, and
+/// the RST vectors — so control returns to the instruction after it.
+pub fn calls_subroutine(opcode: u8) -> bool {
+    matches!(opcode, 0xcd | 0xc4 | 0xcc | 0xd4 | 0xdc) || opcode & 0xc7 == 0xc7
+}
+
 /// Returns the total byte length of the instruction at the given opcode byte.
 /// This includes the opcode itself (1 byte) plus any operand bytes.
 pub fn instruction_length(opcode: u8) -> u16 {

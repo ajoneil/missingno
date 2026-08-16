@@ -15,12 +15,12 @@ use std::hash::{Hash, Hasher};
 
 use missingno_core::system::{StateError, SystemConsole};
 use missingno_core::video::Frame;
-use missingno_gb::system::GbConsole;
+use missingno_gb::system::{GbConsole, create_console};
 
 /// Wrap a freshly booted DMG console in the system seam.
 fn dmg_console(rom: &str) -> GbConsole<missingno_gb::Dmg> {
     let run = missingno_gb::test_support::load_rom(rom);
-    GbConsole::new(run.gb, |_| None)
+    create_console(run.gb, |_| None)
 }
 
 fn frame_hash(frame: &Frame) -> u64 {

@@ -358,6 +358,7 @@ fn hdma_status(status: VramDmaStatus) -> String {
 }
 
 /// A per-vblank snapshot: the model-shared state plus the CGB register view.
+#[derive(Clone)]
 pub struct CgbSnapshot {
     pub base: GbSnapshot,
     pub cgb: CgbView,
@@ -393,9 +394,6 @@ impl InspectSnapshot for CgbSnapshot {
             &self.base.cartridge,
         )
     }
-    fn memory_window(&self) -> Option<&inspect::MemoryWindow> {
-        self.base.memory_window()
-    }
     fn pc(&self) -> Option<u32> {
         self.base.pc()
     }
@@ -411,16 +409,13 @@ impl InspectSnapshot for CgbSnapshot {
     fn instruction_set(&self) -> Option<&dyn missingno_core::isa::InstructionSet> {
         self.base.instruction_set()
     }
-    fn channel_waves(&self) -> Option<Vec<missingno_core::waveform::ChannelWave>> {
-        self.base.channel_waves()
-    }
-    fn graphics(&self) -> Option<&GraphicsView> {
-        self.base.graphics()
-    }
 }
 
 impl ConsoleUi for Cgb {
     const MONOCHROME_PALETTE: bool = false;
+    const BANKS_WORK_RAM: bool = true;
+
+    type Inspect = CgbSnapshot;
 
     fn state_schema() -> Option<&'static missingno_core::state::SystemStateSchema> {
         Some(crate::state_schema::cgb_state_schema())
@@ -508,6 +503,12 @@ impl ConsoleUi for Cgb {
         console.restore_boundary(record, memory, frame)
     }
 
+    /// The colour console resolves its own pixels, so a blank panel is blank
+    /// RGBA — what an off LCD shows.
+    fn blank_display() -> Frame {
+        Frame::Rgba(RgbaFrame::blank(NATIVE_SIZE.0, NATIVE_SIZE.1))
+    }
+
     fn screen_display(console: &Console<Self>, new_screen: Option<Self::Screen>) -> Option<Frame> {
         if !console.ppu().control().video_enabled() {
             Some(Frame::Rgba(RgbaFrame::blank(NATIVE_SIZE.0, NATIVE_SIZE.1)))
@@ -535,28 +536,33 @@ impl ConsoleUi for Cgb {
         }
     }
 
-    fn snapshot(
+    fn inspect(
         console: &Console<Self>,
         frame: u64,
         symbols: Arc<SymbolTable>,
         cdl: CdlWindow,
-    ) -> DebugView {
+    ) -> CgbSnapshot {
         let ppu = console.ppu().model();
-        // Resolve the corrected CRAM palettes once and feed both the colour
-        // snapshot and the graphics decode, rather than re-resolving per surface.
         let background = cram_palettes(|palette, index| ppu.bg_color(palette, index));
         let objects = cram_palettes(|palette, index| ppu.obj_color(palette, index));
-        let graphics = console
-            .graphics_capture()
-            .then(|| cgb_graphics_view(console.ppu(), console.vram(), &background, &objects));
         let colors = ColorSnapshot::Cgb {
             background,
             objects,
         };
-        let base = GbSnapshot::capture(console, colors, frame, symbols, cdl, graphics);
-        Box::new(CgbSnapshot {
+        CgbSnapshot {
             cgb: CgbView::capture(console),
-            base,
+            base: GbSnapshot::capture(console, colors, frame, symbols, cdl),
+        }
+    }
+
+    fn shared(state: &CgbSnapshot) -> &GbSnapshot {
+        &state.base
+    }
+
+    fn snapshot(state: &CgbSnapshot, frame: u64) -> DebugView {
+        Box::new(CgbSnapshot {
+            base: state.base.at_frame(frame),
+            cgb: state.cgb.clone(),
         })
     }
 
@@ -566,23 +572,6 @@ impl ConsoleUi for Cgb {
         let objects = cram_palettes(|palette, index| ppu.obj_color(palette, index));
         cgb_graphics_view(console.ppu(), console.vram(), &background, &objects)
     }
-
-    fn sidebar_sections(console: &Console<Self>) -> Vec<inspect::Section> {
-        let ppu = console.ppu().model();
-        let background = cram_palettes(|palette, index| ppu.bg_color(palette, index));
-        let objects = cram_palettes(|palette, index| ppu.obj_color(palette, index));
-        cgb_sidebar_sections(
-            console.cpu(),
-            console.ppu(),
-            console.interrupts(),
-            &TimersView::capture(console.timers()),
-            &AudioView::capture(console.audio()),
-            &CgbView::capture(console),
-            &background,
-            &objects,
-            &console.cartridge().inspect(),
-        )
-    }
 }
 
 #[cfg(test)]
@@ -590,6 +579,17 @@ mod tests {
     use super::*;
     use missingno_gb::cartridge::Cartridge;
     use missingno_gb::debugger::Debugger;
+
+    /// The sidebar as the debugger draws it: from a capture off the console.
+    fn sections(console: &GameBoyColor) -> Vec<inspect::Section> {
+        Cgb::inspect(
+            console,
+            0,
+            Arc::new(SymbolTable::default()),
+            CdlWindow::default(),
+        )
+        .sidebar_sections()
+    }
 
     #[test]
     fn snapshot_sidebar_sections_match_live() {
@@ -602,8 +602,21 @@ mod tests {
         }
         let console = debugger.game_boy();
 
-        let live = Cgb::sidebar_sections(console);
-        let snapshot = Cgb::snapshot(
+        let ppu = console.ppu().model();
+        let background = cram_palettes(|palette, index| ppu.bg_color(palette, index));
+        let objects = cram_palettes(|palette, index| ppu.obj_color(palette, index));
+        let live = cgb_sidebar_sections(
+            console.cpu(),
+            console.ppu(),
+            console.interrupts(),
+            &TimersView::capture(console.timers()),
+            &AudioView::capture(console.audio()),
+            &CgbView::capture(console),
+            &background,
+            &objects,
+            &console.cartridge().inspect(),
+        );
+        let captured = Cgb::inspect(
             console,
             0,
             Arc::new(SymbolTable::default()),
@@ -611,7 +624,7 @@ mod tests {
         );
         assert_eq!(
             format!("{live:?}"),
-            format!("{:?}", snapshot.sidebar_sections())
+            format!("{:?}", captured.sidebar_sections())
         );
     }
 
@@ -744,14 +757,14 @@ mod tests {
         for _ in 0..4 {
             debugger.step();
         }
-        let sections = Cgb::sidebar_sections(debugger.game_boy());
+        let sections = sections(debugger.game_boy());
         assert!(sections.iter().any(|section| section.name == "APU"));
     }
 
     #[test]
     fn cram_swatches_carry_the_raw_words() {
         let debugger = stepped_cgb();
-        let sections = Cgb::sidebar_sections(debugger.game_boy());
+        let sections = sections(debugger.game_boy());
         let cram = sections
             .iter()
             .find(|section| section.name == "CRAM")
@@ -789,28 +802,10 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_graphics_matches_live_and_is_gated() {
+    fn cgb_graphics_view_decodes_both_banks() {
         let mut debugger = stepped_cgb();
-        // Disabled: the snapshot carries no graphics.
-        let off = Cgb::snapshot(
-            debugger.game_boy(),
-            0,
-            Arc::new(SymbolTable::default()),
-            CdlWindow::default(),
-        );
-        assert!(off.graphics().is_none());
-
-        // Enabled: the running snapshot equals the live (paused) view.
         debugger.game_boy_mut().set_graphics_capture(true);
-        let console = debugger.game_boy();
-        let live = Cgb::graphics_view(console);
-        let on = Cgb::snapshot(
-            console,
-            0,
-            Arc::new(SymbolTable::default()),
-            CdlWindow::default(),
-        );
-        assert_eq!(on.graphics(), Some(&live));
+        let live = Cgb::graphics_view(debugger.game_boy());
         // Two banks, both core-owned CRAM palettes; maps carry per-cell palette.
         assert_eq!(live.atlases.len(), 2);
         assert!(

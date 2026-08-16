@@ -6,7 +6,7 @@
 use missingno_core::recording::{Recorder, Recording, ReplayOutcome, replay};
 use missingno_core::system::{ControlId, ControlInput, ControlRole, SystemConsole};
 use missingno_gb::cartridge::Cartridge;
-use missingno_gb::system::GbConsole;
+use missingno_gb::system::{GbConsole, create_console};
 use missingno_gbc::{Cgb, GameBoyColor};
 
 fn cgb_console(rom: &str) -> GbConsole<Cgb> {
@@ -14,7 +14,7 @@ fn cgb_console(rom: &str) -> GbConsole<Cgb> {
     let rom = std::fs::read(format!("{path}{rom}")).expect("ROM present");
     let mut gbc = GameBoyColor::new(Cartridge::new(rom, None), None);
     missingno_gb::test_support::run_boot_rom(&mut gbc);
-    GbConsole::new(gbc, |_| None)
+    create_console(gbc, |_| None)
 }
 
 const SCRIPT: &[(u64, ControlRole, bool)] = &[

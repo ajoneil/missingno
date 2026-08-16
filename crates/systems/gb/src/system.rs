@@ -1,8 +1,10 @@
-//! The Game Boy family's implementation of the system seam. One generic impl
-//! serves both models; [`ConsoleUi`] carries the DMG↔CGB divergences (screen
-//! framing and the debugger snapshot).
+//! The Game Boy family's binding to the machine seam: the core the hooks drive
+//! — the console under its debugging backend, plus the link port and the
+//! battery-save format the frontend owns — and the hooks themselves. One
+//! generic impl serves both models; [`ConsoleUi`] carries the DMG↔CGB
+//! divergences (screen framing, state schema, and the debugger capture).
 
-use std::collections::BTreeSet;
+use std::marker::PhantomData;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,23 +13,28 @@ use missingno_core::HighPass;
 use missingno_core::graphics::GraphicsView;
 use missingno_core::inspect;
 use missingno_core::isa::InstructionSet;
+use missingno_core::machine::{
+    BoundaryState, CoreRun, CoreStop, Machine, MachineConsole, StateIdentity, StopSet,
+};
 use missingno_core::ports::{
     ControlDescriptor, ControlKind, PeripheralDescriptor, PeripheralId, PlugError, PortDescriptor,
     PortId, Provider,
 };
 use missingno_core::state::{StateRecord, SystemStateSchema};
-use missingno_core::state_file::{StateFrame, StateMeta, read_state_file, write_state_file};
+use missingno_core::state_file::StateFrame;
 use missingno_core::symbols::{Symbol, SymbolTable};
 use missingno_core::system::{
-    ControlId, ControlInput, ControlRole, ControlSite, DebugView, FrameOutcome, RunningStatus,
-    StateError, StepOutcome, SystemConsole, SystemDebugger,
+    ControlId, ControlInput, ControlRole, ControlSite, DebugView, InspectSnapshot, RunningStatus,
+    StateError,
 };
 use missingno_core::video::{DisplayTechnology, Frame, RawFrame};
+use missingno_core::waveform::ChannelWave;
 
 use crate::cartridge::Cartridge;
+use crate::cpu::instructions::{calls_subroutine, instruction_length};
 use crate::debugger::cdl::{CdlWindow, CodeDataLog};
 use crate::debugger::inspection::{ColorSnapshot, GbSnapshot};
-use crate::debugger::{Debugger, WatchCondition};
+use crate::debugger::{Debugger, watchables};
 use crate::frame::{GameBoyScreen, GbFrame, NATIVE_SIZE, SgbScreen};
 use crate::joypad::Button;
 use crate::sgb::MaskMode;
@@ -42,11 +49,20 @@ const FRAME_INTERVAL: Duration = Duration::from_micros(16_740);
 pub type BatterySave = fn(&Cartridge) -> Option<Vec<u8>>;
 
 /// How each console model presents to the system seam: its monochrome-palette
-/// flag, its screen framing, and the per-vblank debugger snapshot it builds.
+/// flag, its screen framing, its state schema, and the per-vblank capture the
+/// debugger renders from.
 pub trait ConsoleUi: Model {
     /// DMG renders through a user-selectable monochrome palette; CGB is
     /// colour. Gates the play-mode Display panel's palette picker.
     const MONOCHROME_PALETTE: bool;
+
+    /// Whether this console pages work RAM (CGB), which decides whether the
+    /// `wram-bank` watch is one it can name.
+    const BANKS_WORK_RAM: bool;
+
+    /// The state a per-vblank capture carries: the model-shared view, plus
+    /// whatever extra register state the model draws.
+    type Inspect: InspectSnapshot + Clone + 'static;
 
     /// This model's hardware state schema, if it authors one. DMG returns its
     /// schema; CGB composes it as the DMG fields plus its colour delta.
@@ -82,22 +98,28 @@ pub trait ConsoleUi: Model {
     /// as-is.
     fn screen_display(console: &Console<Self>, new_screen: Option<Self::Screen>) -> Option<Frame>;
 
+    /// What the display shows before the first frame completes.
+    fn blank_display() -> Frame;
+
     /// The current screen in its pre-resolution domain (DMG shade indices, CGB
     /// RGB555 words) — the values the accuracy references compare in.
     fn raw_frame(console: &Console<Self>) -> RawFrame;
 
-    /// A per-vblank inspection snapshot for the UI to render while running.
-    fn snapshot(
+    /// Copy the state the debugger renders from off the console, so the UI
+    /// reads it while the core runs on the emulation thread.
+    fn inspect(
         console: &Console<Self>,
         frame: u64,
         symbols: Arc<SymbolTable>,
         cdl: CdlWindow,
-    ) -> DebugView;
+    ) -> Self::Inspect;
 
-    /// The whole left-column sidebar for this console, composed from the shared
-    /// section part-builders — each system decides its own sections and where
-    /// its console-specific state sits.
-    fn sidebar_sections(console: &Console<Self>) -> Vec<inspect::Section>;
+    /// The model-shared part of a capture, which the seam reads for the answers
+    /// both models give identically.
+    fn shared(state: &Self::Inspect) -> &GbSnapshot;
+
+    /// A capture stamped with the UI's frame counter, ready to publish.
+    fn snapshot(state: &Self::Inspect, frame: u64) -> DebugView;
 
     /// The decoded graphics surfaces (tile atlases, maps, object table) for this
     /// console. One builder serves the live console (paused) and the per-vblank
@@ -108,6 +130,9 @@ pub trait ConsoleUi: Model {
 
 impl ConsoleUi for Dmg {
     const MONOCHROME_PALETTE: bool = true;
+    const BANKS_WORK_RAM: bool = false;
+
+    type Inspect = GbSnapshot;
 
     fn state_schema() -> Option<&'static SystemStateSchema> {
         Some(crate::state_schema::dmg_state_schema())
@@ -157,6 +182,11 @@ impl ConsoleUi for Dmg {
         }
     }
 
+    /// The panel before the first frame reads as it does with the LCD off.
+    fn blank_display() -> Frame {
+        Frame::Console(Box::new(GbFrame::GameBoy(GameBoyScreen::Off)))
+    }
+
     fn raw_frame(console: &Console<Self>) -> RawFrame {
         use crate::ppu::screen::{NUM_SCANLINES, PIXELS_PER_LINE};
         let screen = console.screen();
@@ -170,33 +200,24 @@ impl ConsoleUi for Dmg {
         }
     }
 
-    fn snapshot(
+    fn inspect(
         console: &Console<Self>,
         frame: u64,
         symbols: Arc<SymbolTable>,
         cdl: CdlWindow,
-    ) -> DebugView {
+    ) -> GbSnapshot {
         let colors = ColorSnapshot::Dmg {
             sgb: console.sgb().is_some(),
         };
-        let graphics = console
-            .graphics_capture()
-            .then(|| Self::graphics_view(console));
-        Box::new(GbSnapshot::capture(
-            console, colors, frame, symbols, cdl, graphics,
-        ))
+        GbSnapshot::capture(console, colors, frame, symbols, cdl)
     }
 
-    fn sidebar_sections(console: &Console<Self>) -> Vec<inspect::Section> {
-        use crate::debugger::inspection::{AudioView, TimersView, dmg_sidebar_sections};
-        dmg_sidebar_sections(
-            console.cpu(),
-            console.ppu(),
-            console.interrupts(),
-            &TimersView::capture(console.timers()),
-            &AudioView::capture(console.audio()),
-            &console.cartridge().inspect(),
-        )
+    fn shared(state: &GbSnapshot) -> &GbSnapshot {
+        state
+    }
+
+    fn snapshot(state: &GbSnapshot, frame: u64) -> DebugView {
+        Box::new(state.at_frame(frame))
     }
 
     fn graphics_view(console: &Console<Self>) -> GraphicsView {
@@ -204,17 +225,11 @@ impl ConsoleUi for Dmg {
     }
 }
 
-/// A hex SHA-256 of the cartridge ROM, so a save state can refuse a ROM it was
-/// not written for.
-fn rom_sha256(cartridge: &Cartridge) -> String {
+/// SHA-256 of the cartridge ROM, so a save state can refuse a ROM it was not
+/// written for.
+fn rom_fingerprint(cartridge: &Cartridge) -> [u8; 32] {
     use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(cartridge.rom());
-    hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    Sha256::digest(cartridge.rom()).into()
 }
 
 /// The current frame in its pre-resolution domain, as a save-state framebuffer
@@ -253,54 +268,6 @@ fn state_frame(raw: &RawFrame) -> StateFrame {
             data: pixels.clone(),
         },
     }
-}
-
-/// Serialize the console's boundary state into a save file: the schema-keyed
-/// record, the RAM spans, and the current framebuffer. `None` when the model
-/// authors no state schema, or the console is mid-instruction — a save is only
-/// faithful at an instruction boundary, where the CPU carries no
-/// micro-sequencer residue (a fetch boundary, or halted waiting on an
-/// interrupt).
-fn save_state_bytes<M: ConsoleUi>(console: &Console<M>) -> Option<Vec<u8>> {
-    if !console.cpu().is_fetch_phase() && !console.cpu().is_halted() {
-        return None;
-    }
-    let schema = M::state_schema()?;
-    let record = M::read_state(console)?;
-    let memory = M::capture_memory(console);
-    let frame = state_frame(&M::raw_frame(console));
-    let hash = rom_sha256(console.cartridge());
-    let meta = StateMeta {
-        system: schema.system,
-        rom_sha256: Some(&hash),
-        emulator: "missingno",
-        emulator_version: env!("CARGO_PKG_VERSION"),
-    };
-    write_state_file(&meta, &record, &memory, Some(&frame)).ok()
-}
-
-/// Restore the console from a save file, rejecting a state for the wrong system
-/// or ROM, an unsupported version, or a record that fails schema validation.
-fn load_state_into<M: ConsoleUi>(console: &mut Console<M>, bytes: &[u8]) -> Result<(), StateError> {
-    use missingno_core::state_file::StateFileError;
-
-    let schema = M::state_schema().ok_or(StateError::Unsupported)?;
-    let file = read_state_file(bytes).map_err(|error| match error {
-        StateFileError::UnsupportedVersion(_) => StateError::VersionMismatch,
-        _ => StateError::Corrupt,
-    })?;
-    if file.system != schema.system {
-        return Err(StateError::WrongSystem);
-    }
-    if let Some(fingerprint) = &file.rom_sha256
-        && *fingerprint != rom_sha256(console.cartridge())
-    {
-        return Err(StateError::IncompatibleRom);
-    }
-    let record = schema
-        .record_from(file.fields)
-        .map_err(|_| StateError::Corrupt)?;
-    M::restore_state(console, &record, file.memory, file.frame.as_ref())
 }
 
 /// The pad moulded into the console's own case.
@@ -398,37 +365,148 @@ fn button_for_control(control: ControlId) -> Option<Button> {
     })
 }
 
-/// A Game Boy core adapted to the seam. One generic wrapper serves both models;
-/// [`ConsoleUi`] carries the divergences.
-pub struct GbConsole<M: ConsoleUi> {
-    console: Console<M>,
+/// What the seam drives: the console under its debugging backend, the link-port
+/// peripheral it reports, and the battery-save format the frontend supplies.
+pub struct GbCore<M: ConsoleUi> {
+    debugger: Debugger<M>,
     battery_save: BatterySave,
     link: PeripheralId,
+    /// The display a completed step produced, waiting for the seam to take it.
+    pending: Option<Frame>,
+    /// Battery-backed writes seen since the seam last took the flag.
+    sram_dirty: bool,
 }
 
-impl<M: ConsoleUi> GbConsole<M> {
-    pub fn new(console: Console<M>, battery_save: BatterySave) -> Self {
-        Self::with_link(console, battery_save, LINK_DISCONNECTED)
-    }
-
-    /// Wrap a console whose link port already carries a host-built peripheral:
-    /// the object went in through [`Console::set_link`], and `link` names which
-    /// kind it was so the port reads back truthfully.
-    pub fn with_link(console: Console<M>, battery_save: BatterySave, link: PeripheralId) -> Self {
-        Self {
-            console,
+impl<M: ConsoleUi> GbCore<M> {
+    fn new(console: Console<M>, battery_save: BatterySave, link: PeripheralId) -> Self {
+        GbCore {
+            debugger: Debugger::new(console),
             battery_save,
             link,
+            pending: None,
+            sram_dirty: false,
+        }
+    }
+
+    fn console(&self) -> &Console<M> {
+        self.debugger.game_boy()
+    }
+
+    fn console_mut(&mut self) -> &mut Console<M> {
+        self.debugger.game_boy_mut()
+    }
+
+    /// A step result mapped for display: the console may show something (LCD
+    /// off, SGB freeze) even when no new frame completed.
+    fn display(&self, screen: Option<M::Screen>) -> Option<Frame> {
+        M::screen_display(self.console(), screen)
+    }
+
+    fn cdl_window(&self) -> CdlWindow {
+        let console = self.console();
+        self.debugger.cdl().window(
+            console.cpu().ir_address,
+            console.cartridge().switchable_rom_bank(),
+        )
+    }
+
+    /// Why a run that stopped short of its boundary stopped: a watch names
+    /// itself, otherwise the pc has reached a breakpoint.
+    fn stop_reason(&self, stops: &StopSet) -> CoreStop {
+        match self.debugger.last_watch_hit() {
+            Some(watch) => CoreStop::WatchHit(watch),
+            None if stops.pc.contains(&(self.console().cpu().ir_address as u32)) => {
+                CoreStop::Breakpoint
+            }
+            None => CoreStop::BudgetExhausted,
         }
     }
 }
 
-impl<M: ConsoleUi + 'static> SystemConsole for GbConsole<M>
+/// A Game Boy adapted to the machine seam. One generic system serves both
+/// models; [`ConsoleUi`] carries the divergences.
+pub struct GbSystem<M>(PhantomData<M>);
+
+/// A Game Boy under the seam's console wrapper.
+pub type GbConsole<M> = MachineConsole<GbSystem<M>>;
+
+/// Wrap a console for the seam, binding its save states to the loaded ROM.
+pub fn create_console<M: ConsoleUi + 'static>(
+    console: Console<M>,
+    battery_save: BatterySave,
+) -> GbConsole<M>
 where
     Console<M>: Send,
 {
-    fn step_frame(&mut self) -> FrameOutcome {
-        let console = &mut self.console;
+    create_console_with_link(console, battery_save, LINK_DISCONNECTED)
+}
+
+/// Wrap a console whose link port already carries a host-built peripheral: the
+/// object went in through [`Console::set_link`], and `link` names which kind it
+/// was so the port reads back truthfully.
+pub fn create_console_with_link<M: ConsoleUi + 'static>(
+    console: Console<M>,
+    battery_save: BatterySave,
+    link: PeripheralId,
+) -> GbConsole<M>
+where
+    Console<M>: Send,
+{
+    let fingerprint = rom_fingerprint(console.cartridge());
+    let title = console.cartridge().title().to_string();
+    MachineConsole::new(GbCore::new(console, battery_save, link), title).with_identity(
+        StateIdentity {
+            rom_fingerprint: fingerprint,
+        },
+    )
+}
+
+impl<M: ConsoleUi + 'static> Machine for GbSystem<M>
+where
+    Console<M>: Send,
+{
+    type Core = GbCore<M>;
+    /// The family's frame is the composed display: what a completed step shows
+    /// reads console state (the LCD's enable, an SGB mask) the display hook
+    /// cannot see.
+    type Frame = Frame;
+    type InspectState = M::Inspect;
+
+    const FRAME_INTERVAL: Duration = FRAME_INTERVAL;
+    // The run hooks drive the engine to the console's own boundaries — a
+    // completed frame, a call's return address — and never count instructions;
+    // the seam asks for a floor all the same.
+    const RUN_BUDGET: u32 = 200_000;
+
+    fn pc(core: &GbCore<M>) -> u16 {
+        core.console().cpu().ir_address
+    }
+
+    fn peek(core: &GbCore<M>, address: u16) -> u8 {
+        core.console().peek(address)
+    }
+
+    fn peek_region(core: &GbCore<M>, address: u32) -> u8 {
+        core.debugger.peek(address)
+    }
+
+    fn instruction_set() -> Option<&'static dyn InstructionSet> {
+        Some(&crate::isa::Sm83)
+    }
+
+    fn step_instruction(core: &mut GbCore<M>) {
+        let screen = core.debugger.step();
+        core.pending = core.display(screen);
+    }
+
+    fn take_frame(core: &mut GbCore<M>) -> Option<Frame> {
+        core.pending.take()
+    }
+
+    /// One frame on the console's own budget: run until the PPU presents,
+    /// bounded at two frames' worth of dots so an off LCD cannot stall it.
+    fn step_frame(core: &mut GbCore<M>) -> Option<Frame> {
+        let console = core.console_mut();
         let max = 70224 * 2 * console.cpu_steps_per_dot() as u32;
         let mut tcycles = 0;
         let mut sram_dirty = false;
@@ -442,496 +520,414 @@ where
         }
         console.sync_audio();
         console.sync_ppu();
-        FrameOutcome {
-            display: Some(SystemConsole::screen_display(self)),
-            sram_dirty,
-        }
-    }
-
-    fn reset(&mut self) {
-        Console::reset(&mut self.console);
-    }
-
-    fn uses_monochrome_palette(&self) -> bool {
-        M::MONOCHROME_PALETTE
-    }
-
-    fn supports_sgb(&self) -> bool {
-        Console::cartridge(&self.console).supports_sgb()
-    }
-
-    fn set_control(&mut self, control: ControlId, input: ControlInput) {
-        let (Some(button), ControlInput::Digital(pressed)) = (button_for_control(control), input)
-        else {
-            return;
-        };
-        if pressed {
-            Console::press_button(&mut self.console, button);
-        } else {
-            Console::release_button(&mut self.console, button);
-        }
-    }
-
-    fn integrated_controls(&self) -> &'static [ControlDescriptor] {
-        PAD
-    }
-
-    fn ports(&self) -> &'static [PortDescriptor] {
-        PORTS
-    }
-
-    fn plugged(&self, port: PortId) -> Option<PeripheralId> {
-        (port == LINK_PORT).then_some(self.link)
-    }
-
-    fn plug(&mut self, port: PortId, peripheral: PeripheralId) -> Result<(), PlugError> {
-        plug_link(&mut self.console, &mut self.link, port, peripheral)
-    }
-
-    fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
-        Console::drain_audio_samples(&mut self.console)
-    }
-
-    fn audio_coupling(&self) -> Option<HighPass> {
-        Some(crate::board::audio_coupling())
-    }
-
-    fn screen_display(&self) -> Frame {
-        M::screen_display(&self.console, Some(self.console.screen().clone()))
-            .expect("screen_display is always Some when given a screen")
-    }
-
-    fn video_out(&self) -> DisplayTechnology {
-        DisplayTechnology::Lcd {
-            native: crate::frame::NATIVE_SIZE,
-            panel: M::LCD_PANEL,
-            pixel_aspect: 1.0,
-        }
-    }
-
-    fn game_title(&self) -> String {
-        Console::cartridge(&self.console).title().to_string()
-    }
-
-    fn battery_save(&self) -> Option<Vec<u8>> {
-        (self.battery_save)(Console::cartridge(&self.console))
-    }
-
-    fn frame_interval(&self) -> Duration {
-        FRAME_INTERVAL
-    }
-
-    fn state_schema(&self) -> Option<&'static SystemStateSchema> {
-        M::state_schema()
-    }
-
-    fn read_state(&self) -> Option<StateRecord> {
-        M::read_state(&self.console)
-    }
-
-    fn save_state(&self) -> Option<Vec<u8>> {
-        save_state_bytes(&self.console)
-    }
-
-    fn load_state(&mut self, bytes: &[u8]) -> Result<(), StateError> {
-        load_state_into(&mut self.console, bytes)
-    }
-
-    fn into_debugger(self: Box<Self>) -> Box<dyn SystemDebugger> {
-        Box::new(GbDebugger {
-            core: Debugger::new(self.console),
-            battery_save: self.battery_save,
-            link: self.link,
-        })
-    }
-}
-
-/// A Game Boy core under the debugger backend, adapting it to the seam.
-pub struct GbDebugger<M: ConsoleUi> {
-    core: Debugger<M>,
-    battery_save: BatterySave,
-    link: PeripheralId,
-}
-
-impl<M: ConsoleUi> GbDebugger<M> {
-    /// A step result mapped for display: the system may show something (LCD
-    /// off, SGB freeze) even when no new frame completed.
-    fn display(&self, screen: Option<M::Screen>) -> Option<Frame> {
-        M::screen_display(self.core.game_boy(), screen)
-    }
-
-    fn cdl_window(&self) -> CdlWindow {
-        let console = self.core.game_boy();
-        self.core.cdl().window(
-            console.cpu().ir_address,
-            console.cartridge().switchable_rom_bank(),
+        core.sram_dirty |= sram_dirty;
+        let screen = core.console().screen().clone();
+        Some(
+            core.display(Some(screen))
+                .expect("a screen given always displays"),
         )
     }
 
-    /// The live console, for a family extension surface to read model-specific
-    /// state the object-safe seam does not expose.
-    pub fn console(&self) -> &Console<M> {
-        self.core.game_boy()
+    fn power_cycle(core: &mut GbCore<M>) {
+        core.debugger.reset();
     }
 
-    /// Advance one dot (T-cycle) — the finest step the seam's instruction- and
-    /// frame-granularity stepping cannot express.
-    pub fn step_tcycle(&mut self) {
-        self.core.step_tcycle();
-    }
-
-    pub fn watchpoints(&self) -> &[WatchCondition] {
-        self.core.watchpoints()
-    }
-
-    pub fn add_watchpoint(&mut self, condition: WatchCondition) {
-        self.core.add_watchpoint(condition);
-    }
-
-    pub fn remove_watchpoint(&mut self, condition: &WatchCondition) {
-        self.core.remove_watchpoint(condition);
-    }
-
-    pub fn clear_watchpoints(&mut self) {
-        self.core.clear_watchpoints();
-    }
-
-    pub fn last_watchpoint_hit(&self) -> Option<&WatchCondition> {
-        self.core.last_watchpoint_hit()
-    }
-}
-
-impl<M: ConsoleUi + 'static> SystemConsole for GbDebugger<M>
-where
-    Console<M>: Send,
-{
-    /// One frame under the debugger: the breakpoints and watches still stop it,
-    /// and the host learns why only through [`SystemDebugger::run_frame`].
-    fn step_frame(&mut self) -> FrameOutcome {
-        FrameOutcome {
-            display: SystemDebugger::run_frame(self).into_frame(),
-            sram_dirty: false,
-        }
-    }
-
-    fn reset(&mut self) {
-        self.core.reset();
-    }
-
-    fn uses_monochrome_palette(&self) -> bool {
-        M::MONOCHROME_PALETTE
-    }
-
-    fn supports_sgb(&self) -> bool {
-        self.core.game_boy().cartridge().supports_sgb()
-    }
-
-    fn set_control(&mut self, control: ControlId, input: ControlInput) {
+    fn apply_control(core: &mut GbCore<M>, control: ControlId, input: ControlInput) {
         let (Some(button), ControlInput::Digital(pressed)) = (button_for_control(control), input)
         else {
             return;
         };
         if pressed {
-            self.core.game_boy_mut().press_button(button);
+            core.console_mut().press_button(button);
         } else {
-            self.core.game_boy_mut().release_button(button);
+            core.console_mut().release_button(button);
         }
     }
 
-    fn integrated_controls(&self) -> &'static [ControlDescriptor] {
-        PAD
-    }
-
-    fn ports(&self) -> &'static [PortDescriptor] {
+    fn ports() -> &'static [PortDescriptor] {
         PORTS
     }
 
-    fn plugged(&self, port: PortId) -> Option<PeripheralId> {
-        (port == LINK_PORT).then_some(self.link)
+    fn plugged(core: &GbCore<M>, port: PortId) -> Option<PeripheralId> {
+        (port == LINK_PORT).then_some(core.link)
     }
 
-    fn plug(&mut self, port: PortId, peripheral: PeripheralId) -> Result<(), PlugError> {
-        plug_link(self.core.game_boy_mut(), &mut self.link, port, peripheral)
+    fn plug(core: &mut GbCore<M>, port: PortId, peripheral: PeripheralId) -> Result<(), PlugError> {
+        let GbCore { debugger, link, .. } = core;
+        plug_link(debugger.game_boy_mut(), link, port, peripheral)
     }
 
-    fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
-        self.core.game_boy_mut().drain_audio_samples()
+    fn integrated_controls() -> &'static [ControlDescriptor] {
+        PAD
     }
 
-    fn audio_coupling(&self) -> Option<HighPass> {
+    fn drain_audio_samples(core: &mut GbCore<M>) -> Vec<(f32, f32)> {
+        core.console_mut().drain_audio_samples()
+    }
+
+    fn audio_coupling() -> Option<HighPass> {
         Some(crate::board::audio_coupling())
     }
 
-    fn screen_display(&self) -> Frame {
-        self.display(Some(self.core.game_boy().screen().clone()))
-            .expect("screen_display is always Some when given a screen")
-    }
-
-    fn video_out(&self) -> DisplayTechnology {
+    fn video_out(_core: &GbCore<M>) -> DisplayTechnology {
         DisplayTechnology::Lcd {
-            native: crate::frame::NATIVE_SIZE,
+            native: NATIVE_SIZE,
             panel: M::LCD_PANEL,
             pixel_aspect: 1.0,
         }
     }
 
-    fn game_title(&self) -> String {
-        self.core.game_boy().cartridge().title().to_string()
+    fn display_frame(frame: &Frame) -> Frame {
+        frame.clone()
     }
 
-    fn battery_save(&self) -> Option<Vec<u8>> {
-        (self.battery_save)(self.core.game_boy().cartridge())
+    fn blank_display() -> Frame {
+        M::blank_display()
     }
 
-    fn frame_interval(&self) -> Duration {
-        FRAME_INTERVAL
+    fn frame_raw(core: &GbCore<M>) -> Option<RawFrame> {
+        Some(M::raw_frame(core.console()))
     }
 
-    fn state_schema(&self) -> Option<&'static SystemStateSchema> {
+    fn uses_monochrome_palette() -> bool {
+        M::MONOCHROME_PALETTE
+    }
+
+    fn supports_sgb(core: &GbCore<M>) -> bool {
+        core.console().cartridge().supports_sgb()
+    }
+
+    fn take_sram_dirty(core: &mut GbCore<M>) -> bool {
+        std::mem::take(&mut core.sram_dirty)
+    }
+
+    fn battery_save(core: &GbCore<M>) -> Option<Vec<u8>> {
+        (core.battery_save)(core.console().cartridge())
+    }
+
+    fn state_schema() -> Option<&'static SystemStateSchema> {
         M::state_schema()
     }
 
-    fn read_state(&self) -> Option<StateRecord> {
-        M::read_state(self.core.game_boy())
+    fn read_state(core: &GbCore<M>) -> Option<StateRecord> {
+        M::read_state(core.console())
     }
 
-    fn save_state(&self) -> Option<Vec<u8>> {
-        save_state_bytes(self.core.game_boy())
-    }
-
-    fn load_state(&mut self, bytes: &[u8]) -> Result<(), StateError> {
-        load_state_into(self.core.game_boy_mut(), bytes)
-    }
-
-    fn into_debugger(self: Box<Self>) -> Box<dyn SystemDebugger> {
-        self
-    }
-}
-
-impl<M: ConsoleUi + 'static> SystemDebugger for GbDebugger<M>
-where
-    Console<M>: Send,
-{
-    fn step(&mut self) -> StepOutcome {
-        let screen = self.core.step();
-        StepOutcome::Completed {
-            frame: self.display(screen),
+    /// A save is only faithful at an instruction boundary, where the CPU carries
+    /// no micro-sequencer residue — a fetch boundary, or halted waiting on an
+    /// interrupt.
+    fn capture_boundary(core: &GbCore<M>) -> Result<BoundaryState, StateError> {
+        let console = core.console();
+        if !console.cpu().is_fetch_phase() && !console.cpu().is_halted() {
+            return Err(StateError::NotAtBoundary);
         }
+        let record = M::read_state(console).ok_or(StateError::Unsupported)?;
+        Ok(BoundaryState {
+            record,
+            memory: M::capture_memory(console),
+            frame: Some(state_frame(&M::raw_frame(console))),
+        })
     }
 
-    fn step_over(&mut self) -> StepOutcome {
-        let screen = self.core.step_over();
-        StepOutcome::Completed {
-            frame: self.display(screen),
-        }
+    fn restore_boundary(
+        core: &mut GbCore<M>,
+        record: &StateRecord,
+        memory: &[(String, Vec<u8>)],
+        frame: Option<&StateFrame>,
+    ) -> Result<(), StateError> {
+        M::restore_state(core.console_mut(), record, memory.to_vec(), frame)
     }
 
-    fn run_frame(&mut self) -> StepOutcome {
-        let screen = self.core.step_frame();
-        // The core stops early (no completed frame) on a breakpoint or watch;
-        // `last_watch_hit` names which, without changing the stop condition.
-        let stopped_early = screen.is_none();
-        let frame = self.display(screen);
-        if stopped_early {
-            match self.core.last_watch_hit() {
-                Some(watch) => StepOutcome::WatchHit(watch),
-                None => StepOutcome::Breakpoint { frame },
-            }
-        } else {
-            StepOutcome::Completed { frame }
-        }
+    /// A call runs to the address it returns to; every other instruction steps.
+    fn step_over_target(core: &GbCore<M>) -> Option<u16> {
+        let console = core.console();
+        let address = console.cpu().ir_address;
+        let opcode = console.peek(address);
+        calls_subroutine(opcode).then(|| address.wrapping_add(instruction_length(opcode)))
     }
 
-    fn tick_name(&self) -> Option<&'static str> {
+    fn tick_name() -> Option<&'static str> {
         Some("dot")
     }
 
-    fn step_tick(&mut self) {
-        self.core.step_tcycle();
+    fn step_tick(core: &mut GbCore<M>) {
+        core.debugger.step_tcycle();
     }
 
-    fn frame_raw(&self) -> Option<RawFrame> {
-        Some(M::raw_frame(self.core.game_boy()))
+    /// Run until the PPU presents a frame, a breakpoint fires, or a watch hits.
+    /// The engine evaluates the watches at the sub-instruction points they are
+    /// defined on, so the seam's stores are handed to it whole.
+    fn run_frame(core: &mut GbCore<M>, stops: &StopSet) -> CoreRun<Frame> {
+        core.debugger.load_stops(stops);
+        let screen = core.debugger.step_frame();
+        let stopped_early = screen.is_none();
+        let frame = core.display(screen);
+        let stop = match stopped_early {
+            true => core.stop_reason(stops),
+            false => CoreStop::Completed,
+        };
+        CoreRun { stop, frame }
     }
 
-    fn set_wave_capture(&mut self, on: bool) {
-        self.core.game_boy_mut().set_wave_capture(on);
+    /// Run to the address the call returns to, carrying out the newest frame
+    /// completed on the way.
+    fn run_step_over(core: &mut GbCore<M>, stops: &StopSet, return_address: u16) -> CoreRun<Frame> {
+        core.debugger.load_stops(stops);
+        let screen = core.debugger.run_to(return_address);
+        let frame = core.display(screen);
+        let stop = match core.console().cpu().ir_address == return_address {
+            true => CoreStop::Completed,
+            false => core.stop_reason(stops),
+        };
+        CoreRun { stop, frame }
     }
 
-    fn channel_waves(&self) -> Option<Vec<missingno_core::waveform::ChannelWave>> {
-        self.core.game_boy().channel_waves()
+    fn memory_regions(core: &GbCore<M>) -> Vec<inspect::MemoryRegion> {
+        core.debugger.memory_regions()
     }
 
-    fn set_graphics_capture(&mut self, on: bool) {
-        self.core.game_boy_mut().set_graphics_capture(on);
-    }
-
-    fn graphics(&self) -> Option<GraphicsView> {
-        let console = self.core.game_boy();
-        console
-            .graphics_capture()
-            .then(|| M::graphics_view(console))
-    }
-
-    fn set_breakpoint(&mut self, address: u32) {
-        self.core.set_breakpoint(address as u16);
-    }
-
-    fn clear_breakpoint(&mut self, address: u32) {
-        self.core.clear_breakpoint(address as u16);
-    }
-
-    fn breakpoints(&self) -> BTreeSet<u32> {
-        self.core.breakpoints().iter().map(|&a| a as u32).collect()
-    }
-
-    fn register_groups(&self) -> Vec<inspect::RegisterGroup> {
-        self.core.register_groups()
-    }
-
-    fn sidebar_sections(&self) -> Vec<inspect::Section> {
-        M::sidebar_sections(self.core.game_boy())
-    }
-
-    fn memory_regions(&self) -> Vec<inspect::MemoryRegion> {
-        self.core.memory_regions()
-    }
-
-    fn peek(&self, address: u32) -> u8 {
-        self.core.peek(address)
-    }
-
-    fn pc(&self) -> u32 {
-        self.core.pc()
-    }
-
-    fn instruction_set(&self) -> Option<&dyn InstructionSet> {
-        Some(self.core.instruction_set())
-    }
-
-    fn bank_for(&self, address: u32) -> Option<u16> {
+    fn bank_for(core: &GbCore<M>, address: u32) -> Option<u16> {
         match address {
-            0x4000..=0x7FFF => self.core.game_boy().cartridge().switchable_rom_bank(),
+            0x4000..=0x7FFF => core.console().cartridge().switchable_rom_bank(),
             _ => None,
         }
     }
 
-    fn present_address(&self, address: u32) -> inspect::AddressDisplay {
-        self.core.present_address(address)
+    fn present_address(core: &GbCore<M>, address: u32) -> inspect::AddressDisplay {
+        core.debugger.present_address(address)
     }
 
-    fn locate_bank_window(&self, bank: u16, window: u32) -> Option<u32> {
-        self.core.locate_bank_window(bank, window)
+    fn locate_bank_window(core: &GbCore<M>, bank: u16, window: u32) -> Option<u32> {
+        core.debugger.locate_bank_window(bank, window)
     }
 
-    fn watchables(&self) -> &'static [inspect::Watchable] {
-        self.core.watchables()
+    fn watchables() -> &'static [inspect::Watchable] {
+        watchables(M::BANKS_WORK_RAM)
     }
 
-    fn add_watch(&mut self, watch: inspect::Watch) {
-        self.core.add_watch(watch);
+    fn symbols(core: &GbCore<M>) -> Arc<SymbolTable> {
+        core.debugger.symbols().clone()
     }
 
-    fn remove_watch(&mut self, watch: &inspect::Watch) {
-        self.core.remove_watch(watch.clone());
-    }
-
-    fn watches(&self) -> Vec<inspect::Watch> {
-        self.core.watches()
-    }
-
-    fn last_watch_hit(&self) -> Option<inspect::Watch> {
-        self.core.last_watch_hit()
-    }
-
-    fn family_state(&self) -> &dyn std::any::Any {
-        self.core.game_boy()
-    }
-
-    fn symbols(&self) -> Arc<SymbolTable> {
-        self.core.symbols().clone()
-    }
-
-    fn add_symbol(&mut self, address: u32, name: String) {
+    /// A label takes the bank paged into the window it lands in; the fixed
+    /// windows are all bank 0.
+    fn add_symbol(core: &mut GbCore<M>, address: u32, name: String) {
         let address = address as u16;
         let bank = match address {
-            0x4000..=0x7fff => self
-                .core
-                .game_boy()
+            0x4000..=0x7fff => core
+                .console()
                 .cartridge()
                 .switchable_rom_bank()
                 .unwrap_or(0),
             _ => 0,
         };
-        self.core.add_user_symbol(Symbol {
+        core.debugger.add_user_symbol(Symbol {
             bank,
             address,
             name,
         });
     }
 
-    fn remove_symbol(&mut self, symbol: &Symbol) {
-        self.core.remove_user_symbol(symbol);
+    fn remove_symbol(core: &mut GbCore<M>, symbol: &Symbol) {
+        core.debugger.remove_user_symbol(symbol);
     }
 
-    fn cdl_window(&self) -> CdlWindow {
-        GbDebugger::cdl_window(self)
+    fn cdl_window(core: &GbCore<M>) -> CdlWindow {
+        core.cdl_window()
     }
 
-    fn load_sidecars(&mut self, rom_path: &Path) {
-        self.core.set_symbols(SymbolTable::for_rom(rom_path));
-        let rom_len = self.core.game_boy().cartridge().rom_len();
-        self.core
+    fn load_sidecars(core: &mut GbCore<M>, rom_path: &Path) {
+        core.debugger.set_symbols(SymbolTable::for_rom(rom_path));
+        let rom_len = core.console().cartridge().rom_len();
+        core.debugger
             .set_cdl(CodeDataLog::load(&rom_path.with_extension("cdl"), rom_len));
     }
 
-    fn save_sidecars(&self, rom_path: &Path) {
-        self.core.cdl().save(&rom_path.with_extension("cdl"));
-        self.core.save_symbols(&rom_path.with_extension("sym"));
+    fn save_sidecars(core: &GbCore<M>, rom_path: &Path) {
+        core.debugger.cdl().save(&rom_path.with_extension("cdl"));
+        core.debugger.save_symbols(&rom_path.with_extension("sym"));
     }
 
-    fn snapshot(&self, frame: u64) -> DebugView {
-        M::snapshot(
-            self.core.game_boy(),
-            frame,
-            self.core.symbols().clone(),
-            self.cdl_window(),
-        )
-    }
-
-    fn running_status(&self, frame: u64) -> RunningStatus {
-        let console = self.core.game_boy();
-        RunningStatus {
-            pc: console.cpu().ir_address.into(),
-            sp: console.cpu().stack_pointer.into(),
-            video_label: "PPU",
-            video_summary: format!(
-                "{} · ly {}",
-                crate::debugger::inspection::mode_label(console.ppu().mode()),
-                console.ppu().video.ly()
-            ),
-            frame,
-        }
-    }
-
-    fn capture_trace(&mut self, path: &Path) -> Option<Frame> {
+    fn capture_trace(core: &mut GbCore<M>, path: &Path) -> Option<Frame> {
         #[cfg(feature = "morepork")]
         {
-            let screen = self.core.capture_frame(path).ok()?;
-            self.display(Some(screen))
+            let screen = core.debugger.capture_frame(path).ok()?;
+            core.display(Some(screen))
         }
         #[cfg(not(feature = "morepork"))]
         {
-            let _ = path;
+            let _ = (core, path);
             None
         }
     }
 
-    fn into_console(self: Box<Self>) -> Box<dyn SystemConsole> {
-        Box::new(GbConsole {
-            console: self.core.game_boy_take(),
-            battery_save: self.battery_save,
-            link: self.link,
-        })
+    fn inspect(core: &GbCore<M>, frame_count: u64) -> M::Inspect {
+        M::inspect(
+            core.console(),
+            frame_count,
+            core.debugger.symbols().clone(),
+            core.cdl_window(),
+        )
+    }
+
+    fn set_graphics_capture(core: &mut GbCore<M>, on: bool) {
+        core.console_mut().set_graphics_capture(on);
+    }
+
+    fn graphics_view(core: &GbCore<M>) -> Option<GraphicsView> {
+        let console = core.console();
+        console
+            .graphics_capture()
+            .then(|| M::graphics_view(console))
+    }
+
+    fn set_wave_capture(core: &mut GbCore<M>, on: bool) {
+        core.console_mut().set_wave_capture(on);
+    }
+
+    fn channel_waves(core: &GbCore<M>) -> Option<Vec<ChannelWave>> {
+        core.console().channel_waves()
+    }
+
+    fn register_groups(state: &M::Inspect) -> Vec<inspect::RegisterGroup> {
+        state.register_groups()
+    }
+
+    fn sidebar_sections(state: &M::Inspect) -> Vec<inspect::Section> {
+        state.sidebar_sections()
+    }
+
+    fn snapshot(state: &M::Inspect, frame: u64) -> DebugView {
+        M::snapshot(state, frame)
+    }
+
+    fn running_status(state: &M::Inspect, frame: u64) -> RunningStatus {
+        M::shared(state).running_status(frame)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use missingno_core::inspect::Watch;
+    use missingno_core::system::{StepOutcome, SystemConsole, SystemDebugger};
+
+    use crate::cartridge::Cartridge;
+
+    /// NOP; JP 0150 → CALL 0160 { LD A,42; RET } → JR self.
+    fn call_program() -> Console<Dmg> {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x101..0x104].copy_from_slice(&[0xc3, 0x50, 0x01]);
+        rom[0x150..0x153].copy_from_slice(&[0xcd, 0x60, 0x01]);
+        rom[0x153..0x155].copy_from_slice(&[0x18, 0xfe]);
+        rom[0x160..0x162].copy_from_slice(&[0x3e, 0x42]);
+        rom[0x162] = 0xc9;
+        Console::new(Cartridge::new(rom, None), None)
+    }
+
+    fn debugger() -> Box<dyn SystemDebugger> {
+        Box::new(create_console(call_program(), |_| None)).into_debugger()
+    }
+
+    #[test]
+    fn a_breakpoint_stops_the_frame_where_it_is_set() {
+        let mut debugger = debugger();
+        debugger.set_breakpoint(0x0150);
+        assert!(matches!(
+            debugger.run_frame(),
+            StepOutcome::Breakpoint { .. }
+        ));
+        assert_eq!(debugger.pc(), 0x0150);
+    }
+
+    #[test]
+    fn a_watch_reaches_the_engines_condition() {
+        let mut debugger = debugger();
+        debugger.add_watch(Watch::single("pc", None, Some(0x0150)));
+        assert!(matches!(debugger.run_frame(), StepOutcome::WatchHit(_)));
+        assert_eq!(debugger.pc(), 0x0150);
+    }
+
+    /// An MBC1 cart of eight banks whose program pages `bank` into the `$4000`
+    /// window and jumps there, where a self-loop parks the pc at `$4000`.
+    fn bank_jump(bank: u8) -> Console<Dmg> {
+        let mut rom = vec![0u8; 8 * 0x4000];
+        rom[0x147] = 0x01; // MBC1
+        rom[0x148] = 0x04; // 128 KB
+        rom[0x100..0x108].copy_from_slice(&[
+            0x3e, bank, // LD A, bank
+            0xea, 0x00, 0x20, // LD ($2000), A — select ROM bank
+            0xc3, 0x00, 0x40, // JP $4000
+        ]);
+        for b in 1..8 {
+            rom[b * 0x4000..b * 0x4000 + 2].copy_from_slice(&[0x18, 0xfe]); // JR -2
+        }
+        Console::new(Cartridge::new(rom, None), None)
+    }
+
+    #[test]
+    fn a_banked_watch_gates_on_the_mapped_bank() {
+        let compound = Watch {
+            terms: vec![
+                missingno_core::inspect::WatchTerm {
+                    key: "pc".into(),
+                    address: None,
+                    value: Some(0x4000),
+                },
+                missingno_core::inspect::WatchTerm {
+                    key: "rom-bank".into(),
+                    address: None,
+                    value: Some(3),
+                },
+            ],
+        };
+
+        let mut right: Box<dyn SystemDebugger> =
+            Box::new(create_console(bank_jump(3), |_| None)).into_debugger();
+        right.add_watch(compound.clone());
+        assert!(matches!(right.run_frame(), StepOutcome::WatchHit(_)));
+        assert_eq!(right.pc(), 0x4000);
+
+        // Bank 2 mapped: the pc still reaches $4000, but the bank term rejects.
+        let mut wrong: Box<dyn SystemDebugger> =
+            Box::new(create_console(bank_jump(2), |_| None)).into_debugger();
+        wrong.add_watch(compound);
+        assert!(matches!(wrong.run_frame(), StepOutcome::Completed { .. }));
+        assert!(wrong.last_watch_hit().is_none());
+    }
+
+    #[test]
+    fn step_over_runs_a_call_out_and_steps_everything_else() {
+        let mut over_call = debugger();
+        over_call.step(); // NOP
+        over_call.step(); // JP → at the CALL
+        assert_eq!(over_call.pc(), 0x0150);
+        over_call.step_over();
+        assert_eq!(over_call.pc(), 0x0153);
+
+        // A plain instruction has no return address, so step-over steps it.
+        let mut over_nop = debugger();
+        over_nop.step_over();
+        assert_eq!(over_nop.pc(), 0x0101);
+    }
+
+    #[test]
+    fn graphics_capture_gates_the_decoded_surfaces() {
+        let mut debugger = debugger();
+        assert!(debugger.graphics().is_none());
+        debugger.set_graphics_capture(true);
+        assert!(debugger.graphics().is_some());
+    }
+
+    #[test]
+    fn video_out_states_the_models_panel() {
+        let console = create_console(call_program(), |_| None);
+        match console.video_out() {
+            DisplayTechnology::Lcd { native, panel, .. } => {
+                assert_eq!(native, NATIVE_SIZE);
+                assert_eq!(panel, <Dmg as Model>::LCD_PANEL);
+            }
+            other => panic!("the Game Boy drives an LCD, got {other:?}"),
+        }
     }
 }

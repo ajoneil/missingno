@@ -5,7 +5,7 @@
 
 use missingno_gb::frame::{self, GameBoyScreen, GbFrame};
 use missingno_gb::ppu::types::palette::{Palette, PaletteChoice, PaletteIndex};
-use missingno_gb::system::{GbConsole, LINK_CABLE, LINK_DISCONNECTED, LINK_PRINTER};
+use missingno_gb::system::{LINK_CABLE, LINK_DISCONNECTED, LINK_PRINTER, create_console_with_link};
 use missingno_gb::{BootRom, GameBoy, cartridge::Cartridge, serial_transfer::SerialLink};
 use missingno_gbc::GameBoyColor;
 
@@ -219,10 +219,10 @@ pub fn create_console(media: MediaLoad) -> Result<Box<dyn SystemConsole>, String
     impl GbLaunch for Boxed {
         type Output = Box<dyn SystemConsole>;
         fn dmg(self, console: GameBoy) -> Self::Output {
-            Box::new(GbConsole::with_link(console, battery_save, self.link))
+            Box::new(create_console_with_link(console, battery_save, self.link))
         }
         fn cgb(self, console: GameBoyColor) -> Self::Output {
-            Box::new(GbConsole::with_link(console, battery_save, self.link))
+            Box::new(create_console_with_link(console, battery_save, self.link))
         }
     }
     let (link, kind) = match media.serial_link.take() {
