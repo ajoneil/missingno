@@ -25,9 +25,9 @@ still hold in spirit ("hardware is the source of truth"), but their
   CGB-integration regression or an unimplemented CGB divergence — mechanism mostly
   already understood from the DMG model, and the DMG core is the reference. A test
   with **no DMG counterpart** is genuinely CGB-specific. Use this partition before any
-  cross-emulator lookup; `test-report-gbc.sh` emits it automatically. (Both suites
-  fully pass in the steady state — this triage applies when a regression or a newly
-  added test breaks the green baseline.)
+  cross-emulator lookup; `test-report-gbc.sh` emits it automatically. The gate is a
+  fully-passing suite — any failure is a regression, and this partition is how you
+  triage one.
 
 - **Ground-truth hierarchy for the CGB delta** (where no gate-level truth exists), in
   order:
@@ -62,6 +62,32 @@ still hold in spirit ("hardware is the source of truth"), but their
 - **Double-speed is implemented via the clock divider.** `MasterClock` owns a ÷1/÷2
   divider between CPU edge and dot edge: at double speed (KEY1) the CPU takes two edges
   per dot and the dot edge lands on alternate CPU edges; the speed-switch blackout holds
-  the CPU phase while the dot domain free-runs (`step_blackout_chunk`). The
-  blackout/switch orchestration lives in `missingno-gbc`. Both suites fully pass under
-  this model — extend it, don't redesign it.
+  the CPU phase while the dot domain free-runs. The split is across crates: this crate
+  owns the switch/blackout orchestration (`speed_switch.rs` and the `Model` hooks in
+  `lib.rs` — arming, the blackout countdown, the wake), while the held-edge stepping it
+  drives is generic and lives in the gb crate (`step_blackout_chunk`,
+  `crates/systems/gb/src/execute/blackout.rs`). Extend this model, don't redesign it.
+
+## Resources
+
+**Tier-1 test ROMs.** Two roots, resolved by the helpers in
+`crates/systems/gbc/tests/accuracy/common/`: ROMs that run on both models live in
+the gb crate (`crates/systems/gb/tests/accuracy/roms/`, loaded with `load_rom`),
+CGB-only ROMs in this crate (`crates/systems/gbc/tests/accuracy/roms/`,
+`load_cgb_rom`). Each root has an `ATTRIBUTION.md` with per-suite author and
+licence; the binaries come from the
+[c-sp/game-boy-test-roms](https://github.com/c-sp/game-boy-test-roms) collection.
+
+| Suite | Upstream | ROMs |
+|-------|----------|------|
+| cgb-acid2 | https://github.com/mattcurrie/cgb-acid2 | gbc `roms/cgb-acid2/` |
+| cgb-acid-hell | https://github.com/mattcurrie/cgb-acid-hell | gbc `roms/cgb-acid-hell/` |
+| SameSuite | https://github.com/LIJI32/SameSuite | gbc `roms/samesuite/`; the DMG-compatible ones in the gb root |
+| age-test-roms | https://github.com/c-sp/age-test-roms | `roms/age-test-roms/` in both roots |
+| mooneye-test-suite | https://github.com/Gekkio/mooneye-test-suite | gb root `roms/mooneye/`; the CGB subset is selected by filename suffix |
+| gambatte | https://github.com/pokemon-speedrunning/gambatte-core | `roms/gambatte/` in both roots; the expected-output suffixes are the runner's (`test/testrunner.cpp`) |
+| rtc3test | https://github.com/aaaaaa123456789/rtc3test | gbc `roms/rtc3test/` |
+
+**Tier-2 references**: gb-ctr (https://gekkio.fi/files/gb-docs/gbctr.pdf),
+Pan Docs (https://github.com/gbdev/pandocs), and the SameBoy source read for
+its inline hardware comments (https://github.com/LIJI32/SameBoy).

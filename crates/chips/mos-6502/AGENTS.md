@@ -8,20 +8,20 @@ leaves packaging and wiring to its consumers — the VCS's 6507 (masked address
 bus, no interrupt pins) and the NES's 2A03 core (no decimal mode), each applied
 in the console crate, not here.
 
-**A system doc outranks this one in-system.** When the chip is inside a
-console, that console's ground-truth hierarchy adjudicates — for the VCS that
-means Sim2600 gate-level lockstep and hardware captures
-(`crates/systems/vcs/AGENTS.md`), which sit *above* everything below. This doc
-governs only the chip in isolation.
+**A system doc outranks this one in-system** — for the VCS that means Sim2600
+gate-level lockstep and hardware captures sit *above* everything below. This
+doc governs only the chip in isolation.
 
 ## Ground-truth hierarchy (the chip in isolation)
 
-1. **The SingleStepTests 65x02 oracle** — the crate's conformance floor.
+1. **The SingleStepTests 65x02 oracle**
+   (https://github.com/SingleStepTests/65x02) — the crate's conformance floor.
    Per-cycle bus activity and final state for all 256 opcodes (documented and
-   undocumented), 10,000 cases per opcode in each of the `6502` (decimal) and
-   `nes6502` (decimal-less) variants. The sweep in `tests/single_step.rs` runs in plain
-   `cargo test`, fetches the data on first run into `tests/single-step-tests/`
-   (gitignored), and records the oracle commit in `FETCHED_COMMIT`. Tier
+   undocumented) in each of the `6502` (decimal) and `nes6502` (decimal-less)
+   variants. The sweep in `tests/single_step.rs` runs in plain `cargo test`,
+   fetches the data over the network on first run into
+   `tests/single-step-tests/` (gitignored; `SINGLE_STEP_TESTS_DIR` overrides),
+   and records the fetched oracle commit in a marker file beside it. Tier
    honesty: the oracle is **behavioural, not silicon-derived** — its README
    describes generation from a reference implementation conforming to available
    documentation and prior published test sets. It is the floor, not the

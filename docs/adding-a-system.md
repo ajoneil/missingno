@@ -18,12 +18,15 @@ Don't confuse the two kinds of "new system":
 
 - **A variant within a family, sharing silicon** — the DMG↔CGB axis. Both are
   `Console<M>` with the divergences carried by the `Model` / `PpuModel` /
-  `ApuSpec` traits in `missingno-gb`. If the new machine shares the SM83 core
-  and PPU/APU lineage (Super Game Boy is already modelled this way; a
-  hypothetical Mega Duck would fit too), implement a new `Model` and stay
-  inside the family. Read the extensive doc comments on those traits — every
-  associated const and hook documents the exact hardware divergence it exists
-  to carry.
+  `ApuSpec` traits in `missingno-gb`; `Dmg` and `Cgb` are the only two `Model`
+  impls. If the new machine diverges in the shared silicon itself while keeping
+  the SM83 core and PPU/APU lineage (a hypothetical Mega Duck), implement a new
+  `Model` and stay inside the family. Read the extensive doc comments on those
+  traits — every associated const and hook documents the exact hardware
+  divergence it exists to carry. A variant that instead wraps an *unchanged*
+  console in extra hardware needs no `Model` of its own: the Super Game Boy is
+  an `Option<sgb::Sgb>` field inside `Dmg`, reached through the model's existing
+  joypad and present hooks.
 - **A new family entirely** (Master System, NES, a future Game Gear) — a new
   core crate plus an app family registration. The rest of this document is
   about this axis.
@@ -219,11 +222,11 @@ For a core whose debugger is plain instruction stepping (PC breakpoints, one
 typed inspection state, indexed frames), don't implement the two seam traits by
 hand: implement `SteppingSystem` (`missingno-core`'s `stepping.rs`) — a flat list
 of hooks — and the shared `SteppingConsole<S>` / `SteppingDebugger<S>` carry the
-seam's control flow. The Master System and NES are the worked consumers; the VCS
-adapts its own core-side debugger backend directly instead, and the Game Boy
-family implements the seam once (in `missingno-gb`'s `system.rs`, as
-`GbConsole<M>`, generic over its `Model`) — consumed unchanged by both the
-headless factory and the GUI.
+seam's control flow. The SG-1000, Master System and NES are the worked
+consumers; the VCS adapts its own core-side debugger backend directly instead,
+and the Game Boy family implements the seam once (in `missingno-gb`'s
+`system.rs`, as `GbConsole<M>`, generic over its `Model`) — consumed unchanged
+by both the headless factory and the GUI.
 
 ## The app family axis: `app/system/`
 
@@ -248,13 +251,14 @@ dual-compatible cart boots the CGB core enhanced), so platform identity and
 execution core are deliberately decoupled, like a GB cart slotted into a real
 GBC.
 
-The GUI's pane registry is likewise family-provided: `pane_family()` is a
-required seam method returning a `panes::Family` (its `PaneDescriptor` list names
-which generic panes the family registers — Screen plus the Memory/Disassembly
-set for a register-dump family; the graphics and audio panes only where the core
-fills their capture hooks — and its default layout). Panes may be instanceable
-(the Memory pane opens a fresh instance per click; a message can target one
-instance so sibling panes are untouched) or single-instance.
+The GUI's pane registry is likewise family-provided, but app-side rather than
+through the seam: the app's own `PANE_FAMILIES` table (`app/debugger/panes.rs`)
+maps a `Platform` to a `panes::Family`, whose `PaneDescriptor` list names which
+generic panes the family registers — Screen plus the Memory/Disassembly set for
+a register-dump family; the graphics and audio panes only where the core fills
+their capture hooks — and its default layout. Panes may be instanceable (the
+Memory pane opens a fresh instance per click; a message can target one instance
+so sibling panes are untouched) or single-instance.
 
 ## Honest inventory: what is still per-system
 
@@ -275,29 +279,49 @@ Filling the seam buys the subsystems above; these stay a family's own work:
 And a few surfaces are still Game Boy-shaped, quarantined by no-op defaults
 until a second family grows the equivalent:
 
-- **GB types ride a few seam signatures** — `WatchCondition`-shaped watch
-  methods, `SymbolTable` / `Symbol` label editing, and `CdlWindow`
-  (`cdl_window`) are GB-flavoured on `SystemDebugger`, plus the boot-ROM and
-  serial-link fields on `MediaLoad`. Generalize each when a second family grows
-  the backend.
-- **Presentation details** — the GUI's `ScreenView` carries GB palette/SGB
-  fields beside the indexed path, and the library's bundled catalogue and
-  homebrew browser are Game Boy data flows. Mostly data, not code shape.
+- **Game Boy peripherals on `MediaLoad`** — the app's `MediaLoad` carries
+  `boot_rom`, `serial_link` and `print_sink`; its own doc comment states the
+  quarantine. Generalize each when a second family grows the backend.
+- **Two Game Boy questions on `SystemConsole`** — `uses_monochrome_palette`
+  (whether the play-mode Display panel offers a palette picker) and
+  `supports_sgb` (the SGB palette override); every other family takes the
+  `false` default.
+- **The shared graphics panes and sidebar read GB palette types** — they take an
+  `Option<&ConsoleColors>` (an app-side `Dmg`/`Cgb` enum built from
+  `missingno_gb`'s `Palette`), and the app's debugger modules import
+  `missingno_gb`'s palette and tile types directly. A core that owns its own
+  palettes still falls back to `Palette::CLASSIC` for its ramp.
+- **A GB-only downcast in the app's inspect bridge** — `as_inspect_source`
+  (`app/debugger/inspect.rs`) downcasts the family-erased state against the four
+  GB-family types and returns `None` for anything else; another family's panes
+  downcast their own typed state instead.
+- **`SwatchRow::Shades { packed }`** — the generic `inspect` swatch vocabulary
+  carries a packed DMG BGP/OBP byte for the frontend to resolve through the
+  user's palette. Only `missingno-gb` emits it; cores that own their colours use
+  the sibling `Colors` variant.
+- **`TraceRequest.profile` is a `missingno_gb` type** — the trace CLI's profile
+  is `missingno_gb::trace::Profile` (itself a morepork re-export), so the VCS and
+  NES trace entry points take it from the GB crate.
+- **Symbol and code/data-log addressing** — `SymbolTable`, `Symbol` and
+  `CdlWindow` are `missingno-core` vocabularies and generic on the seam, but they
+  are keyed on `u16` CPU addresses and shaped by the no$gmb/RGBDS `.sym` format;
+  the Game Boy family is the only backend.
+- **Presentation and library data** — the bundled catalogue ships only the
+  platforms in its archive (Game Boy, Game Boy Color, VCS) and the homebrew
+  browser is gbdev-sourced. Mostly data, not code shape.
 - **16-bit addressing assumptions** — breakpoints and `RunningStatus.pc/sp`
   cross the seam as `u32` but every current core masks to a 16-bit bus. Fine
   for every current family; widen when a 32-bit-bus system arrives.
 
 ## Quality bars
 
-- **Accuracy oracles in CI from day one.** The GB, GBC, and VCS suites all
-  fully pass; the gate for any change is a fully-passing suite. A new core lands
-  its own accuracy tests (screenshot or trace parity against its ground-truth
-  tier) with it.
+- **Accuracy oracles in CI from day one.** A new core lands its own accuracy
+  tests (screenshot or trace parity against its ground-truth tier) with it.
 - **Round-trip gates for the state story.** A save-state round-trip test and a
   record→replay frame-hash gate are the accuracy bar for the schema work (see
   the `save_state` and `recording` integration tests).
-- **Suite-green is the merge gate**, per the per-core methodology docs; ANY
-  failure is a regression.
+- **Suite-green is the merge gate**, per the per-core methodology docs: every
+  crate a change touches passes fully, and ANY failure is a regression.
 
 ## Checklist for a new family
 
@@ -305,26 +329,30 @@ until a second family grows the equivalent:
    plus a `crates/<crate>/AGENTS.md` methodology doc (ground-truth hierarchy,
    resources, timing model) and one routing row in the root `AGENTS.md`
    *Per-core methodology* table.
-2. **The seam impl** — either a `SteppingSystem` impl for a simple stepping
+2. **A `crates/chips/<chip>/AGENTS.md`** for every chip crate the board
+   composes, new or newly shared — the chip's own conformance oracle and
+   references. In-system, the console's methodology doc outranks the chip's.
+3. **The seam impl** — either a `SteppingSystem` impl for a simple stepping
    core, or hand-written `SystemConsole` + `SystemDebugger` impls where the core
    has its own debugger backend. Registering the core in `missingno-session`'s
    factory (`factory.rs`) gives it session hosting, both servers, the agent tool
    surface, and attach.
-3. **`video_out`** returning the right `DisplayTechnology`, and a palette table
+4. **`video_out`** returning the right `DisplayTechnology`, and a palette table
    (or RGBA-producing frame) plus the family's reading of the shared control ids.
-4. **The state schema** — a `SystemStateSchema`, `state_schema` / `read_state`,
+5. **The state schema** — a `SystemStateSchema`, `state_schema` / `read_state`,
    and the `save_state` / `load_state` boundary bridge. Save states, traces, and
    recordings follow.
-5. **The debugger surfaces** you have — `sidebar_sections`, `instruction_set`,
+6. **The debugger surfaces** you have — `sidebar_sections`, `instruction_set`,
    the graphics/audio capture hooks — each of which lights up its pane and tool.
-6. **App registration** — a `FamilyDescriptor` in `FAMILIES`
-   (`app/system/mod.rs`) with its `Platform` variant, a `pane_family()`, and a
-   default layout. Dialogs, loading, library scanning, badges, the bindings UI,
-   and the trace CLI follow from the table.
-7. **Convert audio to 44.1 kHz** on the family's side of the seam.
-8. **Accuracy and round-trip tests** committed with the core.
-9. **A gamedb hardware struct**, when the platform's releases vary by board or
-   peripheral. If the platform has swappable controllers, pick one canonical
-   default: the db stages `controllers` only on deviation from it or for
-   sibling-release contrast (the VCS default is the joystick), so an empty
-   list always means "the default" and never "unknown".
+7. **App registration** — a `FamilyDescriptor` in `FAMILIES`
+   (`app/system/mod.rs`) with its `Platform` variant, plus a `panes::Family` in
+   the app's `PANE_FAMILIES` table carrying its pane list and default layout.
+   Dialogs, loading, library scanning, badges, the bindings UI, and the trace CLI
+   follow from the descriptor table.
+8. **Convert audio to 44.1 kHz** on the family's side of the seam.
+9. **Accuracy and round-trip tests** committed with the core.
+10. **A gamedb hardware struct**, when the platform's releases vary by board or
+    peripheral. If the platform has swappable controllers, pick one canonical
+    default: the db stages `controllers` only on deviation from it or for
+    sibling-release contrast (the VCS default is the joystick), so an empty
+    list always means "the default" and never "unknown".

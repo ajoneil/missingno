@@ -9,16 +9,16 @@ without a board*: it models the chip — the write port and its latched register
 address, three tone generators, the noise generator and its shift register,
 the four attenuators, and the summing stage — and leaves board wiring (I/O
 decode, the READY→/WAIT tie, the output RC network, the sample rate) to its
-consumers (SG-1000 first; the Sega-integrated clone serves the Master System
-until that core grows its own).
+consumers (the SG-1000; the Sega-integrated variant serves the Master System).
 
 **A system doc outranks this one in-system.** When the chip is inside a
 console, that console's ground-truth hierarchy adjudicates.
 
 ## Ground-truth hierarchy (the chip in isolation)
 
-There is **no test corpus yet** — the ROM tier is future work, and until it
-exists this crate has no conformance oracle of its own. Every reading below is
+This crate has **no hardware conformance oracle**. Its gate is its own unit
+tests (`src/lib.rs`) plus the consuming board suites; a hardware-capture
+corpus would become the oracle if one lands. Every reading below is
 documentary, and the ones that are contested are listed as such further down.
 
 1. **TI manufacturer documentation** — the *SN76489AN* data sheet/technical
@@ -52,10 +52,18 @@ documentary, and the ones that are contested are listed as such further down.
    "Verified on SMS hardware") whose captures are unpublished, so what is on
    record is a maintainer's summary.
 
-Resources live in `receipts/resources/ti-psg/`; the consolidated behaviour
-research, with every claim tiered and every conflict recorded, is
-`receipts/research/sn76489-behaviour-checklist.md`, and the observability
-survey is `receipts/research/sn76489-test-observability.md`.
+Where each source above lives:
+
+| Source | URL |
+|--------|-----|
+| TI *SN76489AN* manual | ships in `docs/` of https://github.com/rejunity/tt05-psg-sn76489 |
+| TI D2801 application manual | ships in `VDP/PSG/Docs/` of the SEGAChips repo below |
+| emu-russia *SEGAChips* netlist | https://github.com/emu-russia/SEGAChips |
+| `76489A-analysis` die photograph | https://github.com/gchiasso/76489A-analysis |
+| SMS Power SN76489 page | https://www.smspower.org/Development/SN76489 |
+| scarybeast oscilloscope captures | https://scarybeastsecurity.blogspot.com/2020/06/sampled-sound-1980s-style-from-sn76489.html |
+| Enri's SC-3000 page (PSG sheet) | `http://www43.tok2.com/home/cmpslv/Sc3000/EnrSC.htm` — host dead, via the Internet Archive |
+| MAME `sn76496.cpp` | https://github.com/mamedev/mame (`src/devices/sound/sn76496.cpp`) |
 
 ## The variant seam
 
@@ -77,7 +85,7 @@ is likewise unmodelled.
 ## Stated abstractions
 
 Each of these is a documentary reading standing in for a measurement nobody
-has published. All are **pending hardware**.
+has published.
 
 - **Zero period register: 0x400 on the TI part, held on the Sega part.**
   The split is MAME's, whose Sega half is annotated "verified on SMS

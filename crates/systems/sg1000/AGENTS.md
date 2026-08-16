@@ -19,9 +19,7 @@ board, adjudicate here; when it is about a chip's internals, that chip's
    source for every wiring fact this crate encodes: the 74LS139 halves and
    what they decode, the TMM2009's brought-out address lines, the joystick
    bit assignments and their pull-ups, VDP INT → Z80 /INT with IM 1, the
-   pause switch on /NMI, and the cartridge edge. Consolidated with citations
-   in `receipts/research/sg1000-board-facts.md`; the pages themselves are
-   archived under `receipts/resources/sg1000-docs/`.
+   pause switch on /NMI, and the cartridge edge.
 2. **The `barbeque/sg1000` ("Soggy-1000") KiCad recreation** — an
    independent re-trace, built and tested against real cartridges. It is the
    citable topology where Enri's scan resolution defeats a junction (the /M1
@@ -38,6 +36,18 @@ a running SG-1000 in the tree. Where a board question has no answer in the
 tiers above, escalate to the user rather than adopting an emulator's
 behaviour as fact.
 
+## Resources
+
+Where each source above lives.
+
+| Source | Tier | Location / URL |
+|--------|------|----------------|
+| Enri, *Enri's Home PAGE (SG-1000)* — the traced schematic sheets (CPU, VDP, PSG, I/O decode, joystick wiring, connectors, cartridge boards) | 1 | `http://www43.tok2.com/home/cmpslv/Sg1000/EnrSG.htm` — host dead, retrieved through the Internet Archive (Shift-JIS original). Enri's companion SC-3000 and Mark III pages sit under the same host path. |
+| `barbeque/sg1000` ("Soggy-1000") KiCad recreation — `Schematic-V0.4.pdf`, `sg1000.kicad_sch` | 2 | https://github.com/barbeque/sg1000 |
+| TI, *TMS9918A/TMS9928A/TMS9929A Video Display Processors Data Manual* (Nov 1982) | 3 | http://www.bitsavers.org/components/ti/TMS9900/TMS9918A_TMS9928A_TMS9929A_Video_Display_Processors_Data_Manual_Nov82.pdf |
+| TI, *SN76489AN Digital Complex Sound Generator* data manual (undated) | 3 | No publisher URL located; the copy in hand ships in the `docs/` directory of https://github.com/rejunity/tt05-psg-sn76489 |
+| MAME — SG-1000 driver, Sega-8 slot and per-cart handlers, software list | 4 | https://github.com/mamedev/mame (`src/mame/sega/sg1000.cpp`, `src/devices/bus/sega8/`, `hash/sg1000.xml`) |
+
 ## The conformance tier
 
 The chip crate's hardware-endorsed `.sg` corpus — adjudicated on a Japanese
@@ -47,8 +57,19 @@ through the chip crate's testbench. The real board map satisfies the ROMs'
 assumptions (1 KB work RAM, the RESULT block at `$C000`, VDP data `$BE` /
 control `$BF`, IM 1 on the VDP interrupt) by construction, so a corpus ROM
 that passes in the testbench and fails here is a statement about the board
-model. The corpus does not exercise the PSG or the joystick ports at all;
-those two smoke tests pin the board's own behaviour instead.
+model. The corpus does not exercise the PSG or the joystick ports at all, so
+the crate's own smoke tests pin those two board behaviours instead — the
+multiplexer pair and the PSG's READY→/WAIT stall.
+
+The slice is deliberately a smoke selection, not a second run of the corpus:
+the two harness mirror ROMs (work RAM through the top window, the VDP ports
+across their block), one frame-flag-against-interrupt-line race, and one
+Graphics I scene carried through to a non-blank frame.
+
+`cargo test -p missingno-sg1000` is the whole gate for this crate — the board
+suite in `tests/board.rs` plus the crate's unit tests. The VDP screenshot
+corpus and its references belong to `missingno-ti-vdp` and run there. There is
+no test-report script for this core; run the suite directly.
 
 ## The timing model
 
@@ -89,13 +110,16 @@ strobed it — and moves the /INT sample point along with it.
   the Taiwanese **Dahjee** RAM expanders, **Terebi Oekaki**'s tablet, the
   SC-3000 Survivors **multicarts**, and the `/DSRAM` route by which a cart
   disables the console's own RAM. A game probing `$8000-$BFFF` for cart RAM
-  reads `0xFF` and will misbehave. The gamedb `cart_type` field, carried
-  through `LoadOptions`/`MediaLoad`, is the intended selector when these
-  land. A combined 16 KB dump of an 8 K + 8 K board is a known limitation:
-  the halves must be dumped per region to mirror correctly.
+  reads `0xFF` and will misbehave. The selector for a board model is the
+  gamedb `cart_type` field: both loaders already carry it — the session
+  factory's `LoadOptions` (`missingno-session`) and the app's `MediaLoad`
+  (`missingno`'s `app/system/`) — and this core's constructors ignore it. A
+  combined 16 KB dump of an 8 K + 8 K board is a known limitation: the halves
+  must be dumped per region to mirror correctly.
 - **1 KB of work RAM — the SG-1000 proper.** The SG-1000 II and SC-3000
   fit 2 KB, which the documented machine-detection routine distinguishes by
-  reading the mirror. A variant seam belongs here when those machines do.
+  reading the mirror. The size is fixed here, not a variant axis; modelling
+  those machines is what would make it one.
 - **`CON` is held released.** `$DD` bit 4 is a real line on the cartridge
   edge and the keyboard connector whose **function no source explains**; it
   reads 1, along with the three unconnected multiplexer inputs above it.
