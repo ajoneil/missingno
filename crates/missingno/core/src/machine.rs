@@ -89,6 +89,11 @@ pub trait Machine: 'static {
 
     /// Wall-clock duration of one emulated frame, for the pacing loop.
     const FRAME_INTERVAL: Duration;
+    /// The pacing interval this console runs at, when it is not the family's
+    /// nominal one — a set's broadcast standard decides it.
+    fn frame_interval(_core: &Self::Core) -> Duration {
+        Self::FRAME_INTERVAL
+    }
     /// Instruction budget for one debugger-driven frame or step-over, so a
     /// core that never completes a frame cannot stall the UI.
     const RUN_BUDGET: u32;
@@ -97,6 +102,12 @@ pub trait Machine: 'static {
     /// Side-effect-free read of the CPU address space, for the memory viewer
     /// and the disassembly.
     fn peek(core: &Self::Core, address: u16) -> u8;
+    /// Side-effect-free read of the debugger's address space, which a family may
+    /// extend above the CPU bus with the bank-complete stores its
+    /// [`memory_regions`](Machine::memory_regions) names.
+    fn peek_region(core: &Self::Core, address: u32) -> u8 {
+        Self::peek(core, address as u16)
+    }
     /// The decode-for-display front end, when the family has one. `None`
     /// leaves the disassembly to fall back to raw bytes.
     fn instruction_set() -> Option<&'static dyn InstructionSet> {
@@ -261,8 +272,9 @@ pub trait Machine: 'static {
         }
     }
 
-    /// The CPU-visible address map, named by role.
-    fn memory_regions() -> Vec<MemoryRegion> {
+    /// The address map the debugger browses, named by role: the CPU bus, plus
+    /// any bank-complete store the board exposes above it.
+    fn memory_regions(_core: &Self::Core) -> Vec<MemoryRegion> {
         Vec::new()
     }
     /// The bank mapped at `address`, for a bank-prefixed disassembly row.
@@ -444,7 +456,7 @@ impl<M: Machine> SystemConsole for MachineConsole<M> {
     }
 
     fn frame_interval(&self) -> Duration {
-        M::FRAME_INTERVAL
+        M::frame_interval(&self.core)
     }
 
     fn save_state(&self) -> Option<Vec<u8>> {
@@ -713,11 +725,11 @@ impl<M: Machine> SystemDebugger for MachineDebugger<M> {
     }
 
     fn memory_regions(&self) -> Vec<MemoryRegion> {
-        M::memory_regions()
+        M::memory_regions(&self.console.core)
     }
 
     fn peek(&self, address: u32) -> u8 {
-        M::peek(&self.console.core, address as u16)
+        M::peek_region(&self.console.core, address)
     }
 
     fn pc(&self) -> u32 {

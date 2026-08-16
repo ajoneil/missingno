@@ -129,7 +129,8 @@ fn budget_guard_returns_none_without_vsync() {
 
 #[test]
 fn debugger_breakpoints_and_peek_are_side_effect_free() {
-    use missingno_vcs::debugger::{Debugger, Stop};
+    use missingno_core::machine::StopSet;
+    use missingno_vcs::debugger::{Debugger, Stop, Stops};
 
     let mut asm = Asm::new(0xF000);
     asm.lda_imm(0x02);
@@ -149,9 +150,12 @@ fn debugger_breakpoints_and_peek_are_side_effect_free() {
         )
         .unwrap(),
     );
-    debugger.set_breakpoint(target);
-    let (_, stop) = debugger.run();
-    assert_eq!(stop, Stop::Breakpoint);
+    let stops = Stops::new(&StopSet {
+        pc: [target as u32].into_iter().collect(),
+        watches: Vec::new(),
+    });
+    let stop = (0..10_000).find_map(|_| debugger.step(&stops));
+    assert_eq!(stop, Some(Stop::Breakpoint));
     assert_eq!(debugger.console().cpu.pc & 0x1FFF, target & 0x1FFF);
 
     // Repeated peeks at the RIOT timer flag and TIA inputs are inert.

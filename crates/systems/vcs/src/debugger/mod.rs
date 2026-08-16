@@ -1,22 +1,25 @@
-//! Debugging backend: instruction stepping, PC breakpoints, and bus-access
-//! watchpoints over a console, with side-effect-free inspection through
-//! [`Vcs::peek`].
+//! Debugging backend: instruction stepping with the seam's stops evaluated at
+//! each boundary, and side-effect-free inspection through [`Vcs::peek`]. The
+//! stores belong to the seam; this side translates them once per run and
+//! compares them the way the board decodes.
 
 mod watch;
 
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 
 use std::collections::BTreeSet;
 
 use missingno_core::inspect;
 use missingno_core::isa::InstructionSet;
+use missingno_core::machine::StopSet;
 use missingno_mos_6502::Mos6502;
 
-use crate::console::{Frame, Vcs};
+use crate::console::Vcs;
 use watch::{WatchCondition, watch_from_condition, watch_to_condition};
 
 pub(crate) use watch::CART_BANK_KEY;
+pub use watch::{supports_watch, watchables};
 
 /// A JSR opcode, for step-over.
 const JSR: u8 = 0x20;
@@ -71,9 +74,6 @@ pub(crate) const MOS6502_FLAGS: &[inspect::FlagName] = &[
     },
 ];
 
-/// Bounds a syncless kernel: ~20 NTSC frames of minimum-length instructions.
-const FRAME_INSTRUCTION_BUDGET: u32 = 200_000;
-
 /// The 6507 register file as one inspection group. Shared by the live debugger
 /// and the running snapshot so both produce identical groups. The stack pointer
 /// shows as the page-1 address it selects rather than as the raw `s` offset.
@@ -121,28 +121,39 @@ pub fn cpu_register_groups(
 
 pub struct Debugger {
     vcs: Vcs,
-    breakpoints: BTreeSet<u16>,
-    watchpoints: Vec<WatchCondition>,
-    last_watchpoint_hit: Option<WatchCondition>,
 }
 
-/// Why a stepping call returned.
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+/// Why an instruction step stopped short of running clean.
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Stop {
-    Completed,
     Breakpoint,
-    Watch,
-    BudgetExhausted,
+    Watch(inspect::Watch),
+}
+
+/// The seam's stop stores in the form this side compares against: breakpoint
+/// addresses and the watch terms translated into conditions. Built once per run,
+/// so a per-instruction check costs no allocation.
+pub struct Stops {
+    breakpoints: BTreeSet<u16>,
+    watchpoints: Vec<WatchCondition>,
+}
+
+impl Stops {
+    pub fn new(stops: &StopSet) -> Self {
+        Stops {
+            breakpoints: stops.pc.iter().map(|&address| address as u16).collect(),
+            watchpoints: stops
+                .watches
+                .iter()
+                .filter_map(watch_to_condition)
+                .collect(),
+        }
+    }
 }
 
 impl Debugger {
     pub fn new(vcs: Vcs) -> Self {
-        Debugger {
-            vcs,
-            breakpoints: BTreeSet::new(),
-            watchpoints: Vec::new(),
-            last_watchpoint_hit: None,
-        }
+        Debugger { vcs }
     }
 
     pub fn console(&self) -> &Vcs {
@@ -157,116 +168,36 @@ impl Debugger {
         self.vcs
     }
 
-    pub fn set_breakpoint(&mut self, address: u16) {
-        self.breakpoints.insert(address);
-    }
-
-    pub fn clear_breakpoint(&mut self, address: u16) {
-        self.breakpoints.remove(&address);
-    }
-
-    pub fn breakpoints(&self) -> &BTreeSet<u16> {
-        &self.breakpoints
-    }
-
-    /// The 6507 drives 13 address lines: breakpoints compare on them.
-    fn at_breakpoint(&self) -> bool {
-        self.breakpoints
-            .iter()
-            .any(|&bp| bp & 0x1FFF == self.vcs.cpu.pc & 0x1FFF)
-    }
-
-    /// The first watch that holds at the current instruction boundary, if any.
-    fn check_watchpoints(&self) -> Option<WatchCondition> {
-        self.watchpoints
-            .iter()
-            .find(|condition| condition.matches(&self.vcs))
-            .cloned()
-    }
-
-    pub fn watchables(&self) -> &'static [inspect::Watchable] {
-        watch::watchables()
-    }
-
-    pub fn add_watch(&mut self, watch: inspect::Watch) {
-        if let Some(condition) = watch_to_condition(&watch)
-            && !self.watchpoints.contains(&condition)
-        {
-            self.watchpoints.push(condition);
-        }
-    }
-
-    pub fn remove_watch(&mut self, watch: &inspect::Watch) {
-        if let Some(condition) = watch_to_condition(watch) {
-            self.watchpoints.retain(|w| *w != condition);
-        }
-    }
-
-    pub fn watches(&self) -> Vec<inspect::Watch> {
-        self.watchpoints.iter().map(watch_from_condition).collect()
-    }
-
-    pub fn last_watch_hit(&self) -> Option<inspect::Watch> {
-        self.last_watchpoint_hit.as_ref().map(watch_from_condition)
-    }
-
-    /// Execute one instruction; a frame completing mid-instruction
-    /// surfaces here.
-    pub fn step(&mut self) -> Option<Frame> {
+    /// Execute one instruction, then evaluate the stops at the boundary it
+    /// lands on — the point a PC breakpoint and a watch condition both fire.
+    pub fn step(&mut self, stops: &Stops) -> Option<Stop> {
         self.vcs.step_instruction();
-        self.vcs.take_frame()
+        self.check(stops)
     }
 
-    /// Like step, but a JSR runs to the instruction after the call
-    /// (bounded, and stopping at breakpoints inside the subroutine).
-    pub fn step_over(&mut self) -> (Option<Frame>, Stop) {
-        self.last_watchpoint_hit = None;
-        if self.vcs.peek(self.vcs.cpu.pc) != JSR {
-            let frame = self.step();
-            return (frame, Stop::Completed);
+    /// The stop that holds at the current instruction boundary, if any; a
+    /// breakpoint is reported ahead of a watch.
+    fn check(&self, stops: &Stops) -> Option<Stop> {
+        if stops.breakpoints.iter().any(|&bp| self.at_address(bp)) {
+            return Some(Stop::Breakpoint);
         }
-        let return_address = self.vcs.cpu.pc.wrapping_add(3);
-        let mut frame = None;
-        for _ in 0..FRAME_INSTRUCTION_BUDGET {
-            self.vcs.step_instruction();
-            // Keep the newest frame completed while stepping.
-            frame = self.vcs.take_frame().or(frame);
-            if self.vcs.cpu.pc & 0x1FFF == return_address & 0x1FFF {
-                return (frame, Stop::Completed);
-            }
-            if self.at_breakpoint() {
-                return (frame, Stop::Breakpoint);
-            }
-            if let Some(hit) = self.check_watchpoints() {
-                self.last_watchpoint_hit = Some(hit);
-                return (frame, Stop::Watch);
-            }
-        }
-        (frame, Stop::BudgetExhausted)
+        let hit = stops
+            .watchpoints
+            .iter()
+            .find(|condition| condition.matches(&self.vcs))?;
+        Some(Stop::Watch(watch_from_condition(hit)))
     }
 
-    /// Run until the next frame completes, a breakpoint, or a watch. A stop takes
-    /// precedence: when the frame-completing instruction also lands on a
-    /// breakpoint or watch, the completed frame is carried out with the stop the
-    /// way `run` keeps frames, so the pending pc is reported now rather than
-    /// stepped past on the next call.
-    pub fn step_frame(&mut self) -> (Option<Frame>, Stop) {
-        self.last_watchpoint_hit = None;
-        for _ in 0..FRAME_INSTRUCTION_BUDGET {
-            self.vcs.step_instruction();
-            let frame = self.vcs.take_frame();
-            if self.at_breakpoint() {
-                return (frame, Stop::Breakpoint);
-            }
-            if let Some(hit) = self.check_watchpoints() {
-                self.last_watchpoint_hit = Some(hit);
-                return (frame, Stop::Watch);
-            }
-            if let Some(frame) = frame {
-                return (Some(frame), Stop::Completed);
-            }
-        }
-        (None, Stop::BudgetExhausted)
+    /// Whether the program counter has reached `address`. The 6507 drives 13
+    /// address lines: the comparison is on them.
+    pub fn at_address(&self, address: u16) -> bool {
+        self.vcs.cpu.pc & 0x1FFF == address & 0x1FFF
+    }
+
+    /// The address a call at the program counter returns to; `None` when the
+    /// instruction there is not one.
+    pub fn step_over_target(&self) -> Option<u16> {
+        (self.vcs.peek(self.vcs.cpu.pc) == JSR).then(|| self.vcs.cpu.pc.wrapping_add(3))
     }
 
     /// The 6502 register file as one inspection group.
@@ -381,69 +312,13 @@ impl Debugger {
         let linear = bank as u32 * 0x1000 + (window & 0x0FFF);
         (linear < self.vcs.cartridge().rom_len() as u32).then_some(CART_ROM_BASE + linear)
     }
-
-    /// Run until a breakpoint or watch (or budget); frames surface as they
-    /// complete.
-    pub fn run(&mut self) -> (Option<Frame>, Stop) {
-        self.last_watchpoint_hit = None;
-        let mut frame = None;
-        for _ in 0..FRAME_INSTRUCTION_BUDGET {
-            self.vcs.step_instruction();
-            // Keep the newest frame completed while stepping.
-            frame = self.vcs.take_frame().or(frame);
-            if self.at_breakpoint() {
-                return (frame, Stop::Breakpoint);
-            }
-            if let Some(hit) = self.check_watchpoints() {
-                self.last_watchpoint_hit = Some(hit);
-                return (frame, Stop::Watch);
-            }
-        }
-        (frame, Stop::BudgetExhausted)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cartridge::CartType;
-    use test_support::{bank_stamped, debugger, reset_to_f000};
-
-    /// A kernel that lands the frame-completing instruction on the loop's first
-    /// instruction: two WSYNCs build visible lines, VSYNC is asserted, and a
-    /// third WSYNC halts through the vsync line so the frame completes exactly as
-    /// the CPU resumes into the loop. The NOP at `$F00A` completes the frame and
-    /// leaves the pc at the `JMP` at `$F00B` — reached for the first time here.
-    fn frame_completes_at_loop_rom() -> Vec<u8> {
-        let mut bank = vec![0u8; 0x1000];
-        bank[0x000..0x00E].copy_from_slice(&[
-            0x85, 0x02, // STA WSYNC
-            0x85, 0x02, // STA WSYNC
-            0xA9, 0x02, // LDA #2
-            0x85, 0x00, // STA VSYNC
-            0x85, 0x02, // STA WSYNC
-            0xEA, // NOP        ($F00A)
-            0x4C, 0x0B, 0xF0, // JMP $F00B  ($F00B)
-        ]);
-        reset_to_f000(&mut bank);
-        bank
-    }
-
-    #[test]
-    fn step_frame_reports_a_stop_coincident_with_frame_completion() {
-        // A breakpoint on the pc the frame-completing instruction lands on must
-        // be reported on the first call, carrying the completed frame — not
-        // masked by the frame and stepped past on the next call.
-        let mut dbg = debugger(&frame_completes_at_loop_rom(), CartType::Plain4K);
-        dbg.set_breakpoint(0xF00B);
-        let (frame, stop) = dbg.step_frame();
-        assert_eq!(stop, Stop::Breakpoint);
-        assert!(
-            frame.is_some(),
-            "the completed frame rides out with the stop"
-        );
-        assert_eq!(dbg.pc() & 0x1FFF, 0xF00B & 0x1FFF);
-    }
+    use test_support::{bank_stamped, debugger};
 
     #[test]
     fn rom_region_only_for_banked_boards() {

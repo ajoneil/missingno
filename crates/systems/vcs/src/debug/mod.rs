@@ -1,27 +1,22 @@
-//! The Atari VCS's implementation of the system seam and its debugger
-//! inspection state.
+//! The Atari VCS's machine binding and its debugger inspection state.
 //!
-//! Two halves of the seam — a plain console driven frame by frame, and the same
-//! console under its debugging backend — share the frame assembly, controls,
-//! save-state glue, and one inspection state that serves both the paused view
-//! (refreshed after every step) and the per-frame snapshot the running view
-//! renders from.
+//! The seam's wrappers drive the hooks in [`machine`]; frame assembly, controls,
+//! and one inspection state — serving both the paused view (refreshed after
+//! every step) and the per-frame snapshot the running view renders from — sit
+//! beside them.
 
-mod console;
 mod controls;
-mod debugger_seam;
 mod frame;
 mod inspect;
+mod machine;
 mod probe;
-mod save_state;
 mod sections;
 
-pub use console::create_console;
 pub use controls::{
     JOYSTICK, KEYPAD, LEFT_PORT, PADDLES, PANEL_CONTROLS, PORTS, RIGHT_PORT, UNPLUGGED,
 };
-pub use debugger_seam::VcsSnapshot;
 pub use inspect::VcsInspectState;
+pub use machine::{VcsSnapshot, VcsSystem, create_console};
 pub use sections::vcs_sidebar_sections;
 
 /// A `.a26` is always ours; a `.bin` only at the family's bare ROM sizes

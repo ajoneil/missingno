@@ -64,7 +64,7 @@ static WATCHABLES: &[WatchableSpec] = &[
 ];
 
 /// The watchables the debugger exposes, built once from [`WATCHABLES`].
-pub(super) fn watchables() -> &'static [inspect::Watchable] {
+pub fn watchables() -> &'static [inspect::Watchable] {
     use std::sync::OnceLock;
     static PUBLIC: OnceLock<Vec<inspect::Watchable>> = OnceLock::new();
     PUBLIC.get_or_init(|| {
@@ -118,6 +118,11 @@ pub(super) fn watch_from_condition(condition: &WatchCondition) -> inspect::Watch
     inspect::Watch { terms }
 }
 
+/// Whether every term of `watch` names something this side can evaluate.
+pub fn supports_watch(watch: &inspect::Watch) -> bool {
+    watch_to_condition(watch).is_some()
+}
+
 pub(super) fn watch_to_condition(watch: &inspect::Watch) -> Option<WatchCondition> {
     let mut conditions = Vec::with_capacity(watch.terms.len());
     for term in &watch.terms {
@@ -134,8 +139,22 @@ pub(super) fn watch_to_condition(watch: &inspect::Watch) -> Option<WatchConditio
 mod tests {
     use super::*;
     use crate::cartridge::CartType;
-    use crate::debugger::Stop;
-    use crate::debugger::test_support::{bank_stamped, debugger, reset_to_f000};
+    use crate::debugger::test_support::{debugger, reset_to_f000};
+    use crate::debugger::{Debugger, Stop, Stops};
+    use missingno_core::machine::StopSet;
+
+    /// The seam's stores holding only these watches.
+    fn stops(watches: &[inspect::Watch]) -> Stops {
+        Stops::new(&StopSet {
+            pc: Default::default(),
+            watches: watches.to_vec(),
+        })
+    }
+
+    /// Step until a stop fires, bounded the way the seam's run hook bounds it.
+    fn run_to_stop(debugger: &mut Debugger, stops: &Stops) -> Option<Stop> {
+        (0..200_000).find_map(|_| debugger.step(stops))
+    }
 
     fn pc_watch(address: u16) -> inspect::Watch {
         inspect::Watch::single("pc", None, Some(address as u32))
@@ -165,9 +184,8 @@ mod tests {
         rom[0x000..0x004].copy_from_slice(&[0xEA, 0x4C, 0x01, 0xF0]);
         reset_to_f000(&mut rom);
         let mut debugger = debugger(&rom, CartType::Plain4K);
-        debugger.add_watch(pc_watch(0xF001));
-        let (_, stop) = debugger.step_frame();
-        assert_eq!(stop, Stop::Watch);
+        let stop = run_to_stop(&mut debugger, &stops(&[pc_watch(0xF001)]));
+        assert!(matches!(stop, Some(Stop::Watch(_))));
         assert_eq!(debugger.pc() & 0x1FFF, 0xF001 & 0x1FFF);
     }
 
@@ -188,21 +206,20 @@ mod tests {
     fn cart_bank_watch_gates_on_the_selected_bank() {
         // Reached before the hotspot: $F002 runs on the wake bank (0).
         let mut on_bank0 = debugger(&f8_bank_switch_rom(), CartType::F8);
-        on_bank0.add_watch(pc_bank_watch(0xF002, 0));
-        let (_, stop) = on_bank0.step_frame();
-        assert_eq!(stop, Stop::Watch);
+        let stop = run_to_stop(&mut on_bank0, &stops(&[pc_bank_watch(0xF002, 0)]));
+        assert!(matches!(stop, Some(Stop::Watch(_))));
         assert_eq!(on_bank0.console().cartridge().selected_bank(), Some(0));
 
         // At the loop the board has switched to bank 1. A `{pc, cart-bank:0}`
-        // watch is added first but must NOT match there; the `cart-bank:1` watch
+        // watch is held first but must NOT match there; the `cart-bank:1` watch
         // does — proving the bank term gates the compound.
         let mut on_bank1 = debugger(&f8_bank_switch_rom(), CartType::F8);
-        on_bank1.add_watch(pc_bank_watch(0xF006, 0));
-        on_bank1.add_watch(pc_bank_watch(0xF006, 1));
-        let (_, stop) = on_bank1.step_frame();
-        assert_eq!(stop, Stop::Watch);
+        let held = stops(&[pc_bank_watch(0xF006, 0), pc_bank_watch(0xF006, 1)]);
+        let stop = run_to_stop(&mut on_bank1, &held);
         assert_eq!(on_bank1.console().cartridge().selected_bank(), Some(1));
-        let hit = on_bank1.last_watch_hit().expect("a watch fired");
+        let Some(Stop::Watch(hit)) = stop else {
+            panic!("a watch fired");
+        };
         let bank_term = hit
             .terms
             .iter()
@@ -213,8 +230,7 @@ mod tests {
 
     #[test]
     fn watchables_expose_pc_and_cart_bank() {
-        let debugger = debugger(&bank_stamped(0x2000), CartType::F8);
-        let keys: Vec<&str> = debugger.watchables().iter().map(|w| w.key).collect();
+        let keys: Vec<&str> = watchables().iter().map(|w| w.key).collect();
         assert!(keys.contains(&"pc"));
         assert!(keys.contains(&CART_BANK_KEY));
     }

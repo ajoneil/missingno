@@ -546,6 +546,12 @@ impl Vcs {
         }
     }
 
+    /// The scanline the TIA completed since the last take, for a frontend that
+    /// advances the console by something other than whole scanlines.
+    pub fn take_line(&mut self) -> Option<Scanline> {
+        self.last_line.take()
+    }
+
     /// Advance until the TIA completes a scanline, returning it with its raw
     /// VSYNC state. The frontend's television integrates VSYNC across scanlines
     /// to decide field boundaries — that lock is off-chip, in the set.
