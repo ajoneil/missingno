@@ -13,9 +13,9 @@ pub enum OamBusOwner {
     Dma(u8),
 }
 
-/// NAVO terminal-count decode: bits 0,1,2,3,4,7 — fires at `dma_a == 0x9F`
+/// NAVO byte-159 decode: bits 0,1,2,3,4,7 — fires at `dma_a == 0x9F`
 /// (159, the 160th byte).
-const NAVO_DECODE: u8 = 0b1001_1111;
+const BYTE_159_DECODE: u8 = 0b1001_1111;
 
 /// OAM DMA controller, modelled as the DMG control-gate pipeline. The
 /// arm/run/terminate gates are clocked by `dma_phi = !data_phase`
@@ -30,21 +30,22 @@ pub struct Dma {
     /// Which bus the DMA source resides on.
     source_bus: Bus,
 
-    /// LYXE: DMA-requested S-R latch — set by the `lavy` $FF46 write
-    /// strobe, reset by `loko`. Drives `lupa → luvy`.
-    lyxe: bool,
-    /// LUVY: DFF on `dma_phi`, `d = lupa` (= `lyxe` at every `dma_phi↑`).
-    luvy: bool,
-    /// LENE: DFF on `dma_phi_n`, `d = luvy`. Arms the run latch and the
-    /// counter reset.
-    lene: bool,
-    /// MYTE: DFF on `dma_phi_n`, `d = nolo` (terminal count), reset by
-    /// `lapa`. Drops the run latch at byte 159.
-    myte: bool,
-    /// LARA/LOKY cross-coupled NAND run latch: set when `lene_n=0`,
-    /// reset when `myte_n=0`.
-    loky: bool,
-    /// MATU: `dma_run`, `loky` re-sampled on `dma_phi↑`.
+    /// FF46 store latch (LYXE) — set by the LAVY store strobe, reset by
+    /// LOKO. Feeds the start synchroniser through LUPA.
+    store_latched: bool,
+    /// Start synchroniser stage 1 (LUVY): DFF on `dma_phi`, `d = LUPA`
+    /// (the store latch once the strobe ends).
+    start_sync_1: bool,
+    /// Start synchroniser stage 2 (LENE): DFF on `dma_phi_n`. Arms the
+    /// run-request latch and the counter reset.
+    start_sync_2: bool,
+    /// Last-byte flip-flop (MYTE): DFF on `dma_phi_n`, `d = NOLO`, reset
+    /// by LAPA. Drops the run-request latch at byte 159.
+    last_byte: bool,
+    /// Run-request latch (LOKY/LARA cross-coupled NANDs): set when
+    /// `lene_n=0`, reset when `myte_n=0`.
+    run_request: bool,
+    /// MATU: `dma_run`, the run request re-sampled on `dma_phi↑`.
     dma_run: bool,
     /// NAKY..MUGU 8-bit ripple counter — OAM offset / source low byte.
     dma_a: u8,
@@ -73,11 +74,11 @@ impl Dma {
             source_register: 0xFF,
             source: 0,
             source_bus: Bus::External,
-            lyxe: false,
-            luvy: false,
-            lene: false,
-            myte: false,
-            loky: false,
+            store_latched: false,
+            start_sync_1: false,
+            start_sync_2: false,
+            last_byte: false,
+            run_request: false,
             dma_run: false,
             dma_a: 0,
             start_edge: 0,
@@ -131,14 +132,14 @@ impl Dma {
         (self.dma_run && self.dma_a < 160).then_some((self.source + self.dma_a as u16, self.dma_a))
     }
 
-    /// $FF46 write: `lavy` strobe sets the LYXE request latch and latches
-    /// the source page. The arm then propagates through `luvy`/`lene` to
-    /// `dma_run` over the next 1.5 M-cycles.
+    /// $FF46 write: the LAVY strobe sets the store latch and latches the
+    /// source page. The arm then propagates through the start
+    /// synchroniser to `dma_run` over the next 1.5 M-cycles.
     pub fn begin_transfer(&mut self, source: u8) {
         self.source_register = source;
         self.source = (source as u16) * 0x100;
         self.source_bus = Bus::of(self.source).unwrap_or(Bus::External);
-        self.lyxe = true;
+        self.store_latched = true;
     }
 
     /// Master edge at which `dma_run` engaged — the byte clock's phase origin.
@@ -165,54 +166,55 @@ impl Dma {
         self.prev_data_phase = data_phase;
 
         if dma_phi_n_rising {
-            self.lene = self.luvy;
-            // MYTE: d = nolo, async-reset by lapa (= counter reset).
-            self.myte = !self.counter_held_reset() && self.nolo();
+            self.start_sync_2 = self.start_sync_1;
+            // MYTE: d = NOLO, async-reset by LAPA (= counter reset).
+            self.last_byte = !self.counter_held_reset() && self.last_byte_term();
             self.settle_latches();
         }
 
         if dma_phi_rising {
-            // META = AND2(dma_phi, loky): reset dominates, else advance —
+            // META = AND2(dma_phi, LOKY): reset dominates, else advance —
             // unless an escape byte's bus tenure gated this advance (the
             // stalled slot re-drives next M-cycle).
             if self.counter_held_reset() {
                 self.dma_a = 0;
-            } else if self.loky {
+            } else if self.run_request {
                 if self.advance_stalled {
                     self.advance_stalled = false;
                 } else {
                     self.dma_a = self.dma_a.wrapping_add(1);
                 }
             }
-            self.luvy = self.lyxe;
+            self.start_sync_1 = self.store_latched;
             // `dma_run` engaging marks the byte clock's phase origin.
-            if !self.dma_run && self.loky {
+            if !self.dma_run && self.run_request {
                 self.start_edge = master_edge;
             }
-            self.dma_run = self.loky;
+            self.dma_run = self.run_request;
             self.settle_latches();
         }
     }
 
-    /// `lapa = 0` (counter + MYTE held in reset) while `lene = 1` — the
-    /// arm window, where `loko = lene` forces the reset.
+    /// `LAPA = 0` (counter + MYTE held in reset) while `LENE = 1` — the
+    /// arm window, where `LOKO = LENE` forces the reset.
     fn counter_held_reset(&self) -> bool {
-        self.lene
+        self.start_sync_2
     }
 
-    /// NAVO terminal detect: `dma_a` has bits 0,1,2,3,4,7 set (0x9F=159).
-    fn nolo(&self) -> bool {
-        self.dma_a & NAVO_DECODE == NAVO_DECODE
+    /// Last-byte term (NOLO = NOT(NAVO)): `dma_a` has bits 0,1,2,3,4,7
+    /// set (0x9F = 159).
+    fn last_byte_term(&self) -> bool {
+        self.dma_a & BYTE_159_DECODE == BYTE_159_DECODE
     }
 
     /// Settle the level S-R latches after a DFF edge: LYXE reset by
-    /// `loko = lene`; LOKY set by `lene_n=0`, reset by `myte_n=0`.
+    /// `LOKO = LENE`; LOKY set by `lene_n=0`, reset by `myte_n=0`.
     fn settle_latches(&mut self) {
-        if self.lene {
-            self.lyxe = false;
-            self.loky = true;
-        } else if self.myte {
-            self.loky = false;
+        if self.start_sync_2 {
+            self.store_latched = false;
+            self.run_request = true;
+        } else if self.last_byte {
+            self.run_request = false;
         }
     }
 
@@ -232,7 +234,7 @@ impl Dma {
             dma.source_bus = Bus::of(snap.source).unwrap_or(Bus::External);
             dma.dma_run = true;
             dma.dma_a = snap.byte_index;
-            dma.loky = true;
+            dma.run_request = true;
         }
         dma
     }

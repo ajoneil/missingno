@@ -54,7 +54,7 @@ impl<M: Model> Console<M> {
     /// OAM DMA control gates clock on dma_phi = !data_phase; tick
     /// every master-clock edge so the engage (dma_phi rising) and arm
     /// (dma_phi_n rising) edges are both seen. data_phase is held LOW
-    /// during halt-spin, freezing the engine (matu/counter get no edge).
+    /// during halt-spin, freezing the engine (MATU/counter get no edge).
     pub(super) fn clock_oam_dma_gate(&mut self, tcycle: TCycle) {
         let data_phase = !self.chassis.cpu.halt_rs_latched() && matches!(tcycle.as_u8(), 2 | 3);
         self.drive_dma(data_phase);
