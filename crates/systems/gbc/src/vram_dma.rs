@@ -1,3 +1,12 @@
+//! The CGB VRAM DMA ($FF51-55): the byte engine, the per-HBlank block
+//! arbitration, and the bus tenure it takes from the CPU and the OAM DMA.
+
+use missingno_gb::ppu::rendering::Mode;
+use missingno_gb::{Chassis, ConsoleShadow, VramDmaClaim};
+
+use crate::Cgb;
+use crate::bus;
+
 /// How the active VRAM DMA is paced. GDMA holds the CPU and flows continuously;
 /// HDMA copies one 16-byte block per HBlank, releasing the CPU between blocks.
 #[derive(Default, PartialEq)]
@@ -288,5 +297,485 @@ impl VramDma {
     /// VRAM address the next byte lands on.
     pub(crate) fn write_address(&self) -> u16 {
         self.cursor.write_address()
+    }
+
+    /// Whether the VRAM DMA will move at least one byte this M-cycle (block
+    /// active, quota available, no setup cell pending) — for the OAM-DMA
+    /// bus-contention check.
+    pub(crate) fn will_move(&self) -> bool {
+        !self.block.setup_cells.active() && self.cursor.quota > 0 && self.moving()
+    }
+
+    /// The byte the VRAM DMA is about to move is a switch-cancel escape byte;
+    /// its bus tenure stalls a concurrent OAM-DMA byte at double speed.
+    pub(crate) fn escape_pending(&self) -> bool {
+        self.cursor.escape_byte && self.will_move()
+    }
+
+    /// An entry-triggered block spends one leading no-data cell — the engine
+    /// loading its working pointers from the HDMA1-4 holding registers (the FF55
+    /// arm strobe performs that load itself). Consumed once per block.
+    pub(crate) fn take_setup_cell(&mut self) -> bool {
+        self.block.setup_cells.tick()
+    }
+
+    /// The next byte the VRAM DMA moves this M-cycle — `(source, destination)`
+    /// resolved addresses — advancing its cursor. `None` once this M-cycle's
+    /// quota is spent.
+    pub(crate) fn next_byte(&mut self) -> Option<(u16, u16)> {
+        if self.cursor.quota == 0 || !self.moving() {
+            return None;
+        }
+        let pair = (self.cursor.source, self.write_address());
+        // Pointers advance per byte and persist for any follow-on transfer. A
+        // switch-cancel escape byte does not count against the latched length.
+        self.cursor.source = self.cursor.source.wrapping_add(1);
+        let (next_dest, carried) = self.cursor.dest.overflowing_add(1);
+        self.cursor.dest = next_dest;
+        if self.cursor.escape_byte {
+            self.cursor.escape_byte = false;
+        } else {
+            self.cursor.remaining -= 1;
+        }
+        self.cursor.quota -= 1;
+        if self.block.remaining > 0 {
+            self.block.remaining -= 1;
+            // A block granted ahead in-halt rejoins the FF55 count as its bytes
+            // finally drain on the post-resume path.
+            if self.block.remaining == 0 {
+                if self.arb.granted_ahead > 0 {
+                    self.arb.granted_ahead -= 1;
+                }
+                self.arb.park_waits_for_fetch = false;
+                self.block.from_arm = false;
+            }
+        }
+        if carried {
+            // The 16-bit dest register carried out of $FFFF — the transfer ends
+            // here rather than wrapping back into VRAM.
+            self.cursor.remaining = 0;
+        }
+        if self.cursor.remaining == 0 {
+            self.cursor.mode = TransferMode::Idle;
+            self.arb.idle_claim = false;
+        }
+        Some(pair)
+    }
+
+    /// The switch-cancel escape byte, moved outside the latched length.
+    pub(crate) fn drain_escape(&mut self) -> Option<(u16, u16)> {
+        if self.cursor.escape_byte && self.moving() {
+            self.cursor.quota = 1;
+            self.next_byte()
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn park_waits_for_fetch(&self) -> bool {
+        self.arb.park_waits_for_fetch
+    }
+
+    pub(crate) fn instruction_retired(&mut self) {
+        self.arb.park_waits_for_fetch = false;
+    }
+
+    pub(crate) fn request_standing(&self) -> bool {
+        self.arb.pend || (self.block.remaining > 0 && self.cursor.remaining > 0)
+    }
+
+    pub(crate) fn holds_cpu(&self) -> bool {
+        self.cursor.mode == TransferMode::General && self.cursor.remaining > 0
+    }
+
+    pub(crate) fn seizes_bus(&self) -> bool {
+        !self.block.ready_in.active()
+            && (self.block.setup_cells.active()
+                || (self.block.remaining > 0 && self.cursor.remaining > 0))
+    }
+}
+
+/// Open-bus value a VRAM-DMA source read returns, or None for a normal read.
+/// A VRAM-DMA source must be ROM/cart-RAM; VRAM ($8000-$9FFF) is off that
+/// source bus and floats to `$FF`.
+fn source_open_bus(source: u16) -> Option<u8> {
+    (0x8000..=0x9FFF).contains(&source).then_some(0xFF)
+}
+
+impl Cgb {
+    pub(crate) fn vram_dma_fall_edge(&mut self, chassis: &mut Chassis<Self>, mode: Mode) {
+        let in_hblank = mode == Mode::HorizontalBlank;
+        let cpu_halted = chassis.cpu.is_halted();
+        if self.vram_dma.inert() && !cpu_halted && !chassis.cpu.is_stopped() {
+            self.vram_dma.settle_inert(in_hblank);
+            return;
+        }
+        // The engine thaws at the IF rise, ahead of the CPU's halt-exit latency
+        // (a wake-coincident block is decided before the first fetch and the
+        // dispatch pick); the taken-clear waits for the CPU's own resume.
+        let engine_gated = (cpu_halted && !chassis.cpu.irq_latched()) || chassis.cpu.is_stopped();
+        let master_edge = chassis.clock.master_edge();
+        let entry_edge = in_hblank && !self.vram_dma.arb.prev_view_hblank;
+        self.vram_dma.arb.prev_view_hblank = in_hblank;
+        if cpu_halted {
+            self.vram_dma.arb.halted_falls = self.vram_dma.arb.halted_falls.saturating_add(1);
+        } else {
+            self.vram_dma.arb.halted_falls = 0;
+        }
+        // The taken-clear stays live through the halt-latch M-cycle, then
+        // freezes until the CPU's own resume (halt only; STOP freezes it
+        // outright via the engine gate). One M-cycle is 4 PPU dots single
+        // speed, 2 in double speed.
+        let taken_clear_window = if self.double_speed { 2 } else { 4 };
+        if !in_hblank && (!cpu_halted || self.vram_dma.arb.halted_falls <= taken_clear_window) {
+            self.vram_dma.block.taken = false;
+        }
+        // A halt wake blinds entry edges on the wake fall and just after it
+        // (the halt analogue of the STOP re-engage window, without the
+        // first-tick exemption — the wake fall's own entry is blinded too).
+        // The halt line is sampled every tick, gated or not — a gated halt
+        // (no latched IRQ) still arms the blind at its wake; the countdown
+        // runs on engine ticks only.
+        if self.vram_dma.arb.prev_cpu_halted && !cpu_halted {
+            self.vram_dma
+                .arb
+                .halt_wake_blind
+                .arm(VramDma::HALT_WAKE_BLIND_TICKS);
+        }
+        // An arm-strobe launch must ready with a fall of mode-0 margin: the
+        // readiness latch's confirmation sample on the following fall reads
+        // the mode-0 level, and a launch confirmed outside mode 0 reverts
+        // (FF55 count restored) to wait for the next entry.
+        if self.vram_dma.block.arm_ready_probation {
+            self.vram_dma.block.arm_ready_probation = false;
+            if !in_hblank && self.vram_dma.block.from_arm && self.vram_dma.block.remaining == 16 {
+                self.vram_dma.block.remaining = 0;
+                self.vram_dma.block.from_arm = false;
+                if self.vram_dma.arb.granted_ahead > 0 {
+                    self.vram_dma.arb.granted_ahead -= 1;
+                }
+            }
+        }
+        // A block whose readiness the HALT latch lands inside joins the halt:
+        // its bytes defer to the wake as a standing granted claim (FF55
+        // already counted it), where the halt-release handover applies. A
+        // latch after readiness leaves the block to drain in-halt.
+        if cpu_halted
+            && !self.vram_dma.arb.prev_cpu_halted
+            && self.vram_dma.block.remaining == 16
+            && self.vram_dma.block.ready_in.active()
+        {
+            self.vram_dma.block.remaining = 0;
+            self.vram_dma.block.ready_in.clear();
+            self.vram_dma.block.setup_cells.clear();
+            self.vram_dma.arb.pend = true;
+            self.vram_dma.arb.pend_granted = true;
+            self.vram_dma.arb.grant_counted = true;
+            self.vram_dma.arb.pend_age = 0;
+        }
+        // The halted view entering this fall — a wake flipping on the commit
+        // fall itself still counts as a halted-CPU commit for the grant mode.
+        let halted_entering = cpu_halted || self.vram_dma.arb.prev_cpu_halted;
+        self.vram_dma.arb.prev_cpu_halted = cpu_halted;
+        // The engine gate freezes commit/grant; the mode-0 entry detector
+        // keeps running — an entry registers a pend-request (consulting the
+        // taken flag) that persists through the freeze and commits at the
+        // thaw. A latched block keeps draining.
+        if engine_gated {
+            if self.vram_dma.arb.pend {
+                self.vram_dma.arb.pend_age = self.vram_dma.arb.pend_age.saturating_add(1);
+            }
+            if cpu_halted
+                && entry_edge
+                && self.vram_dma.cursor.mode == TransferMode::HBlank
+                && !self.vram_dma.block.taken
+                && self.vram_dma.cursor.remaining > 0
+            {
+                self.vram_dma.arb.pend = true;
+                self.vram_dma.arb.pend_from_arm = false;
+                self.vram_dma.arb.pend_age = 0;
+            }
+            // An in-halt mode-0 within the halt-latch window grants the block's
+            // FF55 status (the halted CPU does not contend); the seizure transfer
+            // still waits for the resume.
+            if cpu_halted
+                && entry_edge
+                && self.vram_dma.cursor.mode == TransferMode::HBlank
+                && self.vram_dma.arb.halted_falls <= 2
+                && self.vram_dma.cursor.remaining / 16 > self.vram_dma.arb.granted_ahead as u16
+            {
+                self.vram_dma.arb.granted_ahead += 1;
+                self.vram_dma.arb.grant_counted = true;
+                self.vram_dma.arb.pend_granted = true;
+            }
+            self.vram_dma.cursor.quota = if self.vram_dma.moving() {
+                if self.double_speed { 1 } else { 2 }
+            } else {
+                0
+            };
+            return;
+        }
+
+        if self.vram_dma.arb.halt_wake_blind.tick() && entry_edge {
+            self.vram_dma.block.taken = true;
+        }
+
+        // The post-switch re-engage window: a fresh mode-0 entry edge inside
+        // it passes unserviced (no pend, no retry). The first running tick
+        // after the blackout carries the frozen pre-switch view — a mode-0
+        // level there is blackout-carried, not an entry, and stays eligible.
+        let wake_pend_first_tick =
+            self.vram_dma.arb.wake_pend_blind.remaining() == VramDma::WAKE_PEND_BLIND_TICKS;
+        if self.vram_dma.arb.wake_pend_blind.tick() && entry_edge && !wake_pend_first_tick {
+            self.vram_dma.block.taken = true;
+        }
+
+        // Two-stage trigger, evaluated each fall on the post-rise mode view
+        // with this fall's FF55 commit visible: a pend commits to a
+        // cancel-immune block one fall later; an FF55 write at either fall
+        // kills the pend (armed is consulted at both stages).
+        let armed = self.vram_dma.cursor.mode == TransferMode::HBlank;
+        let committing = self.vram_dma.arb.pend
+            && armed
+            // An arm-strobe pend latched while in HBlank commits even if HBlank
+            // ended in the one-fall pend->commit gap; an in-halt-granted pend
+            // commits at the thaw whatever the live mode.
+            && (in_hblank || self.vram_dma.arb.pend_from_arm || self.vram_dma.arb.pend_granted)
+            // A granted pend commits at the engine thaw even while the CPU is
+            // still halted (an interrupt-dispatch wake) — the grant is the halt's.
+            && (!cpu_halted || self.vram_dma.arb.pend_age <= 2 || self.vram_dma.arb.pend_granted);
+        if committing {
+            self.vram_dma.block.remaining = 16;
+            self.vram_dma.block.start_edge = master_edge;
+            self.vram_dma.block.taken = true;
+            self.vram_dma.arb.idle_claim = false;
+            self.vram_dma.block.from_arm = self.vram_dma.arb.pend_from_arm;
+            // A granted-DRIVEN commit (only reachable through the grant: the
+            // thaw lies outside HBlank) pre-charged its setup during the halt;
+            // a granted pend that commits inside a live HBlank is an ordinary
+            // commit and charges setup normally.
+            let granted = self.vram_dma.arb.pend_granted && !in_hblank;
+            // A dispatch wake (the CPU still halted at the thaw) spends the
+            // halt-exit window dispatching, so its setup runs after instead of
+            // arriving pre-charged.
+            let precharged = granted && !cpu_halted;
+            self.vram_dma.arb.park_waits_for_fetch =
+                !(self.vram_dma.arb.pend_from_arm || halted_entering);
+            self.vram_dma
+                .block
+                .ready_in
+                .arm(if precharged { 0 } else { 2 });
+            self.vram_dma
+                .block
+                .setup_cells
+                .arm(if self.vram_dma.arb.pend_from_arm || precharged {
+                    0
+                } else {
+                    1
+                });
+            // FF55 counts the block out at commit, not at drain end.
+            if !self.vram_dma.arb.grant_counted {
+                self.vram_dma.arb.granted_ahead += 1;
+            }
+            self.vram_dma.arb.grant_counted = false;
+            if granted {
+                self.vram_dma
+                    .arb
+                    .wake_tenure
+                    .arm(VramDma::WAKE_TENURE_TICKS);
+            }
+            self.vram_dma.arb.pend_granted = false;
+        }
+        // A granted pend whose thaw tick passes without committing reverts to
+        // an ordinary pend (its next-HBlank commit charges setup normally).
+        if !committing && !cpu_halted {
+            self.vram_dma.arb.pend_granted = false;
+        }
+        // The wake drain's bus tenure consumes an HBlank entry landing inside
+        // it — the entry neither pends nor retries, but its claim stands: the
+        // engine holds the VRAM select, undriven, until the owed block is
+        // really serviced.
+        if self.vram_dma.arb.wake_tenure.tick() && entry_edge {
+            self.vram_dma.block.taken = true;
+            if self.vram_dma.cursor.remaining > 0 {
+                self.vram_dma.arb.idle_claim = true;
+            }
+        }
+        self.vram_dma.arb.pend = !committing
+            && armed
+            && in_hblank
+            && !self.vram_dma.block.taken
+            && self.vram_dma.cursor.remaining > 0
+            && self.vram_dma.block.remaining == 0;
+        if self.vram_dma.arb.pend {
+            self.vram_dma.arb.pend_from_arm = self.vram_dma.arb.armed_this_fall;
+            self.vram_dma.arb.pend_age = 0;
+        }
+        self.vram_dma.arb.armed_this_fall = false;
+        // An arm-strobe launch must ready inside mode 0: readiness completing
+        // after the mode-0 exit reverts the block (FF55 count restored) to wait
+        // for the next entry. Single speed only: the double-speed
+        // readiness-vs-exit margin is unmeasured, and the DS late_enable rows
+        // expect the arm serviced.
+        if self.vram_dma.block.ready_in.expired()
+            && self.vram_dma.block.from_arm
+            && self.vram_dma.block.remaining == 16
+            && !self.double_speed
+        {
+            self.vram_dma.block.arm_ready_probation = true;
+        }
+
+        // Refill this M-cycle's byte budget while the transfer is moving bytes:
+        // 2/M-cycle single speed, 1 in double speed.
+        self.vram_dma.cursor.quota = if self.vram_dma.moving() {
+            if self.double_speed { 1 } else { 2 }
+        } else {
+            0
+        };
+        if self.vram_dma.seizes_bus() {
+            self.vram_dma.block.seize_falls = self.vram_dma.block.seize_falls.saturating_add(1);
+        } else {
+            self.vram_dma.block.seize_falls = 0;
+        }
+        let claim = VramDmaClaim {
+            committed: committing,
+            // A claim is standing once it has aged through one full M-cycle
+            // of the freeze — the synchronizer stage that carries it into
+            // the CPU's M-cycle clock domain; a younger claim hasn't crossed when
+            // the halt-release fetch starts.
+            standing: committing && self.vram_dma.arb.pend_age >= 4,
+        };
+        if claim.committed {
+            // An active OAM DMA already owns a bus, blocking the handover that
+            // would take the halt-release fetch's tail.
+            let bus_free = chassis.dma.is_active_on_bus().is_none();
+            self.console_state.set_vram_dma_claim(VramDmaClaim {
+                committed: true,
+                standing: claim.standing && bus_free,
+            });
+        }
+    }
+
+    pub(crate) fn vram_dma_on_lcd_disabled(&mut self) {
+        // VID_RST re-anchors the dot unit: the mux displacement is void.
+        self.switch_relock_debit = false;
+        self.vram_dma.arb.idle_claim = false;
+        if self.vram_dma.cursor.mode == TransferMode::HBlank
+            && self.vram_dma.cursor.remaining > 0
+            && !self.vram_dma.block.taken
+            && self.vram_dma.block.remaining == 0
+        {
+            self.vram_dma.block.remaining = 16;
+            self.vram_dma.arb.pend_from_arm = true;
+            self.vram_dma.block.setup_cells.clear();
+            self.vram_dma.block.ready_in.arm(2);
+        }
+    }
+
+    pub(crate) fn vram_dma_write_conflict_source(&self, address: u16) -> Option<u16> {
+        // Double speed only: at single speed the CPU read-latch lands after the
+        // block on its own (the byte-identical single-speed reads pass already);
+        // at 2× the read collides with the byte the block is writing — but only
+        // once the bus seizure has settled one full prior fall (the half-dot from
+        // seizure to byte-readable; the count includes this fall, so `>= 2`).
+        let writing = self.double_speed
+            && self.vram_dma.block.seize_falls >= 2
+            && self.vram_dma.block.remaining > 0
+            && self.vram_dma.cursor.remaining > 0;
+        (writing && address == self.vram_dma.write_address()).then_some(self.vram_dma.cursor.source)
+    }
+
+    pub(crate) fn vram_dma_arbitrate_oam_bus(&mut self, chassis: &mut Chassis<Self>) -> bool {
+        let oam = chassis.dma.peek_transfer();
+        let hdma_active = self.console_state.dma_cpu_hold() || self.console_state.bus_suspended();
+        // The OAM-DMA's final byte still shares the bus on the M-cycle it
+        // completes; edge-detect its active→done boundary so that M-cycle still
+        // contends with a concurrent VRAM-DMA.
+        let oam_transferring = oam.is_some();
+        let oam_just_completed = self.vram_dma.oam.was_transferring && !oam_transferring;
+        self.vram_dma.oam.was_transferring = oam_transferring;
+        // The two engines share one bus: when an OAM-DMA and a VRAM-DMA block
+        // both move a byte this M-cycle, the OAM-DMA latches the VRAM-DMA byte
+        // that coincides with its write rather than its own source.
+        let contended = !self.double_speed
+            && (oam_transferring || oam_just_completed)
+            && hdma_active
+            && self.vram_dma.will_move();
+        // Double speed: a switch-cancel escape byte's bus tenure stalls the
+        // concurrent OAM-DMA byte one M-cycle (the engine resumes it next M).
+        let escape_stall =
+            self.double_speed && oam_transferring && hdma_active && self.vram_dma.escape_pending();
+        if escape_stall {
+            chassis.dma.stall_advance();
+        }
+        self.vram_dma.oam.contended = contended;
+        contended || escape_stall
+    }
+
+    pub(crate) fn vram_dma_commit_bytes(&mut self, chassis: &mut Chassis<Self>) {
+        let hdma_active = self.console_state.dma_cpu_hold() || self.console_state.bus_suspended();
+        if !hdma_active {
+            return;
+        }
+        let contended = self.vram_dma.oam.contended;
+        // Commit the bytes the VRAM DMA moves while it actually holds the bus —
+        // the hold keeps the transfer from overlapping the arming instruction.
+        // (The trigger/quota tick ran before this edge's write commit.)
+        let mut hdma_bytes: [Option<(u16, u8)>; 2] = [None, None];
+        if !self.vram_dma.take_setup_cell() {
+            while let Some((src, dst)) = self.vram_dma.next_byte() {
+                let byte = self.read_hdma_source(chassis, src);
+                chassis.dma_commit(src, dst, byte);
+                if contended {
+                    if hdma_bytes[0].is_none() {
+                        hdma_bytes[0] = Some((src, byte));
+                    } else if hdma_bytes[1].is_none() {
+                        hdma_bytes[1] = Some((src, byte));
+                    }
+                }
+            }
+        }
+
+        // The OAM-DMA's deposit this M-cycle is the coinciding VRAM-DMA byte,
+        // landing at OAM[source_low]. Which of the M-cycle's two VRAM-DMA bytes
+        // coincides is the phase between the two byte clocks (the OAM-DMA's start
+        // edge vs the block's), 2nd byte at residue {0,3}. The coinciding OAM
+        // byte commits one T-cycle after start_edge marks dma_run engaging, so
+        // align the phase to that commit before taking the residue.
+        if contended {
+            const OAM_BYTE_COMMIT_LAG_EDGES: u64 = 2;
+            let phase = self
+                .vram_dma
+                .block
+                .start_edge
+                .wrapping_sub(chassis.dma.start_edge())
+                .wrapping_sub(OAM_BYTE_COMMIT_LAG_EDGES)
+                / 2
+                % 4;
+            let coinciding = if matches!(phase, 0 | 3) {
+                hdma_bytes[1].or(hdma_bytes[0])
+            } else {
+                hdma_bytes[0]
+            };
+            if let Some((hsrc, hdata)) = coinciding {
+                chassis.dma_commit(hsrc, 0xfe00 | (hsrc & 0xFF), hdata);
+            }
+        }
+    }
+
+    /// Read one VRAM-DMA source byte: the VRAM float, then the cart-bus float,
+    /// the CGB register/banked-WRAM map, and finally chassis storage — the
+    /// VRAM-DMA counterpart of `Console::read_dma_source`.
+    fn read_hdma_source(&self, chassis: &Chassis<Self>, source: u16) -> u8 {
+        if let Some(open) = source_open_bus(source) {
+            return open;
+        }
+        if let Some(value) = bus::dma_source_open_bus(source) {
+            return value;
+        }
+        if let Some(value) = self.map_read_byte(source, &chassis.ppu, &chassis.vram_bus.vram) {
+            return value;
+        }
+        chassis.read_dma_storage(source)
     }
 }
