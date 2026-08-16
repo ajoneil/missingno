@@ -17,7 +17,7 @@ console, that console's ground-truth hierarchy adjudicates.
 ## Ground-truth hierarchy (the chip in isolation)
 
 This crate has **no hardware conformance oracle**. Its gate is its own unit
-tests (`src/lib.rs`) plus the consuming board suites; a hardware-capture
+tests (`src/tests.rs`) plus the consuming board suites; a hardware-capture
 corpus would become the oracle if one lands. Every reading below is
 documentary, and the ones that are contested are listed as such further down.
 

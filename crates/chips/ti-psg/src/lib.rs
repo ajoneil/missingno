@@ -22,24 +22,55 @@ const INPUT_CLOCKS_PER_INTERNAL_CLOCK: u8 = 16;
 /// Input clocks a byte takes to load, holding READY low meanwhile.
 const READY_LOW_CLOCKS: u8 = 32;
 /// The attenuation that switches a channel off.
-const MUTE: u8 = 0x0F;
+pub const MUTE_ATTENUATION: u8 = 0x0F;
 /// Attenuator weights: 16, 8, 4 and 2 dB, so one step of the register is 2 dB.
-const DECIBELS_PER_STEP: f32 = 2.0;
+pub const DECIBELS_PER_STEP: f32 = 2.0;
 /// One past the largest period register value.
-const FULL_TONE_SPAN: u16 = 0x400;
+pub const FULL_TONE_SPAN: u16 = 0x400;
 
 const TONE_CHANNELS: usize = 3;
 const CHANNELS: usize = 4;
-/// The register file's fourth channel.
-const NOISE_CHANNEL: usize = 3;
-/// The tone generator the noise generator can borrow its rate from.
-const THIRD_TONE: usize = TONE_CHANNELS - 1;
+
+/// A generator, which is also a register-file address: the output buffer sums
+/// the three tone generators and the noise generator.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Channel {
+    Tone1,
+    Tone2,
+    Tone3,
+    Noise,
+}
+
+impl Channel {
+    /// In register-address order, which is the order the mixer sums them.
+    pub const ALL: [Channel; CHANNELS] = [
+        Channel::Tone1,
+        Channel::Tone2,
+        Channel::Tone3,
+        Channel::Noise,
+    ];
+
+    /// The two channel-select bits of an addressing byte.
+    fn from_address(bits: u8) -> Channel {
+        match bits & 0x03 {
+            0 => Channel::Tone1,
+            1 => Channel::Tone2,
+            2 => Channel::Tone3,
+            _ => Channel::Noise,
+        }
+    }
+
+    /// Its place in the register file, and in [`Psg::dac_codes`].
+    pub fn index(self) -> usize {
+        self as usize
+    }
+}
 
 impl Variant {
     /// The count a channel's period register stands for; `None` never
     /// borrows, holding the flip-flop. Zero is the one value the two parts
     /// read differently.
-    fn effective_period(self, register: u16) -> Option<u16> {
+    pub fn effective_period(self, register: u16) -> Option<u16> {
         match (register, self) {
             (0, Variant::DiscreteTi) => Some(FULL_TONE_SPAN),
             (0, Variant::SegaIntegrated) => None,
@@ -84,7 +115,7 @@ enum RegisterKind {
 /// The register address held on the chip between transfers.
 #[derive(Clone, Copy)]
 struct LatchedRegister {
-    channel: usize,
+    channel: Channel,
     kind: RegisterKind,
 }
 
@@ -120,7 +151,7 @@ impl ToneChannel {
 
 /// The shift rate selector, in divisions of the input clock.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum NoiseRate {
+pub enum NoiseRate {
     Div512,
     Div1024,
     Div2048,
@@ -146,21 +177,28 @@ impl NoiseRate {
         }
     }
 
+    /// The input clocks a shift takes, or `None` where the rate is the third
+    /// tone generator's period instead.
+    pub fn input_clock_division(self) -> Option<u16> {
+        match self {
+            NoiseRate::Div512 => Some(512),
+            NoiseRate::Div1024 => Some(1024),
+            NoiseRate::Div2048 => Some(2048),
+            NoiseRate::FollowTone3 => None,
+        }
+    }
+
     /// Internal clocks between borrows. The named division is the shift
     /// register's rate, and the flip-flop takes two borrows per shift.
     fn fixed_reload(self) -> Option<u16> {
-        let input_clocks: u16 = match self {
-            NoiseRate::Div512 => 512,
-            NoiseRate::Div1024 => 1024,
-            NoiseRate::Div2048 => 2048,
-            NoiseRate::FollowTone3 => return None,
-        };
+        let input_clocks = self.input_clock_division()?;
         Some(input_clocks / (2 * u16::from(INPUT_CLOCKS_PER_INTERNAL_CLOCK)))
     }
 }
 
+/// The feedback the shift register is clocked with.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum NoiseMode {
+pub enum NoiseMode {
     Periodic,
     White,
 }
@@ -234,14 +272,14 @@ impl Psg {
             Variant::DiscreteTi => (
                 0,
                 LatchedRegister {
-                    channel: 0,
+                    channel: Channel::Tone1,
                     kind: RegisterKind::Frequency,
                 },
             ),
             Variant::SegaIntegrated => (
-                MUTE,
+                MUTE_ATTENUATION,
                 LatchedRegister {
-                    channel: 1,
+                    channel: Channel::Tone2,
                     kind: RegisterKind::Attenuation,
                 },
             ),
@@ -262,7 +300,7 @@ impl Psg {
     pub fn write(&mut self, byte: u8) {
         if byte & 0x80 != 0 {
             self.latched = LatchedRegister {
-                channel: ((byte >> 5) & 0x03) as usize,
+                channel: Channel::from_address(byte >> 5),
                 kind: match byte & 0x10 {
                     0 => RegisterKind::Frequency,
                     _ => RegisterKind::Attenuation,
@@ -280,10 +318,10 @@ impl Psg {
     /// The addressing byte's low nibble: the latched register's low bits.
     fn write_latch_data(&mut self, nibble: u8) {
         match (self.latched.kind, self.latched.channel) {
-            (RegisterKind::Attenuation, channel) => self.volumes[channel] = nibble,
-            (RegisterKind::Frequency, NOISE_CHANNEL) => self.write_noise_control(nibble),
-            (RegisterKind::Frequency, channel) => {
-                let period = &mut self.tones[channel].period;
+            (RegisterKind::Attenuation, channel) => self.volumes[channel.index()] = nibble,
+            (RegisterKind::Frequency, Channel::Noise) => self.write_noise_control(nibble),
+            (RegisterKind::Frequency, tone) => {
+                let period = &mut self.tones[tone.index()].period;
                 *period = (*period & 0x3F0) | u16::from(nibble);
             }
         }
@@ -293,10 +331,10 @@ impl Psg {
     /// register too narrow to need two transfers.
     fn write_data(&mut self, bits: u8) {
         match (self.latched.kind, self.latched.channel) {
-            (RegisterKind::Attenuation, channel) => self.volumes[channel] = bits & 0x0F,
-            (RegisterKind::Frequency, NOISE_CHANNEL) => self.write_noise_control(bits),
-            (RegisterKind::Frequency, channel) => {
-                let period = &mut self.tones[channel].period;
+            (RegisterKind::Attenuation, channel) => self.volumes[channel.index()] = bits & 0x0F,
+            (RegisterKind::Frequency, Channel::Noise) => self.write_noise_control(bits),
+            (RegisterKind::Frequency, tone) => {
+                let period = &mut self.tones[tone.index()].period;
                 *period = (*period & 0x00F) | (u16::from(bits) << 4);
             }
         }
@@ -338,7 +376,9 @@ impl Psg {
     fn noise_period(&self) -> Option<u16> {
         match self.noise.rate.fixed_reload() {
             Some(reload) => Some(reload),
-            None => self.variant.effective_period(self.tones[THIRD_TONE].period),
+            None => self
+                .variant
+                .effective_period(self.tones[Channel::Tone3.index()].period),
         }
     }
 
@@ -350,10 +390,10 @@ impl Psg {
 
     /// Whether a channel's generator is driving its attenuator: a tone's
     /// frequency flip-flop high, or the bit leaving the shift register set.
-    fn conducting(&self, channel: usize) -> bool {
+    fn conducting(&self, channel: Channel) -> bool {
         match channel {
-            NOISE_CHANNEL => self.noise.output_bit(),
-            tone => self.tones[tone].output,
+            Channel::Noise => self.noise.output_bit(),
+            tone => self.tones[tone.index()].output,
         }
     }
 
@@ -361,9 +401,9 @@ impl Psg {
     /// generator, here normalised to all four conducting unattenuated.
     pub fn level(&self) -> f32 {
         let mut sum = 0.0;
-        for channel in 0..CHANNELS {
+        for channel in Channel::ALL {
             if self.conducting(channel) {
-                sum += amplitude(self.volumes[channel]);
+                sum += amplitude(self.volumes[channel.index()]);
             }
         }
         sum / CHANNELS as f32
@@ -373,9 +413,9 @@ impl Psg {
     /// complemented while the channel conducts, zero otherwise. The 2 dB per
     /// step the ladder turns each code into is the DAC's, not the code's.
     pub fn dac_codes(&self) -> [u8; CHANNELS] {
-        std::array::from_fn(|channel| {
+        Channel::ALL.map(|channel| {
             if self.conducting(channel) {
-                MUTE - self.volumes[channel]
+                MUTE_ATTENUATION - self.volumes[channel.index()]
             } else {
                 0
             }
@@ -404,10 +444,25 @@ impl Psg {
         };
         mode | self.noise.rate.bits()
     }
+
+    /// The shift rate the noise register selects.
+    pub fn noise_rate(&self) -> NoiseRate {
+        self.noise.rate
+    }
+
+    /// The feedback network the noise register selects.
+    pub fn noise_mode(&self) -> NoiseMode {
+        self.noise.mode
+    }
+
+    /// Which member of the family this is, and so how its registers read.
+    pub fn variant(&self) -> Variant {
+        self.variant
+    }
 }
 
 fn amplitude(attenuation: u8) -> f32 {
-    if attenuation >= MUTE {
+    if attenuation >= MUTE_ATTENUATION {
         0.0
     } else {
         10.0f32.powf(-DECIBELS_PER_STEP * f32::from(attenuation) / 20.0)
@@ -415,413 +470,4 @@ fn amplitude(attenuation: u8) -> f32 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn discrete() -> Psg {
-        Psg::new(Variant::DiscreteTi)
-    }
-
-    fn sega() -> Psg {
-        Psg::new(Variant::SegaIntegrated)
-    }
-
-    fn tone0(psg: &Psg) -> bool {
-        psg.tones[0].output
-    }
-
-    fn noise_flip_flop(psg: &Psg) -> bool {
-        psg.noise.output
-    }
-
-    fn shift_register(psg: &Psg) -> u16 {
-        psg.noise.lfsr
-    }
-
-    fn tick(psg: &mut Psg, clocks: u32) {
-        for _ in 0..clocks {
-            psg.tick();
-        }
-    }
-
-    /// Input clocks until `probe` first differs from its value now.
-    fn clocks_until_change<T: Copy + PartialEq + std::fmt::Debug>(
-        psg: &mut Psg,
-        probe: fn(&Psg) -> T,
-        limit: u32,
-    ) -> u32 {
-        let before = probe(psg);
-        for clock in 1..=limit {
-            psg.tick();
-            if probe(psg) != before {
-                return clock;
-            }
-        }
-        panic!("{before:?} unchanged after {limit} input clocks");
-    }
-
-    /// The bits leaving the shift register, one per shift.
-    fn shift_sequence(variant: Variant, mode: NoiseMode, shifts: usize) -> Vec<u8> {
-        let mut noise = NoiseChannel::new(variant);
-        noise.mode = mode;
-        (0..shifts)
-            .map(|_| {
-                let out = (noise.lfsr & 1) as u8;
-                noise.shift(variant);
-                out
-            })
-            .collect()
-    }
-
-    /// Shifts before the register returns to its cleared state — which, the
-    /// state deciding the whole future, is the output sequence's period.
-    fn shift_cycle_length(variant: Variant, mode: NoiseMode) -> usize {
-        let mut noise = NoiseChannel::new(variant);
-        noise.mode = mode;
-        let cleared = noise.lfsr;
-        for shift in 1..=1 << 17 {
-            noise.shift(variant);
-            if noise.lfsr == cleared {
-                return shift;
-            }
-        }
-        panic!("the shift register never returned to its cleared state");
-    }
-
-    #[test]
-    fn an_addressing_byte_lands_its_nibble_immediately() {
-        let mut psg = discrete();
-        psg.write(0x8F);
-        assert_eq!(psg.tone_periods()[0], 0x00F);
-    }
-
-    #[test]
-    fn a_data_byte_fills_a_tone_registers_high_six_bits() {
-        let mut psg = discrete();
-        psg.write(0x8E);
-        psg.write(0x0F);
-        assert_eq!(psg.tone_periods()[0], 0x0FE);
-    }
-
-    #[test]
-    fn consecutive_bytes_walk_the_tone_register() {
-        // Each byte lands as it arrives; neither waits for the other.
-        let mut psg = discrete();
-        psg.write(0x80);
-        assert_eq!(psg.tone_periods()[0] & 0x00F, 0x000);
-        psg.write(0x00);
-        assert_eq!(psg.tone_periods()[0], 0x000);
-        psg.write(0x8F);
-        assert_eq!(psg.tone_periods()[0], 0x00F);
-        psg.write(0x3F);
-        assert_eq!(psg.tone_periods()[0], 0x3FF);
-    }
-
-    #[test]
-    fn a_data_byte_after_an_attenuation_address_updates_the_volume() {
-        let mut psg = discrete();
-        psg.write(0xDF);
-        psg.write(0x00);
-        assert_eq!(psg.attenuations()[2], 0x00);
-    }
-
-    #[test]
-    fn a_data_byte_after_a_noise_address_updates_the_control() {
-        let mut psg = discrete();
-        psg.write(0xE5);
-        assert_eq!(psg.noise_control(), 0x05);
-        psg.write(0x04);
-        assert_eq!(psg.noise_control(), 0x04);
-    }
-
-    #[test]
-    fn the_noise_register_discards_the_nibbles_high_bit() {
-        let mut psg = discrete();
-        psg.write(0xEF);
-        assert_eq!(psg.noise_control(), 0x07);
-    }
-
-    #[test]
-    fn the_latched_register_survives_data_bytes() {
-        let mut psg = discrete();
-        psg.write(0x8E);
-        psg.write(0x0F);
-        psg.write(0x00);
-        assert_eq!(psg.tone_periods()[0], 0x00E);
-    }
-
-    #[test]
-    fn a_tone_toggles_every_sixteen_input_clocks_per_period_step() {
-        let mut psg = discrete();
-        psg.write(0x83);
-        psg.write(0x00);
-        clocks_until_change(&mut psg, tone0, 64);
-        for _ in 0..4 {
-            assert_eq!(clocks_until_change(&mut psg, tone0, 256), 16 * 3);
-        }
-    }
-
-    #[test]
-    fn a_period_rewrite_applies_at_the_next_borrow() {
-        let mut psg = discrete();
-        psg.write(0x88);
-        psg.write(0x00);
-        clocks_until_change(&mut psg, tone0, 64);
-        tick(&mut psg, 16 * 3);
-        psg.write(0x82);
-        psg.write(0x00);
-        // The counter keeps the five internal clocks it still owes.
-        assert_eq!(clocks_until_change(&mut psg, tone0, 256), 16 * 5);
-        assert_eq!(clocks_until_change(&mut psg, tone0, 256), 16 * 2);
-    }
-
-    #[test]
-    fn a_zero_period_counts_the_full_span_on_the_discrete_part() {
-        let mut psg = discrete();
-        clocks_until_change(&mut psg, tone0, 64);
-        assert_eq!(
-            clocks_until_change(&mut psg, tone0, 32_768),
-            16 * FULL_TONE_SPAN as u32
-        );
-    }
-
-    #[test]
-    fn a_zero_period_holds_the_channel_on_the_integrated_part() {
-        let mut psg = sega();
-        let held = tone0(&psg);
-        tick(&mut psg, 2 * 16 * FULL_TONE_SPAN as u32);
-        assert_eq!(tone0(&psg), held);
-    }
-
-    #[test]
-    fn the_fixed_shift_rates_divide_the_input_clock() {
-        for (control, input_clocks) in [(0xE0u8, 512u32), (0xE1, 1024), (0xE2, 2048)] {
-            let mut psg = discrete();
-            psg.write(control);
-            clocks_until_change(&mut psg, shift_register, 4096);
-            assert_eq!(
-                clocks_until_change(&mut psg, shift_register, 8192),
-                input_clocks
-            );
-        }
-    }
-
-    #[test]
-    fn the_follow_rate_tracks_the_third_tone_register() {
-        let mut psg = discrete();
-        psg.write(0xC4);
-        psg.write(0x00);
-        psg.write(0xE3);
-        clocks_until_change(&mut psg, shift_register, 1024);
-        assert_eq!(
-            clocks_until_change(&mut psg, shift_register, 1024),
-            2 * 16 * 4
-        );
-        psg.write(0xC8);
-        psg.write(0x00);
-        clocks_until_change(&mut psg, shift_register, 2048);
-        assert_eq!(
-            clocks_until_change(&mut psg, shift_register, 2048),
-            2 * 16 * 8
-        );
-    }
-
-    #[test]
-    fn the_shift_register_advances_on_rising_edges_only() {
-        let mut psg = discrete();
-        psg.write(0xE0);
-        let (mut toggles, mut shifts) = (0, 0);
-        let mut output = noise_flip_flop(&psg);
-        let mut register = shift_register(&psg);
-        for _ in 0..16 * 16 * 21 {
-            psg.tick();
-            let toggled = noise_flip_flop(&psg) != output;
-            if shift_register(&psg) != register {
-                assert!(toggled && noise_flip_flop(&psg));
-                register = shift_register(&psg);
-                shifts += 1;
-            }
-            if toggled {
-                output = !output;
-                toggles += 1;
-            }
-        }
-        assert_eq!(toggles, 21);
-        assert_eq!(shifts, 10);
-    }
-
-    #[test]
-    fn the_discrete_white_sequence_runs_32767_shifts() {
-        assert_eq!(
-            shift_cycle_length(Variant::DiscreteTi, NoiseMode::White),
-            32767
-        );
-        // Taps at bits 0 and 1 of a 15-bit register.
-        let sequence = shift_sequence(Variant::DiscreteTi, NoiseMode::White, 200);
-        for i in 15..sequence.len() {
-            assert_eq!(sequence[i], sequence[i - 15] ^ sequence[i - 14]);
-        }
-    }
-
-    #[test]
-    fn the_integrated_white_sequence_runs_57337_shifts() {
-        assert_eq!(
-            shift_cycle_length(Variant::SegaIntegrated, NoiseMode::White),
-            57337
-        );
-        // Taps at bits 0 and 3 of a 16-bit register.
-        let sequence = shift_sequence(Variant::SegaIntegrated, NoiseMode::White, 200);
-        for i in 16..sequence.len() {
-            assert_eq!(sequence[i], sequence[i - 16] ^ sequence[i - 13]);
-        }
-    }
-
-    #[test]
-    fn periodic_noise_is_a_one_in_fifteen_duty_on_the_discrete_part() {
-        assert_eq!(
-            shift_cycle_length(Variant::DiscreteTi, NoiseMode::Periodic),
-            15
-        );
-        let sequence = shift_sequence(Variant::DiscreteTi, NoiseMode::Periodic, 150);
-        assert_eq!(sequence.iter().filter(|&&bit| bit == 1).count(), 10);
-    }
-
-    #[test]
-    fn periodic_noise_is_a_one_in_sixteen_duty_on_the_integrated_part() {
-        assert_eq!(
-            shift_cycle_length(Variant::SegaIntegrated, NoiseMode::Periodic),
-            16
-        );
-        let sequence = shift_sequence(Variant::SegaIntegrated, NoiseMode::Periodic, 160);
-        assert_eq!(sequence.iter().filter(|&&bit| bit == 1).count(), 10);
-    }
-
-    #[test]
-    fn a_noise_control_write_clears_the_shift_register() {
-        let cleared = Variant::DiscreteTi.lfsr_shift_in();
-        let mut psg = discrete();
-        psg.write(0xE4);
-        tick(&mut psg, 16 * 16 * 40);
-        assert_ne!(shift_register(&psg), cleared);
-        psg.write(0xE4);
-        assert_eq!(shift_register(&psg), cleared);
-    }
-
-    #[test]
-    fn each_attenuation_step_is_two_decibels() {
-        for step in 1..MUTE {
-            let ratio = amplitude(step) / amplitude(step - 1);
-            assert!((20.0 * ratio.log10() + DECIBELS_PER_STEP).abs() < 1e-4);
-        }
-        assert_eq!(amplitude(MUTE), 0.0);
-    }
-
-    #[test]
-    fn the_summing_stage_is_linear() {
-        let mut psg = discrete();
-        for channel in 0..CHANNELS as u8 {
-            psg.write(0x9F | (channel << 5));
-        }
-        assert_eq!(psg.level(), 0.0);
-        psg.write(0x90);
-        let one = psg.level();
-        psg.write(0xB0);
-        assert!((psg.level() - 2.0 * one).abs() < 1e-6);
-    }
-
-    #[test]
-    fn a_muted_channel_codes_zero() {
-        let mut psg = discrete();
-        psg.write(0x9F);
-        assert!(tone0(&psg));
-        assert_eq!(psg.dac_codes()[0], 0);
-    }
-
-    #[test]
-    fn an_unattenuated_conducting_channel_codes_full_scale() {
-        let psg = discrete();
-        assert_eq!(psg.attenuations()[0], 0);
-        assert!(tone0(&psg));
-        assert_eq!(psg.dac_codes()[0], 15);
-    }
-
-    #[test]
-    fn a_tone_code_follows_its_flip_flop() {
-        let mut psg = discrete();
-        psg.write(0x83);
-        psg.write(0x00);
-        assert!(tone0(&psg));
-        assert_eq!(psg.dac_codes()[0], 15);
-        clocks_until_change(&mut psg, tone0, 64);
-        assert_eq!(psg.dac_codes()[0], 0);
-        clocks_until_change(&mut psg, tone0, 64);
-        assert_eq!(psg.dac_codes()[0], 15);
-    }
-
-    #[test]
-    fn the_noise_code_follows_the_bit_leaving_the_shift_register() {
-        let mut psg = discrete();
-        psg.write(0xE4);
-        let (mut set, mut cleared) = (false, false);
-        for _ in 0..16 * 512 * 8 {
-            psg.tick();
-            let conducting = shift_register(&psg) & 1 != 0;
-            assert_eq!(
-                psg.dac_codes()[NOISE_CHANNEL],
-                if conducting { 15 } else { 0 }
-            );
-            set |= conducting;
-            cleared |= !conducting;
-        }
-        assert!(set && cleared, "the output bit never took both values");
-    }
-
-    #[test]
-    fn ready_returns_thirty_two_input_clocks_after_a_write() {
-        let mut psg = discrete();
-        assert!(psg.ready());
-        psg.write(0x9F);
-        for _ in 0..READY_LOW_CLOCKS - 1 {
-            psg.tick();
-            assert!(!psg.ready());
-        }
-        psg.tick();
-        assert!(psg.ready());
-    }
-
-    #[test]
-    fn the_integrated_part_is_always_ready() {
-        let mut psg = sega();
-        psg.write(0x9F);
-        assert!(psg.ready());
-    }
-
-    #[test]
-    fn the_discrete_part_powers_on_sounding() {
-        let psg = discrete();
-        assert_eq!(psg.tone_periods(), [0; TONE_CHANNELS]);
-        assert_eq!(psg.attenuations(), [0; CHANNELS]);
-        assert!(psg.level() > 0.0);
-    }
-
-    #[test]
-    fn the_discrete_part_powers_on_addressing_the_first_tone() {
-        let mut psg = discrete();
-        psg.write(0x3F);
-        assert_eq!(psg.tone_periods()[0], 0x3F0);
-    }
-
-    #[test]
-    fn the_integrated_part_powers_on_silent() {
-        let psg = sega();
-        assert_eq!(psg.attenuations(), [MUTE; CHANNELS]);
-        assert_eq!(psg.level(), 0.0);
-    }
-
-    #[test]
-    fn the_integrated_part_powers_on_addressing_the_second_attenuation() {
-        let mut psg = sega();
-        psg.write(0x00);
-        assert_eq!(psg.attenuations()[1], 0x00);
-    }
-}
+mod tests;
