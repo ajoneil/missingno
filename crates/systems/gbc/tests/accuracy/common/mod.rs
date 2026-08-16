@@ -17,11 +17,13 @@ use missingno_gbc::GameBoyColor;
 
 #[allow(unused_imports)]
 pub use missingno_gb::test_support::{
-    System, check_mooneye_pass, format_registers, format_wram_dump, is_infinite_loop,
-    load_reference_png, rom_path, run_boot_rom, run_for_tcycles, run_frames, run_until_breakpoint,
+    System, check_mooneye_pass, decode_screen_hex, format_registers, format_wram_dump,
+    is_infinite_loop, rom_path, run_boot_rom, run_for_tcycles, run_frames, run_until_breakpoint,
     run_until_infinite_loop, run_until_infinite_loop_no_lcd, run_until_serial_match,
-    run_until_undefined_opcode, screen_to_greyscale,
+    run_until_undefined_opcode, screen_matches_hex, screen_to_greyscale,
 };
+pub use missingno_test_support::compare::{assert_pixels_match, debug_value, hex_byte};
+use missingno_test_support::reference::ReferencePng;
 
 /// Try to load the CGB boot ROM (2304 bytes) from the path in `CGB_BOOT_ROM`.
 /// Returns None if unset or unreadable. Proprietary — not distributed.
@@ -79,89 +81,31 @@ pub fn load_cgb_rom_traced(relative: &str) -> TestRun<missingno_gbc::Cgb> {
     TestRun::new(new_cgb(rom), relative, "CGB-C")
 }
 
-/// Load a reference PNG from the gbc crate's own roms dir.
+/// Load a reference PNG from the gbc crate's own roms dir as one shade byte
+/// per pixel.
 pub fn load_cgb_reference_png(relative: &str) -> Vec<u8> {
-    let path = cgb_rom_path(relative);
-    let file = std::fs::File::open(&path)
-        .unwrap_or_else(|e| panic!("Failed to open reference image {}: {e}", path.display()));
-    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
-    decoder.set_transformations(png::Transformations::EXPAND);
-    let mut reader = decoder.read_info().unwrap();
-    let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
-    let info = reader.next_frame(&mut buf).unwrap();
-
-    let width = info.width as usize;
-    let height = info.height as usize;
-    let stride = match info.color_type {
-        png::ColorType::Grayscale => 1,
-        png::ColorType::Rgb => 3,
-        png::ColorType::Rgba => 4,
-        other => panic!("Unsupported PNG color type: {other:?}"),
-    };
-    (0..width * height).map(|i| buf[i * stride]).collect()
+    ReferencePng::load(&cgb_rom_path(relative)).greyscale()
 }
 
-/// Load a reference PNG from the gbc crate's own roms dir as flat RGB888 bytes
-/// (width × height × 3). The RGB analogue of [`load_cgb_reference_png`], for the
-/// colourised CGB-compat references where the red channel alone is insufficient.
-pub fn load_cgb_reference_png_rgb(relative: &str) -> Vec<u8> {
-    let path = cgb_rom_path(relative);
-    let file = std::fs::File::open(&path)
-        .unwrap_or_else(|e| panic!("Failed to open reference image {}: {e}", path.display()));
-    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
-    decoder.set_transformations(png::Transformations::EXPAND);
-    let mut reader = decoder.read_info().unwrap();
-    let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
-    let info = reader.next_frame(&mut buf).unwrap();
-
-    let width = info.width as usize;
-    let height = info.height as usize;
-    let stride = match info.color_type {
-        png::ColorType::Grayscale => 1,
-        png::ColorType::Rgb => 3,
-        png::ColorType::Rgba => 4,
-        other => panic!("Unsupported PNG color type: {other:?}"),
-    };
-    (0..width * height)
-        .flat_map(|i| {
-            let p = i * stride;
-            match info.color_type {
-                png::ColorType::Grayscale => [buf[p], buf[p], buf[p]],
-                _ => [buf[p], buf[p + 1], buf[p + 2]],
-            }
-        })
-        .collect()
+/// Load a reference PNG from the gb crate's shared roms dir as one shade byte
+/// per pixel.
+pub fn load_reference_png(relative: &str) -> Vec<u8> {
+    ReferencePng::load(&rom_path(relative)).greyscale()
 }
 
-/// Load a reference PNG from the gb crate's shared roms dir as flat RGB888
-/// bytes (width × height × 3). For colourised CGB-compat references where the
-/// red channel alone is insufficient (the greyscale loaders above collapse to
-/// one byte per pixel).
-pub fn load_reference_png_rgb(relative: &str) -> Vec<u8> {
-    let path = rom_path(relative);
-    let file = std::fs::File::open(&path)
-        .unwrap_or_else(|e| panic!("Failed to open reference image {}: {e}", path.display()));
-    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
-    decoder.set_transformations(png::Transformations::EXPAND);
-    let mut reader = decoder.read_info().unwrap();
-    let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
-    let info = reader.next_frame(&mut buf).unwrap();
+/// The RGB analogue of [`load_cgb_reference_png`], for the colourised
+/// CGB-compat references where the red channel alone is insufficient.
+pub fn load_cgb_reference_png_rgb(relative: &str) -> Vec<[u8; 3]> {
+    ReferencePng::load(&cgb_rom_path(relative)).rgb()
+}
 
-    let width = info.width as usize;
-    let height = info.height as usize;
-    let stride = match info.color_type {
-        png::ColorType::Grayscale => 1,
-        png::ColorType::Rgb => 3,
-        png::ColorType::Rgba => 4,
-        other => panic!("Unsupported PNG color type: {other:?}"),
-    };
-    (0..width * height)
-        .flat_map(|i| {
-            let p = i * stride;
-            match info.color_type {
-                png::ColorType::Grayscale => [buf[p], buf[p], buf[p]],
-                _ => [buf[p], buf[p + 1], buf[p + 2]],
-            }
-        })
-        .collect()
+/// The RGB analogue of [`load_reference_png`], from the shared roms dir.
+pub fn load_reference_png_rgb(relative: &str) -> Vec<[u8; 3]> {
+    ReferencePng::load(&rom_path(relative)).rgb()
+}
+
+/// Re-cut a screen's flat RGB888 bytes as one triple per pixel, the currency
+/// the colour references compare in.
+pub fn rgb_pixels(bytes: &[u8]) -> Vec<[u8; 3]> {
+    bytes.chunks_exact(3).map(|p| [p[0], p[1], p[2]]).collect()
 }

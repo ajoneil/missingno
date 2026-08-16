@@ -3,11 +3,12 @@
 //! Confirms the recording machinery is model-generic — the CGB console reaches
 //! it with no CGB-specific code.
 
-use missingno_core::recording::{Recorder, Recording, ReplayOutcome, replay};
-use missingno_core::system::{ControlId, ControlInput, ControlRole, SystemConsole};
+use missingno_core::recording::{Recording, ReplayOutcome, replay};
+use missingno_core::system::{ControlId, ControlRole, SystemConsole};
 use missingno_gb::cartridge::Cartridge;
 use missingno_gb::system::{GbConsole, create_console};
 use missingno_gbc::{Cgb, GameBoyColor};
+use missingno_test_support::roundtrip::record_scripted;
 
 fn cgb_console(rom: &str) -> GbConsole<Cgb> {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/accuracy/roms/");
@@ -31,20 +32,7 @@ fn cgb_recording_replays_deterministically() {
         console.step_frame();
     }
 
-    let mut recorder = Recorder::start(&mut console, 4).expect("CGB saves state");
-    for frame in 0..16u64 {
-        for &(at, role, pressed) in SCRIPT {
-            if at == frame {
-                let control = ControlId::integrated(role);
-                let input = ControlInput::Digital(pressed);
-                console.set_control(control, input);
-                recorder.note_input(control, input);
-            }
-        }
-        let produced = console.step_frame().display;
-        recorder.note_frame(produced.as_ref());
-    }
-    let recording = recorder.finish();
+    let recording = record_scripted(&mut console, SCRIPT, 16, 4, ControlId::integrated);
 
     let bytes = recording.to_bytes().unwrap();
     let parsed = Recording::from_bytes(&bytes).expect("round-trips through bytes");

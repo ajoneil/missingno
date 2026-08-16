@@ -22,28 +22,17 @@ fn run_test(rom: GameBoyColor, rom_name: &str) {
         "Mealybug test {rom_name} timed out without reaching LD B,B breakpoint"
     );
 
-    let actual = gbc.screen().to_rgb_bytes();
+    let actual = common::rgb_pixels(&gbc.screen().to_rgb_bytes());
     let reference = format!("mealybug-tearoom/{rom_name}_cgb_c.png");
     let expected = common::load_cgb_reference_png_rgb(&reference);
 
-    let mut mismatches = 0;
-    for (i, (a, e)) in actual
-        .chunks_exact(3)
-        .zip(expected.chunks_exact(3))
-        .enumerate()
-    {
-        if a != e {
-            if mismatches < 10 {
-                let (x, y) = (i % 160, i / 160);
-                eprintln!("Pixel mismatch at ({x}, {y}): got {a:?}, expected {e:?}");
-            }
-            mismatches += 1;
-        }
-    }
-
-    assert_eq!(
-        mismatches, 0,
-        "Mealybug test {rom_name}: {mismatches} pixel mismatches"
+    common::assert_pixels_match(
+        &format!("Mealybug test {rom_name}"),
+        &actual,
+        &expected,
+        160,
+        10,
+        common::debug_value,
     );
 }
 

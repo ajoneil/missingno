@@ -11,34 +11,14 @@
 //! captured — the deferred Tier-2b residue) leave the very first post-restore
 //! frame transiently different before the sequence reconverges.
 
-use std::hash::{Hash, Hasher};
-
 use missingno_core::system::{StateError, SystemConsole};
-use missingno_core::video::Frame;
 use missingno_gb::system::{GbConsole, create_console};
+use missingno_test_support::roundtrip::step_frame_hash;
 
 /// Wrap a freshly booted DMG console in the system seam.
 fn dmg_console(rom: &str) -> GbConsole<missingno_gb::Dmg> {
     let run = missingno_gb::test_support::load_rom(rom);
     create_console(run.gb, |_| None)
-}
-
-fn frame_hash(frame: &Frame) -> u64 {
-    let rgba = frame.resolve_rgba();
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    rgba.width.hash(&mut hasher);
-    rgba.height.hash(&mut hasher);
-    rgba.pixels.hash(&mut hasher);
-    hasher.finish()
-}
-
-/// Step one frame and hash whatever it displayed (a blank hash when the LCD
-/// produced no new frame).
-fn step_frame_hash(console: &mut dyn SystemConsole) -> u64 {
-    match console.step_frame().display {
-        Some(frame) => frame_hash(&frame),
-        None => 0,
-    }
 }
 
 /// The round-trip: `warmup` frames, save, `run` frames capturing hashes, load,

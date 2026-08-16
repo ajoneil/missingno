@@ -16,4 +16,4 @@ rgb = { workspace = true }
 
 [dev-dependencies]
 missingno-gbc = { path = ".", features = ["test-support"] }
-png = "0.18"
+missingno-test-support = { path = "../../missingno/test-support" }

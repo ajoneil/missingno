@@ -65,19 +65,13 @@ fn run_screen_shared(rom_file: &str, reference_file: &str) {
     let actual = gbc.screen().to_greyscale_bytes();
     let expected = common::load_cgb_reference_png(&format!("age-test-roms/{reference_file}"));
 
-    let mut mismatches = 0;
-    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
-        if a != e {
-            if mismatches < 10 {
-                let (x, y) = (i % 160, i / 160);
-                eprintln!("Pixel mismatch at ({x}, {y}): got 0x{a:02X}, expected 0x{e:02X}");
-            }
-            mismatches += 1;
-        }
-    }
-    assert_eq!(
-        mismatches, 0,
-        "AGE test {rom_file}: {mismatches} pixel mismatches"
+    common::assert_pixels_match(
+        &format!("AGE test {rom_file}"),
+        &actual,
+        &expected,
+        160,
+        10,
+        common::hex_byte,
     );
 }
 
@@ -89,26 +83,16 @@ fn run_screen_cgb(rom_file: &str, reference_file: &str) {
         "AGE test {rom_file} timed out without reaching LD B,B"
     );
 
-    let actual = gbc.screen().to_rgb_bytes();
+    let actual = common::rgb_pixels(&gbc.screen().to_rgb_bytes());
     let expected = common::load_cgb_reference_png_rgb(&format!("age-test-roms/{reference_file}"));
 
-    let mut mismatches = 0;
-    for (i, (a, e)) in actual
-        .chunks_exact(3)
-        .zip(expected.chunks_exact(3))
-        .enumerate()
-    {
-        if a != e {
-            if mismatches < 10 {
-                let (x, y) = (i % 160, i / 160);
-                eprintln!("Pixel mismatch at ({x}, {y}): got {a:?}, expected {e:?}");
-            }
-            mismatches += 1;
-        }
-    }
-    assert_eq!(
-        mismatches, 0,
-        "AGE test {rom_file}: {mismatches} pixel mismatches"
+    common::assert_pixels_match(
+        &format!("AGE test {rom_file}"),
+        &actual,
+        &expected,
+        160,
+        10,
+        common::debug_value,
     );
 }
 

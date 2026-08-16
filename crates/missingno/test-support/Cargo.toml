@@ -1,0 +1,11 @@
+[package]
+name = "missingno-test-support"
+version.workspace = true
+authors = ["Andrew O'Neil <andy@andyofniall.net>"]
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+missingno-core = { path = "../core" }
+png = "0.18"

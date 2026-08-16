@@ -32,20 +32,13 @@ fn run_blargg_screen_test(rom_path: &str, reference_path: &str, timeout_frames: 
     let actual = gbc.screen().to_greyscale_bytes();
     let expected = common::load_reference_png(reference_path);
 
-    let mut mismatches = 0;
-    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
-        if a != e {
-            if mismatches < 10 {
-                let (x, y) = (i % 160, i / 160);
-                eprintln!("Pixel mismatch at ({x}, {y}): got 0x{a:02X}, expected 0x{e:02X}");
-            }
-            mismatches += 1;
-        }
-    }
-
-    assert_eq!(
-        mismatches, 0,
-        "Blargg test {rom_path}: {mismatches} pixel mismatches vs {reference_path}"
+    common::assert_pixels_match(
+        &format!("Blargg test {rom_path} vs {reference_path}"),
+        &actual,
+        &expected,
+        160,
+        10,
+        common::hex_byte,
     );
 }
 
@@ -148,19 +141,12 @@ fn interrupt_time() {
     let actual = gbc.screen().to_greyscale_bytes();
     let expected = common::load_cgb_reference_png("blargg/interrupt_time-cgb.png");
 
-    let mut mismatches = 0;
-    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
-        if a != e {
-            if mismatches < 10 {
-                let (x, y) = (i % 160, i / 160);
-                eprintln!("Pixel mismatch at ({x}, {y}): got 0x{a:02X}, expected 0x{e:02X}");
-            }
-            mismatches += 1;
-        }
-    }
-
-    assert_eq!(
-        mismatches, 0,
-        "Blargg interrupt_time: {mismatches} pixel mismatches"
+    common::assert_pixels_match(
+        "Blargg interrupt_time",
+        &actual,
+        &expected,
+        160,
+        10,
+        common::hex_byte,
     );
 }

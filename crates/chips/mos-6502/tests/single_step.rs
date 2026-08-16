@@ -2,10 +2,10 @@
 //! state for all 256 opcodes. Data is fetched (not committed) — the sweep
 //! sparse-clones the oracle on first run, or honours `SINGLE_STEP_TESTS_DIR`.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
 
 use missingno_mos_6502::{Bus, Cpu};
+use missingno_test_support::oracle::fetch_oracle;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -62,53 +62,14 @@ fn data_dir(variant: &str) -> PathBuf {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/single-step-tests");
     let dir = root.join(variant).join("v1");
     if !dir.is_dir() {
-        fetch_oracle(&root);
+        fetch_oracle(
+            &root,
+            "https://github.com/SingleStepTests/65x02",
+            &["6502/v1", "nes6502/v1"],
+            "SINGLE_STEP_TESTS_DIR",
+        );
     }
     dir
-}
-
-/// Sparse-clones the 65x02 oracle sets and records the fetched commit.
-fn fetch_oracle(root: &Path) {
-    let git = |args: &[&str], cwd: Option<&Path>| {
-        let mut command = Command::new("git");
-        command.args(args);
-        if let Some(cwd) = cwd {
-            command.current_dir(cwd);
-        }
-        let ran = command.status().map(|status| status.success());
-        assert!(
-            ran.unwrap_or(false),
-            "git {} failed — clone https://github.com/SingleStepTests/65x02 into {} \
-             (sparse: 6502/v1 nes6502/v1), or set SINGLE_STEP_TESTS_DIR",
-            args.join(" "),
-            root.display(),
-        );
-    };
-    if !root.is_dir() {
-        git(
-            &[
-                "clone",
-                "--depth",
-                "1",
-                "--filter=blob:none",
-                "--sparse",
-                "https://github.com/SingleStepTests/65x02",
-                &root.display().to_string(),
-            ],
-            None,
-        );
-    }
-    git(
-        &["sparse-checkout", "set", "6502/v1", "nes6502/v1"],
-        Some(root),
-    );
-    git(&["checkout", "--", "."], Some(root));
-    let head = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(root)
-        .output()
-        .expect("git rev-parse");
-    std::fs::write(root.join("FETCHED_COMMIT"), head.stdout).expect("record fetched commit");
 }
 
 fn run_case(case: &Case, decimal: bool) -> Result<(), String> {

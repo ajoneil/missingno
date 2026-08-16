@@ -5,6 +5,9 @@
 //! console — the ROMs confine themselves to the envelope every host machine
 //! shares.
 
+use missingno_test_support::compare::{self, assert_pixels_match};
+use missingno_test_support::reference::ReferencePng;
+use missingno_test_support::verdict::{Outcome, Poll, Verdict, poll_verdict};
 use missingno_ti_vdp::{ACTIVE_LINES, ACTIVE_WIDTH, Frame, LEFT_BORDER, PALETTE, Standard, Vdp};
 use missingno_zilog_z80::{Bus, Cpu};
 use std::path::Path;
@@ -14,9 +17,6 @@ mod trace;
 
 const RAM_BASE: u16 = 0xC000;
 const RAM_MASK: usize = 0x3FF;
-
-const RESULT_PASS: u8 = 0xA5;
-const RESULT_FAIL: u8 = 0x5A;
 
 /// The envelope's crystal against its Z80: 10.738635 MHz over 3.579545 MHz.
 const XTALS_PER_TSTATE: u32 = 3;
@@ -79,13 +79,6 @@ impl Bus for Board {
     }
 }
 
-pub struct Verdict {
-    pub passed: bool,
-    pub code: u8,
-    pub observed: u8,
-    pub expected: u8,
-}
-
 fn run(rom: &str, budget_frames: u64) -> (Board, Verdict) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/accuracy/roms")
@@ -103,39 +96,30 @@ fn run(rom: &str, budget_frames: u64) -> (Board, Verdict) {
     #[cfg(feature = "morepork")]
     let mut tracer = trace::Tracer::create(rom, &cpu, &board);
 
-    let budget = budget_frames * TSTATES_PER_FRAME;
-    for _ in 0..budget {
+    let outcome = poll_verdict(budget_frames * TSTATES_PER_FRAME, || {
         board.vdp.tick(XTALS_PER_TSTATE);
         cpu.tick(&mut board);
         cpu.set_irq(board.vdp.interrupt_asserted());
 
         if !cpu.at_instruction_boundary() {
-            continue;
+            return Poll::Pending;
         }
         #[cfg(feature = "morepork")]
         if let Some(tracer) = &mut tracer {
             tracer.capture(&cpu, &mut board);
         }
-        let result = board.ram[0];
-        if result == RESULT_PASS || result == RESULT_FAIL {
-            #[cfg(feature = "morepork")]
-            if let Some(tracer) = tracer.take() {
-                tracer.finish(&board.ram);
-            }
-            let verdict = Verdict {
-                passed: result == RESULT_PASS,
-                code: board.ram[1],
-                observed: board.ram[2],
-                expected: board.ram[3],
-            };
-            return (board, verdict);
-        }
-    }
+        Poll::Read([board.ram[0], board.ram[1], board.ram[2], board.ram[3]])
+    });
+
     #[cfg(feature = "morepork")]
     if let Some(tracer) = tracer.take() {
         tracer.finish(&board.ram);
     }
-    panic!("{rom}: no verdict within {budget_frames} frames");
+
+    match outcome {
+        Outcome::Reached(verdict) => (board, verdict),
+        _ => panic!("{rom}: no verdict within {budget_frames} frames"),
+    }
 }
 
 pub fn assert_pass(rom: &str) {
@@ -186,19 +170,18 @@ pub fn assert_screenshot(rom: &str) {
         // above for adjudication against the SC-3000 capture.
         panic!("{rom}: no blessed reference committed");
     };
-    let mut mismatches = 0usize;
-    for (i, &index) in active.iter().enumerate() {
-        let actual = PALETTE[index as usize];
-        let expected = reference[i];
-        if actual != expected {
-            if mismatches < MAX_REPORTED_MISMATCHES {
-                let (x, y) = (i % 256, i / 256);
-                eprintln!("{rom}: pixel ({x},{y}) got {actual:?} expected {expected:?}");
-            }
-            mismatches += 1;
-        }
-    }
-    assert_eq!(mismatches, 0, "{rom}: {mismatches} pixel mismatches");
+    let actual: Vec<[u8; 3]> = active
+        .iter()
+        .map(|&index| PALETTE[index as usize])
+        .collect();
+    assert_pixels_match(
+        rom,
+        &actual,
+        &reference,
+        256,
+        MAX_REPORTED_MISMATCHES,
+        compare::debug_value,
+    );
 }
 
 /// `TIVDP_DUMP_FRAMES=<dir>` writes each captured display area through the
@@ -226,28 +209,15 @@ fn load_reference(rom: &str) -> Option<Vec<[u8; 3]>> {
     if !path.exists() {
         return None;
     }
-    let file = std::fs::File::open(&path)
-        .unwrap_or_else(|e| panic!("opening reference {}: {e}", path.display()));
-    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
-    decoder.set_transformations(png::Transformations::EXPAND);
-    let mut reader = decoder.read_info().unwrap();
-    let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
-    let info = reader.next_frame(&mut buf).unwrap();
+    let reference = ReferencePng::load(&path);
+    reference.require_colour();
     assert_eq!(
-        (info.width, info.height),
+        (reference.width(), reference.height()),
         (256, 192),
         "{}: reference must be the 256x192 active area",
         path.display()
     );
-    let stride = match info.color_type {
-        png::ColorType::Rgb => 3,
-        png::ColorType::Rgba => 4,
-        other => panic!("unsupported reference colour type: {other:?}"),
-    };
-    let rgb = (0..256 * 192)
-        .map(|i| [buf[i * stride], buf[i * stride + 1], buf[i * stride + 2]])
-        .collect();
-    Some(rgb)
+    Some(reference.rgb())
 }
 
 pub fn assert_pass_within(rom: &str, budget_frames: u64) {

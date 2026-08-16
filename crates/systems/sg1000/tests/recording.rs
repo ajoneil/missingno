@@ -3,10 +3,11 @@
 //! frame-hash checkpoint to match. A save carries no sequencer residue, so the
 //! replay is bit-exact.
 
-use missingno_core::recording::{Recorder, Recording, ReplayError, ReplayOutcome, replay};
-use missingno_core::system::{ControlId, ControlInput, ControlRole, StateError, SystemConsole};
+use missingno_core::recording::{Recording, ReplayError, ReplayOutcome, replay};
+use missingno_core::system::{ControlId, ControlRole, StateError, SystemConsole};
 use missingno_sg1000::console::JOY1;
 use missingno_sg1000::debug::create_console;
+use missingno_test_support::roundtrip::record_scripted;
 
 const CORPUS: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -34,21 +35,9 @@ fn record(relative: &str, warmup: usize, frames: u64, interval: u64) -> Recordin
         console.step_frame();
     }
 
-    let mut recorder = Recorder::start(console.as_mut(), interval).expect("the board saves state");
-    for frame in 0..frames {
-        for &(at, role, pressed) in SCRIPT {
-            if at == frame {
-                let control = ControlId::port(JOY1, role);
-                let input = ControlInput::Digital(pressed);
-                console.set_control(control, input);
-                recorder.note_input(control, input);
-            }
-        }
-        let produced = console.step_frame().display;
-        recorder.note_frame(produced.as_ref());
-    }
-
-    recorder.finish()
+    record_scripted(console.as_mut(), SCRIPT, frames, interval, |role| {
+        ControlId::port(JOY1, role)
+    })
 }
 
 #[test]

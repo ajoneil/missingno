@@ -14,20 +14,13 @@ fn run_mealybug_test(rom_name: &str) {
     let actual = common::screen_to_greyscale(run.gb.screen());
     let expected = common::load_reference_png(&reference_path);
 
-    let mut mismatches = 0;
-    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
-        if a != e {
-            if mismatches < 10 {
-                let (x, y) = (i % 160, i / 160);
-                eprintln!("Pixel mismatch at ({x}, {y}): got 0x{a:02X}, expected 0x{e:02X}");
-            }
-            mismatches += 1;
-        }
-    }
-
-    assert_eq!(
-        mismatches, 0,
-        "Mealybug test {rom_name}: {mismatches} pixel mismatches"
+    common::assert_pixels_match(
+        &format!("Mealybug test {rom_name}"),
+        &actual,
+        &expected,
+        160,
+        10,
+        common::hex_byte,
     );
 }
 

@@ -20,85 +20,6 @@ const TCYCLES: u32 = 1_053_360;
 /// 15 frames matches the prior `TCYCLES` (= 15 × 70224 dots) at single speed.
 const FRAMES: u32 = 15;
 
-// Gambatte hex digit tile patterns (8x8 pixels each).
-// 0 = foreground (0x00 greyscale), 1 = background (0xFF greyscale).
-#[rustfmt::skip]
-const HEX_TILES: [[u8; 64]; 16] = [
-    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,0,0,0,0,0,0], // 0
-    [1,1,1,1,1,1,1,1, 1,1,1,1,0,1,1,1, 1,1,1,1,0,1,1,1, 1,1,1,1,0,1,1,1, 1,1,1,1,0,1,1,1, 1,1,1,1,0,1,1,1, 1,1,1,1,0,1,1,1, 1,1,1,1,0,1,1,1], // 1
-    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,1,1,1,1,1,1,0, 1,1,1,1,1,1,1,0, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,1, 1,0,0,0,0,0,0,0], // 2
-    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,1,1,1,1,1,1,0, 1,1,1,1,1,1,1,0, 1,1,0,0,0,0,0,0, 1,1,1,1,1,1,1,0, 1,1,1,1,1,1,1,0, 1,0,0,0,0,0,0,0], // 3
-    [1,1,1,1,1,1,1,1, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,0,0,0,0,0,0, 1,1,1,1,1,1,1,0, 1,1,1,1,1,1,1,0, 1,1,1,1,1,1,1,0], // 4
-    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,1, 1,0,0,0,0,0,0,1, 1,1,1,1,1,1,1,0, 1,1,1,1,1,1,1,0, 1,0,0,0,0,0,0,1], // 5
-    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,0,0,0,0,0,0], // 6
-    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,1,1,1,1,1,1,0, 1,1,1,1,1,1,0,1, 1,1,1,1,1,0,1,1, 1,1,1,1,0,1,1,1, 1,1,1,0,1,1,1,1, 1,1,1,0,1,1,1,1], // 7
-    [1,1,1,1,1,1,1,1, 1,1,0,0,0,0,0,1, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,1,0,0,0,0,0,1, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,1,0,0,0,0,0,1], // 8
-    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,0,0,0,0,0,0, 1,1,1,1,1,1,1,0, 1,1,1,1,1,1,1,0, 1,0,0,0,0,0,0,0], // 9
-    [1,1,1,1,1,1,1,1, 1,1,1,1,0,1,1,1, 1,1,0,1,1,1,0,1, 1,0,1,1,1,1,1,0, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0], // A
-    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,1, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,0,0,0,0,0,1, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,0,0,0,0,0,1], // B
-    [1,1,1,1,1,1,1,1, 1,1,0,0,0,0,0,1, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,0, 1,1,0,0,0,0,0,1], // C
-    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,1, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,0,0,0,0,0,1], // D
-    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,1, 1,0,0,0,0,0,0,0], // E
-    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,1], // F
-];
-
-fn screen_matches_hex(screen_greyscale: &[u8], expected_hex: &str) -> bool {
-    let digits: Vec<u8> = expected_hex
-        .chars()
-        .map(|c| {
-            c.to_digit(16)
-                .unwrap_or_else(|| panic!("Invalid hex char: {c}")) as u8
-        })
-        .collect();
-    for (idx, &digit) in digits.iter().enumerate() {
-        let tile = &HEX_TILES[digit as usize];
-        let x_off = idx * 8;
-        if x_off + 8 > 160 {
-            break;
-        }
-        for ty in 0..8 {
-            for tx in 0..8 {
-                let screen_pixel = screen_greyscale[ty * 160 + x_off + tx];
-                let expected_pixel = if tile[ty * 8 + tx] == 0 { 0x00 } else { 0xFF };
-                let diff = (screen_pixel as i16 - expected_pixel as i16).unsigned_abs();
-                if diff > 8 {
-                    return false;
-                }
-            }
-        }
-    }
-    true
-}
-
-/// Reverse of `screen_matches_hex`: read back the hex digits the screen
-/// actually shows, for diagnostics on failure. A digit slot that matches no
-/// tile (e.g. a blank screen) reads as `?`.
-fn decode_screen_hex(screen_greyscale: &[u8], num_digits: usize) -> String {
-    (0..num_digits)
-        .map(|idx| {
-            let x_off = idx * 8;
-            if x_off + 8 > 160 {
-                return '?';
-            }
-            for (digit, tile) in HEX_TILES.iter().enumerate() {
-                let matches = (0..8).all(|ty| {
-                    (0..8).all(|tx| {
-                        let screen_pixel = screen_greyscale[ty * 160 + x_off + tx];
-                        let expected_pixel = if tile[ty * 8 + tx] == 0 { 0x00 } else { 0xFF };
-                        (screen_pixel as i16 - expected_pixel as i16).unsigned_abs() <= 8
-                    })
-                });
-                if matches {
-                    return char::from_digit(digit as u32, 16)
-                        .unwrap()
-                        .to_ascii_uppercase();
-                }
-            }
-            '?'
-        })
-        .collect()
-}
-
 fn extract_expected_hex(filename: &str) -> &str {
     let stem = filename
         .strip_suffix(".gbc")
@@ -112,8 +33,8 @@ fn check_screen(gbc: &missingno_gbc::GameBoyColor, rom_path: &str) {
     let screen = gbc.screen().to_greyscale_bytes();
     let filename = rom_path.rsplit('/').next().unwrap();
     let expected_hex = extract_expected_hex(filename);
-    if !screen_matches_hex(&screen, expected_hex) {
-        let shown = decode_screen_hex(&screen, expected_hex.len());
+    if !common::screen_matches_hex(&screen, expected_hex) {
+        let shown = common::decode_screen_hex(&screen, expected_hex.len());
         panic!("Gambatte hex test {rom_path}: screen shows 0x{shown}, expected 0x{expected_hex}");
     }
 }

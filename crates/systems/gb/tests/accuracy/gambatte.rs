@@ -6,215 +6,6 @@ use crate::common;
 // never enable the LCD.
 const TCYCLES: u32 = 1_053_360;
 
-// Gambatte hex digit tile patterns (8x8 pixels each).
-// 0 = foreground (0x00 greyscale), 1 = background (0xFF greyscale).
-// From gambatte-core testrunner.cpp tileFromChar(), where _ = 0xF8F8F8 and O = 0x000000.
-#[rustfmt::skip]
-const HEX_TILES: [[u8; 64]; 16] = [
-    // 0
-    [1,1,1,1,1,1,1,1,
-     1,0,0,0,0,0,0,0,
-     1,0,1,1,1,1,1,0,
-     1,0,1,1,1,1,1,0,
-     1,0,1,1,1,1,1,0,
-     1,0,1,1,1,1,1,0,
-     1,0,1,1,1,1,1,0,
-     1,0,0,0,0,0,0,0],
-    // 1
-    [1,1,1,1,1,1,1,1,
-     1,1,1,1,0,1,1,1,
-     1,1,1,1,0,1,1,1,
-     1,1,1,1,0,1,1,1,
-     1,1,1,1,0,1,1,1,
-     1,1,1,1,0,1,1,1,
-     1,1,1,1,0,1,1,1,
-     1,1,1,1,0,1,1,1],
-    // 2
-    [1,1,1,1,1,1,1,1,
-     1,0,0,0,0,0,0,0,
-     1,1,1,1,1,1,1,0,
-     1,1,1,1,1,1,1,0,
-     1,0,0,0,0,0,0,0,
-     1,0,1,1,1,1,1,1,
-     1,0,1,1,1,1,1,1,
-     1,0,0,0,0,0,0,0],
-    // 3
-    [1,1,1,1,1,1,1,1,
-     1,0,0,0,0,0,0,0,
-     1,1,1,1,1,1,1,0,
-     1,1,1,1,1,1,1,0,
-     1,1,0,0,0,0,0,0,
-     1,1,1,1,1,1,1,0,
-     1,1,1,1,1,1,1,0,
-     1,0,0,0,0,0,0,0],
-    // 4
-    [1,1,1,1,1,1,1,1,
-     1,0,1,1,1,1,1,0,
-     1,0,1,1,1,1,1,0,
-     1,0,1,1,1,1,1,0,
-     1,0,0,0,0,0,0,0,
-     1,1,1,1,1,1,1,0,
-     1,1,1,1,1,1,1,0,
-     1,1,1,1,1,1,1,0],
-    // 5
-    [1,1,1,1,1,1,1,1,
-     1,0,0,0,0,0,0,0,
-     1,0,1,1,1,1,1,1,
-     1,0,1,1,1,1,1,1,
-     1,0,0,0,0,0,0,1,
-     1,1,1,1,1,1,1,0,
-     1,1,1,1,1,1,1,0,
-     1,0,0,0,0,0,0,1],
-    // 6
-    [1,1,1,1,1,1,1,1,
-     1,0,0,0,0,0,0,0,
-     1,0,1,1,1,1,1,1,
-     1,0,1,1,1,1,1,1,
-     1,0,0,0,0,0,0,0,
-     1,0,1,1,1,1,1,0,
-     1,0,1,1,1,1,1,0,
-     1,0,0,0,0,0,0,0],
-    // 7
-    [1,1,1,1,1,1,1,1,
-     1,0,0,0,0,0,0,0,
-     1,1,1,1,1,1,1,0,
-     1,1,1,1,1,1,0,1,
-     1,1,1,1,1,0,1,1,
-     1,1,1,1,0,1,1,1,
-     1,1,1,0,1,1,1,1,
-     1,1,1,0,1,1,1,1],
-    // 8
-    [1,1,1,1,1,1,1,1,
-     1,1,0,0,0,0,0,1,
-     1,0,1,1,1,1,1,0,
-     1,0,1,1,1,1,1,0,
-     1,1,0,0,0,0,0,1,
-     1,0,1,1,1,1,1,0,
-     1,0,1,1,1,1,1,0,
-     1,1,0,0,0,0,0,1],
-    // 9
-    [1,1,1,1,1,1,1,1,
-     1,0,0,0,0,0,0,0,
-     1,0,1,1,1,1,1,0,
-     1,0,1,1,1,1,1,0,
-     1,0,0,0,0,0,0,0,
-     1,1,1,1,1,1,1,0,
-     1,1,1,1,1,1,1,0,
-     1,0,0,0,0,0,0,0],
-    // A
-    [1,1,1,1,1,1,1,1,
-     1,1,1,1,0,1,1,1,
-     1,1,0,1,1,1,0,1,
-     1,0,1,1,1,1,1,0,
-     1,0,0,0,0,0,0,0,
-     1,0,1,1,1,1,1,0,
-     1,0,1,1,1,1,1,0,
-     1,0,1,1,1,1,1,0],
-    // B
-    [1,1,1,1,1,1,1,1,
-     1,0,0,0,0,0,0,1,
-     1,0,1,1,1,1,1,0,
-     1,0,1,1,1,1,1,0,
-     1,0,0,0,0,0,0,1,
-     1,0,1,1,1,1,1,0,
-     1,0,1,1,1,1,1,0,
-     1,0,0,0,0,0,0,1],
-    // C
-    [1,1,1,1,1,1,1,1,
-     1,1,0,0,0,0,0,1,
-     1,0,1,1,1,1,1,0,
-     1,0,1,1,1,1,1,1,
-     1,0,1,1,1,1,1,1,
-     1,0,1,1,1,1,1,1,
-     1,0,1,1,1,1,1,0,
-     1,1,0,0,0,0,0,1],
-    // D
-    [1,1,1,1,1,1,1,1,
-     1,0,0,0,0,0,0,1,
-     1,0,1,1,1,1,1,0,
-     1,0,1,1,1,1,1,0,
-     1,0,1,1,1,1,1,0,
-     1,0,1,1,1,1,1,0,
-     1,0,1,1,1,1,1,0,
-     1,0,0,0,0,0,0,1],
-    // E
-    [1,1,1,1,1,1,1,1,
-     1,0,0,0,0,0,0,0,
-     1,0,1,1,1,1,1,1,
-     1,0,1,1,1,1,1,1,
-     1,0,0,0,0,0,0,0,
-     1,0,1,1,1,1,1,1,
-     1,0,1,1,1,1,1,1,
-     1,0,0,0,0,0,0,0],
-    // F
-    [1,1,1,1,1,1,1,1,
-     1,0,0,0,0,0,0,0,
-     1,0,1,1,1,1,1,1,
-     1,0,1,1,1,1,1,1,
-     1,0,0,0,0,0,0,0,
-     1,0,1,1,1,1,1,1,
-     1,0,1,1,1,1,1,1,
-     1,0,1,1,1,1,1,1],
-];
-
-/// Check if the screen's top-left tiles match the expected hex string.
-/// Each hex digit occupies an 8x8 tile starting at (digit_index * 8, 0).
-fn screen_matches_hex(screen_greyscale: &[u8], expected_hex: &str) -> bool {
-    for (digit_idx, ch) in expected_hex.chars().enumerate() {
-        let tile_value = match ch {
-            '0'..='9' => (ch as u8 - b'0') as usize,
-            'A'..='F' => (ch as u8 - b'A' + 10) as usize,
-            'a'..='f' => (ch as u8 - b'a' + 10) as usize,
-            _ => panic!("Invalid hex char: {ch}"),
-        };
-        let tile = &HEX_TILES[tile_value];
-        let x_off = digit_idx * 8;
-
-        for ty in 0..8 {
-            for tx in 0..8 {
-                let screen_pixel = screen_greyscale[ty * 160 + x_off + tx];
-                // tile: 0 = foreground (0x00), 1 = background (0xFF)
-                // Allow ±8 tolerance (Gambatte uses 0xF8F8F8 mask)
-                let expected_pixel = if tile[ty * 8 + tx] == 0 { 0x00 } else { 0xFF };
-                let diff = (screen_pixel as i16 - expected_pixel as i16).unsigned_abs();
-                if diff > 8 {
-                    return false;
-                }
-            }
-        }
-    }
-    true
-}
-
-/// Reverse of `screen_matches_hex`: read back the hex digits the screen
-/// actually shows, for diagnostics on failure. A digit slot that matches no
-/// tile (e.g. a blank screen) reads as `?`.
-fn decode_screen_hex(screen_greyscale: &[u8], num_digits: usize) -> String {
-    (0..num_digits)
-        .map(|idx| {
-            let x_off = idx * 8;
-            if x_off + 8 > 160 {
-                return '?';
-            }
-            for (digit, tile) in HEX_TILES.iter().enumerate() {
-                let matches = (0..8).all(|ty| {
-                    (0..8).all(|tx| {
-                        let screen_pixel = screen_greyscale[ty * 160 + x_off + tx];
-                        let expected_pixel = if tile[ty * 8 + tx] == 0 { 0x00 } else { 0xFF };
-                        (screen_pixel as i16 - expected_pixel as i16).unsigned_abs() <= 8
-                    })
-                });
-                if matches {
-                    return char::from_digit(digit as u32, 16)
-                        .unwrap()
-                        .to_ascii_uppercase();
-                }
-            }
-            '?'
-        })
-        .collect()
-}
-
 /// Extract the expected hex output from a Gambatte test filename.
 /// Pattern: `_out<HEX>` before the file extension.
 fn extract_expected_hex(filename: &str) -> &str {
@@ -248,8 +39,8 @@ fn run_gambatte_hex_test(rom_path: &str) {
     let filename = rom_path.rsplit('/').next().unwrap();
     let expected_hex = extract_expected_hex(filename);
 
-    if !screen_matches_hex(&screen, expected_hex) {
-        let shown = decode_screen_hex(&screen, expected_hex.len());
+    if !common::screen_matches_hex(&screen, expected_hex) {
+        let shown = common::decode_screen_hex(&screen, expected_hex.len());
         panic!("Gambatte hex test {rom_path}: screen shows 0x{shown}, expected 0x{expected_hex}");
     }
 }
@@ -261,20 +52,13 @@ fn run_gambatte_screenshot_test(rom_path: &str, reference_path: &str) {
     let actual = common::screen_to_greyscale(run.gb.screen());
     let expected = common::load_reference_png(reference_path);
 
-    let mut mismatches = 0;
-    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
-        if a != e {
-            if mismatches < 10 {
-                let (x, y) = (i % 160, i / 160);
-                eprintln!("Pixel mismatch at ({x}, {y}): got 0x{a:02X}, expected 0x{e:02X}");
-            }
-            mismatches += 1;
-        }
-    }
-
-    assert_eq!(
-        mismatches, 0,
-        "Gambatte screenshot test {rom_path}: {mismatches} pixel mismatches"
+    common::assert_pixels_match(
+        &format!("Gambatte screenshot test {rom_path}"),
+        &actual,
+        &expected,
+        160,
+        10,
+        common::hex_byte,
     );
 }
 

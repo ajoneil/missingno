@@ -13,17 +13,15 @@
 
 use std::path::{Path, PathBuf};
 
+use missingno_test_support::compare::{self, assert_pixels_match};
+use missingno_test_support::reference::ReferencePng;
+use missingno_test_support::verdict::{Outcome, Poll, poll_verdict};
 use missingno_vcs::console::{Frame, Vcs};
 use missingno_vcs::tia::{VISIBLE_CLOCKS, palette, palette_index};
 use missingno_vcs::{CartType, DumpFit, TvStandard};
 
 /// RESULT convention (see `missingno-vcs-tests/include/result.h`).
 const RESULT: u16 = 0x0080;
-const CODE: u16 = 0x0081;
-const OBSERVED: u16 = 0x0082;
-const EXPECTED: u16 = 0x0083;
-const PASS_MAGIC: u8 = 0xA5;
-const FAIL_MAGIC: u8 = 0x5A;
 
 /// A self-test writes its verdict within a handful of frames; this caps a
 /// hung or never-verdicting ROM. Each instruction is a few CPU cycles — at
@@ -59,7 +57,7 @@ fn load(relative: &str, standard: TvStandard, cart_type: CartType) -> Vcs {
 pub fn run_self_test_image(name: &str, image: &[u8], standard: TvStandard, cart_type: CartType) {
     let vcs = Vcs::new(image, standard, Some(cart_type), DumpFit::Exact)
         .unwrap_or_else(|e| panic!("failed to load {name}: {e:?}"));
-    poll_verdict(name, vcs);
+    run_to_verdict(name, vcs);
 }
 
 /// Run a self-checking ROM on a plain 4K board — the suite's unmarked default,
@@ -72,37 +70,33 @@ pub fn run_self_test(relative: &str, standard: TvStandard) {
 /// Panics with the failing sub-check code and observed/expected bytes on FAIL,
 /// or after the instruction budget if the ROM never reports a verdict.
 pub fn run_self_test_on(relative: &str, standard: TvStandard, cart_type: CartType) {
-    poll_verdict(relative, load(relative, standard, cart_type));
+    run_to_verdict(relative, load(relative, standard, cart_type));
 }
 
-fn poll_verdict(relative: &str, mut vcs: Vcs) {
-    for _ in 0..MAX_INSTRUCTIONS {
+fn run_to_verdict(relative: &str, mut vcs: Vcs) {
+    let outcome = poll_verdict(MAX_INSTRUCTIONS, || {
         vcs.step_instruction();
-        match vcs.peek(RESULT) {
-            PASS_MAGIC => return,
-            FAIL_MAGIC => panic!(
-                "{relative}: FAIL code=0x{:02X} observed=0x{:02X} expected=0x{:02X}",
-                vcs.peek(CODE),
-                vcs.peek(OBSERVED),
-                vcs.peek(EXPECTED),
-            ),
-            _ => {}
-        }
+        let block = [0, 1, 2, 3].map(|offset| vcs.peek(RESULT + offset));
         if vcs.cpu.jammed() {
-            break;
+            Poll::Stopped(block)
+        } else {
+            Poll::Read(block)
+        }
+    });
+
+    match outcome {
+        Outcome::Reached(verdict) if verdict.passed => {}
+        Outcome::Reached(verdict) => panic!(
+            "{relative}: FAIL code=0x{:02X} observed=0x{:02X} expected=0x{:02X}",
+            verdict.code, verdict.observed, verdict.expected
+        ),
+        Outcome::Stopped(result) => {
+            panic!("{relative}: CPU halted (JAM) before any verdict (RESULT=0x{result:02X})")
+        }
+        Outcome::Exhausted(result) => {
+            panic!("{relative}: no verdict (RESULT=0x{result:02X}) within instruction budget")
         }
     }
-
-    if vcs.cpu.jammed() {
-        panic!(
-            "{relative}: CPU halted (JAM) before any verdict (RESULT=0x{:02X})",
-            vcs.peek(RESULT)
-        );
-    }
-    panic!(
-        "{relative}: no verdict (RESULT=0x{:02X}) within instruction budget",
-        vcs.peek(RESULT)
-    );
 }
 
 /// Render one settled frame and diff it against the reference PNG, asserting
@@ -121,78 +115,38 @@ pub fn run_screenshot(rom_relative: &str, png_relative: &str, standard: TvStanda
     let frame = frame.unwrap_or_else(|| panic!("{rom_relative}: produced no frame"));
     let actual = frame_to_rgb(&frame, standard);
 
-    let reference = Png::load(&rom_path(png_relative));
+    let reference = ReferencePng::load(&rom_path(png_relative));
+    reference.require_colour();
     assert_eq!(
-        reference.width, VISIBLE_CLOCKS,
+        reference.width(),
+        VISIBLE_CLOCKS,
         "{png_relative}: reference width must be the TIA's visible clocks"
     );
 
     // References carry the VSYNC-period lines that `Frame` drops, so they
     // run a few lines taller; compare the overlap.
-    let rows = frame.lines.len().min(reference.height);
-    let mut mismatches = 0;
-    for y in 0..rows {
-        for x in 0..VISIBLE_CLOCKS {
-            let a = actual[y * VISIBLE_CLOCKS + x];
-            let e = reference.rgb(x, y);
-            if a != e {
-                if mismatches < MAX_REPORTED_MISMATCHES {
-                    eprintln!("{rom_relative}: pixel ({x},{y}) got {a:?} expected {e:?}");
-                }
-                mismatches += 1;
-            }
-        }
-    }
-
-    assert_eq!(
-        mismatches, 0,
-        "{rom_relative}: {mismatches} pixel mismatches vs {png_relative}"
+    let rows = frame.lines.len().min(reference.height());
+    let pixels = rows * VISIBLE_CLOCKS;
+    assert_pixels_match(
+        &format!("{rom_relative} vs {png_relative}"),
+        &actual[..pixels],
+        &reference.rgb()[..pixels],
+        VISIBLE_CLOCKS,
+        MAX_REPORTED_MISMATCHES,
+        compare::debug_value,
     );
 }
 
-fn frame_to_rgb(frame: &Frame, standard: TvStandard) -> Vec<(u8, u8, u8)> {
+fn frame_to_rgb(frame: &Frame, standard: TvStandard) -> Vec<[u8; 3]> {
     let palette = palette(standard);
     frame
         .lines
         .iter()
-        .flat_map(|line| line.iter().map(|&byte| palette[palette_index(byte)]))
+        .flat_map(|line| {
+            line.iter().map(|&byte| {
+                let (r, g, b) = palette[palette_index(byte)];
+                [r, g, b]
+            })
+        })
         .collect()
-}
-
-/// A decoded reference frame, RGB per pixel.
-struct Png {
-    width: usize,
-    height: usize,
-    rgb: Vec<(u8, u8, u8)>,
-}
-
-impl Png {
-    fn load(path: &Path) -> Png {
-        let file = std::fs::File::open(path)
-            .unwrap_or_else(|e| panic!("failed to open reference {}: {e}", path.display()));
-        let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
-        decoder.set_transformations(png::Transformations::EXPAND);
-        let mut reader = decoder.read_info().unwrap();
-        let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
-        let info = reader.next_frame(&mut buf).unwrap();
-
-        let stride = match info.color_type {
-            png::ColorType::Rgb => 3,
-            png::ColorType::Rgba => 4,
-            other => panic!("unsupported reference PNG colour type: {other:?}"),
-        };
-        let rgb = (0..info.width as usize * info.height as usize)
-            .map(|i| (buf[i * stride], buf[i * stride + 1], buf[i * stride + 2]))
-            .collect();
-
-        Png {
-            width: info.width as usize,
-            height: info.height as usize,
-            rgb,
-        }
-    }
-
-    fn rgb(&self, x: usize, y: usize) -> (u8, u8, u8) {
-        self.rgb[y * self.width + x]
-    }
 }

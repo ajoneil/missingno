@@ -74,26 +74,16 @@ fn run_mooneye_screen_test(rom_path: &str, reference_path: &str) {
 
     // DMG-compat colourised output: compare in full RGB — greyscale
     // collapses the compat palette and can never match the reference.
-    let actual = gbc.screen().to_rgb_bytes();
+    let actual = common::rgb_pixels(&gbc.screen().to_rgb_bytes());
     let expected = common::load_reference_png_rgb(reference_path);
 
-    let mut mismatches = 0;
-    for (i, (a, e)) in actual.chunks(3).zip(expected.chunks(3)).enumerate() {
-        if a != e {
-            if mismatches < 10 {
-                let (x, y) = (i % 160, i / 160);
-                eprintln!(
-                    "Pixel mismatch at ({x}, {y}): got #{:02X}{:02X}{:02X}, expected #{:02X}{:02X}{:02X}",
-                    a[0], a[1], a[2], e[0], e[1], e[2]
-                );
-            }
-            mismatches += 1;
-        }
-    }
-
-    assert_eq!(
-        mismatches, 0,
-        "Mooneye test {rom_path}: {mismatches} pixel mismatches vs {reference_path}"
+    common::assert_pixels_match(
+        &format!("Mooneye test {rom_path} vs {reference_path}"),
+        &actual,
+        &expected,
+        160,
+        10,
+        common::debug_value,
     );
 }
 

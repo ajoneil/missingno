@@ -519,25 +519,84 @@ pub fn screen_to_greyscale(screen: &Screen) -> Vec<u8> {
         .collect()
 }
 
-/// Load a reference PNG as a flat greyscale pixel buffer (values 0x00-0xFF).
-pub fn load_reference_png(relative: &str) -> Vec<u8> {
-    let path = rom_path(relative);
-    let file = std::fs::File::open(&path)
-        .unwrap_or_else(|e| panic!("Failed to open reference image {}: {e}", path.display()));
-    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
-    decoder.set_transformations(png::Transformations::EXPAND);
-    let mut reader = decoder.read_info().unwrap();
-    let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
-    let info = reader.next_frame(&mut buf).unwrap();
+/// The 8x8 glyphs the gambatte suite prints its expected value in, one per hex
+/// digit: 0 is foreground, 1 background.
+#[rustfmt::skip]
+const HEX_TILES: [[u8; 64]; 16] = [
+    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,0,0,0,0,0,0], // 0
+    [1,1,1,1,1,1,1,1, 1,1,1,1,0,1,1,1, 1,1,1,1,0,1,1,1, 1,1,1,1,0,1,1,1, 1,1,1,1,0,1,1,1, 1,1,1,1,0,1,1,1, 1,1,1,1,0,1,1,1, 1,1,1,1,0,1,1,1], // 1
+    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,1,1,1,1,1,1,0, 1,1,1,1,1,1,1,0, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,1, 1,0,0,0,0,0,0,0], // 2
+    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,1,1,1,1,1,1,0, 1,1,1,1,1,1,1,0, 1,1,0,0,0,0,0,0, 1,1,1,1,1,1,1,0, 1,1,1,1,1,1,1,0, 1,0,0,0,0,0,0,0], // 3
+    [1,1,1,1,1,1,1,1, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,0,0,0,0,0,0, 1,1,1,1,1,1,1,0, 1,1,1,1,1,1,1,0, 1,1,1,1,1,1,1,0], // 4
+    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,1, 1,0,0,0,0,0,0,1, 1,1,1,1,1,1,1,0, 1,1,1,1,1,1,1,0, 1,0,0,0,0,0,0,1], // 5
+    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,0,0,0,0,0,0], // 6
+    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,1,1,1,1,1,1,0, 1,1,1,1,1,1,0,1, 1,1,1,1,1,0,1,1, 1,1,1,1,0,1,1,1, 1,1,1,0,1,1,1,1, 1,1,1,0,1,1,1,1], // 7
+    [1,1,1,1,1,1,1,1, 1,1,0,0,0,0,0,1, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,1,0,0,0,0,0,1, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,1,0,0,0,0,0,1], // 8
+    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,0,0,0,0,0,0, 1,1,1,1,1,1,1,0, 1,1,1,1,1,1,1,0, 1,0,0,0,0,0,0,0], // 9
+    [1,1,1,1,1,1,1,1, 1,1,1,1,0,1,1,1, 1,1,0,1,1,1,0,1, 1,0,1,1,1,1,1,0, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0], // A
+    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,1, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,0,0,0,0,0,1, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,0,0,0,0,0,1], // B
+    [1,1,1,1,1,1,1,1, 1,1,0,0,0,0,0,1, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,0, 1,1,0,0,0,0,0,1], // C
+    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,1, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,1,1,1,1,1,0, 1,0,0,0,0,0,0,1], // D
+    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,1, 1,0,0,0,0,0,0,0], // E
+    [1,1,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,1, 1,0,0,0,0,0,0,0, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,1, 1,0,1,1,1,1,1,1], // F
+];
 
-    let width = info.width as usize;
-    let height = info.height as usize;
-    let stride = match info.color_type {
-        png::ColorType::Grayscale => 1,
-        png::ColorType::Rgb => 3,
-        png::ColorType::Rgba => 4,
-        other => panic!("Unsupported PNG color type: {other:?}"),
-    };
+/// Does the screen's top-left row of tiles spell `expected_hex`? Each digit
+/// occupies an 8x8 tile at (digit index × 8, 0), matched to within the ±8
+/// tolerance gambatte's own 0xF8F8F8 mask allows.
+pub fn screen_matches_hex(screen_greyscale: &[u8], expected_hex: &str) -> bool {
+    let digits: Vec<u8> = expected_hex
+        .chars()
+        .map(|c| {
+            c.to_digit(16)
+                .unwrap_or_else(|| panic!("Invalid hex char: {c}")) as u8
+        })
+        .collect();
+    for (idx, &digit) in digits.iter().enumerate() {
+        let tile = &HEX_TILES[digit as usize];
+        let x_off = idx * 8;
+        if x_off + 8 > 160 {
+            break;
+        }
+        for ty in 0..8 {
+            for tx in 0..8 {
+                let screen_pixel = screen_greyscale[ty * 160 + x_off + tx];
+                let expected_pixel = if tile[ty * 8 + tx] == 0 { 0x00 } else { 0xFF };
+                let diff = (screen_pixel as i16 - expected_pixel as i16).unsigned_abs();
+                if diff > 8 {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
 
-    (0..width * height).map(|i| buf[i * stride]).collect()
+/// Reverse of [`screen_matches_hex`]: read back the hex digits the screen
+/// actually shows, for diagnostics on failure. A digit slot that matches no
+/// tile (e.g. a blank screen) reads as `?`.
+pub fn decode_screen_hex(screen_greyscale: &[u8], num_digits: usize) -> String {
+    (0..num_digits)
+        .map(|idx| {
+            let x_off = idx * 8;
+            if x_off + 8 > 160 {
+                return '?';
+            }
+            for (digit, tile) in HEX_TILES.iter().enumerate() {
+                let matches = (0..8).all(|ty| {
+                    (0..8).all(|tx| {
+                        let screen_pixel = screen_greyscale[ty * 160 + x_off + tx];
+                        let expected_pixel = if tile[ty * 8 + tx] == 0 { 0x00 } else { 0xFF };
+                        (screen_pixel as i16 - expected_pixel as i16).unsigned_abs() <= 8
+                    })
+                });
+                if matches {
+                    return char::from_digit(digit as u32, 16)
+                        .unwrap()
+                        .to_ascii_uppercase();
+                }
+            }
+            '?'
+        })
+        .collect()
 }

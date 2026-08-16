@@ -11,15 +11,13 @@
 //! transiently different before the sequence reconverges. Double-speed saves
 //! carry no boundary-observable dot-phase alignment, so restore refuses them.
 
-use std::hash::{Hash, Hasher};
-
 use missingno_core::state_file::read_state_file;
 use missingno_core::system::{StateError, SystemConsole};
-use missingno_core::video::Frame;
 use missingno_gb::cartridge::Cartridge;
 use missingno_gb::system::{GbConsole, create_console};
 use missingno_gb::{Dmg, GameBoy};
 use missingno_gbc::{Cgb, GameBoyColor};
+use missingno_test_support::roundtrip::step_frame_hash;
 
 /// A booted CGB console wrapped in the system seam, from a gbc-crate ROM.
 fn cgb_console(rom: &str) -> GbConsole<Cgb> {
@@ -38,22 +36,6 @@ fn dmg_console() -> GbConsole<Dmg> {
     // A synthetic all-NOP DMG cartridge — enough to produce a DMG save state.
     let gb = GameBoy::new(Cartridge::new(vec![0u8; 0x8000], None), None);
     create_console(gb, |_| None)
-}
-
-fn frame_hash(frame: &Frame) -> u64 {
-    let rgba = frame.resolve_rgba();
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    rgba.width.hash(&mut hasher);
-    rgba.height.hash(&mut hasher);
-    rgba.pixels.hash(&mut hasher);
-    hasher.finish()
-}
-
-fn step_frame_hash(console: &mut dyn SystemConsole) -> u64 {
-    match console.step_frame().display {
-        Some(frame) => frame_hash(&frame),
-        None => 0,
-    }
 }
 
 /// The round-trip: `warmup` frames, save, `run` frames capturing hashes, load,

@@ -6,6 +6,7 @@
 use missingno_core::ports::PortId;
 use missingno_core::system::{ControlId, ControlInput, ControlRole, ControlSite};
 use missingno_sg1000::console::{Sg1000, TSTATES_PER_FRAME};
+use missingno_test_support::verdict::{Outcome, Poll, poll_verdict};
 
 /// The chip crate's corpus: the same self-checking `.sg` ROMs, driven here by
 /// a real board map instead of the testbench's common-subset envelope.
@@ -16,8 +17,6 @@ const CORPUS: &str = concat!(
 
 /// Each ROM latches a verdict into the RESULT block at the base of work RAM.
 const RESULT_BLOCK: u16 = 0xC000;
-const RESULT_PASS: u8 = 0xA5;
-const RESULT_FAIL: u8 = 0x5A;
 
 /// The chip crate's default: the timing sweeps run ~550 frames to a verdict.
 const BUDGET_FRAMES: u64 = 1200;
@@ -29,20 +28,19 @@ fn run_to_verdict(rom: &str) -> Sg1000 {
     let path = format!("{CORPUS}{rom}");
     let image = std::fs::read(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"));
     let mut console = Sg1000::new(&image).expect("flat cartridge image");
-    for _ in 0..INSTRUCTION_BUDGET {
+    let outcome = poll_verdict(INSTRUCTION_BUDGET, || {
         console.step_instruction();
-        match console.peek(RESULT_BLOCK) {
-            RESULT_PASS => return console,
-            RESULT_FAIL => panic!(
-                "{rom}: FAIL code={:02X} observed={:02X} expected={:02X}",
-                console.peek(RESULT_BLOCK + 1),
-                console.peek(RESULT_BLOCK + 2),
-                console.peek(RESULT_BLOCK + 3)
-            ),
-            _ => {}
-        }
+        Poll::Read([0, 1, 2, 3].map(|offset| console.peek(RESULT_BLOCK + offset)))
+    });
+
+    match outcome {
+        Outcome::Reached(verdict) if verdict.passed => console,
+        Outcome::Reached(verdict) => panic!(
+            "{rom}: FAIL code={:02X} observed={:02X} expected={:02X}",
+            verdict.code, verdict.observed, verdict.expected
+        ),
+        _ => panic!("{rom}: no verdict within {BUDGET_FRAMES} frames"),
     }
-    panic!("{rom}: no verdict within {BUDGET_FRAMES} frames");
 }
 
 /// The 1 KB work RAM repeating to $FFFF — the board's own decode, and the

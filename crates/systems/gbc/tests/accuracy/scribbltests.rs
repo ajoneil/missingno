@@ -16,20 +16,13 @@ fn run_scribbltest(rom_name: &str, timeout_frames: u32) {
     let actual = gbc.screen().to_greyscale_bytes();
     let expected = common::load_reference_png(&reference_path);
 
-    let mut mismatches = 0;
-    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
-        if a != e {
-            if mismatches < 10 {
-                let (x, y) = (i % 160, i / 160);
-                eprintln!("Pixel mismatch at ({x}, {y}): got 0x{a:02X}, expected 0x{e:02X}");
-            }
-            mismatches += 1;
-        }
-    }
-
-    assert_eq!(
-        mismatches, 0,
-        "Scribbltest {rom_name}: {mismatches} pixel mismatches"
+    common::assert_pixels_match(
+        &format!("Scribbltest {rom_name}"),
+        &actual,
+        &expected,
+        160,
+        10,
+        common::hex_byte,
     );
 }
 

@@ -10,3 +10,6 @@ missingno-ti-vdp = { path = "../../chips/ti-vdp" }
 missingno-zilog-z80 = { path = "../../chips/zilog-z80" }
 rgb = { workspace = true }
 sha2 = { version = "0.11" }
+
+[dev-dependencies]
+missingno-test-support = { path = "../../missingno/test-support" }

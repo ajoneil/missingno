@@ -7,11 +7,10 @@
 //! recorded timeline is exactly the continuation replay reproduces: the
 //! frame-hash checks agree bit-for-bit, no convergence tolerance.
 
-use missingno_core::recording::{
-    Recorder, Recording, RecordingError, ReplayError, ReplayOutcome, replay,
-};
-use missingno_core::system::{ControlId, ControlInput, ControlRole, StateError, SystemConsole};
+use missingno_core::recording::{Recording, RecordingError, ReplayError, ReplayOutcome, replay};
+use missingno_core::system::{ControlId, ControlRole, StateError, SystemConsole};
 use missingno_gb::system::{GbConsole, create_console};
+use missingno_test_support::roundtrip::record_scripted;
 
 fn dmg_console(rom: &str) -> GbConsole<missingno_gb::Dmg> {
     let run = missingno_gb::test_support::load_rom(rom);
@@ -35,23 +34,13 @@ fn record(rom: &str, warmup: usize, frames: u64, interval: u64) -> Recording {
         console.step_frame();
     }
 
-    let mut recorder =
-        Recorder::start(&mut console, interval).expect("DMG authors a save-state backend");
-
-    for frame in 0..frames {
-        for &(at, role, pressed) in SCRIPT {
-            if at == frame {
-                let control = ControlId::integrated(role);
-                let input = ControlInput::Digital(pressed);
-                console.set_control(control, input);
-                recorder.note_input(control, input);
-            }
-        }
-        let produced = console.step_frame().display;
-        recorder.note_frame(produced.as_ref());
-    }
-
-    recorder.finish()
+    record_scripted(
+        &mut console as &mut dyn SystemConsole,
+        SCRIPT,
+        frames,
+        interval,
+        ControlId::integrated,
+    )
 }
 
 #[test]

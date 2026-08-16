@@ -4,8 +4,9 @@
 //! Tier-2b residue, so replay is bit-exact.
 
 use crate::common::rom_path;
-use missingno_core::recording::{Recorder, Recording, ReplayError, ReplayOutcome, replay};
-use missingno_core::system::{ControlId, ControlInput, ControlRole, StateError, SystemConsole};
+use missingno_core::recording::{Recording, ReplayError, ReplayOutcome, replay};
+use missingno_core::system::{ControlId, ControlRole, StateError, SystemConsole};
+use missingno_test_support::roundtrip::record_scripted;
 use missingno_vcs::TvStandard;
 use missingno_vcs::debug::create_console;
 
@@ -29,22 +30,9 @@ fn record(relative: &str, warmup: usize, frames: u64, interval: u64) -> Recordin
         console.step_frame();
     }
 
-    let mut recorder = Recorder::start(console.as_mut(), interval).expect("VCS saves state");
-
-    for frame in 0..frames {
-        for &(at, role, pressed) in SCRIPT {
-            if at == frame {
-                let control = ControlId::port(missingno_vcs::debug::LEFT_PORT, role);
-                let input = ControlInput::Digital(pressed);
-                console.set_control(control, input);
-                recorder.note_input(control, input);
-            }
-        }
-        let produced = console.step_frame().display;
-        recorder.note_frame(produced.as_ref());
-    }
-
-    recorder.finish()
+    record_scripted(console.as_mut(), SCRIPT, frames, interval, |role| {
+        ControlId::port(missingno_vcs::debug::LEFT_PORT, role)
+    })
 }
 
 #[test]

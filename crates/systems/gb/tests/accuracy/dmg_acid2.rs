@@ -10,14 +10,12 @@ fn dmg_acid2() {
     let actual = common::screen_to_greyscale(run.gb.screen());
     let expected = common::load_reference_png("dmg-acid2/dmg-acid2-dmg.png");
 
-    let mut mismatches = 0;
-    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
-        if a != e {
-            let (x, y) = (i % 160, i / 160);
-            eprintln!("Pixel mismatch at ({x}, {y}): got 0x{a:02X}, expected 0x{e:02X}");
-            mismatches += 1;
-        }
-    }
-
-    assert_eq!(mismatches, 0, "dmg-acid2: {mismatches} pixel mismatches");
+    common::assert_pixels_match(
+        "dmg-acid2",
+        &actual,
+        &expected,
+        160,
+        usize::MAX,
+        common::hex_byte,
+    );
 }
