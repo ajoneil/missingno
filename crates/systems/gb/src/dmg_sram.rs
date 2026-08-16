@@ -1,7 +1,7 @@
 //! DMG WRAM power-on pattern: 256-byte word-line stripes with the
 //! upper 4 KiB mirroring the lower 4 KiB, overlaid with a sparse table
 //! of dump diffs from a real DMG-08 unit. Ported from gambatte's
-//! `setInitialDmgWram` (`libgambatte/src/mem_dumps.h:2760`).
+//! `setInitialDmgWram` (`mem_dumps.h`).
 //!
 //! WRAM-specific: the stripe layout and 4-KiB mirror assume an 8 KiB
 //! buffer; `fill` asserts the size.

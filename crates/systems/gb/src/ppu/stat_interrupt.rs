@@ -1,7 +1,7 @@
 //! STAT register state and LALU edge-detection.
 //! LYC pipeline: PALY (LY==LYC) → ROPO (TALU-rising DFF) → RUPO (transparent NOR latch).
 
-use crate::ppu::DffBit;
+use crate::ppu::{DffBit, Ppu, PpuModel};
 use bitflags::bitflags;
 
 bitflags! {
@@ -450,8 +450,7 @@ const SUKO_HIGH_CAPTURE_PS: i32 = 1_000;
 /// mode-0 (WODU) arm is slow enough that a same-fall enable-clear can't suppress
 /// a mode-0 condition rising on the same fall before its SUKO pulse is captured
 /// (`E ≥ MODE_0_ARRIVAL.rising + SUKO_HIGH_CAPTURE_PS`); it applies only to
-/// that coincident-rising race, not to a steady mode-0 leg. No CGB netlist;
-/// gambatte cgb04c pins these.
+/// that coincident-rising race, not to a steady mode-0 leg. No CGB netlist.
 const REGISTER_ARRIVAL_DEFAULT: u16 = 3_300;
 const REGISTER_ARRIVAL_MODE_0: u16 = 6_000;
 
@@ -481,5 +480,82 @@ fn arrival(leg: InterruptFlags, talu_rising: bool) -> LegArrival {
         MODE_2_ARRIVAL
     } else {
         unreachable!("arrival(): non-single-leg flags 0x{:02X}", leg.bits());
+    }
+}
+
+impl<P: PpuModel> Ppu<P> {
+    /// SUKO condition vector — the per-source condition inputs (ROPO and the
+    /// TARU/PARU/TAPA terms), pre-enable. Shared DMG silicon on both
+    /// consoles. The mode-2 term is TAPA = TOLU AND SELA: the line-144 mode-2
+    /// IRQ comes from RUTU's line-end pulse landing before POPU rises (NYPE
+    /// lag), not from a vblank extension of the leg.
+    pub(in crate::ppu) fn stat_conditions(&self) -> InterruptFlags {
+        let mut conditions = InterruptFlags::empty();
+
+        // ROPO is frozen across LCD-off, so the LYC condition stays live
+        // while the LCD is off — only the mode terms go quiet.
+        if self.video.stat.ly_eq_lyc() {
+            conditions |= InterruptFlags::CURRENT_LINE_COMPARE;
+        }
+
+        // Mode terms need the pixel pipeline, which is held in reset while LCD off.
+        let Some(rendering) = &self.pixel_pipeline else {
+            return conditions;
+        };
+
+        let vblank = self.video.vblank();
+        let sprites_enabled = self.registers.control.sprites_enabled();
+
+        if !vblank
+            && (rendering.end_of_line_signal(sprites_enabled)
+                || rendering.terminal_wodu_pulse()
+                || (P::WINDOW_RESTART_MASKS_MODE3_END && rendering.terminal_restart()))
+        {
+            conditions |= InterruptFlags::HORIZONTAL_BLANK;
+        }
+        if vblank {
+            conditions |= InterruptFlags::VERTICAL_BLANK;
+        }
+        if !vblank && rendering.mode2_interrupt_active(&self.video) {
+            conditions |= InterruptFlags::OAM_SCAN;
+        }
+        conditions
+    }
+
+    /// SUKO source-leg vector — one bit per enabled-source AND-term (matches AO2222 structure).
+    /// The CGB reads the enables through the register-file synchroniser.
+    pub fn stat_legs(&self) -> InterruptFlags {
+        let enables = if P::STAT_ENABLES_CROSSING.is_synced() {
+            self.model.stat_shadow().synced_enables()
+        } else {
+            self.video.stat.enables()
+        };
+        self.stat_conditions() & enables
+    }
+
+    /// SUKO combined output (= any leg active).
+    pub fn stat_line(&self) -> bool {
+        !self.stat_legs().is_empty()
+    }
+
+    /// LALU edge detect: fires on SUKO 0→1, with the pulse-width filter applied on
+    /// TALU↑ evaluations (callable off-TALU; pulse-width filter is skipped).
+    pub fn check_stat_edge(&mut self) -> bool {
+        if self.span.asleep() {
+            return false;
+        }
+        if !self.control().video_enabled() {
+            return false;
+        }
+        let conditions = self.stat_conditions();
+        if P::STAT_ENABLES_CROSSING.is_synced() {
+            return self.video.stat.eval_synced(
+                conditions,
+                false,
+                false,
+                self.model.stat_shadow_mut(),
+            );
+        }
+        self.video.stat.eval_conditions(conditions, false)
     }
 }

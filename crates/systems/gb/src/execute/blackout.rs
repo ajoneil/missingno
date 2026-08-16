@@ -77,7 +77,7 @@ impl<M: Model> Console<M> {
     }
 
     /// One held master edge of the speed-switch blackout: the CPU clock is frozen
-    /// (`execute_phase` already advanced the dot domain) and the dot clock alone
+    /// (`step_blackout_chunk` already advanced the dot domain) and the dot clock alone
     /// ran. Step the PPU one edge with the per-dot APU tick riding it, and pulse
     /// the CPU-clock divider (timer/serial + the CGB STAT crossing) at the CPU
     /// rate off the master count. The CPU phase is untouched, so when the count

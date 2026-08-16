@@ -3,7 +3,6 @@ use core::fmt;
 use bitflags::bitflags;
 
 #[derive(Clone)]
-#[allow(dead_code)]
 pub enum Flag {
     Zero,
     Negative,

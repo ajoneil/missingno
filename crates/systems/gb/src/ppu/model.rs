@@ -79,11 +79,11 @@ pub struct CartridgeBootHeader {
 /// resolves a pixel by calling [`PpuModel::resolve`]; the result is the final
 /// framebuffer pixel for that console.
 pub trait PpuModel: Default {
-    /// The DMG window-X comparator (NUKO) drives the §6.1 PANY BG drain-detector
-    /// slip whenever the window is armed (REJO), even with WIN_EN off — an
+    /// The DMG window-X comparator (NUKO) drives the PANY BG drain-detector slip
+    /// whenever the window is armed (REJO), even with WIN_EN off — an
     /// armed-but-disabled 1-dot BG slip. The CGB suppresses that coupling: its
-    /// NUKO→PANY path requires the window enabled. (Confirmed by dmg-sim; the
-    /// enabled-window slip is unaffected on both.)
+    /// NUKO→PANY path requires the window enabled; the enabled-window slip is
+    /// unaffected on both.
     const WINDOW_DRAIN_SLIP_WHILE_DISABLED: bool = true;
 
     /// The DMG "STAT write" glitch: a write to STAT ($FF41) momentarily drives every

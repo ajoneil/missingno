@@ -104,9 +104,9 @@ impl<M: Model> Console<M> {
         self.chassis.cpu.take_instruction_boundary();
 
         // Speed-switch blackout: the CPU clock is held while the dot clock
-        // keeps running. Drive one CPU M-cycle of held master edges through the
-        // same `execute_phase` loop (the gate is `Held`, the CPU frozen) and
-        // return, draining the blackout across step()s until the count empties.
+        // keeps running. Drive one CPU M-cycle of held master edges (the gate is
+        // `Held`, the CPU frozen) and return, draining the blackout across
+        // step()s until the count empties.
         if self.chassis.cpu.is_stopped() && self.model.speed_switch_in_progress() {
             return self.step_blackout_chunk();
         }
