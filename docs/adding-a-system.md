@@ -220,8 +220,8 @@ read typed surfaces, but the sidebar's shape is the family's own.
 
 For a core whose debugger is plain instruction stepping (PC breakpoints, one
 typed inspection state, indexed frames), don't implement the two seam traits by
-hand: implement `SteppingSystem` (`missingno-core`'s `stepping.rs`) — a flat list
-of hooks — and the shared `SteppingConsole<S>` / `SteppingDebugger<S>` carry the
+hand: implement `Machine` (`missingno-core`'s `machine.rs`) — a flat list
+of hooks — and the shared `MachineConsole<M>` / `MachineDebugger<M>` carry the
 seam's control flow. The SG-1000, Master System and NES are the worked
 consumers; the VCS adapts its own core-side debugger backend directly instead,
 and the Game Boy family implements the seam once (in `missingno-gb`'s
@@ -332,7 +332,7 @@ until a second family grows the equivalent:
 2. **A `crates/chips/<chip>/AGENTS.md`** for every chip crate the board
    composes, new or newly shared — the chip's own conformance oracle and
    references. In-system, the console's methodology doc outranks the chip's.
-3. **The seam impl** — either a `SteppingSystem` impl for a simple stepping
+3. **The seam impl** — either a `Machine` impl for a simple stepping
    core, or hand-written `SystemConsole` + `SystemDebugger` impls where the core
    has its own debugger backend. Registering the core in `missingno-session`'s
    factory (`factory.rs`) gives it session hosting, both servers, the agent tool

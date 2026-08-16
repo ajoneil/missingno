@@ -1,7 +1,7 @@
-//! The SG-1000's debugger seam: its inspection state and the stepping-system
-//! binding over the console. One owned state struct serves both the paused
-//! view (refreshed after every step) and the per-frame snapshot the running
-//! view renders from, and one module per chip on the board turns it into
+//! The SG-1000's debugger seam: its inspection state and the machine binding
+//! over the console. One owned state struct serves both the paused view
+//! (refreshed after every step) and the per-frame snapshot the running view
+//! renders from, and one module per chip on the board turns it into
 //! sections.
 
 pub mod graphics;
@@ -14,12 +14,13 @@ mod vdp;
 
 use std::time::Duration;
 
+use missingno_core::TvStandard;
 use missingno_core::graphics::GraphicsView;
 use missingno_core::inspect::{RegisterGroup, Section};
+use missingno_core::machine::Machine;
 use missingno_core::ports::{PanelControl, PeripheralId, PlugError, PortDescriptor, PortId};
-use missingno_core::stepping::SteppingSystem;
 use missingno_core::system::{ControlId, ControlInput, DebugView, InspectSnapshot, RunningStatus};
-use missingno_core::video::IndexedFrame;
+use missingno_core::video::{DisplayTechnology, Frame, IndexedFrame};
 use missingno_core::waveform::ChannelWave;
 use missingno_ti_psg::{NoiseMode, NoiseRate, Variant};
 use missingno_ti_vdp::{Frame as VdpFrame, Standard, VISIBLE_WIDTH};
@@ -131,7 +132,7 @@ pub fn is_sg1000_rom(path: &std::path::Path) -> bool {
 
 pub struct Sg1000System;
 
-impl SteppingSystem for Sg1000System {
+impl Machine for Sg1000System {
     type Core = Sg1000;
     type Frame = IndexedFrame;
     type InspectState = Sg1000InspectState;
@@ -139,7 +140,6 @@ impl SteppingSystem for Sg1000System {
     /// One NTSC frame: 262 lines × 228 T-states at 3.579545 MHz.
     const FRAME_INTERVAL: Duration = Duration::from_micros(16_688);
     const RUN_BUDGET: u32 = 400_000;
-    const PIXEL_ASPECT: f32 = PIXEL_ASPECT;
 
     fn pc(sg: &Sg1000) -> u16 {
         sg.cpu.pc
@@ -197,16 +197,23 @@ impl SteppingSystem for Sg1000System {
         sg.drain_audio_samples()
     }
 
-    fn indexed_frame(frame: &IndexedFrame) -> IndexedFrame {
-        frame.clone()
+    fn video_out(_sg: &Sg1000) -> DisplayTechnology {
+        DisplayTechnology::Crt {
+            standard: TvStandard::Ntsc,
+            pixel_aspect: PIXEL_ASPECT,
+        }
     }
 
-    fn blank_frame() -> IndexedFrame {
-        IndexedFrame::blank(
+    fn display_frame(frame: &IndexedFrame) -> Frame {
+        Frame::Indexed(frame.clone())
+    }
+
+    fn blank_display() -> Frame {
+        Frame::Indexed(IndexedFrame::blank(
             VISIBLE_WIDTH as u32,
             STANDARD.visible_lines() as u32,
             ti_palette(),
-        )
+        ))
     }
 
     fn step_over_target(sg: &Sg1000) -> Option<u16> {
@@ -307,7 +314,7 @@ impl SteppingSystem for Sg1000System {
 mod fixtures {
     use missingno_core::inspect::{Row, Section, SectionBlock};
 
-    use super::{Sg1000, Sg1000InspectState, Sg1000System, SteppingSystem};
+    use super::{Machine, Sg1000, Sg1000InspectState, Sg1000System};
 
     /// What a powered-on board reads, for a test to vary one chip of.
     pub(crate) fn power_on_state() -> Sg1000InspectState {

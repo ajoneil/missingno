@@ -1,24 +1,25 @@
-//! The SMS family's debugger seam: its inspection state and the
-//! stepping-system binding over the console. One owned state struct serves
-//! both the paused view (refreshed after every step) and the per-frame
-//! snapshot the running view renders from.
+//! The SMS family's debugger seam: its inspection state and the machine
+//! binding over the console. One owned state struct serves both the paused
+//! view (refreshed after every step) and the per-frame snapshot the running
+//! view renders from.
 
 use std::sync::Arc;
 use std::time::Duration;
 
+use missingno_core::TvStandard;
 use missingno_core::inspect::{
     BitColumn, BitRow, BitTable, Register, RegisterGroup, Row, Section, SectionBlock, Sweep,
     SweepZone, Tone, ValueStyle,
 };
+use missingno_core::machine::Machine;
 use missingno_core::ports::{
     ControlDescriptor, ControlKind, PanelBehaviour, PanelControl, PeripheralDescriptor,
     PeripheralId, PlugError, PortDescriptor, PortId, Provider,
 };
-use missingno_core::stepping::SteppingSystem;
 use missingno_core::system::{
     ControlId, ControlInput, ControlRole, ControlSite, DebugView, InspectSnapshot, RunningStatus,
 };
-use missingno_core::video::IndexedFrame;
+use missingno_core::video::{DisplayTechnology, Frame as DisplayFrame, IndexedFrame};
 use rgb::RGB8;
 
 use crate::console::Sms;
@@ -309,7 +310,7 @@ pub fn is_sms_rom(path: &std::path::Path) -> bool {
 
 pub struct SmsSystem;
 
-impl SteppingSystem for SmsSystem {
+impl Machine for SmsSystem {
     type Core = Sms;
     type Frame = Frame;
     type InspectState = SmsInspectState;
@@ -317,7 +318,6 @@ impl SteppingSystem for SmsSystem {
     /// One NTSC frame: 262 lines × 228 T-states at 3.579545 MHz.
     const FRAME_INTERVAL: Duration = Duration::from_micros(16_688);
     const RUN_BUDGET: u32 = 400_000;
-    const PIXEL_ASPECT: f32 = PIXEL_ASPECT;
 
     fn pc(sms: &Sms) -> u16 {
         sms.cpu.pc
@@ -375,21 +375,28 @@ impl SteppingSystem for SmsSystem {
         sms.drain_audio_samples()
     }
 
-    fn indexed_frame(frame: &Frame) -> IndexedFrame {
-        IndexedFrame {
+    fn video_out(_sms: &Sms) -> DisplayTechnology {
+        DisplayTechnology::Crt {
+            standard: TvStandard::Ntsc,
+            pixel_aspect: PIXEL_ASPECT,
+        }
+    }
+
+    fn display_frame(frame: &Frame) -> DisplayFrame {
+        DisplayFrame::Indexed(IndexedFrame {
             width: vdp::PIXELS_PER_LINE as u32,
             height: vdp::ACTIVE_LINES as u32,
             pixels: frame.pixels.clone().into(),
             palette: cram_palette(&frame.cram),
-        }
+        })
     }
 
-    fn blank_frame() -> IndexedFrame {
-        IndexedFrame::blank(
+    fn blank_display() -> DisplayFrame {
+        DisplayFrame::Indexed(IndexedFrame::blank(
             vdp::PIXELS_PER_LINE as u32,
             vdp::ACTIVE_LINES as u32,
             cram_palette(&[0; 32]),
-        )
+        ))
     }
 
     fn step_over_target(sms: &Sms) -> Option<u16> {

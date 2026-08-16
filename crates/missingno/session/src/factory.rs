@@ -145,7 +145,7 @@ mod vcs {
 #[cfg(feature = "nes")]
 mod nes {
     use super::*;
-    use missingno_core::stepping::SteppingConsole;
+    use missingno_core::machine::MachineConsole;
     use missingno_core::system::SystemConsole;
     use missingno_nes::console::Nes;
     use missingno_nes::debug::NesSystem;
@@ -156,7 +156,7 @@ mod nes {
         _options: &LoadOptions,
     ) -> Option<Box<dyn SystemConsole>> {
         let nes = Nes::new(rom).ok()?;
-        Some(Box::new(SteppingConsole::<NesSystem>::new(
+        Some(Box::new(MachineConsole::<NesSystem>::new(
             nes,
             title_for(path),
         )))
@@ -170,7 +170,7 @@ mod nes {
 #[cfg(feature = "sms")]
 mod sms {
     use super::*;
-    use missingno_core::stepping::SteppingConsole;
+    use missingno_core::machine::MachineConsole;
     use missingno_core::system::SystemConsole;
     use missingno_sms::console::Sms;
     use missingno_sms::debug::SmsSystem;
@@ -181,7 +181,7 @@ mod sms {
         _options: &LoadOptions,
     ) -> Option<Box<dyn SystemConsole>> {
         let sms = Sms::new(rom).ok()?;
-        Some(Box::new(SteppingConsole::<SmsSystem>::new(
+        Some(Box::new(MachineConsole::<SmsSystem>::new(
             sms,
             title_for(path),
         )))
@@ -195,7 +195,7 @@ mod sms {
 #[cfg(feature = "sg1000")]
 mod sg1000 {
     use super::*;
-    use missingno_core::stepping::SteppingConsole;
+    use missingno_core::machine::MachineConsole;
     use missingno_core::system::SystemConsole;
     use missingno_sg1000::console::Sg1000;
     use missingno_sg1000::debug::Sg1000System;
@@ -206,7 +206,7 @@ mod sg1000 {
         _options: &LoadOptions,
     ) -> Option<Box<dyn SystemConsole>> {
         let sg1000 = Sg1000::new(rom).ok()?;
-        Some(Box::new(SteppingConsole::<Sg1000System>::new(
+        Some(Box::new(MachineConsole::<Sg1000System>::new(
             sg1000,
             title_for(path),
         )))

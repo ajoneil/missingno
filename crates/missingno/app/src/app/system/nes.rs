@@ -1,7 +1,7 @@
 //! The NES / Famicom family's load-path registration: media recognition,
-//! control labels, and the console factory over the crate's stepping system.
+//! control labels, and the console factory over the crate's machine binding.
 
-use missingno_core::stepping::SteppingConsole;
+use missingno_core::machine::MachineConsole;
 use missingno_nes::cartridge::CartridgeError;
 use missingno_nes::console::Nes;
 use missingno_nes::debug::NesSystem;
@@ -16,7 +16,7 @@ pub const ROM_EXTENSIONS: &[&str] = &["nes"];
 pub const CONTROLS: ControlMap = ControlMap::new(&[], missingno_nes::debug::PORTS, &[]);
 
 pub fn create_console(rom: &[u8], title: String) -> Result<Box<dyn SystemConsole>, CartridgeError> {
-    Ok(Box::new(SteppingConsole::<NesSystem>::new(
+    Ok(Box::new(MachineConsole::<NesSystem>::new(
         Nes::new(rom)?,
         title,
     )))

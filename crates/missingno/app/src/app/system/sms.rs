@@ -1,8 +1,8 @@
 //! The Sega Master System family's load-path registration: media
 //! recognition, control labels, and the console factory over the crate's
-//! stepping system.
+//! machine binding.
 
-use missingno_core::stepping::SteppingConsole;
+use missingno_core::machine::MachineConsole;
 use missingno_sms::cartridge::CartridgeError;
 use missingno_sms::console::Sms;
 use missingno_sms::debug::SmsSystem;
@@ -21,7 +21,7 @@ pub const CONTROLS: ControlMap = ControlMap::new(
 );
 
 pub fn create_console(rom: &[u8], title: String) -> Result<Box<dyn SystemConsole>, CartridgeError> {
-    Ok(Box::new(SteppingConsole::<SmsSystem>::new(
+    Ok(Box::new(MachineConsole::<SmsSystem>::new(
         Sms::new(rom)?,
         title,
     )))

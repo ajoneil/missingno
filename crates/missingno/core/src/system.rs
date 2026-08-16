@@ -446,14 +446,7 @@ pub trait SystemDebugger: SystemConsole {
     /// Defaults to the palette indices of an indexed frame; a family whose
     /// screen resolves before the seam overrides with its own raw domain.
     fn frame_raw(&self) -> Option<RawFrame> {
-        match self.screen_display() {
-            Frame::Indexed(frame) => Some(RawFrame::Palette {
-                width: frame.width,
-                height: frame.height,
-                pixels: frame.pixels.to_vec(),
-            }),
-            _ => None,
-        }
+        self.screen_display().to_raw()
     }
     /// Enable or disable per-channel waveform capture. Interest-gated: capture
     /// stays off — and costs nothing — until a consumer turns it on. A family
@@ -576,7 +569,7 @@ pub trait SystemDebugger: SystemConsole {
 }
 
 /// The shared empty table behind the default [`SystemDebugger::symbols`].
-fn empty_symbols() -> Arc<SymbolTable> {
+pub(crate) fn empty_symbols() -> Arc<SymbolTable> {
     use std::sync::OnceLock;
     static EMPTY: OnceLock<Arc<SymbolTable>> = OnceLock::new();
     EMPTY

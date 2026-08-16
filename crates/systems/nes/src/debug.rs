@@ -1,24 +1,25 @@
-//! The NES family's debugger seam: its inspection state and the
-//! stepping-system binding over the console. One owned state struct serves
-//! both the paused view (refreshed after every step) and the per-frame
-//! snapshot the running view renders from.
+//! The NES family's debugger seam: its inspection state and the machine
+//! binding over the console. One owned state struct serves both the paused
+//! view (refreshed after every step) and the per-frame snapshot the running
+//! view renders from.
 
 use std::sync::Arc;
 use std::time::Duration;
 
+use missingno_core::TvStandard;
 use missingno_core::inspect::{
     BitColumn, BitRow, BitTable, FlagName, Register, RegisterGroup, Row, Section, SectionBlock,
     Sweep, SweepZone, Tone, ValueStyle,
 };
+use missingno_core::machine::Machine;
 use missingno_core::ports::{
     ControlDescriptor, ControlKind, PeripheralDescriptor, PeripheralId, PlugError, PortDescriptor,
     PortId, Provider,
 };
-use missingno_core::stepping::SteppingSystem;
 use missingno_core::system::{
     ControlId, ControlInput, ControlRole, ControlSite, DebugView, InspectSnapshot, RunningStatus,
 };
-use missingno_core::video::IndexedFrame;
+use missingno_core::video::{DisplayTechnology, Frame as DisplayFrame, IndexedFrame};
 use missingno_mos_6502::disasm;
 use rgb::RGB8;
 
@@ -248,7 +249,7 @@ pub fn is_nes_rom(rom: &[u8]) -> bool {
 
 pub struct NesSystem;
 
-impl SteppingSystem for NesSystem {
+impl Machine for NesSystem {
     type Core = Nes;
     type Frame = Frame;
     type InspectState = NesInspectState;
@@ -256,7 +257,6 @@ impl SteppingSystem for NesSystem {
     /// One NTSC frame: 262 lines × 341 dots ÷ 3 CPU cycles ≈ 29780 cycles.
     const FRAME_INTERVAL: Duration = Duration::from_micros(16_639);
     const RUN_BUDGET: u32 = 400_000;
-    const PIXEL_ASPECT: f32 = PIXEL_ASPECT;
 
     fn pc(nes: &Nes) -> u16 {
         nes.cpu.pc
@@ -310,21 +310,28 @@ impl SteppingSystem for NesSystem {
         nes.drain_audio_samples()
     }
 
-    fn indexed_frame(frame: &Frame) -> IndexedFrame {
-        IndexedFrame {
+    fn video_out(_nes: &Nes) -> DisplayTechnology {
+        DisplayTechnology::Crt {
+            standard: TvStandard::Ntsc,
+            pixel_aspect: PIXEL_ASPECT,
+        }
+    }
+
+    fn display_frame(frame: &Frame) -> DisplayFrame {
+        DisplayFrame::Indexed(IndexedFrame {
             width: ppu::PIXELS_PER_LINE as u32,
             height: ppu::VISIBLE_LINES as u32,
             pixels: frame.pixels.clone().into(),
             palette: nes_palette(),
-        }
+        })
     }
 
-    fn blank_frame() -> IndexedFrame {
-        IndexedFrame::blank(
+    fn blank_display() -> DisplayFrame {
+        DisplayFrame::Indexed(IndexedFrame::blank(
             ppu::PIXELS_PER_LINE as u32,
             ppu::VISIBLE_LINES as u32,
             nes_palette(),
-        )
+        ))
     }
 
     fn step_over_target(nes: &Nes) -> Option<u16> {

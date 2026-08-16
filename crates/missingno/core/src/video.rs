@@ -118,7 +118,30 @@ impl std::fmt::Debug for Frame {
     }
 }
 
+impl Clone for Frame {
+    fn clone(&self) -> Self {
+        match self {
+            Frame::Indexed(frame) => Frame::Indexed(frame.clone()),
+            Frame::Rgba(frame) => Frame::Rgba(frame.clone()),
+            Frame::Console(frame) => Frame::Console(frame.clone_box()),
+        }
+    }
+}
+
 impl Frame {
+    /// The frame in its pre-resolution domain, when it carries one: an indexed
+    /// frame is its palette indices, a resolved frame has no such domain.
+    pub fn to_raw(&self) -> Option<RawFrame> {
+        match self {
+            Frame::Indexed(frame) => Some(RawFrame::Palette {
+                width: frame.width,
+                height: frame.height,
+                pixels: frame.pixels.to_vec(),
+            }),
+            _ => None,
+        }
+    }
+
     pub fn resolve_rgba(&self) -> RgbaFrame {
         match self {
             Frame::Indexed(frame) => RgbaFrame {
