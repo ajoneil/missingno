@@ -23,10 +23,12 @@ pub mod decode;
 pub mod disasm;
 pub mod isa;
 mod sequencer;
+mod state;
 
 use sequencer::Sequencer;
 
 pub use isa::Z80;
+pub use state::CpuState;
 
 pub mod flags {
     pub const CARRY: u8 = 0x01;
@@ -140,7 +142,7 @@ pub struct BusCycle {
     pub pins: Pins,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum InterruptMode {
     Mode0,
     Mode1,

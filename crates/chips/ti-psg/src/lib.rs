@@ -106,8 +106,9 @@ impl Variant {
     }
 }
 
-#[derive(Clone, Copy)]
-enum RegisterKind {
+/// Which of a channel's two registers an addressing byte selected.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RegisterKind {
     Frequency,
     Attenuation,
 }
@@ -159,7 +160,8 @@ pub enum NoiseRate {
 }
 
 impl NoiseRate {
-    fn from_control(control: u8) -> NoiseRate {
+    /// The noise register's low two bits.
+    pub fn from_control(control: u8) -> NoiseRate {
         match control & 0x03 {
             0 => NoiseRate::Div512,
             1 => NoiseRate::Div1024,
@@ -168,7 +170,7 @@ impl NoiseRate {
         }
     }
 
-    fn bits(self) -> u8 {
+    pub fn bits(self) -> u8 {
         match self {
             NoiseRate::Div512 => 0,
             NoiseRate::Div1024 => 1,
@@ -201,6 +203,23 @@ impl NoiseRate {
 pub enum NoiseMode {
     Periodic,
     White,
+}
+
+impl NoiseMode {
+    /// The noise register's bit 2.
+    pub fn from_control(control: u8) -> NoiseMode {
+        match control & 0x04 {
+            0 => NoiseMode::Periodic,
+            _ => NoiseMode::White,
+        }
+    }
+
+    pub fn bits(self) -> u8 {
+        match self {
+            NoiseMode::Periodic => 0,
+            NoiseMode::White => 0x04,
+        }
+    }
 }
 
 /// The noise generator: a counter and flip-flop like a tone channel's, whose
@@ -343,10 +362,7 @@ impl Psg {
     /// The 3-bit noise register. Changing it clears the shift register.
     fn write_noise_control(&mut self, control: u8) {
         self.noise.rate = NoiseRate::from_control(control);
-        self.noise.mode = match control & 0x04 {
-            0 => NoiseMode::Periodic,
-            _ => NoiseMode::White,
-        };
+        self.noise.mode = NoiseMode::from_control(control);
         self.noise.lfsr = self.variant.lfsr_shift_in();
     }
 
@@ -438,11 +454,7 @@ impl Psg {
 
     /// The 3-bit noise register: mode in bit 2, shift rate in bits 1-0.
     pub fn noise_control(&self) -> u8 {
-        let mode = match self.noise.mode {
-            NoiseMode::Periodic => 0,
-            NoiseMode::White => 0x04,
-        };
-        mode | self.noise.rate.bits()
+        self.noise.mode.bits() | self.noise.rate.bits()
     }
 
     /// The shift rate the noise register selects.
@@ -458,6 +470,89 @@ impl Psg {
     /// Which member of the family this is, and so how its registers read.
     pub fn variant(&self) -> Variant {
         self.variant
+    }
+}
+
+/// One tone generator: its period register, the counter reloading from it, and
+/// the frequency flip-flop.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ToneState {
+    pub period: u16,
+    pub counter: u16,
+    pub output: bool,
+}
+
+/// The noise generator: what the noise register selects, its counter and
+/// flip-flop, and the shift register's contents.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct NoiseState {
+    pub rate: NoiseRate,
+    pub mode: NoiseMode,
+    pub counter: u16,
+    pub output: bool,
+    pub shift_register: u16,
+}
+
+/// The whole chip at one instant: the register file, the generators behind it,
+/// the prescaler, and the READY countdown.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct PsgState {
+    /// The register address held between transfers.
+    pub latched_channel: Channel,
+    pub latched_kind: RegisterKind,
+    pub tones: [ToneState; TONE_CHANNELS],
+    pub noise: NoiseState,
+    /// The four 4-bit attenuations, in register-address order.
+    pub attenuations: [u8; CHANNELS],
+    /// The prescaler's count toward an internal clock.
+    pub clock_divider: u8,
+    /// Input clocks left of the byte load holding READY low.
+    pub ready_countdown: u8,
+}
+
+impl Psg {
+    /// The chip's state at this instant. The variant is the part's identity,
+    /// not its state, so it stays with the part a restore lands in.
+    pub fn boundary_state(&self) -> PsgState {
+        PsgState {
+            latched_channel: self.latched.channel,
+            latched_kind: self.latched.kind,
+            tones: std::array::from_fn(|channel| ToneState {
+                period: self.tones[channel].period,
+                counter: self.tones[channel].counter,
+                output: self.tones[channel].output,
+            }),
+            noise: NoiseState {
+                rate: self.noise.rate,
+                mode: self.noise.mode,
+                counter: self.noise.counter,
+                output: self.noise.output,
+                shift_register: self.noise.lfsr,
+            },
+            attenuations: self.volumes,
+            clock_divider: self.divider,
+            ready_countdown: self.busy_clocks,
+        }
+    }
+
+    pub fn restore_boundary(&mut self, state: &PsgState) {
+        self.latched = LatchedRegister {
+            channel: state.latched_channel,
+            kind: state.latched_kind,
+        };
+        for (tone, captured) in self.tones.iter_mut().zip(state.tones) {
+            tone.period = captured.period;
+            tone.counter = captured.counter;
+            tone.output = captured.output;
+        }
+        self.noise.rate = state.noise.rate;
+        self.noise.mode = state.noise.mode;
+        self.noise.counter = state.noise.counter;
+        self.noise.output = state.noise.output;
+        self.noise.lfsr = state.noise.shift_register;
+        self.volumes = state.attenuations;
+        self.divider = state.clock_divider;
+        self.busy_clocks = state.ready_countdown;
     }
 }
 

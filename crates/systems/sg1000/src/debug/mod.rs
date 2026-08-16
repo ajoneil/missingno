@@ -17,15 +17,21 @@ use std::time::Duration;
 use missingno_core::TvStandard;
 use missingno_core::graphics::GraphicsView;
 use missingno_core::inspect::{RegisterGroup, Section};
-use missingno_core::machine::Machine;
+use missingno_core::machine::{BoundaryState, Machine, MachineConsole, StateIdentity};
 use missingno_core::ports::{PanelControl, PeripheralId, PlugError, PortDescriptor, PortId};
-use missingno_core::system::{ControlId, ControlInput, DebugView, InspectSnapshot, RunningStatus};
+use missingno_core::state::{StateRecord, SystemStateSchema};
+use missingno_core::state_file::StateFrame;
+use missingno_core::system::{
+    ControlId, ControlInput, DebugView, InspectSnapshot, RunningStatus, StateError, SystemConsole,
+};
 use missingno_core::video::{DisplayTechnology, Frame, IndexedFrame};
 use missingno_core::waveform::ChannelWave;
 use missingno_ti_psg::{NoiseMode, NoiseRate, Variant};
 use missingno_ti_vdp::{Frame as VdpFrame, Standard, VISIBLE_WIDTH};
 
+use crate::cartridge::CartridgeError;
 use crate::console::{JOY1, JOY2, STANDARD, Sg1000, TSTATES_PER_FRAME};
+use crate::state_schema::sg1000_state_schema;
 use palette::ti_palette;
 use ports::CONTROL_PAD;
 
@@ -130,6 +136,22 @@ pub fn is_sg1000_rom(path: &std::path::Path) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("sg"))
 }
 
+/// A console bound to its media, so a save state can refuse a ROM it was not
+/// written for.
+pub fn create_console(rom: &[u8], title: String) -> Result<Box<dyn SystemConsole>, CartridgeError> {
+    let console = MachineConsole::<Sg1000System>::new(Sg1000::new(rom)?, title);
+    Ok(Box::new(console.with_identity(StateIdentity {
+        rom_fingerprint: rom_fingerprint(rom),
+    })))
+}
+
+/// SHA-256 of the cartridge image, taken at load — the digest a save state
+/// carries.
+fn rom_fingerprint(rom: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(rom).into()
+}
+
 pub struct Sg1000System;
 
 impl Machine for Sg1000System {
@@ -214,6 +236,29 @@ impl Machine for Sg1000System {
             STANDARD.visible_lines() as u32,
             ti_palette(),
         ))
+    }
+
+    fn state_schema() -> Option<&'static SystemStateSchema> {
+        Some(sg1000_state_schema())
+    }
+
+    fn read_state(sg: &Sg1000) -> Option<StateRecord> {
+        crate::snapshot::read_state(sg)
+    }
+
+    /// A save is only faithful at an instruction boundary, where the Z80 holds
+    /// no sequencer residue.
+    fn capture_boundary(sg: &Sg1000) -> Result<BoundaryState, StateError> {
+        crate::snapshot::capture(sg)
+    }
+
+    fn restore_boundary(
+        sg: &mut Sg1000,
+        record: &StateRecord,
+        memory: &[(String, Vec<u8>)],
+        frame: Option<&StateFrame>,
+    ) -> Result<(), StateError> {
+        crate::snapshot::restore(sg, record, memory, frame)
     }
 
     fn step_over_target(sg: &Sg1000) -> Option<u16> {

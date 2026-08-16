@@ -195,21 +195,14 @@ mod sms {
 #[cfg(feature = "sg1000")]
 mod sg1000 {
     use super::*;
-    use missingno_core::machine::MachineConsole;
     use missingno_core::system::SystemConsole;
-    use missingno_sg1000::console::Sg1000;
-    use missingno_sg1000::debug::Sg1000System;
 
     pub fn create(
         path: &Path,
         rom: &[u8],
         _options: &LoadOptions,
     ) -> Option<Box<dyn SystemConsole>> {
-        let sg1000 = Sg1000::new(rom).ok()?;
-        Some(Box::new(MachineConsole::<Sg1000System>::new(
-            sg1000,
-            title_for(path),
-        )))
+        missingno_sg1000::debug::create_console(rom, title_for(path)).ok()
     }
 
     pub fn is_rom(path: &Path, _rom: &[u8]) -> bool {

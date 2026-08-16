@@ -17,15 +17,19 @@ mod render;
 mod scan;
 mod sprites;
 mod standard;
+mod state;
 mod status;
 mod vram;
 
+pub use port::PortTransfer;
 pub use registers::Mode;
 pub use render::{Frame, PALETTE};
+pub use scan::ScanStop;
 pub use sprites::SPRITE_TERMINATOR;
 pub use standard::{
     ACTIVE_LINES, ACTIVE_WIDTH, LEFT_BORDER, RIGHT_BORDER, Standard, VISIBLE_WIDTH,
 };
+pub use state::{AccessState, PortState, ScannerState, SegmentState, StatusState, VdpState};
 pub use vram::VRAM_SIZE;
 
 use port::Port;

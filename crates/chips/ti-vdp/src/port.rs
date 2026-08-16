@@ -20,10 +20,10 @@ const RUN_START_CYCLES: [usize; 11] = [0, 16, 32, 48, 64, 79, 95, 110, 123, 139,
 const RUN_LENGTH_CYCLES: [usize; 11] = [1, 1, 1, 1, 1, 2, 5, 4, 1, 1, 1];
 /// The servicing cycle samples the transfer register this long after its
 /// own start...
-const TRANSFER_LOCK_XTALS: u64 = 17;
+pub(crate) const TRANSFER_LOCK_XTALS: u64 = 17;
 /// ...and the request flag clears this long after, so a request landing
 /// in the gap both supplies the in-flight data and queues itself.
-const FLAG_RELEASE_XTALS: u64 = 15;
+pub(crate) const FLAG_RELEASE_XTALS: u64 = 15;
 /// A port write needs this long to settle; a lock sampling sooner sees
 /// the register mid-transition and each bit resolves as old AND new.
 const TRANSFER_SETTLE_XTALS: u64 = 2;
@@ -48,8 +48,8 @@ const ACCESS_CYCLES: [bool; CYCLES_PER_LINE] = {
 };
 
 /// Direction and data of a CPU port transfer.
-#[derive(Clone, Copy)]
-pub(crate) enum PortTransfer {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PortTransfer {
     Write(u8),
     Refill,
 }
@@ -75,9 +75,9 @@ impl ControlCommand {
 /// The access a CPU-access cycle has claimed: the address latched at
 /// claim, and the cycle's lock and release instants.
 pub(crate) struct InFlightAccess {
-    address: VramAddress,
-    lock_at: u64,
-    release_at: u64,
+    pub(crate) address: VramAddress,
+    pub(crate) lock_at: u64,
+    pub(crate) release_at: u64,
 }
 
 /// The port's own state: the pointer, the control-port latch, the
@@ -90,16 +90,16 @@ pub(crate) struct Port {
     pub(crate) read_buffer: u8,
     /// Re-latched by every CPU request; the servicing cycle samples it at
     /// its lock instant, so a newer request steals an in-flight cycle.
-    transfer: PortTransfer,
+    pub(crate) transfer: PortTransfer,
     /// The transfer being replaced, and when: a lock sampling within the
     /// settle window merges the two.
-    prior_transfer: PortTransfer,
-    transfer_written_at: u64,
+    pub(crate) prior_transfer: PortTransfer,
+    pub(crate) transfer_written_at: u64,
     /// Latched by the request that raised the flag; replacements leave it
     /// holding — a superseded access keeps the first address.
-    pending_address: VramAddress,
-    pending_flag: bool,
-    in_flight: Option<InFlightAccess>,
+    pub(crate) pending_address: VramAddress,
+    pub(crate) pending_flag: bool,
+    pub(crate) in_flight: Option<InFlightAccess>,
 }
 
 impl Port {

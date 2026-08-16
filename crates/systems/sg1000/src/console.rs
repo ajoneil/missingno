@@ -124,6 +124,16 @@ pub struct Sg1000 {
     frames_seen: u64,
 }
 
+/// The board's own state beside the chips': the multiplexer bytes the pads
+/// drive, the phase of the 44.1 kHz output tap, and the fields handed out.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct BoardState {
+    pub joystick_dc: u8,
+    pub joystick_dd: u8,
+    pub sample_phase: f32,
+    pub fields_taken: u64,
+}
+
 struct Board {
     cart: Cartridge,
     ram: [u8; RAM_SIZE],
@@ -209,8 +219,49 @@ impl Sg1000 {
         &self.board.vdp
     }
 
+    pub fn vdp_mut(&mut self) -> &mut Vdp {
+        &mut self.board.vdp
+    }
+
     pub fn psg(&self) -> &Psg {
         &self.board.psg
+    }
+
+    pub fn psg_mut(&mut self) -> &mut Psg {
+        &mut self.board.psg
+    }
+
+    /// The TMM2009's kilobyte, before the decode mirrors it.
+    pub fn work_ram(&self) -> &[u8] {
+        &self.board.ram
+    }
+
+    pub fn restore_work_ram(&mut self, bytes: &[u8]) {
+        let len = self.board.ram.len().min(bytes.len());
+        self.board.ram[..len].copy_from_slice(&bytes[..len]);
+    }
+
+    pub fn board_state(&self) -> BoardState {
+        BoardState {
+            joystick_dc: self.board.joy_dc,
+            joystick_dd: self.board.joy_dd,
+            sample_phase: self.sample_clock,
+            fields_taken: self.frames_seen,
+        }
+    }
+
+    /// Reseat the board. Samples already accumulated belong to the timeline
+    /// being left, so the pending buffer starts empty.
+    pub fn restore_board(&mut self, state: &BoardState) {
+        self.board.joy_dc = state.joystick_dc;
+        self.board.joy_dd = state.joystick_dd;
+        self.sample_clock = state.sample_phase;
+        self.frames_seen = state.fields_taken;
+        self.audio.clear();
+    }
+
+    pub fn at_instruction_boundary(&self) -> bool {
+        self.cpu.at_instruction_boundary()
     }
 
     /// One Z80 T-state, and with it the three crystal periods the VDP takes
@@ -235,6 +286,11 @@ impl Sg1000 {
         }
     }
 
+    /// One T-state of the board — the grid every chip is stepped on.
+    pub fn step_tstate(&mut self) {
+        self.tick();
+    }
+
     pub fn step_instruction(&mut self) {
         self.tick();
         while !self.cpu.at_instruction_boundary() {
@@ -242,12 +298,15 @@ impl Sg1000 {
         }
     }
 
-    /// Run T-states until the raster leaves the visible picture, bounded so
-    /// runaway code cannot stall the caller.
+    /// Run T-states until the raster leaves the visible picture and the CPU
+    /// reaches an instruction boundary — so a frame handoff is a point a state
+    /// can be captured at — bounded so runaway code cannot stall the caller.
     pub fn step_frame(&mut self, budget_tstates: u32) -> Option<&Frame> {
         for _ in 0..budget_tstates {
             self.tick();
-            if self.board.vdp.frames_completed() != self.frames_seen {
+            if self.board.vdp.frames_completed() != self.frames_seen
+                && self.cpu.at_instruction_boundary()
+            {
                 break;
             }
         }

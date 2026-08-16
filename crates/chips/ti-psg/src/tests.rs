@@ -406,3 +406,43 @@ fn the_integrated_part_powers_on_addressing_the_second_attenuation() {
     psg.write(0x00);
     assert_eq!(psg.attenuations()[1], 0x00);
 }
+
+/// The captured state names everything the generators run on, so a restored
+/// part stays in step clock for clock.
+#[test]
+fn a_captured_state_survives_its_own_restore() {
+    let mut psg = discrete();
+    psg.write(0x8A); // tone 1 period low
+    psg.write(0x0C); // ...and its high bits
+    psg.write(0x92); // tone 1 attenuation
+    psg.write(0xE5); // noise: white, ÷1024
+    tick(&mut psg, 900);
+
+    let state = psg.boundary_state();
+    let mut restored = discrete();
+    restored.restore_boundary(&state);
+    assert_eq!(restored.boundary_state(), state);
+
+    for _ in 0..64 {
+        tick(&mut psg, 17);
+        tick(&mut restored, 17);
+        assert_eq!(restored.boundary_state(), psg.boundary_state());
+        assert_eq!(restored.dac_codes(), psg.dac_codes());
+    }
+}
+
+/// READY's countdown rides the state, so a restore taken inside a byte load
+/// still stalls the board for what is left of it.
+#[test]
+fn a_restored_part_finishes_the_byte_it_was_loading() {
+    let mut psg = discrete();
+    psg.write(0x9F);
+    tick(&mut psg, 8);
+    assert!(!psg.ready());
+
+    let mut restored = discrete();
+    restored.restore_boundary(&psg.boundary_state());
+    assert!(!restored.ready());
+    tick(&mut restored, READY_LOW_CLOCKS as u32 - 8);
+    assert!(restored.ready());
+}

@@ -72,11 +72,11 @@ impl Frame {
 /// the live backdrop at emission.
 #[derive(Clone, Copy)]
 pub(crate) struct Segment {
-    bits: u8,
-    fg: u8,
-    bg: u8,
-    start_x: usize,
-    end_x: usize,
+    pub(crate) bits: u8,
+    pub(crate) fg: u8,
+    pub(crate) bg: u8,
+    pub(crate) start_x: usize,
+    pub(crate) end_x: usize,
 }
 
 impl Segment {

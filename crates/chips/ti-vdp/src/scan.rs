@@ -46,8 +46,8 @@ const SCAN_WINDOW_XTALS: u64 = 5;
 /// Where a line's pre-processing ramp ends and why: the full 32-entry
 /// walk, a terminator's own index, or the fifth match's — only the
 /// fifth-match halt arms the field hold.
-#[derive(Clone, Copy)]
-pub(crate) enum ScanStop {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScanStop {
     FullWalk,
     Terminator(u8),
     FifthMatch(u8),
@@ -68,13 +68,13 @@ impl ScanStop {
 pub(crate) struct Scanner {
     pub(crate) counter: u8,
     pub(crate) stop: ScanStop,
-    stepped_at: u64,
-    step_from: u8,
+    pub(crate) stepped_at: u64,
+    pub(crate) step_from: u8,
     /// The fifth-match event arms a hold on the presented field; it
     /// survives the next reset and drops at the release cycle of the
     /// first scan with no event.
-    field_hold: Option<u8>,
-    fifth_match_this_scan: bool,
+    pub(crate) field_hold: Option<u8>,
+    pub(crate) fifth_match_this_scan: bool,
 }
 
 impl Scanner {
