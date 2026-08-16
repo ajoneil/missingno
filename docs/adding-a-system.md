@@ -216,17 +216,19 @@ left-column sidebar, the headless `describe_machine` MCP tool, and the HTTP
 `/sections` route. This composition is per-system by design — the shared panes
 read typed surfaces, but the sidebar's shape is the family's own.
 
-## The shortcut for a plain stepping core
+## Every family implements `Machine`
 
-For a core whose debugger is plain instruction stepping (PC breakpoints, one
-typed inspection state, indexed frames), don't implement the two seam traits by
-hand: implement `Machine` (`missingno-core`'s `machine.rs`) — a flat list
-of hooks — and the shared `MachineConsole<M>` / `MachineDebugger<M>` carry the
-seam's control flow. The SG-1000, Master System and NES are the worked
-consumers; the VCS adapts its own core-side debugger backend directly instead,
-and the Game Boy family implements the seam once (in `missingno-gb`'s
-`system.rs`, as `GbConsole<M>`, generic over its `Model`) — consumed unchanged
-by both the headless factory and the GUI.
+No core implements the two seam traits by hand: a family implements `Machine`
+(`missingno-core`'s `machine.rs`) — a flat list of hooks — and the shared
+`MachineConsole<M>` / `MachineDebugger<M>` carry the seam's control flow,
+the save-state glue, and the breakpoint/watch stores exactly once. A plain
+stepping core takes the default run hooks (an instruction loop over the PC
+breakpoints — SG-1000, Master System, NES); a family with its own debugger
+engine overrides `run_frame`/`run_step_over` and interprets the seam's
+`StopSet` itself, which is how the VCS keeps its budget-exhaustion reporting
+and the Game Boy family (one `Machine` impl generic over its `Model`) keeps
+evaluating watches at sub-instruction bus points. Hand-written seam plumbing
+in a core is a gap in the hook vocabulary — grow `Machine`, don't bypass it.
 
 ## The app family axis: `app/system/`
 
@@ -332,11 +334,10 @@ until a second family grows the equivalent:
 2. **A `crates/chips/<chip>/AGENTS.md`** for every chip crate the board
    composes, new or newly shared — the chip's own conformance oracle and
    references. In-system, the console's methodology doc outranks the chip's.
-3. **The seam impl** — either a `Machine` impl for a simple stepping
-   core, or hand-written `SystemConsole` + `SystemDebugger` impls where the core
-   has its own debugger backend. Registering the core in `missingno-session`'s
-   factory (`factory.rs`) gives it session hosting, both servers, the agent tool
-   surface, and attach.
+3. **The `Machine` impl** — the family's hooks, overriding the run hooks only
+   where it has its own debugger engine. Registering the core in
+   `missingno-session`'s factory (`factory.rs`) gives it session hosting, both
+   servers, the agent tool surface, and attach.
 4. **`video_out`** returning the right `DisplayTechnology`, and a palette table
    (or RGBA-producing frame) plus the family's reading of the shared control ids.
 5. **The state schema** — a `SystemStateSchema`, `state_schema` / `read_state`,
