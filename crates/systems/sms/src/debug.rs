@@ -37,9 +37,12 @@ const CODE_WINDOW_ROWS: usize = 10;
 pub struct SmsInspectState {
     pub a: u8,
     pub f: u8,
-    pub bc: u16,
-    pub de: u16,
-    pub hl: u16,
+    pub b: u8,
+    pub c: u8,
+    pub d: u8,
+    pub e: u8,
+    pub h: u8,
+    pub l: u8,
     pub ix: u16,
     pub iy: u16,
     pub sp: u16,
@@ -87,28 +90,62 @@ impl InspectSnapshot for SmsSnapshot {
 }
 
 /// The Z80 register file as one inspection group, shared by the live view and
-/// the running snapshot. `f` renders as a plain byte — no validated Z80 flag
-/// table exists yet.
+/// the running snapshot.
 fn cpu_register_groups(state: &SmsInspectState) -> Vec<RegisterGroup> {
+    use missingno_core::inspect::RegisterPurpose::{
+        PairHigh, PairLow, ProgramCounter, StackPointer,
+    };
+
     let hex = |name, value: u32, bits| Register {
         name,
         value,
         bits,
         style: ValueStyle::Hex,
         help: None,
+        purpose: None,
+        active: None,
     };
     vec![RegisterGroup {
         name: "cpu",
         registers: vec![
-            hex("a", state.a as u32, 8).help("accumulator"),
-            hex("f", state.f as u32, 8).help("flags register"),
-            hex("bc", state.bc as u32, 16).help("general-purpose register pair BC"),
-            hex("de", state.de as u32, 16).help("general-purpose register pair DE"),
-            hex("hl", state.hl as u32, 16).help("general-purpose register pair HL"),
+            hex("a", state.a as u32, 8)
+                .help("accumulator")
+                .purpose(PairHigh("af")),
+            Register {
+                name: "f",
+                value: state.f as u32,
+                bits: 8,
+                style: ValueStyle::Flags(missingno_zilog_z80::flags::NAMES),
+                help: Some("flags register"),
+                purpose: Some(PairLow("af")),
+                active: None,
+            },
+            hex("b", state.b as u32, 8)
+                .help("general register B (high byte of BC)")
+                .purpose(PairHigh("bc")),
+            hex("c", state.c as u32, 8)
+                .help("general register C (low byte of BC)")
+                .purpose(PairLow("bc")),
+            hex("d", state.d as u32, 8)
+                .help("general register D (high byte of DE)")
+                .purpose(PairHigh("de")),
+            hex("e", state.e as u32, 8)
+                .help("general register E (low byte of DE)")
+                .purpose(PairLow("de")),
+            hex("h", state.h as u32, 8)
+                .help("general register H (high byte of HL)")
+                .purpose(PairHigh("hl")),
+            hex("l", state.l as u32, 8)
+                .help("general register L (low byte of HL)")
+                .purpose(PairLow("hl")),
             hex("ix", state.ix as u32, 16).help("index register IX"),
             hex("iy", state.iy as u32, 16).help("index register IY"),
-            hex("sp", state.sp as u32, 16).help("stack pointer"),
-            hex("pc", state.pc as u32, 16).help("program counter"),
+            hex("sp", state.sp as u32, 16)
+                .help("stack pointer")
+                .purpose(StackPointer),
+            hex("pc", state.pc as u32, 16)
+                .help("program counter")
+                .purpose(ProgramCounter),
         ],
     }]
 }
@@ -383,9 +420,12 @@ impl SteppingSystem for SmsSystem {
         SmsInspectState {
             a: cpu.a,
             f: cpu.f,
-            bc: cpu.bc(),
-            de: cpu.de(),
-            hl: cpu.hl(),
+            b: cpu.b,
+            c: cpu.c,
+            d: cpu.d,
+            e: cpu.e,
+            h: cpu.h,
+            l: cpu.l,
             ix: cpu.ix,
             iy: cpu.iy,
             sp: cpu.sp,

@@ -218,13 +218,13 @@ fn ascii_cell(cell: Option<u8>) -> (char, Option<Color>) {
     }
 }
 
-/// The coloured runs of one grid line: `$ADDR  XX XX .. XX  |ascii|`, with the
+/// The coloured runs of one grid line: `ADDR  XX XX .. XX  |ascii|`, with the
 /// address and separators muted, each hex pair and its ASCII glyph tinted by the
 /// byte's value. A `None` cell is a byte the running window hasn't published yet
 /// — a muted `--` and a blank ASCII column so scrolling reads as updating rather
 /// than as zeroes. Short final rows pad the hex columns.
 fn row_spans(address: u32, cells: &[Option<u8>]) -> Vec<(String, Option<Color>)> {
-    let mut spans = vec![(format!("${address:04X}  "), Some(palette::OVERLAY0))];
+    let mut spans = vec![(format!("{address:04X}  "), Some(palette::OVERLAY0))];
     for i in 0..BYTES_PER_ROW as usize {
         if i > 0 {
             spans.push((" ".to_owned(), None));
@@ -360,7 +360,7 @@ impl MemoryPane {
             ),
         );
 
-        let jump = text_input("$addr", &self.jump_input)
+        let jump = text_input("addr", &self.jump_input)
             .font(fonts::monospace())
             .size(13.0)
             .width(Length::Fixed(96.0))
@@ -615,7 +615,7 @@ mod tests {
         let bytes: Vec<u8> = (0..16).collect();
         assert_eq!(
             row_text(0xC100, &cells(&bytes)),
-            "$C100  00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F  |................|"
+            "C100  00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F  |................|"
         );
     }
 
@@ -626,14 +626,14 @@ mod tests {
         // gutter only as wide as the bytes present.
         assert_eq!(
             row,
-            "$FF80  48 49                                            |HI|"
+            "FF80  48 49                                            |HI|"
         );
     }
 
     #[test]
     fn row_unpublished_cell_reads_as_dashes() {
         let row = row_text(0xC100, &[Some(0x10), None, Some(0x30)]);
-        assert!(row.starts_with("$C100  10 -- 30"));
+        assert!(row.starts_with("C100  10 -- 30"));
         assert!(row.ends_with("|. 0|"));
         // The `--` placeholder and its blank ASCII column stay muted, untinted.
         let spans = row_spans(0xC100, &[Some(0x10), None, Some(0x30)]);

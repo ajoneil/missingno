@@ -38,6 +38,42 @@ pub mod flags {
     pub const ZERO: u8 = 0x40;
     pub const SIGN: u8 = 0x80;
     pub const XY: u8 = X | Y;
+
+    /// The documented F bits; X and Y are result copies and stay unnamed.
+    pub const NAMES: &[missingno_core::inspect::FlagName] = &[
+        missingno_core::inspect::FlagName {
+            name: "s",
+            bit: 7,
+            help: Some("sign flag — bit 7 of the result"),
+        },
+        missingno_core::inspect::FlagName {
+            name: "z",
+            bit: 6,
+            help: Some("zero flag — set when a result is zero"),
+        },
+        missingno_core::inspect::FlagName {
+            name: "h",
+            bit: 4,
+            help: Some("half-carry flag — carry from bit 3 (used by DAA)"),
+        },
+        missingno_core::inspect::FlagName {
+            name: "p",
+            bit: 2,
+            help: Some(
+                "parity/overflow flag — parity after logic, signed overflow after arithmetic",
+            ),
+        },
+        missingno_core::inspect::FlagName {
+            name: "n",
+            bit: 1,
+            help: Some("add/subtract flag — set by a subtraction (used by DAA)"),
+        },
+        missingno_core::inspect::FlagName {
+            name: "c",
+            bit: 0,
+            help: Some("carry flag — carry or borrow out of bit 7"),
+        },
+    ];
 }
 
 pub trait Bus {

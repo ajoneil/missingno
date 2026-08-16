@@ -160,7 +160,8 @@ impl canvas::Program<Message> for ChannelScope {
         let usable = (h - 2.0 * pad).max(1.0);
         let y_of = |code: f32| pad + (1.0 - code / self.max_code) * usable;
 
-        for (col, (min, max)) in column_minmax(&self.levels, cols).into_iter().enumerate() {
+        let bars = bridge_gaps(column_minmax(&self.levels, cols));
+        for (col, (min, max)) in bars.into_iter().enumerate() {
             let top = y_of(max as f32);
             let bottom = y_of(min as f32);
             let bar = (bottom - top).max(1.0);
@@ -194,9 +195,25 @@ fn column_minmax(levels: &[u8], cols: usize) -> Vec<(u8, u8)> {
         .collect()
 }
 
+/// Stretch each column to meet the one before it, so a transition landing
+/// between columns still draws its vertical edge instead of leaving two
+/// disconnected bars. Each column is widened against the *original* previous
+/// column, never the already-bridged one, so a run of steps does not smear.
+fn bridge_gaps(cols: Vec<(u8, u8)>) -> Vec<(u8, u8)> {
+    cols.iter()
+        .enumerate()
+        .map(
+            |(index, &(min, max))| match index.checked_sub(1).map(|prev| cols[prev]) {
+                Some((prev_min, prev_max)) => (min.min(prev_max), max.max(prev_min)),
+                None => (min, max),
+            },
+        )
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::column_minmax;
+    use super::{bridge_gaps, column_minmax};
 
     #[test]
     fn column_minmax_preserves_peaks() {
@@ -228,5 +245,23 @@ mod tests {
     fn column_minmax_empty_inputs() {
         assert!(column_minmax(&[], 10).is_empty());
         assert!(column_minmax(&[1, 2, 3], 0).is_empty());
+    }
+
+    #[test]
+    fn bridge_gaps_spans_a_square_wave_edge() {
+        assert_eq!(bridge_gaps(vec![(3, 3), (9, 9)]), vec![(3, 3), (3, 9)]);
+        assert_eq!(bridge_gaps(vec![(9, 9), (3, 3)]), vec![(9, 9), (3, 9)]);
+    }
+
+    #[test]
+    fn bridge_gaps_leaves_connected_columns_alone() {
+        // Overlapping ranges, then ranges that merely touch.
+        assert_eq!(bridge_gaps(vec![(0, 7), (1, 6)]), vec![(0, 7), (1, 6)]);
+        assert_eq!(bridge_gaps(vec![(0, 3), (3, 5)]), vec![(0, 3), (3, 5)]);
+    }
+
+    #[test]
+    fn bridge_gaps_empty_input() {
+        assert!(bridge_gaps(Vec::new()).is_empty());
     }
 }

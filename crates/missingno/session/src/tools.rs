@@ -1751,6 +1751,8 @@ mod tests {
             bits: 8,
             style: ValueStyle::Flags(&FLAGS),
             help: None,
+            purpose: None,
+            active: None,
         };
         assert_eq!(render_register(&register), "[Z+ C-]");
     }
@@ -1772,6 +1774,8 @@ mod tests {
                         bits: 8,
                         style: ValueStyle::Hex,
                         help: None,
+                        purpose: None,
+                        active: None,
                     }],
                 }),
                 SectionBlock::Rows(vec![Row::flag("lcd on", true)]),

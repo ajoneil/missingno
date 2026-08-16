@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use missingno_core::graphics::GraphicsView;
 use missingno_core::inspect::{
-    BitColumn, BitRow, BitTable, ColorSwatch, Concept, Detail, Register, RegisterGroup, Row,
-    Section, SectionBlock, SwatchRow, Sweep, SweepZone, Tone, ValueStyle,
+    BitColumn, BitRow, BitTable, ColorSwatch, Concept, Detail, Register, RegisterGroup,
+    RegisterPurpose, Row, Section, SectionBlock, SwatchRow, Sweep, SweepZone, Tone, ValueStyle,
 };
 use missingno_core::ports::{
     ControlDescriptor, ControlKind, PanelBehaviour, PanelControl, PeripheralDescriptor,
@@ -126,9 +126,12 @@ impl Default for VdpLayout {
 pub struct Sg1000InspectState {
     pub a: u8,
     pub f: u8,
-    pub bc: u16,
-    pub de: u16,
-    pub hl: u16,
+    pub b: u8,
+    pub c: u8,
+    pub d: u8,
+    pub e: u8,
+    pub h: u8,
+    pub l: u8,
     pub ix: u16,
     pub iy: u16,
     pub sp: u16,
@@ -175,28 +178,60 @@ impl InspectSnapshot for Sg1000Snapshot {
 }
 
 /// The Z80 register file as one inspection group, shared by the live view and
-/// the running snapshot. `f` renders as a plain byte — no validated Z80 flag
-/// table exists yet.
+/// the running snapshot.
 fn cpu_register_groups(state: &Sg1000InspectState) -> Vec<RegisterGroup> {
+    use RegisterPurpose::{PairHigh, PairLow, ProgramCounter, StackPointer};
+
     let hex = |name, value: u32, bits| Register {
         name,
         value,
         bits,
         style: ValueStyle::Hex,
         help: None,
+        purpose: None,
+        active: None,
     };
     vec![RegisterGroup {
         name: "cpu",
         registers: vec![
-            hex("a", state.a as u32, 8).help("accumulator"),
-            hex("f", state.f as u32, 8).help("flags register"),
-            hex("bc", state.bc as u32, 16).help("general-purpose register pair BC"),
-            hex("de", state.de as u32, 16).help("general-purpose register pair DE"),
-            hex("hl", state.hl as u32, 16).help("general-purpose register pair HL"),
+            hex("a", state.a as u32, 8)
+                .help("accumulator")
+                .purpose(PairHigh("af")),
+            Register {
+                name: "f",
+                value: state.f as u32,
+                bits: 8,
+                style: ValueStyle::Flags(missingno_zilog_z80::flags::NAMES),
+                help: Some("flags register"),
+                purpose: Some(PairLow("af")),
+                active: None,
+            },
+            hex("b", state.b as u32, 8)
+                .help("general register B (high byte of BC)")
+                .purpose(PairHigh("bc")),
+            hex("c", state.c as u32, 8)
+                .help("general register C (low byte of BC)")
+                .purpose(PairLow("bc")),
+            hex("d", state.d as u32, 8)
+                .help("general register D (high byte of DE)")
+                .purpose(PairHigh("de")),
+            hex("e", state.e as u32, 8)
+                .help("general register E (low byte of DE)")
+                .purpose(PairLow("de")),
+            hex("h", state.h as u32, 8)
+                .help("general register H (high byte of HL)")
+                .purpose(PairHigh("hl")),
+            hex("l", state.l as u32, 8)
+                .help("general register L (low byte of HL)")
+                .purpose(PairLow("hl")),
             hex("ix", state.ix as u32, 16).help("index register IX"),
             hex("iy", state.iy as u32, 16).help("index register IY"),
-            hex("sp", state.sp as u32, 16).help("stack pointer"),
-            hex("pc", state.pc as u32, 16).help("program counter"),
+            hex("sp", state.sp as u32, 16)
+                .help("stack pointer")
+                .purpose(StackPointer),
+            hex("pc", state.pc as u32, 16)
+                .help("program counter")
+                .purpose(ProgramCounter),
         ],
     }]
 }
@@ -205,10 +240,11 @@ fn cpu_register_groups(state: &Sg1000InspectState) -> Vec<RegisterGroup> {
 /// Z80 register file, the VDP's position/status/registers, and the PSG's
 /// channels. The board has no mapper to show.
 fn sg1000_sidebar_sections(state: &Sg1000InspectState) -> Vec<Section> {
-    let mut sections = missingno_core::inspect::default_sections(cpu_register_groups(state));
-    sections.push(vdp_section(state));
-    sections.push(psg_section(state));
-    sections
+    vec![
+        missingno_core::inspect::cpu_section(cpu_register_groups(state)),
+        vdp_section(state),
+        psg_section(state),
+    ]
 }
 
 /// The SN76489AN: three tone channels and one noise channel, each with an
@@ -278,7 +314,7 @@ fn noise_rows(state: &Sg1000InspectState) -> SectionBlock {
 /// A period register beside the tone it produces.
 fn tone_label(period: u16) -> String {
     format!(
-        "${period:03X} ({} Hz)",
+        "{period:03X} ({} Hz)",
         tone_frequency(period).round() as u32
     )
 }
@@ -297,11 +333,11 @@ fn tone_frequency(period: u16) -> f32 {
 /// An attenuation register beside the attenuation it sets.
 fn attenuation_label(attenuation: u8) -> String {
     if attenuation >= MUTE_ATTENUATION {
-        format!("${attenuation:X} (off)")
+        format!("{attenuation:X} (off)")
     } else if attenuation == 0 {
-        format!("${attenuation:X} (0 dB)")
+        format!("{attenuation:X} (0 dB)")
     } else {
-        format!("${attenuation:X} (-{} dB)", attenuation * DECIBELS_PER_STEP)
+        format!("{attenuation:X} (-{} dB)", attenuation * DECIBELS_PER_STEP)
     }
 }
 
@@ -437,7 +473,7 @@ fn table_rows(layout: &VdpLayout) -> Vec<Row> {
 }
 
 fn address(base: u16) -> String {
-    format!("${base:04X}")
+    format!("{base:04X}")
 }
 
 /// The backdrop R7's low nibble selects, resolved through the datasheet
@@ -460,8 +496,8 @@ fn status_table(status: u8) -> BitTable {
         columns: vec![
             // F is the chip's vertical-blank interrupt source.
             BitColumn::concept("f", Concept::VBlank),
-            BitColumn::plain("5s"),
-            BitColumn::plain("c"),
+            BitColumn::concept("5s", Concept::SpriteOverflow),
+            BitColumn::concept("c", Concept::SpriteCollision),
         ],
         corner: None,
         rows: vec![BitRow {
@@ -590,9 +626,12 @@ impl SteppingSystem for Sg1000System {
         Sg1000InspectState {
             a: cpu.a,
             f: cpu.f,
-            bc: cpu.bc(),
-            de: cpu.de(),
-            hl: cpu.hl(),
+            b: cpu.b,
+            c: cpu.c,
+            d: cpu.d,
+            e: cpu.e,
+            h: cpu.h,
+            l: cpu.l,
             ix: cpu.ix,
             iy: cpu.iy,
             sp: cpu.sp,
@@ -752,10 +791,10 @@ mod tests {
 
     #[test]
     fn attenuation_reads_as_decibels() {
-        assert_eq!(attenuation_label(0x0), "$0 (0 dB)");
-        assert_eq!(attenuation_label(0x1), "$1 (-2 dB)");
-        assert_eq!(attenuation_label(0x5), "$5 (-10 dB)");
-        assert_eq!(attenuation_label(0xF), "$F (off)");
+        assert_eq!(attenuation_label(0x0), "0 (0 dB)");
+        assert_eq!(attenuation_label(0x1), "1 (-2 dB)");
+        assert_eq!(attenuation_label(0x5), "5 (-10 dB)");
+        assert_eq!(attenuation_label(0xF), "F (off)");
     }
 
     #[test]
@@ -772,10 +811,10 @@ mod tests {
         assert_eq!(section.summary, "1/4 audible");
 
         let rows = rows(&section);
-        assert_eq!(value_of(&rows, "per1"), Some("$0FE (440 Hz)"));
-        assert_eq!(value_of(&rows, "att1"), Some("$0 (0 dB)"));
-        assert_eq!(value_of(&rows, "per2"), Some("$1FE (219 Hz)"));
-        assert_eq!(value_of(&rows, "att2"), Some("$F (off)"));
+        assert_eq!(value_of(&rows, "per1"), Some("0FE (440 Hz)"));
+        assert_eq!(value_of(&rows, "att1"), Some("0 (0 dB)"));
+        assert_eq!(value_of(&rows, "per2"), Some("1FE (219 Hz)"));
+        assert_eq!(value_of(&rows, "att2"), Some("F (off)"));
         // Noise control $05: white feedback, the input clock over 1024.
         assert_eq!(value_of(&rows, "mode"), Some("white"));
         assert_eq!(value_of(&rows, "rate"), Some("clock ÷ 1024"));
@@ -819,11 +858,11 @@ mod tests {
         };
         let section = vdp_section(&state);
         let rows = rows(&section);
-        assert_eq!(value_of(&rows, "name"), Some("$3800"));
-        assert_eq!(value_of(&rows, "pattern"), Some("$1800"));
-        assert_eq!(value_of(&rows, "colour"), Some("$3FC0"));
-        assert_eq!(value_of(&rows, "sprite attr"), Some("$3B00"));
-        assert_eq!(value_of(&rows, "sprite gen"), Some("$1800"));
+        assert_eq!(value_of(&rows, "name"), Some("3800"));
+        assert_eq!(value_of(&rows, "pattern"), Some("1800"));
+        assert_eq!(value_of(&rows, "colour"), Some("3FC0"));
+        assert_eq!(value_of(&rows, "sprite attr"), Some("3B00"));
+        assert_eq!(value_of(&rows, "sprite gen"), Some("1800"));
         // R1 $63 selects 16×16 sprites, magnified, in Graphics I.
         assert_eq!(
             section.detail.as_ref().map(|detail| detail.text.as_str()),
@@ -844,6 +883,57 @@ mod tests {
         let sections = sg1000_sidebar_sections(&Sg1000InspectState::default());
         let names: Vec<&str> = sections.iter().map(|section| section.name).collect();
         assert_eq!(names, ["CPU", "VDP", "PSG"]);
+    }
+
+    #[test]
+    fn the_cpu_section_sets_the_pointers_and_pairs_apart_from_the_file() {
+        let state = Sg1000InspectState {
+            pc: 0x1234,
+            sp: 0xDFF0,
+            a: 0x5A,
+            f: 0x0F,
+            b: 0xC0,
+            c: 0xDE,
+            ..Sg1000InspectState::default()
+        };
+        let section = missingno_core::inspect::cpu_section(cpu_register_groups(&state));
+        assert_eq!(section.summary, "pc 1234 · sp DFF0");
+
+        let pointers: Vec<&str> = section
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                SectionBlock::Pointers(pointers) => Some(pointers),
+                _ => None,
+            })
+            .flatten()
+            .map(|pointer| pointer.register.name)
+            .collect();
+        assert_eq!(pointers, ["pc", "sp"]);
+
+        let pairs: Vec<u32> = section
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                SectionBlock::Pairs(pairs) => Some(pairs),
+                _ => None,
+            })
+            .flatten()
+            .map(|pair| pair.combined())
+            .collect();
+        assert_eq!(pairs, [0x5A0F, 0xC0DE, 0x0000, 0x0000]);
+
+        let file: Vec<&str> = section
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                SectionBlock::Registers(group) => Some(&group.registers),
+                _ => None,
+            })
+            .flatten()
+            .map(|register| register.name)
+            .collect();
+        assert_eq!(file, ["ix", "iy"]);
     }
 
     #[test]

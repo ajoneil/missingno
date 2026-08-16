@@ -122,14 +122,19 @@ impl InspectSnapshot for NesSnapshot {
 }
 
 /// The 2A03 register file as one inspection group, shared by the live view and
-/// the running snapshot.
+/// the running snapshot. The stack pointer shows as the page-1 address it
+/// selects rather than as the raw `s` offset.
 fn cpu_register_groups(state: &NesInspectState) -> Vec<RegisterGroup> {
+    use missingno_core::inspect::RegisterPurpose;
+
     let hex = |name, value: u32, bits| Register {
         name,
         value,
         bits,
         style: ValueStyle::Hex,
         help: None,
+        purpose: None,
+        active: None,
     };
     vec![RegisterGroup {
         name: "cpu",
@@ -137,15 +142,21 @@ fn cpu_register_groups(state: &NesInspectState) -> Vec<RegisterGroup> {
             hex("a", state.a as u32, 8).help("accumulator"),
             hex("x", state.x as u32, 8).help("X index register"),
             hex("y", state.y as u32, 8).help("Y index register"),
-            hex("s", state.s as u32, 8).help("stack pointer (offset into page 1)"),
+            hex("sp", 0x0100 | state.s as u32, 16)
+                .help("stack pointer (offset into page 1)")
+                .purpose(RegisterPurpose::StackPointer),
             Register {
                 name: "p",
                 value: state.p as u32,
                 bits: 8,
                 style: ValueStyle::Flags(MOS6502_FLAGS),
                 help: Some("processor status flags"),
+                purpose: None,
+                active: None,
             },
-            hex("pc", state.pc as u32, 16).help("program counter"),
+            hex("pc", state.pc as u32, 16)
+                .help("program counter")
+                .purpose(RegisterPurpose::ProgramCounter),
         ],
     }]
 }

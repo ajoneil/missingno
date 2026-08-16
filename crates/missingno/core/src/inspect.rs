@@ -21,6 +21,11 @@ pub struct Register {
     pub bits: u8,
     pub style: ValueStyle,
     pub help: Option<&'static str>,
+    /// The register's architectural role, when it has one the layout knows.
+    pub purpose: Option<RegisterPurpose>,
+    /// Whether the register is currently advancing; `None` where the notion
+    /// doesn't apply.
+    pub active: Option<bool>,
 }
 
 impl Register {
@@ -29,6 +34,30 @@ impl Register {
         self.help = Some(help);
         self
     }
+
+    /// Tag the register's architectural role.
+    pub fn purpose(mut self, purpose: RegisterPurpose) -> Self {
+        self.purpose = Some(purpose);
+        self
+    }
+
+    /// Mark whether the register is advancing — a halted CPU's `pc` is not.
+    pub fn active(mut self, active: bool) -> Self {
+        self.active = Some(active);
+        self
+    }
+}
+
+/// What a register is in the processor's architecture, where several consoles
+/// share the notion — the layout derives shared treatment from the tag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegisterPurpose {
+    ProgramCounter,
+    StackPointer,
+    /// The high half of the named 16-bit architectural pair.
+    PairHigh(&'static str),
+    /// The low half of the named 16-bit architectural pair.
+    PairLow(&'static str),
 }
 
 /// How a register value reads to a human.
@@ -284,7 +313,8 @@ impl BitColumn {
 }
 
 /// A hardware concept a [`BitColumn`] stands for, drawn from the interrupt
-/// sources several consoles share so a renderer can give each a common symbol.
+/// sources and status conditions several consoles share so a renderer can give
+/// each a common symbol.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Concept {
     /// The vertical-blanking interval.
@@ -297,6 +327,11 @@ pub enum Concept {
     Serial,
     /// A player-input event (the Game Boy joypad).
     Input,
+    /// The sprite-per-line scan overflowing (the TMS9918's fifth sprite, the
+    /// NES's eighth).
+    SpriteOverflow,
+    /// Two sprites' opaque pixels coinciding.
+    SpriteCollision,
 }
 
 /// One row of a [`BitTable`]: a name, one bool per column, and a [`Tone`]
@@ -422,26 +457,117 @@ pub struct ColorSwatch {
     pub raw: Option<u16>,
 }
 
-/// The fallback sidebar for a core that has not built family-specific sections:
-/// its register groups as one CPU section, summarised by the program counter.
-pub fn default_sections(groups: Vec<RegisterGroup>) -> Vec<Section> {
-    let summary = groups
-        .iter()
-        .flat_map(|group| &group.registers)
-        .find(|register| register.name == "pc")
-        .map(|pc| {
-            let digits = (pc.bits as usize).div_ceil(4);
-            format!("pc {:0width$X}", pc.value, width = digits)
-        })
-        .unwrap_or_default();
-    let blocks = groups.into_iter().map(SectionBlock::Registers).collect();
-    vec![Section {
+/// Lay out a register file from its purpose tags: pc/sp lead as pointers,
+/// adjacent pair halves fuse into pair rows, the rest list as plain rows.
+pub fn register_file_blocks(mut groups: Vec<RegisterGroup>) -> Vec<SectionBlock> {
+    let mut pointers = Vec::new();
+    for purpose in [
+        RegisterPurpose::ProgramCounter,
+        RegisterPurpose::StackPointer,
+    ] {
+        for register in groups.iter().flat_map(|group| &group.registers) {
+            if register.purpose == Some(purpose) {
+                pointers.push(Pointer {
+                    register: register.clone(),
+                    active: register.active,
+                });
+            }
+        }
+    }
+    for group in &mut groups {
+        group.registers.retain(|register| {
+            !matches!(
+                register.purpose,
+                Some(RegisterPurpose::ProgramCounter | RegisterPurpose::StackPointer)
+            )
+        });
+    }
+
+    let mut parts = Vec::new();
+    if !pointers.is_empty() {
+        parts.push(SectionBlock::Pointers(pointers));
+    }
+    for mut group in groups {
+        let mut pairs = Vec::new();
+        let mut rest = Vec::new();
+        let mut registers = group.registers.into_iter().peekable();
+        while let Some(register) = registers.next() {
+            let fuses = matches!(
+                (register.purpose, registers.peek().and_then(|next| next.purpose)),
+                (Some(RegisterPurpose::PairHigh(high)), Some(RegisterPurpose::PairLow(low)))
+                    if high == low
+            );
+            if fuses {
+                pairs.push(RegisterPair {
+                    high: register,
+                    low: registers.next().expect("peeked"),
+                });
+            } else {
+                // A half with no adjacent partner falls back to a plain row.
+                rest.push(register);
+            }
+        }
+        if !pairs.is_empty() {
+            parts.push(SectionBlock::Pairs(pairs));
+        }
+        group.registers = rest;
+        if !group.registers.is_empty() {
+            parts.push(SectionBlock::Registers(group));
+        }
+    }
+
+    let mut blocks = Vec::new();
+    for part in parts {
+        if !blocks.is_empty() {
+            blocks.push(SectionBlock::Rule);
+        }
+        blocks.push(part);
+    }
+    blocks
+}
+
+/// A register file's collapsed one-liner: its tagged pointers, each at its own
+/// width.
+pub fn register_file_summary(groups: &[RegisterGroup]) -> String {
+    [
+        RegisterPurpose::ProgramCounter,
+        RegisterPurpose::StackPointer,
+    ]
+    .into_iter()
+    .filter_map(|purpose| {
+        groups
+            .iter()
+            .flat_map(|group| &group.registers)
+            .find(|register| register.purpose == Some(purpose))
+    })
+    .map(|register| {
+        format!(
+            "{} {:0width$X}",
+            register.name,
+            register.value,
+            width = (register.bits as usize).div_ceil(4)
+        )
+    })
+    .collect::<Vec<_>>()
+    .join(" · ")
+}
+
+/// A register file as one CPU section, laid out from its purpose tags. A core
+/// with more to show embeds this and appends its own blocks.
+pub fn cpu_section(groups: Vec<RegisterGroup>) -> Section {
+    Section {
         name: "CPU",
-        summary,
+        summary: register_file_summary(&groups),
         active: None,
         detail: None,
-        blocks,
-    }]
+        blocks: register_file_blocks(groups),
+    }
+}
+
+/// The fallback sidebar for a core that has not built family-specific sections:
+/// its register groups as one CPU section.
+pub fn default_sections(groups: Vec<RegisterGroup>) -> Vec<Section> {
+    vec![cpu_section(groups)]
 }
 
 /// A contiguous span of the CPU-visible address space, named by its role.
@@ -574,7 +700,155 @@ impl MemoryWindow {
 
 #[cfg(test)]
 mod tests {
-    use super::{MemoryWindow, PairMatrix, Sweep, SweepZone, Tone, pair_index};
+    use super::{
+        MemoryWindow, PairMatrix, Register, RegisterGroup, RegisterPurpose, SectionBlock, Sweep,
+        SweepZone, Tone, ValueStyle, cpu_section, pair_index, register_file_blocks,
+    };
+
+    fn register(name: &'static str, value: u32, bits: u8) -> Register {
+        Register {
+            name,
+            value,
+            bits,
+            style: ValueStyle::Hex,
+            help: None,
+            purpose: None,
+            active: None,
+        }
+    }
+
+    /// An SM83-shaped file: the pairs listed before the pointers.
+    fn sm83_file() -> Vec<RegisterGroup> {
+        vec![RegisterGroup {
+            name: "cpu",
+            registers: vec![
+                register("a", 0x01, 8).purpose(RegisterPurpose::PairHigh("af")),
+                register("f", 0xB0, 8).purpose(RegisterPurpose::PairLow("af")),
+                register("b", 0x00, 8).purpose(RegisterPurpose::PairHigh("bc")),
+                register("c", 0x13, 8).purpose(RegisterPurpose::PairLow("bc")),
+                register("sp", 0xFFFE, 16).purpose(RegisterPurpose::StackPointer),
+                register("pc", 0x0100, 16)
+                    .purpose(RegisterPurpose::ProgramCounter)
+                    .active(false),
+            ],
+        }]
+    }
+
+    fn pointer_names(blocks: &[SectionBlock]) -> Vec<&'static str> {
+        blocks
+            .iter()
+            .filter_map(|block| match block {
+                SectionBlock::Pointers(pointers) => Some(pointers),
+                _ => None,
+            })
+            .flatten()
+            .map(|pointer| pointer.register.name)
+            .collect()
+    }
+
+    #[test]
+    fn pointers_lead_with_the_program_counter_before_the_stack_pointer() {
+        let blocks = register_file_blocks(sm83_file());
+        assert!(matches!(blocks[0], SectionBlock::Pointers(_)));
+        // Listed sp-then-pc, laid out pc-then-sp.
+        assert_eq!(pointer_names(&blocks), ["pc", "sp"]);
+    }
+
+    #[test]
+    fn a_stalled_pointer_carries_its_active_flag() {
+        let blocks = register_file_blocks(sm83_file());
+        let SectionBlock::Pointers(pointers) = &blocks[0] else {
+            panic!("expected a pointer block");
+        };
+        assert_eq!(pointers[0].active, Some(false));
+        assert_eq!(pointers[1].active, None);
+    }
+
+    #[test]
+    fn adjacent_halves_fuse_into_pairs() {
+        let blocks = register_file_blocks(sm83_file());
+        let pairs = blocks
+            .iter()
+            .find_map(|block| match block {
+                SectionBlock::Pairs(pairs) => Some(pairs),
+                _ => None,
+            })
+            .expect("expected a pair block");
+        let names: Vec<_> = pairs
+            .iter()
+            .map(|pair| (pair.high.name, pair.low.name))
+            .collect();
+        assert_eq!(names, [("a", "f"), ("b", "c")]);
+        assert_eq!(pairs[0].combined(), 0x01B0);
+        // Nothing is left over to list as plain rows.
+        assert!(
+            !blocks
+                .iter()
+                .any(|b| matches!(b, SectionBlock::Registers(_)))
+        );
+    }
+
+    #[test]
+    fn a_half_without_its_partner_lists_as_a_plain_row() {
+        let groups = vec![RegisterGroup {
+            name: "cpu",
+            registers: vec![
+                register("a", 0x01, 8).purpose(RegisterPurpose::PairHigh("af")),
+                register("bc", 0x0013, 16),
+                register("f", 0xB0, 8).purpose(RegisterPurpose::PairLow("af")),
+            ],
+        }];
+        let blocks = register_file_blocks(groups);
+        let SectionBlock::Registers(group) = &blocks[0] else {
+            panic!("expected a plain register block");
+        };
+        let names: Vec<_> = group.registers.iter().map(|r| r.name).collect();
+        assert_eq!(names, ["a", "bc", "f"]);
+        assert_eq!(blocks.len(), 1);
+    }
+
+    #[test]
+    fn rules_separate_the_parts() {
+        let groups = vec![RegisterGroup {
+            name: "cpu",
+            registers: vec![
+                register("a", 0x01, 8).purpose(RegisterPurpose::PairHigh("af")),
+                register("f", 0xB0, 8).purpose(RegisterPurpose::PairLow("af")),
+                register("hl", 0x014D, 16),
+                register("pc", 0x0100, 16).purpose(RegisterPurpose::ProgramCounter),
+            ],
+        }];
+        let blocks = register_file_blocks(groups);
+        assert!(matches!(
+            blocks.as_slice(),
+            [
+                SectionBlock::Pointers(_),
+                SectionBlock::Rule,
+                SectionBlock::Pairs(_),
+                SectionBlock::Rule,
+                SectionBlock::Registers(_),
+            ]
+        ));
+    }
+
+    #[test]
+    fn the_summary_reads_the_tagged_pointers_at_their_own_width() {
+        assert_eq!(cpu_section(sm83_file()).summary, "pc 0100 · sp FFFE");
+    }
+
+    #[test]
+    fn an_untagged_file_has_no_summary_and_no_pointers() {
+        let groups = vec![RegisterGroup {
+            name: "cpu",
+            registers: vec![register("a", 0x01, 8)],
+        }];
+        let section = cpu_section(groups);
+        assert_eq!(section.summary, "");
+        assert!(matches!(
+            section.blocks.as_slice(),
+            [SectionBlock::Registers(_)]
+        ));
+    }
 
     #[test]
     fn pair_index_packs_the_lower_triangle() {

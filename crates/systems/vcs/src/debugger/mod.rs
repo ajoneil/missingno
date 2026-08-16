@@ -75,7 +75,8 @@ pub(crate) const MOS6502_FLAGS: &[inspect::FlagName] = &[
 const FRAME_INSTRUCTION_BUDGET: u32 = 200_000;
 
 /// The 6507 register file as one inspection group. Shared by the live debugger
-/// and the running snapshot so both produce identical groups.
+/// and the running snapshot so both produce identical groups. The stack pointer
+/// shows as the page-1 address it selects rather than as the raw `s` offset.
 pub fn cpu_register_groups(
     pc: u16,
     a: u8,
@@ -90,21 +91,29 @@ pub fn cpu_register_groups(
         bits,
         style: inspect::ValueStyle::Hex,
         help: None,
+        purpose: None,
+        active: None,
     };
     vec![inspect::RegisterGroup {
         name: "cpu",
         registers: vec![
-            hex("pc", pc as u32, 16).help("program counter"),
+            hex("pc", pc as u32, 16)
+                .help("program counter")
+                .purpose(inspect::RegisterPurpose::ProgramCounter),
+            hex("sp", 0x0100 | s as u32, 16)
+                .help("stack pointer (offset into page 1)")
+                .purpose(inspect::RegisterPurpose::StackPointer),
             hex("a", a as u32, 8).help("accumulator"),
             hex("x", x as u32, 8).help("X index register"),
             hex("y", y as u32, 8).help("Y index register"),
-            hex("s", s as u32, 8).help("stack pointer (offset into page 1)"),
             inspect::Register {
                 name: "p",
                 value: p as u32,
                 bits: 8,
                 style: inspect::ValueStyle::Flags(MOS6502_FLAGS),
                 help: Some("processor status flags"),
+                purpose: None,
+                active: None,
             },
         ],
     }]

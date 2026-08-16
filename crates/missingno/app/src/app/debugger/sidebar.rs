@@ -37,8 +37,12 @@ const SIDEBAR_WIDTH: f32 = 260.0;
 
 /// Fixed width for one 8-bit register display ("b 04"), so columns align.
 const REG8_WIDTH: f32 = 48.0;
-/// Fixed width for a swatch row's label, so swatches line up.
+/// Minimum width for a swatch row's label, so swatches line up; a block whose
+/// longest label overruns it widens every row in that block to fit.
 const SWATCH_LABEL_WIDTH: f32 = 40.0;
+/// One monospace character's advance at [`LABEL`] size, sizing a label slot to
+/// the block's longest label.
+const SWATCH_LABEL_CHAR: f32 = 7.0;
 /// A pixel-strip cell's width and height; height runs taller so the strip reads
 /// as a bold pixel row. A strip too wide to sit beside its label (the
 /// playfield's 20 cells) stacks beneath it instead.
@@ -738,6 +742,8 @@ fn concept_icon(concept: inspect::Concept) -> Icon {
         inspect::Concept::Timer => Icon::Clock,
         inspect::Concept::Serial => Icon::Link,
         inspect::Concept::Input => Icon::Gamepad,
+        inspect::Concept::SpriteOverflow => Icon::Pile,
+        inspect::Concept::SpriteCollision => Icon::Overlap,
     }
 }
 
@@ -875,16 +881,32 @@ fn swatches_block(
     rows: &[inspect::SwatchRow],
     colors: Option<&ConsoleColors>,
 ) -> Element<'static, app::Message> {
+    let label_width = swatch_label_width(rows);
     let mut stack = column![].spacing(xs());
     for row in rows {
-        stack = stack.push(swatch_row(row, colors));
+        stack = stack.push(swatch_row(row, colors, label_width));
     }
     stack.into()
+}
+
+/// The label slot every row in one swatches block shares, sized to the longest
+/// label so a wide one never runs into the swatches.
+fn swatch_label_width(rows: &[inspect::SwatchRow]) -> f32 {
+    let longest = rows
+        .iter()
+        .map(|row| match row {
+            inspect::SwatchRow::Shades { label, .. } => label.chars().count(),
+            inspect::SwatchRow::Colors { label, .. } => label.chars().count(),
+        })
+        .max()
+        .unwrap_or(0);
+    SWATCH_LABEL_WIDTH.max(longest as f32 * SWATCH_LABEL_CHAR)
 }
 
 fn swatch_row(
     row: &inspect::SwatchRow,
     colors: Option<&ConsoleColors>,
+    label_width: f32,
 ) -> Element<'static, app::Message> {
     match row {
         inspect::SwatchRow::Shades { label, packed } => {
@@ -896,14 +918,19 @@ fn swatch_row(
             let swatches: Vec<(Color, Option<u16>)> = (0..4)
                 .map(|i| (iced_color(map.color(PaletteIndex(i), &palette)), None))
                 .collect();
-            swatch_line(label, swatches, Some(format!("{:02X}", packed)))
+            swatch_line(
+                label,
+                swatches,
+                Some(format!("{:02X}", packed)),
+                label_width,
+            )
         }
         inspect::SwatchRow::Colors { label, colors } => {
             let swatches: Vec<(Color, Option<u16>)> = colors
                 .iter()
                 .map(|c| (iced_color(c.color), c.raw))
                 .collect();
-            swatch_line(label, swatches, None)
+            swatch_line(label, swatches, None, label_width)
         }
     }
 }
@@ -912,6 +939,7 @@ fn swatch_line(
     label: &str,
     swatches: Vec<(Color, Option<u16>)>,
     trailing: Option<String>,
+    label_width: f32,
 ) -> Element<'static, app::Message> {
     let mut cells = iced::widget::row![].spacing(2.0);
     for (color, raw) in swatches {
@@ -920,7 +948,7 @@ fn swatch_line(
             // The raw palette word as the hardware holds it, on hover.
             Some(word) => help_tooltip(
                 swatch,
-                format!("${word:04X}"),
+                format!("{word:04X}"),
                 LABEL,
                 tooltip::Position::Bottom,
             ),
@@ -935,7 +963,7 @@ fn swatch_line(
                 .size(LABEL)
                 .color(palette::MUTED),
         )
-        .width(Length::Fixed(SWATCH_LABEL_WIDTH)),
+        .width(Length::Fixed(label_width)),
         cells,
     ]
     .spacing(s())

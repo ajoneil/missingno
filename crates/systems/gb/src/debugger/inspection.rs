@@ -183,12 +183,16 @@ const SM83_FLAGS: &[inspect::FlagName] = &[
 /// so both produce identical groups. `pc` follows the debugger's convention of
 /// the current instruction's fetch address.
 pub fn cpu_register_groups(cpu: &impl CpuSource) -> Vec<inspect::RegisterGroup> {
+    use inspect::RegisterPurpose::{PairHigh, PairLow, ProgramCounter, StackPointer};
+
     let hex8 = |name, register| inspect::Register {
         name,
         value: cpu.get_register8(register) as u32,
         bits: 8,
         style: inspect::ValueStyle::Hex,
         help: None,
+        purpose: None,
+        active: None,
     };
     let hex16 = |name, value: u16| inspect::Register {
         name,
@@ -196,26 +200,49 @@ pub fn cpu_register_groups(cpu: &impl CpuSource) -> Vec<inspect::RegisterGroup> 
         bits: 16,
         style: inspect::ValueStyle::Hex,
         help: None,
+        purpose: None,
+        active: None,
     };
     vec![inspect::RegisterGroup {
         name: "cpu",
         registers: vec![
-            hex8("a", Register8::A).help("accumulator"),
+            hex8("a", Register8::A)
+                .help("accumulator")
+                .purpose(PairHigh("af")),
             inspect::Register {
                 name: "f",
                 value: cpu.flags().bits() as u32,
                 bits: 8,
                 style: inspect::ValueStyle::Flags(SM83_FLAGS),
                 help: Some("flags register"),
+                purpose: Some(PairLow("af")),
+                active: None,
             },
-            hex8("b", Register8::B).help("general register B (high byte of BC)"),
-            hex8("c", Register8::C).help("general register C (low byte of BC)"),
-            hex8("d", Register8::D).help("general register D (high byte of DE)"),
-            hex8("e", Register8::E).help("general register E (low byte of DE)"),
-            hex8("h", Register8::H).help("general register H (high byte of HL)"),
-            hex8("l", Register8::L).help("general register L (low byte of HL)"),
-            hex16("sp", cpu.stack_pointer()).help("stack pointer"),
-            hex16("pc", cpu.ir_address()).help("program counter"),
+            hex8("b", Register8::B)
+                .help("general register B (high byte of BC)")
+                .purpose(PairHigh("bc")),
+            hex8("c", Register8::C)
+                .help("general register C (low byte of BC)")
+                .purpose(PairLow("bc")),
+            hex8("d", Register8::D)
+                .help("general register D (high byte of DE)")
+                .purpose(PairHigh("de")),
+            hex8("e", Register8::E)
+                .help("general register E (low byte of DE)")
+                .purpose(PairLow("de")),
+            hex8("h", Register8::H)
+                .help("general register H (high byte of HL)")
+                .purpose(PairHigh("hl")),
+            hex8("l", Register8::L)
+                .help("general register L (low byte of HL)")
+                .purpose(PairLow("hl")),
+            hex16("sp", cpu.stack_pointer())
+                .help("stack pointer")
+                .purpose(StackPointer),
+            hex16("pc", cpu.ir_address())
+                .help("program counter")
+                .purpose(ProgramCounter)
+                .active(!cpu.halted()),
         ],
     }]
 }
@@ -646,77 +673,22 @@ const INTERRUPT_SOURCES: [interrupts::Interrupt; 5] = [
 
 /// The CPU section's collapsed summary.
 pub fn cpu_summary(cpu: &impl CpuSource) -> String {
-    format!(
-        "pc {:04X} · sp {:04X}",
-        cpu.ir_address(),
-        cpu.stack_pointer()
-    )
+    inspect::register_file_summary(&cpu_register_groups(cpu))
 }
 
-/// The shared CPU block list: the pc/sp pointers, the `af`/`bc`/`de`/`hl`
-/// register pairs, and the interrupt table.
+/// The shared CPU block list: the register file's derived layout followed by
+/// the interrupt table.
 pub fn cpu_blocks(
     cpu: &impl CpuSource,
     ints: &interrupts::Registers,
 ) -> Vec<inspect::SectionBlock> {
-    let hex8 = |name, register| inspect::Register {
-        name,
-        value: cpu.get_register8(register) as u32,
-        bits: 8,
-        style: inspect::ValueStyle::Hex,
-        help: None,
-    };
-    let f = inspect::Register {
-        name: "f",
-        value: cpu.flags().bits() as u32,
-        bits: 8,
-        style: inspect::ValueStyle::Flags(SM83_FLAGS),
-        help: Some("flags register"),
-    };
-    let pairs = vec![
-        inspect::RegisterPair {
-            high: hex8("a", Register8::A).help("accumulator"),
-            low: f,
-        },
-        inspect::RegisterPair {
-            high: hex8("b", Register8::B).help("general register B (high byte of BC)"),
-            low: hex8("c", Register8::C).help("general register C (low byte of BC)"),
-        },
-        inspect::RegisterPair {
-            high: hex8("d", Register8::D).help("general register D (high byte of DE)"),
-            low: hex8("e", Register8::E).help("general register E (low byte of DE)"),
-        },
-        inspect::RegisterPair {
-            high: hex8("h", Register8::H).help("general register H (high byte of HL)"),
-            low: hex8("l", Register8::L).help("general register L (low byte of HL)"),
-        },
-    ];
-    let pointer = |name, value: u16, active, help| inspect::Pointer {
-        register: inspect::Register {
-            name,
-            value: value as u32,
-            bits: 16,
-            style: inspect::ValueStyle::Hex,
-            help: Some(help),
-        },
-        active,
-    };
-
-    vec![
-        inspect::SectionBlock::Pointers(vec![
-            pointer(
-                "pc",
-                cpu.ir_address(),
-                Some(!cpu.halted()),
-                "program counter",
-            ),
-            pointer("sp", cpu.stack_pointer(), None, "stack pointer"),
-        ]),
-        inspect::SectionBlock::Rule,
-        inspect::SectionBlock::Pairs(pairs),
-        inspect::SectionBlock::Rule,
-        inspect::SectionBlock::Table(interrupt_table(ints, cpu.interrupts_enabled())),
-    ]
+    let mut blocks = inspect::register_file_blocks(cpu_register_groups(cpu));
+    blocks.push(inspect::SectionBlock::Rule);
+    blocks.push(inspect::SectionBlock::Table(interrupt_table(
+        ints,
+        cpu.interrupts_enabled(),
+    )));
+    blocks
 }
 
 fn interrupt_table(ints: &interrupts::Registers, ime: bool) -> inspect::BitTable {

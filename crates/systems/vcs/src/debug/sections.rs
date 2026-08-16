@@ -11,7 +11,9 @@ use super::inspect::VcsInspectState;
 /// reads back, and what it runs from.
 pub fn vcs_sidebar_sections(state: &VcsInspectState) -> Vec<inspect::Section> {
     vec![
-        cpu_section(state),
+        inspect::cpu_section(crate::debugger::cpu_register_groups(
+            state.pc, state.a, state.x, state.y, state.s, state.p,
+        )),
         tia_section(state),
         audio_section(state),
         riot_section(state),
@@ -74,66 +76,6 @@ fn cartridge_section(state: &VcsInspectState) -> inspect::Section {
         active: None,
         detail: None,
         blocks,
-    }
-}
-
-fn cpu_section(state: &VcsInspectState) -> inspect::Section {
-    use inspect::{Register, RegisterGroup, SectionBlock, ValueStyle};
-
-    let hex8 = |name, value: u8| Register {
-        name,
-        value: value as u32,
-        bits: 8,
-        style: ValueStyle::Hex,
-        help: None,
-    };
-    let stack_pointer = 0x0100 | state.s as u16;
-    let group = RegisterGroup {
-        name: "cpu",
-        registers: vec![
-            hex8("a", state.a).help("accumulator"),
-            hex8("x", state.x).help("X index register"),
-            hex8("y", state.y).help("Y index register"),
-            Register {
-                name: "p",
-                value: state.p as u32,
-                bits: 8,
-                style: ValueStyle::Flags(crate::debugger::MOS6502_FLAGS),
-                help: Some("processor status flags"),
-            },
-        ],
-    };
-    inspect::Section {
-        name: "CPU",
-        summary: format!("pc {:04X} · sp {:04X}", state.pc, stack_pointer),
-        active: None,
-        detail: None,
-        blocks: vec![
-            SectionBlock::Pointers(vec![
-                inspect::Pointer {
-                    register: Register {
-                        name: "pc",
-                        value: state.pc as u32,
-                        bits: 16,
-                        style: ValueStyle::Hex,
-                        help: Some("program counter"),
-                    },
-                    active: None,
-                },
-                inspect::Pointer {
-                    register: Register {
-                        name: "sp",
-                        value: stack_pointer as u32,
-                        bits: 16,
-                        style: ValueStyle::Hex,
-                        help: Some("stack pointer (offset into page 1)"),
-                    },
-                    active: None,
-                },
-            ]),
-            SectionBlock::Rule,
-            SectionBlock::Registers(group),
-        ],
     }
 }
 
