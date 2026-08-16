@@ -132,13 +132,17 @@ impl<A: ApuSpec> Audio<A> {
                 Register::Channel1(pulse_sweep::Register::WaveformAndInitialLength)
                 | Register::Channel2(pulse::Register::WaveformAndInitialLength) => {
                     let length_only = value & 0x3F;
-                    let caru_low = self.caru_low();
+                    let length_clock_low = self.length_clock_low();
                     match register {
                         Register::Channel1(r) => {
-                            self.channels.ch1.write_register(r, length_only, caru_low);
+                            self.channels
+                                .ch1
+                                .write_register(r, length_only, length_clock_low);
                         }
                         Register::Channel2(r) => {
-                            self.channels.ch2.write_register(r, length_only, caru_low);
+                            self.channels
+                                .ch2
+                                .write_register(r, length_only, length_clock_low);
                         }
                         _ => unreachable!(),
                     }
@@ -201,22 +205,31 @@ impl<A: ApuSpec> Audio<A> {
                 self.volume_right = Volume(value & 0b111);
             }
             Register::Channel1(register) => {
-                let caru_low = self.caru_low();
-                self.channels.ch1.write_register(register, value, caru_low)
+                let length_clock_low = self.length_clock_low();
+                self.channels
+                    .ch1
+                    .write_register(register, value, length_clock_low)
             }
             Register::Channel2(register) => {
-                let caru_low = self.caru_low();
-                self.channels.ch2.write_register(register, value, caru_low)
+                let length_clock_low = self.length_clock_low();
+                self.channels
+                    .ch2
+                    .write_register(register, value, length_clock_low)
             }
             Register::Channel3(register) => {
-                let caru_low = self.caru_low();
-                self.channels.ch3.write_register(register, value, caru_low)
+                let length_clock_low = self.length_clock_low();
+                self.channels
+                    .ch3
+                    .write_register(register, value, length_clock_low)
             }
             Register::Channel4(register) => {
-                let caru_low = self.caru_low();
-                self.channels
-                    .ch4
-                    .write_register(register, value, caru_low, A::NOISE_GRID_ANCHOR)
+                let length_clock_low = self.length_clock_low();
+                self.channels.ch4.write_register(
+                    register,
+                    value,
+                    length_clock_low,
+                    A::NOISE_GRID_ANCHOR,
+                )
             }
         }
     }

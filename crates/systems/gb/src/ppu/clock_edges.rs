@@ -6,8 +6,8 @@ use super::{Ppu, PpuModel, PpuTickResult, TileSelGlitch, screen};
 
 impl<P: PpuModel> Ppu<P> {
     /// Snapshot LCDC.1 (XYLO) before the CPU's staged bus write applies, for the SOBU/CUPA race in mode3_rising.
-    pub fn snapshot_pre_cupa_lcdc(&mut self) {
-        self.registers.sprites_enabled_pre_cupa = self.registers.control.sprites_enabled();
+    pub fn snapshot_pre_write_strobe_lcdc(&mut self) {
+        self.registers.sprites_enabled_pre_write_strobe = self.registers.control.sprites_enabled();
     }
 
     /// ALET rises; ALET-clocked DFFs capture (NYKA, LYZU, PYGO, RENE, DOBA, NOPA, VOGA).
@@ -85,7 +85,7 @@ impl<P: PpuModel> Ppu<P> {
         // XUPY = WUVU.Q; tick_dot returns previous WUVU.Q so scan_clock_rising = !was.
         let scan_clock_rising = !self.video.tick_dot();
 
-        let talu_rising = self.advance_dividers(&mut result);
+        let lx_clock_rising = self.advance_dividers(&mut result);
 
         if self.span_sleepable() {
             self.span.arm(self.video.dots_to_line_end());
@@ -99,7 +99,7 @@ impl<P: PpuModel> Ppu<P> {
             mcycle_last_fall,
             oam_bus,
             scan_clock_rising,
-            talu_rising,
+            lx_clock_rising,
             &mut result,
         );
 
@@ -131,7 +131,7 @@ impl<P: PpuModel> Ppu<P> {
         mcycle_last_fall: bool,
         oam_bus: OamBusOwner,
         scan_clock_rising: bool,
-        talu_rising: bool,
+        lx_clock_rising: bool,
         result: &mut PpuTickResult<P::Pixel>,
     ) {
         self.registers.tick_on_master_clock_fall(
@@ -143,7 +143,7 @@ impl<P: PpuModel> Ppu<P> {
         self.run_ppu_clock_fall(
             oam_bus,
             scan_clock_rising,
-            talu_rising,
+            lx_clock_rising,
             mcycle_last_fall,
             result,
         );
@@ -165,12 +165,12 @@ impl<P: PpuModel> Ppu<P> {
             // the M-cycle's last PPU fall instead.
             self.video.stat.eval_synced(
                 conditions,
-                talu_rising,
+                lx_clock_rising,
                 is_mcycle,
                 self.model.stat_shadow_mut(),
             )
         } else {
-            self.video.stat.eval_conditions(conditions, talu_rising)
+            self.video.stat.eval_conditions(conditions, lx_clock_rising)
         };
         if edge {
             result.request_stat = true;
@@ -203,20 +203,21 @@ impl<P: PpuModel> Ppu<P> {
             return false;
         }
 
-        let vena_was = self.video.dividers.tick_mcycle();
-        let vena_now = self.video.dividers.mcycle();
-        let popu_was = self.video.vblank();
+        // VENA (1 MHz toggle divider) and POPU (VBlank capture) before this edge.
+        let mcycle_was = self.video.dividers.tick_mcycle();
+        let mcycle_now = self.video.dividers.mcycle();
+        let vblank_was = self.video.vblank();
 
         let mut scanline_boundary = false;
-        let talu_rising = !vena_was && vena_now;
-        if talu_rising {
+        let lx_clock_rising = !mcycle_was && mcycle_now;
+        if lx_clock_rising {
             // VENA↑ = TALU↑: ROPO captures PALY; NYPE captures POPU/MYTA; LX advances.
             self.video.update_ly_comparison(self.model.stat_shadow());
             self.video.stat.latch_comparison();
             self.video.on_lx_counter_clock_rise();
             self.video.update_ly_comparison(self.model.stat_shadow());
         }
-        if vena_was && !vena_now {
+        if mcycle_was && !mcycle_now {
             // VENA↓ = SONO↑ = TALU↓: RUTU captures SANU; LY advances.
             scanline_boundary = self.video.on_lx_counter_clock_fall();
             self.video.update_ly_comparison(self.model.stat_shadow());
@@ -235,18 +236,18 @@ impl<P: PpuModel> Ppu<P> {
         }
 
         // POPU↑ → VYPU → LOPE: VBlank IF.
-        if self.video.vblank() && !popu_was {
+        if self.video.vblank() && !vblank_was {
             result.request_vblank = true;
         }
 
-        talu_rising
+        lx_clock_rising
     }
 
     fn run_ppu_clock_fall(
         &mut self,
         oam_bus: OamBusOwner,
         scan_clock_rising: bool,
-        talu_rising: bool,
+        lx_clock_rising: bool,
         mcycle_last_fall: bool,
         result: &mut PpuTickResult<P::Pixel>,
     ) {
@@ -258,7 +259,7 @@ impl<P: PpuModel> Ppu<P> {
                 &self.oam,
                 oam_bus,
                 scan_clock_rising,
-                talu_rising,
+                lx_clock_rising,
                 mcycle_last_fall,
             );
             if result.pixel.is_some() {

@@ -36,7 +36,7 @@ impl<M: Model> Console<M> {
     /// Mid-CUPA lock sample: catches the AJUJ-glitch window where AVAP
     /// ends mode-2 mid-strobe and the rendering deferral leaves
     /// `mode2=0 ∧ mode3=0` observable here.
-    pub(super) fn sample_mid_cupa_lock(&mut self) {
+    pub(super) fn sample_mid_write_strobe_lock(&mut self) {
         if let Some(address) = self.chassis.cpu_bus.mid_sample_pending() {
             // The double-speed write-lock follows this mid sample; it counts only
             // the genuine mode lock, not the RUTU pre-onset that the single-speed
@@ -137,7 +137,7 @@ impl<M: Model> Console<M> {
                 return;
             }
             let (locked_at_snapshot, locked_at_mid) = self.chassis.cpu_bus.write_lock_samples();
-            self.write_byte_with_cupa_lock(
+            self.write_byte_with_write_strobe_lock(
                 address,
                 self.chassis.cpu_bus.data,
                 locked_at_snapshot,

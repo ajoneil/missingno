@@ -98,8 +98,8 @@ impl Cgb {
         self.speed_switch_blackout = 0;
         self.speed_switch_wake_latency = None;
         self.switch_relock_debit = false;
-        self.pre_alet_rendering = false;
-        self.pre_alet_lock = None;
+        self.pre_ppu_clock_rendering = false;
+        self.pre_ppu_clock_lock = None;
         self.read_drive_oam_lock = None;
         self.ff44_ripple_old = None;
         self.console_state = CgbConsoleState::default();

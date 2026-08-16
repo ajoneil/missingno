@@ -96,12 +96,12 @@ pub struct Cgb {
     /// (where VOGA captures) — the pre-transition view a double-speed FF41 read's
     /// `data_phase_n↑` latch saw; `resolve_read_latch` resolves the read's STAT
     /// mode to it.
-    pre_alet_rendering: bool,
+    pre_ppu_clock_rendering: bool,
     /// Pre-ALET-rise lock for a pending lockable (OAM/VRAM) read — the lock
-    /// analogue of `pre_alet_rendering`. A double-speed read's `data_phase_n↑`
+    /// analogue of `pre_ppu_clock_rendering`. A double-speed read's `data_phase_n↑`
     /// latch saw this pre-transition lock; `resolve_read_latch` ORs it with the
     /// latch-edge lock so a mode-3→0 release between the two still floats.
-    pre_alet_lock: Option<bool>,
+    pre_ppu_clock_lock: Option<bool>,
     /// A pending OAM read's lock at the drive enable (tobe↑) — the
     /// single-speed decisive grant sample, taken before that fall's lock
     /// onset (`resolve_read_latch` consumes it).
@@ -143,8 +143,8 @@ impl Default for Cgb {
             vram_dma: VramDma::default(),
             speed_switch_blackout: 0,
             speed_switch_wake_latency: None,
-            pre_alet_rendering: false,
-            pre_alet_lock: None,
+            pre_ppu_clock_rendering: false,
+            pre_ppu_clock_lock: None,
             read_drive_oam_lock: None,
             switch_relock_debit: false,
             ff44_ripple_old: None,
@@ -306,12 +306,12 @@ impl Model for Cgb {
         self.steps_per_dot()
     }
 
-    fn note_pre_alet_rendering(&mut self, rendering: bool) {
-        self.set_pre_alet_rendering(rendering);
+    fn note_pre_ppu_clock_rendering(&mut self, rendering: bool) {
+        self.set_pre_ppu_clock_rendering(rendering);
     }
 
-    fn note_pre_alet_lock(&mut self, lock: Option<bool>) {
-        self.set_pre_alet_lock(lock);
+    fn note_pre_ppu_clock_lock(&mut self, lock: Option<bool>) {
+        self.set_pre_ppu_clock_lock(lock);
     }
 
     fn note_read_drive_phase(&mut self, oam_lock: Option<bool>) {

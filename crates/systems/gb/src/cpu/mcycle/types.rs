@@ -209,7 +209,7 @@ pub(crate) enum Phase {
 
     /// Trailing fetch-overlap M-cycle: reads the next instruction's
     /// opcode while the in-flight instruction's `commit` retires at
-    /// the closing edge (same edge as `zacw` capture). Phase-changers
+    /// the closing edge (same edge as ZACW capture). Phase-changers
     /// (EnterHalt / EnterStop / Invalid) are peeled off at the opening
     /// edge so halt/lockup routing fires before this cell.
     FetchOverlap { commit: Commit },
@@ -264,6 +264,6 @@ pub(crate) enum HaltPhase {
     /// One extra M-cycle so `irq_latched` captures on the next CLK9↑.
     SetupMiss,
     /// IME=1 stand-in for the discarded m7 fetch plus the
-    /// `dispatch_active.q` (zacw) capture cycle.
+    /// `dispatch_active.q` (ZACW) capture cycle.
     WakeIntake,
 }

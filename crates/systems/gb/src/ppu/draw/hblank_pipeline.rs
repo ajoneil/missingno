@@ -9,7 +9,7 @@ pub(in crate::ppu) struct HblankPipeline {
     end_of_line_latched: bool,
     /// AJUJ permit pulse — ~2,100 ps window between BESU.q↓ and mode3 net↑ during the AVAP cascade.
     /// Asserted at AVAP-fall with mode3↑, deasserted at the next master-clock rise.
-    ajuj_pulse: bool,
+    access_permit_pulse: bool,
 }
 
 impl HblankPipeline {
@@ -17,7 +17,7 @@ impl HblankPipeline {
         Self {
             rendering_active: false,
             end_of_line_latched: false,
-            ajuj_pulse: false,
+            access_permit_pulse: false,
         }
     }
 
@@ -25,19 +25,23 @@ impl HblankPipeline {
         Self {
             rendering_active: false,
             end_of_line_latched: true,
-            ajuj_pulse: false,
+            access_permit_pulse: false,
         }
     }
 
     /// WODU = AND2(!FEPO, XANO). Zero registered cells between FEPO and WODU on hardware.
-    pub(in crate::ppu) fn compute_end_of_line(xano: bool, fepo: bool) -> bool {
-        xano && !fepo
+    pub(in crate::ppu) fn compute_end_of_line(terminal_count: bool, sprite_x_match: bool) -> bool {
+        terminal_count && !sprite_x_match
     }
 
-    /// Latch VOGA when WODU first rises. FEPO→WODU is combinational; `fepo` must reflect
+    /// Latch VOGA when WODU first rises. FEPO→WODU is combinational; `sprite_x_match` must reflect
     /// any same-edge transitions (post-WUTY for rise-side, post-pix-advance for fall-side).
-    pub(in crate::ppu) fn latch_end_of_line(&mut self, xano: bool, fepo: bool) -> bool {
-        let end_of_line_now = Self::compute_end_of_line(xano, fepo);
+    pub(in crate::ppu) fn latch_end_of_line(
+        &mut self,
+        terminal_count: bool,
+        sprite_x_match: bool,
+    ) -> bool {
+        let end_of_line_now = Self::compute_end_of_line(terminal_count, sprite_x_match);
         if end_of_line_now {
             self.end_of_line_latched = true;
         }
@@ -56,19 +60,19 @@ impl HblankPipeline {
     }
 
     /// AVAP-fall: set XYMU.q (rendering_active=true) and assert the AJUJ permit pulse for write-locks.
-    pub(in crate::ppu) fn pulse_ajuj_on_avap_fall(&mut self) {
+    pub(in crate::ppu) fn pulse_access_permit_on_scan_complete(&mut self) {
         self.rendering_active = true;
-        self.ajuj_pulse = true;
+        self.access_permit_pulse = true;
     }
 
     /// Close the AJUJ window on the next rise.
-    pub(in crate::ppu) fn tick_ajuj_pulse_on_rise(&mut self) {
-        self.ajuj_pulse = false;
+    pub(in crate::ppu) fn tick_access_permit_on_rise(&mut self) {
+        self.access_permit_pulse = false;
     }
 
-    /// Write-permit override consumed by oam/vram_write_locked.
-    pub(in crate::ppu) fn ajuj_pulse(&self) -> bool {
-        self.ajuj_pulse
+    /// AJUJ write-permit override consumed by oam/vram_write_locked.
+    pub(in crate::ppu) fn access_permit_pulse(&self) -> bool {
+        self.access_permit_pulse
     }
 
     pub(in crate::ppu) fn rendering_active(&self) -> bool {
@@ -82,6 +86,6 @@ impl HblankPipeline {
     pub(in crate::ppu) fn reset(&mut self) {
         self.rendering_active = false;
         self.end_of_line_latched = false;
-        self.ajuj_pulse = false;
+        self.access_permit_pulse = false;
     }
 }

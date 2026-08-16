@@ -46,11 +46,11 @@ impl LineEndPipeline {
     }
 
     /// Capture NERU into MEDA on NYPE-falling; latch vsync_committed on first 0→1.
-    pub(in crate::ppu) fn capture_vsync(&mut self, neru: bool) {
-        if !self.vsync_active && neru {
+    pub(in crate::ppu) fn capture_vsync(&mut self, at_line_zero: bool) {
+        if !self.vsync_active && at_line_zero {
             self.vsync_committed = true;
         }
-        self.vsync_active = neru;
+        self.vsync_active = at_line_zero;
     }
 
     pub(in crate::ppu) fn vid_rst(&mut self) {

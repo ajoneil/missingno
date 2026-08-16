@@ -77,7 +77,7 @@ pub struct Chassis<M: Model> {
     pub cpu_bus: CpuBus,
     pub bus_trace: cpu_bus::BusTrace,
     /// OAM-DMA source-bus write conflicts deferred to the M-cycle boundary.
-    /// Set in `write_byte_with_cupa_lock`/`commit_write`, drained in
+    /// Set in `write_byte_with_write_strobe_lock`/`commit_write`, drained in
     /// `tick_mcycle_boundary_fall`.
     pub dma_conflict: DmaConflictLatch,
 }

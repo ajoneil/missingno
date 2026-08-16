@@ -212,13 +212,13 @@ impl<P: PpuModel> Ppu<P> {
                     // DMG STAT write glitch: all enables briefly high, then settle.
                     self.video.stat.set_enables(InterruptFlags::all());
                     let glitch_legs = self.stat_legs();
-                    let glitch_edge = self.video.stat.detect_suko_edge(glitch_legs);
+                    let glitch_edge = self.video.stat.detect_condition_edge(glitch_legs);
 
                     self.video
                         .stat
                         .write_stat_bits(value, self.model.stat_shadow_mut());
                     let final_legs = self.stat_legs();
-                    let final_edge = self.video.stat.detect_suko_edge(final_legs);
+                    let final_edge = self.video.stat.detect_condition_edge(final_legs);
 
                     return glitch_edge || final_edge;
                 }

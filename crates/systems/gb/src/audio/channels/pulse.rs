@@ -110,7 +110,7 @@ impl PulseChannel {
         }
     }
 
-    pub fn write_register(&mut self, register: Register, value: u8, caru_low: bool) {
+    pub fn write_register(&mut self, register: Register, value: u8, length_clock_low: bool) {
         self.output_dirty = true;
         match register {
             Register::WaveformAndInitialLength => {
@@ -132,7 +132,7 @@ impl PulseChannel {
                 // counter. If this write lands on an even step its tick already
                 // ran, so apply it now; otherwise defer to the next even step.
                 if old_pace == 0 && new_pace != 0 && self.enabled.enabled {
-                    if caru_low {
+                    if length_clock_low {
                         self.tick_envelope_counter();
                     } else {
                         self.envelope.enable_tick_pending = true;
@@ -157,14 +157,14 @@ impl PulseChannel {
                 // 0→1 rises deme (one extra length count) iff caru is low.
                 if self
                     .length
-                    .enable_glitch(caru_low, ctrl.enable_length(), ctrl.trigger())
+                    .enable_glitch(length_clock_low, ctrl.enable_length(), ctrl.trigger())
                 {
                     self.enabled.enabled = false;
                 }
 
                 if ctrl.trigger() {
                     self.trigger();
-                    self.length.trigger_enable_fixup(caru_low);
+                    self.length.trigger_enable_fixup(length_clock_low);
                 }
             }
         }
@@ -257,10 +257,10 @@ impl PulseChannel {
         );
     }
 
-    /// horu_512hz↑ edge (every fs step transition). Drains `kyvo` into
+    /// JOPA sample on the horu_512hz↑ edge (every fs step transition). Drains `kyvo` into
     /// the volume counter when `hafe` is asserted; otherwise consumes
     /// `kyvo` without firing (= dropped sample).
-    pub fn sample_envelope_jopa(&mut self) {
+    pub fn sample_envelope_fire(&mut self) {
         if self.envelope.sample_fire(
             self.volume_and_envelope.sweep_pace(),
             self.enabled.enabled,

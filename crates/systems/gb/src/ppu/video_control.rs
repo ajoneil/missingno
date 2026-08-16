@@ -87,8 +87,9 @@ impl VideoControl {
         let line_end_edge = self.line_end.capture();
         self.lines.on_lx_counter_clock_rise(line_end_edge);
         if matches!(line_end_edge, LineEndEdge::Falling) {
-            let neru = self.lines.y.value == 0;
-            self.line_end.capture_vsync(neru);
+            // NERU = LY 0 decode.
+            let at_line_zero = self.lines.y.value == 0;
+            self.line_end.capture_vsync(at_line_zero);
         }
     }
 

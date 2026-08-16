@@ -179,7 +179,7 @@ impl WaveChannel {
         }
     }
 
-    pub fn write_register(&mut self, register: Register, value: u8, caru_low: bool) {
+    pub fn write_register(&mut self, register: Register, value: u8, length_clock_low: bool) {
         self.output_dirty = true;
         match register {
             Register::Volume => self.volume = Volume(value),
@@ -206,14 +206,14 @@ impl WaveChannel {
                 // 0→1 rises doda (one extra length count) iff caru is low.
                 if self
                     .length
-                    .enable_glitch(caru_low, ctrl.enable_length(), ctrl.trigger())
+                    .enable_glitch(length_clock_low, ctrl.enable_length(), ctrl.trigger())
                 {
                     self.enabled.enabled = false;
                 }
 
                 if ctrl.trigger() {
                     self.trigger();
-                    self.length.trigger_enable_fixup(caru_low);
+                    self.length.trigger_enable_fixup(length_clock_low);
                 }
             }
         }
@@ -244,7 +244,7 @@ impl WaveChannel {
         let ch3_2mhz_prev = self.ch3_2mhz;
         self.ch3_2mhz = !self.ch3_2mhz;
         let ch3_2mhz_rising = !ch3_2mhz_prev && self.ch3_2mhz;
-        let fabo_rising = ch3_2mhz_prev && !self.ch3_2mhz; // ch3_2mhz↓
+        let restart_sample_clock_rising = ch3_2mhz_prev && !self.ch3_2mhz; // FABO↑ = ch3_2mhz↓
 
         // huno clock-to-q ripple: promote the pending overflow into
         // `ch3_frst` on the rise AFTER the divider wrap.
@@ -260,7 +260,7 @@ impl WaveChannel {
         self.wave_data_latch.sync_2 = self.wave_data_latch.sync_1;
         self.wave_data_latch.extended = self.wave_data_latch.latched;
 
-        if fabo_rising {
+        if restart_sample_clock_rising {
             // gara/gyta sample on fabo↑. gyta captures the prior
             // `restart`; when high it async-resets gara via fury.
             let new_self_clear = self.trigger_sync.restart;

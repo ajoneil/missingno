@@ -30,7 +30,7 @@ pub struct LineCounterY {
 impl LineCounter {
     pub(in crate::ppu) fn on_lx_counter_clock_rise(&mut self, line_end_edge: LineEndEdge) {
         match line_end_edge {
-            LineEndEdge::Rising => self.y.capture_vblank_on_nype_rise(),
+            LineEndEdge::Rising => self.y.capture_vblank_on_line_end_rise(),
             LineEndEdge::Falling => self.y.capture_frame_end_on_line_end_fall(),
             LineEndEdge::None => {}
         }
@@ -84,18 +84,18 @@ impl LineCounter {
     /// the fall leaving WUVU low and VENA high; SANU decodes it, and the TALU↓
     /// two dots later captures it. Prediction only — nothing here advances.
     pub(in crate::ppu) fn dots_to_line_end(&self, dividers: &Dividers) -> u32 {
-        let to_talu_fall = 4 - dividers.half_mcycle as u32 - 2 * dividers.mcycle as u32;
+        let to_lx_clock_fall = 4 - dividers.half_mcycle as u32 - 2 * dividers.mcycle as u32;
         if self.x.line_end.pending() {
             debug_assert!(
-                to_talu_fall <= 2,
+                to_lx_clock_fall <= 2,
                 "SANU decoded with its capture edge more than an M-cycle away"
             );
-            return to_talu_fall;
+            return to_lx_clock_fall;
         }
         // TALU's rise sits two dots off its fall, in the same 1..=4 window.
-        let to_talu_rise = (to_talu_fall + 1) % 4 + 1;
+        let to_lx_clock_rise = (to_lx_clock_fall + 1) % 4 + 1;
         let advances = u32::from(SANU_DECODE_LX).saturating_sub(1 + u32::from(self.x.value));
-        to_talu_rise + 4 * advances + 2
+        to_lx_clock_rise + 4 * advances + 2
     }
 }
 
@@ -162,7 +162,7 @@ impl LineCounterY {
     }
 
     /// POPU VBlank capture on NYPE rising.
-    pub(in crate::ppu) fn capture_vblank_on_nype_rise(&mut self) {
+    pub(in crate::ppu) fn capture_vblank_on_line_end_rise(&mut self) {
         self.vblank = self.value >= 144;
     }
 

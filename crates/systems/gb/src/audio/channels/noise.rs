@@ -36,7 +36,7 @@ pub struct NoiseChannel {
     /// `noise_counter_clk = ch4_1mhz AND gary`, and drives `huce = ch4_restart OR
     /// gary` — so a mid-run code change is taken at the next terminal, immediately
     /// while on code 0 (huce continuous).
-    pub gary: bool,
+    pub divider_clock_enabled: bool,
     /// Cold synchroniser hold: the divider is frozen for this many T after a
     /// trigger so the first tap lands at `sync_delay + period/2` = the cold-load.
     pub sync_delay: u16,
@@ -45,9 +45,9 @@ pub struct NoiseChannel {
     /// `ch4_1mhz` /4 prescaler (BAVU), `t_index`-anchored — same cell as the
     /// pulse channels' chN_1mhz divider; drives the hama half-phase.
     pub mhz_prescaler: Prescaler,
-    /// Hama half-phase (`jeso`, ÷2 of `ch4_1mhz`). The code ≥ 1 cold-load snaps
+    /// Hama half-phase (JESO, ÷2 of `ch4_1mhz`). The code ≥ 1 cold-load snaps
     /// to the hama grid by this; flips each `ch4_1mhz↑`, reset only on apu-off.
-    pub jeso: bool,
+    pub prescaler_512khz: bool,
     /// KEY1 double-speed, latched each tcycle. At double speed the cold-load
     /// gains the prescaler-terminal-relative hold read by `trigger()`.
     pub double_speed: bool,
@@ -75,11 +75,11 @@ impl Default for NoiseChannel {
             divider: 0,
             divider_subcounter: 0,
             prescaler: 0,
-            gary: false,
+            divider_clock_enabled: false,
             sync_delay: 0,
             prev_tap: false,
             mhz_prescaler: Prescaler::default(),
-            jeso: false,
+            prescaler_512khz: false,
             double_speed: false,
             skip_first_clock: false,
             lfsr: 0x7fff,
@@ -103,11 +103,11 @@ impl NoiseChannel {
         self.divider = 0;
         self.divider_subcounter = 0;
         self.prescaler = 0;
-        self.gary = false;
+        self.divider_clock_enabled = false;
         self.sync_delay = 0;
         self.prev_tap = false;
         self.mhz_prescaler = Prescaler::default();
-        self.jeso = false;
+        self.prescaler_512khz = false;
         self.skip_first_clock = false;
         self.lfsr = 0x7fff;
         self.envelope = Envelope::default();
@@ -127,7 +127,7 @@ impl NoiseChannel {
         &mut self,
         register: Register,
         value: u8,
-        caru_low: bool,
+        length_clock_low: bool,
         grid_anchor: bool,
     ) {
         self.output_dirty = true;
@@ -176,7 +176,7 @@ impl NoiseChannel {
                         // Code 0 is terminal-pinned: off the kanu terminal (jeso
                         // high) the shift divider resumes 4 T ticking on the next
                         // ch4_1mhz rather than waiting for the next kanu terminal.
-                        if self.jeso {
+                        if self.prescaler_512khz {
                             self.prescaler = 0b111;
                             self.divider_subcounter = 0;
                         }
@@ -192,14 +192,14 @@ impl NoiseChannel {
                 // 0→1 rises gepy (one extra length count) iff caru is low.
                 if self
                     .length
-                    .enable_glitch(caru_low, ctrl.enable_length(), ctrl.trigger())
+                    .enable_glitch(length_clock_low, ctrl.enable_length(), ctrl.trigger())
                 {
                     self.enabled.enabled = false;
                 }
 
                 if ctrl.trigger() {
                     self.trigger();
-                    self.length.trigger_enable_fixup(caru_low);
+                    self.length.trigger_enable_fixup(length_clock_low);
                 }
             }
         }
@@ -214,13 +214,14 @@ impl NoiseChannel {
         // at the measured cold-load (sync_delay + period/2): mid-cell / code 0
         // → +4; code 1 hama edge → +8; code ≥ 2 hama edge → +0 (snapped to the
         // 8 T hama grid by the fdis load-settle, code ≥ 1 only).
-        self.sync_delay = if self.frequency_and_randomness.divisor_code() == 0 || self.jeso {
-            4
-        } else if self.frequency_and_randomness.divisor_code() == 1 {
-            8
-        } else {
-            0
-        };
+        self.sync_delay =
+            if self.frequency_and_randomness.divisor_code() == 0 || self.prescaler_512khz {
+                4
+            } else if self.frequency_and_randomness.divisor_code() == 1 {
+                8
+            } else {
+                0
+            };
         // At double speed the cold-load also depends on the free-running
         // prescaler phase at the trigger — the hold runs to a fixed offset past
         // the next hama terminal (counter 2). Single speed is prescaler-phase-
@@ -235,7 +236,7 @@ impl NoiseChannel {
         // divider stays untouched. The subcounter tracks the 4 T ch4_1mhz grid.
         self.divider_subcounter = 4;
         self.prescaler = !self.frequency_and_randomness.divisor_code() & 0b111;
-        self.gary = false;
+        self.divider_clock_enabled = false;
         // Re-triggering a running channel clocks the first LFSR shift one sample
         // later than a cold trigger: swallow the first tap.
         self.skip_first_clock = was_running;
@@ -260,11 +261,11 @@ impl NoiseChannel {
             .mhz_prescaler
             .tcycle(apu_reset_n, t_index, double_speed);
         if !apu_reset_n {
-            self.jeso = false;
+            self.prescaler_512khz = false;
             return;
         }
         if mhz_rise {
-            self.jeso = !self.jeso;
+            self.prescaler_512khz = !self.prescaler_512khz;
         }
         // Cold synchroniser (ch4_restart) holds the frequency timer, then it
         // free-runs. The shift divider is clocked by `noise_counter_clk =
@@ -283,11 +284,11 @@ impl NoiseChannel {
             // the prescaler up toward terminal 7. gary captures the new terminal.
             if self.prescaler == 0b111 {
                 self.prescaler = !self.frequency_and_randomness.divisor_code() & 0b111;
-            } else if !self.jeso {
+            } else if !self.prescaler_512khz {
                 self.prescaler = (self.prescaler + 1) & 0b111;
             }
-            self.gary = self.prescaler == 0b111;
-            if self.gary {
+            self.divider_clock_enabled = self.prescaler == 0b111;
+            if self.divider_clock_enabled {
                 let shift = self.frequency_and_randomness.clock_shift();
                 self.divider = self.divider.wrapping_add(1) & 0x3fff;
                 let tap = (self.divider >> shift) & 1 != 0;
@@ -326,9 +327,9 @@ impl NoiseChannel {
             .tick_counter(self.volume_and_envelope.sweep_pace(), false);
     }
 
-    /// horu_512hz↑ edge (every fs step transition). Commits an armed `kyvo`
+    /// JOPA sample on the horu_512hz↑ edge (every fs step transition). Commits an armed `kyvo`
     /// into the volume counter — one 512 Hz tick after the kene↓ that armed it.
-    pub fn sample_envelope_jopa(&mut self) {
+    pub fn sample_envelope_fire(&mut self) {
         if self.envelope.sample_fire(
             self.volume_and_envelope.sweep_pace(),
             self.enabled.enabled,

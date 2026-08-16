@@ -29,10 +29,15 @@ impl<const MAX: u16> LengthCounter<MAX> {
     /// NRx4 length-enable rising edge (deme/capy/gepy/doda): a 0→1 enable
     /// while `caru` is low clocks one extra length count. Returns true when
     /// that clock reaches 0 on a non-trigger write — the caller disables.
-    pub fn enable_glitch(&mut self, caru_low: bool, enable_length: bool, trigger: bool) -> bool {
+    pub fn enable_glitch(
+        &mut self,
+        length_clock_low: bool,
+        enable_length: bool,
+        trigger: bool,
+    ) -> bool {
         let was_enabled = self.enabled;
         self.enabled = enable_length;
-        if caru_low && !was_enabled && self.enabled && self.counter > 0 {
+        if length_clock_low && !was_enabled && self.enabled && self.counter > 0 {
             self.counter -= 1;
             if self.counter == 0 && !trigger {
                 return true;
@@ -50,8 +55,8 @@ impl<const MAX: u16> LengthCounter<MAX> {
 
     /// Trigger-coincident enable fixup: a trigger that reloads to `MAX` while
     /// length-enabled and `caru` low immediately clocks once (MAX→MAX-1).
-    pub fn trigger_enable_fixup(&mut self, caru_low: bool) {
-        if caru_low && self.enabled && self.counter == MAX {
+    pub fn trigger_enable_fixup(&mut self, length_clock_low: bool) {
+        if length_clock_low && self.enabled && self.counter == MAX {
             self.counter = MAX - 1;
         }
     }

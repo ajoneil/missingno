@@ -251,10 +251,10 @@ impl<A: ApuSpec> Audio<A> {
         self.frame_sequencer_step
     }
 
-    /// `bufy_256hz` LOW = `caru` (ripple bit 0) low = `C` even — the
+    /// `bufy_256hz` LOW = CARU (ripple bit 0) low = `C` even — the
     /// deme NOR length-clock gate's level input that an NRx4 length-enable
     /// 0→1 write reads to decide the extra clock.
-    fn caru_low(&self) -> bool {
+    fn length_clock_low(&self) -> bool {
         self.frame_sequencer_step.is_multiple_of(2)
     }
 
@@ -465,9 +465,9 @@ impl<A: ApuSpec> Audio<A> {
         // latches (KOZY/JOPA) sample any kyvo armed by the previous
         // kene↓ before this step re-arms it — an NRx2 pace=0 write in
         // the intervening M-cycles clears kyvo and suppresses the fire.
-        self.channels.ch1.sample_envelope_jopa();
-        self.channels.ch2.sample_envelope_jopa();
-        self.channels.ch4.sample_envelope_jopa();
+        self.channels.ch1.sample_envelope_fire();
+        self.channels.ch2.sample_envelope_fire();
+        self.channels.ch4.sample_envelope_fire();
 
         // bure↑ advances the (caru, bylu, JYNA) ripple; the strobes are
         // its bit-fall edges.
@@ -629,7 +629,7 @@ impl<A: ApuSpec> Audio<A> {
                 sweep_timer: snap.ch1_sweep_timer,
                 sweep_enabled: snap.ch1_sweep_enabled,
                 sweep_negate_used: snap.ch1_sweep_negate_used,
-                coze: false,
+                sweep_counter_at_max: false,
                 sweep_cate_taken: false,
                 sweep_calc_steps: 0,
                 sweep_calc_restart: false,
@@ -701,11 +701,11 @@ impl<A: ApuSpec> Audio<A> {
                 divider: 0,
                 divider_subcounter: 0,
                 prescaler: 0,
-                gary: false,
+                divider_clock_enabled: false,
                 sync_delay: 0,
                 prev_tap: false,
                 mhz_prescaler: Prescaler::default(),
-                jeso: false,
+                prescaler_512khz: false,
                 double_speed: false,
                 skip_first_clock: false,
                 lfsr: 0x7FFF,

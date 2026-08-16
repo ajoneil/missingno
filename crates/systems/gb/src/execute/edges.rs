@@ -129,10 +129,10 @@ impl<M: Model> Console<M> {
         // CPU↔ALET read placement). Only double speed consumes it.
         if ppu == Edge::Rise && self.double_speed_active() {
             self.model
-                .note_pre_alet_rendering(self.chassis.ppu.is_rendering());
+                .note_pre_ppu_clock_rendering(self.chassis.ppu.is_rendering());
             if let Some(address) = self.chassis.cpu_bus.read_address() {
                 self.model
-                    .note_pre_alet_lock(self.chassis.ppu.read_lock(address));
+                    .note_pre_ppu_clock_lock(self.chassis.ppu.read_lock(address));
             }
         }
 
@@ -262,7 +262,7 @@ impl<M: Model> Console<M> {
         standalone_stat: bool,
     ) -> (bool, Option<ppu::PixelOutput>) {
         if fall.tcycle.as_u8() == 2 {
-            self.sample_mid_cupa_lock();
+            self.sample_mid_write_strobe_lock();
         }
 
         self.commit_read_latch(fall.ly_at_latch);
@@ -362,7 +362,7 @@ impl<M: Model> Console<M> {
             self.chassis.interrupts.enabled,
             self.chassis.interrupts.requested,
         );
-        self.chassis.cpu.dispatch.tick_zacw();
+        self.chassis.cpu.dispatch.tick_dispatch_capture();
 
         // Promote ime_delay (EI's shadow) to ime — produces EI's
         // one-instruction delay.
@@ -430,7 +430,7 @@ impl<M: Model> Console<M> {
         // alet-rising DFF capture (SOBU on TEKY → FEPO → XYLO) beats
         // CUPA-rising's transparent-latch propagation by ~14 ns. Other
         // consumers read post-CUPA `regs` directly.
-        self.chassis.ppu.snapshot_pre_cupa_lcdc();
+        self.chassis.ppu.snapshot_pre_write_strobe_lcdc();
 
         // Apply staged write at CUPA-rising (T-cycle 2). PPU registers
         // latch combinationally during CUPA-high; memory commits at
@@ -457,7 +457,7 @@ impl<M: Model> Console<M> {
         }
     }
 
-    /// Vector resolve (ISR M3→M4): clear zkog/zloz + the dispatched IF
+    /// Vector resolve (ISR M3→M4): clear ZKOG/zloz + the dispatched IF
     /// bit, latch the vector into pc. Reads the priority chain
     /// output (post-latch), matching the IE-push-bug timing.
     fn apply_vector_resolve(&mut self) {
@@ -476,7 +476,7 @@ impl<M: Model> Console<M> {
         }
     }
 
-    /// data_phase_n↓ at T1→T2 and the zkog SR-latch update. Together
+    /// data_phase_n↓ at T1→T2 and the ZKOG SR-latch update. Together
     /// they gate this M-cycle's interrupt dispatch visibility.
     fn step_dispatch_logic(&mut self, tcycle: TCycle) {
         // data_phase_n↓ closes the per-bit irq_latch at the T1→T2
@@ -492,25 +492,27 @@ impl<M: Model> Console<M> {
             self.chassis.cpu.presample_halt_wake();
         }
 
-        // step_zkog: zaij = ime ∧ data_phase ∧ int_take ∧ xogs. HALT
-        // body and halt-spin both feed into xogs so dispatch can fire
+        // step_dispatch_set: ZAIJ = ime ∧ data_phase ∧ int_take ∧ XOGS. HALT
+        // body and halt-spin both feed into XOGS so dispatch can fire
         // mid-HALT for the immediate-dispatch path.
         let halt_body = self.chassis.cpu.is_halted() && !self.chassis.cpu.halt_rs_latched();
         let halt_spin = self.chassis.cpu.halt_rs_latched();
         let data_phase = !halt_spin && (tcycle.as_u8() == 2 || tcycle.as_u8() == 3);
         let write_phase = !halt_spin && tcycle.as_u8() == 3;
         let ctl_fetch = self.chassis.cpu.is_fetch_phase() || halt_body;
-        let xogs = (data_phase && ctl_fetch) || halt_spin;
+        let instruction_boundary = (data_phase && ctl_fetch) || halt_spin;
         let ime_enabled =
             self.chassis.cpu.irq.ime.output() == crate::cpu::InterruptMasterEnable::Enabled;
         self.chassis.cpu.dispatch.update_latch(
             self.chassis.interrupts.enabled,
             self.chassis.interrupts.requested,
         );
-        self.chassis
-            .cpu
-            .dispatch
-            .step_zkog(ime_enabled, data_phase, write_phase, xogs);
+        self.chassis.cpu.dispatch.step_dispatch_set(
+            ime_enabled,
+            data_phase,
+            write_phase,
+            instruction_boundary,
+        );
     }
 
     /// Stage this M-cycle's bus activity. The CPU asserts at most one

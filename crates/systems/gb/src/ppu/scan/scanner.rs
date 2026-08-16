@@ -18,9 +18,9 @@ pub(in crate::ppu) struct SpriteScanner {
     /// NOT(VID_RST) gate for CATU; false at LCD-on, set by arm_scan_capture() after the first scanline.
     scan_capture_armed: bool,
     /// CATU_LINE_ENDp DFF17 (XUPY-rising, D = ABOV_LINE_ENDp).
-    catu: bool,
+    scan_boundary_trigger: bool,
     /// RUTU nor_latch: set at scanline boundary by reset(), cleared by tick_scan_capture on capture.
-    rutu: bool,
+    line_end: bool,
     /// DOBA DFF (dffr, ALET-clocked). D = BYBA (dffr, XUPY-clocked) scan-done;
     /// Q = the delayed copy. AVAP = BYBA && !DOBA, read via `pending`/`output`.
     scan_done: DffBit,
@@ -29,12 +29,14 @@ pub(in crate::ppu) struct SpriteScanner {
 
 pub(in crate::ppu) struct ScanSignals {
     /// AVAP — scan complete (Mode 2→3).
-    pub(in crate::ppu) avap: bool,
+    pub(in crate::ppu) scan_complete: bool,
 }
 
 impl ScanSignals {
     /// XUPY low: the scan chain holds, so no AVAP.
-    pub(in crate::ppu) const HELD: Self = Self { avap: false };
+    pub(in crate::ppu) const HELD: Self = Self {
+        scan_complete: false,
+    };
 }
 
 impl SpriteScanner {
@@ -44,8 +46,8 @@ impl SpriteScanner {
             scanning: false,
             mode2_active: false,
             scan_capture_armed: false,
-            catu: false,
-            rutu: false,
+            scan_boundary_trigger: false,
+            line_end: false,
             scan_done: DffBit::new(false, false),
             sprites: SpriteStore::new(),
         }
@@ -57,8 +59,8 @@ impl SpriteScanner {
             scanning: false,
             mode2_active: false,
             scan_capture_armed: true,
-            catu: false,
-            rutu: false,
+            scan_boundary_trigger: false,
+            line_end: false,
             scan_done: DffBit::new(true, true),
             sprites: SpriteStore::new(),
         }
@@ -80,7 +82,7 @@ impl SpriteScanner {
     /// RUTU has been set at the scanline boundary but CATU hasn't fired yet — used to lock OAM
     /// pre-BESU.
     pub(in crate::ppu) fn scan_capture_pending(&self) -> bool {
-        self.rutu
+        self.line_end
     }
 
     pub(in crate::ppu) fn scan_capture_armed(&self) -> bool {
@@ -102,8 +104,8 @@ impl SpriteScanner {
     pub(in crate::ppu) fn chain_idle(&self) -> bool {
         !self.scanning
             && !self.mode2_active
-            && !self.rutu
-            && !self.catu
+            && !self.line_end
+            && !self.scan_boundary_trigger
             && self.counter.frozen()
             && self.scan_done.pending()
             && self.scan_done.output()
@@ -150,14 +152,14 @@ impl SpriteScanner {
 
         // XYVO = LY bit 7 & bit 4 — true for LY 144..=153 in practice (i.e. VBlank lines).
         let in_vblank_line = ly & 0x90 == 0x90;
-        let catu_captures = self.rutu && !in_vblank_line;
+        let scan_boundary_fires = self.line_end && !in_vblank_line;
 
-        if catu_captures {
+        if scan_boundary_fires {
             // Capture deasserts RUTU; XYVO-gated edges must not lose RUTU.
-            self.rutu = false;
+            self.line_end = false;
         }
 
-        if catu_captures && !self.scanning {
+        if scan_boundary_fires && !self.scanning {
             self.scanning = true;
             if self.scan_capture_armed {
                 self.mode2_active = true;
@@ -165,8 +167,8 @@ impl SpriteScanner {
             self.counter.reset();
         }
 
-        self.catu = catu_captures;
-        catu_captures
+        self.scan_boundary_trigger = scan_boundary_fires;
+        scan_boundary_fires
     }
 
     /// XUPY rising: counter tick + BYBA/DOBA capture + AVAP detection. The
@@ -194,12 +196,12 @@ impl SpriteScanner {
         self.counter.tick_clock();
 
         // AVAP detection + reaction co-locate (AVAP↑ and Mode 3 init on the same alet-falling edge).
-        let avap = self.scan_done.pending() && !self.scan_done.output() && self.scanning;
-        if avap {
+        let scan_complete = self.scan_done.pending() && !self.scan_done.output() && self.scanning;
+        if scan_complete {
             self.scanning = false;
             self.mode2_active = false;
         }
-        ScanSignals { avap }
+        ScanSignals { scan_complete }
     }
 
     /// Scanline boundary reset. RUTU is set here; tick_scan_capture captures on the next XUPY rising.
@@ -209,7 +211,7 @@ impl SpriteScanner {
         self.mode2_active = false;
         self.sprites = SpriteStore::new();
         self.scan_done = DffBit::new(false, false);
-        self.catu = false;
-        self.rutu = true;
+        self.scan_boundary_trigger = false;
+        self.line_end = true;
     }
 }

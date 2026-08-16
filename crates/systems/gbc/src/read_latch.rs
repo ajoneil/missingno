@@ -4,15 +4,17 @@
 use crate::Cgb;
 
 impl Cgb {
-    pub(crate) fn set_pre_alet_rendering(&mut self, rendering: bool) {
+    /// Sample XYMU before this dot's ALET rise.
+    pub(crate) fn set_pre_ppu_clock_rendering(&mut self, rendering: bool) {
         if self.double_speed {
-            self.pre_alet_rendering = rendering;
+            self.pre_ppu_clock_rendering = rendering;
         }
     }
 
-    pub(crate) fn set_pre_alet_lock(&mut self, lock: Option<bool>) {
+    /// Sample the read lock before this dot's ALET rise.
+    pub(crate) fn set_pre_ppu_clock_lock(&mut self, lock: Option<bool>) {
         if self.double_speed {
-            self.pre_alet_lock = lock;
+            self.pre_ppu_clock_lock = lock;
         }
     }
 
@@ -42,7 +44,7 @@ impl Cgb {
             // fallen to 0. This is the CGB CPU↔ALET half-dot phase — distinct
             // from the DMG, whose lockstep timing lands the latch after the edge.
             0xFF41 if self.double_speed => {
-                if self.pre_alet_rendering {
+                if self.pre_ppu_clock_rendering {
                     value | 0b11
                 } else {
                     value
@@ -64,7 +66,7 @@ impl Cgb {
             // edge, so a mode-3→0 release landing between them still floats. OR like
             // the single-speed OAM grant/latch arm — never removes a lock the latch sees.
             0x8000..=0x9FFF | 0xFE00..=0xFEFF if self.double_speed => {
-                if self.pre_alet_lock == Some(true) || latch_lock == Some(true) {
+                if self.pre_ppu_clock_lock == Some(true) || latch_lock == Some(true) {
                     0xFF
                 } else {
                     value

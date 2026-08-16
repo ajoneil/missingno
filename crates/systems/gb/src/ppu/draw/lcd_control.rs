@@ -35,7 +35,7 @@ impl LcdControl {
     /// PPU fall: XAJO sets WUSA, TOBA pushes screen_x=0..158. Caller passes post-advance `px_value`.
     pub(in crate::ppu) fn on_ppu_clock_fall<Pix: Copy>(
         &mut self,
-        sacu: bool,
+        pipe_shift_clock: bool,
         pixel: Pix,
         fine_scroll_match: bool,
         px_value: u8,
@@ -45,9 +45,9 @@ impl LcdControl {
             self.pixel_gate = true;
         }
 
-        let toba = self.pixel_gate && sacu;
+        let pixel_emit = self.pixel_gate && pipe_shift_clock;
 
-        let pixel_out = if toba
+        let pixel_out = if pixel_emit
             && self.lcd_push_count < 159
             && self.scanline < crate::ppu::screen::NUM_SCANLINES
         {
@@ -64,7 +64,7 @@ impl LcdControl {
 
         self.fine_scroll_match = fine_scroll_match;
 
-        (toba, pixel_out)
+        (pixel_emit, pixel_out)
     }
 
     /// PPU rise: VOGA clears WUSA; WODU dot pushes screen_x=159 from the post-fall-shift shifter MSB.

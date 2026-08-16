@@ -658,7 +658,7 @@ impl<M: Model> Console<M> {
     /// THREE samples — modelling hardware's "AJUJ high at ANY edge
     /// during CUPA strobes the per-byte write." `None` lock samples
     /// mean a non-CUPA write path; the live lock alone decides.
-    pub fn write_byte_with_cupa_lock(
+    pub fn write_byte_with_write_strobe_lock(
         &mut self,
         address: u16,
         value: u8,

@@ -238,12 +238,12 @@ pub trait Model: Default {
     /// `ppu_rise_edge` (the ALET-rising XYMU.q↑). A double-speed FF41 read
     /// latching on that phase resolves its STAT mode to this pre-transition
     /// view. DMG (latch always lands after a separate-phase rise) ignores it.
-    fn note_pre_alet_rendering(&mut self, _rendering: bool) {}
+    fn note_pre_ppu_clock_rendering(&mut self, _rendering: bool) {}
 
     /// A pending lockable (OAM/VRAM) read's lock at the pre-ALET rise, sampled
     /// before this dot's `ppu_rise_edge` lock onset/release — the lock analogue
-    /// of `note_pre_alet_rendering`. DMG ignores it.
-    fn note_pre_alet_lock(&mut self, _lock: Option<bool>) {}
+    /// of `note_pre_ppu_clock_rendering`. DMG ignores it.
+    fn note_pre_ppu_clock_lock(&mut self, _lock: Option<bool>) {}
 
     /// A pending OAM read's lock at the drive enable (tobe↑, the read's third
     /// T-cycle fall), sampled before that fall's PPU advance applies any lock

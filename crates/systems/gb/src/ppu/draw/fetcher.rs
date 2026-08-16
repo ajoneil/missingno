@@ -155,7 +155,7 @@ impl<P: PpuModel> TileFetcher<P> {
     fn bg_tilemap_coords(
         &self,
         pixel_counter: u8,
-        sacu_active: bool,
+        pipe_shift_clock_active: bool,
         synced_scx: u8,
         regs: &PipelineRegisters,
         video: &VideoControl,
@@ -168,7 +168,7 @@ impl<P: PpuModel> TileFetcher<P> {
         } else {
             regs.background_viewport.x.live()
         };
-        let effective_pix = if sacu_active {
+        let effective_pix = if pipe_shift_clock_active {
             pixel_counter.wrapping_add(1)
         } else {
             pixel_counter
@@ -199,10 +199,11 @@ impl<P: PpuModel> TileFetcher<P> {
 
     /// Reads SCX/SCY live each fetch (mirrors AMUV/VEVY live arbitration); the
     /// tilemap-select bit comes from `tile_map_byte`, captured at counter 0.
+    /// `pipe_shift_clock_active` is SACU.
     fn tile_index_address(
         &self,
         pixel_counter: u8,
-        sacu_active: bool,
+        pipe_shift_clock_active: bool,
         synced_scx: u8,
         window_line_counter: u8,
         regs: &PipelineRegisters,
@@ -211,7 +212,13 @@ impl<P: PpuModel> TileFetcher<P> {
         let (map_x, map_y) = if self.fetching_window {
             self.window_tilemap_coords(window_line_counter)
         } else {
-            self.bg_tilemap_coords(pixel_counter, sacu_active, synced_scx, regs, video)
+            self.bg_tilemap_coords(
+                pixel_counter,
+                pipe_shift_clock_active,
+                synced_scx,
+                regs,
+                video,
+            )
         };
         let map_select_bit = if self.fetching_window { 6 } else { 3 };
         let map_id = TileMapId((self.tile_map_byte >> map_select_bit) & 1);
@@ -253,11 +260,12 @@ impl<P: PpuModel> TileFetcher<P> {
     }
 
     /// PPU fall: VRAM reads at counter 0/2/4 (no counter increment — LEBO only fires on rise).
+    /// `pipe_shift_clock_active` is SACU.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::ppu) fn advance_falling(
         &mut self,
         pixel_counter: u8,
-        sacu_active: bool,
+        pipe_shift_clock_active: bool,
         synced_scx: u8,
         window_line_counter: u8,
         window_mode_active: bool,
@@ -273,7 +281,7 @@ impl<P: PpuModel> TileFetcher<P> {
                 self.tile_map_byte = regs.tile_map_select_byte();
                 self.vram_address = self.tile_index_address(
                     pixel_counter,
-                    sacu_active,
+                    pipe_shift_clock_active,
                     synced_scx,
                     window_line_counter,
                     regs,

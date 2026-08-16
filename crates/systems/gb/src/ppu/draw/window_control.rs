@@ -42,32 +42,33 @@ use super::fine_scroll::FineScroll;
 /// - NUNY = AND2(PYNU, NOPA_n). MOSU↑ fires on NUNY 0→1.
 pub(in crate::ppu) struct WindowControl {
     /// Window-hit (RYDY nor3 + PUKU feedback). Set on NUNY rise; cleared by PORY during cascade restart.
-    rydy: NorLatch,
-    /// Captures NUKO on PPU rise (ROCO rising, gated by POKY=1).
-    pyco: DffLatch,
-    /// Captures PYCO on PPU fall (MEHE rising) — one half-dot after PYCO.
-    nunu: DffLatch,
+    window_hit: NorLatch,
+    /// PYCO: captures NUKO on PPU rise (ROCO rising, gated by POKY=1).
+    wx_match_capture_1: DffLatch,
+    /// NUNU: captures PYCO on PPU fall (MEHE rising) — one half-dot after PYCO.
+    wx_match_capture_2: DffLatch,
     /// Level-sensitive PYNU: sets when NUNU=1 with XOFO=0; clears when XOFO=1.
-    pynu: NorLatch,
+    window_armed: NorLatch,
     /// Captures PYNU on PPU rise; NOPA_n drives NUNY's AND2 low gate.
-    nopa: DffLatch,
+    window_mode: DffLatch,
     /// Previous-dot NUNY for MOSU rising-edge detection.
-    prev_nuny: bool,
+    prev_window_trigger_pulse: bool,
     /// Window has rendered at least one pixel on the current line (WAZY-equivalent flag).
     window_rendered: bool,
-    /// WX register's DFF8 slave output (lags the master by one ALET edge).
-    nuko_wx: u8,
+    /// WX as the NUKO comparator sees it: the register's DFF8 slave output
+    /// (lags the master by one ALET edge).
+    match_wx: u8,
     /// WAZY → VYNO ripple, clocked by PYNU 1→0 transitions during rendering.
     window_line_counter: u8,
     /// SOVY: MYVO-clocked DFF delaying RYDY; SUZU = AND2(!RYDY, SOVY).
     delayed_window_hit: DffBit,
     /// SARY: hclk-clocked DFF sampling `wy_match = LCDC.5 ∧ (LY == WY)`.
-    sary: DffLatch,
+    wy_match_sample: DffLatch,
     /// REJO WY-match frame latch. Set by SARY.q; reset by REPU = vblank (mode1).
-    rejo: NorLatch,
+    wy_match_frame: NorLatch,
     /// REJO.q as NUKO's fall-phase consumer (PANY) sees it: sampled before this fall's
     /// hclk/SARY→REJO update, since the NUKO decode precedes the late hclk edge.
-    rejo_at_roco: bool,
+    wy_match_frame_at_capture: bool,
     /// CGB WY/WX/LCDC.5/LCDC.2 as the window decode, trigger chain, and scan
     /// Y-comparator see them: register cells cross into the PPU domain at the
     /// write M-cycle's last PPU fall (the STAT register file's sibling
@@ -83,19 +84,19 @@ pub(in crate::ppu) struct WindowControl {
 impl WindowControl {
     pub(in crate::ppu) fn new() -> Self {
         WindowControl {
-            rydy: NorLatch::new(false),
-            pyco: DffLatch::new(0),
-            nunu: DffLatch::new(0),
-            pynu: NorLatch::new(false),
-            nopa: DffLatch::new(0),
-            prev_nuny: false,
+            window_hit: NorLatch::new(false),
+            wx_match_capture_1: DffLatch::new(0),
+            wx_match_capture_2: DffLatch::new(0),
+            window_armed: NorLatch::new(false),
+            window_mode: DffLatch::new(0),
+            prev_window_trigger_pulse: false,
             window_rendered: false,
-            nuko_wx: 0xFF,
+            match_wx: 0xFF,
             window_line_counter: 0,
             delayed_window_hit: DffBit::new(false, false),
-            sary: DffLatch::new(0),
-            rejo: NorLatch::new(false),
-            rejo_at_roco: false,
+            wy_match_sample: DffLatch::new(0),
+            wy_match_frame: NorLatch::new(false),
+            wy_match_frame_at_capture: false,
             synced: CrossedWindowRegisters::new(),
             vblank_at_last_capture: true,
         }
@@ -120,12 +121,14 @@ impl WindowControl {
         self.synced.sprite_size
     }
 
-    pub(in crate::ppu) fn init_nuko_wx(&mut self, wx: u8) {
-        self.nuko_wx = wx;
+    /// Seed NUKO's WX slave at the AVAP-fall Mode-3 entry.
+    pub(in crate::ppu) fn init_match_wx(&mut self, wx: u8) {
+        self.match_wx = wx;
     }
 
-    pub(in crate::ppu) fn update_nuko_wx(&mut self, wx: u8, synced: bool) {
-        self.nuko_wx = if synced { self.synced.wx } else { wx };
+    /// Advance NUKO's WX slave one ALET edge behind the register master.
+    pub(in crate::ppu) fn update_match_wx(&mut self, wx: u8, synced: bool) {
+        self.match_wx = if synced { self.synced.wx } else { wx };
     }
 
     /// SARY's D input: `LCDC.5 ∧ (LY == WY)`, read live on the DMG and through
@@ -140,43 +143,45 @@ impl WindowControl {
 
     /// REJO's fall-phase view (PANY) already holds the latch output this fall's
     /// copy would rewrite.
-    pub(in crate::ppu) fn rejo_settled(&self) -> bool {
-        self.rejo_at_roco == self.rejo.output()
+    pub(in crate::ppu) fn wy_match_frame_settled(&self) -> bool {
+        self.wy_match_frame_at_capture == self.wy_match_frame.output()
     }
 
     /// SARY already holds the match its next TALU↑ capture would write, with
     /// REPU's POPU copy current — so both the capture and REJO's update rewrite
     /// what is there. LY advances inside a span, so this is the WY-match ender.
-    pub(in crate::ppu) fn sary_settled(
+    pub(in crate::ppu) fn wy_match_settled(
         &self,
         regs: &PipelineRegisters,
         video: &VideoControl,
         synced: bool,
     ) -> bool {
-        (self.sary.output() != 0) == self.wy_match(regs, video, synced)
+        (self.wy_match_sample.output() != 0) == self.wy_match(regs, video, synced)
             && self.vblank_at_last_capture == video.vblank()
-            && self.sary.pending().is_none()
+            && self.wy_match_sample.pending().is_none()
     }
 
-    fn capture_sary(&mut self, regs: &PipelineRegisters, video: &VideoControl, synced: bool) {
+    /// SARY's TALU↑ capture.
+    fn capture_wy_match(&mut self, regs: &PipelineRegisters, video: &VideoControl, synced: bool) {
         let wy_match = self.wy_match(regs, video, synced);
         self.vblank_at_last_capture = video.vblank();
-        self.sary.write(if wy_match { 1 } else { 0 });
-        self.sary.tick();
+        self.wy_match_sample.write(if wy_match { 1 } else { 0 });
+        self.wy_match_sample.tick();
     }
 
-    fn update_rejo(&mut self, video: &VideoControl) {
+    /// REJO: set by SARY.q, reset by REPU (vblank).
+    fn update_wy_match_frame(&mut self, video: &VideoControl) {
         if video.vblank() {
-            self.rejo.clear();
-        } else if self.sary.output() != 0 {
-            self.rejo.set();
+            self.wy_match_frame.clear();
+        } else if self.wy_match_sample.output() != 0 {
+            self.wy_match_frame.set();
         }
     }
 
     /// REJO re-evaluates against current SARY + vblank on every PPU rise (handles vblank↑).
     /// SARY itself only captures on TALU↑ — see `tick_wy_match_falling`.
-    pub(in crate::ppu) fn update_rejo_on_rise(&mut self, video: &VideoControl) {
-        self.update_rejo(video);
+    pub(in crate::ppu) fn update_wy_match_frame_on_rise(&mut self, video: &VideoControl) {
+        self.update_wy_match_frame(video);
     }
 
     /// TALU↑ (hclk rising) lands on a PPU fall in the emulator's clock model. SARY captures
@@ -185,14 +190,14 @@ impl WindowControl {
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
-        talu_rising: bool,
+        lx_clock_rising: bool,
         register_sync: bool,
     ) {
-        self.rejo_at_roco = self.rejo.output();
-        if talu_rising {
-            self.capture_sary(regs, video, register_sync);
+        self.wy_match_frame_at_capture = self.wy_match_frame.output();
+        if lx_clock_rising {
+            self.capture_wy_match(regs, video, register_sync);
         }
-        self.update_rejo(video);
+        self.update_wy_match_frame(video);
     }
 
     /// PORY's RYDY reset arm, then SUZU = AND2(!RYDY, SOVY): true on any RYDY 1→0 —
@@ -202,57 +207,60 @@ impl WindowControl {
         fetcher_reset: bool,
     ) -> bool {
         if fetcher_reset {
-            self.rydy.clear();
+            self.window_hit.clear();
         }
-        self.delayed_window_hit.output() && !self.rydy.output()
+        self.delayed_window_hit.output() && !self.window_hit.output()
     }
 
     /// SOVY captures RYDY on MYVO; free-runs even when NAFY gates the fetcher advance.
     pub(in crate::ppu) fn tick_delayed_window_hit(&mut self) {
-        self.delayed_window_hit.write(self.rydy.output());
+        self.delayed_window_hit.write(self.window_hit.output());
         self.delayed_window_hit.tick();
     }
 
-    fn compute_nuko(&self, pixel_counter: u8, rejo: bool) -> bool {
-        rejo && pixel_counter == self.nuko_wx
+    /// NUKO = AND2(REJO, PX == WX).
+    fn compute_wx_match(&self, pixel_counter: u8, wy_match_frame: bool) -> bool {
+        wy_match_frame && pixel_counter == self.match_wx
     }
 
     /// PYCO captures NUKO on ROCO↑ (ALET-phase, one half-dot before NUNU's
     /// MEHE capture). PYCO holds when FEPO=1 or POKY=0: VYBO/TYFA halt ROCO.
     /// On CGB, XOFO's reset reach dominates the capture (r-dominant dffr).
-    pub(in crate::ppu) fn capture_pyco_on_roco<P: PpuModel>(
+    pub(in crate::ppu) fn capture_wx_match_on_pixel_clock<P: PpuModel>(
         &mut self,
         pixel_counter: u8,
         fetcher_ready: bool,
-        fepo: bool,
+        sprite_x_match: bool,
         regs: &PipelineRegisters,
     ) {
-        if P::ENABLE_QUALIFIED_WINDOW_HIT && self.compute_xofo(regs, P::WINDOW_CROSSING.is_synced())
+        if P::ENABLE_QUALIFIED_WINDOW_HIT
+            && self.compute_window_arm_reset(regs, P::WINDOW_CROSSING.is_synced())
         {
-            self.pyco.write_immediate(0);
+            self.wx_match_capture_1.write_immediate(0);
             return;
         }
-        let nuko = self.compute_nuko(pixel_counter, self.rejo.output());
-        if fetcher_ready && !fepo {
-            self.pyco.write(if nuko { 1 } else { 0 });
-            self.pyco.tick();
+        let wx_match = self.compute_wx_match(pixel_counter, self.wy_match_frame.output());
+        if fetcher_ready && !sprite_x_match {
+            self.wx_match_capture_1.write(if wx_match { 1 } else { 0 });
+            self.wx_match_capture_1.tick();
         }
     }
 
-    fn nuny(&self) -> bool {
-        self.pynu.output() && self.nopa.output() == 0
+    /// NUNY = AND2(PYNU, NOPA_n).
+    fn window_trigger_pulse(&self) -> bool {
+        self.window_armed.output() && self.window_mode.output() == 0
     }
 
     /// Live NUKO (pixel_counter == WX). Two netlist consumers: PYCO (this chain) and PANY
     /// (drain-detector input). PANY's tile-boundary high window is where a same-dot hit lands
     /// as the cascade slip.
     pub(in crate::ppu) fn window_x_reached(&self, pixel_counter: u8) -> bool {
-        self.compute_nuko(pixel_counter, self.rejo_at_roco)
+        self.compute_wx_match(pixel_counter, self.wy_match_frame_at_capture)
     }
 
     /// XOFO during rendering simplifies to NOT(LCDC.5) — read live on the
     /// DMG, through the M-boundary crossing on the CGB.
-    fn compute_xofo(&self, regs: &PipelineRegisters, synced: bool) -> bool {
+    fn compute_window_arm_reset(&self, regs: &PipelineRegisters, synced: bool) -> bool {
         if synced {
             !self.synced.enabled
         } else {
@@ -270,10 +278,11 @@ impl WindowControl {
         regs: &PipelineRegisters,
     ) -> bool {
         // NOPA captures BEFORE the PYNU update so it observes PYNU's prior-fall value.
-        self.nopa.write(if self.pynu.output() { 1 } else { 0 });
-        self.nopa.tick();
+        self.window_mode
+            .write(if self.window_armed.output() { 1 } else { 0 });
+        self.window_mode.tick();
 
-        self.update_pynu_and_check_mosu(regs, fetcher, cascade, fine_scroll)
+        self.update_window_armed_and_check_trigger(regs, fetcher, cascade, fine_scroll)
     }
 
     /// PPU fall: NUNU captures PYCO on MEHE↑ (= NOT(ALET)), one half-dot after
@@ -285,57 +294,58 @@ impl WindowControl {
         fine_scroll: &mut FineScroll,
         regs: &PipelineRegisters,
     ) -> bool {
-        self.nunu.write(self.pyco.output());
-        self.nunu.tick();
+        self.wx_match_capture_2
+            .write(self.wx_match_capture_1.output());
+        self.wx_match_capture_2.tick();
 
-        self.update_pynu_and_check_mosu(regs, fetcher, cascade, fine_scroll)
+        self.update_window_armed_and_check_trigger(regs, fetcher, cascade, fine_scroll)
     }
 
     /// PYNU/NUNY/MOSU update. Runs on every edge since PYNU is combinational on NUNU/XOFO.
-    fn update_pynu_and_check_mosu<P: PpuModel>(
+    fn update_window_armed_and_check_trigger<P: PpuModel>(
         &mut self,
         regs: &PipelineRegisters,
         fetcher: &mut TileFetcher<P>,
         cascade: &mut FetchCascade,
         fine_scroll: &mut FineScroll,
     ) -> bool {
-        let xofo = self.compute_xofo(regs, P::WINDOW_CROSSING.is_synced());
-        let prev_pynu_q = self.pynu.output();
+        let window_arm_reset = self.compute_window_arm_reset(regs, P::WINDOW_CROSSING.is_synced());
+        let prev_window_armed = self.window_armed.output();
 
-        if xofo {
-            self.pynu.clear();
+        if window_arm_reset {
+            self.window_armed.clear();
             if P::ENABLE_QUALIFIED_WINDOW_HIT {
                 // CGB extends XOFO's reset reach into the capture chain: a hit
                 // landing while LCDC.5=0 cannot wait armed for a re-enable
                 // (DMG keeps PYCO/NUNU propagating and fires the deferred
                 // completion; CGB does not).
-                self.rydy.clear();
-                self.pyco.write_immediate(0);
-                self.nunu.write_immediate(0);
+                self.window_hit.clear();
+                self.wx_match_capture_1.write_immediate(0);
+                self.wx_match_capture_2.write_immediate(0);
             }
-        } else if self.nunu.output() != 0 {
-            self.pynu.set();
+        } else if self.wx_match_capture_2.output() != 0 {
+            self.window_armed.set();
         }
 
-        let nuny = self.nuny();
-        let mosu_rising = nuny && !self.prev_nuny;
-        self.prev_nuny = nuny;
+        let window_trigger_pulse = self.window_trigger_pulse();
+        let window_triggered = window_trigger_pulse && !self.prev_window_trigger_pulse;
+        self.prev_window_trigger_pulse = window_trigger_pulse;
 
         // WAZY ticks on PYNU 1→0 (mid-mode-3 LCDC.5↓ or end-of-mode-3 ATEJ↑).
-        if prev_pynu_q && !self.pynu.output() && self.window_rendered {
+        if prev_window_armed && !self.window_armed.output() && self.window_rendered {
             self.window_line_counter = self.window_line_counter.wrapping_add(1);
             self.window_rendered = false;
         }
 
-        if mosu_rising {
+        if window_triggered {
             fine_scroll.reset_for_window();
-            self.rydy.set();
+            self.window_hit.set();
             fetcher.reset_for_window();
             cascade.reset_window();
             self.window_rendered = true;
         }
 
-        mosu_rising
+        window_triggered
     }
 
     pub(in crate::ppu) fn reset_frame(&mut self) {
@@ -346,33 +356,35 @@ impl WindowControl {
     /// Models ATEJ↑'s XOFO pulse on PYNU: clear briefly, re-set from NUNU carryover, NOPA captures.
     /// The CGB's extended XOFO reach clears PYCO/NUNU too — the right-edge NUNU=1 carryover dies,
     /// so the cascade re-fires fresh each line where the DMG's stays armed.
-    pub(in crate::ppu) fn reset_scanline(&mut self, xofo_reaches_capture_chain: bool) {
-        self.rydy.clear();
+    pub(in crate::ppu) fn reset_scanline(&mut self, arm_reset_reaches_capture_chain: bool) {
+        self.window_hit.clear();
         self.delayed_window_hit = DffBit::new(false, false);
-        if self.pynu.output() && self.window_rendered {
+        if self.window_armed.output() && self.window_rendered {
             self.window_line_counter = self.window_line_counter.wrapping_add(1);
             self.window_rendered = false;
         }
-        self.pynu.clear();
-        if xofo_reaches_capture_chain {
-            self.pyco.write_immediate(0);
-            self.nunu.write_immediate(0);
+        self.window_armed.clear();
+        if arm_reset_reaches_capture_chain {
+            self.wx_match_capture_1.write_immediate(0);
+            self.wx_match_capture_2.write_immediate(0);
         }
-        if self.nunu.output() != 0 {
-            self.pynu.set();
+        if self.wx_match_capture_2.output() != 0 {
+            self.window_armed.set();
         }
-        self.nopa.write(if self.pynu.output() { 1 } else { 0 });
-        self.nopa.tick();
-        self.prev_nuny = self.nuny();
-        self.nuko_wx = 0xFF;
+        self.window_mode
+            .write(if self.window_armed.output() { 1 } else { 0 });
+        self.window_mode.tick();
+        self.prev_window_trigger_pulse = self.window_trigger_pulse();
+        self.match_wx = 0xFF;
     }
 
-    pub(in crate::ppu) fn rydy(&self) -> bool {
-        self.rydy.output()
+    /// RYDY.
+    pub(in crate::ppu) fn window_hit(&self) -> bool {
+        self.window_hit.output()
     }
 
     pub(in crate::ppu) fn wx_triggered(&self, regs: &PipelineRegisters, synced: bool) -> bool {
-        self.pynu.output() && !self.compute_xofo(regs, synced)
+        self.window_armed.output() && !self.compute_window_arm_reset(regs, synced)
     }
 
     pub(in crate::ppu) fn window_rendered(&self) -> bool {

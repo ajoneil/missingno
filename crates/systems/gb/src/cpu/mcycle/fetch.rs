@@ -156,7 +156,7 @@ impl Cpu {
     }
 
     /// Enter the trailing fetch-overlap M-cycle at the opening edge.
-    /// Captures `zacw` (dispatch_active) and routes early to dispatch
+    /// Captures ZACW (dispatch_active) and routes early to dispatch
     /// or halt when needed. Commits apply inline so the new register
     /// values are visible at the start of the next M-cycle.
     pub(super) fn enter_fetch_overlap(
@@ -174,7 +174,7 @@ impl Cpu {
         self.seq.boundary_flag = true;
 
         if self.dispatch.dispatch_active() {
-            // zkog/zloz reset fires at ctl_int_entry_m6 (M3→M4 vector
+            // ZKOG/zloz reset fires at ctl_int_entry_m6 (M3→M4 vector
             // resolve), driven by pending_vector_resolve in execute.rs.
             self.halt.state = HaltState::Running;
             self.halt.rs_latched = false;

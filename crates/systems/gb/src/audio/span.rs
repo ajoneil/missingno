@@ -184,7 +184,7 @@ pub(super) fn predict_inert_ticks<A: ApuSpec>(
 
     // A sweep arm awaiting its BEXA drain, or a trigger's adder restart, resolves
     // at the next ajer↑ with effects the closed forms below do not cover.
-    if ch.ch1.coze || ch.ch1.sweep_calc_restart {
+    if ch.ch1.sweep_counter_at_max || ch.ch1.sweep_calc_restart {
         return 0;
     }
     // The adder's step counter advances once per M-cycle at ajer↑ and clears
@@ -336,7 +336,8 @@ pub(super) struct NoiseChain {
     /// Ticks past the reference tick that the pending chain tick lands on.
     pub offset: u32,
     pub prescaler: u8,
-    pub jeso: bool,
+    /// JESO, the free-running 512 kHz prescaler bit.
+    pub prescaler_512khz: bool,
     pub divisor_code: u8,
 }
 
@@ -354,7 +355,7 @@ impl NoiseChain {
         Self {
             offset,
             prescaler: ch4.prescaler,
-            jeso: ch4.jeso ^ flipped,
+            prescaler_512khz: ch4.prescaler_512khz ^ flipped,
             divisor_code: ch4.frequency_and_randomness.divisor_code(),
         }
     }
@@ -364,7 +365,7 @@ impl NoiseChain {
     pub(super) fn step(&mut self) -> bool {
         if self.prescaler == 0b111 {
             self.prescaler = !self.divisor_code & 0b111;
-        } else if !self.jeso {
+        } else if !self.prescaler_512khz {
             self.prescaler = (self.prescaler + 1) & 0b111;
         }
         self.prescaler == 0b111
@@ -373,7 +374,7 @@ impl NoiseChain {
     /// Move on to the following chain tick (4 T later, one `jeso` flip on).
     pub(super) fn advance(&mut self) {
         self.offset += 4;
-        self.jeso = !self.jeso;
+        self.prescaler_512khz = !self.prescaler_512khz;
     }
 
     /// T-cycles between divider increments once the chain is cycling: `gary`

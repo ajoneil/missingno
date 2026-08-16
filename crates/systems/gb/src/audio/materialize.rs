@@ -33,13 +33,23 @@ impl<A: ApuSpec> Audio<A> {
             "the channel clock and CH4 prescaler share one phase"
         );
         let entry_phase = prescaler_phase(self.channel_clock.counter, 1);
-        let calo_rises = phase_count(entry_phase, CLOCK_RISE_PHASE, ticks);
-        let ajer_rises = phase_count(entry_phase, SWEEP_STEP_PHASE, ticks);
+        // CALO↑ (chN_1mhz) and AJER↑ (the sweep-step tap) across the span.
+        let channel_clock_rises = phase_count(entry_phase, CLOCK_RISE_PHASE, ticks);
+        let sweep_clock_rises = phase_count(entry_phase, SWEEP_STEP_PHASE, ticks);
 
-        advance_pulse_sweep(&mut self.channels.ch1, calo_rises, ajer_rises);
-        advance_pulse(&mut self.channels.ch2, calo_rises);
+        advance_pulse_sweep(
+            &mut self.channels.ch1,
+            channel_clock_rises,
+            sweep_clock_rises,
+        );
+        advance_pulse(&mut self.channels.ch2, channel_clock_rises);
         advance_wave(&mut self.channels.ch3, ticks);
-        let noise_flip_at = advance_noise(&mut self.channels.ch4, ticks, entry_phase, calo_rises);
+        let noise_flip_at = advance_noise(
+            &mut self.channels.ch4,
+            ticks,
+            entry_phase,
+            channel_clock_rises,
+        );
 
         self.channel_clock.counter = prescaler_phase(self.channel_clock.counter, ticks);
         let tap = if A::DOUBLE_SPEED && double_speed {
@@ -101,13 +111,17 @@ impl<A: ApuSpec> Audio<A> {
 /// CH1: the sweep hold and adder counter run whatever the channel's state; the
 /// divider only runs while it is enabled (and so contributing — a DAC-off write
 /// disables the channel).
-fn advance_pulse_sweep(ch1: &mut PulseSweepChannel, calo_rises: u32, ajer_rises: u32) {
+fn advance_pulse_sweep(
+    ch1: &mut PulseSweepChannel,
+    channel_clock_rises: u32,
+    sweep_clock_rises: u32,
+) {
     ch1.sweep_load_hold = ch1
         .sweep_load_hold
-        .saturating_sub(calo_rises.min(255) as u8);
+        .saturating_sub(channel_clock_rises.min(255) as u8);
     if ch1.sweep_calc_steps > 0 {
         // The predictor ends the span before the counter saturates.
-        ch1.sweep_calc_steps -= ajer_rises as u8;
+        ch1.sweep_calc_steps -= sweep_clock_rises as u8;
         debug_assert!(ch1.sweep_calc_steps > 0);
     }
     if !ch1.enabled.enabled {
@@ -119,13 +133,13 @@ fn advance_pulse_sweep(ch1: &mut PulseSweepChannel, calo_rises: u32, ajer_rises:
         &mut ch1.wave_duty_position,
         &mut ch1.ch1_frst,
         ch1.period.0,
-        calo_rises,
+        channel_clock_rises,
         &duty,
     );
     debug_assert!(latch.is_none_or(|bit| bit == ch1.pwm_latch));
 }
 
-fn advance_pulse(ch2: &mut PulseChannel, calo_rises: u32) {
+fn advance_pulse(ch2: &mut PulseChannel, channel_clock_rises: u32) {
     if !ch2.enabled.enabled {
         return;
     }
@@ -135,7 +149,7 @@ fn advance_pulse(ch2: &mut PulseChannel, calo_rises: u32) {
         &mut ch2.wave_duty_position,
         &mut ch2.ch2_frst,
         ch2.period.0,
-        calo_rises,
+        channel_clock_rises,
         &duty,
     );
     debug_assert!(latch.is_none_or(|bit| bit == ch2.pwm_latch));
@@ -201,12 +215,12 @@ fn advance_noise(
     ch4: &mut NoiseChannel,
     ticks: u32,
     entry_phase: u8,
-    calo_rises: u32,
+    channel_clock_rises: u32,
 ) -> Option<u32> {
     ch4.mhz_prescaler.counter = prescaler_phase(ch4.mhz_prescaler.counter, ticks);
     if ch4.sync_delay > 0 {
         // The chain is frozen for the whole span; only the hold counts down.
-        ch4.jeso ^= calo_rises % 2 == 1;
+        ch4.prescaler_512khz ^= channel_clock_rises % 2 == 1;
         ch4.sync_delay -= ticks as u16;
         return None;
     }
@@ -226,7 +240,7 @@ fn advance_noise(
             let jumped = (increments - 1) * cadence;
             first_increment = Some(chain.offset);
             chain.offset += jumped;
-            chain.jeso ^= (jumped / 4) % 2 == 1;
+            chain.prescaler_512khz ^= (jumped / 4) % 2 == 1;
             last_chain_tick = Some(chain.offset);
             chain.advance();
             break;
@@ -240,10 +254,10 @@ fn advance_noise(
         chain.advance();
     }
     ch4.prescaler = chain.prescaler;
-    ch4.jeso ^= calo_rises % 2 == 1;
+    ch4.prescaler_512khz ^= channel_clock_rises % 2 == 1;
     match last_chain_tick {
         Some(at) => {
-            ch4.gary = chain.prescaler == 0b111;
+            ch4.divider_clock_enabled = chain.prescaler == 0b111;
             ch4.divider_subcounter = 4 - (ticks - at) as u16;
         }
         None => ch4.divider_subcounter -= ticks as u16,

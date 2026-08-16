@@ -109,7 +109,7 @@ pub struct PipelineRegisters {
     /// Sprite-fetch trigger chain sees live XYLO, not this overlay.
     pub(in crate::ppu) sprites_enabled_overlay: OldOverlay,
     /// LCDC.1 snapshot taken at start of rise() before staged write applies; consumed by FEPO-for-TEKY (SOBU/CUPA race).
-    pub(in crate::ppu) sprites_enabled_pre_cupa: bool,
+    pub(in crate::ppu) sprites_enabled_pre_write_strobe: bool,
     /// Falls remaining in which a CPU register write's staged value may still be
     /// resolving through a DFF crossing or OLD-overlay hold. Armed at each write,
     /// decremented per fall; the per-fall latch ticks run only while it is > 0,

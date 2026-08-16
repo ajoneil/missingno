@@ -386,7 +386,7 @@ pub struct Cpu {
     /// between an in-flight instruction and a pending VRAM-DMA block.
     pub(crate) bus_arbitration: BusArbitration,
     /// Running-CPU dispatch chain: per-bit irq_latch_inst<i> →
-    /// priority chain → int_take → zaij → zkog/zloz → zfex → zacw.
+    /// priority chain → int_take → ZAIJ → ZKOG/zloz → zfex → ZACW.
     /// Owns the `data_phase_n` latch and the EI/DI block.
     pub dispatch: dispatch_chain::DispatchChain,
 }
@@ -628,7 +628,7 @@ impl Cpu {
         self.irq.irq_pending
     }
 
-    /// Captured running-CPU dispatch decision (zacw). True while the
+    /// Captured running-CPU dispatch decision (ZACW). True while the
     /// 5-M-cycle dispatch sequence is in progress.
     pub fn dispatch_active(&self) -> bool {
         self.dispatch.dispatch_active()
@@ -787,7 +787,7 @@ impl Cpu {
     }
 
     /// Whether the CPU is in a fetch M-cycle (reading the next opcode).
-    /// Drives `ctl_fetch` in the dispatch chain's xogs gate.
+    /// Drives `ctl_fetch` in the dispatch chain's XOGS gate.
     pub fn is_fetch_phase(&self) -> bool {
         matches!(
             self.seq.phase,

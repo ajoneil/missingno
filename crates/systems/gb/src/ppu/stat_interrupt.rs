@@ -189,12 +189,12 @@ impl StatInterrupt {
     pub(in crate::ppu) fn eval_conditions(
         &mut self,
         conditions: InterruptFlags,
-        talu_rising: bool,
+        lx_clock_rising: bool,
     ) -> bool {
         let enables = self.enables;
         self.eval_core(
             conditions,
-            talu_rising,
+            lx_clock_rising,
             enables,
             enables,
             InterruptFlags::empty(),
@@ -211,7 +211,7 @@ impl StatInterrupt {
     pub(in crate::ppu) fn eval_synced(
         &mut self,
         conditions: InterruptFlags,
-        talu_rising: bool,
+        lx_clock_rising: bool,
         boundary_capture: bool,
         shadow: &mut impl StatShadow,
     ) -> bool {
@@ -226,7 +226,7 @@ impl StatInterrupt {
         let enables_after = shadow.synced_enables();
         self.eval_core(
             conditions,
-            talu_rising,
+            lx_clock_rising,
             enables_before,
             enables_after,
             register_edges,
@@ -234,10 +234,11 @@ impl StatInterrupt {
         )
     }
 
+    /// `lx_clock_rising` is TALU↑.
     fn eval_core(
         &mut self,
         conditions: InterruptFlags,
-        talu_rising: bool,
+        lx_clock_rising: bool,
         enables_before: InterruptFlags,
         enables_after: InterruptFlags,
         register_edges: InterruptFlags,
@@ -249,18 +250,18 @@ impl StatInterrupt {
         // Off-TALU evaluations use the boolean rising-edge rule; so does any
         // evaluation with no input transition — a flat SUKO waveform cannot
         // produce a capturable 0→1.
-        if register_edges.is_empty() && (!talu_rising || conditions == conditions_before) {
+        if register_edges.is_empty() && (!lx_clock_rising || conditions == conditions_before) {
             let legs = conditions & enables_after;
-            return self.detect_suko_edge(legs);
+            return self.detect_condition_edge(legs);
         }
-        self.detect_suko_waveform(
+        self.detect_condition_waveform(
             conditions_before,
             conditions,
             enables_before,
             enables_after,
             register_edges,
             synced,
-            talu_rising,
+            lx_clock_rising,
         )
     }
 
@@ -271,7 +272,7 @@ impl StatInterrupt {
     /// captures a 0→1 only when the preceding low interval and the following
     /// high interval both meet the capture threshold.
     #[allow(clippy::too_many_arguments)]
-    fn detect_suko_waveform(
+    fn detect_condition_waveform(
         &mut self,
         conditions_before: InterruptFlags,
         conditions_after: InterruptFlags,
@@ -279,7 +280,7 @@ impl StatInterrupt {
         enables_after: InterruptFlags,
         register_edges: InterruptFlags,
         synced: bool,
-        talu_rising: bool,
+        lx_clock_rising: bool,
     ) -> bool {
         const STEADY_PS: i32 = i32::MAX / 2;
         self.legs_was_high = conditions_after & enables_after;
@@ -303,7 +304,7 @@ impl StatInterrupt {
             if lyc_lingers && leg == InterruptFlags::CURRENT_LINE_COMPARE {
                 continue;
             }
-            let arrival = arrival(leg, talu_rising);
+            let arrival = arrival(leg, lx_clock_rising);
             times[time_count] = if conditions_after.contains(leg) {
                 arrival.rising_ps as i32
             } else {
@@ -325,9 +326,9 @@ impl StatInterrupt {
                 }
                 let cond_changed = (conditions_before ^ conditions_after).contains(leg);
                 let cond_arrival = if conditions_after.contains(leg) {
-                    arrival(leg, talu_rising).rising_ps as i32
+                    arrival(leg, lx_clock_rising).rising_ps as i32
                 } else {
-                    arrival(leg, talu_rising).falling_ps as i32
+                    arrival(leg, lx_clock_rising).falling_ps as i32
                 };
                 let cond = if lyc_lingers && leg == InterruptFlags::CURRENT_LINE_COMPARE {
                     true
@@ -382,7 +383,7 @@ impl StatInterrupt {
 
     /// LALU dffsr SUKO 0→1 capture, off-TALU boolean rule (write-time glitch
     /// evaluations and rise-edge evaluations — no input arrives mid-eval).
-    pub(in crate::ppu) fn detect_suko_edge(&mut self, legs: InterruptFlags) -> bool {
+    pub(in crate::ppu) fn detect_condition_edge(&mut self, legs: InterruptFlags) -> bool {
         let prev = self.legs_was_high;
         self.legs_was_high = legs;
 
@@ -462,13 +463,13 @@ fn register_arrival(leg: InterruptFlags, rising_conditions: InterruptFlags) -> u
     }
 }
 
-fn arrival(leg: InterruptFlags, talu_rising: bool) -> LegArrival {
+fn arrival(leg: InterruptFlags, lx_clock_rising: bool) -> LegArrival {
     if leg == InterruptFlags::CURRENT_LINE_COMPARE {
         LYC_ARRIVAL
     } else if leg == InterruptFlags::VERTICAL_BLANK {
         MODE_1_ARRIVAL
     } else if leg == InterruptFlags::HORIZONTAL_BLANK {
-        if talu_rising {
+        if lx_clock_rising {
             MODE_0_ARRIVAL
         } else {
             LegArrival {
@@ -508,7 +509,7 @@ impl<P: PpuModel> Ppu<P> {
 
         if !vblank
             && (rendering.end_of_line_signal(sprites_enabled)
-                || rendering.terminal_wodu_pulse()
+                || rendering.terminal_end_of_line_pulse()
                 || (P::WINDOW_RESTART_MASKS_MODE3_END && rendering.terminal_restart()))
         {
             conditions |= InterruptFlags::HORIZONTAL_BLANK;

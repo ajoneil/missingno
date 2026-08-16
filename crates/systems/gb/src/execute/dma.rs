@@ -81,7 +81,7 @@ impl<M: Model> Console<M> {
         if let Some(crate::DmaBankWrite { address, value }) =
             self.chassis.dma_conflict.pending_bank_write.take()
         {
-            self.write_byte_with_cupa_lock(address, value, None, None);
+            self.write_byte_with_write_strobe_lock(address, value, None, None);
         }
 
         // The CGB VRAM-DMA byte engine: moves this M-cycle's bytes while it holds

@@ -54,11 +54,11 @@ pub struct PulseSweepChannel {
     pub sweep_timer: u8,
     pub sweep_enabled: bool,
     pub sweep_negate_used: bool,
-    /// `coze` (sweep-counter saturation). Set at cate_128hz↓ when the
+    /// COZE (sweep-counter saturation). Set at cate_128hz↓ when the
     /// sweep counter reaches 0; sampled into BEXA on the next ajer↑.
     /// An NR10 pace=0 write in the intervening T-cycles clears it via
     /// the hafe async-reset path.
-    pub coze: bool,
+    pub sweep_counter_at_max: bool,
     /// This rise's cate↓ already ticked inside `tcycle` (the early wrap-
     /// coincident path); the frame sequencer's late pass must not repeat it.
     pub sweep_cate_taken: bool,
@@ -112,7 +112,7 @@ impl Default for PulseSweepChannel {
             sweep_timer: 0,
             sweep_enabled: false,
             sweep_negate_used: false,
-            coze: false,
+            sweep_counter_at_max: false,
             sweep_cate_taken: false,
             sweep_calc_steps: 0,
             sweep_calc_restart: false,
@@ -147,7 +147,7 @@ impl PulseSweepChannel {
             sweep_timer: 0,
             sweep_enabled: false,
             sweep_negate_used: false,
-            coze: false,
+            sweep_counter_at_max: false,
             sweep_cate_taken: false,
             sweep_calc_steps: 0,
             sweep_calc_restart: false,
@@ -166,7 +166,7 @@ impl PulseSweepChannel {
         }
     }
 
-    pub fn write_register(&mut self, register: Register, value: u8, caru_low: bool) {
+    pub fn write_register(&mut self, register: Register, value: u8, length_clock_low: bool) {
         self.output_dirty = true;
         match register {
             Register::WaveformAndInitialLength => {
@@ -188,7 +188,7 @@ impl PulseSweepChannel {
                 // counter. If this write lands on an even step its tick already
                 // ran, so apply it now; otherwise defer to the next even step.
                 if old_pace == 0 && new_pace != 0 && self.enabled.enabled {
-                    if caru_low {
+                    if length_clock_low {
                         self.tick_envelope_counter();
                     } else {
                         self.envelope.enable_tick_pending = true;
@@ -216,7 +216,7 @@ impl PulseSweepChannel {
                 // armed coze — and a running adder calculation — is dropped
                 // before ch1_ld_sum can latch an overflow into the stop latch.
                 if self.sweep.pace() == 0 {
-                    self.coze = false;
+                    self.sweep_counter_at_max = false;
                     self.sweep_calc_steps = 0;
                     self.sweep_calc_restart = false;
                 }
@@ -230,14 +230,14 @@ impl PulseSweepChannel {
                 // 0→1 rises capy (one extra length count) iff caru is low.
                 if self
                     .length
-                    .enable_glitch(caru_low, ctrl.enable_length(), ctrl.trigger())
+                    .enable_glitch(length_clock_low, ctrl.enable_length(), ctrl.trigger())
                 {
                     self.enabled.enabled = false;
                 }
 
                 if ctrl.trigger() {
                     self.trigger();
-                    self.length.trigger_enable_fixup(caru_low);
+                    self.length.trigger_enable_fixup(length_clock_low);
                 }
             }
         }
@@ -275,7 +275,7 @@ impl PulseSweepChannel {
         self.sweep_timer = if pace != 0 { pace } else { 8 };
         self.sweep_enabled = pace != 0 || self.sweep.step() != 0;
         // ch1_restart resets BEXA: any prior coze arm is dropped.
-        self.coze = false;
+        self.sweep_counter_at_max = false;
         // The adder calc restarts on ch1_restart — the *synced* trigger that
         // lands at the next ch1_1mhz↑ (where the divider reloads too), not on
         // this write edge. Armed here, loaded in `tcycle` at that wrap.
@@ -301,30 +301,29 @@ impl PulseSweepChannel {
     pub fn tcycle(
         &mut self,
         apu_reset_n: bool,
+        // The shared channel clock's CALO↑ (ch1_1mhz↑) strobe.
         channel_clock_rose: bool,
         clock_phase_one: bool,
         wide_sweep_hold: bool,
         sweep_cate_due: bool,
     ) {
-        // The shared channel clock's CALO↑ (ch1_1mhz↑) strobe.
-        let calo_rose = channel_clock_rose;
         // cate↓ settles before the slot's wrap (measured sub-slot order:
         // cate +0.005, fire +0.25, wrap +0.52): tick it here so a wrap-
         // coincident arm's fire commits the period the wrap loads. A rise
         // with a trigger consume pending keeps the late (post-consume) cate
         // so the load-window hold still sees the settle; mid-count arms keep
         // the ajer↑ drain either way.
-        if calo_rose {
+        if channel_clock_rose {
             self.sweep_load_hold = self.sweep_load_hold.saturating_sub(1);
         }
         if sweep_cate_due
             && self.pending_reload == TriggerReload::Idle
-            && calo_rose
+            && channel_clock_rose
             && self.divider.counter >= 0x7FF
         {
             self.sweep_cate_taken = true;
             self.tick_sweep_counter();
-            self.sample_sweep_bexa(true);
+            self.sample_sweep_fire(true);
         }
         // BEXA samples coze at the first ajer↑ of each M-cycle —
         // prescaler counter == 1 after the advance. Sample even when
@@ -332,9 +331,9 @@ impl PulseSweepChannel {
         // sees the cleared coze.
         if apu_reset_n && clock_phase_one {
             self.tick_sweep_calc();
-            self.sample_sweep_bexa(false);
+            self.sample_sweep_fire(false);
         }
-        if !calo_rose || !self.enabled.enabled {
+        if !channel_clock_rose || !self.enabled.enabled {
             return;
         }
         // ch1_restart latches the adder's ~shift step counter at this synced
@@ -410,10 +409,10 @@ impl PulseSweepChannel {
         );
     }
 
-    /// horu_512hz↑ edge (every fs step transition). Drains `kyvo` into
+    /// JOPA sample on the horu_512hz↑ edge (every fs step transition). Drains `kyvo` into
     /// the volume counter when `hafe` is asserted; otherwise consumes
     /// `kyvo` without firing.
-    pub fn sample_envelope_jopa(&mut self) {
+    pub fn sample_envelope_fire(&mut self) {
         if self.envelope.sample_fire(
             self.volume_and_envelope.sweep_pace(),
             self.enabled.enabled,
@@ -446,7 +445,7 @@ impl PulseSweepChannel {
             let pace = self.sweep.pace();
             self.sweep_timer = if pace != 0 { pace } else { 8 };
             if pace != 0 {
-                self.coze = true;
+                self.sweep_counter_at_max = true;
             }
         }
     }
@@ -461,12 +460,13 @@ impl PulseSweepChannel {
         taken
     }
 
-    pub fn sample_sweep_bexa(&mut self, early: bool) {
-        if !self.coze {
+    /// BEXA: sample the armed COZE into the sweep-fire latch.
+    pub fn sample_sweep_fire(&mut self, early: bool) {
+        if !self.sweep_counter_at_max {
             return;
         }
         if self.sweep.pace() == 0 {
-            self.coze = false;
+            self.sweep_counter_at_max = false;
             return;
         }
         let new_frequency = self.calculate_sweep_frequency();
@@ -478,11 +478,11 @@ impl PulseSweepChannel {
             if early {
                 return;
             }
-            self.coze = false;
+            self.sweep_counter_at_max = false;
             self.enabled.enabled = false;
             self.output_dirty = true;
         } else {
-            self.coze = false;
+            self.sweep_counter_at_max = false;
             if self.sweep.step() != 0 {
                 // Commit calc1, then restart the adder calculation: the recheck
                 // on the committed period overflows `shift` M-cycles on

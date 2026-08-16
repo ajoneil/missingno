@@ -39,7 +39,7 @@ impl Cpu {
         opcode: u8,
         fetch_addr: u16,
     ) -> Option<MCycleAction> {
-        // zacw captures dispatch_active.q HIGH at this M-cycle's
+        // ZACW captures dispatch_active.q HIGH at this M-cycle's
         // closing edge — dispatch saves PC = fetch_addr so RETI
         // resumes at the prefetched-then-discarded instruction.
         if self.dispatch.dispatch_active() {

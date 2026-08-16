@@ -194,7 +194,7 @@ impl<P: PpuModel> Ppu<P> {
                 palettes: Palettes::default(),
                 bg_window_enabled_overlay: registers::OldOverlay::default(),
                 sprites_enabled_overlay: registers::OldOverlay::default(),
-                sprites_enabled_pre_cupa: false,
+                sprites_enabled_pre_write_strobe: false,
                 register_write_settle: 0,
             },
             video: VideoControl {
@@ -259,7 +259,7 @@ impl<P: PpuModel> Ppu<P> {
             },
         };
         ppu.pixel_pipeline = Some(Rendering::post_boot());
-        ppu.registers.sprites_enabled_pre_cupa = true;
+        ppu.registers.sprites_enabled_pre_write_strobe = true;
         ppu
     }
 
@@ -341,7 +341,7 @@ impl<P: PpuModel> Ppu<P> {
             },
             bg_window_enabled_overlay: registers::OldOverlay::default(),
             sprites_enabled_overlay: registers::OldOverlay::default(),
-            sprites_enabled_pre_cupa: lcd_on,
+            sprites_enabled_pre_write_strobe: lcd_on,
             register_write_settle: 0,
         };
 

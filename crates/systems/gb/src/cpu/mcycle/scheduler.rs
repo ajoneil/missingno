@@ -203,7 +203,7 @@ impl Cpu {
                 Some(MCycleAction::Internal { address: self.pc })
             }
             CpuPhase::Halted(HaltPhase::WakeIntake) => {
-                // IME=1 dispatch capture: zacw captures `dispatch_active.q = 1`
+                // IME=1 dispatch capture: ZACW captures `dispatch_active.q = 1`
                 // and routes the next M-cycle to dispatch M1. The IME=0
                 // fall-through stays defensive for the SetupMiss path; the
                 // primary IME=0 wake short-circuits at the Spin arm above.
