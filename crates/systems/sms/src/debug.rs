@@ -8,8 +8,7 @@ use std::time::Duration;
 
 use missingno_core::TvStandard;
 use missingno_core::inspect::{
-    BitColumn, BitRow, BitTable, Register, RegisterGroup, Row, Section, SectionBlock, Sweep,
-    SweepZone, Tone, ValueStyle,
+    BitColumn, BitRow, BitTable, RegisterGroup, Row, Section, SectionBlock, Sweep, SweepZone, Tone,
 };
 use missingno_core::machine::Machine;
 use missingno_core::ports::{
@@ -22,8 +21,15 @@ use missingno_core::system::{
 use missingno_core::video::{DisplayTechnology, Frame as DisplayFrame, IndexedFrame};
 use rgb::RGB8;
 
+use missingno_ti_psg::inspect::Registers as PsgRegisters;
+use missingno_ti_psg::{NoiseMode, NoiseRate, Variant};
+use missingno_zilog_z80::inspect::RegisterFile;
+
 use crate::console::Sms;
 use crate::vdp::{self, Frame};
+
+/// What the board drives the PSG's CLOCK pin at.
+const PSG_CLOCK_HZ: u32 = 3_579_545;
 
 /// Instruction budget per frame step; generous over the ~15k typical.
 const FRAME_BUDGET: u32 = 200_000;
@@ -91,64 +97,22 @@ impl InspectSnapshot for SmsSnapshot {
 }
 
 /// The Z80 register file as one inspection group, shared by the live view and
-/// the running snapshot.
+/// the running snapshot. The part states its own layout.
 fn cpu_register_groups(state: &SmsInspectState) -> Vec<RegisterGroup> {
-    use missingno_core::inspect::RegisterPurpose::{
-        PairHigh, PairLow, ProgramCounter, StackPointer,
-    };
-
-    let hex = |name, value: u32, bits| Register {
-        name,
-        value,
-        bits,
-        style: ValueStyle::Hex,
-        help: None,
-        purpose: None,
-        active: None,
-    };
-    vec![RegisterGroup {
-        name: "cpu",
-        registers: vec![
-            hex("a", state.a as u32, 8)
-                .help("accumulator")
-                .purpose(PairHigh("af")),
-            Register {
-                name: "f",
-                value: state.f as u32,
-                bits: 8,
-                style: ValueStyle::Flags(missingno_zilog_z80::flags::NAMES),
-                help: Some("flags register"),
-                purpose: Some(PairLow("af")),
-                active: None,
-            },
-            hex("b", state.b as u32, 8)
-                .help("general register B (high byte of BC)")
-                .purpose(PairHigh("bc")),
-            hex("c", state.c as u32, 8)
-                .help("general register C (low byte of BC)")
-                .purpose(PairLow("bc")),
-            hex("d", state.d as u32, 8)
-                .help("general register D (high byte of DE)")
-                .purpose(PairHigh("de")),
-            hex("e", state.e as u32, 8)
-                .help("general register E (low byte of DE)")
-                .purpose(PairLow("de")),
-            hex("h", state.h as u32, 8)
-                .help("general register H (high byte of HL)")
-                .purpose(PairHigh("hl")),
-            hex("l", state.l as u32, 8)
-                .help("general register L (low byte of HL)")
-                .purpose(PairLow("hl")),
-            hex("ix", state.ix as u32, 16).help("index register IX"),
-            hex("iy", state.iy as u32, 16).help("index register IY"),
-            hex("sp", state.sp as u32, 16)
-                .help("stack pointer")
-                .purpose(StackPointer),
-            hex("pc", state.pc as u32, 16)
-                .help("program counter")
-                .purpose(ProgramCounter),
-        ],
-    }]
+    missingno_zilog_z80::inspect::register_groups(&RegisterFile {
+        a: state.a,
+        f: state.f,
+        b: state.b,
+        c: state.c,
+        d: state.d,
+        e: state.e,
+        h: state.h,
+        l: state.l,
+        ix: state.ix,
+        iy: state.iy,
+        sp: state.sp,
+        pc: state.pc,
+    })
 }
 
 /// The SMS sidebar sections, shared by the live view and the running snapshot:
@@ -184,61 +148,19 @@ fn mapper_section(state: &SmsInspectState) -> Section {
     }
 }
 
-/// The SN76489 PSG: three tone channels and one noise channel. Each channel
-/// shows its period (or the noise-control byte) and 4-bit attenuation, with an
-/// audibility pip — attenuation $F fully mutes, so anything below it is audible.
+/// The SN76489 PSG's register view, as the part states it. The board clocks it
+/// from the same 3.579545 MHz the CPU runs on.
 fn psg_section(state: &SmsInspectState) -> Section {
-    let tone = |i: usize, label: &'static str, per_label, per_help, att_label, att_help| {
-        SectionBlock::Rows(vec![
-            Row::flag(label, state.psg_volumes[i] != 0x0F).help("tone audible — attenuation < $F"),
-            Row::value(per_label, format!("{:03X}", state.psg_periods[i])).help(per_help),
-            Row::value(att_label, format!("{:X}", state.psg_volumes[i])).help(att_help),
-        ])
-    };
-    let audible = (0..4).filter(|&i| state.psg_volumes[i] != 0x0F).count();
-    Section {
-        name: "PSG",
-        summary: format!("{audible}/4 audible"),
-        active: None,
-        detail: None,
-        blocks: vec![
-            tone(
-                0,
-                "t0",
-                "per0",
-                "tone 0 period (10-bit)",
-                "att0",
-                "tone 0 attenuation ($F = mute)",
-            ),
-            SectionBlock::Rule,
-            tone(
-                1,
-                "t1",
-                "per1",
-                "tone 1 period (10-bit)",
-                "att1",
-                "tone 1 attenuation ($F = mute)",
-            ),
-            SectionBlock::Rule,
-            tone(
-                2,
-                "t2",
-                "per2",
-                "tone 2 period (10-bit)",
-                "att2",
-                "tone 2 attenuation ($F = mute)",
-            ),
-            SectionBlock::Rule,
-            SectionBlock::Rows(vec![
-                Row::flag("noise", state.psg_volumes[3] != 0x0F)
-                    .help("noise audible — attenuation < $F"),
-                Row::value("nctl", format!("{:X}", state.psg_noise))
-                    .help("noise feedback mode & shift rate"),
-                Row::value("att3", format!("{:X}", state.psg_volumes[3]))
-                    .help("noise attenuation ($F = mute)"),
-            ]),
-        ],
-    }
+    missingno_ti_psg::inspect::section(
+        &PsgRegisters {
+            tone_periods: state.psg_periods,
+            attenuations: state.psg_volumes,
+            noise_mode: NoiseMode::from_control(state.psg_noise),
+            noise_rate: NoiseRate::from_control(state.psg_noise),
+            variant: Variant::SegaIntegrated,
+        },
+        PSG_CLOCK_HZ,
+    )
 }
 
 fn vdp_section(state: &SmsInspectState) -> Section {
@@ -499,21 +421,13 @@ pub const PANEL: &[PanelControl] = &[PanelControl {
 }];
 
 const PAD_BUTTONS: &[ControlDescriptor] = &[
-    button(ControlRole::Action(0), "Button 1"),
-    button(ControlRole::Action(1), "Button 2"),
-    button(ControlRole::Up, "Up"),
-    button(ControlRole::Down, "Down"),
-    button(ControlRole::Left, "Left"),
-    button(ControlRole::Right, "Right"),
+    ControlDescriptor::button(ControlRole::Action(0), "Button 1"),
+    ControlDescriptor::button(ControlRole::Action(1), "Button 2"),
+    ControlDescriptor::button(ControlRole::Up, "Up"),
+    ControlDescriptor::button(ControlRole::Down, "Down"),
+    ControlDescriptor::button(ControlRole::Left, "Left"),
+    ControlDescriptor::button(ControlRole::Right, "Right"),
 ];
-
-const fn button(role: ControlRole, label: &'static str) -> ControlDescriptor {
-    ControlDescriptor {
-        role,
-        label,
-        kind: ControlKind::Button,
-    }
-}
 
 /// Only the first control pad is wired; the second port is not modelled.
 pub const PORTS: &[PortDescriptor] = &[PortDescriptor {
@@ -564,7 +478,7 @@ mod tests {
     fn psg_section_reports_registers_and_audibility() {
         let mut state = SmsInspectState::default();
         state.psg_periods = [0x1FE, 0, 0];
-        // Tone 0 audible (attenuation 0), the rest muted at $F.
+        // Tone 1 audible (attenuation 0), the rest muted at $F.
         state.psg_volumes = [0x00, 0x0F, 0x0F, 0x0F];
         state.psg_noise = 0x05;
         let section = psg_section(&state);
@@ -580,16 +494,20 @@ mod tests {
             .flatten()
             .collect();
         assert_eq!(
-            rows.iter().find(|r| r.label == "per0").map(|r| &r.value),
-            Some(&"1FE".to_string())
+            rows.iter().find(|r| r.label == "per1").map(|r| &r.value),
+            Some(&"1FE (219 Hz)".to_string())
         );
-        // Tone 0's pip is lit (attenuation below $F); tone 1's is dim.
+        // Tone 1's pip is lit (attenuation below $F); tone 2's is dim.
         assert_eq!(
-            rows.iter().find(|r| r.label == "t0").and_then(|r| r.active),
+            rows.iter()
+                .find(|r| r.label == "tone 1")
+                .and_then(|r| r.active),
             Some(true)
         );
         assert_eq!(
-            rows.iter().find(|r| r.label == "t1").and_then(|r| r.active),
+            rows.iter()
+                .find(|r| r.label == "tone 2")
+                .and_then(|r| r.active),
             Some(false)
         );
     }

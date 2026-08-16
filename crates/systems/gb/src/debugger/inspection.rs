@@ -2,10 +2,9 @@
 //!
 //! The UI cannot touch the core while it runs on the emulation thread, so the
 //! seam copies the pane-relevant state into a [`GbSnapshot`] and the panes
-//! render from that. The section builders read the
-//! [`CpuSource`]/[`PpuSource`] traits (and the pane's disassembly reads
-//! [`ReadInstructionMemory`]), so one body serves a capture and the live
-//! console the tests hold it against.
+//! render from that. The section builders read the [`CpuSource`]/[`PpuSource`]
+//! traits, so one body serves a capture and the live console the tests hold it
+//! against.
 
 use std::sync::Arc;
 
@@ -24,7 +23,6 @@ use crate::cpu::{
     flags::Flags,
     registers::{Register8, Register16},
 };
-use crate::debugger::instructions::ReadInstructionMemory;
 use crate::interrupts;
 use crate::ppu::{
     BgFifoCell, ObjFifoCell, Ppu, Register,
@@ -580,17 +578,6 @@ impl AudioView {
                 lfsr: ch4.lfsr,
             },
         }
-    }
-}
-
-// --- Memory window -----------------------------------------------------------
-
-/// Reads through the captured window with the CPU's 16-bit wrap; addresses
-/// outside the span return open-bus `0xFF` (the pane never sweeps past it).
-impl ReadInstructionMemory for inspect::MemoryWindow {
-    fn read(&self, address: u16) -> u8 {
-        let offset = address.wrapping_sub(self.base as u16) as usize;
-        self.bytes.get(offset).copied().unwrap_or(0xFF)
     }
 }
 

@@ -8,6 +8,9 @@
 //! state and in whether a READY pin exists. Every one of those sits behind
 //! [`Variant`] at the single point it manifests.
 
+#[cfg(feature = "inspect")]
+pub mod inspect;
+
 /// Which member of the family the model is being asked to be.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Variant {
@@ -28,8 +31,8 @@ pub const DECIBELS_PER_STEP: f32 = 2.0;
 /// One past the largest period register value.
 pub const FULL_TONE_SPAN: u16 = 0x400;
 
-const TONE_CHANNELS: usize = 3;
-const CHANNELS: usize = 4;
+pub const TONE_CHANNELS: usize = 3;
+pub const CHANNELS: usize = 4;
 
 /// A generator, which is also a register-file address: the output buffer sums
 /// the three tone generators and the noise generator.

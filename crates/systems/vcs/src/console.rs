@@ -6,6 +6,7 @@
 //! beam" kernels depend on. WSYNC parks the CPU through the 6502 module's
 //! RDY pin; the TIA raises it again as the beam wraps.
 
+use missingno_core::ClockRatio;
 use missingno_core::system::{ControlInput, ControlRole};
 
 use crate::TvStandard;
@@ -38,9 +39,7 @@ pub struct Vcs {
     /// it integrates VSYNC across scanlines to decide field boundaries, so it
     /// consumes the raw per-line stream rather than the `Frame` the suite uses.
     last_line: Option<Scanline>,
-    sample_clock: f32,
-    /// Colour clocks per 44.1 kHz sample, from the region's master clock.
-    clocks_per_sample: f32,
+    sample_clock: ClockRatio,
     /// The audio level integrated across the sample window so far, and the
     /// clocks it spans — the window is fractional, so its width alternates.
     sample_accum: f32,
@@ -198,7 +197,7 @@ impl Vcs {
         cart_type: Option<CartType>,
         fit: DumpFit,
     ) -> Result<Vcs, CartridgeError> {
-        let clock_hz = crate::tv_standard::master_clock_hz(region);
+        let clock_hz = crate::tv_standard::master_clock_hz(region) as f32;
         Ok(Vcs::with_cartridge(
             Cartridge::load(rom, cart_type, clock_hz, fit)?,
             region,
@@ -221,8 +220,7 @@ impl Vcs {
             in_vsync: false,
             finished_frame: None,
             last_line: None,
-            sample_clock: 0.0,
-            clocks_per_sample: crate::tv_standard::clocks_per_sample(region),
+            sample_clock: crate::tv_standard::sample_clock(region),
             sample_accum: 0.0,
             sample_accum_clocks: 0,
             samples: Vec::new(),
@@ -294,9 +292,7 @@ impl Vcs {
         // conductances first would run the saturating divider off its mean.
         self.sample_accum += self.tia.audio_level();
         self.sample_accum_clocks += 1;
-        self.sample_clock += 1.0;
-        if self.sample_clock >= self.clocks_per_sample {
-            self.sample_clock -= self.clocks_per_sample;
+        for _ in 0..self.sample_clock.advance(1) {
             let level = self.sample_accum / self.sample_accum_clocks as f32;
             self.samples.push((level, level));
             self.sample_accum = 0.0;
@@ -345,8 +341,8 @@ impl Vcs {
     /// region's line rate (master clock ÷ 228 clocks/line).
     pub fn channel_waves(&self) -> Option<Vec<missingno_core::waveform::ChannelWave>> {
         let (levels, active) = self.tia.wave_windows()?;
-        let line_rate =
-            crate::tv_standard::master_clock_hz(self.region) / crate::tia::CLOCKS_PER_LINE as f32;
+        let line_rate = crate::tv_standard::master_clock_hz(self.region) as f32
+            / crate::tia::CLOCKS_PER_LINE as f32;
         let rate = (2.0 * line_rate).round() as u32;
         let labels = ["CH0", "CH1"];
         Some(
@@ -428,7 +424,7 @@ impl Vcs {
         self.in_vsync = false;
         self.finished_frame = None;
         self.last_line = None;
-        self.sample_clock = 0.0;
+        self.sample_clock = crate::tv_standard::sample_clock(self.region);
         self.sample_accum = 0.0;
         self.sample_accum_clocks = 0;
         self.samples.clear();

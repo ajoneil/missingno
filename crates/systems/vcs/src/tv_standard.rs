@@ -2,7 +2,11 @@
 //! region header, so the standard is supplied by the caller, not detected —
 //! it selects the colour decode and the master-clock-derived audio rate.
 
+use missingno_core::ClockRatio;
 pub use missingno_core::TvStandard;
+
+/// The console's audio output tap.
+const SAMPLE_RATE: u64 = 44_100;
 
 /// Display aspect of a TIA pixel on a 525-line (NTSC) raster: 12/7.
 pub const NTSC_PIXEL_ASPECT: f32 = 12.0 / 7.0;
@@ -21,14 +25,14 @@ pub fn pixel_aspect(standard: TvStandard) -> f32 {
 /// TIA colour-clock (pixel-clock) frequency; the CPU runs at a third of it.
 /// The PAL crystal is not PAL's colour carrier, so the rate is the console's
 /// property rather than the standard's.
-pub fn master_clock_hz(standard: TvStandard) -> f32 {
+pub fn master_clock_hz(standard: TvStandard) -> u32 {
     match standard {
-        TvStandard::Ntsc => 3_579_545.0,
-        TvStandard::Pal | TvStandard::Secam => 3_546_894.0,
+        TvStandard::Ntsc => 3_579_545,
+        TvStandard::Pal | TvStandard::Secam => 3_546_894,
     }
 }
 
-/// Colour clocks per 44.1 kHz output sample.
-pub fn clocks_per_sample(standard: TvStandard) -> f32 {
-    master_clock_hz(standard) / 44_100.0
+/// The 44.1 kHz output tap, divided from the region's master clock.
+pub fn sample_clock(standard: TvStandard) -> ClockRatio {
+    ClockRatio::new(SAMPLE_RATE, master_clock_hz(standard) as u64)
 }

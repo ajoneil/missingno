@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 missingno-core = { path = "../../missingno/core" }
-missingno-ti-psg = { path = "../../chips/ti-psg" }
+missingno-ti-psg = { path = "../../chips/ti-psg", features = ["inspect"] }
 missingno-ti-vdp = { path = "../../chips/ti-vdp" }
 missingno-zilog-z80 = { path = "../../chips/zilog-z80" }
 rgb = { workspace = true }

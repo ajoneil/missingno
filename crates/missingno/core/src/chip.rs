@@ -63,6 +63,18 @@ impl ClockRatio {
         assert!(n > 0);
         (n * self.denominator - self.remainder).div_ceil(self.numerator)
     }
+
+    /// The carried residue, in master ticks — where the division stands
+    /// between two client ticks. A boundary a save state can name.
+    pub fn phase(&self) -> u64 {
+        self.remainder
+    }
+
+    /// Resume at a carried residue; anything at or past a whole client tick is
+    /// not a phase this division can be in.
+    pub fn set_phase(&mut self, remainder: u64) {
+        self.remainder = remainder % self.denominator;
+    }
 }
 
 #[cfg(test)]

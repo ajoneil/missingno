@@ -1,17 +1,27 @@
 //! The console: Z80 + VDP + PSG + cartridge on one crystal. Two CPU
 //! T-states carry exactly three VDP dots; the CPU steps a whole
-//! instruction at a time and the VDP catches up afterwards in half-dot
-//! units, so instruction-granular timing is the current resolution —
+//! instruction at a time and the VDP catches up afterwards on the carried
+//! ratio, so instruction-granular timing is the current resolution —
 //! refining the catch-up to the VDP-port membrane is later accuracy work.
 
+use missingno_core::ClockRatio;
 use missingno_ti_psg::{Psg, Variant};
 use missingno_zilog_z80::{Bus, Cpu};
 
 use crate::cartridge::{Cartridge, CartridgeError};
 use crate::vdp::{Frame, Vdp};
 
-/// 44.1 kHz output from the 3.579545 MHz CPU/PSG clock.
-const TSTATES_PER_SAMPLE: f32 = 3_579_545.0 / 44_100.0;
+/// The CPU/PSG clock, and the 44.1 kHz output taken from it.
+const TSTATE_HZ: u64 = 3_579_545;
+const SAMPLE_RATE: u64 = 44_100;
+
+fn dot_clock() -> ClockRatio {
+    ClockRatio::new(3, 2)
+}
+
+fn sample_clock() -> ClockRatio {
+    ClockRatio::new(SAMPLE_RATE, TSTATE_HZ)
+}
 
 pub struct Sms {
     pub cpu: Cpu,
@@ -25,8 +35,9 @@ pub struct Sms {
     pub port_dc: u8,
     pub port_dd: u8,
 
-    half_dots_pending: u32,
-    sample_clock: f32,
+    /// Three VDP dots per two T-states.
+    dot_clock: ClockRatio,
+    sample_clock: ClockRatio,
     samples: Vec<(f32, f32)>,
 }
 
@@ -106,8 +117,8 @@ impl Sms {
             io_control: 0,
             port_dc: 0xFF,
             port_dd: 0xFF,
-            half_dots_pending: 0,
-            sample_clock: 0.0,
+            dot_clock: dot_clock(),
+            sample_clock: sample_clock(),
             samples: Vec::new(),
         })
     }
@@ -126,18 +137,13 @@ impl Sms {
         };
         let tstates = self.cpu.step(&mut bus);
 
-        // 2 T-states = 3 dots, carried in half-dot units.
-        self.half_dots_pending += tstates * 3;
-        while self.half_dots_pending >= 2 {
-            self.half_dots_pending -= 2;
+        for _ in 0..self.dot_clock.advance(tstates as u64) {
             self.vdp.step_dot();
         }
         for _ in 0..tstates {
             self.psg.tick();
         }
-        self.sample_clock += tstates as f32;
-        while self.sample_clock >= TSTATES_PER_SAMPLE {
-            self.sample_clock -= TSTATES_PER_SAMPLE;
+        for _ in 0..self.sample_clock.advance(tstates as u64) {
             let level = self.psg.level();
             self.samples.push((level, level));
         }
@@ -183,8 +189,8 @@ impl Sms {
         *self.ram = [0; 0x2000];
         self.memory_control = 0;
         self.io_control = 0;
-        self.half_dots_pending = 0;
-        self.sample_clock = 0.0;
+        self.dot_clock = dot_clock();
+        self.sample_clock = sample_clock();
         self.samples.clear();
         let banks: [u8; 3] = [0, 1, 2];
         for (slot, bank) in banks.into_iter().enumerate() {

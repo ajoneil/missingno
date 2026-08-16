@@ -46,6 +46,16 @@ pub struct ControlDescriptor {
     pub kind: ControlKind,
 }
 
+impl ControlDescriptor {
+    pub const fn button(role: ControlRole, label: &'static str) -> Self {
+        ControlDescriptor {
+            role,
+            label,
+            kind: ControlKind::Button,
+        }
+    }
+}
+
 /// A control mounted on the console shell rather than on a controller.
 #[derive(Clone, Copy, Debug)]
 pub struct PanelControl {

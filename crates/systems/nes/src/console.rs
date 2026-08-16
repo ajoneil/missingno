@@ -3,6 +3,7 @@
 //! the interleave is cycle-granular. OAM DMA freezes the CPU for the
 //! 513-cycle transfer while the PPU keeps running.
 
+use missingno_core::ClockRatio;
 use missingno_mos_6502::{Bus, Cpu};
 
 use crate::apu::Apu;
@@ -10,7 +11,9 @@ use crate::cartridge::{Cartridge, CartridgeError};
 use crate::ppu::{Frame, Ppu};
 
 /// 44.1 kHz output from the 1.789773 MHz CPU clock.
-const CYCLES_PER_SAMPLE: f32 = 1_789_773.0 / 44_100.0;
+fn sample_clock() -> ClockRatio {
+    ClockRatio::new(44_100, 1_789_773)
+}
 
 pub struct Nes {
     pub cpu: Cpu,
@@ -22,7 +25,7 @@ pub struct Nes {
     controller_shift: u8,
     controller_strobe: bool,
     pending_oam_dma: Option<u8>,
-    sample_clock: f32,
+    sample_clock: ClockRatio,
     samples: Vec<(f32, f32)>,
     finished_frame: Option<Frame>,
 }
@@ -91,7 +94,7 @@ impl Nes {
             controller_shift: 0,
             controller_strobe: false,
             pending_oam_dma: None,
-            sample_clock: 0.0,
+            sample_clock: sample_clock(),
             samples: Vec::new(),
             finished_frame: None,
         })
@@ -129,9 +132,7 @@ impl Nes {
         }
 
         self.apu.tick();
-        self.sample_clock += 1.0;
-        if self.sample_clock >= CYCLES_PER_SAMPLE {
-            self.sample_clock -= CYCLES_PER_SAMPLE;
+        for _ in 0..self.sample_clock.advance(1) {
             let level = self.apu.level();
             self.samples.push((level, level));
         }
@@ -220,7 +221,7 @@ impl Nes {
         self.controller_shift = 0;
         self.controller_strobe = false;
         self.pending_oam_dma = None;
-        self.sample_clock = 0.0;
+        self.sample_clock = sample_clock();
         self.samples.clear();
         self.finished_frame = None;
     }

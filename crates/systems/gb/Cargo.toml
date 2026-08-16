@@ -6,7 +6,7 @@ edition = "2024"
 license = "MIT"
 
 [features]
-morepork = ["dep:morepork"]
+morepork = ["dep:morepork", "missingno-core/morepork"]
 test-support = ["dep:png"]
 
 [dependencies]

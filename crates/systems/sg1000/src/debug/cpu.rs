@@ -1,65 +1,26 @@
 //! The Z80's register file as one inspection group, shared by the live view
-//! and the running snapshot.
+//! and the running snapshot. The part states its own layout.
 
-use missingno_core::inspect::{Register, RegisterGroup, RegisterPurpose, ValueStyle};
+use missingno_core::inspect::RegisterGroup;
+use missingno_zilog_z80::inspect::RegisterFile;
 
 use super::Sg1000InspectState;
 
 pub(crate) fn register_groups(state: &Sg1000InspectState) -> Vec<RegisterGroup> {
-    use RegisterPurpose::{PairHigh, PairLow, ProgramCounter, StackPointer};
-
-    let hex = |name, value: u32, bits| Register {
-        name,
-        value,
-        bits,
-        style: ValueStyle::Hex,
-        help: None,
-        purpose: None,
-        active: None,
-    };
-    vec![RegisterGroup {
-        name: "cpu",
-        registers: vec![
-            hex("a", state.a as u32, 8)
-                .help("accumulator")
-                .purpose(PairHigh("af")),
-            Register {
-                name: "f",
-                value: state.f as u32,
-                bits: 8,
-                style: ValueStyle::Flags(missingno_zilog_z80::flags::NAMES),
-                help: Some("flags register"),
-                purpose: Some(PairLow("af")),
-                active: None,
-            },
-            hex("b", state.b as u32, 8)
-                .help("general register B (high byte of BC)")
-                .purpose(PairHigh("bc")),
-            hex("c", state.c as u32, 8)
-                .help("general register C (low byte of BC)")
-                .purpose(PairLow("bc")),
-            hex("d", state.d as u32, 8)
-                .help("general register D (high byte of DE)")
-                .purpose(PairHigh("de")),
-            hex("e", state.e as u32, 8)
-                .help("general register E (low byte of DE)")
-                .purpose(PairLow("de")),
-            hex("h", state.h as u32, 8)
-                .help("general register H (high byte of HL)")
-                .purpose(PairHigh("hl")),
-            hex("l", state.l as u32, 8)
-                .help("general register L (low byte of HL)")
-                .purpose(PairLow("hl")),
-            hex("ix", state.ix as u32, 16).help("index register IX"),
-            hex("iy", state.iy as u32, 16).help("index register IY"),
-            hex("sp", state.sp as u32, 16)
-                .help("stack pointer")
-                .purpose(StackPointer),
-            hex("pc", state.pc as u32, 16)
-                .help("program counter")
-                .purpose(ProgramCounter),
-        ],
-    }]
+    missingno_zilog_z80::inspect::register_groups(&RegisterFile {
+        a: state.a,
+        f: state.f,
+        b: state.b,
+        c: state.c,
+        d: state.d,
+        e: state.e,
+        h: state.h,
+        l: state.l,
+        ix: state.ix,
+        iy: state.iy,
+        sp: state.sp,
+        pc: state.pc,
+    })
 }
 
 #[cfg(test)]

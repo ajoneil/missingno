@@ -29,6 +29,8 @@ pub mod state;
 pub mod state_file;
 pub mod symbols;
 pub mod system;
+#[cfg(feature = "morepork")]
+pub mod trace;
 pub mod tv;
 pub mod video;
 pub mod waveform;

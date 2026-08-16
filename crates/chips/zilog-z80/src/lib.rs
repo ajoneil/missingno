@@ -21,6 +21,7 @@
 mod apply;
 pub mod decode;
 pub mod disasm;
+pub mod inspect;
 pub mod isa;
 mod sequencer;
 mod state;

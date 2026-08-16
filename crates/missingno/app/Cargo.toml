@@ -17,7 +17,7 @@ nes = ["dep:missingno-nes", "missingno-nes/morepork"]
 
 [dependencies]
 missingno-gamedb = { path = "../../../missingno-gamedb/crates/gamedb" }
-missingno-core = { path = "../core" }
+missingno-core = { path = "../core", features = ["morepork"] }
 missingno-iced = { path = "../iced" }
 missingno-gb = { path = "../../systems/gb", features = ["morepork"] }
 missingno-gbc = { path = "../../systems/gbc", features = ["morepork"] }

@@ -120,7 +120,7 @@ pub struct TraceRequest<'a> {
     pub rom: &'a [u8],
     /// For the Game Boy family's `.sav` sidecar lookup.
     pub rom_path: &'a Path,
-    pub profile: &'a missingno_gb::trace::Profile,
+    pub profile: &'a missingno_core::trace::Profile,
     pub output: &'a Path,
     pub cycles: u64,
     pub boot_rom: Option<missingno_gb::BootRom>,

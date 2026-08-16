@@ -28,7 +28,7 @@ pub(super) fn frame_interval(standard: TvStandard) -> Duration {
         TvStandard::Ntsc => 262.0,
         TvStandard::Pal | TvStandard::Secam => 312.0,
     };
-    Duration::from_secs_f32(lines * 228.0 / crate::tv_standard::master_clock_hz(standard))
+    Duration::from_secs_f32(lines * 228.0 / crate::tv_standard::master_clock_hz(standard) as f32)
 }
 
 /// The picture window shown from the full field the core emits: skip the

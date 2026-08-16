@@ -15,36 +15,18 @@
 use std::path::Path;
 
 use morepork::format::write::MoreporkWriter;
-use morepork::header::{HeaderFieldDef, PixFormat, TraceHeader};
-use morepork::profile::FieldType as WireType;
-// `Profile` is re-exported for the frontend's multi-system trace command, which
-// shares one profile type across the console families. The Game Boy schema-driven
-// capture reads only the trigger cadence from it — the column set comes from the
-// state schema, not the profile — while the 6502 cores still consume the full
-// profile.
-pub use morepork::{BootRom, Profile, Trigger};
 use sha2::{Digest, Sha256};
 
-use missingno_core::state::{
-    FieldType, PixelFormat, Provenance, StateValue, SystemStateSchema, Tier,
+use missingno_core::state::FieldType;
+pub use missingno_core::trace::{BootRom, Profile, TraceScope, Trigger};
+use missingno_core::trace::{
+    ObservationDef, Source as PlannedSource, TraceIdentity, build_columns, create_writer,
+    emit_value, pix_format,
 };
 
 use crate::Console;
 use crate::ppu::{PpuTraceSnapshot, TracePixel};
 use crate::system::ConsoleUi;
-
-/// Which tier of the schema a trace captures. The observable surface is the
-/// cross-emulator comparison ground; the full scope adds the boundary-complete
-/// deep state (a gate-level producer fills nearly all of it).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum TraceScope {
-    /// Tier-1 observable fields plus the trace observations. The diff surface.
-    #[default]
-    Observable,
-    /// Also the schema's Tier-2a deep state: the scalar counters/latches and the
-    /// pixel-pipeline cells.
-    Full,
-}
 
 /// A pixel-pipeline cell read from the PPU's per-tick trace snapshot. These are
 /// the schema's nullable Tier-2a `ppu` fields the boundary record does not carry.
@@ -113,18 +95,9 @@ enum Observation {
     ApuWriteData,
 }
 
-struct ObservationDef {
-    name: &'static str,
-    ty: FieldType,
-    subsystem: &'static str,
-    layer: &'static str,
-    nullable: bool,
-    observation: Observation,
-}
-
 /// The trace observations, in capture order. `op_addr` leads so it is the
 /// instruction-address column; `pix` and the write taps follow.
-static OBSERVATIONS: &[ObservationDef] = &[
+static OBSERVATIONS: &[ObservationDef<Observation>] = &[
     ObservationDef {
         name: "op_addr",
         ty: FieldType::U16,
@@ -216,33 +189,6 @@ pub struct Tracer {
     apu_write_data: u8,
 }
 
-fn wire_type(ty: FieldType) -> WireType {
-    match ty {
-        FieldType::Bool => WireType::Bool,
-        FieldType::U8 => WireType::UInt8,
-        FieldType::U16 => WireType::UInt16,
-        // The wire format has no 32-bit column; a u32 field widens to u64.
-        FieldType::U32 => WireType::UInt64,
-        FieldType::Str => WireType::Str,
-    }
-}
-
-fn tier_layer(tier: Tier) -> &'static str {
-    match tier {
-        Tier::Observable => "registers",
-        Tier::Boundary => "internal",
-        Tier::Tick => "timing",
-    }
-}
-
-fn pix_format(format: PixelFormat) -> PixFormat {
-    match format {
-        PixelFormat::Shade2 => PixFormat::Shade2,
-        PixelFormat::Rgb555 => PixFormat::Rgb555,
-        PixelFormat::Indexed8 => PixFormat::Indexed8,
-    }
-}
-
 impl Tracer {
     /// Create a tracer whose columns are authored from the console model's state
     /// schema. `scope` selects the tier depth; `trigger` records the capture
@@ -259,7 +205,23 @@ impl Tracer {
             morepork::Error::Profile("console model authors no state schema".into())
         })?;
 
-        let (columns, field_defs) = build_columns(schema, scope);
+        let (planned, field_defs) = build_columns(schema, scope, OBSERVATIONS);
+        let columns: Vec<Column> = planned
+            .into_iter()
+            .map(|column| Column {
+                ty: column.ty,
+                nullable: column.nullable,
+                source: match column.source {
+                    // A pipeline cell is a schema field the boundary record
+                    // cannot answer; the PPU's per-tick snapshot does.
+                    PlannedSource::Field(name) => match PipelineCell::from_name(name) {
+                        Some(cell) => Source::Pipeline(cell),
+                        None => Source::Field(name),
+                    },
+                    PlannedSource::Observation(observation) => Source::Obs(observation),
+                },
+            })
+            .collect();
         let needs_pipeline = columns.iter().any(|c| {
             matches!(c.source, Source::Pipeline(_))
                 || matches!(c.source, Source::Obs(Observation::PixX))
@@ -275,33 +237,22 @@ impl Tracer {
                 .collect::<String>()
         };
 
-        let field_names: Vec<String> = field_defs.iter().map(|d| d.name.clone()).collect();
-
-        let header = TraceHeader {
-            _header: true,
-            format_version: "0.1.0".into(),
-            emulator: "missingno".into(),
-            emulator_version: env!("CARGO_PKG_VERSION").into(),
-            rom_sha256,
-            model: model_label.into(),
-            boot_rom,
-            profile: match scope {
-                TraceScope::Observable => "observable".into(),
-                TraceScope::Full => "full".into(),
+        let writer = create_writer(
+            path,
+            TraceIdentity {
+                rom_sha256,
+                system: schema.system,
+                isa: "sm83",
+                model: model_label,
+                scope,
+                trigger: trigger.clone(),
+                pix_format: pix_format(schema.frame.format),
+                boot_rom,
+                instruction_addr_field: "op_addr",
+                snapshot_kinds: vec!["frame".into(), "memory".into()],
             },
-            fields: field_names,
-            trigger: trigger.clone(),
-            system: schema.system.into(),
-            isa: "sm83".into(),
-            pix_format: pix_format(schema.frame.format),
             field_defs,
-            instruction_addr_field: Some("op_addr".into()),
-            snapshot_kinds: vec!["frame".into(), "memory".into()],
-            notes: String::new(),
-            ..Default::default()
-        };
-
-        let writer = MoreporkWriter::create(path, &header, &[])?;
+        )?;
 
         Ok(Self {
             writer,
@@ -414,104 +365,6 @@ impl Tracer {
 
     pub fn finish(self) -> Result<(), morepork::Error> {
         self.writer.finish()
-    }
-}
-
-/// Build the ordered column plan and the matching header field defs for a scope.
-/// Tier-1 (and, under `Full`, Tier-2a) schema fields lead; the observations
-/// follow. Every column's type metadata comes from the schema or the observation
-/// table — never re-authored here.
-fn build_columns(
-    schema: &SystemStateSchema,
-    scope: TraceScope,
-) -> (Vec<Column>, Vec<HeaderFieldDef>) {
-    let mut columns = Vec::new();
-    let mut defs = Vec::new();
-
-    for field in &schema.fields {
-        let include = match field.tier {
-            Tier::Observable => true,
-            Tier::Boundary => scope == TraceScope::Full,
-            Tier::Tick => false,
-        };
-        if !include {
-            continue;
-        }
-
-        let source = match PipelineCell::from_name(field.name) {
-            Some(cell) => Source::Pipeline(cell),
-            None => Source::Field(field.name),
-        };
-        columns.push(Column {
-            ty: field.ty,
-            nullable: field.nullable,
-            source,
-        });
-        defs.push(HeaderFieldDef {
-            name: field.name.to_string(),
-            field_type: wire_type(field.ty),
-            subsystem: Some(field.subsystem.to_string()),
-            layer: Some(tier_layer(field.tier).to_string()),
-            nullable: field.nullable,
-            dictionary: false,
-            source: match field.provenance {
-                Provenance::Hardware => None,
-                Provenance::Emulator(id) => Some(id.to_string()),
-            },
-        });
-    }
-
-    for obs in OBSERVATIONS {
-        columns.push(Column {
-            ty: obs.ty,
-            nullable: obs.nullable,
-            source: Source::Obs(obs.observation),
-        });
-        defs.push(HeaderFieldDef {
-            name: obs.name.to_string(),
-            field_type: wire_type(obs.ty),
-            subsystem: Some(obs.subsystem.to_string()),
-            layer: Some(obs.layer.to_string()),
-            nullable: obs.nullable,
-            dictionary: false,
-            source: Some("missingno".to_string()),
-        });
-    }
-
-    (columns, defs)
-}
-
-fn emit_value(
-    w: &mut MoreporkWriter,
-    col: usize,
-    ty: FieldType,
-    nullable: bool,
-    value: Option<&StateValue>,
-) {
-    match value {
-        Some(StateValue::Int(v)) => match ty {
-            FieldType::U8 => w.set_u8(col, *v as u8),
-            FieldType::U16 => w.set_u16(col, *v as u16),
-            FieldType::U32 => w.set_u64(col, *v as u64),
-            _ => w.set_u8(col, *v as u8),
-        },
-        Some(StateValue::Bool(b)) => w.set_bool(col, *b),
-        Some(StateValue::Text(t)) => w.set_str(col, t),
-        Some(StateValue::Null) | None => {
-            if nullable {
-                w.set_null(col);
-            } else {
-                // A non-nullable schema field the record did not carry: emit a
-                // type-appropriate zero so columns stay aligned.
-                match ty {
-                    FieldType::Bool => w.set_bool(col, false),
-                    FieldType::U16 => w.set_u16(col, 0),
-                    FieldType::U32 => w.set_u64(col, 0),
-                    FieldType::Str => w.set_str(col, ""),
-                    FieldType::U8 => w.set_u8(col, 0),
-                }
-            }
-        }
     }
 }
 
@@ -694,6 +547,7 @@ pub fn step_instruction_tcycle<M: ConsoleUi>(
 mod tests {
     use super::*;
     use crate::system::ConsoleUi;
+    use missingno_core::state::Tier;
 
     /// The pipeline-cell table and the schema must stay in lockstep: every cell
     /// names a nullable Tier-2a `ppu` field, and every such field resolves to a

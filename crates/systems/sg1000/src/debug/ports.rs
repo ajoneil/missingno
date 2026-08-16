@@ -20,21 +20,13 @@ pub const PANEL: &[PanelControl] = &[PanelControl {
 }];
 
 const PAD_BUTTONS: &[ControlDescriptor] = &[
-    button(ControlRole::Action(0), "Button 1"),
-    button(ControlRole::Action(1), "Button 2"),
-    button(ControlRole::Up, "Up"),
-    button(ControlRole::Down, "Down"),
-    button(ControlRole::Left, "Left"),
-    button(ControlRole::Right, "Right"),
+    ControlDescriptor::button(ControlRole::Action(0), "Button 1"),
+    ControlDescriptor::button(ControlRole::Action(1), "Button 2"),
+    ControlDescriptor::button(ControlRole::Up, "Up"),
+    ControlDescriptor::button(ControlRole::Down, "Down"),
+    ControlDescriptor::button(ControlRole::Left, "Left"),
+    ControlDescriptor::button(ControlRole::Right, "Right"),
 ];
-
-const fn button(role: ControlRole, label: &'static str) -> ControlDescriptor {
-    ControlDescriptor {
-        role,
-        label,
-        kind: ControlKind::Button,
-    }
-}
 
 const fn pad_port(port: PortId, label: &'static str) -> PortDescriptor {
     PortDescriptor {

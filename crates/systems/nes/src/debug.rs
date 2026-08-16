@@ -406,23 +406,15 @@ const CONTROLLER_PORT: PortId = PortId(0);
 const CONTROLLER: PeripheralId = PeripheralId(0);
 
 const CONTROLLER_BUTTONS: &[ControlDescriptor] = &[
-    button(ControlRole::Start, "Start"),
-    button(ControlRole::Select, "Select"),
-    button(ControlRole::Action(0), "A"),
-    button(ControlRole::Action(1), "B"),
-    button(ControlRole::Up, "Up"),
-    button(ControlRole::Down, "Down"),
-    button(ControlRole::Left, "Left"),
-    button(ControlRole::Right, "Right"),
+    ControlDescriptor::button(ControlRole::Start, "Start"),
+    ControlDescriptor::button(ControlRole::Select, "Select"),
+    ControlDescriptor::button(ControlRole::Action(0), "A"),
+    ControlDescriptor::button(ControlRole::Action(1), "B"),
+    ControlDescriptor::button(ControlRole::Up, "Up"),
+    ControlDescriptor::button(ControlRole::Down, "Down"),
+    ControlDescriptor::button(ControlRole::Left, "Left"),
+    ControlDescriptor::button(ControlRole::Right, "Right"),
 ];
-
-const fn button(role: ControlRole, label: &'static str) -> ControlDescriptor {
-    ControlDescriptor {
-        role,
-        label,
-        kind: ControlKind::Button,
-    }
-}
 
 /// Only the first controller is wired; the second port and the expansion port
 /// are not modelled.

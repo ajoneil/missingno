@@ -196,7 +196,7 @@ fn write_psg(r: &mut StateRecord, psg: &PsgState) {
 fn write_board(r: &mut StateRecord, board: &BoardState) {
     r.set("joystick_dc", board.joystick_dc)
         .set("joystick_dd", board.joystick_dd)
-        .set("audio_sample_phase", board.sample_phase.to_bits())
+        .set("audio_sample_phase", board.sample_phase)
         .set("fields_taken", board.fields_taken as u32);
 }
 
@@ -388,8 +388,8 @@ fn parse_board(r: &StateRecord) -> Result<BoardState, StateError> {
         joystick_dc: u8_of(r, "joystick_dc")?,
         joystick_dd: u8_of(r, "joystick_dd")?,
         sample_phase: match r.get("audio_sample_phase") {
-            Some(StateValue::Int(bits)) => f32::from_bits(*bits),
-            Some(StateValue::Null) | None => 0.0,
+            Some(StateValue::Int(phase)) => *phase,
+            Some(StateValue::Null) | None => 0,
             _ => return Err(StateError::Corrupt),
         },
         fields_taken: u32_of(r, "fields_taken")? as u64,

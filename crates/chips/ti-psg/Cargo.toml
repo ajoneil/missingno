@@ -2,3 +2,11 @@
 name = "missingno-ti-psg"
 version.workspace = true
 edition = "2024"
+
+[features]
+# The debugger's register view of the part, in missingno-core's inspection
+# vocabulary. Off by default so an embedder links no debug surface.
+inspect = ["dep:missingno-core"]
+
+[dependencies]
+missingno-core = { path = "../../missingno/core", optional = true }

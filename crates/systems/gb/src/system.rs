@@ -32,7 +32,7 @@ use missingno_core::waveform::ChannelWave;
 
 use crate::cartridge::Cartridge;
 use crate::cpu::instructions::{calls_subroutine, instruction_length};
-use crate::debugger::cdl::{CdlWindow, CodeDataLog};
+use crate::debugger::cdl::{self, CdlWindow, CodeDataLog};
 use crate::debugger::inspection::{ColorSnapshot, GbSnapshot};
 use crate::debugger::{Debugger, watchables};
 use crate::frame::{GameBoyScreen, GbFrame, NATIVE_SIZE, SgbScreen};
@@ -272,23 +272,15 @@ fn state_frame(raw: &RawFrame) -> StateFrame {
 
 /// The pad moulded into the console's own case.
 pub const PAD: &[ControlDescriptor] = &[
-    button(ControlRole::Start, "Start"),
-    button(ControlRole::Select, "Select"),
-    button(ControlRole::Action(0), "A"),
-    button(ControlRole::Action(1), "B"),
-    button(ControlRole::Up, "Up"),
-    button(ControlRole::Down, "Down"),
-    button(ControlRole::Left, "Left"),
-    button(ControlRole::Right, "Right"),
+    ControlDescriptor::button(ControlRole::Start, "Start"),
+    ControlDescriptor::button(ControlRole::Select, "Select"),
+    ControlDescriptor::button(ControlRole::Action(0), "A"),
+    ControlDescriptor::button(ControlRole::Action(1), "B"),
+    ControlDescriptor::button(ControlRole::Up, "Up"),
+    ControlDescriptor::button(ControlRole::Down, "Down"),
+    ControlDescriptor::button(ControlRole::Left, "Left"),
+    ControlDescriptor::button(ControlRole::Right, "Right"),
 ];
-
-const fn button(role: ControlRole, label: &'static str) -> ControlDescriptor {
-    ControlDescriptor {
-        role,
-        label,
-        kind: ControlKind::Button,
-    }
-}
 
 /// The serial socket on the console's left edge.
 pub const LINK_PORT: PortId = PortId(0);
@@ -404,10 +396,12 @@ impl<M: ConsoleUi> GbCore<M> {
 
     fn cdl_window(&self) -> CdlWindow {
         let console = self.console();
-        self.debugger.cdl().window(
-            console.cpu().ir_address,
-            console.cartridge().switchable_rom_bank(),
-        )
+        let bank = console.cartridge().switchable_rom_bank();
+        self.debugger
+            .cdl()
+            .window(console.cpu().ir_address, |address| {
+                cdl::rom_offset(address, bank)
+            })
     }
 
     /// Why a run that stopped short of its boundary stopped: a watch names

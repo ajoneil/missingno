@@ -14,7 +14,6 @@ use symbols::SymbolTable;
 pub mod cdl;
 pub mod graphics;
 pub mod inspection;
-pub mod instructions;
 use missingno_core::inspect;
 use missingno_core::isa::InstructionSet;
 use missingno_core::machine::StopSet;
@@ -606,18 +605,23 @@ impl<M: Model> Debugger<M> {
 
         let result = self.game_boy.step_recorded();
 
-        self.cdl
-            .mark(before, bank_before, cdl::CODE | cdl::INSTRUCTION_START);
+        self.cdl.mark(
+            cdl::rom_offset(before, bank_before),
+            cdl::CODE | cdl::INSTRUCTION_START,
+        );
         for offset in 1..length {
-            self.cdl
-                .mark(before.wrapping_add(offset), bank_before, cdl::CODE);
+            self.cdl.mark(
+                cdl::rom_offset(before.wrapping_add(offset), bank_before),
+                cdl::CODE,
+            );
         }
         let instruction_end = before.wrapping_add(length);
         for access in self.game_boy.bus_trace() {
             let is_read = matches!(access.kind, BusAccessKind::Read | BusAccessKind::DmaRead);
             let in_instruction = access.address >= before && access.address < instruction_end;
             if is_read && !in_instruction {
-                self.cdl.mark(access.address, bank_before, cdl::DATA);
+                self.cdl
+                    .mark(cdl::rom_offset(access.address, bank_before), cdl::DATA);
             }
         }
 
@@ -629,7 +633,7 @@ impl<M: Model> Debugger<M> {
             } else {
                 cdl::JUMP_TARGET
             };
-            self.cdl.mark(after, bank_after, bits);
+            self.cdl.mark(cdl::rom_offset(after, bank_after), bits);
         }
         result
     }
@@ -1137,7 +1141,7 @@ mod tests {
             debugger.step();
         }
 
-        let flags = |address| debugger.cdl().flags(address, Some(1));
+        let flags = |address| debugger.cdl().flags(cdl::rom_offset(address, Some(1)));
         assert_eq!(
             flags(0x0100) & (cdl::CODE | cdl::INSTRUCTION_START),
             cdl::CODE | cdl::INSTRUCTION_START
@@ -1401,7 +1405,7 @@ mod tests {
         assert_eq!(debugger.peek(0xC002), 0xFD);
         // The log records nothing for RAM addresses, so the disassembly's
         // backward context has no coverage and uses the heuristic.
-        assert_eq!(debugger.cdl().flags(0xC000, None), 0);
+        assert_eq!(debugger.cdl().flags(cdl::rom_offset(0xC000, None)), 0);
 
         struct Peek<'a>(&'a Debugger<Dmg>);
         impl ReadMemory for Peek<'_> {
@@ -1409,8 +1413,10 @@ mod tests {
                 self.0.peek(address)
             }
         }
-        let cdl = debugger.cdl().window(0xC000, None);
-        let rows = window_after(0xC000, 2, &Sm83, &Peek(&debugger), Some(&cdl));
+        let window = debugger
+            .cdl()
+            .window(0xC000, |address| cdl::rom_offset(address, None));
+        let rows = window_after(0xC000, 2, &Sm83, &Peek(&debugger), Some(&window));
         assert_eq!(
             rows,
             vec![Row::Instruction(0xC000), Row::Instruction(0xC001)]

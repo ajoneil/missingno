@@ -3,6 +3,12 @@ name = "missingno-core"
 version.workspace = true
 edition = "2024"
 
+[features]
+# The trace-container vocabulary: the column planning every core's capture
+# bridge shares. Off by default so an embedder links no trace engine.
+morepork = ["dep:morepork"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 rgb = { workspace = true }
+morepork = { git = "https://github.com/ajoneil/morepork", branch = "main", optional = true }

@@ -58,11 +58,11 @@ pub const PADDLES: PeripheralId = PeripheralId(2);
 pub const KEYPAD: PeripheralId = PeripheralId(3);
 
 const JOYSTICK_CONTROLS: &[ControlDescriptor] = &[
-    button(ControlRole::Action(0), "Fire"),
-    button(ControlRole::Up, "Up"),
-    button(ControlRole::Down, "Down"),
-    button(ControlRole::Left, "Left"),
-    button(ControlRole::Right, "Right"),
+    ControlDescriptor::button(ControlRole::Action(0), "Fire"),
+    ControlDescriptor::button(ControlRole::Up, "Up"),
+    ControlDescriptor::button(ControlRole::Down, "Down"),
+    ControlDescriptor::button(ControlRole::Left, "Left"),
+    ControlDescriptor::button(ControlRole::Right, "Right"),
 ];
 
 /// One paddle of the pair a jack carries; the second stays off the frontend's
@@ -73,32 +73,24 @@ const PADDLE_CONTROLS: &[ControlDescriptor] = &[
         label: "Paddle Knob",
         kind: ControlKind::Axis,
     },
-    button(ControlRole::Action(0), "Paddle Button"),
+    ControlDescriptor::button(ControlRole::Action(0), "Paddle Button"),
 ];
 
 /// The keyboard controller's 12 keys, row-major from its top left.
 const KEYPAD_CONTROLS: &[ControlDescriptor] = &[
-    button(ControlRole::Key(0), "1"),
-    button(ControlRole::Key(1), "2"),
-    button(ControlRole::Key(2), "3"),
-    button(ControlRole::Key(3), "4"),
-    button(ControlRole::Key(4), "5"),
-    button(ControlRole::Key(5), "6"),
-    button(ControlRole::Key(6), "7"),
-    button(ControlRole::Key(7), "8"),
-    button(ControlRole::Key(8), "9"),
-    button(ControlRole::Key(9), "*"),
-    button(ControlRole::Key(10), "0"),
-    button(ControlRole::Key(11), "#"),
+    ControlDescriptor::button(ControlRole::Key(0), "1"),
+    ControlDescriptor::button(ControlRole::Key(1), "2"),
+    ControlDescriptor::button(ControlRole::Key(2), "3"),
+    ControlDescriptor::button(ControlRole::Key(3), "4"),
+    ControlDescriptor::button(ControlRole::Key(4), "5"),
+    ControlDescriptor::button(ControlRole::Key(5), "6"),
+    ControlDescriptor::button(ControlRole::Key(6), "7"),
+    ControlDescriptor::button(ControlRole::Key(7), "8"),
+    ControlDescriptor::button(ControlRole::Key(8), "9"),
+    ControlDescriptor::button(ControlRole::Key(9), "*"),
+    ControlDescriptor::button(ControlRole::Key(10), "0"),
+    ControlDescriptor::button(ControlRole::Key(11), "#"),
 ];
-
-const fn button(role: ControlRole, label: &'static str) -> ControlDescriptor {
-    ControlDescriptor {
-        role,
-        label,
-        kind: ControlKind::Button,
-    }
-}
 
 const CONTROLLERS: &[PeripheralDescriptor] = &[
     PeripheralDescriptor {

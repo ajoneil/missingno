@@ -4,6 +4,7 @@
 //! contributes only decode (two halves of one '139), the joystick
 //! multiplexers, and the pause switch on /NMI.
 
+use missingno_core::ClockRatio;
 use missingno_core::ports::PortId;
 use missingno_core::system::{ControlId, ControlInput, ControlRole, ControlSite};
 use missingno_core::waveform::{ChannelWave, WaveRing};
@@ -29,10 +30,13 @@ const RAM_BASE: u16 = 0xC000;
 
 /// The clock the Z80 and the PSG's CLOCK pin share, the crystal divided by
 /// three.
-pub(crate) const CLOCK_HZ: f32 = 3_579_545.0;
+pub(crate) const CLOCK_HZ: u32 = 3_579_545;
 /// 44.1 kHz output from that clock.
 const SAMPLE_RATE: u32 = 44_100;
-const TSTATES_PER_SAMPLE: f32 = CLOCK_HZ / SAMPLE_RATE as f32;
+
+fn sample_clock() -> ClockRatio {
+    ClockRatio::new(SAMPLE_RATE as u64, CLOCK_HZ as u64)
+}
 
 const PSG_CHANNELS: usize = 4;
 /// Width of the amplitude code each channel hands its DAC.
@@ -111,7 +115,7 @@ enum MuxByte {
 pub struct Sg1000 {
     pub cpu: Cpu,
     board: Board,
-    sample_clock: f32,
+    sample_clock: ClockRatio,
     audio: Vec<(f32, f32)>,
     /// Per-channel DAC codes for the debugger's scope, present only while a
     /// consumer wants them.
@@ -125,12 +129,13 @@ pub struct Sg1000 {
 }
 
 /// The board's own state beside the chips': the multiplexer bytes the pads
-/// drive, the phase of the 44.1 kHz output tap, and the fields handed out.
+/// drive, the carried phase of the 44.1 kHz output tap, and the fields handed
+/// out.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct BoardState {
     pub joystick_dc: u8,
     pub joystick_dd: u8,
-    pub sample_phase: f32,
+    pub sample_phase: u32,
     pub fields_taken: u64,
 }
 
@@ -207,7 +212,7 @@ impl Sg1000 {
                 joy_dc: RELEASED,
                 joy_dd: RELEASED,
             },
-            sample_clock: 0.0,
+            sample_clock: sample_clock(),
             audio: Vec::new(),
             wave_capture: None,
             graphics_capture: false,
@@ -245,7 +250,7 @@ impl Sg1000 {
         BoardState {
             joystick_dc: self.board.joy_dc,
             joystick_dd: self.board.joy_dd,
-            sample_phase: self.sample_clock,
+            sample_phase: self.sample_clock.phase() as u32,
             fields_taken: self.frames_seen,
         }
     }
@@ -255,7 +260,7 @@ impl Sg1000 {
     pub fn restore_board(&mut self, state: &BoardState) {
         self.board.joy_dc = state.joystick_dc;
         self.board.joy_dd = state.joystick_dd;
-        self.sample_clock = state.sample_phase;
+        self.sample_clock.set_phase(state.sample_phase as u64);
         self.frames_seen = state.fields_taken;
         self.audio.clear();
     }
@@ -273,9 +278,7 @@ impl Sg1000 {
         self.cpu.tick(&mut self.board);
         self.cpu.set_irq(self.board.vdp.interrupt_asserted());
 
-        self.sample_clock += 1.0;
-        while self.sample_clock >= TSTATES_PER_SAMPLE {
-            self.sample_clock -= TSTATES_PER_SAMPLE;
+        for _ in 0..self.sample_clock.advance(1) {
             let level = self.board.psg.level();
             self.audio.push((level, level));
             if let Some(rings) = &mut self.wave_capture {
@@ -382,7 +385,7 @@ impl Sg1000 {
         self.board.vdp.reset();
         self.board.psg = Psg::new(Variant::DiscreteTi);
         self.board.ram = [0; RAM_SIZE];
-        self.sample_clock = 0.0;
+        self.sample_clock = sample_clock();
         self.audio.clear();
         if let Some(rings) = &mut self.wave_capture {
             rings.iter_mut().for_each(WaveRing::clear);

@@ -221,7 +221,7 @@ pub fn boundary_fields() -> Vec<FieldDef> {
 
     fields.extend([
         FieldDef::boundary("audio_sample_phase", U32, "board")
-            .help("the 44.1 kHz output tap's accumulator, in IEEE-754 bits — an output stage, not board silicon")
+            .help("the 44.1 kHz output tap's carried phase, in T-states — an output stage, not board silicon")
             .sourced("missingno")
             .nullable(),
         FieldDef::boundary("fields_taken", U32, "board")
