@@ -22,6 +22,7 @@ pub mod disasm;
 pub mod graphics;
 pub mod inspect;
 pub mod isa;
+pub mod launch;
 pub mod machine;
 pub mod ports;
 pub mod recording;
@@ -43,6 +44,9 @@ pub use inspect::{
     Watchable,
 };
 pub use isa::{Flow, Instruction, InstructionSet};
+pub use launch::{
+    LaunchChoice, LaunchOptionDescriptor, LaunchOptionKind, LaunchValue, LaunchValues,
+};
 pub use machine::{
     BoundaryState, CoreRun, CoreStop, Machine, MachineConsole, MachineDebugger, StateIdentity,
     StopSet,

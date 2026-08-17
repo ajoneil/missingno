@@ -22,4 +22,28 @@ impl TvStandard {
             TvStandard::Secam => "SECAM",
         }
     }
+
+    /// The name catalogues and launch options carry the standard under.
+    pub fn code(self) -> &'static str {
+        match self {
+            TvStandard::Ntsc => "ntsc",
+            TvStandard::Pal => "pal",
+            TvStandard::Secam => "secam",
+        }
+    }
+
+    /// The standard a code names, however it was cased.
+    pub fn from_code(code: &str) -> Option<TvStandard> {
+        match code.trim().to_ascii_lowercase().as_str() {
+            "ntsc" => Some(TvStandard::Ntsc),
+            "pal" => Some(TvStandard::Pal),
+            "secam" => Some(TvStandard::Secam),
+            _ => None,
+        }
+    }
+
+    /// Every standard, in the order they are offered.
+    pub fn all() -> [TvStandard; 3] {
+        [TvStandard::Ntsc, TvStandard::Pal, TvStandard::Secam]
+    }
 }
