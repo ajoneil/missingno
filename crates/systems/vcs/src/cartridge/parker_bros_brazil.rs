@@ -19,14 +19,14 @@ const HOTSPOT_SELECT: u16 = 0x0380;
 /// Each segment's enable line, active low.
 const ENABLES: [u16; PAGEABLE_SEGMENTS] = [0x10, 0x20, 0x40];
 
-pub struct Zero3E0 {
+pub struct ParkerBrosBrazil {
     image: Vec<u8>,
     slices: [usize; PAGEABLE_SEGMENTS],
 }
 
-impl Zero3E0 {
-    pub fn new(rom: &[u8]) -> Zero3E0 {
-        Zero3E0 {
+impl ParkerBrosBrazil {
+    pub fn new(rom: &[u8]) -> ParkerBrosBrazil {
+        ParkerBrosBrazil {
             image: rom.to_vec(),
             slices: [0; PAGEABLE_SEGMENTS],
         }

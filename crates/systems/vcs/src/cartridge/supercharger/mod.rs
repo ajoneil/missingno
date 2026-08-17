@@ -159,7 +159,7 @@ fn sum(bytes: &[u8]) -> u8 {
     bytes.iter().fold(0u8, |total, &b| total.wrapping_add(b))
 }
 
-pub struct Ar {
+pub struct Supercharger {
     ram: [[u8; BANK_SIZE]; BANKS],
     bios: [u8; BIOS_SIZE],
     loads: Vec<Load>,
@@ -172,14 +172,14 @@ pub struct Ar {
     last_address: u16,
 }
 
-impl Ar {
-    pub fn new(image: &[u8]) -> Result<Ar, CartridgeError> {
+impl Supercharger {
+    pub fn new(image: &[u8]) -> Result<Supercharger, CartridgeError> {
         let loads = image
             .chunks_exact(IMAGE_SIZE)
             .enumerate()
             .map(|(unit, chunk)| Load::parse(unit, chunk))
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Ar {
+        Ok(Supercharger {
             ram: [[0u8; BANK_SIZE]; BANKS],
             bios: bios::assemble(),
             loads,
@@ -201,7 +201,7 @@ impl Ar {
             return bios::NO_LOAD;
         };
         self.current = index;
-        let Ar { ram, loads, .. } = self;
+        let Supercharger { ram, loads, .. } = self;
         let load = &loads[index];
         for page in 0..load.page_count {
             let entry = load.page_table[page];
@@ -430,19 +430,19 @@ mod tests {
         ])
     }
 
-    fn read(ar: &mut Ar, address: u16) -> u8 {
+    fn read(ar: &mut Supercharger, address: u16) -> u8 {
         ar.read(address, 0).expect("the window answers")
     }
 
     /// Commit a control byte the way a program does: latch it, then strobe.
-    fn configure(ar: &mut Ar, control: u8) {
+    fn configure(ar: &mut Supercharger, control: u8) {
         read(ar, 0xF000 | u16::from(control));
         read(ar, 0xFFF8);
     }
 
     #[test]
     fn a_multi_unit_container_stuffs_the_unit_the_request_names() {
-        let mut ar = Ar::new(&two_loads()).unwrap();
+        let mut ar = Supercharger::new(&two_loads()).unwrap();
 
         assert_eq!(read(&mut ar, bios::LOAD_REQUEST + 5), bios::LOADED);
         assert_eq!(ar.ram[0][0x200], 0x22);
@@ -456,7 +456,7 @@ mod tests {
 
     #[test]
     fn a_request_no_unit_answers_delivers_nothing() {
-        let mut ar = Ar::new(&two_loads()).unwrap();
+        let mut ar = Supercharger::new(&two_loads()).unwrap();
         read(&mut ar, bios::LOAD_REQUEST);
 
         assert_eq!(read(&mut ar, bios::LOAD_REQUEST + 9), bios::NO_LOAD);
@@ -468,7 +468,7 @@ mod tests {
         let mut image = two_loads();
         image[IMAGE_SIZE + DATA_SIZE + HEADER_CHECKSUM] ^= 0xFF;
         assert_eq!(
-            Ar::new(&image).err(),
+            Supercharger::new(&image).err(),
             Some(CartridgeError::LoadChecksum {
                 unit: 1,
                 page: None
@@ -481,7 +481,7 @@ mod tests {
         let mut image = two_loads();
         image[0] ^= 0xFF;
         assert_eq!(
-            Ar::new(&image).err(),
+            Supercharger::new(&image).err(),
             Some(CartridgeError::LoadChecksum {
                 unit: 0,
                 page: Some(0),
@@ -491,7 +491,7 @@ mod tests {
 
     #[test]
     fn the_write_lands_five_transitions_on_counting_repeats_once() {
-        let mut ar = Ar::new(&two_loads()).unwrap();
+        let mut ar = Supercharger::new(&two_loads()).unwrap();
         configure(&mut ar, 0x06);
 
         read(&mut ar, 0xF047); // arm $47
@@ -506,7 +506,7 @@ mod tests {
 
     #[test]
     fn a_read_of_the_latch_page_corrupts_ram_when_writes_are_enabled() {
-        let mut ar = Ar::new(&two_loads()).unwrap();
+        let mut ar = Supercharger::new(&two_loads()).unwrap();
         configure(&mut ar, 0x06);
 
         read(&mut ar, 0xF042); // an innocent-looking load
@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn the_strobe_commits_a_latch_of_any_age() {
-        let mut ar = Ar::new(&two_loads()).unwrap();
+        let mut ar = Supercharger::new(&two_loads()).unwrap();
         configure(&mut ar, 0x00);
 
         read(&mut ar, 0xF014);
@@ -533,7 +533,7 @@ mod tests {
 
     #[test]
     fn a_write_whose_transition_falls_outside_mapped_ram_is_refused() {
-        let mut ar = Ar::new(&two_loads()).unwrap();
+        let mut ar = Supercharger::new(&two_loads()).unwrap();
         configure(&mut ar, 0x06);
 
         let bios_byte = ar.peek(0xFF00).unwrap();
@@ -556,7 +556,7 @@ mod tests {
 
     #[test]
     fn a_read_of_the_tape_input_leaves_the_latch_alone() {
-        let mut ar = Ar::new(&two_loads()).unwrap();
+        let mut ar = Supercharger::new(&two_loads()).unwrap();
 
         read(&mut ar, 0xF03C);
         assert_eq!(read(&mut ar, 0xFFF9), 0x00);

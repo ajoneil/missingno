@@ -16,15 +16,15 @@ const BANKS: usize = 3;
 const BANK_SIZE: usize = 0x1000;
 pub const RAM_SIZE: usize = 0x100;
 
-pub struct Fa {
+pub struct CbsRamPlus {
     image: Vec<u8>,
     bank: usize,
     ram: Box<[u8; RAM_SIZE]>,
 }
 
-impl Fa {
-    pub fn new(rom: &[u8]) -> Fa {
-        Fa {
+impl CbsRamPlus {
+    pub fn new(rom: &[u8]) -> CbsRamPlus {
+        CbsRamPlus {
             image: rom.to_vec(),
             bank: 0,
             ram: Box::new([0; RAM_SIZE]),
@@ -47,7 +47,7 @@ impl Fa {
     }
 
     pub fn read(&mut self, address: u16, bus: u8) -> u8 {
-        if let Some((cell, write_port)) = Fa::ram_port(address) {
+        if let Some((cell, write_port)) = CbsRamPlus::ram_port(address) {
             // No R/W line: a write-port read still stores, latching the
             // floating bus byte the CPU also sees.
             if write_port {
@@ -64,7 +64,7 @@ impl Fa {
 
     pub fn write_access(&mut self, address: u16, data: u8) {
         self.hotspot(address, data);
-        if let Some((cell, true)) = Fa::ram_port(address) {
+        if let Some((cell, true)) = CbsRamPlus::ram_port(address) {
             self.ram[cell] = data;
         }
     }
@@ -96,7 +96,7 @@ impl Fa {
     }
 
     pub fn peek(&self, address: u16) -> u8 {
-        match Fa::ram_port(address) {
+        match CbsRamPlus::ram_port(address) {
             Some((cell, _)) => self.ram[cell],
             None => self.image[self.bank * BANK_SIZE + (address & 0x0FFF) as usize],
         }

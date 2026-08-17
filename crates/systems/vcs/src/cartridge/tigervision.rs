@@ -25,7 +25,7 @@ const BANK_SIZE: usize = 0x800;
 /// rise on the next cycle.
 const ARM_MASK: u16 = 0x10C0;
 
-pub struct ThreeF {
+pub struct Tigervision {
     image: Vec<u8>,
     bank: usize,
     banks: usize,
@@ -33,9 +33,9 @@ pub struct ThreeF {
     armed: bool,
 }
 
-impl ThreeF {
-    pub fn new(rom: &[u8]) -> ThreeF {
-        ThreeF {
+impl Tigervision {
+    pub fn new(rom: &[u8]) -> Tigervision {
+        Tigervision {
             image: rom.to_vec(),
             bank: 0,
             banks: rom.len() / BANK_SIZE,

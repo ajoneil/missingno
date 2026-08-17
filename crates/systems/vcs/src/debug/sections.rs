@@ -359,7 +359,7 @@ mod tests {
             .iter()
             .find(|s| s.name == "Cartridge")
             .expect("cartridge section");
-        assert_eq!(section.summary, "DPC (Pitfall II)");
+        assert_eq!(section.summary, "DPC — Pitfall II (DPC)");
         let labels = cartridge_rows(section);
         for i in 0..8 {
             assert!(
@@ -374,7 +374,7 @@ mod tests {
     fn cartridge_section_shows_bank_for_banked_boards() {
         let cart = crate::cartridge::Cartridge::load(
             &vec![0u8; 0x2000],
-            Some(CartType::F8),
+            Some(CartType::Atari8K),
             3_579_545.0,
             crate::cartridge::DumpFit::Exact,
         )

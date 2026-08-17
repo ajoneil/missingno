@@ -85,7 +85,7 @@ fn round_trip_draw_delay_is_bit_exact() {
 fn round_trip_bank_f8_restores_the_bank() {
     // An F8 banked cart: the round-trip also proves the selected ROM bank is
     // restored (a fresh console would wake in bank 0).
-    let mut original = load("cartridge/bank-f8_ntsc.a26", CartType::F8);
+    let mut original = load("cartridge/bank-f8_ntsc.a26", CartType::Atari8K);
     for _ in 0..16 {
         original.step_frame(FRAME_LINE_BUDGET);
     }
@@ -94,7 +94,7 @@ fn round_trip_bank_f8_restores_the_bank() {
 
     let record = read_state(&original);
     let memory = owned_memory(&original);
-    let mut restored = load("cartridge/bank-f8_ntsc.a26", CartType::F8);
+    let mut restored = load("cartridge/bank-f8_ntsc.a26", CartType::Atari8K);
     restore(&mut restored, &record, &memory).unwrap();
     assert_eq!(
         restored.cartridge().selected_bank(),
@@ -102,7 +102,7 @@ fn round_trip_bank_f8_restores_the_bank() {
         "the selected bank is restored"
     );
 
-    assert_round_trip("cartridge/bank-f8_ntsc.a26", CartType::F8, 3);
+    assert_round_trip("cartridge/bank-f8_ntsc.a26", CartType::Atari8K, 3);
 }
 
 #[test]
@@ -110,7 +110,7 @@ fn round_trip_bank_fa_restores_cart_ram() {
     // The CBS RAM Plus (FA) board has 256 bytes of cart RAM; the round-trip
     // carries it as a memory span. Confirm the captured RAM is non-trivial and
     // restores to the same bytes, and the continuation is bit-exact.
-    let mut original = load("cartridge/bank-fa_ntsc.a26", CartType::Fa);
+    let mut original = load("cartridge/bank-fa_ntsc.a26", CartType::CbsRamPlus);
     for _ in 0..16 {
         original.step_frame(FRAME_LINE_BUDGET);
     }
@@ -124,7 +124,7 @@ fn round_trip_bank_fa_restores_cart_ram() {
     assert_eq!(cart_ram.len(), 0x100, "CBS RAM Plus is 256 bytes");
 
     let record = read_state(&original);
-    let mut restored = load("cartridge/bank-fa_ntsc.a26", CartType::Fa);
+    let mut restored = load("cartridge/bank-fa_ntsc.a26", CartType::CbsRamPlus);
     restore(&mut restored, &record, &memory).unwrap();
     let restored_ram = owned_memory(&restored)
         .into_iter()
@@ -133,7 +133,7 @@ fn round_trip_bank_fa_restores_cart_ram() {
         .unwrap();
     assert_eq!(restored_ram, cart_ram, "cart RAM restores byte-for-byte");
 
-    assert_round_trip("cartridge/bank-fa_ntsc.a26", CartType::Fa, 3);
+    assert_round_trip("cartridge/bank-fa_ntsc.a26", CartType::CbsRamPlus, 3);
 }
 
 #[test]
@@ -217,7 +217,7 @@ fn load_rejects_corrupt_and_wrong_version() {
 #[test]
 fn state_file_round_trips_the_record() {
     // The full container path: capture → write → read → rebuild the record.
-    let mut vcs = load("cartridge/bank-f8_ntsc.a26", CartType::F8);
+    let mut vcs = load("cartridge/bank-f8_ntsc.a26", CartType::Atari8K);
     for _ in 0..8 {
         vcs.step_frame(FRAME_LINE_BUDGET);
     }

@@ -13,16 +13,16 @@ const BANK_SIZE: usize = 0x1000;
 const DECODE_MASK: u16 = 0x1800;
 const SELECT: u16 = 0x0800;
 
-pub struct Sb {
+pub struct Superbanking {
     image: Vec<u8>,
     bank: usize,
     banks: usize,
 }
 
-impl Sb {
-    pub fn new(rom: &[u8]) -> Sb {
+impl Superbanking {
+    pub fn new(rom: &[u8]) -> Superbanking {
         let banks = rom.len() / BANK_SIZE;
-        Sb {
+        Superbanking {
             image: rom.to_vec(),
             bank: banks - 1,
             banks,

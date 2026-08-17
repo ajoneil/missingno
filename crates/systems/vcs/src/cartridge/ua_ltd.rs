@@ -20,14 +20,14 @@ const DECODE_MASK: u16 = 0x1260;
 const BANK_0_HOTSPOT: u16 = 0x0220;
 const BANK_1_HOTSPOT: u16 = 0x0240;
 
-pub struct Ua {
+pub struct UaLtd {
     image: Vec<u8>,
     bank: usize,
 }
 
-impl Ua {
-    pub fn new(rom: &[u8]) -> Ua {
-        Ua {
+impl UaLtd {
+    pub fn new(rom: &[u8]) -> UaLtd {
+        UaLtd {
             image: rom.to_vec(),
             bank: 0,
         }

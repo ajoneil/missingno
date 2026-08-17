@@ -19,14 +19,14 @@ const PAGEABLE_WINDOWS: usize = 3;
 /// The fourth window never moves.
 const FIXED_SLICE: usize = 7;
 
-pub struct E0 {
+pub struct ParkerBros {
     image: Vec<u8>,
     slices: [usize; PAGEABLE_WINDOWS],
 }
 
-impl E0 {
-    pub fn new(rom: &[u8]) -> E0 {
-        E0 {
+impl ParkerBros {
+    pub fn new(rom: &[u8]) -> ParkerBros {
+        ParkerBros {
             image: rom.to_vec(),
             slices: [0; PAGEABLE_WINDOWS],
         }

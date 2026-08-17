@@ -9,14 +9,14 @@ const BANK_SIZE: usize = 0x1000;
 const BANKS: usize = 16;
 const HOTSPOT: u16 = 0x1FF0;
 
-pub struct F0 {
+pub struct Megaboy {
     image: Vec<u8>,
     bank: usize,
 }
 
-impl F0 {
-    pub fn new(rom: &[u8]) -> F0 {
-        F0 {
+impl Megaboy {
+    pub fn new(rom: &[u8]) -> Megaboy {
+        Megaboy {
             image: rom.to_vec(),
             bank: 0,
         }

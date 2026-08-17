@@ -38,7 +38,7 @@ enum LowerWindow {
     Ram(usize),
 }
 
-pub struct ThreeE {
+pub struct TigervisionRam {
     image: Vec<u8>,
     ram: Vec<u8>,
     lower: LowerWindow,
@@ -47,9 +47,9 @@ pub struct ThreeE {
     armed: Option<u16>,
 }
 
-impl ThreeE {
-    pub fn new(rom: &[u8]) -> ThreeE {
-        ThreeE {
+impl TigervisionRam {
+    pub fn new(rom: &[u8]) -> TigervisionRam {
+        TigervisionRam {
             image: rom.to_vec(),
             ram: vec![0; RAM_BANKS * RAM_BANK_SIZE],
             lower: LowerWindow::Rom(0),

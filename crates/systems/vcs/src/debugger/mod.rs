@@ -322,7 +322,7 @@ mod tests {
 
     #[test]
     fn rom_region_only_for_banked_boards() {
-        let banked = debugger(&bank_stamped(0x2000), CartType::F8);
+        let banked = debugger(&bank_stamped(0x2000), CartType::Atari8K);
         let rom = banked
             .memory_regions()
             .into_iter()
@@ -338,7 +338,7 @@ mod tests {
 
     #[test]
     fn cart_ram_region_for_superchip() {
-        let sc = debugger(&vec![0u8; 0x2000], CartType::F8Sc);
+        let sc = debugger(&vec![0u8; 0x2000], CartType::Atari8KSuperchip);
         let ram = sc
             .memory_regions()
             .into_iter()
@@ -353,7 +353,7 @@ mod tests {
 
     #[test]
     fn synthetic_rom_peek_reads_unmapped_bank() {
-        let banked = debugger(&bank_stamped(0x2000), CartType::F8);
+        let banked = debugger(&bank_stamped(0x2000), CartType::Atari8K);
         // File order, independent of the currently paged bank.
         assert_eq!(banked.peek(CART_ROM_BASE), 0);
         assert_eq!(banked.peek(CART_ROM_BASE + 0x1000), 1);
@@ -361,7 +361,7 @@ mod tests {
 
     #[test]
     fn present_and_locate_round_trip_rom() {
-        let banked = debugger(&bank_stamped(0x2000), CartType::F8);
+        let banked = debugger(&bank_stamped(0x2000), CartType::Atari8K);
         let display = |a: u32| {
             let d = banked.present_address(a);
             (d.bank, d.window, d.breakpoint)

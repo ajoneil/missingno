@@ -17,16 +17,16 @@ const BAND: u16 = 0x0800;
 /// A selected value with this bit set locks the board.
 const LOCK: u8 = 0x80;
 
-pub struct Mdm {
+pub struct MenuDrivenMegacart {
     image: Vec<u8>,
     bank: usize,
     banks: usize,
     locked: bool,
 }
 
-impl Mdm {
-    pub fn new(rom: &[u8]) -> Mdm {
-        Mdm {
+impl MenuDrivenMegacart {
+    pub fn new(rom: &[u8]) -> MenuDrivenMegacart {
+        MenuDrivenMegacart {
             image: rom.to_vec(),
             bank: 0,
             banks: rom.len() / BANK_SIZE,

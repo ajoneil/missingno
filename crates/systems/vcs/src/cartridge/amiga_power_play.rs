@@ -19,16 +19,16 @@ const LATCH_LOW: u16 = 0x1FF8;
 const LATCH_HIGH: u16 = 0x1FF9;
 const COMMIT: u16 = 0x1FFC;
 
-pub struct Fc {
+pub struct AmigaPowerPlay {
     image: Vec<u8>,
     bank: usize,
     /// The bank a commit would make live.
     target: usize,
 }
 
-impl Fc {
-    pub fn new(rom: &[u8]) -> Fc {
-        Fc {
+impl AmigaPowerPlay {
+    pub fn new(rom: &[u8]) -> AmigaPowerPlay {
+        AmigaPowerPlay {
             image: rom.to_vec(),
             bank: 0,
             target: 0,

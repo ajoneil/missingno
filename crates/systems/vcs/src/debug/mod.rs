@@ -30,7 +30,8 @@ pub fn is_vcs_rom(path: &std::path::Path, rom: &[u8]) -> bool {
     match extension.as_deref() {
         Some("a26") => true,
         Some("bin") => {
-            matches!(rom.len(), 0x800 | 0x1000) || crate::cartridge::ar::is_container(rom.len())
+            matches!(rom.len(), 0x800 | 0x1000)
+                || crate::cartridge::supercharger::is_container(rom.len())
         }
         _ => false,
     }

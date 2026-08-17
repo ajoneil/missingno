@@ -44,7 +44,7 @@ enum Mapping {
     Ram(usize),
 }
 
-pub struct ThreeEPlus {
+pub struct TigervisionRamPlus {
     image: Vec<u8>,
     ram: Vec<u8>,
     segments: [Mapping; SEGMENTS],
@@ -52,11 +52,11 @@ pub struct ThreeEPlus {
     armed: Option<u16>,
 }
 
-impl ThreeEPlus {
-    pub fn new(rom: &[u8]) -> ThreeEPlus {
+impl TigervisionRamPlus {
+    pub fn new(rom: &[u8]) -> TigervisionRamPlus {
         let mut segments = [Mapping::Rom(0); SEGMENTS];
         segments[BOOT_SEGMENT] = Mapping::Rom(0);
-        ThreeEPlus {
+        TigervisionRamPlus {
             image: rom.to_vec(),
             ram: vec![0; RAM_BANKS * RAM_BANK_SIZE],
             segments,

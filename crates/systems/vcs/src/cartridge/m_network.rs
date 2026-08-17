@@ -37,7 +37,7 @@ enum LowerWindow {
     Ram,
 }
 
-pub struct E7 {
+pub struct MNetwork {
     image: Vec<u8>,
     lower: LowerWindow,
     page: usize,
@@ -45,9 +45,9 @@ pub struct E7 {
     pages: Box<[u8; PAGES * PAGE_SIZE]>,
 }
 
-impl E7 {
-    pub fn new(rom: &[u8]) -> E7 {
-        E7 {
+impl MNetwork {
+    pub fn new(rom: &[u8]) -> MNetwork {
+        MNetwork {
             image: rom.to_vec(),
             lower: LowerWindow::Rom(0),
             page: 0,

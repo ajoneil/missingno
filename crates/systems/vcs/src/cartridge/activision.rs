@@ -25,7 +25,7 @@ const ARM_ADDRESS: u16 = 0x01FE;
 /// The captured line: set selects bank 0, clear selects bank 1.
 const BANK_SELECT: u8 = 0x20;
 
-pub struct Fe {
+pub struct Activision {
     image: Vec<u8>,
     bank: usize,
     /// The access just seen was to $01FE.
@@ -34,9 +34,9 @@ pub struct Fe {
     capturing: bool,
 }
 
-impl Fe {
-    pub fn new(rom: &[u8]) -> Fe {
-        Fe {
+impl Activision {
+    pub fn new(rom: &[u8]) -> Activision {
+        Activision {
             image: rom.to_vec(),
             bank: 0,
             armed: false,

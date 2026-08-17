@@ -33,12 +33,20 @@ fn mirror_2k_secam() {
 
 #[test]
 fn bank_f4_ntsc() {
-    run_self_test_on("cartridge/bank-f4_ntsc.a26", TvStandard::Ntsc, CartType::F4);
+    run_self_test_on(
+        "cartridge/bank-f4_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Atari32K,
+    );
 }
 
 #[test]
 fn bank_f4_pal() {
-    run_self_test_on("cartridge/bank-f4_pal.a26", TvStandard::Pal, CartType::F4);
+    run_self_test_on(
+        "cartridge/bank-f4_pal.a26",
+        TvStandard::Pal,
+        CartType::Atari32K,
+    );
 }
 
 #[test]
@@ -46,18 +54,26 @@ fn bank_f4_secam() {
     run_self_test_on(
         "cartridge/bank-f4_secam.a26",
         TvStandard::Secam,
-        CartType::F4,
+        CartType::Atari32K,
     );
 }
 
 #[test]
 fn bank_f6_ntsc() {
-    run_self_test_on("cartridge/bank-f6_ntsc.a26", TvStandard::Ntsc, CartType::F6);
+    run_self_test_on(
+        "cartridge/bank-f6_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Atari16K,
+    );
 }
 
 #[test]
 fn bank_f6_pal() {
-    run_self_test_on("cartridge/bank-f6_pal.a26", TvStandard::Pal, CartType::F6);
+    run_self_test_on(
+        "cartridge/bank-f6_pal.a26",
+        TvStandard::Pal,
+        CartType::Atari16K,
+    );
 }
 
 #[test]
@@ -65,18 +81,26 @@ fn bank_f6_secam() {
     run_self_test_on(
         "cartridge/bank-f6_secam.a26",
         TvStandard::Secam,
-        CartType::F6,
+        CartType::Atari16K,
     );
 }
 
 #[test]
 fn bank_f8_ntsc() {
-    run_self_test_on("cartridge/bank-f8_ntsc.a26", TvStandard::Ntsc, CartType::F8);
+    run_self_test_on(
+        "cartridge/bank-f8_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Atari8K,
+    );
 }
 
 #[test]
 fn bank_f8_pal() {
-    run_self_test_on("cartridge/bank-f8_pal.a26", TvStandard::Pal, CartType::F8);
+    run_self_test_on(
+        "cartridge/bank-f8_pal.a26",
+        TvStandard::Pal,
+        CartType::Atari8K,
+    );
 }
 
 #[test]
@@ -84,18 +108,26 @@ fn bank_f8_secam() {
     run_self_test_on(
         "cartridge/bank-f8_secam.a26",
         TvStandard::Secam,
-        CartType::F8,
+        CartType::Atari8K,
     );
 }
 
 #[test]
 fn bank_fa_ntsc() {
-    run_self_test_on("cartridge/bank-fa_ntsc.a26", TvStandard::Ntsc, CartType::Fa);
+    run_self_test_on(
+        "cartridge/bank-fa_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::CbsRamPlus,
+    );
 }
 
 #[test]
 fn bank_fa_pal() {
-    run_self_test_on("cartridge/bank-fa_pal.a26", TvStandard::Pal, CartType::Fa);
+    run_self_test_on(
+        "cartridge/bank-fa_pal.a26",
+        TvStandard::Pal,
+        CartType::CbsRamPlus,
+    );
 }
 
 #[test]
@@ -103,18 +135,26 @@ fn bank_fa_secam() {
     run_self_test_on(
         "cartridge/bank-fa_secam.a26",
         TvStandard::Secam,
-        CartType::Fa,
+        CartType::CbsRamPlus,
     );
 }
 
 #[test]
 fn bank_e0_ntsc() {
-    run_self_test_on("cartridge/bank-e0_ntsc.a26", TvStandard::Ntsc, CartType::E0);
+    run_self_test_on(
+        "cartridge/bank-e0_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::ParkerBros,
+    );
 }
 
 #[test]
 fn bank_e0_pal() {
-    run_self_test_on("cartridge/bank-e0_pal.a26", TvStandard::Pal, CartType::E0);
+    run_self_test_on(
+        "cartridge/bank-e0_pal.a26",
+        TvStandard::Pal,
+        CartType::ParkerBros,
+    );
 }
 
 #[test]
@@ -122,18 +162,26 @@ fn bank_e0_secam() {
     run_self_test_on(
         "cartridge/bank-e0_secam.a26",
         TvStandard::Secam,
-        CartType::E0,
+        CartType::ParkerBros,
     );
 }
 
 #[test]
 fn bank_e7_ntsc() {
-    run_self_test_on("cartridge/bank-e7_ntsc.a26", TvStandard::Ntsc, CartType::E7);
+    run_self_test_on(
+        "cartridge/bank-e7_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::MNetwork,
+    );
 }
 
 #[test]
 fn bank_e7_pal() {
-    run_self_test_on("cartridge/bank-e7_pal.a26", TvStandard::Pal, CartType::E7);
+    run_self_test_on(
+        "cartridge/bank-e7_pal.a26",
+        TvStandard::Pal,
+        CartType::MNetwork,
+    );
 }
 
 #[test]
@@ -141,18 +189,26 @@ fn bank_e7_secam() {
     run_self_test_on(
         "cartridge/bank-e7_secam.a26",
         TvStandard::Secam,
-        CartType::E7,
+        CartType::MNetwork,
     );
 }
 
 #[test]
 fn bank_fe_ntsc() {
-    run_self_test_on("cartridge/bank-fe_ntsc.a26", TvStandard::Ntsc, CartType::Fe);
+    run_self_test_on(
+        "cartridge/bank-fe_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Activision,
+    );
 }
 
 #[test]
 fn bank_fe_pal() {
-    run_self_test_on("cartridge/bank-fe_pal.a26", TvStandard::Pal, CartType::Fe);
+    run_self_test_on(
+        "cartridge/bank-fe_pal.a26",
+        TvStandard::Pal,
+        CartType::Activision,
+    );
 }
 
 #[test]
@@ -160,7 +216,7 @@ fn bank_fe_secam() {
     run_self_test_on(
         "cartridge/bank-fe_secam.a26",
         TvStandard::Secam,
-        CartType::Fe,
+        CartType::Activision,
     );
 }
 
@@ -169,7 +225,7 @@ fn bank_3f_ntsc() {
     run_self_test_on(
         "cartridge/bank-3f_ntsc.a26",
         TvStandard::Ntsc,
-        CartType::ThreeF,
+        CartType::Tigervision,
     );
 }
 
@@ -178,7 +234,7 @@ fn bank_3f_pal() {
     run_self_test_on(
         "cartridge/bank-3f_pal.a26",
         TvStandard::Pal,
-        CartType::ThreeF,
+        CartType::Tigervision,
     );
 }
 
@@ -187,18 +243,26 @@ fn bank_3f_secam() {
     run_self_test_on(
         "cartridge/bank-3f_secam.a26",
         TvStandard::Secam,
-        CartType::ThreeF,
+        CartType::Tigervision,
     );
 }
 
 #[test]
 fn bank_ua_ntsc() {
-    run_self_test_on("cartridge/bank-ua_ntsc.a26", TvStandard::Ntsc, CartType::Ua);
+    run_self_test_on(
+        "cartridge/bank-ua_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::UaLtd,
+    );
 }
 
 #[test]
 fn bank_ua_pal() {
-    run_self_test_on("cartridge/bank-ua_pal.a26", TvStandard::Pal, CartType::Ua);
+    run_self_test_on(
+        "cartridge/bank-ua_pal.a26",
+        TvStandard::Pal,
+        CartType::UaLtd,
+    );
 }
 
 #[test]
@@ -206,18 +270,26 @@ fn bank_ua_secam() {
     run_self_test_on(
         "cartridge/bank-ua_secam.a26",
         TvStandard::Secam,
-        CartType::Ua,
+        CartType::UaLtd,
     );
 }
 
 #[test]
 fn ram_cv_ntsc() {
-    run_self_test_on("cartridge/ram-cv_ntsc.a26", TvStandard::Ntsc, CartType::Cv);
+    run_self_test_on(
+        "cartridge/ram-cv_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Commavid,
+    );
 }
 
 #[test]
 fn ram_cv_pal() {
-    run_self_test_on("cartridge/ram-cv_pal.a26", TvStandard::Pal, CartType::Cv);
+    run_self_test_on(
+        "cartridge/ram-cv_pal.a26",
+        TvStandard::Pal,
+        CartType::Commavid,
+    );
 }
 
 #[test]
@@ -225,7 +297,7 @@ fn ram_cv_secam() {
     run_self_test_on(
         "cartridge/ram-cv_secam.a26",
         TvStandard::Secam,
-        CartType::Cv,
+        CartType::Commavid,
     );
 }
 
@@ -234,7 +306,7 @@ fn bank_hotspot_window_ntsc() {
     run_self_test_on(
         "cartridge/bank-hotspot-window_ntsc.a26",
         TvStandard::Ntsc,
-        CartType::F8,
+        CartType::Atari8K,
     );
 }
 
@@ -243,7 +315,7 @@ fn bank_hotspot_window_pal() {
     run_self_test_on(
         "cartridge/bank-hotspot-window_pal.a26",
         TvStandard::Pal,
-        CartType::F8,
+        CartType::Atari8K,
     );
 }
 
@@ -252,7 +324,7 @@ fn bank_hotspot_window_secam() {
     run_self_test_on(
         "cartridge/bank-hotspot-window_secam.a26",
         TvStandard::Secam,
-        CartType::F8,
+        CartType::Atari8K,
     );
 }
 
@@ -261,7 +333,7 @@ fn ram_superchip_ntsc() {
     run_self_test_on(
         "cartridge/ram-superchip_ntsc.a26",
         TvStandard::Ntsc,
-        CartType::F8Sc,
+        CartType::Atari8KSuperchip,
     );
 }
 
@@ -270,7 +342,7 @@ fn ram_superchip_pal() {
     run_self_test_on(
         "cartridge/ram-superchip_pal.a26",
         TvStandard::Pal,
-        CartType::F8Sc,
+        CartType::Atari8KSuperchip,
     );
 }
 
@@ -279,7 +351,7 @@ fn ram_superchip_secam() {
     run_self_test_on(
         "cartridge/ram-superchip_secam.a26",
         TvStandard::Secam,
-        CartType::F8Sc,
+        CartType::Atari8KSuperchip,
     );
 }
 
@@ -573,13 +645,17 @@ fn ar_config_ntsc() {
     run_self_test_on(
         "cartridge/ar-config_ntsc.a26",
         TvStandard::Ntsc,
-        CartType::Ar,
+        CartType::Supercharger,
     );
 }
 
 #[test]
 fn ar_config_pal() {
-    run_self_test_on("cartridge/ar-config_pal.a26", TvStandard::Pal, CartType::Ar);
+    run_self_test_on(
+        "cartridge/ar-config_pal.a26",
+        TvStandard::Pal,
+        CartType::Supercharger,
+    );
 }
 
 #[test]
@@ -587,7 +663,7 @@ fn ar_config_secam() {
     run_self_test_on(
         "cartridge/ar-config_secam.a26",
         TvStandard::Secam,
-        CartType::Ar,
+        CartType::Supercharger,
     );
 }
 
@@ -596,13 +672,17 @@ fn ar_write_ntsc() {
     run_self_test_on(
         "cartridge/ar-write_ntsc.a26",
         TvStandard::Ntsc,
-        CartType::Ar,
+        CartType::Supercharger,
     );
 }
 
 #[test]
 fn ar_write_pal() {
-    run_self_test_on("cartridge/ar-write_pal.a26", TvStandard::Pal, CartType::Ar);
+    run_self_test_on(
+        "cartridge/ar-write_pal.a26",
+        TvStandard::Pal,
+        CartType::Supercharger,
+    );
 }
 
 #[test]
@@ -610,7 +690,7 @@ fn ar_write_secam() {
     run_self_test_on(
         "cartridge/ar-write_secam.a26",
         TvStandard::Secam,
-        CartType::Ar,
+        CartType::Supercharger,
     );
 }
 
@@ -619,7 +699,7 @@ fn ar_hazards_ntsc() {
     run_self_test_on(
         "cartridge/ar-hazards_ntsc.a26",
         TvStandard::Ntsc,
-        CartType::Ar,
+        CartType::Supercharger,
     );
 }
 
@@ -628,7 +708,7 @@ fn ar_hazards_pal() {
     run_self_test_on(
         "cartridge/ar-hazards_pal.a26",
         TvStandard::Pal,
-        CartType::Ar,
+        CartType::Supercharger,
     );
 }
 
@@ -637,7 +717,7 @@ fn ar_hazards_secam() {
     run_self_test_on(
         "cartridge/ar-hazards_secam.a26",
         TvStandard::Secam,
-        CartType::Ar,
+        CartType::Supercharger,
     );
 }
 
@@ -697,18 +777,26 @@ fn ar_multiload_ntsc() {
         "cartridge/ar-multiload",
         &[boot, decoy, asked_for].concat(),
         TvStandard::Ntsc,
-        CartType::Ar,
+        CartType::Supercharger,
     );
 }
 
 #[test]
 fn bank_f0_ntsc() {
-    run_self_test_on("cartridge/bank-f0_ntsc.a26", TvStandard::Ntsc, CartType::F0);
+    run_self_test_on(
+        "cartridge/bank-f0_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Megaboy,
+    );
 }
 
 #[test]
 fn bank_f0_pal() {
-    run_self_test_on("cartridge/bank-f0_pal.a26", TvStandard::Pal, CartType::F0);
+    run_self_test_on(
+        "cartridge/bank-f0_pal.a26",
+        TvStandard::Pal,
+        CartType::Megaboy,
+    );
 }
 
 #[test]
@@ -716,18 +804,26 @@ fn bank_f0_secam() {
     run_self_test_on(
         "cartridge/bank-f0_secam.a26",
         TvStandard::Secam,
-        CartType::F0,
+        CartType::Megaboy,
     );
 }
 
 #[test]
 fn bank_wd_ntsc() {
-    run_self_test_on("cartridge/bank-wd_ntsc.a26", TvStandard::Ntsc, CartType::Wd);
+    run_self_test_on(
+        "cartridge/bank-wd_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::WicksteadDesign,
+    );
 }
 
 #[test]
 fn bank_wd_pal() {
-    run_self_test_on("cartridge/bank-wd_pal.a26", TvStandard::Pal, CartType::Wd);
+    run_self_test_on(
+        "cartridge/bank-wd_pal.a26",
+        TvStandard::Pal,
+        CartType::WicksteadDesign,
+    );
 }
 
 #[test]
@@ -735,7 +831,7 @@ fn bank_wd_secam() {
     run_self_test_on(
         "cartridge/bank-wd_secam.a26",
         TvStandard::Secam,
-        CartType::Wd,
+        CartType::WicksteadDesign,
     );
 }
 
@@ -771,13 +867,17 @@ fn bank_wf8_ntsc() {
     run_self_test_on(
         "cartridge/bank-wf8_ntsc.a26",
         TvStandard::Ntsc,
-        CartType::Wf8,
+        CartType::ColecoWf8,
     );
 }
 
 #[test]
 fn bank_wf8_pal() {
-    run_self_test_on("cartridge/bank-wf8_pal.a26", TvStandard::Pal, CartType::Wf8);
+    run_self_test_on(
+        "cartridge/bank-wf8_pal.a26",
+        TvStandard::Pal,
+        CartType::ColecoWf8,
+    );
 }
 
 #[test]
@@ -785,18 +885,26 @@ fn bank_wf8_secam() {
     run_self_test_on(
         "cartridge/bank-wf8_secam.a26",
         TvStandard::Secam,
-        CartType::Wf8,
+        CartType::ColecoWf8,
     );
 }
 
 #[test]
 fn bank_fc_ntsc() {
-    run_self_test_on("cartridge/bank-fc_ntsc.a26", TvStandard::Ntsc, CartType::Fc);
+    run_self_test_on(
+        "cartridge/bank-fc_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::AmigaPowerPlay,
+    );
 }
 
 #[test]
 fn bank_fc_pal() {
-    run_self_test_on("cartridge/bank-fc_pal.a26", TvStandard::Pal, CartType::Fc);
+    run_self_test_on(
+        "cartridge/bank-fc_pal.a26",
+        TvStandard::Pal,
+        CartType::AmigaPowerPlay,
+    );
 }
 
 #[test]
@@ -804,7 +912,7 @@ fn bank_fc_secam() {
     run_self_test_on(
         "cartridge/bank-fc_secam.a26",
         TvStandard::Secam,
-        CartType::Fc,
+        CartType::AmigaPowerPlay,
     );
 }
 
@@ -813,7 +921,7 @@ fn bank_0fa0_ntsc() {
     run_self_test_on(
         "cartridge/bank-0fa0_ntsc.a26",
         TvStandard::Ntsc,
-        CartType::ZeroFa0,
+        CartType::Fotomania,
     );
 }
 
@@ -822,7 +930,7 @@ fn bank_0fa0_pal() {
     run_self_test_on(
         "cartridge/bank-0fa0_pal.a26",
         TvStandard::Pal,
-        CartType::ZeroFa0,
+        CartType::Fotomania,
     );
 }
 
@@ -831,7 +939,7 @@ fn bank_0fa0_secam() {
     run_self_test_on(
         "cartridge/bank-0fa0_secam.a26",
         TvStandard::Secam,
-        CartType::ZeroFa0,
+        CartType::Fotomania,
     );
 }
 
@@ -840,7 +948,7 @@ fn bank_03e0_ntsc() {
     run_self_test_on(
         "cartridge/bank-03e0_ntsc.a26",
         TvStandard::Ntsc,
-        CartType::Zero3E0,
+        CartType::ParkerBrosBrazil,
     );
 }
 
@@ -849,7 +957,7 @@ fn bank_03e0_pal() {
     run_self_test_on(
         "cartridge/bank-03e0_pal.a26",
         TvStandard::Pal,
-        CartType::Zero3E0,
+        CartType::ParkerBrosBrazil,
     );
 }
 
@@ -858,7 +966,7 @@ fn bank_03e0_secam() {
     run_self_test_on(
         "cartridge/bank-03e0_secam.a26",
         TvStandard::Secam,
-        CartType::Zero3E0,
+        CartType::ParkerBrosBrazil,
     );
 }
 
@@ -867,7 +975,7 @@ fn power_on_bank_ntsc() {
     run_self_test_on(
         "cartridge/power-on-bank_ntsc.a26",
         TvStandard::Ntsc,
-        CartType::F8,
+        CartType::Atari8K,
     );
 }
 
@@ -876,7 +984,7 @@ fn power_on_bank_pal() {
     run_self_test_on(
         "cartridge/power-on-bank_pal.a26",
         TvStandard::Pal,
-        CartType::F8,
+        CartType::Atari8K,
     );
 }
 
@@ -885,7 +993,7 @@ fn power_on_bank_secam() {
     run_self_test_on(
         "cartridge/power-on-bank_secam.a26",
         TvStandard::Secam,
-        CartType::F8,
+        CartType::Atari8K,
     );
 }
 
@@ -894,7 +1002,7 @@ fn bank_3e_ntsc() {
     run_self_test_on(
         "cartridge/bank-3e_ntsc.a26",
         TvStandard::Ntsc,
-        CartType::ThreeE,
+        CartType::TigervisionRam,
     );
 }
 
@@ -903,7 +1011,7 @@ fn bank_3e_pal() {
     run_self_test_on(
         "cartridge/bank-3e_pal.a26",
         TvStandard::Pal,
-        CartType::ThreeE,
+        CartType::TigervisionRam,
     );
 }
 
@@ -912,7 +1020,7 @@ fn bank_3e_secam() {
     run_self_test_on(
         "cartridge/bank-3e_secam.a26",
         TvStandard::Secam,
-        CartType::ThreeE,
+        CartType::TigervisionRam,
     );
 }
 
@@ -921,7 +1029,7 @@ fn bank_3e_wide_ntsc() {
     run_self_test_on(
         "cartridge/bank-3e-wide_ntsc.a26",
         TvStandard::Ntsc,
-        CartType::ThreeE,
+        CartType::TigervisionRam,
     );
 }
 
@@ -930,7 +1038,7 @@ fn bank_3e_wide_pal() {
     run_self_test_on(
         "cartridge/bank-3e-wide_pal.a26",
         TvStandard::Pal,
-        CartType::ThreeE,
+        CartType::TigervisionRam,
     );
 }
 
@@ -939,7 +1047,7 @@ fn bank_3e_wide_secam() {
     run_self_test_on(
         "cartridge/bank-3e-wide_secam.a26",
         TvStandard::Secam,
-        CartType::ThreeE,
+        CartType::TigervisionRam,
     );
 }
 
@@ -948,7 +1056,7 @@ fn bank_3ep_ntsc() {
     run_self_test_on(
         "cartridge/bank-3ep_ntsc.a26",
         TvStandard::Ntsc,
-        CartType::ThreeEPlus,
+        CartType::TigervisionRamPlus,
     );
 }
 
@@ -957,7 +1065,7 @@ fn bank_3ep_pal() {
     run_self_test_on(
         "cartridge/bank-3ep_pal.a26",
         TvStandard::Pal,
-        CartType::ThreeEPlus,
+        CartType::TigervisionRamPlus,
     );
 }
 
@@ -966,7 +1074,7 @@ fn bank_3ep_secam() {
     run_self_test_on(
         "cartridge/bank-3ep_secam.a26",
         TvStandard::Secam,
-        CartType::ThreeEPlus,
+        CartType::TigervisionRamPlus,
     );
 }
 
@@ -975,7 +1083,7 @@ fn bank_3ep_wide_ntsc() {
     run_self_test_on(
         "cartridge/bank-3ep-wide_ntsc.a26",
         TvStandard::Ntsc,
-        CartType::ThreeEPlus,
+        CartType::TigervisionRamPlus,
     );
 }
 
@@ -984,7 +1092,7 @@ fn bank_3ep_wide_pal() {
     run_self_test_on(
         "cartridge/bank-3ep-wide_pal.a26",
         TvStandard::Pal,
-        CartType::ThreeEPlus,
+        CartType::TigervisionRamPlus,
     );
 }
 
@@ -993,18 +1101,26 @@ fn bank_3ep_wide_secam() {
     run_self_test_on(
         "cartridge/bank-3ep-wide_secam.a26",
         TvStandard::Secam,
-        CartType::ThreeEPlus,
+        CartType::TigervisionRamPlus,
     );
 }
 
 #[test]
 fn bank_ef_ntsc() {
-    run_self_test_on("cartridge/bank-ef_ntsc.a26", TvStandard::Ntsc, CartType::Ef);
+    run_self_test_on(
+        "cartridge/bank-ef_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Atari64K,
+    );
 }
 
 #[test]
 fn bank_ef_pal() {
-    run_self_test_on("cartridge/bank-ef_pal.a26", TvStandard::Pal, CartType::Ef);
+    run_self_test_on(
+        "cartridge/bank-ef_pal.a26",
+        TvStandard::Pal,
+        CartType::Atari64K,
+    );
 }
 
 #[test]
@@ -1012,18 +1128,26 @@ fn bank_ef_secam() {
     run_self_test_on(
         "cartridge/bank-ef_secam.a26",
         TvStandard::Secam,
-        CartType::Ef,
+        CartType::Atari64K,
     );
 }
 
 #[test]
 fn bank_df_ntsc() {
-    run_self_test_on("cartridge/bank-df_ntsc.a26", TvStandard::Ntsc, CartType::Df);
+    run_self_test_on(
+        "cartridge/bank-df_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Atari128K,
+    );
 }
 
 #[test]
 fn bank_df_pal() {
-    run_self_test_on("cartridge/bank-df_pal.a26", TvStandard::Pal, CartType::Df);
+    run_self_test_on(
+        "cartridge/bank-df_pal.a26",
+        TvStandard::Pal,
+        CartType::Atari128K,
+    );
 }
 
 #[test]
@@ -1031,18 +1155,26 @@ fn bank_df_secam() {
     run_self_test_on(
         "cartridge/bank-df_secam.a26",
         TvStandard::Secam,
-        CartType::Df,
+        CartType::Atari128K,
     );
 }
 
 #[test]
 fn bank_bf_ntsc() {
-    run_self_test_on("cartridge/bank-bf_ntsc.a26", TvStandard::Ntsc, CartType::Bf);
+    run_self_test_on(
+        "cartridge/bank-bf_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Atari256K,
+    );
 }
 
 #[test]
 fn bank_bf_pal() {
-    run_self_test_on("cartridge/bank-bf_pal.a26", TvStandard::Pal, CartType::Bf);
+    run_self_test_on(
+        "cartridge/bank-bf_pal.a26",
+        TvStandard::Pal,
+        CartType::Atari256K,
+    );
 }
 
 #[test]
@@ -1050,18 +1182,26 @@ fn bank_bf_secam() {
     run_self_test_on(
         "cartridge/bank-bf_secam.a26",
         TvStandard::Secam,
-        CartType::Bf,
+        CartType::Atari256K,
     );
 }
 
 #[test]
 fn bank_sb_ntsc() {
-    run_self_test_on("cartridge/bank-sb_ntsc.a26", TvStandard::Ntsc, CartType::Sb);
+    run_self_test_on(
+        "cartridge/bank-sb_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Superbanking,
+    );
 }
 
 #[test]
 fn bank_sb_pal() {
-    run_self_test_on("cartridge/bank-sb_pal.a26", TvStandard::Pal, CartType::Sb);
+    run_self_test_on(
+        "cartridge/bank-sb_pal.a26",
+        TvStandard::Pal,
+        CartType::Superbanking,
+    );
 }
 
 #[test]
@@ -1069,7 +1209,7 @@ fn bank_sb_secam() {
     run_self_test_on(
         "cartridge/bank-sb_secam.a26",
         TvStandard::Secam,
-        CartType::Sb,
+        CartType::Superbanking,
     );
 }
 
@@ -1078,7 +1218,7 @@ fn bank_0840_ntsc() {
     run_self_test_on(
         "cartridge/bank-0840_ntsc.a26",
         TvStandard::Ntsc,
-        CartType::Zero840,
+        CartType::Econobanking,
     );
 }
 
@@ -1087,7 +1227,7 @@ fn bank_0840_pal() {
     run_self_test_on(
         "cartridge/bank-0840_pal.a26",
         TvStandard::Pal,
-        CartType::Zero840,
+        CartType::Econobanking,
     );
 }
 
@@ -1096,7 +1236,7 @@ fn bank_0840_secam() {
     run_self_test_on(
         "cartridge/bank-0840_secam.a26",
         TvStandard::Secam,
-        CartType::Zero840,
+        CartType::Econobanking,
     );
 }
 
@@ -1128,13 +1268,17 @@ fn bank_mdm_ntsc() {
     run_self_test_on(
         "cartridge/bank-mdm_ntsc.a26",
         TvStandard::Ntsc,
-        CartType::Mdm,
+        CartType::MenuDrivenMegacart,
     );
 }
 
 #[test]
 fn bank_mdm_pal() {
-    run_self_test_on("cartridge/bank-mdm_pal.a26", TvStandard::Pal, CartType::Mdm);
+    run_self_test_on(
+        "cartridge/bank-mdm_pal.a26",
+        TvStandard::Pal,
+        CartType::MenuDrivenMegacart,
+    );
 }
 
 #[test]
@@ -1142,6 +1286,6 @@ fn bank_mdm_secam() {
     run_self_test_on(
         "cartridge/bank-mdm_secam.a26",
         TvStandard::Secam,
-        CartType::Mdm,
+        CartType::MenuDrivenMegacart,
     );
 }

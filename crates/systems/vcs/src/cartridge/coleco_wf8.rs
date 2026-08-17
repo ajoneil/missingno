@@ -13,14 +13,14 @@ const BANK_SIZE: usize = 0x1000;
 const HOTSPOT: u16 = 0x1FF8;
 const BANK_SELECT: u8 = 0x04;
 
-pub struct Wf8 {
+pub struct ColecoWf8 {
     image: Vec<u8>,
     bank: usize,
 }
 
-impl Wf8 {
-    pub fn new(rom: &[u8]) -> Wf8 {
-        Wf8 {
+impl ColecoWf8 {
+    pub fn new(rom: &[u8]) -> ColecoWf8 {
+        ColecoWf8 {
             image: rom.to_vec(),
             bank: 0,
         }

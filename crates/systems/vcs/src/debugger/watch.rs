@@ -205,7 +205,7 @@ mod tests {
     #[test]
     fn cart_bank_watch_gates_on_the_selected_bank() {
         // Reached before the hotspot: $F002 runs on the wake bank (0).
-        let mut on_bank0 = debugger(&f8_bank_switch_rom(), CartType::F8);
+        let mut on_bank0 = debugger(&f8_bank_switch_rom(), CartType::Atari8K);
         let stop = run_to_stop(&mut on_bank0, &stops(&[pc_bank_watch(0xF002, 0)]));
         assert!(matches!(stop, Some(Stop::Watch(_))));
         assert_eq!(on_bank0.console().cartridge().selected_bank(), Some(0));
@@ -213,7 +213,7 @@ mod tests {
         // At the loop the board has switched to bank 1. A `{pc, cart-bank:0}`
         // watch is held first but must NOT match there; the `cart-bank:1` watch
         // does — proving the bank term gates the compound.
-        let mut on_bank1 = debugger(&f8_bank_switch_rom(), CartType::F8);
+        let mut on_bank1 = debugger(&f8_bank_switch_rom(), CartType::Atari8K);
         let held = stops(&[pc_bank_watch(0xF006, 0), pc_bank_watch(0xF006, 1)]);
         let stop = run_to_stop(&mut on_bank1, &held);
         assert_eq!(on_bank1.console().cartridge().selected_bank(), Some(1));

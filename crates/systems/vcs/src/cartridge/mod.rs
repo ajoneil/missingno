@@ -4,60 +4,60 @@
 //! board decides what answers there. A plain ROM mirrors up into it; the rest
 //! page it, shadow it with RAM, or both. One module per board.
 
-pub mod ar;
+pub mod activision;
+pub mod amiga_power_play;
 pub mod atari;
-pub mod cv;
+pub mod cbs_ram_plus;
+pub mod coleco_wf8;
+pub mod commavid;
 pub mod dpc;
-pub mod e0;
-pub mod e7;
-pub mod f0;
-pub mod fa;
-pub mod fc;
-pub mod fe;
+pub mod econobanking;
+pub mod fotomania;
 pub mod jane;
-pub mod mdm;
+pub mod m_network;
+pub mod megaboy;
+pub mod menu_driven_megacart;
+pub mod parker_bros;
+pub mod parker_bros_brazil;
 pub mod plain;
-pub mod sb;
-pub mod three_e;
-pub mod three_e_plus;
-pub mod three_f;
-pub mod ua;
-pub mod wd;
-pub mod wf8;
+pub mod superbanking;
+pub mod supercharger;
+pub mod tigervision;
+pub mod tigervision_ram;
+pub mod tigervision_ram_plus;
+pub mod ua_ltd;
+pub mod wickstead_design;
 pub mod x07;
-pub mod zero_3e0;
-pub mod zero_840;
-pub mod zero_fa0;
 
 mod cart_type;
 mod stores;
 
 pub use cart_type::{CartType, CartridgeError, DumpFit};
 
-use ar::Ar;
+use activision::Activision;
+use amiga_power_play::AmigaPowerPlay;
 use atari::Atari;
-use cv::Cv;
+use cbs_ram_plus::CbsRamPlus;
+use coleco_wf8::ColecoWf8;
+use commavid::Commavid;
 use dpc::Dpc;
-use e0::E0;
-use e7::E7;
-use f0::F0;
-use fa::Fa;
-use fc::Fc;
-use fe::Fe;
+use econobanking::Econobanking;
+use fotomania::Fotomania;
 use jane::Jane;
-use mdm::Mdm;
+use m_network::MNetwork;
+use megaboy::Megaboy;
+use menu_driven_megacart::MenuDrivenMegacart;
+use parker_bros::ParkerBros;
+use parker_bros_brazil::ParkerBrosBrazil;
 use plain::Plain;
-use sb::Sb;
-use three_e::ThreeE;
-use three_e_plus::ThreeEPlus;
-use three_f::ThreeF;
-use ua::Ua;
-use wd::Wd;
-use wf8::Wf8;
+use superbanking::Superbanking;
+use supercharger::Supercharger;
+use tigervision::Tigervision;
+use tigervision_ram::TigervisionRam;
+use tigervision_ram_plus::TigervisionRamPlus;
+use ua_ltd::UaLtd;
+use wickstead_design::WicksteadDesign;
 use x07::X07;
-use zero_3e0::Zero3E0;
-use zero_840::Zero840;
-use zero_fa0::ZeroFa0;
 
 /// The board in the slot. Bank state and cart RAM live inline, so one board
 /// exists per console and survives a power cycle exactly as the silicon does.
@@ -67,34 +67,36 @@ use zero_fa0::ZeroFa0;
 pub enum Board {
     /// Nothing in the slot: no silicon drives the window, so it floats.
     Empty,
-    Ar(Ar),
+    Supercharger(Supercharger),
     Plain(Plain),
     Atari(Atari),
-    Fa(Fa),
-    E0(E0),
-    E7(E7),
-    Cv(Cv),
+    CbsRamPlus(CbsRamPlus),
+    ParkerBros(ParkerBros),
+    MNetwork(MNetwork),
+    Commavid(Commavid),
     Dpc(Dpc),
-    F0(F0),
+    Megaboy(Megaboy),
     Jane(Jane),
-    Wf8(Wf8),
-    Wd(Wd),
-    Fc(Fc),
-    ZeroFa0(ZeroFa0),
-    Zero3E0(Zero3E0),
-    Fe(Fe),
-    Ua(Ua),
-    ThreeF(ThreeF),
-    ThreeE(ThreeE),
-    ThreeEPlus(ThreeEPlus),
-    Sb(Sb),
-    Zero840(Zero840),
+    ColecoWf8(ColecoWf8),
+    WicksteadDesign(WicksteadDesign),
+    AmigaPowerPlay(AmigaPowerPlay),
+    Fotomania(Fotomania),
+    ParkerBrosBrazil(ParkerBrosBrazil),
+    Activision(Activision),
+    UaLtd(UaLtd),
+    Tigervision(Tigervision),
+    TigervisionRam(TigervisionRam),
+    TigervisionRamPlus(TigervisionRamPlus),
+    Superbanking(Superbanking),
+    Econobanking(Econobanking),
     X07(X07),
-    Mdm(Mdm),
+    MenuDrivenMegacart(MenuDrivenMegacart),
 }
 
 pub struct Cartridge {
     board: Board,
+    /// The board the slot holds; `None` when nothing is plugged in.
+    cart_type: Option<CartType>,
 }
 
 /// A read-only view of the board and, on a DPC cart, its custom chip, for the
@@ -108,47 +110,16 @@ pub struct CartridgeInspect {
 }
 
 impl Board {
-    /// A short display name for the debugger.
-    fn name(&self) -> &'static str {
-        match self {
-            Board::Empty => "empty",
-            Board::Ar(_) => "Supercharger",
-            Board::Plain(_) => "plain",
-            Board::Atari(_) => "Atari bankswitch",
-            Board::Fa(_) => "CBS RAM Plus",
-            Board::E0(_) => "Parker Bros E0",
-            Board::E7(_) => "M-Network E7",
-            Board::Cv(_) => "CommaVid",
-            Board::Dpc(_) => "DPC (Pitfall II)",
-            Board::F0(_) => "Megaboy F0",
-            Board::Jane(_) => "Tarzan (Jane)",
-            Board::Wf8(_) => "Coleco WF8",
-            Board::Wd(_) => "Wickstead WD",
-            Board::Fc(_) => "Amiga FC",
-            Board::ZeroFa0(_) => "Fotomania",
-            Board::Zero3E0(_) => "Parker Bros 3E0",
-            Board::Fe(_) => "Activision FE",
-            Board::Ua(_) => "UA Ltd",
-            Board::ThreeF(_) => "Tigervision 3F",
-            Board::ThreeE(_) => "3E",
-            Board::ThreeEPlus(_) => "3E+",
-            Board::Sb(_) => "SuperBanking",
-            Board::Zero840(_) => "EconoBanking",
-            Board::X07(_) => "X07",
-            Board::Mdm(_) => "Megacart MDM",
-        }
-    }
-
     /// The single 4 KB bank paged into the window, on boards that keep one.
     fn selected_bank(&self) -> Option<usize> {
         match self {
             Board::Atari(board) => Some(board.selected_bank()),
-            Board::F0(board) => Some(board.selected_bank()),
+            Board::Megaboy(board) => Some(board.selected_bank()),
             Board::Jane(board) => Some(board.selected_bank()),
-            Board::Wf8(board) => Some(board.selected_bank()),
-            Board::Fc(board) => Some(board.selected_bank()),
-            Board::Sb(board) => Some(board.selected_bank()),
-            Board::Mdm(board) => Some(board.selected_bank()),
+            Board::ColecoWf8(board) => Some(board.selected_bank()),
+            Board::AmigaPowerPlay(board) => Some(board.selected_bank()),
+            Board::Superbanking(board) => Some(board.selected_bank()),
+            Board::MenuDrivenMegacart(board) => Some(board.selected_bank()),
             Board::X07(board) => Some(board.selected_bank()),
             _ => None,
         }
@@ -181,8 +152,10 @@ impl Cartridge {
         fit: DumpFit,
     ) -> Result<Cartridge, CartridgeError> {
         let Some(cart_type) = cart_type else {
+            let inferred = CartType::infer(rom)?;
             return Ok(Cartridge {
-                board: Cartridge::build(rom, CartType::infer(rom)?, clock_hz)?,
+                board: Cartridge::build(rom, inferred, clock_hz)?,
+                cart_type: Some(inferred),
             });
         };
         let rom = match fit {
@@ -197,6 +170,7 @@ impl Cartridge {
         };
         Ok(Cartridge {
             board: Cartridge::build(rom, cart_type, clock_hz)?,
+            cart_type: Some(cart_type),
         })
     }
 
@@ -218,39 +192,39 @@ impl Cartridge {
             |hotspot_base, superchip| Board::Atari(Atari::new(rom, hotspot_base, superchip));
         Ok(match cart_type {
             CartType::Plain2K | CartType::Plain4K => Board::Plain(Plain::new(rom)),
-            CartType::F8 => atari(atari::F8_HOTSPOT_BASE, false),
-            CartType::F8Sc => atari(atari::F8_HOTSPOT_BASE, true),
-            CartType::F6 => atari(atari::F6_HOTSPOT_BASE, false),
-            CartType::F6Sc => atari(atari::F6_HOTSPOT_BASE, true),
-            CartType::F4 => atari(atari::F4_HOTSPOT_BASE, false),
-            CartType::F4Sc => atari(atari::F4_HOTSPOT_BASE, true),
-            CartType::Ef => atari(atari::EF_HOTSPOT_BASE, false),
-            CartType::Df => Board::Atari(
+            CartType::Atari8K => atari(atari::F8_HOTSPOT_BASE, false),
+            CartType::Atari8KSuperchip => atari(atari::F8_HOTSPOT_BASE, true),
+            CartType::Atari16K => atari(atari::F6_HOTSPOT_BASE, false),
+            CartType::Atari16KSuperchip => atari(atari::F6_HOTSPOT_BASE, true),
+            CartType::Atari32K => atari(atari::F4_HOTSPOT_BASE, false),
+            CartType::Atari32KSuperchip => atari(atari::F4_HOTSPOT_BASE, true),
+            CartType::Atari64K => atari(atari::EF_HOTSPOT_BASE, false),
+            CartType::Atari128K => Board::Atari(
                 Atari::new(rom, atari::DF_HOTSPOT_BASE, false).waking_in(atari::DF_START_BANK),
             ),
-            CartType::Bf => atari(atari::BF_HOTSPOT_BASE, false),
-            CartType::Fa => Board::Fa(Fa::new(rom)),
-            CartType::E0 => Board::E0(E0::new(rom)),
-            CartType::E7 => Board::E7(E7::new(rom)),
-            CartType::Cv => Board::Cv(Cv::new(rom)),
-            CartType::Ua => Board::Ua(Ua::new(rom)),
-            CartType::ThreeF => Board::ThreeF(ThreeF::new(rom)),
-            CartType::Fe => Board::Fe(Fe::new(rom)),
+            CartType::Atari256K => atari(atari::BF_HOTSPOT_BASE, false),
+            CartType::CbsRamPlus => Board::CbsRamPlus(CbsRamPlus::new(rom)),
+            CartType::ParkerBros => Board::ParkerBros(ParkerBros::new(rom)),
+            CartType::MNetwork => Board::MNetwork(MNetwork::new(rom)),
+            CartType::Commavid => Board::Commavid(Commavid::new(rom)),
+            CartType::UaLtd => Board::UaLtd(UaLtd::new(rom)),
+            CartType::Tigervision => Board::Tigervision(Tigervision::new(rom)),
+            CartType::Activision => Board::Activision(Activision::new(rom)),
             CartType::Dpc => Board::Dpc(Dpc::new(rom, clock_hz)),
-            CartType::Ar => Board::Ar(Ar::new(rom)?),
-            CartType::F0 => Board::F0(F0::new(rom)),
+            CartType::Supercharger => Board::Supercharger(Supercharger::new(rom)?),
+            CartType::Megaboy => Board::Megaboy(Megaboy::new(rom)),
             CartType::Jane => Board::Jane(Jane::new(rom)),
-            CartType::Wf8 => Board::Wf8(Wf8::new(rom)),
-            CartType::Wd => Board::Wd(Wd::new(rom)),
-            CartType::Fc => Board::Fc(Fc::new(rom)),
-            CartType::ZeroFa0 => Board::ZeroFa0(ZeroFa0::new(rom)),
-            CartType::Zero3E0 => Board::Zero3E0(Zero3E0::new(rom)),
-            CartType::ThreeE => Board::ThreeE(ThreeE::new(rom)),
-            CartType::ThreeEPlus => Board::ThreeEPlus(ThreeEPlus::new(rom)),
-            CartType::Sb => Board::Sb(Sb::new(rom)),
-            CartType::Zero840 => Board::Zero840(Zero840::new(rom)),
+            CartType::ColecoWf8 => Board::ColecoWf8(ColecoWf8::new(rom)),
+            CartType::WicksteadDesign => Board::WicksteadDesign(WicksteadDesign::new(rom)),
+            CartType::AmigaPowerPlay => Board::AmigaPowerPlay(AmigaPowerPlay::new(rom)),
+            CartType::Fotomania => Board::Fotomania(Fotomania::new(rom)),
+            CartType::ParkerBrosBrazil => Board::ParkerBrosBrazil(ParkerBrosBrazil::new(rom)),
+            CartType::TigervisionRam => Board::TigervisionRam(TigervisionRam::new(rom)),
+            CartType::TigervisionRamPlus => Board::TigervisionRamPlus(TigervisionRamPlus::new(rom)),
+            CartType::Superbanking => Board::Superbanking(Superbanking::new(rom)),
+            CartType::Econobanking => Board::Econobanking(Econobanking::new(rom)),
             CartType::X07 => Board::X07(X07::new(rom)),
-            CartType::Mdm => Board::Mdm(Mdm::new(rom)),
+            CartType::MenuDrivenMegacart => Board::MenuDrivenMegacart(MenuDrivenMegacart::new(rom)),
         })
     }
 
@@ -259,6 +233,7 @@ impl Cartridge {
     pub fn unplugged() -> Cartridge {
         Cartridge {
             board: Board::Empty,
+            cart_type: None,
         }
     }
 
@@ -273,30 +248,30 @@ impl Cartridge {
             // Boards that answer only inside the cart window.
             Board::Plain(board) => window.then(|| board.read(address)),
             Board::Atari(board) => window.then(|| board.read(address, residue)),
-            Board::Fa(board) => window.then(|| board.read(address, residue)),
-            Board::E0(board) => window.then(|| board.read(address)),
-            Board::E7(board) => window.then(|| board.read(address, residue)),
-            Board::Cv(board) => window.then(|| board.read(address, residue)),
+            Board::CbsRamPlus(board) => window.then(|| board.read(address, residue)),
+            Board::ParkerBros(board) => window.then(|| board.read(address)),
+            Board::MNetwork(board) => window.then(|| board.read(address, residue)),
+            Board::Commavid(board) => window.then(|| board.read(address, residue)),
             Board::Dpc(board) => window.then(|| board.read(address, residue)),
-            Board::F0(board) => window.then(|| board.read(address)),
+            Board::Megaboy(board) => window.then(|| board.read(address)),
             Board::Jane(board) => window.then(|| board.read(address)),
-            Board::Wf8(board) => window.then(|| board.peek(address)),
-            Board::Fc(board) => window.then(|| board.read(address)),
+            Board::ColecoWf8(board) => window.then(|| board.peek(address)),
+            Board::AmigaPowerPlay(board) => window.then(|| board.read(address)),
             // Boards that watch the whole address bus — for hotspots below the
             // window, or to count its transitions — and answer only inside it.
-            Board::Ar(board) => board.read(address, residue),
-            Board::Wd(board) => board.read(address, residue),
-            Board::ZeroFa0(board) => board.read(address),
-            Board::Zero3E0(board) => board.read(address),
-            Board::Sb(board) => board.read(address),
-            Board::Zero840(board) => board.read(address),
+            Board::Supercharger(board) => board.read(address, residue),
+            Board::WicksteadDesign(board) => board.read(address, residue),
+            Board::Fotomania(board) => board.read(address),
+            Board::ParkerBrosBrazil(board) => board.read(address),
+            Board::Superbanking(board) => board.read(address),
+            Board::Econobanking(board) => board.read(address),
             Board::X07(board) => board.read(address),
-            Board::Mdm(board) => board.read(address),
-            Board::Ua(board) => board.read(address),
-            Board::ThreeF(board) => board.read(address, residue),
-            Board::ThreeE(board) => board.read(address, residue),
-            Board::ThreeEPlus(board) => board.read(address, residue),
-            Board::Fe(board) => board.read(address, residue),
+            Board::MenuDrivenMegacart(board) => board.read(address),
+            Board::UaLtd(board) => board.read(address),
+            Board::Tigervision(board) => board.read(address, residue),
+            Board::TigervisionRam(board) => board.read(address, residue),
+            Board::TigervisionRamPlus(board) => board.read(address, residue),
+            Board::Activision(board) => board.read(address, residue),
             // No plugged board drives the bus.
             Board::Empty => None,
         }
@@ -309,40 +284,40 @@ impl Cartridge {
         match &mut self.board {
             // Boards whose write port and hotspots sit inside the cart window.
             Board::Atari(board) if window => board.write_access(address, data),
-            Board::Fa(board) if window => board.write_access(address, data),
-            Board::E0(board) if window => board.write_access(address),
-            Board::E7(board) if window => board.write_access(address, data),
-            Board::Cv(board) if window => board.write_access(address, data),
+            Board::CbsRamPlus(board) if window => board.write_access(address, data),
+            Board::ParkerBros(board) if window => board.write_access(address),
+            Board::MNetwork(board) if window => board.write_access(address, data),
+            Board::Commavid(board) if window => board.write_access(address, data),
             Board::Dpc(board) if window => board.write_access(address, data),
-            Board::F0(board) if window => board.write_access(address),
+            Board::Megaboy(board) if window => board.write_access(address),
             Board::Jane(board) if window => board.write_access(address),
-            Board::Wf8(board) if window => board.write_access(address, data),
-            Board::Fc(board) if window => board.write_access(address, data),
+            Board::ColecoWf8(board) if window => board.write_access(address, data),
+            Board::AmigaPowerPlay(board) if window => board.write_access(address, data),
             // Windowed boards ignore a write cycle outside the window.
             Board::Atari(_)
-            | Board::Fa(_)
-            | Board::E0(_)
-            | Board::E7(_)
-            | Board::Cv(_)
+            | Board::CbsRamPlus(_)
+            | Board::ParkerBros(_)
+            | Board::MNetwork(_)
+            | Board::Commavid(_)
             | Board::Dpc(_)
-            | Board::F0(_)
+            | Board::Megaboy(_)
             | Board::Jane(_)
-            | Board::Wf8(_)
-            | Board::Fc(_) => {}
+            | Board::ColecoWf8(_)
+            | Board::AmigaPowerPlay(_) => {}
             // Boards that watch the whole address bus for hotspots.
-            Board::Ar(board) => board.write_access(address),
-            Board::Wd(board) => board.write_access(address, data),
-            Board::ZeroFa0(board) => board.write_access(address),
-            Board::Zero3E0(board) => board.write_access(address),
-            Board::Sb(board) => board.write_access(address),
-            Board::Zero840(board) => board.write_access(address),
+            Board::Supercharger(board) => board.write_access(address),
+            Board::WicksteadDesign(board) => board.write_access(address, data),
+            Board::Fotomania(board) => board.write_access(address),
+            Board::ParkerBrosBrazil(board) => board.write_access(address),
+            Board::Superbanking(board) => board.write_access(address),
+            Board::Econobanking(board) => board.write_access(address),
             Board::X07(board) => board.write_access(address),
-            Board::Mdm(board) => board.write_access(address),
-            Board::Ua(board) => board.write_access(address),
-            Board::ThreeF(board) => board.write_access(address, residue),
-            Board::ThreeE(board) => board.write_access(address, residue, data),
-            Board::ThreeEPlus(board) => board.write_access(address, residue, data),
-            Board::Fe(board) => board.write_access(address, residue),
+            Board::MenuDrivenMegacart(board) => board.write_access(address),
+            Board::UaLtd(board) => board.write_access(address),
+            Board::Tigervision(board) => board.write_access(address, residue),
+            Board::TigervisionRam(board) => board.write_access(address, residue, data),
+            Board::TigervisionRamPlus(board) => board.write_access(address, residue, data),
+            Board::Activision(board) => board.write_access(address, residue),
             // A plain board and an empty slot latch nothing on a write.
             Board::Empty | Board::Plain(_) => {}
         }
@@ -351,7 +326,7 @@ impl Cartridge {
     /// A read-only view of the board for the debugger's Cartridge section.
     pub fn inspect(&self) -> CartridgeInspect {
         CartridgeInspect {
-            board: self.board.name(),
+            board: self.cart_type.map_or("empty", CartType::display_name),
             bank: self.board.selected_bank(),
             dpc: match &self.board {
                 Board::Dpc(board) => Some(board.inspect()),
@@ -366,28 +341,28 @@ impl Cartridge {
             Board::Empty => 0,
             Board::Plain(board) => board.read(address),
             Board::Atari(board) => board.peek(address),
-            Board::Fa(board) => board.peek(address),
-            Board::E0(board) => board.peek(address),
-            Board::E7(board) => board.peek(address),
-            Board::Cv(board) => board.peek(address),
+            Board::CbsRamPlus(board) => board.peek(address),
+            Board::ParkerBros(board) => board.peek(address),
+            Board::MNetwork(board) => board.peek(address),
+            Board::Commavid(board) => board.peek(address),
             Board::Dpc(board) => board.peek(address),
-            Board::F0(board) => board.peek(address),
+            Board::Megaboy(board) => board.peek(address),
             Board::Jane(board) => board.peek(address),
-            Board::Wf8(board) => board.peek(address),
-            Board::Wd(board) => board.peek(address),
-            Board::Fc(board) => board.peek(address),
-            Board::ZeroFa0(board) => board.peek(address),
-            Board::Zero3E0(board) => board.peek(address),
-            Board::Sb(board) => board.peek(address),
-            Board::Zero840(board) => board.peek(address),
+            Board::ColecoWf8(board) => board.peek(address),
+            Board::WicksteadDesign(board) => board.peek(address),
+            Board::AmigaPowerPlay(board) => board.peek(address),
+            Board::Fotomania(board) => board.peek(address),
+            Board::ParkerBrosBrazil(board) => board.peek(address),
+            Board::Superbanking(board) => board.peek(address),
+            Board::Econobanking(board) => board.peek(address),
             Board::X07(board) => board.peek(address),
-            Board::Mdm(board) => board.peek(address),
-            Board::Ar(board) => board.peek(address).unwrap_or(0),
-            Board::Ua(board) => board.peek(address),
-            Board::ThreeF(board) => board.peek(address),
-            Board::ThreeE(board) => board.peek(address),
-            Board::ThreeEPlus(board) => board.peek(address),
-            Board::Fe(board) => board.peek(address),
+            Board::MenuDrivenMegacart(board) => board.peek(address),
+            Board::Supercharger(board) => board.peek(address).unwrap_or(0),
+            Board::UaLtd(board) => board.peek(address),
+            Board::Tigervision(board) => board.peek(address),
+            Board::TigervisionRam(board) => board.peek(address),
+            Board::TigervisionRamPlus(board) => board.peek(address),
+            Board::Activision(board) => board.peek(address),
         }
     }
 }
@@ -436,13 +411,13 @@ mod tests {
         assert_eq!(
             Cartridge::load(
                 &vec![0u8; 0x800],
-                Some(CartType::F8),
+                Some(CartType::Atari8K),
                 CLOCK,
                 DumpFit::Overdump
             )
             .err(),
             Some(CartridgeError::WrongSizeForBoard {
-                cart_type: CartType::F8,
+                cart_type: CartType::Atari8K,
                 size: 0x800,
             })
         );
@@ -482,7 +457,7 @@ mod tests {
         let banks = 240;
         let rom: Vec<u8> = (0..banks).flat_map(|bank| [bank as u8; 0x800]).collect();
         let mut cart =
-            Cartridge::load(&rom, Some(CartType::ThreeE), CLOCK, DumpFit::Exact).unwrap();
+            Cartridge::load(&rom, Some(CartType::TigervisionRam), CLOCK, DumpFit::Exact).unwrap();
         // The upper half is the last bank, whatever the lower half shows.
         assert_eq!(cart.read(0xF800, 0), Some(banks as u8 - 1));
         for bank in [0, 17, banks - 1] {
@@ -498,7 +473,7 @@ mod tests {
     fn a_3e_image_short_of_a_whole_bank_is_refused() {
         let error = Cartridge::load(
             &vec![0u8; 0x900],
-            Some(CartType::ThreeE),
+            Some(CartType::TigervisionRam),
             CLOCK,
             DumpFit::Exact,
         )
@@ -509,20 +484,25 @@ mod tests {
 
     #[test]
     fn whole_supercharger_load_units_name_the_board() {
-        assert_eq!(CartType::infer(&[0u8; ar::IMAGE_SIZE]), Ok(CartType::Ar));
         assert_eq!(
-            CartType::infer(&vec![0u8; 4 * ar::IMAGE_SIZE]),
-            Ok(CartType::Ar)
+            CartType::infer(&[0u8; supercharger::IMAGE_SIZE]),
+            Ok(CartType::Supercharger)
+        );
+        assert_eq!(
+            CartType::infer(&vec![0u8; 4 * supercharger::IMAGE_SIZE]),
+            Ok(CartType::Supercharger)
         );
         // Past the cap, and short of a whole unit, the length names nothing.
-        let beyond = (ar::MAX_LOADS + 1) * ar::IMAGE_SIZE;
+        let beyond = (supercharger::MAX_LOADS + 1) * supercharger::IMAGE_SIZE;
         assert_eq!(
             CartType::infer(&vec![0u8; beyond]),
             Err(CartridgeError::UnsupportedSize(beyond))
         );
         assert_eq!(
-            CartType::infer(&[0u8; ar::IMAGE_SIZE - 1]),
-            Err(CartridgeError::UnsupportedSize(ar::IMAGE_SIZE - 1))
+            CartType::infer(&[0u8; supercharger::IMAGE_SIZE - 1]),
+            Err(CartridgeError::UnsupportedSize(
+                supercharger::IMAGE_SIZE - 1
+            ))
         );
     }
 }

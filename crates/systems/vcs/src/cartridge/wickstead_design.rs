@@ -34,7 +34,7 @@ const ARRANGEMENTS: [[usize; SEGMENTS]; 8] = [
     [6, 0, 5, 1],
 ];
 
-pub struct Wd {
+pub struct WicksteadDesign {
     image: Vec<u8>,
     arrangement: usize,
     /// An arrangement selected but not yet settled, and the cycles left.
@@ -42,9 +42,9 @@ pub struct Wd {
     ram: [u8; RAM_SIZE],
 }
 
-impl Wd {
-    pub fn new(rom: &[u8]) -> Wd {
-        Wd {
+impl WicksteadDesign {
+    pub fn new(rom: &[u8]) -> WicksteadDesign {
+        WicksteadDesign {
             image: rom.to_vec(),
             arrangement: 0,
             pending: None,
@@ -82,7 +82,7 @@ impl Wd {
 
     pub fn read(&mut self, address: u16, residue: u8) -> Option<u8> {
         self.settle();
-        if let Some(arrangement) = Wd::hotspot(address) {
+        if let Some(arrangement) = WicksteadDesign::hotspot(address) {
             self.pending = Some((arrangement, SWITCH_DELAY));
         }
         if !super::selects_window(address) {

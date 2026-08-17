@@ -12,14 +12,14 @@ const RAM_SIZE: usize = 0x400;
 const WRITE_PORT: usize = 0x400;
 const ROM_BASE: usize = 0x800;
 
-pub struct Cv {
+pub struct Commavid {
     image: Vec<u8>,
     ram: Box<[u8; RAM_SIZE]>,
 }
 
-impl Cv {
-    pub fn new(rom: &[u8]) -> Cv {
-        Cv {
+impl Commavid {
+    pub fn new(rom: &[u8]) -> Commavid {
+        Commavid {
             image: rom.to_vec(),
             ram: Box::new([0; RAM_SIZE]),
         }
