@@ -58,7 +58,8 @@ pub fn serve(session: impl Into<SharedSession>, port: u16) -> std::io::Result<()
 /// Answer the routes the session's command queue owns — free-running control,
 /// input, and recording capture — handing back any request they do not claim.
 fn session_route(mut request: Request, client: &SessionHandle) -> Option<Request> {
-    match (request.method().clone(), request.url().to_string().as_str()) {
+    let path = split_url(request.url()).0.to_string();
+    match (request.method().clone(), path.as_str()) {
         (Method::Get, "/run") => respond_json(request, run_state_json(client)),
         (Method::Post, "/run") => {
             client.run();
@@ -156,15 +157,19 @@ fn read_json_body(request: &mut Request) -> Result<Value, String> {
     serde_json::from_str(&body).map_err(|e| format!("invalid JSON: {e}"))
 }
 
+/// Split a request target into its path and query string. Both routing passes
+/// match on the path, so a query string never changes which route claims a
+/// request.
+fn split_url(url: &str) -> (&str, &str) {
+    url.split_once('?').unwrap_or((url, ""))
+}
+
 fn handle(request: Request, session: &mut Session) {
     let method = request.method().clone();
     let url = request.url().to_string();
-    let (path, query) = match url.split_once('?') {
-        Some((path, query)) => (path.to_string(), query.to_string()),
-        None => (url, String::new()),
-    };
+    let (path, query) = split_url(&url);
 
-    match (&method, path.as_str()) {
+    match (&method, path) {
         (Method::Get, "/status") => respond_json(request, status_json(session)),
         (Method::Get, "/registers") => respond_json(request, registers_json(session)),
         (Method::Get, "/sections") => respond_json(request, sections_json(session)),
@@ -173,7 +178,7 @@ fn handle(request: Request, session: &mut Session) {
         (Method::Get, "/watchables") => respond_json(request, watchables_json(session)),
         (Method::Get, "/watches") => respond_json(request, watches_json(session)),
         (Method::Get, "/symbols") => respond_json(request, symbols_json(session)),
-        (Method::Get, "/disassembly") => disassembly(request, session, &query),
+        (Method::Get, "/disassembly") => disassembly(request, session, query),
         (Method::Get, "/frame/bitmap") => frame_bitmap(request, session),
         (Method::Get, "/frame/raw") => respond_json(request, frame_raw_json(session)),
         (Method::Get, "/waveforms") => respond_json(request, waveforms_json(session)),
@@ -182,7 +187,7 @@ fn handle(request: Request, session: &mut Session) {
         (Method::Post, "/step") => step(request, session, Session::step),
         (Method::Post, "/step-over") => step(request, session, Session::step_over),
         (Method::Post, "/step-frame") => step(request, session, Session::step_frame),
-        (Method::Post, "/step-tick") => step_tick(request, session, &query),
+        (Method::Post, "/step-tick") => step_tick(request, session, query),
         (Method::Post, "/recording/replay") => recording_replay(request, session),
         (Method::Post, "/reset") => {
             session.reset();
@@ -194,8 +199,8 @@ fn handle(request: Request, session: &mut Session) {
         (Method::Put, "/watches") => watch_edit(request, session, WatchEdit::Add),
         (Method::Delete, "/watches") => watch_edit(request, session, WatchEdit::Remove),
 
-        _ if path.starts_with("/memory/") => memory(request, session, &method, &path),
-        _ if path.starts_with("/breakpoints/") => breakpoint_edit(request, session, &method, &path),
+        _ if path.starts_with("/memory/") => memory(request, session, &method, path),
+        _ if path.starts_with("/breakpoints/") => breakpoint_edit(request, session, &method, path),
 
         _ => respond_error(request, 404, "not found"),
     }
@@ -981,6 +986,32 @@ fn respond_error(request: Request, code: u16, message: &str) {
 
 fn header(text: &str) -> Header {
     text.parse::<Header>().expect("valid header literal")
+}
+
+#[cfg(test)]
+mod routing_tests {
+    use super::*;
+
+    #[test]
+    fn a_query_string_never_changes_the_routed_path() {
+        assert_eq!(split_url("/run"), ("/run", ""));
+        assert_eq!(split_url("/run?x=1"), ("/run", "x=1"));
+        assert_eq!(split_url("/run?"), ("/run", ""));
+        assert_eq!(
+            split_url("/disassembly?at=100&count=4"),
+            ("/disassembly", "at=100&count=4")
+        );
+        assert_eq!(split_url("/memory/c000/16"), ("/memory/c000/16", ""));
+    }
+
+    #[test]
+    fn both_routing_passes_split_the_same_way() {
+        // `session_route` and `handle` share one splitter, so the route a
+        // request lands on is the same with or without a query string.
+        for url in ["/run", "/pause", "/state/save", "/status", "/step"] {
+            assert_eq!(split_url(url).0, split_url(&format!("{url}?x=1")).0);
+        }
+    }
 }
 
 /// The JSON these endpoints emit is exercised over a real Game Boy session
