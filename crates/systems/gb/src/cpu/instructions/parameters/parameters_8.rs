@@ -93,72 +93,80 @@ pub enum Source8 {
     Memory(Address),
 }
 
+/// Every place a value can be written is also a place it can be read from;
+/// only [`Source8::Constant`] has no target counterpart.
+impl From<Target8> for Source8 {
+    fn from(target: Target8) -> Self {
+        match target {
+            Target8::Register(register) => Self::Register(register),
+            Target8::Memory(address) => Self::Memory(address),
+        }
+    }
+}
+
 impl Source8 {
     pub fn constant(ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
         Some(Self::Constant(ops.next()?))
     }
 
     pub fn a() -> Self {
-        Self::Register(Register8::A)
+        Target8::a().into()
     }
 
     pub fn b() -> Self {
-        Self::Register(Register8::B)
+        Target8::b().into()
     }
 
     pub fn c() -> Self {
-        Self::Register(Register8::C)
+        Target8::c().into()
     }
 
     pub fn d() -> Self {
-        Self::Register(Register8::D)
+        Target8::d().into()
     }
 
     pub fn e() -> Self {
-        Self::Register(Register8::E)
+        Target8::e().into()
     }
 
     pub fn h() -> Self {
-        Self::Register(Register8::H)
+        Target8::h().into()
     }
 
     pub fn l() -> Self {
-        Self::Register(Register8::L)
+        Target8::l().into()
     }
 
     pub fn address(ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
-        Some(Self::Memory(Address::Fixed(u16::from_le_bytes([
-            ops.next()?,
-            ops.next()?,
-        ]))))
+        Some(Target8::address(ops)?.into())
     }
 
     pub fn deref_bc() -> Self {
-        Self::Memory(Address::deref_bc())
+        Target8::deref_bc().into()
     }
 
     pub fn deref_de() -> Self {
-        Self::Memory(Address::deref_de())
+        Target8::deref_de().into()
     }
 
     pub fn deref_hl() -> Self {
-        Self::Memory(Address::deref_hl())
+        Target8::deref_hl().into()
     }
 
     pub fn deref_hl_inc() -> Self {
-        Self::Memory(Address::deref_hl_inc())
+        Target8::deref_hl_inc().into()
     }
 
     pub fn deref_hl_dec() -> Self {
-        Self::Memory(Address::deref_hl_dec())
+        Target8::deref_hl_dec().into()
     }
 
     pub fn high(ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
-        Some(Self::Memory(Address::high(ops)?))
+        Some(Target8::high(ops)?.into())
     }
 
     pub fn high_c() -> Self {
-        Self::Memory(Address::HighPlusC)
+        Target8::high_c().into()
     }
 }
 
