@@ -307,15 +307,7 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
 /// The same launch panel the window shows, over the game's stored overrides.
 fn game_settings<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
     let body: Element<'_, app::Message> = match &data.launch_options {
-        Some(options) => column![
-            app_text::detail(
-                "What this game boots with. Automatic leaves the choice to the system."
-            )
-            .color(MUTED),
-            launch::panel(options),
-        ]
-        .spacing(l())
-        .into(),
+        Some(options) => launch::panel(options),
         None => app_text::detail("No system is registered for this game.")
             .color(MUTED)
             .into(),
@@ -327,16 +319,10 @@ fn game_settings<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
 }
 
 fn activity_loading() -> Element<'static, app::Message> {
-    container(
-        column![
-            app_text::label("Activity"),
-            app_text::detail("Loading…").color(MUTED),
-        ]
-        .spacing(m()),
-    )
-    .padding(l())
-    .width(Fill)
-    .into()
+    container(app_text::detail("Loading…").color(MUTED))
+        .padding(l())
+        .width(Fill)
+        .into()
 }
 
 /// Right panel: chronological activity log.
@@ -347,9 +333,7 @@ fn activity_log<'a>(
     live_prints: &'a [image::Handle],
     hovered_log_entry: Option<usize>,
 ) -> Element<'a, app::Message> {
-    let mut log = column![app_text::label("Activity")]
-        .spacing(m())
-        .width(Fill);
+    let mut log = column![].spacing(m()).width(Fill);
 
     // Show live session at the top if one is in progress
     if let Some(live) = live_session {
