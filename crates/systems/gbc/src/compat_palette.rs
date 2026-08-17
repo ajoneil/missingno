@@ -3,15 +3,15 @@ use crate::screen::Color555;
 /// The CGB boot ROM's default DMG-compatibility palette for a cartridge whose
 /// title does not match the boot ROM table (palette combination 0): BG palette
 /// 29, and OBJ palettes 0 and 1 both = palette 4. Little-endian RGB555.
-pub const DMG_COMPAT_BG: [u16; 4] = [0x7FFF, 0x1BEF, 0x6180, 0x0000];
-pub const DMG_COMPAT_OBJ: [u16; 4] = [0x7FFF, 0x421F, 0x1CF2, 0x0000];
+pub(crate) const DMG_COMPAT_BG: [u16; 4] = [0x7FFF, 0x1BEF, 0x6180, 0x0000];
+pub(crate) const DMG_COMPAT_OBJ: [u16; 4] = [0x7FFF, 0x421F, 0x1CF2, 0x0000];
 
 /// Reverse-map a DMG-compatibility framebuffer colour to its DMG shade index
 /// (0-3), for shade-pattern screenshot comparison. The compat palette is a
 /// bijection over the four shades (white→0, BG green / OBJ pink →1, BG blue /
 /// OBJ red →2, black→3), so the shade pattern is recoverable independent of the
 /// tint. `None` for any off-palette colour.
-pub fn dmg_compat_shade(color: Color555) -> Option<u8> {
+pub(crate) fn dmg_compat_shade(color: Color555) -> Option<u8> {
     DMG_COMPAT_BG
         .iter()
         .chain(DMG_COMPAT_OBJ.iter())
@@ -31,8 +31,7 @@ pub(crate) fn dmg_compat_palettes(
 ) -> ([u16; 4], [u16; 4], [u16; 4]) {
     use crate::dmg_palette_data as data;
 
-    let is_nintendo =
-        old_licensee == 0x01 || (old_licensee == 0x33 && new_licensee == [b'0', b'1']);
+    let is_nintendo = old_licensee == 0x01 || (old_licensee == 0x33 && new_licensee == *b"01");
 
     let mut combo = 0u8;
     if is_nintendo {

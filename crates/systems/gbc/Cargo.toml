@@ -6,7 +6,6 @@ edition = "2024"
 license = "MIT"
 
 [features]
-test-support = ["missingno-gb/test-support"]
 morepork = ["missingno-gb/morepork"]
 
 [dependencies]
@@ -15,5 +14,5 @@ missingno-core = { path = "../../missingno/core" }
 rgb = { workspace = true }
 
 [dev-dependencies]
-missingno-gbc = { path = ".", features = ["test-support"] }
+missingno-gb = { path = "../gb", features = ["test-support"] }
 missingno-test-support = { path = "../../missingno/test-support" }

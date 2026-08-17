@@ -17,8 +17,7 @@ impl Cgb {
 
     /// Index into `wram` for a work-RAM or echo-RAM address, else `None`.
     fn wram_index(&self, address: u16) -> Option<usize> {
-        let bank = if self.svbk == 0 { 1 } else { self.svbk } as usize;
-        let banked = |within: u16| bank * 0x1000 + within as usize;
+        let banked = |within: u16| self.wram_bank() as usize * 0x1000 + within as usize;
         match address {
             0xC000..=0xCFFF => Some((address - 0xC000) as usize),
             0xD000..=0xDFFF => Some(banked(address - 0xD000)),

@@ -359,36 +359,23 @@ impl CgbPpu {
         )
     }
 
+    /// DMG-compat locks only the CRAM data port; the index registers stay
+    /// live (boot leftovers read back).
+    fn data_port_locked_by_compat(&self, register: ColorRegister) -> bool {
+        self.dmg_compat
+            && matches!(
+                register,
+                ColorRegister::BackgroundData | ColorRegister::ObjectData
+            )
+    }
+
     /// CPU read of a CGB colour-palette register; the palette block's own
     /// clock-domain sample supplies the data-port mode-3 lock.
     pub(crate) fn read_color_register(&self, register: ColorRegister) -> u8 {
-        // DMG-compat locks only the CRAM data port; the index registers
-        // stay live (boot leftovers read back).
-        if self.dmg_compat
-            && matches!(
-                register,
-                ColorRegister::BackgroundData | ColorRegister::ObjectData
-            )
-        {
+        if self.data_port_locked_by_compat(register) {
             return 0xFF;
         }
-        self.read_cram_register(register, self.palette_drawing_synced)
-    }
-
-    /// CPU write of a CGB colour-palette register.
-    pub(crate) fn write_color_register(&mut self, register: ColorRegister, value: u8) {
-        if self.dmg_compat
-            && matches!(
-                register,
-                ColorRegister::BackgroundData | ColorRegister::ObjectData
-            )
-        {
-            return;
-        }
-        self.write_cram_register(register, value, self.palette_drawing_synced);
-    }
-
-    fn read_cram_register(&self, register: ColorRegister, rendering: bool) -> u8 {
+        let rendering = self.palette_drawing_synced;
         match register {
             ColorRegister::BackgroundIndex => self.bg_cram.read_index(),
             ColorRegister::ObjectIndex => self.obj_cram.read_index(),
@@ -399,7 +386,12 @@ impl CgbPpu {
         }
     }
 
-    fn write_cram_register(&mut self, register: ColorRegister, value: u8, rendering: bool) {
+    /// CPU write of a CGB colour-palette register.
+    pub(crate) fn write_color_register(&mut self, register: ColorRegister, value: u8) {
+        if self.data_port_locked_by_compat(register) {
+            return;
+        }
+        let rendering = self.palette_drawing_synced;
         match register {
             ColorRegister::BackgroundIndex => self.bg_cram.write_index(value),
             ColorRegister::ObjectIndex => self.obj_cram.write_index(value),

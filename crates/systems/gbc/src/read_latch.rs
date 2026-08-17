@@ -50,16 +50,15 @@ impl Cgb {
                     value
                 }
             }
-            // Single speed: OR-of-accessibility over the drive-enable grant
-            // sample and the latch-edge lock — the bus keeps the byte OAM
-            // drove while addressed and unlocked. (The earlier address-phase
+            // Single speed: an unlocked drive-enable grant sample keeps the byte
+            // OAM drove while addressed, whatever the latch edge then saw — the
+            // accessibility of the two is OR'd (a latch-edge lock alone falls
+            // through to the generic float below). The earlier address-phase
             // grant is double-speed-only; a single-speed onset between the
-            // address phase and tobe↑ still floats the read.)
-            0xFE00..=0xFEFF if !self.double_speed => match (self.read_drive_oam_lock, latch_lock) {
-                (Some(false), _) => value,
-                (_, Some(true)) => 0xFF,
-                _ => value,
-            },
+            // address phase and tobe↑ still floats the read.
+            0xFE00..=0xFEFF if !self.double_speed && self.read_drive_oam_lock == Some(false) => {
+                value
+            }
             // Double-speed VRAM/OAM lock: data_phase_n↑ latches before this dot's
             // ALET edge — the same CGB CPU↔ALET half-dot phase as the STAT mode bits.
             // The read floats if it was locked at the pre-ALET view OR at the latch

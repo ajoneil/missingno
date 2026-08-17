@@ -149,7 +149,7 @@ pub(crate) struct TransferCursor {
 impl TransferCursor {
     /// VRAM address the next byte lands on; the dest register is 16-bit but VRAM
     /// decodes only the low 13 bits.
-    fn write_address(&self) -> u16 {
+    pub(crate) fn write_address(&self) -> u16 {
         0x8000 | (self.dest & 0x1FFF)
     }
 }
@@ -294,9 +294,14 @@ impl VramDma {
             || (self.cursor.mode == TransferMode::General && self.cursor.remaining > 0)
     }
 
-    /// VRAM address the next byte lands on.
-    pub(crate) fn write_address(&self) -> u16 {
-        self.cursor.write_address()
+    /// Refill this M-cycle's byte budget while the transfer is moving bytes:
+    /// 2/M-cycle single speed, 1 in double speed.
+    pub(crate) fn refill_quota(&mut self, double_speed: bool) {
+        self.cursor.quota = if self.moving() {
+            if double_speed { 1 } else { 2 }
+        } else {
+            0
+        };
     }
 
     /// Whether the VRAM DMA will move at least one byte this M-cycle (block
@@ -326,7 +331,7 @@ impl VramDma {
         if self.cursor.quota == 0 || !self.moving() {
             return None;
         }
-        let pair = (self.cursor.source, self.write_address());
+        let pair = (self.cursor.source, self.cursor.write_address());
         // Pointers advance per byte and persist for any follow-on transfer. A
         // switch-cancel escape byte does not count against the latched length.
         self.cursor.source = self.cursor.source.wrapping_add(1);
@@ -370,14 +375,6 @@ impl VramDma {
         } else {
             None
         }
-    }
-
-    pub(crate) fn park_waits_for_fetch(&self) -> bool {
-        self.arb.park_waits_for_fetch
-    }
-
-    pub(crate) fn instruction_retired(&mut self) {
-        self.arb.park_waits_for_fetch = false;
     }
 
     pub(crate) fn request_standing(&self) -> bool {
@@ -508,11 +505,7 @@ impl Cgb {
                 self.vram_dma.arb.grant_counted = true;
                 self.vram_dma.arb.pend_granted = true;
             }
-            self.vram_dma.cursor.quota = if self.vram_dma.moving() {
-                if self.double_speed { 1 } else { 2 }
-            } else {
-                0
-            };
+            self.vram_dma.refill_quota(self.double_speed);
             return;
         }
 
@@ -625,13 +618,7 @@ impl Cgb {
             self.vram_dma.block.arm_ready_probation = true;
         }
 
-        // Refill this M-cycle's byte budget while the transfer is moving bytes:
-        // 2/M-cycle single speed, 1 in double speed.
-        self.vram_dma.cursor.quota = if self.vram_dma.moving() {
-            if self.double_speed { 1 } else { 2 }
-        } else {
-            0
-        };
+        self.vram_dma.refill_quota(self.double_speed);
         if self.vram_dma.seizes_bus() {
             self.vram_dma.block.seize_falls = self.vram_dma.block.seize_falls.saturating_add(1);
         } else {
@@ -682,7 +669,8 @@ impl Cgb {
             && self.vram_dma.block.seize_falls >= 2
             && self.vram_dma.block.remaining > 0
             && self.vram_dma.cursor.remaining > 0;
-        (writing && address == self.vram_dma.write_address()).then_some(self.vram_dma.cursor.source)
+        (writing && address == self.vram_dma.cursor.write_address())
+            .then_some(self.vram_dma.cursor.source)
     }
 
     pub(crate) fn vram_dma_arbitrate_oam_bus(&mut self, chassis: &mut Chassis<Self>) -> bool {

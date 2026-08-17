@@ -3072,7 +3072,6 @@ version = "26.9.0"
 dependencies = [
  "missingno-core 26.9.0",
  "missingno-gb",
- "missingno-gbc",
  "missingno-test-support",
  "rgb",
 ]

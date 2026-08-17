@@ -15,12 +15,11 @@ use missingno_gb::cartridge::Cartridge;
 use missingno_gb::memory::BootRom;
 use missingno_gbc::GameBoyColor;
 
-#[allow(unused_imports)]
 pub use missingno_gb::test_support::{
-    System, check_mooneye_pass, decode_screen_hex, format_registers, format_wram_dump,
-    is_infinite_loop, rom_path, run_boot_rom, run_for_tcycles, run_frames, run_until_breakpoint,
-    run_until_infinite_loop, run_until_infinite_loop_no_lcd, run_until_serial_match,
-    run_until_undefined_opcode, screen_matches_hex, screen_to_greyscale,
+    System, check_mooneye_pass, decode_screen_hex, format_registers, format_wram_dump, rom_path,
+    run_boot_rom, run_for_tcycles, run_frames, run_until_breakpoint, run_until_infinite_loop,
+    run_until_infinite_loop_no_lcd, run_until_serial_match, run_until_undefined_opcode,
+    screen_matches_hex,
 };
 pub use missingno_test_support::compare::{assert_pixels_match, debug_value, hex_byte};
 use missingno_test_support::reference::ReferencePng;

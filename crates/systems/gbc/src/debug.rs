@@ -28,15 +28,23 @@ use missingno_gb::ppu::types::tiles::TileMapId;
 use missingno_gb::system::ConsoleUi;
 
 use crate::screen::Color555;
-use crate::{BgAttribute, Cgb, GameBoyColor, VramDmaStatus};
+use crate::{BgAttribute, Cgb, CgbPpu, GameBoyColor, VramDmaStatus};
 
 /// The 8 corrected display palettes of one CGB palette RAM.
-pub fn cram_palettes(color: impl Fn(u8, u8) -> Color555) -> [Palette; 8] {
+fn cram_palettes(color: impl Fn(u8, u8) -> Color555) -> [Palette; 8] {
     std::array::from_fn(|palette| {
         let colors = [0, 1, 2, 3].map(|index| color(palette as u8, index).to_corrected_rgb8());
         // A CRAM palette states no unlit tone of its own; entry 0 stands in.
         Palette::new(colors, colors[0])
     })
+}
+
+/// Both palette RAMs as corrected display palettes: `(background, objects)`.
+fn cram_palette_banks(ppu: &CgbPpu) -> ([Palette; 8], [Palette; 8]) {
+    (
+        cram_palettes(|palette, index| ppu.bg_color(palette, index)),
+        cram_palettes(|palette, index| ppu.obj_color(palette, index)),
+    )
 }
 
 /// One CRAM bank's eight palettes as named resolved-colour palettes.
@@ -56,7 +64,7 @@ fn cram_named(prefix: &str, palettes: &[Palette; 8]) -> Vec<NamedPalette> {
 /// BG-over-OBJ priority), and the OAM object table with per-entry CGB
 /// attributes. Composes its own two-bank view over the shared Game Boy decode
 /// helpers rather than layering onto the DMG builder.
-pub fn cgb_graphics_view(
+fn cgb_graphics_view(
     ppu: &dyn PpuSource,
     vram: &dyn VramView,
     background: &[Palette; 8],
@@ -524,15 +532,10 @@ impl ConsoleUi for Cgb {
     }
 
     fn raw_frame(console: &Console<Self>) -> RawFrame {
-        use crate::screen::{NUM_SCANLINES, PIXELS_PER_LINE};
-        let screen = console.screen();
-        let pixels = (0..NUM_SCANLINES)
-            .flat_map(|y| (0..PIXELS_PER_LINE).map(move |x| screen.pixel(x, y).0))
-            .collect();
         RawFrame::Rgb555 {
             width: NATIVE_SIZE.0,
             height: NATIVE_SIZE.1,
-            pixels,
+            pixels: console.screen().pixels().map(|c| c.0).collect(),
         }
     }
 
@@ -542,9 +545,7 @@ impl ConsoleUi for Cgb {
         symbols: Arc<SymbolTable>,
         cdl: CdlWindow,
     ) -> CgbSnapshot {
-        let ppu = console.ppu().model();
-        let background = cram_palettes(|palette, index| ppu.bg_color(palette, index));
-        let objects = cram_palettes(|palette, index| ppu.obj_color(palette, index));
+        let (background, objects) = cram_palette_banks(console.ppu().model());
         let colors = ColorSnapshot::Cgb {
             background,
             objects,
@@ -567,9 +568,7 @@ impl ConsoleUi for Cgb {
     }
 
     fn graphics_view(console: &Console<Self>) -> GraphicsView {
-        let ppu = console.ppu().model();
-        let background = cram_palettes(|palette, index| ppu.bg_color(palette, index));
-        let objects = cram_palettes(|palette, index| ppu.obj_color(palette, index));
+        let (background, objects) = cram_palette_banks(console.ppu().model());
         cgb_graphics_view(console.ppu(), console.vram(), &background, &objects)
     }
 }
@@ -606,9 +605,7 @@ mod tests {
         }
         let console = debugger.game_boy();
 
-        let ppu = console.ppu().model();
-        let background = cram_palettes(|palette, index| ppu.bg_color(palette, index));
-        let objects = cram_palettes(|palette, index| ppu.obj_color(palette, index));
+        let (background, objects) = cram_palette_banks(console.ppu().model());
         let live = cgb_sidebar_sections(
             console.cpu(),
             console.ppu(),

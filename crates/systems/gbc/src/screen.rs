@@ -112,8 +112,10 @@ impl Screen {
         self.front.pixels[y as usize][x as usize]
     }
 
-    pub fn front(&self) -> &Framebuffer {
-        &self.front
+    /// Every displayed pixel in row-major order — the scan the flat-buffer
+    /// readers below share.
+    pub(crate) fn pixels(&self) -> impl Iterator<Item = Color555> + '_ {
+        (0..NUM_SCANLINES).flat_map(move |y| (0..PIXELS_PER_LINE).map(move |x| self.pixel(x, y)))
     }
 
     /// Read the current front buffer as a flat greyscale byte buffer
@@ -122,18 +124,13 @@ impl Screen {
     /// placeholder/full-CGB greys, then the DMG-compat boot palette, else the
     /// 5→8-bit expansion of the red channel.
     pub fn to_greyscale_bytes(&self) -> Vec<u8> {
-        (0..NUM_SCANLINES)
-            .flat_map(|y| {
-                (0..PIXELS_PER_LINE).map(move |x| {
-                    let c = self.pixel(x, y);
-                    match GREYSCALE.iter().position(|&grey| grey == c) {
-                        Some(shade) => GREYSCALE_BYTE[shade],
-                        None => match crate::dmg_compat_shade(c) {
-                            Some(shade) => GREYSCALE_BYTE[shade as usize],
-                            None => (c.red() << 3) | (c.red() >> 2),
-                        },
-                    }
-                })
+        self.pixels()
+            .map(|c| match GREYSCALE.iter().position(|&grey| grey == c) {
+                Some(shade) => GREYSCALE_BYTE[shade],
+                None => match crate::dmg_compat_shade(c) {
+                    Some(shade) => GREYSCALE_BYTE[shade as usize],
+                    None => (c.red() << 3) | (c.red() >> 2),
+                },
             })
             .collect()
     }
@@ -142,11 +139,9 @@ impl Screen {
     /// 255), each pixel colour-corrected for display.
     pub fn to_corrected_rgba(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(NUM_SCANLINES as usize * PIXELS_PER_LINE as usize * 4);
-        for y in 0..NUM_SCANLINES {
-            for x in 0..PIXELS_PER_LINE {
-                let c = self.pixel(x, y).to_corrected_rgb8();
-                bytes.extend_from_slice(&[c.r, c.g, c.b, 255]);
-            }
+        for pixel in self.pixels() {
+            let c = pixel.to_corrected_rgb8();
+            bytes.extend_from_slice(&[c.r, c.g, c.b, 255]);
         }
         bytes
     }
@@ -156,13 +151,8 @@ impl Screen {
     /// against full-colour reference images.
     pub fn to_rgb_bytes(&self) -> Vec<u8> {
         let expand = |c: u8| (c << 3) | (c >> 2);
-        (0..NUM_SCANLINES)
-            .flat_map(|y| {
-                (0..PIXELS_PER_LINE).flat_map(move |x| {
-                    let c = self.pixel(x, y);
-                    [expand(c.red()), expand(c.green()), expand(c.blue())]
-                })
-            })
+        self.pixels()
+            .flat_map(|c| [expand(c.red()), expand(c.green()), expand(c.blue())])
             .collect()
     }
 }
@@ -200,8 +190,8 @@ impl ScreenBuffer for Screen {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct Framebuffer {
-    pub pixels: [[Color555; PIXELS_PER_LINE as usize]; NUM_SCANLINES as usize],
+pub(crate) struct Framebuffer {
+    pixels: [[Color555; PIXELS_PER_LINE as usize]; NUM_SCANLINES as usize],
 }
 
 impl Framebuffer {

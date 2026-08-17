@@ -1,7 +1,7 @@
 //! Max-speed throughput benchmark: emulate N frames unpaced, report fps.
 //!
 //! ```sh
-//! cargo run --profile profiling -p missingno-gbc --example bench -- <rom.gbc> [frames]
+//! cargo run --profile profiling -p missingno-gbc --example bench-gbc -- <rom.gbc> [frames]
 //! ```
 
 use missingno_gb::cartridge::Cartridge;

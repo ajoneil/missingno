@@ -45,13 +45,14 @@ mod vram;
 mod vram_dma;
 
 pub use apu::CgbApu;
-pub use compat_palette::{DMG_COMPAT_BG, DMG_COMPAT_OBJ, dmg_compat_shade};
 pub use console_state::CgbConsoleState;
-pub use cram::{ColorRam, ColorRegister};
-pub use debug::{CgbSnapshot, CgbView, cram_palettes};
+pub use debug::{CgbSnapshot, CgbView};
 pub use obj_fifo::CgbObjShifter;
 pub use ppu_model::{CgbPpu, SyncedStatCells, TileSelResetGlitch};
 pub use vram::{BgAttribute, CgbVram};
+
+pub(crate) use compat_palette::dmg_compat_shade;
+pub(crate) use cram::ColorRegister;
 
 use missingno_gb::ppu::Ppu;
 use missingno_gb::ppu::rendering::Mode;
@@ -380,11 +381,11 @@ impl Model for Cgb {
     }
 
     fn vram_dma_park_waits_for_fetch(&self) -> bool {
-        self.vram_dma.park_waits_for_fetch()
+        self.vram_dma.arb.park_waits_for_fetch
     }
 
     fn vram_dma_instruction_retired(&mut self) {
-        self.vram_dma.instruction_retired();
+        self.vram_dma.arb.park_waits_for_fetch = false;
     }
 
     fn vram_dma_request_standing(&self) -> bool {
