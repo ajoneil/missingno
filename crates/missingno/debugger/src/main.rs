@@ -34,6 +34,14 @@ struct Args {
     overdump: bool,
 }
 
+/// The value following an option, or `missing` when the arguments ran out.
+fn value_for(
+    iter: &mut impl Iterator<Item = String>,
+    missing: &'static str,
+) -> Result<String, String> {
+    iter.next().ok_or_else(|| missing.to_string())
+}
+
 fn parse_args() -> Result<Args, String> {
     let mut rom = None;
     let mut port = DEFAULT_PORT;
@@ -47,19 +55,22 @@ fn parse_args() -> Result<Args, String> {
     while let Some(argument) = iter.next() {
         match argument.as_str() {
             "--port" => {
-                let value = iter.next().ok_or("--port needs a value")?;
+                let value = value_for(&mut iter, "--port needs a value")?;
                 port = value
                     .parse()
                     .map_err(|_| format!("invalid port: {value}"))?;
             }
             "--boot-rom" => {
-                boot_rom = Some(PathBuf::from(iter.next().ok_or("--boot-rom needs a path")?));
+                boot_rom = Some(PathBuf::from(value_for(
+                    &mut iter,
+                    "--boot-rom needs a path",
+                )?));
             }
             "--cart-type" => {
-                cart_type = Some(iter.next().ok_or("--cart-type needs a board code")?);
+                cart_type = Some(value_for(&mut iter, "--cart-type needs a board code")?);
             }
             "--tv-standard" => {
-                tv_standard = Some(iter.next().ok_or("--tv-standard needs a value")?);
+                tv_standard = Some(value_for(&mut iter, "--tv-standard needs a value")?);
             }
             "--overdump" => overdump = true,
             "--mcp" => mcp = true,

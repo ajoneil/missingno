@@ -31,7 +31,7 @@ pub fn parse_hex_arg(args: &Value, name: &str) -> Result<u32, String> {
     }
 }
 
-pub fn parse_optional_u32(value: Option<&Value>) -> Result<Option<u32>, String> {
+fn parse_optional_u32(value: Option<&Value>) -> Result<Option<u32>, String> {
     match value {
         None | Some(Value::Null) => Ok(None),
         Some(Value::Number(number)) => number
@@ -53,7 +53,7 @@ pub fn parse_watch_terms(args: &Value) -> Result<Vec<WatchTerm>, String> {
     }
 }
 
-pub fn parse_watch_term(value: &Value) -> Result<WatchTerm, String> {
+fn parse_watch_term(value: &Value) -> Result<WatchTerm, String> {
     let key = value
         .get("key")
         .and_then(Value::as_str)

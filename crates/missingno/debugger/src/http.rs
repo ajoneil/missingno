@@ -11,17 +11,14 @@ use missingno_core::inspect::{
     BitTable, PairMatrix, PixelStrip, Pointer, Register, RegisterPair, Row, Section, SectionBlock,
     SwatchRow, Sweep, Tone, ValueStyle, Watch,
 };
-use missingno_core::ports::{
-    ControlDescriptor, ControlKind, PanelBehaviour, PanelControl, Provider,
-};
-use missingno_core::system::ControlSite;
 use missingno_core::waveform::ChannelWave;
 use serde_json::{Value, json};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 use missingno_session::request::{parse_control, parse_hex, parse_plug, parse_watch_terms};
 use missingno_session::session::{DisasmLine, Session, StopReason};
-use missingno_session::shared::{ControlSurfaces, SessionHandle, SharedSession};
+use missingno_session::shared::{SessionHandle, SharedSession};
+use missingno_session::surfaces::surfaces_json;
 
 /// Cap on a single `/memory` read, so a bad length can't allocate unbounded.
 const MAX_MEMORY_LEN: u32 = 0x1000;
@@ -72,68 +69,67 @@ fn session_route(mut request: Request, client: &SessionHandle) -> Option<Request
             respond_json(request, run_state_json(client));
         }
         (Method::Post, "/control") => {
-            match read_json_body(&mut request).and_then(|body| parse_control(&body)) {
-                Ok((control, input)) => {
+            let outcome = read_json_body(&mut request)
+                .and_then(|body| parse_control(&body))
+                .map(|(control, input)| {
                     client.set_control(control, input);
-                    respond_json(
-                        request,
-                        json!({ "site": control.site.name(), "role": control.role.name() }),
-                    );
-                }
-                Err(message) => respond_error(request, 400, &message),
-            }
+                    json!({ "site": control.site.name(), "role": control.role.name() })
+                });
+            respond_result(request, outcome);
         }
         (Method::Get, "/ports") => {
             respond_json(request, surfaces_json(&client.control_surfaces()));
         }
         (Method::Post, "/plug") => {
             let surfaces = client.control_surfaces();
-            match read_json_body(&mut request).and_then(|body| parse_plug(&surfaces, &body)) {
-                Ok((port, peripheral)) => match client.plug(port, peripheral) {
-                    Ok(()) => respond_json(
-                        request,
-                        json!({ "port": port.0, "peripheral": peripheral.0 }),
-                    ),
-                    Err(message) => respond_error(request, 400, &message),
-                },
-                Err(message) => respond_error(request, 400, &message),
-            }
+            let outcome = read_json_body(&mut request)
+                .and_then(|body| parse_plug(&surfaces, &body))
+                .and_then(|(port, peripheral)| {
+                    client.plug(port, peripheral)?;
+                    Ok(json!({ "port": port.0, "peripheral": peripheral.0 }))
+                });
+            respond_result(request, outcome);
         }
-        (Method::Post, "/state/save") => match read_path_body(&mut request) {
-            Ok(path) => match client.save_state(path.clone().into()) {
-                Ok(()) => respond_json(request, json!({ "saved": path })),
-                Err(message) => respond_error(request, 400, &message),
-            },
-            Err(message) => respond_error(request, 400, &message),
-        },
-        (Method::Post, "/state/load") => match read_path_body(&mut request) {
-            Ok(path) => match client.load_state(path.into()) {
-                Ok(()) => respond_json(request, loaded_state_json(client)),
-                Err(message) => respond_error(request, 400, &message),
-            },
-            Err(message) => respond_error(request, 400, &message),
-        },
-        (Method::Post, "/recording/start") => match read_path_body(&mut request) {
-            Ok(path) => match client.start_recording(path.clone().into()) {
-                Ok(()) => respond_json(request, json!({ "recording": path })),
-                Err(message) => respond_error(request, 400, &message),
-            },
-            Err(message) => respond_error(request, 400, &message),
-        },
-        (Method::Post, "/recording/stop") => match client.stop_recording() {
-            Ok(()) => respond_json(request, run_state_json(client)),
-            Err(message) => respond_error(request, 400, &message),
-        },
-        (Method::Post, "/recording/play") => match read_path_body(&mut request) {
-            Ok(path) => match client.play_recording(path.clone().into()) {
-                Ok(()) => respond_json(request, json!({ "playing": path })),
-                Err(message) => respond_error(request, 400, &message),
-            },
-            Err(message) => respond_error(request, 400, &message),
-        },
+        (Method::Post, "/state/save") => path_command(request, |path| {
+            client.save_state(path.clone().into())?;
+            Ok(json!({ "saved": path }))
+        }),
+        (Method::Post, "/state/load") => path_command(request, |path| {
+            client.load_state(path.into())?;
+            Ok(loaded_state_json(client))
+        }),
+        (Method::Post, "/recording/start") => path_command(request, |path| {
+            client.start_recording(path.clone().into())?;
+            Ok(json!({ "recording": path }))
+        }),
+        (Method::Post, "/recording/stop") => {
+            respond_result(
+                request,
+                client.stop_recording().map(|()| run_state_json(client)),
+            );
+        }
+        (Method::Post, "/recording/play") => path_command(request, |path| {
+            client.play_recording(path.clone().into())?;
+            Ok(json!({ "playing": path }))
+        }),
         _ => return Some(request),
     }
     None
+}
+
+/// Run a command over the `{ "path": … }` body a request carries, answering with
+/// the JSON it produced or a 400 naming the failure.
+fn path_command(mut request: Request, act: impl FnOnce(String) -> Result<Value, String>) {
+    let outcome = read_path_body(&mut request).and_then(act);
+    respond_result(request, outcome);
+}
+
+/// Answer a fallible command: its JSON body, or a 400 naming the failure.
+fn respond_result(request: Request, outcome: Result<Value, String>) {
+    match outcome {
+        Ok(body) => respond_json(request, body),
+        Err(message) => respond_error(request, 400, &message),
+    }
 }
 
 /// The post-load view: the debugger's status where there is one, and the run
@@ -148,90 +144,6 @@ fn loaded_state_json(client: &SessionHandle) -> Value {
 
 fn run_state_json(client: &SessionHandle) -> Value {
     json!({ "running": client.is_running(), "recording": client.is_recording() })
-}
-
-/// The machine's input surfaces: each port with the peripherals it accepts and
-/// the one in it now, plus the console's own controls. Controls carry the site
-/// and role spelling `/control` takes.
-fn surfaces_json(surfaces: &ControlSurfaces) -> Value {
-    let ports: Vec<Value> = surfaces
-        .ports
-        .iter()
-        .map(|port| {
-            let site = ControlSite::Port(port.descriptor.port);
-            let options: Vec<Value> = port
-                .descriptor
-                .accepts
-                .iter()
-                .map(|peripheral| {
-                    json!({
-                        "id": peripheral.id.0,
-                        "label": peripheral.label,
-                        "provider": match peripheral.provider {
-                            Provider::Console => "console",
-                            Provider::Host => "host",
-                        },
-                        "controls": peripheral
-                            .controls
-                            .iter()
-                            .map(|control| control_json(site, control))
-                            .collect::<Vec<_>>(),
-                    })
-                })
-                .collect();
-            json!({
-                "port": port.descriptor.port.0,
-                "site": site.name(),
-                "label": port.descriptor.label,
-                "plugged": port.plugged.map(|peripheral| peripheral.0),
-                "options": options,
-            })
-        })
-        .collect();
-    json!({
-        "ports": ports,
-        "integrated_controls": surfaces
-            .integrated
-            .iter()
-            .map(|control| control_json(ControlSite::Integrated, control))
-            .collect::<Vec<_>>(),
-        "panel_controls": surfaces
-            .panel
-            .iter()
-            .map(panel_control_json)
-            .collect::<Vec<_>>(),
-    })
-}
-
-fn control_json(site: ControlSite, control: &ControlDescriptor) -> Value {
-    json!({
-        "site": site.name(),
-        "role": control.role.name(),
-        "label": control.label,
-        "kind": match control.kind {
-            ControlKind::Button => "button",
-            ControlKind::Axis => "axis",
-        },
-    })
-}
-
-fn panel_control_json(control: &PanelControl) -> Value {
-    let mut body = json!({
-        "site": ControlSite::Panel.name(),
-        "role": control.role.name(),
-        "label": control.label,
-        "behaviour": match control.behaviour {
-            PanelBehaviour::Momentary => "momentary",
-            PanelBehaviour::Toggle { .. } => "toggle",
-        },
-    });
-    if let Some((positions, default_high)) = control.toggle()
-        && let Some(object) = body.as_object_mut()
-    {
-        object.insert("positions".into(), json!(positions));
-        object.insert("default_high".into(), json!(default_high));
-    }
-    body
 }
 
 /// Read a request body as JSON, so the shared argument parsers can take it.
@@ -267,18 +179,9 @@ fn handle(request: Request, session: &mut Session) {
         (Method::Get, "/waveforms") => respond_json(request, waveforms_json(session)),
         (Method::Get, "/graphics") => respond_json(request, graphics_json(session)),
 
-        (Method::Post, "/step") => {
-            let stop = session.step();
-            respond_step(request, session, &stop);
-        }
-        (Method::Post, "/step-over") => {
-            let stop = session.step_over();
-            respond_step(request, session, &stop);
-        }
-        (Method::Post, "/step-frame") => {
-            let stop = session.step_frame();
-            respond_step(request, session, &stop);
-        }
+        (Method::Post, "/step") => step(request, session, Session::step),
+        (Method::Post, "/step-over") => step(request, session, Session::step_over),
+        (Method::Post, "/step-frame") => step(request, session, Session::step_frame),
         (Method::Post, "/step-tick") => step_tick(request, session, &query),
         (Method::Post, "/recording/replay") => recording_replay(request, session),
         (Method::Post, "/reset") => {
@@ -288,9 +191,8 @@ fn handle(request: Request, session: &mut Session) {
         (Method::Post, "/waveforms/capture") => capture_edit(request, session, Capture::Waves),
         (Method::Post, "/graphics/capture") => capture_edit(request, session, Capture::Graphics),
 
-        (Method::Put, "/watches") | (Method::Delete, "/watches") => {
-            watch_edit(request, session, method)
-        }
+        (Method::Put, "/watches") => watch_edit(request, session, WatchEdit::Add),
+        (Method::Delete, "/watches") => watch_edit(request, session, WatchEdit::Remove),
 
         _ if path.starts_with("/memory/") => memory(request, session, &method, &path),
         _ if path.starts_with("/breakpoints/") => breakpoint_edit(request, session, &method, &path),
@@ -332,6 +234,12 @@ fn video_json(video: missingno_core::video::DisplayTechnology) -> Value {
             "pixel_aspect": pixel_aspect,
         }),
     }
+}
+
+/// Run one stepping call and report where it stopped.
+fn step(request: Request, session: &mut Session, run: fn(&mut Session) -> StopReason) {
+    let stop = run(session);
+    respond_step(request, session, &stop);
 }
 
 fn respond_step(request: Request, session: &Session, stop: &StopReason) {
@@ -864,16 +772,13 @@ enum Capture {
 }
 
 fn capture_edit(mut request: Request, session: &mut Session, capture: Capture) {
-    let mut body = String::new();
-    if request.as_reader().read_to_string(&mut body).is_err() {
-        return respond_error(request, 400, "could not read request body");
-    }
-    let value: Value = match serde_json::from_str(&body) {
-        Ok(value) => value,
-        Err(error) => return respond_error(request, 400, &format!("invalid JSON: {error}")),
-    };
-    let Some(on) = value.get("on").and_then(Value::as_bool) else {
-        return respond_error(request, 400, "expected { \"on\": bool }");
+    let on = match read_json_body(&mut request).and_then(|body| {
+        body.get("on")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| "expected { \"on\": bool }".to_string())
+    }) {
+        Ok(on) => on,
+        Err(message) => return respond_error(request, 400, &message),
     };
     match capture {
         Capture::Waves => session.set_wave_capture(on),
@@ -882,16 +787,10 @@ fn capture_edit(mut request: Request, session: &mut Session, capture: Capture) {
     respond_json(request, json!({ "capture": on }));
 }
 
-/// Read a `{ "path": "..." }` body, returning the path or responding 400.
+/// Read a `{ "path": "..." }` body, returning the path it names.
 fn read_path_body(request: &mut Request) -> Result<String, String> {
-    let mut body = String::new();
-    request
-        .as_reader()
-        .read_to_string(&mut body)
-        .map_err(|_| "could not read request body".to_string())?;
-    let value: Value = serde_json::from_str(&body).map_err(|e| format!("invalid JSON: {e}"))?;
-    value
-        .get("path")
+    let body = read_json_body(request)?;
+    body.get("path")
         .and_then(Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| "expected { \"path\": string }".to_string())
@@ -1037,27 +936,25 @@ fn breakpoint_edit(request: Request, session: &mut Session, method: &Method, pat
     }
 }
 
-fn watch_edit(mut request: Request, session: &mut Session, method: Method) {
+/// The two edits `/watches` accepts, one per method it answers to.
+enum WatchEdit {
+    Add,
+    Remove,
+}
+
+fn watch_edit(mut request: Request, session: &mut Session, edit: WatchEdit) {
     let terms = match read_json_body(&mut request).and_then(|body| parse_watch_terms(&body)) {
         Ok(terms) => terms,
         Err(message) => return respond_error(request, 400, &message),
     };
-    let result = match method {
-        Method::Put => session.add_watch(terms),
-        Method::Delete => session.remove_watch(terms),
-        _ => return respond_error(request, 405, "method not allowed"),
+    let (result, field) = match edit {
+        WatchEdit::Add => (session.add_watch(terms), "added"),
+        WatchEdit::Remove => (session.remove_watch(terms), "removed"),
     };
-    match result {
-        Ok(watch) => {
-            let field = if method == Method::Put {
-                "added"
-            } else {
-                "removed"
-            };
-            respond_json(request, json!({ field: watch_json(&watch) }));
-        }
-        Err(message) => respond_error(request, 400, &message),
-    }
+    respond_result(
+        request,
+        result.map(|watch| json!({ field: watch_json(&watch) })),
+    );
 }
 
 fn query_param(query: &str, name: &str) -> Option<String> {

@@ -212,6 +212,11 @@ fn tools_list(loaded: &mut Option<Host>) -> Value {
     json!({ "tools": tools })
 }
 
+/// The schema of a tool that takes no arguments.
+fn no_arguments() -> Value {
+    json!({ "type": "object", "properties": {}, "additionalProperties": false })
+}
+
 /// The idle-server tool that recognises and loads a ROM.
 fn load_rom_tool() -> Tool {
     Tool {
@@ -252,7 +257,7 @@ fn eject_tool() -> Tool {
         description: "Unload the current ROM, or detach from an attached session, returning the \
                       server to idle."
             .into(),
-        input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+        input_schema: no_arguments(),
     }
 }
 
@@ -289,7 +294,7 @@ fn status_tool() -> Tool {
         description: "The loaded ROM's core, title, program counter, frame count, and last stop \
                       reason — or idle when no ROM is loaded."
             .into(),
-        input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+        input_schema: no_arguments(),
     }
 }
 

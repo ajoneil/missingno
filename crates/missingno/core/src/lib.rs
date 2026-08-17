@@ -48,8 +48,7 @@ pub use launch::{
     LaunchChoice, LaunchOptionDescriptor, LaunchOptionKind, LaunchValue, LaunchValues,
 };
 pub use machine::{
-    BoundaryState, CoreRun, CoreStop, Machine, MachineConsole, MachineDebugger, StateIdentity,
-    StopSet,
+    BoundaryState, CoreRun, CoreStop, Machine, MachineConsole, StateIdentity, StopSet,
 };
 pub use ports::{
     ControlDescriptor, ControlKind, PanelBehaviour, PanelControl, PeripheralDescriptor,

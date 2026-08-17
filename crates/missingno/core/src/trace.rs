@@ -58,7 +58,7 @@ pub struct Column<T> {
     pub source: Source<T>,
 }
 
-pub fn wire_type(ty: FieldType) -> WireType {
+fn wire_type(ty: FieldType) -> WireType {
     match ty {
         FieldType::Bool => WireType::Bool,
         FieldType::U8 => WireType::UInt8,
@@ -69,7 +69,7 @@ pub fn wire_type(ty: FieldType) -> WireType {
     }
 }
 
-pub fn tier_layer(tier: Tier) -> &'static str {
+fn tier_layer(tier: Tier) -> &'static str {
     match tier {
         Tier::Observable => "registers",
         Tier::Boundary => "internal",

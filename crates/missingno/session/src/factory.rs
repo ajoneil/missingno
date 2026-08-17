@@ -14,10 +14,10 @@ use missingno_core::launch::{LaunchOptionDescriptor, LaunchValues};
 use missingno_core::system::SystemConsole;
 
 /// Whether a path and its contents are this core's media.
-pub type IsRom = fn(&Path, &[u8]) -> bool;
+type IsRom = fn(&Path, &[u8]) -> bool;
 /// Build this core's console from a ROM's path and contents, honouring the
 /// launch options the core published.
-pub type Create = fn(&Path, &[u8], &LaunchValues) -> Result<Box<dyn SystemConsole>, LoadError>;
+type Create = fn(&Path, &[u8], &LaunchValues) -> Result<Box<dyn SystemConsole>, LoadError>;
 
 /// Why media did not become a console.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -284,7 +284,7 @@ mod sg1000 {
 }
 
 /// Every registered core, in claim order.
-pub static FACTORIES: &[CoreFactory] = &[
+static FACTORIES: &[CoreFactory] = &[
     #[cfg(feature = "gb")]
     CoreFactory {
         name: "Game Boy",

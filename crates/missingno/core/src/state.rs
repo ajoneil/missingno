@@ -22,19 +22,6 @@ pub enum FieldType {
     Str,
 }
 
-impl FieldType {
-    /// Bytes a fixed-width field occupies; `None` for the variable-length
-    /// [`FieldType::Str`].
-    pub fn byte_width(self) -> Option<u8> {
-        match self {
-            FieldType::Bool | FieldType::U8 => Some(1),
-            FieldType::U16 => Some(2),
-            FieldType::U32 => Some(4),
-            FieldType::Str => None,
-        }
-    }
-}
-
 /// How observable a field is — how many emulators can produce it, and which
 /// fidelity of save state it serves. The tiers are ordered: a producer filling
 /// a tier fills the tiers below it.
@@ -176,15 +163,6 @@ impl MemorySpan {
     pub const fn help(mut self, help: &'static str) -> Self {
         self.help = Some(help);
         self
-    }
-
-    /// Whether `address` falls in this region's half-open `[start, start+len)`
-    /// span. Always false for an off-bus region.
-    pub fn contains(&self, address: u32) -> bool {
-        match self.start {
-            Some(start) => address >= start && address - start < self.len,
-            None => false,
-        }
     }
 }
 
@@ -412,14 +390,6 @@ impl StateRecord {
         self.values.iter().map(|(&name, value)| (name, value))
     }
 
-    pub fn len(&self) -> usize {
-        self.values.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
-    }
-
     /// Check the record against a schema: every non-nullable field present with
     /// a matching type, every present value well-typed, and no field of a name
     /// the schema does not define.
@@ -498,14 +468,6 @@ mod tests {
     }
 
     #[test]
-    fn field_widths() {
-        assert_eq!(FieldType::Bool.byte_width(), Some(1));
-        assert_eq!(FieldType::U16.byte_width(), Some(2));
-        assert_eq!(FieldType::U32.byte_width(), Some(4));
-        assert_eq!(FieldType::Str.byte_width(), None);
-    }
-
-    #[test]
     fn tiers_order_observable_below_deep() {
         assert!(Tier::Observable < Tier::Boundary);
         assert!(Tier::Boundary < Tier::Tick);
@@ -546,16 +508,6 @@ mod tests {
             schema.check(),
             Err(SchemaError::OverlappingSpans(_, _))
         ));
-    }
-
-    #[test]
-    fn off_bus_span_never_contains() {
-        let cram = MemorySpan::off_bus("cram", 64);
-        assert!(!cram.contains(0));
-        let vram = MemorySpan::addressable("vram", 0x8000, 0x2000);
-        assert!(vram.contains(0x8000));
-        assert!(vram.contains(0x9FFF));
-        assert!(!vram.contains(0xA000));
     }
 
     #[test]

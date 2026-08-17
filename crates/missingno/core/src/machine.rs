@@ -524,7 +524,7 @@ fn hex_digest(digest: &[u8; 32]) -> String {
 
 /// A machine under the seam's debugger: the console wrapper plus the stop
 /// stores and the typed inspection state refreshed after every step.
-pub struct MachineDebugger<M: Machine> {
+pub(crate) struct MachineDebugger<M: Machine> {
     console: MachineConsole<M>,
     stops: StopSet,
     last_watch_hit: Option<Watch>,

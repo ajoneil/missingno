@@ -24,12 +24,13 @@ pub mod factory;
 pub mod request;
 pub mod session;
 pub mod shared;
+pub mod surfaces;
 #[cfg(feature = "tools")]
 pub mod tools;
 
 #[cfg(all(unix, feature = "tools"))]
 pub use attach::{AttachClient, AttachEndpoint, Publication, SessionInfo};
-pub use session::{DisasmLine, Session, StopReason, validate_watch};
+pub use session::{DisasmLine, Session, StopReason};
 pub use shared::{
     AudioSink, ControlSurfaces, ExtractedMachine, MemoryInterest, PluggedPort, RunningReadout,
     SessionEvent, SessionHandle, SharedSession,

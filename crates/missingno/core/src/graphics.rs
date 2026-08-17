@@ -62,7 +62,7 @@ pub struct AtlasRegion {
 
 impl TileAtlas {
     /// Palette indices per tile: `tile_width * tile_height`.
-    pub fn tile_stride(&self) -> usize {
+    fn tile_stride(&self) -> usize {
         self.tile_width as usize * self.tile_height as usize
     }
 

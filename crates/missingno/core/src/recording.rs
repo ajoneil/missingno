@@ -573,7 +573,7 @@ impl ReplayCursor {
         self.frame
     }
 
-    pub fn checks_verified(&self) -> u64 {
+    fn checks_verified(&self) -> u64 {
         self.checks_verified
     }
 

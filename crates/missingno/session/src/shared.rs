@@ -405,16 +405,6 @@ impl SessionHandle {
         self.slots.status.lock().ok().and_then(|slot| slot.clone())
     }
 
-    /// Read the latest published inspection snapshot through `f` (the snapshot is
-    /// not clonable, so it is borrowed in place). `f` sees `None` before the
-    /// first free-run frame publishes one.
-    pub fn with_snapshot<R>(&self, f: impl FnOnce(Option<&DebugView>) -> R) -> R {
-        match self.slots.snapshot.lock() {
-            Ok(slot) => f(slot.as_ref()),
-            Err(_) => f(None),
-        }
-    }
-
     /// Take the latest published inspection snapshot, or `None` when none is
     /// pending. A take, like [`latest_frame`](Self::latest_frame): the frontend
     /// stores the owned snapshot and the run loop republishes one each frame.

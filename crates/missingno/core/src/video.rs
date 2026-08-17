@@ -131,7 +131,7 @@ impl Clone for Frame {
 impl Frame {
     /// The frame in its pre-resolution domain, when it carries one: an indexed
     /// frame is its palette indices, a resolved frame has no such domain.
-    pub fn to_raw(&self) -> Option<RawFrame> {
+    pub(crate) fn to_raw(&self) -> Option<RawFrame> {
         match self {
             Frame::Indexed(frame) => Some(RawFrame::Palette {
                 width: frame.width,

@@ -1,21 +1,7 @@
 //! The save-state and recording round-trip shapes the cores share.
 
-use std::hash::{Hash, Hasher};
-
-use missingno_core::recording::{Recorder, Recording};
+use missingno_core::recording::{Recorder, Recording, frame_hash};
 use missingno_core::system::{ControlId, ControlInput, ControlRole, SystemConsole};
-use missingno_core::video::Frame;
-
-/// Hash a displayed frame — the currency the round-trip gates compare
-/// continuations in.
-pub fn frame_hash(frame: &Frame) -> u64 {
-    let rgba = frame.resolve_rgba();
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    rgba.width.hash(&mut hasher);
-    rgba.height.hash(&mut hasher);
-    rgba.pixels.hash(&mut hasher);
-    hasher.finish()
-}
 
 /// Step one frame and hash whatever it displayed; a step the display produced
 /// no frame for hashes as zero.

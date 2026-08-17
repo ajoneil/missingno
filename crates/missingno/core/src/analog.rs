@@ -18,7 +18,7 @@ pub struct RcHighPass {
 
 impl RcHighPass {
     /// The −3 dB corner.
-    pub fn cutoff_hz(self) -> f32 {
+    fn cutoff_hz(self) -> f32 {
         1.0 / (TAU * self.resistance_ohms * self.capacitance_farads)
     }
 
@@ -26,10 +26,6 @@ impl RcHighPass {
         HighPass {
             cutoff_hz: self.cutoff_hz(),
         }
-    }
-
-    pub fn at_sample_rate(self, sample_rate_hz: f32) -> OnePoleHighPass {
-        self.high_pass().at_sample_rate(sample_rate_hz)
     }
 }
 
@@ -65,13 +61,13 @@ pub struct OnePoleHighPass {
 }
 
 impl OnePoleHighPass {
-    pub fn from_cutoff(cutoff_hz: f32, sample_rate_hz: f32) -> Self {
+    fn from_cutoff(cutoff_hz: f32, sample_rate_hz: f32) -> Self {
         Self::from_pole((-TAU * cutoff_hz / sample_rate_hz).exp())
     }
 
     /// For a coupling known only by its pole — a measured or fitted decay whose
     /// components have never been traced to a schematic.
-    pub fn from_pole(pole: f32) -> Self {
+    fn from_pole(pole: f32) -> Self {
         OnePoleHighPass {
             pole,
             previous_input: 0.0,
@@ -106,7 +102,7 @@ mod tests {
     #[test]
     fn a_coupling_blocks_dc() {
         // A held level charges the cap and stops reaching the far side.
-        let mut filter = ATARI_COUPLING.at_sample_rate(44_100.0);
+        let mut filter = ATARI_COUPLING.high_pass().at_sample_rate(44_100.0);
         let mut output = 0.0;
         for _ in 0..44_100 {
             output = filter.process(1.0);
@@ -117,7 +113,7 @@ mod tests {
     #[test]
     fn a_coupling_passes_the_band() {
         // 1 kHz sits far above the corner, so it comes through near unity.
-        let mut filter = ATARI_COUPLING.at_sample_rate(44_100.0);
+        let mut filter = ATARI_COUPLING.high_pass().at_sample_rate(44_100.0);
         let mut peak: f32 = 0.0;
         for n in 0..441 {
             let phase = TAU * 1_000.0 * n as f32 / 44_100.0;
@@ -142,7 +138,7 @@ mod tests {
 
     #[test]
     fn the_pole_route_matches_the_component_route() {
-        let from_components = ATARI_COUPLING.at_sample_rate(44_100.0);
+        let from_components = ATARI_COUPLING.high_pass().at_sample_rate(44_100.0);
         let pole = (-TAU * 88.4194 / 44_100.0).exp();
         let mut a = from_components;
         let mut b = OnePoleHighPass::from_pole(pole);

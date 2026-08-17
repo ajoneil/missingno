@@ -680,16 +680,6 @@ pub struct MemoryWindow {
 }
 
 impl MemoryWindow {
-    /// One past the last captured address.
-    pub fn end(&self) -> u32 {
-        self.base.saturating_add(self.bytes.len() as u32)
-    }
-
-    /// Whether `address` falls within the captured span.
-    pub fn contains(&self, address: u32) -> bool {
-        address >= self.base && address < self.end()
-    }
-
     /// The captured byte at `address`, or `None` outside the span.
     pub fn read(&self, address: u32) -> Option<u8> {
         address
@@ -940,15 +930,6 @@ mod tests {
             base: 0xC100,
             bytes: vec![0x10, 0x20, 0x30, 0x40],
         }
-    }
-
-    #[test]
-    fn contains_spans_base_to_end() {
-        let w = window();
-        assert!(!w.contains(0xC0FF));
-        assert!(w.contains(0xC100));
-        assert!(w.contains(0xC103));
-        assert!(!w.contains(0xC104));
     }
 
     #[test]

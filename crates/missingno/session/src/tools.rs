@@ -11,15 +11,12 @@ use missingno_core::graphics::{
 use missingno_core::inspect::{
     BitTable, PairMatrix, PixelStrip, Register, Section, SectionBlock, SwatchRow, ValueStyle,
 };
-use missingno_core::ports::{
-    ControlDescriptor, ControlKind, PanelBehaviour, PanelControl, Provider,
-};
-use missingno_core::system::ControlSite;
 use serde_json::{Value, json};
 
 use crate::request::{parse_control, parse_hex_arg, parse_plug, parse_watch_terms};
 use crate::session::{Session, StopReason};
-use crate::shared::{ControlSurfaces, SessionHandle};
+use crate::shared::SessionHandle;
+use crate::surfaces::surfaces_json;
 
 /// Cap on a single `read_memory`, so a bad length can't allocate unbounded.
 const MAX_MEMORY_LEN: u32 = 0x1000;
@@ -959,89 +956,6 @@ fn plug(handle: &SessionHandle, args: &Value) -> ToolOutcome {
         "port{} now carries peripheral {}",
         port.0, peripheral.0
     ))
-}
-
-/// The machine's input surfaces as JSON, every control spelled the way
-/// `set_control` takes it.
-fn surfaces_json(surfaces: &ControlSurfaces) -> Value {
-    let ports: Vec<Value> = surfaces
-        .ports
-        .iter()
-        .map(|port| {
-            let site = ControlSite::Port(port.descriptor.port);
-            let options: Vec<Value> = port
-                .descriptor
-                .accepts
-                .iter()
-                .map(|peripheral| {
-                    json!({
-                        "id": peripheral.id.0,
-                        "label": peripheral.label,
-                        "provider": match peripheral.provider {
-                            Provider::Console => "console",
-                            Provider::Host => "host",
-                        },
-                        "controls": peripheral
-                            .controls
-                            .iter()
-                            .map(|control| control_json(site, control))
-                            .collect::<Vec<_>>(),
-                    })
-                })
-                .collect();
-            json!({
-                "port": port.descriptor.port.0,
-                "site": site.name(),
-                "label": port.descriptor.label,
-                "plugged": port.plugged.map(|peripheral| peripheral.0),
-                "options": options,
-            })
-        })
-        .collect();
-    json!({
-        "ports": ports,
-        "integrated_controls": surfaces
-            .integrated
-            .iter()
-            .map(|control| control_json(ControlSite::Integrated, control))
-            .collect::<Vec<_>>(),
-        "panel_controls": surfaces
-            .panel
-            .iter()
-            .map(panel_control_json)
-            .collect::<Vec<_>>(),
-    })
-}
-
-fn control_json(site: ControlSite, control: &ControlDescriptor) -> Value {
-    json!({
-        "site": site.name(),
-        "role": control.role.name(),
-        "label": control.label,
-        "kind": match control.kind {
-            ControlKind::Button => "button",
-            ControlKind::Axis => "axis",
-        },
-    })
-}
-
-fn panel_control_json(control: &PanelControl) -> Value {
-    let mut body = json!({
-        "site": ControlSite::Panel.name(),
-        "role": control.role.name(),
-        "label": control.label,
-        "behaviour": match control.behaviour {
-            PanelBehaviour::Momentary => "momentary",
-            PanelBehaviour::Toggle { .. } => "toggle",
-        },
-    });
-    if let Some((positions, default_high)) = control.toggle()
-        && let Some(object) = body.as_object_mut()
-    {
-        object.insert("positions".into(), json!(positions));
-        object.insert("default_high".into(), json!(default_high));
-    }
-    body
 }
 
 // --- get_waveforms ------------------------------------------------------------

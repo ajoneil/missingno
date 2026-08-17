@@ -42,10 +42,6 @@ impl WaveRing {
         }
     }
 
-    pub fn capacity(&self) -> usize {
-        self.buf.len()
-    }
-
     pub fn len(&self) -> usize {
         self.len
     }
@@ -112,7 +108,6 @@ mod tests {
         }
         // Capacity 4: the two oldest (1, 2) were overwritten.
         assert_eq!(ring.len(), 4);
-        assert_eq!(ring.capacity(), 4);
         assert_eq!(ring.to_vec(), vec![3, 4, 5, 6]);
     }
 
@@ -142,7 +137,6 @@ mod tests {
     #[test]
     fn zero_capacity_is_clamped_to_one() {
         let mut ring = WaveRing::new(0);
-        assert_eq!(ring.capacity(), 1);
         ring.push(5);
         ring.push(6);
         assert_eq!(ring.to_vec(), vec![6]);

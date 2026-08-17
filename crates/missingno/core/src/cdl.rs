@@ -116,19 +116,19 @@ impl CdlWindow {
         CdlWindow { base, flags }
     }
 
-    pub fn flags_at(&self, address: u16) -> u8 {
+    fn flags_at(&self, address: u16) -> u8 {
         let offset = address.wrapping_sub(self.base) as usize;
         self.flags.get(offset).copied().unwrap_or(0)
     }
 
     /// A data byte that was never executed — the disassembly shows these as
     /// bytes instead of decoding garbage instructions through them.
-    pub fn is_data(&self, address: u16) -> bool {
+    pub(crate) fn is_data(&self, address: u16) -> bool {
         let flags = self.flags_at(address);
         flags & DATA != 0 && flags & CODE == 0
     }
 
-    pub fn is_instruction_start(&self, address: u16) -> bool {
+    pub(crate) fn is_instruction_start(&self, address: u16) -> bool {
         self.flags_at(address) & INSTRUCTION_START != 0
     }
 }

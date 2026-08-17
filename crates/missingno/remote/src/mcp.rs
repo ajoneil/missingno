@@ -317,6 +317,11 @@ fn window_list(windows: &[crate::ui_socket::UiInfo]) -> String {
 
 // --- management tool advertisements -------------------------------------------
 
+/// The schema of a tool that takes no arguments.
+fn no_arguments() -> Value {
+    json!({ "type": "object", "properties": {}, "additionalProperties": false })
+}
+
 fn attach_tool() -> Value {
     json!({
         "name": "attach",
@@ -342,7 +347,7 @@ fn detach_tool() -> Value {
         "name": "detach",
         "description": "Detach from the attached app window, returning the server to idle. The \
                         window keeps running.",
-        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+        "inputSchema": no_arguments(),
     })
 }
 
@@ -351,7 +356,7 @@ fn status_tool() -> Value {
         "name": "status",
         "description": "Whether the server is idle or attached, and which app windows are \
                         reachable right now — each with its pid and version.",
-        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+        "inputSchema": no_arguments(),
     })
 }
 

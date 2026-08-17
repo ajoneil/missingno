@@ -6,9 +6,7 @@
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
-use std::time::Duration;
 
-use missingno_core::HighPass;
 use missingno_core::cdl::CdlWindow;
 use missingno_core::disasm::{ReadMemory, Row, window_after};
 use missingno_core::graphics::GraphicsView;
@@ -16,9 +14,7 @@ use missingno_core::inspect::{
     MemoryRegion, RegisterGroup, Section, Watch, WatchParam, WatchTerm, Watchable,
 };
 use missingno_core::symbols::SymbolTable;
-use missingno_core::system::{
-    ControlId, ControlInput, DebugView, RunningStatus, StateError, StepOutcome, SystemDebugger,
-};
+use missingno_core::system::{DebugView, RunningStatus, StepOutcome, SystemDebugger};
 use missingno_core::video::{DisplayTechnology, Frame, RawFrame, RgbaFrame};
 use missingno_core::waveform::ChannelWave;
 
@@ -88,32 +84,30 @@ impl Session {
         self.debugger.video_out()
     }
 
-    fn record(&mut self, outcome: StepOutcome) -> StopReason {
-        let completed_frame = matches!(
-            &outcome,
-            StepOutcome::Completed { frame: Some(_) } | StepOutcome::Breakpoint { frame: Some(_) }
-        );
-        if completed_frame {
+    /// Fold one outcome into the run bookkeeping, handing back the stop reason
+    /// and any display frame it carried.
+    fn record(&mut self, outcome: StepOutcome) -> (StopReason, Option<Frame>) {
+        let (reason, frame) = match outcome {
+            StepOutcome::Completed { frame } => (StopReason::Completed, frame),
+            StepOutcome::Breakpoint { frame } => (StopReason::Breakpoint, frame),
+            StepOutcome::WatchHit(watch) => (StopReason::Watch(watch), None),
+            StepOutcome::BudgetExhausted => (StopReason::BudgetExhausted, None),
+        };
+        if frame.is_some() {
             self.frame += 1;
         }
-        let reason = match outcome {
-            StepOutcome::Completed { .. } => StopReason::Completed,
-            StepOutcome::Breakpoint { .. } => StopReason::Breakpoint,
-            StepOutcome::WatchHit(watch) => StopReason::Watch(watch),
-            StepOutcome::BudgetExhausted => StopReason::BudgetExhausted,
-        };
         self.last_stop = reason.clone();
-        reason
+        (reason, frame)
     }
 
     pub fn step(&mut self) -> StopReason {
         let outcome = self.debugger.step();
-        self.record(outcome)
+        self.record(outcome).0
     }
 
     pub fn step_over(&mut self) -> StopReason {
         let outcome = self.debugger.step_over();
-        self.record(outcome)
+        self.record(outcome).0
     }
 
     pub fn step_frame(&mut self) -> StopReason {
@@ -125,21 +119,7 @@ impl Session {
     /// frame; the recorder and the frame slot need the frame itself.
     pub fn advance_frame(&mut self) -> (StopReason, Option<Frame>) {
         let outcome = self.debugger.run_frame();
-        let completed_frame = matches!(
-            &outcome,
-            StepOutcome::Completed { frame: Some(_) } | StepOutcome::Breakpoint { frame: Some(_) }
-        );
-        if completed_frame {
-            self.frame += 1;
-        }
-        let (reason, frame) = match outcome {
-            StepOutcome::Completed { frame } => (StopReason::Completed, frame),
-            StepOutcome::Breakpoint { frame } => (StopReason::Breakpoint, frame),
-            StepOutcome::WatchHit(watch) => (StopReason::Watch(watch), None),
-            StepOutcome::BudgetExhausted => (StopReason::BudgetExhausted, None),
-        };
-        self.last_stop = reason.clone();
-        (reason, frame)
+        self.record(outcome)
     }
 
     /// The name of this core's sub-instruction step unit, or `None` when the
@@ -229,12 +209,6 @@ impl Session {
     /// description a transport renders as its "describe machine" view.
     pub fn sidebar_sections(&self) -> Vec<Section> {
         self.debugger.sidebar_sections()
-    }
-
-    /// Apply an input to a family-interpreted control (the GUI's control path,
-    /// for a headless transport).
-    pub fn set_control(&mut self, control: ControlId, input: ControlInput) {
-        self.debugger.set_control(control, input);
     }
 
     pub fn memory_regions(&self) -> Vec<MemoryRegion> {
@@ -356,11 +330,6 @@ impl Session {
         Ok(lines)
     }
 
-    /// Wall-clock duration of one emulated frame, for the run loop's pacing.
-    pub fn frame_interval(&self) -> Duration {
-        self.debugger.frame_interval()
-    }
-
     /// An owned per-vblank inspection snapshot, published to the run loop's
     /// snapshot slot while free-running.
     pub fn snapshot(&self) -> DebugView {
@@ -373,40 +342,10 @@ impl Session {
         self.debugger.drain_audio_samples()
     }
 
-    /// The coupling the console's board puts between its audio pads and the jack.
-    pub fn audio_coupling(&self) -> Option<HighPass> {
-        self.debugger.audio_coupling()
-    }
-
-    /// A serialized machine state in memory, if the system has a backend. The
-    /// recorder's initial state and the run loop's boundary checks read this.
-    pub fn save_state_bytes(&self) -> Option<Vec<u8>> {
-        self.debugger.save_state()
-    }
-
-    /// Whether the system has a save-state backend at all — it authors a state
-    /// schema. A `None` from [`save_state_bytes`](Self::save_state_bytes) on a
-    /// backend-having console is a transient off-boundary miss, not "no backend".
-    pub fn has_state_backend(&self) -> bool {
-        self.debugger.state_schema().is_some()
-    }
-
     /// The display frame as it currently stands — the screenshot source and the
     /// frame the run loop publishes.
     pub fn display_frame(&self) -> Frame {
         self.debugger.screen_display()
-    }
-
-    /// The battery-backed RAM contents to persist, or `None` when the cart has
-    /// no battery.
-    pub fn battery_save(&self) -> Option<Vec<u8>> {
-        self.debugger.battery_save()
-    }
-
-    /// Restore a serialized machine state from memory (the recorder re-seats the
-    /// console from its own captured state so the timeline is self-consistent).
-    pub fn load_state_bytes(&mut self, bytes: &[u8]) -> Result<(), StateError> {
-        self.debugger.load_state(bytes)
     }
 
     /// Hand back the owned debugger — the seam by which a bare session becomes a
@@ -443,7 +382,7 @@ impl Session {
 
 /// Validate watch terms against a watchable table: each term's key must name a
 /// watchable, and its parameters must match that watchable's shape.
-pub fn validate_watch(watchables: &[Watchable], terms: Vec<WatchTerm>) -> Result<Watch, String> {
+fn validate_watch(watchables: &[Watchable], terms: Vec<WatchTerm>) -> Result<Watch, String> {
     if terms.is_empty() {
         return Err("a watch needs at least one term".to_string());
     }

@@ -47,10 +47,6 @@ impl ReferencePng {
         self.height
     }
 
-    pub fn colour_type(&self) -> png::ColorType {
-        self.colour_type
-    }
-
     /// Panic unless the image carries colour channels — for suites whose
     /// references are colour by construction, where a greyscale file is a
     /// mis-exported reference rather than a shade-only one.
@@ -66,35 +62,21 @@ impl ReferencePng {
     /// One byte per pixel: the first channel, which on a greyscale or neutral
     /// reference is the shade.
     pub fn greyscale(&self) -> Vec<u8> {
-        (0..self.width * self.height)
-            .map(|i| self.bytes[i * self.stride])
-            .collect()
+        self.walk(|p| self.bytes[p])
     }
 
     /// Three bytes per pixel; a greyscale reference expands to neutral triples.
     pub fn rgb(&self) -> Vec<[u8; 3]> {
-        (0..self.width * self.height)
-            .map(|i| self.pixel(i))
-            .collect()
-    }
-
-    /// The same triples flattened, for surfaces stated as loose RGB888 bytes.
-    pub fn rgb_bytes(&self) -> Vec<u8> {
-        (0..self.width * self.height)
-            .flat_map(|i| self.pixel(i))
-            .collect()
-    }
-
-    /// One pixel by coordinate, for callers that walk a sub-rectangle.
-    pub fn rgb_at(&self, x: usize, y: usize) -> [u8; 3] {
-        self.pixel(y * self.width + x)
-    }
-
-    fn pixel(&self, index: usize) -> [u8; 3] {
-        let p = index * self.stride;
-        match self.colour_type {
+        self.walk(|p| match self.colour_type {
             png::ColorType::Grayscale => [self.bytes[p]; 3],
             _ => [self.bytes[p], self.bytes[p + 1], self.bytes[p + 2]],
-        }
+        })
+    }
+
+    /// Every pixel in turn, `read` taking the index of its first channel byte.
+    fn walk<T>(&self, read: impl Fn(usize) -> T) -> Vec<T> {
+        (0..self.width * self.height)
+            .map(|i| read(i * self.stride))
+            .collect()
     }
 }
