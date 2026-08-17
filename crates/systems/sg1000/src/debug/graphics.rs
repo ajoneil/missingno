@@ -585,7 +585,7 @@ mod tests {
 
     #[test]
     fn capture_off_decodes_nothing() {
-        let mut console = Sg1000::new(&[0u8; 0x2000]).expect("flat cartridge image");
+        let mut console = Sg1000::new(&[0u8; 0x2000], None).expect("flat cartridge image");
         assert!(graphics_view(&console).is_none());
         console.set_graphics_capture(true);
         let view = graphics_view(&console).expect("surfaces decoded");

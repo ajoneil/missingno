@@ -12,7 +12,7 @@ use missingno_ti_psg::{MUTE_ATTENUATION, Psg, Variant};
 use missingno_ti_vdp::{Frame, Standard, Vdp};
 use missingno_zilog_z80::{Bus, Cpu};
 
-use crate::cartridge::{Cartridge, CartridgeError, UNDRIVEN};
+use crate::cartridge::{CartType, Cartridge, CartridgeError, UNDRIVEN};
 
 /// The board is cut for NTSC: a TMS9918A, and a 262-line frame.
 pub(crate) const STANDARD: Standard = Standard::Ntsc;
@@ -150,13 +150,20 @@ struct Board {
 
 impl Board {
     /// The memory map the '139's first half decodes: the cartridge selects
-    /// below `/CS WRAM`, the work RAM mirrored above it.
+    /// below `/CS WRAM`, the work RAM mirrored above it — unless the cart is
+    /// holding `/DSRAM` high, which takes that select away from the console.
     fn memory(&self, address: u16) -> u8 {
-        if address < RAM_BASE {
-            self.cart.read(address)
-        } else {
-            self.ram[address as usize & RAM_MASK]
+        if let Some(driven) = self.cart.read(address) {
+            return driven;
         }
+        if self.console_ram_selected(address) {
+            return self.ram[address as usize & RAM_MASK];
+        }
+        UNDRIVEN
+    }
+
+    fn console_ram_selected(&self, address: u16) -> bool {
+        address >= RAM_BASE && !self.cart.disables_console_ram(address)
     }
 }
 
@@ -165,10 +172,11 @@ impl Bus for Board {
         self.memory(address)
     }
 
-    /// Nothing below the RAM select is writable: no SG-1000 cart in this cut
-    /// carries RAM.
+    /// The cycle reaches the cart edge whatever the address; the console's own
+    /// RAM takes it only where its select survives.
     fn write(&mut self, address: u16, data: u8) {
-        if address >= RAM_BASE {
+        self.cart.write(address, data);
+        if self.console_ram_selected(address) {
             self.ram[address as usize & RAM_MASK] = data;
         }
     }
@@ -201,11 +209,13 @@ impl Bus for Board {
 }
 
 impl Sg1000 {
-    pub fn new(rom: &[u8]) -> Result<Sg1000, CartridgeError> {
+    /// A console with the stated board in its slot; without one the image
+    /// loads as a plain ROM.
+    pub fn new(rom: &[u8], cart_type: Option<CartType>) -> Result<Sg1000, CartridgeError> {
         Ok(Sg1000 {
             cpu: Cpu::new(),
             board: Board {
-                cart: Cartridge::load(rom)?,
+                cart: Cartridge::load(rom, cart_type)?,
                 ram: [0; RAM_SIZE],
                 vdp: Vdp::new(STANDARD),
                 psg: Psg::new(Variant::DiscreteTi),
@@ -244,6 +254,16 @@ impl Sg1000 {
     pub fn restore_work_ram(&mut self, bytes: &[u8]) {
         let len = self.board.ram.len().min(bytes.len());
         self.board.ram[..len].copy_from_slice(&bytes[..len]);
+    }
+
+    /// The cartridge's own RAM, its chips in decode order; `None` for a board
+    /// that carries none.
+    pub fn cart_ram(&self) -> Option<Vec<u8>> {
+        self.board.cart.ram()
+    }
+
+    pub fn restore_cart_ram(&mut self, bytes: &[u8]) {
+        self.board.cart.restore_ram(bytes);
     }
 
     pub fn board_state(&self) -> BoardState {
@@ -380,11 +400,13 @@ impl Sg1000 {
     }
 
     /// Power-cycle: fresh chip state, same cartridge and the same lines held.
+    /// Cart RAM is unbacked SRAM, so it clears with the console's own.
     pub fn power_cycle(&mut self) {
         self.cpu = Cpu::new();
         self.board.vdp.reset();
         self.board.psg = Psg::new(Variant::DiscreteTi);
         self.board.ram = [0; RAM_SIZE];
+        self.board.cart.power_cycle();
         self.sample_clock = sample_clock();
         self.audio.clear();
         if let Some(rings) = &mut self.wave_capture {
@@ -438,5 +460,66 @@ fn pad_line(port: PortId, role: ControlRole) -> Option<(MuxByte, u8)> {
         (JOY2, ControlRole::Action(0)) => Some((MuxByte::Dd, dd::P2_BUTTON_1)),
         (JOY2, ControlRole::Action(1)) => Some((MuxByte::Dd, dd::P2_BUTTON_2)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn console(cart_type: Option<CartType>) -> Sg1000 {
+        Sg1000::new(&[0x11; 0x8000], cart_type).expect("an image the board holds")
+    }
+
+    fn write(console: &mut Sg1000, address: u16, data: u8) {
+        console.board.write(address, data);
+    }
+
+    /// The kilobyte repeats through `/CS WRAM` on a board that leaves the
+    /// select alone — a plain ROM, and both Sega RAM boards.
+    #[test]
+    fn the_console_ram_keeps_its_window_where_no_cart_drives_dsram() {
+        for cart_type in [None, Some(CartType::OthelloRam), Some(CartType::CastleRam)] {
+            let mut console = console(cart_type);
+            write(&mut console, 0xC000, 0x5A);
+            assert_eq!(console.peek(0xC000), 0x5A);
+            assert_eq!(console.peek(0xC400), 0x5A);
+            assert_eq!(console.peek(0xFC00), 0x5A);
+            assert_eq!(console.work_ram()[0], 0x5A);
+        }
+    }
+
+    /// The cart's own RAM behind `/EXM1` and the console's above it are
+    /// separate stores.
+    #[test]
+    fn a_sega_boards_ram_sits_beside_the_consoles() {
+        let mut console = console(Some(CartType::OthelloRam));
+        write(&mut console, 0x8000, 0x5A);
+        write(&mut console, 0xC000, 0xA5);
+        assert_eq!(console.peek(0x8000), 0x5A);
+        assert_eq!(console.peek(0xC000), 0xA5);
+        assert_eq!(console.cart_ram().map(|ram| ram[0]), Some(0x5A));
+        assert_eq!(console.work_ram()[0], 0xA5);
+    }
+
+    /// An expander holding `/DSRAM` high answers the whole top window itself;
+    /// the console's kilobyte is deselected for reads and writes alike.
+    #[test]
+    fn an_expander_takes_the_console_ram_window() {
+        for cart_type in [CartType::DahjeeA, CartType::DahjeeB] {
+            let mut console = console(Some(cart_type));
+            write(&mut console, 0xC000, 0x5A);
+            assert_eq!(console.peek(0xC000), 0x5A);
+            assert_eq!(console.work_ram()[0], 0x00, "{cart_type:?}");
+        }
+    }
+
+    /// Cart RAM carries no battery, so a power cycle wakes it cleared.
+    #[test]
+    fn a_power_cycle_clears_cart_ram() {
+        let mut console = console(Some(CartType::CastleRam));
+        write(&mut console, 0x8000, 0x5A);
+        console.power_cycle();
+        assert_eq!(console.peek(0x8000), 0x00);
     }
 }

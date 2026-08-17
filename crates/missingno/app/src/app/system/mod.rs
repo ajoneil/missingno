@@ -260,11 +260,8 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         controls: sg1000::CONTROLS,
         is_rom: |path, _| sg1000::is_sg1000_rom(path),
         title_from_rom: |_| None,
-        create_console: |media| {
-            sg1000::create_console(media.rom, media.fallback_title)
-                .map_err(|error| format!("{error:?}"))
-        },
-        options: Vec::new,
+        create_console: sg1000::create_console,
+        options: sg1000::launch_options,
         port_config: |_| Vec::new(),
         trace: None,
     },

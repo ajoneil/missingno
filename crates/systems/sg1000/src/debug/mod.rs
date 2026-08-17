@@ -17,6 +17,7 @@ use std::time::Duration;
 use missingno_core::TvStandard;
 use missingno_core::graphics::GraphicsView;
 use missingno_core::inspect::{RegisterGroup, Section};
+use missingno_core::launch::{LaunchChoice, LaunchOptionDescriptor, LaunchOptionKind};
 use missingno_core::machine::{BoundaryState, Machine, MachineConsole, StateIdentity};
 use missingno_core::ports::{PanelControl, PeripheralId, PlugError, PortDescriptor, PortId};
 use missingno_core::state::{StateRecord, SystemStateSchema};
@@ -29,7 +30,7 @@ use missingno_core::waveform::ChannelWave;
 use missingno_ti_psg::{NoiseMode, NoiseRate, Variant};
 use missingno_ti_vdp::{Frame as VdpFrame, Standard, VISIBLE_WIDTH};
 
-use crate::cartridge::CartridgeError;
+use crate::cartridge::{CartType, CartridgeError};
 use crate::console::{JOY1, JOY2, STANDARD, Sg1000, TSTATES_PER_FRAME};
 use crate::state_schema::sg1000_state_schema;
 use palette::ti_palette;
@@ -136,10 +137,34 @@ pub fn is_sg1000_rom(path: &std::path::Path) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("sg"))
 }
 
+/// The board the cartridge's silicon sits on.
+pub const BOARD: &str = "board";
+
+/// The options the SG-1000 accepts at launch. A cartridge carries no header, so
+/// what a catalogue says about its board is all a loader has.
+pub fn launch_options() -> Vec<LaunchOptionDescriptor> {
+    vec![LaunchOptionDescriptor {
+        id: BOARD,
+        label: "Cartridge board",
+        kind: LaunchOptionKind::Choice {
+            choices: CartType::all()
+                .map(|board| LaunchChoice {
+                    value: board.code(),
+                    label: board.display_name(),
+                })
+                .collect(),
+        },
+    }]
+}
+
 /// A console bound to its media, so a save state can refuse a ROM it was not
 /// written for.
-pub fn create_console(rom: &[u8], title: String) -> Result<Box<dyn SystemConsole>, CartridgeError> {
-    let console = MachineConsole::<Sg1000System>::new(Sg1000::new(rom)?, title);
+pub fn create_console(
+    rom: &[u8],
+    title: String,
+    cart_type: Option<CartType>,
+) -> Result<Box<dyn SystemConsole>, CartridgeError> {
+    let console = MachineConsole::<Sg1000System>::new(Sg1000::new(rom, cart_type)?, title);
     Ok(Box::new(console.with_identity(StateIdentity {
         rom_fingerprint: rom_fingerprint(rom),
     })))
@@ -363,7 +388,7 @@ mod fixtures {
 
     /// What a powered-on board reads, for a test to vary one chip of.
     pub(crate) fn power_on_state() -> Sg1000InspectState {
-        let console = Sg1000::new(&[0; 0x2000]).expect("flat cartridge image");
+        let console = Sg1000::new(&[0; 0x2000], None).expect("flat cartridge image");
         Sg1000System::inspect(&console, 0)
     }
 

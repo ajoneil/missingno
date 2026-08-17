@@ -16,8 +16,9 @@
 //! access are live wherever the boundary falls.
 //!
 //! Excluded by design: the recorded bus trace (a diagnostic of the instruction
-//! just run) and the accumulated audio samples (drained output, not state). The
-//! cartridge is a flat ROM with no board state to carry.
+//! just run) and the accumulated audio samples (drained output, not state). No
+//! SG-1000 board switches banks, so a cartridge carries nothing but whatever
+//! RAM it holds.
 
 use std::sync::LazyLock;
 
@@ -232,14 +233,19 @@ pub fn boundary_fields() -> Vec<FieldDef> {
     fields
 }
 
-/// The byte regions a save state carries: the work RAM, the VDP's DRAM, and the
-/// two line buffers under the raster. The field being emitted travels as the
-/// state's framebuffer, since a mid-field save cannot reconstruct the rows
-/// already put down.
+/// The byte regions a save state carries: the work RAM, whatever RAM the
+/// cartridge holds, the VDP's DRAM, and the two line buffers under the raster.
+/// The field being emitted travels as the state's framebuffer, since a mid-field
+/// save cannot reconstruct the rows already put down.
 pub fn memory_spans() -> Vec<MemorySpan> {
     vec![
         MemorySpan::addressable("work_ram", RAM_BASE, RAM_SIZE)
             .help("the TMM2009's kilobyte, before the decode mirrors it"),
+        // Where a board's RAM answers and how much of it there is are the
+        // board's own decode, so it travels as one linear region.
+        MemorySpan::off_bus("cart_ram", 0)
+            .optional()
+            .help("the cartridge's RAM chips, in the order the board decodes them"),
         MemorySpan::off_bus("vram", VRAM_SIZE as u32).help("the VDP's DRAM, in physical order"),
         MemorySpan::off_bus("vdp_line", VISIBLE_WIDTH as u32)
             .help("the row being composited under the raster"),

@@ -26,7 +26,7 @@ const SCRIPT: &[(u64, ControlRole, bool)] = &[
 fn console(relative: &str) -> Box<dyn SystemConsole> {
     let path = format!("{CORPUS}{relative}");
     let rom = std::fs::read(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"));
-    create_console(&rom, "test".into()).expect("flat cartridge image")
+    create_console(&rom, "test".into(), None).expect("flat cartridge image")
 }
 
 fn record(relative: &str, warmup: usize, frames: u64, interval: u64) -> Recording {

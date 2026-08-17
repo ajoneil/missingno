@@ -102,20 +102,29 @@ strobed it — and moves the /INT sample point along with it.
   never touches port space and READY can only be low inside the stretched
   `OUT` itself, so the protection holds vacuously. If the acknowledge cycle
   ever grows a bus surface, this becomes real wiring.
-- **Flat cartridges only.** The cart is a ROM image: a power-of-two image
-  inside `/EXM2` repeats through `$0000-$7FFF` (the documented no-decoder
-  multi-ROM boards mirror exactly this way), a larger image runs flat into
-  `$8000-$BFFF`, and anything past the two windows is rejected. Not
-  supported, and named: **Othello** and **The Castle** cart RAM at `$8000`,
-  the Taiwanese **Dahjee** RAM expanders, **Terebi Oekaki**'s tablet, the
-  SC-3000 Survivors **multicarts**, and the `/DSRAM` route by which a cart
-  disables the console's own RAM. A game probing `$8000-$BFFF` for cart RAM
-  reads `0xFF` and will misbehave. The selector for a board model is the
-  gamedb `cart_type` field: both loaders already carry it — the session
-  factory's `LoadOptions` (`missingno-session`) and the app's `MediaLoad`
-  (`missingno`'s `app/system/`) — and this core's constructors ignore it. A
-  combined 16 KB dump of an 8 K + 8 K board is a known limitation: the halves
-  must be dumped per region to mirror correctly.
+- **Five cartridge boards, no mapper.** The cart edge is modelled whole: the
+  cartridge sees every access, answers or leaves the bus undriven, and may
+  hold `/DSRAM` — edge pin B3, which is the console work RAM's own chip
+  select — to answer over the console's kilobyte. The boards are the plain
+  ROM image (a power-of-two image inside `/EXM2` repeats through
+  `$0000-$7FFF`, as the documented no-decoder multi-ROM boards do; a larger
+  image runs flat into `$8000-$BFFF`), Othello's 2 KB and The Castle's 8 KB
+  answering all of `/EXM1` from their own address lines, and the two
+  Taiwanese DahJee expanders. Nothing is inferred — a dump carries no header
+  and no distinguishing length — so a board is named by the gamedb
+  `cart_type` field, which reaches this core as the `board` launch option
+  through both loaders. Still not supported, and named: **Terebi Oekaki**'s
+  tablet, the SC-3000 Survivors **multicarts**, and the BASIC carts'
+  address-qualified `/DSRAM` drive. A combined 16 KB dump of an 8 K + 8 K
+  board is a known limitation: the halves must be dumped per region to
+  mirror correctly.
+- **The DahJee expanders are provisional.** No traced sheet of either type
+  exists — Enri marks both unconfirmed — so their decode is derived from the
+  mechanism the edge offers: a static `/DSRAM` drive over RAM wired to its
+  own low address lines, which reproduces the windows MAME gives them (Type
+  A's 8 KB at `$2000-$3FFF` and kilobyte repeating through `$C000-$FFFF`,
+  Type B's 8 KB twice over the same window). Tracing a real unit would
+  settle it.
 - **1 KB of work RAM — the SG-1000 proper.** The SG-1000 II and SC-3000
   fit 2 KB, which the documented machine-detection routine distinguishes by
   reading the mirror. The size is fixed here, not a variant axis; modelling

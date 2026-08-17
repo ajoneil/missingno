@@ -52,15 +52,19 @@ pub fn capture(sg: &Sg1000) -> Result<BoundaryState, StateError> {
     })
 }
 
-/// The byte regions beside the record: the work RAM, the VDP's DRAM, and the
-/// two line buffers under the raster.
+/// The byte regions beside the record: the work RAM, a RAM-bearing cartridge's
+/// own stores, the VDP's DRAM, and the two line buffers under the raster.
 pub fn capture_memory(sg: &Sg1000) -> Vec<(&'static str, Vec<u8>)> {
-    vec![
+    let mut regions = vec![
         ("work_ram", sg.work_ram().to_vec()),
         ("vram", sg.vdp().vram().to_vec()),
         ("vdp_line", sg.vdp().line_buffer().to_vec()),
         ("vdp_sprite_plane", sg.vdp().sprite_plane().to_vec()),
-    ]
+    ];
+    if let Some(ram) = sg.cart_ram() {
+        regions.push(("cart_ram", ram));
+    }
+    regions
 }
 
 /// The field being emitted, as the state file's framebuffer carries it.
@@ -230,6 +234,9 @@ pub fn restore(
     };
     if let Some(bytes) = region("work_ram") {
         sg.restore_work_ram(bytes);
+    }
+    if let Some(bytes) = region("cart_ram") {
+        sg.restore_cart_ram(bytes);
     }
     if let Some(bytes) = region("vram") {
         sg.vdp_mut().restore_vram(bytes);
@@ -525,7 +532,7 @@ mod tests {
     /// A powered-on board's record carries every field the schema names.
     #[test]
     fn a_captured_record_validates_against_the_schema() {
-        let mut console = Sg1000::new(&[0; 0x2000]).expect("flat cartridge image");
+        let mut console = Sg1000::new(&[0; 0x2000], None).expect("flat cartridge image");
         for _ in 0..64 {
             console.step_instruction();
         }
@@ -535,7 +542,7 @@ mod tests {
 
     #[test]
     fn a_capture_is_refused_mid_instruction() {
-        let mut console = Sg1000::new(&[0; 0x2000]).expect("flat cartridge image");
+        let mut console = Sg1000::new(&[0; 0x2000], None).expect("flat cartridge image");
         console.step_tstate();
         assert!(!console.at_instruction_boundary());
         assert!(matches!(capture(&console), Err(StateError::NotAtBoundary)));

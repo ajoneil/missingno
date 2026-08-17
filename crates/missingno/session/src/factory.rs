@@ -247,18 +247,38 @@ mod sms {
 mod sg1000 {
     use super::*;
     use missingno_core::system::SystemConsole;
+    use missingno_sg1000::cartridge::CartType;
+    use missingno_sg1000::debug::BOARD;
 
+    /// A stated board is the catalogue's word on media that carries no header of
+    /// its own — a code the core cannot read is an error, never a quiet fall
+    /// back to a plain ROM.
     pub fn create(
         path: &Path,
         rom: &[u8],
-        _launch: &LaunchValues,
+        launch: &LaunchValues,
     ) -> Result<Box<dyn SystemConsole>, LoadError> {
-        missingno_sg1000::debug::create_console(rom, title_for(path))
-            .map_err(|error| LoadError::Core(format!("{error:?}")))
+        let board = match launch.choice(BOARD) {
+            Some(code) => {
+                Some(
+                    CartType::from_code(code).ok_or_else(|| LoadError::InvalidValue {
+                        option: BOARD.to_string(),
+                        value: code.to_string(),
+                    })?,
+                )
+            }
+            None => None,
+        };
+        missingno_sg1000::debug::create_console(rom, title_for(path), board)
+            .map_err(|error| LoadError::Core(error.to_string()))
     }
 
     pub fn is_rom(path: &Path, _rom: &[u8]) -> bool {
         missingno_sg1000::debug::is_sg1000_rom(path)
+    }
+
+    pub fn options() -> Vec<LaunchOptionDescriptor> {
+        missingno_sg1000::debug::launch_options()
     }
 }
 
@@ -297,7 +317,7 @@ pub static FACTORIES: &[CoreFactory] = &[
         name: "SG-1000",
         is_rom: sg1000::is_rom,
         create: sg1000::create,
-        options: Vec::new,
+        options: sg1000::options,
     },
 ];
 

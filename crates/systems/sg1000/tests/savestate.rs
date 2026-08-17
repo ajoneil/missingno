@@ -9,6 +9,7 @@
 use missingno_core::machine::BoundaryState;
 use missingno_core::state_file::{StateMeta, write_state_file};
 use missingno_core::system::{StateError, SystemDebugger};
+use missingno_sg1000::cartridge::CartType;
 use missingno_sg1000::console::{Sg1000, TSTATES_PER_FRAME};
 use missingno_sg1000::debug::create_console;
 use missingno_sg1000::snapshot::{capture, restore};
@@ -29,7 +30,7 @@ fn image(relative: &str) -> Vec<u8> {
 }
 
 fn load(relative: &str) -> Sg1000 {
-    Sg1000::new(&image(relative)).expect("flat cartridge image")
+    Sg1000::new(&image(relative), None).expect("flat cartridge image")
 }
 
 /// Run `frames` frames, each landing at an instruction boundary.
@@ -157,6 +158,48 @@ fn the_work_ram_rides_the_save() {
     assert_eq!(read_back, written.collect::<Vec<u8>>());
 }
 
+/// A RAM-bearing board's own store rides the save the work RAM does: a fresh
+/// console of the same board wakes with it cleared, and the restore fills it.
+#[test]
+fn cart_ram_rides_the_save() {
+    // LD A,$5A / LD ($8000),A / LD A,$A5 / LD ($87FF),A / spin.
+    let mut rom = vec![0u8; 0x8000];
+    rom[..13].copy_from_slice(&[
+        0x3E, 0x5A, 0x32, 0x00, 0x80, 0x3E, 0xA5, 0x32, 0xFF, 0x87, 0xC3, 0x0A, 0x00,
+    ]);
+    let board = Some(CartType::OthelloRam);
+
+    let mut original = Sg1000::new(&rom, board).expect("an image the board holds");
+    for _ in 0..8 {
+        original.step_instruction();
+    }
+    assert_eq!(original.peek(0x8000), 0x5A);
+    assert_eq!(original.peek(0x87FF), 0xA5);
+
+    let state = capture(&original).expect("a boundary save");
+    let mut restored = Sg1000::new(&rom, board).expect("an image the board holds");
+    assert_eq!(restored.peek(0x8000), 0x00, "cart RAM wakes cleared");
+    restore(
+        &mut restored,
+        &state.record,
+        &owned(&state),
+        state.frame.as_ref(),
+    )
+    .expect("restore succeeds");
+
+    assert_eq!(restored.cart_ram(), original.cart_ram());
+    assert_eq!(restored.peek(0x8000), 0x5A);
+    assert_eq!(restored.peek(0x87FF), 0xA5);
+}
+
+/// A board with no RAM of its own contributes no region.
+#[test]
+fn a_flat_board_carries_no_cart_ram_region() {
+    let console = load("modes/graphic1.sg");
+    let state = capture(&console).expect("a boundary save");
+    assert!(!state.memory.iter().any(|(name, _)| *name == "cart_ram"));
+}
+
 #[test]
 fn a_captured_record_validates_against_the_schema() {
     let mut console = load("modes/graphic2.sg");
@@ -181,7 +224,8 @@ fn a_save_is_refused_mid_instruction() {
 // ── Through the seam ──────────────────────────────────────────────
 
 fn seam_console(relative: &str) -> Box<dyn SystemDebugger> {
-    let console = create_console(&image(relative), "test".into()).expect("flat cartridge image");
+    let console =
+        create_console(&image(relative), "test".into(), None).expect("flat cartridge image");
     let mut debugger = console.into_debugger();
     for _ in 0..20 {
         debugger.step_frame();

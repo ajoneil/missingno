@@ -27,7 +27,7 @@ const INSTRUCTION_BUDGET: u64 = BUDGET_FRAMES * TSTATES_PER_FRAME as u64 / 4;
 fn run_to_verdict(rom: &str) -> Sg1000 {
     let path = format!("{CORPUS}{rom}");
     let image = std::fs::read(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"));
-    let mut console = Sg1000::new(&image).expect("flat cartridge image");
+    let mut console = Sg1000::new(&image, None).expect("flat cartridge image");
     let outcome = poll_verdict(INSTRUCTION_BUDGET, || {
         console.step_instruction();
         Poll::Read([0, 1, 2, 3].map(|offset| console.peek(RESULT_BLOCK + offset)))
@@ -141,7 +141,7 @@ fn run_joystick_probe(console: &mut Sg1000) -> [u8; 4] {
 
 #[test]
 fn released_joysticks_read_all_ones() {
-    let mut console = Sg1000::new(&joystick_probe()).unwrap();
+    let mut console = Sg1000::new(&joystick_probe(), None).unwrap();
     assert_eq!(run_joystick_probe(&mut console), [0xFF; 4]);
 }
 
@@ -164,7 +164,7 @@ fn each_pad_line_clears_its_own_bit() {
         (PortId(1), ControlRole::Action(1), 0xFF, 0xF7),
     ];
     for (port, role, dc, dd) in cases {
-        let mut console = Sg1000::new(&joystick_probe()).unwrap();
+        let mut console = Sg1000::new(&joystick_probe(), None).unwrap();
         press(&mut console, port, role);
         let read = run_joystick_probe(&mut console);
         assert_eq!(
@@ -180,7 +180,7 @@ fn each_pad_line_clears_its_own_bit() {
 /// through the whole $C0-$FF block.
 #[test]
 fn the_multiplexer_pair_aliases_every_two_addresses() {
-    let mut console = Sg1000::new(&joystick_probe()).unwrap();
+    let mut console = Sg1000::new(&joystick_probe(), None).unwrap();
     press(&mut console, PortId(0), ControlRole::Left);
     press(&mut console, PortId(1), ControlRole::Right);
     let read = run_joystick_probe(&mut console);
@@ -192,7 +192,7 @@ fn the_multiplexer_pair_aliases_every_two_addresses() {
 /// control can pull $DD's top nibble down.
 #[test]
 fn the_top_nibble_of_the_second_byte_stays_high() {
-    let mut console = Sg1000::new(&joystick_probe()).unwrap();
+    let mut console = Sg1000::new(&joystick_probe(), None).unwrap();
     for port in [PortId(0), PortId(1)] {
         for role in [
             ControlRole::Up,
@@ -223,7 +223,7 @@ fn a_psg_write_stretches_its_own_out() {
     let spin = asm.here();
     asm.jp(spin);
 
-    let mut console = Sg1000::new(&asm.into_rom()).unwrap();
+    let mut console = Sg1000::new(&asm.into_rom(), None).unwrap();
     console.step_instruction();
     console.step_instruction();
     let unstalled = console.cpu.bus_trace().len();
