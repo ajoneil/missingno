@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-pub use missingno_core::launch::{LaunchOptionDescriptor, LaunchValues};
+pub use missingno_core::launch::{LaunchOptionDescriptor, LaunchValue, LaunchValues};
 pub use missingno_core::ports::{
     ControlDescriptor, PanelControl, PeripheralId, PortDescriptor, PortId,
 };
@@ -146,6 +146,13 @@ impl ControlMap {
     }
 }
 
+/// One launch option the media itself answers, read off a header without
+/// building a console — what a launch surface shows as the automatic value.
+pub struct MediaFact {
+    pub option: &'static str,
+    pub value: LaunchValue,
+}
+
 /// A family's registration on the load path: how its media is recognised in
 /// file dialogs, library scans, and ROM loads, and how a console is built.
 pub struct FamilyDescriptor {
@@ -162,10 +169,10 @@ pub struct FamilyDescriptor {
     pub title_from_rom: fn(&[u8]) -> Option<String>,
     pub create_console: CreateConsole,
     /// The launch options this family's core publishes.
-    // The loader states them for a caller to collect values against; no app
-    // surface renders them yet.
-    #[expect(dead_code)]
     pub options: fn() -> Vec<LaunchOptionDescriptor>,
+    /// The options the media answers for itself, for a launch surface to show
+    /// as the automatic value. Empty where only the core can resolve them.
+    pub stated_by_media: fn(&[u8]) -> Vec<MediaFact>,
     /// How this family's ports are configured for a game whose library
     /// metadata names these controllers. Empty leaves the console's power-on
     /// configuration.
@@ -213,6 +220,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         title_from_rom: gb::title_from_rom,
         create_console: gb::create_console,
         options: gb::launch_options,
+        stated_by_media: gb::stated_by_media,
         port_config: |_| Vec::new(),
         trace: Some(crate::trace::trace_gb),
     },
@@ -225,6 +233,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         // The same factory serves both platforms: the header picks the core.
         create_console: gb::create_console,
         options: gb::launch_options,
+        stated_by_media: gb::stated_by_media,
         port_config: |_| Vec::new(),
         trace: Some(crate::trace::trace_gb),
     },
@@ -236,6 +245,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         title_from_rom: |_| None,
         create_console: vcs::create_console,
         options: vcs::launch_options,
+        stated_by_media: |_| Vec::new(),
         port_config: vcs::port_config,
         trace: Some(crate::trace::trace_vcs),
     },
@@ -251,6 +261,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
                 .map_err(|error| format!("{error:?}"))
         },
         options: Vec::new,
+        stated_by_media: |_| Vec::new(),
         port_config: |_| Vec::new(),
         trace: None,
     },
@@ -262,6 +273,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         title_from_rom: |_| None,
         create_console: sg1000::create_console,
         options: sg1000::launch_options,
+        stated_by_media: |_| Vec::new(),
         port_config: |_| Vec::new(),
         trace: None,
     },
@@ -277,6 +289,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
                 .map_err(|error| format!("{error:?}"))
         },
         options: Vec::new,
+        stated_by_media: |_| Vec::new(),
         port_config: |_| Vec::new(),
         trace: Some(crate::trace::trace_nes),
     },

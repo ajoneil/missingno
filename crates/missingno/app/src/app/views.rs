@@ -13,7 +13,7 @@ use super::ui::{
     sizes::{l, s},
     text,
 };
-use super::{App, DetailSubScreen, Fullscreen, Message, Screen, controls, settings};
+use super::{App, DetailSubScreen, Fullscreen, Message, Screen, controls, launch, settings};
 
 mod cartridge;
 mod emulator;
@@ -89,6 +89,7 @@ impl App {
         };
 
         // 2. Shell overlays — applied once regardless of screen
+        let content = self.apply_launch_window(content);
         let content = self.apply_toast(content);
         let content = self.apply_menu(content);
         self.apply_confirmation_dialog(content)
@@ -163,8 +164,31 @@ impl App {
                 }) => Some(Message::ExitFullscreen),
                 _ => None,
             }),
-            if self.notice.is_some() {
+            // A notice offering an action waits to be taken rather than timing
+            // out under the pointer.
+            if self
+                .notice
+                .as_ref()
+                .is_some_and(|(notice, _)| notice.action.is_none())
+            {
                 time::every(std::time::Duration::from_millis(3000)).map(|_| Message::DismissNotice)
+            } else {
+                Subscription::none()
+            },
+            // The launch window's happy path is one keystroke: Enter starts what
+            // it is showing, Escape puts it away.
+            if self.launch_window.is_some() {
+                event::listen_with(|event, _, _| match event {
+                    iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+                        ..
+                    }) => Some(launch::Message::Launch.into()),
+                    iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                        ..
+                    }) => Some(launch::Message::Close.into()),
+                    _ => None,
+                })
             } else {
                 Subscription::none()
             },

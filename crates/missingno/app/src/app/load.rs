@@ -6,8 +6,10 @@ use missingno_session::SharedSession;
 use rfd::{AsyncFileDialog, FileHandle};
 
 use crate::app::emulator::ConsoleFacts;
+use crate::app::launch;
+use crate::app::system::LaunchValues;
 use crate::app::system::SystemConsole;
-use crate::app::{self, App, CurrentGame, Game, LoadedGame, Screen, library, system};
+use crate::app::{self, App, CurrentGame, Game, LoadedGame, Notice, Screen, library, system};
 use missingno_iced::ScreenView;
 
 #[derive(Debug, Clone)]
@@ -69,65 +71,118 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
             }
         }
 
+        // Every file the user picks goes through the launch window, so what it
+        // will boot with — and what to change when it refuses — is in front of
+        // them before it runs.
         Message::Loaded(rom_path, rom) => {
             let rom = crate::patch::soft_patch(&rom_path, rom);
-            return setup_game(app, rom_path, rom);
+            return Task::done(
+                launch::Message::Opened(rom_path, rom, launch::Target::Transient).into(),
+            );
         }
     }
 
     Task::none()
 }
 
+/// One launch, whatever raised it.
+struct Request<'a> {
+    rom: Vec<u8>,
+    rom_path: &'a std::path::Path,
+    save_data: Option<Vec<u8>>,
+    /// The system to run it on, where the user named one for media no family
+    /// claims; otherwise the media classifies itself.
+    platform: Option<system::Platform>,
+    /// The user's own word on the options this launch runs with.
+    overrides: LaunchValues,
+}
+
 /// Build the console for a ROM and wrap it for the active mode (debugger or
 /// emulator), storing it in `app.game`. Returns the game's title; `Err`
-/// when no family claims the media, or the core it belongs to refused it.
-fn start_console(
-    app: &mut App,
-    rom: Vec<u8>,
-    save_data: Option<Vec<u8>>,
-    rom_path: &std::path::Path,
-    game_dir: &std::path::Path,
-) -> Result<String, String> {
-    let family = system::family_for(rom_path, &rom).ok_or("unsupported ROM")?;
-    let entry = crate::app::library::load_entry(game_dir);
+/// carries what the core refused the media with, for the caller to put in
+/// front of the user.
+fn start(app: &mut App, request: Request<'_>) -> Result<String, String> {
+    let family = match request.platform {
+        Some(platform) => system::family_of(platform),
+        None => system::family_for(request.rom_path, &request.rom),
+    }
+    .ok_or("no system recognises this file")?;
+
+    let sha1 = library::hasheous::rom_sha1(&request.rom);
+    let facts = launch::facts(
+        family,
+        &request.rom,
+        &app.catalogue,
+        &sha1,
+        app.boot_rom.as_ref(),
+    );
+    let values = launch::resolve(&(family.options)(), &request.overrides, &facts);
+
     let mut console = (family.create_console)(system::MediaLoad {
-        rom: &rom,
-        fallback_title: file_stem_title(rom_path),
-        save_data,
-        launch: launch_values(app, entry.as_ref()),
+        rom: &request.rom,
+        fallback_title: file_stem_title(request.rom_path),
+        save_data: request.save_data,
+        launch: values,
         serial_link: &mut app.serial_link,
         print_sink: Some(app.print_tx.clone()),
     })?;
     // The game's catalogued controllers decide what its ports carry: paddle
     // input is inert until a paddle pair is in the jack.
-    let controllers = entry.map(|entry| entry.controllers).unwrap_or_default();
+    let controllers = launch::catalogued_controllers(&app.catalogue, &sha1);
     for (port, peripheral) in (family.port_config)(&controllers) {
         let _ = console.plug(port, peripheral);
     }
-    Ok(finish_start(app, console, rom_path, family.platform))
+    Ok(finish_start(
+        app,
+        console,
+        request.rom_path,
+        family.platform,
+    ))
 }
 
-/// The per-ROM boot choices, as the options the families publish: what the
-/// library entry records about the media, plus any boot ROM named on the
-/// command line. A family reads only the options it published.
-fn launch_values(app: &App, entry: Option<&library::GameEntry>) -> system::LaunchValues {
-    let mut launch = system::LaunchValues::default();
-    if let Some(boot_rom) = &app.boot_rom {
-        launch.set_file(system::gb::BOOT_ROM, boot_rom.bytes().to_vec());
+/// The one place a refusal reaches the user from a path that skipped the launch
+/// window: nothing boots, and the notice offers the window where the console,
+/// board or standard the launch stated can be changed.
+fn refused(app: &mut App, error: String, reopen: launch::Message) {
+    eprintln!("{error}");
+    app.game = Game::Unloaded;
+    app.show_notice(Notice::failure(error, "Launch options…", reopen.into()));
+}
+
+/// Start what the launch window is showing. A refusal goes back onto the
+/// window, which stays open over whatever raised it.
+pub fn launch_from_window(app: &mut App) -> Task<app::Message> {
+    let Some(mut window) = app.launch_window.take() else {
+        return Task::none();
+    };
+
+    let outcome = match window.target {
+        launch::Target::Library => {
+            if select_game(app, &window.sha1) {
+                start_current_game(app, None, window.overrides.clone())
+            } else {
+                Err("this game is no longer in the library".to_string())
+            }
+        }
+        launch::Target::Transient => install_and_start(
+            app,
+            window.rom_path.clone(),
+            window.rom.clone(),
+            window.platform,
+            window.overrides.clone(),
+        ),
+    };
+
+    match outcome {
+        Ok(()) => Task::none(),
+        Err(error) => {
+            eprintln!("{}: {error}", window.rom_path.display());
+            app.game = Game::Unloaded;
+            window.error = Some(error);
+            app.launch_window = Some(window);
+            Task::none()
+        }
     }
-    if let Some(standard) = entry.and_then(|entry| entry.tv_standard) {
-        launch.set_choice(system::vcs::TV_STANDARD, standard.code());
-    }
-    // Every family publishes its board option under the same id, so one key
-    // carries the catalogue's word whichever core is about to read it.
-    if let Some(board) = entry.and_then(|entry| entry.cart_type.as_deref()) {
-        launch.set_choice(system::vcs::BOARD, board);
-    }
-    launch.set_toggle(
-        system::vcs::OVERDUMP,
-        entry.is_some_and(|entry| entry.overdump),
-    );
-    launch
 }
 
 pub(crate) fn file_stem_title(rom_path: &std::path::Path) -> String {
@@ -203,39 +258,55 @@ pub fn select_game(app: &mut App, sha1: &str) -> bool {
     true
 }
 
-/// Start emulation for the currently selected game.
-/// Requires current_game to be set (via select_game or setup_game).
-pub fn play_current_game(app: &mut App) -> Task<app::Message> {
-    let (rom_path, game_dir) = {
-        let Some(current) = &app.current_game else {
-            return Task::none();
-        };
-        let Some(rom_path) = current.entry.rom_paths.iter().find(|p| p.exists()).cloned() else {
-            return Task::none();
-        };
-        (rom_path, current.game_dir.clone())
+/// Start the currently selected library game, optionally from a save in its
+/// activity log. `Err` carries what the core refused the media with.
+fn start_current_game(
+    app: &mut App,
+    from_save: Option<&str>,
+    overrides: LaunchValues,
+) -> Result<(), String> {
+    let (rom_path, game_dir, platform) = {
+        let current = app
+            .current_game
+            .as_ref()
+            .ok_or("no game is selected".to_string())?;
+        let rom_path = current
+            .entry
+            .rom_paths
+            .iter()
+            .find(|path| path.exists())
+            .cloned()
+            .ok_or("this game's ROM file is missing".to_string())?;
+        // The entry's own platform, so media no family claims still runs on the
+        // system the user named for it.
+        (rom_path, current.game_dir.clone(), current.entry.platform)
     };
 
-    let Ok(rom) = std::fs::read(&rom_path) else {
-        return Task::none();
-    };
+    let rom = std::fs::read(&rom_path).map_err(|error| format!("{error}"))?;
     let rom = crate::patch::soft_patch(&rom_path, rom);
 
-    let save_data = library::activity::load_current_sram(&game_dir);
-    let initial_sram = save_data.clone();
-    let cartridge_title = match start_console(app, rom, save_data, &rom_path, &game_dir) {
-        Ok(title) => title,
-        Err(error) => {
-            eprintln!("{}: {error}", rom_path.display());
-            app.game = Game::Unloaded;
-            return Task::none();
-        }
+    let save_data = match from_save {
+        Some(activity_filename) => library::activity::load_sram_from(&game_dir, activity_filename),
+        None => library::activity::load_current_sram(&game_dir),
     };
+    let initial_sram = save_data.clone();
 
-    // Start play session
+    let cartridge_title = start(
+        app,
+        Request {
+            rom,
+            rom_path: &rom_path,
+            save_data,
+            platform,
+            overrides,
+        },
+    )?;
+
     if let Some(current) = &mut app.current_game {
-        let session =
-            library::activity::SessionFile::new(Timestamp::now(), current.started_from.clone());
+        let started_from = from_save
+            .map(str::to_owned)
+            .or_else(|| current.started_from.clone());
+        let session = library::activity::SessionFile::new(Timestamp::now(), started_from);
         library::activity::write_session(&current.game_dir, &session);
         current.session = Some(session);
         current.started_from = None;
@@ -255,74 +326,58 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
     if let Some(current) = &app.current_game {
         app.store.notify_activity_changed(&current.entry.sha1);
     }
-
-    Task::none()
+    Ok(())
 }
 
-/// Start emulation with a specific save from an activity file.
+/// The overrides the selected game's library entry holds.
+fn current_overrides(app: &App) -> LaunchValues {
+    app.current_game
+        .as_ref()
+        .map(|current| current.entry.overrides.clone())
+        .unwrap_or_default()
+}
+
+/// Play the selected game from a quick path — one that skips the launch window,
+/// so a refusal has to come back as something the user can act on.
+pub fn play_current_game(app: &mut App) -> Task<app::Message> {
+    play_from(app, None)
+}
+
+/// Play the selected game from a specific save in its activity log.
 pub fn play_with_save(app: &mut App, activity_filename: &str) -> Task<app::Message> {
-    let (rom_path, game_dir) = {
-        let Some(current) = &app.current_game else {
-            return Task::none();
-        };
-        let Some(rom_path) = current.entry.rom_paths.iter().find(|p| p.exists()).cloned() else {
-            return Task::none();
-        };
-        (rom_path, current.game_dir.clone())
-    };
+    play_from(app, Some(activity_filename))
+}
 
-    let Ok(rom) = std::fs::read(&rom_path) else {
-        return Task::none();
-    };
-    let rom = crate::patch::soft_patch(&rom_path, rom);
-
-    let save_data = library::activity::load_sram_from(&game_dir, activity_filename);
-    let initial_sram = save_data.clone();
-    let cartridge_title = match start_console(app, rom, save_data, &rom_path, &game_dir) {
-        Ok(title) => title,
-        Err(error) => {
-            eprintln!("{}: {error}", rom_path.display());
-            app.game = Game::Unloaded;
-            return Task::none();
-        }
-    };
-
-    if let Some(current) = &mut app.current_game {
-        let session = library::activity::SessionFile::new(
-            Timestamp::now(),
-            Some(activity_filename.to_string()),
-        );
-        library::activity::write_session(&current.game_dir, &session);
-        current.session = Some(session);
-        current.started_from = None;
-        current.initial_sram = initial_sram;
-        current.cartridge_title = cartridge_title;
-
-        app.recent_games.add(
-            &current.entry.sha1,
-            &current.entry.display_title(),
-            &rom_path,
-        );
-        app.recent_games.save();
+fn play_from(app: &mut App, from_save: Option<&str>) -> Task<app::Message> {
+    let overrides = current_overrides(app);
+    let sha1 = app
+        .current_game
+        .as_ref()
+        .map(|current| current.entry.sha1.clone());
+    if let Err(error) = start_current_game(app, from_save, overrides)
+        && let Some(sha1) = sha1
+    {
+        refused(app, error, launch::Message::OpenForGame(sha1));
     }
-
-    app.screen = Screen::Emulator;
-    if let Some(current) = &app.current_game {
-        app.store.notify_activity_changed(&current.entry.sha1);
-    }
-
     Task::none()
 }
 
-/// Full pipeline for loading a ROM from a file path: create library entry + start emulation.
-pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::Message> {
+/// Full pipeline for a ROM at a path: give it a library entry, then start it.
+/// `Err` carries what the core refused it with.
+fn install_and_start(
+    app: &mut App,
+    rom_path: PathBuf,
+    rom: Vec<u8>,
+    platform: Option<system::Platform>,
+    overrides: LaunchValues,
+) -> Result<(), String> {
     // Classify before touching the library so unsupported files don't get
     // library entries.
-    let Some(family) = system::family_for(&rom_path, &rom) else {
-        eprintln!("unsupported ROM: {}", rom_path.display());
-        app.game = Game::Unloaded;
-        return Task::none();
-    };
+    let family = match platform {
+        Some(platform) => system::family_of(platform),
+        None => system::family_for(&rom_path, &rom),
+    }
+    .ok_or("no system recognises this file")?;
 
     let sha1 = library::hasheous::rom_sha1(&rom);
 
@@ -339,7 +394,7 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
         entry.header_title = header_title;
         entry.platform = Some(family.platform);
         let game_dir = library::game_dir_for(&entry.title, &entry.sha1)
-            .expect("Could not determine library directory");
+            .ok_or("could not determine the library directory".to_string())?;
 
         // Import .sav from next to ROM if no activity exists yet
         let legacy_sav = rom_path.with_extension("sav");
@@ -357,20 +412,20 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
     entry.add_rom_path(rom_path.clone());
     library::save_entry(&game_dir, &entry);
 
-    // Load save data and cover
     let save_data = library::activity::load_current_sram(&game_dir);
     let initial_sram = save_data.clone();
     let cover = library::load_cover(&game_dir).map(iced::widget::image::Handle::from_bytes);
 
-    // Create cartridge and start emulation
-    let cartridge_title = match start_console(app, rom, save_data, &rom_path, &game_dir) {
-        Ok(title) => title,
-        Err(error) => {
-            eprintln!("{}: {error}", rom_path.display());
-            app.game = Game::Unloaded;
-            return Task::none();
-        }
-    };
+    let cartridge_title = start(
+        app,
+        Request {
+            rom,
+            rom_path: &rom_path,
+            save_data,
+            platform,
+            overrides,
+        },
+    )?;
 
     let session = library::activity::SessionFile::new(Timestamp::now(), None);
     library::activity::write_session(&game_dir, &session);
@@ -391,6 +446,18 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
         .add(&entry.sha1, &entry.display_title(), &rom_path);
     app.recent_games.save();
     app.store.notify_game_added(&entry.sha1, game_dir_clone);
+    Ok(())
+}
 
+/// Load a ROM named outside the library — on the command line, or from the
+/// recent list — using whatever its entry already records.
+pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::Message> {
+    let sha1 = library::hasheous::rom_sha1(&rom);
+    let overrides = library::find_by_sha1(&sha1)
+        .map(|(_, entry)| entry.overrides)
+        .unwrap_or_default();
+    if let Err(error) = install_and_start(app, rom_path.clone(), rom, None, overrides) {
+        refused(app, error, launch::Message::OpenForPath(rom_path));
+    }
     Task::none()
 }

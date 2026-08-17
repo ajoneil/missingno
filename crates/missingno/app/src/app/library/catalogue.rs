@@ -44,6 +44,9 @@ pub struct CatalogueEntry {
     pub links: Vec<Link>,
     pub covers: Vec<String>,
     pub screenshots: Vec<String>,
+    /// A human has reviewed this entry, so it is the better source for
+    /// everything a metadata service would supply.
+    pub curated: bool,
     pub releases: Vec<CatalogueRelease>,
 }
 
@@ -146,6 +149,7 @@ fn entry_from<P: DbPlatform>(
         links: game.links,
         covers: game.covers,
         screenshots: game.screenshots,
+        curated: game.curated,
         releases: game
             .releases
             .into_iter()
@@ -304,6 +308,18 @@ impl Catalogue {
             let release = &entry.releases[r];
             (entry, release, &release.artifacts[a])
         })
+    }
+
+    /// Whether a human has reviewed the catalogue's entry for this dump.
+    pub fn curated(&self, sha1: &str) -> bool {
+        self.lookup_hash(sha1)
+            .is_some_and(|(game, _, _)| game.curated)
+    }
+
+    /// The cover image the catalogue links for this dump's game.
+    pub fn cover_url(&self, sha1: &str) -> Option<String> {
+        self.lookup_hash(sha1)
+            .and_then(|(game, _, _)| game.download_cover_url())
     }
 
     /// Get all homebrew entries, sorted by year (newest first).

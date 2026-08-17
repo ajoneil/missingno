@@ -16,10 +16,26 @@ use crate::app::ui::{
     text,
 };
 use crate::app::{
-    App, DetailMessage, DetailSubScreen, Message, Notice, PendingAction, Screen, debugger, load,
+    App, DetailMessage, DetailSubScreen, Message, Notice, PendingAction, Screen, debugger, launch,
+    load,
 };
 
 impl App {
+    /// The launch window stands over whatever screen raised it, so every entry
+    /// point reaches the same one.
+    pub(super) fn apply_launch_window<'a>(
+        &self,
+        content: Element<'a, Message>,
+    ) -> Element<'a, Message> {
+        match &self.launch_window {
+            Some(window) => Stack::new()
+                .push(content)
+                .push(launch::window(window))
+                .into(),
+            None => content,
+        }
+    }
+
     pub(super) fn apply_toast<'a>(&self, content: Element<'a, Message>) -> Element<'a, Message> {
         let mut layers = vec![content];
         if let Some((notice, _)) = &self.notice {
@@ -289,6 +305,10 @@ fn notice_toast<'a>(notice: &Notice) -> Element<'a, Message> {
         }));
     }
     line = line.push(iced_text(notice.message.clone()).color(iced::Color::WHITE));
+    if let Some(action) = &notice.action {
+        line = line.push(buttons::standard(action.label).on_press((*action.message).clone()));
+        line = line.push(buttons::subtle("Dismiss").on_press(Message::DismissNotice));
+    }
 
     container(container(line).padding(s()).style(|_| container::Style {
         background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.6).into()),

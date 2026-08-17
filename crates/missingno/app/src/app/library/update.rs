@@ -119,7 +119,11 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                     }
                 }
                 RefreshMetadata => {
-                    if let Some(sha1) = app.viewing_sha1().map(|s| s.to_string()) {
+                    // A curated catalogue entry is already the better source,
+                    // so it is never looked up — here or on a scan.
+                    if let Some(sha1) = app.viewing_sha1().map(|s| s.to_string())
+                        && !app.catalogue.curated(&sha1)
+                    {
                         return Task::perform(
                             smol::unblock(move || super::hasheous::lookup(&sha1).ok().flatten()),
                             move |info| {
@@ -250,22 +254,13 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                         *hovered_log_entry = None;
                     }
                 }
-                HoverHeader => {
+                SelectSection(selected) => {
                     if let Screen::ViewingGame {
-                        sub_screen: DetailSubScreen::Detail { header_hovered, .. },
+                        sub_screen: DetailSubScreen::Detail { section, .. },
                         ..
                     } = &mut app.screen
                     {
-                        *header_hovered = true;
-                    }
-                }
-                UnhoverHeader => {
-                    if let Screen::ViewingGame {
-                        sub_screen: DetailSubScreen::Detail { header_hovered, .. },
-                        ..
-                    } = &mut app.screen
-                    {
-                        *header_hovered = false;
+                        *section = selected;
                     }
                 }
                 RemoveGame => {
@@ -776,10 +771,8 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
             if changed {
                 app.store.rebuild_index();
             }
-            if app.settings.internet_enabled && app.settings.hasheous_enabled {
-                return Task::perform(smol::unblock(super::scanner::enrich_next), |result| {
-                    app::Message::EnrichComplete(result)
-                });
+            if app.settings.internet_enabled {
+                return enrich_task(app);
             }
         }
         app::Message::EnrichComplete(result) => {
@@ -806,10 +799,8 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
             }
 
             // Chain: enrich next game if there are more
-            if result.has_more && app.settings.internet_enabled && app.settings.hasheous_enabled {
-                return Task::perform(smol::unblock(super::scanner::enrich_next), |result| {
-                    app::Message::EnrichComplete(result)
-                });
+            if result.has_more && app.settings.internet_enabled {
+                return enrich_task(app);
             }
         }
         app::Message::OpenUrl(url) => {
@@ -859,11 +850,8 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                 app.store.rebuild_index();
 
                 // Trigger enrichment for cover art etc.
-                if app.settings.internet_enabled && app.settings.hasheous_enabled {
-                    return Task::perform(
-                        smol::unblock(super::scanner::enrich_next),
-                        app::Message::EnrichComplete,
-                    );
+                if app.settings.internet_enabled {
+                    return enrich_task(app);
                 }
             }
         }
@@ -872,6 +860,16 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
     }
 
     Task::none()
+}
+
+/// Fetch whatever the next library entry still needs from the network.
+fn enrich_task(app: &app::App) -> Task<app::Message> {
+    let catalogue = app.catalogue.clone();
+    let hasheous = app.settings.hasheous_enabled;
+    Task::perform(
+        smol::unblock(move || super::scanner::enrich_next(&catalogue, hasheous)),
+        app::Message::EnrichComplete,
+    )
 }
 
 /// Load cover images for visible homebrew entries (first batch only).

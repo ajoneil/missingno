@@ -18,6 +18,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use crate::app::system::LaunchValues;
+
 /// Current version of the GameEntry format. Increment when adding migrations.
 const CURRENT_VERSION: u32 = 1;
 
@@ -52,21 +54,12 @@ pub struct GameEntry {
     pub header_title: Option<String>,
     #[serde(default, deserialize_with = "compat_platform")]
     pub platform: Option<crate::app::system::Platform>,
-    /// Broadcast standard the game expects; VCS reads it at boot, else probes.
-    #[serde(default)]
-    pub tv_standard: Option<crate::app::system::TvStandard>,
-    /// The board the cartridge is built on, in its core's own vocabulary —
-    /// "F8", "DAHJEE-A", "MBC1M"; absent, the core reads the media instead.
-    #[serde(default)]
-    pub cart_type: Option<String>,
-    /// The catalogue records this dump as an overdump: padded past the
-    /// cartridge's silicon, so the stated board says where it ends.
-    #[serde(default)]
-    pub overdump: bool,
-    /// Controllers the game needs, when they deviate from its platform's
-    /// default; the loader configures the console's ports from them.
-    #[serde(default)]
-    pub controllers: Vec<missingno_gamedb::Controller>,
+    /// Launch options the user set for this game themselves, sparse and keyed
+    /// by option id. What the catalogue states about the dump is resolved live
+    /// at launch, so only the user's own word is kept here — and a rescan never
+    /// touches it.
+    #[serde(default, skip_serializing_if = "LaunchValues::is_empty")]
+    pub overrides: LaunchValues,
     pub publisher: Option<String>,
     pub year: Option<String>,
     pub description: Option<String>,
@@ -87,10 +80,7 @@ impl GameEntry {
             title,
             header_title: None,
             platform: None,
-            tv_standard: None,
-            cart_type: None,
-            overdump: false,
-            controllers: Vec::new(),
+            overrides: LaunchValues::default(),
             publisher: None,
             year: None,
             description: None,
@@ -321,5 +311,37 @@ mod tests {
     fn unknown_platform_strings_drop_to_none() {
         let entry: GameEntry = ron::from_str(&entry_ron("Some(\"Neo Geo\")")).unwrap();
         assert_eq!(entry.platform, None);
+    }
+
+    // Entries written before catalogue facts were resolved live carry them as
+    // fields of their own; they must still load, minus the stale copies.
+    #[test]
+    fn an_entry_carrying_the_old_catalogue_copies_still_loads() {
+        let entry: GameEntry = ron::from_str(
+            "(version: 1, sha1: \"abc\", title: \"T\", platform: Some(AtariVcs), \
+             tv_standard: Some(Pal), cart_type: Some(\"F8\"), overdump: true, \
+             controllers: [Paddle], publisher: None, year: None, description: None, \
+             rom_paths: [])",
+        )
+        .unwrap();
+        assert_eq!(entry.platform, Some(Platform::AtariVcs));
+        assert!(entry.overrides.is_empty());
+    }
+
+    #[test]
+    fn overrides_round_trip() {
+        let mut entry = GameEntry::new("abc".into(), "T".into(), PathBuf::from("t.a26"));
+        entry.overrides.set_choice("board", "F8");
+        let ron = ron::ser::to_string(&entry).unwrap();
+        let back: GameEntry = ron::from_str(&ron).unwrap();
+        assert_eq!(back.overrides.choice("board"), Some("F8"));
+    }
+
+    /// An empty override bag leaves nothing behind in the file.
+    #[test]
+    fn an_entry_with_no_overrides_writes_none() {
+        let entry = GameEntry::new("abc".into(), "T".into(), PathBuf::from("t.gb"));
+        let ron = ron::ser::to_string(&entry).unwrap();
+        assert!(!ron.contains("overrides"));
     }
 }

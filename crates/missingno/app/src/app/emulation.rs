@@ -495,7 +495,7 @@ impl App {
     }
 
     /// Show a transient status-line toast.
-    fn show_notice(&mut self, notice: Notice) {
+    pub(super) fn show_notice(&mut self, notice: Notice) {
         self.notice = Some((notice, Instant::now()));
     }
 

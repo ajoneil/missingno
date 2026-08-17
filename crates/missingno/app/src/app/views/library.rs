@@ -10,7 +10,7 @@ use crate::app::ui::{
     icons::{self, Icon},
     sizes::{m, s},
 };
-use crate::app::{App, DetailSubScreen, Game, Message, Screen, library};
+use crate::app::{App, DetailSubScreen, Game, Message, Screen, launch, library};
 
 impl App {
     fn homebrew_enabled(&self) -> bool {
@@ -33,16 +33,22 @@ impl App {
     }
 
     pub(super) fn detail_view(&self) -> Element<'_, Message> {
-        let (viewing_sha1, hovered_log_entry, header_hovered) = match &self.screen {
+        let (viewing_sha1, section, hovered_log_entry, launch_facts) = match &self.screen {
             Screen::ViewingGame {
                 sha1,
                 sub_screen:
                     DetailSubScreen::Detail {
+                        section,
                         hovered_log_entry,
-                        header_hovered,
+                        launch_facts,
                     },
-            } => (Some(sha1.as_str()), *hovered_log_entry, *header_hovered),
-            _ => (None, None, false),
+            } => (
+                Some(sha1.as_str()),
+                *section,
+                *hovered_log_entry,
+                Some(launch_facts),
+            ),
+            _ => (None, Default::default(), None, None),
         };
 
         let sha1 = match viewing_sha1 {
@@ -91,10 +97,11 @@ impl App {
             live_session,
             live_screenshots: self.store.live_screenshots(),
             live_prints: self.store.live_prints(),
+            section,
             hovered_log_entry,
-            header_hovered,
             is_loaded,
             inserted_cartridge: self.inserted_cartridge(),
+            launch_options: launch_facts.and_then(|facts| launch::game_settings(self, sha1, facts)),
         })
     }
 
@@ -105,8 +112,9 @@ impl App {
         self.screen = Screen::ViewingGame {
             sha1: sha1.to_string(),
             sub_screen: DetailSubScreen::Detail {
+                section: Default::default(),
                 hovered_log_entry: None,
-                header_hovered: false,
+                launch_facts: launch::facts_for_game(self, sha1),
             },
         };
         self.load_activity_async(sha1)

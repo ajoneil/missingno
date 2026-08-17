@@ -7,7 +7,7 @@ use iced::{
 };
 
 use crate::app::{
-    self,
+    self, launch,
     library::{
         GameEntry,
         activity::{self, ActivityKind, SessionFile},
@@ -25,6 +25,37 @@ use crate::cartridge_rw;
 
 const COVER_HEIGHT: f32 = 160.0;
 const COVER_WIDTH: f32 = 120.0;
+/// The section rail, matching the settings screen's.
+const RAIL_WIDTH: f32 = 220.0;
+
+/// The sections of a game's details page, in nav order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Section {
+    #[default]
+    Overview,
+    GameSettings,
+    Activity,
+}
+
+impl Section {
+    fn label(self) -> &'static str {
+        match self {
+            Section::Overview => "Overview",
+            Section::GameSettings => "Game Settings",
+            Section::Activity => "Activity",
+        }
+    }
+
+    fn icon(self) -> Icon {
+        match self {
+            Section::Overview => Icon::GameBoy,
+            Section::GameSettings => Icon::Sliders,
+            Section::Activity => Icon::Play,
+        }
+    }
+}
+
+const SECTIONS: [Section; 3] = [Section::Overview, Section::GameSettings, Section::Activity];
 
 pub struct DetailData<'a> {
     pub entry: &'a GameEntry,
@@ -33,217 +64,77 @@ pub struct DetailData<'a> {
     pub live_session: Option<&'a SessionFile>,
     pub live_screenshots: &'a [image::Handle],
     pub live_prints: &'a [image::Handle],
+    pub section: Section,
     pub hovered_log_entry: Option<usize>,
-    pub header_hovered: bool,
     /// Whether this game is currently loaded and running.
     pub is_loaded: bool,
     /// The inserted cartridge, if any, for flash writing.
     pub inserted_cartridge: Option<&'a cartridge_rw::CartridgeHeader>,
+    /// The game's launch options, absent where no family claims its platform.
+    pub launch_options: Option<launch::PanelData>,
 }
 
 #[allow(private_interfaces)]
 pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
-    let header = game_header(&data);
-    let content = match data.activity_state {
-        ActivityState::Loading => activity_loading(),
-        ActivityState::Loaded(detail) => activity_log(
-            &detail.sessions,
-            data.live_session,
-            data.live_screenshots,
-            data.live_prints,
-            data.hovered_log_entry,
-        ),
+    let content = match data.section {
+        Section::Overview => overview(&data),
+        Section::GameSettings => game_settings(&data),
+        Section::Activity => match data.activity_state {
+            ActivityState::Loading => activity_loading(),
+            ActivityState::Loaded(detail) => activity_log(
+                &detail.sessions,
+                data.live_session,
+                data.live_screenshots,
+                data.live_prints,
+                data.hovered_log_entry,
+            ),
+        },
     };
 
-    column![header, content].height(Fill).into()
+    column![
+        title_bar(&data),
+        horizontal_rule(),
+        row![rail(data.section), content].height(Fill),
+    ]
+    .height(Fill)
+    .into()
 }
 
-/// Unified header: back + cover + identity + play + settings.
-fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
-    use iced::widget::stack;
+/// Back, the game's name, and the actions that apply on every section.
+fn title_bar<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
+    let has_rom = data.entry.rom_paths.iter().any(|path| path.exists());
 
-    let has_rom = data.entry.rom_paths.iter().any(|p| p.exists());
-
-    // Cover thumbnail with back button overlay — clickable to play if ROM exists
-    let cover: Element<'_, app::Message> = if let Some(handle) = data.cover {
-        let cover_img: Element<'_, app::Message> = image(handle.clone())
-            .height(COVER_HEIGHT)
-            .content_fit(iced::ContentFit::ScaleDown)
-            .into();
-
-        let cover_el: Element<'_, app::Message> = if data.header_hovered {
-            let back_btn = container(app::automation::tag(
-                app::automation::ids::DETAIL_BACK,
-                button(icons::m(Icon::Back).style(|_, _| iced::widget::svg::Style {
-                    color: Some(iced::Color::WHITE),
-                }))
-                .on_press(app::Message::BackToLibrary)
-                .style(|_, status| {
-                    let bg_alpha = match status {
-                        button::Status::Hovered => 0.9,
-                        _ => 0.7,
-                    };
-                    button::Style {
-                        background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, bg_alpha).into()),
-                        text_color: iced::Color::WHITE,
-                        border: iced::Border::default().rounded(border_s()),
-                        ..Default::default()
-                    }
-                }),
-            ))
-            .padding([m() + 4.0, m()]);
-
-            stack![cover_img, back_btn].into()
-        } else {
-            cover_img
-        };
-
-        if has_rom {
-            mouse_area(cover_el)
-                .on_press(app::Message::PlayFromDetail)
-                .interaction(mouse::Interaction::Pointer)
-                .into()
-        } else {
-            cover_el
-        }
-    } else {
-        let placeholder = super::view::cartridge_placeholder(
-            &data.entry.display_title(),
-            data.entry.platform,
-            COVER_WIDTH,
-            COVER_HEIGHT,
-            iced::border::Radius::from(0.0),
-        );
-        let back_btn = container(app::automation::tag(
-            app::automation::ids::DETAIL_BACK,
-            button(icons::m(Icon::Back).style(|_, _| iced::widget::svg::Style {
-                color: Some(iced::Color::WHITE),
-            }))
-            .on_press(app::Message::BackToLibrary)
-            .style(|_, status| {
-                let bg_alpha = match status {
-                    button::Status::Hovered => 0.9,
-                    _ => 0.7,
-                };
-                button::Style {
-                    background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, bg_alpha).into()),
-                    text_color: iced::Color::WHITE,
-                    border: iced::Border::default().rounded(border_s()),
-                    ..Default::default()
-                }
-            }),
-        ))
-        .padding([m() + 4.0, m()]);
-
-        stack![placeholder, back_btn].into()
-    };
-
-    // Title + metadata column
-    let mut info = column![
-        app_text::heading(data.entry.display_title()).wrapping(iced::widget::text::Wrapping::None),
-    ]
-    .spacing(4);
-
-    let subtitle_parts: Vec<String> = [
-        data.entry.publisher.clone(),
-        data.entry.year.as_ref().map(|y| activity::release_year(y)),
-        data.entry.platform.map(|p| p.name().to_string()),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    if !subtitle_parts.is_empty() {
-        info = info.push(text(subtitle_parts.join(" · ")).color(MUTED));
-    }
-
-    // Play time + links on one line
-    let mut meta_parts = row![].spacing(m()).align_y(Center);
-    let mut has_meta = false;
-
-    if let ActivityState::Loaded(detail) = data.activity_state {
-        let total_secs: f64 = detail
-            .sessions
-            .iter()
-            .filter(|a| a.kind == ActivityKind::Session)
-            .filter_map(|a| {
-                a.end
-                    .map(|end: jiff::Timestamp| end.duration_since(a.start).as_secs_f64())
-            })
-            .sum();
-        if total_secs > 0.0 {
-            meta_parts = meta_parts
-                .push(app_text::detail(activity::format_play_time(total_secs)).color(MUTED));
-            has_meta = true;
-        }
-    }
-
-    if let Some(url) = &data.entry.wikipedia_url {
-        meta_parts = meta_parts.push(
-            mouse_area(
-                row![icons::m(Icon::Globe), text("Wikipedia").color(MUTED)]
-                    .spacing(s())
-                    .align_y(Center),
-            )
-            .on_press(app::Message::OpenUrl(leak_str(url)))
-            .interaction(mouse::Interaction::Pointer),
-        );
-        has_meta = true;
-    }
-    if let Some(url) = &data.entry.igdb_url {
-        meta_parts = meta_parts.push(
-            mouse_area(
-                row![icons::m(Icon::Globe), text("IGDB").color(MUTED)]
-                    .spacing(s())
-                    .align_y(Center),
-            )
-            .on_press(app::Message::OpenUrl(leak_str(url)))
-            .interaction(mouse::Interaction::Pointer),
-        );
-        has_meta = true;
-    }
-
-    if has_meta {
-        info = info.push(meta_parts);
-    }
-
-    // Right side: primary row on top, secondary row below on hover
-    let mut primary = row![].spacing(s()).align_y(Center);
+    let mut actions = row![].spacing(s()).align_y(Center);
     if has_rom {
+        let (id, label) = if data.is_loaded {
+            (app::automation::ids::DETAIL_PLAY, "Resume")
+        } else {
+            (app::automation::ids::DETAIL_PLAY, "Play")
+        };
+        actions = actions.push(app::automation::tag(
+            id,
+            buttons::primary(
+                row![icons::m(Icon::Play), label]
+                    .spacing(s())
+                    .align_y(Center),
+            )
+            .on_press(app::Message::PlayFromDetail),
+        ));
         if data.is_loaded {
-            primary = primary.push(app::automation::tag(
-                app::automation::ids::DETAIL_PLAY,
-                buttons::primary(
-                    row![icons::m(Icon::Play), "Resume"]
-                        .spacing(s())
-                        .align_y(Center),
-                )
-                .on_press(app::Message::PlayFromDetail),
-            ));
-            primary = primary.push(app::automation::tag(
+            actions = actions.push(app::automation::tag(
                 app::automation::ids::DETAIL_STOP,
                 buttons::danger("Stop").on_press(app::Message::StopGame),
             ));
-        } else {
-            primary = primary.push(app::automation::tag(
-                app::automation::ids::DETAIL_PLAY,
-                buttons::primary(
-                    row![icons::m(Icon::Play), "Play"]
-                        .spacing(s())
-                        .align_y(Center),
-                )
-                .on_press(app::Message::PlayFromDetail),
-            ));
         }
     }
-    // Cartridge actions button — only show when the cart matches this game or is flashable
     if let Some(cart) = data.inserted_cartridge {
         let cart_matches = data
             .entry
             .header_title
             .as_ref()
-            .is_some_and(|ht| ht == &cart.title);
+            .is_some_and(|title| title == &cart.title);
         if cart_matches || cart.flashable() {
-            primary = primary.push(app::automation::tag(
+            actions = actions.push(app::automation::tag(
                 app::automation::ids::DETAIL_CARTRIDGE,
                 buttons::standard(
                     row![icons::m(Icon::CircuitBoard), "Cartridge"]
@@ -256,27 +147,174 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
             ));
         }
     }
-
-    primary = primary.push(app::automation::tag(
+    actions = actions.push(app::automation::tag(
         app::automation::ids::DETAIL_MENU,
         buttons::subtle(icons::m(Icon::Menu)).on_press(app::Message::ToggleMenu),
     ));
 
-    let right = column![primary].align_x(iced::alignment::Horizontal::Right);
+    row![
+        app::automation::tag(
+            app::automation::ids::DETAIL_BACK,
+            buttons::subtle(icons::m(Icon::Back)).on_press(app::Message::BackToLibrary),
+        ),
+        container(
+            app_text::heading(data.entry.display_title())
+                .wrapping(iced::widget::text::Wrapping::None)
+        )
+        .width(Fill),
+        actions,
+    ]
+    .spacing(s())
+    .padding(m())
+    .align_y(Center)
+    .into()
+}
 
-    let header = row![
-        cover,
-        container(row![info.width(Fill), right].spacing(m()),)
-            .padding([m() + 4.0, m()])
-            .width(Fill)
-            .height(COVER_HEIGHT),
-    ];
+fn rail(current: Section) -> Element<'static, app::Message> {
+    let mut col = column![].spacing(s());
+    for section in SECTIONS {
+        let label = row![icons::m(section.icon()), text(section.label())]
+            .spacing(s())
+            .align_y(Center);
+        col = col.push(if section == current {
+            buttons::selected(label).width(Fill)
+        } else {
+            buttons::subtle(label)
+                .on_press(app::Message::Detail(app::DetailMessage::SelectSection(
+                    section,
+                )))
+                .width(Fill)
+        });
+    }
 
-    let header = mouse_area(header)
-        .on_enter(app::Message::Detail(app::DetailMessage::HoverHeader))
-        .on_exit(app::Message::Detail(app::DetailMessage::UnhoverHeader));
+    container(col.padding(m()))
+        .width(RAIL_WIDTH)
+        .height(Fill)
+        .style(containers::sidebar)
+        .into()
+}
 
-    column![header, horizontal_rule()].into()
+/// Cover, identity and everything the library knows about the game.
+fn overview<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
+    let has_rom = data.entry.rom_paths.iter().any(|path| path.exists());
+
+    let cover: Element<'_, app::Message> = match data.cover {
+        Some(handle) => image(handle.clone())
+            .height(COVER_HEIGHT)
+            .content_fit(iced::ContentFit::ScaleDown)
+            .into(),
+        None => super::view::cartridge_placeholder(
+            &data.entry.display_title(),
+            data.entry.platform,
+            COVER_WIDTH,
+            COVER_HEIGHT,
+            iced::border::Radius::from(0.0),
+        ),
+    };
+    let cover: Element<'_, app::Message> = if has_rom {
+        mouse_area(cover)
+            .on_press(app::Message::PlayFromDetail)
+            .interaction(mouse::Interaction::Pointer)
+            .into()
+    } else {
+        cover
+    };
+
+    let mut info = column![].spacing(4);
+
+    let subtitle_parts: Vec<String> = [
+        data.entry.publisher.clone(),
+        data.entry
+            .year
+            .as_ref()
+            .map(|year| activity::release_year(year)),
+        data.entry
+            .platform
+            .map(|platform| platform.name().to_string()),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if !subtitle_parts.is_empty() {
+        info = info.push(text(subtitle_parts.join(" · ")).color(MUTED));
+    }
+
+    let mut meta_parts = row![].spacing(m()).align_y(Center);
+    let mut has_meta = false;
+
+    if let ActivityState::Loaded(detail) = data.activity_state {
+        let total_secs: f64 = detail
+            .sessions
+            .iter()
+            .filter(|entry| entry.kind == ActivityKind::Session)
+            .filter_map(|entry| {
+                entry
+                    .end
+                    .map(|end: jiff::Timestamp| end.duration_since(entry.start).as_secs_f64())
+            })
+            .sum();
+        if total_secs > 0.0 {
+            meta_parts = meta_parts
+                .push(app_text::detail(activity::format_play_time(total_secs)).color(MUTED));
+            has_meta = true;
+        }
+    }
+
+    for (url, label) in [
+        (&data.entry.wikipedia_url, "Wikipedia"),
+        (&data.entry.igdb_url, "IGDB"),
+    ] {
+        if let Some(url) = url {
+            meta_parts = meta_parts.push(
+                mouse_area(
+                    row![icons::m(Icon::Globe), text(label).color(MUTED)]
+                        .spacing(s())
+                        .align_y(Center),
+                )
+                .on_press(app::Message::OpenUrl(leak_str(url)))
+                .interaction(mouse::Interaction::Pointer),
+            );
+            has_meta = true;
+        }
+    }
+
+    if has_meta {
+        info = info.push(meta_parts);
+    }
+
+    let mut body =
+        column![row![cover, container(info).padding([0.0, m()]).width(Fill)].spacing(m())]
+            .spacing(l());
+
+    if let Some(description) = &data.entry.description {
+        body = body.push(text(description.clone()));
+    }
+
+    scrollable(container(body.max_width(900)).padding(l()).width(Fill))
+        .height(Fill)
+        .into()
+}
+
+/// The same launch panel the window shows, over the game's stored overrides.
+fn game_settings<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
+    let body: Element<'_, app::Message> = match &data.launch_options {
+        Some(options) => column![
+            app_text::detail(
+                "What this game boots with. Automatic leaves the choice to the system."
+            )
+            .color(MUTED),
+            launch::panel(options),
+        ]
+        .spacing(l())
+        .into(),
+        None => app_text::detail("No system is registered for this game.")
+            .color(MUTED)
+            .into(),
+    };
+
+    scrollable(container(body).padding(l()).width(Fill))
+        .height(Fill)
+        .into()
 }
 
 fn activity_loading() -> Element<'static, app::Message> {

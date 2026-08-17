@@ -15,6 +15,7 @@ mod controls;
 mod debugger;
 mod emulation;
 mod emulator;
+mod launch;
 pub mod library;
 mod load;
 pub(crate) use load::file_stem_title;
@@ -138,6 +139,8 @@ struct App {
     /// A transient status line (screenshot, save/load result, recording
     /// lifecycle, replay divergence), shown as a toast until it times out.
     notice: Option<(Notice, Instant)>,
+    /// The launch options window, standing over whatever screen raised it.
+    launch_window: Option<launch::Window>,
     /// Serial link cable connection (BGB link protocol), injected into GameBoy on load.
     serial_link: Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
     /// Finished Game Boy Printer prints, sent from the printer (on the emu
@@ -432,6 +435,16 @@ pub(crate) enum FlashState {
 struct Notice {
     icon: Option<Icon>,
     message: String,
+    /// Something the user can do about what happened. A notice carrying one
+    /// stays up until it is taken or dismissed.
+    action: Option<NoticeAction>,
+}
+
+/// The offer a notice makes: a label and the message pressing it sends.
+#[derive(Clone)]
+struct NoticeAction {
+    label: &'static str,
+    message: Box<Message>,
 }
 
 impl Notice {
@@ -439,6 +452,7 @@ impl Notice {
         Notice {
             icon: None,
             message: message.into(),
+            action: None,
         }
     }
 
@@ -446,6 +460,19 @@ impl Notice {
         Notice {
             icon: Some(icon),
             message: message.into(),
+            action: None,
+        }
+    }
+
+    /// Something went wrong that the user can act on — no launch fails silently.
+    fn failure(message: impl Into<String>, label: &'static str, action: Message) -> Self {
+        Notice {
+            icon: Some(Icon::Warning),
+            message: message.into(),
+            action: Some(NoticeAction {
+                label,
+                message: Box::new(action),
+            }),
         }
     }
 }
@@ -489,8 +516,11 @@ enum Screen {
 
 enum DetailSubScreen {
     Detail {
+        section: library::detail_view::Section,
         hovered_log_entry: Option<usize>,
-        header_hovered: bool,
+        /// What fills this game's launch options where the user has not, read
+        /// off the media once on arrival rather than on every frame.
+        launch_facts: launch::Facts,
     },
     CartridgeActions {
         /// Whether to write saves alongside a flash operation.
@@ -509,10 +539,9 @@ enum DetailSubScreen {
 /// Messages specific to the game detail screen.
 #[derive(Debug, Clone)]
 enum DetailMessage {
+    SelectSection(library::detail_view::Section),
     HoverLogEntry(usize),
     UnhoverLogEntry,
-    HoverHeader,
-    UnhoverHeader,
     OpenGameFolder,
     RefreshMetadata,
     ImportSave,
@@ -582,6 +611,7 @@ struct CurrentGame {
 #[derive(Debug, Clone)]
 enum Message {
     Load(load::Message),
+    Launch(launch::Message),
 
     // Navigation
     BackToLibrary,
@@ -732,6 +762,7 @@ impl App {
             store,
             pending_action: None,
             notice: None,
+            launch_window: None,
             serial_link,
             print_tx,
             print_rx,
@@ -770,10 +801,12 @@ impl App {
                 smol::unblock(move || library::scanner::scan_directories(&dirs, &cat)),
                 |entries| Message::ScanComplete(!entries.is_empty()),
             ));
-        } else if app.settings.internet_enabled && app.settings.hasheous_enabled {
+        } else if app.settings.internet_enabled {
             // No directories to scan, but still enrich any unenriched games
+            let catalogue = app.catalogue.clone();
+            let hasheous = app.settings.hasheous_enabled;
             tasks.push(Task::perform(
-                smol::unblock(library::scanner::enrich_next),
+                smol::unblock(move || library::scanner::enrich_next(&catalogue, hasheous)),
                 Message::EnrichComplete,
             ));
         }
@@ -796,6 +829,7 @@ impl App {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Load(message) => return load::update(message, self),
+            Message::Launch(message) => return launch::update(message, self),
 
             // Emulation messages
             Message::Run

@@ -17,7 +17,7 @@ pub use missingno_gbc::launch::{
 use missingno_core::ports::PeripheralId;
 use missingno_core::video::{ConsoleFrame, RgbaFrame};
 
-use super::{ControlMap, MediaLoad, Platform, SystemConsole};
+use super::{ControlMap, LaunchValue, MediaFact, MediaLoad, Platform, SystemConsole};
 use missingno_iced::PalettePolicy;
 
 /// The Game Boy family's colour policy: the user's monochrome palette plus the
@@ -135,6 +135,32 @@ pub const GBC_ROM_EXTENSIONS: &[&str] = &["gbc"];
 pub const DEFAULT_ROM_EXTENSION: &str = "gb";
 pub const SAVE_FILTER_NAME: &str = "Game Boy Save";
 pub const SAVE_EXTENSIONS: &[&str] = &["sav"];
+
+/// What the cartridge header answers for itself: the console it is slotted
+/// into, as the hardware would read it, and the board it declares.
+pub fn stated_by_media(rom: &[u8]) -> Vec<MediaFact> {
+    let mut stated = vec![MediaFact {
+        option: RUNNER,
+        value: LaunchValue::Choice(
+            if Cartridge::peek_cgb(rom) {
+                "cgb"
+            } else {
+                "dmg"
+            }
+            .to_owned(),
+        ),
+    }];
+    if let Some(board) = rom
+        .get(0x147)
+        .and_then(|byte| GbCartType::from_header(*byte).ok())
+    {
+        stated.push(MediaFact {
+            option: BOARD,
+            value: LaunchValue::Choice(board.code().to_owned()),
+        });
+    }
+    stated
+}
 
 /// The console's pad and its link port; the Game Boy has no panel controls.
 pub const CONTROLS: ControlMap =
