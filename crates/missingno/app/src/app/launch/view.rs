@@ -5,7 +5,6 @@
 use iced::{
     Alignment::Center,
     Element,
-    Length::Fill,
     widget::{center, column, container, mouse_area, opaque, pick_list, row, scrollable},
 };
 use missingno_core::launch::{LaunchOptionDescriptor, LaunchOptionKind, LaunchValue, LaunchValues};
@@ -23,6 +22,9 @@ use crate::app::ui::{
 /// The label column, wide enough for the longest option label to sit on one
 /// line beside its control.
 const ROW_LABEL_WIDTH: f32 = 170.0;
+/// The control column: a pick list is this wide whatever its entries say, so a
+/// board with a long name does not stretch the row.
+const CONTROL_WIDTH: f32 = 260.0;
 const PANEL_WIDTH: f32 = 560.0;
 const MAX_PANEL_HEIGHT: f32 = 640.0;
 
@@ -86,7 +88,7 @@ impl std::fmt::Display for Entry {
     }
 }
 
-/// The Automatic entry, naming what fills the option and in whose words.
+/// The Automatic entry, naming what fills the option.
 fn automatic(
     id: &str,
     data: &PanelData,
@@ -95,10 +97,8 @@ fn automatic(
     let label = data
         .facts
         .get(id)
-        .and_then(|fact| {
-            describe(&fact.value)
-                .map(|value| format!("Automatic ({value} — {})", fact.source.word()))
-        })
+        .and_then(describe)
+        .map(|described| format!("Automatic ({described})"))
         .unwrap_or_else(|| "Automatic".to_string());
     Entry { value: None, label }
 }
@@ -136,7 +136,7 @@ fn choice_control(
     pick_list(entries, selected, move |entry| {
         Message::Set(surface, Edit::Choice(id, entry.value)).into()
     })
-    .width(Fill)
+    .width(CONTROL_WIDTH)
     .into()
 }
 
@@ -177,7 +177,7 @@ fn toggle_control(id: &'static str, data: &PanelData) -> Element<'static, app::M
         )
         .into()
     })
-    .width(Fill)
+    .width(CONTROL_WIDTH)
     .into()
 }
 
@@ -191,10 +191,7 @@ fn file_control(
 
     let status = match chosen {
         Some(bytes) => format!("Chosen · {bytes} bytes"),
-        None => match data.facts.get(id) {
-            Some(fact) => format!("Automatic ({})", fact.source.word()),
-            None => "Automatic".to_string(),
-        },
+        None => "Automatic".to_string(),
     };
 
     let mut controls = row![
@@ -236,7 +233,7 @@ pub fn window(state: &Window) -> Element<'static, app::Message> {
                         Message::SelectSystem(platform).into()
                     })
                     .placeholder("Choose a system")
-                    .width(Fill),
+                    .width(CONTROL_WIDTH),
                 ]
                 .spacing(m())
                 .align_y(Center),
@@ -248,7 +245,7 @@ pub fn window(state: &Window) -> Element<'static, app::Message> {
     if let Some(family) = state.family() {
         body = body.push(horizontal_rule());
         body = body.push(panel(&PanelData {
-            descriptors: (family.options)(),
+            descriptors: super::rendered_options(family),
             overrides: state.overrides.clone(),
             facts: state.facts.clone(),
             surface: EditSurface::Window,

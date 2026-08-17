@@ -21,47 +21,33 @@ mod view;
 
 pub(in crate::app) use view::{PanelData, panel, window};
 
-/// Where a value the user did not set came from, in the words the window uses.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum FactSource {
-    /// The bundled game database's entry for this dump.
-    Catalogue,
-    /// A header the media carries.
-    Header,
-    /// Named on the command line this run started with.
-    CommandLine,
-}
-
-impl FactSource {
-    fn word(self) -> &'static str {
-        match self {
-            FactSource::Catalogue => "game database",
-            FactSource::Header => "header",
-            FactSource::CommandLine => "command line",
-        }
-    }
-}
-
-/// One value something other than the user supplies for an option.
-#[derive(Clone)]
-pub struct Fact {
-    pub value: LaunchValue,
-    pub source: FactSource,
-}
-
 /// What fills the options the user has not set, keyed by option id. Sparse: an
 /// option nothing here names is one only the core can resolve.
 #[derive(Clone, Default)]
-pub struct Facts(BTreeMap<&'static str, Fact>);
+pub struct Facts(BTreeMap<&'static str, LaunchValue>);
 
 impl Facts {
-    fn set(&mut self, id: &'static str, value: LaunchValue, source: FactSource) {
-        self.0.insert(id, Fact { value, source });
+    fn set(&mut self, id: &'static str, value: LaunchValue) {
+        self.0.insert(id, value);
     }
 
-    pub fn get(&self, id: &str) -> Option<&Fact> {
+    pub fn get(&self, id: &str) -> Option<&LaunchValue> {
         self.0.get(id)
     }
+}
+
+/// Options no launch surface renders yet: a boot ROM belongs with the system
+/// files, and an overdump is the catalogue's word about a dump rather than a
+/// choice. Both still resolve into the values a launch runs with.
+const UNRENDERED_OPTIONS: [&str; 2] = [system::gb::BOOT_ROM, system::vcs::OVERDUMP];
+
+fn rendered(descriptor: &LaunchOptionDescriptor) -> bool {
+    !UNRENDERED_OPTIONS.contains(&descriptor.id)
+}
+
+/// The options a family publishes that a launch surface shows.
+fn rendered_options(family: &FamilyDescriptor) -> Vec<LaunchOptionDescriptor> {
+    (family.options)().into_iter().filter(rendered).collect()
 }
 
 /// What the catalogue and the media itself state about a dump, ahead of any
@@ -77,7 +63,7 @@ pub fn facts(
     let mut facts = Facts::default();
 
     for stated in (family.stated_by_media)(rom) {
-        facts.set(stated.option, stated.value, FactSource::Header);
+        facts.set(stated.option, stated.value);
     }
 
     if let Some((_, release, artifact)) = catalogue.lookup_hash(sha1) {
@@ -85,24 +71,18 @@ pub fn facts(
             facts.set(
                 system::vcs::TV_STANDARD,
                 LaunchValue::Choice(standard.code().to_owned()),
-                FactSource::Catalogue,
             );
         }
         // Every family publishes its board option under the same id, so one
         // key carries the catalogue's word whichever core is about to read it.
         if let Some(board) = &release.cart_type {
-            facts.set(
-                system::vcs::BOARD,
-                LaunchValue::Choice(board.clone()),
-                FactSource::Catalogue,
-            );
+            facts.set(system::vcs::BOARD, LaunchValue::Choice(board.clone()));
         }
         // A dump padded past the cartridge's silicon: the stated board says
         // where the silicon ends.
         facts.set(
             system::vcs::OVERDUMP,
             LaunchValue::Toggle(artifact.defect == Some(missingno_gamedb::Defect::Overdump)),
-            FactSource::Catalogue,
         );
     }
 
@@ -110,7 +90,6 @@ pub fn facts(
         facts.set(
             system::gb::BOOT_ROM,
             LaunchValue::File(boot_rom.bytes().to_vec()),
-            FactSource::CommandLine,
         );
     }
 
@@ -144,7 +123,7 @@ pub fn resolve(
     for descriptor in descriptors {
         if let Some(value) = overrides
             .value(descriptor.id)
-            .or_else(|| facts.get(descriptor.id).map(|fact| &fact.value))
+            .or_else(|| facts.get(descriptor.id))
         {
             values.set(descriptor.id, value.clone());
         }
@@ -425,7 +404,7 @@ pub(in crate::app) fn game_settings(
     let entry = app.store.entry(sha1)?;
     let family = system::family_of(entry.platform?)?;
     Some(view::PanelData {
-        descriptors: (family.options)(),
+        descriptors: rendered_options(family),
         overrides: entry.overrides.clone(),
         facts: facts.clone(),
         surface: EditSurface::GameSettings,
@@ -465,11 +444,7 @@ mod tests {
 
     fn catalogued_board(code: &str) -> Facts {
         let mut facts = Facts::default();
-        facts.set(
-            "board",
-            LaunchValue::Choice(code.to_owned()),
-            FactSource::Catalogue,
-        );
+        facts.set("board", LaunchValue::Choice(code.to_owned()));
         facts
     }
 
@@ -506,6 +481,20 @@ mod tests {
         let values = resolve(&descriptors(), &overrides, &Facts::default());
         assert_eq!(values.choice("tv-standard"), None);
         assert!(values.toggle("overdump"));
+    }
+
+    #[test]
+    fn an_option_no_surface_renders_still_resolves() {
+        let mut facts = Facts::default();
+        facts.set(system::vcs::OVERDUMP, LaunchValue::Toggle(true));
+        let values = resolve(&descriptors(), &LaunchValues::default(), &facts);
+        assert!(values.toggle(system::vcs::OVERDUMP));
+        let shown: Vec<_> = descriptors()
+            .into_iter()
+            .filter(rendered)
+            .map(|descriptor| descriptor.id)
+            .collect();
+        assert_eq!(shown, ["board"]);
     }
 
     #[test]

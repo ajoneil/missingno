@@ -518,6 +518,7 @@ enum DetailSubScreen {
     Detail {
         section: library::detail_view::Section,
         hovered_log_entry: Option<usize>,
+        header_hovered: bool,
         /// What fills this game's launch options where the user has not, read
         /// off the media once on arrival rather than on every frame.
         launch_facts: launch::Facts,
@@ -542,6 +543,8 @@ enum DetailMessage {
     SelectSection(library::detail_view::Section),
     HoverLogEntry(usize),
     UnhoverLogEntry,
+    HoverHeader,
+    UnhoverHeader,
     OpenGameFolder,
     RefreshMetadata,
     ImportSave,

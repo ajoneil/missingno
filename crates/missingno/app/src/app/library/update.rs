@@ -254,6 +254,24 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                         *hovered_log_entry = None;
                     }
                 }
+                HoverHeader => {
+                    if let Screen::ViewingGame {
+                        sub_screen: DetailSubScreen::Detail { header_hovered, .. },
+                        ..
+                    } = &mut app.screen
+                    {
+                        *header_hovered = true;
+                    }
+                }
+                UnhoverHeader => {
+                    if let Screen::ViewingGame {
+                        sub_screen: DetailSubScreen::Detail { header_hovered, .. },
+                        ..
+                    } = &mut app.screen
+                    {
+                        *header_hovered = false;
+                    }
+                }
                 SelectSection(selected) => {
                     if let Screen::ViewingGame {
                         sub_screen: DetailSubScreen::Detail { section, .. },
