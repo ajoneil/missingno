@@ -306,7 +306,7 @@ pub trait Machine: 'static {
 
     /// Labels from the ROM's debug-symbol sidecar, if one was loaded.
     fn symbols(_core: &Self::Core) -> Arc<SymbolTable> {
-        crate::system::empty_symbols()
+        empty_symbols()
     }
     /// Create a user label at an address; the system decides the bank from the
     /// current mapping.
@@ -506,6 +506,15 @@ impl<M: Machine> SystemConsole for MachineConsole<M> {
     fn into_debugger(self: Box<Self>) -> Box<dyn SystemDebugger> {
         Box::new(MachineDebugger::new(*self))
     }
+}
+
+/// The shared empty table behind the default [`Machine::symbols`].
+fn empty_symbols() -> Arc<SymbolTable> {
+    use std::sync::OnceLock;
+    static EMPTY: OnceLock<Arc<SymbolTable>> = OnceLock::new();
+    EMPTY
+        .get_or_init(|| Arc::new(SymbolTable::default()))
+        .clone()
 }
 
 /// The hex spelling of a media digest, as the state file carries it.
@@ -738,10 +747,6 @@ impl<M: Machine> SystemDebugger for MachineDebugger<M> {
 
     fn instruction_set(&self) -> Option<&dyn InstructionSet> {
         M::instruction_set()
-    }
-
-    fn bank_for(&self, address: u32) -> Option<u16> {
-        M::bank_for(&self.console.core, address)
     }
 
     fn present_address(&self, address: u32) -> AddressDisplay {

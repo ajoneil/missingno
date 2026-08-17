@@ -16,8 +16,7 @@ fn decode(opcode: u8, address: u32) -> missingno_core::isa::Instruction {
 }
 
 #[test]
-fn tag_and_max_len() {
-    assert_eq!(Mos6502.id(), "6502");
+fn max_len_covers_the_longest_opcode() {
     assert_eq!(Mos6502.max_len(), 3);
 }
 

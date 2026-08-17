@@ -1,4 +1,4 @@
-use crate::audio::Audio;
+use crate::audio::{ApuSpec, Audio};
 use crate::cartridge::Cartridge;
 use crate::clock::{CpuDivider, MasterClock};
 use crate::cpu::Cpu;
@@ -304,7 +304,7 @@ impl<M: Model> Console<M> {
     /// KEY1 double speed currently engaged. Folds to `false` on consoles
     /// without the ÷2 cell.
     pub(crate) fn double_speed_active(&self) -> bool {
-        M::DOUBLE_SPEED && self.model.cpu_steps_per_dot() == 2
+        <M::Apu as ApuSpec>::DOUBLE_SPEED && self.model.cpu_steps_per_dot() == 2
     }
 
     pub fn screen(&self) -> &M::Screen {

@@ -1,6 +1,7 @@
 use super::{FallEdge, PhaseResult, RiseEdge};
 use crate::{
     Console, ConsoleShadow, Model,
+    audio::ApuSpec,
     clock::{CpuGate, Edge, TcycleSchedule},
     cpu::mcycle::{BusAction, TCycle},
     interrupts::Interrupt,
@@ -33,7 +34,7 @@ impl<M: Model> Console<M> {
         // the interrupt set-settle rides every master edge. Both feed double-speed
         // read placement only — every consumer sits behind double_speed_active(),
         // so consoles without the ÷2 cell never read them.
-        if M::DOUBLE_SPEED {
+        if <M::Apu as ApuSpec>::DOUBLE_SPEED {
             self.chassis.ppu.tick_onset_settles();
             self.chassis.interrupts.tick_set_settles();
         }
@@ -71,7 +72,7 @@ impl<M: Model> Console<M> {
 
         // Only the ÷1 fall carries a dot edge for the onset settle to ride; the
         // set-settle rides every master edge.
-        if M::DOUBLE_SPEED {
+        if <M::Apu as ApuSpec>::DOUBLE_SPEED {
             if has_dot_fall {
                 self.chassis.ppu.tick_onset_settles();
             }

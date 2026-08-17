@@ -19,9 +19,11 @@ use span::{Consumed, SpanPredictor};
 /// CGB silicon fix differently, so the console-specific runtime setters and
 /// flag fields collapse into consts the monomorphization folds away.
 pub trait ApuSpec {
-    /// Console has the KEY1 ÷2 cell. When false the frame-sequencer double-rate
-    /// tap, the CH1/CH2 prescaler free-run, and the CH4 cold-load DS term all
-    /// dead-code (their runtime `double_speed` argument folds to false).
+    /// Console has the KEY1 ÷2 cell — the console-wide fact, read through
+    /// [`Model::Apu`](crate::Model::Apu) outside the APU too. When false the
+    /// double-speed branches of the shared step loop dead-code, along with the
+    /// frame-sequencer double-rate tap, the CH1/CH2 prescaler free-run, and the
+    /// CH4 cold-load DS term (their runtime `double_speed` argument folds to false).
     const DOUBLE_SPEED: bool = false;
     /// CGB widens the CH1 sweep-counter load-hold by one ch1_1mhz↑ (`ch1_ld_sum`
     /// spans a second cycle); DMG keeps the single-cycle divider settle.

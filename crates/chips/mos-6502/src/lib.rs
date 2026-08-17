@@ -139,17 +139,3 @@ impl Cpu {
         }
     }
 }
-
-impl<B: Bus> missingno_core::ClockedCpu<B> for Cpu {
-    fn tick(&mut self, bus: &mut B) {
-        Cpu::tick(self, bus);
-    }
-
-    fn at_instruction_boundary(&self) -> bool {
-        Cpu::at_instruction_boundary(self)
-    }
-
-    fn jammed(&self) -> bool {
-        Cpu::jammed(self)
-    }
-}

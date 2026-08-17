@@ -365,13 +365,3 @@ impl Cpu {
         self.record(self.last_address, None, Pins::IDLE);
     }
 }
-
-impl<B: Bus> missingno_core::ClockedCpu<B> for Cpu {
-    fn tick(&mut self, bus: &mut B) {
-        Cpu::tick(self, bus);
-    }
-
-    fn at_instruction_boundary(&self) -> bool {
-        Cpu::at_instruction_boundary(self)
-    }
-}

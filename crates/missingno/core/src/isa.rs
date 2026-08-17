@@ -47,9 +47,6 @@ pub enum OperandClass {
 /// A CPU family's decode-for-display front end. Stateless, so a `&'static`
 /// reference can ride a per-vblank snapshot onto the UI thread.
 pub trait InstructionSet: Send + Sync {
-    /// Trace-format tag identifying this ISA.
-    fn id(&self) -> &'static str;
-
     /// The longest instruction this ISA decodes, in bytes.
     fn max_len(&self) -> usize;
 

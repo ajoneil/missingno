@@ -23,6 +23,7 @@
 //! CGB-B-only ROMs are excluded from the CGB-C-passing set.
 
 pub mod debug;
+pub mod launch;
 pub mod screen;
 pub mod state_schema;
 pub mod timing;
@@ -252,8 +253,6 @@ impl Model for Cgb {
     fn has_serial_fast_clock(&self) -> bool {
         !self.dmg_compat
     }
-
-    const DOUBLE_SPEED: bool = true;
 
     // The T2-rise presample holds at both speeds — double speed shifts the
     // dot↔T-cycle ratio, not where in the M-cycle the comparator samples.

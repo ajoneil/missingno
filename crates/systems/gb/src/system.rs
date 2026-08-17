@@ -406,8 +406,8 @@ impl<M: ConsoleUi> GbCore<M> {
 
     /// Why a run that stopped short of its boundary stopped: a watch names
     /// itself, otherwise the pc has reached a breakpoint.
-    fn stop_reason(&self, stops: &StopSet) -> CoreStop {
-        match self.debugger.last_watch_hit() {
+    fn stop_reason(&self, stops: &StopSet, watch_hit: Option<inspect::Watch>) -> CoreStop {
+        match watch_hit {
             Some(watch) => CoreStop::WatchHit(watch),
             None if stops.pc.contains(&(self.console().cpu().ir_address as u32)) => {
                 CoreStop::Breakpoint
@@ -650,14 +650,13 @@ where
 
     /// Run until the PPU presents a frame, a breakpoint fires, or a watch hits.
     /// The engine evaluates the watches at the sub-instruction points they are
-    /// defined on, so the seam's stores are handed to it whole.
+    /// defined on, so the seam's stops are handed to it whole.
     fn run_frame(core: &mut GbCore<M>, stops: &StopSet) -> CoreRun<Frame> {
-        core.debugger.load_stops(stops);
-        let screen = core.debugger.step_frame();
-        let stopped_early = screen.is_none();
-        let frame = core.display(screen);
+        let run = core.debugger.step_frame(stops);
+        let stopped_early = run.screen.is_none();
+        let frame = core.display(run.screen);
         let stop = match stopped_early {
-            true => core.stop_reason(stops),
+            true => core.stop_reason(stops, run.watch_hit),
             false => CoreStop::Completed,
         };
         CoreRun { stop, frame }
@@ -666,25 +665,17 @@ where
     /// Run to the address the call returns to, carrying out the newest frame
     /// completed on the way.
     fn run_step_over(core: &mut GbCore<M>, stops: &StopSet, return_address: u16) -> CoreRun<Frame> {
-        core.debugger.load_stops(stops);
-        let screen = core.debugger.run_to(return_address);
-        let frame = core.display(screen);
+        let run = core.debugger.run_to(return_address, stops);
+        let frame = core.display(run.screen);
         let stop = match core.console().cpu().ir_address == return_address {
             true => CoreStop::Completed,
-            false => core.stop_reason(stops),
+            false => core.stop_reason(stops, run.watch_hit),
         };
         CoreRun { stop, frame }
     }
 
     fn memory_regions(core: &GbCore<M>) -> Vec<inspect::MemoryRegion> {
         core.debugger.memory_regions()
-    }
-
-    fn bank_for(core: &GbCore<M>, address: u32) -> Option<u16> {
-        match address {
-            0x4000..=0x7FFF => core.console().cartridge().switchable_rom_bank(),
-            _ => None,
-        }
     }
 
     fn present_address(core: &GbCore<M>, address: u32) -> inspect::AddressDisplay {

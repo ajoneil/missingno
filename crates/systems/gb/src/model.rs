@@ -54,10 +54,6 @@ pub trait Model: Default {
     /// DMG arms/fires the OAM-corruption bug (BOWA/CUFE); CGB silicon has none.
     const HAS_OAM_BUG: bool = false;
 
-    /// Console has the KEY1 ÷2 cell. When false every double-speed branch in
-    /// the shared step loop is dead code.
-    const DOUBLE_SPEED: bool = false;
-
     /// VRAM banks the console carries: one on the DMG (fully visible through the
     /// `$8000` window), two on the CGB (VBK-switched). More than one means the
     /// debugger exposes the bank-complete image linearly above the bus.

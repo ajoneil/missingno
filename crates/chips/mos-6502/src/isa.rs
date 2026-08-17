@@ -10,10 +10,6 @@ use crate::disasm;
 pub struct Mos6502;
 
 impl InstructionSet for Mos6502 {
-    fn id(&self) -> &'static str {
-        "6502"
-    }
-
     fn max_len(&self) -> usize {
         3
     }

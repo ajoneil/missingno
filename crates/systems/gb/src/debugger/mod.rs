@@ -22,9 +22,6 @@ use watch::{watch_from_condition, watch_to_condition};
 
 pub struct Debugger<M: Model = Dmg> {
     game_boy: Console<M>,
-    breakpoints: BTreeSet<u16>,
-    watchpoints: Vec<WatchCondition>,
-    last_watchpoint_hit: Option<WatchCondition>,
     /// Labels from the ROM's `.sym` sidecar; shared so snapshots ride along.
     symbols: Arc<SymbolTable>,
     /// How each ROM byte has been used, filled in as the debugger runs.
@@ -34,14 +31,39 @@ pub struct Debugger<M: Model = Dmg> {
     tcycle_count: u64,
 }
 
+/// The seam's stops in the form this engine evaluates them: breakpoints as bus
+/// addresses, each watch translated into its condition. Compiled once per run,
+/// so a per-instruction check costs no allocation.
+struct RunStops {
+    breakpoints: BTreeSet<u16>,
+    watches: Vec<WatchCondition>,
+}
+
+impl RunStops {
+    fn compile(stops: &StopSet) -> Self {
+        Self {
+            breakpoints: stops.pc.iter().map(|&address| address as u16).collect(),
+            watches: stops
+                .watches
+                .iter()
+                .filter_map(watch_to_condition)
+                .collect(),
+        }
+    }
+}
+
+/// What a run stopped with: the newest screen completed on the way, and the
+/// watch that stopped it.
+pub struct RunOutcome<S> {
+    pub screen: Option<S>,
+    pub watch_hit: Option<inspect::Watch>,
+}
+
 impl<M: Model> Debugger<M> {
     pub fn new(game_boy: Console<M>) -> Self {
         let cdl = CodeDataLog::new(game_boy.cartridge().rom_len());
         Self {
             game_boy,
-            breakpoints: BTreeSet::new(),
-            watchpoints: Vec::new(),
-            last_watchpoint_hit: None,
             symbols: Arc::new(SymbolTable::default()),
             cdl,
             tcycle_count: 0,
@@ -169,48 +191,66 @@ impl<M: Model> Debugger<M> {
     /// Run frames until the program counter reaches `address` — a call's return
     /// address — or a breakpoint or watch stops it first, carrying out the
     /// newest screen completed on the way.
-    pub fn run_to(&mut self, address: u16) -> Option<M::Screen> {
-        let temporary = self.breakpoints.insert(address);
+    pub fn run_to(&mut self, address: u16, stops: &StopSet) -> RunOutcome<M::Screen> {
+        let mut stops = RunStops::compile(stops);
+        stops.breakpoints.insert(address);
         let mut last_screen = None;
-        while let Some(screen) = self.step_frame() {
-            last_screen = Some(screen);
+        loop {
+            let outcome = self.run_frame(&stops);
+            match outcome.screen {
+                Some(screen) => last_screen = Some(screen),
+                None => {
+                    return RunOutcome {
+                        screen: last_screen,
+                        watch_hit: outcome.watch_hit,
+                    };
+                }
+            }
         }
-        if temporary {
-            self.breakpoints.remove(&address);
-        }
-        last_screen
     }
 
-    pub fn step_frame(&mut self) -> Option<M::Screen> {
-        self.last_watchpoint_hit = None;
-        let screen = if self.watchpoints.is_empty() {
-            self.step_frame_simple()
+    pub fn step_frame(&mut self, stops: &StopSet) -> RunOutcome<M::Screen> {
+        self.run_frame(&RunStops::compile(stops))
+    }
+
+    fn run_frame(&mut self, stops: &RunStops) -> RunOutcome<M::Screen> {
+        let (screen, hit) = if stops.watches.is_empty() {
+            (self.step_frame_simple(stops), None)
         } else {
-            self.step_frame_watched()
+            self.step_frame_watched(stops)
         };
         self.game_boy.sync_audio();
         self.game_boy.sync_ppu();
-        screen
+        RunOutcome {
+            screen,
+            watch_hit: hit.as_ref().map(watch_from_condition),
+        }
     }
 
-    fn step_frame_simple(&mut self) -> Option<M::Screen> {
+    fn step_frame_simple(&mut self, stops: &RunStops) -> Option<M::Screen> {
         loop {
             let screen = self.step_free();
-            if screen.is_some() || self.breakpoint_triggered() {
+            if screen.is_some() || self.breakpoint_triggered(stops) {
                 return screen;
             }
         }
     }
 
-    fn step_frame_watched(&mut self) -> Option<M::Screen> {
-        if self.watchpoints.iter().any(|w| w.needs_bus_trace()) {
-            self.step_frame_watched_traced()
+    fn step_frame_watched(
+        &mut self,
+        stops: &RunStops,
+    ) -> (Option<M::Screen>, Option<WatchCondition>) {
+        if stops.watches.iter().any(|w| w.needs_bus_trace()) {
+            self.step_frame_watched_traced(stops)
         } else {
-            self.step_frame_watched_dots()
+            self.step_frame_watched_dots(stops)
         }
     }
 
-    fn step_frame_watched_traced(&mut self) -> Option<M::Screen> {
+    fn step_frame_watched_traced(
+        &mut self,
+        stops: &RunStops,
+    ) -> (Option<M::Screen>, Option<WatchCondition>) {
         loop {
             let result = self.step_logged();
             self.tcycle_count += result.tcycles as u64;
@@ -220,43 +260,40 @@ impl<M: Model> Debugger<M> {
                 None
             };
 
-            let hit = self
-                .watchpoints
+            let hit = stops
+                .watches
                 .iter()
                 .find(|condition| self.condition_matches(condition, self.game_boy.bus_trace()))
                 .cloned();
-            if let Some(hit) = hit {
-                self.last_watchpoint_hit = Some(hit);
-                return screen;
+            if hit.is_some() {
+                return (screen, hit);
             }
 
-            if screen.is_some() || self.breakpoint_triggered() {
-                return screen;
+            if screen.is_some() || self.breakpoint_triggered(stops) {
+                return (screen, None);
             }
         }
     }
 
-    fn step_frame_watched_dots(&mut self) -> Option<M::Screen> {
+    fn step_frame_watched_dots(
+        &mut self,
+        stops: &RunStops,
+    ) -> (Option<M::Screen>, Option<WatchCondition>) {
         loop {
             let screen = self.step_tcycle_free();
 
-            if let Some(hit) = self.check_watchpoints(&[]) {
-                self.last_watchpoint_hit = Some(hit);
-                return screen;
+            if let Some(hit) = self.check_watchpoints(&stops.watches, &[]) {
+                return (screen, Some(hit));
             }
 
-            if screen.is_some() || self.breakpoint_triggered() {
-                return screen;
+            if screen.is_some() || self.breakpoint_triggered(stops) {
+                return (screen, None);
             }
         }
     }
 
-    fn breakpoint_triggered(&self) -> bool {
-        self.breakpoints.contains(&self.game_boy.cpu().ir_address)
-    }
-
-    pub fn last_watchpoint_hit(&self) -> Option<&WatchCondition> {
-        self.last_watchpoint_hit.as_ref()
+    fn breakpoint_triggered(&self, stops: &RunStops) -> bool {
+        stops.breakpoints.contains(&self.game_boy.cpu().ir_address)
     }
 
     /// The SM83 register file as one inspection group.
@@ -278,45 +315,9 @@ impl<M: Model> Debugger<M> {
         watchables(self.game_boy.model().wram_image().is_some())
     }
 
-    /// Take the seam's stop stores as this engine's own, translating each watch
-    /// into the condition it evaluates. Called once per run, so a
-    /// per-instruction check costs no allocation.
-    pub fn load_stops(&mut self, stops: &StopSet) {
-        self.breakpoints = stops.pc.iter().map(|&address| address as u16).collect();
-        self.watchpoints = stops
-            .watches
-            .iter()
-            .filter_map(watch_to_condition)
-            .collect();
-    }
-
-    pub fn add_watch(&mut self, watch: inspect::Watch) {
-        if let Some(condition) = watch_to_condition(&watch)
-            && !self.watchpoints.contains(&condition)
-        {
-            self.watchpoints.push(condition);
-        }
-    }
-
-    pub fn last_watch_hit(&self) -> Option<inspect::Watch> {
-        self.last_watchpoint_hit.as_ref().map(watch_from_condition)
-    }
-
     pub fn reset(&mut self) {
         self.game_boy.reset();
         self.tcycle_count = 0;
-    }
-
-    pub fn breakpoints(&self) -> &BTreeSet<u16> {
-        &self.breakpoints
-    }
-
-    pub fn set_breakpoint(&mut self, address: u16) {
-        self.breakpoints.insert(address);
-    }
-
-    pub fn clear_breakpoint(&mut self, address: u16) {
-        self.breakpoints.remove(&address);
     }
 
     /// Capture a full T-cycle trace of one frame to a .morepork file. The full
@@ -431,8 +432,7 @@ mod tests {
         debugger.step(); // NOP
         debugger.step(); // JP → at the CALL
         assert_eq!(debugger.game_boy().cpu().ir_address, 0x0150);
-        debugger.run_to(0x0153);
+        debugger.run_to(0x0153, &StopSet::default());
         assert_eq!(debugger.game_boy().cpu().ir_address, 0x0153);
-        assert!(debugger.breakpoints().is_empty());
     }
 }

@@ -474,8 +474,12 @@ pub(super) fn watch_to_condition(watch: &inspect::Watch) -> Option<WatchConditio
 }
 
 impl<M: Model> Debugger<M> {
-    pub(super) fn check_watchpoints(&self, trace: &[BusAccess]) -> Option<WatchCondition> {
-        for condition in &self.watchpoints {
+    pub(super) fn check_watchpoints(
+        &self,
+        watches: &[WatchCondition],
+        trace: &[BusAccess],
+    ) -> Option<WatchCondition> {
+        for condition in watches {
             if self.condition_matches(condition, trace) {
                 return Some(condition.clone());
             }
@@ -548,6 +552,15 @@ mod tests {
     use super::*;
     use crate::debugger::tests::traced_program_console;
     use crate::{Console, Dmg};
+    use missingno_core::machine::StopSet;
+    use std::collections::BTreeSet;
+
+    fn watch_stops(watch: inspect::Watch) -> StopSet {
+        StopSet {
+            watches: vec![watch],
+            ..StopSet::default()
+        }
+    }
 
     #[test]
     fn every_watchable_key_round_trips() {
@@ -610,14 +623,21 @@ mod tests {
         // A pc watch stops where a plain breakpoint at the same address would:
         // both read the instruction-fetch address, so they land on the same row.
         let mut watched = Debugger::new(traced_program_console());
-        watched.add_watch(inspect::Watch::single("pc", None, Some(0x0150)));
-        watched.step_frame();
+        let hit = watched
+            .step_frame(&watch_stops(inspect::Watch::single(
+                "pc",
+                None,
+                Some(0x0150),
+            )))
+            .watch_hit;
         assert_eq!(watched.pc(), 0x0150);
-        assert!(watched.last_watch_hit().is_some());
+        assert!(hit.is_some());
 
         let mut broken = Debugger::new(traced_program_console());
-        broken.set_breakpoint(0x0150);
-        broken.step_frame();
+        broken.step_frame(&StopSet {
+            pc: BTreeSet::from([0x0150]),
+            ..StopSet::default()
+        });
         assert_eq!(broken.pc(), watched.pc());
     }
 
@@ -640,17 +660,15 @@ mod tests {
 
         // Bank 3 mapped: the PC reaches $4000 with the watched bank — it fires.
         let mut right = Debugger::new(mbc1_bank_jump(3));
-        right.add_watch(compound.clone());
-        right.step_frame();
+        let hit = right.step_frame(&watch_stops(compound.clone())).watch_hit;
         assert_eq!(right.pc(), 0x4000);
-        assert!(right.last_watch_hit().is_some());
+        assert!(hit.is_some());
 
         // Bank 2 mapped: the PC still reaches $4000, but the bank term rejects,
         // so the watch never fires and the frame runs to completion.
         let mut wrong = Debugger::new(mbc1_bank_jump(2));
-        wrong.add_watch(compound);
-        wrong.step_frame();
-        assert!(wrong.last_watch_hit().is_none());
+        let hit = wrong.step_frame(&watch_stops(compound)).watch_hit;
+        assert!(hit.is_none());
     }
 
     #[test]

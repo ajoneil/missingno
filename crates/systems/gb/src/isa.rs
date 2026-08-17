@@ -10,10 +10,6 @@ use crate::cpu::instructions::{Address, Instruction, instruction_length};
 pub struct Sm83;
 
 impl InstructionSet for Sm83 {
-    fn id(&self) -> &'static str {
-        "sm83"
-    }
-
     fn max_len(&self) -> usize {
         3
     }

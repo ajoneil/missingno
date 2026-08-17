@@ -157,9 +157,6 @@ mod tests {
     /// (1..=3 bytes), so a stream can be deliberately misaligned.
     struct Toy;
     impl InstructionSet for Toy {
-        fn id(&self) -> &'static str {
-            "toy"
-        }
         fn max_len(&self) -> usize {
             3
         }

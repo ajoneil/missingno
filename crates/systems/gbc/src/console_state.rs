@@ -41,9 +41,6 @@ impl ConsoleShadow for CgbConsoleState {
     fn clear_vram_dma_claim(&mut self) {
         self.vram_dma_claim = VramDmaClaim::default();
     }
-    fn dma_conflict_oam_zero(&self) -> Option<u8> {
-        self.dma_conflict_oam_zero
-    }
     fn set_dma_conflict_oam_zero(&mut self, offset: Option<u8>) {
         self.dma_conflict_oam_zero = offset;
     }

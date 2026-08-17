@@ -444,9 +444,6 @@ mod tests {
     /// A synthetic ISA whose instruction length is `opcode % 3 + 1`.
     struct Toy;
     impl InstructionSet for Toy {
-        fn id(&self) -> &'static str {
-            "toy"
-        }
         fn max_len(&self) -> usize {
             3
         }

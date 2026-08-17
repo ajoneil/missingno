@@ -9,10 +9,6 @@ use crate::disasm;
 pub struct Z80;
 
 impl InstructionSet for Z80 {
-    fn id(&self) -> &'static str {
-        "z80"
-    }
-
     fn max_len(&self) -> usize {
         // DDCB d op, ld (ix+d),n, ld ix,nn, and the ED ld (nn),rp forms.
         4

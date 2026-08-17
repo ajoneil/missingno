@@ -318,80 +318,54 @@ pub trait SystemConsole: Send {
     fn set_control(&mut self, control: ControlId, input: ControlInput);
     /// The console's controller and expansion ports; empty for a family that
     /// models none.
-    fn ports(&self) -> &'static [PortDescriptor] {
-        &[]
-    }
+    fn ports(&self) -> &'static [PortDescriptor];
     /// The peripheral currently plugged into `port`.
-    fn plugged(&self, _port: PortId) -> Option<PeripheralId> {
-        None
-    }
+    fn plugged(&self, port: PortId) -> Option<PeripheralId>;
     /// Plug a console-constructible peripheral into a port. A
     /// [`Provider::Host`](crate::ports::Provider::Host) kind arrives as an
     /// object from the host instead, and is refused here.
-    fn plug(&mut self, _port: PortId, _peripheral: PeripheralId) -> Result<(), PlugError> {
-        Err(PlugError::UnknownPort)
-    }
+    fn plug(&mut self, port: PortId, peripheral: PeripheralId) -> Result<(), PlugError>;
     /// The console's built-in game controller — the Game Boy's pad. Empty for
     /// a console whose controllers all arrive through ports.
-    fn integrated_controls(&self) -> &'static [ControlDescriptor] {
-        &[]
-    }
+    fn integrated_controls(&self) -> &'static [ControlDescriptor];
     /// The controls on the console shell: momentary buttons and the latching
     /// switches the UI renders as in-play toggles.
-    fn panel_controls(&self) -> &'static [PanelControl] {
-        &[]
-    }
+    fn panel_controls(&self) -> &'static [PanelControl];
     /// Whether this console renders through a user-selectable monochrome
     /// palette (DMG). The play-mode Display panel shows its palette picker
     /// only when true; colour and TV systems return false.
-    fn uses_monochrome_palette(&self) -> bool {
-        false
-    }
+    fn uses_monochrome_palette(&self) -> bool;
     /// Whether the loaded media enables Super Game Boy enhancements (the SGB
     /// palette override). Only meaningful for the Game Boy; others return false.
-    fn supports_sgb(&self) -> bool {
-        false
-    }
+    fn supports_sgb(&self) -> bool;
     /// Stereo samples at 44.1 kHz — the seam's fixed rate. Families
     /// convert from their native rate on their own side.
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)>;
     /// The coupling the console's board puts between its audio pads and the
     /// jack. `None` for a family whose board has not been modelled — its
     /// samples reach the device as the chip drove them.
-    fn audio_coupling(&self) -> Option<HighPass> {
-        None
-    }
+    fn audio_coupling(&self) -> Option<HighPass>;
     fn screen_display(&self) -> Frame;
     /// The display device this console drives: a fixed-size LCD, or a CRT.
     fn video_out(&self) -> DisplayTechnology;
     /// The game's title for filenames and session records.
     fn game_title(&self) -> String;
     /// Serialized battery-backed save contents, if the media persists any.
-    fn battery_save(&self) -> Option<Vec<u8>> {
-        None
-    }
+    fn battery_save(&self) -> Option<Vec<u8>>;
     /// Wall-clock duration of one emulated frame, for the pacing loop.
     fn frame_interval(&self) -> Duration;
     /// A serialized machine state, if the system has a save-state backend.
-    fn save_state(&self) -> Option<Vec<u8>> {
-        None
-    }
+    fn save_state(&self) -> Option<Vec<u8>>;
     /// Restore a previously serialized machine state.
-    fn load_state(&mut self, _bytes: &[u8]) -> Result<(), StateError> {
-        Err(StateError::Unsupported)
-    }
+    fn load_state(&mut self, bytes: &[u8]) -> Result<(), StateError>;
     /// The hardware-named state schema this console describes, if it authors
     /// one. The save-state bridge and the trace writer key their records on its
     /// fields; a console without a schema returns `None`.
-    fn state_schema(&self) -> Option<&'static SystemStateSchema> {
-        None
-    }
+    fn state_schema(&self) -> Option<&'static SystemStateSchema>;
     /// Read the current machine state into a record keyed by the schema's field
     /// names — the bridge's capture side. `None` for a console without a schema
     /// or before its bridge is wired.
-    fn read_state(&self) -> Option<StateRecord> {
-        None
-    }
+    fn read_state(&self) -> Option<StateRecord>;
     /// Convert to the debugger-backed form.
     fn into_debugger(self: Box<Self>) -> Box<dyn SystemDebugger>;
 }
@@ -422,9 +396,10 @@ impl StepOutcome {
 /// debugger is also a [`SystemConsole`], so a host drives it exactly as it
 /// drives a bare console and reaches for this surface only to inspect.
 ///
-/// Watchpoints, symbols, code/data logging, and trace capture default to
-/// absent — a family implements only the backends it has. Breakpoints and
-/// peeks cross the seam as `u32`; a core masks them to its own bus width.
+/// Watchpoints, symbols, code/data logging, and trace capture may be absent —
+/// a family without one of those backends reports nothing rather than failing.
+/// Breakpoints and peeks cross the seam as `u32`; a core masks them to its own
+/// bus width.
 pub trait SystemDebugger: SystemConsole {
     fn step(&mut self) -> StepOutcome;
     fn step_over(&mut self) -> StepOutcome;
@@ -435,122 +410,83 @@ pub trait SystemDebugger: SystemConsole {
     /// the Game Boy, a "colour clock" on the VCS — or `None` when the finest
     /// step the core exposes is a whole instruction. A transport offers
     /// sub-instruction stepping only when this is `Some`.
-    fn tick_name(&self) -> Option<&'static str> {
-        None
-    }
+    fn tick_name(&self) -> Option<&'static str>;
     /// Advance one sub-instruction tick (see [`tick_name`](Self::tick_name)).
-    /// A core without sub-instruction granularity does nothing.
-    fn step_tick(&mut self) {}
+    /// A core without sub-instruction granularity leaves the machine as it is.
+    fn step_tick(&mut self);
     /// The current frame in its pre-resolution domain (the values the accuracy
     /// references compare in), or `None` when the family has no such surface.
-    /// Defaults to the palette indices of an indexed frame; a family whose
-    /// screen resolves before the seam overrides with its own raw domain.
-    fn frame_raw(&self) -> Option<RawFrame> {
-        self.screen_display().to_raw()
-    }
+    /// A family whose screen resolves before the seam reports its own raw
+    /// domain; otherwise these are the palette indices of the indexed frame.
+    fn frame_raw(&self) -> Option<RawFrame>;
     /// Enable or disable per-channel waveform capture. Interest-gated: capture
     /// stays off — and costs nothing — until a consumer turns it on. A family
-    /// without a capture backend does nothing.
-    fn set_wave_capture(&mut self, _on: bool) {}
+    /// without a capture backend ignores it.
+    fn set_wave_capture(&mut self, on: bool);
     /// The current per-channel waveform windows, for the audio scope while
     /// paused. `None` when the family captures no waveforms, or capture is
     /// disabled.
-    fn channel_waves(&self) -> Option<Vec<ChannelWave>> {
-        None
-    }
+    fn channel_waves(&self) -> Option<Vec<ChannelWave>>;
     /// Enable or disable graphics-surface capture. Interest-gated like
     /// [`set_wave_capture`](Self::set_wave_capture): capture stays off — and
     /// the per-vblank tile/map/object decode costs nothing — until a consumer
-    /// turns it on. A family without a graphics backend does nothing.
-    fn set_graphics_capture(&mut self, _on: bool) {}
+    /// turns it on. A family without a graphics backend ignores it.
+    fn set_graphics_capture(&mut self, on: bool);
     /// The current decoded graphics surfaces, for the graphics panes while
     /// paused. `None` when the family has none, or graphics capture is disabled.
-    fn graphics(&self) -> Option<GraphicsView> {
-        None
-    }
+    fn graphics(&self) -> Option<GraphicsView>;
 
     fn set_breakpoint(&mut self, address: u32);
     fn clear_breakpoint(&mut self, address: u32);
     fn breakpoints(&self) -> BTreeSet<u32>;
 
     /// The register groups this core exposes for the registers view.
-    fn register_groups(&self) -> Vec<RegisterGroup> {
-        Vec::new()
-    }
-    /// The structured left-column sidebar this core exposes. Defaults to a
-    /// single CPU section from [`register_groups`](Self::register_groups); a
-    /// family overrides to add its video and system sections.
-    fn sidebar_sections(&self) -> Vec<Section> {
-        crate::inspect::default_sections(self.register_groups())
-    }
+    fn register_groups(&self) -> Vec<RegisterGroup>;
+    /// The structured left-column sidebar this core exposes: a CPU section from
+    /// [`register_groups`](Self::register_groups), plus whatever video and
+    /// system sections the family adds.
+    fn sidebar_sections(&self) -> Vec<Section>;
     /// The CPU-visible address map, named by role. Owned because the list is
     /// cart-dependent — a board with RAM contributes a region the bare console
     /// does not — even though each region's `name` stays a static string.
-    fn memory_regions(&self) -> Vec<MemoryRegion> {
-        Vec::new()
-    }
+    fn memory_regions(&self) -> Vec<MemoryRegion>;
     /// Side-effect-free read of the CPU address space.
-    fn peek(&self, _address: u32) -> u8 {
-        0xFF
-    }
+    fn peek(&self, address: u32) -> u8;
     /// The address the debugger keys instructions on.
-    fn pc(&self) -> u32 {
-        0
-    }
+    fn pc(&self) -> u32;
     /// The core's decode-for-display front end, if it has one.
-    fn instruction_set(&self) -> Option<&dyn InstructionSet> {
-        None
-    }
-    /// The bank currently mapped at `address`, for a bank-prefixed disassembly
-    /// row. `None` outside any switchable region, or for a core without one.
-    fn bank_for(&self, _address: u32) -> Option<u16> {
-        None
-    }
-    /// How `address` presents in the disassembly's address column. Defaults to a
-    /// plain bus row carrying [`bank_for`](Self::bank_for); a core with a
-    /// synthetic bank-complete space overrides to present its rows as bank:window.
-    fn present_address(&self, address: u32) -> crate::inspect::AddressDisplay {
-        crate::inspect::AddressDisplay::bus(address, self.bank_for(address))
-    }
+    fn instruction_set(&self) -> Option<&dyn InstructionSet>;
+    /// How `address` presents in the disassembly's address column: a plain bus
+    /// row, carrying the bank mapped there when the region is switchable, or a
+    /// `bank:window` row for a core with a synthetic bank-complete space.
+    fn present_address(&self, address: u32) -> crate::inspect::AddressDisplay;
     /// The walk address whose disassembly row presents as `bank:window` — the
     /// synthetic bank-complete address for a banked region, for jump-to-address.
     /// `None` when no region presents that pairing. Inverse of
     /// [`present_address`](Self::present_address) over the synthetic space.
-    fn locate_bank_window(&self, _bank: u16, _window: u32) -> Option<u32> {
-        None
-    }
+    fn locate_bank_window(&self, bank: u16, window: u32) -> Option<u32>;
 
     /// The watch conditions this core can name.
-    fn watchables(&self) -> &'static [Watchable] {
-        &[]
-    }
-    fn add_watch(&mut self, _watch: Watch) {}
-    fn remove_watch(&mut self, _watch: &Watch) {}
-    fn watches(&self) -> Vec<Watch> {
-        Vec::new()
-    }
-    fn last_watch_hit(&self) -> Option<Watch> {
-        None
-    }
+    fn watchables(&self) -> &'static [Watchable];
+    fn add_watch(&mut self, watch: Watch);
+    fn remove_watch(&mut self, watch: &Watch);
+    fn watches(&self) -> Vec<Watch>;
+    fn last_watch_hit(&self) -> Option<Watch>;
 
     /// Labels from the ROM's debug-symbol sidecar, if one was loaded.
-    fn symbols(&self) -> Arc<SymbolTable> {
-        empty_symbols()
-    }
+    fn symbols(&self) -> Arc<SymbolTable>;
     /// Create a user label at an address; the system decides the bank from
     /// the current mapping.
-    fn add_symbol(&mut self, _address: u32, _name: String) {}
-    fn remove_symbol(&mut self, _symbol: &Symbol) {}
+    fn add_symbol(&mut self, address: u32, name: String);
+    fn remove_symbol(&mut self, symbol: &Symbol);
     /// Code/data-log flags around the current instruction, for the
     /// disassembly's data-byte display.
-    fn cdl_window(&self) -> CdlWindow {
-        CdlWindow::default()
-    }
+    fn cdl_window(&self) -> CdlWindow;
     /// Load debug sidecars found beside the ROM (the Game Boy's `.sym`
-    /// labels and `.cdl` code/data log); families without any do nothing.
-    fn load_sidecars(&mut self, _rom_path: &Path) {}
+    /// labels and `.cdl` code/data log); a family without any ignores the call.
+    fn load_sidecars(&mut self, rom_path: &Path);
     /// Write updated debug sidecars back beside the ROM.
-    fn save_sidecars(&self, _rom_path: &Path) {}
+    fn save_sidecars(&self, rom_path: &Path);
     /// An owned per-vblank snapshot for the UI to render from while running.
     fn snapshot(&self, frame: u64) -> DebugView;
     fn running_status(&self, frame: u64) -> RunningStatus;
@@ -560,19 +496,8 @@ pub trait SystemDebugger: SystemConsole {
 
     /// Step one frame while writing an execution trace to `path`; `None` when
     /// the system has no capture backend or capture fails.
-    fn capture_trace(&mut self, _path: &Path) -> Option<Frame> {
-        None
-    }
+    fn capture_trace(&mut self, path: &Path) -> Option<Frame>;
 
     /// Hand back a plain console, dropping the debugger's per-step bookkeeping.
     fn into_console(self: Box<Self>) -> Box<dyn SystemConsole>;
-}
-
-/// The shared empty table behind the default [`SystemDebugger::symbols`].
-pub(crate) fn empty_symbols() -> Arc<SymbolTable> {
-    use std::sync::OnceLock;
-    static EMPTY: OnceLock<Arc<SymbolTable>> = OnceLock::new();
-    EMPTY
-        .get_or_init(|| Arc::new(SymbolTable::default()))
-        .clone()
 }

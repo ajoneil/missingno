@@ -8,6 +8,8 @@ use missingno_gb::ppu::types::palette::{Palette, PaletteChoice, PaletteIndex};
 use missingno_gb::system::{LINK_CABLE, LINK_DISCONNECTED, LINK_PRINTER, create_console_with_link};
 use missingno_gb::{BootRom, GameBoy, cartridge::Cartridge, serial_transfer::SerialLink};
 use missingno_gbc::GameBoyColor;
+use missingno_gbc::launch::BootRomFit;
+pub use missingno_gbc::launch::GbLaunch;
 
 use missingno_core::ports::PeripheralId;
 use missingno_core::video::{ConsoleFrame, RgbaFrame};
@@ -163,17 +165,9 @@ fn build_cartridge(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Cartridge {
     cartridge
 }
 
-/// Receives the console `launch` selects. Two concrete arms rather than one
-/// generic method so a caller can require its own model traits on each.
-pub trait GbLaunch {
-    type Output;
-    fn dmg(self, console: GameBoy) -> Self::Output;
-    fn cgb(self, console: GameBoyColor) -> Self::Output;
-}
-
-/// The one DMG-vs-CGB selection point for every executable path (GUI load,
-/// trace): CGB-aware media — enhanced or required — boots the CGB core, like a
-/// cartridge slotted into a real GBC; DMG-only media boots the DMG core.
+/// The app's executable paths (GUI load, trace) reach the core selection
+/// through here, adding the save-backed cartridge and a word to the user when
+/// the boot ROM they named is dropped.
 pub fn launch<L: GbLaunch>(
     rom: Vec<u8>,
     save_data: Option<Vec<u8>>,
@@ -182,30 +176,11 @@ pub fn launch<L: GbLaunch>(
     launcher: L,
 ) -> L::Output {
     let cartridge = build_cartridge(rom, save_data);
-    let boot_rom = matching_boot_rom(boot_rom, cartridge.is_cgb());
-    if cartridge.is_cgb() {
-        let mut console = GameBoyColor::new(cartridge, boot_rom);
-        if let Some(link) = link {
-            console.set_link(link);
-        }
-        launcher.cgb(console)
-    } else {
-        let mut console = GameBoy::new(cartridge, boot_rom);
-        if let Some(link) = link {
-            console.set_link(link);
-        }
-        launcher.dmg(console)
+    let (output, boot_rom) = missingno_gbc::launch::console(cartridge, boot_rom, link, launcher);
+    if boot_rom == BootRomFit::Dropped {
+        eprintln!("warning: boot ROM model does not match the selected core; ignoring it");
     }
-}
-
-fn matching_boot_rom(boot_rom: Option<BootRom>, cgb_core: bool) -> Option<BootRom> {
-    match (&boot_rom, cgb_core) {
-        (Some(BootRom::Dmg(_)), true) | (Some(BootRom::Cgb(_)), false) => {
-            eprintln!("warning: boot ROM model does not match the selected core; ignoring it");
-            None
-        }
-        _ => boot_rom,
-    }
+    output
 }
 
 /// The factory both platform descriptors register: the header picks the

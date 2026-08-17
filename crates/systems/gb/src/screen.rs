@@ -41,7 +41,6 @@ pub trait ConsoleShadow {
 
     /// OAM offset whose DMA-deposited byte a VRAM-source bus conflict forces to
     /// `$00`, drained at the M-cycle-boundary fall.
-    fn dma_conflict_oam_zero(&self) -> Option<u8>;
     fn set_dma_conflict_oam_zero(&mut self, offset: Option<u8>);
     fn take_dma_conflict_oam_zero(&mut self) -> Option<u8>;
 }
@@ -64,9 +63,6 @@ impl ConsoleShadow for () {
     }
     fn set_vram_dma_claim(&mut self, _claim: VramDmaClaim) {}
     fn clear_vram_dma_claim(&mut self) {}
-    fn dma_conflict_oam_zero(&self) -> Option<u8> {
-        None
-    }
     fn set_dma_conflict_oam_zero(&mut self, _offset: Option<u8>) {}
     fn take_dma_conflict_oam_zero(&mut self) -> Option<u8> {
         None

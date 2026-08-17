@@ -60,16 +60,15 @@ must provide:
 7. **Committable test oracles in CI from day one** — accuracy claims live
    in tests.
 
-### CPU chips: the `ClockedCpu` contract and the two board compositions
+### CPU chips: the stepping contract and the two board compositions
 
-A CPU that lives in `crates/chips/` implements `missingno-core`'s
-`ClockedCpu<B>`: the board drives it **one T of its own clock per call**
-(`tick`), the chip reports `at_instruction_boundary()` (the debugger's
-stepping unit and the save-state restore point) and `jammed()` (permanently
-fetch-stopped — a halted-but-resumable CPU is *not* jammed and keeps
-ticking). Cycle counts are call counts; the bus trait stays per-chip (a
-6502 has `read`/`write`, a Z80 adds ports), and execution decode stays
-per-crate per `isa`'s charter.
+A CPU that lives in `crates/chips/` is driven by its board **one T of its
+own clock per call** (`tick`), and reports `at_instruction_boundary()` (the
+debugger's stepping unit and the save-state restore point) and, where the
+silicon can stop fetching for good, `jammed()` (a halted-but-resumable CPU
+is *not* jammed and keeps ticking). Cycle counts are call counts; the bus
+trait stays per-chip (a 6502 has `read`/`write`, a Z80 adds ports), and
+execution decode stays per-crate per `isa`'s charter.
 
 Board clocking is one principle: **the board ticks at its crystal, and
 every chip is a client at its divisor**. The VCS's single 3.58 MHz crystal

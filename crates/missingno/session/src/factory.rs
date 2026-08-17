@@ -62,6 +62,7 @@ mod gb {
     use missingno_gb::system::create_console;
     use missingno_gb::{BootRom, GameBoy, media};
     use missingno_gbc::GameBoyColor;
+    use missingno_gbc::launch::GbLaunch;
 
     /// The headless build persists no battery save; the format is frontend
     /// policy the GUI owns.
@@ -69,36 +70,30 @@ mod gb {
         None
     }
 
-    /// The one DMG-vs-CGB selection point: CGB-aware media boots the CGB core,
-    /// like a cartridge slotted into a real GBC; DMG media boots the DMG core.
+    /// No battery save, no link peripheral, and a mismatched boot ROM dropped
+    /// without a word — this load path has no user to tell.
     pub fn create(
         _path: &Path,
         rom: &[u8],
         options: &LoadOptions,
     ) -> Option<Box<dyn SystemConsole>> {
-        let cartridge = Cartridge::new(rom.to_vec(), None);
-        let boot_rom = boot_rom_for(options, cartridge.is_cgb());
-        Some(if cartridge.is_cgb() {
-            Box::new(create_console(
-                GameBoyColor::new(cartridge, boot_rom),
-                no_battery,
-            ))
-        } else {
-            Box::new(create_console(
-                GameBoy::new(cartridge, boot_rom),
-                no_battery,
-            ))
-        })
-    }
-
-    /// A boot ROM only boots the model it was dumped from, so one that does not
-    /// match the core the header selected is dropped rather than forced on it.
-    fn boot_rom_for(options: &LoadOptions, cgb_core: bool) -> Option<BootRom> {
-        let boot_rom = BootRom::from_bytes(options.boot_rom.clone()?).ok()?;
-        match (&boot_rom, cgb_core) {
-            (BootRom::Dmg(_), true) | (BootRom::Cgb(_), false) => None,
-            _ => Some(boot_rom),
+        struct Boxed;
+        impl GbLaunch for Boxed {
+            type Output = Box<dyn SystemConsole>;
+            fn dmg(self, console: GameBoy) -> Self::Output {
+                Box::new(create_console(console, no_battery))
+            }
+            fn cgb(self, console: GameBoyColor) -> Self::Output {
+                Box::new(create_console(console, no_battery))
+            }
         }
+        let cartridge = Cartridge::new(rom.to_vec(), None);
+        let boot_rom = options
+            .boot_rom
+            .clone()
+            .and_then(|bytes| BootRom::from_bytes(bytes).ok());
+        let (console, _) = missingno_gbc::launch::console(cartridge, boot_rom, None, Boxed);
+        Some(console)
     }
 
     pub fn is_rom(path: &Path, rom: &[u8]) -> bool {

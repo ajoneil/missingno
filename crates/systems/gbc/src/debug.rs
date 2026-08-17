@@ -577,6 +577,7 @@ impl ConsoleUi for Cgb {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use missingno_core::machine::StopSet;
     use missingno_gb::cartridge::Cartridge;
     use missingno_gb::debugger::Debugger;
 
@@ -729,23 +730,26 @@ mod tests {
             0x18, 0xfe, // JR -2 self-loop at $0105
         ]);
         let mut debugger = Debugger::new(GameBoyColor::new(Cartridge::new(rom, None), None));
-        debugger.add_watch(inspect::Watch {
-            terms: vec![
-                inspect::WatchTerm {
-                    key: "pc".into(),
-                    address: None,
-                    value: Some(0x0105),
-                },
-                inspect::WatchTerm {
-                    key: "wram-bank".into(),
-                    address: None,
-                    value: Some(3),
-                },
-            ],
-        });
-        debugger.step_frame();
+        let stops = StopSet {
+            watches: vec![inspect::Watch {
+                terms: vec![
+                    inspect::WatchTerm {
+                        key: "pc".into(),
+                        address: None,
+                        value: Some(0x0105),
+                    },
+                    inspect::WatchTerm {
+                        key: "wram-bank".into(),
+                        address: None,
+                        value: Some(3),
+                    },
+                ],
+            }],
+            ..StopSet::default()
+        };
+        let hit = debugger.step_frame(&stops).watch_hit;
         assert_eq!(debugger.pc(), 0x0105);
-        assert!(debugger.last_watch_hit().is_some());
+        assert!(hit.is_some());
     }
 
     #[test]

@@ -14,8 +14,7 @@ fn reference_mnemonic(bytes: &[u8]) -> Option<String> {
 }
 
 #[test]
-fn tag_and_max_len() {
-    assert_eq!(Sm83.id(), "sm83");
+fn max_len_covers_the_longest_opcode() {
     assert_eq!(Sm83.max_len(), 3);
 }
 
