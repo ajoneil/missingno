@@ -52,15 +52,7 @@ impl PaletteSelection {
         match mode {
             DisplayMode::Sgb => Self::Sgb,
             DisplayMode::Cgb => Self::Cgb,
-            DisplayMode::Palette(name) => {
-                let choice = match name.as_str() {
-                    "Green" => PaletteChoice::Green,
-                    "Pocket" => PaletteChoice::Pocket,
-                    "Classic" => PaletteChoice::Classic,
-                    _ => PaletteChoice::default(),
-                };
-                Self::Dmg(choice)
-            }
+            DisplayMode::Palette(name) => Self::Dmg(activity::parse_palette_choice(name)),
         }
     }
 }
