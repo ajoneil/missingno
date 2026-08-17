@@ -106,7 +106,7 @@ impl AudioView {
             prev_div_apu_bit: audio.prev_div_apu_bit(),
             ch1: PulseChannelView {
                 enabled: ch1.enabled,
-                sweep: Some(ch1.sweep.0),
+                sweep: Some(ch1.sweep.register.0),
                 duty_and_length: ch1.waveform_and_initial_length.0,
                 volume_and_envelope: ch1.volume_and_envelope,
                 period: ch1.period.0 & 0x7FF,
@@ -114,10 +114,10 @@ impl AudioView {
                 length_counter: ch1.length.counter,
                 envelope_volume: ch1.envelope.volume,
                 envelope_timer: ch1.envelope.timer,
-                shadow_frequency: Some(ch1.shadow_frequency),
-                sweep_timer: Some(ch1.sweep_timer),
-                sweep_enabled: Some(ch1.sweep_enabled),
-                sweep_negate_used: Some(ch1.sweep_negate_used),
+                shadow_frequency: Some(ch1.sweep.shadow_frequency),
+                sweep_timer: Some(ch1.sweep.timer),
+                sweep_enabled: Some(ch1.sweep.enabled),
+                sweep_negate_used: Some(ch1.sweep.negate_used),
             },
             ch2: PulseChannelView {
                 enabled: ch2.enabled,

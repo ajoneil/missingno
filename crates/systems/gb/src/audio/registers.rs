@@ -2,18 +2,18 @@ use bitflags::bitflags;
 
 use super::{
     ApuSpec, Audio, Register,
-    channels::{noise, pulse, pulse_sweep, wave},
+    channels::{noise, pulse, wave},
     volume::Volume,
 };
 
 impl Register {
     pub fn map(address: u16) -> Self {
         match address {
-            0xff10 => Self::Channel1(pulse_sweep::Register::PeriodSweep),
-            0xff11 => Self::Channel1(pulse_sweep::Register::WaveformAndInitialLength),
-            0xff12 => Self::Channel1(pulse_sweep::Register::Volume),
-            0xff13 => Self::Channel1(pulse_sweep::Register::PeriodLow),
-            0xff14 => Self::Channel1(pulse_sweep::Register::PeriodHighAndControl),
+            0xff10 => Self::Channel1Sweep,
+            0xff11 => Self::Channel1(pulse::Register::WaveformAndInitialLength),
+            0xff12 => Self::Channel1(pulse::Register::VolumeAndEnvelope),
+            0xff13 => Self::Channel1(pulse::Register::PeriodLow),
+            0xff14 => Self::Channel1(pulse::Register::PeriodHighAndControl),
 
             0xff16 => Self::Channel2(pulse::Register::WaveformAndInitialLength),
             0xff17 => Self::Channel2(pulse::Register::VolumeAndEnvelope),
@@ -107,6 +107,7 @@ impl<A: ApuSpec> Audio<A> {
             }
 
             Register::Volume => self.nr50,
+            Register::Channel1Sweep => self.channels.ch1.read_period_sweep(),
             Register::Channel1(register) => self.channels.ch1.read_register(register),
             Register::Channel2(register) => self.channels.ch2.read_register(register),
             Register::Channel3(register) => self.channels.ch3.read_register(register),
@@ -129,7 +130,7 @@ impl<A: ApuSpec> Audio<A> {
                 // DMG: NRx1 length timer registers are writable even when APU is off.
                 // For NR11/NR21, only the length bits (lower 6) take effect;
                 // the duty bits (upper 2) are masked out.
-                Register::Channel1(pulse_sweep::Register::WaveformAndInitialLength)
+                Register::Channel1(pulse::Register::WaveformAndInitialLength)
                 | Register::Channel2(pulse::Register::WaveformAndInitialLength) => {
                     let length_only = value & 0x3F;
                     let length_clock_low = self.length_clock_low();
@@ -204,6 +205,7 @@ impl<A: ApuSpec> Audio<A> {
                 self.volume_left = Volume((value >> 4) & 0b111);
                 self.volume_right = Volume(value & 0b111);
             }
+            Register::Channel1Sweep => self.channels.ch1.write_period_sweep(value),
             Register::Channel1(register) => {
                 let length_clock_low = self.length_clock_low();
                 self.channels

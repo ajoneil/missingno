@@ -1,14 +1,14 @@
 use noise::NoiseChannel;
 use pulse::PulseChannel;
-use pulse_sweep::PulseSweepChannel;
+use sweep::{NoSweep, Sweep};
 use wave::WaveChannel;
 
 pub mod envelope;
 pub mod length;
 pub mod noise;
 pub mod pulse;
-pub mod pulse_sweep;
 pub mod registers;
+pub mod sweep;
 pub mod wave;
 
 /// A trigger-armed divider reload pending on CH1/CH2, latched at the NRx4
@@ -25,8 +25,8 @@ pub enum TriggerReload {
 
 #[derive(Clone, Default)]
 pub struct Channels {
-    pub ch1: PulseSweepChannel,
-    pub ch2: PulseChannel,
+    pub ch1: PulseChannel<Sweep>,
+    pub ch2: PulseChannel<NoSweep>,
     pub ch3: WaveChannel,
     pub ch4: NoiseChannel,
 }

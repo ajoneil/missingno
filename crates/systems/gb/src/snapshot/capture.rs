@@ -68,7 +68,7 @@ pub fn capture_apu<M: crate::Model>(gb: &Console<M>) -> ApuSnapshot {
         sound_pan: gb.peek(0xFF25),
         sound_on: gb.peek(0xFF26),
 
-        ch1_sweep: ch.ch1.sweep.0,
+        ch1_sweep: ch.ch1.sweep.register.0,
         ch1_duty_len: ch.ch1.waveform_and_initial_length.0,
         ch1_vol_env: ch.ch1.volume_and_envelope.0,
         ch1_freq_lo: ch.ch1.period.0 as u8,
@@ -95,9 +95,9 @@ pub fn capture_apu<M: crate::Model>(gb: &Console<M>) -> ApuSnapshot {
 
         ch1_period: ch.ch1.period.0,
         ch1_envelope_timer: ch.ch1.envelope.timer,
-        ch1_sweep_timer: ch.ch1.sweep_timer,
-        ch1_sweep_enabled: ch.ch1.sweep_enabled,
-        ch1_sweep_negate_used: ch.ch1.sweep_negate_used,
+        ch1_sweep_timer: ch.ch1.sweep.timer,
+        ch1_sweep_enabled: ch.ch1.sweep.enabled,
+        ch1_sweep_negate_used: ch.ch1.sweep.negate_used,
         ch1_length_enabled: ch.ch1.length.enabled,
 
         ch2_period: ch.ch2.period.0,

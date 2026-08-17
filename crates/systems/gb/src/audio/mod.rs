@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use channels::registers::Prescaler;
 use channels::wave::WaveRamCoupling;
-use channels::{Channels, noise, pulse, pulse_sweep, wave};
+use channels::{Channels, noise, pulse, wave};
 use missingno_core::ClockRatio;
 use missingno_core::waveform::{ChannelWave, WaveRing};
 use volume::Volume;
@@ -45,7 +45,9 @@ pub enum Register {
     Control,
     Panning,
     Volume,
-    Channel1(pulse_sweep::Register),
+    /// NR10 — the sweep register, which only CH1 carries.
+    Channel1Sweep,
+    Channel1(pulse::Register),
     Channel2(pulse::Register),
     Channel3(wave::Register),
     Channel4(noise::Register),
@@ -468,7 +470,7 @@ impl<A: ApuSpec> Audio<A> {
             }
         }
         // bylu↓ (cate_128hz↓): arm coze; BEXA samples at next ajer↑ inside
-        // pulse_sweep::tcycle — unless the early wrap-coincident path already
+        // CH1's tcycle — unless the early wrap-coincident path already
         // delivered this rise's cate.
         if (c == 0 || c == 4) && !self.channels.ch1.take_sweep_cate() {
             self.channels.ch1.tick_sweep_counter();
@@ -575,18 +577,25 @@ impl<A: ApuSpec> Audio<A> {
             length::LengthCounter,
             noise::NoiseChannel,
             pulse::PulseChannel,
-            pulse_sweep::{PulseSweepChannel, Sweep},
+            sweep::{NoSweep, PeriodSweep, Sweep},
             wave::WaveChannel,
         };
 
         let channels = Channels {
-            ch1: PulseSweepChannel {
+            ch1: PulseChannel {
                 enabled: Enabled {
                     enabled: snap.sound_on & 0x01 != 0,
                     output_left: snap.sound_pan & 0x10 != 0,
                     output_right: snap.sound_pan & 0x01 != 0,
                 },
-                sweep: Sweep(snap.ch1_sweep),
+                sweep: Sweep {
+                    register: PeriodSweep(snap.ch1_sweep),
+                    shadow_frequency: snap.ch1_period,
+                    timer: snap.ch1_sweep_timer,
+                    enabled: snap.ch1_sweep_enabled,
+                    negate_used: snap.ch1_sweep_negate_used,
+                    ..Sweep::default()
+                },
                 waveform_and_initial_length: WaveformAndInitialLength(snap.ch1_duty_len),
                 volume_and_envelope: VolumeAndEnvelope(snap.ch1_vol_env),
                 length: LengthCounter {
@@ -597,22 +606,13 @@ impl<A: ApuSpec> Audio<A> {
                 divider: PeriodDivider::default(),
                 wave_duty_position: 0,
                 pwm_latch: false,
+                overflow_pulse: false,
                 pending_reload: TriggerReload::Idle,
                 divider_load_settle: false,
-                sweep_load_hold: 0,
                 envelope: Envelope {
                     timer: snap.ch1_envelope_timer,
                     ..Envelope::default()
                 },
-                shadow_frequency: snap.ch1_period,
-                sweep_timer: snap.ch1_sweep_timer,
-                sweep_enabled: snap.ch1_sweep_enabled,
-                sweep_negate_used: snap.ch1_sweep_negate_used,
-                sweep_counter_at_max: false,
-                sweep_cate_taken: false,
-                sweep_calc_steps: 0,
-                sweep_calc_restart: false,
-                ch1_frst: false,
                 output_dirty: true,
             },
             ch2: PulseChannel {
@@ -621,6 +621,7 @@ impl<A: ApuSpec> Audio<A> {
                     output_left: snap.sound_pan & 0x20 != 0,
                     output_right: snap.sound_pan & 0x02 != 0,
                 },
+                sweep: NoSweep,
                 waveform_and_initial_length: WaveformAndInitialLength(snap.ch2_duty_len),
                 volume_and_envelope: VolumeAndEnvelope(snap.ch2_vol_env),
                 length: LengthCounter {
@@ -631,7 +632,7 @@ impl<A: ApuSpec> Audio<A> {
                 divider: PeriodDivider::default(),
                 wave_duty_position: 0,
                 pwm_latch: false,
-                ch2_frst: false,
+                overflow_pulse: false,
                 pending_reload: TriggerReload::Idle,
                 divider_load_settle: false,
                 envelope: Envelope {

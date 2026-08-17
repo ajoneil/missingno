@@ -5,6 +5,7 @@ use super::{
     registers::{
         PeriodDivider, PeriodHighAndControl, Signed11, VolumeAndEnvelope, WaveformAndInitialLength,
     },
+    sweep::{NoSweep, PeriodSweep, Sweep, SweepUnit},
 };
 
 const DUTY_TABLE: [[u8; 8]; 4] = [
@@ -14,6 +15,8 @@ const DUTY_TABLE: [[u8; 8]; 4] = [
     [1, 1, 1, 1, 1, 1, 0, 0], // 75%
 ];
 
+/// NR11-NR14 on CH1, NR21-NR24 on CH2. CH1's sweep register has no CH2
+/// counterpart, so it is written through the sweep unit instead.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Register {
     WaveformAndInitialLength,
@@ -22,9 +25,13 @@ pub enum Register {
     PeriodHighAndControl,
 }
 
+/// A pulse channel: the 11-bit period divider driving a duty pipeline, the
+/// length counter and the volume envelope. CH1 is this silicon carrying a
+/// [`Sweep`]; CH2 is the same carrying [`NoSweep`].
 #[derive(Clone)]
-pub struct PulseChannel {
+pub struct PulseChannel<S: SweepUnit> {
     pub enabled: Enabled,
+    pub sweep: S,
     pub waveform_and_initial_length: WaveformAndInitialLength,
     pub volume_and_envelope: VolumeAndEnvelope,
     pub length: LengthCounter<64>,
@@ -32,28 +39,60 @@ pub struct PulseChannel {
 
     pub divider: PeriodDivider,
     pub wave_duty_position: u8,
-    /// `dome` PWM latch (CH2 mirror of CH1's `duwo`).
+    /// `duwo`/`dome` PWM latch — captures the duty-pattern bit on each
+    /// natural-overflow `chN_frst↑`; holds the emitted output between
+    /// overflows.
     pub pwm_latch: bool,
-    /// `ch2_frst` overflow pulse — high for one `ch2_1mhz` cycle after an
-    /// overflow. `dome` captures the pre-advance duty on its rise; the duty
-    /// counter (`cule`) clocks on its fall, one cycle later (CH2 mirror of
-    /// CH1's `ch1_frst`).
-    pub ch2_frst: bool,
-    /// `ch2_restart` sync stage; pending between NR24 trigger write
-    /// and the next ch2_1mhz↑ that applies the reload.
+    /// `ch1_frst`/`ch2_frst` overflow pulse — high for one `chN_1mhz` cycle
+    /// after an overflow. `duwo`/`dome` captures the pre-advance duty on its
+    /// rise (the overflow edge); the duty counter (`dajo`/`cule`) clocks on its
+    /// fall, one cycle later. So capture precedes advance.
+    pub overflow_pulse: bool,
+    /// `chN_restart` sync stage; pending between the NRx4 trigger write
+    /// and the next chN_1mhz↑ that applies the reload.
     pub pending_reload: TriggerReload,
     /// Set on the reload edge; the first count is suppressed so the
-    /// divider DFFs settle out of load mode (CH1/CH2 mirror).
+    /// divider DFFs settle out of load mode before counting resumes.
     pub divider_load_settle: bool,
     pub envelope: Envelope,
     /// An input to `digital_sample()` / the mix may have changed.
     pub output_dirty: bool,
 }
 
-impl Default for PulseChannel {
+impl Default for PulseChannel<Sweep> {
     fn default() -> Self {
-        // Post-boot state at PC=0x0100. Boot ROM doesn't drive CH2:
-        // DAC off, channel disabled, internal counters at reset.
+        // Post-boot state at PC=0x0100 (boot ROM's Nintendo chime ran
+        // CH1 to a known mid-period state with the envelope decayed).
+        Self {
+            enabled: Enabled {
+                enabled: true,
+                output_left: true,
+                output_right: true,
+            },
+            sweep: Sweep {
+                register: PeriodSweep(0x80),
+                ..Sweep::default()
+            },
+            waveform_and_initial_length: WaveformAndInitialLength(0xbf),
+            volume_and_envelope: VolumeAndEnvelope(0xf3),
+            period: Signed11(0x7C1),
+            divider: PeriodDivider { counter: 0x7F9 },
+            wave_duty_position: 2,
+            // chime decay ran to saturation; JEME latched
+            envelope: Envelope {
+                stopped: true,
+                ..Envelope::default()
+            },
+            ..Self::at_reset(0)
+        }
+    }
+}
+
+impl Default for PulseChannel<NoSweep> {
+    fn default() -> Self {
+        // Post-boot state at PC=0x0100. Boot ROM doesn't drive CH2: DAC off,
+        // channel disabled, internal counters at reset (NR23/NR24 never
+        // written, so acc_d = 0).
         Self {
             enabled: Enabled {
                 enabled: false, // ch2_fdis = 1 (channel disabled)
@@ -61,27 +100,18 @@ impl Default for PulseChannel {
                 output_right: true,
             },
             waveform_and_initial_length: WaveformAndInitialLength(0x3f),
-            volume_and_envelope: VolumeAndEnvelope(0),
-            length: LengthCounter::default(),
-            period: Signed11(0), // CH2 NR23/NR24 never written by boot ROM; acc_d = 0
-
-            divider: PeriodDivider::default(),
-            wave_duty_position: 0,
-            pwm_latch: false,
-            ch2_frst: false,
-            pending_reload: TriggerReload::Idle,
-            divider_load_settle: false,
-            envelope: Envelope::default(),
-            output_dirty: true,
+            ..Self::at_reset(0)
         }
     }
 }
 
-impl PulseChannel {
-    pub fn reset(&mut self) {
-        let length_counter = self.length.counter; // DMG: length timers preserved on power-off
-        *self = Self {
+impl<S: SweepUnit> PulseChannel<S> {
+    /// apu_reset: every register cleared and every internal counter at rest.
+    /// DMG preserves the length timer across power-off, so it is carried in.
+    fn at_reset(length_counter: u16) -> Self {
+        Self {
             enabled: Enabled::disabled(),
+            sweep: S::default(),
             waveform_and_initial_length: WaveformAndInitialLength(0),
             volume_and_envelope: VolumeAndEnvelope(0),
             length: LengthCounter {
@@ -93,12 +123,16 @@ impl PulseChannel {
             divider: PeriodDivider::default(),
             wave_duty_position: 0,
             pwm_latch: false,
-            ch2_frst: false,
+            overflow_pulse: false,
             pending_reload: TriggerReload::Idle,
             divider_load_settle: false,
             envelope: Envelope::default(),
             output_dirty: true,
-        };
+        }
+    }
+
+    pub fn reset(&mut self) {
+        *self = Self::at_reset(self.length.counter);
     }
 
     pub fn read_register(&self, register: Register) -> u8 {
@@ -138,7 +172,7 @@ impl PulseChannel {
                         self.envelope.enable_tick_pending = true;
                     }
                 }
-                // pace=0 raises jupu → hafe=0 → JOPA async-reset; any
+                // pace=0 raises jupu → hafe=0 → KOZY/JOPA async-reset; any
                 // armed kyvo is dropped before the next horu_512hz↑.
                 if new_pace == 0 {
                     self.envelope.saturation_armed = false;
@@ -153,8 +187,8 @@ impl PulseChannel {
                 let ctrl = PeriodHighAndControl(value);
                 self.period.set_high3(ctrl.period_high());
 
-                // deme = NOR(cyre, bufy_256hz, ff19_d6_n): length-enable
-                // 0→1 rises deme (one extra length count) iff caru is low.
+                // capy/deme = NOR(cero/cyre, bufy_256hz, NRx4 d6): length-enable
+                // 0→1 rises it (one extra length count) iff caru is low.
                 if self
                     .length
                     .enable_glitch(length_clock_low, ctrl.enable_length(), ctrl.trigger())
@@ -171,25 +205,30 @@ impl PulseChannel {
     }
 
     pub fn trigger(&mut self) {
-        // Only the channel-enabling trigger (ch2_fdis 1→0) freezes the load tick
-        // (the +1 first overflow); a re-trigger of a running channel reloads with
-        // no +1.
+        // chN_fdis (set by DAC-off / apu_reset, cleared by a trigger) gates the
+        // divider toggle clock. Only the channel-enabling trigger — the one that
+        // clears fdis 1→0 — freezes a load tick (the +1 first overflow); a
+        // re-trigger of a running channel reloads with no +1 (the reload arm
+        // distinguishes the enabling case).
         let was_running = self.enabled.enabled;
         self.enabled.enabled = true;
         self.length.trigger_reload();
-        // Arm the ch2_restart sync: the reload applies at the next
-        // ch2_1mhz↑, not on this write edge.
+        // Arm the chN_restart sync: the reload applies at the next
+        // chN_1mhz↑, not on this write edge. A coincident natural
+        // overflow on that wrap is suppressed (on CH1, dyru async-resets
+        // comy before cala can clock).
         self.pending_reload = if was_running {
             TriggerReload::Retrigger
         } else {
             TriggerReload::Enabling
         };
-        // ch2_restart pulls hafe low → JOPA reset → any prior kyvo
+        // chN_restart pulls hafe low → KOZY/JOPA reset → any prior kyvo
         // arm from the previous trigger window is dropped.
         self.envelope.trigger(
             self.volume_and_envelope.initial_volume(),
             self.volume_and_envelope.sweep_pace(),
         );
+        self.sweep.on_trigger(self.period.0);
 
         // DAC check: if upper 5 bits of volume register are 0, channel is disabled
         if !self.dac_enabled() {
@@ -197,36 +236,42 @@ impl PulseChannel {
         }
     }
 
-    /// One master-clock rise. `channel_clock_rose` is the shared CALO↑
-    /// (ch2_1mhz↑) strobe, low while apu_reset holds the clock.
-    pub fn tcycle(&mut self, channel_clock_rose: bool) {
+    /// One chN_1mhz↑ of the period divider and its duty pipeline.
+    /// `wide_sweep_hold` reaches only a channel that carries a sweep unit.
+    pub(super) fn tick_divider(&mut self, channel_clock_rose: bool, wide_sweep_hold: bool) {
         if !channel_clock_rose || !self.enabled.enabled {
             return;
         }
-        // ch2_frst↓ (one ch2_1mhz↑ after an overflow): the duty counter (cule)
-        // clocks on the fall, so the advance trails dome's capture by one cycle.
-        if self.ch2_frst {
+        self.sweep.on_channel_clock();
+        // chN_frst↓ (one chN_1mhz↑ after an overflow): the duty counter
+        // (dajo/cule) clocks on the fall, so the advance trails duwo/dome's
+        // capture by one cycle.
+        if self.overflow_pulse {
             self.wave_duty_position = (self.wave_duty_position + 1) % 8;
-            self.ch2_frst = false;
+            self.overflow_pulse = false;
         }
+        // Prescaler wrapped (chN_1mhz↑). Trigger reload and natural
+        // overflow are mutually exclusive on the same edge — trigger
+        // wins via dyru's async-reset of comy.
         if self.pending_reload != TriggerReload::Idle {
             // Enabling trigger freezes the load tick → +1 first overflow;
             // re-trigger reloads with no +1.
             self.divider_load_settle = self.pending_reload == TriggerReload::Enabling;
+            self.sweep.on_trigger_reload(wide_sweep_hold);
             self.divider.counter = (self.period.0) & 0x7FF;
             self.pending_reload = TriggerReload::Idle;
         } else if self.divider_load_settle {
             self.divider_load_settle = false;
         } else if self.divider.counter >= 0x7FF {
-            // ch2_frst↑ (the overflow): dome captures the pre-advance duty step
-            // and the divider reloads; the counter advances next cycle.
+            // chN_frst↑ (the overflow): duwo/dome captures the pre-advance duty
+            // step and the divider reloads; the counter advances next cycle.
             let duty = self.waveform_and_initial_length.waveform() as usize;
             let latch = DUTY_TABLE[duty][self.wave_duty_position as usize] != 0;
             if latch != self.pwm_latch {
                 self.pwm_latch = latch;
                 self.output_dirty = true;
             }
-            self.ch2_frst = true;
+            self.overflow_pulse = true;
             self.divider.counter = (self.period.0) & 0x7FF;
         } else {
             self.divider.counter += 1;
@@ -248,7 +293,7 @@ impl PulseChannel {
 
     /// kene↓ edge (fs step 7→0). Advances the envelope counter and
     /// arms `kyvo` on saturation; the volume update is deferred to the
-    /// next horu_512hz↑ sample so a same-step NR22 pace=0 write can
+    /// next horu_512hz↑ sample so a same-step NRx2 pace=0 write can
     /// clear `kyvo` and suppress the fire.
     pub fn tick_envelope_counter(&mut self) {
         self.envelope.tick_counter(
@@ -257,9 +302,9 @@ impl PulseChannel {
         );
     }
 
-    /// JOPA sample on the horu_512hz↑ edge (every fs step transition). Drains `kyvo` into
-    /// the volume counter when `hafe` is asserted; otherwise consumes
-    /// `kyvo` without firing (= dropped sample).
+    /// JOPA sample on the horu_512hz↑ edge (every fs step transition). Drains
+    /// `kyvo` into the volume counter when `hafe` is asserted; otherwise
+    /// consumes `kyvo` without firing (= dropped sample).
     pub fn sample_envelope_fire(&mut self) {
         if self.envelope.sample_fire(
             self.volume_and_envelope.sweep_pace(),
@@ -270,12 +315,12 @@ impl PulseChannel {
         }
     }
 
-    // DAC power = NRx2 upper five bits (FUTE).
+    // DAC power = NRx2 upper five bits (HOCA on CH1, FUTE on CH2).
     pub fn dac_enabled(&self) -> bool {
         self.volume_and_envelope.0 & 0xf8 != 0
     }
 
-    /// The bit `dome` would capture at duty step `position`.
+    /// The bit `duwo`/`dome` would capture at duty step `position`.
     pub fn duty_bit(&self, position: u8) -> bool {
         let duty = self.waveform_and_initial_length.waveform() as usize;
         DUTY_TABLE[duty][(position % 8) as usize] != 0
@@ -285,10 +330,20 @@ impl PulseChannel {
         if !self.enabled.enabled {
             return 0;
         }
+        // The DAC sees the latched duty bit from the previous
+        // overflow, not the combinational chN_pwm output.
         if self.pwm_latch {
             self.envelope.volume
         } else {
             0
         }
+    }
+}
+
+impl PulseChannel<NoSweep> {
+    /// One master-clock rise. `channel_clock_rose` is the shared CALO↑
+    /// (ch2_1mhz↑) strobe, low while apu_reset holds the clock.
+    pub fn tcycle(&mut self, channel_clock_rose: bool) {
+        self.tick_divider(channel_clock_rose, false);
     }
 }

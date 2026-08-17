@@ -10,7 +10,9 @@
 //! channel carries pipeline residue the materialisation does not model, so
 //! every armed span lands on state closed forms can reproduce exactly.
 
-use super::channels::{TriggerReload, noise::NoiseChannel, wave::WaveChannel};
+use super::channels::{
+    TriggerReload, noise::NoiseChannel, pulse::PulseChannel, sweep::SweepUnit, wave::WaveChannel,
+};
 use super::{ApuSpec, Audio, DIV_APU_BIT, DIV_APU_BIT_DOUBLE};
 
 /// Longest span the predictor will claim.
@@ -184,13 +186,13 @@ pub(super) fn predict_inert_ticks<A: ApuSpec>(
 
     // A sweep arm awaiting its BEXA drain, or a trigger's adder restart, resolves
     // at the next ajer↑ with effects the closed forms below do not cover.
-    if ch.ch1.sweep_counter_at_max || ch.ch1.sweep_calc_restart {
+    if ch.ch1.sweep.counter_at_max || ch.ch1.sweep.calc_restart {
         return 0;
     }
     // The adder's step counter advances once per M-cycle at ajer↑ and clears
     // `enabled` when it saturates on an overflow.
-    if ch.ch1.sweep_calc_steps > 0 {
-        let steps = ch.ch1.sweep_calc_steps as u32;
+    if ch.ch1.sweep.calc_steps > 0 {
+        let steps = ch.ch1.sweep.calc_steps as u32;
         span = span.min(ticks_until(clock_phase, SWEEP_STEP_PHASE) + (steps - 1) * 4 - 1);
     }
 
@@ -204,26 +206,10 @@ pub(super) fn predict_inert_ticks<A: ApuSpec>(
     }
 
     if ch.ch1.enabled.enabled {
-        span = span.min(ticks_to_duty_change(
-            clock_phase,
-            ch.ch1.divider.counter,
-            ch.ch1.period.0,
-            ch.ch1.wave_duty_position,
-            ch.ch1.ch1_frst,
-            ch.ch1.pwm_latch,
-            |position| ch.ch1.duty_bit(position),
-        ));
+        span = span.min(ticks_to_duty_change(clock_phase, &ch.ch1));
     }
     if ch.ch2.enabled.enabled {
-        span = span.min(ticks_to_duty_change(
-            clock_phase,
-            ch.ch2.divider.counter,
-            ch.ch2.period.0,
-            ch.ch2.wave_duty_position,
-            ch.ch2.ch2_frst,
-            ch.ch2.pwm_latch,
-            |position| ch.ch2.duty_bit(position),
-        ));
+        span = span.min(ticks_to_duty_change(clock_phase, &ch.ch2));
     }
     span = span.min(ticks_to_wave_step(&ch.ch3));
     if span == 0 {
@@ -278,26 +264,17 @@ fn ticks_to_frame_sequencer_strobe<A: ApuSpec>(
 /// the one driving the DAC now. A disabled channel's divider is frozen, so this
 /// is asked only of a running one — which the DAC-off write path guarantees is
 /// also a contributing one.
-#[allow(clippy::too_many_arguments)]
-fn ticks_to_duty_change(
-    phase: u8,
-    counter: u16,
-    period: u16,
-    position: u8,
-    frst: bool,
-    latch: bool,
-    duty_bit: impl Fn(u8) -> bool,
-) -> u32 {
+fn ticks_to_duty_change<S: SweepUnit>(phase: u8, ch: &PulseChannel<S>) -> u32 {
     // The divider clocks at CALO↑, once per M-cycle.
     let to_first_clock = ticks_until(phase, CLOCK_RISE_PHASE);
-    let counter = counter & 0x7FF;
-    let period = period & 0x7FF;
+    let counter = ch.divider.counter & 0x7FF;
+    let period = ch.period.0 & 0x7FF;
     // duwo/dome capture the pre-advance duty step, so an overflow with the step
     // advance already pending latches the following position.
-    let base = position + u8::from(frst);
+    let base = ch.wave_duty_position + u8::from(ch.overflow_pulse);
     let mut clocks = 0x800 - counter as u32;
     for step in 0..8 {
-        if duty_bit(base.wrapping_add(step)) != latch {
+        if ch.duty_bit(base.wrapping_add(step)) != ch.pwm_latch {
             return to_first_clock + (clocks - 1) * 4 - 1;
         }
         clocks += 0x800 - period as u32;

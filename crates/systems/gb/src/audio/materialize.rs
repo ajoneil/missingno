@@ -6,7 +6,7 @@
 
 use super::channels::noise::{NoiseChannel, shift_lfsr};
 use super::channels::pulse::PulseChannel;
-use super::channels::pulse_sweep::PulseSweepChannel;
+use super::channels::sweep::{Sweep, SweepUnit};
 use super::channels::wave::WaveChannel;
 use super::span::{
     CLOCK_RISE_PHASE, NoiseChain, SWEEP_STEP_PHASE, increments_to_tap_rise, phase_count,
@@ -112,47 +112,36 @@ impl<A: ApuSpec> Audio<A> {
 /// divider only runs while it is enabled (and so contributing — a DAC-off write
 /// disables the channel).
 fn advance_pulse_sweep(
-    ch1: &mut PulseSweepChannel,
+    ch1: &mut PulseChannel<Sweep>,
     channel_clock_rises: u32,
     sweep_clock_rises: u32,
 ) {
-    ch1.sweep_load_hold = ch1
-        .sweep_load_hold
+    ch1.sweep.load_hold = ch1
+        .sweep
+        .load_hold
         .saturating_sub(channel_clock_rises.min(255) as u8);
-    if ch1.sweep_calc_steps > 0 {
+    if ch1.sweep.calc_steps > 0 {
         // The predictor ends the span before the counter saturates.
-        ch1.sweep_calc_steps -= sweep_clock_rises as u8;
-        debug_assert!(ch1.sweep_calc_steps > 0);
+        ch1.sweep.calc_steps -= sweep_clock_rises as u8;
+        debug_assert!(ch1.sweep.calc_steps > 0);
     }
-    if !ch1.enabled.enabled {
-        return;
-    }
-    let duty: [bool; 8] = std::array::from_fn(|step| ch1.duty_bit(step as u8));
-    let latch = advance_period_divider(
-        &mut ch1.divider.counter,
-        &mut ch1.wave_duty_position,
-        &mut ch1.ch1_frst,
-        ch1.period.0,
-        channel_clock_rises,
-        &duty,
-    );
-    debug_assert!(latch.is_none_or(|bit| bit == ch1.pwm_latch));
+    advance_pulse(ch1, channel_clock_rises);
 }
 
-fn advance_pulse(ch2: &mut PulseChannel, channel_clock_rises: u32) {
-    if !ch2.enabled.enabled {
+fn advance_pulse<S: SweepUnit>(ch: &mut PulseChannel<S>, channel_clock_rises: u32) {
+    if !ch.enabled.enabled {
         return;
     }
-    let duty: [bool; 8] = std::array::from_fn(|step| ch2.duty_bit(step as u8));
+    let duty: [bool; 8] = std::array::from_fn(|step| ch.duty_bit(step as u8));
     let latch = advance_period_divider(
-        &mut ch2.divider.counter,
-        &mut ch2.wave_duty_position,
-        &mut ch2.ch2_frst,
-        ch2.period.0,
+        &mut ch.divider.counter,
+        &mut ch.wave_duty_position,
+        &mut ch.overflow_pulse,
+        ch.period.0,
         channel_clock_rises,
         &duty,
     );
-    debug_assert!(latch.is_none_or(|bit| bit == ch2.pwm_latch));
+    debug_assert!(latch.is_none_or(|bit| bit == ch.pwm_latch));
 }
 
 /// The shared 11-bit period divider: counts to 0x7FF, reloads from `period`
