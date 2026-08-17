@@ -17,8 +17,10 @@ use std::time::Duration;
 use missingno_core::TvStandard;
 use missingno_core::graphics::GraphicsView;
 use missingno_core::inspect::{RegisterGroup, Section};
-use missingno_core::launch::{LaunchChoice, LaunchOptionDescriptor, LaunchOptionKind};
-use missingno_core::machine::{BoundaryState, Machine, MachineConsole, StateIdentity};
+use missingno_core::launch::{LaunchChoice, LaunchOptionDescriptor, board_option};
+use missingno_core::machine::{
+    BoundaryState, Machine, MachineConsole, StateIdentity, rom_fingerprint,
+};
 use missingno_core::ports::{PanelControl, PeripheralId, PlugError, PortDescriptor, PortId};
 use missingno_core::state::{StateRecord, SystemStateSchema};
 use missingno_core::state_file::StateFrame;
@@ -144,18 +146,13 @@ pub const BOARD: &str = "board";
 /// what a catalogue says about its board is all a loader has — the media itself
 /// settles nothing.
 pub fn launch_options(_rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
-    vec![LaunchOptionDescriptor {
-        id: BOARD,
-        label: "Cartridge board",
-        kind: LaunchOptionKind::Choice {
-            choices: CartType::all()
-                .map(|board| LaunchChoice {
-                    value: board.code(),
-                    label: board.display_name(),
-                })
-                .collect(),
-        },
-    }]
+    vec![board_option(
+        BOARD,
+        CartType::all().map(|board| LaunchChoice {
+            value: board.code(),
+            label: board.display_name(),
+        }),
+    )]
 }
 
 /// A console bound to its media, so a save state can refuse a ROM it was not
@@ -169,13 +166,6 @@ pub fn create_console(
     Ok(Box::new(console.with_identity(StateIdentity {
         rom_fingerprint: rom_fingerprint(rom),
     })))
-}
-
-/// SHA-256 of the cartridge image, taken at load — the digest a save state
-/// carries.
-fn rom_fingerprint(rom: &[u8]) -> [u8; 32] {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(rom).into()
 }
 
 pub struct Sg1000System;

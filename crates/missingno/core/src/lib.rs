@@ -16,6 +16,7 @@
 //! watchpoint can name — stays with that console.
 
 pub mod analog;
+pub mod cartridge;
 pub mod cdl;
 pub mod chip;
 pub mod disasm;

@@ -10,9 +10,12 @@ use missingno_core::inspect::{
     AddressDisplay, MemoryRegion, RegisterGroup, Section, Watch, Watchable,
 };
 use missingno_core::isa::InstructionSet;
-use missingno_core::launch::{LaunchChoice, LaunchOptionDescriptor, LaunchOptionKind};
+use missingno_core::launch::{
+    LaunchChoice, LaunchOptionDescriptor, LaunchOptionKind, board_option,
+};
 use missingno_core::machine::{
     BoundaryState, CoreRun, CoreStop, Machine, MachineConsole, StateIdentity, StopSet,
+    rom_fingerprint,
 };
 use missingno_core::ports::{PanelControl, PeripheralId, PlugError, PortDescriptor, PortId};
 use missingno_core::state::{PixelFormat, StateRecord, SystemStateSchema};
@@ -71,19 +74,15 @@ pub fn launch_options(_rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
                     .collect(),
             },
         },
-        LaunchOptionDescriptor {
-            id: BOARD,
-            label: "Cartridge board",
-            kind: LaunchOptionKind::Choice {
-                choices: CartType::all()
-                    .filter(|board| board.built())
-                    .map(|board| LaunchChoice {
-                        value: board.code(),
-                        label: board.display_name(),
-                    })
-                    .collect(),
-            },
-        },
+        board_option(
+            BOARD,
+            CartType::all()
+                .filter(|board| board.built())
+                .map(|board| LaunchChoice {
+                    value: board.code(),
+                    label: board.display_name(),
+                }),
+        ),
         LaunchOptionDescriptor {
             id: OVERDUMP,
             label: "Overdump",
@@ -119,13 +118,6 @@ pub fn create_console(
             rom_fingerprint: fingerprint,
         }),
     ))
-}
-
-/// SHA-256 of the raw ROM image, taken at load (the cartridge does not retain a
-/// plain board's image), so a save state can refuse a ROM it was not written for.
-fn rom_fingerprint(rom: &[u8]) -> [u8; 32] {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(rom).into()
 }
 
 /// What the seam drives: the console under its debugging backend, the

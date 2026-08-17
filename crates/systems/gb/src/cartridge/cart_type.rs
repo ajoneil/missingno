@@ -5,6 +5,8 @@
 //! MBC30 chip, an unlicensed mapper hiding behind a borrowed byte — so a caller
 //! that knows better can state the board instead.
 
+use missingno_core::cartridge::BoardNames;
+
 /// The cartridge's objection to media it cannot be built from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GbCartridgeError {
@@ -61,26 +63,18 @@ pub enum GbCartType {
     DbzTrans,
 }
 
-/// One board's names: the byte its header declares it by, the code it goes by in
-/// interchange — game-db entries, the CLI, a launch value — and the name shown
-/// to a reader.
-struct BoardNames {
-    cart_type: GbCartType,
-    /// The `$0147` value declaring this board; `None` where no byte names it.
-    header: Option<u8>,
-    code: &'static str,
-    display: &'static str,
-}
-
+/// One row of the vocabulary: the `$0147` value declaring this board — `None`
+/// where no byte names it — beside the code it goes by in interchange and the
+/// name shown to a reader.
 const fn row(
     cart_type: GbCartType,
     header: Option<u8>,
     code: &'static str,
     display: &'static str,
-) -> BoardNames {
+) -> BoardNames<GbCartType, Option<u8>> {
     BoardNames {
-        cart_type,
-        header,
+        board: cart_type,
+        declared: header,
         code,
         display,
     }
@@ -88,7 +82,7 @@ const fn row(
 
 /// The whole board vocabulary, one row per board. Every name a board answers to
 /// derives from here.
-const BOARD_NAMES: &[BoardNames] = &[
+const BOARD_NAMES: &[BoardNames<GbCartType, Option<u8>>] = &[
     row(GbCartType::Rom, Some(0x00), "ROM", "ROM only"),
     row(GbCartType::RomRam, Some(0x08), "ROM+RAM", "ROM + RAM"),
     row(
@@ -172,56 +166,16 @@ const BOARD_NAMES: &[BoardNames] = &[
     ),
 ];
 
-/// A board crosses a catalogue as its interchange code, so the vocabulary is
-/// the whole serialised form: an unlisted code names no board this core builds.
-impl serde::Serialize for GbCartType {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.code())
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for GbCartType {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let code = String::deserialize(deserializer)?;
-        GbCartType::from_code(&code).ok_or_else(|| {
-            serde::de::Error::custom(format!("unknown Game Boy board code {code:?}"))
-        })
-    }
-}
+missingno_core::board_vocabulary!(GbCartType, BOARD_NAMES, "unknown Game Boy board code");
 
 impl GbCartType {
     /// The board header byte `$0147` declares; `Err` carries a byte naming none.
     pub fn from_header(byte: u8) -> Result<GbCartType, u8> {
         BOARD_NAMES
             .iter()
-            .find(|board| board.header == Some(byte))
-            .map(|board| board.cart_type)
+            .find(|row| row.declared == Some(byte))
+            .map(|row| row.board)
             .ok_or(byte)
-    }
-
-    /// Every board the core knows, in the vocabulary's order.
-    pub fn all() -> impl Iterator<Item = GbCartType> {
-        BOARD_NAMES.iter().map(|board| board.cart_type)
-    }
-
-    /// The board a board code names.
-    pub fn from_code(code: &str) -> Option<GbCartType> {
-        BOARD_NAMES
-            .iter()
-            .find(|board| board.code == code)
-            .map(|board| board.cart_type)
-    }
-
-    /// The board code for this board — the inverse of [`from_code`].
-    ///
-    /// [`from_code`]: GbCartType::from_code
-    pub fn code(self) -> &'static str {
-        self.names().code
-    }
-
-    /// The board's name for a reader: the mapper chip and the parts beside it.
-    pub fn display_name(self) -> &'static str {
-        self.names().display
     }
 
     /// Whether the board keeps its RAM alive off the cartridge battery, so a
@@ -251,13 +205,6 @@ impl GbCartType {
             GbCartType::Mbc3TimerBattery | GbCartType::Mbc3TimerRamBattery
         )
     }
-
-    fn names(self) -> &'static BoardNames {
-        BOARD_NAMES
-            .iter()
-            .find(|board| board.cart_type == self)
-            .expect("every board has a row in BOARD_NAMES")
-    }
 }
 
 #[cfg(test)]
@@ -266,9 +213,9 @@ mod tests {
 
     #[test]
     fn every_board_round_trips_its_code() {
-        for board in BOARD_NAMES {
-            assert_eq!(GbCartType::from_code(board.code), Some(board.cart_type));
-            assert_eq!(board.cart_type.code(), board.code);
+        for row in BOARD_NAMES {
+            assert_eq!(GbCartType::from_code(row.code), Some(row.board));
+            assert_eq!(row.board.code(), row.code);
         }
     }
 
@@ -289,9 +236,9 @@ mod tests {
 
     #[test]
     fn every_declared_board_round_trips_its_header_byte() {
-        for board in BOARD_NAMES {
-            let Some(byte) = board.header else { continue };
-            assert_eq!(GbCartType::from_header(byte), Ok(board.cart_type));
+        for row in BOARD_NAMES {
+            let Some(byte) = row.declared else { continue };
+            assert_eq!(GbCartType::from_header(byte), Ok(row.board));
         }
     }
 

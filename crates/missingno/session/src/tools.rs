@@ -1531,7 +1531,8 @@ fn encode_png(width: u32, height: u32, pixels: &[u8]) -> Result<Vec<u8>, String>
     Ok(buffer)
 }
 
-fn base64_encode(data: &[u8]) -> String {
+/// Standard base64, for embedding a PNG in a tool result.
+pub fn base64_encode(data: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {

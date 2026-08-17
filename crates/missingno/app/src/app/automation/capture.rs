@@ -1,6 +1,6 @@
 //! Pure helpers behind the `screenshot` tool: mapping a logical crop rect onto a
-//! physical capture, PNG encoding, and base64. Kept apart from the state machine
-//! in [`super::update`] so the geometry can be unit-tested on its own.
+//! physical capture, and PNG encoding. Kept apart from the state machine in
+//! [`super::update`] so the geometry can be unit-tested on its own.
 
 /// Map a logical-pixel crop rect onto a capture of `capture` physical pixels:
 /// scale each edge, round to the nearest pixel, and clamp to the capture bounds.
@@ -31,31 +31,6 @@ pub fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, Strin
         .write_image(rgba, width, height, image::ExtendedColorType::Rgba8)
         .map_err(|error| format!("png encode: {error}"))?;
     Ok(buffer.into_inner())
-}
-
-/// Standard base64, for embedding a PNG in a tool result.
-pub fn base64_encode(data: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
-        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-        out.push(ALPHABET[(triple >> 18 & 0x3f) as usize] as char);
-        out.push(ALPHABET[(triple >> 12 & 0x3f) as usize] as char);
-        out.push(if chunk.len() > 1 {
-            ALPHABET[(triple >> 6 & 0x3f) as usize] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            ALPHABET[(triple & 0x3f) as usize] as char
-        } else {
-            '='
-        });
-    }
-    out
 }
 
 #[cfg(test)]
@@ -118,15 +93,6 @@ mod tests {
             physical_crop((10.0, 10.0, 0.0, 40.0), 1.0, (200, 200)),
             None
         );
-    }
-
-    #[test]
-    fn base64_matches_known_vectors() {
-        assert_eq!(base64_encode(b""), "");
-        assert_eq!(base64_encode(b"f"), "Zg==");
-        assert_eq!(base64_encode(b"fo"), "Zm8=");
-        assert_eq!(base64_encode(b"foo"), "Zm9v");
-        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
     }
 
     #[test]

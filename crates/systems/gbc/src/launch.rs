@@ -2,7 +2,7 @@
 //! console it is slotted into, and this crate is the one that knows both.
 
 use missingno_core::launch::{
-    LaunchChoice, LaunchOptionDescriptor, LaunchOptionKind, LaunchValues,
+    LaunchChoice, LaunchOptionDescriptor, LaunchOptionKind, LaunchValues, board_option,
 };
 use missingno_gb::cartridge::GbCartType;
 use missingno_gb::serial_transfer::SerialLink;
@@ -38,18 +38,13 @@ pub fn launch_options(rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
         },
     });
     let fixed = [
-        LaunchOptionDescriptor {
-            id: BOARD,
-            label: "Cartridge board",
-            kind: LaunchOptionKind::Choice {
-                choices: GbCartType::all()
-                    .map(|board| LaunchChoice {
-                        value: board.code(),
-                        label: board.display_name(),
-                    })
-                    .collect(),
-            },
-        },
+        board_option(
+            BOARD,
+            GbCartType::all().map(|board| LaunchChoice {
+                value: board.code(),
+                label: board.display_name(),
+            }),
+        ),
         LaunchOptionDescriptor {
             id: BOOT_ROM,
             label: "Boot ROM",

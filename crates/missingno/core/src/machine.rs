@@ -73,6 +73,12 @@ pub struct StateIdentity {
     pub rom_fingerprint: [u8; 32],
 }
 
+/// SHA-256 of a media image, the digest a [`StateIdentity`] binds to.
+pub fn rom_fingerprint(rom: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(rom).into()
+}
+
 /// A machine's state at an instruction boundary: the schema-keyed record, the
 /// memory spans the schema names, and the displayed frame (informational — a
 /// restored machine regenerates its display).

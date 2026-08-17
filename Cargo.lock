@@ -2998,6 +2998,7 @@ dependencies = [
  "morepork",
  "rgb",
  "serde",
+ "sha2 0.11.0",
 ]
 
 [[package]]
@@ -3144,7 +3145,6 @@ dependencies = [
  "rgb",
  "ron",
  "serde",
- "sha2 0.11.0",
 ]
 
 [[package]]

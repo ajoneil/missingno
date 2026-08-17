@@ -228,8 +228,7 @@ impl ConsoleUi for Dmg {
 /// SHA-256 of the cartridge ROM, so a save state can refuse a ROM it was not
 /// written for.
 fn rom_fingerprint(cartridge: &Cartridge) -> [u8; 32] {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(cartridge.rom()).into()
+    missingno_core::machine::rom_fingerprint(cartridge.rom())
 }
 
 /// The current frame in its pre-resolution domain, as a save-state framebuffer

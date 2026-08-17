@@ -487,13 +487,10 @@ pub fn format_wram_dump<S: System>(s: &S, start: u16, len: u16) -> String {
     out
 }
 
-/// Convert a Screen to a flat greyscale pixel buffer using dmg-acid2 reference palette:
-/// PaletteIndex 0 → 0xFF, 1 → 0xAA, 2 → 0x55, 3 → 0x00
+/// The screen as the flat greyscale buffer the shade-pattern references compare
+/// against.
 pub fn screen_to_greyscale(screen: &Screen) -> Vec<u8> {
-    const GREYSCALE: [u8; 4] = [0xFF, 0xAA, 0x55, 0x00];
-    (0..144u8)
-        .flat_map(|y| (0..160u8).map(move |x| GREYSCALE[screen.pixel(x, y).0 as usize]))
-        .collect()
+    screen.to_greyscale_bytes()
 }
 
 /// The 8x8 glyphs the gambatte suite prints its expected value in, one per hex

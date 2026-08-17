@@ -15,10 +15,10 @@ use iced::window::Screenshot;
 use iced::{Rectangle, Size, Task, window};
 use serde_json::{Value, json};
 
-use missingno_session::tools::{Content, ToolOutcome, outcome_json, text};
+use missingno_session::tools::{Content, ToolOutcome, base64_encode, outcome_json, text};
 
 use super::bridge::{AutomationBridge, AutomationCall};
-use super::capture::{base64_encode, encode_png, physical_crop};
+use super::capture::{encode_png, physical_crop};
 use super::registry::{self, Screen, UiContext};
 use super::{CollectBounds, Msg, UiKind, UiNode};
 use crate::app::{

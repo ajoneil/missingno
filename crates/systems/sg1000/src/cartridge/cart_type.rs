@@ -5,6 +5,8 @@
 //! inferred: a board is stated by a catalogue or an override, or the image
 //! loads as a plain ROM.
 
+use missingno_core::cartridge::{BoardNames, row};
+
 use super::{CARTRIDGE_SPAN, EXM2_WINDOW};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -49,25 +51,10 @@ pub enum CartType {
     DahjeeB,
 }
 
-/// One board's names: the code it goes by in interchange — game-db entries, the
-/// CLI, a test's board override — and the name shown to a reader.
-struct BoardNames {
-    cart_type: CartType,
-    code: &'static str,
-    display: &'static str,
-}
-
-const fn row(cart_type: CartType, code: &'static str, display: &'static str) -> BoardNames {
-    BoardNames {
-        cart_type,
-        code,
-        display,
-    }
-}
-
-/// The whole board vocabulary, one row per board. Every name a board answers to
-/// derives from here.
-const BOARD_NAMES: &[BoardNames] = &[
+/// The whole board vocabulary, one row per board — the code a board goes by in
+/// interchange (game-db entries, the CLI, a test's board override) and the name
+/// shown to a reader. Every name a board answers to derives from here.
+const BOARD_NAMES: &[BoardNames<CartType>] = &[
     row(CartType::Flat, "FLAT", "Plain ROM"),
     row(CartType::OthelloRam, "OTHELLO", "Sega 2 KB RAM (Othello)"),
     row(CartType::CastleRam, "CASTLE", "Sega 8 KB RAM (The Castle)"),
@@ -75,55 +62,9 @@ const BOARD_NAMES: &[BoardNames] = &[
     row(CartType::DahjeeB, "DAHJEE-B", "DahJee expander Type B"),
 ];
 
-/// A board crosses a catalogue as its interchange code, so the vocabulary is
-/// the whole serialised form: an unlisted code names no board this core builds.
-impl serde::Serialize for CartType {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.code())
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for CartType {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let code = String::deserialize(deserializer)?;
-        CartType::from_code(&code)
-            .ok_or_else(|| serde::de::Error::custom(format!("unknown SG-1000 board code {code:?}")))
-    }
-}
+missingno_core::board_vocabulary!(CartType, BOARD_NAMES, "unknown SG-1000 board code");
 
 impl CartType {
-    /// Every board the core knows, in the vocabulary's order.
-    pub fn all() -> impl Iterator<Item = CartType> {
-        BOARD_NAMES.iter().map(|board| board.cart_type)
-    }
-
-    /// The board a game-db board code names.
-    pub fn from_code(code: &str) -> Option<CartType> {
-        BOARD_NAMES
-            .iter()
-            .find(|board| board.code == code)
-            .map(|board| board.cart_type)
-    }
-
-    /// The game-db board code for this board — the inverse of [`from_code`].
-    ///
-    /// [`from_code`]: CartType::from_code
-    pub fn code(self) -> &'static str {
-        self.names().code
-    }
-
-    /// The board's name for a reader.
-    pub fn display_name(self) -> &'static str {
-        self.names().display
-    }
-
-    fn names(self) -> &'static BoardNames {
-        BOARD_NAMES
-            .iter()
-            .find(|board| board.cart_type == self)
-            .expect("every board has a row in BOARD_NAMES")
-    }
-
     /// How far the board's ROM reaches: `/EXM2` alone where the board's own RAM
     /// answers `/EXM1`, both windows where the image runs on into it.
     pub(super) fn rom_window(self) -> usize {
@@ -140,10 +81,10 @@ mod tests {
 
     #[test]
     fn every_board_round_trips_its_code() {
-        for board in BOARD_NAMES {
-            assert_eq!(CartType::from_code(board.code), Some(board.cart_type));
-            assert_eq!(board.cart_type.code(), board.code);
-            assert!(!board.cart_type.display_name().is_empty());
+        for row in BOARD_NAMES {
+            assert_eq!(CartType::from_code(row.code), Some(row.board));
+            assert_eq!(row.board.code(), row.code);
+            assert!(!row.board.display_name().is_empty());
         }
         assert_eq!(CartType::all().count(), BOARD_NAMES.len());
         assert_eq!(CartType::from_code("F8"), None);

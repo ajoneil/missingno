@@ -11,4 +11,5 @@ morepork = ["dep:morepork"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 rgb = { workspace = true }
+sha2 = { version = "0.11" }
 morepork = { git = "https://github.com/ajoneil/morepork", branch = "main", optional = true }

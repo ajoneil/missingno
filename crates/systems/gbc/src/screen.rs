@@ -11,6 +11,7 @@
 use std::sync::OnceLock;
 
 use missingno_gb::ScreenBuffer;
+use missingno_gb::ppu::screen::{Screen as GbScreen, ScreenPixel};
 use rgb::RGB8;
 
 pub const NUM_SCANLINES: u8 = 144;
@@ -92,30 +93,25 @@ pub const GREYSCALE: [Color555; 4] = [
 /// by shade — the single source of truth shared with `to_greyscale_bytes`.
 const GREYSCALE_BYTE: [u8; 4] = [0xFF, 0xAA, 0x55, 0x00];
 
-#[derive(Clone, Debug)]
-pub struct Screen {
-    front: Box<Framebuffer>,
-    back: Box<Framebuffer>,
+/// A powered LCD with nothing drawn reads white, matching the DMG screen's
+/// `PaletteIndex(0)`.
+impl ScreenPixel for Color555 {
+    const BLANK: Self = GREYSCALE[0];
 }
 
-impl Default for Screen {
-    fn default() -> Self {
-        Self {
-            front: Box::new(Framebuffer::default()),
-            back: Box::new(Framebuffer::default()),
-        }
-    }
-}
+/// The CGB's colour LCD over the shared double-buffered screen.
+#[derive(Clone, Debug, Default)]
+pub struct Screen(GbScreen<Color555>);
 
 impl Screen {
     pub fn pixel(&self, x: u8, y: u8) -> Color555 {
-        self.front.pixels[y as usize][x as usize]
+        self.0.pixel(x, y)
     }
 
     /// Every displayed pixel in row-major order — the scan the flat-buffer
     /// readers below share.
     pub(crate) fn pixels(&self) -> impl Iterator<Item = Color555> + '_ {
-        (0..NUM_SCANLINES).flat_map(move |y| (0..PIXELS_PER_LINE).map(move |x| self.pixel(x, y)))
+        self.0.pixels()
     }
 
     /// Read the current front buffer as a flat greyscale byte buffer
@@ -161,53 +157,28 @@ impl ScreenBuffer for Screen {
     type Pixel = Color555;
 
     fn draw_pixel(&mut self, x: u8, y: u8, pixel: Color555) {
-        self.back.pixels[y as usize][x as usize] = pixel;
+        self.0.draw_pixel(x, y, pixel);
     }
 
     fn present(&mut self) -> bool {
-        std::mem::swap(&mut self.front, &mut self.back);
-        self.back.clear();
-        true
+        self.0.present()
     }
 
     fn blank(&mut self) {
-        self.front.clear();
-        self.back.clear();
+        self.0.blank();
     }
 
     /// Seed the displayed (front) buffer from a save state's framebuffer:
     /// little-endian RGB555 words, row-major. The back buffer stays cleared.
     fn restore(&mut self, bytes: &[u8]) {
+        let front = self.0.front_mut();
         for y in 0..NUM_SCANLINES as usize {
             for x in 0..PIXELS_PER_LINE as usize {
                 let offset = (y * PIXELS_PER_LINE as usize + x) * 2;
                 if let Some(pair) = bytes.get(offset..offset + 2) {
-                    self.front.pixels[y][x] = Color555(u16::from_le_bytes([pair[0], pair[1]]));
+                    front.pixels[y][x] = Color555(u16::from_le_bytes([pair[0], pair[1]]));
                 }
             }
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-pub(crate) struct Framebuffer {
-    pixels: [[Color555; PIXELS_PER_LINE as usize]; NUM_SCANLINES as usize],
-}
-
-impl Framebuffer {
-    /// Clears in place — assigning `Framebuffer::default()` by value puts a
-    /// screen-sized temporary on the stack of every caller it inlines into.
-    fn clear(&mut self) {
-        self.pixels.fill([GREYSCALE[0]; PIXELS_PER_LINE as usize]);
-    }
-}
-
-impl Default for Framebuffer {
-    fn default() -> Self {
-        // A powered LCD with nothing drawn reads white, matching the DMG
-        // screen's PaletteIndex(0). GREYSCALE[0] is the white grey.
-        Self {
-            pixels: [[GREYSCALE[0]; PIXELS_PER_LINE as usize]; NUM_SCANLINES as usize],
         }
     }
 }

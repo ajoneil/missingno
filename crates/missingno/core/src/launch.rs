@@ -38,6 +38,22 @@ pub struct LaunchChoice {
     pub label: &'static str,
 }
 
+/// The cartridge-board option, as every core with a board vocabulary publishes
+/// it. The caller supplies the choices, so it decides which of its boards a
+/// frontend may state.
+pub fn board_option(
+    id: &'static str,
+    choices: impl Iterator<Item = LaunchChoice>,
+) -> LaunchOptionDescriptor {
+    LaunchOptionDescriptor {
+        id,
+        label: "Cartridge board",
+        kind: LaunchOptionKind::Choice {
+            choices: choices.collect(),
+        },
+    }
+}
+
 /// A value a caller set for one option.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LaunchValue {
