@@ -6,6 +6,8 @@
 use std::path::Path;
 
 use missingno_core::inspect::WatchTerm;
+use missingno_core::launch::LaunchValues;
+use missingno_session::factory::LoadError;
 use missingno_session::{Session, factory};
 
 fn value_term(key: &str, value: u32) -> WatchTerm {
@@ -25,7 +27,6 @@ fn minimal_rom() -> Vec<u8> {
 fn session() -> Session {
     let rom = minimal_rom();
     let console = factory::create_console(Path::new("test.gb"), &rom)
-        .expect("factory should not error")
         .expect("gb factory should claim a .gb ROM");
     let debugger = console.into_debugger();
     Session::new(debugger)
@@ -40,9 +41,8 @@ fn cgb_rom() -> Vec<u8> {
 }
 
 fn session_from(path: &str, rom: &[u8]) -> Session {
-    let console = factory::create_console(Path::new(path), rom)
-        .expect("factory should not error")
-        .expect("gb factory should claim the ROM");
+    let console =
+        factory::create_console(Path::new(path), rom).expect("gb factory should claim the ROM");
     let debugger = console.into_debugger();
     Session::new(debugger)
 }
@@ -80,6 +80,44 @@ fn cgb_drives_an_active_tft_lcd() {
         }
         other => panic!("CGB should drive an LCD, got {other:?}"),
     }
+}
+
+#[test]
+fn the_cgb_runner_takes_a_dmg_cartridge_on_the_colour_core() {
+    use missingno_core::video::{DisplayTechnology, LcdPanel};
+    let mut launch = LaunchValues::default();
+    launch.set_choice("runner", "cgb");
+    let console = factory::create_console_with(Path::new("test.gb"), &minimal_rom(), &launch)
+        .expect("a DMG cartridge runs on a Game Boy Color");
+    assert!(matches!(
+        console.video_out(),
+        DisplayTechnology::Lcd {
+            panel: LcdPanel::ActiveTft,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn the_dmg_runner_refuses_a_cgb_only_cartridge() {
+    let mut launch = LaunchValues::default();
+    launch.set_choice("runner", "dmg");
+    let Err(error) = factory::create_console_with(Path::new("test.gbc"), &cgb_rom(), &launch)
+    else {
+        panic!("a CGB-only cartridge runs on no DMG");
+    };
+    assert!(matches!(error, LoadError::IncompatibleOption { .. }));
+}
+
+#[test]
+fn a_boot_rom_image_of_no_known_length_is_refused() {
+    let mut launch = LaunchValues::default();
+    launch.set_file("boot-rom", vec![0x00; 0x80]);
+    let Err(error) = factory::create_console_with(Path::new("test.gb"), &minimal_rom(), &launch)
+    else {
+        panic!("no boot ROM is 128 bytes long");
+    };
+    assert!(matches!(error, LoadError::InvalidValue { .. }));
 }
 
 #[test]
@@ -213,7 +251,6 @@ fn banked_rom() -> Vec<u8> {
 fn banked_session() -> Session {
     let rom = banked_rom();
     let console = factory::create_console(Path::new("test.gb"), &rom)
-        .expect("factory should not error")
         .expect("gb factory should claim a .gb ROM");
     Session::new(console.into_debugger())
 }

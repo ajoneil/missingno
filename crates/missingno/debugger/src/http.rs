@@ -1101,7 +1101,6 @@ mod tests {
     fn gb_session() -> Session {
         let rom = vec![0x00u8; 0x8000];
         let console = missingno_session::factory::create_console(Path::new("test.gb"), &rom)
-            .expect("factory should not error")
             .expect("gb factory claims a .gb ROM");
         Session::new(console.into_debugger())
     }
@@ -1144,7 +1143,6 @@ mod tests {
         let mut rom = vec![0x00u8; 0x8000];
         rom[0x143] = 0xC0;
         let console = missingno_session::factory::create_console(Path::new("test.gbc"), &rom)
-            .expect("factory should not error")
             .expect("gb factory claims a .gbc ROM");
         Session::new(console.into_debugger())
     }

@@ -94,10 +94,7 @@ fn start_console(
         rom: &rom,
         fallback_title: file_stem_title(rom_path),
         save_data,
-        boot_rom: app.boot_rom.clone(),
-        tv_standard: entry.as_ref().and_then(|e| e.tv_standard),
-        cart_type: entry.as_ref().and_then(|e| e.cart_type.clone()),
-        overdump: entry.as_ref().is_some_and(|e| e.overdump),
+        launch: launch_values(app, entry.as_ref()),
         serial_link: &mut app.serial_link,
         print_sink: Some(app.print_tx.clone()),
     })?;
@@ -108,6 +105,27 @@ fn start_console(
         let _ = console.plug(port, peripheral);
     }
     Ok(finish_start(app, console, rom_path, family.platform))
+}
+
+/// The per-ROM boot choices, as the options the families publish: what the
+/// library entry records about the media, plus any boot ROM named on the
+/// command line. A family reads only the options it published.
+fn launch_values(app: &App, entry: Option<&library::GameEntry>) -> system::LaunchValues {
+    let mut launch = system::LaunchValues::default();
+    if let Some(boot_rom) = &app.boot_rom {
+        launch.set_file(system::gb::BOOT_ROM, boot_rom.bytes().to_vec());
+    }
+    if let Some(standard) = entry.and_then(|entry| entry.tv_standard) {
+        launch.set_choice(system::vcs::TV_STANDARD, standard.code());
+    }
+    if let Some(board) = entry.and_then(|entry| entry.cart_type.as_deref()) {
+        launch.set_choice(system::vcs::BOARD, board);
+    }
+    launch.set_toggle(
+        system::vcs::OVERDUMP,
+        entry.is_some_and(|entry| entry.overdump),
+    );
+    launch
 }
 
 pub(crate) fn file_stem_title(rom_path: &std::path::Path) -> String {

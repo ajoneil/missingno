@@ -238,6 +238,11 @@ impl CartType {
         })
     }
 
+    /// Every board the core knows, in the vocabulary's order.
+    pub fn all() -> impl Iterator<Item = CartType> {
+        BOARD_NAMES.iter().map(|board| board.cart_type)
+    }
+
     /// The board a game-db board code names.
     pub fn from_code(code: &str) -> Option<CartType> {
         BOARD_NAMES

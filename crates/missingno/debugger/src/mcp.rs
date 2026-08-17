@@ -14,7 +14,8 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-use missingno_session::factory::{self, LoadOptions};
+use missingno_core::launch::{LaunchOptionKind, LaunchValues};
+use missingno_session::factory::{self, CoreFactory};
 use missingno_session::shared::SharedSession;
 use missingno_session::tools::{
     Tool, ToolOutcome, call_session_tool, outcome_json, session_tools, text,
@@ -216,13 +217,23 @@ fn load_rom_tool() -> Tool {
     Tool {
         name: "load_rom",
         description: "Load a ROM by filesystem path and begin debugging it. The core is \
-                      recognised from the file across all enabled cores. Optional `tv_standard` \
-                      (ntsc/pal/secam) overrides the Atari VCS broadcast-standard auto-detection."
+                      recognised from the file across all enabled cores. `options` sets the \
+                      launch options the recognised core publishes, each left out to let the \
+                      core resolve it: the Atari VCS takes `tv-standard` (ntsc/pal/secam), \
+                      `board` (a cartridge board code such as F8, F6SC, E0), and `overdump` \
+                      (boolean); the Game Boy family takes `runner` (dmg/cgb) and `boot-rom` \
+                      (path to a boot ROM image). `tv_standard` is the older spelling of the \
+                      VCS standard override."
             .into(),
         input_schema: json!({
             "type": "object",
             "properties": {
                 "path": { "type": "string", "description": "filesystem path to the ROM" },
+                "options": {
+                    "type": "object",
+                    "description": "launch option id to value: a string for a choice or a file \
+                                    path, true/false for a toggle",
+                },
                 "tv_standard": {
                     "type": "string",
                     "enum": ["ntsc", "pal", "secam"],
@@ -329,24 +340,75 @@ fn load_rom(loaded: &mut Option<Host>, args: &Value) -> ToolOutcome {
         .and_then(Value::as_str)
         .ok_or("'path' (string) is required")?;
     let bytes = std::fs::read(path).map_err(|error| format!("failed to read {path}: {error}"))?;
-    let options = LoadOptions {
-        tv_standard: args
-            .get("tv_standard")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        ..LoadOptions::default()
-    };
     let path_ref = Path::new(path);
-    let console = factory::create_console_with(path_ref, &bytes, &options)?
+    let factory = factory::factory_for(path_ref, &bytes)
         .ok_or_else(|| format!("no core recognises {path}"))?;
+    let launch = launch_values(factory, args)?;
+    let console = (factory.create)(path_ref, &bytes, &launch).map_err(|error| error.to_string())?;
     let debugger = console.into_debugger();
-    let core_name = factory::factory_for(path_ref, &bytes)
-        .map(|factory| factory.name)
-        .unwrap_or("unknown");
+    let core_name = factory.name;
     let shared = SharedSession::spawn(debugger);
     let title = shared.handle().with_session(|s| s.game_title());
     *loaded = Some(Host::Local { shared, core_name });
     text(format!("loaded {core_name}: {title}"))
+}
+
+/// The launch values a call names, read against the options the recognised core
+/// publishes: an option it does not publish, or a value of the wrong shape, is
+/// an error rather than a setting quietly dropped.
+fn launch_values(factory: &CoreFactory, args: &Value) -> Result<LaunchValues, String> {
+    let mut launch = LaunchValues::default();
+    // The VCS broadcast standard had a parameter of its own before the option
+    // bag existed, and keeps answering to it.
+    if let Some(standard) = args.get("tv_standard").and_then(Value::as_str) {
+        launch.set_choice("tv-standard", standard);
+    }
+    let Some(options) = args.get("options") else {
+        return Ok(launch);
+    };
+    let options = options
+        .as_object()
+        .ok_or("'options' must be an object of option id to value")?;
+    let published = (factory.options)();
+    for (id, value) in options {
+        let descriptor = published
+            .iter()
+            .find(|option| option.id == id)
+            .ok_or_else(|| {
+                let known: Vec<&str> = published.iter().map(|option| option.id).collect();
+                match known.is_empty() {
+                    true => format!("{} takes no launch options", factory.name),
+                    false => format!(
+                        "{} has no launch option '{id}'; it takes: {}",
+                        factory.name,
+                        known.join(", ")
+                    ),
+                }
+            })?;
+        match descriptor.kind {
+            LaunchOptionKind::Choice { .. } => {
+                let chosen = value
+                    .as_str()
+                    .ok_or_else(|| format!("launch option '{id}' takes a string"))?;
+                launch.set_choice(id, chosen);
+            }
+            LaunchOptionKind::Toggle => {
+                let flag = value
+                    .as_bool()
+                    .ok_or_else(|| format!("launch option '{id}' takes true or false"))?;
+                launch.set_toggle(id, flag);
+            }
+            LaunchOptionKind::File { .. } => {
+                let file = value
+                    .as_str()
+                    .ok_or_else(|| format!("launch option '{id}' takes a filesystem path"))?;
+                let contents = std::fs::read(file)
+                    .map_err(|error| format!("launch option '{id}': {file}: {error}"))?;
+                launch.set_file(id, contents);
+            }
+        }
+    }
+    Ok(launch)
 }
 
 /// Attach to a session another process published, and drive it from here.

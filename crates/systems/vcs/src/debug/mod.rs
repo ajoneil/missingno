@@ -16,7 +16,9 @@ pub use controls::{
     JOYSTICK, KEYPAD, LEFT_PORT, PADDLES, PANEL_CONTROLS, PORTS, RIGHT_PORT, UNPLUGGED,
 };
 pub use inspect::VcsInspectState;
-pub use machine::{VcsSnapshot, VcsSystem, create_console};
+pub use machine::{
+    BOARD, OVERDUMP, TV_STANDARD, VcsSnapshot, VcsSystem, create_console, launch_options,
+};
 pub use sections::vcs_sidebar_sections;
 
 /// A `.a26` is always ours; a `.bin` only at the family's bare ROM sizes

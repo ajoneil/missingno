@@ -8,8 +8,8 @@ use missingno_gb::ppu::types::palette::{Palette, PaletteChoice, PaletteIndex};
 use missingno_gb::system::{LINK_CABLE, LINK_DISCONNECTED, LINK_PRINTER, create_console_with_link};
 use missingno_gb::{BootRom, GameBoy, cartridge::Cartridge, serial_transfer::SerialLink};
 use missingno_gbc::GameBoyColor;
-use missingno_gbc::launch::BootRomFit;
-pub use missingno_gbc::launch::GbLaunch;
+pub use missingno_gbc::launch::{BOOT_ROM, GbLaunch, RUNNER, RunnerPreference, launch_options};
+use missingno_gbc::launch::{BootRomFit, RunnerRefused};
 
 use missingno_core::ports::PeripheralId;
 use missingno_core::video::{ConsoleFrame, RgbaFrame};
@@ -173,14 +173,16 @@ pub fn launch<L: GbLaunch>(
     save_data: Option<Vec<u8>>,
     boot_rom: Option<BootRom>,
     link: Option<Box<dyn SerialLink>>,
+    runner: RunnerPreference,
     launcher: L,
-) -> L::Output {
+) -> Result<L::Output, RunnerRefused> {
     let cartridge = build_cartridge(rom, save_data);
-    let (output, boot_rom) = missingno_gbc::launch::console(cartridge, boot_rom, link, launcher);
+    let (output, boot_rom) =
+        missingno_gbc::launch::console(cartridge, boot_rom, link, runner, launcher)?;
     if boot_rom == BootRomFit::Dropped {
         eprintln!("warning: boot ROM model does not match the selected core; ignoring it");
     }
-    output
+    Ok(output)
 }
 
 /// The factory both platform descriptors register: the header picks the
@@ -210,13 +212,24 @@ pub fn create_console(media: MediaLoad) -> Result<Box<dyn SystemConsole>, String
             None => (None, LINK_DISCONNECTED),
         },
     };
-    Ok(launch(
+    let boot_rom = match media.launch.file(BOOT_ROM) {
+        Some(bytes) => Some(
+            BootRom::from_bytes(bytes.to_vec())
+                .map_err(|length| format!("{BOOT_ROM}: {length} bytes is no boot ROM image"))?,
+        ),
+        None => None,
+    };
+    let runner = RunnerPreference::from_launch(&media.launch)
+        .map_err(|value| format!("{RUNNER}: no such console \"{value}\""))?;
+    launch(
         media.rom.to_vec(),
         media.save_data,
-        media.boot_rom,
+        boot_rom,
         link,
+        runner,
         Boxed { link: kind },
-    ))
+    )
+    .map_err(|refused| format!("{RUNNER}: {refused}"))
 }
 
 #[cfg(test)]

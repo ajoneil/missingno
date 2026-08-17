@@ -7,6 +7,7 @@
 
 use std::path::Path;
 
+pub use missingno_core::launch::{LaunchOptionDescriptor, LaunchValues};
 pub use missingno_core::ports::{
     ControlDescriptor, PanelControl, PeripheralId, PortDescriptor, PortId,
 };
@@ -85,7 +86,8 @@ pub use missingno_core::TvStandard;
 /// Everything the loader hands a family's console factory. The fields are
 /// family-agnostic except the two Game Boy peripheral ones, quarantined here
 /// under the same rule as the GB types on the seam traits: generalize when a
-/// second family grows an equivalent, not before.
+/// second family grows an equivalent, not before. Per-ROM boot choices travel
+/// as the launch values, so a family reads only options it published.
 pub struct MediaLoad<'a> {
     /// Soft-patched ROM contents.
     pub rom: &'a [u8],
@@ -94,15 +96,9 @@ pub struct MediaLoad<'a> {
     pub fallback_title: String,
     /// Battery-save contents to restore, if the library holds any.
     pub save_data: Option<Vec<u8>>,
-    /// Boot ROM supplied on the CLI; the Game Boy family attaches it.
-    pub boot_rom: Option<missingno_gb::BootRom>,
-    /// Broadcast standard from the library entry; the VCS uses it, else probes.
-    pub tv_standard: Option<TvStandard>,
-    /// Cartridge board code from the library entry (VCS), e.g. "F8".
-    pub cart_type: Option<String>,
-    /// The library entry records this dump as an overdump: padded past the
-    /// cartridge's silicon, which the VCS loads on the stated board anyway.
-    pub overdump: bool,
+    /// The launch options the loader collected — from the library entry and the
+    /// command line — for the family to read what it published.
+    pub launch: LaunchValues,
     /// Link-cable connection, borrowed mutably so only the family that owns
     /// the concept takes it.
     pub serial_link: &'a mut Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
@@ -165,6 +161,11 @@ pub struct FamilyDescriptor {
     /// one; `None` falls back to the file stem.
     pub title_from_rom: fn(&[u8]) -> Option<String>,
     pub create_console: CreateConsole,
+    /// The launch options this family's core publishes.
+    // The loader states them for a caller to collect values against; no app
+    // surface renders them yet.
+    #[expect(dead_code)]
+    pub options: fn() -> Vec<LaunchOptionDescriptor>,
     /// How this family's ports are configured for a game whose library
     /// metadata names these controllers. Empty leaves the console's power-on
     /// configuration.
@@ -211,6 +212,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         is_rom: gb::is_gb_rom,
         title_from_rom: gb::title_from_rom,
         create_console: gb::create_console,
+        options: gb::launch_options,
         port_config: |_| Vec::new(),
         trace: Some(crate::trace::trace_gb),
     },
@@ -222,6 +224,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         title_from_rom: gb::title_from_rom,
         // The same factory serves both platforms: the header picks the core.
         create_console: gb::create_console,
+        options: gb::launch_options,
         port_config: |_| Vec::new(),
         trace: Some(crate::trace::trace_gb),
     },
@@ -231,16 +234,8 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         controls: vcs::CONTROLS,
         is_rom: vcs::is_vcs_rom,
         title_from_rom: |_| None,
-        create_console: |media| {
-            vcs::create_console(
-                media.rom,
-                media.fallback_title,
-                media.tv_standard,
-                media.cart_type.as_deref(),
-                media.overdump,
-            )
-            .map_err(|error| error.to_string())
-        },
+        create_console: vcs::create_console,
+        options: vcs::launch_options,
         port_config: vcs::port_config,
         trace: Some(crate::trace::trace_vcs),
     },
@@ -255,6 +250,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
             sms::create_console(media.rom, media.fallback_title)
                 .map_err(|error| format!("{error:?}"))
         },
+        options: Vec::new,
         port_config: |_| Vec::new(),
         trace: None,
     },
@@ -268,6 +264,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
             sg1000::create_console(media.rom, media.fallback_title)
                 .map_err(|error| format!("{error:?}"))
         },
+        options: Vec::new,
         port_config: |_| Vec::new(),
         trace: None,
     },
@@ -282,6 +279,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
             nes::create_console(media.rom, media.fallback_title)
                 .map_err(|error| format!("{error:?}"))
         },
+        options: Vec::new,
         port_config: |_| Vec::new(),
         trace: Some(crate::trace::trace_nes),
     },

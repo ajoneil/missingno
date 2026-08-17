@@ -3,10 +3,11 @@
 
 use missingno_core::ports::{PeripheralId, PortId};
 use missingno_gamedb::Controller;
-use missingno_vcs::cartridge::CartridgeError;
 use missingno_vcs::debug::{JOYSTICK, KEYPAD, LEFT_PORT, PADDLES, RIGHT_PORT};
 
-use super::{ControlMap, SystemConsole, TvStandard};
+use super::{ControlMap, MediaLoad, SystemConsole, TvStandard};
+
+pub use missingno_vcs::debug::{BOARD, OVERDUMP, TV_STANDARD, launch_options};
 
 pub use missingno_vcs::debug::is_vcs_rom;
 
@@ -39,12 +40,19 @@ pub fn port_config(controllers: &[Controller]) -> Vec<(PortId, PeripheralId)> {
     }
 }
 
-pub fn create_console(
-    rom: &[u8],
-    title: String,
-    tv_standard: Option<TvStandard>,
-    cart_type: Option<&str>,
-    overdump: bool,
-) -> Result<Box<dyn SystemConsole>, CartridgeError> {
-    missingno_vcs::debug::create_console(rom, title, tv_standard, cart_type, overdump)
+/// The catalogue's word on a cart that carries no header of its own: the
+/// standard to decode for, the board the dump sits on, and whether it runs past
+/// the silicon. Absent, the core probes and infers.
+pub fn create_console(media: MediaLoad) -> Result<Box<dyn SystemConsole>, String> {
+    missingno_vcs::debug::create_console(
+        media.rom,
+        media.fallback_title,
+        media
+            .launch
+            .choice(TV_STANDARD)
+            .and_then(TvStandard::from_code),
+        media.launch.choice(BOARD),
+        media.launch.toggle(OVERDUMP),
+    )
+    .map_err(|error| error.to_string())
 }

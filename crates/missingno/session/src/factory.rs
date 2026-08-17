@@ -1,6 +1,8 @@
 //! The per-core ROM→console registry: the one point that knows concrete
-//! cores. Each entry pairs a media-recognition predicate with a constructor
-//! that builds a `Box<dyn SystemConsole>`; everything downstream is generic.
+//! cores. Each entry pairs a media-recognition predicate with the launch
+//! options its core publishes and a constructor that builds a
+//! `Box<dyn SystemConsole>` from values for them; everything downstream is
+//! generic.
 //!
 //! Entries are feature-gated, so a build carries only the cores it selected.
 //! Off-chip Game Boy peripherals (serial link, printer, battery save) are
@@ -8,39 +10,49 @@
 
 use std::path::Path;
 
+use missingno_core::launch::{LaunchOptionDescriptor, LaunchValues};
 use missingno_core::system::SystemConsole;
 
 /// Whether a path and its contents are this core's media.
 pub type IsRom = fn(&Path, &[u8]) -> bool;
-/// Build this core's console from a ROM's path and contents, honouring any
-/// construction options a core recognises.
-pub type Create = fn(&Path, &[u8], &LoadOptions) -> Option<Box<dyn SystemConsole>>;
+/// Build this core's console from a ROM's path and contents, honouring the
+/// launch options the core published.
+pub type Create = fn(&Path, &[u8], &LaunchValues) -> Result<Box<dyn SystemConsole>, LoadError>;
 
-/// Optional construction overrides a core may honour. Generic by design: a core
-/// that does not recognise an option ignores it.
-#[derive(Clone, Default)]
-pub struct LoadOptions {
-    /// A broadcast-standard override ("ntsc"/"pal"/"secam", case-insensitive);
-    /// `None` lets the core auto-detect. Read by the Atari VCS core.
-    pub tv_standard: Option<String>,
-    /// A boot ROM's contents, so a session can observe the boot sequence
-    /// rather than the post-boot state the core otherwise seeds. Read by the
-    /// Game Boy family.
-    pub boot_rom: Option<Vec<u8>>,
-    /// A cartridge board override ("F8", "F6SC", …); `None` lets the core
-    /// size-detect. Read by the Atari VCS core, whose carts have no header.
-    pub cart_type: Option<String>,
-    /// The catalogue records this dump as an overdump, so the image runs past
-    /// the cartridge's silicon and the stated board says where it ends. Read
-    /// by the Atari VCS core.
-    pub overdump: bool,
+/// Why media did not become a console.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LoadError {
+    /// No registered core claims this media.
+    UnrecognizedMedia,
+    /// A launch value the core does not accept for that option.
+    InvalidValue { option: String, value: String },
+    /// A launch value the core accepts, but not for this media.
+    IncompatibleOption { option: String, reason: String },
+    /// The core's own objection to the media.
+    Core(String),
 }
 
-/// A registered core: how its media is recognised, and how a console is built.
+impl std::fmt::Display for LoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoadError::UnrecognizedMedia => f.write_str("no core recognises this media"),
+            LoadError::InvalidValue { option, value } => {
+                write!(f, "{option}: no such value \"{value}\"")
+            }
+            LoadError::IncompatibleOption { option, reason } => write!(f, "{option}: {reason}"),
+            LoadError::Core(message) => f.write_str(message),
+        }
+    }
+}
+
+/// A registered core: how its media is recognised, what it lets a loader
+/// decide, and how a console is built.
 pub struct CoreFactory {
     pub name: &'static str,
     pub is_rom: IsRom,
     pub create: Create,
+    /// The launch options this core publishes.
+    pub options: fn() -> Vec<LaunchOptionDescriptor>,
 }
 
 /// The file stem as a display title, falling back to a generic name. The
@@ -62,7 +74,7 @@ mod gb {
     use missingno_gb::system::create_console;
     use missingno_gb::{BootRom, GameBoy, media};
     use missingno_gbc::GameBoyColor;
-    use missingno_gbc::launch::GbLaunch;
+    use missingno_gbc::launch::{self, BOOT_ROM, GbLaunch, RUNNER, RunnerPreference};
 
     /// The headless build persists no battery save; the format is frontend
     /// policy the GUI owns.
@@ -75,8 +87,8 @@ mod gb {
     pub fn create(
         _path: &Path,
         rom: &[u8],
-        options: &LoadOptions,
-    ) -> Option<Box<dyn SystemConsole>> {
+        launch: &LaunchValues,
+    ) -> Result<Box<dyn SystemConsole>, LoadError> {
         struct Boxed;
         impl GbLaunch for Boxed {
             type Output = Box<dyn SystemConsole>;
@@ -88,12 +100,32 @@ mod gb {
             }
         }
         let cartridge = Cartridge::new(rom.to_vec(), None);
-        let boot_rom = options
-            .boot_rom
-            .clone()
-            .and_then(|bytes| BootRom::from_bytes(bytes).ok());
-        let (console, _) = missingno_gbc::launch::console(cartridge, boot_rom, None, Boxed);
-        Some(console)
+        let boot_rom = match launch.file(BOOT_ROM) {
+            Some(bytes) => Some(BootRom::from_bytes(bytes.to_vec()).map_err(|length| {
+                LoadError::InvalidValue {
+                    option: BOOT_ROM.to_string(),
+                    value: format!("{length}-byte image"),
+                }
+            })?),
+            None => None,
+        };
+        let runner =
+            RunnerPreference::from_launch(launch).map_err(|value| LoadError::InvalidValue {
+                option: RUNNER.to_string(),
+                value: value.to_string(),
+            })?;
+        let (console, _) =
+            launch::console(cartridge, boot_rom, None, runner, Boxed).map_err(|refusal| {
+                LoadError::IncompatibleOption {
+                    option: RUNNER.to_string(),
+                    reason: refusal.to_string(),
+                }
+            })?;
+        Ok(console)
+    }
+
+    pub fn options() -> Vec<LaunchOptionDescriptor> {
+        launch::launch_options()
     }
 
     pub fn is_rom(path: &Path, rom: &[u8]) -> bool {
@@ -106,34 +138,53 @@ mod vcs {
     use super::*;
     use missingno_core::system::SystemConsole;
 
+    use missingno_vcs::debug::{BOARD, OVERDUMP, TV_STANDARD};
+    use missingno_vcs::{CartType, TvStandard};
+
+    /// A stated board or standard is the catalogue's word on media that carries
+    /// no header of its own — a value the core cannot read is an error, never a
+    /// quiet fall back to inference.
     pub fn create(
         path: &Path,
         rom: &[u8],
-        options: &LoadOptions,
-    ) -> Option<Box<dyn SystemConsole>> {
-        let standard = options.tv_standard.as_deref().and_then(parse_tv_standard);
+        launch: &LaunchValues,
+    ) -> Result<Box<dyn SystemConsole>, LoadError> {
+        let standard = match launch.choice(TV_STANDARD) {
+            Some(name) => {
+                Some(
+                    TvStandard::from_code(name).ok_or_else(|| LoadError::InvalidValue {
+                        option: TV_STANDARD.to_string(),
+                        value: name.to_string(),
+                    })?,
+                )
+            }
+            None => None,
+        };
+        let board = match launch.choice(BOARD) {
+            Some(code) if CartType::from_code(code).is_none() => {
+                return Err(LoadError::InvalidValue {
+                    option: BOARD.to_string(),
+                    value: code.to_string(),
+                });
+            }
+            board => board,
+        };
         missingno_vcs::debug::create_console(
             rom,
             title_for(path),
             standard,
-            options.cart_type.as_deref(),
-            options.overdump,
+            board,
+            launch.toggle(OVERDUMP),
         )
-        .ok()
+        .map_err(|error| LoadError::Core(error.to_string()))
     }
 
     pub fn is_rom(path: &Path, rom: &[u8]) -> bool {
         missingno_vcs::debug::is_vcs_rom(path, rom)
     }
 
-    fn parse_tv_standard(name: &str) -> Option<missingno_vcs::TvStandard> {
-        use missingno_vcs::TvStandard;
-        match name.trim().to_ascii_lowercase().as_str() {
-            "ntsc" => Some(TvStandard::Ntsc),
-            "pal" => Some(TvStandard::Pal),
-            "secam" => Some(TvStandard::Secam),
-            _ => None,
-        }
+    pub fn options() -> Vec<LaunchOptionDescriptor> {
+        missingno_vcs::debug::launch_options()
     }
 }
 
@@ -148,10 +199,10 @@ mod nes {
     pub fn create(
         path: &Path,
         rom: &[u8],
-        _options: &LoadOptions,
-    ) -> Option<Box<dyn SystemConsole>> {
-        let nes = Nes::new(rom).ok()?;
-        Some(Box::new(MachineConsole::<NesSystem>::new(
+        _launch: &LaunchValues,
+    ) -> Result<Box<dyn SystemConsole>, LoadError> {
+        let nes = Nes::new(rom).map_err(|error| LoadError::Core(format!("{error:?}")))?;
+        Ok(Box::new(MachineConsole::<NesSystem>::new(
             nes,
             title_for(path),
         )))
@@ -173,10 +224,10 @@ mod sms {
     pub fn create(
         path: &Path,
         rom: &[u8],
-        _options: &LoadOptions,
-    ) -> Option<Box<dyn SystemConsole>> {
-        let sms = Sms::new(rom).ok()?;
-        Some(Box::new(MachineConsole::<SmsSystem>::new(
+        _launch: &LaunchValues,
+    ) -> Result<Box<dyn SystemConsole>, LoadError> {
+        let sms = Sms::new(rom).map_err(|error| LoadError::Core(format!("{error:?}")))?;
+        Ok(Box::new(MachineConsole::<SmsSystem>::new(
             sms,
             title_for(path),
         )))
@@ -195,9 +246,10 @@ mod sg1000 {
     pub fn create(
         path: &Path,
         rom: &[u8],
-        _options: &LoadOptions,
-    ) -> Option<Box<dyn SystemConsole>> {
-        missingno_sg1000::debug::create_console(rom, title_for(path)).ok()
+        _launch: &LaunchValues,
+    ) -> Result<Box<dyn SystemConsole>, LoadError> {
+        missingno_sg1000::debug::create_console(rom, title_for(path))
+            .map_err(|error| LoadError::Core(format!("{error:?}")))
     }
 
     pub fn is_rom(path: &Path, _rom: &[u8]) -> bool {
@@ -212,30 +264,35 @@ pub static FACTORIES: &[CoreFactory] = &[
         name: "Game Boy",
         is_rom: gb::is_rom,
         create: gb::create,
+        options: gb::options,
     },
     #[cfg(feature = "vcs")]
     CoreFactory {
         name: "Atari VCS",
         is_rom: vcs::is_rom,
         create: vcs::create,
+        options: vcs::options,
     },
     #[cfg(feature = "nes")]
     CoreFactory {
         name: "NES",
         is_rom: nes::is_rom,
         create: nes::create,
+        options: Vec::new,
     },
     #[cfg(feature = "sms")]
     CoreFactory {
         name: "Master System",
         is_rom: sms::is_rom,
         create: sms::create,
+        options: Vec::new,
     },
     #[cfg(feature = "sg1000")]
     CoreFactory {
         name: "SG-1000",
         is_rom: sg1000::is_rom,
         create: sg1000::create,
+        options: Vec::new,
     },
 ];
 
@@ -244,27 +301,19 @@ pub fn factory_for(path: &Path, rom: &[u8]) -> Option<&'static CoreFactory> {
     FACTORIES.iter().find(|factory| (factory.is_rom)(path, rom))
 }
 
-/// Build a console from a ROM's path and contents. `Ok(None)` when no core
-/// recognises the media; `Err` when a core claimed it but construction failed.
-pub fn create_console(path: &Path, rom: &[u8]) -> Result<Option<Box<dyn SystemConsole>>, String> {
-    create_console_with(path, rom, &LoadOptions::default())
+/// Build a console from a ROM's path and contents, leaving every launch option
+/// to the core that claims it.
+pub fn create_console(path: &Path, rom: &[u8]) -> Result<Box<dyn SystemConsole>, LoadError> {
+    create_console_with(path, rom, &LaunchValues::default())
 }
 
-/// Build a console, passing construction options a core may honour.
-/// Recognition is unaffected by the options.
+/// Build a console from the launch values a loader collected. Recognition is
+/// unaffected by them.
 pub fn create_console_with(
     path: &Path,
     rom: &[u8],
-    options: &LoadOptions,
-) -> Result<Option<Box<dyn SystemConsole>>, String> {
-    let Some(factory) = factory_for(path, rom) else {
-        return Ok(None);
-    };
-    match (factory.create)(path, rom, options) {
-        Some(console) => Ok(Some(console)),
-        None => Err(format!(
-            "{}: failed to construct console from media",
-            factory.name
-        )),
-    }
+    launch: &LaunchValues,
+) -> Result<Box<dyn SystemConsole>, LoadError> {
+    let factory = factory_for(path, rom).ok_or(LoadError::UnrecognizedMedia)?;
+    (factory.create)(path, rom, launch)
 }

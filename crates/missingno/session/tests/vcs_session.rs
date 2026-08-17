@@ -7,10 +7,14 @@
 use std::path::Path;
 use std::time::Duration;
 
+use missingno_core::TvStandard;
 use missingno_core::inspect::WatchTerm;
+use missingno_core::launch::LaunchValues;
 use missingno_core::ports::PeripheralId;
 use missingno_core::recording::{EventKind, Recording};
 use missingno_core::system::SystemConsole;
+use missingno_core::video::DisplayTechnology;
+use missingno_session::factory::LoadError;
 use missingno_session::{Session, SharedSession, factory};
 use missingno_vcs::debug::{JOYSTICK, LEFT_PORT, PADDLES, RIGHT_PORT};
 
@@ -44,12 +48,37 @@ fn looping_rom() -> Vec<u8> {
 
 fn console_from(rom: &[u8]) -> Box<dyn SystemConsole> {
     factory::create_console(Path::new("test.a26"), rom)
-        .expect("factory should not error")
         .expect("vcs factory should claim an .a26 ROM")
 }
 
 fn console() -> Box<dyn SystemConsole> {
     console_from(&minimal_rom())
+}
+
+#[test]
+fn a_board_no_cartridge_answers_to_is_refused() {
+    let mut launch = LaunchValues::default();
+    launch.set_choice("board", "F9");
+    let Err(error) = factory::create_console_with(Path::new("test.a26"), &minimal_rom(), &launch)
+    else {
+        panic!("no board is catalogued as F9");
+    };
+    assert!(matches!(error, LoadError::InvalidValue { .. }));
+}
+
+#[test]
+fn a_stated_standard_is_the_one_the_console_decodes_for() {
+    let mut launch = LaunchValues::default();
+    launch.set_choice("tv-standard", "pal");
+    let console = factory::create_console_with(Path::new("test.a26"), &minimal_rom(), &launch)
+        .expect("vcs factory should claim an .a26 ROM");
+    assert!(matches!(
+        console.video_out(),
+        DisplayTechnology::Crt {
+            standard: TvStandard::Pal,
+            ..
+        }
+    ));
 }
 
 fn session() -> Session {

@@ -15,7 +15,6 @@ use missingno_session::{SessionEvent, SessionHandle, SharedSession, StopReason, 
 fn shared() -> SharedSession {
     let rom = vec![0x00u8; 0x8000];
     let console = factory::create_console(Path::new("test.gb"), &rom)
-        .expect("factory should not error")
         .expect("gb factory should claim a .gb ROM");
     let debugger = console.into_debugger();
     SharedSession::spawn(debugger)
@@ -268,7 +267,6 @@ fn stopping_without_a_recording_is_silent() {
 fn shared_console() -> SharedSession {
     let rom = vec![0x00u8; 0x8000];
     let console = factory::create_console(Path::new("test.gb"), &rom)
-        .expect("factory should not error")
         .expect("gb factory should claim a .gb ROM");
     SharedSession::spawn_console(console)
 }
@@ -411,7 +409,6 @@ fn into_machine_hands_back_a_plain_console() {
 
     let rom = vec![0x00u8; 0x8000];
     let console = factory::create_console(Path::new("test.gb"), &rom)
-        .expect("factory should not error")
         .expect("gb factory should claim a .gb ROM");
     let session = SharedSession::spawn_console(console);
     assert!(
@@ -424,7 +421,6 @@ fn into_machine_hands_back_a_plain_console() {
 fn session_engine() -> missingno_session::Session {
     let rom = vec![0x00u8; 0x8000];
     let console = factory::create_console(Path::new("test.gb"), &rom)
-        .expect("factory should not error")
         .expect("gb factory should claim a .gb ROM");
     missingno_session::Session::new(console.into_debugger())
 }

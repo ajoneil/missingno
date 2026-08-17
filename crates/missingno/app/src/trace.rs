@@ -82,11 +82,12 @@ pub(crate) fn trace_gb(request: TraceRequest) {
             trace_console(console, self.profile, self.output, self.cycles, self.boot);
         }
     }
-    system::gb::launch(
+    let launched = system::gb::launch(
         request.rom.to_vec(),
         save_data,
         request.boot_rom,
         None,
+        system::gb::RunnerPreference::Auto,
         Trace {
             profile: request.profile,
             output: request.output,
@@ -94,6 +95,9 @@ pub(crate) fn trace_gb(request: TraceRequest) {
             boot,
         },
     );
+    if let Err(refused) = launched {
+        eprintln!("error: {refused}");
+    }
 }
 
 fn trace_console<M: ConsoleUi>(

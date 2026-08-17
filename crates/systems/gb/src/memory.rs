@@ -78,6 +78,14 @@ impl BootRom {
         }
     }
 
+    /// The image the boot ROM was classified from.
+    pub fn bytes(&self) -> &[u8] {
+        match self {
+            BootRom::Dmg(rom) => rom.as_slice(),
+            BootRom::Cgb(rom) => rom.as_slice(),
+        }
+    }
+
     /// The boot-ROM byte overlaying `addr`, or `None` if `addr` shows the
     /// cartridge through (always, or the CGB header window).
     fn overlay_byte(&self, addr: u16) -> Option<u8> {

@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, mpsc::Receiver};
 use std::time::Duration;
 
 use iced::futures::SinkExt;
+use missingno_core::launch::LaunchValues;
 use missingno_core::ports::{PanelControl, PeripheralId, PortId};
 use missingno_core::system::{ControlId, ControlInput, ControlRole, ControlSite};
 use missingno_core::video::DisplayTechnology;
@@ -66,16 +67,17 @@ pub fn start(
     overdump: bool,
     controllers: &[Controller],
 ) -> Result<PlaySession, String> {
-    let options = factory::LoadOptions {
-        tv_standard,
-        boot_rom: None,
-        cart_type,
-        overdump,
-    };
+    let mut launch = LaunchValues::default();
+    if let Some(standard) = tv_standard {
+        launch.set_choice(missingno_vcs::debug::TV_STANDARD, standard);
+    }
+    if let Some(board) = cart_type {
+        launch.set_choice(missingno_vcs::debug::BOARD, board);
+    }
+    launch.set_toggle(missingno_vcs::debug::OVERDUMP, overdump);
     let mut console =
-        factory::create_console_with(std::path::Path::new(filename_hint), rom, &options)
-            .map_err(|e| format!("core rejected ROM: {e}"))?
-            .ok_or("no core recognizes this ROM")?;
+        factory::create_console_with(std::path::Path::new(filename_hint), rom, &launch)
+            .map_err(|error| format!("core rejected ROM: {error}"))?;
     // Knob and key input reach nothing until the peripheral is in the jack, and
     // a paddle trigger lands on the direction line it shares on real hardware.
     let mut plugged = [missingno_vcs::debug::JOYSTICK; 2];

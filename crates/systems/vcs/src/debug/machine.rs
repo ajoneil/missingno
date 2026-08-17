@@ -10,6 +10,7 @@ use missingno_core::inspect::{
     AddressDisplay, MemoryRegion, RegisterGroup, Section, Watch, Watchable,
 };
 use missingno_core::isa::InstructionSet;
+use missingno_core::launch::{LaunchChoice, LaunchOptionDescriptor, LaunchOptionKind};
 use missingno_core::machine::{
     BoundaryState, CoreRun, CoreStop, Machine, MachineConsole, StateIdentity, StopSet,
 };
@@ -44,6 +45,50 @@ use super::sections::vcs_sidebar_sections;
 /// it at the frame budget's worth of CPU cycles (76 per scanline).
 #[cfg(feature = "morepork")]
 const CAPTURE_BUDGET_CYCLES: usize = FRAME_BUDGET_LINES * 76;
+
+/// The broadcast standard the console's video is decoded for.
+pub const TV_STANDARD: &str = "tv-standard";
+/// The board the cartridge's silicon sits on.
+pub const BOARD: &str = "board";
+/// The dump runs past the cartridge's silicon.
+pub const OVERDUMP: &str = "overdump";
+
+/// The options the VCS accepts at launch. A cart carries no header, so what a
+/// catalogue says about its region, its board and its dump is all a loader has.
+pub fn launch_options() -> Vec<LaunchOptionDescriptor> {
+    vec![
+        LaunchOptionDescriptor {
+            id: TV_STANDARD,
+            label: "TV standard",
+            kind: LaunchOptionKind::Choice {
+                choices: TvStandard::all()
+                    .into_iter()
+                    .map(|standard| LaunchChoice {
+                        value: standard.code(),
+                        label: standard.name(),
+                    })
+                    .collect(),
+            },
+        },
+        LaunchOptionDescriptor {
+            id: BOARD,
+            label: "Cartridge board",
+            kind: LaunchOptionKind::Choice {
+                choices: CartType::all()
+                    .map(|board| LaunchChoice {
+                        value: board.code(),
+                        label: board.display_name(),
+                    })
+                    .collect(),
+            },
+        },
+        LaunchOptionDescriptor {
+            id: OVERDUMP,
+            label: "Overdump",
+            kind: LaunchOptionKind::Toggle,
+        },
+    ]
+}
 
 pub fn create_console(
     rom: &[u8],

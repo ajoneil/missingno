@@ -17,7 +17,6 @@ use serde_json::{Value, json};
 fn gb_session() -> SharedSession {
     let rom = vec![0x00u8; 0x8000];
     let console = missingno_session::factory::create_console(Path::new("test.gb"), &rom)
-        .expect("factory should not error")
         .expect("gb factory claims a .gb ROM");
     SharedSession::spawn(console.into_debugger())
 }
@@ -26,7 +25,6 @@ fn gb_session() -> SharedSession {
 fn gb_console_session() -> SharedSession {
     let rom = vec![0x00u8; 0x8000];
     let console = missingno_session::factory::create_console(Path::new("test.gb"), &rom)
-        .expect("factory should not error")
         .expect("gb factory claims a .gb ROM");
     SharedSession::spawn_console(console)
 }

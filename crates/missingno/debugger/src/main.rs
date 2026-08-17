@@ -10,9 +10,10 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use missingno_core::launch::LaunchValues;
 use missingno_debugger::http;
 use missingno_session::SharedSession;
-use missingno_session::factory::{self, LoadOptions};
+use missingno_session::factory::{self, LoadError};
 
 /// Matches the GUI crate's headless server default.
 const DEFAULT_PORT: u16 = 3333;
@@ -98,29 +99,31 @@ fn run() -> Result<(), String> {
     let rom_path = args.rom.ok_or(USAGE)?;
     let rom = std::fs::read(&rom_path)
         .map_err(|e| format!("failed to read {}: {e}", rom_path.display()))?;
-    let boot_rom = match &args.boot_rom {
-        Some(path) => Some(
-            std::fs::read(path)
-                .map_err(|e| format!("failed to read boot ROM {}: {e}", path.display()))?,
-        ),
-        None => None,
-    };
-    let options = LoadOptions {
-        boot_rom,
-        cart_type: args.cart_type.clone(),
-        tv_standard: args.tv_standard.clone(),
-        overdump: args.overdump,
-    };
-    let console = factory::create_console_with(&rom_path, &rom, &options)
-        .map_err(|e| match args.cart_type {
+    let mut launch = LaunchValues::default();
+    if let Some(path) = &args.boot_rom {
+        let bytes = std::fs::read(path)
+            .map_err(|e| format!("failed to read boot ROM {}: {e}", path.display()))?;
+        launch.set_file("boot-rom", bytes);
+    }
+    if let Some(code) = &args.cart_type {
+        launch.set_choice("board", code);
+    }
+    if let Some(standard) = &args.tv_standard {
+        launch.set_choice("tv-standard", standard);
+    }
+    launch.set_toggle("overdump", args.overdump);
+    let console =
+        factory::create_console_with(&rom_path, &rom, &launch).map_err(|error| match error {
+            LoadError::UnrecognizedMedia => {
+                format!("no core recognises {}", rom_path.display())
+            }
             // Size-detection is what fails on a bankswitched VCS image, and
             // the message alone does not say the board can be supplied.
-            None => {
-                format!("{e} — if this is a bankswitched cart, name its board with --cart-type")
+            error if args.cart_type.is_none() => {
+                format!("{error} — if this is a bankswitched cart, name its board with --cart-type")
             }
-            Some(_) => e,
-        })?
-        .ok_or_else(|| format!("no core recognises {}", rom_path.display()))?;
+            error => error.to_string(),
+        })?;
     let debugger = console.into_debugger();
     let session = SharedSession::spawn(debugger);
 

@@ -271,6 +271,11 @@ impl Cartridge {
         self.rom[0x143] & 0x80 != 0
     }
 
+    /// $C0 in the CGB flag: the game runs on no Game Boy but a Color.
+    pub fn requires_cgb(&self) -> bool {
+        Cartridge::peek_cgb_only(&self.rom)
+    }
+
     pub fn ram(&self) -> Option<Vec<u8>> {
         self.mbc.ram()
     }
