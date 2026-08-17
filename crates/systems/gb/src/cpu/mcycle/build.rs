@@ -4,7 +4,7 @@ use super::super::{
     flags::Flags,
     instructions::{
         Address, Arithmetic, Arithmetic8, Arithmetic16, BitFlag, BitShift, Bitwise, Jump, Load,
-        Source8, Source16, Stack, Target8, Target16, jump,
+        Place8, Source8, Source16, Stack, Target16, jump,
     },
     registers::Register16,
 };
@@ -53,18 +53,18 @@ impl Cpu {
     pub(super) fn build_load(cpu: &mut Cpu, load: &Load) -> (Phase, Commit) {
         match load {
             Load::Load8(target, source) => match (target, source) {
-                (Target8::Register(treg), Source8::Constant(val)) => (
+                (Place8::Register(treg), Source8::Constant(val)) => (
                     Phase::Empty,
                     Commit::LoadR8 {
                         reg: *treg,
                         value: *val,
                     },
                 ),
-                (Target8::Register(treg), Source8::Register(sreg)) => {
+                (Place8::Register(treg), Source8::Place(Place8::Register(sreg))) => {
                     let value = cpu.get_register8(*sreg);
                     (Phase::Empty, Commit::LoadR8 { reg: *treg, value })
                 }
-                (Target8::Register(treg), Source8::Memory(address)) => {
+                (Place8::Register(treg), Source8::Place(Place8::Memory(address))) => {
                     let addr = Self::resolve_address(cpu, address);
                     let delta = Self::hl_post_delta(address);
                     let action = if delta != 0 {
@@ -80,13 +80,13 @@ impl Cpu {
                         Commit::NoOperation,
                     )
                 }
-                (Target8::Memory(address), source) => {
+                (Place8::Memory(address), source) => {
                     let addr = Self::resolve_address(cpu, address);
                     let delta = Self::hl_post_delta(address);
                     let value = match source {
                         Source8::Constant(v) => *v,
-                        Source8::Register(r) => cpu.get_register8(*r),
-                        Source8::Memory(_) => unreachable!(),
+                        Source8::Place(Place8::Register(r)) => cpu.get_register8(*r),
+                        Source8::Place(Place8::Memory(_)) => unreachable!(),
                     };
                     (
                         Phase::WriteOp {
@@ -157,8 +157,8 @@ impl Cpu {
         match arith {
             Arithmetic::Arithmetic8(a8) => match a8 {
                 Arithmetic8::Increment(target) => match target {
-                    Target8::Register(reg) => (Phase::Empty, Commit::IncR8 { reg: *reg }),
-                    Target8::Memory(address) => {
+                    Place8::Register(reg) => (Phase::Empty, Commit::IncR8 { reg: *reg }),
+                    Place8::Memory(address) => {
                         let addr = Self::resolve_address(cpu, address);
                         (
                             Phase::ReadModifyWrite {
@@ -170,8 +170,8 @@ impl Cpu {
                     }
                 },
                 Arithmetic8::Decrement(target) => match target {
-                    Target8::Register(reg) => (Phase::Empty, Commit::DecR8 { reg: *reg }),
-                    Target8::Memory(address) => {
+                    Place8::Register(reg) => (Phase::Empty, Commit::DecR8 { reg: *reg }),
+                    Place8::Memory(address) => {
                         let addr = Self::resolve_address(cpu, address);
                         (
                             Phase::ReadModifyWrite {
@@ -236,11 +236,11 @@ impl Cpu {
     fn build_alu_source(cpu: &mut Cpu, source: &Source8, op: AluOp) -> (Phase, Commit) {
         match source {
             Source8::Constant(val) => (Phase::Empty, Commit::AluA { op, value: *val }),
-            Source8::Register(reg) => {
+            Source8::Place(Place8::Register(reg)) => {
                 let value = cpu.get_register8(*reg);
                 (Phase::Empty, Commit::AluA { op, value })
             }
-            Source8::Memory(address) => {
+            Source8::Place(Place8::Memory(address)) => {
                 let addr = Self::resolve_address(cpu, address);
                 (
                     Phase::ReadOp {
@@ -272,7 +272,7 @@ impl Cpu {
                 },
             ),
             BitShift::Rotate(direction, carry, target) => match target {
-                Target8::Register(reg) => (
+                Place8::Register(reg) => (
                     Phase::Empty,
                     Commit::RotateReg {
                         reg: *reg,
@@ -280,7 +280,7 @@ impl Cpu {
                         carry: carry.clone(),
                     },
                 ),
-                Target8::Memory(address) => {
+                Place8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
                     (
                         Phase::ReadModifyWrite {
@@ -292,14 +292,14 @@ impl Cpu {
                 }
             },
             BitShift::ShiftArithmetical(direction, target) => match target {
-                Target8::Register(reg) => (
+                Place8::Register(reg) => (
                     Phase::Empty,
                     Commit::ShiftArithmetical {
                         reg: *reg,
                         direction: direction.clone(),
                     },
                 ),
-                Target8::Memory(address) => {
+                Place8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
                     (
                         Phase::ReadModifyWrite {
@@ -311,8 +311,8 @@ impl Cpu {
                 }
             },
             BitShift::ShiftRightLogical(target) => match target {
-                Target8::Register(reg) => (Phase::Empty, Commit::ShiftRightLogical { reg: *reg }),
-                Target8::Memory(address) => {
+                Place8::Register(reg) => (Phase::Empty, Commit::ShiftRightLogical { reg: *reg }),
+                Place8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
                     (
                         Phase::ReadModifyWrite {
@@ -324,8 +324,8 @@ impl Cpu {
                 }
             },
             BitShift::Swap(target) => match target {
-                Target8::Register(reg) => (Phase::Empty, Commit::SwapReg { reg: *reg }),
-                Target8::Memory(address) => {
+                Place8::Register(reg) => (Phase::Empty, Commit::SwapReg { reg: *reg }),
+                Place8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
                     (
                         Phase::ReadModifyWrite {
@@ -341,15 +341,15 @@ impl Cpu {
 
     pub(super) fn build_bit_flag(cpu: &Cpu, bf: &BitFlag) -> (Phase, Commit) {
         match bf {
-            BitFlag::Check(bit, source) => match source {
-                Source8::Register(reg) => (
+            BitFlag::Check(bit, place) => match place {
+                Place8::Register(reg) => (
                     Phase::Empty,
                     Commit::BitTest {
                         bit: *bit,
                         reg: *reg,
                     },
                 ),
-                Source8::Memory(address) => {
+                Place8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
                     (
                         Phase::ReadOp {
@@ -359,17 +359,16 @@ impl Cpu {
                         Commit::NoOperation,
                     )
                 }
-                Source8::Constant(_) => unreachable!(),
             },
             BitFlag::Set(bit, target) => match target {
-                Target8::Register(reg) => (
+                Place8::Register(reg) => (
                     Phase::Empty,
                     Commit::BitSet {
                         bit: *bit,
                         reg: *reg,
                     },
                 ),
-                Target8::Memory(address) => {
+                Place8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
                     (
                         Phase::ReadModifyWrite {
@@ -381,14 +380,14 @@ impl Cpu {
                 }
             },
             BitFlag::Unset(bit, target) => match target {
-                Target8::Register(reg) => (
+                Place8::Register(reg) => (
                     Phase::Empty,
                     Commit::BitReset {
                         bit: *bit,
                         reg: *reg,
                     },
                 ),
-                Target8::Memory(address) => {
+                Place8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
                     (
                         Phase::ReadModifyWrite {

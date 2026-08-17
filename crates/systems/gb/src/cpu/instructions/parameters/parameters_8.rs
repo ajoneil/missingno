@@ -2,13 +2,14 @@ use core::fmt;
 
 use crate::cpu::{Register8, instructions::Address};
 
-#[derive(Clone)]
-pub enum Target8 {
+/// An 8-bit location the CPU can both read and write.
+#[derive(Copy, Clone, Debug)]
+pub enum Place8 {
     Register(Register8),
     Memory(Address),
 }
 
-impl Target8 {
+impl Place8 {
     pub fn a() -> Self {
         Self::Register(Register8::A)
     }
@@ -73,34 +74,24 @@ impl Target8 {
     }
 }
 
-impl fmt::Display for Target8 {
+impl fmt::Display for Place8 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::Register(register) => register.to_string(),
-                Self::Memory(address) => address.to_string(),
-            }
-        )
+        match self {
+            Self::Register(register) => register.fmt(f),
+            Self::Memory(address) => address.fmt(f),
+        }
     }
 }
 
 #[derive(Copy, Clone, Debug)]
 pub enum Source8 {
+    Place(Place8),
     Constant(u8),
-    Register(Register8),
-    Memory(Address),
 }
 
-/// Every place a value can be written is also a place it can be read from;
-/// only [`Source8::Constant`] has no target counterpart.
-impl From<Target8> for Source8 {
-    fn from(target: Target8) -> Self {
-        match target {
-            Target8::Register(register) => Self::Register(register),
-            Target8::Memory(address) => Self::Memory(address),
-        }
+impl From<Place8> for Source8 {
+    fn from(place: Place8) -> Self {
+        Self::Place(place)
     }
 }
 
@@ -110,76 +101,71 @@ impl Source8 {
     }
 
     pub fn a() -> Self {
-        Target8::a().into()
+        Place8::a().into()
     }
 
     pub fn b() -> Self {
-        Target8::b().into()
+        Place8::b().into()
     }
 
     pub fn c() -> Self {
-        Target8::c().into()
+        Place8::c().into()
     }
 
     pub fn d() -> Self {
-        Target8::d().into()
+        Place8::d().into()
     }
 
     pub fn e() -> Self {
-        Target8::e().into()
+        Place8::e().into()
     }
 
     pub fn h() -> Self {
-        Target8::h().into()
+        Place8::h().into()
     }
 
     pub fn l() -> Self {
-        Target8::l().into()
+        Place8::l().into()
     }
 
     pub fn address(ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
-        Some(Target8::address(ops)?.into())
+        Some(Place8::address(ops)?.into())
     }
 
     pub fn deref_bc() -> Self {
-        Target8::deref_bc().into()
+        Place8::deref_bc().into()
     }
 
     pub fn deref_de() -> Self {
-        Target8::deref_de().into()
+        Place8::deref_de().into()
     }
 
     pub fn deref_hl() -> Self {
-        Target8::deref_hl().into()
+        Place8::deref_hl().into()
     }
 
     pub fn deref_hl_inc() -> Self {
-        Target8::deref_hl_inc().into()
+        Place8::deref_hl_inc().into()
     }
 
     pub fn deref_hl_dec() -> Self {
-        Target8::deref_hl_dec().into()
+        Place8::deref_hl_dec().into()
     }
 
     pub fn high(ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
-        Some(Target8::high(ops)?.into())
+        Some(Place8::high(ops)?.into())
     }
 
     pub fn high_c() -> Self {
-        Target8::high_c().into()
+        Place8::high_c().into()
     }
 }
 
 impl fmt::Display for Source8 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Source8::Constant(value) => format!("{}", value),
-                Source8::Register(register) => register.to_string(),
-                Source8::Memory(address) => address.to_string(),
-            }
-        )
+        match self {
+            Self::Place(place) => place.fmt(f),
+            Self::Constant(value) => write!(f, "{}", value),
+        }
     }
 }

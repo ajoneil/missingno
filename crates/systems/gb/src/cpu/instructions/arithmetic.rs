@@ -2,7 +2,7 @@ use core::fmt;
 
 use crate::cpu::{
     Register16,
-    instructions::{Source8, Target8},
+    instructions::{Place8, Source8},
 };
 
 #[derive(Clone)]
@@ -13,8 +13,8 @@ pub enum Arithmetic {
 
 #[derive(Clone)]
 pub enum Arithmetic8 {
-    Increment(Target8),
-    Decrement(Target8),
+    Increment(Place8),
+    Decrement(Place8),
     AddA(Source8),
     SubtractA(Source8),
     AddACarry(Source8),
@@ -29,11 +29,11 @@ impl From<Arithmetic8> for Arithmetic {
 }
 
 impl Arithmetic8 {
-    pub fn inc(target: Target8) -> Arithmetic {
+    pub fn inc(target: Place8) -> Arithmetic {
         Self::Increment(target).into()
     }
 
-    pub fn dec(target: Target8) -> Arithmetic {
+    pub fn dec(target: Place8) -> Arithmetic {
         Self::Decrement(target).into()
     }
 
@@ -88,22 +88,22 @@ impl Arithmetic16 {
 impl Arithmetic {
     pub fn decode(op: u8, ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
         Some(match op {
-            0x04 => Arithmetic8::inc(Target8::b()),
-            0x14 => Arithmetic8::inc(Target8::d()),
-            0x24 => Arithmetic8::inc(Target8::h()),
-            0x34 => Arithmetic8::inc(Target8::deref_hl()),
-            0x05 => Arithmetic8::dec(Target8::b()),
-            0x15 => Arithmetic8::dec(Target8::d()),
-            0x25 => Arithmetic8::dec(Target8::h()),
-            0x35 => Arithmetic8::dec(Target8::deref_hl()),
-            0x0c => Arithmetic8::inc(Target8::c()),
-            0x1c => Arithmetic8::inc(Target8::e()),
-            0x2c => Arithmetic8::inc(Target8::l()),
-            0x3c => Arithmetic8::inc(Target8::a()),
-            0x0d => Arithmetic8::dec(Target8::c()),
-            0x1d => Arithmetic8::dec(Target8::e()),
-            0x2d => Arithmetic8::dec(Target8::l()),
-            0x3d => Arithmetic8::dec(Target8::a()),
+            0x04 => Arithmetic8::inc(Place8::b()),
+            0x14 => Arithmetic8::inc(Place8::d()),
+            0x24 => Arithmetic8::inc(Place8::h()),
+            0x34 => Arithmetic8::inc(Place8::deref_hl()),
+            0x05 => Arithmetic8::dec(Place8::b()),
+            0x15 => Arithmetic8::dec(Place8::d()),
+            0x25 => Arithmetic8::dec(Place8::h()),
+            0x35 => Arithmetic8::dec(Place8::deref_hl()),
+            0x0c => Arithmetic8::inc(Place8::c()),
+            0x1c => Arithmetic8::inc(Place8::e()),
+            0x2c => Arithmetic8::inc(Place8::l()),
+            0x3c => Arithmetic8::inc(Place8::a()),
+            0x0d => Arithmetic8::dec(Place8::c()),
+            0x1d => Arithmetic8::dec(Place8::e()),
+            0x2d => Arithmetic8::dec(Place8::l()),
+            0x3d => Arithmetic8::dec(Place8::a()),
             0x80 => Arithmetic8::add_a(Source8::b()),
             0x90 => Arithmetic8::sub_a(Source8::b()),
             0x81 => Arithmetic8::add_a(Source8::c()),
