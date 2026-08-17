@@ -3,17 +3,10 @@
 //! the frame-hash checkpoints to match end-to-end. A VCS save carries no
 //! Tier-2b residue, so replay is bit-exact.
 
-use crate::common::rom_path;
+use crate::common::seam_console;
 use missingno_core::recording::{Recording, ReplayError, ReplayOutcome, replay};
-use missingno_core::system::{ControlId, ControlRole, StateError, SystemConsole};
+use missingno_core::system::{ControlId, ControlRole, StateError};
 use missingno_test_support::roundtrip::record_scripted;
-use missingno_vcs::TvStandard;
-use missingno_vcs::debug::create_console;
-
-fn console(relative: &str) -> Box<dyn SystemConsole> {
-    let rom = std::fs::read(rom_path(relative)).unwrap();
-    create_console(&rom, "test".into(), Some(TvStandard::Ntsc), None, false).unwrap()
-}
 
 /// Scripted changes to the left joystick: (frame boundary, role, pressed).
 const SCRIPT: &[(u64, ControlRole, bool)] = &[
@@ -25,7 +18,7 @@ const SCRIPT: &[(u64, ControlRole, bool)] = &[
 ];
 
 fn record(relative: &str, warmup: usize, frames: u64, interval: u64) -> Recording {
-    let mut console = console(relative);
+    let mut console = seam_console(relative);
     for _ in 0..warmup {
         console.step_frame();
     }
@@ -48,7 +41,7 @@ fn vcs_recording_replays_deterministically() {
     let bytes = recording.to_bytes().unwrap();
     let parsed = Recording::from_bytes(&bytes).expect("round-trips through bytes");
 
-    let mut console = console(rom);
+    let mut console = seam_console(rom);
     let outcome = replay(&parsed, console.as_mut()).expect("the recording replays");
     assert_eq!(
         outcome,
@@ -62,7 +55,7 @@ fn vcs_recording_replays_deterministically() {
 #[test]
 fn replay_rejects_a_recording_for_a_different_rom() {
     let recording = record("tia-render/draw-delay_ntsc.a26", 8, 8, 4);
-    let mut other = console("tia-render/colors_ntsc.a26");
+    let mut other = seam_console("tia-render/colors_ntsc.a26");
     assert_eq!(
         replay(&recording, other.as_mut()),
         Err(ReplayError::State(StateError::IncompatibleRom))

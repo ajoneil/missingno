@@ -66,11 +66,6 @@ impl Collisions {
         }
     }
 
-    /// One CXxx latch's driven D7/D6, for a bus read.
-    pub(super) fn read(&self, register: usize) -> u8 {
-        self.0[register]
-    }
-
     pub(super) fn clear(&mut self) {
         self.0 = [0; 8];
     }

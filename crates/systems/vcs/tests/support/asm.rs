@@ -42,12 +42,6 @@ impl Asm {
     pub fn stx_zp(&mut self, address: u8) {
         self.emit(&[0x86, address]);
     }
-    pub fn lda_zp(&mut self, address: u8) {
-        self.emit(&[0xA5, address]);
-    }
-    pub fn nop(&mut self) {
-        self.emit(&[0xEA]);
-    }
     pub fn inx(&mut self) {
         self.emit(&[0xE8]);
     }

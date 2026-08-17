@@ -9,7 +9,7 @@ pub use missingno_core::TvStandard;
 const SAMPLE_RATE: u64 = 44_100;
 
 /// Display aspect of a TIA pixel on a 525-line (NTSC) raster: 12/7.
-pub const NTSC_PIXEL_ASPECT: f32 = 12.0 / 7.0;
+const NTSC_PIXEL_ASPECT: f32 = 12.0 / 7.0;
 
 /// Display aspect of a TIA pixel on the cart's standard. The 228-clock line
 /// spans the screen identically everywhere, but a 625-line raster paints

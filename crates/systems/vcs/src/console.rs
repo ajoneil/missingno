@@ -487,20 +487,12 @@ impl Vcs {
 
     /// The console's momentary Game Reset switch (SWCHB bit 0, active-low).
     pub fn set_console_reset(&mut self, pressed: bool) {
-        if pressed {
-            self.riot.set_pin_b(0x01, false);
-        } else {
-            self.riot.set_pin_b(0x01, true);
-        }
+        self.riot.set_pin_b(0x01, !pressed);
     }
 
     /// The console's momentary Game Select switch (SWCHB bit 1, active-low).
     pub fn set_console_select(&mut self, pressed: bool) {
-        if pressed {
-            self.riot.set_pin_b(0x02, false);
-        } else {
-            self.riot.set_pin_b(0x02, true);
-        }
+        self.riot.set_pin_b(0x02, !pressed);
     }
 
     /// A player difficulty switch (SWCHB: P0 = bit 6, P1 = bit 7). Pro (A)

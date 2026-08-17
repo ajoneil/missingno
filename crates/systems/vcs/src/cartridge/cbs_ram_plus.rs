@@ -13,8 +13,7 @@
 
 const HOTSPOT_BASE: u16 = 0x1FF8;
 const BANKS: usize = 3;
-const BANK_SIZE: usize = 0x1000;
-pub const RAM_SIZE: usize = 0x100;
+const RAM_SIZE: usize = 0x100;
 
 pub struct CbsRamPlus {
     image: Vec<u8>,
@@ -33,9 +32,8 @@ impl CbsRamPlus {
 
     /// The switch only fires when the byte on the data bus has D0 set.
     fn hotspot(&mut self, address: u16, bus: u8) {
-        let decoded = address & 0x1FFF;
-        let offset = decoded.wrapping_sub(HOTSPOT_BASE) as usize;
-        if decoded >= HOTSPOT_BASE && offset < BANKS && bus & 0x01 != 0 {
+        let offset = (address & 0x1FFF).wrapping_sub(HOTSPOT_BASE) as usize;
+        if offset < BANKS && bus & 0x01 != 0 {
             self.bank = offset;
         }
     }
@@ -98,7 +96,7 @@ impl CbsRamPlus {
     pub fn peek(&self, address: u16) -> u8 {
         match CbsRamPlus::ram_port(address) {
             Some((cell, _)) => self.ram[cell],
-            None => self.image[self.bank * BANK_SIZE + (address & 0x0FFF) as usize],
+            None => super::banked_byte(&self.image, self.bank, address),
         }
     }
 }

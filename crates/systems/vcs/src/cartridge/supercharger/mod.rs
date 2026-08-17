@@ -45,12 +45,12 @@ const PAGE_SIZE: usize = 0x100;
 const MAX_PAGES: usize = BANKS * BANK_SIZE / PAGE_SIZE;
 
 /// One tape load: the pages the BIOS streams into RAM, then its header.
-pub const IMAGE_SIZE: usize = DATA_SIZE + PAGE_SIZE;
+pub(super) const IMAGE_SIZE: usize = DATA_SIZE + PAGE_SIZE;
 const DATA_SIZE: usize = 0x2000;
 
 /// The most load units a container is read as. The largest known title carries
 /// four; the rest of the range is slack.
-pub const MAX_LOADS: usize = 8;
+pub(super) const MAX_LOADS: usize = 8;
 
 /// Whether a length is a fastload container: whole load units, up to the cap.
 pub fn is_container(len: usize) -> bool {

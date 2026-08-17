@@ -47,17 +47,13 @@ impl Ball {
         self.counter.inject_start();
     }
 
-    fn enabled(&self) -> bool {
+    /// The ENABL bit the beam draws, VDELBL-selected.
+    pub fn enabled(&self) -> bool {
         if self.vertical_delay {
             self.enabled_old
         } else {
             self.enabled_new
         }
-    }
-
-    /// The ENABL bit the beam draws (VDELBL-selected) — inspection only.
-    pub fn effective_enabled(&self) -> bool {
-        self.enabled()
     }
 
     /// Combinational serialiser output for the current scan state.

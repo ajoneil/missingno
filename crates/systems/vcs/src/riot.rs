@@ -182,10 +182,8 @@ impl Riot {
 
     pub fn read(&mut self, register: u16) -> u8 {
         match register & 0x07 {
-            0x00 => self.port_a.level(),
-            0x01 => self.port_a.ddr,
-            0x02 => self.port_b.level(),
-            0x03 => self.port_b.ddr,
+            // The port and DDR reads carry no side effects.
+            0x00..=0x03 => self.peek(register),
             // Reading the flag register clears the PA7 flag and leaves the
             // timer flag intact; only timer-register accesses clear that.
             0x05 | 0x07 => {

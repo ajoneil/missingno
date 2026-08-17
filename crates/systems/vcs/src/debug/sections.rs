@@ -4,16 +4,14 @@
 use missingno_core::inspect;
 use rgb::RGB8;
 
-use super::inspect::VcsInspectState;
+use super::inspect::{VcsInspectState, cpu_register_groups};
 
 /// The 6507 register file and the TIA/RIOT state the inspection struct carries,
 /// in reading order: what runs, what it draws, what it sounds like, what it
 /// reads back, and what it runs from.
 pub fn vcs_sidebar_sections(state: &VcsInspectState) -> Vec<inspect::Section> {
     vec![
-        inspect::cpu_section(crate::debugger::cpu_register_groups(
-            state.pc, state.a, state.x, state.y, state.s, state.p,
-        )),
+        inspect::cpu_section(cpu_register_groups(state)),
         tia_section(state),
         audio_section(state),
         riot_section(state),
@@ -259,26 +257,21 @@ fn tia_section(state: &VcsInspectState) -> inspect::Section {
 fn audio_section(state: &VcsInspectState) -> inspect::Section {
     use inspect::{Row, SectionBlock};
 
+    // Per channel: the audibility pip, then AUDC/AUDF/AUDV.
+    const LABELS: [[&str; 4]; 2] = [
+        ["ch0", "audc0", "audf0", "audv0"],
+        ["ch1", "audc1", "audf1", "audv1"],
+    ];
+
     let channel = |i: usize, on_help, audc_help, audf_help, audv_help| {
+        let [on, audc, audf, audv] = LABELS[i];
         SectionBlock::Rows(vec![
             // A channel is audible only while its volume is non-zero; AUDC/AUDF
             // still divide, but the DAC drives nothing at zero AUDV.
-            Row::flag(if i == 0 { "ch0" } else { "ch1" }, state.audv[i] > 0).help(on_help),
-            Row::value(
-                if i == 0 { "audc0" } else { "audc1" },
-                format!("{:02X}", state.audc[i]),
-            )
-            .help(audc_help),
-            Row::value(
-                if i == 0 { "audf0" } else { "audf1" },
-                format!("{:02X}", state.audf[i]),
-            )
-            .help(audf_help),
-            Row::value(
-                if i == 0 { "audv0" } else { "audv1" },
-                format!("{:02X}", state.audv[i]),
-            )
-            .help(audv_help),
+            Row::flag(on, state.audv[i] > 0).help(on_help),
+            Row::value(audc, format!("{:02X}", state.audc[i])).help(audc_help),
+            Row::value(audf, format!("{:02X}", state.audf[i])).help(audf_help),
+            Row::value(audv, format!("{:02X}", state.audv[i])).help(audv_help),
         ])
     };
 

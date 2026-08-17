@@ -13,10 +13,12 @@
 
 use std::path::{Path, PathBuf};
 
+use missingno_core::system::SystemConsole;
 use missingno_test_support::compare::{self, assert_pixels_match};
 use missingno_test_support::reference::ReferencePng;
 use missingno_test_support::verdict::{Outcome, Poll, poll_verdict};
 use missingno_vcs::console::{Frame, Vcs};
+use missingno_vcs::debug::create_console;
 use missingno_vcs::tia::{VISIBLE_CLOCKS, palette, palette_index};
 use missingno_vcs::{CartType, DumpFit, TvStandard};
 
@@ -44,12 +46,18 @@ pub fn rom_path(relative: &str) -> PathBuf {
 /// image: a size heuristic would silently decide the very thing the cartridge
 /// tests exist to check. This mirrors the suite's own `; mapper:` convention,
 /// where an unmarked source is a plain 4K board.
-fn load(relative: &str, standard: TvStandard, cart_type: CartType) -> Vcs {
+pub fn load(relative: &str, standard: TvStandard, cart_type: CartType) -> Vcs {
     let path = rom_path(relative);
     let rom = std::fs::read(&path)
         .unwrap_or_else(|e| panic!("failed to read ROM {}: {e}", path.display()));
     Vcs::new(&rom, standard, Some(cart_type), DumpFit::Exact)
         .unwrap_or_else(|e| panic!("failed to load ROM {}: {e:?}", path.display()))
+}
+
+/// A ROM on the app seam, on the NTSC standard the seam-level tests assume.
+pub fn seam_console(relative: &str) -> Box<dyn SystemConsole> {
+    let rom = std::fs::read(rom_path(relative)).unwrap();
+    create_console(&rom, "test".into(), Some(TvStandard::Ntsc), None, false).unwrap()
 }
 
 /// Run a self-checking image the test built itself, for a board whose subject

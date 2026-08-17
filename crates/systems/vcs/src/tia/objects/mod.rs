@@ -26,7 +26,7 @@ pub(crate) use playfield::PlayfieldState;
 use super::motion::MovableIndex;
 
 /// Visible clocks per line — the objects' colour-clock position space.
-pub const COUNTER_RANGE: u8 = 160;
+const COUNTER_RANGE: u8 = 160;
 
 /// The five objects the HMOVE engine can move, addressed by [`MovableIndex`]
 /// so the motion loops need no per-object branching of their own.

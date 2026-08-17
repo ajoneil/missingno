@@ -143,27 +143,28 @@ fn jack(port: PortId) -> Option<Jack> {
     }
 }
 
+/// Each peripheral a jack accepts, paired with the controller the console
+/// builds for it — read in both directions.
+const PLUGGABLE: &[(PeripheralId, ControllerKind)] = &[
+    (UNPLUGGED, ControllerKind::Unplugged),
+    (JOYSTICK, ControllerKind::Joystick),
+    (PADDLES, ControllerKind::Paddles),
+    (KEYPAD, ControllerKind::Keypad),
+];
+
 fn peripheral_id(kind: ControllerKind) -> PeripheralId {
-    match kind {
-        ControllerKind::Unplugged => UNPLUGGED,
-        ControllerKind::Joystick => JOYSTICK,
-        ControllerKind::Paddles => PADDLES,
-        ControllerKind::Keypad => KEYPAD,
-    }
+    PLUGGABLE
+        .iter()
+        .find(|(_, plugged)| *plugged == kind)
+        .map(|(id, _)| *id)
+        .expect("every controller kind is a listed peripheral")
 }
 
 fn controller_kind(peripheral: PeripheralId) -> Option<ControllerKind> {
-    if peripheral == UNPLUGGED {
-        Some(ControllerKind::Unplugged)
-    } else if peripheral == JOYSTICK {
-        Some(ControllerKind::Joystick)
-    } else if peripheral == PADDLES {
-        Some(ControllerKind::Paddles)
-    } else if peripheral == KEYPAD {
-        Some(ControllerKind::Keypad)
-    } else {
-        None
-    }
+    PLUGGABLE
+        .iter()
+        .find(|(id, _)| *id == peripheral)
+        .map(|(_, kind)| *kind)
 }
 
 pub(super) fn plugged(vcs: &Vcs, port: PortId) -> Option<PeripheralId> {

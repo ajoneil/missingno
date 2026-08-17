@@ -13,7 +13,7 @@ const MOTION_DECREMENT_PHASE: u16 = 3;
 /// The motion ripple counter's value between sequences (%1111).
 const RESTING_RIPPLE: u8 = 15;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub(super) enum MovableIndex {
     P0,
     P1,
@@ -87,7 +87,7 @@ impl<T> IndexMut<MovableIndex> for PerObject<T> {
 /// strictly after it set (a set coincident with the slot start misses), clocks
 /// through the next H@1, then arms on the following H@2 — a three-stage
 /// two-phase shift, so the arm delay falls out of the grid per strobe parity.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub(super) enum MotionArmDecode {
     Idle,
     /// Latched by the strobe; the next strict H@2 samples it.

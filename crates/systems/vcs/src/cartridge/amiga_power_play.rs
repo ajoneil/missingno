@@ -12,7 +12,6 @@
 //! which makes the write-inertness a modelling choice rather than a hardware
 //! fact. A socketed board is the arbiter.
 
-const BANK_SIZE: usize = 0x1000;
 const BANKS: usize = 8;
 
 const LATCH_LOW: u16 = 0x1FF8;
@@ -66,6 +65,6 @@ impl AmigaPowerPlay {
     }
 
     pub fn peek(&self, address: u16) -> u8 {
-        self.image[self.bank * BANK_SIZE + (address & 0x0FFF) as usize]
+        super::banked_byte(&self.image, self.bank, address)
     }
 }

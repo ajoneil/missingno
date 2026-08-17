@@ -23,7 +23,7 @@ const MAX_ROM_BANKS: usize = 256;
 /// Whether an image is a whole number of ROM banks within the scheme's reach.
 /// Unlike the commercial boards, 3E has no one size: the image says how many
 /// banks the cart carries.
-pub fn holds(len: usize) -> bool {
+pub(super) fn holds(len: usize) -> bool {
     len.is_multiple_of(ROM_BANK_SIZE) && (1..=MAX_ROM_BANKS).contains(&(len / ROM_BANK_SIZE))
 }
 

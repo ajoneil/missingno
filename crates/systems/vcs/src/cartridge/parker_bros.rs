@@ -67,9 +67,17 @@ impl ParkerBros {
     }
 
     pub fn peek(&self, address: u16) -> u8 {
-        let offset = (address & 0x0FFF) as usize;
-        let window = offset / SLICE_SIZE;
-        let slice = self.slices.get(window).copied().unwrap_or(FIXED_SLICE);
-        self.image[slice * SLICE_SIZE + offset % SLICE_SIZE]
+        sliced_byte(&self.image, &self.slices, address)
     }
+}
+
+/// The image byte an address reads through the four 1 KB windows: the pageable
+/// ones draw the slices the board holds, and the window past them is fixed.
+pub(super) fn sliced_byte(image: &[u8], slices: &[usize], address: u16) -> u8 {
+    let offset = (address & 0x0FFF) as usize;
+    let slice = slices
+        .get(offset / SLICE_SIZE)
+        .copied()
+        .unwrap_or(FIXED_SLICE);
+    image[slice * SLICE_SIZE + offset % SLICE_SIZE]
 }

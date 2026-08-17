@@ -14,51 +14,11 @@
 //! write to $0220 pokes HMP0 as well as paging the bank. The console still
 //! routes them there — the board only listens.
 
-const BANK_SIZE: usize = 0x1000;
-/// The only address lines the board examines: A12, A9, A6, A5.
-const DECODE_MASK: u16 = 0x1260;
-const BANK_0_HOTSPOT: u16 = 0x0220;
-const BANK_1_HOTSPOT: u16 = 0x0240;
+use super::low_bank_select::Decode;
 
-pub struct UaLtd {
-    image: Vec<u8>,
-    bank: usize,
-}
-
-impl UaLtd {
-    pub fn new(rom: &[u8]) -> UaLtd {
-        UaLtd {
-            image: rom.to_vec(),
-            bank: 0,
-        }
-    }
-
-    fn hotspot(&mut self, address: u16) {
-        match address & DECODE_MASK {
-            BANK_0_HOTSPOT => self.bank = 0,
-            BANK_1_HOTSPOT => self.bank = 1,
-            _ => {}
-        }
-    }
-
-    /// The board watches every cycle for its hotspots, but only drives the bus
-    /// inside the window.
-    pub fn read(&mut self, address: u16) -> Option<u8> {
-        self.hotspot(address);
-        super::selects_window(address).then(|| self.peek(address))
-    }
-
-    pub fn write_access(&mut self, address: u16) {
-        self.hotspot(address);
-    }
-
-    /// The full ROM image, all banks in file order, for the debugger's
-    /// bank-complete `rom` region.
-    pub(super) fn rom(&self) -> &[u8] {
-        &self.image
-    }
-
-    pub fn peek(&self, address: u16) -> u8 {
-        self.image[self.bank * BANK_SIZE + (address & 0x0FFF) as usize]
-    }
-}
+/// A12, A9, A6, A5: the only address lines the board examines.
+pub(super) const DECODE: Decode = Decode {
+    lines: 0x1260,
+    bank_0: 0x0220,
+    bank_1: 0x0240,
+};

@@ -41,7 +41,7 @@ const BANK_SIZE: usize = 0x1000;
 const PROGRAM_SIZE: usize = 0x2000;
 const DISPLAY_SIZE: usize = 0x800;
 /// The program and display ROMs; anything past them is the dumper's tail.
-pub const IMAGE_SIZE: usize = PROGRAM_SIZE + DISPLAY_SIZE;
+pub(super) const IMAGE_SIZE: usize = PROGRAM_SIZE + DISPLAY_SIZE;
 const FETCHERS: usize = 8;
 /// The first fetcher with a music voice; DF5-DF7 have one.
 const FIRST_MUSIC_FETCHER: usize = 5;
@@ -231,8 +231,13 @@ impl Dpc {
 
     /// The low nibble of an amplitude read: the three voices through the mixer.
     fn mixed_amplitude(&self) -> u8 {
-        let voice = |n: usize| u8::from(self.fetchers[n].square_wave());
-        AMPLITUDE[usize::from(voice(5) | voice(6) << 1 | voice(7) << 2)]
+        let voices = self.fetchers[FIRST_MUSIC_FETCHER..]
+            .iter()
+            .enumerate()
+            .fold(0, |bits, (voice, fetcher)| {
+                bits | u8::from(fetcher.square_wave()) << voice
+            });
+        AMPLITUDE[usize::from(voices)]
     }
 
     /// The high nibble: MOVAMT gated by the draw-line carry.
@@ -245,7 +250,10 @@ impl Dpc {
 
     fn pulse_draw_line(&mut self) {
         if self.draw_line.enabled {
-            let (latch, carry) = self.draw_line.latch.overflowing_add(self.fetchers[4].top);
+            let (latch, carry) = self
+                .draw_line
+                .latch
+                .overflowing_add(self.fetchers[DRAW_LINE_FETCHER].top);
             self.draw_line.latch = latch;
             self.draw_line.carry = carry;
         }
@@ -413,7 +421,7 @@ impl Dpc {
     }
 
     pub fn peek(&self, address: u16) -> u8 {
-        self.program[self.bank * BANK_SIZE + (address & 0x0FFF) as usize]
+        super::banked_byte(&self.program, self.bank, address)
     }
 }
 

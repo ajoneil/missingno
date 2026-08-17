@@ -14,20 +14,20 @@
 //! high half is the read port. The RAM sits outside the banked ROM, so a bank
 //! switch never disturbs it, and it shadows the ROM bytes under it.
 
-pub const F8_HOTSPOT_BASE: u16 = 0x1FF8;
-pub const F6_HOTSPOT_BASE: u16 = 0x1FF6;
-pub const F4_HOTSPOT_BASE: u16 = 0x1FF4;
+pub(super) const F8_HOTSPOT_BASE: u16 = 0x1FF8;
+pub(super) const F6_HOTSPOT_BASE: u16 = 0x1FF6;
+pub(super) const F4_HOTSPOT_BASE: u16 = 0x1FF4;
 /// The homebrew boards need a wider run, so theirs starts lower.
-pub const EF_HOTSPOT_BASE: u16 = 0x1FE0;
-pub const DF_HOTSPOT_BASE: u16 = 0x1FC0;
-pub const BF_HOTSPOT_BASE: u16 = 0x1F80;
+pub(super) const EF_HOTSPOT_BASE: u16 = 0x1FE0;
+pub(super) const DF_HOTSPOT_BASE: u16 = 0x1FC0;
+pub(super) const BF_HOTSPOT_BASE: u16 = 0x1F80;
 
 /// Nothing on a board latches a bank at reset, so the bank it wakes in is
 /// undefined state and most images force one before looking. DF images instead
 /// expect the bank both references settle on.
-pub const DF_START_BANK: usize = 15;
+pub(super) const DF_START_BANK: usize = 15;
 
-pub const SUPERCHIP_RAM_SIZE: usize = 0x80;
+pub(super) const SUPERCHIP_RAM_SIZE: usize = 0x80;
 
 const BANK_SIZE: usize = 0x1000;
 
@@ -59,9 +59,8 @@ impl Atari {
     /// The board decodes 13 lines; one hotspot per bank, counting up from the
     /// board's base address.
     fn hotspot(&mut self, address: u16) {
-        let decoded = address & 0x1FFF;
-        let offset = decoded.wrapping_sub(self.hotspot_base) as usize;
-        if decoded >= self.hotspot_base && offset < self.banks {
+        let offset = (address & 0x1FFF).wrapping_sub(self.hotspot_base) as usize;
+        if offset < self.banks {
             self.bank = offset;
         }
     }

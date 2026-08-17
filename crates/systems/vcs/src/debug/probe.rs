@@ -1,13 +1,13 @@
 //! Reading a ROM's hardware assumptions when the library's metadata is silent:
 //! which broadcast standard its kernel was written for.
 
-use missingno_core::video::{self, Television};
+use missingno_core::video::Television;
 
 use crate::console::Vcs;
 use crate::tia::VISIBLE_CLOCKS;
 use crate::{CartType, DumpFit, TvStandard};
 
-use super::frame::{FRAME_BUDGET_LINES, VSYNC_LOCK_LINES};
+use super::frame::{FRAME_BUDGET_LINES, VSYNC_LOCK_LINES, tv_scanline};
 
 /// Scanlines per field that split NTSC (~262) from PAL (~312); the midpoint
 /// clears the ~284–290 overlap where a handful of ROMs are genuinely ambiguous.
@@ -32,13 +32,7 @@ pub(super) fn probe_tv_standard(
     for _ in 0..(FRAME_BUDGET_LINES * 8) {
         let line = vcs.step_scanline();
         lines_this_field += 1;
-        if tv
-            .feed(video::Scanline {
-                pixels: line.pixels,
-                vsync: line.vsync,
-            })
-            .is_some()
-        {
+        if tv.feed(tv_scanline(line)).is_some() {
             fields.push(lines_this_field);
             lines_this_field = 0;
             if fields.len() >= 6 {

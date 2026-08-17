@@ -4,11 +4,11 @@
 
 use std::time::Duration;
 
-use missingno_core::video::IndexedFrame;
+use missingno_core::video::{self, IndexedFrame};
 use rgb::RGB8;
 
 use crate::TvStandard;
-use crate::tia::{VISIBLE_CLOCKS, palette_index};
+use crate::tia::{Scanline, VISIBLE_CLOCKS, palette_index};
 
 /// Frames are emergent from VSYNC; bound the search so a kernel that never
 /// syncs cannot stall the emulation thread.
@@ -19,6 +19,15 @@ pub(super) const FRAME_BUDGET_LINES: usize = 1000;
 /// the set (off-chip) and is calibratable — reference emulators model 2 and the
 /// safe kernel convention is 3, so anything shorter is swallowed.
 pub(super) const VSYNC_LOCK_LINES: usize = 2;
+
+/// A completed scanline as the television reads it: the visible pixels and
+/// whether the line carried VSYNC.
+pub(super) fn tv_scanline(line: Scanline) -> video::Scanline<VISIBLE_CLOCKS> {
+    video::Scanline {
+        pixels: line.pixels,
+        vsync: line.vsync,
+    }
+}
 
 /// Nominal frame: a full field of 228-clock lines at the colour clock — 262
 /// lines (NTSC) or 312 (PAL). Kernels vary line counts; pacing uses the

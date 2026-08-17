@@ -26,7 +26,7 @@ const MAX_ROM_BANKS: usize = 64;
 /// Whether an image is a whole number of ROM banks within the bank field's
 /// reach. As on 3E, the board has no one size: the image says how many banks
 /// the cart carries.
-pub fn holds(len: usize) -> bool {
+pub(super) fn holds(len: usize) -> bool {
     len.is_multiple_of(ROM_BANK_SIZE) && (1..=MAX_ROM_BANKS).contains(&(len / ROM_BANK_SIZE))
 }
 
@@ -34,9 +34,6 @@ const ROM_HOTSPOT: u16 = 0x3F;
 const RAM_HOTSPOT: u16 = 0x3E;
 /// A12, A7 and A6 low: the access arms the latch and leaves A12 free to rise.
 const ARM_MASK: u16 = 0x10C0;
-
-/// The segment holding the reset vector, and so the only one that boots defined.
-const BOOT_SEGMENT: usize = 3;
 
 #[derive(Clone, Copy)]
 enum Mapping {
@@ -54,12 +51,12 @@ pub struct TigervisionRamPlus {
 
 impl TigervisionRamPlus {
     pub fn new(rom: &[u8]) -> TigervisionRamPlus {
-        let mut segments = [Mapping::Rom(0); SEGMENTS];
-        segments[BOOT_SEGMENT] = Mapping::Rom(0);
         TigervisionRamPlus {
             image: rom.to_vec(),
             ram: vec![0; RAM_BANKS * RAM_BANK_SIZE],
-            segments,
+            // Only the segment holding the reset vector wakes defined; the
+            // undefined three wake with it here.
+            segments: [Mapping::Rom(0); SEGMENTS],
             rom_banks: rom.len() / ROM_BANK_SIZE,
             armed: None,
         }

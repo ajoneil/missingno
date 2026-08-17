@@ -9,7 +9,6 @@
 //! *read* of $1FF8 does is undefined by the board, and the two implementations
 //! disagree, so nothing is done here.
 
-const BANK_SIZE: usize = 0x1000;
 const HOTSPOT: u16 = 0x1FF8;
 const BANK_SELECT: u8 = 0x04;
 
@@ -48,6 +47,6 @@ impl ColecoWf8 {
     }
 
     pub fn peek(&self, address: u16) -> u8 {
-        self.image[self.bank * BANK_SIZE + (address & 0x0FFF) as usize]
+        super::banked_byte(&self.image, self.bank, address)
     }
 }

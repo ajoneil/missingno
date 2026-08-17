@@ -326,7 +326,7 @@ impl CartType {
             CartType::TigervisionRamPlus => tigervision_ram_plus::holds(len),
             // The refusal an unbuilt board earns is about the board, not the
             // image.
-            CartType::DpcPlus | CartType::GameLine | CartType::Fa2 | CartType::FourA50 => true,
+            _ if !self.built() => true,
             _ => self.image_size() == Some(len),
         }
     }

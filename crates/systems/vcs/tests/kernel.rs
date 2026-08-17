@@ -293,8 +293,8 @@ fn wave_capture_records_per_channel_dac_codes() {
         assert!(wave.levels.iter().all(|&code| code <= 15));
     }
     // Channel 0's square-wave DAC swings between 0 and full volume (15).
-    assert!(waves[0].levels.iter().any(|&code| code == 0));
-    assert!(waves[0].levels.iter().any(|&code| code == 15));
+    assert!(waves[0].levels.contains(&0));
+    assert!(waves[0].levels.contains(&15));
     assert!(waves[0].active);
     // Channel 1 never got a volume, so its DAC rests at 0 and reads inactive.
     assert!(waves[1].levels.iter().all(|&code| code == 0));

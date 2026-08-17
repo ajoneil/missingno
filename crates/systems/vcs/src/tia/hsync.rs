@@ -94,11 +94,7 @@ impl HSyncCounter {
             };
         }
         self.position += 1;
-        if self.position == CLOCKS_PER_LINE {
-            self.reset_line();
-            return true;
-        }
-        false
+        self.position == CLOCKS_PER_LINE
     }
 
     /// Whether MOTCK reaches the objects this clock: the die's 160 rises per line
@@ -137,11 +133,14 @@ impl HSyncCounter {
 mod tests {
     use super::*;
 
-    /// Step a fresh counter to an absolute position with no HMOVE extension.
+    /// Step a fresh counter to an absolute position with no HMOVE extension,
+    /// resetting on the wrap as the TIA's line end does.
     fn at(position: u16) -> HSyncCounter {
         let mut c = HSyncCounter::new();
         while c.position() != position {
-            c.advance(false);
+            if c.advance(false) {
+                c.reset_line();
+            }
         }
         c
     }
@@ -176,6 +175,8 @@ mod tests {
     fn wraps_after_228_clocks() {
         let mut c = at(227);
         assert!(c.advance(false));
+        assert_eq!(c.position(), CLOCKS_PER_LINE);
+        c.reset_line();
         assert_eq!(c.position(), 0);
     }
 }

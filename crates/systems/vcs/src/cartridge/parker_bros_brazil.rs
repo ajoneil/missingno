@@ -8,10 +8,7 @@
 //! segments at once — or, with every enable high, none of them. The slice is the
 //! low three address bits, and a select fires on the bus access, read or write.
 
-const SLICE_SIZE: usize = 0x400;
 const PAGEABLE_SEGMENTS: usize = 3;
-/// The fourth segment never moves.
-const FIXED_SLICE: usize = 7;
 
 /// A9-A7 high with A12 low: the hotspot page.
 const HOTSPOT_DECODE: u16 = 0x1F80;
@@ -58,10 +55,8 @@ impl ParkerBrosBrazil {
         &self.image
     }
 
+    /// The window maps exactly as E0's does.
     pub fn peek(&self, address: u16) -> u8 {
-        let offset = usize::from(address & 0x0FFF);
-        let segment = offset / SLICE_SIZE;
-        let slice = self.slices.get(segment).copied().unwrap_or(FIXED_SLICE);
-        self.image[slice * SLICE_SIZE + offset % SLICE_SIZE]
+        super::parker_bros::sliced_byte(&self.image, &self.slices, address)
     }
 }

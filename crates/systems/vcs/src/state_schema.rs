@@ -34,7 +34,7 @@ use FieldType::{Bool, U8, U16};
 
 /// Tier-1 observable fields: the 6507 register file, the readable collision and
 /// RIOT registers, and the TIA write-register-equivalent bytes the die stores.
-pub fn observable_fields() -> Vec<FieldDef> {
+fn observable_fields() -> Vec<FieldDef> {
     let mut fields = vec![
         // 6507 register file.
         FieldDef::observable("a", U8, "cpu").help("accumulator"),
@@ -169,7 +169,7 @@ pub fn observable_fields() -> Vec<FieldDef> {
 /// boundary restore needs — object counters and ring phases, serialiser and
 /// gate latches, the HMOVE engine, per-channel audio counters, the RIOT timer
 /// internals, and the console's deferred-write pipe and bus-capacitance byte.
-pub fn boundary_fields() -> Vec<FieldDef> {
+fn boundary_fields() -> Vec<FieldDef> {
     let mut fields = vec![
         FieldDef::boundary("cpu_halted", Bool, "cpu").help("the 6507 is jammed (JAM opcode)"),
         // TIA line-timing spine and WSYNC/HBLANK latches.
@@ -415,7 +415,7 @@ pub fn boundary_fields() -> Vec<FieldDef> {
 
 /// The VCS RAM regions a save state carries. ROM comes from the cartridge; cart
 /// RAM is board-dependent and travels only when the board has any.
-pub fn memory_spans() -> Vec<MemorySpan> {
+fn memory_spans() -> Vec<MemorySpan> {
     vec![
         MemorySpan::addressable("riot_ram", 0x0080, 0x80).help("RIOT 128-byte RAM"),
         // Cart RAM is banked/paged and its size is board-dependent, so it is an
@@ -433,7 +433,7 @@ pub fn memory_spans() -> Vec<MemorySpan> {
 
 /// The VCS framebuffer: 160 visible clocks wide, emergent height (VSYNC-delimited
 /// field), TIA colour indices into the region palette.
-pub fn frame() -> FrameSpec {
+fn frame() -> FrameSpec {
     FrameSpec {
         width: VISIBLE_CLOCKS as u32,
         height: None,

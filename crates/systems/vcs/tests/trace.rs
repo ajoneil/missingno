@@ -112,7 +112,7 @@ fn captures_a_readable_trace_with_emergent_frames() {
     assert_eq!(frame.height, 259);
     assert_eq!(frame.palette.len(), 128);
     assert!(
-        frame.pixels.iter().any(|&p| p == 0x23),
+        frame.pixels.contains(&0x23),
         "expected COLUBK pixels in the frame"
     );
 

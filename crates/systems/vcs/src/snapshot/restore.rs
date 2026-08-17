@@ -3,7 +3,7 @@
 use missingno_core::state::{StateRecord, StateValue};
 use missingno_core::system::StateError;
 
-use super::fields::{cap_field, field, hm_field, more_field, subsume_field};
+use super::fields::{field, object_field};
 use crate::console::Vcs;
 use crate::riot::RiotState;
 use crate::tia::TiaState;
@@ -104,10 +104,10 @@ fn parse_tia(r: &StateRecord) -> Result<TiaState, StateError> {
     let mut mot_captured_hm = [0u8; 5];
     let mut subsume_next_edge = [false; 5];
     for (i, o) in objs.iter().enumerate() {
-        mot_hm_values[i] = u8_of(r, hm_field(o))?;
-        mot_more_movement[i] = bool_of(r, more_field(o))?;
-        mot_captured_hm[i] = u8_of(r, cap_field(o))?;
-        subsume_next_edge[i] = bool_of(r, subsume_field(o))?;
+        mot_hm_values[i] = u8_of(r, object_field("mot_hm", o))?;
+        mot_more_movement[i] = bool_of(r, object_field("mot_more", o))?;
+        mot_captured_hm[i] = u8_of(r, object_field("mot_cap", o))?;
+        subsume_next_edge[i] = bool_of(r, object_field("subsume", o))?;
     }
     let mut collisions = [0u8; 8];
     for (i, cx) in ["cx0", "cx1", "cx2", "cx3", "cx4", "cx5", "cx6", "cx7"]

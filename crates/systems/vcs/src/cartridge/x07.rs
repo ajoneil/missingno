@@ -13,8 +13,6 @@
 //! is still written; the flip is a side effect. So the same store through two
 //! TIA mirrors parks two different banks.
 
-const BANK_SIZE: usize = 0x1000;
-
 /// A12, A11, A3-A0: the direct select's compare.
 const DIRECT_MASK: u16 = 0x180F;
 const DIRECT_SELECT: u16 = 0x080D;
@@ -71,6 +69,6 @@ impl X07 {
     }
 
     pub fn peek(&self, address: u16) -> u8 {
-        self.image[self.bank * BANK_SIZE + (address & 0x0FFF) as usize]
+        super::banked_byte(&self.image, self.bank, address)
     }
 }

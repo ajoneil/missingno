@@ -11,9 +11,7 @@ pub(crate) mod test_support;
 use std::collections::BTreeSet;
 
 use missingno_core::inspect;
-use missingno_core::isa::InstructionSet;
 use missingno_core::machine::StopSet;
-use missingno_mos_6502::Mos6502;
 
 use crate::console::Vcs;
 use watch::{WatchCondition, watch_from_condition, watch_to_condition};
@@ -41,7 +39,7 @@ enum SyntheticStore {
 }
 
 /// Named bits of the 6502 status register `p`; the B flag is not architectural.
-pub(crate) const MOS6502_FLAGS: &[inspect::FlagName] = &[
+const MOS6502_FLAGS: &[inspect::FlagName] = &[
     inspect::FlagName {
         name: "n",
         bit: 7,
@@ -134,6 +132,8 @@ pub enum Stop {
 /// addresses and the watch terms translated into conditions. Built once per run,
 /// so a per-instruction check costs no allocation.
 pub struct Stops {
+    /// Breakpoints on the 13 lines the 6507 drives, so mirror aliases of one
+    /// address collapse to the single entry a check looks up.
     breakpoints: BTreeSet<u16>,
     watchpoints: Vec<WatchCondition>,
 }
@@ -141,7 +141,11 @@ pub struct Stops {
 impl Stops {
     pub fn new(stops: &StopSet) -> Self {
         Stops {
-            breakpoints: stops.pc.iter().map(|&address| address as u16).collect(),
+            breakpoints: stops
+                .pc
+                .iter()
+                .map(|&address| address as u16 & 0x1FFF)
+                .collect(),
             watchpoints: stops
                 .watches
                 .iter()
@@ -164,10 +168,6 @@ impl Debugger {
         &mut self.vcs
     }
 
-    pub fn into_console(self) -> Vcs {
-        self.vcs
-    }
-
     /// Execute one instruction, then evaluate the stops at the boundary it
     /// lands on — the point a PC breakpoint and a watch condition both fire.
     pub fn step(&mut self, stops: &Stops) -> Option<Stop> {
@@ -178,7 +178,7 @@ impl Debugger {
     /// The stop that holds at the current instruction boundary, if any; a
     /// breakpoint is reported ahead of a watch.
     fn check(&self, stops: &Stops) -> Option<Stop> {
-        if stops.breakpoints.iter().any(|&bp| self.at_address(bp)) {
+        if stops.breakpoints.contains(&(self.vcs.cpu.pc & 0x1FFF)) {
             return Some(Stop::Breakpoint);
         }
         let hit = stops
@@ -198,12 +198,6 @@ impl Debugger {
     /// instruction there is not one.
     pub fn step_over_target(&self) -> Option<u16> {
         (self.vcs.peek(self.vcs.cpu.pc) == JSR).then(|| self.vcs.cpu.pc.wrapping_add(3))
-    }
-
-    /// The 6502 register file as one inspection group.
-    pub fn register_groups(&self) -> Vec<inspect::RegisterGroup> {
-        let cpu = &self.vcs.cpu;
-        cpu_register_groups(cpu.pc, cpu.a, cpu.x, cpu.y, cpu.s, cpu.p)
     }
 
     /// The 6507's 13-line address map, named for what the board decodes, plus
@@ -275,10 +269,6 @@ impl Debugger {
 
     pub fn pc(&self) -> u32 {
         self.vcs.cpu.pc as u32
-    }
-
-    pub fn instruction_set(&self) -> &'static dyn InstructionSet {
-        &Mos6502
     }
 
     /// How `address` presents in the disassembly's address column: a synthetic

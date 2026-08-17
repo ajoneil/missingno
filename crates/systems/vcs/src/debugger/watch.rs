@@ -41,42 +41,23 @@ impl WatchCondition {
     }
 }
 
-/// A watchable key, its label and parameter shape, and the condition it maps
-/// onto — the single source for both the exposed list and the mapping.
-struct WatchableSpec {
-    key: &'static str,
-    label: &'static str,
-    param: inspect::WatchParam,
-}
-
-static WATCHABLES: &[WatchableSpec] = &[
+static WATCHABLES: &[inspect::Watchable] = &[
     // A full 16-bit address; the condition compares it on the 13 decoded lines.
-    WatchableSpec {
+    inspect::Watchable {
         key: "pc",
         label: "PC",
         param: inspect::WatchParam::Value { bits: 16 },
     },
-    WatchableSpec {
+    inspect::Watchable {
         key: CART_BANK_KEY,
         label: "cart bank",
         param: inspect::WatchParam::Value { bits: 16 },
     },
 ];
 
-/// The watchables the debugger exposes, built once from [`WATCHABLES`].
+/// The watchables the debugger exposes.
 pub fn watchables() -> &'static [inspect::Watchable] {
-    use std::sync::OnceLock;
-    static PUBLIC: OnceLock<Vec<inspect::Watchable>> = OnceLock::new();
-    PUBLIC.get_or_init(|| {
-        WATCHABLES
-            .iter()
-            .map(|spec| inspect::Watchable {
-                key: spec.key,
-                label: spec.label,
-                param: spec.param,
-            })
-            .collect()
-    })
+    WATCHABLES
 }
 
 fn condition_from_term(term: &inspect::WatchTerm) -> Option<WatchCondition> {

@@ -7,22 +7,15 @@
 //! (the frame-assembly buffer empty) and assert the continuation frames are
 //! byte-identical.
 
-use crate::common::rom_path;
+use crate::common::{load, seam_console};
 use missingno_core::state_file::{StateMeta, read_state_file, write_state_file};
 use missingno_core::system::StateError;
-use missingno_vcs::DumpFit;
-use missingno_vcs::console::{Frame, Vcs};
-use missingno_vcs::debug::create_console;
+use missingno_vcs::console::Vcs;
 use missingno_vcs::snapshot::{capture_memory, read_state, restore};
 use missingno_vcs::state_schema::vcs_state_schema;
 use missingno_vcs::{CartType, TvStandard};
 
 const FRAME_LINE_BUDGET: usize = 400;
-
-fn load(relative: &str, cart: CartType) -> Vcs {
-    let rom = std::fs::read(rom_path(relative)).unwrap();
-    Vcs::new(&rom, TvStandard::Ntsc, Some(cart), DumpFit::Exact).unwrap()
-}
 
 fn owned_memory(vcs: &Vcs) -> Vec<(String, Vec<u8>)> {
     capture_memory(vcs)
@@ -31,15 +24,11 @@ fn owned_memory(vcs: &Vcs) -> Vec<(String, Vec<u8>)> {
         .collect()
 }
 
-fn frame_lines(frame: &Frame) -> Vec<[u8; 160]> {
-    frame.lines.clone()
-}
-
 /// Settle the console, land it at a frame boundary (frame-assembly buffer just
 /// drained) and then at an instruction boundary, and assert a save/restore into
 /// a fresh console reproduces the next `frames` fields byte-for-byte.
 fn assert_round_trip(relative: &str, cart: CartType, frames: usize) {
-    let mut original = load(relative, cart);
+    let mut original = load(relative, TvStandard::Ntsc, cart);
     for _ in 0..8 {
         original.step_frame(FRAME_LINE_BUDGET);
     }
@@ -56,7 +45,7 @@ fn assert_round_trip(relative: &str, cart: CartType, frames: usize) {
     let record = read_state(&original);
     let memory = owned_memory(&original);
 
-    let mut restored = load(relative, cart);
+    let mut restored = load(relative, TvStandard::Ntsc, cart);
     restore(&mut restored, &record, &memory).expect("restore succeeds");
 
     for i in 0..frames {
@@ -67,8 +56,7 @@ fn assert_round_trip(relative: &str, cart: CartType, frames: usize) {
             .step_frame(FRAME_LINE_BUDGET)
             .expect("restored frame");
         assert_eq!(
-            frame_lines(&a),
-            frame_lines(&b),
+            a.lines, b.lines,
             "{relative}: frame {i} after restore diverges"
         );
     }
@@ -85,7 +73,11 @@ fn round_trip_draw_delay_is_bit_exact() {
 fn round_trip_bank_f8_restores_the_bank() {
     // An F8 banked cart: the round-trip also proves the selected ROM bank is
     // restored (a fresh console would wake in bank 0).
-    let mut original = load("cartridge/bank-f8_ntsc.a26", CartType::Atari8K);
+    let mut original = load(
+        "cartridge/bank-f8_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Atari8K,
+    );
     for _ in 0..16 {
         original.step_frame(FRAME_LINE_BUDGET);
     }
@@ -94,7 +86,11 @@ fn round_trip_bank_f8_restores_the_bank() {
 
     let record = read_state(&original);
     let memory = owned_memory(&original);
-    let mut restored = load("cartridge/bank-f8_ntsc.a26", CartType::Atari8K);
+    let mut restored = load(
+        "cartridge/bank-f8_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Atari8K,
+    );
     restore(&mut restored, &record, &memory).unwrap();
     assert_eq!(
         restored.cartridge().selected_bank(),
@@ -110,7 +106,11 @@ fn round_trip_bank_fa_restores_cart_ram() {
     // The CBS RAM Plus (FA) board has 256 bytes of cart RAM; the round-trip
     // carries it as a memory span. Confirm the captured RAM is non-trivial and
     // restores to the same bytes, and the continuation is bit-exact.
-    let mut original = load("cartridge/bank-fa_ntsc.a26", CartType::CbsRamPlus);
+    let mut original = load(
+        "cartridge/bank-fa_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::CbsRamPlus,
+    );
     for _ in 0..16 {
         original.step_frame(FRAME_LINE_BUDGET);
     }
@@ -124,7 +124,11 @@ fn round_trip_bank_fa_restores_cart_ram() {
     assert_eq!(cart_ram.len(), 0x100, "CBS RAM Plus is 256 bytes");
 
     let record = read_state(&original);
-    let mut restored = load("cartridge/bank-fa_ntsc.a26", CartType::CbsRamPlus);
+    let mut restored = load(
+        "cartridge/bank-fa_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::CbsRamPlus,
+    );
     restore(&mut restored, &record, &memory).unwrap();
     let restored_ram = owned_memory(&restored)
         .into_iter()
@@ -138,7 +142,11 @@ fn round_trip_bank_fa_restores_cart_ram() {
 
 #[test]
 fn read_state_validates_against_the_schema() {
-    let mut vcs = load("tia-render/draw-delay_ntsc.a26", CartType::Plain4K);
+    let mut vcs = load(
+        "tia-render/draw-delay_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Plain4K,
+    );
     for _ in 0..4 {
         vcs.step_frame(FRAME_LINE_BUDGET);
     }
@@ -150,9 +158,7 @@ fn read_state_validates_against_the_schema() {
 // ── Seam save/load + error cases ─────────────────────────────────
 
 fn boundary_console(relative: &str) -> Box<dyn missingno_core::system::SystemDebugger> {
-    let rom = std::fs::read(rom_path(relative)).unwrap();
-    let console = create_console(&rom, "test".into(), Some(TvStandard::Ntsc), None, false).unwrap();
-    let mut dbg = console.into_debugger();
+    let mut dbg = seam_console(relative).into_debugger();
     // Step instructions to settle and land on an instruction boundary.
     for _ in 0..20_000 {
         dbg.step();
@@ -165,9 +171,7 @@ fn seam_save_and_load_round_trips() {
     let a = boundary_console("tia-render/draw-delay_ntsc.a26");
     let bytes = a.save_state().expect("save at an instruction boundary");
 
-    let rom = std::fs::read(rom_path("tia-render/draw-delay_ntsc.a26")).unwrap();
-    let console = create_console(&rom, "test".into(), Some(TvStandard::Ntsc), None, false).unwrap();
-    let mut b = console.into_debugger();
+    let mut b = seam_console("tia-render/draw-delay_ntsc.a26").into_debugger();
     b.load_state(&bytes).expect("load a matching state");
 }
 
@@ -217,7 +221,11 @@ fn load_rejects_corrupt_and_wrong_version() {
 #[test]
 fn state_file_round_trips_the_record() {
     // The full container path: capture → write → read → rebuild the record.
-    let mut vcs = load("cartridge/bank-f8_ntsc.a26", CartType::Atari8K);
+    let mut vcs = load(
+        "cartridge/bank-f8_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Atari8K,
+    );
     for _ in 0..8 {
         vcs.step_frame(FRAME_LINE_BUDGET);
     }
@@ -241,7 +249,11 @@ fn state_file_round_trips_the_record() {
 fn restore_parses_before_mutating_the_console() {
     use missingno_core::state::StateValue;
 
-    let mut vcs = load("tia-render/draw-delay_ntsc.a26", CartType::Plain4K);
+    let mut vcs = load(
+        "tia-render/draw-delay_ntsc.a26",
+        TvStandard::Ntsc,
+        CartType::Plain4K,
+    );
     for _ in 0..4 {
         vcs.step_frame(FRAME_LINE_BUDGET);
     }
@@ -252,7 +264,7 @@ fn restore_parses_before_mutating_the_console() {
     // U16 boundary field, here mistyped as a bool. Also move `pc` so a
     // half-applied restore would be observable on the probe.
     let mut bad = read_state(&vcs);
-    bad.set("pc", (pc_before ^ 0x0FF0) as u16);
+    bad.set("pc", pc_before ^ 0x0FF0);
     bad.set("beam", true);
 
     let err = restore(&mut vcs, &bad, &[]).unwrap_err();

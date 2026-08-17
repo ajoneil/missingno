@@ -5,7 +5,6 @@
 //! No address selects a specific bank, so software steps through them in order,
 //! and code that strobes must be byte-identical in every bank.
 
-const BANK_SIZE: usize = 0x1000;
 const BANKS: usize = 16;
 const HOTSPOT: u16 = 0x1FF0;
 
@@ -53,6 +52,6 @@ impl Megaboy {
     }
 
     pub fn peek(&self, address: u16) -> u8 {
-        self.image[self.bank * BANK_SIZE + (address & 0x0FFF) as usize]
+        super::banked_byte(&self.image, self.bank, address)
     }
 }

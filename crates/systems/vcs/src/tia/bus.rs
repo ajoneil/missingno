@@ -121,7 +121,7 @@ impl Tia {
     /// undriven line keeps the bus's retained byte. Side-effect-free.
     pub fn read(&self, address: u16, floating: u8) -> u8 {
         match address & 0x0F {
-            reg @ 0x00..=0x07 => self.collisions.read(reg as usize) | (floating & 0x3F),
+            reg @ 0x00..=0x07 => self.collisions.0[reg as usize] | (floating & 0x3F),
             reg @ 0x08..=0x0B => self.input.pot_level((reg - 0x08) as usize) | (floating & 0x7F),
             reg @ (0x0C | 0x0D) => {
                 self.input.trigger_level((reg - 0x0C) as usize) | (floating & 0x7F)

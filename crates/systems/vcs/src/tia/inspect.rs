@@ -67,7 +67,7 @@ impl Tia {
             pf_mirrored: self.playfield.mirrored,
             missile0: self.movables.m0.enabled && !self.movables.m0.locked_to_player,
             missile1: self.movables.m1.enabled && !self.movables.m1.locked_to_player,
-            ball: self.movables.bl.effective_enabled(),
+            ball: self.movables.bl.enabled(),
             color_p0: self.mux.color_p0,
             color_p1: self.mux.color_p1,
             color_pf: self.mux.color_pf,

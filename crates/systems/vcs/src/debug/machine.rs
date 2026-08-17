@@ -21,7 +21,7 @@ use missingno_core::system::{
     ControlId, ControlInput, DebugView, InspectSnapshot, RunningStatus, StateError, SystemConsole,
 };
 use missingno_core::video::{
-    self, DisplayTechnology, Field, Frame as VideoFrame, IndexedFrame, Television,
+    DisplayTechnology, Field, Frame as VideoFrame, IndexedFrame, Television,
 };
 use missingno_core::waveform::ChannelWave;
 
@@ -35,9 +35,9 @@ use crate::tv_standard::pixel_aspect;
 
 use super::controls::{self, apply_control};
 use super::frame::{
-    FRAME_BUDGET_LINES, VSYNC_LOCK_LINES, blank_frame, frame_interval, indexed_frame,
+    FRAME_BUDGET_LINES, VSYNC_LOCK_LINES, blank_frame, frame_interval, indexed_frame, tv_scanline,
 };
-use super::inspect::{VcsInspectState, capture};
+use super::inspect::{VcsInspectState, capture, cpu_register_groups};
 use super::probe::probe_tv_standard;
 use super::sections::vcs_sidebar_sections;
 
@@ -164,10 +164,7 @@ impl VcsCore {
 
     /// Show one completed scanline; the television says when the field ends.
     fn feed(&mut self, line: Scanline) -> Option<Field<VISIBLE_CLOCKS>> {
-        self.tv.feed(video::Scanline {
-            pixels: line.pixels,
-            vsync: line.vsync,
-        })
+        self.tv.feed(tv_scanline(line))
     }
 
     /// Show every scanline the console has completed since the last look — the
@@ -371,75 +368,25 @@ impl Machine for VcsSystem {
     /// lands on one, the field rides out with the stop, so the pending pc is
     /// reported now rather than stepped past on the next call.
     fn run_frame(core: &mut VcsCore, stops: &StopSet) -> CoreRun<IndexedFrame> {
-        let stops = Stops::new(stops);
-        for _ in 0..Self::RUN_BUDGET {
-            let (stop, frame) = core.step_instruction(&stops);
-            match stop {
-                Some(Stop::Breakpoint) => {
-                    return CoreRun {
-                        stop: CoreStop::Breakpoint,
-                        frame,
-                    };
-                }
-                Some(Stop::Watch(watch)) => {
-                    return CoreRun {
-                        stop: CoreStop::WatchHit(watch),
-                        frame,
-                    };
-                }
-                None if frame.is_some() => {
-                    return CoreRun {
-                        stop: CoreStop::Completed,
-                        frame,
-                    };
-                }
-                None => {}
-            }
-        }
-        CoreRun {
-            stop: CoreStop::BudgetExhausted,
-            frame: None,
-        }
+        run_bounded(core, stops, |_, stop, completed| {
+            stop_reason(stop).or(completed.then_some(CoreStop::Completed))
+        })
     }
 
     /// Run to the address the call returns to, carrying out the newest field
-    /// completed on the way.
+    /// completed on the way. Arriving there ends the run even when the boundary
+    /// also holds a stop.
     fn run_step_over(
         core: &mut VcsCore,
         stops: &StopSet,
         return_address: u16,
     ) -> CoreRun<IndexedFrame> {
-        let stops = Stops::new(stops);
-        let mut frame = None;
-        for _ in 0..Self::RUN_BUDGET {
-            let (stop, completed) = core.step_instruction(&stops);
-            frame = completed.or(frame);
-            if core.debugger.at_address(return_address) {
-                return CoreRun {
-                    stop: CoreStop::Completed,
-                    frame,
-                };
+        run_bounded(core, stops, |core, stop, _| {
+            match core.debugger.at_address(return_address) {
+                true => Some(CoreStop::Completed),
+                false => stop_reason(stop),
             }
-            match stop {
-                Some(Stop::Breakpoint) => {
-                    return CoreRun {
-                        stop: CoreStop::Breakpoint,
-                        frame,
-                    };
-                }
-                Some(Stop::Watch(watch)) => {
-                    return CoreRun {
-                        stop: CoreStop::WatchHit(watch),
-                        frame,
-                    };
-                }
-                None => {}
-            }
-        }
-        CoreRun {
-            stop: CoreStop::BudgetExhausted,
-            frame,
-        }
+        })
     }
 
     fn memory_regions(core: &VcsCore) -> Vec<MemoryRegion> {
@@ -473,7 +420,7 @@ impl Machine for VcsSystem {
     fn capture_trace(core: &mut VcsCore, path: &std::path::Path) -> Option<VideoFrame> {
         #[cfg(feature = "morepork")]
         {
-            use crate::trace::{TraceScope, Tracer, Trigger};
+            use crate::trace::{TraceScope, Tracer, Trigger, hex_digest};
 
             let mut tracer = Tracer::create_hashed(
                 path,
@@ -514,7 +461,7 @@ impl Machine for VcsSystem {
     }
 
     fn register_groups(state: &VcsInspectState) -> Vec<RegisterGroup> {
-        crate::debugger::cpu_register_groups(state.pc, state.a, state.x, state.y, state.s, state.p)
+        cpu_register_groups(state)
     }
 
     fn sidebar_sections(state: &VcsInspectState) -> Vec<Section> {
@@ -538,6 +485,39 @@ impl Machine for VcsSystem {
     }
 }
 
+/// The seam's reading of a debugger stop at the boundary just reached.
+fn stop_reason(stop: Option<Stop>) -> Option<CoreStop> {
+    match stop? {
+        Stop::Breakpoint => Some(CoreStop::Breakpoint),
+        Stop::Watch(watch) => Some(CoreStop::WatchHit(watch)),
+    }
+}
+
+/// Step instructions until `resolve` names an end, bounded so a kernel that
+/// never reaches one cannot stall the emulation thread. `resolve` sees the
+/// stop the boundary holds and whether that step completed a field; the newest
+/// completed field rides out with whatever ends the run.
+fn run_bounded(
+    core: &mut VcsCore,
+    stops: &StopSet,
+    resolve: impl Fn(&VcsCore, Option<Stop>, bool) -> Option<CoreStop>,
+) -> CoreRun<IndexedFrame> {
+    let stops = Stops::new(stops);
+    let mut frame = None;
+    for _ in 0..VcsSystem::RUN_BUDGET {
+        let (stop, completed) = core.step_instruction(&stops);
+        let completed_a_field = completed.is_some();
+        frame = completed.or(frame);
+        if let Some(stop) = resolve(core, stop, completed_a_field) {
+            return CoreRun { stop, frame };
+        }
+    }
+    CoreRun {
+        stop: CoreStop::BudgetExhausted,
+        frame,
+    }
+}
+
 /// The displayed field as a save-state framebuffer blob — informational; a
 /// restored console regenerates its display from the restored hardware.
 fn state_frame(frame: &IndexedFrame) -> StateFrame {
@@ -547,12 +527,6 @@ fn state_frame(frame: &IndexedFrame) -> StateFrame {
         format: PixelFormat::Indexed8,
         data: frame.pixels.to_vec(),
     }
-}
-
-/// The hex spelling of the ROM digest, as a trace's media binding carries it.
-#[cfg(feature = "morepork")]
-fn hex_digest(digest: &[u8; 32]) -> String {
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[cfg(test)]

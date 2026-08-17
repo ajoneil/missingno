@@ -2,7 +2,7 @@
 
 use missingno_core::state::{StateRecord, StateValue};
 
-use super::fields::{cap_field, field, hm_field, more_field, subsume_field};
+use super::fields::{field, object_field};
 use crate::console::Vcs;
 use crate::riot::RiotState;
 use crate::tia::TiaState;
@@ -15,14 +15,12 @@ pub fn read_state(vcs: &Vcs) -> StateRecord {
     let pending = vcs.pending_tia_writes();
 
     let mut r = StateRecord::new();
-    match vcs.cartridge().selected_bank() {
-        Some(bank) => {
-            r.set("cart_bank", bank as u16);
-        }
-        None => {
-            r.set("cart_bank", StateValue::Null);
-        }
-    }
+    r.set(
+        "cart_bank",
+        vcs.cartridge()
+            .selected_bank()
+            .map_or(StateValue::Null, |bank| StateValue::from(bank as u16)),
+    );
     // 6507 register file.
     r.set("a", cpu.a)
         .set("x", cpu.x)
@@ -84,10 +82,10 @@ fn write_tia(r: &mut StateRecord, t: &TiaState) {
     // HMOVE engine.
     let objs = ["p0", "p1", "m0", "m1", "bl"];
     for (i, o) in objs.iter().enumerate() {
-        r.set(hm_field(o), t.mot_hm_values[i]);
-        r.set(more_field(o), t.mot_more_movement[i]);
-        r.set(cap_field(o), t.mot_captured_hm[i]);
-        r.set(subsume_field(o), t.subsume_next_edge[i]);
+        r.set(object_field("mot_hm", o), t.mot_hm_values[i]);
+        r.set(object_field("mot_more", o), t.mot_more_movement[i]);
+        r.set(object_field("mot_cap", o), t.mot_captured_hm[i]);
+        r.set(object_field("subsume", o), t.subsume_next_edge[i]);
     }
     r.set("mot_arm_stage", t.mot_arm_stage)
         .set("mot_just_strobed", t.mot_just_strobed)

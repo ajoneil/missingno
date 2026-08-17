@@ -19,7 +19,6 @@
 //! Activision shipped. The readings only diverge for an armed byte outside
 //! $Cx-$Fx, which no shipped game produces.
 
-const BANK_SIZE: usize = 0x1000;
 /// The address whose access arms the latch, on the board's full 13-line decode.
 const ARM_ADDRESS: u16 = 0x01FE;
 /// The captured line: set selects bank 0, clear selects bank 1.
@@ -74,6 +73,6 @@ impl Activision {
     }
 
     pub fn peek(&self, address: u16) -> u8 {
-        self.image[self.bank * BANK_SIZE + (address & 0x0FFF) as usize]
+        super::banked_byte(&self.image, self.bank, address)
     }
 }

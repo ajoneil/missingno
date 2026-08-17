@@ -212,14 +212,13 @@ impl Tia {
         // MOTCK it merges into one stretched pulse, handled at the edge phase
         // below.
         let motion_clock = self.hsync.motck_fires();
-        let mut merged = PerObject::splat(false);
-        let mut merge_blocked = PerObject::splat(false);
+        let mut merge_advances = PerObject::splat(false);
         if let Some(ticks) = self.motion.step(self.hsync.phase()) {
             for (which, ticked) in ticks.iter() {
                 if ticked {
                     if motion_clock {
-                        merged[which] = self.movables.merge_delivery_fires(which);
-                        merge_blocked[which] = self.movables.merge_second_transfer_blocked(which);
+                        merge_advances[which] = self.movables.merge_delivery_fires(which)
+                            && !self.movables.merge_second_transfer_blocked(which);
                     } else {
                         self.movables.tick(which);
                     }
@@ -273,7 +272,7 @@ impl Tia {
                 } else {
                     self.movables.tick(which);
                 }
-                if merged[which] && !merge_blocked[which] {
+                if merge_advances[which] {
                     self.movables.tick(which);
                     self.subsume_next_edge[which] = true;
                 }
@@ -318,7 +317,7 @@ impl Tia {
         let position = self.hsync.position();
         AUDIO_COMMIT
             .iter()
-            .any(|&slot| (slot.saturating_sub(3)..slot).contains(&position))
+            .any(|&slot| (slot - 3..slot).contains(&position))
     }
 
     /// The HSync-counter wrap: one mechanism with two triggers — the

@@ -4,30 +4,31 @@
 //! board decides what answers there. A plain ROM mirrors up into it; the rest
 //! page it, shadow it with RAM, or both. One module per board.
 
-pub mod activision;
-pub mod amiga_power_play;
-pub mod atari;
-pub mod cbs_ram_plus;
-pub mod coleco_wf8;
-pub mod commavid;
+mod activision;
+mod amiga_power_play;
+mod atari;
+mod cbs_ram_plus;
+mod coleco_wf8;
+mod commavid;
 pub mod dpc;
-pub mod econobanking;
-pub mod fotomania;
-pub mod jane;
-pub mod m_network;
-pub mod megaboy;
-pub mod menu_driven_megacart;
-pub mod parker_bros;
-pub mod parker_bros_brazil;
-pub mod plain;
-pub mod superbanking;
+mod econobanking;
+mod fotomania;
+mod jane;
+mod low_bank_select;
+mod m_network;
+mod megaboy;
+mod menu_driven_megacart;
+mod parker_bros;
+mod parker_bros_brazil;
+mod plain;
+mod superbanking;
 pub mod supercharger;
-pub mod tigervision;
-pub mod tigervision_ram;
-pub mod tigervision_ram_plus;
-pub mod ua_ltd;
-pub mod wickstead_design;
-pub mod x07;
+mod tigervision;
+mod tigervision_ram;
+mod tigervision_ram_plus;
+mod ua_ltd;
+mod wickstead_design;
+mod x07;
 
 mod cart_type;
 mod stores;
@@ -41,9 +42,8 @@ use cbs_ram_plus::CbsRamPlus;
 use coleco_wf8::ColecoWf8;
 use commavid::Commavid;
 use dpc::Dpc;
-use econobanking::Econobanking;
-use fotomania::Fotomania;
 use jane::Jane;
+use low_bank_select::LowBankSelect;
 use m_network::MNetwork;
 use megaboy::Megaboy;
 use menu_driven_megacart::MenuDrivenMegacart;
@@ -55,7 +55,6 @@ use supercharger::Supercharger;
 use tigervision::Tigervision;
 use tigervision_ram::TigervisionRam;
 use tigervision_ram_plus::TigervisionRamPlus;
-use ua_ltd::UaLtd;
 use wickstead_design::WicksteadDesign;
 use x07::X07;
 
@@ -64,7 +63,7 @@ use x07::X07;
 /// The Supercharger's 6 KB dwarfs a plain board's state; one exists per
 /// console, so the spread costs nothing.
 #[allow(clippy::large_enum_variant)]
-pub enum Board {
+enum Board {
     /// Nothing in the slot: no silicon drives the window, so it floats.
     Empty,
     Supercharger(Supercharger),
@@ -80,15 +79,15 @@ pub enum Board {
     ColecoWf8(ColecoWf8),
     WicksteadDesign(WicksteadDesign),
     AmigaPowerPlay(AmigaPowerPlay),
-    Fotomania(Fotomania),
+    Fotomania(LowBankSelect),
     ParkerBrosBrazil(ParkerBrosBrazil),
     Activision(Activision),
-    UaLtd(UaLtd),
+    UaLtd(LowBankSelect),
     Tigervision(Tigervision),
     TigervisionRam(TigervisionRam),
     TigervisionRamPlus(TigervisionRamPlus),
     Superbanking(Superbanking),
-    Econobanking(Econobanking),
+    Econobanking(LowBankSelect),
     X07(X07),
     MenuDrivenMegacart(MenuDrivenMegacart),
 }
@@ -129,8 +128,17 @@ impl Board {
 /// A12 hands the bus to the cart. The port has no chip select, so this is the
 /// board's own decode, not the console's — which is why a board is free to
 /// watch the address lines below it too.
-pub(crate) fn selects_window(address: u16) -> bool {
+fn selects_window(address: u16) -> bool {
     address & 0x1000 != 0
+}
+
+/// A paged bank fills the whole window.
+const BANK_SIZE: usize = 0x1000;
+
+/// The image byte a window address reads on a board that pages a whole bank
+/// into it.
+fn banked_byte(image: &[u8], bank: usize, address: u16) -> u8 {
+    image[bank * BANK_SIZE + (address & 0x0FFF) as usize]
 }
 
 impl Cartridge {
@@ -207,7 +215,7 @@ impl Cartridge {
             CartType::ParkerBros => Board::ParkerBros(ParkerBros::new(rom)),
             CartType::MNetwork => Board::MNetwork(MNetwork::new(rom)),
             CartType::Commavid => Board::Commavid(Commavid::new(rom)),
-            CartType::UaLtd => Board::UaLtd(UaLtd::new(rom)),
+            CartType::UaLtd => Board::UaLtd(LowBankSelect::new(rom, ua_ltd::DECODE)),
             CartType::Tigervision => Board::Tigervision(Tigervision::new(rom)),
             CartType::Activision => Board::Activision(Activision::new(rom)),
             CartType::Dpc => Board::Dpc(Dpc::new(rom, clock_hz)),
@@ -217,12 +225,14 @@ impl Cartridge {
             CartType::ColecoWf8 => Board::ColecoWf8(ColecoWf8::new(rom)),
             CartType::WicksteadDesign => Board::WicksteadDesign(WicksteadDesign::new(rom)),
             CartType::AmigaPowerPlay => Board::AmigaPowerPlay(AmigaPowerPlay::new(rom)),
-            CartType::Fotomania => Board::Fotomania(Fotomania::new(rom)),
+            CartType::Fotomania => Board::Fotomania(LowBankSelect::new(rom, fotomania::DECODE)),
             CartType::ParkerBrosBrazil => Board::ParkerBrosBrazil(ParkerBrosBrazil::new(rom)),
             CartType::TigervisionRam => Board::TigervisionRam(TigervisionRam::new(rom)),
             CartType::TigervisionRamPlus => Board::TigervisionRamPlus(TigervisionRamPlus::new(rom)),
             CartType::Superbanking => Board::Superbanking(Superbanking::new(rom)),
-            CartType::Econobanking => Board::Econobanking(Econobanking::new(rom)),
+            CartType::Econobanking => {
+                Board::Econobanking(LowBankSelect::new(rom, econobanking::DECODE))
+            }
             CartType::X07 => Board::X07(X07::new(rom)),
             CartType::MenuDrivenMegacart => Board::MenuDrivenMegacart(MenuDrivenMegacart::new(rom)),
             CartType::DpcPlus | CartType::GameLine | CartType::Fa2 | CartType::FourA50 => {
@@ -285,28 +295,58 @@ impl Cartridge {
     pub fn write_access(&mut self, address: u16, data: u8, residue: u8) {
         let window = selects_window(address);
         match &mut self.board {
-            // Boards whose write port and hotspots sit inside the cart window.
-            Board::Atari(board) if window => board.write_access(address, data),
-            Board::CbsRamPlus(board) if window => board.write_access(address, data),
-            Board::ParkerBros(board) if window => board.write_access(address),
-            Board::MNetwork(board) if window => board.write_access(address, data),
-            Board::Commavid(board) if window => board.write_access(address, data),
-            Board::Dpc(board) if window => board.write_access(address, data),
-            Board::Megaboy(board) if window => board.write_access(address),
-            Board::Jane(board) if window => board.write_access(address),
-            Board::ColecoWf8(board) if window => board.write_access(address, data),
-            Board::AmigaPowerPlay(board) if window => board.write_access(address, data),
-            // Windowed boards ignore a write cycle outside the window.
-            Board::Atari(_)
-            | Board::CbsRamPlus(_)
-            | Board::ParkerBros(_)
-            | Board::MNetwork(_)
-            | Board::Commavid(_)
-            | Board::Dpc(_)
-            | Board::Megaboy(_)
-            | Board::Jane(_)
-            | Board::ColecoWf8(_)
-            | Board::AmigaPowerPlay(_) => {}
+            // Boards whose write port and hotspots sit inside the cart window,
+            // so a cycle outside it passes them by.
+            Board::Atari(board) => {
+                if window {
+                    board.write_access(address, data)
+                }
+            }
+            Board::CbsRamPlus(board) => {
+                if window {
+                    board.write_access(address, data)
+                }
+            }
+            Board::ParkerBros(board) => {
+                if window {
+                    board.write_access(address)
+                }
+            }
+            Board::MNetwork(board) => {
+                if window {
+                    board.write_access(address, data)
+                }
+            }
+            Board::Commavid(board) => {
+                if window {
+                    board.write_access(address, data)
+                }
+            }
+            Board::Dpc(board) => {
+                if window {
+                    board.write_access(address, data)
+                }
+            }
+            Board::Megaboy(board) => {
+                if window {
+                    board.write_access(address)
+                }
+            }
+            Board::Jane(board) => {
+                if window {
+                    board.write_access(address)
+                }
+            }
+            Board::ColecoWf8(board) => {
+                if window {
+                    board.write_access(address, data)
+                }
+            }
+            Board::AmigaPowerPlay(board) => {
+                if window {
+                    board.write_access(address, data)
+                }
+            }
             // Boards that watch the whole address bus for hotspots.
             Board::Supercharger(board) => board.write_access(address),
             Board::WicksteadDesign(board) => board.write_access(address, data),

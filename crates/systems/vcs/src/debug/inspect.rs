@@ -47,6 +47,14 @@ pub struct VcsInspectState {
     pub frame: u64,
 }
 
+/// The captured register file as one inspection group, so the paused view and
+/// the per-frame snapshot render the same thing.
+pub(super) fn cpu_register_groups(
+    state: &VcsInspectState,
+) -> Vec<missingno_core::inspect::RegisterGroup> {
+    crate::debugger::cpu_register_groups(state.pc, state.a, state.x, state.y, state.s, state.p)
+}
+
 /// Read the inspection state out of a console without disturbing it.
 pub(super) fn capture(vcs: &Vcs, frame: u64) -> VcsInspectState {
     let cpu = &vcs.cpu;

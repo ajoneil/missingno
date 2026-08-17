@@ -64,6 +64,11 @@ static OBSERVATIONS: &[ObservationDef<Observation>] = &[
     },
 ];
 
+/// The hex spelling of a digest, as a trace's media binding carries it.
+pub(crate) fn hex_digest(digest: &[u8]) -> String {
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 /// Run to the next instruction boundary, returning the CPU cycles consumed
 /// (WSYNC parks the CPU, so one store can span most of a scanline). The tracing
 /// counterpart of [`Vcs::step_instruction`].
@@ -99,16 +104,13 @@ impl Tracer {
         trigger: Trigger,
         scope: TraceScope,
     ) -> Result<Tracer, morepork::Error> {
-        let rom_sha256 = {
-            let mut hasher = Sha256::new();
-            hasher.update(rom);
-            hasher
-                .finalize()
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<String>()
-        };
-        Tracer::create_hashed(path, rom_sha256, region, trigger, scope)
+        Tracer::create_hashed(
+            path,
+            hex_digest(&Sha256::digest(rom)),
+            region,
+            trigger,
+            scope,
+        )
     }
 
     /// [`Tracer::create`] for a caller that holds the ROM's hash but not its
