@@ -2,44 +2,35 @@
 //! and the running snapshot. The part states its own layout.
 
 use missingno_core::inspect::RegisterGroup;
-use missingno_zilog_z80::inspect::RegisterFile;
 
 use super::Sg1000InspectState;
 
 pub(crate) fn register_groups(state: &Sg1000InspectState) -> Vec<RegisterGroup> {
-    missingno_zilog_z80::inspect::register_groups(&RegisterFile {
-        a: state.a,
-        f: state.f,
-        b: state.b,
-        c: state.c,
-        d: state.d,
-        e: state.e,
-        h: state.h,
-        l: state.l,
-        ix: state.ix,
-        iy: state.iy,
-        sp: state.sp,
-        pc: state.pc,
-    })
+    missingno_zilog_z80::inspect::register_groups(&state.registers)
 }
 
 #[cfg(test)]
 mod tests {
     use missingno_core::inspect::SectionBlock;
+    use missingno_zilog_z80::inspect::RegisterFile;
 
     use super::*;
     use crate::debug::fixtures::power_on_state;
 
     #[test]
     fn the_cpu_section_sets_the_pointers_and_pairs_apart_from_the_file() {
+        let powered = power_on_state();
         let state = Sg1000InspectState {
-            pc: 0x1234,
-            sp: 0xDFF0,
-            a: 0x5A,
-            f: 0x0F,
-            b: 0xC0,
-            c: 0xDE,
-            ..power_on_state()
+            registers: RegisterFile {
+                pc: 0x1234,
+                sp: 0xDFF0,
+                a: 0x5A,
+                f: 0x0F,
+                b: 0xC0,
+                c: 0xDE,
+                ..powered.registers
+            },
+            ..powered
         };
         let section = missingno_core::inspect::cpu_section(register_groups(&state));
         assert_eq!(section.summary, "pc 1234 · sp DFF0");

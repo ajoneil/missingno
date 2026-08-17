@@ -67,12 +67,29 @@ impl InstructionSet for Z80 {
     }
 }
 
+/// The address a `call` at `pc` returns to; `None` when the instruction there
+/// is not one. Both the unconditional and the condition-tested forms are three
+/// bytes long.
+pub fn step_over_target(opcode: u8, pc: u16) -> Option<u16> {
+    let is_call = opcode == 0xCD || (opcode & 0xC7) == 0xC4;
+    is_call.then(|| pc.wrapping_add(3))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn class(operand: &str) -> OperandClass {
         Z80.classify_operand(operand)
+    }
+
+    #[test]
+    fn steps_over_calls_only() {
+        assert_eq!(step_over_target(0xCD, 0x1000), Some(0x1003));
+        assert_eq!(step_over_target(0xC4, 0x1000), Some(0x1003));
+        assert_eq!(step_over_target(0xFC, 0x1000), Some(0x1003));
+        assert_eq!(step_over_target(0x00, 0x1000), None);
+        assert_eq!(step_over_target(0xC7, 0x1000), None);
     }
 
     #[test]

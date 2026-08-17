@@ -28,8 +28,6 @@ use crate::ppu::{self, Frame, PIXEL_ASPECT};
 /// CPU cycles per frame step, generous over the ~29.8k typical.
 const FRAME_BUDGET: u32 = 200_000;
 
-const JSR: u8 = 0x20;
-
 /// Named bits of the 2A03's 6502 status register `p`; the B flag is not
 /// architectural.
 const MOS6502_FLAGS: &[FlagName] = &[
@@ -321,7 +319,7 @@ impl Machine for NesSystem {
     }
 
     fn step_over_target(nes: &Nes) -> Option<u16> {
-        (nes.peek(nes.cpu.pc) == JSR).then(|| nes.cpu.pc.wrapping_add(3))
+        missingno_mos_6502::step_over_target(nes.peek(nes.cpu.pc), nes.cpu.pc)
     }
 
     fn inspect(nes: &Nes, frame_count: u64) -> NesInspectState {

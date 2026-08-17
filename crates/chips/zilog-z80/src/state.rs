@@ -9,146 +9,87 @@
 
 use crate::{Cpu, InterruptMode};
 
-/// Everything the CPU carries across an instruction boundary. The recorded bus
-/// trace is a diagnostic of the instruction just run, not state, and is absent
-/// here.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct CpuState {
-    pub a: u8,
-    pub f: u8,
-    pub b: u8,
-    pub c: u8,
-    pub d: u8,
-    pub e: u8,
-    pub h: u8,
-    pub l: u8,
-    /// The alternate set, reached through EX AF,AF' and EXX.
-    pub a_alt: u8,
-    pub f_alt: u8,
-    pub b_alt: u8,
-    pub c_alt: u8,
-    pub d_alt: u8,
-    pub e_alt: u8,
-    pub h_alt: u8,
-    pub l_alt: u8,
-    pub ix: u16,
-    pub iy: u16,
-    pub sp: u16,
-    pub pc: u16,
-    /// MEMPTR, which the undocumented flags of BIT n,(HL) read.
-    pub wz: u16,
-    pub i: u8,
-    pub r: u8,
-    pub iff1: bool,
-    pub iff2: bool,
-    pub interrupt_mode: InterruptMode,
-    pub halted: bool,
-    /// Interrupt acceptance is held off for the instruction following EI.
-    pub ei_pending: bool,
-    /// F left by the last flag-modifying instruction, else 0 — SCF/CCF fold it
-    /// into their undocumented X/Y flags.
-    pub q: u8,
-    /// Whether the instruction just retired touched the flags, which decides
-    /// the next Q.
-    pub flags_touched: bool,
-    /// Set by LD A,I / LD A,R, whose PF took IFF2.
-    pub p: bool,
-    pub nmi_pending: bool,
-    /// /INT as the board drives it, and as acceptance sampled it at the last
-    /// instruction's final T-state.
-    pub irq_line: bool,
-    pub irq_sampled: bool,
-    /// The address the pins hold; an internal T-state drives it unchanged.
-    pub address_bus: u16,
+/// Names each carried field once — as the saved value and as the CPU field it
+/// comes from — and generates the state, the capture, and the restore together,
+/// so the two directions cannot drift apart.
+macro_rules! carried_across_boundary {
+    ($($(#[$note:meta])* $saved:ident: $ty:ty = $register:ident),* $(,)?) => {
+        /// Everything the CPU carries across an instruction boundary. The
+        /// recorded bus trace is a diagnostic of the instruction just run, not
+        /// state, and is absent here.
+        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+        pub struct CpuState {
+            $($(#[$note])* pub $saved: $ty,)*
+        }
+
+        impl Cpu {
+            /// The state at an instruction boundary; `None` mid-instruction,
+            /// where the sequencer holds residue this does not name.
+            pub fn boundary_state(&self) -> Option<CpuState> {
+                if !self.at_instruction_boundary() {
+                    return None;
+                }
+                Some(CpuState { $($saved: self.$register,)* })
+            }
+
+            /// Reseat the CPU at an instruction boundary, discarding any
+            /// sequencer in flight and the bus trace that went with it.
+            pub fn restore_boundary(&mut self, state: &CpuState) {
+                $(self.$register = state.$saved;)*
+                self.trace.clear();
+                self.sequencer = None;
+            }
+        }
+    };
 }
 
-impl Cpu {
-    /// The state at an instruction boundary; `None` mid-instruction, where the
-    /// sequencer holds residue this does not name.
-    pub fn boundary_state(&self) -> Option<CpuState> {
-        if !self.at_instruction_boundary() {
-            return None;
-        }
-        Some(CpuState {
-            a: self.a,
-            f: self.f,
-            b: self.b,
-            c: self.c,
-            d: self.d,
-            e: self.e,
-            h: self.h,
-            l: self.l,
-            a_alt: self.a_,
-            f_alt: self.f_,
-            b_alt: self.b_,
-            c_alt: self.c_,
-            d_alt: self.d_,
-            e_alt: self.e_,
-            h_alt: self.h_,
-            l_alt: self.l_,
-            ix: self.ix,
-            iy: self.iy,
-            sp: self.sp,
-            pc: self.pc,
-            wz: self.wz,
-            i: self.i,
-            r: self.r,
-            iff1: self.iff1,
-            iff2: self.iff2,
-            interrupt_mode: self.im,
-            halted: self.halted,
-            ei_pending: self.ei_pending,
-            q: self.q,
-            flags_touched: self.flags_touched,
-            p: self.p,
-            nmi_pending: self.nmi_pending,
-            irq_line: self.irq_line,
-            irq_sampled: self.irq_sampled,
-            address_bus: self.last_address,
-        })
-    }
-
-    /// Reseat the CPU at an instruction boundary, discarding any sequencer in
-    /// flight and the bus trace that went with it.
-    pub fn restore_boundary(&mut self, state: &CpuState) {
-        self.a = state.a;
-        self.f = state.f;
-        self.b = state.b;
-        self.c = state.c;
-        self.d = state.d;
-        self.e = state.e;
-        self.h = state.h;
-        self.l = state.l;
-        self.a_ = state.a_alt;
-        self.f_ = state.f_alt;
-        self.b_ = state.b_alt;
-        self.c_ = state.c_alt;
-        self.d_ = state.d_alt;
-        self.e_ = state.e_alt;
-        self.h_ = state.h_alt;
-        self.l_ = state.l_alt;
-        self.ix = state.ix;
-        self.iy = state.iy;
-        self.sp = state.sp;
-        self.pc = state.pc;
-        self.wz = state.wz;
-        self.i = state.i;
-        self.r = state.r;
-        self.iff1 = state.iff1;
-        self.iff2 = state.iff2;
-        self.im = state.interrupt_mode;
-        self.halted = state.halted;
-        self.ei_pending = state.ei_pending;
-        self.q = state.q;
-        self.flags_touched = state.flags_touched;
-        self.p = state.p;
-        self.nmi_pending = state.nmi_pending;
-        self.irq_line = state.irq_line;
-        self.irq_sampled = state.irq_sampled;
-        self.last_address = state.address_bus;
-        self.trace.clear();
-        self.sequencer = None;
-    }
+carried_across_boundary! {
+    a: u8 = a,
+    f: u8 = f,
+    b: u8 = b,
+    c: u8 = c,
+    d: u8 = d,
+    e: u8 = e,
+    h: u8 = h,
+    l: u8 = l,
+    /// The alternate set, reached through EX AF,AF' and EXX.
+    a_alt: u8 = a_,
+    f_alt: u8 = f_,
+    b_alt: u8 = b_,
+    c_alt: u8 = c_,
+    d_alt: u8 = d_,
+    e_alt: u8 = e_,
+    h_alt: u8 = h_,
+    l_alt: u8 = l_,
+    ix: u16 = ix,
+    iy: u16 = iy,
+    sp: u16 = sp,
+    pc: u16 = pc,
+    /// MEMPTR, which the undocumented flags of BIT n,(HL) read.
+    wz: u16 = wz,
+    i: u8 = i,
+    r: u8 = r,
+    iff1: bool = iff1,
+    iff2: bool = iff2,
+    interrupt_mode: InterruptMode = im,
+    halted: bool = halted,
+    /// Interrupt acceptance is held off for the instruction following EI.
+    ei_pending: bool = ei_pending,
+    /// F left by the last flag-modifying instruction, else 0 — SCF/CCF fold it
+    /// into their undocumented X/Y flags.
+    q: u8 = q,
+    /// Whether the instruction just retired touched the flags, which decides
+    /// the next Q.
+    flags_touched: bool = flags_touched,
+    /// Set by LD A,I / LD A,R, whose PF took IFF2.
+    p: bool = p,
+    nmi_pending: bool = nmi_pending,
+    /// /INT as the board drives it, and as acceptance sampled it at the last
+    /// instruction's final T-state.
+    irq_line: bool = irq_line,
+    irq_sampled: bool = irq_sampled,
+    /// The address the pins hold; an internal T-state drives it unchanged.
+    address_bus: u16 = last_address,
 }
 
 #[cfg(test)]

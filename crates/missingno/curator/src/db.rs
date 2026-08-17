@@ -9,6 +9,8 @@ use missingno_gamedb::{
     Sg1000, Sg1000CartType, Sha1, Slug, Tree, TvFormat, Vcs, VcsCartType,
 };
 
+use crate::vocabulary;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TreeId {
     Gb,
@@ -1096,148 +1098,45 @@ fn sg1000_board(code: &str) -> Result<Option<Sg1000CartType>, String> {
 
 /// A JSON string → LinkType, rejecting unknowns with the valid set named.
 pub fn parse_link_type(value: &str) -> Result<LinkType, String> {
-    Ok(match value {
-        "Wiki" => LinkType::Wiki,
-        "Manual" => LinkType::Manual,
-        "Source" => LinkType::Source,
-        "Speedrun" => LinkType::Speedrun,
-        "UnusedContent" => LinkType::UnusedContent,
-        "TechnicalReference" => LinkType::TechnicalReference,
-        "Guide" => LinkType::Guide,
-        "Community" => LinkType::Community,
-        "Store" => LinkType::Store,
-        "DownloadPage" => LinkType::DownloadPage,
-        "Download" => LinkType::Download,
-        other => {
-            return Err(format!(
-                "unknown link_type {other:?}; expected Wiki, Manual, Source, Speedrun,                  UnusedContent, TechnicalReference, Guide, Community, Store, DownloadPage, or Download"
-            ));
-        }
-    })
+    vocabulary::LINK_TYPES.parse(value)
 }
 
 /// Parse a language name for a link's `languages` list.
 pub fn parse_language(value: &str) -> Result<Language, String> {
-    Ok(match value {
-        "English" => Language::English,
-        "French" => Language::French,
-        "German" => Language::German,
-        "Spanish" => Language::Spanish,
-        "Italian" => Language::Italian,
-        "Portuguese" => Language::Portuguese,
-        "Dutch" => Language::Dutch,
-        "Japanese" => Language::Japanese,
-        "Swedish" => Language::Swedish,
-        other => {
-            return Err(format!(
-                "unknown language {other:?}; expected English, French, German, Spanish, Italian, Portuguese, Dutch, Japanese, or Swedish"
-            ));
-        }
-    })
+    vocabulary::LANGUAGES.parse(value)
 }
 
 pub fn parse_release_status(value: &str) -> Result<ReleaseStatus, String> {
-    Ok(match value {
-        "Released" => ReleaseStatus::Released,
-        "Demo" => ReleaseStatus::Demo,
-        "WorkInProgress" => ReleaseStatus::WorkInProgress,
-        "Beta" => ReleaseStatus::Beta,
-        "Prototype" => ReleaseStatus::Prototype,
-        other => {
-            return Err(format!(
-                "unknown status {other:?}; expected Released, Demo, WorkInProgress, Beta, or Prototype"
-            ));
-        }
-    })
+    vocabulary::RELEASE_STATUSES.parse(value)
 }
 
 /// Parse a defect argument: a name sets it, `"None"`/`""` clears it.
 pub fn parse_defect(value: &str) -> Result<Option<Defect>, String> {
-    Ok(match value {
-        "Overdump" => Some(Defect::Overdump),
-        "BadDump" => Some(Defect::BadDump),
-        "None" | "" => None,
-        other => {
-            return Err(format!(
-                "unknown defect {other:?}; expected Overdump, BadDump, or None"
-            ));
-        }
-    })
+    if value.is_empty() {
+        return Ok(None);
+    }
+    vocabulary::DEFECTS.parse(value)
 }
 
 /// PAL-M is Brazil's: PAL colour on System M's 525-line/59.94 Hz raster.
 pub fn parse_tv_format(value: &str) -> Result<TvFormat, String> {
-    Ok(match value {
-        "Ntsc" => TvFormat::Ntsc,
-        "Pal" => TvFormat::Pal,
-        "Pal60" => TvFormat::Pal60,
-        "PalM" => TvFormat::PalM,
-        "Secam" => TvFormat::Secam,
-        other => {
-            return Err(format!(
-                "unknown tv_format {other:?}; expected Ntsc, Pal, Pal60, PalM, or Secam"
-            ));
-        }
-    })
+    vocabulary::TV_FORMATS.parse(value)
 }
 
 /// Non-default VCS controllers; a joystick game leaves the field unset.
 pub fn parse_controller(value: &str) -> Result<Controller, String> {
-    Ok(match value {
-        "Joystick" => Controller::Joystick,
-        "Paddle" => Controller::Paddle,
-        "Driving" => Controller::Driving,
-        "Keypad" => Controller::Keypad,
-        "Trackball" => Controller::Trackball,
-        "BoosterGrip" => Controller::BoosterGrip,
-        "KidVid" => Controller::KidVid,
-        "MindLink" => Controller::MindLink,
-        other => {
-            return Err(format!(
-                "unknown controller {other:?}; expected Joystick, Paddle, Driving, Keypad, Trackball, BoosterGrip, KidVid, or MindLink"
-            ));
-        }
-    })
+    vocabulary::CONTROLLERS.parse(value)
 }
 
 /// The region vocabulary is closed: unknown text is a data error, not a value.
 pub fn parse_region(value: &str) -> Result<Region, String> {
-    Ok(match value {
-        "Japan" => Region::Japan,
-        "Usa" => Region::Usa,
-        "Europe" => Region::Europe,
-        "World" => Region::World,
-        "Taiwan" => Region::Taiwan,
-        "Germany" => Region::Germany,
-        "France" => Region::France,
-        "China" => Region::China,
-        "Spain" => Region::Spain,
-        "Italy" => Region::Italy,
-        "Australia" => Region::Australia,
-        "UnitedKingdom" => Region::UnitedKingdom,
-        "Korea" => Region::Korea,
-        "HongKong" => Region::HongKong,
-        "Sweden" => Region::Sweden,
-        "Netherlands" => Region::Netherlands,
-        "Canada" => Region::Canada,
-        "Brazil" => Region::Brazil,
-        other => return Err(format!("unknown region {other:?}")),
-    })
+    vocabulary::REGIONS
+        .lookup(value)
+        .ok_or_else(|| format!("unknown region {value:?}"))
 }
 
 pub fn parse_mod_category(value: &str) -> Result<ModCategory, String> {
-    Ok(match value {
-        "Translation" => ModCategory::Translation,
-        "QualityOfLife" => ModCategory::QualityOfLife,
-        "ContentChange" => ModCategory::ContentChange,
-        "Compatibility" => ModCategory::Compatibility,
-        "TotalConversion" => ModCategory::TotalConversion,
-        other => {
-            return Err(format!(
-                "unknown category {other:?}; expected Translation, QualityOfLife, ContentChange, Compatibility, or TotalConversion"
-            ));
-        }
-    })
+    vocabulary::MOD_CATEGORIES.parse(value)
 }
 
 fn slugify(title: &str) -> String {

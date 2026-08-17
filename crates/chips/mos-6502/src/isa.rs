@@ -66,12 +66,25 @@ fn flow(address: u16, bytes: [u8; 3]) -> Flow {
     }
 }
 
+/// The address a `jsr` at `pc` returns to; `None` when the instruction there is
+/// not one.
+pub fn step_over_target(opcode: u8, pc: u16) -> Option<u16> {
+    matches!(DECODE[opcode as usize].op, Op::Jsr).then(|| pc.wrapping_add(3))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn class(operand: &str) -> OperandClass {
         Mos6502.classify_operand(operand)
+    }
+
+    #[test]
+    fn steps_over_subroutine_calls_only() {
+        assert_eq!(step_over_target(0x20, 0x1000), Some(0x1003));
+        assert_eq!(step_over_target(0xEA, 0x1000), None);
+        assert_eq!(step_over_target(0x4C, 0x1000), None);
     }
 
     #[test]

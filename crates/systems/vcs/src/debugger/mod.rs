@@ -19,9 +19,6 @@ use watch::{WatchCondition, watch_from_condition, watch_to_condition};
 pub(crate) use watch::CART_BANK_KEY;
 pub use watch::{supports_watch, watchables};
 
-/// A JSR opcode, for step-over.
-const JSR: u8 = 0x20;
-
 // Synthetic address bases above the real bus, where the debugger exposes
 // bank-complete cartridge stores past the board's paged window. The scheme
 // mirrors the Game Boy debugger's: each store gets its own decade with room for
@@ -197,7 +194,7 @@ impl Debugger {
     /// The address a call at the program counter returns to; `None` when the
     /// instruction there is not one.
     pub fn step_over_target(&self) -> Option<u16> {
-        (self.vcs.peek(self.vcs.cpu.pc) == JSR).then(|| self.vcs.cpu.pc.wrapping_add(3))
+        missingno_mos_6502::step_over_target(self.vcs.peek(self.vcs.cpu.pc), self.vcs.cpu.pc)
     }
 
     /// The 6507's 13-line address map, named for what the board decodes, plus

@@ -28,7 +28,7 @@ mod state;
 
 use sequencer::Sequencer;
 
-pub use isa::Z80;
+pub use isa::{Z80, step_over_target};
 pub use state::CpuState;
 
 pub mod flags {

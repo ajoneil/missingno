@@ -17,7 +17,7 @@ pub mod disasm;
 pub mod isa;
 mod sequencer;
 
-pub use isa::Mos6502;
+pub use isa::{Mos6502, step_over_target};
 
 use sequencer::{InterruptKind, State};
 

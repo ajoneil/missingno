@@ -9,6 +9,7 @@ mod db;
 mod play;
 mod remote;
 mod verify;
+mod vocabulary;
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -1669,17 +1670,10 @@ impl Curator {
                     applied.push("cart_type");
                 }
                 if let Some(kind) = set.get("kind").and_then(serde_json::Value::as_str) {
-                    let kind = match kind.to_ascii_lowercase().as_str() {
-                        "game" => missingno_gamedb::GameKind::Game,
-                        "demo" => missingno_gamedb::GameKind::Demo,
-                        "demoscene" => missingno_gamedb::GameKind::Demoscene,
-                        "test" => missingno_gamedb::GameKind::Test,
-                        "tool" => missingno_gamedb::GameKind::Tool,
-                        other => {
-                            return error_result(format!(
-                                "unknown kind {other:?}; expected Game, Demo, Demoscene, Test or Tool"
-                            ));
-                        }
+                    let Some(kind) = vocabulary::GAME_KINDS.lookup_ignoring_case(kind) else {
+                        return error_result(
+                            vocabulary::GAME_KINDS.unknown(&kind.to_ascii_lowercase()),
+                        );
                     };
                     entry.game.set_kind(kind);
                     applied.push("kind");

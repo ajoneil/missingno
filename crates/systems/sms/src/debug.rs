@@ -42,18 +42,7 @@ const CODE_WINDOW_ROWS: usize = 10;
 
 #[derive(Clone, Default)]
 pub struct SmsInspectState {
-    pub a: u8,
-    pub f: u8,
-    pub b: u8,
-    pub c: u8,
-    pub d: u8,
-    pub e: u8,
-    pub h: u8,
-    pub l: u8,
-    pub ix: u16,
-    pub iy: u16,
-    pub sp: u16,
-    pub pc: u16,
+    pub registers: RegisterFile,
     pub line: u16,
     pub dot: u16,
     pub vdp_status: u8,
@@ -99,20 +88,7 @@ impl InspectSnapshot for SmsSnapshot {
 /// The Z80 register file as one inspection group, shared by the live view and
 /// the running snapshot. The part states its own layout.
 fn cpu_register_groups(state: &SmsInspectState) -> Vec<RegisterGroup> {
-    missingno_zilog_z80::inspect::register_groups(&RegisterFile {
-        a: state.a,
-        f: state.f,
-        b: state.b,
-        c: state.c,
-        d: state.d,
-        e: state.e,
-        h: state.h,
-        l: state.l,
-        ix: state.ix,
-        iy: state.iy,
-        sp: state.sp,
-        pc: state.pc,
-    })
+    missingno_zilog_z80::inspect::register_groups(&state.registers)
 }
 
 /// The SMS sidebar sections, shared by the live view and the running snapshot:
@@ -322,10 +298,7 @@ impl Machine for SmsSystem {
     }
 
     fn step_over_target(sms: &Sms) -> Option<u16> {
-        // CALL and RST push a return path; run to the next address.
-        let opcode = sms.peek(sms.cpu.pc);
-        let is_call = opcode == 0xCD || (opcode & 0xC7) == 0xC4;
-        is_call.then(|| sms.cpu.pc.wrapping_add(3))
+        missingno_zilog_z80::step_over_target(sms.peek(sms.cpu.pc), sms.cpu.pc)
     }
 
     fn inspect(sms: &Sms, frame_count: u64) -> SmsInspectState {
@@ -347,18 +320,7 @@ impl Machine for SmsSystem {
         // The mapper latches mirror into RAM, which inspection can read.
         let banks = [0, 1, 2].map(|slot| sms.peek(0xFFFD + slot as u16));
         SmsInspectState {
-            a: cpu.a,
-            f: cpu.f,
-            b: cpu.b,
-            c: cpu.c,
-            d: cpu.d,
-            e: cpu.e,
-            h: cpu.h,
-            l: cpu.l,
-            ix: cpu.ix,
-            iy: cpu.iy,
-            sp: cpu.sp,
-            pc: cpu.pc,
+            registers: RegisterFile::of(cpu),
             line: sms.vdp.line(),
             dot: sms.vdp.dot(),
             vdp_status: sms.vdp.peek_status(),
@@ -388,8 +350,8 @@ impl Machine for SmsSystem {
 
     fn running_status(state: &SmsInspectState, frame: u64) -> RunningStatus {
         RunningStatus {
-            pc: state.pc.into(),
-            sp: state.sp.into(),
+            pc: state.registers.pc.into(),
+            sp: state.registers.sp.into(),
             video_label: "VDP",
             video_summary: format!("line {} · dot {}", state.line, state.dot),
             frame,

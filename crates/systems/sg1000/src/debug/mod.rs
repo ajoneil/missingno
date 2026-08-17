@@ -31,6 +31,7 @@ use missingno_core::video::{DisplayTechnology, Frame, IndexedFrame};
 use missingno_core::waveform::ChannelWave;
 use missingno_ti_psg::{NoiseMode, NoiseRate, Variant};
 use missingno_ti_vdp::{Frame as VdpFrame, Standard, VISIBLE_WIDTH};
+use missingno_zilog_z80::inspect::RegisterFile;
 
 use crate::cartridge::{CartType, CartridgeError};
 use crate::console::{JOY1, JOY2, STANDARD, Sg1000, TSTATES_PER_FRAME};
@@ -53,18 +54,7 @@ const CODE_WINDOW_ROWS: usize = 10;
 
 #[derive(Clone)]
 pub struct Sg1000InspectState {
-    pub a: u8,
-    pub f: u8,
-    pub b: u8,
-    pub c: u8,
-    pub d: u8,
-    pub e: u8,
-    pub h: u8,
-    pub l: u8,
-    pub ix: u16,
-    pub iy: u16,
-    pub sp: u16,
-    pub pc: u16,
+    pub registers: RegisterFile,
     pub standard: Standard,
     pub line: u16,
     pub dot: u16,
@@ -278,10 +268,7 @@ impl Machine for Sg1000System {
     }
 
     fn step_over_target(sg: &Sg1000) -> Option<u16> {
-        // CALL and RST push a return path; run to the next address.
-        let opcode = sg.peek(sg.cpu.pc);
-        let is_call = opcode == 0xCD || (opcode & 0xC7) == 0xC4;
-        is_call.then(|| sg.cpu.pc.wrapping_add(3))
+        missingno_zilog_z80::step_over_target(sg.peek(sg.cpu.pc), sg.cpu.pc)
     }
 
     fn inspect(sg: &Sg1000, frame_count: u64) -> Sg1000InspectState {
@@ -301,18 +288,7 @@ impl Machine for Sg1000System {
             address = address.wrapping_add(4);
         }
         Sg1000InspectState {
-            a: cpu.a,
-            f: cpu.f,
-            b: cpu.b,
-            c: cpu.c,
-            d: cpu.d,
-            e: cpu.e,
-            h: cpu.h,
-            l: cpu.l,
-            ix: cpu.ix,
-            iy: cpu.iy,
-            sp: cpu.sp,
-            pc: cpu.pc,
+            registers: RegisterFile::of(cpu),
             standard: sg.vdp().standard(),
             line: sg.vdp().line(),
             dot: sg.vdp().dot(),
@@ -361,8 +337,8 @@ impl Machine for Sg1000System {
 
     fn running_status(state: &Sg1000InspectState, frame: u64) -> RunningStatus {
         RunningStatus {
-            pc: state.pc.into(),
-            sp: state.sp.into(),
+            pc: state.registers.pc.into(),
+            sp: state.registers.sp.into(),
             video_label: "VDP",
             video_summary: format!("line {} · dot {}", state.line, state.dot),
             frame,
