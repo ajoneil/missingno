@@ -129,8 +129,6 @@ struct Curator {
     session_log: Vec<String>,
     /// sha1 → fetched ROM bytes, kept for boot verification.
     rom_cache: std::collections::HashMap<String, std::sync::Arc<Vec<u8>>>,
-    fetching: bool,
-    scanning: bool,
     playing: Option<(String, play::PlaySession)>,
     play_screen: Option<missingno_iced::ScreenView>,
     playing_sha1: Option<String>,
@@ -181,9 +179,7 @@ enum Message {
     ToggleSwitch(usize),
     /// Press a momentary console switch; release follows after a beat.
     TapSwitch(ControlId),
-    Fetch {
-        play_after: bool,
-    },
+    Fetch,
     Fetched(String, Result<(String, std::sync::Arc<Vec<u8>>), String>),
     ScanRoms,
     ScannedRoms(Result<std::sync::Arc<RomIndex>, String>),
@@ -324,8 +320,6 @@ impl Curator {
                 session_marks: std::collections::HashMap::new(),
                 session_log: Vec::new(),
                 rom_cache: std::collections::HashMap::new(),
-                fetching: false,
-                scanning: false,
                 playing: None,
                 play_screen: None,
                 playing_sha1: None,
@@ -723,15 +717,14 @@ impl Curator {
                     );
                 }
             }
-            Message::Fetch { play_after } => {
+            Message::Fetch => {
                 if let (Ok(db), Some(i)) = (&self.db, self.selected) {
                     let entry = &db.entries[i];
                     let Some(url) = entry.game.download_url() else {
                         return Task::none();
                     };
                     let key = entry.key();
-                    self.play_after_fetch = play_after.then(|| key.clone());
-                    self.fetching = true;
+                    self.play_after_fetch = Some(key.clone());
                     self.verify_status
                         .insert(key.clone(), format!("fetching {url}…"));
                     return Task::perform(
@@ -742,49 +735,42 @@ impl Curator {
                     );
                 }
             }
-            Message::Fetched(key, result) => {
-                self.fetching = false;
-                match result {
-                    Ok((url, bytes)) => {
-                        let sha1 = verify::sha1_hex(&bytes);
-                        let size = bytes.len() as u64;
-                        self.rom_cache.insert(sha1.clone(), bytes);
-                        self.fetched_sha1.insert(key.clone(), sha1.clone());
-                        let sha1_for_play = sha1.clone();
-                        if let Some(i) = self.find_entry(&key) {
-                            let bytes = self.rom_cache.get(&sha1).cloned();
-                            if let Some(bytes) = bytes {
-                                self.stage_header_facts(i, &bytes);
-                            }
-                        }
-                        let mut line = format!("{} bytes from {url}\nsha1 {sha1}", size);
-                        if let Ok(db) = &mut self.db
-                            && let Some(i) = db.entries.iter().position(|e| e.key() == key)
-                        {
-                            if db.entries[i].game.stage_artifact(&sha1, size) {
-                                db.entries[i].dirty = true;
-                                line.push_str(" — NEW, staged onto sourced release");
-                            } else {
-                                line.push_str(" — matches a known artifact");
-                            }
-                        }
-                        self.verify_status.insert(key.clone(), line);
-                        if self.play_after_fetch.as_deref() == Some(key.as_str()) {
-                            self.play_after_fetch = None;
-                            return Task::done(Message::Play(BootSource::Cached(sha1_for_play)));
+            Message::Fetched(key, result) => match result {
+                Ok((url, bytes)) => {
+                    let sha1 = verify::sha1_hex(&bytes);
+                    let size = bytes.len() as u64;
+                    self.rom_cache.insert(sha1.clone(), bytes.clone());
+                    self.fetched_sha1.insert(key.clone(), sha1.clone());
+                    let sha1_for_play = sha1.clone();
+                    if let Some(i) = self.find_entry(&key) {
+                        self.stage_header_facts(i, &bytes);
+                    }
+                    let mut line = format!("{} bytes from {url}\nsha1 {sha1}", size);
+                    if let Ok(db) = &mut self.db
+                        && let Some(i) = db.entries.iter().position(|e| e.key() == key)
+                    {
+                        if db.entries[i].game.stage_artifact(&sha1, size) {
+                            db.entries[i].dirty = true;
+                            line.push_str(" — NEW, staged onto sourced release");
+                        } else {
+                            line.push_str(" — matches a known artifact");
                         }
                     }
-                    Err(e) => {
-                        self.verify_status.insert(key, e);
+                    self.verify_status.insert(key.clone(), line);
+                    if self.play_after_fetch.as_deref() == Some(key.as_str()) {
                         self.play_after_fetch = None;
+                        return Task::done(Message::Play(BootSource::Cached(sha1_for_play)));
                     }
                 }
-            }
+                Err(e) => {
+                    self.verify_status.insert(key, e);
+                    self.play_after_fetch = None;
+                }
+            },
             Message::ScanRoms => {
                 if self.rom_dir.is_some() || self.collection_dir.is_some() {
                     let inbox = self.rom_dir.clone();
                     let collection = self.collection_dir.clone();
-                    self.scanning = true;
                     self.status = "scanning ROM folders…".to_owned();
                     return Task::perform(
                         smol::unblock(move || {
@@ -796,30 +782,26 @@ impl Curator {
                     );
                 }
             }
-            Message::ScannedRoms(result) => {
-                self.scanning = false;
-                match result {
-                    Ok(index) => {
-                        let (collection, inbox) = (index.collection, index.inbox);
-                        self.rom_index = Some(index.clone());
-                        let added = match &mut self.db {
-                            Ok(db) => db.add_unmatched_roms(&index),
-                            Err(_) => 0,
-                        };
-                        let dupes = index.duplicates_moved;
-                        let mut parts =
-                            vec![format!("{collection} in collection · {inbox} in inbox")];
-                        if dupes > 0 {
-                            parts.push(format!("{dupes} inbox duplicate(s) set aside"));
-                        }
-                        if added > 0 {
-                            parts.push(format!("{added} matched no manifest → new records"));
-                        }
-                        self.status = parts.join(" · ");
+            Message::ScannedRoms(result) => match result {
+                Ok(index) => {
+                    let (collection, inbox) = (index.collection, index.inbox);
+                    self.rom_index = Some(index.clone());
+                    let added = match &mut self.db {
+                        Ok(db) => db.add_unmatched_roms(&index),
+                        Err(_) => 0,
+                    };
+                    let dupes = index.duplicates_moved;
+                    let mut parts = vec![format!("{collection} in collection · {inbox} in inbox")];
+                    if dupes > 0 {
+                        parts.push(format!("{dupes} inbox duplicate(s) set aside"));
                     }
-                    Err(e) => self.status = format!("scan failed: {e}"),
+                    if added > 0 {
+                        parts.push(format!("{added} matched no manifest → new records"));
+                    }
+                    self.status = parts.join(" · ");
                 }
-            }
+                Err(e) => self.status = format!("scan failed: {e}"),
+            },
             Message::FilterTree(TreeChoice(tree)) => {
                 self.filter_tree = tree;
                 self.selected = None;
@@ -1082,7 +1064,7 @@ impl Curator {
                 break 'boot Task::done(Message::Play(BootSource::Cached(sha1.clone())));
             }
             if entry.game.download_url().is_some() {
-                break 'boot Task::done(Message::Fetch { play_after: true });
+                break 'boot Task::done(Message::Fetch);
             }
             self.status = format!("{key}: no local dump and no download source");
             Task::none()
@@ -1996,19 +1978,14 @@ impl Curator {
                         return error_result("controllers apply to VCS mods only");
                     }
                 }
-                let applied = Some(applied);
-                match applied {
-                    Some(applied) if applied.is_empty() => {
-                        error_result("no recognized fields in set")
+                if applied.is_empty() {
+                    error_result("no recognized fields in set")
+                } else {
+                    db.entries[i].dirty = true;
+                    if let Err(e) = db.write_entry(i) {
+                        return error_result(format!("staged, but writing {key} failed: {e}"));
                     }
-                    Some(applied) => {
-                        db.entries[i].dirty = true;
-                        if let Err(e) = db.write_entry(i) {
-                            return error_result(format!("staged, but writing {key} failed: {e}"));
-                        }
-                        text_result(format!("updated mod on {key}: {}", applied.join(", ")))
-                    }
-                    None => error_result(format!("mod {mod_name:?} vanished mid-edit")),
+                    text_result(format!("updated mod on {key}: {}", applied.join(", ")))
                 }
             }
             "split_release" => {
@@ -2347,11 +2324,7 @@ impl Curator {
                     return error_result("db not loaded");
                 };
                 let entry = &db.entries[i];
-                let mut needles = vec![missingno_gamedb::normalized_title(entry.game.title())];
-                for release_title in entry.game.release_titles() {
-                    needles.push(missingno_gamedb::normalized_title(&release_title));
-                }
-                needles.retain(|n| !n.is_empty());
+                let needles = entry.title_needles();
                 let lines: Vec<String> = db
                     .entries
                     .iter()
@@ -3028,8 +3001,8 @@ impl Curator {
         };
 
         let left: Option<Element<'_, Message>> = self.list_visible.then_some(left.into());
-        let body: Element<'_, Message> = match &self.playing {
-            Some((key, _)) => {
+        let play_region: Element<'_, Message> = match &self.playing {
+            Some((key, session)) => {
                 let mut pane = column![
                     row![
                         text(format!(
@@ -3043,42 +3016,37 @@ impl Curator {
                     .align_y(iced::Alignment::Center),
                 ]
                 .spacing(8);
-                if let Some((_, session)) = &self.playing {
-                    let mut switches = row![
-                        button(text("Reset").size(12))
-                            .on_press(Message::TapSwitch(ControlId::panel(ControlRole::Reset))),
-                        button(text("Select").size(12))
-                            .on_press(Message::TapSwitch(ControlId::panel(ControlRole::Select))),
-                    ]
-                    .spacing(8)
-                    .align_y(iced::Alignment::Center);
-                    let jack = if session.pad_jack == missingno_vcs::debug::RIGHT_PORT {
-                        "right"
-                    } else {
-                        "left"
+                let mut switches = row![
+                    button(text("Reset").size(12))
+                        .on_press(Message::TapSwitch(ControlId::panel(ControlRole::Reset))),
+                    button(text("Select").size(12))
+                        .on_press(Message::TapSwitch(ControlId::panel(ControlRole::Select))),
+                ]
+                .spacing(8)
+                .align_y(iced::Alignment::Center);
+                let jack = if session.pad_jack == missingno_vcs::debug::RIGHT_PORT {
+                    "right"
+                } else {
+                    "left"
+                };
+                switches = switches.push(
+                    button(text(format!("Pad: {jack} jack")).size(12))
+                        .on_press(Message::SwapPadJack),
+                );
+                for (i, switch) in session.switches.iter().enumerate() {
+                    let level = session.switch_levels.get(i).copied().unwrap_or(false);
+                    let Some((positions, _)) = switch.toggle() else {
+                        continue;
                     };
+                    let position = positions[usize::from(level)];
                     switches = switches.push(
-                        button(text(format!("Pad: {jack} jack")).size(12))
-                            .on_press(Message::SwapPadJack),
+                        button(text(format!("{}: {position}", switch.label)).size(12))
+                            .on_press(Message::ToggleSwitch(i)),
                     );
-                    for (i, switch) in session.switches.iter().enumerate() {
-                        let level = session.switch_levels.get(i).copied().unwrap_or(false);
-                        let Some((positions, _)) = switch.toggle() else {
-                            continue;
-                        };
-                        let position = positions[usize::from(level)];
-                        switches = switches.push(
-                            button(text(format!("{}: {position}", switch.label)).size(12))
-                                .on_press(Message::ToggleSwitch(i)),
-                        );
-                    }
-                    pane = pane.push(switches);
                 }
+                pane = pane.push(switches);
                 if let Some(screen) = &self.play_screen {
-                    let paddles = self
-                        .playing
-                        .as_ref()
-                        .is_some_and(|(_, session)| session.paddles);
+                    let paddles = session.paddles;
                     pane = pane.push(iced::widget::responsive(move |size| {
                         let (width, height) = screen.fitted_size(size);
                         // Horizontal position over the screen drives the
@@ -3099,29 +3067,24 @@ impl Curator {
                         container(area).center(Length::Fill).into()
                     }));
                 }
-                let mut body = row![].spacing(16);
-                if let Some(left) = left {
-                    body = body.push(left);
-                }
-                body.push(container(right).width(Length::FillPortion(2)))
-                    .push(container(pane).width(Length::FillPortion(3)))
-                    .into()
+                pane.into()
             }
-            None => {
-                // Reserve the play region even when idle so starting or
-                // stopping emulation never relayouts the editor column.
-                let idle = container(text("Boot a dump to play").size(13))
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill);
-                let mut body = row![].spacing(16);
-                if let Some(left) = left {
-                    body = body.push(left);
-                }
-                body.push(container(right).width(Length::FillPortion(2)))
-                    .push(container(idle).width(Length::FillPortion(3)))
-                    .into()
-            }
+            // Reserve the play region even when idle so starting or stopping
+            // emulation never relayouts the editor column.
+            None => container(text("Boot a dump to play").size(13))
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
+                .into(),
         };
+
+        let mut body = row![].spacing(16);
+        if let Some(left) = left {
+            body = body.push(left);
+        }
+        let body: Element<'_, Message> = body
+            .push(container(right).width(Length::FillPortion(2)))
+            .push(container(play_region).width(Length::FillPortion(3)))
+            .into();
 
         let mut bottom = row![].spacing(14).align_y(iced::Alignment::Center);
         bottom = bottom.push(text(&self.status).size(12).width(Length::Fill));

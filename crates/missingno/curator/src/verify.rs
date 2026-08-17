@@ -294,7 +294,6 @@ pub struct ScannedRom {
 #[derive(Default, Clone, Debug)]
 pub struct RomIndex {
     pub by_sha1: HashMap<String, ScannedRom>,
-    pub scanned: usize,
     /// Unique-hash ROMs found in the collection (already-curated) directory.
     pub collection: usize,
     /// Unique-hash ROMs found in the inbox (still to curate).
@@ -374,7 +373,6 @@ impl RomIndex {
                     continue;
                 }
                 self.by_sha1.insert(sha1, ScannedRom { path, home });
-                self.scanned += 1;
                 match home {
                     RomHome::Collection => self.collection += 1,
                     RomHome::Inbox => self.inbox += 1,

@@ -72,6 +72,26 @@ pub struct ReleaseLine {
     pub detail: String,
 }
 
+/// The VCS facts that vary from release to release, as one display string.
+fn vcs_hardware(hardware: &missingno_gamedb::VcsHardware) -> String {
+    [
+        hardware.tv_format.map(|t| format!("{t:?}")),
+        hardware.cart_type.map(|c| c.code().to_owned()),
+        (!hardware.controllers.is_empty()).then(|| {
+            hardware
+                .controllers
+                .iter()
+                .map(|c| format!("{c:?}"))
+                .collect::<Vec<_>>()
+                .join("/")
+        }),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" ")
+}
+
 impl AnyGame {
     pub fn title(&self) -> &str {
         common!(self, g => &g.title)
@@ -122,9 +142,9 @@ impl AnyGame {
     pub fn set_text_field(&mut self, field: TextField, value: String) {
         let optional = (!value.is_empty()).then_some(value.clone());
         common!(self, g => match field {
-            TextField::Title => g.title = value.clone(),
-            TextField::Developer => g.developer = optional.clone(),
-            TextField::Description => g.description = optional.clone(),
+            TextField::Title => g.title = value,
+            TextField::Developer => g.developer = optional,
+            TextField::Description => g.description = optional,
         });
     }
 
@@ -182,25 +202,7 @@ impl AnyGame {
             AnyGame::Vcs(g) => g
                 .releases
                 .iter()
-                .map(|r| {
-                    let hw = [
-                        r.hardware.tv_format.map(|t| format!("{t:?}")),
-                        r.hardware.cart_type.map(|c| c.code().to_owned()),
-                        (!r.hardware.controllers.is_empty()).then(|| {
-                            r.hardware
-                                .controllers
-                                .iter()
-                                .map(|c| format!("{c:?}"))
-                                .collect::<Vec<_>>()
-                                .join("/")
-                        }),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                    line(r, &hw)
-                })
+                .map(|r| line(r, &vcs_hardware(&r.hardware)))
                 .collect(),
         }
     }
@@ -278,7 +280,7 @@ impl AnyGame {
     }
 
     pub fn set_covers(&mut self, covers: Vec<String>) {
-        common!(self, g => g.covers = covers.clone());
+        common!(self, g => g.covers = covers);
     }
 
     /// Add a cover URL if absent; returns whether anything changed.
@@ -315,13 +317,13 @@ impl AnyGame {
             if let Some(link) = g.links.iter_mut().find(|l| l.name == name) {
                 link.url = url.to_owned();
                 link.link_type = link_type;
-                link.languages = languages.clone();
+                link.languages = languages;
             } else {
                 g.links.push(Link {
                     name: name.to_owned(),
                     url: url.to_owned(),
                     link_type,
-                    languages: languages.clone(),
+                    languages,
                 });
             }
         });
@@ -366,54 +368,43 @@ impl AnyGame {
             .unwrap_or_default())
     }
 
+    /// Edit the dump with this hash, wherever it hangs — a release's or a mod
+    /// release's. False when the entry doesn't hold it.
+    fn with_artifact(
+        &mut self,
+        sha1: &str,
+        edit: impl FnOnce(&mut missingno_gamedb::Artifact),
+    ) -> bool {
+        common!(self, g => {
+            let found = g
+                .releases
+                .iter_mut()
+                .flat_map(|r| r.artifacts.iter_mut())
+                .chain(
+                    g.mods
+                        .iter_mut()
+                        .flat_map(|m| m.releases.iter_mut())
+                        .flat_map(|r| r.artifacts.iter_mut()),
+                )
+                .find(|a| a.sha1.as_str() == sha1);
+            match found {
+                Some(artifact) => {
+                    edit(artifact);
+                    true
+                }
+                None => false,
+            }
+        })
+    }
+
     pub fn set_artifact_label(&mut self, sha1: &str, label: &str) -> bool {
         let value = (!label.is_empty()).then(|| label.to_owned());
-        common!(self, g => {
-            for release in &mut g.releases {
-                if let Some(artifact) =
-                    release.artifacts.iter_mut().find(|a| a.sha1.as_str() == sha1)
-                {
-                    artifact.label = value.clone();
-                    return true;
-                }
-            }
-            for game_mod in &mut g.mods {
-                for release in &mut game_mod.releases {
-                    if let Some(artifact) =
-                        release.artifacts.iter_mut().find(|a| a.sha1.as_str() == sha1)
-                    {
-                        artifact.label = value.clone();
-                        return true;
-                    }
-                }
-            }
-            false
-        })
+        self.with_artifact(sha1, |artifact| artifact.label = value)
     }
 
     /// Set (or clear, with `None`) a dump's quality defect.
     pub fn set_artifact_defect(&mut self, sha1: &str, defect: Option<Defect>) -> bool {
-        common!(self, g => {
-            for release in &mut g.releases {
-                if let Some(artifact) =
-                    release.artifacts.iter_mut().find(|a| a.sha1.as_str() == sha1)
-                {
-                    artifact.defect = defect;
-                    return true;
-                }
-            }
-            for game_mod in &mut g.mods {
-                for release in &mut game_mod.releases {
-                    if let Some(artifact) =
-                        release.artifacts.iter_mut().find(|a| a.sha1.as_str() == sha1)
-                    {
-                        artifact.defect = defect;
-                        return true;
-                    }
-                }
-            }
-            false
-        })
+        self.with_artifact(sha1, |artifact| artifact.defect = defect)
     }
 
     /// One display line per attached mod, with its links.
@@ -470,69 +461,31 @@ impl AnyGame {
                 parts.join(" · ")
             }
         }
+        fn versions<P: Platform>(
+            game: &Game<P>,
+            index: usize,
+            hardware: impl Fn(&P::ReleaseHardware) -> String,
+        ) -> Vec<String> {
+            game.mods
+                .get(index)
+                .map(|m| {
+                    m.releases
+                        .iter()
+                        .map(|r| describe(&r.label, &r.date, &hardware(&r.hardware)))
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
         match self {
-            AnyGame::Vcs(g) => g
-                .mods
-                .get(index)
-                .map(|m| {
-                    m.releases
-                        .iter()
-                        .map(|r| {
-                            let hw = [
-                                r.hardware.tv_format.map(|t| format!("{t:?}")),
-                                r.hardware.cart_type.map(|c| c.code().to_owned()),
-                                (!r.hardware.controllers.is_empty()).then(|| {
-                                    r.hardware
-                                        .controllers
-                                        .iter()
-                                        .map(|c| format!("{c:?}"))
-                                        .collect::<Vec<_>>()
-                                        .join("/")
-                                }),
-                            ]
-                            .into_iter()
-                            .flatten()
-                            .collect::<Vec<_>>()
-                            .join(" ");
-                            describe(&r.label, &r.date, &hw)
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
-            AnyGame::Sg1000(g) => g
-                .mods
-                .get(index)
-                .map(|m| {
-                    m.releases
-                        .iter()
-                        .map(|r| {
-                            let board =
-                                r.hardware.cart_type.map(Sg1000CartType::code).unwrap_or("");
-                            describe(&r.label, &r.date, board)
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
-            AnyGame::Gb(g) => g
-                .mods
-                .get(index)
-                .map(|m| {
-                    m.releases
-                        .iter()
-                        .map(|r| describe(&r.label, &r.date, ""))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            AnyGame::Gbc(g) => g
-                .mods
-                .get(index)
-                .map(|m| {
-                    m.releases
-                        .iter()
-                        .map(|r| describe(&r.label, &r.date, ""))
-                        .collect()
-                })
-                .unwrap_or_default(),
+            AnyGame::Vcs(g) => versions(g, index, vcs_hardware),
+            AnyGame::Sg1000(g) => versions(g, index, |hw| {
+                hw.cart_type
+                    .map(Sg1000CartType::code)
+                    .unwrap_or("")
+                    .to_owned()
+            }),
+            AnyGame::Gb(g) => versions(g, index, |_| String::new()),
+            AnyGame::Gbc(g) => versions(g, index, |_| String::new()),
         }
     }
 
@@ -669,10 +622,10 @@ impl AnyGame {
     }
 
     pub fn set_release_publisher(&mut self, index: usize, value: String) {
-        let publisher = (!value.is_empty()).then_some(value.clone());
+        let publisher = (!value.is_empty()).then_some(value);
         common!(self, g => {
             if let Some(release) = g.releases.get_mut(index) {
-                release.publisher = publisher.clone();
+                release.publisher = publisher;
             }
         });
     }
@@ -688,17 +641,18 @@ impl AnyGame {
     /// Board hint for the session factory (VCS and SG-1000 — their carts have
     /// no header, so the db's word must reach the core).
     pub fn cart_hint(&self) -> Option<String> {
+        fn first_board<P: Platform>(
+            game: &Game<P>,
+            code: impl Fn(&P::ReleaseHardware) -> Option<&'static str>,
+        ) -> Option<String> {
+            game.releases
+                .iter()
+                .find_map(|r| code(&r.hardware))
+                .map(str::to_owned)
+        }
         match self {
-            AnyGame::Vcs(g) => g
-                .releases
-                .iter()
-                .find_map(|r| r.hardware.cart_type)
-                .map(|c| c.code().to_owned()),
-            AnyGame::Sg1000(g) => g
-                .releases
-                .iter()
-                .find_map(|r| r.hardware.cart_type)
-                .map(|c| c.code().to_owned()),
+            AnyGame::Vcs(g) => first_board(g, |hw| hw.cart_type.map(VcsCartType::code)),
+            AnyGame::Sg1000(g) => first_board(g, |hw| hw.cart_type.map(Sg1000CartType::code)),
             _ => None,
         }
     }
@@ -1676,6 +1630,17 @@ impl EntryHandle {
     pub fn key(&self) -> String {
         format!("{}/{}", self.tree.dir(), self.slug)
     }
+
+    /// Every normalised title the entry answers to — the game's and each of its
+    /// releases' — with empties dropped.
+    pub fn title_needles(&self) -> Vec<String> {
+        let mut needles = vec![missingno_gamedb::normalized_title(self.game.title())];
+        for release_title in self.game.release_titles() {
+            needles.push(missingno_gamedb::normalized_title(&release_title));
+        }
+        needles.retain(|n| !n.is_empty());
+        needles
+    }
 }
 
 pub struct Db {
@@ -1862,12 +1827,8 @@ impl Db {
             let source_title = self.entries[source].game.title().to_owned();
             let name = title.unwrap_or_else(|| format!("Unnamed mod of {source_title}"));
             let base = self.resolve_base(source, sha1, base_override)?;
-            let attached = match &mut self.entries[source].game {
-                AnyGame::Gb(g) => attach_mod(g, sha1, name.clone(), category, homepage, base),
-                AnyGame::Gbc(g) => attach_mod(g, sha1, name.clone(), category, homepage, base),
-                AnyGame::Sg1000(g) => attach_mod(g, sha1, name.clone(), category, homepage, base),
-                AnyGame::Vcs(g) => attach_mod(g, sha1, name.clone(), category, homepage, base),
-            };
+            let attached = common!(&mut self.entries[source].game, g =>
+                attach_mod(g, sha1, name.clone(), category, homepage, base));
             if !attached {
                 return Err(format!("{sha1} is not an artifact of this entry"));
             }
@@ -1956,18 +1917,7 @@ impl Db {
             .ok_or("a total conversion needs a base artifact — pass base_sha1")?;
         let title = title.unwrap_or_else(|| format!("Hack of {source_title}"));
 
-        let mut slug = slugify(&title);
-        let taken: std::collections::HashSet<String> = self
-            .entries
-            .iter()
-            .filter(|e| e.tree == tree)
-            .map(|e| e.slug.clone())
-            .collect();
-        let mut n = 1;
-        while taken.contains(&slug) {
-            n += 1;
-            slug = format!("{}-{n}", slugify(&title));
-        }
+        let slug = self.free_slug(tree, &title);
 
         let hack = match &mut self.entries[source].game {
             AnyGame::Gb(g) => {
@@ -2183,12 +2133,8 @@ impl Db {
                 ));
             }
         }
-        let split = match &mut self.entries[entry].game {
-            AnyGame::Gb(g) => split_release_from(g, sha1, status, title, label, date),
-            AnyGame::Gbc(g) => split_release_from(g, sha1, status, title, label, date),
-            AnyGame::Sg1000(g) => split_release_from(g, sha1, status, title, label, date),
-            AnyGame::Vcs(g) => split_release_from(g, sha1, status, title, label, date),
-        };
+        let split = common!(&mut self.entries[entry].game, g =>
+            split_release_from(g, sha1, status, title, label, date));
         if !split {
             return Err(format!("{sha1} is not a release artifact of this entry"));
         }
@@ -2205,11 +2151,7 @@ impl Db {
     pub fn related_entries(&self, entry: usize) -> Vec<(String, String, &'static str, bool)> {
         let this = &self.entries[entry];
         let (tree, slug) = (this.tree, this.slug.as_str());
-        let mut needles = vec![missingno_gamedb::normalized_title(this.game.title())];
-        for release_title in this.game.release_titles() {
-            needles.push(missingno_gamedb::normalized_title(&release_title));
-        }
-        needles.retain(|n| !n.is_empty());
+        let needles = this.title_needles();
         let title_lower = this.game.title().to_lowercase();
 
         let mut out = Vec::new();
@@ -2288,12 +2230,8 @@ impl Db {
         sha1: &str,
         to_index: usize,
     ) -> Result<bool, String> {
-        let emptied = match &mut self.entries[entry].game {
-            AnyGame::Gb(g) => move_artifact_in(g, sha1, to_index),
-            AnyGame::Gbc(g) => move_artifact_in(g, sha1, to_index),
-            AnyGame::Sg1000(g) => move_artifact_in(g, sha1, to_index),
-            AnyGame::Vcs(g) => move_artifact_in(g, sha1, to_index),
-        }?;
+        let emptied = common!(&mut self.entries[entry].game, g =>
+            move_artifact_in(g, sha1, to_index))?;
         self.entries[entry].dirty = true;
         self.write_entry(entry).map_err(|e| e.to_string())?;
         Ok(emptied)

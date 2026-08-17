@@ -6,5 +6,5 @@ pub mod screen;
 pub mod texture_renderer;
 
 pub use paddle::PaddleWind;
-pub use screen::{Frame, IndexedFrame, PalettePolicy, RgbaFrame, ScreenView, iced_color};
-pub use texture_renderer::{ScreenOverlay, TextureRenderer};
+pub use screen::{Frame, PalettePolicy, ScreenView, iced_color};
+pub use texture_renderer::TextureRenderer;

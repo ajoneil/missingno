@@ -35,12 +35,6 @@ impl PaddleWind {
         self.right = zoned(depression);
     }
 
-    /// The pointer path shares the knob: an absolute set keeps the two input
-    /// styles continuous with each other.
-    pub fn set_position(&mut self, position: f32) {
-        self.position = position.clamp(0.0, 1.0);
-    }
-
     pub fn idle(&self) -> bool {
         self.left == 0.0 && self.right == 0.0
     }
@@ -117,13 +111,5 @@ mod tests {
         let mut wind = PaddleWind::new();
         wind.set_right(0.03);
         assert!(wind.idle());
-    }
-
-    #[test]
-    fn pointer_set_is_absolute() {
-        let mut wind = PaddleWind::new();
-        wind.set_position(0.8);
-        wind.set_right(1.0);
-        assert!(wind.tick(0.05).unwrap() > 0.8);
     }
 }

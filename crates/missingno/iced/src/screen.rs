@@ -3,11 +3,11 @@ use std::sync::Arc;
 use iced::widget::shader;
 use rgb::RGB8;
 
-use missingno_core::video::{ConsoleFrame, DisplayTechnology, LcdPanel};
+use missingno_core::video::{ConsoleFrame, DisplayTechnology, IndexedFrame, LcdPanel, RgbaFrame};
 
 use crate::texture_renderer::{ScreenOverlay, TextureRenderer};
 
-pub use missingno_core::video::{Frame, IndexedFrame, RgbaFrame};
+pub use missingno_core::video::Frame;
 
 /// Fraction of the accumulator retained each frame, per display class — the
 /// decay rate of a pixel's trail. Fitted to taste, not measured panel response:

@@ -10,7 +10,8 @@ use std::{
     time::Duration,
 };
 
-use iced::futures::{SinkExt, StreamExt, channel::mpsc::UnboundedSender};
+use iced::futures::{StreamExt, channel::mpsc::UnboundedSender, stream};
+use missingno_session::tools::{outcome_json, text};
 use serde_json::{Value, json};
 
 const REPLY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -45,13 +46,8 @@ pub enum Bridge {
 
 /// Subscription worker: hands the UI a sink, then streams tool calls.
 pub fn worker() -> impl iced::futures::Stream<Item = Bridge> {
-    iced::stream::channel(16, async move |mut output| {
-        let (tx, mut rx) = iced::futures::channel::mpsc::unbounded();
-        let _ = output.send(Bridge::Ready(tx)).await;
-        while let Some(call) = rx.next().await {
-            let _ = output.send(Bridge::Call(call)).await;
-        }
-    })
+    let (sink, calls) = iced::futures::channel::mpsc::unbounded::<ToolCall>();
+    stream::once(async move { Bridge::Ready(sink) }).chain(calls.map(Bridge::Call))
 }
 
 pub struct RemoteEndpoint {
@@ -181,12 +177,12 @@ fn error_frame(id: Value, message: &str) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": message } })
 }
 
-pub fn text_result(text: impl Into<String>) -> Value {
-    json!({ "content": [{ "type": "text", "text": text.into() }], "isError": false })
+pub fn text_result(body: impl Into<String>) -> Value {
+    outcome_json(text(body))
 }
 
-pub fn error_result(text: impl Into<String>) -> Value {
-    json!({ "content": [{ "type": "text", "text": text.into() }], "isError": true })
+pub fn error_result(body: impl Into<String>) -> Value {
+    outcome_json(Err(body.into()))
 }
 
 fn tool_definitions() -> Value {

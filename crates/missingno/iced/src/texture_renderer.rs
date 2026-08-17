@@ -1,7 +1,7 @@
 use iced::{Rectangle, wgpu, widget::shader};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 static NEXT_TEXTURE_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -9,8 +9,8 @@ static NEXT_TEXTURE_ID: AtomicU64 = AtomicU64::new(0);
 /// merge into flat dimming rather than separate pixels, so they fade out; full
 /// strength by [`OVERLAY_FULL_PX`]. Shared with the fragment shader, which reads
 /// the same ramp.
-pub const OVERLAY_ONSET_PX: f32 = 3.0;
-pub const OVERLAY_FULL_PX: f32 = 6.0;
+pub(crate) const OVERLAY_ONSET_PX: f32 = 3.0;
+pub(crate) const OVERLAY_FULL_PX: f32 = 6.0;
 /// The LCD grid is a pixel *aperture*, not a darkening laid on top: a fragment
 /// either lands inside a lit pixel or in the inter-pixel matrix, which shows the
 /// panel behind it. `MATRIX_FRACTION` is the share of the cell pitch, per axis,
@@ -85,7 +85,9 @@ fn prescale_factor(scale: f32) -> Option<u32> {
 
 /// Reusable GPU texture renderer for pixel-based graphics
 pub struct TextureRenderer {
-    id: u64,
+    /// Filled on the first draw unless [`TextureRenderer::key`] named a slot, so
+    /// a keyed owner never spends an id it discards.
+    id: OnceLock<u64>,
     width: u32,
     height: u32,
     pixels: Arc<[u8]>,
@@ -98,7 +100,7 @@ impl TextureRenderer {
         let pixels = pixels.into();
         assert_eq!(pixels.len(), (width * height * 4) as usize);
         Self {
-            id: NEXT_TEXTURE_ID.fetch_add(1, Ordering::Relaxed),
+            id: OnceLock::new(),
             width,
             height,
             pixels,
@@ -123,7 +125,7 @@ impl TextureRenderer {
     /// Render into a caller-owned texture slot instead of a fresh one, so a
     /// long-lived owner re-uses one GPU texture across per-draw constructions.
     pub fn key(mut self, key: u64) -> Self {
-        self.id = key;
+        self.id = OnceLock::from(key);
         self
     }
 
@@ -144,7 +146,7 @@ impl<Message> shader::Program<Message> for TextureRenderer {
         _bounds: Rectangle,
     ) -> Self::Primitive {
         TexturePrimitive {
-            id: self.id,
+            id: *self.id.get_or_init(Self::allocate_key),
             overlay: self.overlay,
             panel_base: self.panel_base,
             state: Mutex::new(PrimitiveState::Pending {
@@ -1346,7 +1348,7 @@ mod tests {
         // Bounded by the stated range.
         assert_eq!(beam_sigma(0.0), BEAM_SIGMA_MIN);
         assert_eq!(beam_sigma(1.0), BEAM_SIGMA_MAX);
-        assert!(BEAM_SIGMA_MIN < BEAM_SIGMA_MAX);
+        const { assert!(BEAM_SIGMA_MIN < BEAM_SIGMA_MAX) };
     }
 
     #[test]
@@ -1431,7 +1433,7 @@ mod tests {
         );
         assert_eq!(APERTURE_FRACTION, 1.0 - MATRIX_FRACTION);
         // The border is a minority of the cell — pixels still dominate it.
-        assert!(MATRIX_FRACTION > 0.0 && MATRIX_FRACTION < 0.5);
+        const { assert!(MATRIX_FRACTION > 0.0 && MATRIX_FRACTION < 0.5) };
         let area = APERTURE_FRACTION * APERTURE_FRACTION;
         assert!(
             (area - (1.0 - MATRIX_FRACTION).powi(2)).abs() < 1e-6,
