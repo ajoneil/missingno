@@ -140,6 +140,95 @@ fn round_trip_bank_fa_restores_cart_ram() {
     assert_round_trip("cartridge/bank-fa_ntsc.a26", CartType::CbsRamPlus, 3);
 }
 
+/// Everything a save carries about which slice of the image the window shows:
+/// the single-bank field and the multi-slot blob.
+fn selection(vcs: &Vcs) -> (Option<usize>, Vec<u8>) {
+    (
+        vcs.cartridge().selected_bank(),
+        vcs.cartridge().bank_state(),
+    )
+}
+
+/// Settle a banked board, let `switch` hand it a non-default selection through
+/// its own bus hotspots, and assert a save/restore into a fresh console
+/// reproduces both the selection and the bytes the window then reads. A board
+/// contributing nothing to the save would wake in its power-on selection.
+fn assert_selection_round_trip(relative: &str, cart: CartType, switch: impl Fn(&mut Vcs)) {
+    let mut original = load(relative, TvStandard::Ntsc, cart);
+    for _ in 0..8 {
+        original.step_frame(FRAME_LINE_BUDGET);
+    }
+    original.step_instruction();
+    switch(&mut original);
+
+    let fresh = load(relative, TvStandard::Ntsc, cart);
+    assert_ne!(
+        selection(&original),
+        selection(&fresh),
+        "{relative}: the save point must not be the power-on selection"
+    );
+    let window: Vec<u8> = (0xF000..=0xFFFF).map(|a| original.peek(a)).collect();
+
+    let record = read_state(&original);
+    let memory = owned_memory(&original);
+    let mut restored = load(relative, TvStandard::Ntsc, cart);
+    restore(&mut restored, &record, &memory).expect("restore succeeds");
+
+    assert_eq!(
+        selection(&restored),
+        selection(&original),
+        "{relative}: the board selection restores"
+    );
+    let restored_window: Vec<u8> = (0xF000..=0xFFFF).map(|a| restored.peek(a)).collect();
+    assert_eq!(
+        restored_window, window,
+        "{relative}: the window reads the same bytes after a restore"
+    );
+}
+
+#[test]
+fn round_trip_bank_ua_restores_the_bank() {
+    // The UA board's $0240 hotspot pages bank 1 from below the cart window.
+    assert_selection_round_trip("cartridge/bank-ua_ntsc.a26", CartType::UaLtd, |vcs| {
+        vcs.cartridge_mut().write_access(0x0240, 0, 0);
+    });
+}
+
+#[test]
+fn round_trip_bank_fe_restores_the_bank() {
+    // The FE latch arms on an access to $01FE and captures D5 two cycles later:
+    // clear selects bank 1.
+    assert_selection_round_trip("cartridge/bank-fe_ntsc.a26", CartType::Activision, |vcs| {
+        for address in [0x01FE, 0x0000, 0x0000] {
+            vcs.cartridge_mut().write_access(address, 0, 0);
+        }
+    });
+}
+
+#[test]
+fn round_trip_bank_3f_restores_the_lower_window() {
+    // The 3F test ROM leaves its own non-default bank in the lower window, so
+    // the save is taken exactly as the program left it.
+    assert_selection_round_trip("cartridge/bank-3f_ntsc.a26", CartType::Tigervision, |_| {});
+    assert_round_trip("cartridge/bank-3f_ntsc.a26", CartType::Tigervision, 3);
+}
+
+#[test]
+fn round_trip_bank_03e0_restores_every_segment() {
+    // The 03E0 board pages three 1 KB segments independently; the test ROM
+    // leaves them on different slices.
+    assert_selection_round_trip(
+        "cartridge/bank-03e0_ntsc.a26",
+        CartType::ParkerBrosBrazil,
+        |_| {},
+    );
+    assert_round_trip(
+        "cartridge/bank-03e0_ntsc.a26",
+        CartType::ParkerBrosBrazil,
+        3,
+    );
+}
+
 #[test]
 fn read_state_validates_against_the_schema() {
     let mut vcs = load(

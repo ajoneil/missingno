@@ -72,6 +72,18 @@ impl Activision {
         &self.image
     }
 
+    pub(super) fn selected_bank(&self) -> usize {
+        self.bank
+    }
+
+    /// Re-page to a saved bank. The two-cycle arm/capture sequence is transient
+    /// and settles to its power-on state.
+    pub(super) fn set_bank(&mut self, bank: usize) {
+        self.bank = bank & 1;
+        self.armed = false;
+        self.capturing = false;
+    }
+
     pub fn peek(&self, address: u16) -> u8 {
         super::banked_byte(&self.image, self.bank, address)
     }

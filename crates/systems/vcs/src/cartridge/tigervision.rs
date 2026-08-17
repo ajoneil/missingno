@@ -67,6 +67,20 @@ impl Tigervision {
         &self.image
     }
 
+    /// The lower window's 2 KB bank, for a state save — the fixed upper half
+    /// means no single 4 KB bank describes the window. The A12-rise arm latch is
+    /// transient and stays cleared.
+    pub(super) fn bank_state(&self) -> Vec<u8> {
+        vec![self.bank as u8]
+    }
+
+    pub(super) fn restore_bank_state(&mut self, bytes: &[u8]) {
+        if let Some(&bank) = bytes.first() {
+            self.bank = usize::from(bank) % self.banks;
+        }
+        self.armed = false;
+    }
+
     pub fn peek(&self, address: u16) -> u8 {
         let offset = (address & 0x0FFF) as usize;
         // The upper half never moves; the lower half is the selected bank.

@@ -55,6 +55,17 @@ impl ParkerBrosBrazil {
         &self.image
     }
 
+    /// The three pageable-segment slices, for a state save.
+    pub(super) fn bank_state(&self) -> Vec<u8> {
+        self.slices.iter().map(|&s| s as u8).collect()
+    }
+
+    pub(super) fn restore_bank_state(&mut self, bytes: &[u8]) {
+        for (slot, &value) in self.slices.iter_mut().zip(bytes) {
+            *slot = usize::from(value & 0x07);
+        }
+    }
+
     /// The window maps exactly as E0's does.
     pub fn peek(&self, address: u16) -> u8 {
         super::parker_bros::sliced_byte(&self.image, &self.slices, address)

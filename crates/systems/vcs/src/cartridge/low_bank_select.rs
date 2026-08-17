@@ -56,6 +56,14 @@ impl LowBankSelect {
         &self.image
     }
 
+    pub(super) fn selected_bank(&self) -> usize {
+        self.bank
+    }
+
+    pub(super) fn set_bank(&mut self, bank: usize) {
+        self.bank = bank & 1;
+    }
+
     pub fn peek(&self, address: u16) -> u8 {
         super::banked_byte(&self.image, self.bank, address)
     }

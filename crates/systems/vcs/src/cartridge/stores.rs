@@ -126,10 +126,10 @@ impl Cartridge {
     }
 
     /// The board's durable bank/slot selection as an opaque blob, for a state
-    /// save — the multi-slot boards a single [`selected_bank`](Self::selected_bank)
-    /// cannot describe (three windows, a lower-window ROM/RAM select, four
-    /// independently-banked segments). Empty for a board whose whole selection is
-    /// the single bank, or none at all.
+    /// save — the boards a single [`selected_bank`](Self::selected_bank) cannot
+    /// describe (three windows, a paging half-window, a lower-window ROM/RAM
+    /// select, four independently-banked segments). Empty for a board whose whole
+    /// selection is the single 4 KB bank, or none at all.
     pub fn bank_state(&self) -> Vec<u8> {
         match &self.board {
             Board::CbsRamPlus(board) => board.bank_state(),
@@ -138,8 +138,10 @@ impl Cartridge {
             Board::Dpc(board) => board.bank_state(),
             Board::Supercharger(board) => board.bank_state(),
             Board::WicksteadDesign(board) => board.bank_state(),
+            Board::Tigervision(board) => board.bank_state(),
             Board::TigervisionRam(board) => board.bank_state(),
             Board::TigervisionRamPlus(board) => board.bank_state(),
+            Board::ParkerBrosBrazil(board) => board.bank_state(),
             _ => Vec::new(),
         }
     }
@@ -155,8 +157,10 @@ impl Cartridge {
             Board::Dpc(board) => board.restore_bank_state(bytes),
             Board::Supercharger(board) => board.restore_bank_state(bytes),
             Board::WicksteadDesign(board) => board.restore_bank_state(bytes),
+            Board::Tigervision(board) => board.restore_bank_state(bytes),
             Board::TigervisionRam(board) => board.restore_bank_state(bytes),
             Board::TigervisionRamPlus(board) => board.restore_bank_state(bytes),
+            Board::ParkerBrosBrazil(board) => board.restore_bank_state(bytes),
             _ => {}
         }
     }
@@ -176,6 +180,10 @@ impl Cartridge {
             Board::Superbanking(board) => board.set_bank(bank),
             Board::MenuDrivenMegacart(board) => board.set_bank(bank),
             Board::X07(board) => board.set_bank(bank),
+            Board::Activision(board) => board.set_bank(bank),
+            Board::UaLtd(board) | Board::Fotomania(board) | Board::Econobanking(board) => {
+                board.set_bank(bank)
+            }
             _ => {}
         }
     }

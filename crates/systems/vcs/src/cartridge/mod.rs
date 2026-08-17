@@ -120,6 +120,10 @@ impl Board {
             Board::Superbanking(board) => Some(board.selected_bank()),
             Board::MenuDrivenMegacart(board) => Some(board.selected_bank()),
             Board::X07(board) => Some(board.selected_bank()),
+            Board::Activision(board) => Some(board.selected_bank()),
+            Board::UaLtd(board) | Board::Fotomania(board) | Board::Econobanking(board) => {
+                Some(board.selected_bank())
+            }
             _ => None,
         }
     }
