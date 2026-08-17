@@ -2,7 +2,7 @@ use super::{
     Enabled,
     envelope::Envelope,
     length::LengthCounter,
-    registers::{Prescaler, VolumeAndEnvelope},
+    registers::{PeriodHighAndControl, Prescaler, VolumeAndEnvelope},
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -119,7 +119,7 @@ impl NoiseChannel {
             Register::LengthTimer => 0xff,
             Register::VolumeAndEnvelope => self.volume_and_envelope.0,
             Register::FrequencyAndRandomness => self.frequency_and_randomness.0,
-            Register::Control => Control::read(self.length.enabled),
+            Register::Control => PeriodHighAndControl::read(self.length.enabled),
         }
     }
 
@@ -186,7 +186,7 @@ impl NoiseChannel {
                 }
             }
             Register::Control => {
-                let ctrl = Control(value);
+                let ctrl = PeriodHighAndControl(value);
 
                 // gepy = NOR(fexu, bufy_256hz, ff1e_d6_n): length-enable
                 // 0→1 rises gepy (one extra length count) iff caru is low.
@@ -370,28 +370,6 @@ pub(crate) fn shift_lfsr(lfsr: &mut u16, short_mode: bool) -> bool {
         *lfsr |= feedback << 6;
     }
     *lfsr & 1 != old_bit0
-}
-
-struct Control(pub u8);
-
-impl Control {
-    const LENGTH: u8 = 0b0100_0000;
-
-    pub fn read(length_enabled: bool) -> u8 {
-        if length_enabled {
-            0xff
-        } else {
-            0xff ^ Self::LENGTH
-        }
-    }
-
-    pub fn trigger(&self) -> bool {
-        self.0 & 0b1000_0000 != 0
-    }
-
-    pub fn enable_length(&self) -> bool {
-        self.0 & Self::LENGTH != 0
-    }
 }
 
 #[derive(Clone)]

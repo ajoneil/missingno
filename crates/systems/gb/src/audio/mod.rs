@@ -142,33 +142,15 @@ impl<A: ApuSpec> Audio<A> {
     pub fn post_boot(internal_counter: u16) -> Self {
         Self {
             enabled: true,
-            channel_clock: Prescaler::default(),
             channels: Channels::default(),
             volume_left: Volume::max(),
             volume_right: Volume::max(),
             nr50: 0x77,
-
             prev_div_apu_bit: internal_counter & DIV_APU_BIT != 0,
             // Boot ROM leftover ripple phase: step 0 (kene↓) lands at
             // reg_div16≡0x1800, three advances past the divider's 0.
             frame_sequencer_step: 2,
-            fs_edge_pending: false,
-            div_apu_double_parity: false,
-            div_apu_switch_lag: false,
-            fs_edge_predelay: false,
-            sample_clock: sample_clock(),
-            pending_left: 0,
-            pending_right: 0,
-            pending_count: 0,
-            last_mix: (0, 0),
-            mix_run: 0,
-            sample_accum_left: 0.0,
-            sample_accum_right: 0.0,
-            sample_accum_count: 0,
-            sample_buffer: Vec::new(),
-            wave_capture: None,
-            span: SpanPredictor::default(),
-            _spec: PhantomData,
+            ..Self::new()
         }
     }
 
@@ -216,11 +198,6 @@ impl<A: ApuSpec> Audio<A> {
 
     pub fn enabled(&self) -> bool {
         self.enabled
-    }
-
-    /// The shared 1 MHz channel-clock phase (CALO/AJER counter).
-    pub fn channel_clock_counter(&self) -> u8 {
-        self.channel_clock.counter
     }
 
     /// PCM12: CGB-only digital tap of the channel DACs — CH1 low nibble, CH2 high.
@@ -721,30 +698,11 @@ impl<A: ApuSpec> Audio<A> {
 
         Self {
             enabled: snap.sound_on & 0x80 != 0,
-            channel_clock: Prescaler::default(),
             channels,
-            volume_left: Volume(0),
-            volume_right: Volume(0),
             nr50: snap.master_vol,
             prev_div_apu_bit: snap.prev_div_apu_bit,
             frame_sequencer_step: snap.frame_sequencer_step,
-            fs_edge_pending: false,
-            div_apu_double_parity: false,
-            div_apu_switch_lag: false,
-            fs_edge_predelay: false,
-            sample_clock: sample_clock(),
-            pending_left: 0,
-            pending_right: 0,
-            pending_count: 0,
-            last_mix: (0, 0),
-            mix_run: 0,
-            sample_accum_left: 0.0,
-            sample_accum_right: 0.0,
-            sample_accum_count: 0,
-            sample_buffer: Vec::new(),
-            wave_capture: None,
-            span: SpanPredictor::default(),
-            _spec: PhantomData,
+            ..Self::new()
         }
     }
 }

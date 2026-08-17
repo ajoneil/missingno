@@ -9,10 +9,7 @@ mod locks;
 mod mode3;
 mod snapshot;
 
-pub use snapshot::{
-    PipelineSnapshot, PpuTraceSnapshot, SpriteFetchPhase, SpriteStoreEntrySnapshot,
-    SpriteStoreSnapshot,
-};
+pub use snapshot::{PipelineSnapshot, PpuTraceSnapshot, SpriteFetchPhase};
 
 use core::fmt;
 

@@ -25,9 +25,6 @@ use crate::trace::{TraceScope, Tracer};
 /// Common interface for a Game Boy–family console runnable under the
 /// shared accuracy test helpers. Implemented by `GameBoy` here and by
 /// downstream systems (e.g. `GameBoyColor`).
-/// Common interface for a Game Boy–family console runnable under the
-/// shared accuracy test helpers. Implemented by `GameBoy` here and by
-/// downstream systems (e.g. `GameBoyColor`).
 ///
 /// `screen()` deliberately isn't on this trait — the DMG screen stores
 /// 2-bit shade indices while the CGB screen stores RGB pixels, so
@@ -36,20 +33,14 @@ pub trait System {
     fn step(&mut self) -> StepResult;
     fn read(&self, address: u16) -> u8;
     fn cpu(&self) -> &Cpu;
-    fn cpu_mut(&mut self) -> &mut Cpu;
     fn drain_serial_output(&mut self) -> Vec<u8>;
     fn interrupts(&self) -> &interrupts::Registers;
     /// True while a CGB double-speed switch holds the CPU stopped in its
-    /// settling blackout (a self-resuming STOP). Defaults false for systems
-    /// without a speed switch.
-    fn speed_switch_in_progress(&self) -> bool {
-        false
-    }
+    /// settling blackout (a self-resuming STOP).
+    fn speed_switch_in_progress(&self) -> bool;
     /// True while a VRAM DMA holds the CPU (the bus master's hold, not a
-    /// software STOP/HALT). Defaults false for systems without one.
-    fn vram_dma_holds_cpu(&self) -> bool {
-        false
-    }
+    /// software STOP/HALT).
+    fn vram_dma_holds_cpu(&self) -> bool;
     /// Peek a contiguous range of memory, bypassing bus conflicts and
     /// PPU mode gating. Used by tests that decode assertion records
     /// from WRAM after the test has halted.
@@ -69,9 +60,6 @@ impl<M: Model> System for Console<M> {
     }
     fn cpu(&self) -> &Cpu {
         Console::<M>::cpu(self)
-    }
-    fn cpu_mut(&mut self) -> &mut Cpu {
-        Console::<M>::cpu_mut(self)
     }
     fn drain_serial_output(&mut self) -> Vec<u8> {
         Console::<M>::drain_serial_output(self)
@@ -105,7 +93,7 @@ pub fn rom_path(relative: &str) -> PathBuf {
 /// is set (any value enables capture — the column set comes from the state
 /// schema, not a named profile), each `step()` captures state into a native
 /// `.morepork` trace file under `receipts/traces/`.
-pub struct TestRun<M: Model = crate::Dmg> {
+pub struct TestRun<M: Model> {
     pub gb: Console<M>,
     #[cfg(feature = "morepork")]
     tracer: TracerGuard,
@@ -165,7 +153,7 @@ impl<M: ConsoleUi> TestRun<M> {
                 }
             }
 
-            return result;
+            result
         }
 
         #[cfg(not(feature = "morepork"))]
@@ -196,9 +184,6 @@ impl<M: ConsoleUi> System for TestRun<M> {
     }
     fn cpu(&self) -> &Cpu {
         self.gb.cpu()
-    }
-    fn cpu_mut(&mut self) -> &mut Cpu {
-        self.gb.cpu_mut()
     }
     fn drain_serial_output(&mut self) -> Vec<u8> {
         self.gb.drain_serial_output()
@@ -288,18 +273,10 @@ pub fn load_rom(relative: &str) -> TestRun<crate::Dmg> {
     TestRun::new(gb, relative, "DMG-B")
 }
 
-pub fn load_rom_with_boot_rom(relative: &str, boot_rom: Box<[u8; 256]>) -> TestRun<crate::Dmg> {
-    let gb = GameBoy::new(
-        Cartridge::new(std::fs::read(rom_path(relative)).unwrap(), None, None).unwrap(),
-        Some(BootRom::Dmg(boot_rom)),
-    );
-    TestRun::new(gb, relative, "DMG-B")
-}
-
 /// Try to load the DMG boot ROM from the path in `DMG_BOOT_ROM`.
 /// Returns None if the env var is unset or the file can't be read.
 /// The boot ROM cannot be distributed with the repo for legal reasons.
-pub fn try_load_boot_rom() -> Option<BootRom> {
+fn try_load_boot_rom() -> Option<BootRom> {
     let path = std::env::var("DMG_BOOT_ROM").ok()?;
     let data = std::fs::read(&path).ok()?;
     let boxed: Box<[u8; 256]> = data.into_boxed_slice().try_into().ok()?;
@@ -553,23 +530,27 @@ pub fn screen_matches_hex(screen_greyscale: &[u8], expected_hex: &str) -> bool {
         })
         .collect();
     for (idx, &digit) in digits.iter().enumerate() {
-        let tile = &HEX_TILES[digit as usize];
         let x_off = idx * 8;
         if x_off + 8 > 160 {
             break;
         }
-        for ty in 0..8 {
-            for tx in 0..8 {
-                let screen_pixel = screen_greyscale[ty * 160 + x_off + tx];
-                let expected_pixel = if tile[ty * 8 + tx] == 0 { 0x00 } else { 0xFF };
-                let diff = (screen_pixel as i16 - expected_pixel as i16).unsigned_abs();
-                if diff > 8 {
-                    return false;
-                }
-            }
+        if !hex_tile_matches(screen_greyscale, x_off, digit) {
+            return false;
         }
     }
     true
+}
+
+/// Does the 8×8 tile at `x_off` on the screen's top row show `digit`?
+fn hex_tile_matches(screen_greyscale: &[u8], x_off: usize, digit: u8) -> bool {
+    let tile = &HEX_TILES[digit as usize];
+    (0..8).all(|ty| {
+        (0..8).all(|tx| {
+            let screen_pixel = screen_greyscale[ty * 160 + x_off + tx];
+            let expected_pixel = if tile[ty * 8 + tx] == 0 { 0x00 } else { 0xFF };
+            (screen_pixel as i16 - expected_pixel as i16).unsigned_abs() <= 8
+        })
+    })
 }
 
 /// Reverse of [`screen_matches_hex`]: read back the hex digits the screen
@@ -582,15 +563,8 @@ pub fn decode_screen_hex(screen_greyscale: &[u8], num_digits: usize) -> String {
             if x_off + 8 > 160 {
                 return '?';
             }
-            for (digit, tile) in HEX_TILES.iter().enumerate() {
-                let matches = (0..8).all(|ty| {
-                    (0..8).all(|tx| {
-                        let screen_pixel = screen_greyscale[ty * 160 + x_off + tx];
-                        let expected_pixel = if tile[ty * 8 + tx] == 0 { 0x00 } else { 0xFF };
-                        (screen_pixel as i16 - expected_pixel as i16).unsigned_abs() <= 8
-                    })
-                });
-                if matches {
+            for digit in 0..HEX_TILES.len() as u8 {
+                if hex_tile_matches(screen_greyscale, x_off, digit) {
                     return char::from_digit(digit as u32, 16)
                         .unwrap()
                         .to_ascii_uppercase();

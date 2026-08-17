@@ -87,20 +87,7 @@ impl<P: PpuModel> TileFetcher<P> {
     pub(in crate::ppu) fn post_boot() -> Self {
         Self {
             fetch_counter: 5,
-            window_tile_x: 0,
-            tile_index: TileIndex(0),
-            bg_cell: P::BgCell::default(),
-            tile_map_byte: 0,
-            tile_data_low: 0,
-            tile_data_high: 0,
-            fetching_window: false,
-            vram_address: 0,
-            set_glitch_armed: false,
-            bus_low: 0,
-            bus_high: 0,
-            glitch_src_low: 0,
-            glitch_src_high: 0,
-            glitch_capture_armed: false,
+            ..Self::new()
         }
     }
 

@@ -3,7 +3,7 @@
 //! beside it. Each captured column is either a schema field (its type, subsystem,
 //! and tier come straight from the schema) or a trace-only observation the schema
 //! deliberately excludes because it is re-derivable at a boundary — the executing
-//! instruction address, the pixel output, and the VRAM/APU write taps.
+//! instruction address and the pixel output.
 //!
 //! The state a column carries is read through the same [`ConsoleUi::read_state`]
 //! bridge the save-state framing uses, so a trace column and a save-state field
@@ -89,14 +89,10 @@ enum Observation {
     Pix,
     /// Pixels pushed on the current line (the PPU's pipeline pixel count).
     PixX,
-    VramAddr,
-    VramData,
-    ApuWriteAddr,
-    ApuWriteData,
 }
 
 /// The trace observations, in capture order. `op_addr` leads so it is the
-/// instruction-address column; `pix` and the write taps follow.
+/// instruction-address column; the pixel columns follow.
 static OBSERVATIONS: &[ObservationDef<Observation>] = &[
     ObservationDef {
         name: "op_addr",
@@ -121,38 +117,6 @@ static OBSERVATIONS: &[ObservationDef<Observation>] = &[
         layer: "output",
         nullable: false,
         observation: Observation::PixX,
-    },
-    ObservationDef {
-        name: "vram_addr",
-        ty: FieldType::U16,
-        subsystem: "ppu",
-        layer: "writes",
-        nullable: true,
-        observation: Observation::VramAddr,
-    },
-    ObservationDef {
-        name: "vram_data",
-        ty: FieldType::U8,
-        subsystem: "ppu",
-        layer: "writes",
-        nullable: true,
-        observation: Observation::VramData,
-    },
-    ObservationDef {
-        name: "apu_write_addr",
-        ty: FieldType::U16,
-        subsystem: "apu",
-        layer: "writes",
-        nullable: true,
-        observation: Observation::ApuWriteAddr,
-    },
-    ObservationDef {
-        name: "apu_write_data",
-        ty: FieldType::U8,
-        subsystem: "apu",
-        layer: "writes",
-        nullable: true,
-        observation: Observation::ApuWriteData,
     },
 ];
 
@@ -183,10 +147,6 @@ pub struct Tracer {
     tcycle_count: u64,
     trigger: Trigger,
     pix_buffer: String,
-    vram_write_addr: u16,
-    vram_write_data: u8,
-    apu_write_addr: u16,
-    apu_write_data: u8,
 }
 
 impl Tracer {
@@ -261,10 +221,6 @@ impl Tracer {
             tcycle_count: 0,
             trigger,
             pix_buffer: String::new(),
-            vram_write_addr: 0,
-            vram_write_data: 0,
-            apu_write_addr: 0,
-            apu_write_data: 0,
         })
     }
 
@@ -283,16 +239,6 @@ impl Tracer {
         let _ = write!(self.pix_buffer, "{:04X}", value & 0x7FFF);
     }
 
-    pub fn push_vram_write(&mut self, addr: u16, data: u8) {
-        self.vram_write_addr = addr;
-        self.vram_write_data = data;
-    }
-
-    pub fn push_apu_write(&mut self, addr: u16, data: u8) {
-        self.apu_write_addr = addr;
-        self.apu_write_data = data;
-    }
-
     /// Write a typed snapshot record into the trace stream. `tag` is a
     /// format-level tag (`TAG_FRAME`, `TAG_MEMORY`).
     pub fn write_snapshot(&mut self, tag: u8, payload: &[u8]) -> Result<(), morepork::Error> {
@@ -308,13 +254,7 @@ impl Tracer {
         } else {
             None
         };
-        let taps = ObsTaps {
-            op_addr: gb.cpu().ir_address,
-            vram_addr: self.vram_write_addr,
-            vram_data: self.vram_write_data,
-            apu_addr: self.apu_write_addr,
-            apu_data: self.apu_write_data,
-        };
+        let op_addr = gb.cpu().ir_address;
 
         let pix_buffer = &self.pix_buffer;
         let columns = &self.columns;
@@ -326,23 +266,13 @@ impl Tracer {
                     emit_value(w, col, column.ty, column.nullable, value);
                 }
                 Source::Pipeline(cell) => emit_pipeline(w, col, *cell, &ppu_snap),
-                Source::Obs(observation) => emit_obs(
-                    w,
-                    col,
-                    *observation,
-                    column.nullable,
-                    &taps,
-                    pix_buffer,
-                    &ppu_snap,
-                ),
+                Source::Obs(observation) => {
+                    emit_obs(w, col, *observation, op_addr, pix_buffer, &ppu_snap)
+                }
             }
         }
 
         self.pix_buffer.clear();
-        self.vram_write_addr = 0;
-        self.vram_write_data = 0;
-        self.apu_write_addr = 0;
-        self.apu_write_data = 0;
 
         self.writer.finish_entry()
     }
@@ -396,32 +326,14 @@ fn emit_pipeline(
     }
 }
 
-/// The per-step write taps and instruction address, snapshotted before the
-/// column loop so the emitter borrows no `self` field but the writer.
-struct ObsTaps {
-    op_addr: u16,
-    vram_addr: u16,
-    vram_data: u8,
-    apu_addr: u16,
-    apu_data: u8,
-}
-
 fn emit_obs(
     w: &mut MoreporkWriter,
     col: usize,
     observation: Observation,
-    nullable: bool,
-    taps: &ObsTaps,
+    op_addr: u16,
     pix_buffer: &str,
     ppu_snap: &Option<PpuTraceSnapshot>,
 ) {
-    let ObsTaps {
-        op_addr,
-        vram_addr,
-        vram_data,
-        apu_addr,
-        apu_data,
-    } = *taps;
     match observation {
         Observation::OpAddr => w.set_u16(col, op_addr),
         Observation::Pix => {
@@ -434,42 +346,6 @@ fn emit_obs(
         Observation::PixX => {
             let count = ppu_snap.as_ref().map(|s| s.pix_count).unwrap_or(0);
             w.set_u8(col, count);
-        }
-        Observation::VramAddr => {
-            if vram_addr != 0 {
-                w.set_u16(col, vram_addr);
-            } else if nullable {
-                w.set_null(col);
-            } else {
-                w.set_u16(col, 0);
-            }
-        }
-        Observation::VramData => {
-            if vram_addr != 0 {
-                w.set_u8(col, vram_data);
-            } else if nullable {
-                w.set_null(col);
-            } else {
-                w.set_u8(col, 0);
-            }
-        }
-        Observation::ApuWriteAddr => {
-            if apu_addr != 0 {
-                w.set_u16(col, apu_addr);
-            } else if nullable {
-                w.set_null(col);
-            } else {
-                w.set_u16(col, 0);
-            }
-        }
-        Observation::ApuWriteData => {
-            if apu_addr != 0 {
-                w.set_u8(col, apu_data);
-            } else if nullable {
-                w.set_null(col);
-            } else {
-                w.set_u8(col, 0);
-            }
         }
     }
 }

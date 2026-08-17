@@ -28,8 +28,8 @@ pub use cartridge::cartridge_section;
 pub use cpu::{CpuSource, CpuView, cpu_blocks, cpu_register_groups, cpu_summary};
 pub use ppu::{
     ColorSnapshot, PpuSource, PpuView, dmg_background_swatches, dmg_fifo_block,
-    dmg_object_swatches, mode_label, ppu_background_block, ppu_detail, ppu_position_block,
-    ppu_sprites_block, ppu_status_block, ppu_summary, ppu_window_block,
+    dmg_object_swatches, ppu_background_block, ppu_detail, ppu_position_block, ppu_sprites_block,
+    ppu_status_block, ppu_summary, ppu_window_block,
 };
 pub use timers::{TimersView, timers_section};
 
@@ -142,7 +142,7 @@ impl GbSnapshot {
             pc: self.cpu.ir_address.into(),
             sp: self.cpu.stack_pointer.into(),
             video_label: "PPU",
-            video_summary: format!("{} · ly {}", mode_label(self.ppu.mode), self.ppu.ly),
+            video_summary: format!("{} · ly {}", self.ppu.mode, self.ppu.ly),
             frame,
         }
     }

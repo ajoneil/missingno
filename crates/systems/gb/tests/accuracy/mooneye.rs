@@ -264,15 +264,6 @@ mooneye_test!(
 // different (undocumented) result due to model-specific OAM corruption
 // patterns during halted DMA. No DMG reference image exists upstream or
 // elsewhere.
-//
-// #[test]
-// fn madness_mgb_oam_dma_halt_sprites() {
-//     run_mooneye_screen_test_with_timeout(
-//         "mooneye/madness/mgb_oam_dma_halt_sprites.gb",
-//         "mooneye/madness/mgb_oam_dma_halt_sprites_expected.png",
-//         600,
-//     );
-// }
 
 // manual-only/ — visual tests requiring screenshot comparison
 #[test]

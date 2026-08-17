@@ -86,9 +86,9 @@ fn extract_expected_audio(filename: &str) -> bool {
 /// expected) or `_outaudio1` (audio expected). Matches gambatte's
 /// testrunner convention (testrunner.cpp:263-268): pass if the LAST
 /// FRAME's samples are all equal to the first sample of that frame
-/// (`_outaudio0`) or NOT all equal (`_outaudio1`). Transient audio
-/// earlier in the run is expected on hardware (see spec §14.6.8) and
-/// tolerated. Tolerance 0.005 accounts for APU DC-offset drift.
+/// (`_outaudio0`) or NOT all equal (`_outaudio1`). Transient audio earlier in
+/// the run is expected on hardware and tolerated. Tolerance 0.005 accounts for
+/// APU DC-offset drift.
 fn run_gambatte_audio_test(rom_path: &str) {
     let mut run = common::load_rom(rom_path);
     let _ = run.gb.drain_audio_samples();

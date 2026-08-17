@@ -16,9 +16,6 @@ use super::registers::{Register8, Register16};
 /// multi-M-cycle terminal-step commits reuse single-M-cycle variants where
 /// the shape matches (e.g., `LD r,[HL]` final step emits `Commit::LoadR8`
 /// just as `LD r,d8` does).
-// The 16-bit arithmetic variants are applied but not yet emitted: those opcodes
-// still mutate inline at their decode edge rather than through a retire commit.
-#[allow(dead_code)]
 #[derive(Debug)]
 pub(super) enum Commit {
     // ── No register/flag change ──
@@ -50,21 +47,6 @@ pub(super) enum Commit {
     LoadR16 {
         reg: Register16,
         value: u16,
-    },
-    Inc16 {
-        reg: Register16,
-    },
-    Dec16 {
-        reg: Register16,
-    },
-    AddHl {
-        source: Register16,
-    },
-    AddSpOffset {
-        offset: i8,
-    },
-    LdHlSpOffset {
-        offset: i8,
     },
 
     // ── Flags / accumulator bit ops ──

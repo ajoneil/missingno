@@ -16,23 +16,9 @@ impl Mbc5 {
     }
 
     fn create(rom: &[u8], save_data: Option<Vec<u8>>, rumble: bool) -> Self {
-        let num_ram_banks = match rom[0x149] {
-            2 => 1,
-            3 => 4,
-            4 => 16,
-            5 => 8,
-            _ => 0,
-        };
-
-        let mut ram = vec![[0u8; 8 * 1024]; num_ram_banks];
+        let mut ram = vec![[0u8; 8 * 1024]; super::num_ram_banks(rom)];
         if let Some(data) = &save_data {
-            for (bank_idx, bank) in ram.iter_mut().enumerate() {
-                let offset = bank_idx * 8 * 1024;
-                if offset < data.len() {
-                    let len = (data.len() - offset).min(bank.len());
-                    bank[..len].copy_from_slice(&data[offset..offset + len]);
-                }
-            }
+            super::restore_banked(&mut ram, data);
         }
 
         Self {
@@ -45,11 +31,7 @@ impl Mbc5 {
     }
 
     pub fn ram(&self) -> Option<Vec<u8>> {
-        if self.ram.is_empty() {
-            None
-        } else {
-            Some(self.ram.iter().flatten().copied().collect())
-        }
+        super::save_banked(&self.ram)
     }
 
     pub(super) fn switchable_rom_bank(&self) -> u16 {

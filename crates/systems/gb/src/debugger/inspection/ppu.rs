@@ -119,22 +119,22 @@ pub struct PpuView {
 }
 
 impl PpuView {
-    pub(super) fn capture<P: PpuModel>(ppu: &Ppu<P>) -> Self {
+    pub(super) fn capture(ppu: &impl PpuSource) -> Self {
         Self {
             control: ppu.control(),
             mode: ppu.mode(),
-            stat: ppu.read_register(Register::Status),
-            ly: ppu.video.ly(),
+            stat: ppu.stat(),
+            ly: ppu.ly(),
             lx: ppu.lx(),
-            lyc: ppu.read_register(Register::InterruptOnScanline),
-            scx: ppu.read_register(Register::BackgroundViewportX),
-            scy: ppu.read_register(Register::BackgroundViewportY),
-            wx: ppu.read_register(Register::WindowX),
-            wy: ppu.read_register(Register::WindowY),
-            bgp: ppu.palettes().background.output(),
-            obp0: ppu.palettes().sprite0.output(),
-            obp1: ppu.palettes().sprite1.output(),
-            sprites: std::array::from_fn(|i| *ppu.sprite(SpriteId(i as u8))),
+            lyc: ppu.lyc(),
+            scx: ppu.scx(),
+            scy: ppu.scy(),
+            wx: ppu.wx(),
+            wy: ppu.wy(),
+            bgp: ppu.bgp(),
+            obp0: ppu.obp0(),
+            obp1: ppu.obp1(),
+            sprites: std::array::from_fn(|i| ppu.sprite(SpriteId(i as u8))),
             bg_fifo: ppu.bg_fifo(),
             obj_fifo: ppu.obj_fifo(),
             scan_counter: ppu.scan_counter(),
@@ -212,16 +212,6 @@ pub enum ColorSnapshot {
     },
 }
 
-/// The sidebar heading for a PPU mode.
-pub fn mode_label(mode: Mode) -> &'static str {
-    match mode {
-        Mode::HorizontalBlank => "HBlank",
-        Mode::VerticalBlank => "VBlank",
-        Mode::OamScan => "OAM Scan",
-        Mode::Drawing => "Drawing",
-    }
-}
-
 /// The accent class for a PPU mode's inline detail.
 fn mode_tone(mode: Mode) -> inspect::Tone {
     match mode {
@@ -234,14 +224,14 @@ fn mode_tone(mode: Mode) -> inspect::Tone {
 
 /// The PPU section's collapsed summary.
 pub fn ppu_summary(ppu: &impl PpuSource) -> String {
-    format!("{} · ly {}", mode_label(ppu.mode()), ppu.ly())
+    format!("{} · ly {}", ppu.mode(), ppu.ly())
 }
 
 /// The accented PPU-mode detail beside the section heading.
 pub fn ppu_detail(ppu: &impl PpuSource) -> inspect::Detail {
     let mode = ppu.mode();
     inspect::Detail {
-        text: mode_label(mode).to_string(),
+        text: mode.to_string(),
         tone: mode_tone(mode),
     }
 }

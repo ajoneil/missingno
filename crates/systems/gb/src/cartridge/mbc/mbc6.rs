@@ -15,13 +15,7 @@ impl Mbc6 {
     pub fn new(_rom: &[u8], save_data: Option<Vec<u8>>) -> Self {
         let mut ram = vec![[0u8; 4 * 1024]; 8];
         if let Some(data) = &save_data {
-            for (bank_idx, bank) in ram.iter_mut().enumerate() {
-                let offset = bank_idx * 4 * 1024;
-                if offset < data.len() {
-                    let len = (data.len() - offset).min(bank.len());
-                    bank[..len].copy_from_slice(&data[offset..offset + len]);
-                }
-            }
+            super::restore_banked(&mut ram, data);
         }
 
         let flash = vec![0xff; 1024 * 1024];

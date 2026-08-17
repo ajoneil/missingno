@@ -42,54 +42,6 @@ impl Cpu {
             }
             Commit::AluA { op, value } => Self::apply_alu(cpu, &op, value),
 
-            Commit::Inc16 { reg } => {
-                let val = cpu.get_register16(reg);
-                cpu.set_register16(reg, val.wrapping_add(1));
-            }
-            Commit::Dec16 { reg } => {
-                let val = cpu.get_register16(reg);
-                cpu.set_register16(reg, val.wrapping_sub(1));
-            }
-            Commit::AddHl { source } => {
-                let value = cpu.get_register16(source);
-                let hl = cpu.get_register16(Register16::Hl);
-                cpu.flags.remove(Flags::NEGATIVE);
-                cpu.flags.set(
-                    Flags::HALF_CARRY,
-                    (hl & 0xfff) as u32 + (value & 0xfff) as u32 > 0xfff,
-                );
-                cpu.flags
-                    .set(Flags::CARRY, hl as u32 + value as u32 > 0xffff);
-                cpu.set_register16(Register16::Hl, hl.wrapping_add(value));
-            }
-            Commit::AddSpOffset { offset } => {
-                let sp = cpu.stack_pointer;
-                let offset_u8 = offset as u8;
-                cpu.stack_pointer = sp.wrapping_add(offset as i16 as u16);
-                cpu.flags.remove(Flags::ZERO);
-                cpu.flags.remove(Flags::NEGATIVE);
-                cpu.flags.set(
-                    Flags::HALF_CARRY,
-                    (sp & 0xf) + (offset_u8 as u16 & 0xf) > 0xf,
-                );
-                cpu.flags
-                    .set(Flags::CARRY, (sp & 0xff) + (offset_u8 as u16 & 0xff) > 0xff);
-            }
-            Commit::LdHlSpOffset { offset } => {
-                let sp = cpu.stack_pointer;
-                let offset_u8 = offset as u8;
-                let result = sp.wrapping_add(offset as i16 as u16);
-                cpu.flags.remove(Flags::ZERO);
-                cpu.flags.remove(Flags::NEGATIVE);
-                cpu.flags.set(
-                    Flags::HALF_CARRY,
-                    (sp & 0xf) + (offset_u8 as u16 & 0xf) > 0xf,
-                );
-                cpu.flags
-                    .set(Flags::CARRY, (sp & 0xff) + (offset_u8 as u16 & 0xff) > 0xff);
-                cpu.set_register16(Register16::Hl, result);
-            }
-
             Commit::Daa => Self::apply_daa(cpu),
             Commit::CarryFlag(cf) => Self::apply_carry_flag(cpu, &cf),
             Commit::ComplementA => {

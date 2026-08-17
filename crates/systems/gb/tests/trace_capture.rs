@@ -106,7 +106,7 @@ fn header_fields_are_authored_from_the_schema() {
             "missing column {name}"
         );
     }
-    let observations = ["op_addr", "pix", "pix_x", "vram_addr", "vram_data"];
+    let observations = ["op_addr", "pix", "pix_x"];
     for name in observations {
         assert!(
             hdr.fields.iter().any(|f| f == name),
@@ -206,7 +206,7 @@ fn diff_detects_a_planted_divergence() {
     let store_b = MoreporkStore::from_bytes(&data_b).unwrap();
 
     let cmp = TraceComparison::align(&store_a, &store_b, None).unwrap();
-    assert!(cmp.len() > 0, "traces did not align");
+    assert!(!cmp.is_empty(), "traces did not align");
 
     // The control flow matches (op_addr aligns), but `a` diverges at entry 0.
     assert!(

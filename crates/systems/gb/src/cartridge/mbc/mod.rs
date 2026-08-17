@@ -163,6 +163,27 @@ fn peek_banked<const N: usize>(banks: &[[u8; N]], offset: usize) -> u8 {
     banks.get(offset / N).map_or(0xff, |bank| bank[offset % N])
 }
 
+/// Cartridge-RAM bank count declared by the header's RAM-size byte ($0149).
+fn num_ram_banks(rom: &[u8]) -> usize {
+    match rom[0x149] {
+        2 => 1,
+        3 => 4,
+        4 => 16,
+        5 => 8,
+        _ => 0,
+    }
+}
+
+/// A bank-major RAM store linearised for a save file; `None` when the board
+/// carries no RAM.
+fn save_banked<const N: usize>(banks: &[[u8; N]]) -> Option<Vec<u8>> {
+    if banks.is_empty() {
+        None
+    } else {
+        Some(banks.iter().flatten().copied().collect())
+    }
+}
+
 /// Copy a saved span into a flat store, truncating to whichever is shorter.
 pub(super) fn restore_flat(dst: &mut [u8], src: &[u8]) {
     let len = dst.len().min(src.len());

@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use crate::{Console, Dmg, Model, cpu_bus::BusAccessKind, isa::Sm83};
+use crate::{Console, Dmg, Model, cpu_bus::BusAccessKind};
 use cdl::CodeDataLog;
 use std::sync::Arc;
 use symbols::SymbolTable;
@@ -12,13 +12,12 @@ pub mod graphics;
 pub mod inspection;
 mod watch;
 use missingno_core::inspect;
-use missingno_core::isa::InstructionSet;
 use missingno_core::machine::StopSet;
 use missingno_core::symbols;
 
-pub use watch::{CpuRegister, WatchCondition, watchables};
+pub use watch::watchables;
 pub(crate) use watch::{ROM_BANK_KEY, SRAM_BANK_KEY, WRAM_BANK_KEY};
-use watch::{watch_from_condition, watch_to_condition};
+use watch::{WatchCondition, watch_from_condition, watch_to_condition};
 
 pub struct Debugger<M: Model = Dmg> {
     game_boy: Console<M>,
@@ -26,9 +25,6 @@ pub struct Debugger<M: Model = Dmg> {
     symbols: Arc<SymbolTable>,
     /// How each ROM byte has been used, filled in as the debugger runs.
     cdl: CodeDataLog,
-    /// T-cycle counter. Increments once per dot. Not hardware state —
-    /// debugging/tracing infrastructure built on top of the emulation core.
-    tcycle_count: u64,
 }
 
 /// The seam's stops in the form this engine evaluates them: breakpoints as bus
@@ -66,7 +62,6 @@ impl<M: Model> Debugger<M> {
             game_boy,
             symbols: Arc::new(SymbolTable::default()),
             cdl,
-            tcycle_count: 0,
         }
     }
 
@@ -106,10 +101,6 @@ impl<M: Model> Debugger<M> {
         &mut self.game_boy
     }
 
-    pub fn tcycle_count(&self) -> u64 {
-        self.tcycle_count
-    }
-
     pub fn step(&mut self) -> Option<M::Screen> {
         let screen = self.step_free();
         self.game_boy.sync_audio();
@@ -121,7 +112,6 @@ impl<M: Model> Debugger<M> {
     /// their own exit boundary.
     fn step_free(&mut self) -> Option<M::Screen> {
         let result = self.step_logged();
-        self.tcycle_count += result.tcycles as u64;
         if result.new_screen {
             Some(self.game_boy.screen().clone())
         } else {
@@ -180,7 +170,6 @@ impl<M: Model> Debugger<M> {
 
     /// One T-cycle without the observation syncs, for the same reason.
     fn step_tcycle_free(&mut self) -> Option<M::Screen> {
-        self.tcycle_count += 1;
         if self.game_boy.step_tcycle() {
             Some(self.game_boy.screen().clone())
         } else {
@@ -252,19 +241,9 @@ impl<M: Model> Debugger<M> {
         stops: &RunStops,
     ) -> (Option<M::Screen>, Option<WatchCondition>) {
         loop {
-            let result = self.step_logged();
-            self.tcycle_count += result.tcycles as u64;
-            let screen = if result.new_screen {
-                Some(self.game_boy.screen().clone())
-            } else {
-                None
-            };
+            let screen = self.step_free();
 
-            let hit = stops
-                .watches
-                .iter()
-                .find(|condition| self.condition_matches(condition, self.game_boy.bus_trace()))
-                .cloned();
+            let hit = self.check_watchpoints(&stops.watches, self.game_boy.bus_trace());
             if hit.is_some() {
                 return (screen, hit);
             }
@@ -307,17 +286,12 @@ impl<M: Model> Debugger<M> {
         self.game_boy.cpu().ir_address as u32
     }
 
-    pub fn instruction_set(&self) -> &'static dyn InstructionSet {
-        &Sm83
-    }
-
     pub fn watchables(&self) -> &'static [inspect::Watchable] {
         watchables(self.game_boy.model().wram_image().is_some())
     }
 
     pub fn reset(&mut self) {
         self.game_boy.reset();
-        self.tcycle_count = 0;
     }
 
     /// Capture a full T-cycle trace of one frame to a .morepork file. The full
@@ -368,7 +342,6 @@ impl<M: Model> Debugger<M> {
             if let Some(e) = trace_err {
                 return Err(e);
             }
-            self.tcycle_count += 1;
             if frame {
                 break;
             }

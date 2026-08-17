@@ -10,17 +10,6 @@ use crate::ppu::{
 pub use crate::ppu::draw::sprite_fetch::SpriteFetchPhase;
 use crate::ppu::draw::sprite_fetch::SpriteState;
 
-pub struct SpriteStoreSnapshot {
-    pub count: u8,
-    pub fetched: u16,
-    pub entries: Vec<SpriteStoreEntrySnapshot>,
-}
-pub struct SpriteStoreEntrySnapshot {
-    pub oam_index: u8,
-    pub line_offset: u8,
-    pub x: u8,
-    pub fetched: bool,
-}
 /// morepork `ppu_internal` snapshot. Field names match the morepork spec.
 pub struct PpuTraceSnapshot {
     pub sprite_x: [u8; 10],
@@ -78,24 +67,6 @@ pub struct PipelineSnapshot {
 }
 
 impl<P: PpuModel> Rendering<P> {
-    pub(in crate::ppu) fn sprite_store_snapshot(&self) -> SpriteStoreSnapshot {
-        let sprites = &self.scan.sprites_ref();
-        SpriteStoreSnapshot {
-            count: sprites.count,
-            fetched: sprites.fetched,
-            entries: (0..sprites.count as usize)
-                .map(|i| {
-                    let e = &sprites.entries[i];
-                    SpriteStoreEntrySnapshot {
-                        oam_index: e.oam_index,
-                        line_offset: e.line_offset,
-                        x: e.x,
-                        fetched: sprites.fetched & (1 << i) != 0,
-                    }
-                })
-                .collect(),
-        }
-    }
     pub(in crate::ppu) fn trace_snapshot(&self, oam: &Oam) -> PpuTraceSnapshot {
         let sprites = self.scan.sprites_ref();
         let mut sprite_x = [0u8; 10];

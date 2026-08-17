@@ -59,19 +59,19 @@ pub struct CpuView {
 }
 
 impl CpuView {
-    pub(super) fn capture(cpu: &Cpu) -> Self {
+    pub(super) fn capture(cpu: &impl CpuSource) -> Self {
         Self {
-            a: cpu.a,
-            b: cpu.b,
-            c: cpu.c,
-            d: cpu.d,
-            e: cpu.e,
-            h: cpu.h,
-            l: cpu.l,
-            flags: cpu.flags,
-            stack_pointer: cpu.stack_pointer,
-            ir_address: cpu.ir_address,
-            halted: cpu.halt.state == HaltState::Halted,
+            a: cpu.get_register8(Register8::A),
+            b: cpu.get_register8(Register8::B),
+            c: cpu.get_register8(Register8::C),
+            d: cpu.get_register8(Register8::D),
+            e: cpu.get_register8(Register8::E),
+            h: cpu.get_register8(Register8::H),
+            l: cpu.get_register8(Register8::L),
+            flags: cpu.flags(),
+            stack_pointer: cpu.stack_pointer(),
+            ir_address: cpu.ir_address(),
+            halted: cpu.halted(),
             ime: cpu.interrupts_enabled(),
         }
     }

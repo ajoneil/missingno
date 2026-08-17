@@ -18,10 +18,7 @@ pub use model::{
     obj_fifo_cells_from, resolve_dmg_pixel, resolve_shade,
 };
 pub use registers::{PipelineRegisters, TileSelGlitch};
-pub use rendering::{
-    Mode, PipelineSnapshot, PpuTraceSnapshot, SpriteFetchPhase, SpriteStoreEntrySnapshot,
-    SpriteStoreSnapshot,
-};
+pub use rendering::{Mode, PipelineSnapshot, PpuTraceSnapshot, SpriteFetchPhase};
 pub use stat_interrupt::{InterruptFlags, StatInterrupt, StatShadow};
 pub use video_control::VideoControl;
 
@@ -94,22 +91,6 @@ impl<Pix> Default for PpuTickResult<Pix> {
             request_stat: false,
         }
     }
-}
-
-/// Internal PPU DFF/latch signals exposed for morepork capture.
-#[derive(Clone, Copy, Debug)]
-pub struct TraceSignals {
-    /// WUVU.Q — 2-dot divider.
-    pub half_mcycle: bool,
-    /// VENA.Q — 4-dot divider.
-    pub mcycle: bool,
-    /// XUPY = WUVU.Q — scan-counter / OAM-pipeline clock.
-    pub scan_clock: bool,
-    /// BESU — Mode 2 OAM-scan + locks asserted.
-    pub mode2_active: bool,
-    /// WODU = AND2(XUGU, !FEPO) — HBlank STAT contributor.
-    pub end_of_visible_line: bool,
-    pub stat_line: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -770,31 +751,8 @@ impl<P: PpuModel> Ppu<P> {
         })
     }
 
-    pub fn sprite_store(&self) -> Option<SpriteStoreSnapshot> {
-        self.pixel_pipeline
-            .as_ref()
-            .map(|r| r.sprite_store_snapshot())
-    }
-
     pub fn stat_line_was_high(&self) -> bool {
         !self.video.stat.legs_was_high().is_empty()
-    }
-
-    pub fn trace_signals(&self) -> TraceSignals {
-        let sprites_enabled = self.registers.control.sprites_enabled();
-        let (mode2_active, end_of_visible_line) = self
-            .pixel_pipeline
-            .as_ref()
-            .map(|r| (r.scan_mode2_active(), r.end_of_line_signal(sprites_enabled)))
-            .unwrap_or((false, false));
-        TraceSignals {
-            half_mcycle: self.video.dividers.half_mcycle,
-            mcycle: self.video.dividers.mcycle(),
-            scan_clock: self.video.dividers.scan_clock(),
-            mode2_active,
-            end_of_visible_line,
-            stat_line: self.stat_line(),
-        }
     }
 
     /// Used internally by the master-clock-fall path for the BGP recovery edge detector.

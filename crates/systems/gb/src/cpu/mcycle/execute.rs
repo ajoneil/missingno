@@ -314,38 +314,7 @@ impl Cpu {
                 }
             }
 
-            Phase::Push { sp, hi, lo } => {
-                let sp = *sp;
-                match current_step {
-                    0 => (Some(MCycleAction::InternalOamBug { address: sp }), true),
-                    1 => {
-                        let addr = sp.wrapping_sub(1);
-                        self.stack_pointer = addr;
-                        (
-                            Some(MCycleAction::Write {
-                                address: addr,
-                                value: *hi,
-                            }),
-                            true,
-                        )
-                    }
-                    2 => {
-                        let addr = sp.wrapping_sub(2);
-                        self.stack_pointer = addr;
-                        (
-                            Some(MCycleAction::Write {
-                                address: addr,
-                                value: *lo,
-                            }),
-                            true,
-                        )
-                    }
-                    _ => (
-                        Some(self.enter_fetch_overlap(claim, Commit::NoOperation)),
-                        false,
-                    ),
-                }
-            }
+            Phase::Push { sp, hi, lo } => self.push_step(claim, current_step, *sp, *hi, *lo),
 
             Phase::CondJump { taken, target } => {
                 if current_step == 0 && *taken {
@@ -369,36 +338,7 @@ impl Cpu {
                         false,
                     );
                 }
-                let sp = *sp;
-                match current_step {
-                    0 => (Some(MCycleAction::InternalOamBug { address: sp }), true),
-                    1 => {
-                        let addr = sp.wrapping_sub(1);
-                        self.stack_pointer = addr;
-                        (
-                            Some(MCycleAction::Write {
-                                address: addr,
-                                value: *hi,
-                            }),
-                            true,
-                        )
-                    }
-                    2 => {
-                        let addr = sp.wrapping_sub(2);
-                        self.stack_pointer = addr;
-                        (
-                            Some(MCycleAction::Write {
-                                address: addr,
-                                value: *lo,
-                            }),
-                            true,
-                        )
-                    }
-                    _ => (
-                        Some(self.enter_fetch_overlap(claim, Commit::NoOperation)),
-                        false,
-                    ),
-                }
+                self.push_step(claim, current_step, *sp, *hi, *lo)
             }
 
             Phase::CondReturn { taken, sp, action } => {
@@ -430,6 +370,35 @@ impl Cpu {
                     ),
                 }
             }
+        }
+    }
+
+    /// The stack-push M-cycles: an idle cycle on the pre-decrement SP, then the
+    /// high and low byte writes, each on the SP it just decremented to.
+    fn push_step(
+        &mut self,
+        claim: VramDmaClaim,
+        current_step: u8,
+        sp: u16,
+        hi: u8,
+        lo: u8,
+    ) -> (Option<MCycleAction>, bool) {
+        match current_step {
+            0 => (Some(MCycleAction::InternalOamBug { address: sp }), true),
+            1 => {
+                let address = sp.wrapping_sub(1);
+                self.stack_pointer = address;
+                (Some(MCycleAction::Write { address, value: hi }), true)
+            }
+            2 => {
+                let address = sp.wrapping_sub(2);
+                self.stack_pointer = address;
+                (Some(MCycleAction::Write { address, value: lo }), true)
+            }
+            _ => (
+                Some(self.enter_fetch_overlap(claim, Commit::NoOperation)),
+                false,
+            ),
         }
     }
 }

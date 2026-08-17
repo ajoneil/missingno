@@ -24,10 +24,6 @@ impl VolumeAndEnvelope {
         self.0 >> 4
     }
 
-    pub fn initial_volume_percent(&self) -> f32 {
-        self.initial_volume() as f32 / 15.0
-    }
-
     pub fn direction(&self) -> EnvelopeDirection {
         if self.0 & 0b1000 != 0 {
             EnvelopeDirection::Increase

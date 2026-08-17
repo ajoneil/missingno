@@ -585,32 +585,6 @@ impl Cpu {
         self.irq.ime.output() != InterruptMasterEnable::Disabled
     }
 
-    /// Per-instruction (or dispatch) M-cycle index — 0 = fetch,
-    /// 1 = first post-fetch M-cycle, etc. Interrupt dispatch's
-    /// 5 M-cycles report 0..=4 (M0 overlaps the fetch). Halt: 0.
-    pub fn op_state(&self) -> u8 {
-        match &self.seq.phase {
-            mcycle::CpuPhase::Fetch => 0,
-            mcycle::CpuPhase::Execute { step, .. } => *step,
-            mcycle::CpuPhase::InterruptDispatch { step, .. } => *step,
-            mcycle::CpuPhase::Halted(_) => 0,
-            mcycle::CpuPhase::Locked => 0,
-        }
-    }
-
-    /// AFUR/ALEF/APUK/ADYK ring-counter state, packed
-    /// `AFUR<<3 | ALEF<<2 | APUK<<1 | ADYK<<0` to match GateBoy's
-    /// encoding at the post-fall sampling instant.
-    pub fn mcycle_phase(&self) -> u8 {
-        match self.seq.last_tcycle.as_u8() {
-            0 => 0x0E, // AFUR=1 ALEF=1 APUK=1 ADYK=0
-            1 => 0x07, // AFUR=0 ALEF=1 APUK=1 ADYK=1
-            2 => 0x01, // AFUR=0 ALEF=0 APUK=0 ADYK=1
-            3 => 0x08, // AFUR=1 ALEF=0 APUK=0 ADYK=0
-            _ => unreachable!(),
-        }
-    }
-
     /// Address on the CPU bus for the current M-cycle.
     pub fn bus_address(&self) -> u16 {
         match &self.bus.current_action {
@@ -645,17 +619,6 @@ impl Cpu {
         let pending = self.seq.boundary_pending;
         self.seq.boundary_pending = false;
         pending
-    }
-
-    /// IE-push-bug flag (morepork extension). Set during dispatch's M3
-    /// vector-resolve window.
-    pub fn pending_vector_resolve_flag(&self) -> bool {
-        self.irq.pending_vector_resolve
-    }
-
-    /// HALT-bug flag (morepork extension). See `HaltContext::bug`.
-    pub fn halt_bug_flag(&self) -> bool {
-        self.halt.bug
     }
 
     pub fn is_halted(&self) -> bool {

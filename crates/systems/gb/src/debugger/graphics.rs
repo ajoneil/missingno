@@ -20,7 +20,7 @@ use crate::ppu::types::tiles::{TileAddressMode, TileBlockId, TileIndex, TileMapI
 use super::inspection::PpuSource;
 
 /// Addressable tiles per VRAM bank: three 128-tile blocks in address order.
-pub const TILES_PER_BANK: usize = 384;
+pub(crate) const TILES_PER_BANK: usize = 384;
 
 /// Sprites are eight pixels wide in both LCDC.2 sizes.
 const SPRITE_WIDTH: u32 = 8;

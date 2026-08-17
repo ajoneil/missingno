@@ -133,17 +133,7 @@ impl Cpu {
                     // step: PC HALT+1 → HALT_addr.
                     self.pc = self.pc.wrapping_sub(1);
                     if self.dispatch.dispatch_active() {
-                        let pc = self.pc;
-                        self.seq.phase = CpuPhase::InterruptDispatch {
-                            sp: self.stack_pointer,
-                            pc_hi: (pc >> 8) as u8,
-                            pc_lo: (pc & 0xff) as u8,
-                            step: 0,
-                        };
-                        self.seq.exec_step = 0;
-                        self.irq.pending_vector_resolve = false;
-                        self.seq.boundary_flag = true;
-                        return self.mcycle_isr(claim);
+                        return self.enter_interrupt_dispatch(claim);
                     }
                 } else {
                     // HALT-bug: PC++ suppression at the next opcode
@@ -213,22 +203,27 @@ impl Cpu {
                     self.halt.state = HaltState::Running;
                     self.halt.rs_latched = false;
                     self.halt.wake_active = true;
-                    let pc = self.pc;
-                    self.seq.phase = CpuPhase::InterruptDispatch {
-                        sp: self.stack_pointer,
-                        pc_hi: (pc >> 8) as u8,
-                        pc_lo: (pc & 0xff) as u8,
-                        step: 0,
-                    };
-                    self.seq.exec_step = 0;
-                    self.irq.pending_vector_resolve = false;
-                    self.seq.boundary_flag = true;
-                    self.mcycle_isr(claim)
+                    self.enter_interrupt_dispatch(claim)
                 } else {
                     self.enter_post_halt_fetch(claim)
                 }
             }
         }
+    }
+
+    /// Enter the 5-M-cycle interrupt dispatch, carrying the PC to push.
+    fn enter_interrupt_dispatch(&mut self, claim: VramDmaClaim) -> Option<MCycleAction> {
+        let pc = self.pc;
+        self.seq.phase = CpuPhase::InterruptDispatch {
+            sp: self.stack_pointer,
+            pc_hi: (pc >> 8) as u8,
+            pc_lo: (pc & 0xff) as u8,
+            step: 0,
+        };
+        self.seq.exec_step = 0;
+        self.irq.pending_vector_resolve = false;
+        self.seq.boundary_flag = true;
+        self.mcycle_isr(claim)
     }
 
     /// Enter `CpuPhase::Halted(phase)`. No bus activity — the halted
