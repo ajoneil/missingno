@@ -291,6 +291,12 @@ impl Cartridge {
         rom.get(0x143).is_some_and(|flag| flag & 0xC0 == 0xC0)
     }
 
+    /// CGB flag (header $0143): bit 7 set marks a CGB-aware cartridge, which a
+    /// Color boots enhanced.
+    pub fn peek_cgb(rom: &[u8]) -> bool {
+        rom.get(0x143).is_some_and(|flag| flag & 0x80 != 0)
+    }
+
     pub fn title(&self) -> &str {
         &self.title
     }
@@ -307,7 +313,7 @@ impl Cartridge {
     /// CGB-aware cartridge. Any other value is a DMG cartridge, which the CGB
     /// runs in DMG-compatibility mode.
     pub fn is_cgb(&self) -> bool {
-        self.rom[0x143] & 0x80 != 0
+        Cartridge::peek_cgb(&self.rom)
     }
 
     /// $C0 in the CGB flag: the game runs on no Game Boy but a Color.

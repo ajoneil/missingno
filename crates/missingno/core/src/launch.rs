@@ -70,6 +70,20 @@ impl LaunchValues {
         }
     }
 
+    /// Whatever the caller set for `id`, whichever kind it is.
+    pub fn value(&self, id: &str) -> Option<&LaunchValue> {
+        self.0.get(id)
+    }
+
+    pub fn set(&mut self, id: impl Into<String>, value: LaunchValue) {
+        self.0.insert(id.into(), value);
+    }
+
+    /// Leave `id` to the core again.
+    pub fn clear(&mut self, id: &str) {
+        self.0.remove(id);
+    }
+
     pub fn set_choice(&mut self, id: impl Into<String>, value: impl Into<String>) {
         self.0.insert(id.into(), LaunchValue::Choice(value.into()));
     }
