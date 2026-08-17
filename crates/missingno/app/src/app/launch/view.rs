@@ -245,7 +245,7 @@ pub fn window(state: &Window) -> Element<'static, app::Message> {
     if let Some(family) = state.family() {
         body = body.push(horizontal_rule());
         body = body.push(panel(&PanelData {
-            descriptors: super::rendered_options(family),
+            descriptors: super::rendered_options(family, &state.rom),
             overrides: state.overrides.clone(),
             facts: state.facts.clone(),
             surface: EditSurface::Window,

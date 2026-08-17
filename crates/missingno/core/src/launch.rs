@@ -10,6 +10,7 @@
 use std::collections::BTreeMap;
 
 /// One option a core accepts at launch.
+#[derive(Clone)]
 pub struct LaunchOptionDescriptor {
     pub id: &'static str,
     pub label: &'static str,
@@ -18,6 +19,7 @@ pub struct LaunchOptionDescriptor {
 
 /// What kind of value an option takes. Absence of a value always means
 /// automatic: the core resolves it from the media, a header, or an inference.
+#[derive(Clone)]
 pub enum LaunchOptionKind {
     Choice {
         choices: Vec<LaunchChoice>,
@@ -30,6 +32,7 @@ pub enum LaunchOptionKind {
 }
 
 /// One value a [`LaunchOptionKind::Choice`] accepts, and how to show it.
+#[derive(Clone)]
 pub struct LaunchChoice {
     pub value: &'static str,
     pub label: &'static str,

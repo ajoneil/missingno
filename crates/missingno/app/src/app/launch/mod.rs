@@ -45,9 +45,9 @@ fn rendered(descriptor: &LaunchOptionDescriptor) -> bool {
     !UNRENDERED_OPTIONS.contains(&descriptor.id)
 }
 
-/// The options a family publishes that a launch surface shows.
-fn rendered_options(family: &FamilyDescriptor) -> Vec<LaunchOptionDescriptor> {
-    (family.options)().into_iter().filter(rendered).collect()
+/// The options a family publishes for this media that a launch surface shows.
+fn rendered_options(family: &FamilyDescriptor, rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
+    (family.options)(rom).into_iter().filter(rendered).collect()
 }
 
 /// What the catalogue and the media itself state about a dump, ahead of any
@@ -377,14 +377,23 @@ fn store_overrides(app: &mut App, sha1: &str, overrides: LaunchValues) {
     }
 }
 
-/// What fills a library game's launch options where the user has not. Reads the
+/// What a library game's media settles about its launch: the options its family
+/// publishes for this ROM, and what fills the ones the user has not set.
+#[derive(Clone, Default)]
+pub struct MediaOptions {
+    /// `None` where no family is registered for the game.
+    published: Option<Vec<LaunchOptionDescriptor>>,
+    facts: Facts,
+}
+
+/// What a library game's own media says about its launch options. Reads the
 /// media, so it is taken once when the game's details page opens.
-pub(in crate::app) fn facts_for_game(app: &App, sha1: &str) -> Facts {
+pub(in crate::app) fn media_options(app: &App, sha1: &str) -> MediaOptions {
     let Some(entry) = app.store.entry(sha1) else {
-        return Facts::default();
+        return MediaOptions::default();
     };
     let Some(family) = entry.platform.and_then(system::family_of) else {
-        return Facts::default();
+        return MediaOptions::default();
     };
     let rom = entry
         .rom_paths
@@ -392,21 +401,23 @@ pub(in crate::app) fn facts_for_game(app: &App, sha1: &str) -> Facts {
         .find(|path| path.exists())
         .and_then(|path| std::fs::read(path).ok())
         .unwrap_or_default();
-    facts(family, &rom, &app.catalogue, sha1, app.boot_rom.as_ref())
+    MediaOptions {
+        published: Some(rendered_options(family, &rom)),
+        facts: facts(family, &rom, &app.catalogue, sha1, app.boot_rom.as_ref()),
+    }
 }
 
 /// The rows a library game's own settings section shows.
 pub(in crate::app) fn game_settings(
     app: &App,
     sha1: &str,
-    facts: &Facts,
+    media: &MediaOptions,
 ) -> Option<view::PanelData> {
     let entry = app.store.entry(sha1)?;
-    let family = system::family_of(entry.platform?)?;
     Some(view::PanelData {
-        descriptors: rendered_options(family),
+        descriptors: media.published.clone()?,
         overrides: entry.overrides.clone(),
-        facts: facts.clone(),
+        facts: media.facts.clone(),
         surface: EditSurface::GameSettings,
     })
 }

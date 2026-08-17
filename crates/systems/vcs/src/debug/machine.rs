@@ -54,8 +54,9 @@ pub const BOARD: &str = "board";
 pub const OVERDUMP: &str = "overdump";
 
 /// The options the VCS accepts at launch. A cart carries no header, so what a
-/// catalogue says about its region, its board and its dump is all a loader has.
-pub fn launch_options() -> Vec<LaunchOptionDescriptor> {
+/// catalogue says about its region, its board and its dump is all a loader has —
+/// the media itself settles nothing.
+pub fn launch_options(_rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
     vec![
         LaunchOptionDescriptor {
             id: TV_STANDARD,

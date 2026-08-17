@@ -141,8 +141,9 @@ pub fn is_sg1000_rom(path: &std::path::Path) -> bool {
 pub const BOARD: &str = "board";
 
 /// The options the SG-1000 accepts at launch. A cartridge carries no header, so
-/// what a catalogue says about its board is all a loader has.
-pub fn launch_options() -> Vec<LaunchOptionDescriptor> {
+/// what a catalogue says about its board is all a loader has — the media itself
+/// settles nothing.
+pub fn launch_options(_rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
     vec![LaunchOptionDescriptor {
         id: BOARD,
         label: "Cartridge board",

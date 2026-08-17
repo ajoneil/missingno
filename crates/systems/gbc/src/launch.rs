@@ -17,23 +17,26 @@ pub const BOOT_ROM: &str = "boot-rom";
 /// The board the cartridge is built on, for media whose header misdeclares it.
 pub const BOARD: &str = "board";
 
-/// The options the Game Boy family accepts at launch.
-pub fn launch_options() -> Vec<LaunchOptionDescriptor> {
+/// The options the Game Boy family accepts at launch for this cartridge. The
+/// DMG is offered for media it can run: a Color runs a DMG cartridge, but no
+/// Game Boy but a Color runs one whose header requires it.
+pub fn launch_options(rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
+    let dmg = (!Cartridge::peek_cgb_only(rom)).then_some(LaunchChoice {
+        value: "dmg",
+        label: "Game Boy (DMG)",
+    });
     vec![
         LaunchOptionDescriptor {
             id: RUNNER,
             label: "Console",
             kind: LaunchOptionKind::Choice {
-                choices: vec![
-                    LaunchChoice {
-                        value: "dmg",
-                        label: "Game Boy (DMG)",
-                    },
-                    LaunchChoice {
+                choices: dmg
+                    .into_iter()
+                    .chain([LaunchChoice {
                         value: "cgb",
                         label: "Game Boy Color (CGB)",
-                    },
-                ],
+                    }])
+                    .collect(),
             },
         },
         LaunchOptionDescriptor {
@@ -168,4 +171,62 @@ pub fn console<L: GbLaunch>(
         launcher.dmg(console)
     };
     Ok((output, fit))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A cartridge image whose header carries `cgb_flag` at $0143 and names a
+    /// mapperless board at $0147.
+    fn rom(cgb_flag: u8) -> Vec<u8> {
+        let mut rom = vec![0; 0x8000];
+        rom[0x143] = cgb_flag;
+        rom
+    }
+
+    fn runner_choices(rom: &[u8]) -> Vec<&'static str> {
+        let runner = launch_options(rom)
+            .into_iter()
+            .find(|option| option.id == RUNNER)
+            .expect("the console option is published");
+        match runner.kind {
+            LaunchOptionKind::Choice { choices } => {
+                choices.into_iter().map(|choice| choice.value).collect()
+            }
+            _ => panic!("the console option is a choice"),
+        }
+    }
+
+    #[test]
+    fn a_cgb_only_cartridge_offers_no_dmg() {
+        assert_eq!(runner_choices(&rom(0xC0)), ["cgb"]);
+    }
+
+    #[test]
+    fn a_cgb_enhanced_cartridge_offers_both_consoles() {
+        assert_eq!(runner_choices(&rom(0x80)), ["dmg", "cgb"]);
+    }
+
+    #[test]
+    fn a_dmg_cartridge_offers_both_consoles() {
+        assert_eq!(runner_choices(&rom(0x00)), ["dmg", "cgb"]);
+    }
+
+    #[test]
+    fn a_dmg_choice_kept_from_elsewhere_is_still_refused() {
+        struct Named;
+        impl GbLaunch for Named {
+            type Output = &'static str;
+            fn dmg(self, _: GameBoy) -> &'static str {
+                "dmg"
+            }
+            fn cgb(self, _: GameBoyColor) -> &'static str {
+                "cgb"
+            }
+        }
+        let cartridge = Cartridge::new(rom(0xC0), None, None).expect("the header names a board");
+        let launched = console(cartridge, None, None, RunnerPreference::Dmg, Named);
+        assert_eq!(launched.err(), Some(RunnerRefused::CgbOnlyCartridge));
+    }
 }

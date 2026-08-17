@@ -116,7 +116,7 @@ fn start(app: &mut App, request: Request<'_>) -> Result<String, String> {
         &sha1,
         app.boot_rom.as_ref(),
     );
-    let values = launch::resolve(&(family.options)(), &request.overrides, &facts);
+    let values = launch::resolve(&(family.options)(&request.rom), &request.overrides, &facts);
 
     let mut console = (family.create_console)(system::MediaLoad {
         rom: &request.rom,

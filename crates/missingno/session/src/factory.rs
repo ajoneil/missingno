@@ -51,8 +51,9 @@ pub struct CoreFactory {
     pub name: &'static str,
     pub is_rom: IsRom,
     pub create: Create,
-    /// The launch options this core publishes.
-    pub options: fn() -> Vec<LaunchOptionDescriptor>,
+    /// The launch options this core publishes for the media in hand: a choice
+    /// the ROM's own header rules out is not among them.
+    pub options: fn(&[u8]) -> Vec<LaunchOptionDescriptor>,
 }
 
 /// The file stem as a display title, falling back to a generic name. The
@@ -129,8 +130,8 @@ mod gb {
         Ok(console)
     }
 
-    pub fn options() -> Vec<LaunchOptionDescriptor> {
-        launch::launch_options()
+    pub fn options(rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
+        launch::launch_options(rom)
     }
 
     pub fn is_rom(path: &Path, rom: &[u8]) -> bool {
@@ -188,8 +189,8 @@ mod vcs {
         missingno_vcs::debug::is_vcs_rom(path, rom)
     }
 
-    pub fn options() -> Vec<LaunchOptionDescriptor> {
-        missingno_vcs::debug::launch_options()
+    pub fn options(rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
+        missingno_vcs::debug::launch_options(rom)
     }
 }
 
@@ -277,8 +278,8 @@ mod sg1000 {
         missingno_sg1000::debug::is_sg1000_rom(path)
     }
 
-    pub fn options() -> Vec<LaunchOptionDescriptor> {
-        missingno_sg1000::debug::launch_options()
+    pub fn options(rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
+        missingno_sg1000::debug::launch_options(rom)
     }
 }
 
@@ -303,14 +304,14 @@ pub static FACTORIES: &[CoreFactory] = &[
         name: "NES",
         is_rom: nes::is_rom,
         create: nes::create,
-        options: Vec::new,
+        options: |_| Vec::new(),
     },
     #[cfg(feature = "sms")]
     CoreFactory {
         name: "Master System",
         is_rom: sms::is_rom,
         create: sms::create,
-        options: Vec::new,
+        options: |_| Vec::new(),
     },
     #[cfg(feature = "sg1000")]
     CoreFactory {

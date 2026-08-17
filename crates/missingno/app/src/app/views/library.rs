@@ -33,7 +33,7 @@ impl App {
     }
 
     pub(super) fn detail_view(&self) -> Element<'_, Message> {
-        let (viewing_sha1, section, hovered_log_entry, header_hovered, launch_facts) =
+        let (viewing_sha1, section, hovered_log_entry, header_hovered, media_options) =
             match &self.screen {
                 Screen::ViewingGame {
                     sha1,
@@ -42,14 +42,14 @@ impl App {
                             section,
                             hovered_log_entry,
                             header_hovered,
-                            launch_facts,
+                            media_options,
                         },
                 } => (
                     Some(sha1.as_str()),
                     *section,
                     *hovered_log_entry,
                     *header_hovered,
-                    Some(launch_facts),
+                    Some(media_options),
                 ),
                 _ => (None, Default::default(), None, false, None),
             };
@@ -105,7 +105,8 @@ impl App {
             header_hovered,
             is_loaded,
             inserted_cartridge: self.inserted_cartridge(),
-            launch_options: launch_facts.and_then(|facts| launch::game_settings(self, sha1, facts)),
+            launch_options: media_options
+                .and_then(|media| launch::game_settings(self, sha1, media)),
         })
     }
 
@@ -119,7 +120,7 @@ impl App {
                 section: Default::default(),
                 hovered_log_entry: None,
                 header_hovered: false,
-                launch_facts: launch::facts_for_game(self, sha1),
+                media_options: launch::media_options(self, sha1),
             },
         };
         self.load_activity_async(sha1)

@@ -168,8 +168,9 @@ pub struct FamilyDescriptor {
     /// one; `None` falls back to the file stem.
     pub title_from_rom: fn(&[u8]) -> Option<String>,
     pub create_console: CreateConsole,
-    /// The launch options this family's core publishes.
-    pub options: fn() -> Vec<LaunchOptionDescriptor>,
+    /// The launch options this family's core publishes for the media in hand: a
+    /// choice the ROM's own header rules out is not among them.
+    pub options: fn(&[u8]) -> Vec<LaunchOptionDescriptor>,
     /// The options the media answers for itself, for a launch surface to show
     /// as the automatic value. Empty where only the core can resolve them.
     pub stated_by_media: fn(&[u8]) -> Vec<MediaFact>,
@@ -260,7 +261,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
             sms::create_console(media.rom, media.fallback_title)
                 .map_err(|error| format!("{error:?}"))
         },
-        options: Vec::new,
+        options: |_| Vec::new(),
         stated_by_media: |_| Vec::new(),
         port_config: |_| Vec::new(),
         trace: None,
@@ -288,7 +289,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
             nes::create_console(media.rom, media.fallback_title)
                 .map_err(|error| format!("{error:?}"))
         },
-        options: Vec::new,
+        options: |_| Vec::new(),
         stated_by_media: |_| Vec::new(),
         port_config: |_| Vec::new(),
         trace: Some(crate::trace::trace_nes),

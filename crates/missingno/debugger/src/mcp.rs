@@ -343,7 +343,7 @@ fn load_rom(loaded: &mut Option<Host>, args: &Value) -> ToolOutcome {
     let path_ref = Path::new(path);
     let factory = factory::factory_for(path_ref, &bytes)
         .ok_or_else(|| format!("no core recognises {path}"))?;
-    let launch = launch_values(factory, args)?;
+    let launch = launch_values(factory, &bytes, args)?;
     let console = (factory.create)(path_ref, &bytes, &launch).map_err(|error| error.to_string())?;
     let debugger = console.into_debugger();
     let core_name = factory.name;
@@ -354,9 +354,9 @@ fn load_rom(loaded: &mut Option<Host>, args: &Value) -> ToolOutcome {
 }
 
 /// The launch values a call names, read against the options the recognised core
-/// publishes: an option it does not publish, or a value of the wrong shape, is
-/// an error rather than a setting quietly dropped.
-fn launch_values(factory: &CoreFactory, args: &Value) -> Result<LaunchValues, String> {
+/// publishes for this media: an option it does not publish, or a value of the
+/// wrong shape, is an error rather than a setting quietly dropped.
+fn launch_values(factory: &CoreFactory, rom: &[u8], args: &Value) -> Result<LaunchValues, String> {
     let mut launch = LaunchValues::default();
     // The VCS broadcast standard had a parameter of its own before the option
     // bag existed, and keeps answering to it.
@@ -369,7 +369,7 @@ fn launch_values(factory: &CoreFactory, args: &Value) -> Result<LaunchValues, St
     let options = options
         .as_object()
         .ok_or("'options' must be an object of option id to value")?;
-    let published = (factory.options)();
+    let published = (factory.options)(rom);
     for (id, value) in options {
         let descriptor = published
             .iter()
