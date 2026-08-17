@@ -138,11 +138,13 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                     });
                 }
                 ImportSaveSelected(handle) => {
-                    if let (Some(handle), Some(sha1)) = (handle, app.viewing_sha1())
-                        && let Some((game_dir, _)) = super::find_by_sha1(sha1)
+                    if let (Some(handle), Some(sha1)) =
+                        (handle, app.viewing_sha1().map(str::to_owned))
+                        && let Some((game_dir, _)) = super::find_by_sha1(&sha1)
                         && let Ok(data) = std::fs::read(handle.path())
                     {
                         super::activity::write_import(&game_dir, &data);
+                        app.store.notify_activity_changed(&sha1);
                     }
                 }
                 PlayWithSave(save_id) => {
@@ -674,9 +676,7 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                                     app::Message::HomebrewDownloaded(title, rom_bytes, manifest)
                                 }
                                 Err(e) => app::Message::HomebrewBrowser(
-                                    homebrew_browser::Message::DownloadFailed(format!(
-                                        "Download failed: {e}"
-                                    )),
+                                    homebrew_browser::Message::DownloadFailed(e),
                                 ),
                             },
                         );
