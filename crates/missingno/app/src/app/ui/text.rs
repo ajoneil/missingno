@@ -59,7 +59,7 @@ pub fn link_text<'a>(
     parts: impl IntoIterator<Item = TextPart<'a>>,
     color: Color,
 ) -> Element<'a, app::Message> {
-    let spans: Vec<Span<'a, &'static str>> = parts
+    let spans: Vec<Span<'a, String>> = parts
         .into_iter()
         .map(|part| match part {
             TextPart::Plain(t) => Span {
@@ -70,7 +70,7 @@ pub fn link_text<'a>(
             TextPart::Link(label, url) => Span {
                 text: label,
                 color: Some(color),
-                link: Some(url),
+                link: Some(url.to_string()),
                 ..Default::default()
             },
         })
@@ -136,11 +136,7 @@ pub fn progress_text(
 pub mod sizes {
     use crate::app::ui::sizes;
 
-    pub fn m() -> f32 {
-        sizes::m()
-    }
-
     pub fn xl() -> f32 {
-        m() * 2.0
+        sizes::m() * 2.0
     }
 }

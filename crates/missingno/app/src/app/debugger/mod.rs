@@ -231,6 +231,26 @@ fn parse_disasm_jump(input: &str) -> Option<DisasmJump> {
     }
 }
 
+/// The width of a bus address as the panel address fields take it.
+const ADDRESS_DIGITS: usize = 4;
+
+/// What an address field accepts as it is typed into: hex digits, one bus
+/// address wide.
+fn address_field(input: &str) -> String {
+    input
+        .chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .take(ADDRESS_DIGITS)
+        .collect()
+}
+
+/// The address a filled address field names; `None` until it holds a whole one.
+fn parse_address_field(input: &str) -> Option<u32> {
+    (input.len() == ADDRESS_DIGITS)
+        .then(|| u32::from_str_radix(input, 16).ok())
+        .flatten()
+}
+
 impl Debugger {
     /// Build a shell over the session hosting a debugger core. `screen_view`
     /// carries the console's technology (fresh from a cold load, or transferred
@@ -475,11 +495,6 @@ impl Debugger {
             .with_session(move |s| s.debugger_mut().remove_watch(&watch));
     }
 
-    fn display_after_step(&mut self) -> Task<app::Message> {
-        self.refresh_paused();
-        Task::none()
-    }
-
     /// Run a paused-step command against the session, then drain and drop the
     /// audio it produced. The session's audio sink only drains in the run loop,
     /// so paused-step audio does not play — draining here keeps it from piling up
@@ -497,19 +512,22 @@ impl Debugger {
                 self.step_and_drop(|s| {
                     s.step();
                 });
-                self.display_after_step()
+                self.refresh_paused();
+                Task::none()
             }
             Message::StepOver => {
                 self.step_and_drop(|s| {
                     s.step_over();
                 });
-                self.display_after_step()
+                self.refresh_paused();
+                Task::none()
             }
             Message::StepFrame => {
                 self.step_and_drop(|s| {
                     s.step_frame();
                 });
-                self.display_after_step()
+                self.refresh_paused();
+                Task::none()
             }
             Message::CaptureFrame => {
                 let title = self.handle.with_session(|s| s.game_title());
@@ -552,17 +570,12 @@ impl Debugger {
                 Task::none()
             }
             Message::BreakpointInputChanged(input) => {
-                self.breakpoint_input = input
-                    .chars()
-                    .filter(|c| c.is_ascii_hexdigit())
-                    .take(4)
-                    .collect();
+                self.breakpoint_input = address_field(&input);
                 Task::none()
             }
             Message::AddBreakpoint => {
-                if self.breakpoint_input.len() == 4 {
-                    let address = u16::from_str_radix(&self.breakpoint_input, 16).unwrap();
-                    self.set_breakpoint(address as u32);
+                if let Some(address) = parse_address_field(&self.breakpoint_input) {
+                    self.set_breakpoint(address);
                     self.breakpoint_input.clear();
                 }
                 Task::none()
@@ -577,11 +590,7 @@ impl Debugger {
                 Task::none()
             }
             Message::WatchpointInputChanged(input) => {
-                self.watchpoint_input = input
-                    .chars()
-                    .filter(|c| c.is_ascii_hexdigit())
-                    .take(4)
-                    .collect();
+                self.watchpoint_input = address_field(&input);
                 Task::none()
             }
             Message::WatchpointKindChanged(kind) => {
@@ -589,13 +598,12 @@ impl Debugger {
                 Task::none()
             }
             Message::AddWatchpoint => {
-                if self.watchpoint_input.len() == 4 {
-                    let address = u16::from_str_radix(&self.watchpoint_input, 16).unwrap();
+                if let Some(address) = parse_address_field(&self.watchpoint_input) {
                     let key = match self.watchpoint_kind {
                         AccessKind::Read => "bus-read",
                         AccessKind::Write => "bus-write",
                     };
-                    self.add_watchpoint(Watch::single(key, Some(address as u32), None));
+                    self.add_watchpoint(Watch::single(key, Some(address), None));
                     self.watchpoint_input.clear();
                 }
                 Task::none()
@@ -609,11 +617,7 @@ impl Debugger {
                 Task::none()
             }
             Message::LabelAddressChanged(input) => {
-                self.label_address_input = input
-                    .chars()
-                    .filter(|c| c.is_ascii_hexdigit())
-                    .take(4)
-                    .collect();
+                self.label_address_input = address_field(&input);
                 Task::none()
             }
             Message::LabelNameChanged(input) => {
@@ -621,11 +625,12 @@ impl Debugger {
                 Task::none()
             }
             Message::AddLabel => {
-                if self.label_address_input.len() == 4 && !self.label_name_input.is_empty() {
-                    let address = u16::from_str_radix(&self.label_address_input, 16).unwrap();
+                if let Some(address) = parse_address_field(&self.label_address_input)
+                    && !self.label_name_input.is_empty()
+                {
                     let name = std::mem::take(&mut self.label_name_input);
                     self.handle
-                        .with_session(move |s| s.debugger_mut().add_symbol(address as u32, name));
+                        .with_session(move |s| s.debugger_mut().add_symbol(address, name));
                     self.label_address_input.clear();
                     self.save_sidecars();
                     self.refresh_paused();
@@ -745,32 +750,11 @@ impl Debugger {
             graphics: paused.graphics.as_ref(),
         };
 
-        let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
-            pane_grid(split_state, |_handle, zone, _maximized| {
-                let content: Element<'_, app::Message> = match zone {
-                    MainSplit::Top => self.panes.view(Some(ctx)),
-                    MainSplit::Bottom => self.bottom_pane_grid(
-                        self.bottom_panes
-                            .as_ref()
-                            .expect("bottom_panes must exist when main_split exists"),
-                    ),
-                };
-                pane_grid::Content::new(content)
-            })
-            .on_resize(10.0, |resize| Message::MainSplitResize(resize).into())
-            .spacing(s())
-            .into()
-        } else {
-            self.panes.view(Some(ctx))
-        };
-
+        let center = self.main_area(|| self.panes.view(Some(ctx)));
         let sidebar = self
             .sidebar
             .view(paused.sidebar.clone(), paused.colors.as_ref());
-        row![sidebar, center, self.icon_rail(),]
-            .spacing(s())
-            .padding(s())
-            .into()
+        self.shell(sidebar, center)
     }
 
     /// The view while the session free-runs. The screen pane stays live from the
@@ -784,25 +768,7 @@ impl Debugger {
             .and_then(|snapshot| inspect::as_inspect_source(snapshot.family_state()))
             .map(|source| source.colors(self.panes.palette()));
 
-        let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
-            pane_grid(split_state, |_handle, zone, _maximized| {
-                let content: Element<'_, app::Message> = match zone {
-                    MainSplit::Top => self.running_center(colors.as_ref()),
-                    MainSplit::Bottom => self.bottom_pane_grid(
-                        self.bottom_panes
-                            .as_ref()
-                            .expect("bottom_panes must exist when main_split exists"),
-                    ),
-                };
-                pane_grid::Content::new(content)
-            })
-            .on_resize(10.0, |resize| Message::MainSplitResize(resize).into())
-            .spacing(s())
-            .into()
-        } else {
-            self.running_center(colors.as_ref())
-        };
-
+        let center = self.main_area(|| self.running_center(colors.as_ref()));
         let sidebar = match self.last_snapshot.as_deref() {
             Some(snapshot) => self
                 .sidebar
@@ -811,10 +777,45 @@ impl Debugger {
             None => self.sidebar.running_summary(self.last_status.as_ref()),
         };
 
-        row![sidebar, center, self.icon_rail(),]
+        self.shell(sidebar, center)
+    }
+
+    /// The debugger's frame: the machine-state sidebar, the main area, and the
+    /// pane rail.
+    fn shell<'a>(
+        &'a self,
+        sidebar: Element<'a, app::Message>,
+        center: Element<'a, app::Message>,
+    ) -> Element<'a, app::Message> {
+        row![sidebar, center, self.icon_rail()]
             .spacing(s())
             .padding(s())
             .into()
+    }
+
+    /// The main area: `top` alone, or `top` over the bottom panels once one is
+    /// open and the split exists.
+    fn main_area<'a>(
+        &'a self,
+        top: impl Fn() -> Element<'a, app::Message>,
+    ) -> Element<'a, app::Message> {
+        let Some(split_state) = &self.main_split else {
+            return top();
+        };
+        pane_grid(split_state, move |_handle, zone, _maximized| {
+            let content: Element<'_, app::Message> = match zone {
+                MainSplit::Top => top(),
+                MainSplit::Bottom => self.bottom_pane_grid(
+                    self.bottom_panes
+                        .as_ref()
+                        .expect("bottom_panes must exist when main_split exists"),
+                ),
+            };
+            pane_grid::Content::new(content)
+        })
+        .on_resize(10.0, |resize| Message::MainSplitResize(resize).into())
+        .spacing(s())
+        .into()
     }
 
     /// The main pane area while running: snapshot-backed panes when a snapshot
@@ -887,11 +888,13 @@ impl Debugger {
     }
 
     fn breakpoints_content(&self) -> Element<'_, app::Message> {
-        let breakpoint_list = Column::from_iter(
-            self.breakpoints
-                .iter()
-                .map(|&address| breakpoint_row(address)),
-        );
+        let breakpoint_list = Column::from_iter(self.breakpoints.iter().map(|&address| {
+            panel_row(
+                icons::breakpoint_enabled(),
+                Message::ClearBreakpoint(address),
+                format!("{address:04X}"),
+            )
+        }));
 
         let input = text_input("Address (hex)...", &self.breakpoint_input)
             .font(fonts::monospace())
@@ -905,7 +908,13 @@ impl Debugger {
     }
 
     fn watchpoints_content(&self) -> Element<'_, app::Message> {
-        let watchpoint_list = Column::from_iter(self.watchpoints.iter().map(watchpoint_row));
+        let watchpoint_list = Column::from_iter(self.watchpoints.iter().map(|watch| {
+            panel_row(
+                icons::m(icons::Icon::Close),
+                Message::RemoveWatchpoint(watch.clone()),
+                watch_summary(watch),
+            )
+        }));
 
         let address = text_input("Address (hex)...", &self.watchpoint_input)
             .font(fonts::monospace())
@@ -945,7 +954,13 @@ impl Debugger {
         };
         let symbols = &paused.symbols;
 
-        let user_rows = Column::from_iter(symbols.user_symbols().iter().map(label_row));
+        let user_rows = Column::from_iter(symbols.user_symbols().iter().map(|symbol| {
+            panel_row(
+                icons::m(icons::Icon::Close),
+                Message::RemoveLabel(symbol.clone()),
+                format!("{:02X}:{:04X} {}", symbol.bank, symbol.address, symbol.name),
+            )
+        }));
 
         let address = text_input("Address (hex)...", &self.label_address_input)
             .font(fonts::monospace())
@@ -1143,30 +1158,17 @@ fn rail_tooltip<'a>(btn: Element<'a, app::Message>, label: &str) -> Element<'a, 
     help_tooltip(btn, label.to_owned(), 13.0, tooltip::Position::Left)
 }
 
-fn label_row(symbol: &Symbol) -> Element<'static, app::Message> {
+/// One entry of a bottom panel: the control that takes it away, then what it
+/// names.
+fn panel_row<'a>(
+    control: impl Into<Element<'a, app::Message>>,
+    remove: Message,
+    summary: String,
+) -> Element<'a, app::Message> {
     container(
         row![
-            button(icons::m(icons::Icon::Close))
-                .on_press(Message::RemoveLabel(symbol.clone()).into())
-                .style(button::text),
-            text(format!(
-                "{:02X}:{:04X} {}",
-                symbol.bank, symbol.address, symbol.name
-            ))
-            .font(fonts::monospace())
-        ]
-        .align_y(Vertical::Center),
-    )
-    .into()
-}
-
-fn watchpoint_row(watch: &Watch) -> Element<'static, app::Message> {
-    container(
-        row![
-            button(icons::m(icons::Icon::Close))
-                .on_press(Message::RemoveWatchpoint(watch.clone()).into())
-                .style(button::text),
-            text(watch_summary(watch)).font(fonts::monospace())
+            button(control).on_press(remove.into()).style(button::text),
+            text(summary).font(fonts::monospace())
         ]
         .align_y(Vertical::Center),
     )
@@ -1196,19 +1198,6 @@ fn term_summary(term: &WatchTerm) -> String {
             None => format!("{other} {address:#06X}"),
         },
     }
-}
-
-fn breakpoint_row(address: u32) -> Element<'static, app::Message> {
-    container(
-        row![
-            button(icons::breakpoint_enabled())
-                .on_press(Message::ClearBreakpoint(address).into())
-                .style(button::text),
-            text(format!("{:04X}", address)).font(fonts::monospace())
-        ]
-        .align_y(Vertical::Center),
-    )
-    .into()
 }
 
 #[cfg(test)]

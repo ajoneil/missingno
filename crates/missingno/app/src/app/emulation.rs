@@ -66,10 +66,7 @@ impl App {
     /// holder to keep alive, and the Send sink the session drains into. `None`
     /// silences the game when no device is available.
     pub(super) fn open_audio() -> (Option<AudioOutput>, Option<missingno_session::AudioSink>) {
-        match AudioOutput::open() {
-            Some((output, sink)) => (Some(output), Some(sink)),
-            None => (None, None),
-        }
+        AudioOutput::open().unzip()
     }
 
     pub(super) fn handle_emulation_message(&mut self, message: Message) -> Task<Message> {
@@ -292,7 +289,7 @@ impl App {
                 let new_session = SharedSession::spawn_console_with_audio(console, sink);
                 let handle = new_session.handle();
                 let mut emulator =
-                    Emulator::from_debugger(handle, screen_view, facts, platform, presentation);
+                    Emulator::build(handle, screen_view, facts, platform, presentation);
                 emulator.set_palette(palette);
                 self.game = Game::Loaded(LoadedGame::Emulator(emulator));
                 self.install_session(new_session, audio);
@@ -391,23 +388,31 @@ impl App {
     #[cfg(not(unix))]
     pub(super) fn publish_session(&mut self) {}
 
-    /// The platform of the loaded game, if one is loaded.
-    pub(super) fn platform(&self) -> Option<crate::app::system::Platform> {
+    /// The game showing, whichever shell it is in; `None` before one loads.
+    fn loaded(&self) -> Option<&LoadedGame> {
         match &self.game {
-            Game::Loaded(LoadedGame::Debugger(debugger)) => Some(debugger.platform()),
-            Game::Loaded(LoadedGame::Emulator(emulator)) => Some(emulator.platform()),
+            Game::Loaded(game) => Some(game),
             _ => None,
         }
+    }
+
+    fn loaded_mut(&mut self) -> Option<&mut LoadedGame> {
+        match &mut self.game {
+            Game::Loaded(game) => Some(game),
+            _ => None,
+        }
+    }
+
+    /// The platform of the loaded game, if one is loaded.
+    pub(super) fn platform(&self) -> Option<crate::app::system::Platform> {
+        self.loaded().map(LoadedGame::platform)
     }
 
     /// The loaded console's presentation pixel aspect, or square (1.0) when none
     /// is loaded — recorded on a capture so it renders like the screen.
     fn presentation_pixel_aspect(&self) -> f32 {
-        match &self.game {
-            Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.technology().pixel_aspect(),
-            Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.technology().pixel_aspect(),
-            _ => 1.0,
-        }
+        self.loaded()
+            .map_or(1.0, |game| game.technology().pixel_aspect())
     }
 
     /// Handle an item from the app-lifetime session subscription.
@@ -442,16 +447,11 @@ impl App {
                     .as_ref()
                     .map(|handle| handle.latest_memory_windows())
                     .unwrap_or_default();
-                match &mut self.game {
-                    Game::Loaded(LoadedGame::Emulator(emulator)) => {
-                        if let Some(display) = display {
-                            emulator.apply_frame(display);
-                        }
+                if let Some(game) = self.loaded_mut() {
+                    if let Some(display) = display {
+                        game.apply_frame(display);
                     }
-                    Game::Loaded(LoadedGame::Debugger(debugger)) => {
-                        if let Some(display) = display {
-                            debugger.apply_frame(display);
-                        }
+                    if let Some(debugger) = game.debugger_mut() {
                         if let Some(status) = status {
                             debugger.apply_status(status);
                         }
@@ -460,7 +460,6 @@ impl App {
                         }
                         debugger.apply_memory_windows(memory_windows);
                     }
-                    _ => {}
                 }
             }
             SessionEvent::Stopped => {
@@ -500,20 +499,12 @@ impl App {
     }
 
     pub(super) fn running(&self) -> bool {
-        match &self.game {
-            Game::Loaded(game) => match game {
-                LoadedGame::Debugger(debugger) => debugger.running(),
-                LoadedGame::Emulator(emulator) => emulator.running(),
-            },
-            _ => false,
-        }
+        self.loaded().is_some_and(LoadedGame::running)
     }
 
     pub(super) fn run(&mut self) {
-        match &mut self.game {
-            Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.run(),
-            Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.run(),
-            _ => {}
+        if let Some(game) = self.loaded_mut() {
+            game.run();
         }
     }
 
@@ -528,20 +519,16 @@ impl App {
     }
 
     pub(super) fn pause(&mut self) {
-        match &mut self.game {
-            Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.pause(),
-            Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.pause(),
-            _ => {}
+        if let Some(game) = self.loaded_mut() {
+            game.pause();
         }
         // Persist any pending SRAM now that the machine is stopped.
         self.save();
     }
 
     pub(super) fn reset(&mut self) {
-        match &mut self.game {
-            Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.reset(),
-            Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.reset(),
-            _ => {}
+        if let Some(game) = self.loaded_mut() {
+            game.reset();
         }
     }
 

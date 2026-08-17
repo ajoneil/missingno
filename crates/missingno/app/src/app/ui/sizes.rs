@@ -34,3 +34,7 @@ pub fn border_m() -> f32 {
 pub fn border_l() -> f32 {
     24.0
 }
+
+/// The label column of a settings or launch row, wide enough for the longest
+/// label to sit on one line beside its control.
+pub const ROW_LABEL_WIDTH: f32 = 170.0;

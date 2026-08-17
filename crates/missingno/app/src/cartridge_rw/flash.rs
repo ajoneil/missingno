@@ -50,13 +50,13 @@ pub(super) fn detect_flash(
     // Reset again after CFI query
     let _ = cart_write_flash(port, &[(0x0000, 0x00F0)]);
 
-    cfi.map(|info| FlashInfo { chip_id, ..info })
+    cfi
 }
 
 /// Query the CFI (Common Flash Interface) table from a flash chip.
 ///
 /// Sends the CFI enter command (0x98), reads 0x400 bytes, parses the
-/// standardised CFI structure for device size, write buffer, and sector layout.
+/// standardised CFI structure for device size and write buffer.
 fn query_cfi(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) -> Option<FlashInfo> {
     // Enter CFI mode: write 0x98 to address 0x00AA
     cart_write_flash(port, &[(0x00AA, 0x0098)])?;
@@ -100,30 +100,9 @@ fn query_cfi(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) -> Option<
         0
     };
 
-    // Erase capabilities
-    let sector_erase = cfi[0x42] > 0 && cfi[0x42] < 0xFF;
-    let chip_erase = cfi[0x44] > 0 && cfi[0x44] < 0xFF;
-
-    // Sector regions
-    let num_regions = cfi[0x58] as usize;
-    let mut sectors = Vec::new();
-    for i in 0..num_regions.min(4) {
-        let offset = 0x5A + i * 8;
-        if offset + 7 >= cfi.len() {
-            break;
-        }
-        let count = ((cfi[offset + 2] as u32) << 8 | cfi[offset] as u32) + 1;
-        let size = ((cfi[offset + 6] as u32) << 8 | cfi[offset + 4] as u32) * 256;
-        sectors.push((size, count));
-    }
-
     Some(FlashInfo {
-        chip_id: Vec::new(), // Filled in by caller
         size: device_size,
         buffer_size,
-        chip_erase,
-        sector_erase,
-        sectors,
     })
 }
 
@@ -147,7 +126,6 @@ fn read_rom_bytes(
 
 /// Progress update during a flash operation.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct FlashProgress {
     pub phase: FlashPhase,
     pub bytes_done: usize,
@@ -437,28 +415,14 @@ fn chip_erase_amd(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) -> Re
 
 /// Flash chip parameters, queried via CFI (Common Flash Interface).
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct FlashInfo {
-    /// Raw flash ID bytes (manufacturer at [0], device at [2]).
-    pub chip_id: Vec<u8>,
     /// Total flash size in bytes.
     pub size: u32,
     /// Write buffer size in bytes (0 = unbuffered writes only).
     pub buffer_size: u32,
-    /// Whether chip erase is supported.
-    pub chip_erase: bool,
-    /// Whether sector erase is supported.
-    pub sector_erase: bool,
-    /// Erase sector regions: (sector_size, sector_count) pairs.
-    pub sectors: Vec<(u32, u32)>,
 }
 
-#[allow(dead_code)]
 impl FlashInfo {
-    pub fn size_display(&self) -> String {
-        format_size(self.size)
-    }
-
     pub fn write_method(&self) -> u8 {
         if self.buffer_size > 0 { 0x02 } else { 0x01 } // buffered vs unbuffered
     }

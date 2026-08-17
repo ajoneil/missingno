@@ -6,10 +6,11 @@ use iced::{
     widget::{button, column, container, image, mouse_area, row, scrollable, text},
 };
 
+use crate::app::library::view::{COVER_HEIGHT, COVER_WIDTH};
 use crate::app::{
     self, launch,
     library::{
-        GameEntry,
+        GameEntry, SystemName,
         activity::{self, ActivityKind, SessionFile},
         store::{ActivityState, SessionSummary},
     },
@@ -22,9 +23,6 @@ use crate::app::{
     },
 };
 use crate::cartridge_rw;
-
-const COVER_HEIGHT: f32 = 160.0;
-const COVER_WIDTH: f32 = 120.0;
 
 /// The bodies a game's details page switches between, under its header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -184,21 +182,8 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
     ]
     .spacing(4);
 
-    let subtitle_parts: Vec<String> = [
-        data.entry.publisher.clone(),
-        data.entry
-            .year
-            .as_ref()
-            .map(|year| activity::release_year(year)),
-        data.entry
-            .platform
-            .map(|platform| platform.name().to_string()),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    if !subtitle_parts.is_empty() {
-        info = info.push(text(subtitle_parts.join(" · ")).color(MUTED));
+    if let Some(line) = data.entry.metadata_line(SystemName::Trailing) {
+        info = info.push(text(line).color(MUTED));
     }
 
     let mut meta_parts = row![].spacing(m()).align_y(Center);
@@ -233,7 +218,7 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
                         .spacing(s())
                         .align_y(Center),
                 )
-                .on_press(app::Message::OpenUrl(leak_str(url)))
+                .on_press(app::Message::OpenUrl(url.clone()))
                 .interaction(mouse::Interaction::Pointer),
             );
             has_meta = true;
@@ -364,10 +349,8 @@ fn activity_log<'a>(
         log = log.push(app_text::detail("No activity yet").color(MUTED));
     }
 
-    let hovered = hovered_log_entry;
-
     for (idx, entry) in filtered.iter().enumerate() {
-        let is_hovered = hovered == Some(idx);
+        let is_hovered = hovered_log_entry == Some(idx);
         log = log.push(
             mouse_area(activity_card(entry, is_hovered))
                 .on_enter(app::Message::Detail(app::DetailMessage::HoverLogEntry(idx)))
@@ -436,29 +419,7 @@ fn session_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, ap
 
     let has_saves = entry.save_count > 0 && !entry.filename.is_empty();
     if has_saves {
-        if is_hovered {
-            header = header.push(
-                row![
-                    buttons::subtle(app_text::detail("Export")).on_press(app::Message::Detail(
-                        app::DetailMessage::ExportSave(entry.filename.clone())
-                    )),
-                    buttons::subtle(app_text::detail("Play from here")).on_press(
-                        app::Message::Detail(app::DetailMessage::PlayWithSave(
-                            entry.filename.clone()
-                        ))
-                    ),
-                ]
-                .spacing(s()),
-            );
-        } else {
-            header = header.push(
-                row![
-                    buttons::invisible(app_text::detail("Export")),
-                    buttons::invisible(app_text::detail("Play from here")),
-                ]
-                .spacing(s()),
-            );
-        }
+        header = header.push(save_actions(&entry.filename, is_hovered));
     }
 
     let mut card = column![header].spacing(s());
@@ -534,24 +495,65 @@ fn session_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, ap
         .into()
 }
 
-fn import_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, app::Message> {
-    let time = activity::format_local(&entry.start);
-    let size_kb = entry.size_bytes.unwrap_or(0) / 1024;
+/// Export and play-from-here, kept in the layout while unhovered so the card
+/// doesn't jump as the pointer crosses it.
+fn save_actions(filename: &str, is_hovered: bool) -> iced::widget::Row<'static, app::Message> {
+    if is_hovered {
+        row![
+            buttons::subtle(app_text::detail("Export")).on_press(app::Message::Detail(
+                app::DetailMessage::ExportSave(filename.to_owned())
+            )),
+            buttons::subtle(app_text::detail("Play from here")).on_press(app::Message::Detail(
+                app::DetailMessage::PlayWithSave(filename.to_owned())
+            )),
+        ]
+        .spacing(s())
+    } else {
+        row![
+            buttons::invisible(app_text::detail("Export")),
+            buttons::invisible(app_text::detail("Play from here")),
+        ]
+        .spacing(s())
+    }
+}
 
-    let from_cartridge = matches!(
+fn import_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, app::Message> {
+    let (icon, label) = if matches!(
         entry.import_source,
         Some(activity::ImportSource::Cartridge { .. })
-    );
-    let (icon, label) = if from_cartridge {
+    ) {
         (Icon::CircuitBoard, "Save imported from cartridge")
     } else {
         (Icon::Download, "Save imported")
     };
 
+    transfer_card(
+        icon,
+        label,
+        entry,
+        Some(save_actions(&entry.filename, is_hovered)),
+    )
+}
+
+fn cart_write_card(entry: &SessionSummary) -> Element<'static, app::Message> {
+    transfer_card(Icon::CircuitBoard, "Save written to cartridge", entry, None)
+}
+
+/// One line of activity that moved a save around: what happened, when, and how
+/// big it was.
+fn transfer_card(
+    icon: Icon,
+    label: &str,
+    entry: &SessionSummary,
+    actions: Option<iced::widget::Row<'static, app::Message>>,
+) -> Element<'static, app::Message> {
+    let time = activity::format_local(&entry.start);
+    let size_kb = entry.size_bytes.unwrap_or(0) / 1024;
+
     let mut content = row![
         icons::m(icon),
         column![
-            text(label).font(fonts::bold()),
+            text(label.to_owned()).font(fonts::bold()),
             app_text::detail(format!("{time} · {size_kb} KB")).color(MUTED),
         ]
         .spacing(2)
@@ -560,26 +562,8 @@ fn import_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, app
     .spacing(s())
     .align_y(Center);
 
-    if is_hovered {
-        content = content.push(
-            row![
-                buttons::subtle(app_text::detail("Export")).on_press(app::Message::Detail(
-                    app::DetailMessage::ExportSave(entry.filename.clone())
-                )),
-                buttons::subtle(app_text::detail("Play from here")).on_press(app::Message::Detail(
-                    app::DetailMessage::PlayWithSave(entry.filename.clone())
-                )),
-            ]
-            .spacing(s()),
-        );
-    } else {
-        content = content.push(
-            row![
-                buttons::invisible(app_text::detail("Export")),
-                buttons::invisible(app_text::detail("Play from here")),
-            ]
-            .spacing(s()),
-        );
+    if let Some(actions) = actions {
+        content = content.push(actions);
     }
 
     container(content)
@@ -587,31 +571,4 @@ fn import_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, app
         .style(containers::card)
         .padding(m())
         .into()
-}
-
-fn cart_write_card(entry: &SessionSummary) -> Element<'static, app::Message> {
-    let time = activity::format_local(&entry.start);
-    let size_kb = entry.size_bytes.unwrap_or(0) / 1024;
-
-    let content = row![
-        icons::m(Icon::CircuitBoard),
-        column![
-            text("Save written to cartridge").font(fonts::bold()),
-            app_text::detail(format!("{time} · {size_kb} KB")).color(MUTED),
-        ]
-        .spacing(2)
-        .width(Fill),
-    ]
-    .spacing(s())
-    .align_y(Center);
-
-    container(content)
-        .width(Fill)
-        .style(containers::card)
-        .padding(m())
-        .into()
-}
-
-fn leak_str(s: &str) -> &'static str {
-    Box::leak(s.to_string().into_boxed_str())
 }

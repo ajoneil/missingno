@@ -3,7 +3,10 @@ use iced::{
     Element,
     Length::Fill,
     Padding,
-    widget::{Stack, center, column, container, mouse_area, opaque, row, svg, text as iced_text},
+    widget::{
+        Button, Row, Stack, center, column, container, mouse_area, opaque, row, svg,
+        text as iced_text,
+    },
 };
 
 use super::friendly_ago;
@@ -37,14 +40,9 @@ impl App {
     }
 
     pub(super) fn apply_toast<'a>(&self, content: Element<'a, Message>) -> Element<'a, Message> {
-        let mut layers = vec![content];
-        if let Some((notice, _)) = &self.notice {
-            layers.push(notice_toast(notice));
-        }
-        if layers.len() == 1 {
-            layers.pop().unwrap()
-        } else {
-            Stack::with_children(layers).into()
+        match &self.notice {
+            Some((notice, _)) => Stack::new().push(content).push(notice_toast(notice)).into(),
+            None => content,
         }
     }
 
@@ -64,6 +62,7 @@ impl App {
                     Icon::FolderOpen,
                     "Open ROM file...",
                     load::Message::Pick.into(),
+                    buttons::subtle,
                 ));
                 has_items = true;
             }
@@ -76,6 +75,7 @@ impl App {
                     Icon::FolderOpen,
                     "Open ROM file...",
                     load::Message::Pick.into(),
+                    buttons::subtle,
                 ));
                 items = items.push(menu_divider());
                 items = items.push(menu_item(
@@ -83,25 +83,29 @@ impl App {
                     Icon::Download,
                     "Import Save...",
                     Message::Detail(DetailMessage::ImportSave),
+                    buttons::subtle,
                 ));
                 items = items.push(menu_item(
                     ids::MENU_OPEN_FOLDER,
                     Icon::FolderOpen,
                     "Open Folder",
                     Message::Detail(DetailMessage::OpenGameFolder),
+                    buttons::subtle,
                 ));
                 items = items.push(menu_item(
                     ids::MENU_REFRESH_METADATA,
                     Icon::Globe,
                     "Refresh Metadata",
                     Message::Detail(DetailMessage::RefreshMetadata),
+                    buttons::subtle,
                 ));
                 items = items.push(menu_divider());
-                items = items.push(menu_item_danger(
+                items = items.push(menu_item(
                     ids::MENU_REMOVE_GAME,
                     Icon::Trash,
                     "Remove Game",
                     Message::Detail(DetailMessage::RemoveGame),
+                    buttons::danger,
                 ));
                 has_items = true;
             }
@@ -112,6 +116,7 @@ impl App {
                         Icon::Debug,
                         "Debugger",
                         Message::ToggleDebugger(true),
+                        buttons::subtle,
                     ));
                     items = items.push(menu_divider());
                 }
@@ -121,13 +126,15 @@ impl App {
                         Icon::Forward,
                         "Step Frame",
                         debugger::Message::StepFrame.into(),
+                        buttons::subtle,
                     ));
                 }
-                items = items.push(menu_item_danger(
+                items = items.push(menu_item(
                     ids::MENU_RESET,
                     Icon::Reload,
                     "Reset",
                     Message::Reset,
+                    buttons::danger,
                 ));
                 items = items.push(menu_divider());
                 items = items.push(menu_item(
@@ -135,6 +142,7 @@ impl App {
                     Icon::Camera,
                     "Screenshot",
                     Message::TakeScreenshot,
+                    buttons::subtle,
                 ));
                 if self.debugger_enabled {
                     items = items.push(menu_item(
@@ -142,6 +150,7 @@ impl App {
                         Icon::Download,
                         "Capture Trace",
                         debugger::Message::CaptureFrame.into(),
+                        buttons::subtle,
                     ));
                 }
                 has_items = true;
@@ -158,6 +167,7 @@ impl App {
             Icon::Gear,
             "Settings",
             Message::ShowSettings,
+            buttons::subtle,
         ));
 
         let menu_panel = container(items.padding(s())).style(containers::menu);
@@ -260,24 +270,16 @@ impl App {
     }
 }
 
-fn menu_item<'a>(id: &str, icon: Icon, label: &'a str, message: Message) -> Element<'a, Message> {
-    tagged_full_width(
-        id,
-        buttons::subtle(row![icons::m(icon), label].spacing(s()).align_y(Center))
-            .on_press(Message::MenuAction(Box::new(message)))
-            .width(Fill),
-    )
-}
-
-fn menu_item_danger<'a>(
+fn menu_item<'a>(
     id: &str,
     icon: Icon,
     label: &'a str,
     message: Message,
+    style: fn(Row<'a, Message>) -> Button<'a, Message>,
 ) -> Element<'a, Message> {
     tagged_full_width(
         id,
-        buttons::danger(row![icons::m(icon), label].spacing(s()).align_y(Center))
+        style(row![icons::m(icon), label].spacing(s()).align_y(Center))
             .on_press(Message::MenuAction(Box::new(message)))
             .width(Fill),
     )

@@ -73,7 +73,6 @@ impl DetectedDevice {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct CartridgeHeader {
     pub title: String,
     pub mapper_byte: u8,
@@ -81,8 +80,6 @@ pub struct CartridgeHeader {
     pub rom_size: u32,
     pub ram_size: u32,
     pub has_battery: bool,
-    pub sgb_flag: bool,
-    pub header_checksum_valid: bool,
     /// Flash chip info, if a flash chip was detected.
     pub flash: Option<FlashInfo>,
 }
@@ -287,8 +284,6 @@ fn read_cartridge_header(
             rom_size: 0,
             ram_size: 0,
             has_battery: false,
-            sgb_flag: false,
-            header_checksum_valid: false,
             flash: Some(flash),
         });
     }
@@ -352,17 +347,10 @@ fn parse_cartridge_header(header: &[u8]) -> Option<CartridgeHeader> {
         return None;
     }
 
-    let (title, sgb_flag, has_battery) = missingno_gb::cartridge::parse_header(header);
+    let (title, _sgb_flag, has_battery) = missingno_gb::cartridge::parse_header(header);
     let mapper_byte = header[0x147];
     let rom_size_index = header[0x148];
     let ram_size_index = header[0x149];
-
-    // Validate header checksum
-    let mut checksum: u8 = 0;
-    for &byte in &header[0x134..0x14D] {
-        checksum = checksum.wrapping_sub(byte).wrapping_sub(1);
-    }
-    let header_checksum_valid = checksum == header[0x14D];
 
     let rom_size = ROM_SIZES
         .iter()
@@ -390,8 +378,6 @@ fn parse_cartridge_header(header: &[u8]) -> Option<CartridgeHeader> {
         rom_size,
         ram_size,
         has_battery,
-        sgb_flag,
-        header_checksum_valid,
         flash: None, // Set by detect_flash() after header read
     })
 }
@@ -412,7 +398,6 @@ fn mapper_name(byte: u8) -> &'static str {
 }
 
 impl CartridgeHeader {
-    #[allow(dead_code)]
     pub fn flashable(&self) -> bool {
         self.flash.is_some()
     }

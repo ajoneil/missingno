@@ -6,6 +6,7 @@ use iced::{
     widget::{
         button, container, pane_grid,
         pane_grid::Axis::{Horizontal, Vertical},
+        pick_list,
     },
 };
 
@@ -202,7 +203,7 @@ pub static VCS_FAMILY: Family = Family {
     platforms: &[Platform::AtariVcs],
     registry: VCS_PANE_REGISTRY,
     layout_key: "vcs",
-    default_layout: vcs_default_layout,
+    default_layout: disassembly_screen_memory_layout,
 };
 
 /// The panes a platform presents. `None` only for a platform this build left
@@ -237,65 +238,41 @@ pub static NES_FAMILY: Family = Family {
     platforms: &[Platform::Nes],
     registry: NES_PANE_REGISTRY,
     layout_key: "nes",
-    default_layout: nes_default_layout,
+    default_layout: disassembly_screen_memory_layout,
 };
 
 /// The NES presents the screen and the two generic code/data panes; its 2A03
 /// and 2C02 register state lives in the sidebar.
 #[cfg(feature = "nes")]
-pub static NES_PANE_REGISTRY: &[PaneDescriptor] = &[
-    PaneDescriptor {
-        kind: DebuggerPane::Screen,
-        icon: Icon::Monitor,
-        label: "Screen",
-        instanceable: false,
-        construct: || Box::new(ScreenPane::new()),
-    },
-    MEMORY_DESCRIPTOR,
-    DISASSEMBLY_DESCRIPTOR,
-];
+pub static NES_PANE_REGISTRY: &[PaneDescriptor] =
+    &[SCREEN_DESCRIPTOR, MEMORY_DESCRIPTOR, DISASSEMBLY_DESCRIPTOR];
 
 #[cfg(feature = "sms")]
 pub static SMS_FAMILY: Family = Family {
     platforms: &[Platform::MasterSystem],
     registry: SMS_PANE_REGISTRY,
     layout_key: "sms",
-    default_layout: sms_default_layout,
+    default_layout: disassembly_screen_memory_layout,
 };
 
 /// The SMS presents the screen and the two generic code/data panes; its Z80,
 /// VDP, mapper, and PSG state lives in the sidebar.
 #[cfg(feature = "sms")]
-pub static SMS_PANE_REGISTRY: &[PaneDescriptor] = &[
-    PaneDescriptor {
-        kind: DebuggerPane::Screen,
-        icon: Icon::Monitor,
-        label: "Screen",
-        instanceable: false,
-        construct: || Box::new(ScreenPane::new()),
-    },
-    MEMORY_DESCRIPTOR,
-    DISASSEMBLY_DESCRIPTOR,
-];
+pub static SMS_PANE_REGISTRY: &[PaneDescriptor] =
+    &[SCREEN_DESCRIPTOR, MEMORY_DESCRIPTOR, DISASSEMBLY_DESCRIPTOR];
 
 pub static SG1000_FAMILY: Family = Family {
     platforms: &[Platform::Sg1000],
     registry: SG1000_PANE_REGISTRY,
     layout_key: "sg1000",
-    default_layout: sg1000_default_layout,
+    default_layout: disassembly_screen_memory_layout,
 };
 
 /// The SG-1000 presents the screen, the two generic code/data panes, the VDP's
 /// three graphics surfaces and the audio scope over its PSG; its Z80, VDP, and
 /// PSG register state lives in the sidebar.
 pub static SG1000_PANE_REGISTRY: &[PaneDescriptor] = &[
-    PaneDescriptor {
-        kind: DebuggerPane::Screen,
-        icon: Icon::Monitor,
-        label: "Screen",
-        instanceable: false,
-        construct: || Box::new(ScreenPane::new()),
-    },
+    SCREEN_DESCRIPTOR,
     MEMORY_DESCRIPTOR,
     DISASSEMBLY_DESCRIPTOR,
     TILES_DESCRIPTOR,
@@ -305,17 +282,20 @@ pub static SG1000_PANE_REGISTRY: &[PaneDescriptor] = &[
 ];
 
 pub static VCS_PANE_REGISTRY: &[PaneDescriptor] = &[
-    PaneDescriptor {
-        kind: DebuggerPane::Screen,
-        icon: Icon::Monitor,
-        label: "Screen",
-        instanceable: false,
-        construct: || Box::new(ScreenPane::new()),
-    },
+    SCREEN_DESCRIPTOR,
     MEMORY_DESCRIPTOR,
     DISASSEMBLY_DESCRIPTOR,
     AUDIO_DESCRIPTOR,
 ];
+
+/// The console's own picture, registered for every family.
+const SCREEN_DESCRIPTOR: PaneDescriptor = PaneDescriptor {
+    kind: DebuggerPane::Screen,
+    icon: Icon::Monitor,
+    label: "Screen",
+    instanceable: false,
+    construct: || Box::new(ScreenPane::new()),
+};
 
 /// The generic memory viewer, registered for every family — it reads the
 /// seam's named regions and side-effect-free peeks while paused.
@@ -338,13 +318,7 @@ const DISASSEMBLY_DESCRIPTOR: PaneDescriptor = PaneDescriptor {
 };
 
 pub static PANE_REGISTRY: &[PaneDescriptor] = &[
-    PaneDescriptor {
-        kind: DebuggerPane::Screen,
-        icon: Icon::Monitor,
-        label: "Screen",
-        instanceable: false,
-        construct: || Box::new(ScreenPane::new()),
-    },
+    SCREEN_DESCRIPTOR,
     MEMORY_DESCRIPTOR,
     DISASSEMBLY_DESCRIPTOR,
     TILES_DESCRIPTOR,
@@ -437,28 +411,17 @@ impl fmt::Display for DebuggerPane {
 
 impl DebuggerPanes {
     pub fn with_screen(family: &'static Family, screen_view: ScreenView) -> Self {
-        Self::build(family, Some(screen_view))
-    }
-
-    fn build(family: &'static Family, screen_view: Option<ScreenView>) -> Self {
         let panes = layout::load(family.layout_key)
             .and_then(|saved| saved.into_state())
             .unwrap_or_else(family.default_layout);
-
-        let screen_technology = screen_view
-            .as_ref()
-            .map(|view| view.technology())
-            .unwrap_or_else(|| ScreenView::new().technology());
 
         let mut this = Self {
             family,
             panes,
             palette: PaletteChoice::default(),
-            screen_technology,
+            screen_technology: screen_view.technology(),
         };
-        if let Some(view) = screen_view {
-            this.adopt_screen_view(view);
-        }
+        this.with_screen_pane(|pane| pane.adopt_screen_view(screen_view));
         this
     }
 
@@ -482,34 +445,9 @@ fn gb_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
     Some(panes)
 }
 
-/// The NES starts with the disassembly beside the screen, memory below — its
-/// CPU/PPU state lives in the sidebar.
-#[cfg(feature = "nes")]
-fn nes_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
-    disassembly_screen_memory_layout()
-}
-
-/// The SG-1000 starts with the disassembly beside the screen, memory below —
-/// its CPU/VDP/PSG state lives in the sidebar.
-fn sg1000_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
-    disassembly_screen_memory_layout()
-}
-
-/// The SMS starts with the disassembly beside the screen, memory below — its
-/// CPU/VDP/PSG state lives in the sidebar.
-#[cfg(feature = "sms")]
-fn sms_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
-    disassembly_screen_memory_layout()
-}
-
-/// The VCS starts with the disassembly beside the screen, memory below — its
-/// CPU/TIA/RIOT state lives in the sidebar.
-fn vcs_default_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
-    disassembly_screen_memory_layout()
-}
-
-/// The shared default for a register-dump family: disassembly beside the
-/// screen, memory below.
+/// The shared default for a register-dump family — the NES, SG-1000, SMS and
+/// VCS, whose chip state lives in the sidebar: disassembly beside the screen,
+/// memory below.
 fn disassembly_screen_memory_layout() -> Option<pane_grid::State<Box<dyn Pane>>> {
     let (mut panes, disassembly_handle) =
         pane_grid::State::new(DebuggerPane::Disassembly.construct());
@@ -528,14 +466,15 @@ fn disassembly_screen_memory_layout() -> Option<pane_grid::State<Box<dyn Pane>>>
 }
 
 impl DebuggerPanes {
-    fn adopt_screen_view(&mut self, view: ScreenView) {
-        if let Some(panes) = &mut self.panes {
-            for (_, pane) in panes.iter_mut() {
-                if pane.kind() == DebuggerPane::Screen {
-                    pane.adopt_screen_view(view);
-                    return;
-                }
-            }
+    /// Reach the open screen pane, if the grid holds one; the first in grid
+    /// order, since the kind is single-instance.
+    fn with_screen_pane(&mut self, apply: impl FnOnce(&mut dyn Pane)) {
+        if let Some(panes) = &mut self.panes
+            && let Some((_, pane)) = panes
+                .iter_mut()
+                .find(|(_, pane)| pane.kind() == DebuggerPane::Screen)
+        {
+            apply(pane.as_mut());
         }
     }
 
@@ -678,7 +617,7 @@ impl DebuggerPanes {
     pub fn set_palette(&mut self, palette: PaletteChoice) {
         self.palette = palette;
         let policy = self.screen_palette_policy();
-        self.install_screen_policy(policy);
+        self.with_screen_pane(|pane| pane.set_palette_policy(policy));
     }
 
     /// The colour policy the screen pane needs for this family and palette;
@@ -689,17 +628,6 @@ impl DebuggerPanes {
             .iter()
             .any(|platform| matches!(platform, Platform::GameBoy | Platform::GameBoyColor))
             .then(|| gb::dmg_palette_policy(self.palette, true))
-    }
-
-    fn install_screen_policy(&mut self, policy: Option<Box<dyn PalettePolicy>>) {
-        if let Some(panes) = &mut self.panes {
-            for (_, pane) in panes.iter_mut() {
-                if pane.kind() == DebuggerPane::Screen {
-                    pane.set_palette_policy(policy);
-                    return;
-                }
-            }
-        }
     }
 
     /// The pane grid, rendered from the live console while paused or the
@@ -838,6 +766,19 @@ pub fn title_bar_with_detail<'a>(
     close: pane_grid::Pane,
 ) -> pane_grid::TitleBar<'a, app::Message> {
     build_title_bar(title_text(label), Some(detail.into()), close)
+}
+
+/// A compact `pick_list` sized and styled to sit in a pane title bar.
+pub fn title_bar_picker<'a, T: ToString + PartialEq + Clone + 'a>(
+    choices: Vec<T>,
+    selected: Option<T>,
+    on_select: impl Fn(T) -> app::Message + 'a,
+) -> Element<'a, app::Message> {
+    pick_list(choices, selected, on_select)
+        .font(fonts::monospace())
+        .text_size(11.0)
+        .padding([1.0, 4.0])
+        .into()
 }
 
 fn title_text(label: &str) -> Element<'_, app::Message> {

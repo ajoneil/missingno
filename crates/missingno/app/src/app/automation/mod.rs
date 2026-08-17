@@ -25,16 +25,11 @@ pub mod tools;
 pub mod update;
 
 /// The role a tagged element plays, so a client picks the right verb for it.
-/// Some roles are reserved for surfaces not yet tagged (sliders, scrollables).
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiKind {
     Button,
     Toggle,
     TextInput,
-    Slider,
-    Scrollable,
-    Region,
 }
 
 impl UiKind {
@@ -43,9 +38,6 @@ impl UiKind {
             UiKind::Button => "button",
             UiKind::Toggle => "toggle",
             UiKind::TextInput => "text_input",
-            UiKind::Slider => "slider",
-            UiKind::Scrollable => "scrollable",
-            UiKind::Region => "region",
         }
     }
 }

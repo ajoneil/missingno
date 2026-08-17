@@ -747,7 +747,7 @@ fn gamepad_capture_stream() -> impl iced::futures::Stream<Item = app::Message> {
 }
 
 /// Convert an iced keyboard Key to a stable string for storage/comparison.
-pub fn key_to_string(key: &Key) -> Option<String> {
+fn key_to_string(key: &Key) -> Option<String> {
     match key.as_ref() {
         Key::Named(named) => Some(format!("{named:?}")),
         Key::Character(c) => Some(c.to_string()),
@@ -762,15 +762,7 @@ pub fn display_key_name(s: &str) -> &str {
         "ArrowDown" => "↓",
         "ArrowLeft" => "←",
         "ArrowRight" => "→",
-        "Enter" => "Enter",
-        "Shift" => "Shift",
-        "Space" => "Space",
-        "Tab" => "Tab",
-        "Backspace" => "Backspace",
         "Control" => "Ctrl",
-        "Alt" => "Alt",
-        "F11" => "F11",
-        "F12" => "F12",
         other => other,
     }
 }

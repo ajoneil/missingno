@@ -52,10 +52,7 @@ pub struct Emulator {
     /// The user's monochrome palette choice, held so a palette change can rebuild
     /// the renderer's colour policy and the Display panel can show the selection.
     palette: PaletteChoice,
-    use_sgb_colors: bool,
-    persistence: bool,
-    pixel_grid: bool,
-    scanlines: bool,
+    presentation: Presentation,
     /// The console's latching panel switches, captured at load so the Console
     /// panel renders without reaching into the session-owned console; where
     /// they sit is the emulation layer's. Empty for families with none.
@@ -123,18 +120,9 @@ impl Emulator {
         Self::build(handle, screen_view, facts, platform, presentation)
     }
 
-    /// Build a shell carrying a screen view across a debugger→emulator toggle.
-    pub fn from_debugger(
-        handle: SessionHandle,
-        screen_view: ScreenView,
-        facts: ConsoleFacts,
-        platform: Platform,
-        presentation: Presentation,
-    ) -> Self {
-        Self::build(handle, screen_view, facts, platform, presentation)
-    }
-
-    fn build(
+    /// Build a shell over a session, with a screen view carried across a
+    /// debugger→emulator toggle or freshly made for a cold load.
+    pub(super) fn build(
         handle: SessionHandle,
         screen_view: ScreenView,
         facts: ConsoleFacts,
@@ -147,52 +135,36 @@ impl Emulator {
             screen_view,
             screen_hovered: false,
             palette: PaletteChoice::default(),
-            use_sgb_colors: presentation.use_sgb_colors,
-            persistence: presentation.persistence,
-            pixel_grid: presentation.pixel_grid,
-            scanlines: presentation.scanlines,
+            presentation,
             switches: facts.switches,
             monochrome_palette: facts.monochrome_palette,
             supports_sgb: facts.supports_sgb,
             open_panels: Vec::new(),
         };
         this.apply_presentation();
-        this.refresh_palette_policy();
         this
     }
 
-    /// Push the app's presentation choices onto the renderer.
+    /// Push the app's presentation choices onto the renderer: the screen
+    /// effects, and the colour policy the palette and SGB choice make (none for
+    /// families whose frames arrive already resolved).
     fn apply_presentation(&mut self) {
-        self.screen_view.set_persistence(self.persistence);
-        self.screen_view.set_pixel_grid(self.pixel_grid);
-        self.screen_view.set_scanlines(self.scanlines);
-    }
-
-    /// Rebuild the renderer's colour policy from the current palette and SGB
-    /// choice; a no-op for families whose frames arrive already resolved.
-    fn refresh_palette_policy(&mut self) {
-        let policy = gb::palette_policy(self.platform, self.palette, self.use_sgb_colors);
+        self.screen_view
+            .set_persistence(self.presentation.persistence);
+        self.screen_view
+            .set_pixel_grid(self.presentation.pixel_grid);
+        self.screen_view.set_scanlines(self.presentation.scanlines);
+        let policy = gb::palette_policy(
+            self.platform,
+            self.palette,
+            self.presentation.use_sgb_colors,
+        );
         self.screen_view.set_palette_policy(policy);
     }
 
-    pub fn set_use_sgb_colors(&mut self, use_sgb: bool) {
-        self.use_sgb_colors = use_sgb;
-        self.refresh_palette_policy();
-    }
-
-    pub fn set_persistence(&mut self, persistence: bool) {
-        self.persistence = persistence;
-        self.screen_view.set_persistence(persistence);
-    }
-
-    pub fn set_pixel_grid(&mut self, pixel_grid: bool) {
-        self.pixel_grid = pixel_grid;
-        self.screen_view.set_pixel_grid(pixel_grid);
-    }
-
-    pub fn set_scanlines(&mut self, scanlines: bool) {
-        self.scanlines = scanlines;
-        self.screen_view.set_scanlines(scanlines);
+    pub fn set_presentation(&mut self, presentation: Presentation) {
+        self.presentation = presentation;
+        self.apply_presentation();
     }
 
     /// The display technology the loaded console states.
@@ -203,16 +175,16 @@ impl Emulator {
     /// The display options the play panel offers for this console: the effects
     /// its screen shows, and the colour choices its games carry.
     pub fn display_options(&self) -> DisplayOptions {
-        let sgb_overriding = self.supports_sgb && self.use_sgb_colors;
+        let sgb_overriding = self.supports_sgb && self.presentation.use_sgb_colors;
         DisplayOptions {
             effects: Effects {
-                persistence: self.persistence,
-                scanlines: self.scanlines,
-                pixel_grid: self.pixel_grid,
+                persistence: self.presentation.persistence,
+                scanlines: self.presentation.scanlines,
+                pixel_grid: self.presentation.pixel_grid,
             },
             technology: Some(self.technology()),
             sgb_colors: (self.monochrome_palette && self.supports_sgb)
-                .then_some(self.use_sgb_colors),
+                .then_some(self.presentation.use_sgb_colors),
             // The SGB palette overrides the monochrome one, so the picker it
             // would silently ignore is not offered.
             palette: (self.monochrome_palette && !sgb_overriding).then_some(self.palette),
@@ -260,7 +232,7 @@ impl Emulator {
 
     pub fn set_palette(&mut self, palette: PaletteChoice) {
         self.palette = palette;
-        self.refresh_palette_policy();
+        self.apply_presentation();
     }
 
     /// Whether this panel is open, so automation enumerates only what shows.
@@ -357,21 +329,17 @@ impl Emulator {
             // Only a console with a port that takes a controller of its own has
             // anything to plug or reassign.
             has_controllers: !controllers.ports.is_empty(),
-            // The Display panel now carries options for every system, so it is
-            // available whenever a console is running.
-            has_display: true,
-            // Capturing is always available, so the Play log is too.
-            has_playlog: true,
         };
 
         let mut layout = row![screen_area];
         if let Some(side) = panels::side_column(&self.open_panels, &ctx) {
             layout = layout.push(side);
         }
-        if let Some(rail) = panels::rail(&self.open_panels, &ctx) {
-            layout = layout.push(rail);
-        }
-        layout.width(Fill).height(Fill).into()
+        layout
+            .push(panels::rail(&self.open_panels, &ctx))
+            .width(Fill)
+            .height(Fill)
+            .into()
     }
 
     /// Whether the session is free-running — the session is the source of truth.

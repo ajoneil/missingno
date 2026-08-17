@@ -15,13 +15,10 @@ use crate::app::system::{Platform, platforms_by_name};
 use crate::app::ui::{
     buttons, containers, horizontal_rule,
     palette::{MUTED, RED},
-    sizes::{l, m, s},
+    sizes::{ROW_LABEL_WIDTH, l, m, s},
     text as app_text,
 };
 
-/// The label column, wide enough for the longest option label to sit on one
-/// line beside its control.
-const ROW_LABEL_WIDTH: f32 = 170.0;
 /// The control column: a pick list is this wide whatever its entries say, so a
 /// board with a long name does not stretch the row.
 const CONTROL_WIDTH: f32 = 400.0;

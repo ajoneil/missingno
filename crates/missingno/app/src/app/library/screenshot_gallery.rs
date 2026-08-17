@@ -20,10 +20,7 @@ use crate::app::{
 
 /// State for the screenshot gallery view.
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub struct GalleryState {
-    /// Session filename this gallery is showing.
-    pub session_filename: String,
     /// All screenshots from the session (pre-loaded).
     pub screenshots: Vec<Screenshot>,
     /// Currently selected screenshot index.
@@ -107,7 +104,6 @@ impl GalleryState {
         let palette = PaletteSelection::from_display_mode(&screenshots[0].capture.display_mode);
 
         Some(Self {
-            session_filename: session_filename.to_string(),
             screenshots,
             selected: 0,
             palette,

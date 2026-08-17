@@ -19,7 +19,6 @@ const SYNC2: u8 = 105;
 const SYNC3: u8 = 106;
 const STATUS: u8 = 108;
 
-#[allow(dead_code)]
 impl Packet {
     pub const SIZE: usize = 8;
 
@@ -98,17 +97,6 @@ impl Packet {
         }
     }
 
-    /// Timestamp synchronization (sent when idle to keep clocks aligned).
-    pub fn sync3_timestamp(timestamp: u32) -> Self {
-        Packet {
-            command: SYNC3,
-            b2: 0,
-            b3: 0,
-            b4: 0,
-            timestamp,
-        }
-    }
-
     /// Transfer acknowledgment (b2=1).
     pub fn sync3_ack() -> Self {
         Packet {
@@ -130,10 +118,6 @@ impl Packet {
 
     pub fn is_sync2(&self) -> bool {
         self.command == SYNC2
-    }
-
-    pub fn is_sync3(&self) -> bool {
-        self.command == SYNC3
     }
 
     pub fn is_status(&self) -> bool {

@@ -17,7 +17,7 @@ use crate::app::{
     },
 };
 
-use crate::app::library;
+use crate::app::library::{self, SystemName};
 use crate::app::system::Platform;
 use crate::app::views::friendly_ago;
 
@@ -42,7 +42,7 @@ fn title_color(title: &str) -> Color {
 }
 
 pub(crate) const COVER_HEIGHT: f32 = 160.0;
-const COVER_WIDTH: f32 = 120.0;
+pub(crate) const COVER_WIDTH: f32 = 120.0;
 const CARD_MIN_WIDTH: f32 = 340.0;
 
 /// Whether the library body renders as a cover grid or a compact list.
@@ -417,21 +417,9 @@ fn list_row(game: &GameSummary, hovered: bool) -> Element<'_, app::Message> {
     let has_rom = !game.entry.rom_paths.is_empty();
     let sha1 = &game.entry.sha1;
 
-    let subtitle_parts: Vec<String> = [
-        game.entry.platform.map(|p| p.name().to_string()),
-        game.entry.publisher.clone(),
-        game.entry
-            .year
-            .as_ref()
-            .map(|y| library::activity::release_year(y)),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-
     let mut info = column![text(game.entry.display_title()).font(fonts::bold())].spacing(2);
-    if !subtitle_parts.is_empty() {
-        info = info.push(app_text::detail(subtitle_parts.join(" · ")).color(MUTED));
+    if let Some(line) = game.entry.metadata_line(SystemName::Leading) {
+        info = info.push(app_text::detail(line).color(MUTED));
     }
 
     let stats: Element<'_, app::Message> = if let Some(last_ts) = game.last_played {
@@ -583,21 +571,8 @@ fn game_card(game: &GameSummary, hovered: bool) -> Element<'_, app::Message> {
     // Title — bold, readable size
     let mut info = column![text(game.entry.display_title()).font(fonts::bold()),].spacing(4);
 
-    // Publisher · Date · Platform
-    let subtitle_parts: Vec<String> = [
-        game.entry.publisher.clone(),
-        game.entry
-            .year
-            .as_ref()
-            .map(|y| library::activity::release_year(y)),
-        game.entry.platform.map(|p| p.name().to_string()),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-
-    if !subtitle_parts.is_empty() {
-        info = info.push(app_text::detail(subtitle_parts.join(" · ")).color(MUTED));
+    if let Some(line) = game.entry.metadata_line(SystemName::Trailing) {
+        info = info.push(app_text::detail(line).color(MUTED));
     }
 
     // Last played / play time
@@ -612,15 +587,7 @@ fn game_card(game: &GameSummary, hovered: bool) -> Element<'_, app::Message> {
         );
     }
 
-    let card_row =
-        row![cover, container(info.width(Fill)).padding(m()).width(Fill)].height(COVER_HEIGHT);
-
-    let card = container(card_row)
-        .width(Fill)
-        .clip(true)
-        .style(containers::card);
-
-    mouse_area(card)
+    mouse_area(cover_card(cover, info, containers::card))
         .on_press(Message::SelectGame(sha1.clone()).into())
         .on_enter(Message::HoverGame(sha1.clone()).into())
         .on_exit(Message::UnhoverGame.into())
@@ -635,19 +602,9 @@ fn cartridge_game_card<'a>(
 ) -> Element<'a, app::Message> {
     let mut parts: Vec<String> = Vec::new();
 
-    // Publisher · Year (same as game_card)
-    let meta: Vec<String> = [
-        game.entry.publisher.clone(),
-        game.entry
-            .year
-            .as_ref()
-            .map(|y| library::activity::release_year(y)),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    if !meta.is_empty() {
-        parts.push(meta.join(" · "));
+    // The system is the cartridge in hand, so the line doesn't name it.
+    if let Some(line) = game.entry.metadata_line(SystemName::Omitted) {
+        parts.push(line);
     }
 
     // Play time
@@ -745,14 +702,22 @@ fn unmatched_cartridge_card<'a>(
             info.push(buttons::primary("Add to Library").on_press(Message::DumpCartridge.into()));
     }
 
-    let card_row =
-        row![cover, container(info.width(Fill)).padding(m()).width(Fill)].height(COVER_HEIGHT);
+    cover_card(cover, info, containers::card).into()
+}
 
-    container(card_row)
-        .width(Fill)
-        .clip(true)
-        .style(containers::card)
-        .into()
+/// The shape every library card takes: cover down the left, everything the
+/// card has to say filling the rest.
+fn cover_card<'a>(
+    cover: Element<'a, app::Message>,
+    info: Column<'a, app::Message>,
+    style: fn(&iced::Theme) -> container::Style,
+) -> iced::widget::Container<'a, app::Message> {
+    container(
+        row![cover, container(info.width(Fill)).padding(m()).width(Fill)].height(COVER_HEIGHT),
+    )
+    .width(Fill)
+    .clip(true)
+    .style(style)
 }
 
 /// Cartridge silhouette for a platform (generic when the system is unknown).
@@ -853,23 +818,7 @@ pub(crate) fn game_tile<'a>(
     subtitle: &str,
     cover: Option<&'a image::Handle>,
 ) -> Element<'a, app::Message> {
-    let info = column![
-        text(title.to_string()).font(fonts::bold()),
-        app_text::detail(subtitle.to_string()).color(MUTED),
-    ]
-    .spacing(4);
-
-    let card_row = row![
-        cover_element(title, cover),
-        container(info.width(Fill)).padding(m()).width(Fill),
-    ]
-    .height(COVER_HEIGHT);
-
-    container(card_row)
-        .width(Fill)
-        .clip(true)
-        .style(containers::card)
-        .into()
+    tile(title, subtitle, cover, false)
 }
 
 /// Reusable cartridge identification tile.
@@ -881,29 +830,37 @@ pub(crate) fn cartridge_tile<'a>(
     subtitle: &str,
     cover: Option<&'a image::Handle>,
 ) -> Element<'a, app::Message> {
+    tile(title, subtitle, cover, true)
+}
+
+fn tile<'a>(
+    title: &str,
+    subtitle: &str,
+    cover: Option<&'a image::Handle>,
+    from_cartridge: bool,
+) -> Element<'a, app::Message> {
     use crate::app::ui::palette::TEAL;
 
-    let info = column![
+    let heading = text(title.to_string()).font(fonts::bold());
+    let heading: Element<'a, app::Message> = if from_cartridge {
         row![
             icons::m(Icon::CircuitBoard)
                 .style(move |_, _| iced::widget::svg::Style { color: Some(TEAL) }),
-            text(title.to_string()).font(fonts::bold()),
+            heading,
         ]
         .spacing(s())
-        .align_y(Center),
-        app_text::detail(subtitle.to_string()).color(MUTED),
-    ]
-    .spacing(4);
-
-    let card_row = row![
-        cover_element(title, cover),
-        container(info.width(Fill)).padding(m()).width(Fill),
-    ]
-    .height(COVER_HEIGHT);
-
-    container(card_row)
-        .width(Fill)
-        .clip(true)
-        .style(containers::cartridge)
+        .align_y(Center)
         .into()
+    } else {
+        heading.into()
+    };
+
+    let info = column![heading, app_text::detail(subtitle.to_string()).color(MUTED)].spacing(4);
+
+    let style = if from_cartridge {
+        containers::cartridge
+    } else {
+        containers::card
+    };
+    cover_card(cover_element(title, cover), info, style).into()
 }

@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 
 use missingno_gamedb::{
-    Artifact, Controller, Game, GameBoy, GameBoyColor, GameKind, Link, Platform as DbPlatform,
-    ReleaseStatus, Sg1000, TvFormat, Vcs,
+    Artifact, Controller, Game, GameBoy, GameBoyColor, Link, Platform as DbPlatform, Sg1000,
+    TvFormat, Vcs,
 };
 
 use crate::app::system::TvStandard;
@@ -21,23 +21,11 @@ const GBDEV_ENTRIES: &str = "https://raw.githubusercontent.com/gbdev/database/ma
 
 // ── Public types ──────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CataloguePlatform {
-    GameBoy,
-    GameBoyColor,
-    Sg1000,
-    Vcs,
-}
-
 /// A catalogue game, flattened from the schema types.
 #[derive(Debug, Clone)]
 pub struct CatalogueEntry {
-    #[expect(dead_code)]
-    pub platform: CataloguePlatform,
     pub slug: String,
     pub title: String,
-    #[expect(dead_code)]
-    pub kind: GameKind,
     pub developer: Option<String>,
     pub description: Option<String>,
     pub tags: Vec<String>,
@@ -54,12 +42,8 @@ pub struct CatalogueEntry {
 pub struct CatalogueRelease {
     /// Title this release was published under, when it differs from the game's.
     pub title: Option<String>,
-    #[expect(dead_code)]
-    pub label: Option<String>,
     pub date: Option<String>,
     pub publisher: Option<String>,
-    #[expect(dead_code)]
-    pub status: ReleaseStatus,
     /// Broadcast standard (VCS): carts have no region header, so the DB is
     /// authoritative and the core only heuristically probes without it.
     pub tv_format: Option<TvStandard>,
@@ -133,16 +117,13 @@ fn tv_standard(format: TvFormat) -> TvStandard {
 }
 
 fn entry_from<P: DbPlatform>(
-    platform: CataloguePlatform,
     slug: String,
     game: Game<P>,
     hardware: impl Fn(&P::ReleaseHardware) -> (Option<TvStandard>, Option<String>, Vec<Controller>),
 ) -> CatalogueEntry {
     CatalogueEntry {
-        platform,
         slug,
         title: game.title,
-        kind: game.kind,
         developer: game.developer,
         description: game.description,
         tags: game.tags,
@@ -157,10 +138,8 @@ fn entry_from<P: DbPlatform>(
                 let (tv_format, cart_type, controllers) = hardware(&release.hardware);
                 CatalogueRelease {
                     title: release.title,
-                    label: release.label,
                     date: release.date.map(|d| d.as_str().to_owned()),
                     publisher: release.publisher,
-                    status: release.status,
                     tv_format,
                     cart_type,
                     controllers,
@@ -172,36 +151,26 @@ fn entry_from<P: DbPlatform>(
 }
 
 fn parse_entry(console: &str, slug: String, text: &str) -> Option<CatalogueEntry> {
+    // Only the VCS records a broadcast standard or per-release controllers.
+    let board_only = |board: Option<String>| (None, board, Vec::new());
     match console {
         "gb" => Game::<GameBoy>::from_ron(text).ok().map(|g| {
-            entry_from(CataloguePlatform::GameBoy, slug, g, |hw| {
-                (
-                    None,
-                    hw.mapper.map(|board| board.code().to_owned()),
-                    Vec::new(),
-                )
+            entry_from(slug, g, |hw| {
+                board_only(hw.mapper.map(|board| board.code().to_owned()))
             })
         }),
         "gbc" => Game::<GameBoyColor>::from_ron(text).ok().map(|g| {
-            entry_from(CataloguePlatform::GameBoyColor, slug, g, |hw| {
-                (
-                    None,
-                    hw.mapper.map(|board| board.code().to_owned()),
-                    Vec::new(),
-                )
+            entry_from(slug, g, |hw| {
+                board_only(hw.mapper.map(|board| board.code().to_owned()))
             })
         }),
         "sg1000" => Game::<Sg1000>::from_ron(text).ok().map(|g| {
-            entry_from(CataloguePlatform::Sg1000, slug, g, |hw| {
-                (
-                    None,
-                    hw.cart_type.map(|board| board.code().to_owned()),
-                    Vec::new(),
-                )
+            entry_from(slug, g, |hw| {
+                board_only(hw.cart_type.map(|board| board.code().to_owned()))
             })
         }),
         "vcs" => Game::<Vcs>::from_ron(text).ok().map(|g| {
-            entry_from(CataloguePlatform::Vcs, slug, g, |hw| {
+            entry_from(slug, g, |hw| {
                 (
                     hw.tv_format.map(tv_standard),
                     hw.cart_type.map(|board| board.code().to_owned()),
@@ -322,18 +291,8 @@ impl Catalogue {
             .and_then(|(game, _, _)| game.download_cover_url())
     }
 
-    /// Get all homebrew entries, sorted by year (newest first).
-    pub fn homebrew(&self) -> Vec<&CatalogueEntry> {
-        let mut results: Vec<_> = self.entries.iter().filter(|e| e.is_homebrew()).collect();
-        results.sort_by(|a, b| {
-            b.primary_date()
-                .unwrap_or("")
-                .cmp(a.primary_date().unwrap_or(""))
-        });
-        results
-    }
-
-    /// Search homebrew by title substring. Results sorted by year (newest first).
+    /// Search homebrew by title substring; an empty query matches every
+    /// homebrew entry. Results sorted by year (newest first).
     pub fn search_homebrew(&self, query: &str) -> Vec<&CatalogueEntry> {
         let query_lower = query.to_lowercase();
         let matches = |text: &str| text.to_lowercase().contains(&query_lower);

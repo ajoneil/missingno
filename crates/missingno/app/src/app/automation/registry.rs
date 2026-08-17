@@ -79,28 +79,11 @@ pub struct UiContext {
     pub display: Option<settings_view::DisplayOptions>,
 }
 
-const SECTIONS: [(&str, settings_view::Section); 5] = [
-    ("general", settings_view::Section::General),
-    ("display", settings_view::Section::Display),
-    ("controls", settings_view::Section::Controls),
-    ("hardware", settings_view::Section::Hardware),
-    ("developer", settings_view::Section::Developer),
-];
-
 fn section_from_name(name: &str) -> Option<settings_view::Section> {
-    SECTIONS
+    settings_view::SECTIONS
         .iter()
-        .find(|(candidate, _)| *candidate == name)
-        .map(|(_, section)| *section)
-}
-
-fn section_label(name: &str) -> String {
-    let mut chars = name.chars();
-    let title = match chars.next() {
-        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-        None => String::new(),
-    };
-    format!("Open {title} settings")
+        .find(|(_, candidate, _, _)| *candidate == name)
+        .map(|(section, _, _, _)| *section)
 }
 
 fn layout_label(base: &str, ctx: &UiContext, layout: LibraryLayout) -> String {
@@ -229,7 +212,11 @@ pub fn enumerate(ctx: &UiContext) -> Vec<String> {
         }
         Screen::Settings => {
             let mut ids = vec![ids::SETTINGS_BACK.to_string()];
-            ids.extend(SECTIONS.iter().map(|(name, _)| ids::section(name)));
+            ids.extend(
+                settings_view::SECTIONS
+                    .iter()
+                    .map(|(_, name, _, _)| ids::section(name)),
+            );
             if ctx.settings_section == settings_view::Section::Controls {
                 ids.extend(controls_elements(ctx).into_iter().map(|element| element.id));
             }
@@ -250,32 +237,26 @@ pub fn enumerate(ctx: &UiContext) -> Vec<String> {
 }
 
 /// The Controls section's pressable elements for the page it is showing.
-fn controls_elements(ctx: &UiContext) -> Vec<settings_view::ControlsElement> {
+fn controls_elements(ctx: &UiContext) -> Vec<settings_view::PressableElement> {
     settings_view::controls_elements(&ctx.settings_controls, ctx.settings_pointer_knob)
 }
 
-fn controls_element(ctx: &UiContext, id: &str) -> Option<settings_view::ControlsElement> {
-    controls_elements(ctx)
-        .into_iter()
-        .find(|element| element.id == id)
-}
-
 /// The Display section's rows, as the settings screen names them.
-fn settings_display_elements(ctx: &UiContext) -> Vec<settings_view::DisplayElement> {
+fn settings_display_elements(ctx: &UiContext) -> Vec<settings_view::PressableElement> {
     settings_view::display_elements(&ctx.settings_display, ids::settings_display_row)
 }
 
 /// The Display panel's rows, empty unless it is on screen.
-fn display_elements(ctx: &UiContext) -> Vec<settings_view::DisplayElement> {
+fn display_elements(ctx: &UiContext) -> Vec<settings_view::PressableElement> {
     match &ctx.display {
         Some(options) => settings_view::display_elements(options, ids::display_row),
         None => Vec::new(),
     }
 }
 
-/// The role and label of a display row, on either surface that offers it.
-fn display_described(
-    elements: Vec<settings_view::DisplayElement>,
+/// The role and label of one settings element, on whichever surface offers it.
+fn element_described(
+    elements: Vec<settings_view::PressableElement>,
     id: &str,
 ) -> Option<(UiKind, String)> {
     elements
@@ -291,7 +272,7 @@ fn display_described(
         })
 }
 
-fn display_activation(elements: Vec<settings_view::DisplayElement>, id: &str) -> Option<Message> {
+fn element_activation(elements: Vec<settings_view::PressableElement>, id: &str) -> Option<Message> {
     elements
         .into_iter()
         .find(|element| element.id == id)
@@ -327,22 +308,19 @@ pub fn describe(ctx: &UiContext, id: &str) -> Option<(UiKind, String)> {
         ));
     }
     if let Some(name) = ids::section_name(id) {
-        return section_from_name(name).map(|section| {
-            let mut label = section_label(name);
-            if section == ctx.settings_section {
-                label.push_str(" (current)");
-            }
-            (UiKind::Button, label)
-        });
+        return settings_view::SECTIONS
+            .iter()
+            .find(|(_, candidate, _, _)| *candidate == name)
+            .map(|(section, _, _, title)| {
+                let mut label = format!("Open {title} settings");
+                if *section == ctx.settings_section {
+                    label.push_str(" (current)");
+                }
+                (UiKind::Button, label)
+            });
     }
     if ids::is_controls(id) {
-        return controls_element(ctx, id).map(|element| {
-            let kind = match element.toggle {
-                true => UiKind::Toggle,
-                false => UiKind::Button,
-            };
-            (kind, element.label)
-        });
+        return element_described(controls_elements(ctx), id);
     }
     if ids::is_controllers(id) {
         return controllers_elements(ctx)
@@ -351,10 +329,10 @@ pub fn describe(ctx: &UiContext, id: &str) -> Option<(UiKind, String)> {
             .map(|element| (UiKind::Button, element.label));
     }
     if ids::is_settings_display(id) {
-        return display_described(settings_display_elements(ctx), id);
+        return element_described(settings_display_elements(ctx), id);
     }
     if ids::is_display(id) {
-        return display_described(display_elements(ctx), id);
+        return element_described(display_elements(ctx), id);
     }
     let described = match id {
         ids::ACTION_BAR_MENU => (UiKind::Button, "Open menu".to_string()),
@@ -457,13 +435,13 @@ pub(in crate::app) fn activation(ctx: &UiContext, id: &str) -> Option<Message> {
             .map(|section| settings_view::Message::SelectSection(section).into());
     }
     if ids::is_controls(id) {
-        return controls_element(ctx, id).map(|element| element.message.into());
+        return element_activation(controls_elements(ctx), id);
     }
     if ids::is_settings_display(id) {
-        return display_activation(settings_display_elements(ctx), id);
+        return element_activation(settings_display_elements(ctx), id);
     }
     if ids::is_display(id) {
-        return display_activation(display_elements(ctx), id);
+        return element_activation(display_elements(ctx), id);
     }
     let message = match id {
         ids::ACTION_BAR_MENU | ids::DETAIL_MENU => Message::ToggleMenu,
@@ -679,7 +657,7 @@ mod tests {
             }
         }
         // Every settings section renders its own controls.
-        for (_, section) in SECTIONS {
+        for (section, ..) in settings_view::SECTIONS {
             ctxs.push(UiContext {
                 screen: Screen::Settings,
                 settings_section: section,

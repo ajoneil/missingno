@@ -56,28 +56,27 @@ impl App {
 
         let sha1 = match viewing_sha1 {
             Some(s) => s,
-            None => return self.empty_detail_view(),
+            None => return self.library_view(),
         };
 
-        // Get entry from current game (if it's the one being viewed) or store
-        let entry = if let Some(current) = &self.current_game {
-            if current.entry.sha1 == sha1 {
-                &current.entry
-            } else {
-                match self.store.summary(sha1) {
-                    Some(s) => &s.entry,
-                    None => return self.empty_detail_view(),
-                }
-            }
-        } else {
-            match self.store.summary(sha1) {
-                Some(s) => &s.entry,
-                None => return self.empty_detail_view(),
-            }
+        let summary = self.store.summary(sha1);
+
+        // The loaded game carries the fresher entry; anything else comes from
+        // the store.
+        let entry = match self
+            .current_game
+            .as_ref()
+            .filter(|current| current.entry.sha1 == sha1)
+        {
+            Some(current) => &current.entry,
+            None => match summary {
+                Some(summary) => &summary.entry,
+                None => return self.library_view(),
+            },
         };
 
         // Use pre-rendered thumbnail from the store
-        let cover = self.store.summary(sha1).and_then(|s| s.thumbnail.as_ref());
+        let cover = summary.and_then(|s| s.thumbnail.as_ref());
 
         let activity_state = self.store.activity_for(sha1);
 
@@ -158,10 +157,6 @@ impl App {
             search: &self.library_search,
             system_filter: self.library_filter,
         })
-    }
-
-    fn empty_detail_view(&self) -> Element<'_, Message> {
-        self.library_view()
     }
 
     pub(super) fn missing_rom_dirs_bar(&self) -> Option<Element<'static, Message>> {

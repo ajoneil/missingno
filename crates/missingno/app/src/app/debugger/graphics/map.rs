@@ -10,7 +10,7 @@ use iced::{
     widget::{
         Stack,
         canvas::{Frame, Geometry, Path, Program, Stroke},
-        container, pane_grid, pick_list, responsive, shader,
+        container, pane_grid, responsive, shader,
     },
 };
 
@@ -22,7 +22,6 @@ use crate::app::{
         panes::{self, pane, running_placeholder, title_bar, title_bar_with_detail},
         sidebar::tone_color,
     },
-    ui::fonts,
 };
 use missingno_core::graphics::{GraphicsView, TileMap, Viewport};
 use missingno_gb::ppu::types::tiles::TileMapId;
@@ -114,12 +113,9 @@ impl TileMapPane {
             .map(|index| MapChoice(TileMapId(index as u8)))
             .collect();
         let shown = MapChoice(TileMapId(self.displayed_map(graphics) as u8));
-        let picker = pick_list(choices, Some(shown), move |choice| {
+        let picker = panes::title_bar_picker(choices, Some(shown), move |choice| {
             panes::PaneMessage::TileMap(Message::SelectMap(choice.0)).to(close)
-        })
-        .font(fonts::monospace())
-        .text_size(11.0)
-        .padding([1.0, 4.0]);
+        });
         title_bar_with_detail("Tile Map", picker, close)
     }
 }

@@ -13,11 +13,9 @@ use crate::app::{self, App, CurrentGame, Game, LoadedGame, Notice, Screen, libra
 use missingno_iced::ScreenView;
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum Message {
     Pick,
     Picked(Option<FileHandle>),
-    LoadPath(PathBuf),
     Loaded(PathBuf, Vec<u8>),
 }
 
@@ -51,14 +49,6 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
                 Message::Picked(file_handle).into()
             });
         }
-
-        Message::LoadPath(rom_path) => match std::fs::read(&rom_path) {
-            Ok(rom) => return Task::done(Message::Loaded(rom_path, rom).into()),
-            Err(_) => {
-                app.recent_games.remove_path(&rom_path);
-                app.recent_games.save();
-            }
-        },
 
         Message::Picked(file_handle) => {
             if let Some(handle) = file_handle {

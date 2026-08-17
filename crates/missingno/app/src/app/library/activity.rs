@@ -375,7 +375,9 @@ impl FrameCapture {
 
 /// Accepts both the display names captures store ("Original", "Greyscale")
 /// and the variant names older records carry.
-fn parse_palette_choice(name: &str) -> missingno_gb::ppu::types::palette::PaletteChoice {
+pub(in crate::app) fn parse_palette_choice(
+    name: &str,
+) -> missingno_gb::ppu::types::palette::PaletteChoice {
     use missingno_gb::ppu::types::palette::PaletteChoice;
     PaletteChoice::ALL
         .iter()
@@ -384,7 +386,9 @@ fn parse_palette_choice(name: &str) -> missingno_gb::ppu::types::palette::Palett
         .unwrap_or_default()
 }
 
-fn variant_name(choice: missingno_gb::ppu::types::palette::PaletteChoice) -> &'static str {
+pub(in crate::app) fn variant_name(
+    choice: missingno_gb::ppu::types::palette::PaletteChoice,
+) -> &'static str {
     use missingno_gb::ppu::types::palette::PaletteChoice;
     match choice {
         PaletteChoice::Green => "Green",
@@ -644,26 +648,33 @@ pub fn write_session(game_dir: &Path, session: &SessionFile) {
     }
 }
 
-/// Write an import file.
-pub fn write_import(game_dir: &Path, sram: &[u8]) -> String {
+/// Write one activity file, named for the moment it records, and return its
+/// filename. The extension is what `list_activity` reads the kind back from.
+fn write_activity<T: Serialize>(game_dir: &Path, extension: &str, record: &T) -> String {
     let dir = activity_dir(game_dir);
     let _ = fs::create_dir_all(&dir);
 
-    let now = Timestamp::now();
-    let filename = format!("{}.import", timestamp_prefix(&now));
+    let filename = format!("{}.{extension}", timestamp_prefix(&Timestamp::now()));
     let path = dir.join(&filename);
 
-    let import = ImportSave {
-        size_bytes: sram.len() as u32,
-        sram: sram.to_vec(),
-        source: ImportSource::File,
-    };
-
-    if let Ok(ron_data) = ron::ser::to_string_pretty(&import, ron::ser::PrettyConfig::default()) {
+    if let Ok(ron_data) = ron::ser::to_string_pretty(record, ron::ser::PrettyConfig::default()) {
         write_compressed(&path, &ron_data);
     }
 
     filename
+}
+
+/// Write an import file.
+pub fn write_import(game_dir: &Path, sram: &[u8]) -> String {
+    write_activity(
+        game_dir,
+        "import",
+        &ImportSave {
+            size_bytes: sram.len() as u32,
+            sram: sram.to_vec(),
+            source: ImportSource::File,
+        },
+    )
 }
 
 /// Import save data read from a physical cartridge.
@@ -671,49 +682,31 @@ pub fn write_import(game_dir: &Path, sram: &[u8]) -> String {
 /// Like `write_import` but records the source as `Cartridge` with a hash
 /// for sync comparison.
 pub fn write_cartridge_import(game_dir: &Path, sram: &[u8]) -> String {
-    let dir = activity_dir(game_dir);
-    let _ = fs::create_dir_all(&dir);
-
-    let now = Timestamp::now();
-    let filename = format!("{}.import", timestamp_prefix(&now));
-    let path = dir.join(&filename);
-
-    let import = ImportSave {
-        size_bytes: sram.len() as u32,
-        sram: sram.to_vec(),
-        source: ImportSource::Cartridge {
-            sram_hash: hash_sram(sram),
+    write_activity(
+        game_dir,
+        "import",
+        &ImportSave {
+            size_bytes: sram.len() as u32,
+            sram: sram.to_vec(),
+            source: ImportSource::Cartridge {
+                sram_hash: hash_sram(sram),
+            },
         },
-    };
-
-    if let Ok(ron_data) = ron::ser::to_string_pretty(&import, ron::ser::PrettyConfig::default()) {
-        write_compressed(&path, &ron_data);
-    }
-
-    filename
+    )
 }
 
 /// Record that save data was written to a physical cartridge.
 ///
 /// Only stores the hash — the SRAM data itself is already in the library.
 pub fn write_cart_write(game_dir: &Path, sram: &[u8]) -> String {
-    let dir = activity_dir(game_dir);
-    let _ = fs::create_dir_all(&dir);
-
-    let now = Timestamp::now();
-    let filename = format!("{}.cart_write", timestamp_prefix(&now));
-    let path = dir.join(&filename);
-
-    let write = CartridgeWrite {
-        size_bytes: sram.len() as u32,
-        sram_hash: hash_sram(sram),
-    };
-
-    if let Ok(ron_data) = ron::ser::to_string_pretty(&write, ron::ser::PrettyConfig::default()) {
-        write_compressed(&path, &ron_data);
-    }
-
-    filename
+    write_activity(
+        game_dir,
+        "cart_write",
+        &CartridgeWrite {
+            size_bytes: sram.len() as u32,
+            sram_hash: hash_sram(sram),
+        },
+    )
 }
 
 /// Compute a SHA1 hash of SRAM data.

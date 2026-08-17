@@ -72,6 +72,14 @@ pub struct GameEntry {
     pub rom_paths: Vec<PathBuf>,
 }
 
+/// Where a game's system name sits in its metadata line, when it appears.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SystemName {
+    Leading,
+    Trailing,
+    Omitted,
+}
+
 impl GameEntry {
     pub fn new(sha1: String, title: String, rom_path: PathBuf) -> Self {
         Self {
@@ -107,6 +115,46 @@ impl GameEntry {
             }
         }
         self.title.clone()
+    }
+
+    /// "Publisher · 1994 · Game Boy", minus whatever the entry doesn't know.
+    /// Nothing known at all reads as no line rather than an empty one.
+    pub fn metadata_line(&self, system: SystemName) -> Option<String> {
+        let system_name = match system {
+            SystemName::Omitted => None,
+            _ => self.platform.map(|platform| platform.name().to_string()),
+        };
+        let publisher = self.publisher.clone();
+        let year = self.year.as_ref().map(|year| activity::release_year(year));
+
+        let parts: Vec<String> = match system {
+            SystemName::Leading => [system_name, publisher, year],
+            _ => [publisher, year, system_name],
+        }
+        .into_iter()
+        .flatten()
+        .collect();
+
+        (!parts.is_empty()).then(|| parts.join(" · "))
+    }
+
+    /// Fold a metadata lookup's answer into the entry, marking it looked up.
+    pub fn apply_metadata(&mut self, info: hasheous::GameInfo) {
+        self.title = info.name;
+        // Hasheous's platform string never overrides the header-derived
+        // classification; it only fills a gap, mapped to our own type.
+        if self.platform.is_none() {
+            self.platform = info
+                .platform
+                .as_deref()
+                .and_then(crate::app::system::Platform::from_description);
+        }
+        self.publisher = info.publisher;
+        self.year = info.year;
+        self.description = info.description;
+        self.wikipedia_url = info.wikipedia_url;
+        self.igdb_url = info.igdb_url;
+        self.enrichment_attempted = true;
     }
 
     pub fn add_rom_path(&mut self, path: PathBuf) {

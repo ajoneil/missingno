@@ -16,6 +16,7 @@ use missingno_core::system::ControlRole;
 use missingno_gb::ppu::types::palette::PaletteChoice;
 use serde::{Deserialize, Serialize};
 
+use crate::app::library::activity::{parse_palette_choice, variant_name};
 use crate::app::library::store::SortKey;
 use crate::app::library::view::LibraryLayout;
 use crate::app::system::{ControlMap, Platform, family_of};
@@ -341,11 +342,21 @@ impl ControlsSettings {
         surface: Surface,
         slot: ControlSlot,
     ) -> Option<String> {
+        self.system_binding_with(platform, surface, slot, &default_system(platform, surface))
+    }
+
+    /// The same lookup against a default table the caller already holds, so a
+    /// view resolving many slots builds that table once.
+    pub fn system_binding_with(
+        &self,
+        platform: Platform,
+        surface: Surface,
+        slot: ControlSlot,
+        defaults: &HashMap<ControlSlot, String>,
+    ) -> Option<String> {
         match self.systems.get(&platform) {
-            Some(pair) => pair
-                .surface(surface)
-                .binding(slot, &default_system(platform, surface)),
-            None => default_system(platform, surface).get(&slot).cloned(),
+            Some(pair) => pair.surface(surface).binding(slot, defaults),
+            None => defaults.get(&slot).cloned(),
         }
     }
 
@@ -551,7 +562,7 @@ pub fn default_system(platform: Platform, surface: Surface) -> HashMap<ControlSl
 }
 
 /// Every knob this system's controllers carry, as (controller, role).
-pub fn knobs(platform: Platform) -> Vec<(PeripheralId, ControlRole)> {
+fn knobs(platform: Platform) -> Vec<(PeripheralId, ControlRole)> {
     view::controller_types(platform)
         .into_iter()
         .flat_map(|peripheral| {
@@ -666,7 +677,7 @@ impl<C: Default> Default for SettingsFile<C> {
             internet_enabled: false,
             hasheous_enabled: true,
             homebrew_hub_enabled: true,
-            palette: palette_to_string(PaletteChoice::default()),
+            palette: variant_name(PaletteChoice::default()).to_string(),
             rom_directories: Vec::new(),
             use_sgb_colors: true,
             persistence: true,
@@ -694,7 +705,7 @@ impl<C> SettingsFile<C> {
             internet_enabled: self.internet_enabled,
             hasheous_enabled: self.hasheous_enabled,
             homebrew_hub_enabled: self.homebrew_hub_enabled,
-            palette: parse_palette(&self.palette),
+            palette: parse_palette_choice(&self.palette),
             rom_directories: self.rom_directories,
             use_sgb_colors: self.use_sgb_colors,
             persistence: self.persistence,
@@ -837,7 +848,7 @@ impl Settings {
             internet_enabled: self.internet_enabled,
             hasheous_enabled: self.hasheous_enabled,
             homebrew_hub_enabled: self.homebrew_hub_enabled,
-            palette: palette_to_string(self.palette),
+            palette: variant_name(self.palette).to_string(),
             rom_directories: self.rom_directories.clone(),
             use_sgb_colors: self.use_sgb_colors,
             persistence: self.persistence,
@@ -856,24 +867,6 @@ impl Settings {
             let _ = fs::write(path, data);
         }
     }
-}
-
-fn parse_palette(value: &str) -> PaletteChoice {
-    match value {
-        "Green" => PaletteChoice::Green,
-        "Pocket" => PaletteChoice::Pocket,
-        "Classic" => PaletteChoice::Classic,
-        _ => PaletteChoice::default(),
-    }
-}
-
-fn palette_to_string(palette: PaletteChoice) -> String {
-    match palette {
-        PaletteChoice::Green => "Green",
-        PaletteChoice::Pocket => "Pocket",
-        PaletteChoice::Classic => "Classic",
-    }
-    .to_string()
 }
 
 fn settings_path() -> Option<PathBuf> {

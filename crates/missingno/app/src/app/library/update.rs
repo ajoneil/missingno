@@ -84,26 +84,7 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                         return Task::batch([dump_task, progress_task]);
                     }
                 }
-                QuickPlay(sha1) => {
-                    let same_game = app
-                        .current_game
-                        .as_ref()
-                        .map(|c| c.entry.sha1 == sha1)
-                        .unwrap_or(false);
-
-                    if same_game {
-                        // Already loaded, just resume
-                        app.run();
-                        app.screen = Screen::Emulator;
-                    } else if matches!(app.game, Game::Loaded(_)) {
-                        // Different game loaded, confirm first
-                        app.pending_action = Some(app::PendingAction::SwitchGame(sha1));
-                    } else {
-                        // Nothing loaded, go ahead
-                        load::select_game(app, &sha1);
-                        return load::play_current_game(app);
-                    }
-                }
+                QuickPlay(sha1) => return app.play_game(sha1),
             }
         }
 
@@ -136,28 +117,14 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                         );
                     }
                 }
-                GameMetadataRefreshed(info) => {
+                GameMetadataRefreshed(mut info) => {
                     if let Some(sha1) = app.viewing_sha1().map(str::to_owned)
                         && let Some((game_dir, mut entry)) = super::find_by_sha1(&sha1)
                     {
-                        entry.title = info.name;
-                        // Hasheous's platform string never overrides the
-                        // header-derived classification; it only fills a
-                        // gap, mapped to our own type.
-                        if entry.platform.is_none() {
-                            entry.platform = info
-                                .platform
-                                .as_deref()
-                                .and_then(system::Platform::from_description);
-                        }
-                        entry.publisher = info.publisher;
-                        entry.year = info.year;
-                        entry.description = info.description;
-                        entry.wikipedia_url = info.wikipedia_url;
-                        entry.igdb_url = info.igdb_url;
-                        entry.enrichment_attempted = true;
+                        let cover_art = info.cover_art.take();
+                        entry.apply_metadata(info);
                         super::save_entry(&game_dir, &entry);
-                        if let Some(bytes) = &info.cover_art {
+                        if let Some(bytes) = &cover_art {
                             super::save_cover(&game_dir, bytes);
                         }
                         app.store.notify_metadata_changed(&sha1);
@@ -181,17 +148,17 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                 PlayWithSave(save_id) => {
                     // Launch the game with a specific save
                     if let Some(sha1) = app.viewing_sha1().map(|s| s.to_string()) {
+                        let loaded = matches!(app.game, Game::Loaded(_));
                         let same_game = app
                             .current_game
                             .as_ref()
                             .map(|c| c.entry.sha1 == sha1)
                             .unwrap_or(false);
 
-                        if matches!(app.game, Game::Loaded(_)) && !same_game {
-                            // Different game loaded — would need confirmation
-                            // For now, just go to the detail page
-                        } else {
-                            if !same_game || !matches!(app.game, Game::Loaded(_)) {
+                        // Switching away from a different loaded game would
+                        // need confirmation, so that stays on the detail page.
+                        if !loaded || same_game {
+                            if !loaded {
                                 load::select_game(app, &sha1);
                             }
                             return load::play_with_save(app, &save_id);
@@ -230,55 +197,29 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                         };
                     }
                 }
-                HoverLogEntry(idx) => {
+                // The detail page's own view state, which only exists while
+                // that page is the one on screen.
+                page_state @ (HoverLogEntry(_) | UnhoverLogEntry | HoverHeader | UnhoverHeader
+                | SelectSection(_)) => {
                     if let Screen::ViewingGame {
                         sub_screen:
                             DetailSubScreen::Detail {
-                                hovered_log_entry, ..
+                                section,
+                                hovered_log_entry,
+                                header_hovered,
+                                ..
                             },
                         ..
                     } = &mut app.screen
                     {
-                        *hovered_log_entry = Some(idx);
-                    }
-                }
-                UnhoverLogEntry => {
-                    if let Screen::ViewingGame {
-                        sub_screen:
-                            DetailSubScreen::Detail {
-                                hovered_log_entry, ..
-                            },
-                        ..
-                    } = &mut app.screen
-                    {
-                        *hovered_log_entry = None;
-                    }
-                }
-                HoverHeader => {
-                    if let Screen::ViewingGame {
-                        sub_screen: DetailSubScreen::Detail { header_hovered, .. },
-                        ..
-                    } = &mut app.screen
-                    {
-                        *header_hovered = true;
-                    }
-                }
-                UnhoverHeader => {
-                    if let Screen::ViewingGame {
-                        sub_screen: DetailSubScreen::Detail { header_hovered, .. },
-                        ..
-                    } = &mut app.screen
-                    {
-                        *header_hovered = false;
-                    }
-                }
-                SelectSection(selected) => {
-                    if let Screen::ViewingGame {
-                        sub_screen: DetailSubScreen::Detail { section, .. },
-                        ..
-                    } = &mut app.screen
-                    {
-                        *section = selected;
+                        match page_state {
+                            HoverLogEntry(idx) => *hovered_log_entry = Some(idx),
+                            UnhoverLogEntry => *hovered_log_entry = None,
+                            HoverHeader => *header_hovered = true,
+                            UnhoverHeader => *header_hovered = false,
+                            SelectSection(selected) => *section = selected,
+                            _ => {}
+                        }
                     }
                 }
                 RemoveGame => {
@@ -304,18 +245,13 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                     };
                 }
                 Back => {
-                    if let Screen::ViewingGame { sha1, .. } = &app.screen {
-                        let sha1 = sha1.clone();
-                        return app.go_to_detail(&sha1);
+                    if let Some(task) = back_to_detail(app) {
+                        return task;
                     }
                     app.screen = Screen::Library { hovered_game: None };
                 }
                 ImportSave => {
-                    if let Some(device) = app.cartridge_rw.detected_devices.iter().find(|d| {
-                        d.cartridge
-                            .as_ref()
-                            .is_some_and(|c| c.has_battery && c.ram_size > 0)
-                    }) {
+                    if let Some(device) = battery_save_device(app) {
                         let port_name = device.port_name.clone();
                         let header = device.cartridge.clone().unwrap();
                         return Task::perform(
@@ -337,11 +273,7 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                     if let Some(sha1) = app.viewing_sha1()
                         && let Some((game_dir, _)) = super::find_by_sha1(sha1)
                         && let Some(sram) = super::activity::load_current_sram(&game_dir)
-                        && let Some(device) = app.cartridge_rw.detected_devices.iter().find(|d| {
-                            d.cartridge
-                                .as_ref()
-                                .is_some_and(|c| c.has_battery && c.ram_size > 0)
-                        })
+                        && let Some(device) = battery_save_device(app)
                     {
                         let port_name = device.port_name.clone();
                         let header = device.cartridge.clone().unwrap();
@@ -459,10 +391,8 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                     }
                 }
                 FlashCancel => {
-                    // Go back to the detail page if we have a viewing SHA1
-                    if let Screen::ViewingGame { sha1, .. } = &app.screen {
-                        let sha1 = sha1.clone();
-                        return app.go_to_detail(&sha1);
+                    if let Some(task) = back_to_detail(app) {
+                        return task;
                     }
                     app.screen = Screen::Library { hovered_game: None };
                 }
@@ -526,31 +456,18 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
         app::Message::ScreenshotGallery(msg) => {
             use screenshot_gallery::Message as G;
             match msg {
-                G::SelectScreenshot(idx) => {
+                selection @ (G::SelectScreenshot(_) | G::SetPalette(_) | G::SetScale(_)) => {
                     if let Screen::ViewingGame {
                         sub_screen: DetailSubScreen::ScreenshotGallery { gallery_state },
                         ..
                     } = &mut app.screen
                     {
-                        gallery_state.select(idx);
-                    }
-                }
-                G::SetPalette(pal) => {
-                    if let Screen::ViewingGame {
-                        sub_screen: DetailSubScreen::ScreenshotGallery { gallery_state },
-                        ..
-                    } = &mut app.screen
-                    {
-                        gallery_state.palette = pal;
-                    }
-                }
-                G::SetScale(scale) => {
-                    if let Screen::ViewingGame {
-                        sub_screen: DetailSubScreen::ScreenshotGallery { gallery_state },
-                        ..
-                    } = &mut app.screen
-                    {
-                        gallery_state.scale = scale;
+                        match selection {
+                            G::SelectScreenshot(idx) => gallery_state.select(idx),
+                            G::SetPalette(pal) => gallery_state.palette = pal,
+                            G::SetScale(scale) => gallery_state.scale = scale,
+                            _ => {}
+                        }
                     }
                 }
                 G::Export => {
@@ -575,9 +492,8 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                     }
                 }
                 G::Back => {
-                    if let Screen::ViewingGame { sha1, .. } = &app.screen {
-                        let sha1 = sha1.clone();
-                        return app.go_to_detail(&sha1);
+                    if let Some(task) = back_to_detail(app) {
+                        return task;
                     }
                 }
             }
@@ -880,8 +796,28 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
     Task::none()
 }
 
+/// Back to the details page of the game a sub-screen belongs to, if there is
+/// one; the caller decides where to go when there isn't.
+fn back_to_detail(app: &mut app::App) -> Option<Task<app::Message>> {
+    let Screen::ViewingGame { sha1, .. } = &app.screen else {
+        return None;
+    };
+    let sha1 = sha1.clone();
+    Some(app.go_to_detail(&sha1))
+}
+
+/// The first attached reader holding a cartridge with battery-backed save RAM.
+fn battery_save_device(app: &app::App) -> Option<&cartridge_rw::DetectedDevice> {
+    app.cartridge_rw.detected_devices.iter().find(|device| {
+        device
+            .cartridge
+            .as_ref()
+            .is_some_and(|cart| cart.has_battery && cart.ram_size > 0)
+    })
+}
+
 /// Fetch whatever the next library entry still needs from the network.
-fn enrich_task(app: &app::App) -> Task<app::Message> {
+pub(in crate::app) fn enrich_task(app: &app::App) -> Task<app::Message> {
     let catalogue = app.catalogue.clone();
     let hasheous = app.settings.hasheous_enabled;
     Task::perform(
@@ -897,11 +833,7 @@ fn load_homebrew_covers(app: &app::App) -> Task<app::Message> {
         return Task::none();
     };
 
-    let results = if state.search_text.is_empty() {
-        app.catalogue.homebrew()
-    } else {
-        app.catalogue.search_homebrew(&state.search_text)
-    };
+    let results = app.catalogue.search_homebrew(&state.search_text);
 
     let visible = state.visible_count.min(results.len());
 

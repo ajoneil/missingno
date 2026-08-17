@@ -96,34 +96,22 @@ pub(in crate::app) fn handle(
         super::view::Message::SetUseSgbColors(enabled) => {
             app.settings.use_sgb_colors = enabled;
             app.settings.save();
-            if let Game::Loaded(LoadedGame::Emulator(emu)) = &mut app.game {
-                emu.set_use_sgb_colors(enabled);
-            }
+            push_presentation(app);
         }
         super::view::Message::SetPersistence(enabled) => {
             app.settings.persistence = enabled;
             app.settings.save();
-            // Persistence is the main display's control; the debugger screen
-            // pane has its own per-pane device/raw toggle instead.
-            if let Game::Loaded(LoadedGame::Emulator(emu)) = &mut app.game {
-                emu.set_persistence(enabled);
-            }
+            push_presentation(app);
         }
         super::view::Message::SetPixelGrid(enabled) => {
             app.settings.pixel_grid = enabled;
             app.settings.save();
-            // Like persistence, this is the main display's control; the
-            // debugger pane bundles the overlay into its device/raw toggle.
-            if let Game::Loaded(LoadedGame::Emulator(emu)) = &mut app.game {
-                emu.set_pixel_grid(enabled);
-            }
+            push_presentation(app);
         }
         super::view::Message::SetScanlines(enabled) => {
             app.settings.scanlines = enabled;
             app.settings.save();
-            if let Game::Loaded(LoadedGame::Emulator(emu)) = &mut app.game {
-                emu.set_scanlines(enabled);
-            }
+            push_presentation(app);
         }
         super::view::Message::SetCartridgeRwEnabled(enabled) => {
             app.settings.cartridge_rw_enabled = enabled;
@@ -230,6 +218,16 @@ pub(in crate::app) fn handle(
     }
 
     Task::none()
+}
+
+/// Hand the display choices to the running play screen. They are the main
+/// display's controls; the debugger's screen pane has its own per-pane
+/// device/raw toggle instead.
+fn push_presentation(app: &mut app::App) {
+    let presentation = app.settings.presentation();
+    if let Game::Loaded(LoadedGame::Emulator(emulator)) = &mut app.game {
+        emulator.set_presentation(presentation);
+    }
 }
 
 /// Take the binding the settings screen is waiting on, ending the capture.

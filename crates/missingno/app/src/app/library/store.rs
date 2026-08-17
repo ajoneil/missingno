@@ -60,7 +60,7 @@ impl SortKey {
         SortKey::MostPlayed,
     ];
 
-    pub fn label(self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
             SortKey::LastPlayed => "Last played",
             SortKey::Title => "Title",
@@ -154,9 +154,7 @@ pub enum ActivityState {
 }
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub struct ActivityDetail {
-    pub sha1: String,
     pub sessions: Vec<SessionSummary>,
     /// Last cartridge sync hash and timestamp, if any.
     pub last_cart_sync: Option<(String, Timestamp)>,
@@ -220,36 +218,23 @@ pub struct GameStore {
     /// Cached screenshot handles for the live session (avoids re-rendering
     /// every frame). Only invalidated when a new screenshot is taken.
     live_screenshots: Vec<image::Handle>,
-    live_screenshot_count: usize,
     live_prints: Vec<image::Handle>,
-    live_print_count: usize,
 }
 
 impl GameStore {
-    /// Create a new store and scan the library directory.
-    #[cfg(test)]
-    fn empty_for_tests() -> Self {
+    fn empty() -> Self {
         Self {
             index: HashMap::new(),
             summaries: HashMap::new(),
             activity_state: None,
             live_screenshots: Vec::new(),
-            live_screenshot_count: 0,
             live_prints: Vec::new(),
-            live_print_count: 0,
         }
     }
 
+    /// Create a new store and scan the library directory.
     pub fn new() -> Self {
-        let mut store = Self {
-            index: HashMap::new(),
-            summaries: HashMap::new(),
-            activity_state: None,
-            live_screenshots: Vec::new(),
-            live_screenshot_count: 0,
-            live_prints: Vec::new(),
-            live_print_count: 0,
-        };
+        let mut store = Self::empty();
         store.rebuild_index();
         store
     }
@@ -401,38 +386,31 @@ impl GameStore {
                             import_source: None,
                         })
                     }
-                    activity::ActivityKind::Import => {
-                        let import: activity::ImportSave = ron::from_str(&data).ok()?;
-                        let ts_str = r.filename.strip_suffix(".import")?;
+                    kind @ (activity::ActivityKind::Import
+                    | activity::ActivityKind::CartridgeWrite) => {
+                        let (suffix, size_bytes, import_source) = match kind {
+                            activity::ActivityKind::Import => {
+                                let import: activity::ImportSave = ron::from_str(&data).ok()?;
+                                (".import", import.size_bytes, Some(import.source))
+                            }
+                            _ => {
+                                let write: activity::CartridgeWrite = ron::from_str(&data).ok()?;
+                                (".cart_write", write.size_bytes, None)
+                            }
+                        };
+                        let ts_str = r.filename.strip_suffix(suffix)?;
                         let timestamp = activity::parse_filename_timestamp(ts_str)?;
                         Some(RawSessionSummary {
                             filename: r.filename,
-                            kind: activity::ActivityKind::Import,
+                            kind,
                             start: timestamp,
                             end: None,
                             save_count: 0,
                             last_save_time: None,
                             screenshots: Vec::new(),
                             prints: Vec::new(),
-                            size_bytes: Some(import.size_bytes),
-                            import_source: Some(import.source),
-                        })
-                    }
-                    activity::ActivityKind::CartridgeWrite => {
-                        let write: activity::CartridgeWrite = ron::from_str(&data).ok()?;
-                        let ts_str = r.filename.strip_suffix(".cart_write")?;
-                        let timestamp = activity::parse_filename_timestamp(ts_str)?;
-                        Some(RawSessionSummary {
-                            filename: r.filename,
-                            kind: activity::ActivityKind::CartridgeWrite,
-                            start: timestamp,
-                            end: None,
-                            save_count: 0,
-                            last_save_time: None,
-                            screenshots: Vec::new(),
-                            prints: Vec::new(),
-                            size_bytes: Some(write.size_bytes),
-                            import_source: None,
+                            size_bytes: Some(size_bytes),
+                            import_source,
                         })
                     }
                 }
@@ -468,11 +446,9 @@ impl GameStore {
             })
             .collect();
 
-        let sha1 = raw.sha1;
         self.activity_state = Some((
-            sha1.clone(),
+            raw.sha1,
             ActivityState::Loaded(ActivityDetail {
-                sha1,
                 sessions,
                 last_cart_sync: raw.last_cart_sync,
             }),
@@ -496,7 +472,7 @@ impl GameStore {
             .filter(|e| matches!(e.kind, activity::EventKind::Screenshot { .. }))
             .count();
 
-        if current_count > self.live_screenshot_count {
+        if current_count > self.live_screenshots.len() {
             // Only render the new ones
             let new_handles: Vec<_> = session
                 .events
@@ -505,11 +481,10 @@ impl GameStore {
                     activity::EventKind::Screenshot { frame } => Some(frame.to_image_handle()),
                     _ => None,
                 })
-                .skip(self.live_screenshot_count)
+                .skip(self.live_screenshots.len())
                 .collect();
 
             self.live_screenshots.extend(new_handles);
-            self.live_screenshot_count = current_count;
         }
     }
 
@@ -527,7 +502,7 @@ impl GameStore {
             .filter(|e| matches!(e.kind, activity::EventKind::Print { .. }))
             .count();
 
-        if current_count > self.live_print_count {
+        if current_count > self.live_prints.len() {
             let new_handles: Vec<_> = session
                 .events
                 .iter()
@@ -535,20 +510,17 @@ impl GameStore {
                     activity::EventKind::Print { print } => Some(print.to_image_handle()),
                     _ => None,
                 })
-                .skip(self.live_print_count)
+                .skip(self.live_prints.len())
                 .collect();
 
             self.live_prints.extend(new_handles);
-            self.live_print_count = current_count;
         }
     }
 
     /// Reset live screenshot and print caches (e.g., when starting a new session).
     pub fn reset_live_screenshots(&mut self) {
         self.live_screenshots.clear();
-        self.live_screenshot_count = 0;
         self.live_prints.clear();
-        self.live_print_count = 0;
     }
 
     // ── Invalidation ───────────────────────────────────────────────────
@@ -631,7 +603,7 @@ mod tests {
     }
 
     fn store_with(summaries: Vec<GameSummary>) -> GameStore {
-        let mut store = GameStore::empty_for_tests();
+        let mut store = GameStore::empty();
         for summary in summaries {
             store.summaries.insert(summary.entry.sha1.clone(), summary);
         }

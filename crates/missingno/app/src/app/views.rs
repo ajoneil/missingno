@@ -13,7 +13,9 @@ use super::ui::{
     sizes::{l, s},
     text,
 };
-use super::{App, DetailSubScreen, Fullscreen, Message, Screen, controls, launch, settings};
+use super::{
+    App, DetailSubScreen, Fullscreen, Message, Screen, action_bar, controls, launch, settings,
+};
 
 mod cartridge;
 mod emulator;
@@ -34,7 +36,7 @@ impl App {
             }
             (Screen::Emulator, _) => {
                 let screen = container(self.emulator_view(false)).center(Fill);
-                column![self.action_bar.view(self), horizontal_rule(), screen].into()
+                column![action_bar::view(self), horizontal_rule(), screen].into()
             }
             (
                 Screen::Settings {
@@ -75,7 +77,7 @@ impl App {
             _ => {
                 let page_content = self.page_content();
                 let mut col = column![
-                    self.action_bar.view(self),
+                    action_bar::view(self),
                     horizontal_rule(),
                     container(page_content).center(Fill),
                 ];

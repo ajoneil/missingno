@@ -2,7 +2,6 @@ use std::{fs, path::PathBuf, time::Instant};
 
 use std::collections::HashMap;
 
-use action_bar::ActionBar;
 use iced::{Task, Theme, window};
 use missingno_session::audio_output::AudioOutput;
 use ui::fonts;
@@ -98,7 +97,6 @@ struct App {
     game: Game,
     debugger_enabled: bool,
     fullscreen: Fullscreen,
-    action_bar: ActionBar,
     /// The UI-thread cpal stream for the current game's audio; the session holds
     /// the matching sink. Replaced per game load, `None` when nothing is loaded.
     audio_output: Option<AudioOutput>,
@@ -195,6 +193,27 @@ impl App {
             Screen::ViewingGame { sha1, .. } => Some(sha1),
             _ => None,
         }
+    }
+
+    /// Play `sha1`: resume it when it is the game already loaded, ask before
+    /// dropping a different one, otherwise load and start it.
+    pub(in crate::app) fn play_game(&mut self, sha1: String) -> Task<Message> {
+        let same_game = self
+            .current_game
+            .as_ref()
+            .map(|current| current.entry.sha1 == sha1)
+            .unwrap_or(false);
+
+        if same_game {
+            self.run();
+            self.screen = Screen::Emulator;
+        } else if matches!(self.game, Game::Loaded(_)) {
+            self.pending_action = Some(PendingAction::SwitchGame(sha1));
+        } else {
+            load::select_game(self, &sha1);
+            return load::play_current_game(self);
+        }
+        Task::none()
     }
 
     /// Get the keybinding capture state, if on the settings screen.
@@ -597,6 +616,68 @@ enum LoadedGame {
     Emulator(emulator::Emulator),
 }
 
+/// What both shells answer for, so the app drives a loaded game without caring
+/// which one is showing.
+impl LoadedGame {
+    fn platform(&self) -> system::Platform {
+        match self {
+            Self::Debugger(debugger) => debugger.platform(),
+            Self::Emulator(emulator) => emulator.platform(),
+        }
+    }
+
+    fn technology(&self) -> missingno_core::video::DisplayTechnology {
+        match self {
+            Self::Debugger(debugger) => debugger.technology(),
+            Self::Emulator(emulator) => emulator.technology(),
+        }
+    }
+
+    fn running(&self) -> bool {
+        match self {
+            Self::Debugger(debugger) => debugger.running(),
+            Self::Emulator(emulator) => emulator.running(),
+        }
+    }
+
+    fn run(&mut self) {
+        match self {
+            Self::Debugger(debugger) => debugger.run(),
+            Self::Emulator(emulator) => emulator.run(),
+        }
+    }
+
+    fn pause(&mut self) {
+        match self {
+            Self::Debugger(debugger) => debugger.pause(),
+            Self::Emulator(emulator) => emulator.pause(),
+        }
+    }
+
+    fn reset(&mut self) {
+        match self {
+            Self::Debugger(debugger) => debugger.reset(),
+            Self::Emulator(emulator) => emulator.reset(),
+        }
+    }
+
+    fn apply_frame(&mut self, display: missingno_iced::Frame) {
+        match self {
+            Self::Debugger(debugger) => debugger.apply_frame(display),
+            Self::Emulator(emulator) => emulator.apply_frame(display),
+        }
+    }
+
+    /// The debugger shell, when that is the one showing — the inspection
+    /// surfaces the play screen has no use for.
+    fn debugger_mut(&mut self) -> Option<&mut debugger::Debugger> {
+        match self {
+            Self::Debugger(debugger) => Some(debugger),
+            Self::Emulator(_) => None,
+        }
+    }
+}
+
 struct CurrentGame {
     entry: library::GameEntry,
     game_dir: PathBuf,
@@ -683,7 +764,7 @@ enum Message {
     ScanComplete(bool),
     ActivityLoaded(library::store::RawActivityDetail),
     EnrichComplete(library::scanner::EnrichResult),
-    OpenUrl(&'static str),
+    OpenUrl(String),
 
     WindowResized(iced::Size),
     ToggleFullscreen,
@@ -747,7 +828,6 @@ impl App {
             } else {
                 Fullscreen::Windowed
             },
-            action_bar: ActionBar::new(),
             audio_output: None,
             session: None,
             #[cfg(unix)]
@@ -807,12 +887,7 @@ impl App {
             ));
         } else if app.settings.internet_enabled {
             // No directories to scan, but still enrich any unenriched games
-            let catalogue = app.catalogue.clone();
-            let hasheous = app.settings.hasheous_enabled;
-            tasks.push(Task::perform(
-                smol::unblock(move || library::scanner::enrich_next(&catalogue, hasheous)),
-                Message::EnrichComplete,
-            ));
+            tasks.push(library::update::enrich_task(&app));
         }
 
         (app, Task::batch(tasks))
@@ -980,25 +1055,8 @@ impl App {
             }
             Message::PlayFromDetail => {
                 self.menu_open = false;
-                let viewing = self.viewing_sha1().map(|s| s.to_string());
-                let same_game = viewing
-                    .as_ref()
-                    .and_then(|sha1| self.current_game.as_ref().map(|c| c.entry.sha1 == *sha1))
-                    .unwrap_or(false);
-
-                if same_game {
-                    // Resume the already-loaded game
-                    self.run();
-                    self.screen = Screen::Emulator;
-                } else if matches!(self.game, Game::Loaded(_)) {
-                    // Different game loaded, confirm switch
-                    if let Some(sha1) = viewing {
-                        self.pending_action = Some(PendingAction::SwitchGame(sha1));
-                    }
-                } else if let Some(sha1) = viewing {
-                    // Nothing loaded, start the viewed game
-                    load::select_game(self, &sha1);
-                    return load::play_current_game(self);
+                if let Some(sha1) = self.viewing_sha1().map(str::to_string) {
+                    return self.play_game(sha1);
                 }
             }
             Message::StopGame => {

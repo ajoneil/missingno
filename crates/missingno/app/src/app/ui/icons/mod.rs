@@ -5,17 +5,14 @@ use iced::{Theme, widget::svg};
 
 use crate::app::ui::text;
 
-#[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub enum Icon {
     Back,
-    Brush,
     Camera,
     Circle,
     CircuitBoard,
     Clock,
     Close,
-    ColorsSwatch,
     Debug,
     Download,
     Expand,
@@ -28,11 +25,9 @@ pub enum Icon {
     Gamepad,
     GameBoy,
     Gear,
-    GitHub,
     Grid,
     Human,
     Image,
-    Info,
     Globe,
     Link,
     List,
@@ -49,13 +44,11 @@ pub enum Icon {
     Terminal,
     Trash,
     Warning,
-    Wifi,
 }
 
 fn icon_data(icon: Icon) -> Handle {
     match icon {
         Icon::Back => Handle::from_memory(include_bytes!("pixelarticons/chevron-left.svg")),
-        Icon::Brush => Handle::from_memory(include_bytes!("pixelarticons/brush.svg")),
         Icon::Camera => Handle::from_memory(include_bytes!("pixelarticons/camera.svg")),
         Icon::CircuitBoard => {
             Handle::from_memory(include_bytes!("pixelarticons/circuit-board.svg"))
@@ -63,9 +56,6 @@ fn icon_data(icon: Icon) -> Handle {
         Icon::Clock => Handle::from_memory(include_bytes!("pixelarticons/clock.svg")),
         Icon::Close => Handle::from_memory(include_bytes!("pixelarticons/close.svg")),
         Icon::Circle => Handle::from_memory(include_bytes!("pixelarticons/circle.svg")),
-        Icon::ColorsSwatch => {
-            Handle::from_memory(include_bytes!("pixelarticons/colors-swatch.svg"))
-        }
         Icon::Debug => Handle::from_memory(include_bytes!("pixelarticons/debug.svg")),
         Icon::Download => Handle::from_memory(include_bytes!("pixelarticons/download.svg")),
         Icon::Expand => Handle::from_memory(include_bytes!("pixelarticons/expand.svg")),
@@ -78,7 +68,6 @@ fn icon_data(icon: Icon) -> Handle {
         Icon::Gamepad => Handle::from_memory(include_bytes!("pixelarticons/gamepad.svg")),
         Icon::GameBoy => Handle::from_memory(include_bytes!("missingno.svg")),
         Icon::Gear => Handle::from_memory(include_bytes!("pixelarticons/settings-cog.svg")),
-        Icon::GitHub => Handle::from_memory(include_bytes!("bootstrap/github.svg")),
         Icon::Grid => Handle::from_memory(include_bytes!("pixelarticons/grid.svg")),
         Icon::Human => Handle::from_memory(include_bytes!("pixelarticons/human.svg")),
         Icon::Image => Handle::from_memory(include_bytes!("pixelarticons/image.svg")),
@@ -87,7 +76,6 @@ fn icon_data(icon: Icon) -> Handle {
         Icon::List => Handle::from_memory(include_bytes!("pixelarticons/bulletlist.svg")),
         Icon::MemoryStick => Handle::from_memory(include_bytes!("pixelarticons/memory-stick.svg")),
         Icon::Menu => Handle::from_memory(include_bytes!("pixelarticons/menu.svg")),
-        Icon::Info => Handle::from_memory(include_bytes!("pixelarticons/info-box.svg")),
         Icon::Monitor => Handle::from_memory(include_bytes!("pixelarticons/monitor.svg")),
         Icon::Overlap => Handle::from_memory(include_bytes!("pixelarticons/circle-square.svg")),
         Icon::Pile => Handle::from_memory(include_bytes!("pixelarticons/circle-pile.svg")),
@@ -99,7 +87,6 @@ fn icon_data(icon: Icon) -> Handle {
         Icon::Terminal => Handle::from_memory(include_bytes!("pixelarticons/terminal.svg")),
         Icon::Trash => Handle::from_memory(include_bytes!("pixelarticons/trash.svg")),
         Icon::Warning => Handle::from_memory(include_bytes!("pixelarticons/warning-diamond.svg")),
-        Icon::Wifi => Handle::from_memory(include_bytes!("pixelarticons/wifi.svg")),
     }
 }
 

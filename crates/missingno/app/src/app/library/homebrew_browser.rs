@@ -90,11 +90,7 @@ pub(crate) fn view<'a>(
         .on_input(|s| Message::SearchTextChanged(s).into())
         .size(18.0);
 
-    let results = if state.search_text.is_empty() {
-        catalogue.homebrew()
-    } else {
-        catalogue.search_homebrew(&state.search_text)
-    };
+    let results = catalogue.search_homebrew(&state.search_text);
 
     let content = if results.is_empty() {
         container(app_text::detail("No games found").color(MUTED))
@@ -315,7 +311,7 @@ fn entry_detail<'a>(
                     .spacing(s())
                     .align_y(Center),
             )
-            .on_press(app::Message::OpenUrl(leak_str(&link.url)))
+            .on_press(app::Message::OpenUrl(link.url.clone()))
             .interaction(iced::mouse::Interaction::Pointer),
         );
     }
@@ -365,8 +361,4 @@ fn entry_detail<'a>(
     }
 
     page.into()
-}
-
-fn leak_str(s: &str) -> &'static str {
-    Box::leak(s.to_string().into_boxed_str())
 }

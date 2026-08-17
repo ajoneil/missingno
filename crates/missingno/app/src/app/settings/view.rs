@@ -20,7 +20,7 @@ use crate::app::{
         buttons, containers, horizontal_rule,
         icons::{self, Icon},
         palette::{MUTED, YELLOW},
-        sizes::{l, m, s},
+        sizes::{ROW_LABEL_WIDTH, l, m, s},
         text as app_text, vertical_rule,
     },
 };
@@ -139,29 +139,26 @@ pub(in crate::app) fn view<'a>(
     .into()
 }
 
-/// The automation id-name for a settings section, matching the registry.
-fn section_id_name(section: Section) -> &'static str {
-    match section {
-        Section::General => "general",
-        Section::Display => "display",
-        Section::Controls => "controls",
-        Section::Hardware => "hardware",
-        Section::Developer => "developer",
-    }
-}
+/// The settings sections in sidebar order, each with its automation id-name,
+/// its icon and its label. The sidebar lays these out and the automation
+/// registry names them from the same row.
+pub(in crate::app) const SECTIONS: [(Section, &str, Icon, &str); 5] = [
+    (Section::General, "general", Icon::Sliders, "General"),
+    (Section::Display, "display", Icon::Monitor, "Display"),
+    (Section::Controls, "controls", Icon::Gamepad, "Controls"),
+    (
+        Section::Hardware,
+        "hardware",
+        Icon::CircuitBoard,
+        "Hardware",
+    ),
+    (Section::Developer, "developer", Icon::Debug, "Developer"),
+];
 
 fn sidebar_view(current: Section) -> Element<'static, app::Message> {
-    let sections = [
-        (Section::General, Icon::Sliders, "General"),
-        (Section::Display, Icon::Monitor, "Display"),
-        (Section::Controls, Icon::Gamepad, "Controls"),
-        (Section::Hardware, Icon::CircuitBoard, "Hardware"),
-        (Section::Developer, Icon::Debug, "Developer"),
-    ];
-
     let mut col = column![].spacing(s());
 
-    for (section, icon, label) in sections {
+    for (section, id_name, icon, label) in SECTIONS {
         let label_row = row![icons::m(icon), text(label)]
             .spacing(s())
             .align_y(Center);
@@ -173,10 +170,7 @@ fn sidebar_view(current: Section) -> Element<'static, app::Message> {
                 .width(Fill)
         };
 
-        col = col.push(automation::tag(
-            &automation::ids::section(section_id_name(section)),
-            btn,
-        ));
+        col = col.push(automation::tag(&automation::ids::section(id_name), btn));
     }
 
     container(col.padding(m()))
@@ -188,7 +182,6 @@ fn sidebar_view(current: Section) -> Element<'static, app::Message> {
 
 // ── Controls ──────────────────────────────────────────────────────────
 
-const ROW_LABEL_WIDTH: f32 = 170.0;
 const BINDING_WIDTH: f32 = 140.0;
 /// The page rail, wide enough for the longest platform name to wrap into.
 const PAGE_RAIL_WIDTH: f32 = 240.0;
@@ -438,6 +431,7 @@ fn controls_section<'a>(
     .spacing(m());
 
     let pointer_knob = page_pointer_knob(page, settings);
+    let defaults = PageDefaults::of(page);
     for group in page_contents(page, &controls.controller_tabs, pointer_knob).groups {
         if let Some(heading) = group.heading {
             body = body.push(horizontal_rule());
@@ -448,7 +442,7 @@ fn controls_section<'a>(
         }
         let mut rows = column![].spacing(s());
         for entry in group.rows {
-            rows = rows.push(control_row(entry, page, settings, listening_for));
+            rows = rows.push(control_row(entry, page, settings, listening_for, &defaults));
         }
         body = body.push(rows);
     }
@@ -533,9 +527,12 @@ fn control_row(
     page: ControlsPage,
     settings: &super::Settings,
     listening_for: Option<ListeningFor>,
+    defaults: &PageDefaults,
 ) -> Element<'static, app::Message> {
     match entry.kind {
-        RowKind::Bindable(target) => binding_row(&entry, target, page, settings, listening_for),
+        RowKind::Bindable(target) => {
+            binding_row(&entry, target, page, settings, listening_for, defaults)
+        }
         RowKind::Pointer { platform, on } => column![
             automation::tag(
                 &automation::ids::controls_option(&pointer_id_name(page)),
@@ -551,17 +548,53 @@ fn control_row(
     }
 }
 
+/// The default bindings of the system a page shows, resolved once per frame:
+/// every lookup would otherwise rebuild the family's whole default table.
+struct PageDefaults {
+    platform: Option<Platform>,
+    keyboard: HashMap<ControlSlot, String>,
+    gamepad: HashMap<ControlSlot, String>,
+}
+
+impl PageDefaults {
+    fn of(page: ControlsPage) -> Self {
+        match page {
+            ControlsPage::Emulator => Self {
+                platform: None,
+                keyboard: HashMap::new(),
+                gamepad: HashMap::new(),
+            },
+            ControlsPage::System(platform) => Self {
+                platform: Some(platform),
+                keyboard: super::default_system(platform, Surface::Keyboard),
+                gamepad: super::default_system(platform, Surface::Gamepad),
+            },
+        }
+    }
+
+    fn get(&self, platform: Platform, surface: Surface) -> Option<&HashMap<ControlSlot, String>> {
+        (self.platform == Some(platform)).then_some(match surface {
+            Surface::Keyboard => &self.keyboard,
+            Surface::Gamepad => &self.gamepad,
+        })
+    }
+}
+
 /// The key or button this target answers to on one surface.
 fn binding_of(
     settings: &super::Settings,
     surface: Surface,
     target: BindingTarget,
+    defaults: &PageDefaults,
 ) -> Option<String> {
     match target {
         BindingTarget::Emulator(action) => settings.controls.emulator_binding(surface, action),
-        BindingTarget::System(platform, slot) => {
-            settings.controls.system_binding(platform, surface, slot)
-        }
+        BindingTarget::System(platform, slot) => match defaults.get(platform, surface) {
+            Some(defaults) => settings
+                .controls
+                .system_binding_with(platform, surface, slot, defaults),
+            None => settings.controls.system_binding(platform, surface, slot),
+        },
     }
 }
 
@@ -571,13 +604,14 @@ fn binding_row(
     page: ControlsPage,
     settings: &super::Settings,
     listening_for: Option<ListeningFor>,
+    defaults: &PageDefaults,
 ) -> Element<'static, app::Message> {
     let button_for = |surface: Surface| {
         let listening = listening_for == Some(ListeningFor { surface, target });
         let button = if listening {
             buttons::primary(text("Press key…").color(iced::Color::WHITE)).width(BINDING_WIDTH)
         } else {
-            let display = binding_of(settings, surface, target)
+            let display = binding_of(settings, surface, target, defaults)
                 .map(|bound| match surface {
                     Surface::Keyboard => controls::display_key_name(&bound).to_string(),
                     Surface::Gamepad => controls::display_gamepad_name(&bound).to_string(),
@@ -648,29 +682,29 @@ fn binding_id_name(page: ControlsPage, target: BindingTarget, surface: Surface) 
     format!("{}.{control}.{surface}", page_id_name(page))
 }
 
-/// One pressable element of the Controls section: its id, its accessible name,
-/// and the message pressing it sends. Informational rows are not listed — there
-/// is nothing to press on them.
-pub(in crate::app) struct ControlsElement {
+/// One element of a settings surface automation can act on: its id, its
+/// accessible name, whether it is a switch rather than a button, and the
+/// message activating it.
+pub(in crate::app) struct PressableElement {
     pub id: String,
     pub label: String,
-    /// Whether the element is a switch rather than a button to press.
     pub toggle: bool,
     pub message: Message,
 }
 
 /// Every pressable element the Controls section shows, in reading order: the page
 /// selector, the Controllers block's tabs, both binding buttons of every bindable
-/// row, and the page's reset.
+/// row, and the page's reset. Informational rows are not listed — there is
+/// nothing to press on them.
 pub(in crate::app) fn controls_elements(
     controls: &ControlsState,
     pointer_knob: bool,
-) -> Vec<ControlsElement> {
+) -> Vec<PressableElement> {
     let page = controls.page;
     let current = |shown: bool| if shown { " (current)" } else { "" };
-    let mut elements: Vec<ControlsElement> = controls_pages()
+    let mut elements: Vec<PressableElement> = controls_pages()
         .into_iter()
-        .map(|entry| ControlsElement {
+        .map(|entry| PressableElement {
             id: automation::ids::controls_page(&page_id_name(entry)),
             label: format!(
                 "Show {} controls{}",
@@ -684,7 +718,7 @@ pub(in crate::app) fn controls_elements(
 
     for group in page_contents(page, &controls.controller_tabs, pointer_knob).groups {
         for tab in group.tabs {
-            elements.push(ControlsElement {
+            elements.push(PressableElement {
                 id: automation::ids::controls_tab(&tab_id_name(page, tab.peripheral)),
                 label: format!("Show {} controls{}", tab.label, current(tab.selected)),
                 toggle: false,
@@ -698,7 +732,7 @@ pub(in crate::app) fn controls_elements(
                         (Surface::Keyboard, "keyboard"),
                         (Surface::Gamepad, "controller"),
                     ] {
-                        elements.push(ControlsElement {
+                        elements.push(PressableElement {
                             id: automation::ids::controls_binding(&binding_id_name(
                                 page, target, surface,
                             )),
@@ -708,7 +742,7 @@ pub(in crate::app) fn controls_elements(
                         });
                     }
                 }
-                RowKind::Pointer { platform, on } => elements.push(ControlsElement {
+                RowKind::Pointer { platform, on } => elements.push(PressableElement {
                     id: automation::ids::controls_option(&pointer_id_name(page)),
                     label: "Turn the knob with the pointer".to_string(),
                     toggle: true,
@@ -718,7 +752,7 @@ pub(in crate::app) fn controls_elements(
         }
     }
 
-    elements.push(ControlsElement {
+    elements.push(PressableElement {
         id: automation::ids::controls_reset(&page_id_name(page)),
         label: format!("Reset {} controls to defaults", page_label(page)),
         toggle: false,
@@ -936,26 +970,17 @@ impl DisplayRow {
     }
 }
 
-/// One control of a display surface: its id, its accessible name, whether it is
-/// a switch, and the message activating it.
-pub(in crate::app) struct DisplayElement {
-    pub id: String,
-    pub label: String,
-    pub toggle: bool,
-    pub message: Message,
-}
-
 /// Every control a display surface shows, in reading order, with its ids made
 /// the way that surface names them — the settings section and the play panel
 /// offer the same rows under their own prefixes.
 pub(in crate::app) fn display_elements(
     options: &DisplayOptions,
     id: fn(&str) -> String,
-) -> Vec<DisplayElement> {
+) -> Vec<PressableElement> {
     options
         .rows()
         .into_iter()
-        .map(|entry| DisplayElement {
+        .map(|entry| PressableElement {
             id: id(&entry.id_name()),
             label: entry.label(),
             toggle: entry.switched_on().is_some(),

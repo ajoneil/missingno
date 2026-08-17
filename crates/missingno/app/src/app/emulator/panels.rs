@@ -160,32 +160,26 @@ pub struct PanelContext<'a> {
     pub play_log: &'a [PlayLogEntry<'a>],
     pub has_console: bool,
     pub has_controllers: bool,
-    pub has_display: bool,
-    pub has_playlog: bool,
 }
 
 /// The sections in the order they stack, each with whether this console offers
-/// it — the machine itself, then what is plugged into it, then the output.
+/// it — the machine itself, then what is plugged into it, then the output. The
+/// Display panel carries options for every system and capturing is always
+/// available, so those two always show.
 fn sections(ctx: &PanelContext) -> [(PlayPanel, bool); 4] {
     [
         (PlayPanel::Console, ctx.has_console),
         (PlayPanel::Controllers, ctx.has_controllers),
-        (PlayPanel::Display, ctx.has_display),
-        (PlayPanel::PlayLog, ctx.has_playlog),
+        (PlayPanel::Display, true),
+        (PlayPanel::PlayLog, true),
     ]
 }
 
 /// The vertical icon rail. Content-driven: an icon appears only for a section
-/// that has something to show. Returns `None` when none do, so the caller
-/// omits the rail entirely.
-pub fn rail(open: &[PlayPanel], ctx: &PanelContext) -> Option<Element<'static, app::Message>> {
-    let available = sections(ctx);
-    if available.iter().all(|(_, show)| !show) {
-        return None;
-    }
-
+/// that has something to show.
+pub fn rail(open: &[PlayPanel], ctx: &PanelContext) -> Element<'static, app::Message> {
     let mut col = column![].spacing(xs());
-    for (panel, show) in available {
+    for (panel, show) in sections(ctx) {
         if show {
             col = col.push(rail_icon(
                 panel.icon(),
@@ -195,7 +189,7 @@ pub fn rail(open: &[PlayPanel], ctx: &PanelContext) -> Option<Element<'static, a
             ));
         }
     }
-    Some(container(col).padding([s(), xs()]).into())
+    container(col).padding([s(), xs()]).into()
 }
 
 /// The open panels, stacked as titled cards that size to their content, in a

@@ -186,7 +186,7 @@ pub fn enrich_next(catalogue: &Catalogue, hasheous_allowed: bool) -> EnrichResul
         };
     }
 
-    let info = match hasheous::lookup(&entry.sha1) {
+    let mut info = match hasheous::lookup(&entry.sha1) {
         Ok(Some(info)) => info,
         Ok(None) => {
             entry.enrichment_attempted = true;
@@ -206,24 +206,11 @@ pub fn enrich_next(catalogue: &Catalogue, hasheous_allowed: bool) -> EnrichResul
         }
     };
 
-    entry.title = info.name;
-    // Hasheous's platform string never overrides the header-derived
-    // classification; it only fills a gap, mapped to our own type.
-    if entry.platform.is_none() {
-        entry.platform = info
-            .platform
-            .as_deref()
-            .and_then(system::Platform::from_description);
-    }
-    entry.publisher = info.publisher;
-    entry.year = info.year;
-    entry.description = info.description;
-    entry.wikipedia_url = info.wikipedia_url;
-    entry.igdb_url = info.igdb_url;
-    entry.enrichment_attempted = true;
+    let cover_art = info.cover_art.take();
+    entry.apply_metadata(info);
     library::save_entry(&game_dir, &entry);
 
-    if let Some(bytes) = &info.cover_art {
+    if let Some(bytes) = &cover_art {
         library::save_cover(&game_dir, bytes);
     }
 

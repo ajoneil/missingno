@@ -10,7 +10,7 @@ use std::fmt;
 use iced::{
     Element,
     Length::Fill,
-    widget::{column, pick_list, row, rule, scrollable, shader, text, tooltip},
+    widget::{column, row, rule, scrollable, shader, text, tooltip},
 };
 use rgb::RGB8;
 
@@ -245,21 +245,17 @@ fn region_header(region: &AtlasRegion) -> Element<'static, app::Message> {
     column![rule::horizontal(1), header].spacing(2.0).into()
 }
 
-/// A compact `pick_list` styled for a pane title bar, its selection targeted at
-/// this instance's handle so sibling tile panes stay put.
+/// A title-bar picker whose selection is targeted at this instance's handle, so
+/// sibling tile panes stay put.
 fn picker(
     choices: Vec<Choice>,
     selected: Option<Choice>,
     close: iced::widget::pane_grid::Pane,
     on_select: fn(Choice) -> Message,
 ) -> Element<'static, app::Message> {
-    pick_list(choices, selected, move |choice| {
+    panes::title_bar_picker(choices, selected, move |choice| {
         panes::PaneMessage::Tiles(on_select(choice)).to(close)
     })
-    .font(fonts::monospace())
-    .text_size(11.0)
-    .padding([1.0, 4.0])
-    .into()
 }
 
 impl panes::Pane for TileAtlasPane {

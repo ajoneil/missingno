@@ -48,17 +48,24 @@ pub fn standard<'a>(content: impl Into<Element<'a, Message>>) -> Button<'a, Mess
 }
 
 fn standard_style(_theme: &Theme, status: Status) -> Style {
-    let base = Style {
-        background: Some(PURPLE_DIM.into()),
-        text_color: TEXT,
-        border: Border::default().rounded(border_s()),
-        ..Style::default()
-    };
+    tinted_style(
+        status,
+        Style {
+            background: Some(PURPLE_DIM.into()),
+            text_color: TEXT,
+            border: Border::default().rounded(border_s()),
+            ..Style::default()
+        },
+        PURPLE_HOVER,
+    )
+}
 
+/// Hover swaps the background, disabled halves background and text alike.
+fn tinted_style(status: Status, base: Style, hovered: Color) -> Style {
     match status {
         Status::Active | Status::Pressed => base,
         Status::Hovered => Style {
-            background: Some(PURPLE_HOVER.into()),
+            background: Some(hovered.into()),
             ..base
         },
         Status::Disabled => Style {
@@ -149,26 +156,17 @@ fn min_height_content<'a>(
 const DANGER_BORDER: Color = Color::from_rgba(RED.r, RED.g, RED.b, 0.2);
 
 fn danger_style(_theme: &Theme, status: Status) -> Style {
-    let base = Style {
-        background: Some(RED_DIM.into()),
-        text_color: RED,
-        border: Border::default()
-            .rounded(border_s())
-            .width(1.0)
-            .color(DANGER_BORDER),
-        ..Style::default()
-    };
-
-    match status {
-        Status::Active | Status::Pressed => base,
-        Status::Hovered => Style {
-            background: Some(RED_HOVER.into()),
-            ..base
+    tinted_style(
+        status,
+        Style {
+            background: Some(RED_DIM.into()),
+            text_color: RED,
+            border: Border::default()
+                .rounded(border_s())
+                .width(1.0)
+                .color(DANGER_BORDER),
+            ..Style::default()
         },
-        Status::Disabled => Style {
-            background: base.background.map(|bg| bg.scale_alpha(0.5)),
-            text_color: base.text_color.scale_alpha(0.5),
-            ..base
-        },
-    }
+        RED_HOVER,
+    )
 }
