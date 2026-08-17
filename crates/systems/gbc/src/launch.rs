@@ -18,27 +18,26 @@ pub const BOOT_ROM: &str = "boot-rom";
 pub const BOARD: &str = "board";
 
 /// The options the Game Boy family accepts at launch for this cartridge. The
-/// DMG is offered for media it can run: a Color runs a DMG cartridge, but no
-/// Game Boy but a Color runs one whose header requires it.
+/// console is a choice only for media both can run: a Color runs a DMG
+/// cartridge, but one whose header requires the Color leaves nothing to pick.
 pub fn launch_options(rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
-    let dmg = (!Cartridge::peek_cgb_only(rom)).then_some(LaunchChoice {
-        value: "dmg",
-        label: "Game Boy (DMG)",
-    });
-    vec![
-        LaunchOptionDescriptor {
-            id: RUNNER,
-            label: "Console",
-            kind: LaunchOptionKind::Choice {
-                choices: dmg
-                    .into_iter()
-                    .chain([LaunchChoice {
-                        value: "cgb",
-                        label: "Game Boy Color (CGB)",
-                    }])
-                    .collect(),
-            },
+    let runner = (!Cartridge::peek_cgb_only(rom)).then_some(LaunchOptionDescriptor {
+        id: RUNNER,
+        label: "Console",
+        kind: LaunchOptionKind::Choice {
+            choices: vec![
+                LaunchChoice {
+                    value: "dmg",
+                    label: "Game Boy (DMG)",
+                },
+                LaunchChoice {
+                    value: "cgb",
+                    label: "Game Boy Color (CGB)",
+                },
+            ],
         },
+    });
+    let fixed = [
         LaunchOptionDescriptor {
             id: BOARD,
             label: "Cartridge board",
@@ -58,7 +57,8 @@ pub fn launch_options(rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
                 label: "Boot ROM image",
             },
         },
-    ]
+    ];
+    runner.into_iter().chain(fixed).collect()
 }
 
 /// The board the launch values name, or `None` where the header decides; `Err`
@@ -199,8 +199,12 @@ mod tests {
     }
 
     #[test]
-    fn a_cgb_only_cartridge_offers_no_dmg() {
-        assert_eq!(runner_choices(&rom(0xC0)), ["cgb"]);
+    fn a_cgb_only_cartridge_publishes_no_console_choice() {
+        assert!(
+            !launch_options(&rom(0xC0))
+                .iter()
+                .any(|option| option.id == RUNNER)
+        );
     }
 
     #[test]
