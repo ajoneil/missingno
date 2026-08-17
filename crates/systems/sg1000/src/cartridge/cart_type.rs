@@ -128,8 +128,8 @@ impl CartType {
     /// answers `/EXM1`, both windows where the image runs on into it.
     pub(super) fn rom_window(self) -> usize {
         match self {
-            CartType::Flat | CartType::DahjeeB => CARTRIDGE_SPAN,
-            CartType::OthelloRam | CartType::CastleRam | CartType::DahjeeA => EXM2_WINDOW,
+            CartType::Flat | CartType::DahjeeA | CartType::DahjeeB => CARTRIDGE_SPAN,
+            CartType::OthelloRam | CartType::CastleRam => EXM2_WINDOW,
         }
     }
 }

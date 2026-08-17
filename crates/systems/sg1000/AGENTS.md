@@ -123,7 +123,9 @@ strobed it — and moves the /INT sample point along with it.
   mechanism the edge offers: a static `/DSRAM` drive over RAM wired to its
   own low address lines, which reproduces the windows MAME gives them (Type
   A's 8 KB at `$2000-$3FFF` and kilobyte repeating through `$C000-$FFFF`,
-  Type B's 8 KB twice over the same window). Tracing a real unit would
+  Type B's 8 KB twice over the same window). Both pass the game ROM through
+  across `$0000-$BFFF` — Type A dumps commonly run 48 KB, their
+  `$2000-$3FFF` quarter dead under the RAM. Tracing a real unit would
   settle it.
 - **1 KB of work RAM — the SG-1000 proper.** The SG-1000 II and SC-3000
   fit 2 KB, which the documented machine-detection routine distinguishes by

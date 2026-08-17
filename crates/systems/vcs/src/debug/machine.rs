@@ -75,6 +75,7 @@ pub fn launch_options() -> Vec<LaunchOptionDescriptor> {
             label: "Cartridge board",
             kind: LaunchOptionKind::Choice {
                 choices: CartType::all()
+                    .filter(|board| board.built())
                     .map(|board| LaunchChoice {
                         value: board.code(),
                         label: board.display_name(),

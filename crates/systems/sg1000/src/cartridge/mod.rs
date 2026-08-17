@@ -203,7 +203,7 @@ mod tests {
 
     #[test]
     fn an_image_past_the_stated_boards_rom_window_is_rejected() {
-        for cart_type in [CartType::OthelloRam, CartType::CastleRam, CartType::DahjeeA] {
+        for cart_type in [CartType::OthelloRam, CartType::CastleRam] {
             let error = Cartridge::load(&vec![0; 0x8001], Some(cart_type))
                 .err()
                 .expect("the image runs past the board's ROM window");
@@ -215,10 +215,18 @@ mod tests {
                 }
             );
         }
-        assert_eq!(
-            Cartridge::load(&vec![0; 0x8001], Some(CartType::DahjeeB)).err(),
-            None
-        );
+        // Both expanders pass the whole span through: 48 KB dumps are common
+        // for Type A, whose game body runs to $BFFF.
+        for cart_type in [CartType::DahjeeA, CartType::DahjeeB] {
+            assert_eq!(
+                Cartridge::load(&vec![0; 0xC000], Some(cart_type)).err(),
+                None
+            );
+            assert_eq!(
+                Cartridge::load(&vec![0; 0xC001], Some(cart_type)).err(),
+                Some(CartridgeError::UnsupportedSize(0xC001))
+            );
+        }
         assert_eq!(
             Cartridge::load(&vec![0; 0x8001], Some(CartType::OthelloRam))
                 .err()

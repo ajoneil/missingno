@@ -21,6 +21,8 @@ pub enum CartridgeError {
         unit: usize,
         page: Option<usize>,
     },
+    /// A board the catalogue names but the slot does not model.
+    BoardNotBuilt(CartType),
 }
 
 impl std::fmt::Display for CartridgeError {
@@ -42,6 +44,9 @@ impl std::fmt::Display for CartridgeError {
                 unit,
                 page: Some(page),
             } => write!(f, "Supercharger load {unit}: page {page} checksum error"),
+            CartridgeError::BoardNotBuilt(cart_type) => {
+                write!(f, "the {} board is not modelled yet", cart_type.code())
+            }
         }
     }
 }
@@ -139,6 +144,18 @@ pub enum CartType {
     /// 32 KB across eight banks named by an address's low byte, with a one-way
     /// lock (Menu Driven Megacart).
     MenuDrivenMegacart,
+    /// DPC's ARM-hosted successor on the Harmony/Melody boards. Catalogued,
+    /// not modelled.
+    DpcPlus,
+    /// The CVC GameLine Master Module modem cartridge. Catalogued, not
+    /// modelled.
+    GameLine,
+    /// CBS RAM Plus lineage with a larger ROM and hotspot page. Catalogued,
+    /// not modelled.
+    Fa2,
+    /// 64 KB + RAM behind the $4A50-decoded switch it is named for.
+    /// Catalogued, not modelled.
+    FourA50,
 }
 
 /// One board's names: the code it goes by in interchange — game-db entries, the
@@ -217,6 +234,10 @@ const BOARD_NAMES: &[BoardNames] = &[
         "MDM",
         "Menu Driven Megacart (MDM)",
     ),
+    row(CartType::DpcPlus, "DPC+", "DPC+ (Harmony)"),
+    row(CartType::GameLine, "GL", "CVC GameLine Master Module (GL)"),
+    row(CartType::Fa2, "FA2", "FA2 (CBS RAM Plus lineage)"),
+    row(CartType::FourA50, "4A50", "4A50"),
 ];
 
 /// A board crosses a catalogue as its interchange code, so the vocabulary is
@@ -303,8 +324,20 @@ impl CartType {
             CartType::Supercharger => supercharger::is_container(len),
             CartType::TigervisionRam => tigervision_ram::holds(len),
             CartType::TigervisionRamPlus => tigervision_ram_plus::holds(len),
+            // The refusal an unbuilt board earns is about the board, not the
+            // image.
+            CartType::DpcPlus | CartType::GameLine | CartType::Fa2 | CartType::FourA50 => true,
             _ => self.image_size() == Some(len),
         }
+    }
+
+    /// Whether the slot models this board. The catalogue names more boards
+    /// than the core builds; an unbuilt one loads as a stated refusal.
+    pub fn built(self) -> bool {
+        !matches!(
+            self,
+            CartType::DpcPlus | CartType::GameLine | CartType::Fa2 | CartType::FourA50
+        )
     }
 
     /// The image size the board is wired for, where its wiring fixes one. A
@@ -341,6 +374,10 @@ impl CartType {
             // A Supercharger container holds as many tape loads as the title
             // needs, and a 3E or 3E+ image as many banks as the cart carries.
             CartType::Supercharger | CartType::TigervisionRam | CartType::TigervisionRamPlus => {
+                return None;
+            }
+            // An unbuilt board states no wiring to size an image against.
+            CartType::DpcPlus | CartType::GameLine | CartType::Fa2 | CartType::FourA50 => {
                 return None;
             }
         })

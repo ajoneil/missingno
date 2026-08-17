@@ -225,6 +225,9 @@ impl Cartridge {
             CartType::Econobanking => Board::Econobanking(Econobanking::new(rom)),
             CartType::X07 => Board::X07(X07::new(rom)),
             CartType::MenuDrivenMegacart => Board::MenuDrivenMegacart(MenuDrivenMegacart::new(rom)),
+            CartType::DpcPlus | CartType::GameLine | CartType::Fa2 | CartType::FourA50 => {
+                return Err(CartridgeError::BoardNotBuilt(cart_type));
+            }
         })
     }
 
@@ -378,6 +381,26 @@ mod tests {
         let mut rom = vec![0xAA; 0x1000];
         rom[0x800..].fill(0xFF);
         rom
+    }
+
+    #[test]
+    fn an_unbuilt_board_loads_as_a_stated_refusal() {
+        for cart_type in [
+            CartType::DpcPlus,
+            CartType::GameLine,
+            CartType::Fa2,
+            CartType::FourA50,
+        ] {
+            assert!(!cart_type.built());
+            assert_eq!(
+                Cartridge::load(&vec![0; 0x8000], Some(cart_type), CLOCK, DumpFit::Exact).err(),
+                Some(CartridgeError::BoardNotBuilt(cart_type))
+            );
+        }
+        assert_eq!(
+            CartridgeError::BoardNotBuilt(CartType::DpcPlus).to_string(),
+            "the DPC+ board is not modelled yet"
+        );
     }
 
     #[test]
