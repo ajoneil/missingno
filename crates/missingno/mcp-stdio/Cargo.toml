@@ -1,14 +1,9 @@
 [package]
-name = "missingno-remote"
+name = "missingno-mcp-stdio"
 version.workspace = true
 authors = ["Andrew O'Neil <andy@andyofniall.net>"]
 edition = "2024"
 license = "MIT"
 
-[[bin]]
-name = "missingno-remote"
-path = "src/main.rs"
-
 [dependencies]
-missingno-mcp-stdio = { path = "../mcp-stdio" }
 serde_json = "1"

@@ -1,8 +1,6 @@
-//! An MCP-over-stdio transport that drives a running missingno app window. It is
-//! a hand-rolled minimal JSON-RPC 2.0 loop — newline-delimited messages in on
-//! stdin, responses out on stdout — implementing the MCP server basics
-//! (`initialize`, `tools/list`, `tools/call`, graceful shutdown) against
-//! protocol version "2024-11-05".
+//! An MCP-over-stdio transport that drives a running missingno app window. The
+//! JSON-RPC loop and frames are [`missingno_mcp_stdio`]'s; this module supplies
+//! what the server drives.
 //!
 //! stdout is the protocol channel: every log line goes to stderr. The frontend
 //! twin of the debugger's idle server: it starts attached to nothing, advertising
@@ -10,12 +8,11 @@
 //! `attach` reaches an app window it mirrors that window's own tool surface,
 //! forwarding `tools/list` and `tools/call` frames verbatim over the socket.
 
-use std::io::{self, BufRead, Write};
+use std::io;
 
 use serde_json::{Value, json};
 
-/// The MCP protocol version whose message shapes this server targets.
-const PROTOCOL_VERSION: &str = "2024-11-05";
+use missingno_mcp_stdio::no_arguments;
 
 const NO_WINDOWS: &str = "no running app windows are reachable (a window publishes its automation \
                           surface only when launched with --allow-ui-automation or the equivalent \
@@ -51,103 +48,38 @@ impl State {
     }
 }
 
+impl missingno_mcp_stdio::Server for State {
+    const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+
+    /// Attaching and detaching swap the whole tool set.
+    type ToolSetId = bool;
+
+    fn name(&self) -> String {
+        if self.is_attached() {
+            format!("missingno-remote ({})", self.description())
+        } else {
+            "missingno-remote (idle)".to_string()
+        }
+    }
+
+    fn tool_set_id(&self) -> bool {
+        self.is_attached()
+    }
+
+    fn list_tools(&mut self) -> Value {
+        tools_list(self)
+    }
+
+    fn call_tool(&mut self, params: &Value) -> Value {
+        tools_call(self, params)
+    }
+}
+
 /// Serve the automation MCP server over stdio until stdin reaches EOF or a
 /// `shutdown` request arrives.
 pub fn serve() -> io::Result<()> {
-    let mut state = State::new();
     eprintln!("mcp: idle (not attached) ready on stdio");
-    let stdin = io::stdin();
-    let mut stdout = io::stdout();
-    for line in stdin.lock().lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        let was_attached = state.is_attached();
-        let (response, exit) = handle_message(&line, &mut state);
-        if let Some(response) = response {
-            writeln!(stdout, "{}", serde_json::to_string(&response).unwrap())?;
-            stdout.flush()?;
-        }
-        // Attaching/detaching swaps the whole tool set: tell the client to
-        // re-list, or it keeps showing the idle tools.
-        if state.is_attached() != was_attached {
-            let notice = json!({ "jsonrpc": "2.0", "method": "notifications/tools/list_changed" });
-            writeln!(stdout, "{notice}")?;
-            stdout.flush()?;
-        }
-        if exit {
-            break;
-        }
-    }
-    Ok(())
-}
-
-/// Dispatch one JSON-RPC message. Returns the response to emit (if any) and
-/// whether the loop should exit afterwards.
-fn handle_message(line: &str, state: &mut State) -> (Option<Value>, bool) {
-    let message: Value = match serde_json::from_str(line) {
-        Ok(message) => message,
-        Err(error) => {
-            return (
-                Some(error_response(
-                    Value::Null,
-                    -32700,
-                    &format!("parse error: {error}"),
-                )),
-                false,
-            );
-        }
-    };
-
-    let id = message.get("id").cloned();
-    let method = message.get("method").and_then(Value::as_str).unwrap_or("");
-    let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
-
-    // Notifications (no id) are accepted silently.
-    let Some(id) = id else {
-        return (None, false);
-    };
-
-    match method {
-        "initialize" => (Some(success(id, initialize_result(state))), false),
-        "ping" => (Some(success(id, json!({}))), false),
-        "tools/list" => (Some(success(id, tools_list(state))), false),
-        "tools/call" => (Some(success(id, tools_call(state, &params))), false),
-        "shutdown" => (Some(success(id, Value::Null)), true),
-        other => (
-            Some(error_response(
-                id,
-                -32601,
-                &format!("method not found: {other}"),
-            )),
-            false,
-        ),
-    }
-}
-
-fn initialize_result(state: &State) -> Value {
-    let name = if state.is_attached() {
-        format!("missingno-remote ({})", state.description())
-    } else {
-        "missingno-remote (idle)".to_string()
-    };
-    json!({
-        "protocolVersion": PROTOCOL_VERSION,
-        "capabilities": { "tools": { "listChanged": true } },
-        "serverInfo": {
-            "name": name,
-            "version": env!("CARGO_PKG_VERSION"),
-        },
-    })
-}
-
-fn success(id: Value, result: Value) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "result": result })
-}
-
-fn error_response(id: Value, code: i64, message: &str) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
+    missingno_mcp_stdio::serve(&mut State::new())
 }
 
 // --- tools/list ---------------------------------------------------------------
@@ -317,11 +249,6 @@ fn window_list(windows: &[crate::ui_socket::UiInfo]) -> String {
 
 // --- management tool advertisements -------------------------------------------
 
-/// The schema of a tool that takes no arguments.
-fn no_arguments() -> Value {
-    json!({ "type": "object", "properties": {}, "additionalProperties": false })
-}
-
 fn attach_tool() -> Value {
     json!({
         "name": "attach",
@@ -373,6 +300,7 @@ fn error_result(text: &str) -> Value {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use missingno_mcp_stdio::handle_message;
 
     fn dispatch(line: &str, state: &mut State) -> Value {
         handle_message(line, state).0.expect("a response")

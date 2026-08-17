@@ -3035,6 +3035,7 @@ name = "missingno-debugger"
 version = "26.9.0"
 dependencies = [
  "missingno-core 26.9.0",
+ "missingno-mcp-stdio",
  "missingno-session",
  "rgb",
  "serde_json",
@@ -3088,6 +3089,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "missingno-mcp-stdio"
+version = "26.9.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "missingno-mos-6502"
 version = "26.9.0"
 dependencies = [
@@ -3112,6 +3120,7 @@ dependencies = [
 name = "missingno-remote"
 version = "26.9.0"
 dependencies = [
+ "missingno-mcp-stdio",
  "serde_json",
 ]
 

@@ -22,11 +22,16 @@ sms = ["missingno-session/sms"]
 sg1000 = ["missingno-session/sg1000"]
 # The MCP-over-stdio transport, over the session's agent tool surface, with
 # the cores' trace-capture backends behind the capture_trace tool.
-mcp = ["missingno-session/tools", "missingno-session/morepork"]
+mcp = [
+    "dep:missingno-mcp-stdio",
+    "missingno-session/tools",
+    "missingno-session/morepork",
+]
 
 [dependencies]
 missingno-core = { path = "../core" }
 missingno-session = { path = "../session", default-features = false }
+missingno-mcp-stdio = { path = "../mcp-stdio", optional = true }
 tiny_http = "0.12"
 rgb = { workspace = true }
 serde_json = "1"

@@ -1,20 +1,19 @@
 //! An MCP-over-stdio transport over a session's agent tool surface, for an agent
-//! to drive the headless debugger as a tool server. It is a hand-rolled minimal
-//! JSON-RPC 2.0 loop — newline-delimited messages in on stdin, responses out on
-//! stdout — implementing the MCP server basics (`initialize`, `tools/list`,
-//! `tools/call`, graceful shutdown) against protocol version "2024-11-05".
+//! to drive the headless debugger as a tool server. The JSON-RPC loop and frames
+//! are [`missingno_mcp_stdio`]'s; this module supplies what the server drives.
 //!
 //! stdout is the protocol channel: every log line goes to stderr. The tools
 //! themselves belong to the session, not to this transport: the server adds only
 //! the management tools that pick what it drives — a ROM it loads, or a session
 //! another process published.
 
-use std::io::{self, BufRead, Write};
+use std::io;
 use std::path::Path;
 
 use serde_json::{Value, json};
 
 use missingno_core::launch::{LaunchOptionKind, LaunchValues};
+use missingno_mcp_stdio::no_arguments;
 use missingno_session::factory::{self, CoreFactory};
 use missingno_session::shared::SharedSession;
 use missingno_session::tools::{
@@ -50,8 +49,36 @@ impl Host {
     }
 }
 
-/// The MCP protocol version whose message shapes this server targets.
-const PROTOCOL_VERSION: &str = "2024-11-05";
+/// The server's state: what it drives, if anything.
+struct Server {
+    loaded: Option<Host>,
+}
+
+impl missingno_mcp_stdio::Server for Server {
+    const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+
+    /// Loading, attaching, and ejecting swap the whole tool set.
+    type ToolSetId = Option<String>;
+
+    fn name(&self) -> String {
+        match &self.loaded {
+            Some(host) => format!("missingno-debugger ({})", host.description()),
+            None => "missingno-debugger (idle)".to_string(),
+        }
+    }
+
+    fn tool_set_id(&self) -> Option<String> {
+        self.loaded.as_ref().map(Host::description)
+    }
+
+    fn list_tools(&mut self) -> Value {
+        tools_list(&mut self.loaded)
+    }
+
+    fn call_tool(&mut self, params: &Value) -> Value {
+        tools_call(&mut self.loaded, params)
+    }
+}
 
 /// Serve a preloaded shared `session` as an MCP tool server over stdio.
 /// `core_name` names the core in `status` and the server handshake.
@@ -70,107 +97,15 @@ pub fn serve_idle() -> io::Result<()> {
     run(None)
 }
 
-/// The stdio serve loop, over an optional loaded session, until stdin reaches
-/// EOF or a `shutdown` request arrives. Every tool is a [`Session`] call: the
-/// transport is Session-only by construction, with no family-specific escape
-/// hatch.
-fn run(mut loaded: Option<Host>) -> io::Result<()> {
+/// The stdio serve loop, over an optional loaded session. Every tool is a
+/// [`Session`] call: the transport is Session-only by construction, with no
+/// family-specific escape hatch.
+fn run(loaded: Option<Host>) -> io::Result<()> {
     match &loaded {
         Some(host) => eprintln!("mcp: {} ready on stdio", host.description()),
         None => eprintln!("mcp: idle (no ROM loaded) ready on stdio"),
     }
-    let stdin = io::stdin();
-    let mut stdout = io::stdout();
-    for line in stdin.lock().lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        let host_before = loaded.as_ref().map(Host::description);
-        let (response, exit) = handle_message(&line, &mut loaded);
-        if let Some(response) = response {
-            writeln!(stdout, "{}", serde_json::to_string(&response).unwrap())?;
-            stdout.flush()?;
-        }
-        // Loading, attaching, and ejecting swap the whole tool set: tell the
-        // client to re-list, or it keeps showing the stale set.
-        if loaded.as_ref().map(Host::description) != host_before {
-            let notice = json!({ "jsonrpc": "2.0", "method": "notifications/tools/list_changed" });
-            writeln!(stdout, "{notice}")?;
-            stdout.flush()?;
-        }
-        if exit {
-            break;
-        }
-    }
-    Ok(())
-}
-
-/// Dispatch one JSON-RPC message. Returns the response to emit (if any) and
-/// whether the loop should exit afterwards.
-fn handle_message(line: &str, loaded: &mut Option<Host>) -> (Option<Value>, bool) {
-    let message: Value = match serde_json::from_str(line) {
-        Ok(message) => message,
-        Err(error) => {
-            return (
-                Some(error_response(
-                    Value::Null,
-                    -32700,
-                    &format!("parse error: {error}"),
-                )),
-                false,
-            );
-        }
-    };
-
-    let id = message.get("id").cloned();
-    let method = message.get("method").and_then(Value::as_str).unwrap_or("");
-    let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
-
-    // Notifications (no id) are accepted silently; the only one we expect is
-    // `notifications/initialized`.
-    let Some(id) = id else {
-        return (None, false);
-    };
-
-    match method {
-        "initialize" => (Some(success(id, initialize_result(loaded))), false),
-        "ping" => (Some(success(id, json!({}))), false),
-        "tools/list" => (Some(success(id, tools_list(loaded))), false),
-        "tools/call" => (Some(success(id, tools_call(loaded, &params))), false),
-        "shutdown" => (Some(success(id, Value::Null)), true),
-        other => (
-            Some(error_response(
-                id,
-                -32601,
-                &format!("method not found: {other}"),
-            )),
-            false,
-        ),
-    }
-}
-
-fn initialize_result(loaded: &Option<Host>) -> Value {
-    let name = match loaded {
-        Some(host) => format!("missingno-debugger ({})", host.description()),
-        None => "missingno-debugger (idle)".to_string(),
-    };
-    json!({
-        "protocolVersion": PROTOCOL_VERSION,
-        "capabilities": { "tools": { "listChanged": true } },
-        "serverInfo": {
-            "name": name,
-            "version": env!("CARGO_PKG_VERSION"),
-        },
-    })
-}
-
-fn success(id: Value, result: Value) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "result": result })
-}
-
-fn error_response(id: Value, code: i64, message: &str) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
+    missingno_mcp_stdio::serve(&mut Server { loaded })
 }
 
 // --- tools/list ---------------------------------------------------------------
@@ -210,11 +145,6 @@ fn tools_list(loaded: &mut Option<Host>) -> Value {
         }
     };
     json!({ "tools": tools })
-}
-
-/// The schema of a tool that takes no arguments.
-fn no_arguments() -> Value {
-    json!({ "type": "object", "properties": {}, "additionalProperties": false })
 }
 
 /// The idle-server tool that recognises and loads a ROM.
