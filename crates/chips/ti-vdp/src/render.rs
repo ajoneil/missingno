@@ -50,7 +50,6 @@ pub const PALETTE: [[u8; 3]; 16] = [
 /// The visible raster — the display area inside its backdrop border — as
 /// composited colour indices, row-major. 0 survives only where every plane
 /// is transparent (the external-video pass-through) and presents as black.
-#[derive(Clone)]
 pub struct Frame {
     pub pixels: Vec<u8>,
     pub width: u16,

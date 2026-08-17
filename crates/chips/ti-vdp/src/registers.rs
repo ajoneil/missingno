@@ -103,15 +103,20 @@ impl Vdp {
         ((self.registers[3] as u16 & 0x7F) << 6) | 0x3F
     }
 
+    /// R4's high base bit: the half of DRAM a bitmap-family pattern fetch
+    /// lands in.
+    fn bitmap_half(&self) -> u16 {
+        ((self.registers[4] as u16) & 0x04) << 11
+    }
+
     /// Graphics II's two fetches for a tile row `offset` — pattern byte then
     /// colour byte. R3's mask governs both; R4 contributes only the pattern
     /// half select.
     pub fn graphics_ii_cells(&self, offset: u16) -> (u8, u8) {
         let mask = self.bitmap_mask();
         let colour_half = ((self.registers[3] as u16) & 0x80) << 6;
-        let pattern_half = ((self.registers[4] as u16) & 0x04) << 11;
         (
-            self.vram_cell(pattern_half | (offset & mask)),
+            self.vram_cell(self.bitmap_half() | (offset & mask)),
             self.vram_cell(colour_half | (offset & mask)),
         )
     }
@@ -119,13 +124,12 @@ impl Vdp {
     /// The pattern-table base a bitmap-family third selects: the half from
     /// R4's high base bit, the second and third tables gated by its low bits.
     pub(crate) fn bitmap_third_table(&self, third: u16) -> u16 {
-        let half = ((self.registers[4] as u16) & 0x04) << 11;
         let table = match third {
             1 if self.registers[4] & 0x01 != 0 => 1,
             2 if self.registers[4] & 0x02 != 0 => 2,
             _ => 0,
         };
-        half + table * 0x800
+        self.bitmap_half() + table * 0x800
     }
 
     pub fn sprite_attribute_base(&self) -> u16 {

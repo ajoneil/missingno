@@ -20,20 +20,14 @@ use missingno_core::system::{
     ControlId, ControlInput, ControlRole, ControlSite, DebugView, InspectSnapshot, RunningStatus,
 };
 use missingno_core::video::{DisplayTechnology, Frame as DisplayFrame, IndexedFrame};
-use missingno_mos_6502::disasm;
 use rgb::RGB8;
 
 use crate::console::Nes;
-use crate::ppu::{self, Frame};
+use crate::ppu::{self, Frame, PIXEL_ASPECT};
 
 /// CPU cycles per frame step, generous over the ~29.8k typical.
 const FRAME_BUDGET: u32 = 200_000;
 
-/// NTSC pixel aspect at the 2C02's 5.37 MHz dot clock — a display-side
-/// calibratable stage.
-const PIXEL_ASPECT: f32 = 8.0 / 7.0;
-
-const DISASSEMBLY_ROWS: usize = 12;
 const JSR: u8 = 0x20;
 
 /// Named bits of the 2A03's 6502 status register `p`; the B flag is not
@@ -85,15 +79,7 @@ pub struct NesInspectState {
     pub ppu_mask: u8,
     pub ppu_status: u8,
     pub scroll_v: u16,
-    pub disassembly: Vec<DisasmRow>,
     pub frame: u64,
-}
-
-#[derive(Clone)]
-pub struct DisasmRow {
-    pub address: u16,
-    pub text: String,
-    pub current: bool,
 }
 
 /// The per-frame snapshot for the running view.
@@ -340,23 +326,6 @@ impl Machine for NesSystem {
 
     fn inspect(nes: &Nes, frame_count: u64) -> NesInspectState {
         let cpu = &nes.cpu;
-        let mut disassembly = Vec::with_capacity(DISASSEMBLY_ROWS);
-        let mut address = cpu.pc;
-        for i in 0..DISASSEMBLY_ROWS {
-            let bytes = [
-                nes.peek(address),
-                nes.peek(address.wrapping_add(1)),
-                nes.peek(address.wrapping_add(2)),
-            ];
-            let row = disasm::disassemble(address, bytes);
-            disassembly.push(DisasmRow {
-                address,
-                text: row.mnemonic,
-                current: i == 0,
-            });
-            address = address.wrapping_add(row.length as u16);
-        }
-        let (scroll_v, _, _) = nes.ppu.scroll_state();
         NesInspectState {
             a: cpu.a,
             x: cpu.x,
@@ -369,8 +338,7 @@ impl Machine for NesSystem {
             ppu_control: nes.ppu.control,
             ppu_mask: nes.ppu.mask,
             ppu_status: nes.ppu.peek_status(),
-            scroll_v,
-            disassembly,
+            scroll_v: nes.ppu.scroll_v(),
             frame: frame_count,
         }
     }

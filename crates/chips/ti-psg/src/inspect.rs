@@ -7,8 +7,8 @@
 use missingno_core::inspect::{Row, Section, SectionBlock};
 
 use crate::{
-    CHANNELS, Channel, DECIBELS_PER_STEP, MUTE_ATTENUATION, NoiseMode, NoiseRate, Psg,
-    TONE_CHANNELS, Variant,
+    CHANNELS, Channel, DECIBELS_PER_STEP, MUTE_ATTENUATION, NoiseMode, NoiseRate, TONE_CHANNELS,
+    Variant,
 };
 
 /// The ÷16 prescaler and the two borrows a flip-flop toggle takes.
@@ -22,18 +22,6 @@ pub struct Registers {
     pub noise_mode: NoiseMode,
     pub noise_rate: NoiseRate,
     pub variant: Variant,
-}
-
-impl From<&Psg> for Registers {
-    fn from(psg: &Psg) -> Self {
-        Registers {
-            tone_periods: psg.tone_periods(),
-            attenuations: psg.attenuations(),
-            noise_mode: psg.noise_mode(),
-            noise_rate: psg.noise_rate(),
-            variant: psg.variant(),
-        }
-    }
 }
 
 /// `clock_hz` is what the board drives the CLOCK pin at — the tone arithmetic

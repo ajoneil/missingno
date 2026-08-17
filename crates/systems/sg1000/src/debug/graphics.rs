@@ -187,9 +187,9 @@ fn pattern_atlas(vdp: &Vdp, layout: Layout) -> TileAtlas {
     atlas
 }
 
-/// One pattern row's eight pixels, MSB first.
-fn row_pixels(bits: u8, foreground: u8, background: u8, indices: &mut Vec<u8>) {
-    for bit in 0..CELL_WIDTH {
+/// One pattern row's `width` pixels, MSB first.
+fn row_pixels(bits: u8, width: u8, foreground: u8, background: u8, indices: &mut Vec<u8>) {
+    for bit in 0..width {
         let lit = bits & (0x80 >> bit) != 0;
         indices.push(if lit { foreground } else { background });
     }
@@ -205,7 +205,7 @@ fn graphics_i_indices(vdp: &Vdp) -> Vec<u8> {
         let colour = vdp.vram_cell(colours + name / 8);
         for row in 0..CELL_HEIGHT as u16 {
             let bits = vdp.vram_cell(patterns + name * 8 + row);
-            row_pixels(bits, colour >> 4, colour & 0x0F, &mut indices);
+            row_pixels(bits, CELL_WIDTH, colour >> 4, colour & 0x0F, &mut indices);
         }
     }
     indices
@@ -219,7 +219,7 @@ fn graphics_ii_indices(vdp: &Vdp) -> Vec<u8> {
     for tile in 0..tiles as u16 {
         for row in 0..CELL_HEIGHT as u16 {
             let (bits, colour) = vdp.graphics_ii_cells(tile * 8 + row);
-            row_pixels(bits, colour >> 4, colour & 0x0F, &mut indices);
+            row_pixels(bits, CELL_WIDTH, colour >> 4, colour & 0x0F, &mut indices);
         }
     }
     indices
@@ -256,10 +256,7 @@ fn text_indices(vdp: &Vdp) -> Vec<u8> {
     for name in 0..PATTERNS as u16 {
         for row in 0..CELL_HEIGHT as u16 {
             let bits = vdp.vram_cell(patterns + name * 8 + row);
-            for bit in 0..TEXT_CELL_WIDTH {
-                let lit = bits & (0x80 >> bit) != 0;
-                indices.push(if lit { foreground } else { background });
-            }
+            row_pixels(bits, TEXT_CELL_WIDTH, foreground, background, &mut indices);
         }
     }
     indices

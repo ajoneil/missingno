@@ -38,7 +38,7 @@ const RAM_SIZE: u32 = 0x400;
 const SPRITE_PLANE_WIDTH: u32 = 256;
 
 /// Tier-1 observable fields: the three register files and the joystick lines.
-pub fn observable_fields() -> Vec<FieldDef> {
+fn observable_fields() -> Vec<FieldDef> {
     let mut fields = vec![
         FieldDef::observable("a", U8, "cpu").help("accumulator"),
         FieldDef::observable("f", U8, "cpu").help("flags"),
@@ -132,7 +132,7 @@ pub fn observable_fields() -> Vec<FieldDef> {
 
 /// Tier-2a boundary-complete deep state: the CPU's boundary carries, the VDP's
 /// counters and engines, and the PSG's generators.
-pub fn boundary_fields() -> Vec<FieldDef> {
+fn boundary_fields() -> Vec<FieldDef> {
     let mut fields = vec![
         FieldDef::boundary("wz", U16, "cpu").help("MEMPTR"),
         FieldDef::boundary("q", U8, "cpu").help("F left by the last flag-modifying instruction"),
@@ -237,7 +237,7 @@ pub fn boundary_fields() -> Vec<FieldDef> {
 /// cartridge holds, the VDP's DRAM, and the two line buffers under the raster.
 /// The field being emitted travels as the state's framebuffer, since a mid-field
 /// save cannot reconstruct the rows already put down.
-pub fn memory_spans() -> Vec<MemorySpan> {
+fn memory_spans() -> Vec<MemorySpan> {
     vec![
         MemorySpan::addressable("work_ram", RAM_BASE, RAM_SIZE)
             .help("the TMM2009's kilobyte, before the decode mirrors it"),
@@ -260,7 +260,7 @@ fn visible_lines() -> u32 {
 
 /// The picture the console hands out: the VDP's visible raster — the display
 /// area inside its backdrop border — as TI colour indices.
-pub fn frame() -> FrameSpec {
+fn frame() -> FrameSpec {
     FrameSpec {
         width: VISIBLE_WIDTH as u32,
         height: Some(visible_lines()),

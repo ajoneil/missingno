@@ -114,7 +114,7 @@ pub enum Access {
 }
 
 impl Op {
-    pub fn access(self) -> Access {
+    pub(crate) fn access(self) -> Access {
         use Op::*;
         match self {
             Sta | Stx | Sty | Sax | Sha | Shx | Shy | Tas => Access::Write,

@@ -54,7 +54,7 @@ pub fn capture(sg: &Sg1000) -> Result<BoundaryState, StateError> {
 
 /// The byte regions beside the record: the work RAM, a RAM-bearing cartridge's
 /// own stores, the VDP's DRAM, and the two line buffers under the raster.
-pub fn capture_memory(sg: &Sg1000) -> Vec<(&'static str, Vec<u8>)> {
+fn capture_memory(sg: &Sg1000) -> Vec<(&'static str, Vec<u8>)> {
     let mut regions = vec![
         ("work_ram", sg.work_ram().to_vec()),
         ("vram", sg.vdp().vram().to_vec()),
@@ -68,7 +68,7 @@ pub fn capture_memory(sg: &Sg1000) -> Vec<(&'static str, Vec<u8>)> {
 }
 
 /// The field being emitted, as the state file's framebuffer carries it.
-pub fn raster(sg: &Sg1000) -> StateFrame {
+fn raster(sg: &Sg1000) -> StateFrame {
     let frame = sg.vdp().frame();
     StateFrame {
         width: frame.width as u32,

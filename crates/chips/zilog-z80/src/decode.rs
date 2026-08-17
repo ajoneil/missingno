@@ -31,7 +31,7 @@ impl Fields {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub(super) enum AluOp {
     Add,
     Adc,
@@ -50,7 +50,7 @@ impl AluOp {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub(super) enum RotOp {
     Rlc,
     Rrc,
@@ -70,7 +70,7 @@ impl RotOp {
 }
 
 /// A single register operand, addressing IX/IY halves under a prefix.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub(super) enum Reg {
     B,
     C,
@@ -87,7 +87,7 @@ pub(super) enum Reg {
 
 /// Which register pair the H/L slot and the (HL) memory operand resolve to —
 /// the substitution a DD or FD prefix makes.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub(super) enum Index {
     Hl,
     Ix,

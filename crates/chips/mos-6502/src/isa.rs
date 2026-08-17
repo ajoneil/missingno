@@ -33,7 +33,7 @@ impl InstructionSet for Mos6502 {
         // `$1234` is a direct address, unlike the SM83 where `$` reads immediate.
         if operand.starts_with('#') {
             OperandClass::Immediate
-        } else if operand.starts_with('(') || operand.starts_with('[') {
+        } else if operand.starts_with('(') {
             OperandClass::Memory
         } else if matches!(operand, "a" | "x" | "y") {
             OperandClass::Register
@@ -42,27 +42,6 @@ impl InstructionSet for Mos6502 {
         } else {
             OperandClass::Plain
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn class(operand: &str) -> OperandClass {
-        Mos6502.classify_operand(operand)
-    }
-
-    #[test]
-    fn classifies_the_6502_lexicon() {
-        assert_eq!(class("a"), OperandClass::Register);
-        assert_eq!(class("x"), OperandClass::Register);
-        assert_eq!(class("y"), OperandClass::Register);
-        assert_eq!(class("#$44"), OperandClass::Immediate);
-        assert_eq!(class("$44"), OperandClass::Memory);
-        assert_eq!(class("$1234,x"), OperandClass::Memory);
-        assert_eq!(class("($44,x)"), OperandClass::Memory);
-        assert_eq!(class("($1234)"), OperandClass::Memory);
     }
 }
 
@@ -84,5 +63,26 @@ fn flow(address: u16, bytes: [u8; 3]) -> Flow {
         }
         (Op::Rts, _) | (Op::Rti, _) => Flow::Return,
         _ => Flow::Sequential,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn class(operand: &str) -> OperandClass {
+        Mos6502.classify_operand(operand)
+    }
+
+    #[test]
+    fn classifies_the_6502_lexicon() {
+        assert_eq!(class("a"), OperandClass::Register);
+        assert_eq!(class("x"), OperandClass::Register);
+        assert_eq!(class("y"), OperandClass::Register);
+        assert_eq!(class("#$44"), OperandClass::Immediate);
+        assert_eq!(class("$44"), OperandClass::Memory);
+        assert_eq!(class("$1234,x"), OperandClass::Memory);
+        assert_eq!(class("($44,x)"), OperandClass::Memory);
+        assert_eq!(class("($1234)"), OperandClass::Memory);
     }
 }

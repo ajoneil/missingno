@@ -311,7 +311,7 @@ impl Apu {
         pulse_out + tnd_out
     }
 
-    pub fn read(&mut self, address: u16) -> u8 {
+    pub fn read(&self, address: u16) -> u8 {
         if address == 0x4015 {
             let mut value = 0;
             if self.pulse1.length > 0 {
@@ -334,50 +334,37 @@ impl Apu {
 
     pub fn write(&mut self, address: u16, value: u8) {
         match address {
-            0x4000 | 0x4004 => {
-                let pulse = if address == 0x4000 {
+            0x4000..=0x4007 => {
+                let pulse = if address & 0x04 == 0 {
                     &mut self.pulse1
                 } else {
                     &mut self.pulse2
                 };
-                pulse.duty = value >> 6;
-                pulse.halt_length = value & 0x20 != 0;
-                pulse.envelope.looping = value & 0x20 != 0;
-                pulse.envelope.constant = value & 0x10 != 0;
-                pulse.envelope.volume = value & 0x0F;
-            }
-            0x4001 | 0x4005 => {
-                let pulse = if address == 0x4001 {
-                    &mut self.pulse1
-                } else {
-                    &mut self.pulse2
-                };
-                pulse.sweep_enabled = value & 0x80 != 0;
-                pulse.sweep_period = (value >> 4) & 0x07;
-                pulse.sweep_negate = value & 0x08 != 0;
-                pulse.sweep_shift = value & 0x07;
-                pulse.sweep_reload = true;
-            }
-            0x4002 | 0x4006 => {
-                let pulse = if address == 0x4002 {
-                    &mut self.pulse1
-                } else {
-                    &mut self.pulse2
-                };
-                pulse.period = (pulse.period & 0x700) | value as u16;
-            }
-            0x4003 | 0x4007 => {
-                let pulse = if address == 0x4003 {
-                    &mut self.pulse1
-                } else {
-                    &mut self.pulse2
-                };
-                pulse.period = (pulse.period & 0xFF) | (((value & 0x07) as u16) << 8);
-                if pulse.enabled {
-                    pulse.length = LENGTH_TABLE[(value >> 3) as usize];
+                match address & 0x03 {
+                    0 => {
+                        pulse.duty = value >> 6;
+                        pulse.halt_length = value & 0x20 != 0;
+                        pulse.envelope.looping = value & 0x20 != 0;
+                        pulse.envelope.constant = value & 0x10 != 0;
+                        pulse.envelope.volume = value & 0x0F;
+                    }
+                    1 => {
+                        pulse.sweep_enabled = value & 0x80 != 0;
+                        pulse.sweep_period = (value >> 4) & 0x07;
+                        pulse.sweep_negate = value & 0x08 != 0;
+                        pulse.sweep_shift = value & 0x07;
+                        pulse.sweep_reload = true;
+                    }
+                    2 => pulse.period = (pulse.period & 0x700) | value as u16,
+                    _ => {
+                        pulse.period = (pulse.period & 0xFF) | (((value & 0x07) as u16) << 8);
+                        if pulse.enabled {
+                            pulse.length = LENGTH_TABLE[(value >> 3) as usize];
+                        }
+                        pulse.sequence_step = 0;
+                        pulse.envelope.start = true;
+                    }
                 }
-                pulse.sequence_step = 0;
-                pulse.envelope.start = true;
             }
             0x4008 => {
                 self.triangle.halt_length = value & 0x80 != 0;

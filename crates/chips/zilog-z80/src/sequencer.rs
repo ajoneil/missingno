@@ -384,8 +384,8 @@ impl Cpu {
                 match opcode {
                     // A prefix spends its own M1 fetching the opcode that
                     // names the instruction.
-                    0xCB => self.fetch_prefixed(seq, Prefix::Bit),
-                    0xED => self.fetch_prefixed(seq, Prefix::Extended),
+                    0xCB => Self::fetch_prefixed(seq, Prefix::Bit),
+                    0xED => Self::fetch_prefixed(seq, Prefix::Extended),
                     0xDD => self.fetch_indexed(seq, Index::Ix),
                     0xFD => self.fetch_indexed(seq, Index::Iy),
                     _ => {
@@ -406,7 +406,7 @@ impl Cpu {
                         // The last index prefix of a run names the register.
                         0xDD => return self.fetch_indexed(seq, Index::Ix),
                         0xFD => return self.fetch_indexed(seq, Index::Iy),
-                        0xED => return self.fetch_prefixed(seq, Prefix::Extended),
+                        0xED => return Self::fetch_prefixed(seq, Prefix::Extended),
                         0xCB => Body::IndexBit {
                             base: index.base(self),
                         },
@@ -426,7 +426,7 @@ impl Cpu {
         }
     }
 
-    fn fetch_prefixed(&mut self, seq: &mut Sequencer, prefix: Prefix) -> Option<Cycle> {
+    fn fetch_prefixed(seq: &mut Sequencer, prefix: Prefix) -> Option<Cycle> {
         seq.plan = Plan::PrefixFetch { prefix };
         Some(Cycle::OpcodeFetch)
     }
@@ -435,7 +435,7 @@ impl Cpu {
         // The prefix byte completes as a non-flag-modifying step, clearing the
         // Q shadow that SCF/CCF fold into their X/Y flags.
         self.q = 0;
-        self.fetch_prefixed(seq, Prefix::Indexed { index })
+        Self::fetch_prefixed(seq, Prefix::Indexed { index })
     }
 
     /// Schedule the machine cycle at `step` of `body`, first applying the
@@ -462,11 +462,7 @@ impl Cpu {
                 }
             },
             Body::LoadPairImmediate { pair, index } => match step {
-                0 => Some(self.read_at_pc()),
-                1 => {
-                    seq.take_low();
-                    Some(self.read_at_pc())
-                }
+                0 | 1 => self.operand_word(seq, step),
                 _ => {
                     seq.take_high();
                     self.set_pair(pair, index, seq.operand);
@@ -513,11 +509,7 @@ impl Cpu {
                 _ => None,
             },
             Body::LoadAccumulatorAbsolute => match step {
-                0 => Some(self.read_at_pc()),
-                1 => {
-                    seq.take_low();
-                    Some(self.read_at_pc())
-                }
+                0 | 1 => self.operand_word(seq, step),
                 2 => {
                     seq.take_high();
                     self.wz = seq.operand.wrapping_add(1);
@@ -531,11 +523,7 @@ impl Cpu {
                 }
             },
             Body::LoadPairAbsolute { pair, index } => match step {
-                0 => Some(self.read_at_pc()),
-                1 => {
-                    seq.take_low();
-                    Some(self.read_at_pc())
-                }
+                0 | 1 => self.operand_word(seq, step),
                 2 => {
                     seq.take_high();
                     self.wz = seq.operand.wrapping_add(1);
@@ -553,11 +541,7 @@ impl Cpu {
                 }
             },
             Body::StoreAccumulatorAbsolute => match step {
-                0 => Some(self.read_at_pc()),
-                1 => {
-                    seq.take_low();
-                    Some(self.read_at_pc())
-                }
+                0 | 1 => self.operand_word(seq, step),
                 2 => {
                     seq.take_high();
                     self.wz = ((self.a as u16) << 8) | (seq.operand.wrapping_add(1) & 0x00FF);
@@ -569,11 +553,7 @@ impl Cpu {
                 _ => None,
             },
             Body::StorePairAbsolute { value } => match step {
-                0 => Some(self.read_at_pc()),
-                1 => {
-                    seq.take_low();
-                    Some(self.read_at_pc())
-                }
+                0 | 1 => self.operand_word(seq, step),
                 2 => {
                     seq.take_high();
                     self.wz = seq.operand.wrapping_add(1);
@@ -621,11 +601,7 @@ impl Cpu {
                 }
             },
             Body::Jump { taken } => match step {
-                0 => Some(self.read_at_pc()),
-                1 => {
-                    seq.take_low();
-                    Some(self.read_at_pc())
-                }
+                0 | 1 => self.operand_word(seq, step),
                 _ => {
                     seq.take_high();
                     self.wz = seq.operand;
@@ -636,11 +612,7 @@ impl Cpu {
                 }
             },
             Body::Call { taken } => match step {
-                0 => Some(self.read_at_pc()),
-                1 => {
-                    seq.take_low();
-                    Some(self.read_at_pc())
-                }
+                0 | 1 => self.operand_word(seq, step),
                 2 => {
                     seq.take_high();
                     self.wz = seq.operand;
@@ -865,50 +837,32 @@ impl Cpu {
             }
             _ => {
                 let address = seq.operand;
-                match op {
-                    IndexedOp::Load { dest } => match step {
-                        2 => Some(Cycle::MemRead { address }),
-                        _ => {
-                            self.set_reg(dest, seq.latched);
-                            None
-                        }
-                    },
-                    IndexedOp::Store { data } => match step {
-                        2 => Some(Cycle::MemWrite { address, data }),
-                        _ => None,
-                    },
-                    IndexedOp::Alu { op } => match step {
-                        2 => Some(Cycle::MemRead { address }),
-                        _ => {
-                            self.alu(op, seq.latched);
-                            None
-                        }
-                    },
-                    IndexedOp::ReadModifyWrite { increment } => match step {
-                        2 => Some(Cycle::MemRead { address }),
-                        3 => Some(Cycle::Internal { length: 1 }),
-                        4 => {
-                            let data = if increment {
-                                self.inc8(seq.latched)
-                            } else {
-                                self.dec8(seq.latched)
-                            };
-                            Some(Cycle::MemWrite { address, data })
-                        }
-                        _ => None,
-                    },
-                    IndexedOp::StoreImmediate => match step {
-                        2 => {
-                            seq.held = seq.latched;
-                            Some(Cycle::Internal { length: 2 })
-                        }
-                        3 => Some(Cycle::MemWrite {
-                            address,
-                            data: seq.held,
-                        }),
-                        _ => None,
-                    },
-                }
+                // Past the displacement the operation runs the same schedule
+                // its direct-addressed sibling does, two steps in.
+                let body = match op {
+                    IndexedOp::Load { dest } => Body::Load { address, dest },
+                    IndexedOp::Store { data } => Body::Store { address, data },
+                    IndexedOp::Alu { op } => Body::AluIndirect { address, op },
+                    IndexedOp::ReadModifyWrite { increment } => {
+                        Body::ReadModifyWrite { address, increment }
+                    }
+                    // LD (IX+d),n has no direct-addressed twin: its immediate
+                    // arrives before the padding, not after.
+                    IndexedOp::StoreImmediate => {
+                        return match step {
+                            2 => {
+                                seq.held = seq.latched;
+                                Some(Cycle::Internal { length: 2 })
+                            }
+                            3 => Some(Cycle::MemWrite {
+                                address,
+                                data: seq.held,
+                            }),
+                            _ => None,
+                        };
+                    }
+                };
+                self.run_body(seq, body, step - 2)
             }
         }
     }
@@ -1061,6 +1015,15 @@ impl Cpu {
             BitEffect::Reset(index) => Some(value & !(1 << index)),
             BitEffect::Set(index) => Some(value | (1 << index)),
         }
+    }
+
+    /// The two reads a 16-bit operand takes, the low byte held in `operand`
+    /// while the high byte arrives.
+    fn operand_word(&mut self, seq: &mut Sequencer, step: u8) -> Option<Cycle> {
+        if step == 1 {
+            seq.take_low();
+        }
+        Some(self.read_at_pc())
     }
 
     fn read_at_pc(&mut self) -> Cycle {

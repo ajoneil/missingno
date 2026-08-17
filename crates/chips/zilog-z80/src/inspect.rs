@@ -3,11 +3,9 @@
 
 use missingno_core::inspect::{Register, RegisterGroup, RegisterPurpose, ValueStyle};
 
-use crate::Cpu;
-
 /// The programmer-visible main set — what a register pane names. The alternate
 /// set, the interrupt latches and MEMPTR are boundary state, not this view.
-#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct RegisterFile {
     pub a: u8,
     pub f: u8,
@@ -21,25 +19,6 @@ pub struct RegisterFile {
     pub iy: u16,
     pub sp: u16,
     pub pc: u16,
-}
-
-impl From<&Cpu> for RegisterFile {
-    fn from(cpu: &Cpu) -> Self {
-        RegisterFile {
-            a: cpu.a,
-            f: cpu.f,
-            b: cpu.b,
-            c: cpu.c,
-            d: cpu.d,
-            e: cpu.e,
-            h: cpu.h,
-            l: cpu.l,
-            ix: cpu.ix,
-            iy: cpu.iy,
-            sp: cpu.sp,
-            pc: cpu.pc,
-        }
-    }
 }
 
 pub fn register_groups(registers: &RegisterFile) -> Vec<RegisterGroup> {

@@ -5,130 +5,12 @@
 //! assertions against the tick the access lands on and counts the T-states
 //! that follow.
 
-use missingno_zilog_z80::{Bus, BusCycle, Cpu, Pins};
+use missingno_zilog_z80::{BusCycle, Pins};
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Access {
-    MemRead,
-    MemWrite,
-    IoRead,
-    IoWrite,
-}
+#[path = "support/probe.rs"]
+mod support;
 
-/// One bus call: the tick it arrived on, what it was, and the address.
-type Call = (usize, Access, u16);
-
-struct ProbeBus {
-    memory: Vec<u8>,
-    port_input: u8,
-    tick: usize,
-    calls: Vec<Call>,
-    schedule: Schedule,
-}
-
-impl ProbeBus {
-    fn new(program: &[u8], schedule: Schedule) -> Self {
-        let mut memory = vec![0; 0x10000];
-        memory[..program.len()].copy_from_slice(program);
-        ProbeBus {
-            memory,
-            port_input: 0x5A,
-            tick: 0,
-            calls: Vec::new(),
-            schedule,
-        }
-    }
-}
-
-impl Bus for ProbeBus {
-    fn read(&mut self, address: u16) -> u8 {
-        self.calls.push((self.tick, Access::MemRead, address));
-        self.memory[address as usize]
-    }
-
-    fn write(&mut self, address: u16, data: u8) {
-        self.calls.push((self.tick, Access::MemWrite, address));
-        self.memory[address as usize] = data;
-    }
-
-    fn input(&mut self, port: u16) -> u8 {
-        self.calls.push((self.tick, Access::IoRead, port));
-        self.port_input
-    }
-
-    fn output(&mut self, port: u16, _data: u8) {
-        self.calls.push((self.tick, Access::IoWrite, port));
-    }
-
-    fn wait_requested(&self) -> bool {
-        self.schedule.asserted_at(self.tick)
-    }
-}
-
-/// What the board does with /WAIT while the instruction runs.
-#[derive(Clone, Copy)]
-enum Schedule {
-    /// No device pulls the line.
-    Released,
-    /// Asserted for `length` consecutive ticks from `from`.
-    Held { from: usize, length: usize },
-}
-
-impl Schedule {
-    fn asserted_at(self, tick: usize) -> bool {
-        match self {
-            Schedule::Released => false,
-            Schedule::Held { from, length } => (from..from + length).contains(&tick),
-        }
-    }
-}
-
-/// One instruction run to retirement: the CPU it left, the bus calls made,
-/// the T-state count, and the recorded snapshots.
-struct Run {
-    cpu: Cpu,
-    calls: Vec<Call>,
-    ticks: usize,
-    trace: Vec<BusCycle>,
-}
-
-fn run(program: &[u8], schedule: Schedule, prepare: impl FnOnce(&mut Cpu)) -> Run {
-    let mut cpu = Cpu::new();
-    cpu.pc = 0x0000;
-    prepare(&mut cpu);
-    let mut bus = ProbeBus::new(program, schedule);
-
-    let mut ticks = 0;
-    loop {
-        bus.tick = ticks;
-        cpu.tick(&mut bus);
-        ticks += 1;
-        assert!(ticks < 200, "instruction never retired");
-        if cpu.at_instruction_boundary() {
-            break;
-        }
-    }
-    assert_eq!(ticks, cpu.bus_trace().len(), "ticks vs recorded T-states");
-
-    let trace = cpu.bus_trace().to_vec();
-    Run {
-        cpu,
-        calls: bus.calls,
-        ticks,
-        trace,
-    }
-}
-
-/// The tick the `n`th call of `access` lands on with the line at rest — every
-/// expected stretch is measured from here rather than assumed.
-fn access_tick(run: &Run, access: Access, index: usize) -> usize {
-    run.calls
-        .iter()
-        .filter(|(_, kind, _)| *kind == access)
-        .nth(index)
-        .expect("access not found")
-        .0
-}
+use support::{Access, Schedule, run};
 
 /// A wait state holds the last driven address with the data pins off and no
 /// control pin asserted.
@@ -146,7 +28,7 @@ fn held(address: u16) -> BusCycle {
 fn output_to_immediate_port_stalls_from_the_access() {
     let resting = run(&[0xD3, 0x10], Schedule::Released, |cpu| cpu.a = 0x42);
     assert_eq!(resting.ticks, 11);
-    let access = access_tick(&resting, Access::IoWrite, 0);
+    let access = resting.access_tick(Access::IoWrite, 0);
     assert_eq!(access, 9);
 
     for length in 1..=4 {
@@ -174,7 +56,7 @@ fn load_accumulator_absolute_stalls_on_its_read() {
     let program = [0x3A, 0x34, 0x12];
     let resting = run(&program, Schedule::Released, |_| {});
     assert_eq!(resting.ticks, 13);
-    let access = access_tick(&resting, Access::MemRead, 3);
+    let access = resting.access_tick(Access::MemRead, 3);
     assert_eq!(access, 11);
 
     for length in 1..=4 {
@@ -205,7 +87,7 @@ fn release_after_one_wait_state() {
         cpu.l = 0x34;
     });
     assert_eq!(resting.ticks, 7);
-    let access = access_tick(&resting, Access::MemRead, 1);
+    let access = resting.access_tick(Access::MemRead, 1);
 
     let stalled = run(
         &[0x7E],

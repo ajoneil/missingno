@@ -3,98 +3,12 @@
 //! drives whole instructions, so it cannot see where inside one an access
 //! lands; this probe counts ticks and watches the calls arrive.
 
-use missingno_zilog_z80::{Bus, Cpu, InterruptMode};
+use missingno_zilog_z80::{Cpu, InterruptMode};
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Access {
-    MemRead,
-    MemWrite,
-    IoRead,
-    IoWrite,
-}
+#[path = "support/probe.rs"]
+mod support;
 
-/// One bus call: the tick it arrived on, what it was, and the address.
-type Call = (usize, Access, u16);
-
-struct ProbeBus {
-    memory: Vec<u8>,
-    port_input: u8,
-    tick: usize,
-    calls: Vec<Call>,
-}
-
-impl ProbeBus {
-    fn new(program: &[u8]) -> Self {
-        let mut memory = vec![0; 0x10000];
-        memory[..program.len()].copy_from_slice(program);
-        ProbeBus {
-            memory,
-            port_input: 0x5A,
-            tick: 0,
-            calls: Vec::new(),
-        }
-    }
-}
-
-impl Bus for ProbeBus {
-    fn read(&mut self, address: u16) -> u8 {
-        self.calls.push((self.tick, Access::MemRead, address));
-        self.memory[address as usize]
-    }
-
-    fn write(&mut self, address: u16, data: u8) {
-        self.calls.push((self.tick, Access::MemWrite, address));
-        self.memory[address as usize] = data;
-    }
-
-    fn input(&mut self, port: u16) -> u8 {
-        self.calls.push((self.tick, Access::IoRead, port));
-        self.port_input
-    }
-
-    fn output(&mut self, port: u16, _data: u8) {
-        self.calls.push((self.tick, Access::IoWrite, port));
-    }
-}
-
-/// Runs one instruction a tick at a time, returning the retired CPU, the bus
-/// calls it made, the T-state count, and the tick each pin-asserted trace
-/// entry sits on.
-fn probe(program: &[u8], prepare: impl FnOnce(&mut Cpu)) -> (Cpu, Vec<Call>, usize, Vec<Call>) {
-    let mut cpu = Cpu::new();
-    cpu.pc = 0x0000;
-    prepare(&mut cpu);
-    let mut bus = ProbeBus::new(program);
-
-    let mut ticks = 0;
-    loop {
-        bus.tick = ticks;
-        cpu.tick(&mut bus);
-        ticks += 1;
-        if cpu.at_instruction_boundary() {
-            break;
-        }
-    }
-    assert_eq!(ticks, cpu.bus_trace().len(), "ticks vs recorded T-states");
-
-    let asserted = cpu
-        .bus_trace()
-        .iter()
-        .enumerate()
-        .filter_map(|(index, cycle)| {
-            let access = match (cycle.pins.read, cycle.pins.write, cycle.pins.iorq) {
-                (true, false, false) => Access::MemRead,
-                (false, true, false) => Access::MemWrite,
-                (true, false, true) => Access::IoRead,
-                (false, true, true) => Access::IoWrite,
-                _ => return None,
-            };
-            Some((index, access, cycle.address))
-        })
-        .collect();
-
-    (cpu, bus.calls, ticks, asserted)
-}
+use support::{Access, Call, ProbeBus, Schedule, run};
 
 /// The per-T contract: call `n` arrives on the tick recording the `n`th
 /// pin-asserted `BusCycle`.
@@ -105,9 +19,13 @@ fn sequenced(program: &[u8], prepare: impl FnOnce(&mut Cpu)) -> (Vec<Call>, usiz
 
 /// As `sequenced`, also handing back the CPU the instruction retired into.
 fn sequenced_state(program: &[u8], prepare: impl FnOnce(&mut Cpu)) -> (Cpu, Vec<Call>, usize) {
-    let (cpu, calls, ticks, asserted) = probe(program, prepare);
-    assert_eq!(calls, asserted, "bus calls vs pin-asserted T-states");
-    (cpu, calls, ticks)
+    let run = run(program, Schedule::Released, prepare);
+    assert_eq!(
+        run.calls,
+        run.asserted(),
+        "bus calls vs pin-asserted T-states"
+    );
+    (run.cpu, run.calls, run.ticks)
 }
 
 #[test]

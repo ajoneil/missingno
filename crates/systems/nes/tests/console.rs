@@ -67,8 +67,6 @@ impl Asm {
     /// One 16 KB PRG page (mirrored to $C000) plus an 8 KB CHR page.
     fn into_rom(mut self, chr: &[u8]) -> Vec<u8> {
         self.bytes.resize(0x4000, 0);
-        // Vectors live at the top of the mirrored page.
-        self.bytes[0x3FFA] = 0x00; // NMI -> $8000? patched below if needed
         let mut rom = Vec::new();
         rom.extend_from_slice(b"NES\x1A");
         rom.extend_from_slice(&[1, 1, 0, 0]);

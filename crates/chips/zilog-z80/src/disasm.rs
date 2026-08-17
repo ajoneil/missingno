@@ -13,7 +13,7 @@
 
 use missingno_core::isa::Flow;
 
-use crate::decode::Fields;
+use crate::decode::{Fields, Index};
 
 pub struct Disassembly {
     pub mnemonic: String,
@@ -30,9 +30,9 @@ pub fn disassemble(address: u16, bytes: &[u8]) -> Disassembly {
     match r.byte() {
         0xCB => cb(&mut r),
         0xED => ed(&mut r),
-        0xDD => prefixed(address, &mut r, Idx::Ix),
-        0xFD => prefixed(address, &mut r, Idx::Iy),
-        op => unprefixed(address, &mut r, op, Idx::Hl),
+        0xDD => prefixed(address, &mut r, Index::Ix),
+        0xFD => prefixed(address, &mut r, Index::Iy),
+        op => unprefixed(address, &mut r, op, Index::Hl),
     }
 }
 
@@ -61,21 +61,13 @@ impl Reader<'_> {
     }
 }
 
-/// Which register the HL slot names: the bare instruction set, or its
-/// image under a DD (IX) or FD (IY) prefix.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Idx {
-    Hl,
-    Ix,
-    Iy,
-}
-
-impl Idx {
+impl Index {
+    /// What the HL slot renders as under this index prefix.
     fn hl(self) -> &'static str {
         match self {
-            Idx::Hl => "hl",
-            Idx::Ix => "ix",
-            Idx::Iy => "iy",
+            Index::Hl => "hl",
+            Index::Ix => "ix",
+            Index::Iy => "iy",
         }
     }
 }
@@ -86,36 +78,36 @@ const CC: [&str; 8] = ["nz", "z", "nc", "c", "po", "pe", "p", "m"];
 const ROT: [&str; 8] = ["rlc", "rrc", "rl", "rr", "sla", "sra", "sll", "srl"];
 
 /// Register-pair table with SP (`rp`), or with AF (`rp2`).
-fn rp(p: u8, idx: Idx) -> &'static str {
+fn rp(p: u8, idx: Index) -> &'static str {
     ["bc", "de", idx.hl(), "sp"][p as usize]
 }
 
-fn rp2(p: u8, idx: Idx) -> &'static str {
+fn rp2(p: u8, idx: Index) -> &'static str {
     ["bc", "de", idx.hl(), "af"][p as usize]
 }
 
 /// Slot-`i` register under an index prefix: H and L read as the
 /// undocumented half-index registers when no `(hl)` operand is in play.
-fn reg(i: u8, idx: Idx) -> &'static str {
+fn reg(i: u8, idx: Index) -> &'static str {
     match (idx, i) {
-        (Idx::Ix, 4) => "ixh",
-        (Idx::Ix, 5) => "ixl",
-        (Idx::Iy, 4) => "iyh",
-        (Idx::Iy, 5) => "iyl",
+        (Index::Ix, 4) => "ixh",
+        (Index::Ix, 5) => "ixl",
+        (Index::Iy, 4) => "iyh",
+        (Index::Iy, 5) => "iyl",
         _ => R[i as usize],
     }
 }
 
 /// The HL-slot memory operand: `(hl)`, or `(ix+d)`/`(iy+d)` with the
 /// displacement read here (it follows the opcode in every non-CB form).
-fn mem(r: &mut Reader, idx: Idx) -> String {
+fn mem(r: &mut Reader, idx: Index) -> String {
     match idx {
-        Idx::Hl => "(hl)".into(),
+        Index::Hl => "(hl)".into(),
         _ => indexed(idx, r.byte() as i8),
     }
 }
 
-fn indexed(idx: Idx, d: i8) -> String {
+fn indexed(idx: Index, d: i8) -> String {
     if d < 0 {
         format!("({}-${:02x})", idx.hl(), -(d as i16))
     } else {
@@ -136,12 +128,18 @@ fn alu(y: u8, operand: &str) -> String {
     }
 }
 
-fn seq(r: &Reader, mnemonic: impl Into<String>) -> Disassembly {
-    Disassembly {
-        mnemonic: mnemonic.into(),
-        length: r.len(),
-        flow: Flow::Sequential,
+/// The operand an octal field names: the HL-slot memory form in slot 6,
+/// otherwise the register.
+fn slot(r: &mut Reader, idx: Index, i: u8) -> String {
+    if i == 6 {
+        mem(r, idx)
+    } else {
+        reg(i, idx).into()
     }
+}
+
+fn seq(r: &Reader, mnemonic: impl Into<String>) -> Disassembly {
+    flowed(r, mnemonic.into(), Flow::Sequential)
 }
 
 fn flowed(r: &Reader, mnemonic: String, flow: Flow) -> Disassembly {
@@ -155,7 +153,7 @@ fn flowed(r: &Reader, mnemonic: String, flow: Flow) -> Disassembly {
 /// A DD/FD prefix: DDCB/FDCB hands off displacement-first, a following
 /// prefix byte drops this one as a standalone `noni`, and anything else
 /// decodes as the base instruction with HL read as IX/IY.
-fn prefixed(address: u16, r: &mut Reader, idx: Idx) -> Disassembly {
+fn prefixed(address: u16, r: &mut Reader, idx: Index) -> Disassembly {
     match r.peek() {
         0xCB => {
             r.byte();
@@ -169,7 +167,7 @@ fn prefixed(address: u16, r: &mut Reader, idx: Idx) -> Disassembly {
     }
 }
 
-fn unprefixed(address: u16, r: &mut Reader, op: u8, idx: Idx) -> Disassembly {
+fn unprefixed(address: u16, r: &mut Reader, op: u8, idx: Index) -> Disassembly {
     let f = Fields::new(op);
     match f.x {
         0 => match f.z {
@@ -229,20 +227,12 @@ fn unprefixed(address: u16, r: &mut Reader, op: u8, idx: Idx) -> Disassembly {
             },
             4 | 5 => {
                 let verb = if f.z == 4 { "inc" } else { "dec" };
-                let operand = if f.y == 6 {
-                    mem(r, idx)
-                } else {
-                    reg(f.y, idx).into()
-                };
+                let operand = slot(r, idx, f.y);
                 seq(r, format!("{verb} {operand}"))
             }
             6 => {
                 // `ld (ix+d),n` reads the displacement before the literal.
-                let operand = if f.y == 6 {
-                    mem(r, idx)
-                } else {
-                    reg(f.y, idx).into()
-                };
+                let operand = slot(r, idx, f.y);
                 let n = r.byte();
                 seq(r, format!("ld {operand},${n:02x}"))
             }
@@ -266,11 +256,7 @@ fn unprefixed(address: u16, r: &mut Reader, op: u8, idx: Idx) -> Disassembly {
             (y, z) => seq(r, format!("ld {},{}", reg(y, idx), reg(z, idx))),
         },
         2 => {
-            let operand = if f.z == 6 {
-                mem(r, idx)
-            } else {
-                reg(f.z, idx).into()
-            };
+            let operand = slot(r, idx, f.z);
             seq(r, alu(f.y, &operand))
         }
         _ => match f.z {
@@ -361,37 +347,33 @@ fn unprefixed(address: u16, r: &mut Reader, op: u8, idx: Idx) -> Disassembly {
     }
 }
 
-fn cb(r: &mut Reader) -> Disassembly {
-    let f = Fields::new(r.byte());
-    let operand = R[f.z as usize];
-    let mnemonic = match f.x {
+/// The CB-page operation on an already-rendered operand.
+fn bit_op(f: Fields, operand: &str) -> String {
+    match f.x {
         0 => format!("{} {operand}", ROT[f.y as usize]),
         1 => format!("bit {},{operand}", f.y),
         2 => format!("res {},{operand}", f.y),
         _ => format!("set {},{operand}", f.y),
-    };
+    }
+}
+
+fn cb(r: &mut Reader) -> Disassembly {
+    let f = Fields::new(r.byte());
+    let mnemonic = bit_op(f, R[f.z as usize]);
     seq(r, mnemonic)
 }
 
 /// DDCB/FDCB: the displacement precedes the final opcode, every operation
 /// targets `(ix+d)`, and the undocumented non-`(hl)` slots copy the result
 /// into a register — rendered as a second operand.
-fn ddcb(r: &mut Reader, idx: Idx) -> Disassembly {
+fn ddcb(r: &mut Reader, idx: Index) -> Disassembly {
     let d = r.byte() as i8;
     let f = Fields::new(r.byte());
-    let target = indexed(idx, d);
-    let copy = |s: String| {
-        if f.z == 6 {
-            s
-        } else {
-            format!("{s},{}", R[f.z as usize])
-        }
-    };
-    let mnemonic = match f.x {
-        0 => copy(format!("{} {target}", ROT[f.y as usize])),
-        1 => format!("bit {},{target}", f.y),
-        2 => copy(format!("res {},{target}", f.y)),
-        _ => copy(format!("set {},{target}", f.y)),
+    let mnemonic = bit_op(f, &indexed(idx, d));
+    let mnemonic = if f.x != 1 && f.z != 6 {
+        format!("{mnemonic},{}", R[f.z as usize])
+    } else {
+        mnemonic
     };
     seq(r, mnemonic)
 }
@@ -409,14 +391,14 @@ fn ed(r: &mut Reader) -> Disassembly {
                 y => seq(r, format!("out (c),{}", R[y as usize])),
             },
             2 => match f.q {
-                0 => seq(r, format!("sbc hl,{}", rp(f.p, Idx::Hl))),
-                _ => seq(r, format!("adc hl,{}", rp(f.p, Idx::Hl))),
+                0 => seq(r, format!("sbc hl,{}", rp(f.p, Index::Hl))),
+                _ => seq(r, format!("adc hl,{}", rp(f.p, Index::Hl))),
             },
             3 => {
                 let word = r.word();
                 match f.q {
-                    0 => seq(r, format!("ld (${word:04x}),{}", rp(f.p, Idx::Hl))),
-                    _ => seq(r, format!("ld {},(${word:04x})", rp(f.p, Idx::Hl))),
+                    0 => seq(r, format!("ld (${word:04x}),{}", rp(f.p, Index::Hl))),
+                    _ => seq(r, format!("ld {},(${word:04x})", rp(f.p, Index::Hl))),
                 }
             }
             4 => seq(r, "neg"),

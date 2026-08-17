@@ -58,6 +58,22 @@ impl Vdp {
         // combination that includes it.
         let rendered = !phantom && self.registers[1] & r1::M1 == 0;
 
+        self.scanner.stop = self.walk_sprites(self.line as u8, SpritePass::Effects, rendered);
+    }
+
+    /// Paint `row`'s displayed sprites into the emission plane — the same
+    /// walk as the effects scan, latching nothing: 5S, C and the stop
+    /// latch keep their own corroborated line boundary.
+    pub(crate) fn paint_sprites(&mut self, row: u16) {
+        if !self.display_enabled() || self.registers[1] & r1::M1 != 0 {
+            return;
+        }
+        self.walk_sprites(row as u8, SpritePass::Paint, true);
+    }
+
+    /// One walk of the attribute table for `line`: the first four sprites on
+    /// it reach `pass`'s plane, and the walk ends where the scanner does.
+    fn walk_sprites(&mut self, line: u8, pass: SpritePass, rendered: bool) -> ScanStop {
         let geometry = SpriteGeometry::of(self);
         let attributes = self.sprite_attribute_base();
         let mut occupied = [false; 256];
@@ -71,7 +87,7 @@ impl Vdp {
                 stop = ScanStop::Terminator(index);
                 break;
             }
-            let Some(row) = geometry.row_on_line(y, self.line as u8) else {
+            let Some(row) = geometry.row_on_line(y, line) else {
                 continue;
             };
             matched += 1;
@@ -79,7 +95,7 @@ impl Vdp {
                 // The data manual's gate is real: 5S only latches while F
                 // is clear, and the first capture holds until a read. The
                 // scan itself halts here whatever the flags say.
-                if !self.status.frame && !self.status.fifth_sprite {
+                if pass == SpritePass::Effects && !self.status.frame && !self.status.fifth_sprite {
                     self.status.fifth_sprite = true;
                     self.status.fifth_sprite_set_at = self.xtal_total;
                     self.status.sprite_field = index;
@@ -88,45 +104,11 @@ impl Vdp {
                 break;
             }
             if rendered {
-                self.render_sprite_row(entry, row, &mut occupied, geometry, SpritePass::Effects);
+                self.render_sprite_row(entry, row, &mut occupied, geometry, pass);
             }
         }
 
-        self.scanner.stop = stop;
-    }
-
-    /// Paint `row`'s displayed sprites into the emission plane — the same
-    /// walk as the effects scan, latching nothing: 5S, C and the stop
-    /// latch keep their own corroborated line boundary.
-    pub(crate) fn paint_sprites(&mut self, row: u16) {
-        if !self.display_enabled() || self.registers[1] & r1::M1 != 0 {
-            return;
-        }
-        let geometry = SpriteGeometry::of(self);
-        let attributes = self.sprite_attribute_base();
-        let mut occupied = [false; 256];
-        let mut matched = 0u8;
-
-        for index in 0..32u8 {
-            let entry = attributes + index as u16 * 4;
-            let y = self.vram_cell(entry);
-            if y == SPRITE_TERMINATOR {
-                break;
-            }
-            let Some(sprite_row) = geometry.row_on_line(y, row as u8) else {
-                continue;
-            };
-            matched += 1;
-            if matched <= 4 {
-                self.render_sprite_row(
-                    entry,
-                    sprite_row,
-                    &mut occupied,
-                    geometry,
-                    SpritePass::Paint,
-                );
-            }
-        }
+        stop
     }
 
     fn render_sprite_row(
@@ -165,17 +147,20 @@ impl Vdp {
                 if !(0..256).contains(&px) {
                     continue;
                 }
-                let cell = &mut occupied[px as usize];
-                if *cell && pass == SpritePass::Effects {
-                    // Coincidence counts every sprite pixel, transparent
-                    // colour included, and is not gated by F.
-                    self.status.coincidence = true;
-                }
-                *cell = true;
-                // A transparent sprite pixel collides but masks nothing;
-                // among painters the frontmost wins.
-                if pass == SpritePass::Paint && colour != 0 && self.sprite_line[px as usize] == 0 {
-                    self.sprite_line[px as usize] = colour;
+                match pass {
+                    SpritePass::Effects => {
+                        // Coincidence counts every sprite pixel, transparent
+                        // colour included, and is not gated by F.
+                        self.status.coincidence |= occupied[px as usize];
+                        occupied[px as usize] = true;
+                    }
+                    // A transparent sprite pixel collides but masks nothing;
+                    // among painters the frontmost wins.
+                    SpritePass::Paint => {
+                        if colour != 0 && self.sprite_line[px as usize] == 0 {
+                            self.sprite_line[px as usize] = colour;
+                        }
+                    }
                 }
             }
         }

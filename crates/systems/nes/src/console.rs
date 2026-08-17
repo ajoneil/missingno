@@ -150,26 +150,23 @@ impl Nes {
                 _ => 0,
             };
             self.after_cpu_cycle();
-            self.write_oam(value);
+            self.ppu.write_register(0x2004, value, &mut self.cartridge);
             self.after_cpu_cycle();
         }
     }
 
-    fn write_oam(&mut self, value: u8) {
-        self.ppu.write_register(0x2004, value, &mut self.cartridge);
-    }
-
-    /// Run to the next instruction boundary.
-    pub fn step_instruction(&mut self) {
-        if self.cpu.jammed() {
-            return;
-        }
-        while self.cpu.at_instruction_boundary() {
+    /// Run to the next instruction boundary, returning the CPU cycles it took.
+    pub fn step_instruction(&mut self) -> u16 {
+        let mut cycles = 0;
+        while self.cpu.at_instruction_boundary() && !self.cpu.jammed() {
             self.step_cycle();
+            cycles += 1;
         }
         while !self.cpu.at_instruction_boundary() && !self.cpu.jammed() {
             self.step_cycle();
+            cycles += 1;
         }
+        cycles
     }
 
     /// Run until a frame completes, bounded against runaway code.

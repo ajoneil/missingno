@@ -8,7 +8,7 @@ pub struct Disassembly {
     pub length: u8,
 }
 
-pub fn instruction_length(opcode: u8) -> u8 {
+fn instruction_length(opcode: u8) -> u8 {
     match DECODE[opcode as usize].mode {
         Mode::Implied | Mode::Accumulator => 1,
         Mode::Immediate

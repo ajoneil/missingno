@@ -167,7 +167,7 @@ impl Vdp {
         ]
         .into_iter()
         .max()
-        .unwrap_or(0) as u64
+        .unwrap() as u64
             + TRANSFER_LOCK_XTALS;
         self.xtal_total = now;
 

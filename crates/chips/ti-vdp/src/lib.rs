@@ -26,9 +26,7 @@ pub use registers::Mode;
 pub use render::{Frame, PALETTE};
 pub use scan::ScanStop;
 pub use sprites::SPRITE_TERMINATOR;
-pub use standard::{
-    ACTIVE_LINES, ACTIVE_WIDTH, LEFT_BORDER, RIGHT_BORDER, Standard, VISIBLE_WIDTH,
-};
+pub use standard::{ACTIVE_LINES, ACTIVE_WIDTH, LEFT_BORDER, Standard, VISIBLE_WIDTH};
 pub use state::{AccessState, PortState, ScannerState, SegmentState, StatusState, VdpState};
 pub use vram::VRAM_SIZE;
 

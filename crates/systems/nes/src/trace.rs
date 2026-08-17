@@ -12,10 +12,7 @@ pub use morepork::{Profile, Trigger};
 use sha2::{Digest, Sha256};
 
 use crate::console::Nes;
-use crate::ppu::{Frame, PIXELS_PER_LINE, VISIBLE_LINES, master_palette};
-
-/// NES pixels on a 4:3 NTSC display are wider than square.
-pub const PIXEL_ASPECT: f32 = 8.0 / 7.0;
+use crate::ppu::{Frame, PIXEL_ASPECT, PIXELS_PER_LINE, VISIBLE_LINES, master_palette};
 
 enum Emitter {
     Pc,
@@ -61,16 +58,7 @@ fn resolve_emitter(name: &str, profile: &Profile) -> Result<Emitter, morepork::E
 /// Run to the next instruction boundary, returning the CPU cycles
 /// consumed. The tracing counterpart of [`Nes::step_instruction`].
 pub fn step_instruction_counted(nes: &mut Nes) -> u16 {
-    let mut cycles = 0u16;
-    while nes.cpu.at_instruction_boundary() && !nes.cpu.jammed() {
-        nes.step_cycle();
-        cycles += 1;
-    }
-    while !nes.cpu.at_instruction_boundary() && !nes.cpu.jammed() {
-        nes.step_cycle();
-        cycles += 1;
-    }
-    cycles
+    nes.step_instruction()
 }
 
 /// Writes one trace entry per capture and an indexed frame snapshot per

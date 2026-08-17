@@ -187,17 +187,7 @@ impl Cpu {
 
     /// The CB-prefixed shifts/rotates: full flag set from the result.
     pub(super) fn rotate(&mut self, op: RotOp, value: u8) -> u8 {
-        let carry = self.carry_in();
-        let (result, carry_out) = match op {
-            RotOp::Rlc => (value.rotate_left(1), value >> 7),
-            RotOp::Rrc => (value.rotate_right(1), value & 1),
-            RotOp::Rl => ((value << 1) | carry, value >> 7),
-            RotOp::Rr => ((value >> 1) | (carry << 7), value & 1),
-            RotOp::Sla => (value << 1, value >> 7),
-            RotOp::Sra => ((value >> 1) | (value & 0x80), value & 1),
-            RotOp::Sll => ((value << 1) | 1, value >> 7),
-            RotOp::Srl => (value >> 1, value & 1),
-        };
+        let (result, carry_out) = rot(op, value, self.carry_in());
         let f = (result & (flags::SIGN | flags::XY)) | zero(result) | parity(result) | carry_out;
         self.set_f(f);
         result
@@ -206,15 +196,7 @@ impl Cpu {
     /// The accumulator rotates (RLCA/RRCA/RLA/RRA): only H, N, C and X/Y
     /// change; S, Z, P/V are preserved.
     pub(super) fn rotate_a(&mut self, op: RotOp) {
-        let carry = self.carry_in();
-        let value = self.a;
-        let (result, carry_out) = match op {
-            RotOp::Rlc => (value.rotate_left(1), value >> 7),
-            RotOp::Rrc => (value.rotate_right(1), value & 1),
-            RotOp::Rl => ((value << 1) | carry, value >> 7),
-            RotOp::Rr => ((value >> 1) | (carry << 7), value & 1),
-            _ => unreachable!(),
-        };
+        let (result, carry_out) = rot(op, self.a, self.carry_in());
         self.a = result;
         let f = (self.f & (flags::SIGN | flags::ZERO | flags::PARITY))
             | (result & flags::XY)
@@ -399,4 +381,18 @@ impl Cpu {
 
 fn zero(value: u8) -> u8 {
     if value == 0 { flags::ZERO } else { 0 }
+}
+
+/// The shift/rotate itself: the result and the bit shifted out.
+fn rot(op: RotOp, value: u8, carry: u8) -> (u8, u8) {
+    match op {
+        RotOp::Rlc => (value.rotate_left(1), value >> 7),
+        RotOp::Rrc => (value.rotate_right(1), value & 1),
+        RotOp::Rl => ((value << 1) | carry, value >> 7),
+        RotOp::Rr => ((value >> 1) | (carry << 7), value & 1),
+        RotOp::Sla => (value << 1, value >> 7),
+        RotOp::Sra => ((value >> 1) | (value & 0x80), value & 1),
+        RotOp::Sll => ((value << 1) | 1, value >> 7),
+        RotOp::Srl => (value >> 1, value & 1),
+    }
 }

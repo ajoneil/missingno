@@ -116,6 +116,14 @@ pub enum RegisterKind {
     Attenuation,
 }
 
+/// Which of the write port's two transfers carried a value: the addressing
+/// byte's low nibble, or a following data byte's six bits.
+#[derive(Clone, Copy)]
+enum Transfer {
+    Address,
+    Data,
+}
+
 /// The register address held on the chip between transfers.
 #[derive(Clone, Copy)]
 struct LatchedRegister {
@@ -139,18 +147,20 @@ impl ToneChannel {
             output: true,
         }
     }
+}
 
-    /// One internal clock. The borrow reloads the counter and toggles the
-    /// flip-flop, so the half-period is the reloaded count.
-    fn advance(&mut self, period: Option<u16>) {
-        let Some(period) = period else { return };
-        if self.counter > 1 {
-            self.counter -= 1;
-        } else {
-            self.counter = period;
-            self.output = !self.output;
-        }
+/// One internal clock of a channel's divider. The borrow reloads the counter
+/// and toggles the flip-flop, so the half-period is the reloaded count; the
+/// return reports the flip-flop's rising edge.
+fn advance_divider(counter: &mut u16, output: &mut bool, period: Option<u16>) -> bool {
+    let Some(period) = period else { return false };
+    if *counter > 1 {
+        *counter -= 1;
+        return false;
     }
+    *counter = period;
+    *output = !*output;
+    *output
 }
 
 /// The shift rate selector, in divisions of the input clock.
@@ -246,18 +256,6 @@ impl NoiseChannel {
         }
     }
 
-    /// One internal clock, reporting the flip-flop's rising edge.
-    fn advance(&mut self, period: Option<u16>) -> bool {
-        let Some(period) = period else { return false };
-        if self.counter > 1 {
-            self.counter -= 1;
-            return false;
-        }
-        self.counter = period;
-        self.output = !self.output;
-        self.output
-    }
-
     /// White noise inserts the exclusive-OR of the tapped bits; "periodic"
     /// noise taps bit 0 alone, so the contents recirculate.
     fn shift(&mut self, variant: Variant) {
@@ -328,36 +326,28 @@ impl Psg {
                     _ => RegisterKind::Attenuation,
                 },
             };
-            self.write_latch_data(byte & 0x0F);
+            self.write_latched(byte & 0x0F, Transfer::Address);
         } else {
-            self.write_data(byte & 0x3F);
+            self.write_latched(byte & 0x3F, Transfer::Data);
         }
         if self.variant.has_ready() {
             self.busy_clocks = READY_LOW_CLOCKS;
         }
     }
 
-    /// The addressing byte's low nibble: the latched register's low bits.
-    fn write_latch_data(&mut self, nibble: u8) {
+    /// A transfer into the latched register. Only a tone period is wide
+    /// enough to take both halves; every other register takes the whole
+    /// value from either transfer.
+    fn write_latched(&mut self, value: u8, transfer: Transfer) {
         match (self.latched.kind, self.latched.channel) {
-            (RegisterKind::Attenuation, channel) => self.volumes[channel.index()] = nibble,
-            (RegisterKind::Frequency, Channel::Noise) => self.write_noise_control(nibble),
+            (RegisterKind::Attenuation, channel) => self.volumes[channel.index()] = value & 0x0F,
+            (RegisterKind::Frequency, Channel::Noise) => self.write_noise_control(value),
             (RegisterKind::Frequency, tone) => {
                 let period = &mut self.tones[tone.index()].period;
-                *period = (*period & 0x3F0) | u16::from(nibble);
-            }
-        }
-    }
-
-    /// A data byte's six bits: a tone register's high bits, or the whole of a
-    /// register too narrow to need two transfers.
-    fn write_data(&mut self, bits: u8) {
-        match (self.latched.kind, self.latched.channel) {
-            (RegisterKind::Attenuation, channel) => self.volumes[channel.index()] = bits & 0x0F,
-            (RegisterKind::Frequency, Channel::Noise) => self.write_noise_control(bits),
-            (RegisterKind::Frequency, tone) => {
-                let period = &mut self.tones[tone.index()].period;
-                *period = (*period & 0x00F) | (u16::from(bits) << 4);
+                *period = match transfer {
+                    Transfer::Address => (*period & 0x3F0) | u16::from(value),
+                    Transfer::Data => (*period & 0x00F) | (u16::from(value) << 4),
+                };
             }
         }
     }
@@ -383,10 +373,11 @@ impl Psg {
     fn internal_clock(&mut self) {
         for channel in 0..TONE_CHANNELS {
             let period = self.variant.effective_period(self.tones[channel].period);
-            self.tones[channel].advance(period);
+            let tone = &mut self.tones[channel];
+            advance_divider(&mut tone.counter, &mut tone.output, period);
         }
         let period = self.noise_period();
-        if self.noise.advance(period) {
+        if advance_divider(&mut self.noise.counter, &mut self.noise.output, period) {
             self.noise.shift(self.variant);
         }
     }

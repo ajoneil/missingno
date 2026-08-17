@@ -12,7 +12,7 @@
 //! software can observe them.
 
 mod apply;
-pub mod decode;
+mod decode;
 pub mod disasm;
 pub mod isa;
 mod sequencer;
@@ -21,7 +21,7 @@ pub use isa::Mos6502;
 
 use sequencer::{InterruptKind, State};
 
-pub mod flags {
+pub(crate) mod flags {
     pub const CARRY: u8 = 0x01;
     pub const ZERO: u8 = 0x02;
     pub const INTERRUPT_DISABLE: u8 = 0x04;

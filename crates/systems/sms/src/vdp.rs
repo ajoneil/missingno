@@ -340,11 +340,6 @@ impl Vdp {
         value
     }
 
-    /// Data reads have buffer/address side effects; this has none.
-    pub fn peek_data(&self) -> u8 {
-        self.read_buffer
-    }
-
     pub fn write_data(&mut self, value: u8) {
         self.control_latch = None;
         self.read_buffer = value;

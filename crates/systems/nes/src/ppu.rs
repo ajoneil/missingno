@@ -16,6 +16,10 @@ pub const PIXELS_PER_LINE: usize = 256;
 pub const VBLANK_LINE: u16 = 241;
 pub const PRERENDER_LINE: u16 = 261;
 
+/// NTSC pixel aspect at the 2C02's 5.37 MHz dot clock — a display-side
+/// calibratable stage.
+pub const PIXEL_ASPECT: f32 = 8.0 / 7.0;
+
 /// One finished frame of 6-bit NES colour values (palette-RAM resolved).
 pub struct Frame {
     pub pixels: Vec<u8>,
@@ -86,8 +90,9 @@ impl Ppu {
         self.dot
     }
 
-    pub fn scroll_state(&self) -> (u16, u16, u8) {
-        (self.v, self.t, self.fine_x)
+    /// The live VRAM address — the scroll position the raster is fetching at.
+    pub fn scroll_v(&self) -> u16 {
+        self.v
     }
 
     pub fn take_frame(&mut self) -> Option<Frame> {
@@ -344,13 +349,7 @@ impl Ppu {
 
     /// Palette RAM with the sprite-backdrop mirrors ($3F10/14/18/1C).
     fn palette_entry(&self, index: u8) -> u8 {
-        let index = (index & 0x1F) as usize;
-        let index = if index >= 0x10 && index.is_multiple_of(4) {
-            index - 0x10
-        } else {
-            index
-        };
-        self.palette[index]
+        self.palette[palette_index(index as usize)]
     }
 
     // --- CPU-visible registers ($2000-$2007) -----------------------------
@@ -456,16 +455,19 @@ impl Ppu {
                     Self::nametable_offset(0x2000 | (address & 0x0FFF), cartridge.mirroring);
                 self.nametables[offset] = value;
             }
-            _ => {
-                let index = (address as usize) & 0x1F;
-                let index = if index >= 0x10 && index.is_multiple_of(4) {
-                    index - 0x10
-                } else {
-                    index
-                };
-                self.palette[index] = value;
-            }
+            _ => self.palette[palette_index(address as usize)] = value,
         }
+    }
+}
+
+/// Palette RAM index, folding the sprite-backdrop mirrors onto the
+/// background entries they shadow.
+fn palette_index(address: usize) -> usize {
+    let index = address & 0x1F;
+    if index >= 0x10 && index.is_multiple_of(4) {
+        index - 0x10
+    } else {
+        index
     }
 }
 

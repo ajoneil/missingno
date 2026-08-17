@@ -19,10 +19,10 @@
 //! cases, so its cycle-level timing is oracle-unverified.
 
 mod apply;
-pub mod decode;
-pub mod disasm;
+mod decode;
+mod disasm;
 pub mod inspect;
-pub mod isa;
+mod isa;
 mod sequencer;
 mod state;
 
@@ -261,16 +261,16 @@ impl Cpu {
         &self.trace
     }
 
-    pub fn bc(&self) -> u16 {
+    pub(crate) fn bc(&self) -> u16 {
         u16::from_be_bytes([self.b, self.c])
     }
-    pub fn de(&self) -> u16 {
+    pub(crate) fn de(&self) -> u16 {
         u16::from_be_bytes([self.d, self.e])
     }
-    pub fn hl(&self) -> u16 {
+    pub(crate) fn hl(&self) -> u16 {
         u16::from_be_bytes([self.h, self.l])
     }
-    pub fn af(&self) -> u16 {
+    pub(crate) fn af(&self) -> u16 {
         u16::from_be_bytes([self.a, self.f])
     }
     fn set_bc(&mut self, value: u16) {
@@ -334,11 +334,11 @@ impl Cpu {
     /// Run to the next instruction boundary. Returns the number of T-states
     /// consumed.
     pub fn step(&mut self, bus: &mut impl Bus) -> u32 {
-        if self.at_instruction_boundary() {
+        loop {
             self.tick(bus);
-        }
-        while !self.at_instruction_boundary() {
-            self.tick(bus);
+            if self.at_instruction_boundary() {
+                break;
+            }
         }
         self.trace.len() as u32
     }

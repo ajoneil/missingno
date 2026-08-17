@@ -475,7 +475,7 @@ impl Cpu {
                 self.apply_read(e.instr.op, value);
                 finish!(self);
             }
-            (ZeroPage, 1) | (ZeroPageX | ZeroPageY, 1) | (Absolute | AbsoluteX | AbsoluteY, 1) => {
+            (ZeroPage | ZeroPageX | ZeroPageY | Absolute | AbsoluteX | AbsoluteY, 1) => {
                 e.lo = read!(self, bus, self.pc);
                 self.pc = self.pc.wrapping_add(1);
                 next!(self, e);
@@ -514,7 +514,7 @@ impl Cpu {
                 self.pc = self.pc.wrapping_add(1);
                 next!(self, e);
             }
-            (AbsoluteX | AbsoluteY, 3) => {
+            (AbsoluteX | AbsoluteY, 3) | (IndirectY, 4) => {
                 let sum = e.lo as u16 + index as u16;
                 let unfixed = u16::from_le_bytes([sum as u8, e.hi]);
                 let value = read!(self, bus, unfixed);
@@ -525,43 +525,7 @@ impl Cpu {
                 e.addr = unfixed.wrapping_add(0x100);
                 next!(self, e);
             }
-            (IndirectX | IndirectY, 1) => {
-                e.ptr = read!(self, bus, self.pc);
-                self.pc = self.pc.wrapping_add(1);
-                next!(self, e);
-            }
-            (IndirectX, 2) => {
-                read!(self, bus, e.ptr as u16);
-                next!(self, e);
-            }
-            (IndirectX, 3) => {
-                e.lo = read!(self, bus, e.ptr.wrapping_add(index) as u16);
-                next!(self, e);
-            }
-            (IndirectX, 4) => {
-                e.hi = read!(self, bus, e.ptr.wrapping_add(index).wrapping_add(1) as u16);
-                e.addr = u16::from_le_bytes([e.lo, e.hi]);
-                next!(self, e);
-            }
-            (IndirectY, 2) => {
-                e.lo = read!(self, bus, e.ptr as u16);
-                next!(self, e);
-            }
-            (IndirectY, 3) => {
-                e.hi = read!(self, bus, e.ptr.wrapping_add(1) as u16);
-                next!(self, e);
-            }
-            (IndirectY, 4) => {
-                let sum = e.lo as u16 + index as u16;
-                let unfixed = u16::from_le_bytes([sum as u8, e.hi]);
-                let value = read!(self, bus, unfixed);
-                if sum < 0x100 {
-                    self.apply_read(e.instr.op, value);
-                    finish!(self);
-                }
-                e.addr = unfixed.wrapping_add(0x100);
-                next!(self, e);
-            }
+            (IndirectX, 1..=4) | (IndirectY, 1..=3) => self.indirect_pointer_cycle(bus, e, index),
             _ => unreachable!(),
         }
     }
@@ -573,19 +537,17 @@ impl Cpu {
             (ZeroPage | ZeroPageX | ZeroPageY | Absolute | AbsoluteX | AbsoluteY, 1) => {
                 e.lo = read!(self, bus, self.pc);
                 self.pc = self.pc.wrapping_add(1);
+                if e.instr.mode == ZeroPage {
+                    e.addr = e.lo as u16;
+                }
                 next!(self, e);
-            }
-            (ZeroPage, 2) => {
-                let value = self.write_value(e.instr.op, 0);
-                bus.write(e.lo as u16, value);
-                finish!(self);
             }
             (ZeroPageX | ZeroPageY, 2) => {
                 read!(self, bus, e.lo as u16);
                 e.addr = e.lo.wrapping_add(index) as u16;
                 next!(self, e);
             }
-            (ZeroPageX | ZeroPageY, 3) | (IndirectX, 5) => {
+            (ZeroPage, 2) | (ZeroPageX | ZeroPageY, 3) | (IndirectX, 5) => {
                 let value = self.write_value(e.instr.op, e.hi);
                 bus.write(e.addr, value);
                 finish!(self);
@@ -601,7 +563,7 @@ impl Cpu {
                 bus.write(e.addr, value);
                 finish!(self);
             }
-            (AbsoluteX | AbsoluteY, 3) => {
+            (AbsoluteX | AbsoluteY, 3) | (IndirectY, 4) => {
                 let sum = e.lo as u16 + index as u16;
                 let unfixed = u16::from_le_bytes([sum as u8, e.hi]);
                 read!(self, bus, unfixed);
@@ -613,39 +575,7 @@ impl Cpu {
                 bus.write(e.addr, value);
                 finish!(self);
             }
-            (IndirectX | IndirectY, 1) => {
-                e.ptr = read!(self, bus, self.pc);
-                self.pc = self.pc.wrapping_add(1);
-                next!(self, e);
-            }
-            (IndirectX, 2) => {
-                read!(self, bus, e.ptr as u16);
-                next!(self, e);
-            }
-            (IndirectX, 3) => {
-                e.lo = read!(self, bus, e.ptr.wrapping_add(index) as u16);
-                next!(self, e);
-            }
-            (IndirectX, 4) => {
-                e.hi = read!(self, bus, e.ptr.wrapping_add(index).wrapping_add(1) as u16);
-                e.addr = u16::from_le_bytes([e.lo, e.hi]);
-                next!(self, e);
-            }
-            (IndirectY, 2) => {
-                e.lo = read!(self, bus, e.ptr as u16);
-                next!(self, e);
-            }
-            (IndirectY, 3) => {
-                e.hi = read!(self, bus, e.ptr.wrapping_add(1) as u16);
-                next!(self, e);
-            }
-            (IndirectY, 4) => {
-                let sum = e.lo as u16 + index as u16;
-                let unfixed = u16::from_le_bytes([sum as u8, e.hi]);
-                read!(self, bus, unfixed);
-                e.addr = self.indexed_store_address(e.instr.op, e.hi, sum);
-                next!(self, e);
-            }
+            (IndirectX, 1..=4) | (IndirectY, 1..=3) => self.indirect_pointer_cycle(bus, e, index),
             _ => unreachable!(),
         }
     }
@@ -673,7 +603,7 @@ impl Cpu {
                 e.addr = u16::from_le_bytes([e.lo, e.hi]);
                 next!(self, e);
             }
-            (AbsoluteX | AbsoluteY, 3) => {
+            (AbsoluteX | AbsoluteY, 3) | (IndirectY, 4) => {
                 let sum = e.lo as u16 + index as u16;
                 let unfixed = u16::from_le_bytes([sum as u8, e.hi]);
                 read!(self, bus, unfixed);
@@ -712,6 +642,16 @@ impl Cpu {
                 bus.write(e.addr, e.data);
                 finish!(self);
             }
+            (IndirectX, 1..=4) | (IndirectY, 1..=3) => self.indirect_pointer_cycle(bus, e, index),
+            _ => unreachable!(),
+        }
+    }
+
+    /// The pointer fetches (zp,X) and (zp),Y share, ahead of whatever the
+    /// access class does with the address they build.
+    fn indirect_pointer_cycle(&mut self, bus: &mut impl Bus, mut e: Exec, index: u8) {
+        use Mode::*;
+        match (e.instr.mode, e.cycle) {
             (IndirectX | IndirectY, 1) => {
                 e.ptr = read!(self, bus, self.pc);
                 self.pc = self.pc.wrapping_add(1);
@@ -736,17 +676,6 @@ impl Cpu {
             }
             (IndirectY, 3) => {
                 e.hi = read!(self, bus, e.ptr.wrapping_add(1) as u16);
-                next!(self, e);
-            }
-            (IndirectY, 4) => {
-                let sum = e.lo as u16 + index as u16;
-                let unfixed = u16::from_le_bytes([sum as u8, e.hi]);
-                read!(self, bus, unfixed);
-                e.addr = if sum < 0x100 {
-                    unfixed
-                } else {
-                    unfixed.wrapping_add(0x100)
-                };
                 next!(self, e);
             }
             _ => unreachable!(),

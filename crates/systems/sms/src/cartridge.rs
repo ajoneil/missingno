@@ -39,8 +39,4 @@ impl Cartridge {
     pub fn write_bank(&mut self, slot: usize, bank: u8) {
         self.banks[slot] = bank;
     }
-
-    pub fn bank(&self, slot: usize) -> u8 {
-        self.banks[slot]
-    }
 }
