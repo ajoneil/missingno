@@ -41,9 +41,17 @@ impl Section {
             Section::GameSettings => "Game Settings",
         }
     }
+
+    fn icon(self) -> Icon {
+        match self {
+            Section::Activity => Icon::Play,
+            Section::GameSettings => Icon::Sliders,
+        }
+    }
 }
 
 const SECTIONS: [Section; 2] = [Section::Activity, Section::GameSettings];
+const RAIL_WIDTH: f32 = 220.0;
 
 pub struct DetailData<'a> {
     pub entry: &'a GameEntry,
@@ -79,26 +87,34 @@ pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
         },
     };
 
-    column![game_header(&data), tabs(data.section), body]
+    column![game_header(&data), row![rail(data.section), body]]
         .height(Fill)
         .into()
 }
 
 /// Which body the header stands over.
-fn tabs(current: Section) -> Element<'static, app::Message> {
-    let mut tabs = row![].spacing(s());
+fn rail(current: Section) -> Element<'static, app::Message> {
+    let mut col = column![].spacing(s());
     for section in SECTIONS {
-        let label = text(section.label());
-        tabs = tabs.push(if section == current {
-            buttons::selected(label)
+        let label = row![icons::m(section.icon()), text(section.label())]
+            .spacing(s())
+            .align_y(Center);
+        col = col.push(if section == current {
+            buttons::selected(label).width(Fill)
         } else {
-            buttons::subtle(label).on_press(app::Message::Detail(
-                app::DetailMessage::SelectSection(section),
-            ))
+            buttons::subtle(label)
+                .on_press(app::Message::Detail(app::DetailMessage::SelectSection(
+                    section,
+                )))
+                .width(Fill)
         });
     }
 
-    container(tabs).padding([s(), m()]).into()
+    container(col.padding(m()))
+        .width(RAIL_WIDTH)
+        .height(Fill)
+        .style(containers::sidebar)
+        .into()
 }
 
 /// Unified header: back + cover + identity + play + settings.

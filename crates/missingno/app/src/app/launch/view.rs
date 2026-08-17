@@ -24,8 +24,8 @@ use crate::app::ui::{
 const ROW_LABEL_WIDTH: f32 = 170.0;
 /// The control column: a pick list is this wide whatever its entries say, so a
 /// board with a long name does not stretch the row.
-const CONTROL_WIDTH: f32 = 260.0;
-const PANEL_WIDTH: f32 = 560.0;
+const CONTROL_WIDTH: f32 = 400.0;
+const PANEL_WIDTH: f32 = 660.0;
 const MAX_PANEL_HEIGHT: f32 = 640.0;
 
 /// Everything one launch panel's rows read: the options a family publishes,
