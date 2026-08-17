@@ -7,7 +7,6 @@ const USER_AGENT: &str = concat!("missingno/", env!("CARGO_PKG_VERSION"));
 pub struct GameInfo {
     pub name: String,
     pub platform: Option<String>,
-    pub description: Option<String>,
     pub cover_art: Option<Vec<u8>>,
     pub year: Option<String>,
     pub publisher: Option<String>,
@@ -99,7 +98,6 @@ pub fn lookup(sha1: &str) -> Result<Option<GameInfo>, String> {
     Ok(Some(GameInfo {
         name,
         platform,
-        description: None,
         cover_art,
         year,
         publisher,

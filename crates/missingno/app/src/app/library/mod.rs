@@ -151,7 +151,6 @@ impl GameEntry {
         }
         self.publisher = info.publisher;
         self.year = info.year;
-        self.description = info.description;
         self.wikipedia_url = info.wikipedia_url;
         self.igdb_url = info.igdb_url;
         self.enrichment_attempted = true;
