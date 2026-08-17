@@ -12,6 +12,7 @@
 //! Compared against the CGB reference PNG.
 
 use crate::common;
+use crate::common::System;
 use missingno_gb::joypad::{Button, DirectionalPad};
 use missingno_gbc::GameBoyColor;
 
@@ -29,15 +30,10 @@ fn press_button(gbc: &mut GameBoyColor, button: Button) {
 }
 
 fn check_screen(gbc: &GameBoyColor, reference: &str) {
-    let actual = gbc.screen().to_greyscale_bytes();
-    let expected = common::load_cgb_reference_png(reference);
-    common::assert_pixels_match(
+    common::assert_cgb_screen_matches(
         &format!("rtc3test vs {reference}"),
-        &actual,
-        &expected,
-        160,
-        10,
-        common::hex_byte,
+        &gbc.screen_greyscale(),
+        reference,
     );
 }
 

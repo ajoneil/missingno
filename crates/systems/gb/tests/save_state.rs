@@ -13,7 +13,7 @@
 
 use missingno_core::system::{StateError, SystemConsole};
 use missingno_gb::system::{GbConsole, create_console};
-use missingno_test_support::roundtrip::step_frame_hash;
+use missingno_test_support::roundtrip;
 
 /// Wrap a freshly booted DMG console in the system seam.
 fn dmg_console(rom: &str) -> GbConsole<missingno_gb::Dmg> {
@@ -21,50 +21,8 @@ fn dmg_console(rom: &str) -> GbConsole<missingno_gb::Dmg> {
     create_console(run.gb, |_| None)
 }
 
-/// The round-trip: `warmup` frames, save, `run` frames capturing hashes, load,
-/// `run` frames again. The frame-hash continuations must match, and the record
-/// read straight back after the load must equal the record at save (a faithful
-/// boundary restore).
 fn assert_round_trips(rom: &str, warmup: usize, run: usize, converge_after: usize, lively: bool) {
-    let mut console = dmg_console(rom);
-    for _ in 0..warmup {
-        console.step_frame();
-    }
-
-    let save = console.save_state().expect("DMG authors a save state");
-    let record_at_save = console.read_state().expect("DMG reads its state");
-
-    let baseline: Vec<u64> = (0..run).map(|_| step_frame_hash(&mut console)).collect();
-
-    console.load_state(&save).expect("the save loads back");
-
-    // The scalar machine record restores exactly at the boundary.
-    assert_eq!(
-        console.read_state(),
-        Some(record_at_save),
-        "the record after load differs from the record at save"
-    );
-
-    let replay: Vec<u64> = (0..run).map(|_| step_frame_hash(&mut console)).collect();
-
-    // The frame-hash sequences are identical once the display reconverges
-    // (`converge_after` frames — one when the save caught mid-animation, zero
-    // for a static continuation).
-    assert_eq!(
-        baseline[converge_after..],
-        replay[converge_after..],
-        "the frame-hash continuations diverged"
-    );
-    if lively {
-        assert!(
-            baseline
-                .iter()
-                .collect::<std::collections::HashSet<_>>()
-                .len()
-                > 1,
-            "the continuation should exercise more than one frame"
-        );
-    }
+    roundtrip::assert_round_trips(&mut dmg_console(rom), warmup, run, converge_after, lively);
 }
 
 #[test]

@@ -1,4 +1,5 @@
 use crate::common;
+use crate::common::System;
 
 fn run_age_register_test(rom_file: &str) {
     let rom_path = format!("age-test-roms/{rom_file}");
@@ -35,16 +36,10 @@ fn run_age_screenshot_test(rom_file: &str, reference_file: &str) {
         "AGE test {rom_file} timed out without reaching LD B,B"
     );
 
-    let actual = common::screen_to_greyscale(run.gb.screen());
-    let expected = common::load_reference_png(&reference_path);
-
-    common::assert_pixels_match(
+    common::assert_screen_matches(
         &format!("AGE test {rom_file}"),
-        &actual,
-        &expected,
-        160,
-        10,
-        common::hex_byte,
+        &run.screen_greyscale(),
+        &reference_path,
     );
 }
 

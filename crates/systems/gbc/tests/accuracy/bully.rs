@@ -4,6 +4,7 @@
 //! frame on CGB under our fixed greyscale palette.
 
 use crate::common;
+use crate::common::System;
 
 #[test]
 fn bully() {
@@ -18,8 +19,5 @@ fn bully() {
         while !gbc.step().new_screen {}
     }
 
-    let actual = gbc.screen().to_greyscale_bytes();
-    let expected = common::load_reference_png("bully/bully-dmg.png");
-
-    common::assert_pixels_match("Bully", &actual, &expected, 160, 10, common::hex_byte);
+    common::assert_screen_matches("Bully", &gbc.screen_greyscale(), "bully/bully-dmg.png");
 }

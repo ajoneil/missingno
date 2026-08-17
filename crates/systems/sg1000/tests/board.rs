@@ -6,6 +6,7 @@
 use missingno_core::ports::PortId;
 use missingno_core::system::{ControlId, ControlInput, ControlRole, ControlSite};
 use missingno_sg1000::console::{Sg1000, TSTATES_PER_FRAME};
+use missingno_test_support::asm::Z80Asm;
 use missingno_test_support::verdict::{Outcome, Poll, poll_verdict};
 
 /// The chip crate's corpus: the same self-checking `.sg` ROMs, driven here by
@@ -74,42 +75,6 @@ fn a_graphics_scene_reaches_a_non_blank_frame() {
     assert!(lit > 0, "the scene renders something");
 }
 
-struct Asm {
-    bytes: Vec<u8>,
-}
-
-impl Asm {
-    fn new() -> Self {
-        Asm { bytes: Vec::new() }
-    }
-    fn here(&self) -> u16 {
-        self.bytes.len() as u16
-    }
-    fn emit(&mut self, bytes: &[u8]) {
-        self.bytes.extend_from_slice(bytes);
-    }
-    fn ld_a(&mut self, value: u8) {
-        self.emit(&[0x3E, value]);
-    }
-    fn in_port(&mut self, port: u8) {
-        self.emit(&[0xDB, port]);
-    }
-    fn out_port(&mut self, port: u8) {
-        self.emit(&[0xD3, port]);
-    }
-    fn ld_addr_a(&mut self, address: u16) {
-        self.emit(&[0x32, address as u8, (address >> 8) as u8]);
-    }
-    fn jp(&mut self, target: u16) {
-        self.emit(&[0xC3, target as u8, (target >> 8) as u8]);
-    }
-    /// Pad to the smallest flat image the board mirrors through `/EXM2`.
-    fn into_rom(mut self) -> Vec<u8> {
-        self.bytes.resize(0x8000, 0);
-        self.bytes
-    }
-}
-
 fn press(console: &mut Sg1000, port: PortId, role: ControlRole) {
     console.apply_control(
         ControlId {
@@ -122,14 +87,14 @@ fn press(console: &mut Sg1000, port: PortId, role: ControlRole) {
 
 /// Read the four conventional joystick addresses into work RAM.
 fn joystick_probe() -> Vec<u8> {
-    let mut asm = Asm::new();
+    let mut asm = Z80Asm::new();
     for (index, port) in [0xDCu8, 0xDD, 0xDE, 0xDF].into_iter().enumerate() {
         asm.in_port(port);
         asm.ld_addr_a(0xC010 + index as u16);
     }
     let spin = asm.here();
     asm.jp(spin);
-    asm.into_rom()
+    asm.into_rom(0x8000)
 }
 
 fn run_joystick_probe(console: &mut Sg1000) -> [u8; 4] {
@@ -215,7 +180,7 @@ fn the_top_nibble_of_the_second_byte_stays_high() {
 /// the Z80's /WAIT — so the OUT that fed it is the cycle that stretches.
 #[test]
 fn a_psg_write_stretches_its_own_out() {
-    let mut asm = Asm::new();
+    let mut asm = Z80Asm::new();
     asm.ld_a(0x9F);
     asm.out_port(0x00); // the unused block: nothing answers, nothing stalls
     asm.ld_a(0x90); // channel 0 attenuation, wide open
@@ -223,7 +188,7 @@ fn a_psg_write_stretches_its_own_out() {
     let spin = asm.here();
     asm.jp(spin);
 
-    let mut console = Sg1000::new(&asm.into_rom(), None).unwrap();
+    let mut console = Sg1000::new(&asm.into_rom(0x8000), None).unwrap();
     console.step_instruction();
     console.step_instruction();
     let unstalled = console.cpu.bus_trace().len();

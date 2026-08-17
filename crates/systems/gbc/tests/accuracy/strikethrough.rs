@@ -3,21 +3,16 @@
 //! compared against the CGB reference, not the DMG one.
 
 use crate::common;
+use crate::common::System;
 
 #[test]
 fn strikethrough() {
     let mut gbc = common::load_rom("strikethrough/strikethrough.gb");
     common::run_frames(&mut gbc, 30);
 
-    let actual = gbc.screen().to_greyscale_bytes();
-    let expected = common::load_cgb_reference_png("strikethrough/strikethrough-cgb.png");
-
-    common::assert_pixels_match(
+    common::assert_cgb_screen_matches(
         "Strikethrough",
-        &actual,
-        &expected,
-        160,
-        10,
-        common::hex_byte,
+        &gbc.screen_greyscale(),
+        "strikethrough/strikethrough-cgb.png",
     );
 }

@@ -1,4 +1,5 @@
 use crate::common;
+use crate::common::System;
 
 #[test]
 fn strikethrough() {
@@ -6,15 +7,9 @@ fn strikethrough() {
     // Strikethrough displays results after ~0.5s; doesn't terminate with a loop
     common::run_frames(&mut run, 30);
 
-    let actual = common::screen_to_greyscale(run.gb.screen());
-    let expected = common::load_reference_png("strikethrough/strikethrough-dmg.png");
-
-    common::assert_pixels_match(
+    common::assert_screen_matches(
         "Strikethrough",
-        &actual,
-        &expected,
-        160,
-        10,
-        common::hex_byte,
+        &run.screen_greyscale(),
+        "strikethrough/strikethrough-dmg.png",
     );
 }

@@ -13,11 +13,14 @@
 use std::path::{Path, PathBuf};
 
 use crate::{
-    BootRom, Console, GameBoy, Model, cartridge::Cartridge, cpu::Cpu, execute::StepResult,
-    interrupts, ppu::screen::Screen,
+    BootRom, Console, GameBoy, Model, ScreenBuffer, cartridge::Cartridge, cpu::Cpu,
+    execute::StepResult, interrupts,
 };
 
 use crate::system::ConsoleUi;
+
+use missingno_test_support::compare::{assert_pixels_match, hex_byte};
+use missingno_test_support::reference::ReferencePng;
 
 #[cfg(feature = "morepork")]
 use crate::trace::{TraceScope, Tracer};
@@ -26,9 +29,9 @@ use crate::trace::{TraceScope, Tracer};
 /// shared accuracy test helpers. Implemented by `GameBoy` here and by
 /// downstream systems (e.g. `GameBoyColor`).
 ///
-/// `screen()` deliberately isn't on this trait — the DMG screen stores
-/// 2-bit shade indices while the CGB screen stores RGB pixels, so
-/// callers needing screenshot comparison go through the concrete type.
+/// The screen crosses this seam only as greyscale bytes — the DMG stores
+/// 2-bit shade indices and the CGB stores colours, so a caller comparing
+/// against a colour reference goes through the concrete type.
 pub trait System {
     fn step(&mut self) -> StepResult;
     fn read(&self, address: u16) -> u8;
@@ -49,6 +52,9 @@ pub trait System {
     /// gambatte audio tests to check whether the test ROM produced
     /// any sound (`_outaudio1`) or was silent (`_outaudio0`).
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)>;
+    /// The displayed screen as flat greyscale bytes, on the DMG reference
+    /// shade ramp the shade-pattern references compare against.
+    fn screen_greyscale(&self) -> Vec<u8>;
 }
 
 impl<M: Model> System for Console<M> {
@@ -79,12 +85,31 @@ impl<M: Model> System for Console<M> {
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
         Console::<M>::drain_audio_samples(self)
     }
+    fn screen_greyscale(&self) -> Vec<u8> {
+        self.screen().to_greyscale_bytes()
+    }
 }
 
 pub fn rom_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/accuracy/roms")
         .join(relative)
+}
+
+/// A reference PNG from the shared roms tree, as one shade byte per pixel.
+pub fn load_reference_png(relative: &str) -> Vec<u8> {
+    ReferencePng::load(&rom_path(relative)).greyscale()
+}
+
+/// Compare a rendered screen against the greyscale reference PNG at `path`.
+pub fn assert_screen_matches_png(subject: &str, screen: &[u8], path: &Path) {
+    let expected = ReferencePng::load(path).greyscale();
+    assert_pixels_match(subject, screen, &expected, 160, 10, hex_byte);
+}
+
+/// Compare a rendered screen against a reference PNG in the shared roms tree.
+pub fn assert_screen_matches(subject: &str, screen: &[u8], reference: &str) {
+    assert_screen_matches_png(subject, screen, &rom_path(reference));
 }
 
 /// A test run wrapping a `GameBoy` and an optional trace writer.
@@ -202,6 +227,9 @@ impl<M: ConsoleUi> System for TestRun<M> {
     }
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
         self.gb.drain_audio_samples()
+    }
+    fn screen_greyscale(&self) -> Vec<u8> {
+        self.gb.screen_greyscale()
     }
 }
 
@@ -487,10 +515,265 @@ pub fn format_wram_dump<S: System>(s: &S, start: u16, len: u16) -> String {
     out
 }
 
-/// The screen as the flat greyscale buffer the shade-pattern references compare
-/// against.
-pub fn screen_to_greyscale(screen: &Screen) -> Vec<u8> {
-    screen.to_greyscale_bytes()
+/// Drive a Mooneye ROM to its completion loop and require the Fibonacci
+/// pass registers, reporting which sub-test the register walk stalled at.
+pub fn assert_mooneye_verdict<S: System>(s: &mut S, rom_path: &str, timeout_frames: u32) {
+    let mut serial_output = String::new();
+    let found_loop = run_until_infinite_loop(s, timeout_frames);
+    let bytes = s.drain_serial_output();
+    if !bytes.is_empty() {
+        serial_output.push_str(&String::from_utf8_lossy(&bytes));
+    }
+    assert!(
+        found_loop,
+        "Mooneye test {rom_path} timed out without reaching infinite loop"
+    );
+    let cpu = s.cpu();
+    if check_mooneye_pass(cpu) {
+        return;
+    }
+
+    // Most Mooneye tests set registers to Fibonacci values (3,5,8,13,21,34) in
+    // order as sub-tests pass. Some (e.g. lcdon_timing-GS) use quit_inline,
+    // which sets ALL registers to 0x42 on any failure — detect that pattern so
+    // the report doesn't misattribute the failure to sub-test 1.
+    let all_same =
+        cpu.b == cpu.c && cpu.c == cpu.d && cpu.d == cpu.e && cpu.e == cpu.h && cpu.h == cpu.l;
+    if all_same && cpu.b != 0 {
+        panic!(
+            "Mooneye test {rom_path} failed (all registers = 0x{:02X}, ROM uses \
+             uniform failure — sub-test number unknown). Serial: {:?}",
+            cpu.b, serial_output,
+        );
+    }
+
+    let fib = [
+        (cpu.b, 3, "B"),
+        (cpu.c, 5, "C"),
+        (cpu.d, 8, "D"),
+        (cpu.e, 13, "E"),
+        (cpu.h, 21, "H"),
+        (cpu.l, 34, "L"),
+    ];
+    let passed = fib
+        .iter()
+        .take_while(|(val, expected, _)| val == expected)
+        .count();
+    let failed_reg = if passed < 6 { fib[passed].2 } else { "?" };
+    let failed_val = if passed < 6 { fib[passed].0 } else { 0 };
+    eprintln!(
+        "Sub-tests passed: {passed}/6 (failed at register {failed_reg}, got 0x{failed_val:02X})"
+    );
+    panic!(
+        "Mooneye test {rom_path} failed at sub-test {} (register {failed_reg}=0x{failed_val:02X}, expected {}). \
+         Registers: {} Serial: {:?}",
+        passed + 1,
+        if passed < 6 { fib[passed].1 } else { 0 },
+        format_registers(cpu),
+        serial_output,
+    );
+}
+
+/// Drive a Blargg ROM until it reports over the serial link, and require a pass.
+pub fn assert_blargg_serial<S: System>(s: &mut S, rom_path: &str, timeout_frames: u32) {
+    let output = run_until_serial_match(s, &["Passed", "Failed"], timeout_frames);
+    assert!(
+        output.contains("Passed"),
+        "Blargg test {rom_path} failed. Serial output:\n{output}"
+    );
+}
+
+/// Drive a Blargg ROM to its completion loop and compare its result screen
+/// against a greyscale reference.
+pub fn assert_blargg_screen<S: System>(
+    s: &mut S,
+    rom_path: &str,
+    reference: &str,
+    timeout_frames: u32,
+) {
+    let found_loop = run_until_infinite_loop(s, timeout_frames);
+    assert!(
+        found_loop,
+        "Blargg test {rom_path} timed out without reaching infinite loop"
+    );
+    assert_screen_matches(
+        &format!("Blargg test {rom_path} vs {reference}"),
+        &s.screen_greyscale(),
+        reference,
+    );
+}
+
+/// Drive a Scribbltest to its `LD B,B` breakpoint and compare its screen.
+pub fn assert_scribbltest<S: System>(s: &mut S, rom_name: &str, timeout_frames: u32) {
+    let found_breakpoint = run_until_breakpoint(s, timeout_frames);
+    assert!(
+        found_breakpoint,
+        "Scribbltest {rom_name} timed out without reaching LD B,B breakpoint"
+    );
+    assert_screen_matches(
+        &format!("Scribbltest {rom_name}"),
+        &s.screen_greyscale(),
+        &format!("scribbltests/{rom_name}-dmg.png"),
+    );
+}
+
+/// Run a TurtleTest long enough to display its result and compare the screen.
+/// The ROMs don't terminate in a loop, so this is a fixed frame budget.
+pub fn assert_turtle_test<S: System>(s: &mut S, rom_name: &str) {
+    run_frames(s, 30);
+    assert_screen_matches(
+        &format!("TurtleTest {rom_name}"),
+        &s.screen_greyscale(),
+        &format!("turtle-tests/{rom_name}-dmg.png"),
+    );
+}
+
+// Decodes the wilbertpol mooneye fork's `Runtime-State` ramsection — `regs_save`
+// (actual values), `regs_flags` (bit-per-assertion), `regs_assert` (expected values).
+// Layout is: 8 + 1 + 8 = 17 bytes at WRAM slot 2 base. Base is wlalink's convention
+// for unpositioned ramsections, not a source-pinned address.
+const RECORD_BASE: u16 = 0xC000;
+const RECORD_LEN: u16 = 17;
+
+#[derive(Clone, Copy)]
+enum AssertReg {
+    A,
+    F,
+    B,
+    C,
+    D,
+    E,
+    H,
+    L,
+}
+
+impl AssertReg {
+    const ITER: [AssertReg; 8] = [
+        AssertReg::A,
+        AssertReg::F,
+        AssertReg::B,
+        AssertReg::C,
+        AssertReg::D,
+        AssertReg::E,
+        AssertReg::H,
+        AssertReg::L,
+    ];
+
+    fn flag_bit(self) -> u8 {
+        match self {
+            AssertReg::A => 0,
+            AssertReg::F => 1,
+            AssertReg::B => 2,
+            AssertReg::C => 3,
+            AssertReg::D => 4,
+            AssertReg::E => 5,
+            AssertReg::H => 6,
+            AssertReg::L => 7,
+        }
+    }
+
+    // Byte offset within `reg_dump`. Order is `f, a, c, b, e, d, l, h`, matching
+    // `push hl; push de; push bc; push af` from `regs_save + 8` (low to high).
+    fn dump_offset(self) -> usize {
+        match self {
+            AssertReg::F => 0,
+            AssertReg::A => 1,
+            AssertReg::C => 2,
+            AssertReg::B => 3,
+            AssertReg::E => 4,
+            AssertReg::D => 5,
+            AssertReg::L => 6,
+            AssertReg::H => 7,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            AssertReg::A => "a",
+            AssertReg::F => "f",
+            AssertReg::B => "b",
+            AssertReg::C => "c",
+            AssertReg::D => "d",
+            AssertReg::E => "e",
+            AssertReg::H => "h",
+            AssertReg::L => "l",
+        }
+    }
+}
+
+struct FailedAssertion {
+    reg: AssertReg,
+    expected: u8,
+    actual: u8,
+}
+
+fn decode_assertion_record<S: System>(s: &S) -> (u8, Vec<FailedAssertion>) {
+    let bytes = s.peek_range(RECORD_BASE, RECORD_LEN);
+    let save = &bytes[0..8];
+    let flags = bytes[8];
+    let assert = &bytes[9..17];
+
+    let mut failed = Vec::new();
+    for reg in AssertReg::ITER {
+        if flags & (1 << reg.flag_bit()) == 0 {
+            continue;
+        }
+        let off = reg.dump_offset();
+        if save[off] != assert[off] {
+            failed.push(FailedAssertion {
+                reg,
+                expected: assert[off],
+                actual: save[off],
+            });
+        }
+    }
+    (flags, failed)
+}
+
+/// Drive a wilbertpol-fork Mooneye ROM to its `0xED` exit and require the
+/// Fibonacci pass registers, decoding the WRAM assertion record on failure.
+pub fn assert_wilbertpol_verdict<S: System>(s: &mut S, rom_path: &str, timeout_frames: u32) {
+    let found = run_until_undefined_opcode(s, timeout_frames);
+    assert!(
+        found,
+        "Mooneye-wilbertpol test {rom_path} timed out without reaching exit condition"
+    );
+    let cpu = s.cpu();
+    if check_mooneye_pass(cpu) {
+        return;
+    }
+
+    let (flags, failed) = decode_assertion_record(s);
+    if !failed.is_empty() {
+        let mut msg = format!(
+            "Mooneye-wilbertpol test {rom_path} failed: {} assertion(s)",
+            failed.len()
+        );
+        for f in &failed {
+            msg.push_str(&format!(
+                "\n  assert_{}: expected 0x{:02X}, got 0x{:02X}",
+                f.reg.label(),
+                f.expected,
+                f.actual,
+            ));
+        }
+        panic!("{msg}");
+    }
+
+    // The harness stores the failing testcase_id at the record base.
+    let testcase_id = s.peek_range(RECORD_BASE, 1)[0];
+    let round = match cpu.c {
+        0x49 => "Round A FAILED (mode-3 too LONG)",
+        0xBA => "Round B FAILED (mode-3 too SHORT)",
+        0x17 => "STAT IRQ never fired",
+        _ => "(unknown failure round)",
+    };
+    panic!(
+        "Mooneye-wilbertpol test {rom_path} failed with no per-assertion mismatch \
+         (regs_flags=0x{flags:02X}). testcase_id=0x{testcase_id:02X}, {round}. \
+         Registers: {}",
+        format_registers(cpu),
+    );
 }
 
 /// The 8x8 glyphs the gambatte suite prints its expected value in, one per hex

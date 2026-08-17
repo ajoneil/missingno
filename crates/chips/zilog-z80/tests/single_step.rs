@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use missingno_test_support::oracle::fetch_oracle;
+use missingno_test_support::oracle::{assert_oracle_sweep, fetch_oracle};
 use missingno_zilog_z80::{Bus, Cpu, InterruptMode, Pins};
 use serde::Deserialize;
 
@@ -275,26 +275,6 @@ fn data_dir() -> PathBuf {
     dir
 }
 
-fn run_file(path: &PathBuf) -> (usize, usize, Vec<String>) {
-    let raw = std::fs::read(path).expect("readable test file");
-    let cases: Vec<Case> = serde_json::from_slice(&raw).expect("valid test JSON");
-    let mut passed = 0;
-    let mut failed = 0;
-    let mut examples = Vec::new();
-    for case in &cases {
-        match run_case(case) {
-            Ok(()) => passed += 1,
-            Err(problem) => {
-                failed += 1;
-                if examples.len() < 3 {
-                    examples.push(format!("  {problem}"));
-                }
-            }
-        }
-    }
-    (passed, failed, examples)
-}
-
 #[test]
 fn single_step_sweep() {
     let dir = data_dir();
@@ -305,27 +285,11 @@ fn single_step_sweep() {
         .collect();
     files.sort();
 
-    let mut total_passed = 0usize;
-    let mut total_failed = 0usize;
-    let mut bad_files = Vec::new();
-    for path in &files {
-        let (passed, failed, examples) = run_file(path);
-        total_passed += passed;
-        total_failed += failed;
-        if failed > 0 {
-            let name = path.file_stem().unwrap().to_string_lossy();
-            bad_files.push(format!("{name}: {failed} failed\n{}", examples.join("\n")));
-        }
-    }
-    assert!(
-        bad_files.is_empty(),
-        "{} opcode files with failures ({total_passed} passed, {total_failed} failed):\n{}",
-        bad_files.len(),
-        bad_files.join("\n")
-    );
-    assert!(
-        total_passed > 1_000_000,
-        "suspiciously few cases ran: {total_passed}"
+    assert_oracle_sweep(
+        &files,
+        1_000_000,
+        |raw| serde_json::from_slice::<Vec<Case>>(raw).expect("valid test JSON"),
+        run_case,
     );
 }
 

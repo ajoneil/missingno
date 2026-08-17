@@ -7,6 +7,7 @@
 //! shipped with the ROM.
 
 use crate::common;
+use crate::common::System;
 
 #[test]
 fn cgb_acid2() {
@@ -17,8 +18,9 @@ fn cgb_acid2() {
         "cgb-acid2 timed out without reaching LD B,B breakpoint"
     );
 
-    let actual = gbc.screen().to_greyscale_bytes();
-    let expected = common::load_cgb_reference_png("cgb-acid2/cgb-acid2.png");
-
-    common::assert_pixels_match("cgb-acid2", &actual, &expected, 160, 10, common::hex_byte);
+    common::assert_cgb_screen_matches(
+        "cgb-acid2",
+        &gbc.screen_greyscale(),
+        "cgb-acid2/cgb-acid2.png",
+    );
 }

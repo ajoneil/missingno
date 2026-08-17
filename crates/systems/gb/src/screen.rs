@@ -6,6 +6,10 @@ pub trait ScreenBuffer: Default + Clone {
     /// Swap back→front and clear back. Returns true for `new_screen` tracking.
     fn present(&mut self) -> bool;
     fn blank(&mut self);
+    /// The displayed buffer as flat greyscale bytes, one per pixel on the DMG
+    /// reference shade ramp — the currency the shade-pattern references and the
+    /// hex-glyph readers share across consoles.
+    fn to_greyscale_bytes(&self) -> Vec<u8>;
     /// Seed the displayed (front) buffer from a save state's framebuffer bytes,
     /// so the first frame after a restore matches the save. Each console decodes
     /// its own pixel format (DMG shade indices, CGB little-endian RGB555).

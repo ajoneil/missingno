@@ -3152,6 +3152,7 @@ name = "missingno-sms"
 version = "26.9.0"
 dependencies = [
  "missingno-core 26.9.0",
+ "missingno-test-support",
  "missingno-ti-psg",
  "missingno-zilog-z80",
  "rgb",

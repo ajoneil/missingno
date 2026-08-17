@@ -3,14 +3,16 @@
 //! palette, so we reuse the `-dmg.png` reference.
 
 use crate::common;
+use crate::common::System;
 
 #[test]
 fn mbc3_tester() {
     let mut gbc = common::load_rom("mbc3-tester/mbc3-tester.gb");
     common::run_frames(&mut gbc, 60);
 
-    let actual = gbc.screen().to_greyscale_bytes();
-    let expected = common::load_reference_png("mbc3-tester/mbc3-tester-dmg.png");
-
-    common::assert_pixels_match("MBC3 tester", &actual, &expected, 160, 10, common::hex_byte);
+    common::assert_screen_matches(
+        "MBC3 tester",
+        &gbc.screen_greyscale(),
+        "mbc3-tester/mbc3-tester-dmg.png",
+    );
 }

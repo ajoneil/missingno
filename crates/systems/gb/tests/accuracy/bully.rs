@@ -1,4 +1,5 @@
 use crate::common;
+use crate::common::System;
 
 #[test]
 fn bully() {
@@ -15,8 +16,5 @@ fn bully() {
         while !run.step().new_screen {}
     }
 
-    let actual = common::screen_to_greyscale(run.gb.screen());
-    let expected = common::load_reference_png("bully/bully-dmg.png");
-
-    common::assert_pixels_match("Bully", &actual, &expected, 160, 10, common::hex_byte);
+    common::assert_screen_matches("Bully", &run.screen_greyscale(), "bully/bully-dmg.png");
 }

@@ -1,4 +1,5 @@
 use crate::common;
+use crate::common::System;
 
 #[test]
 fn firstwhite() {
@@ -6,7 +7,7 @@ fn firstwhite() {
     // Result is visible nearly immediately; doesn't terminate with a loop
     common::run_frames(&mut run, 30);
 
-    let expected = common::load_reference_png("little-things-gb/firstwhite-dmg.png");
+    let reference = "little-things-gb/firstwhite-dmg.png";
 
     // The ROM cycles LCDC.7 once per frame and relies on the first frame
     // after each LCD-on being uncommitted to the LCD. Check 10 consecutive
@@ -14,15 +15,10 @@ fn firstwhite() {
     // other frames are white.
     for frame in 0..10 {
         while !run.step().new_screen {}
-        let actual = common::screen_to_greyscale(run.gb.screen());
-
-        common::assert_pixels_match(
+        common::assert_screen_matches(
             &format!("firstwhite frame {frame}"),
-            &actual,
-            &expected,
-            160,
-            10,
-            common::hex_byte,
+            &run.screen_greyscale(),
+            reference,
         );
     }
 }

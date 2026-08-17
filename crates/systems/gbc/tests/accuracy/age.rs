@@ -18,6 +18,7 @@
 //! target the CGB-in-DMG-compat mode).
 
 use crate::common;
+use crate::common::System;
 use missingno_gbc::GameBoyColor;
 
 fn check_pass(gbc: &GameBoyColor, rom_file: &str) {
@@ -62,16 +63,10 @@ fn run_screen_shared(rom_file: &str, reference_file: &str) {
         "AGE test {rom_file} timed out without reaching LD B,B"
     );
 
-    let actual = gbc.screen().to_greyscale_bytes();
-    let expected = common::load_cgb_reference_png(&format!("age-test-roms/{reference_file}"));
-
-    common::assert_pixels_match(
+    common::assert_cgb_screen_matches(
         &format!("AGE test {rom_file}"),
-        &actual,
-        &expected,
-        160,
-        10,
-        common::hex_byte,
+        &gbc.screen_greyscale(),
+        &format!("age-test-roms/{reference_file}"),
     );
 }
 

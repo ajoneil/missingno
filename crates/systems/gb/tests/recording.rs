@@ -7,10 +7,12 @@
 //! recorded timeline is exactly the continuation replay reproduces: the
 //! frame-hash checks agree bit-for-bit, no convergence tolerance.
 
-use missingno_core::recording::{Recording, RecordingError, ReplayError, ReplayOutcome, replay};
+use missingno_core::recording::{Recording, RecordingError, ReplayError, replay};
 use missingno_core::system::{ControlId, ControlRole, StateError, SystemConsole};
 use missingno_gb::system::{GbConsole, create_console};
-use missingno_test_support::roundtrip::record_scripted;
+use missingno_test_support::roundtrip::{
+    assert_replay_refuses_other_cartridge, assert_replays_deterministically, record_scripted,
+};
 
 fn dmg_console(rom: &str) -> GbConsole<missingno_gb::Dmg> {
     let run = missingno_gb::test_support::load_rom(rom);
@@ -47,38 +49,14 @@ fn record(rom: &str, warmup: usize, frames: u64, interval: u64) -> Recording {
 fn dmg_recording_replays_deterministically() {
     let rom = "blargg/cpu_instrs/individual/01-special.gb";
     let recording = record(rom, 1, 24, 4);
-    assert!(
-        !recording.checks.is_empty(),
-        "the recording should carry frame-hash checkpoints"
-    );
-    assert!(
-        !recording.events.is_empty(),
-        "the recording should carry the scripted inputs"
-    );
-
-    // Exercise the container round-trip, then replay the parsed recording.
-    let bytes = recording.to_bytes().unwrap();
-    let parsed = Recording::from_bytes(&bytes).expect("the recording round-trips through bytes");
-
-    let mut console = dmg_console(rom);
-    let outcome = replay(&parsed, &mut console).expect("the recording replays");
-    assert_eq!(
-        outcome,
-        ReplayOutcome {
-            frames: 24,
-            checks_verified: parsed.checks.len() as u64,
-        }
-    );
+    assert_replays_deterministically(&recording, &mut dmg_console(rom), 24);
 }
 
 #[test]
 fn replay_rejects_a_recording_for_a_different_rom() {
     let recording = record("blargg/cpu_instrs/individual/01-special.gb", 1, 8, 4);
     let mut other = dmg_console("blargg/cpu_instrs/individual/06-ld r,r.gb");
-    assert_eq!(
-        replay(&recording, &mut other),
-        Err(ReplayError::State(StateError::IncompatibleRom))
-    );
+    assert_replay_refuses_other_cartridge(&recording, &mut other);
 }
 
 #[test]

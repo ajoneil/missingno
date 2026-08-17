@@ -1,4 +1,5 @@
 use crate::common;
+use crate::common::System;
 
 #[test]
 fn dmg_acid2() {
@@ -7,15 +8,9 @@ fn dmg_acid2() {
         while !run.step().new_screen {}
     }
 
-    let actual = common::screen_to_greyscale(run.gb.screen());
-    let expected = common::load_reference_png("dmg-acid2/dmg-acid2-dmg.png");
-
-    common::assert_pixels_match(
+    common::assert_screen_matches(
         "dmg-acid2",
-        &actual,
-        &expected,
-        160,
-        usize::MAX,
-        common::hex_byte,
+        &run.screen_greyscale(),
+        "dmg-acid2/dmg-acid2-dmg.png",
     );
 }

@@ -14,54 +14,7 @@ const TIMEOUT_FRAMES: u32 = 7200; // 120 seconds at ~60fps
 
 fn run_mooneye_test(rom_path: &str) {
     let mut gbc = common::load_rom(rom_path);
-    let mut serial_output = String::new();
-    let found_loop = common::run_until_infinite_loop(&mut gbc, TIMEOUT_FRAMES);
-    let bytes = gbc.drain_serial_output();
-    if !bytes.is_empty() {
-        serial_output.push_str(&String::from_utf8_lossy(&bytes));
-    }
-    assert!(
-        found_loop,
-        "Mooneye test {rom_path} timed out without reaching infinite loop"
-    );
-    let cpu = gbc.cpu();
-    if !common::check_mooneye_pass(cpu) {
-        let all_same =
-            cpu.b == cpu.c && cpu.c == cpu.d && cpu.d == cpu.e && cpu.e == cpu.h && cpu.h == cpu.l;
-        if all_same && cpu.b != 0 {
-            panic!(
-                "Mooneye test {rom_path} failed (all registers = 0x{:02X}, ROM uses \
-                 uniform failure — sub-test number unknown). Serial: {:?}",
-                cpu.b, serial_output,
-            );
-        }
-
-        let fib = [
-            (cpu.b, 3, "B"),
-            (cpu.c, 5, "C"),
-            (cpu.d, 8, "D"),
-            (cpu.e, 13, "E"),
-            (cpu.h, 21, "H"),
-            (cpu.l, 34, "L"),
-        ];
-        let passed = fib
-            .iter()
-            .take_while(|(val, expected, _)| val == expected)
-            .count();
-        let failed_reg = if passed < 6 { fib[passed].2 } else { "?" };
-        let failed_val = if passed < 6 { fib[passed].0 } else { 0 };
-        eprintln!(
-            "Sub-tests passed: {passed}/6 (failed at register {failed_reg}, got 0x{failed_val:02X})"
-        );
-        panic!(
-            "Mooneye test {rom_path} failed at sub-test {} (register {failed_reg}=0x{failed_val:02X}, expected {}). \
-             Registers: {} Serial: {:?}",
-            passed + 1,
-            if passed < 6 { fib[passed].1 } else { 0 },
-            common::format_registers(cpu),
-            serial_output,
-        );
-    }
+    common::assert_mooneye_verdict(&mut gbc, rom_path, TIMEOUT_FRAMES);
 }
 
 fn run_mooneye_screen_test(rom_path: &str, reference_path: &str) {

@@ -1,4 +1,5 @@
 use crate::common;
+use crate::common::System;
 
 const TIMEOUT_FRAMES: u32 = 7200; // 120 seconds at ~60fps
 
@@ -14,74 +15,16 @@ fn run_mooneye_screen_test_with_timeout(rom_path: &str, reference_path: &str, ti
         "Mooneye test {rom_path} timed out without reaching infinite loop"
     );
 
-    let actual = common::screen_to_greyscale(run.gb.screen());
-    let expected = common::load_reference_png(reference_path);
-
-    common::assert_pixels_match(
+    common::assert_screen_matches(
         &format!("Mooneye test {rom_path} vs {reference_path}"),
-        &actual,
-        &expected,
-        160,
-        10,
-        common::hex_byte,
+        &run.screen_greyscale(),
+        reference_path,
     );
 }
 
 fn run_mooneye_test(rom_path: &str) {
     let mut run = common::load_rom(rom_path);
-    let mut serial_output = String::new();
-    let found_loop = common::run_until_infinite_loop(&mut run, TIMEOUT_FRAMES);
-    // Drain any serial output for diagnostic purposes
-    let bytes = run.gb.drain_serial_output();
-    if !bytes.is_empty() {
-        serial_output.push_str(&String::from_utf8_lossy(&bytes));
-    }
-    assert!(
-        found_loop,
-        "Mooneye test {rom_path} timed out without reaching infinite loop"
-    );
-    let cpu = run.gb.cpu();
-    if !common::check_mooneye_pass(cpu) {
-        // Most Mooneye tests set registers to Fibonacci values (3,5,8,13,21,34)
-        // in order as sub-tests pass. Some tests (e.g. lcdon_timing-GS) use
-        // quit_inline which sets ALL registers to 0x42 on any failure —
-        // detect this pattern to avoid misleading "sub-test 1 failed" reports.
-        let all_same =
-            cpu.b == cpu.c && cpu.c == cpu.d && cpu.d == cpu.e && cpu.e == cpu.h && cpu.h == cpu.l;
-        if all_same && cpu.b != 0 {
-            panic!(
-                "Mooneye test {rom_path} failed (all registers = 0x{:02X}, ROM uses \
-                 uniform failure — sub-test number unknown). Serial: {:?}",
-                cpu.b, serial_output,
-            );
-        }
-
-        let fib = [
-            (cpu.b, 3, "B"),
-            (cpu.c, 5, "C"),
-            (cpu.d, 8, "D"),
-            (cpu.e, 13, "E"),
-            (cpu.h, 21, "H"),
-            (cpu.l, 34, "L"),
-        ];
-        let passed = fib
-            .iter()
-            .take_while(|(val, expected, _)| val == expected)
-            .count();
-        let failed_reg = if passed < 6 { fib[passed].2 } else { "?" };
-        let failed_val = if passed < 6 { fib[passed].0 } else { 0 };
-        eprintln!(
-            "Sub-tests passed: {passed}/6 (failed at register {failed_reg}, got 0x{failed_val:02X})"
-        );
-        panic!(
-            "Mooneye test {rom_path} failed at sub-test {} (register {failed_reg}=0x{failed_val:02X}, expected {}). \
-             Registers: {} Serial: {:?}",
-            passed + 1,
-            if passed < 6 { fib[passed].1 } else { 0 },
-            common::format_registers(cpu),
-            serial_output,
-        );
-    }
+    common::assert_mooneye_verdict(&mut run, rom_path, TIMEOUT_FRAMES);
 }
 
 macro_rules! mooneye_test {

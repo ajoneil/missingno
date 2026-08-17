@@ -17,15 +17,19 @@ use missingno_gb::cartridge::Cartridge;
 use missingno_gb::system::{GbConsole, create_console};
 use missingno_gb::{Dmg, GameBoy};
 use missingno_gbc::{Cgb, GameBoyColor};
-use missingno_test_support::roundtrip::step_frame_hash;
+use missingno_test_support::roundtrip::assert_round_trips;
 
-/// A booted CGB console wrapped in the system seam, from a gbc-crate ROM.
-fn cgb_console(rom: &str) -> GbConsole<Cgb> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/accuracy/roms/");
-    let rom = std::fs::read(format!("{path}{rom}")).expect("ROM present");
+/// A booted CGB console wrapped in the system seam, from a cartridge image.
+fn cgb_seam(rom: Vec<u8>) -> GbConsole<Cgb> {
     let mut gbc = GameBoyColor::new(Cartridge::new(rom, None, None).unwrap(), None);
     missingno_gb::test_support::run_boot_rom(&mut gbc);
     create_console(gbc, |_| None)
+}
+
+/// The same, from a gbc-crate ROM file.
+fn cgb_console(rom: &str) -> GbConsole<Cgb> {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/accuracy/roms/");
+    cgb_seam(std::fs::read(format!("{path}{rom}")).expect("ROM present"))
 }
 
 fn cgb_acid2() -> GbConsole<Cgb> {
@@ -36,53 +40,6 @@ fn dmg_console() -> GbConsole<Dmg> {
     // A synthetic all-NOP DMG cartridge — enough to produce a DMG save state.
     let gb = GameBoy::new(Cartridge::new(vec![0u8; 0x8000], None, None).unwrap(), None);
     create_console(gb, |_| None)
-}
-
-/// The round-trip: `warmup` frames, save, `run` frames capturing hashes, load,
-/// `run` frames again. The frame-hash continuations must match once the display
-/// reconverges, and the record read straight back after the load must equal the
-/// record at save (a faithful boundary restore).
-fn assert_round_trips(
-    mut console: GbConsole<Cgb>,
-    warmup: usize,
-    run: usize,
-    converge_after: usize,
-    lively: bool,
-) {
-    for _ in 0..warmup {
-        console.step_frame();
-    }
-
-    let save = console.save_state().expect("CGB authors a save state");
-    let record_at_save = console.read_state().expect("CGB reads its state");
-
-    let baseline: Vec<u64> = (0..run).map(|_| step_frame_hash(&mut console)).collect();
-
-    console.load_state(&save).expect("the save loads back");
-
-    assert_eq!(
-        console.read_state(),
-        Some(record_at_save),
-        "the record after load differs from the record at save"
-    );
-
-    let replay: Vec<u64> = (0..run).map(|_| step_frame_hash(&mut console)).collect();
-
-    assert_eq!(
-        baseline[converge_after..],
-        replay[converge_after..],
-        "the frame-hash continuations diverged"
-    );
-    if lively {
-        assert!(
-            baseline
-                .iter()
-                .collect::<std::collections::HashSet<_>>()
-                .len()
-                > 1,
-            "the continuation should exercise more than one frame"
-        );
-    }
 }
 
 #[test]
@@ -133,7 +90,7 @@ fn cgb_save_captures_a_schema_complete_colour_record() {
 fn cgb_save_state_round_trips_static_continuation() {
     // cgb-acid2 settles to a static test screen: the whole frame-hash sequence
     // reproduces bit-for-bit — the strict round-trip gate.
-    assert_round_trips(cgb_acid2(), 30, 15, 0, false);
+    assert_round_trips(&mut cgb_acid2(), 30, 15, 0, false);
 }
 
 #[test]
@@ -142,8 +99,7 @@ fn cgb_save_state_round_trips_animated() {
     // in the run catches the display mid-animation. The continuation reconverges
     // after the one-frame pixel-pipeline transient (the Tier-2a residue). The
     // save lands single-speed (early boot, before the test's speed switch).
-    let console = cgb_console("blargg/interrupt_time.gb");
-    assert_round_trips(console, 2, 20, 1, true);
+    assert_round_trips(&mut cgb_console("blargg/interrupt_time.gb"), 2, 20, 1, true);
 }
 
 #[test]
@@ -173,9 +129,7 @@ fn cgb_scratch_and_extra_oam_round_trip_deterministically() {
             0x3e, 0x01, 0xe0, 0x4d, // arm KEY1
             0x18, 0xfe, // JR -2 — loop
         ]);
-        let mut gbc = GameBoyColor::new(Cartridge::new(rom, None, None).unwrap(), None);
-        missingno_gb::test_support::run_boot_rom(&mut gbc);
-        create_console(gbc, |_| None)
+        cgb_seam(rom)
     }
 
     let mut console = build();
@@ -239,9 +193,7 @@ fn cgb_refuses_a_double_speed_save() {
         0x10, 0x00, // STOP — engage the speed switch
         0x18, 0xfe, // JR -2 — loop at double speed
     ]);
-    let mut gbc = GameBoyColor::new(Cartridge::new(rom, None, None).unwrap(), None);
-    missingno_gb::test_support::run_boot_rom(&mut gbc);
-    let mut console = create_console(gbc, |_| None);
+    let mut console = cgb_seam(rom);
 
     for _ in 0..5 {
         console.step_frame();

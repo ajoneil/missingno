@@ -168,6 +168,10 @@ impl ScreenBuffer for Screen {
         self.0.blank();
     }
 
+    fn to_greyscale_bytes(&self) -> Vec<u8> {
+        Screen::to_greyscale_bytes(self)
+    }
+
     /// Seed the displayed (front) buffer from a save state's framebuffer:
     /// little-endian RGB555 words, row-major. The back buffer stays cleared.
     fn restore(&mut self, bytes: &[u8]) {

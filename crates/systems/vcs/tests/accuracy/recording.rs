@@ -4,9 +4,11 @@
 //! Tier-2b residue, so replay is bit-exact.
 
 use crate::common::seam_console;
-use missingno_core::recording::{Recording, ReplayError, ReplayOutcome, replay};
-use missingno_core::system::{ControlId, ControlRole, StateError};
-use missingno_test_support::roundtrip::record_scripted;
+use missingno_core::recording::Recording;
+use missingno_core::system::{ControlId, ControlRole};
+use missingno_test_support::roundtrip::{
+    assert_replay_refuses_other_cartridge, assert_replays_deterministically, record_scripted,
+};
 
 /// Scripted changes to the left joystick: (frame boundary, role, pressed).
 const SCRIPT: &[(u64, ControlRole, bool)] = &[
@@ -32,32 +34,14 @@ fn record(relative: &str, warmup: usize, frames: u64, interval: u64) -> Recordin
 fn vcs_recording_replays_deterministically() {
     let rom = "tia-render/draw-delay_ntsc.a26";
     let recording = record(rom, 8, 24, 4);
-    assert!(
-        !recording.checks.is_empty(),
-        "carries frame-hash checkpoints"
-    );
-    assert!(!recording.events.is_empty(), "carries the scripted inputs");
-
-    let bytes = recording.to_bytes().unwrap();
-    let parsed = Recording::from_bytes(&bytes).expect("round-trips through bytes");
-
-    let mut console = seam_console(rom);
-    let outcome = replay(&parsed, console.as_mut()).expect("the recording replays");
-    assert_eq!(
-        outcome,
-        ReplayOutcome {
-            frames: 24,
-            checks_verified: parsed.checks.len() as u64,
-        }
-    );
+    assert_replays_deterministically(&recording, seam_console(rom).as_mut(), 24);
 }
 
 #[test]
 fn replay_rejects_a_recording_for_a_different_rom() {
     let recording = record("tia-render/draw-delay_ntsc.a26", 8, 8, 4);
-    let mut other = seam_console("tia-render/colors_ntsc.a26");
-    assert_eq!(
-        replay(&recording, other.as_mut()),
-        Err(ReplayError::State(StateError::IncompatibleRom))
+    assert_replay_refuses_other_cartridge(
+        &recording,
+        seam_console("tia-render/colors_ntsc.a26").as_mut(),
     );
 }

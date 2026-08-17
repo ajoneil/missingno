@@ -6,32 +6,12 @@ fn run_blargg_test(rom_path: &str) {
 
 fn run_blargg_test_with_timeout(rom_path: &str, timeout_frames: u32) {
     let mut run = common::load_rom(rom_path);
-    let output = common::run_until_serial_match(&mut run, &["Passed", "Failed"], timeout_frames);
-    assert!(
-        output.contains("Passed"),
-        "Blargg test {rom_path} failed. Serial output:\n{output}"
-    );
+    common::assert_blargg_serial(&mut run, rom_path, timeout_frames);
 }
 
 fn run_blargg_screen_test(rom_path: &str, reference_path: &str, timeout_frames: u32) {
     let mut run = common::load_rom(rom_path);
-    let found_loop = common::run_until_infinite_loop(&mut run, timeout_frames);
-    assert!(
-        found_loop,
-        "Blargg test {rom_path} timed out without reaching infinite loop"
-    );
-
-    let actual = common::screen_to_greyscale(run.gb.screen());
-    let expected = common::load_reference_png(reference_path);
-
-    common::assert_pixels_match(
-        &format!("Blargg test {rom_path} vs {reference_path}"),
-        &actual,
-        &expected,
-        160,
-        10,
-        common::hex_byte,
-    );
+    common::assert_blargg_screen(&mut run, rom_path, reference_path, timeout_frames);
 }
 
 #[test]

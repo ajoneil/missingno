@@ -1,4 +1,5 @@
 use crate::common;
+use crate::common::System;
 
 fn run_mealybug_test(rom_name: &str) {
     let rom_path = format!("mealybug-tearoom/{rom_name}.gb");
@@ -11,16 +12,10 @@ fn run_mealybug_test(rom_name: &str) {
         "Mealybug test {rom_name} timed out without reaching LD B,B breakpoint"
     );
 
-    let actual = common::screen_to_greyscale(run.gb.screen());
-    let expected = common::load_reference_png(&reference_path);
-
-    common::assert_pixels_match(
+    common::assert_screen_matches(
         &format!("Mealybug test {rom_name}"),
-        &actual,
-        &expected,
-        160,
-        10,
-        common::hex_byte,
+        &run.screen_greyscale(),
+        &reference_path,
     );
 }
 

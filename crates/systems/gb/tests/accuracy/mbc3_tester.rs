@@ -1,4 +1,5 @@
 use crate::common;
+use crate::common::System;
 
 #[test]
 fn mbc3_tester() {
@@ -6,8 +7,9 @@ fn mbc3_tester() {
     // MBC3 tester loops indefinitely; the bank walk takes ~40 frames to finish.
     common::run_frames(&mut run, 60);
 
-    let actual = common::screen_to_greyscale(run.gb.screen());
-    let expected = common::load_reference_png("mbc3-tester/mbc3-tester-dmg.png");
-
-    common::assert_pixels_match("MBC3 tester", &actual, &expected, 160, 10, common::hex_byte);
+    common::assert_screen_matches(
+        "MBC3 tester",
+        &run.screen_greyscale(),
+        "mbc3-tester/mbc3-tester-dmg.png",
+    );
 }

@@ -16,12 +16,13 @@ use missingno_gb::memory::BootRom;
 use missingno_gbc::GameBoyColor;
 
 pub use missingno_gb::test_support::{
-    System, check_mooneye_pass, decode_screen_hex, format_registers, format_wram_dump, rom_path,
-    run_boot_rom, run_for_tcycles, run_frames, run_until_breakpoint, run_until_infinite_loop,
-    run_until_infinite_loop_no_lcd, run_until_serial_match, run_until_undefined_opcode,
-    screen_matches_hex,
+    System, assert_blargg_screen, assert_blargg_serial, assert_mooneye_verdict,
+    assert_screen_matches, assert_screen_matches_png, assert_scribbltest, assert_turtle_test,
+    assert_wilbertpol_verdict, check_mooneye_pass, decode_screen_hex, format_registers,
+    format_wram_dump, rom_path, run_boot_rom, run_for_tcycles, run_frames, run_until_breakpoint,
+    run_until_infinite_loop, run_until_infinite_loop_no_lcd, screen_matches_hex,
 };
-pub use missingno_test_support::compare::{assert_pixels_match, debug_value, hex_byte};
+pub use missingno_test_support::compare::{assert_pixels_match, debug_value};
 use missingno_test_support::reference::ReferencePng;
 
 /// Try to load the CGB boot ROM (2304 bytes) from the path in `CGB_BOOT_ROM`.
@@ -83,20 +84,15 @@ pub fn load_cgb_rom_traced(relative: &str) -> TestRun<missingno_gbc::Cgb> {
     TestRun::new(new_cgb(rom), relative, "CGB-C")
 }
 
-/// Load a reference PNG from the gbc crate's own roms dir as one shade byte
-/// per pixel.
-pub fn load_cgb_reference_png(relative: &str) -> Vec<u8> {
-    ReferencePng::load(&cgb_rom_path(relative)).greyscale()
+/// Compare a rendered screen against a reference PNG in the gbc crate's own
+/// roms dir — the CGB-only twin of [`assert_screen_matches`].
+pub fn assert_cgb_screen_matches(subject: &str, screen: &[u8], reference: &str) {
+    assert_screen_matches_png(subject, screen, &cgb_rom_path(reference));
 }
 
-/// Load a reference PNG from the gb crate's shared roms dir as one shade byte
-/// per pixel.
-pub fn load_reference_png(relative: &str) -> Vec<u8> {
-    ReferencePng::load(&rom_path(relative)).greyscale()
-}
-
-/// The RGB analogue of [`load_cgb_reference_png`], for the colourised
-/// CGB-compat references where the red channel alone is insufficient.
+/// The colour reference from the gbc crate's own roms dir, for the
+/// colourised CGB-compat references where the red channel alone is
+/// insufficient.
 pub fn load_cgb_reference_png_rgb(relative: &str) -> Vec<[u8; 3]> {
     ReferencePng::load(&cgb_rom_path(relative)).rgb()
 }

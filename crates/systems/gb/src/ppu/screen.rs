@@ -103,6 +103,9 @@ impl crate::ScreenBuffer for Screen {
     fn blank(&mut self) {
         Screen::blank(self);
     }
+    fn to_greyscale_bytes(&self) -> Vec<u8> {
+        Screen::to_greyscale_bytes(self)
+    }
     fn restore(&mut self, bytes: &[u8]) {
         self.restore_front(bytes);
     }

@@ -4,6 +4,7 @@
 //! Expected to fail until CGB PPU support lands.
 
 use crate::common;
+use crate::common::System;
 
 #[test]
 fn cgb_acid_hell() {
@@ -14,15 +15,9 @@ fn cgb_acid_hell() {
         "cgb-acid-hell timed out without reaching LD B,B breakpoint"
     );
 
-    let actual = gbc.screen().to_greyscale_bytes();
-    let expected = common::load_cgb_reference_png("cgb-acid-hell/cgb-acid-hell.png");
-
-    common::assert_pixels_match(
+    common::assert_cgb_screen_matches(
         "cgb-acid-hell",
-        &actual,
-        &expected,
-        160,
-        10,
-        common::hex_byte,
+        &gbc.screen_greyscale(),
+        "cgb-acid-hell/cgb-acid-hell.png",
     );
 }

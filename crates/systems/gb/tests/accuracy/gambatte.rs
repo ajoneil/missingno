@@ -1,4 +1,5 @@
 use crate::common;
+use crate::common::System;
 
 // Gambatte's testrunner runs each ROM for exactly 1,053,360 T-cycles
 // (15 LCD frames at single speed). Tests don't depend on frame events
@@ -35,7 +36,7 @@ fn run_gambatte_hex_test(rom_path: &str) {
     let mut run = common::load_rom(rom_path);
     common::run_for_tcycles(&mut run, TCYCLES);
 
-    let screen = common::screen_to_greyscale(run.gb.screen());
+    let screen = run.screen_greyscale();
     let filename = rom_path.rsplit('/').next().unwrap();
     let expected_hex = extract_expected_hex(filename);
 
@@ -49,16 +50,10 @@ fn run_gambatte_screenshot_test(rom_path: &str, reference_path: &str) {
     let mut run = common::load_rom(rom_path);
     common::run_for_tcycles(&mut run, TCYCLES);
 
-    let actual = common::screen_to_greyscale(run.gb.screen());
-    let expected = common::load_reference_png(reference_path);
-
-    common::assert_pixels_match(
+    common::assert_screen_matches(
         &format!("Gambatte screenshot test {rom_path}"),
-        &actual,
-        &expected,
-        160,
-        10,
-        common::hex_byte,
+        &run.screen_greyscale(),
+        reference_path,
     );
 }
 
@@ -120,7 +115,7 @@ fn run_gambatte_blank_test(rom_path: &str) {
     let mut run = common::load_rom(rom_path);
     common::run_for_tcycles(&mut run, TCYCLES);
 
-    let screen = common::screen_to_greyscale(run.gb.screen());
+    let screen = run.screen_greyscale();
     // Blank screen = all pixels should be background color (0xFF)
     let non_blank = screen.iter().filter(|&&p| p != 0xFF).count();
     assert_eq!(

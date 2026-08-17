@@ -9,142 +9,12 @@
 //! CGB-specific tests) is mechanical follow-up work.
 
 use crate::common;
-use crate::common::System;
 
 const TIMEOUT_FRAMES: u32 = 7200;
 
-const RECORD_BASE: u16 = 0xC000;
-const RECORD_LEN: u16 = 17;
-
-#[derive(Clone, Copy)]
-enum AssertReg {
-    A,
-    F,
-    B,
-    C,
-    D,
-    E,
-    H,
-    L,
-}
-
-impl AssertReg {
-    const ITER: [AssertReg; 8] = [
-        AssertReg::A,
-        AssertReg::F,
-        AssertReg::B,
-        AssertReg::C,
-        AssertReg::D,
-        AssertReg::E,
-        AssertReg::H,
-        AssertReg::L,
-    ];
-
-    fn flag_bit(self) -> u8 {
-        match self {
-            AssertReg::A => 0,
-            AssertReg::F => 1,
-            AssertReg::B => 2,
-            AssertReg::C => 3,
-            AssertReg::D => 4,
-            AssertReg::E => 5,
-            AssertReg::H => 6,
-            AssertReg::L => 7,
-        }
-    }
-
-    fn dump_offset(self) -> usize {
-        match self {
-            AssertReg::A => 1,
-            AssertReg::F => 0,
-            AssertReg::B => 3,
-            AssertReg::C => 2,
-            AssertReg::D => 5,
-            AssertReg::E => 4,
-            AssertReg::L => 6,
-            AssertReg::H => 7,
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            AssertReg::A => "a",
-            AssertReg::F => "f",
-            AssertReg::B => "b",
-            AssertReg::C => "c",
-            AssertReg::D => "d",
-            AssertReg::E => "e",
-            AssertReg::H => "h",
-            AssertReg::L => "l",
-        }
-    }
-}
-
-struct FailedAssertion {
-    reg: AssertReg,
-    expected: u8,
-    actual: u8,
-}
-
-fn decode_assertion_record<S: System>(s: &S) -> (u8, Vec<FailedAssertion>) {
-    let bytes = s.peek_range(RECORD_BASE, RECORD_LEN);
-    let save = &bytes[0..8];
-    let flags = bytes[8];
-    let assert = &bytes[9..17];
-
-    let mut failed = Vec::new();
-    for reg in AssertReg::ITER {
-        if flags & (1 << reg.flag_bit()) == 0 {
-            continue;
-        }
-        let off = reg.dump_offset();
-        if save[off] != assert[off] {
-            failed.push(FailedAssertion {
-                reg,
-                expected: assert[off],
-                actual: save[off],
-            });
-        }
-    }
-    (flags, failed)
-}
-
 fn run_wilbertpol_test(rom_path: &str) {
     let mut gbc = common::load_rom(rom_path);
-    let found = common::run_until_undefined_opcode(&mut gbc, TIMEOUT_FRAMES);
-    assert!(
-        found,
-        "Mooneye-wilbertpol test {rom_path} timed out without reaching exit condition"
-    );
-    let cpu = gbc.cpu();
-    if common::check_mooneye_pass(cpu) {
-        return;
-    }
-
-    let (flags, failed) = decode_assertion_record(&gbc);
-    if !failed.is_empty() {
-        let mut msg = format!(
-            "Mooneye-wilbertpol test {rom_path} failed: {} assertion(s)",
-            failed.len()
-        );
-        for f in &failed {
-            msg.push_str(&format!(
-                "\n  assert_{}: expected 0x{:02X}, got 0x{:02X}",
-                f.reg.label(),
-                f.expected,
-                f.actual,
-            ));
-        }
-        panic!("{msg}");
-    }
-
-    let testcase_id = gbc.peek_range(0xC000, 1)[0];
-    panic!(
-        "Mooneye-wilbertpol test {rom_path} failed with no per-assertion mismatch \
-         (regs_flags=0x{flags:02X}). testcase_id=0x{testcase_id:02X}. \
-         Registers: {}",
-        common::format_registers(cpu),
-    );
+    common::assert_wilbertpol_verdict(&mut gbc, rom_path, TIMEOUT_FRAMES);
 }
 
 macro_rules! wilbertpol_test {
@@ -416,40 +286,7 @@ wilbertpol_test!(
 
 fn run_wilbertpol_cgb_test(rom_path: &str) {
     let mut gbc = common::load_cgb_rom(rom_path);
-    let found = common::run_until_undefined_opcode(&mut gbc, TIMEOUT_FRAMES);
-    assert!(
-        found,
-        "Mooneye-wilbertpol test {rom_path} timed out without reaching exit condition"
-    );
-    let cpu = gbc.cpu();
-    if common::check_mooneye_pass(cpu) {
-        return;
-    }
-
-    let (flags, failed) = decode_assertion_record(&gbc);
-    if !failed.is_empty() {
-        let mut msg = format!(
-            "Mooneye-wilbertpol test {rom_path} failed: {} assertion(s)",
-            failed.len()
-        );
-        for f in &failed {
-            msg.push_str(&format!(
-                "\n  assert_{}: expected 0x{:02X}, got 0x{:02X}",
-                f.reg.label(),
-                f.expected,
-                f.actual,
-            ));
-        }
-        panic!("{msg}");
-    }
-
-    let testcase_id = gbc.peek_range(0xC000, 1)[0];
-    panic!(
-        "Mooneye-wilbertpol test {rom_path} failed with no per-assertion mismatch \
-         (regs_flags=0x{flags:02X}). testcase_id=0x{testcase_id:02X}. \
-         Registers: {}",
-        common::format_registers(cpu),
-    );
+    common::assert_wilbertpol_verdict(&mut gbc, rom_path, TIMEOUT_FRAMES);
 }
 
 macro_rules! wilbertpol_cgb_test {

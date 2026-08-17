@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use missingno_mos_6502::{Bus, Cpu};
-use missingno_test_support::oracle::fetch_oracle;
+use missingno_test_support::oracle::{assert_oracle_sweep, fetch_oracle};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -136,53 +136,18 @@ fn run_case(case: &Case, decimal: bool) -> Result<(), String> {
     }
 }
 
-fn run_file(path: &PathBuf, decimal: bool) -> (usize, usize, Vec<String>) {
-    let raw = std::fs::read(path).expect("readable test file");
-    let cases: Vec<Case> = serde_json::from_slice(&raw).expect("valid test JSON");
-    let mut passed = 0;
-    let mut failed = 0;
-    let mut examples = Vec::new();
-    for case in &cases {
-        match run_case(case, decimal) {
-            Ok(()) => passed += 1,
-            Err(problem) => {
-                failed += 1;
-                if examples.len() < 3 {
-                    examples.push(format!("  {}: {problem}", case.name));
-                }
-            }
-        }
-    }
-    (passed, failed, examples)
-}
-
 fn sweep(variant: &str, decimal: bool) {
     let dir = data_dir(variant);
-    let mut total_passed = 0usize;
-    let mut bad_files = Vec::new();
-    for opcode in 0..=0xFFu8 {
-        let path = dir.join(format!("{opcode:02x}.json"));
-        if !path.exists() {
-            continue;
-        }
-        let (passed, failed, examples) = run_file(&path, decimal);
-        total_passed += passed;
-        if failed > 0 {
-            bad_files.push(format!(
-                "{opcode:02X}: {failed} failed\n{}",
-                examples.join("\n")
-            ));
-        }
-    }
-    assert!(
-        bad_files.is_empty(),
-        "{} opcode files with failures (passed {total_passed}):\n{}",
-        bad_files.len(),
-        bad_files.join("\n")
-    );
-    assert!(
-        total_passed > 2_000_000,
-        "suspiciously few cases ran: {total_passed}"
+    let files: Vec<PathBuf> = (0..=0xFFu8)
+        .map(|opcode| dir.join(format!("{opcode:02x}.json")))
+        .filter(|path| path.exists())
+        .collect();
+
+    assert_oracle_sweep(
+        &files,
+        2_000_000,
+        |raw| serde_json::from_slice::<Vec<Case>>(raw).expect("valid test JSON"),
+        |case| run_case(case, decimal).map_err(|problem| format!("{}: {problem}", case.name)),
     );
 }
 

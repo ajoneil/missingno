@@ -8,3 +8,6 @@ missingno-core = { path = "../../missingno/core" }
 missingno-ti-psg = { path = "../../chips/ti-psg", features = ["inspect"] }
 missingno-zilog-z80 = { path = "../../chips/zilog-z80" }
 rgb = { workspace = true }
+
+[dev-dependencies]
+missingno-test-support = { path = "../../missingno/test-support" }
