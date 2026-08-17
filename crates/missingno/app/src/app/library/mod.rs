@@ -55,7 +55,8 @@ pub struct GameEntry {
     /// Broadcast standard the game expects; VCS reads it at boot, else probes.
     #[serde(default)]
     pub tv_standard: Option<crate::app::system::TvStandard>,
-    /// Cartridge board code (VCS), e.g. "F8"; absent falls back to size-detect.
+    /// The board the cartridge is built on, in its core's own vocabulary —
+    /// "F8", "DAHJEE-A", "MBC1M"; absent, the core reads the media instead.
     #[serde(default)]
     pub cart_type: Option<String>,
     /// The catalogue records this dump as an overdump: padded past the

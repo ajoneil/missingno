@@ -72,6 +72,7 @@ pub fn start(
         launch.set_choice(missingno_vcs::debug::TV_STANDARD, standard);
     }
     if let Some(board) = cart_type {
+        // The VCS and SG-1000 cores publish their board choice under one id.
         launch.set_choice(missingno_vcs::debug::BOARD, board);
     }
     launch.set_toggle(missingno_vcs::debug::OVERDUMP, overdump);

@@ -118,6 +118,8 @@ fn launch_values(app: &App, entry: Option<&library::GameEntry>) -> system::Launc
     if let Some(standard) = entry.and_then(|entry| entry.tv_standard) {
         launch.set_choice(system::vcs::TV_STANDARD, standard.code());
     }
+    // Every family publishes its board option under the same id, so one key
+    // carries the catalogue's word whichever core is about to read it.
     if let Some(board) = entry.and_then(|entry| entry.cart_type.as_deref()) {
         launch.set_choice(system::vcs::BOARD, board);
     }

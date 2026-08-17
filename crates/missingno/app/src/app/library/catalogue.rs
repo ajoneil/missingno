@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use missingno_gamedb::{
     Artifact, Controller, Game, GameBoy, GameBoyColor, GameKind, Link, Platform as DbPlatform,
-    ReleaseStatus, TvFormat, Vcs,
+    ReleaseStatus, Sg1000, TvFormat, Vcs,
 };
 
 use crate::app::system::TvStandard;
@@ -25,6 +25,7 @@ const GBDEV_ENTRIES: &str = "https://raw.githubusercontent.com/gbdev/database/ma
 pub enum CataloguePlatform {
     GameBoy,
     GameBoyColor,
+    Sg1000,
     Vcs,
 }
 
@@ -59,8 +60,9 @@ pub struct CatalogueRelease {
     /// Broadcast standard (VCS): carts have no region header, so the DB is
     /// authoritative and the core only heuristically probes without it.
     pub tv_format: Option<TvStandard>,
-    /// Cartridge board code (VCS), e.g. "F8", "F6SC" — resolves the bank
-    /// scheme the size heuristic can't tell apart.
+    /// The board the cartridge is built on, as its core's interchange code —
+    /// "F8" on the VCS, "DAHJEE-A" on the SG-1000, "MBC1M" where a Game Boy
+    /// header misdeclares itself. Absent, the core reads the media instead.
     pub cart_type: Option<String>,
     /// Controllers the release needs, when it deviates from the platform's
     /// default; the loader configures the console's ports from them.
@@ -168,20 +170,37 @@ fn entry_from<P: DbPlatform>(
 fn parse_entry(console: &str, slug: String, text: &str) -> Option<CatalogueEntry> {
     match console {
         "gb" => Game::<GameBoy>::from_ron(text).ok().map(|g| {
-            entry_from(CataloguePlatform::GameBoy, slug, g, |_| {
-                (None, None, Vec::new())
+            entry_from(CataloguePlatform::GameBoy, slug, g, |hw| {
+                (
+                    None,
+                    hw.mapper.map(|board| board.code().to_owned()),
+                    Vec::new(),
+                )
             })
         }),
         "gbc" => Game::<GameBoyColor>::from_ron(text).ok().map(|g| {
-            entry_from(CataloguePlatform::GameBoyColor, slug, g, |_| {
-                (None, None, Vec::new())
+            entry_from(CataloguePlatform::GameBoyColor, slug, g, |hw| {
+                (
+                    None,
+                    hw.mapper.map(|board| board.code().to_owned()),
+                    Vec::new(),
+                )
+            })
+        }),
+        "sg1000" => Game::<Sg1000>::from_ron(text).ok().map(|g| {
+            entry_from(CataloguePlatform::Sg1000, slug, g, |hw| {
+                (
+                    None,
+                    hw.cart_type.map(|board| board.code().to_owned()),
+                    Vec::new(),
+                )
             })
         }),
         "vcs" => Game::<Vcs>::from_ron(text).ok().map(|g| {
             entry_from(CataloguePlatform::Vcs, slug, g, |hw| {
                 (
                     hw.tv_format.map(tv_standard),
-                    hw.cart_type.clone(),
+                    hw.cart_type.map(|board| board.code().to_owned()),
                     hw.controllers.clone(),
                 )
             })
@@ -373,6 +392,7 @@ mod tests {
         );
         assert!(!db.gb.games.is_empty());
         assert!(!db.gbc.games.is_empty());
+        assert!(!db.sg1000.games.is_empty());
         assert!(!db.vcs.games.is_empty());
     }
 }

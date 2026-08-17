@@ -75,6 +75,22 @@ const BOARD_NAMES: &[BoardNames] = &[
     row(CartType::DahjeeB, "DAHJEE-B", "DahJee expander Type B"),
 ];
 
+/// A board crosses a catalogue as its interchange code, so the vocabulary is
+/// the whole serialised form: an unlisted code names no board this core builds.
+impl serde::Serialize for CartType {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.code())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for CartType {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let code = String::deserialize(deserializer)?;
+        CartType::from_code(&code)
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown SG-1000 board code {code:?}")))
+    }
+}
+
 impl CartType {
     /// Every board the core knows, in the vocabulary's order.
     pub fn all() -> impl Iterator<Item = CartType> {
@@ -131,5 +147,20 @@ mod tests {
         }
         assert_eq!(CartType::all().count(), BOARD_NAMES.len());
         assert_eq!(CartType::from_code("F8"), None);
+    }
+
+    #[test]
+    fn every_board_round_trips_through_ron() {
+        for board in CartType::all() {
+            let text = ron::to_string(&board).expect("a board serialises");
+            assert_eq!(text, format!("{:?}", board.code()));
+            assert_eq!(ron::from_str::<CartType>(&text), Ok(board));
+        }
+    }
+
+    #[test]
+    fn an_unlisted_code_names_no_board() {
+        let error = ron::from_str::<CartType>("\"F8\"").expect_err("no such board");
+        assert!(error.to_string().contains("\"F8\""), "{error}");
     }
 }

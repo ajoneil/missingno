@@ -50,6 +50,14 @@ version = "26.9.0"
 bitflags = "2.13.1"
 rgb = "0.8.53"
 
+# The game database names each core's board vocabulary through this repository's
+# public URL, so its own workspace resolves standalone. Building from here, the
+# cores are the checkout beside us — one instance of each, not a second copy.
+[patch."https://github.com/ajoneil/missingno"]
+missingno-gb = { path = "crates/systems/gb" }
+missingno-vcs = { path = "crates/systems/vcs" }
+missingno-sg1000 = { path = "crates/systems/sg1000" }
+
 [profile.release]
 lto = "fat"
 codegen-units = 1

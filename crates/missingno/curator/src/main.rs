@@ -233,10 +233,11 @@ impl std::fmt::Display for TreeChoice {
     }
 }
 
-const TREE_CHOICES: [TreeChoice; 4] = [
+const TREE_CHOICES: [TreeChoice; 5] = [
     TreeChoice(None),
     TreeChoice(Some(TreeId::Gb)),
     TreeChoice(Some(TreeId::Gbc)),
+    TreeChoice(Some(TreeId::Sg1000)),
     TreeChoice(Some(TreeId::Vcs)),
 ];
 
@@ -504,6 +505,7 @@ impl Curator {
                     let staged: Vec<String> = db.entries[i].game.covers();
                     let system = match db.entries[i].tree {
                         db::TreeId::Vcs => "Atari - 2600",
+                        db::TreeId::Sg1000 => "Sega - SG-1000",
                         db::TreeId::Gb => "Nintendo - Game Boy",
                         db::TreeId::Gbc => "Nintendo - Game Boy Color",
                     };
@@ -595,6 +597,7 @@ impl Curator {
                     let hint = match entry.tree {
                         TreeId::Gb => "verify.gb",
                         TreeId::Gbc => "verify.gbc",
+                        TreeId::Sg1000 => "verify.sg",
                         TreeId::Vcs => "verify.a26",
                     };
                     let bytes = match &source {
@@ -1234,7 +1237,7 @@ impl Curator {
     /// unknown enhancement flags and the mapper; conflicts go to the status).
     fn stage_header_facts(&mut self, i: usize, rom: &[u8]) {
         let Ok(db) = &mut self.db else { return };
-        if matches!(db.entries[i].tree, TreeId::Vcs) {
+        if matches!(db.entries[i].tree, TreeId::Sg1000 | TreeId::Vcs) {
             return;
         }
         let Some(header) = verify::gb_header(rom) else {
@@ -1493,9 +1496,10 @@ impl Curator {
                     return error_result("db not loaded");
                 };
                 text_result(format!(
-                    "backlog: gb {}, gbc {}, vcs {} · open flags: {} · uncommitted files: {}",
+                    "backlog: gb {}, gbc {}, sg1000 {}, vcs {} · open flags: {} · uncommitted files: {}",
                     db.backlog_count(TreeId::Gb),
                     db.backlog_count(TreeId::Gbc),
+                    db.backlog_count(TreeId::Sg1000),
                     db.backlog_count(TreeId::Vcs),
                     db.flags.open().count(),
                     db.uncommitted,
@@ -1670,14 +1674,16 @@ impl Curator {
                     entry.game.set_release_publisher(0, publisher.to_owned());
                     applied.push("publisher");
                 }
-                if let Some(mapper) = set.get("mapper").and_then(serde_json::Value::as_str)
-                    && entry.game.set_mapper(mapper)
-                {
+                if let Some(mapper) = set.get("mapper").and_then(serde_json::Value::as_str) {
+                    if let Err(error) = entry.game.set_mapper(mapper) {
+                        return error_result(error);
+                    }
                     applied.push("mapper");
                 }
-                if let Some(cart) = set.get("cart_type").and_then(serde_json::Value::as_str)
-                    && entry.game.set_cart_type(cart)
-                {
+                if let Some(cart) = set.get("cart_type").and_then(serde_json::Value::as_str) {
+                    if let Err(error) = entry.game.set_cart_type(cart) {
+                        return error_result(error);
+                    }
                     applied.push("cart_type");
                 }
                 if let Some(kind) = set.get("kind").and_then(serde_json::Value::as_str) {
@@ -2161,18 +2167,19 @@ impl Curator {
                             .game
                             .set_release_controllers(index as usize, c)
                     });
-                    let cart = cart_type.as_deref().is_some_and(|c| {
-                        db.entries[i].game.set_release_cart_type(index as usize, c)
-                    });
                     db.entries[i].dirty = true;
+                    if let Some(code) = cart_type.as_deref()
+                        && let Err(error) = db.entries[i]
+                            .game
+                            .set_release_cart_type(index as usize, code)
+                    {
+                        return error_result(error);
+                    }
                     if tv_format.is_some() && !tv {
                         return error_result("tv_format applies to VCS releases only");
                     }
                     if controllers.is_some() && !ctrl {
                         return error_result("controllers apply to VCS releases only");
-                    }
-                    if cart_type.is_some() && !cart {
-                        return error_result("cart_type applies to VCS releases only");
                     }
                     if let Err(e) = db.write_entry(i) {
                         return error_result(format!("staged, but writing {key} failed: {e}"));

@@ -3044,6 +3044,9 @@ dependencies = [
 name = "missingno-gamedb"
 version = "0.1.0"
 dependencies = [
+ "missingno-gb",
+ "missingno-sg1000",
+ "missingno-vcs",
  "ron",
  "serde",
 ]
@@ -3058,6 +3061,8 @@ dependencies = [
  "missingno-test-support",
  "morepork",
  "rgb",
+ "ron",
+ "serde",
  "sha2 0.11.0",
 ]
 
@@ -3138,6 +3143,8 @@ dependencies = [
  "missingno-ti-vdp",
  "missingno-zilog-z80",
  "rgb",
+ "ron",
+ "serde",
  "sha2 0.11.0",
 ]
 
@@ -3186,6 +3193,8 @@ dependencies = [
  "missingno-test-support",
  "morepork",
  "rgb",
+ "ron",
+ "serde",
  "sha2 0.11.0",
 ]
 

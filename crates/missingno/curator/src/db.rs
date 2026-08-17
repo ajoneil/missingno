@@ -4,15 +4,16 @@
 use std::{fs, io, path::PathBuf};
 
 use missingno_gamedb::{
-    Controller, Defect, FlagFile, Game, GameBoy, GameBoyColor, GameKind, Language, Link, LinkType,
-    Mod, ModCategory, ModOf, ModRelease, Platform, Region, Release, ReleaseStatus, Sha1, Slug,
-    Tree, TvFormat, Vcs,
+    Controller, Defect, FlagFile, Game, GameBoy, GameBoyColor, GameKind, GbCartType, Language,
+    Link, LinkType, Mod, ModCategory, ModOf, ModRelease, Platform, Region, Release, ReleaseStatus,
+    Sg1000, Sg1000CartType, Sha1, Slug, Tree, TvFormat, Vcs, VcsCartType,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TreeId {
     Gb,
     Gbc,
+    Sg1000,
     Vcs,
 }
 
@@ -21,6 +22,7 @@ impl TreeId {
         match self {
             TreeId::Gb => "gb",
             TreeId::Gbc => "gbc",
+            TreeId::Sg1000 => "sg1000",
             TreeId::Vcs => "vcs",
         }
     }
@@ -29,6 +31,7 @@ impl TreeId {
         match self {
             TreeId::Gb => "Game Boy",
             TreeId::Gbc => "Game Boy Color",
+            TreeId::Sg1000 => "SG-1000",
             TreeId::Vcs => "Atari VCS",
         }
     }
@@ -38,6 +41,7 @@ impl TreeId {
 pub enum AnyGame {
     Gb(Game<GameBoy>),
     Gbc(Game<GameBoyColor>),
+    Sg1000(Game<Sg1000>),
     Vcs(Game<Vcs>),
 }
 
@@ -46,6 +50,7 @@ macro_rules! common {
         match $self {
             AnyGame::Gb($game) => $body,
             AnyGame::Gbc($game) => $body,
+            AnyGame::Sg1000($game) => $body,
             AnyGame::Vcs($game) => $body,
         }
     };
@@ -164,13 +169,23 @@ impl AnyGame {
                 })
                 .collect(),
             AnyGame::Gbc(g) => g.releases.iter().map(|r| line(r, "")).collect(),
+            AnyGame::Sg1000(g) => g
+                .releases
+                .iter()
+                .map(|r| {
+                    line(
+                        r,
+                        r.hardware.cart_type.map(Sg1000CartType::code).unwrap_or(""),
+                    )
+                })
+                .collect(),
             AnyGame::Vcs(g) => g
                 .releases
                 .iter()
                 .map(|r| {
                     let hw = [
                         r.hardware.tv_format.map(|t| format!("{t:?}")),
-                        r.hardware.cart_type.clone(),
+                        r.hardware.cart_type.map(|c| c.code().to_owned()),
                         (!r.hardware.controllers.is_empty()).then(|| {
                             r.hardware
                                 .controllers
@@ -228,6 +243,7 @@ impl AnyGame {
         match (self, other) {
             (AnyGame::Gb(into), AnyGame::Gb(from)) => Ok(absorb_into(into, from, &held)),
             (AnyGame::Gbc(into), AnyGame::Gbc(from)) => Ok(absorb_into(into, from, &held)),
+            (AnyGame::Sg1000(into), AnyGame::Sg1000(from)) => Ok(absorb_into(into, from, &held)),
             (AnyGame::Vcs(into), AnyGame::Vcs(from)) => Ok(absorb_into(into, from, &held)),
             _ => Err("the two entries are on different platforms".to_owned()),
         }
@@ -464,7 +480,7 @@ impl AnyGame {
                         .map(|r| {
                             let hw = [
                                 r.hardware.tv_format.map(|t| format!("{t:?}")),
-                                r.hardware.cart_type.clone(),
+                                r.hardware.cart_type.map(|c| c.code().to_owned()),
                                 (!r.hardware.controllers.is_empty()).then(|| {
                                     r.hardware
                                         .controllers
@@ -479,6 +495,20 @@ impl AnyGame {
                             .collect::<Vec<_>>()
                             .join(" ");
                             describe(&r.label, &r.date, &hw)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            AnyGame::Sg1000(g) => g
+                .mods
+                .get(index)
+                .map(|m| {
+                    m.releases
+                        .iter()
+                        .map(|r| {
+                            let board =
+                                r.hardware.cart_type.map(Sg1000CartType::code).unwrap_or("");
+                            describe(&r.label, &r.date, board)
                         })
                         .collect()
                 })
@@ -655,11 +685,20 @@ impl AnyGame {
             .collect())
     }
 
-    /// Board hint for the session factory (VCS only — carts have no header,
-    /// so the db's word must reach the core).
+    /// Board hint for the session factory (VCS and SG-1000 — their carts have
+    /// no header, so the db's word must reach the core).
     pub fn cart_hint(&self) -> Option<String> {
         match self {
-            AnyGame::Vcs(g) => g.releases.iter().find_map(|r| r.hardware.cart_type.clone()),
+            AnyGame::Vcs(g) => g
+                .releases
+                .iter()
+                .find_map(|r| r.hardware.cart_type)
+                .map(|c| c.code().to_owned()),
+            AnyGame::Sg1000(g) => g
+                .releases
+                .iter()
+                .find_map(|r| r.hardware.cart_type)
+                .map(|c| c.code().to_owned()),
             _ => None,
         }
     }
@@ -668,39 +707,20 @@ impl AnyGame {
     /// speaks first; a mod's dump answers through its base's release; only
     /// then fall back to the entry's first stated values.
     pub fn hints_for(&self, sha1: &str) -> (Option<String>, Option<String>) {
-        let AnyGame::Vcs(g) = self else {
-            return (None, None);
+        let stated = match self {
+            AnyGame::Vcs(g) => release_holding(g, sha1).map(|r| {
+                (
+                    r.hardware
+                        .tv_format
+                        .map(|tv| format!("{tv:?}").to_lowercase()),
+                    r.hardware.cart_type.map(|c| c.code().to_owned()),
+                )
+            }),
+            AnyGame::Sg1000(g) => release_holding(g, sha1)
+                .map(|r| (None, r.hardware.cart_type.map(|c| c.code().to_owned()))),
+            _ => None,
         };
-        let release_hints = |r: &Release<Vcs>| {
-            (
-                r.hardware
-                    .tv_format
-                    .map(|tv| format!("{tv:?}").to_lowercase()),
-                r.hardware.cart_type.clone(),
-            )
-        };
-        for release in &g.releases {
-            if release.artifacts.iter().any(|a| a.sha1.as_str() == sha1) {
-                return release_hints(release);
-            }
-        }
-        for game_mod in &g.mods {
-            for mod_release in &game_mod.releases {
-                if mod_release
-                    .artifacts
-                    .iter()
-                    .any(|a| a.sha1.as_str() == sha1)
-                    && let Some(base) = &mod_release.base_sha1
-                    && let Some(release) = g
-                        .releases
-                        .iter()
-                        .find(|r| r.artifacts.iter().any(|a| a.sha1 == *base))
-                {
-                    return release_hints(release);
-                }
-            }
-        }
-        (self.tv_hint(), self.cart_hint())
+        stated.unwrap_or_else(|| (self.tv_hint(), self.cart_hint()))
     }
 
     /// The quality problem catalogued against one dump, wherever it hangs: a
@@ -802,16 +822,12 @@ impl AnyGame {
                     }
                     _ => {}
                 }
-                match &release.hardware.mapper {
-                    None => {
-                        release.hardware.mapper = Some(header.mapper.clone());
-                        staged.push(format!("mapper: {}", header.mapper));
-                    }
-                    Some(current) if *current != header.mapper => {
-                        conflicts.push(format!("mapper: db {current} vs header {}", header.mapper))
-                    }
-                    _ => {}
-                }
+                stage_mapper(
+                    &mut release.hardware.mapper,
+                    header.mapper,
+                    &mut staged,
+                    &mut conflicts,
+                );
             }
             AnyGame::Gbc(g) => {
                 if g.releases.is_empty() {
@@ -823,46 +839,52 @@ impl AnyGame {
                     );
                 }
                 let release = &mut g.releases[0];
-                match &release.hardware.mapper {
-                    None => {
-                        release.hardware.mapper = Some(header.mapper.clone());
-                        staged.push(format!("mapper: {}", header.mapper));
-                    }
-                    Some(current) if *current != header.mapper => {
-                        conflicts.push(format!("mapper: db {current} vs header {}", header.mapper))
-                    }
-                    _ => {}
-                }
+                stage_mapper(
+                    &mut release.hardware.mapper,
+                    header.mapper,
+                    &mut staged,
+                    &mut conflicts,
+                );
             }
-            AnyGame::Vcs(_) => {}
+            AnyGame::Sg1000(_) | AnyGame::Vcs(_) => {}
         }
         (staged, conflicts)
     }
 
-    /// Agent override: set the first release's mapper (GB/GBC) — for carts
-    /// whose headers lie.
-    pub fn set_mapper(&mut self, value: &str) -> bool {
+    /// Agent override: set the first release's board (GB/GBC) — for carts
+    /// whose headers lie. An empty code hands the field back to the header.
+    pub fn set_mapper(&mut self, code: &str) -> Result<(), String> {
         match self {
-            AnyGame::Gb(g) => g.releases.first_mut().map(|r| {
-                r.hardware.mapper = Some(value.to_owned());
-            }),
-            AnyGame::Gbc(g) => g.releases.first_mut().map(|r| {
-                r.hardware.mapper = Some(value.to_owned());
-            }),
-            AnyGame::Vcs(_) => None,
+            AnyGame::Gb(g) => {
+                let board = gb_board(code)?;
+                first_release(g)?.hardware.mapper = board;
+                Ok(())
+            }
+            AnyGame::Gbc(g) => {
+                let board = gb_board(code)?;
+                first_release(g)?.hardware.mapper = board;
+                Ok(())
+            }
+            _ => Err("mapper applies to Game Boy and Game Boy Color entries only".to_owned()),
         }
-        .is_some()
     }
 
-    /// Agent override: set the first release's board (VCS — no headers).
-    pub fn set_cart_type(&mut self, value: &str) -> bool {
+    /// Agent override: set the first release's board (VCS and SG-1000 — no
+    /// headers). An empty code clears it back to auto-detect.
+    pub fn set_cart_type(&mut self, code: &str) -> Result<(), String> {
         match self {
-            AnyGame::Vcs(g) => g.releases.first_mut().map(|r| {
-                r.hardware.cart_type = Some(value.to_owned());
-            }),
-            _ => None,
+            AnyGame::Vcs(g) => {
+                let board = vcs_board(code)?;
+                first_release(g)?.hardware.cart_type = board;
+                Ok(())
+            }
+            AnyGame::Sg1000(g) => {
+                let board = sg1000_board(code)?;
+                first_release(g)?.hardware.cart_type = board;
+                Ok(())
+            }
+            _ => Err("cart_type applies to Atari VCS and SG-1000 entries only".to_owned()),
         }
-        .is_some()
     }
 
     /// Re-file a dump onto a mod that is already attached: another version of
@@ -1014,15 +1036,21 @@ impl AnyGame {
         .is_some()
     }
 
-    pub fn set_release_cart_type(&mut self, index: usize, cart_type: &str) -> bool {
+    /// An empty code clears the override back to auto-detect.
+    pub fn set_release_cart_type(&mut self, index: usize, code: &str) -> Result<(), String> {
         match self {
-            AnyGame::Vcs(g) => g.releases.get_mut(index).map(|r| {
-                // An empty string clears the override back to auto-detect.
-                r.hardware.cart_type = (!cart_type.is_empty()).then(|| cart_type.to_owned());
-            }),
-            _ => None,
+            AnyGame::Vcs(g) => {
+                let board = vcs_board(code)?;
+                release_at(g, index)?.hardware.cart_type = board;
+                Ok(())
+            }
+            AnyGame::Sg1000(g) => {
+                let board = sg1000_board(code)?;
+                release_at(g, index)?.hardware.cart_type = board;
+                Ok(())
+            }
+            _ => Err("cart_type applies to Atari VCS and SG-1000 entries only".to_owned()),
         }
-        .is_some()
     }
 
     /// Broadcast-standard hint for the session factory (VCS only).
@@ -1040,6 +1068,76 @@ impl AnyGame {
     pub fn to_ron_string(&self) -> Result<String, String> {
         common!(self, g => g.to_ron_string().map_err(|e| e.to_string()))
     }
+}
+
+fn first_release<P: Platform>(game: &mut Game<P>) -> Result<&mut Release<P>, String> {
+    game.releases
+        .first_mut()
+        .ok_or_else(|| "entry has no releases".to_owned())
+}
+
+fn release_at<P: Platform>(game: &mut Game<P>, index: usize) -> Result<&mut Release<P>, String> {
+    game.releases
+        .get_mut(index)
+        .ok_or_else(|| format!("entry has no release {index}"))
+}
+
+/// Fill in the board the header names, or record why the two disagree.
+fn stage_mapper(
+    stated: &mut Option<GbCartType>,
+    header: Result<GbCartType, u8>,
+    staged: &mut Vec<String>,
+    conflicts: &mut Vec<String>,
+) {
+    match (*stated, header) {
+        (_, Err(byte)) => conflicts.push(format!("mapper: header byte ${byte:02x} names no board")),
+        (None, Ok(board)) => {
+            *stated = Some(board);
+            staged.push(format!("mapper: {}", board.display_name()));
+        }
+        (Some(current), Ok(board)) if current != board => conflicts.push(format!(
+            "mapper: db {} vs header {}",
+            current.display_name(),
+            board.display_name()
+        )),
+        _ => {}
+    }
+}
+
+/// The board a code names; an empty code is the field cleared. An unlisted
+/// code names no board the core builds, so the refusal carries the vocabulary.
+fn board_code<T>(
+    code: &str,
+    named: impl FnOnce(&str) -> Option<T>,
+    vocabulary: impl FnOnce() -> Vec<&'static str>,
+) -> Result<Option<T>, String> {
+    if code.is_empty() {
+        return Ok(None);
+    }
+    named(code).map(Some).ok_or_else(|| {
+        format!(
+            "unknown board code {code:?}; expected one of: {}",
+            vocabulary().join(", ")
+        )
+    })
+}
+
+fn gb_board(code: &str) -> Result<Option<GbCartType>, String> {
+    board_code(code, GbCartType::from_code, || {
+        GbCartType::all().map(GbCartType::code).collect()
+    })
+}
+
+fn vcs_board(code: &str) -> Result<Option<VcsCartType>, String> {
+    board_code(code, VcsCartType::from_code, || {
+        VcsCartType::all().map(VcsCartType::code).collect()
+    })
+}
+
+fn sg1000_board(code: &str) -> Result<Option<Sg1000CartType>, String> {
+    board_code(code, Sg1000CartType::from_code, || {
+        Sg1000CartType::all().map(Sg1000CartType::code).collect()
+    })
 }
 
 /// A JSON string → LinkType, rejecting unknowns with the valid set named.
@@ -1203,6 +1301,56 @@ fn slugify(title: &str) -> String {
         }
     }
     slug
+}
+
+/// The starting point an unmatched dump gets: a single release holding it, with
+/// nothing else stated.
+fn lone_dump_entry<P: Platform>(title: String, artifact: missingno_gamedb::Artifact) -> Game<P> {
+    Game {
+        title,
+        kind: GameKind::Game,
+        developer: None,
+        description: None,
+        tags: Vec::new(),
+        links: Vec::new(),
+        covers: Vec::new(),
+        screenshots: Vec::new(),
+        mod_of: None,
+        mods: Vec::new(),
+        curated: false,
+        adult: false,
+        recommended_by: Vec::new(),
+        releases: vec![Release {
+            title: None,
+            label: None,
+            regions: Vec::new(),
+            languages: Vec::new(),
+            date: None,
+            publisher: None,
+            status: ReleaseStatus::Released,
+            hardware: Default::default(),
+            artifacts: vec![artifact],
+        }],
+    }
+}
+
+/// The release whose hardware describes one dump: the release holding it, or —
+/// for a mod's dump — the release holding the dump that mod patches.
+fn release_holding<'a, P: Platform>(game: &'a Game<P>, sha1: &str) -> Option<&'a Release<P>> {
+    let holds = |r: &Release<P>| r.artifacts.iter().any(|a| a.sha1.as_str() == sha1);
+    if let Some(release) = game.releases.iter().find(|r| holds(r)) {
+        return Some(release);
+    }
+    game.mods
+        .iter()
+        .flat_map(|m| &m.releases)
+        .find(|r| r.artifacts.iter().any(|a| a.sha1.as_str() == sha1))
+        .and_then(|patched| patched.base_sha1.as_ref())
+        .and_then(|base| {
+            game.releases
+                .iter()
+                .find(|r| r.artifacts.iter().any(|a| a.sha1 == *base))
+        })
 }
 
 /// Remove `sha1` from whichever release holds it and build the derived-work
@@ -1570,6 +1718,7 @@ impl Db {
         }
         load_tree::<GameBoy>(&data_root, TreeId::Gb, AnyGame::Gb, &mut entries)?;
         load_tree::<GameBoyColor>(&data_root, TreeId::Gbc, AnyGame::Gbc, &mut entries)?;
+        load_tree::<Sg1000>(&data_root, TreeId::Sg1000, AnyGame::Sg1000, &mut entries)?;
         load_tree::<Vcs>(&data_root, TreeId::Vcs, AnyGame::Vcs, &mut entries)?;
         let flags = FlagFile::load(&repo_root)?;
         Ok(Self {
@@ -1609,7 +1758,7 @@ impl Db {
         Ok(())
     }
 
-    /// Surface local ROMs that match no manifest as empty in-memory VCS entries —
+    /// Surface local ROMs that match no manifest as empty in-memory entries —
     /// one per dump, titled from its filename — so an unknown ROM becomes a
     /// curatable starting point instead of staying invisible. Idempotent: a hash
     /// already held by any entry (including one added here) is skipped, so a
@@ -1624,9 +1773,7 @@ impl Db {
                     known.insert(sha1);
                 }
             }
-            if e.tree == TreeId::Vcs {
-                taken.insert(e.slug.clone());
-            }
+            taken.insert(e.key());
         }
         // Stable order so slugs stay put between scans.
         let mut roms: Vec<(&String, &PathBuf)> = index
@@ -1640,12 +1787,15 @@ impl Db {
             if known.contains(sha1) {
                 continue;
             }
-            // VCS only for now: current collections are Atari, and detecting an
-            // arbitrary core from an unknown ROM is a separate problem.
+            // The filename is all an unmatched dump says about its console, so
+            // only the two headerless platforms are read from one; the shared
+            // `.bin` goes to the Atari, as current collections do.
             let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase());
-            if !matches!(ext.as_deref(), Some("a26") | Some("bin")) {
-                continue;
-            }
+            let tree = match ext.as_deref() {
+                Some("sg") => TreeId::Sg1000,
+                Some("a26") | Some("bin") => TreeId::Vcs,
+                _ => continue,
+            };
             let Ok(parsed) = sha1.parse::<Sha1>() else {
                 continue;
             };
@@ -1664,47 +1814,28 @@ impl Db {
             };
             let mut slug = base.clone();
             let mut n = 1;
-            while taken.contains(&slug) {
+            while taken.contains(&format!("{}/{slug}", tree.dir())) {
                 n += 1;
                 slug = format!("{base}-{n}");
             }
-            taken.insert(slug.clone());
+            taken.insert(format!("{}/{slug}", tree.dir()));
             known.insert(sha1.clone());
-            let game = Game::<Vcs> {
-                title,
-                kind: GameKind::Game,
-                developer: None,
-                description: None,
-                tags: Vec::new(),
-                links: Vec::new(),
-                covers: Vec::new(),
-                screenshots: Vec::new(),
-                mod_of: None,
-                mods: Vec::new(),
-                curated: false,
-                adult: false,
-                recommended_by: Vec::new(),
-                releases: vec![Release::<Vcs> {
-                    title: None,
-                    label: None,
-                    regions: Vec::new(),
-                    languages: Vec::new(),
-                    date: None,
-                    publisher: None,
-                    status: ReleaseStatus::Released,
-                    hardware: Default::default(),
-                    artifacts: vec![missingno_gamedb::Artifact {
-                        sha1: parsed,
-                        label: None,
-                        defect: None,
-                        size,
-                    }],
-                }],
+            let artifact = missingno_gamedb::Artifact {
+                sha1: parsed,
+                label: None,
+                defect: None,
+                size,
+            };
+            let game = match tree {
+                TreeId::Sg1000 => AnyGame::Sg1000(lone_dump_entry(title, artifact)),
+                TreeId::Vcs => AnyGame::Vcs(lone_dump_entry(title, artifact)),
+                // The extension named one of the two headerless platforms.
+                TreeId::Gb | TreeId::Gbc => continue,
             };
             self.entries.push(EntryHandle {
-                tree: TreeId::Vcs,
+                tree,
                 slug,
-                game: AnyGame::Vcs(game),
+                game,
                 dirty: false,
                 synthetic: true,
             });
@@ -1734,6 +1865,7 @@ impl Db {
             let attached = match &mut self.entries[source].game {
                 AnyGame::Gb(g) => attach_mod(g, sha1, name.clone(), category, homepage, base),
                 AnyGame::Gbc(g) => attach_mod(g, sha1, name.clone(), category, homepage, base),
+                AnyGame::Sg1000(g) => attach_mod(g, sha1, name.clone(), category, homepage, base),
                 AnyGame::Vcs(g) => attach_mod(g, sha1, name.clone(), category, homepage, base),
             };
             if !attached {
@@ -1844,6 +1976,9 @@ impl Db {
             AnyGame::Gbc(g) => {
                 split_hack_from(g, sha1, title, category, base, homepage).map(AnyGame::Gbc)
             }
+            AnyGame::Sg1000(g) => {
+                split_hack_from(g, sha1, title, category, base, homepage).map(AnyGame::Sg1000)
+            }
             AnyGame::Vcs(g) => {
                 split_hack_from(g, sha1, title, category, base, homepage).map(AnyGame::Vcs)
             }
@@ -1891,6 +2026,9 @@ impl Db {
             AnyGame::Gb(g) => split_game_from(g, release_index, title.to_owned()).map(AnyGame::Gb),
             AnyGame::Gbc(g) => {
                 split_game_from(g, release_index, title.to_owned()).map(AnyGame::Gbc)
+            }
+            AnyGame::Sg1000(g) => {
+                split_game_from(g, release_index, title.to_owned()).map(AnyGame::Sg1000)
             }
             AnyGame::Vcs(g) => {
                 split_game_from(g, release_index, title.to_owned()).map(AnyGame::Vcs)
@@ -2048,6 +2186,7 @@ impl Db {
         let split = match &mut self.entries[entry].game {
             AnyGame::Gb(g) => split_release_from(g, sha1, status, title, label, date),
             AnyGame::Gbc(g) => split_release_from(g, sha1, status, title, label, date),
+            AnyGame::Sg1000(g) => split_release_from(g, sha1, status, title, label, date),
             AnyGame::Vcs(g) => split_release_from(g, sha1, status, title, label, date),
         };
         if !split {
@@ -2152,6 +2291,7 @@ impl Db {
         let emptied = match &mut self.entries[entry].game {
             AnyGame::Gb(g) => move_artifact_in(g, sha1, to_index),
             AnyGame::Gbc(g) => move_artifact_in(g, sha1, to_index),
+            AnyGame::Sg1000(g) => move_artifact_in(g, sha1, to_index),
             AnyGame::Vcs(g) => move_artifact_in(g, sha1, to_index),
         }?;
         self.entries[entry].dirty = true;
@@ -2801,8 +2941,8 @@ mod release_surgery_tests {
             "a prototype never inherits the retail date"
         );
         assert_eq!(
-            proto.hardware.cart_type.as_deref(),
-            Some("4K"),
+            proto.hardware.cart_type,
+            Some(VcsCartType::Plain4K),
             "hardware inherited"
         );
     }
@@ -2820,7 +2960,7 @@ mod release_surgery_tests {
         );
         assert_eq!(g.releases.len(), 1);
         assert_eq!(g.releases[0].artifacts.len(), 3);
-        assert_eq!(g.releases[0].hardware.cart_type.as_deref(), Some("4K"));
+        assert_eq!(g.releases[0].hardware.cart_type, Some(VcsCartType::Plain4K));
     }
 
     fn two_games_in_one_entry() -> AnyGame {
@@ -2903,5 +3043,56 @@ mod release_surgery_tests {
         g.releases.truncate(1);
         assert!(split_game_from(g, 0, "Anything".to_owned()).is_err());
         assert!(split_game_from(g, 4, "Anything".to_owned()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod board_tests {
+    use super::*;
+
+    fn castle() -> AnyGame {
+        AnyGame::Sg1000(
+            Game::from_ron(
+                r#"(
+    title: "The Castle",
+    releases: [(
+        hardware: (cart_type: Some("CASTLE")),
+        artifacts: [(sha1: "0123456789abcdef0123456789abcdef01234567")],
+    )],
+)"#,
+            )
+            .unwrap(),
+        )
+    }
+
+    #[test]
+    fn a_board_code_is_taken_typed_and_cleared_by_an_empty_one() {
+        let mut game = castle();
+        assert_eq!(game.cart_hint().as_deref(), Some("CASTLE"));
+        game.set_cart_type("DAHJEE-A").unwrap();
+        assert_eq!(game.cart_hint().as_deref(), Some("DAHJEE-A"));
+        game.set_release_cart_type(0, "").unwrap();
+        assert_eq!(game.cart_hint(), None);
+    }
+
+    #[test]
+    fn a_code_from_another_platform_is_refused_with_the_vocabulary() {
+        let mut game = castle();
+        let error = game.set_cart_type("F6SC").unwrap_err();
+        assert!(
+            error.contains("\"F6SC\"") && error.contains("DAHJEE-B"),
+            "{error}"
+        );
+        assert!(game.set_mapper("MBC3").unwrap_err().contains("Game Boy"));
+        assert!(
+            game.set_release_cart_type(4, "FLAT")
+                .unwrap_err()
+                .contains("no release 4")
+        );
+        assert_eq!(
+            game.cart_hint().as_deref(),
+            Some("CASTLE"),
+            "nothing landed"
+        );
     }
 }

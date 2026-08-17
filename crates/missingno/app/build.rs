@@ -2,7 +2,7 @@ use std::{fs, path::PathBuf};
 
 /// Catalogue trees, one per console; the archive path's leading segment records
 /// which console a manifest belongs to.
-const CONSOLES: [&str; 3] = ["gb", "gbc", "vcs"];
+const CONSOLES: [&str; 4] = ["gb", "gbc", "sg1000", "vcs"];
 
 fn main() {
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
