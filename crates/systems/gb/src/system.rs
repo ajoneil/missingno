@@ -807,7 +807,7 @@ mod tests {
         rom[0x153..0x155].copy_from_slice(&[0x18, 0xfe]);
         rom[0x160..0x162].copy_from_slice(&[0x3e, 0x42]);
         rom[0x162] = 0xc9;
-        Console::new(Cartridge::new(rom, None), None)
+        Console::new(Cartridge::new(rom, None, None).unwrap(), None)
     }
 
     fn debugger() -> Box<dyn SystemDebugger> {
@@ -847,7 +847,7 @@ mod tests {
         for b in 1..8 {
             rom[b * 0x4000..b * 0x4000 + 2].copy_from_slice(&[0x18, 0xfe]); // JR -2
         }
-        Console::new(Cartridge::new(rom, None), None)
+        Console::new(Cartridge::new(rom, None, None).unwrap(), None)
     }
 
     #[test]

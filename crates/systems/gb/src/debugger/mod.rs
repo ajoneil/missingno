@@ -396,7 +396,10 @@ mod tests {
         rom[0x160..0x162].copy_from_slice(&[0x3e, 0x42]);
         rom[0x162..0x165].copy_from_slice(&[0xfa, 0x00, 0x02]);
         rom[0x165] = 0xc9;
-        Console::new(crate::cartridge::Cartridge::new(rom, None), None)
+        Console::new(
+            crate::cartridge::Cartridge::new(rom, None, None).unwrap(),
+            None,
+        )
     }
 
     #[test]

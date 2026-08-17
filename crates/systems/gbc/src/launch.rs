@@ -4,6 +4,7 @@
 use missingno_core::launch::{
     LaunchChoice, LaunchOptionDescriptor, LaunchOptionKind, LaunchValues,
 };
+use missingno_gb::cartridge::GbCartType;
 use missingno_gb::serial_transfer::SerialLink;
 use missingno_gb::{BootRom, GameBoy, cartridge::Cartridge};
 
@@ -13,6 +14,8 @@ use crate::GameBoyColor;
 pub const RUNNER: &str = "runner";
 /// The boot ROM to map over the cartridge.
 pub const BOOT_ROM: &str = "boot-rom";
+/// The board the cartridge is built on, for media whose header misdeclares it.
+pub const BOARD: &str = "board";
 
 /// The options the Game Boy family accepts at launch.
 pub fn launch_options() -> Vec<LaunchOptionDescriptor> {
@@ -34,6 +37,18 @@ pub fn launch_options() -> Vec<LaunchOptionDescriptor> {
             },
         },
         LaunchOptionDescriptor {
+            id: BOARD,
+            label: "Cartridge board",
+            kind: LaunchOptionKind::Choice {
+                choices: GbCartType::all()
+                    .map(|board| LaunchChoice {
+                        value: board.code(),
+                        label: board.display_name(),
+                    })
+                    .collect(),
+            },
+        },
+        LaunchOptionDescriptor {
             id: BOOT_ROM,
             label: "Boot ROM",
             kind: LaunchOptionKind::File {
@@ -41,6 +56,15 @@ pub fn launch_options() -> Vec<LaunchOptionDescriptor> {
             },
         },
     ]
+}
+
+/// The board the launch values name, or `None` where the header decides; `Err`
+/// carries a value naming no board.
+pub fn board_from_launch(values: &LaunchValues) -> Result<Option<GbCartType>, &str> {
+    match values.choice(BOARD) {
+        None => Ok(None),
+        Some(code) => GbCartType::from_code(code).map(Some).ok_or(code),
+    }
 }
 
 /// Receives the console [`console`] selects. Two concrete arms rather than one

@@ -198,8 +198,10 @@ mod tests {
         let mut rom = vec![0u8; 0x8000];
         rom[0x100] = 0x00;
         rom[0x101..0x104].copy_from_slice(&[0xc3, 0x50, 0x01]);
-        let mut debugger =
-            Debugger::new(Console::<crate::Dmg>::new(Cartridge::new(rom, None), None));
+        let mut debugger = Debugger::new(Console::<crate::Dmg>::new(
+            Cartridge::new(rom, None, None).unwrap(),
+            None,
+        ));
         for _ in 0..4 {
             debugger.step();
         }

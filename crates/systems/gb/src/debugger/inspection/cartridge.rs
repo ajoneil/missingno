@@ -64,7 +64,7 @@ mod tests {
     fn cartridge_section_shows_mbc3_rtc_rows() {
         let mut rom = vec![0u8; 0x8000];
         rom[0x147] = 0x0f; // MBC3 + TIMER + BATTERY — carries an RTC
-        let console = Console::<crate::Dmg>::new(Cartridge::new(rom, None), None);
+        let console = Console::<crate::Dmg>::new(Cartridge::new(rom, None, None).unwrap(), None);
         let section = cartridge_section(&console.cartridge().inspect());
         assert_eq!(section.name, "Cartridge");
         assert!(section.summary.starts_with("MBC3"), "{}", section.summary);
@@ -77,7 +77,10 @@ mod tests {
         }
 
         // A plain no-clock cart shows the section but no RTC rows.
-        let plain = Console::<crate::Dmg>::new(Cartridge::new(vec![0u8; 0x8000], None), None);
+        let plain = Console::<crate::Dmg>::new(
+            Cartridge::new(vec![0u8; 0x8000], None, None).unwrap(),
+            None,
+        );
         let plain_labels = row_labels(&cartridge_section(&plain.cartridge().inspect()));
         assert!(plain_labels.iter().all(|l| l != "sec"));
     }

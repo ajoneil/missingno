@@ -10,6 +10,16 @@ pub enum Mbc3Chip {
 }
 
 impl Mbc3Chip {
+    /// Which chip a board carries is undeclared: only a ROM past 2 MB or a RAM
+    /// size past four banks needs the MBC30's wider registers.
+    pub fn for_rom(rom: &[u8]) -> Mbc3Chip {
+        if rom.len() > 0x200000 || matches!(rom[0x149], 0x04 | 0x05) {
+            Mbc3Chip::Mbc30
+        } else {
+            Mbc3Chip::Mbc3
+        }
+    }
+
     fn rom_bank_mask(self) -> u8 {
         match self {
             Mbc3Chip::Mbc3 => 0x7f,
@@ -179,7 +189,7 @@ pub struct Mbc3 {
 }
 
 impl Mbc3 {
-    pub fn new(rom: &[u8], save_data: Option<Vec<u8>>) -> Self {
+    pub fn new(rom: &[u8], save_data: Option<Vec<u8>>, chip: Mbc3Chip, timer: bool) -> Self {
         let ram = match rom[0x149] {
             2 => {
                 let mut banks = vec![[0u8; 8 * 1024]; 1];
@@ -205,21 +215,12 @@ impl Mbc3 {
             _ => vec![],
         };
 
-        let clock = match rom[0x147] {
-            0x0f | 0x10 => Some(Clock {
-                registers: ClockRegisters::default(),
-                latched: ClockRegisters::default(),
-                latch_ready: false,
-                sub_second_dots: 0,
-            }),
-            _ => None,
-        };
-
-        let chip = if rom.len() > 0x200000 || matches!(rom[0x149], 0x04 | 0x05) {
-            Mbc3Chip::Mbc30
-        } else {
-            Mbc3Chip::Mbc3
-        };
+        let clock = timer.then(|| Clock {
+            registers: ClockRegisters::default(),
+            latched: ClockRegisters::default(),
+            latch_ready: false,
+            sub_second_dots: 0,
+        });
 
         Self {
             ram,

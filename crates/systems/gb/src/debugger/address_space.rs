@@ -227,7 +227,7 @@ mod tests {
         }
         rom[0x147] = 0x1a; // MBC5 + RAM
         rom[0x149] = 3; // 32 KB (four 8 KB banks)
-        crate::cartridge::Cartridge::new(rom, None)
+        crate::cartridge::Cartridge::new(rom, None, None).unwrap()
     }
 
     #[test]
@@ -360,7 +360,7 @@ mod tests {
         let mut rom = vec![0u8; 0x8000];
         rom[0x147] = cart_type;
         rom[0x149] = ram_size;
-        crate::cartridge::Cartridge::new(rom, None)
+        crate::cartridge::Cartridge::new(rom, None, None).unwrap()
     }
 
     #[test]
@@ -444,7 +444,7 @@ mod tests {
         ];
         rom[0x100..0x100 + program.len()].copy_from_slice(&program);
         let mut debugger = Debugger::new(Console::<Dmg>::new(
-            crate::cartridge::Cartridge::new(rom, None),
+            crate::cartridge::Cartridge::new(rom, None, None).unwrap(),
             None,
         ));
 

@@ -28,7 +28,7 @@ fn main() {
     rom[0x0102] = 0x18; // JR -4
     rom[0x0103] = 0xFC;
 
-    let mut gb = GameBoy::new(Cartridge::new(rom, None), None);
+    let mut gb = GameBoy::new(Cartridge::new(rom, None, None).unwrap(), None);
     gb.cpu_mut().a = initial_a;
 
     let mut tracer = Tracer::create(

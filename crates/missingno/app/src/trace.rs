@@ -84,6 +84,7 @@ pub(crate) fn trace_gb(request: TraceRequest) {
     }
     let launched = system::gb::launch(
         request.rom.to_vec(),
+        None,
         save_data,
         request.boot_rom,
         None,
@@ -95,8 +96,8 @@ pub(crate) fn trace_gb(request: TraceRequest) {
             boot,
         },
     );
-    if let Err(refused) = launched {
-        eprintln!("error: {refused}");
+    if let Err(refusal) = launched {
+        eprintln!("error: {refusal}");
     }
 }
 

@@ -615,7 +615,10 @@ mod tests {
         for b in 1..8 {
             rom[b * 0x4000..b * 0x4000 + 2].copy_from_slice(&[0x18, 0xfe]); // JR -2
         }
-        Console::new(crate::cartridge::Cartridge::new(rom, None), None)
+        Console::new(
+            crate::cartridge::Cartridge::new(rom, None, None).unwrap(),
+            None,
+        )
     }
 
     #[test]

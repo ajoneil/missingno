@@ -79,7 +79,7 @@ pub struct Mbc1 {
 }
 
 impl Mbc1 {
-    pub fn new(rom: &[u8], save_data: Option<Vec<u8>>) -> Self {
+    pub fn new(rom: &[u8], save_data: Option<Vec<u8>>, multicart: bool) -> Self {
         let ram = match rom[0x149] {
             2 => {
                 let mut data = [0; 8 * 1024];
@@ -104,8 +104,6 @@ impl Mbc1 {
             }
             _ => Ram::None,
         };
-
-        let multicart = detect_multicart(rom);
 
         Self {
             ram,
@@ -205,7 +203,7 @@ impl Mbc1 {
 }
 
 /// Detect MBC1M multicart ROMs by checking for a valid Nintendo logo at bank $10.
-fn detect_multicart(rom: &[u8]) -> bool {
+pub fn detect_multicart(rom: &[u8]) -> bool {
     // Only 1 MiB ROMs can be MBC1M multicarts
     if rom.len() != 1024 * 1024 {
         return false;

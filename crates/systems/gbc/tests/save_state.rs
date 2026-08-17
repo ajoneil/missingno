@@ -23,7 +23,7 @@ use missingno_test_support::roundtrip::step_frame_hash;
 fn cgb_console(rom: &str) -> GbConsole<Cgb> {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/accuracy/roms/");
     let rom = std::fs::read(format!("{path}{rom}")).expect("ROM present");
-    let mut gbc = GameBoyColor::new(Cartridge::new(rom, None), None);
+    let mut gbc = GameBoyColor::new(Cartridge::new(rom, None, None).unwrap(), None);
     missingno_gb::test_support::run_boot_rom(&mut gbc);
     create_console(gbc, |_| None)
 }
@@ -34,7 +34,7 @@ fn cgb_acid2() -> GbConsole<Cgb> {
 
 fn dmg_console() -> GbConsole<Dmg> {
     // A synthetic all-NOP DMG cartridge — enough to produce a DMG save state.
-    let gb = GameBoy::new(Cartridge::new(vec![0u8; 0x8000], None), None);
+    let gb = GameBoy::new(Cartridge::new(vec![0u8; 0x8000], None, None).unwrap(), None);
     create_console(gb, |_| None)
 }
 
@@ -173,7 +173,7 @@ fn cgb_scratch_and_extra_oam_round_trip_deterministically() {
             0x3e, 0x01, 0xe0, 0x4d, // arm KEY1
             0x18, 0xfe, // JR -2 — loop
         ]);
-        let mut gbc = GameBoyColor::new(Cartridge::new(rom, None), None);
+        let mut gbc = GameBoyColor::new(Cartridge::new(rom, None, None).unwrap(), None);
         missingno_gb::test_support::run_boot_rom(&mut gbc);
         create_console(gbc, |_| None)
     }
@@ -239,7 +239,7 @@ fn cgb_refuses_a_double_speed_save() {
         0x10, 0x00, // STOP — engage the speed switch
         0x18, 0xfe, // JR -2 — loop at double speed
     ]);
-    let mut gbc = GameBoyColor::new(Cartridge::new(rom, None), None);
+    let mut gbc = GameBoyColor::new(Cartridge::new(rom, None, None).unwrap(), None);
     missingno_gb::test_support::run_boot_rom(&mut gbc);
     let mut console = create_console(gbc, |_| None);
 

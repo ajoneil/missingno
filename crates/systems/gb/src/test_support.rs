@@ -283,14 +283,14 @@ pub fn load_rom(relative: &str) -> TestRun<crate::Dmg> {
     let rom = std::fs::read(&path)
         .unwrap_or_else(|e| panic!("Failed to read ROM {}: {e}", path.display()));
     let boot_rom = try_load_boot_rom();
-    let mut gb = GameBoy::new(Cartridge::new(rom, None), boot_rom);
+    let mut gb = GameBoy::new(Cartridge::new(rom, None, None).unwrap(), boot_rom);
     run_boot_rom(&mut gb);
     TestRun::new(gb, relative, "DMG-B")
 }
 
 pub fn load_rom_with_boot_rom(relative: &str, boot_rom: Box<[u8; 256]>) -> TestRun<crate::Dmg> {
     let gb = GameBoy::new(
-        Cartridge::new(std::fs::read(rom_path(relative)).unwrap(), None),
+        Cartridge::new(std::fs::read(rom_path(relative)).unwrap(), None, None).unwrap(),
         Some(BootRom::Dmg(boot_rom)),
     );
     TestRun::new(gb, relative, "DMG-B")

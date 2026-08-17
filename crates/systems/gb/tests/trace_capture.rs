@@ -45,7 +45,7 @@ fn minimal_rom() -> Vec<u8> {
 
 /// Capture a short observable trace of the increment loop, seeding `a`.
 fn capture_run(path: &std::path::Path, initial_a: u8) {
-    let mut gb = GameBoy::new(Cartridge::new(minimal_rom(), None), None);
+    let mut gb = GameBoy::new(Cartridge::new(minimal_rom(), None, None).unwrap(), None);
     gb.cpu_mut().a = initial_a;
     let mut tracer = Tracer::create(
         path,
@@ -70,7 +70,7 @@ fn header_fields_are_authored_from_the_schema() {
     let dir = TempDir::new();
     let path = dir.path().join("hdr.morepork");
 
-    let mut gb = GameBoy::new(Cartridge::new(minimal_rom(), None), None);
+    let mut gb = GameBoy::new(Cartridge::new(minimal_rom(), None, None).unwrap(), None);
     {
         let mut tracer = Tracer::create(
             &path,
@@ -142,7 +142,7 @@ fn captured_values_round_trip() {
     let dir = TempDir::new();
     let path = dir.path().join("rt.morepork");
 
-    let mut gb = GameBoy::new(Cartridge::new(minimal_rom(), None), None);
+    let mut gb = GameBoy::new(Cartridge::new(minimal_rom(), None, None).unwrap(), None);
 
     let mut expected_a = Vec::new();
     let mut expected_pc = Vec::new();
@@ -227,7 +227,7 @@ fn full_scope_adds_deep_state() {
     let dir = TempDir::new();
     let path = dir.path().join("full.morepork");
 
-    let mut gb = GameBoy::new(Cartridge::new(minimal_rom(), None), None);
+    let mut gb = GameBoy::new(Cartridge::new(minimal_rom(), None, None).unwrap(), None);
     {
         let mut tracer = Tracer::create(
             &path,

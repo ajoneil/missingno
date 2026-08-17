@@ -230,7 +230,7 @@ mod tests {
     #[test]
     fn mbc1_bank_tracks_register_and_zero_maps_to_one() {
         let rom = bank_stamped_rom(32);
-        let mut mbc = Mbc::Mbc1(mbc1::Mbc1::new(&rom, None));
+        let mut mbc = Mbc::Mbc1(mbc1::Mbc1::new(&rom, None, false));
         assert_bank_matches_read(&mbc, &rom);
         mbc.write(0x2000, 0x12);
         assert_eq!(mbc.switchable_rom_bank(rom.len()), Some(0x12));
@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn mbc1_large_rom_upper_bits_apply() {
         let rom = bank_stamped_rom(128);
-        let mut mbc = Mbc::Mbc1(mbc1::Mbc1::new(&rom, None));
+        let mut mbc = Mbc::Mbc1(mbc1::Mbc1::new(&rom, None, false));
         mbc.write(0x2000, 0x03);
         mbc.write(0x4000, 0x01);
         assert_bank_matches_read(&mbc, &rom);
@@ -261,7 +261,7 @@ mod tests {
     #[test]
     fn mbc3_bank_matches_read() {
         let rom = bank_stamped_rom(64);
-        let mut mbc = Mbc::Mbc3(mbc3::Mbc3::new(&rom, None));
+        let mut mbc = Mbc::Mbc3(mbc3::Mbc3::new(&rom, None, mbc3::Mbc3Chip::Mbc3, false));
         mbc.write(0x2000, 0x21);
         assert_eq!(mbc.switchable_rom_bank(rom.len()), Some(0x21));
         assert_bank_matches_read(&mbc, &rom);

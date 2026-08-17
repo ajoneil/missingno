@@ -38,7 +38,10 @@ pub fn try_load_cgb_boot_rom() -> Option<BootRom> {
 /// set (and driving it to the 0x0100 cartridge handoff). With the env unset
 /// the boot ROM is `None` and the core uses its skip-boot post-boot state.
 fn new_cgb(rom: Vec<u8>) -> GameBoyColor {
-    let mut gbc = GameBoyColor::new(Cartridge::new(rom, None), try_load_cgb_boot_rom());
+    let mut gbc = GameBoyColor::new(
+        Cartridge::new(rom, None, None).unwrap(),
+        try_load_cgb_boot_rom(),
+    );
     run_boot_rom(&mut gbc);
     gbc
 }

@@ -13,7 +13,7 @@ use missingno_test_support::roundtrip::record_scripted;
 fn cgb_console(rom: &str) -> GbConsole<Cgb> {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/accuracy/roms/");
     let rom = std::fs::read(format!("{path}{rom}")).expect("ROM present");
-    let mut gbc = GameBoyColor::new(Cartridge::new(rom, None), None);
+    let mut gbc = GameBoyColor::new(Cartridge::new(rom, None, None).unwrap(), None);
     missingno_gb::test_support::run_boot_rom(&mut gbc);
     create_console(gbc, |_| None)
 }

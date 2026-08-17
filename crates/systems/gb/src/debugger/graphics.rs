@@ -264,7 +264,7 @@ mod tests {
         let mut rom = vec![0u8; 0x8000];
         rom[0x100] = 0x00;
         rom[0x101..0x104].copy_from_slice(&[0xc3, 0x50, 0x01]);
-        let console = Console::<Dmg>::new(Cartridge::new(rom, None), None);
+        let console = Console::<Dmg>::new(Cartridge::new(rom, None, None).unwrap(), None);
         let view = dmg_graphics_view(console.ppu(), console.vram());
 
         assert_eq!(view.atlases.len(), 1);

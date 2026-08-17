@@ -1,6 +1,9 @@
+pub mod cart_type;
 pub mod mbc;
 
-use mbc::mbc3::{ClockRegisters, Mapped};
+pub use cart_type::{GbCartType, GbCartridgeError};
+
+use mbc::mbc3::{ClockRegisters, Mapped, Mbc3Chip};
 use mbc::{
     Mbc, dbz_trans::DbzTrans, huc1::Huc1, huc3::Huc3, mbc1::Mbc1, mbc2::Mbc2, mbc3::Mbc3,
     mbc5::Mbc5, mbc6::Mbc6, mbc7::Mbc7, no_mbc::NoMbc,
@@ -80,12 +83,14 @@ pub fn parse_title(rom: &[u8]) -> String {
 pub fn parse_header(rom: &[u8]) -> (String, bool, bool) {
     let title = parse_title(rom);
     let sgb_flag = rom[0x146] == 0x03;
-    let cartridge_type = rom[0x147];
-    let has_battery = matches!(
-        cartridge_type,
-        0x03 | 0x06 | 0x09 | 0x10 | 0x13 | 0x1b | 0x1e | 0x22 | 0xfe | 0xff
-    );
+    let has_battery = GbCartType::from_header(rom[0x147]).is_ok_and(GbCartType::has_battery);
     (title, sgb_flag, has_battery)
+}
+
+/// The unlicensed "GB DBZ GOKOU 2" cart declares MBC5 but wires the DbzTrans
+/// half-bank switch, and only its title gives it away.
+fn is_dbz_trans(rom: &[u8], title: &str) -> bool {
+    title == "GB DBZ GOKOU 2" && rom[0x148] == 0x05
 }
 
 impl Cartridge {
@@ -152,40 +157,74 @@ impl Cartridge {
         }
     }
 
-    pub fn new(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Cartridge {
-        let (title, sgb_flag, has_battery) = parse_header(&rom);
-        let cartridge_type = rom[0x147];
-        let save = if has_battery { save_data } else { None };
-
-        // The unlicensed "GB DBZ GOKOU 2" cart declares MBC5 but uses the
-        // DbzTrans half-bank-switch mapper.
-        let mbc = if title == "GB DBZ GOKOU 2" && rom[0x148] == 0x05 {
-            Mbc::DbzTrans(DbzTrans::new(&rom, save))
-        } else {
-            match cartridge_type {
-                0x00 | 0x08 | 0x09 => Mbc::NoMbc(NoMbc::new(&rom, save)),
-                0x01..=0x03 => Mbc::Mbc1(Mbc1::new(&rom, save)),
-                0x05 | 0x06 => Mbc::Mbc2(Mbc2::new(&rom, save)),
-                0x0f..=0x13 => Mbc::Mbc3(Mbc3::new(&rom, save)),
-                0x19..=0x1b => Mbc::Mbc5(Mbc5::new(&rom, save)),
-                0x1c..=0x1e => Mbc::Mbc5(Mbc5::new_rumble(&rom, save)),
-                0x20 => Mbc::Mbc6(Mbc6::new(&rom, save)),
-                0x22 => Mbc::Mbc7(Mbc7::new(&rom, save)),
-                0xfe => Mbc::Huc3(Huc3::new(&rom, save)),
-                0xff => Mbc::Huc1(Huc1::new(&rom, save)),
-
-                _ => panic!("nyi: mbc {:2x}", cartridge_type),
-            }
+    /// The cartridge a ROM image is built into. The header names the board;
+    /// a caller who knows the header lies may state one instead, which also
+    /// stands in for the boards no header byte names.
+    pub fn new(
+        rom: Vec<u8>,
+        stated: Option<GbCartType>,
+        save_data: Option<Vec<u8>>,
+    ) -> Result<Cartridge, GbCartridgeError> {
+        let title = parse_title(&rom);
+        let sgb_flag = rom[0x146] == 0x03;
+        let cart_type = match stated {
+            Some(stated) => stated,
+            None if is_dbz_trans(&rom, &title) => GbCartType::DbzTrans,
+            None => GbCartType::from_header(rom[0x147]).map_err(GbCartridgeError::UnknownMapper)?,
         };
 
-        Cartridge {
+        let has_battery = cart_type.has_battery();
+        let save = if has_battery { save_data } else { None };
+
+        let mbc = match cart_type {
+            GbCartType::Rom | GbCartType::RomRam | GbCartType::RomRamBattery => {
+                Mbc::NoMbc(NoMbc::new(&rom, save))
+            }
+            GbCartType::Mbc1 | GbCartType::Mbc1Ram | GbCartType::Mbc1RamBattery => {
+                // Only a header-named MBC1 is probed for the multicart logo: a
+                // stated board has already settled the question.
+                let multicart = stated.is_none() && mbc::mbc1::detect_multicart(&rom);
+                Mbc::Mbc1(Mbc1::new(&rom, save, multicart))
+            }
+            GbCartType::Mbc1Multicart => Mbc::Mbc1(Mbc1::new(&rom, save, true)),
+            GbCartType::Mbc2 | GbCartType::Mbc2Battery => Mbc::Mbc2(Mbc2::new(&rom, save)),
+            GbCartType::Mbc3TimerBattery
+            | GbCartType::Mbc3TimerRamBattery
+            | GbCartType::Mbc3
+            | GbCartType::Mbc3Ram
+            | GbCartType::Mbc3RamBattery => Mbc::Mbc3(Mbc3::new(
+                &rom,
+                save,
+                Mbc3Chip::for_rom(&rom),
+                cart_type.has_timer(),
+            )),
+            // MBC30 names the chip, not the whole board, so the header still
+            // says whether the clock is populated beside it.
+            GbCartType::Mbc30 => {
+                let timer = GbCartType::from_header(rom[0x147]).is_ok_and(GbCartType::has_timer);
+                Mbc::Mbc3(Mbc3::new(&rom, save, Mbc3Chip::Mbc30, timer))
+            }
+            GbCartType::Mbc5 | GbCartType::Mbc5Ram | GbCartType::Mbc5RamBattery => {
+                Mbc::Mbc5(Mbc5::new(&rom, save))
+            }
+            GbCartType::Mbc5Rumble
+            | GbCartType::Mbc5RumbleRam
+            | GbCartType::Mbc5RumbleRamBattery => Mbc::Mbc5(Mbc5::new_rumble(&rom, save)),
+            GbCartType::Mbc6 => Mbc::Mbc6(Mbc6::new(&rom, save)),
+            GbCartType::Mbc7 => Mbc::Mbc7(Mbc7::new(&rom, save)),
+            GbCartType::Huc3 => Mbc::Huc3(Huc3::new(&rom, save)),
+            GbCartType::Huc1 => Mbc::Huc1(Huc1::new(&rom, save)),
+            GbCartType::DbzTrans => Mbc::DbzTrans(DbzTrans::new(&rom, save)),
+        };
+
+        Ok(Cartridge {
             title,
             has_battery,
             sgb_flag,
             sram_dirty: false,
             rom,
             mbc,
-        }
+        })
     }
 
     /// A read-only view of the mapper and clock state for the debugger.
@@ -341,5 +380,93 @@ impl Cartridge {
 
     pub fn mbc_mut(&mut self) -> &mut Mbc {
         &mut self.mbc
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rom_declaring(cartridge_type: u8, ram_size: u8) -> Vec<u8> {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x147] = cartridge_type;
+        rom[0x149] = ram_size;
+        rom
+    }
+
+    #[test]
+    fn a_cartridge_type_naming_no_board_is_refused() {
+        let Err(error) = Cartridge::new(rom_declaring(0xdd, 0), None, None) else {
+            panic!("a cartridge type naming no board was accepted");
+        };
+        assert_eq!(error, GbCartridgeError::UnknownMapper(0xdd));
+        assert!(error.to_string().contains("$dd"));
+    }
+
+    #[test]
+    fn a_stated_board_outranks_the_declared_one() {
+        let rom = rom_declaring(0x00, 3);
+        let cartridge = Cartridge::new(rom, Some(GbCartType::Mbc5RamBattery), None).unwrap();
+        assert_eq!(cartridge.mbc().name(), "MBC5");
+        assert!(cartridge.has_battery());
+    }
+
+    #[test]
+    fn a_stated_board_stands_in_for_a_type_that_names_none() {
+        let rom = rom_declaring(0x99, 0);
+        let cartridge = Cartridge::new(rom, Some(GbCartType::DbzTrans), None).unwrap();
+        assert_eq!(cartridge.mbc().name(), "DbzTrans");
+    }
+
+    #[test]
+    fn a_stated_mbc1_settles_the_multicart_question_either_way() {
+        let mut multicart_rom = vec![0u8; 1024 * 1024];
+        multicart_rom[0x147] = 0x01;
+        let logo = 0x10 * 0x4000 + 0x104;
+        multicart_rom[logo..logo + 48].copy_from_slice(&NINTENDO_LOGO);
+
+        let probed = Cartridge::new(multicart_rom.clone(), None, None).unwrap();
+        let Mbc::Mbc1(mbc1) = probed.mbc() else {
+            panic!("MBC1 cart built a different mapper");
+        };
+        assert!(mbc1.multicart);
+
+        let stated = Cartridge::new(multicart_rom, Some(GbCartType::Mbc1), None).unwrap();
+        let Mbc::Mbc1(mbc1) = stated.mbc() else {
+            panic!("MBC1 cart built a different mapper");
+        };
+        assert!(!mbc1.multicart);
+
+        let stated = Cartridge::new(
+            rom_declaring(0x01, 0),
+            Some(GbCartType::Mbc1Multicart),
+            None,
+        )
+        .unwrap();
+        let Mbc::Mbc1(mbc1) = stated.mbc() else {
+            panic!("MBC1 cart built a different mapper");
+        };
+        assert!(mbc1.multicart);
+    }
+
+    #[test]
+    fn a_stated_mbc30_keeps_the_wide_bank_register_on_a_small_rom() {
+        let cartridge =
+            Cartridge::new(rom_declaring(0x10, 3), Some(GbCartType::Mbc30), None).unwrap();
+        let Mbc::Mbc3(mbc3) = cartridge.mbc() else {
+            panic!("MBC30 cart built a different mapper");
+        };
+        assert!(matches!(mbc3.chip, Mbc3Chip::Mbc30));
+        assert!(mbc3.clock.is_some());
+    }
+
+    #[test]
+    fn a_save_is_restored_only_where_the_battery_holds_the_ram() {
+        let save = vec![0xa5; 8 * 1024];
+        let backed = Cartridge::new(rom_declaring(0x13, 2), None, Some(save.clone())).unwrap();
+        assert_eq!(backed.peek_ram(0), 0xa5);
+
+        let unbacked = Cartridge::new(rom_declaring(0x12, 2), None, Some(save)).unwrap();
+        assert_eq!(unbacked.peek_ram(0), 0x00);
     }
 }

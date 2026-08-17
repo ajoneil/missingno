@@ -74,7 +74,7 @@ mod gb {
     use missingno_gb::system::create_console;
     use missingno_gb::{BootRom, GameBoy, media};
     use missingno_gbc::GameBoyColor;
-    use missingno_gbc::launch::{self, BOOT_ROM, GbLaunch, RUNNER, RunnerPreference};
+    use missingno_gbc::launch::{self, BOARD, BOOT_ROM, GbLaunch, RUNNER, RunnerPreference};
 
     /// The headless build persists no battery save; the format is frontend
     /// policy the GUI owns.
@@ -99,7 +99,12 @@ mod gb {
                 Box::new(create_console(console, no_battery))
             }
         }
-        let cartridge = Cartridge::new(rom.to_vec(), None);
+        let board = launch::board_from_launch(launch).map_err(|value| LoadError::InvalidValue {
+            option: BOARD.to_string(),
+            value: value.to_string(),
+        })?;
+        let cartridge = Cartridge::new(rom.to_vec(), board, None)
+            .map_err(|refusal| LoadError::Core(refusal.to_string()))?;
         let boot_rom = match launch.file(BOOT_ROM) {
             Some(bytes) => Some(BootRom::from_bytes(bytes.to_vec()).map_err(|length| {
                 LoadError::InvalidValue {

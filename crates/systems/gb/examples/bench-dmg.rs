@@ -28,7 +28,7 @@ fn main() {
         .unwrap_or(1000);
 
     let rom = std::fs::read(&rom_path).expect("failed to read ROM");
-    let mut gb = GameBoy::new(Cartridge::new(rom, None), None);
+    let mut gb = GameBoy::new(Cartridge::new(rom, None, None).unwrap(), None);
 
     run_frames(&mut gb, WARMUP_FRAMES);
     let start = std::time::Instant::now();

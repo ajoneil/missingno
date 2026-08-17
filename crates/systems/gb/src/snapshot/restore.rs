@@ -247,10 +247,13 @@ mod tests {
             *chunk.last_mut().unwrap() = 0xB0 + bank as u8;
         }
         let rom = mbc3_rom(0x13, 3); // MBC3+RAM+BATTERY, 32 KiB
-        let source = GameBoy::new(Cartridge::new(rom.clone(), Some(save.clone())), None);
+        let source = GameBoy::new(
+            Cartridge::new(rom.clone(), None, Some(save.clone())).unwrap(),
+            None,
+        );
         let (record, memory) = capture(&source);
 
-        let mut target = GameBoy::new(Cartridge::new(rom, None), None);
+        let mut target = GameBoy::new(Cartridge::new(rom, None, None).unwrap(), None);
         target
             .restore_boundary(&record, memory, None)
             .expect("restore succeeds without panicking");
@@ -273,10 +276,10 @@ mod tests {
         let mut save = vec![0u8; 8 * 1024];
         save[0x100] = 0x5A;
         let rom = mbc3_rom(0x13, 2); // MBC3+RAM+BATTERY, 8 KiB
-        let source = GameBoy::new(Cartridge::new(rom.clone(), Some(save)), None);
+        let source = GameBoy::new(Cartridge::new(rom.clone(), None, Some(save)).unwrap(), None);
         let (record, memory) = capture(&source);
 
-        let mut target = GameBoy::new(Cartridge::new(rom, None), None);
+        let mut target = GameBoy::new(Cartridge::new(rom, None, None).unwrap(), None);
         // The fresh target has cartridge RAM disabled.
         match target.cartridge().mbc() {
             Mbc::Mbc3(m) => assert!(!m.ram_and_clock_enabled),
@@ -295,7 +298,7 @@ mod tests {
         let rom = mbc3_rom(0x10, 3); // MBC3+TIMER+RAM+BATTERY (carries a clock)
 
         // Source: RAM bank 2 mapped and enabled, a marker written to it.
-        let mut src_cart = Cartridge::new(rom.clone(), None);
+        let mut src_cart = Cartridge::new(rom.clone(), None, None).unwrap();
         src_cart.write(0x0000, 0x0A); // enable RAM + clock
         src_cart.write(0x4000, 0x02); // map RAM bank 2
         src_cart.write(0xA000, 0x77); // marker in bank 2
@@ -303,7 +306,7 @@ mod tests {
         let (record, memory) = capture(&source);
 
         // Target: currently on the clock register, not RAM.
-        let mut tgt_cart = Cartridge::new(rom, None);
+        let mut tgt_cart = Cartridge::new(rom, None, None).unwrap();
         tgt_cart.write(0x0000, 0x0A);
         tgt_cart.write(0x4000, 0x08); // map the seconds clock register
         let mut target = GameBoy::new(tgt_cart, None);
@@ -328,7 +331,7 @@ mod tests {
     #[test]
     fn mbc3_rtc_registers_round_trip() {
         let rom = mbc3_rom(0x10, 2); // MBC3+TIMER+RAM+BATTERY
-        let mut src_cart = Cartridge::new(rom.clone(), None);
+        let mut src_cart = Cartridge::new(rom.clone(), None, None).unwrap();
         src_cart.write(0x0000, 0x0A);
         src_cart.write(0x4000, 0x08); // map seconds
         src_cart.write(0xA000, 41); // seconds := 41
@@ -337,7 +340,7 @@ mod tests {
         let source = GameBoy::new(src_cart, None);
         let (record, memory) = capture(&source);
 
-        let mut target = GameBoy::new(Cartridge::new(rom, None), None);
+        let mut target = GameBoy::new(Cartridge::new(rom, None, None).unwrap(), None);
         target
             .restore_boundary(&record, memory, None)
             .expect("restore");

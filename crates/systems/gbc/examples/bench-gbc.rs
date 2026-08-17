@@ -29,7 +29,7 @@ fn main() {
         .unwrap_or(1000);
 
     let rom = std::fs::read(&rom_path).expect("failed to read ROM");
-    let mut gbc = GameBoyColor::new(Cartridge::new(rom, None), None);
+    let mut gbc = GameBoyColor::new(Cartridge::new(rom, None, None).unwrap(), None);
 
     run_frames(&mut gbc, WARMUP_FRAMES);
     let start = std::time::Instant::now();

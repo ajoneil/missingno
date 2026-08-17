@@ -3,13 +3,16 @@
 //! header picks the core; the serial link, printer, boot ROM, and battery-save
 //! format are app policy wired in here.
 
+use missingno_gb::cartridge::{GbCartType, GbCartridgeError};
 use missingno_gb::frame::{self, GameBoyScreen, GbFrame};
 use missingno_gb::ppu::types::palette::{Palette, PaletteChoice, PaletteIndex};
 use missingno_gb::system::{LINK_CABLE, LINK_DISCONNECTED, LINK_PRINTER, create_console_with_link};
 use missingno_gb::{BootRom, GameBoy, cartridge::Cartridge, serial_transfer::SerialLink};
 use missingno_gbc::GameBoyColor;
-pub use missingno_gbc::launch::{BOOT_ROM, GbLaunch, RUNNER, RunnerPreference, launch_options};
-use missingno_gbc::launch::{BootRomFit, RunnerRefused};
+use missingno_gbc::launch::BootRomFit;
+pub use missingno_gbc::launch::{
+    BOARD, BOOT_ROM, GbLaunch, RUNNER, RunnerPreference, board_from_launch, launch_options,
+};
 
 use missingno_core::ports::PeripheralId;
 use missingno_core::video::{ConsoleFrame, RgbaFrame};
@@ -149,7 +152,11 @@ fn battery_save(cartridge: &Cartridge) -> Option<Vec<u8>> {
 
 /// A cartridge from ROM + saved battery contents: any RTC tail in the save
 /// restores the clock and catches it up on the time since the save.
-fn build_cartridge(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Cartridge {
+fn build_cartridge(
+    rom: Vec<u8>,
+    board: Option<GbCartType>,
+    save_data: Option<Vec<u8>>,
+) -> Result<Cartridge, GbCartridgeError> {
     let (ram, rtc) = match save_data {
         Some(blob) => {
             let (ram, rtc) = crate::sram::split_blob(blob);
@@ -157,12 +164,12 @@ fn build_cartridge(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Cartridge {
         }
         None => (None, None),
     };
-    let mut cartridge = Cartridge::new(rom, ram);
+    let mut cartridge = Cartridge::new(rom, board, ram)?;
     if let Some((snapshot, saved_at)) = rtc {
         let elapsed = crate::sram::now_unix().saturating_sub(saved_at);
         cartridge.restore_rtc(snapshot, elapsed);
     }
-    cartridge
+    Ok(cartridge)
 }
 
 /// The app's executable paths (GUI load, trace) reach the core selection
@@ -170,15 +177,18 @@ fn build_cartridge(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Cartridge {
 /// the boot ROM they named is dropped.
 pub fn launch<L: GbLaunch>(
     rom: Vec<u8>,
+    board: Option<GbCartType>,
     save_data: Option<Vec<u8>>,
     boot_rom: Option<BootRom>,
     link: Option<Box<dyn SerialLink>>,
     runner: RunnerPreference,
     launcher: L,
-) -> Result<L::Output, RunnerRefused> {
-    let cartridge = build_cartridge(rom, save_data);
+) -> Result<L::Output, String> {
+    let cartridge =
+        build_cartridge(rom, board, save_data).map_err(|refusal| refusal.to_string())?;
     let (output, boot_rom) =
-        missingno_gbc::launch::console(cartridge, boot_rom, link, runner, launcher)?;
+        missingno_gbc::launch::console(cartridge, boot_rom, link, runner, launcher)
+            .map_err(|refused| format!("{RUNNER}: {refused}"))?;
     if boot_rom == BootRomFit::Dropped {
         eprintln!("warning: boot ROM model does not match the selected core; ignoring it");
     }
@@ -221,15 +231,17 @@ pub fn create_console(media: MediaLoad) -> Result<Box<dyn SystemConsole>, String
     };
     let runner = RunnerPreference::from_launch(&media.launch)
         .map_err(|value| format!("{RUNNER}: no such console \"{value}\""))?;
+    let board = board_from_launch(&media.launch)
+        .map_err(|value| format!("{BOARD}: no such board \"{value}\""))?;
     launch(
         media.rom.to_vec(),
+        board,
         media.save_data,
         boot_rom,
         link,
         runner,
         Boxed { link: kind },
     )
-    .map_err(|refused| format!("{RUNNER}: {refused}"))
 }
 
 #[cfg(test)]

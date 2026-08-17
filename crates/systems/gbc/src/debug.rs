@@ -597,7 +597,10 @@ mod tests {
         let mut rom = vec![0u8; 0x8000];
         rom[0x100] = 0x00;
         rom[0x101..0x104].copy_from_slice(&[0xc3, 0x50, 0x01]);
-        let mut debugger = Debugger::new(GameBoyColor::new(Cartridge::new(rom, None), None));
+        let mut debugger = Debugger::new(GameBoyColor::new(
+            Cartridge::new(rom, None, None).unwrap(),
+            None,
+        ));
         for _ in 0..4 {
             debugger.step();
         }
@@ -632,7 +635,7 @@ mod tests {
     #[test]
     fn cgb_exposes_a_linear_wram_region() {
         let debugger = Debugger::new(GameBoyColor::new(
-            Cartridge::new(vec![0u8; 0x8000], None),
+            Cartridge::new(vec![0u8; 0x8000], None, None).unwrap(),
             None,
         ));
         let wram = debugger
@@ -678,7 +681,10 @@ mod tests {
             0x3e, 0x00, 0xe0, 0x4f, // LD A,0; LDH ($4F),A — VBK=0
             0x18, 0xfe, // JR -2
         ]);
-        let mut debugger = Debugger::new(GameBoyColor::new(Cartridge::new(rom, None), None));
+        let mut debugger = Debugger::new(GameBoyColor::new(
+            Cartridge::new(rom, None, None).unwrap(),
+            None,
+        ));
         for _ in 0..40 {
             debugger.step();
         }
@@ -711,7 +717,7 @@ mod tests {
     #[test]
     fn cgb_watchables_expose_the_wram_bank_key() {
         let debugger = Debugger::new(GameBoyColor::new(
-            Cartridge::new(vec![0u8; 0x8000], None),
+            Cartridge::new(vec![0u8; 0x8000], None, None).unwrap(),
             None,
         ));
         let keys: Vec<&str> = debugger.watchables().iter().map(|w| w.key).collect();
@@ -729,7 +735,10 @@ mod tests {
             0xea, 0x70, 0xff, // LD ($FF70),A — SVBK = 3
             0x18, 0xfe, // JR -2 self-loop at $0105
         ]);
-        let mut debugger = Debugger::new(GameBoyColor::new(Cartridge::new(rom, None), None));
+        let mut debugger = Debugger::new(GameBoyColor::new(
+            Cartridge::new(rom, None, None).unwrap(),
+            None,
+        ));
         let stops = StopSet {
             watches: vec![inspect::Watch {
                 terms: vec![
@@ -757,7 +766,10 @@ mod tests {
         let mut rom = vec![0u8; 0x8000];
         rom[0x100] = 0x00;
         rom[0x101..0x104].copy_from_slice(&[0xc3, 0x50, 0x01]);
-        let mut debugger = Debugger::new(GameBoyColor::new(Cartridge::new(rom, None), None));
+        let mut debugger = Debugger::new(GameBoyColor::new(
+            Cartridge::new(rom, None, None).unwrap(),
+            None,
+        ));
         for _ in 0..4 {
             debugger.step();
         }
@@ -798,7 +810,10 @@ mod tests {
         let mut rom = vec![0u8; 0x8000];
         rom[0x100] = 0x00;
         rom[0x101..0x104].copy_from_slice(&[0xc3, 0x50, 0x01]);
-        let mut debugger = Debugger::new(GameBoyColor::new(Cartridge::new(rom, None), None));
+        let mut debugger = Debugger::new(GameBoyColor::new(
+            Cartridge::new(rom, None, None).unwrap(),
+            None,
+        ));
         for _ in 0..4 {
             debugger.step();
         }
