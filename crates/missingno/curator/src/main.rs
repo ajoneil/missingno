@@ -22,7 +22,7 @@ use iced::{Element, Length, Task, Theme};
 
 use db::{Db, TextField, TreeId};
 use missingno_core::system::{ControlId, ControlRole};
-use remote::{Bridge, RemoteEndpoint, SharedSink, error_result, text_result};
+use remote::{Bridge, SharedSink, error_result, text_result};
 use verify::RomIndex;
 #[derive(Parser)]
 struct Args {
@@ -149,7 +149,7 @@ struct Curator {
     enrich_attempted: std::collections::HashSet<String>,
     enriching: bool,
     remote_sink: SharedSink,
-    _remote: Option<RemoteEndpoint>,
+    _remote: Option<missingno_session::attach::SocketHost>,
     /// Parked wait_for_action replies, answered when the human acts.
     action_waiters: Vec<std::sync::mpsc::Sender<serde_json::Value>>,
     /// Decisions made while no agent was waiting.
@@ -302,7 +302,7 @@ impl Curator {
         let db = Db::load(db_path).map_err(|e| e.to_string());
         let remote_sink = SharedSink::default();
         let endpoint = remote
-            .then(|| RemoteEndpoint::open(remote_sink.clone()).ok())
+            .then(|| remote::open(remote_sink.clone()).ok())
             .flatten();
         (
             Self {

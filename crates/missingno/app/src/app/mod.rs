@@ -117,7 +117,7 @@ struct App {
     /// The UI-automation socket, open while the setting or CLI flag is on.
     /// App-lifetime, independent of whether a game is loaded.
     #[cfg(unix)]
-    automation_endpoint: Option<automation::endpoint::AutomationEndpoint>,
+    automation_endpoint: Option<missingno_session::attach::SocketHost>,
     /// Parked `ui_tree` replies awaiting the bounds walk that will answer them.
     automation_pending: HashMap<u64, automation::update::PendingReply>,
     automation_next_request: u64,
@@ -230,7 +230,7 @@ impl App {
     fn reconcile_automation(&mut self) {
         let wanted = self.settings.allow_ui_automation || self.automation_flag;
         if wanted && self.automation_endpoint.is_none() {
-            match automation::endpoint::AutomationEndpoint::open(self.automation_sink.clone()) {
+            match automation::endpoint::open(self.automation_sink.clone()) {
                 Ok(endpoint) => self.automation_endpoint = Some(endpoint),
                 Err(error) => {
                     self.notice = Some((

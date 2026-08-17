@@ -1,24 +1,19 @@
 //! `ui-<pid>.sock` endpoint speaking the same newline JSON-RPC protocol as the
 //! emulator's UI-automation surface, so `missingno-remote` discovers the
 //! curator and forwards its tools over MCP without any server changes. The
-//! socket lives in the shared runtime directory, named by pid, created mode
-//! 0600 under a 0700 directory, and removed on drop.
+//! socket is the session crate's shared host, in the shared runtime directory,
+//! named by pid, created mode 0600 under a 0700 directory, removed on drop.
 
 use std::{
-    io::{BufRead, BufReader, Write},
-    os::unix::fs::PermissionsExt,
-    os::unix::net::{UnixListener, UnixStream},
-    path::{Path, PathBuf},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-        mpsc,
-    },
-    thread::JoinHandle,
+    path::Path,
+    sync::{Arc, Mutex, mpsc},
     time::{Duration, Instant},
 };
 
 use iced::futures::{StreamExt, channel::mpsc::UnboundedSender, stream};
+use missingno_session::attach::{
+    HostSpec, PartialFrames, Request, Serving, SocketHost, error_frame, success_frame,
+};
 use missingno_session::tools::{outcome_json, text};
 use serde_json::{Value, json};
 
@@ -27,8 +22,8 @@ use crate::vocabulary::{
     RELEASE_STATUSES, TV_FORMATS,
 };
 
-/// How long an accept or read waits between polls, bounding shutdown latency.
-const ACCEPT_POLL: Duration = Duration::from_millis(100);
+/// How long a parked reply waits between checks that the endpoint is still open.
+const REPLY_POLL: Duration = Duration::from_millis(100);
 
 const REPLY_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -66,143 +61,33 @@ pub fn worker() -> impl iced::futures::Stream<Item = Bridge> {
     stream::once(async move { Bridge::Ready(sink) }).chain(calls.map(Bridge::Call))
 }
 
-/// A published curator surface: the listening socket plus its accept thread.
-/// Dropping it stops accepting and removes the socket file.
-pub struct RemoteEndpoint {
-    path: PathBuf,
-    stop: Arc<AtomicBool>,
-    thread: Option<JoinHandle<()>>,
+const CURATOR_HOST: HostSpec = HostSpec {
+    socket_prefix: "ui",
+    occupant: "a curator",
+    accept_thread: "curator-remote",
+    client_thread: "curator-remote-client",
+    partial_frames: PartialFrames::Resumed,
+};
+
+/// Publish the curator's tool surface in the default runtime directory.
+pub fn open(sink: SharedSink) -> std::io::Result<SocketHost> {
+    open_in(&missingno_session::attach::runtime_dir(), sink)
 }
 
-impl RemoteEndpoint {
-    pub fn open(sink: SharedSink) -> std::io::Result<Self> {
-        Self::open_in(&missingno_session::attach::runtime_dir(), sink)
-    }
-
-    /// Publish in `dir`, creating it user-only if absent. A socket file left by
-    /// a dead host of the same name is replaced; one whose host still answers
-    /// is an error rather than a silent takeover.
-    pub fn open_in(dir: &Path, sink: SharedSink) -> std::io::Result<Self> {
-        std::fs::create_dir_all(dir)?;
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
-
-        let path = dir.join(format!("ui-{}.sock", std::process::id()));
-        if path.exists() {
-            if UnixStream::connect(&path).is_ok() {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::AddrInUse,
-                    format!("a curator already answers on {}", path.display()),
-                ));
-            }
-            std::fs::remove_file(&path)?;
-        }
-
-        let listener = UnixListener::bind(&path)?;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
-        listener.set_nonblocking(true)?;
-
-        let stop = Arc::new(AtomicBool::new(false));
-        let thread = std::thread::Builder::new()
-            .name("curator-remote".into())
-            .spawn({
-                let stop = stop.clone();
-                move || accept_loop(listener, sink, stop)
-            })?;
-
-        Ok(Self {
-            path,
-            stop,
-            thread: Some(thread),
-        })
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
+/// Publish in `dir`.
+pub fn open_in(dir: &Path, sink: SharedSink) -> std::io::Result<SocketHost> {
+    SocketHost::open_in(dir, CURATOR_HOST, move |line, serving| {
+        Some(answer(line, &sink, serving))
+    })
 }
 
-impl Drop for RemoteEndpoint {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
-fn accept_loop(listener: UnixListener, sink: SharedSink, stop: Arc<AtomicBool>) {
-    let mut clients: Vec<JoinHandle<()>> = Vec::new();
-    while !stop.load(Ordering::SeqCst) {
-        match listener.accept() {
-            Ok((stream, _)) => {
-                let sink = sink.clone();
-                let stop = stop.clone();
-                if let Ok(thread) = std::thread::Builder::new()
-                    .name("curator-remote-client".into())
-                    .spawn(move || serve(stream, sink, stop))
-                {
-                    clients.push(thread);
-                }
-                clients.retain(|client| !client.is_finished());
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(ACCEPT_POLL)
-            }
-            Err(_) => break,
-        }
-    }
-    for client in clients {
-        let _ = client.join();
-    }
-}
-
-fn serve(stream: UnixStream, sink: SharedSink, stop: Arc<AtomicBool>) {
-    // A read timeout is what lets a quiet client notice the endpoint closing.
-    let _ = stream.set_read_timeout(Some(ACCEPT_POLL));
-    let Ok(write_half) = stream.try_clone() else {
-        return;
+/// Dispatch one request frame.
+fn answer(line: &str, sink: &SharedSink, serving: &Serving) -> Value {
+    let Request { id, method, params } = match Request::parse(line) {
+        Ok(request) => request,
+        Err(error) => return error_frame(Value::Null, &format!("bad json: {error}")),
     };
-    let mut writer = write_half;
-    let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    while !stop.load(Ordering::SeqCst) {
-        match reader.read_line(&mut line) {
-            Ok(0) => return,
-            Ok(_) => {}
-            // A timeout can land mid-frame, so the partial line is kept.
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
-                continue;
-            }
-            Err(_) => return,
-        }
-        let frame = answer(&line, &sink, &stop);
-        line.clear();
-        let Some(frame) = frame else { continue };
-        if respond(&mut writer, frame).is_err() {
-            return;
-        }
-    }
-}
-
-/// Dispatch one request frame, or `None` for a blank line.
-fn answer(line: &str, sink: &SharedSink, stop: &AtomicBool) -> Option<Value> {
-    if line.trim().is_empty() {
-        return None;
-    }
-    let request: Value = match serde_json::from_str(line) {
-        Ok(v) => v,
-        Err(e) => return Some(error_frame(Value::Null, &format!("bad json: {e}"))),
-    };
-    let id = request.get("id").cloned().unwrap_or(Value::Null);
-    let method = request.get("method").and_then(Value::as_str).unwrap_or("");
-    let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
-    Some(match method {
+    match method.as_str() {
         "ui/info" => success_frame(
             id,
             json!({
@@ -218,20 +103,20 @@ fn answer(line: &str, sink: &SharedSink, stop: &AtomicBool) -> Option<Value> {
                 .get("arguments")
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            match dispatch(sink, name, args, stop) {
+            match dispatch(sink, name, args, serving) {
                 Ok(body) => success_frame(id, body),
                 Err(message) => error_frame(id, &message),
             }
         }
         other => error_frame(id, &format!("method not found: {other}")),
-    })
+    }
 }
 
 fn dispatch(
     sink: &SharedSink,
     name: &str,
     args: Value,
-    stop: &AtomicBool,
+    serving: &Serving,
 ) -> Result<Value, String> {
     let sink = sink.get().ok_or("curator UI not ready")?;
     let (reply, answer) = mpsc::channel();
@@ -263,27 +148,15 @@ fn dispatch(
     let deadline = Instant::now() + timeout;
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() || stop.load(Ordering::SeqCst) {
+        if remaining.is_zero() || !serving.is_serving() {
             return Err(unanswered());
         }
-        match answer.recv_timeout(remaining.min(ACCEPT_POLL)) {
+        match answer.recv_timeout(remaining.min(REPLY_POLL)) {
             Ok(value) => return Ok(value),
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(mpsc::RecvTimeoutError::Disconnected) => return Err(unanswered()),
         }
     }
-}
-
-fn respond(writer: &mut UnixStream, frame: Value) -> std::io::Result<()> {
-    writeln!(writer, "{frame}")
-}
-
-fn success_frame(id: Value, result: Value) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "result": result })
-}
-
-fn error_frame(id: Value, message: &str) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": message } })
 }
 
 pub fn text_result(body: impl Into<String>) -> Value {
@@ -628,6 +501,9 @@ fn tool_definitions() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixStream;
 
     /// Open an endpoint in a temp dir behind a stub UI, exchange the three
     /// methods, then drop it — the drop must stop the accept thread and clear
@@ -645,7 +521,7 @@ mod tests {
             }
         });
 
-        let endpoint = RemoteEndpoint::open_in(dir.path(), shared).expect("open endpoint");
+        let endpoint = open_in(dir.path(), shared).expect("open endpoint");
         let path = endpoint.path().to_path_buf();
         assert_eq!(
             std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
@@ -681,7 +557,7 @@ mod tests {
         assert_eq!(called["result"]["content"][0]["text"], "ran status");
 
         // A second host on the same socket is refused, not a silent takeover.
-        match RemoteEndpoint::open_in(dir.path(), SharedSink::default()) {
+        match open_in(dir.path(), SharedSink::default()) {
             Ok(_) => panic!("a live host keeps its socket"),
             Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse),
         }
