@@ -2026,6 +2026,48 @@ impl Db {
     /// also walks slug prefixes in both directions and reports why each
     /// candidate matched, since an adjacent slug is often a different game.
     pub fn related_entries(&self, entry: usize) -> Vec<(String, String, &'static str, bool)> {
+        /// Two slugs naming the same game with the punctuation in different
+        /// places. Compared with every separator gone, and the import's
+        /// `zzz-unk-` noise stripped, so `monster-cise` reaches
+        /// `zzz-unk-monstercise-2`.
+        /// Whether `needle` appears inside a bracketed part of `title` — where
+        /// an import parks the real game's name — and not in the run-on list a
+        /// compilation's title is.
+        fn named_in_a_parenthetical(title: &str, needle: &str) -> bool {
+            title.split('(').skip(1).any(|rest| {
+                rest.split_once(')')
+                    .map(|(inside, _)| inside.contains(needle))
+                    .unwrap_or(false)
+            })
+        }
+
+        fn squashed_slugs_overlap(a: &str, b: &str) -> bool {
+            fn squash(s: &str) -> String {
+                s.trim_start_matches("zzz-unk-")
+                    .chars()
+                    .filter(char::is_ascii_alphanumeric)
+                    .flat_map(char::to_lowercase)
+                    .collect()
+            }
+            let (a, b) = (squash(a), squash(b));
+            let (long, short) = if a.len() >= b.len() {
+                (&a, &b)
+            } else {
+                (&b, &a)
+            };
+            if short.len() < 6 || !long.starts_with(short.as_str()) {
+                return false;
+            }
+            let tail = &long[short.len()..];
+            // A dump-flag or import tail, not the next entry in a numbered
+            // series: `…contest-jeffthompson-1` and `…-10` differ by a digit on
+            // something already ending in one.
+            !tail.is_empty()
+                && tail.len() <= 2
+                && !(tail.chars().all(|c| c.is_ascii_digit())
+                    && short.ends_with(|c: char| c.is_ascii_digit()))
+        }
+
         let this = &self.entries[entry];
         let (tree, slug) = (this.tree, this.slug.as_str());
         let needles = this.title_needles();
@@ -2036,6 +2078,7 @@ impl Db {
             if other.tree != tree || other.slug == slug {
                 continue;
             }
+            let other_lower = other.game.title().to_lowercase();
             let reason = if other.slug.starts_with(&format!("{slug}-")) {
                 "slug suffix"
             } else if slug.starts_with(&format!("{}-", other.slug)) {
@@ -2048,10 +2091,20 @@ impl Db {
                     .any(|rt| needles.contains(&missingno_gamedb::normalized_title(rt)))
             {
                 "same title"
-            } else if title_lower.len() >= 4
-                && other.game.title().to_lowercase().contains(&title_lower)
-            {
+            } else if title_lower.len() >= 4 && other_lower.contains(&title_lower) {
                 "title contains"
+            } else if other_lower.len() >= 8 && named_in_a_parenthetical(&title_lower, &other_lower)
+            {
+                // A filename-shaped title names the real game in a bracket:
+                // "Monkey Music (Grover's Music Maker Beta) (08-18-1982)",
+                // "Space Harrier (Moonsweeper Hack)". A compilation lists its
+                // games instead, and listing them is not being them.
+                "named in this title's brackets"
+            } else if squashed_slugs_overlap(slug, &other.slug) {
+                // Hyphens fall differently either side of the same word
+                // (monster-cise / zzz-unk-monstercise-2), which the prefix and
+                // suffix checks above both miss.
+                "slug words overlap"
             } else {
                 continue;
             };
@@ -2909,5 +2962,71 @@ mod board_tests {
             Some("CASTLE"),
             "nothing landed"
         );
+    }
+}
+
+#[cfg(test)]
+mod related_entries_tests {
+    use super::*;
+
+    fn db_with(entries: &[(&str, &str)]) -> (tempfile::TempDir, Db) {
+        let dir = tempfile::tempdir().unwrap();
+        for (slug, title) in entries {
+            let game_dir = dir.path().join("data/vcs").join(slug);
+            std::fs::create_dir_all(&game_dir).unwrap();
+            std::fs::write(
+                game_dir.join("manifest.ron"),
+                format!("(\n    title: {title:?},\n)\n"),
+            )
+            .unwrap();
+        }
+        let db = Db::load(dir.path().to_path_buf()).unwrap();
+        (dir, db)
+    }
+
+    fn keys_related_to(db: &Db, slug: &str) -> Vec<String> {
+        let i = db.entries.iter().position(|e| e.slug == slug).unwrap();
+        db.related_entries(i).into_iter().map(|(k, ..)| k).collect()
+    }
+
+    /// The import titles an entry from a dump's filename, so the real game's
+    /// title is a substring of it rather than the other way round.
+    #[test]
+    fn a_filename_title_reaches_the_game_named_inside_it() {
+        let (_dir, db) = db_with(&[
+            (
+                "monkey-music",
+                "Monkey Music (Grover's Music Maker Beta) (Kid's Controller) (08-18-1982)",
+            ),
+            ("grovers-music-maker", "Grover's Music Maker"),
+        ]);
+        assert_eq!(
+            keys_related_to(&db, "monkey-music"),
+            vec!["vcs/grovers-music-maker"]
+        );
+    }
+
+    /// Neither slug is the other's prefix or suffix: the hyphen falls inside
+    /// the word on one side and the other carries the import's own noise.
+    #[test]
+    fn slugs_hyphenated_differently_still_meet() {
+        let (_dir, db) = db_with(&[
+            ("monster-cise", "Monster Cise"),
+            ("zzz-unk-monstercise-2", "ZZZ-UNK-Monstercise_2"),
+        ]);
+        assert_eq!(
+            keys_related_to(&db, "monster-cise"),
+            vec!["vcs/zzz-unk-monstercise-2"]
+        );
+    }
+
+    /// A different game that merely shares a couple of words stays out.
+    #[test]
+    fn a_shared_word_is_not_a_relation() {
+        let (_dir, db) = db_with(&[
+            ("music-maker", "Music Maker"),
+            ("moon-patrol", "Moon Patrol"),
+        ]);
+        assert!(keys_related_to(&db, "moon-patrol").is_empty());
     }
 }
