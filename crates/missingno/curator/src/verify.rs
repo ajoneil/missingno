@@ -105,6 +105,16 @@ pub fn libretro_boxart_url(system: &str, signature_name: &str) -> Option<String>
     ))
 }
 
+/// libretro keys its files by No-Intro name, while a signature name is often
+/// TOSEC-shaped (`Moon Patrol (1983)(Atari)(NTSC)`), which libretro never has.
+/// The entry's own title plus a region suffix is the No-Intro shape.
+pub fn libretro_title_urls(system: &str, title: &str) -> Vec<String> {
+    ["", " (USA)", " (Europe)", " (World)"]
+        .iter()
+        .filter_map(|suffix| libretro_boxart_url(system, &format!("{title}{suffix}.png")))
+        .collect()
+}
+
 pub fn measure_cover(source: &str, url: String) -> CoverCandidate {
     match fetch(&url) {
         Ok(bytes) => CoverCandidate {

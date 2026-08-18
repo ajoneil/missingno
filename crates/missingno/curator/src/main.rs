@@ -48,6 +48,29 @@ struct Args {
     curator: Option<String>,
 }
 
+/// A mod's link, read from a tool call's `url` plus optional `link_name` and
+/// `link_type`. A catalogue listing is not a homepage, so the name is only
+/// "Homepage" by default.
+fn mod_link(args: &serde_json::Value) -> Result<Option<missingno_gamedb::Link>, String> {
+    let Some(url) = args.get("url").and_then(serde_json::Value::as_str) else {
+        return Ok(None);
+    };
+    let name = args
+        .get("link_name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("Homepage");
+    let link_type = match args.get("link_type").and_then(serde_json::Value::as_str) {
+        Some(kind) => db::parse_link_type(kind)?,
+        None => missingno_gamedb::LinkType::Community,
+    };
+    Ok(Some(missingno_gamedb::Link {
+        name: name.to_owned(),
+        url: url.to_owned(),
+        link_type,
+        languages: Vec::new(),
+    }))
+}
+
 /// This process's action-event log: `runtime_dir/curator-events-<pid>.log`.
 /// A client tails it to see accepts/flags live without the long-poll.
 fn event_log_path() -> std::path::PathBuf {
@@ -511,6 +534,7 @@ impl Curator {
                         .flat_map(|r| db.entries[i].game.release_artifacts(r))
                         .map(|(sha1, _, _)| sha1)
                         .collect();
+                    let title = db.entries[i].game.title().to_owned();
                     let reply = call.reply.clone();
                     self.status = format!("gathering covers for {key}…");
                     return Task::perform(
@@ -519,7 +543,7 @@ impl Curator {
                                 .iter()
                                 .map(|u| verify::measure_cover("staged", u.clone()))
                                 .collect();
-                            for sha1 in dumps.iter().take(6) {
+                            for sha1 in dumps.iter().take(12) {
                                 let Ok(Some(hit)) = verify::hasheous_lookup(sha1) else {
                                     continue;
                                 };
@@ -535,6 +559,16 @@ impl Curator {
                                     out.push(verify::measure_cover("libretro", u));
                                 }
                                 break;
+                            }
+                            for url in verify::libretro_title_urls(system, &title) {
+                                if !out.iter().any(|c| c.url == url) {
+                                    out.push(verify::measure_cover("libretro", url));
+                                }
+                            }
+                            // Keep the failures when nothing landed: "tried and
+                            // missed" is a different answer from "never looked".
+                            if out.iter().any(|c| c.error.is_none()) {
+                                out.retain(|c| c.error.is_none() || c.source == "staged");
                             }
                             out
                         }),
@@ -1841,7 +1875,10 @@ impl Curator {
                 let Ok(db) = &mut self.db else {
                     return error_result("db not loaded");
                 };
-                let homepage = str_arg("url").map(str::to_owned);
+                let homepage = match mod_link(args) {
+                    Ok(link) => link,
+                    Err(e) => return error_result(e),
+                };
                 match db.mark_mod(i, sha1, title, category, base, homepage) {
                     Ok(destination) => {
                         text_result(format!("{sha1} moved out of {key}'s dumps → {destination}"))
@@ -1910,7 +1947,10 @@ impl Curator {
                 let rename = set_str("name").map(str::to_owned);
                 let author = set_str("author").map(str::to_owned);
                 let label = set_str("label").map(str::to_owned);
-                let url = set_str("url").map(str::to_owned);
+                let link = match mod_link(&serde_json::Value::Object(set.clone())) {
+                    Ok(link) => link,
+                    Err(e) => return error_result(e),
+                };
                 let tv_format = match set_str("tv_format") {
                     Some(f) => Some(match db::parse_tv_format(f) {
                         Ok(f) => f,
@@ -1941,7 +1981,7 @@ impl Curator {
                         name: rename,
                         category,
                         author,
-                        url,
+                        link,
                         release_index,
                         base_sha1: base,
                         label,

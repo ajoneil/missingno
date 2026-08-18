@@ -510,15 +510,10 @@ impl AnyGame {
                 m.author = (!author.is_empty()).then_some(author);
                 applied.push("author");
             }
-            if let Some(url) = edits.url {
-                m.links.retain(|l| l.name != "Homepage");
-                if !url.is_empty() {
-                    m.links.push(Link {
-                        name: "Homepage".to_owned(),
-                        url,
-                        link_type: LinkType::Community,
-                        languages: Vec::new(),
-                    });
+            if let Some(link) = edits.link {
+                m.links.retain(|l| l.name != link.name);
+                if !link.url.is_empty() {
+                    m.links.push(link);
                 }
                 applied.push("url");
             }
@@ -1214,7 +1209,7 @@ fn split_hack_from<P: Platform>(
     title: String,
     category: ModCategory,
     base: Sha1,
-    homepage: Option<String>,
+    homepage: Option<Link>,
 ) -> Option<Game<P>> {
     for release in &mut source.releases {
         let Some(at) = release
@@ -1231,16 +1226,7 @@ fn split_hack_from<P: Platform>(
             developer: None,
             description: None,
             tags: Vec::new(),
-            links: homepage
-                .map(|url| {
-                    vec![Link {
-                        name: "Homepage".to_owned(),
-                        url,
-                        link_type: LinkType::Community,
-                        languages: Vec::new(),
-                    }]
-                })
-                .unwrap_or_default(),
+            links: homepage.map(|link| vec![link]).unwrap_or_default(),
             covers: Vec::new(),
             screenshots: Vec::new(),
             mod_of: Some(ModOf {
@@ -1401,7 +1387,7 @@ fn attach_mod<P: Platform>(
     sha1: &str,
     name: String,
     category: ModCategory,
-    homepage: Option<String>,
+    homepage: Option<Link>,
     base_sha1: Option<Sha1>,
 ) -> bool {
     for index in 0..source.releases.len() {
@@ -1421,16 +1407,7 @@ fn attach_mod<P: Platform>(
             author: None,
             curated: false,
             recommended_by: Vec::new(),
-            links: homepage
-                .map(|url| {
-                    vec![Link {
-                        name: "Homepage".to_owned(),
-                        url,
-                        link_type: LinkType::Community,
-                        languages: Vec::new(),
-                    }]
-                })
-                .unwrap_or_default(),
+            links: homepage.map(|link| vec![link]).unwrap_or_default(),
             releases: vec![ModRelease {
                 label: None,
                 date: None,
@@ -1489,7 +1466,8 @@ pub struct ModEdits {
     pub name: Option<String>,
     pub category: Option<ModCategory>,
     pub author: Option<String>,
-    pub url: Option<String>,
+    /// Upserts by link name; an empty url drops that named link.
+    pub link: Option<Link>,
     pub release_index: usize,
     /// Outer None leaves the base; Some(None) clears it.
     pub base_sha1: Option<Option<Sha1>>,
@@ -1720,7 +1698,7 @@ impl Db {
         title: Option<String>,
         category: ModCategory,
         base_override: Option<String>,
-        homepage: Option<String>,
+        homepage: Option<Link>,
     ) -> Result<String, String> {
         if !matches!(category, ModCategory::TotalConversion) {
             let source_title = self.entries[source].game.title().to_owned();
@@ -1799,7 +1777,7 @@ impl Db {
         title: Option<String>,
         category: ModCategory,
         base_override: Option<String>,
-        homepage: Option<String>,
+        homepage: Option<Link>,
     ) -> Result<String, String> {
         let tree = self.entries[source].tree;
         let source_title = self.entries[source].game.title().to_owned();

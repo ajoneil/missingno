@@ -171,12 +171,10 @@ While the developer plays the current game:
 
    **Name a mod only what it is actually called.** A documented title goes in verbatim. When
    a hack has no known name, do not dress a dump-flag descriptor up as one — a bracket note
-   is a cataloguer's shorthand. Use the `Unnamed …` form so a reader can tell a real title
-   from one we supplied:
-
-   - `Unnamed graphics hack of <game>`
-   - `Unnamed trainer of <game>`
-   - `Unnamed hack of <game>` when even the nature of the change is unclear
+   is a cataloguer's shorthand. Name it for what it is, plainly, and never restate the game
+   the mod already hangs off: `Graphics hack`, `Trainer`, `NTSC conversion`, `Sound hack`,
+   or bare `Hack` when even the nature of the change is unclear. Where one game carries
+   several, a parenthetical tells them apart: `Hack (SpkSoft)`, `Hack (Jone Yuan)`.
 
    Rename with `update_mod` the moment a real name turns up; the same call records `author`,
    `date` and `url`, which the signature entry often names.

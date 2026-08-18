@@ -251,7 +251,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "mark_mod",
-            "description": "A hash in an entry turned out to be a modified dump — a mod. Everything except a total conversion becomes a mod ATTACHED to the same game — its own name, homepage link, versions and independent curation; a fan translation is still the same game, exactly as official localizations are releases of it. A Compatibility mod (an NTSC/PAL conversion, a bankswitch re-encoding) is the same game made to run elsewhere. Only TotalConversion splits into its own derived-work entry. Supply title (the mod's real name) and url (its homepage) whenever known.",
+            "description": "A hash in an entry turned out to be a modified dump — a mod. Everything except a total conversion becomes a mod ATTACHED to the same game — its own name, homepage link, versions and independent curation; a fan translation is still the same game, exactly as official localizations are releases of it. A Compatibility mod (an NTSC/PAL conversion, a bankswitch re-encoding) is the same game made to run elsewhere. Only TotalConversion splits into its own derived-work entry. Supply title (the mod's real name) and url (a page for it) whenever known — name that page with link_name, since only the author's own page or release thread is a Homepage.",
             "inputSchema": object(json!({
                 "key": { "type": "string" },
                 "sha1": { "type": "string" },
@@ -259,12 +259,15 @@ fn tool_definitions() -> Value {
                 "category": { "type": "string",
                               "enum": MOD_CATEGORIES.schema() },
                 "base_sha1": { "type": "string", "description": "the dump this mod was made from — a release's, or another mod's when this derives from that hack (a Supercharger conversion of a hack); 'none' when the base is genuinely unknown — never guess one" },
-                "url": { "type": "string", "description": "the mod's homepage" },
+                "url": { "type": "string", "description": "a page for the mod: its homepage, the author's release thread, or a catalogue listing" },
+                "link_name": { "type": "string", "description": "what that page is, named as it will read in the manifest — \"Homepage\" (default) only for the author's own page or release thread; a catalogue listing takes the site's name, e.g. \"AtariAge\"" },
+                "link_type": { "type": "string", "enum": LINK_TYPES.schema(),
+                               "description": "defaults to Community" },
             }), &["key", "sha1"]),
         },
         {
             "name": "update_mod",
-            "description": "Correct or enrich an attached mod's recorded fields: rename it, fix its category, author, homepage url, or a release's base_sha1 ('none' to clear), label, or date. Identify the mod by its current name.",
+            "description": "Correct or enrich an attached mod's recorded fields: rename it, fix its category, author, a link (url plus link_name/link_type), or a release's base_sha1 ('none' to clear), label, or date. Identify the mod by its current name.",
             "inputSchema": object(json!({
                 "key": { "type": "string" },
                 "mod": { "type": "string", "description": "the mod's current name" },
@@ -273,7 +276,10 @@ fn tool_definitions() -> Value {
                     "category": { "type": "string",
                                   "enum": MOD_CATEGORIES.schema() },
                     "author": { "type": "string" },
-                    "url": { "type": "string" },
+                    "url": { "type": "string", "description": "a page for the mod; empty string drops the link named by link_name" },
+                    "link_name": { "type": "string", "description": "what that page is — \"Homepage\" (default) only for the author's own page or release thread; a catalogue listing takes the site's name, e.g. \"AtariAge\". Upserts by name." },
+                    "link_type": { "type": "string", "enum": LINK_TYPES.schema(),
+                                   "description": "defaults to Community" },
                     "release_index": { "type": "integer" },
                     "base_sha1": { "type": "string", "description": "a release's dump, or another mod's when this derives from that hack" },
                     "tv_format": { "type": "string", "enum": TV_FORMATS.schema(),
