@@ -121,6 +121,7 @@ pub static LINK_TYPES: Vocabulary<LinkType> = vocabulary(
         ("Store", LinkType::Store),
         ("DownloadPage", LinkType::DownloadPage),
         ("Download", LinkType::Download),
+        ("Donate", LinkType::Donate),
     ],
 );
 

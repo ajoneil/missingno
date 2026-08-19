@@ -212,7 +212,7 @@ While the developer plays the current game:
    unknown dump of a single-publisher game stays in that release with a `label_artifact` of
    `alt`, not in a release of its own. The database is a working one, not an authoritative
    catalogue; an empty release destroys information and shows the reader nothing.
-4. Research the gaps — empty developer/description/license, suspicious titles, flag
+4. Research the gaps — empty developer/description, suspicious titles, flag
    questions. Prefer existing structured sources (the gamedb itself, pouet.net data dumps,
    gbdev database, publisher/developer sites) over ordinary web pages. **The per-tree source
    hierarchy — which catalogues answer which fields, and which are banned — lives in
@@ -235,8 +235,16 @@ While the developer plays the current game:
 5. `update_game` to stage what you found. Stage only facts you have a source for; leave
    unknown fields empty rather than guessing. **Record each source as a link in the same
    call** (`links`: `{name, url, link_type}` — upserts by name): links live in the manifest,
-   chat does not. Name links bare — `Manual`, not `Manual (Atari Compendium)`; qualify only
-   to tell several of a kind apart.
+   chat does not. **A link's name is the document or the site it comes from**, not its
+   `link_type` — `Manual`, `AtariAge`, `AtariProtos`, `LaunchBox`. Name links bare —
+   `Manual`, not `Manual (Atari Compendium)`; qualify only to tell several of a kind apart.
+
+   **A closed vocabulary means what the schema says.** `kind`, `status`, `defect`,
+   `link_type`, `regions`, `controllers`, `tv_format`, the mod categories and the flag kinds
+   are enums carrying doc comments in `missingno-gamedb/crates/gamedb/src/` (`game.rs` holds
+   most). Read the variant's definition before choosing it; existing entries show usage, not
+   meaning. Where no variant fits, take the default and put the gap to the developer as a
+   schema question.
 
    `retitle` sets the title and, given a slug, renames the entry and moves its collection
    folder in one call; `rename_game` is the slug alone. Both return the new `tree/slug` key —
@@ -267,6 +275,11 @@ While the developer plays the current game:
 
    **`languages` is what the player reads on screen**, not what the box says. Most carts say
    too little to matter; record it where a release genuinely reads in a language.
+
+   **Each release field takes evidence about itself.** A title in a language is not
+   `languages`; a publisher's home country is not `regions`; a TV standard is not a country.
+   Set the field from a source that speaks to that field, and leave it empty otherwise —
+   an empty field costs a reader nothing, a plausible wrong one is never questioned again.
 
    **A publisher is the name on that cart at that time** — never the company's later name, a
    parent company credited beside it, or a house style. Businesses rename, split and merge,
@@ -348,6 +361,14 @@ While the developer plays the current game:
    - **manual** — the Compendium index consulted (and AtariAge-via-Wayback for unlicensed
      carts), linked or absent-with-reason;
    - **flags** — unsupported-controller and playtest-oddity checks done.
+
+   **A "not found" counts only from a search proven able to find.** Before recording an
+   absence, confirm the same command returns a hit for something you know the source holds;
+   a tool that silently skips a file reports nothing and looks identical to a real absence.
+   Where a source is a page or index you fetched, extract its entries and match over those
+   rather than pattern-matching the raw markup. **Check the extraction is complete, not just
+   non-empty**: count the raw occurrences and the parsed ones and see that they agree — a
+   parser that drops the entries carrying extra markup still returns a healthy-looking total.
 11. **Report in chat** — there is no notes panel, deliberately. Say what you staged, the
    single most load-bearing source, and anything to double-check. Anything that must survive
    the session goes in a manifest field or a flag, never in prose. `session_changes` lists
@@ -391,8 +412,8 @@ reflexively make a new game:**
   or the AtariAge store *product* page, never memory.
 - A creator-page link must be for **this** version: a demake's page is not the original's
   page on another platform. If you could not open the page, you have not verified it.
-- `license` is `Freeware` **only** when the creator released a free ROM and you can cite it.
-  A paid aftermarket cart with no free ROM gets `license` left blank.
+- When the creator offers the ROM free, capture where it comes from: their page as a
+  `DownloadPage`, and each direct file URL beside it as a `Download`.
 
 **AtariAge is link-only.** Its pages are Cloudflare-challenged for headless fetches, so no
 ROM is ever pulled from there — but store the AtariAge **release thread** as the creator
@@ -417,7 +438,7 @@ chat instead.
 
 ## Honesty rules
 
-- Never fabricate a developer, date, description, or license. "Not found" is a valid result.
+- Never fabricate a developer, date, or description. "Not found" is a valid result.
 - **The dangerous claim is the one that feels obvious.** What gets through is a true-sounding
   fact you supplied from your own knowledge while believing you read it; being usually
   correct is what makes it survive review. Check each claim against what the source in front
