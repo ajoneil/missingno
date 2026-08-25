@@ -89,6 +89,10 @@ pub static REGIONS: Vocabulary<Region> = vocabulary(
         ("Netherlands", Region::Netherlands),
         ("Canada", Region::Canada),
         ("Brazil", Region::Brazil),
+        ("Argentina", Region::Argentina),
+        ("Singapore", Region::Singapore),
+        ("Thailand", Region::Thailand),
+        ("NewZealand", Region::NewZealand),
     ],
 );
 
