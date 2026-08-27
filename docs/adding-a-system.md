@@ -308,8 +308,8 @@ until a second family grows the equivalent:
   are keyed on `u16` CPU addresses and shaped by the no$gmb/RGBDS `.sym` format;
   the Game Boy family is the only backend.
 - **Presentation and library data** — the bundled catalogue ships only the
-  platforms in its archive (Game Boy, Game Boy Color, VCS) and the homebrew
-  browser is gbdev-sourced. Mostly data, not code shape.
+  platforms in the gamedb's archive, and the homebrew browser is
+  gbdev-sourced. Mostly data, not code shape.
 - **16-bit addressing assumptions** — breakpoints and `RunningStatus.pc/sp`
   cross the seam as `u32` but every current core masks to a 16-bit bus. Fine
   for every current family; widen when a 32-bit-bus system arrives.
@@ -356,8 +356,17 @@ until a second family grows the equivalent:
     `missingno-` prefix. Add one entry per new crate (the core and any new
     chip crates), carrying its apt packages, feature flags, or timeout where
     the defaults don't fit.
-11. **A gamedb hardware struct**, when the platform's releases vary by board or
-    peripheral. If the platform has swappable controllers, pick one canonical
-    default: the db stages `controllers` only on deviation from it or for
-    sibling-release contrast (the VCS default is the joystick), so an empty
-    list always means "the default" and never "unknown".
+11. **A gamedb platform**, when the system's library should catalogue. In the
+    gamedb repo: a `Platform` impl with its `ReleaseHardware` struct, the
+    struct's `HardwareFacts` descriptors (each fact's key, kind, and curation
+    guidance — display, editing tools, generated tool schemas, and catalogue
+    flattening all iterate these), one row in `with_platforms!` (which reaches
+    validate/fmt/sweeps/CLI), and a `sources/<tree>.md` catalogue file. In the
+    curator: a `TreeId`/`AnyGame` variant pair (one file; the per-fact arms
+    are already generic). A DAT importer follows the `import-sg1000` fold
+    shape when a signature source exists. If the platform has swappable
+    controllers, pick one canonical default: the db stages `controllers` only
+    on deviation from it or for sibling-release contrast (the VCS default is
+    the joystick), so an empty list always means "the default" and never
+    "unknown". A broadcast standard, where the platform records one, is
+    stated explicitly per release — absent means unstated, never a default.
