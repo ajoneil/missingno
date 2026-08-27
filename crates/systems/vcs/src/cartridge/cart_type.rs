@@ -327,7 +327,9 @@ impl CartType {
 /// dump repeats each bank's first 128 bytes of filler into the next 128.
 fn has_superchip_signature(rom: &[u8]) -> bool {
     use atari::SUPERCHIP_RAM_SIZE;
-    rom.chunks_exact(0x1000)
+    rom.as_chunks::<0x1000>()
+        .0
+        .iter()
         .all(|bank| bank[..SUPERCHIP_RAM_SIZE] == bank[SUPERCHIP_RAM_SIZE..2 * SUPERCHIP_RAM_SIZE])
 }
 

@@ -244,7 +244,7 @@ fn render(buffer: &[u8], palette: u8) -> Option<Vec<u8>> {
     }
     let width = TILES_PER_ROW * 8;
     let mut pixels = vec![0u8; width * tile_rows * 8];
-    for (tile, bytes) in buffer.chunks_exact(TILE_BYTES).enumerate() {
+    for (tile, bytes) in buffer.as_chunks::<TILE_BYTES>().0.iter().enumerate() {
         let tile_x = tile % TILES_PER_ROW;
         let tile_y = tile / TILES_PER_ROW;
         if tile_y >= tile_rows {

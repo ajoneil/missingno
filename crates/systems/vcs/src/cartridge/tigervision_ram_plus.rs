@@ -144,7 +144,7 @@ impl TigervisionRamPlus {
     }
 
     pub(super) fn restore_bank_state(&mut self, bytes: &[u8]) {
-        for (segment, pair) in self.segments.iter_mut().zip(bytes.chunks_exact(2)) {
+        for (segment, pair) in self.segments.iter_mut().zip(bytes.as_chunks::<2>().0) {
             *segment = if pair[0] == 1 {
                 Mapping::Ram(pair[1] as usize % RAM_BANKS)
             } else {

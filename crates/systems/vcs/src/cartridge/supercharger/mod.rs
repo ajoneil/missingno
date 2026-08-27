@@ -175,7 +175,9 @@ pub struct Supercharger {
 impl Supercharger {
     pub fn new(image: &[u8]) -> Result<Supercharger, CartridgeError> {
         let loads = image
-            .chunks_exact(IMAGE_SIZE)
+            .as_chunks::<IMAGE_SIZE>()
+            .0
+            .iter()
             .enumerate()
             .map(|(unit, chunk)| Load::parse(unit, chunk))
             .collect::<Result<Vec<_>, _>>()?;
