@@ -137,12 +137,13 @@ pub fn start(
 pub const PLAY_PORT: PortId = PortId(0);
 
 /// What the gamepad holds in a jack, released when it moves to the other one.
-const PAD_ROLES: [ControlRole; 5] = [
+const PAD_ROLES: [ControlRole; 6] = [
     ControlRole::Up,
     ControlRole::Down,
     ControlRole::Left,
     ControlRole::Right,
     ControlRole::Action(0),
+    ControlRole::Action(1),
 ];
 
 impl PlaySession {
@@ -222,9 +223,10 @@ fn button_control(button: gilrs::Button) -> Option<ControlId> {
     Some(match button {
         gilrs::Button::Start => ControlId::panel(ControlRole::Reset),
         gilrs::Button::Select => ControlId::panel(ControlRole::Select),
-        gilrs::Button::South | gilrs::Button::East => {
-            ControlId::port(PLAY_PORT, ControlRole::Action(0))
-        }
+        // The emulator's default pad layout: South fires, East is the second
+        // button on pads that have one.
+        gilrs::Button::South => ControlId::port(PLAY_PORT, ControlRole::Action(0)),
+        gilrs::Button::East => ControlId::port(PLAY_PORT, ControlRole::Action(1)),
         gilrs::Button::DPadUp => ControlId::port(PLAY_PORT, ControlRole::Up),
         gilrs::Button::DPadDown => ControlId::port(PLAY_PORT, ControlRole::Down),
         gilrs::Button::DPadLeft => ControlId::port(PLAY_PORT, ControlRole::Left),
