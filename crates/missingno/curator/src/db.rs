@@ -38,11 +38,20 @@ impl TreeId {
         }
     }
 
-    fn for_dir(dir: &str) -> Option<Self> {
+    pub fn for_dir(dir: &str) -> Option<Self> {
         [TreeId::Gb, TreeId::Gbc, TreeId::Sg1000, TreeId::Vcs]
             .into_iter()
             .find(|tree| tree.dir() == dir)
     }
+}
+
+/// What a ROM-folder scan did to the database, for the status line.
+#[derive(Default)]
+pub struct ScanOutcome {
+    /// Unmatched dumps that became new records.
+    pub added: usize,
+    /// Inbox dumps whose hash belongs to a tree other than the declared one.
+    pub strays: Vec<String>,
 }
 
 /// A hardware fact's description for a tool schema: every platform that states
@@ -1499,44 +1508,62 @@ impl Db {
     /// curatable starting point instead of staying invisible. Idempotent: a hash
     /// already held by any entry (including one added here) is skipped, so a
     /// re-scan adds only genuinely new ROMs. Returns how many were added.
-    pub fn add_unmatched_roms(&mut self, index: &crate::verify::RomIndex) -> usize {
-        let mut known: std::collections::HashSet<String> = std::collections::HashSet::new();
+    /// New records for inbox/collection dumps no manifest holds. A declared
+    /// tree files every unmatched inbox dump; recognition only fills in where
+    /// nothing was declared.
+    pub fn add_unmatched_roms(
+        &mut self,
+        index: &crate::verify::RomIndex,
+        declared: Option<TreeId>,
+    ) -> ScanOutcome {
+        let mut known: std::collections::HashMap<String, TreeId> = std::collections::HashMap::new();
         let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
         for e in &self.entries {
-            known.extend(e.game.artifact_sha1s());
+            for sha1 in e.game.artifact_sha1s() {
+                known.insert(sha1, e.tree);
+            }
             for m in 0..e.game.mod_lines().len() {
                 for (sha1, _, _) in e.game.mod_artifacts(m) {
-                    known.insert(sha1);
+                    known.insert(sha1, e.tree);
                 }
             }
             taken.insert(e.key());
         }
         // Stable order so slugs stay put between scans.
-        let mut roms: Vec<(&String, &PathBuf)> = index
-            .by_sha1
-            .iter()
-            .map(|(sha1, rom)| (sha1, &rom.path))
-            .collect();
-        roms.sort_by(|a, b| a.1.cmp(b.1));
-        let mut added = 0;
-        for (sha1, path) in roms {
-            if known.contains(sha1) {
+        let mut roms: Vec<(&String, &crate::verify::ScannedRom)> = index.by_sha1.iter().collect();
+        roms.sort_by(|a, b| a.1.path.cmp(&b.1.path));
+        let mut outcome = ScanOutcome::default();
+        for (sha1, scanned) in roms {
+            let path = &scanned.path;
+            let inbox = scanned.home == crate::verify::RomHome::Inbox;
+            if let Some(&owner) = known.get(sha1) {
+                // A declared-system inbox holding another tree's dump is a
+                // stray to hand back, not work to queue.
+                if inbox && declared.is_some_and(|tree| tree != owner) {
+                    outcome
+                        .strays
+                        .push(format!("{} is {}", path.display(), owner.label()));
+                }
                 continue;
             }
-            // The session factory's own media predicates decide the console —
-            // the same recognition every loader uses, so a `.bin` is claimed
-            // only at the Atari's real image sizes. Only the two headerless
-            // platforms synthesize entries from a bare dump.
-            let Ok(rom) = fs::read(path) else {
-                continue;
-            };
-            let Some(factory) = missingno_session::factory::factory_for(path, &rom) else {
-                continue;
-            };
-            let tree = match factory.name {
-                "SG-1000" => TreeId::Sg1000,
-                "Atari VCS" => TreeId::Vcs,
-                _ => continue,
+            // The operator's declaration files an inbox dump whatever its
+            // extension says; without one, only a factory whose media the
+            // dump unambiguously is may claim it — `.bin` names nobody.
+            let tree = match declared.filter(|_| inbox) {
+                Some(tree) => tree,
+                None => {
+                    let Ok(rom) = fs::read(path) else {
+                        continue;
+                    };
+                    let Some(factory) = missingno_session::factory::factory_for(path, &rom) else {
+                        continue;
+                    };
+                    match factory.name {
+                        "SG-1000" => TreeId::Sg1000,
+                        "Atari VCS" => TreeId::Vcs,
+                        _ => continue,
+                    }
+                }
             };
             let Ok(parsed) = sha1.parse::<Sha1>() else {
                 continue;
@@ -1561,7 +1588,7 @@ impl Db {
                 slug = format!("{base}-{n}");
             }
             taken.insert(format!("{}/{slug}", tree.dir()));
-            known.insert(sha1.clone());
+            known.insert(sha1.clone(), tree);
             let artifact = missingno_gamedb::Artifact {
                 sha1: parsed,
                 label: None,
@@ -1569,10 +1596,10 @@ impl Db {
                 size,
             };
             let game = match tree {
+                TreeId::Gb => AnyGame::Gb(lone_dump_entry(title, artifact)),
+                TreeId::Gbc => AnyGame::Gbc(lone_dump_entry(title, artifact)),
                 TreeId::Sg1000 => AnyGame::Sg1000(lone_dump_entry(title, artifact)),
                 TreeId::Vcs => AnyGame::Vcs(lone_dump_entry(title, artifact)),
-                // The factory match above names only the headerless platforms.
-                TreeId::Gb | TreeId::Gbc => continue,
             };
             self.entries.push(EntryHandle {
                 tree,
@@ -1581,9 +1608,9 @@ impl Db {
                 dirty: false,
                 synthetic: true,
             });
-            added += 1;
+            outcome.added += 1;
         }
-        added
+        outcome
     }
 
     /// A dump that turned out to be a mod. Modifications of the game — QoL,
@@ -2108,16 +2135,15 @@ mod link_tests {
     use super::*;
     use missingno_gamedb::{Game, GameBoy};
 
-    // The factory's media predicates route an unmatched dump: a `.sg` is the
-    // SG-1000's, a `.bin` is the Atari's only at a real image size.
+    // An unmatched dump files by the operator's declaration; recognition only
+    // fills in where nothing was declared, and `.bin` names nobody.
     #[test]
-    fn unmatched_dumps_route_through_the_factory() {
+    fn unmatched_dumps_follow_the_declaration() {
         let repo =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../missingno-gamedb");
         if !repo.join("data/gb").is_dir() {
             return;
         }
-        let mut db = Db::load(repo).expect("gamedb loads");
         let dir = tempfile::tempdir().unwrap();
         let mut index = crate::verify::RomIndex::default();
         for (name, size, sha1) in [
@@ -2127,14 +2153,9 @@ mod link_tests {
                 "aa00000000000000000000000000000000000001",
             ),
             (
-                "real size.bin",
+                "generic dump.bin",
                 4096,
                 "aa00000000000000000000000000000000000002",
-            ),
-            (
-                "odd size.bin",
-                5000,
-                "aa00000000000000000000000000000000000003",
             ),
         ] {
             let path = dir.path().join(name);
@@ -2147,18 +2168,52 @@ mod link_tests {
                 },
             );
         }
-        let before = db.entries.len();
-        assert_eq!(db.add_unmatched_roms(&index), 2);
-        assert_eq!(db.entries.len(), before + 2);
-        let tree_of = |title: &str| {
+        let tree_of = |db: &Db, title: &str| {
             db.entries
                 .iter()
                 .find(|e| e.game.title() == title)
                 .map(|e| e.tree)
         };
-        assert_eq!(tree_of("uncatalogued game"), Some(TreeId::Sg1000));
-        assert_eq!(tree_of("real size"), Some(TreeId::Vcs));
-        assert_eq!(tree_of("odd size"), None);
+
+        let mut undeclared = Db::load(repo.clone()).expect("gamedb loads");
+        let outcome = undeclared.add_unmatched_roms(&index, None);
+        assert_eq!(outcome.added, 1);
+        assert!(outcome.strays.is_empty());
+        assert_eq!(
+            tree_of(&undeclared, "uncatalogued game"),
+            Some(TreeId::Sg1000)
+        );
+        assert_eq!(tree_of(&undeclared, "generic dump"), None);
+
+        let mut declared = Db::load(repo).expect("gamedb loads");
+        let outcome = declared.add_unmatched_roms(&index, Some(TreeId::Sg1000));
+        assert_eq!(outcome.added, 2);
+        assert_eq!(tree_of(&declared, "generic dump"), Some(TreeId::Sg1000));
+
+        // A dump another tree owns is handed back, not queued as new work.
+        let stray_sha1 = declared
+            .entries
+            .iter()
+            .find(|e| e.tree == TreeId::Vcs)
+            .and_then(|e| e.game.artifact_sha1s().into_iter().next())
+            .expect("the VCS tree holds a dump");
+        let stray = dir.path().join("stray.bin");
+        std::fs::write(&stray, [0u8; 16]).unwrap();
+        index.by_sha1.insert(
+            stray_sha1,
+            crate::verify::ScannedRom {
+                path: stray,
+                home: crate::verify::RomHome::Inbox,
+            },
+        );
+        let outcome = declared.add_unmatched_roms(&index, Some(TreeId::Sg1000));
+        assert_eq!(outcome.added, 0);
+        assert_eq!(outcome.strays.len(), 1);
+        assert!(
+            outcome.strays[0].contains("stray.bin"),
+            "{:?}",
+            outcome.strays
+        );
     }
 
     #[test]

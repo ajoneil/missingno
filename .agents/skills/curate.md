@@ -42,10 +42,14 @@ game immediately afterwards**.
    (`$XDG_RUNTIME_DIR/missingno/ui-*.sock`); if not, launch it from the missingno repo root:
 
    ```
-   cargo run --release -p missingno-curator -- [--rom-dir <inbox>] [--collection-dir <collection>]
+   cargo run --release -p missingno-curator -- [--rom-dir <inbox>] [--tree <tree>] [--collection-dir <collection>]
    ```
 
    `--rom-dir` is the **inbox**: to-be-curated ROMs, which define the session's work.
+   **Always pass `--tree` with it** when the inbox is one system's ROMs (it always is):
+   the declaration files every unmatched dump into that tree whatever its extension —
+   `.bin` is generic and names no console by itself — and the scan reports as strays any
+   inbox dump whose hash belongs to another tree.
    `--collection-dir` is the **collection** of already-curated ROMs
    (`<collection>/<tree>/<slug>/`). The scan handles the boundary: an inbox file whose hash
    the collection already holds moves to `<inbox>/duplicates/` (the developer empties it;

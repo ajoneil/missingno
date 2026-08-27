@@ -39,6 +39,11 @@ struct Args {
     #[arg(long)]
     collection_dir: Option<PathBuf>,
 
+    /// The system the inbox holds: unmatched inbox dumps file into this tree
+    /// whatever their extension says. One of the database's tree names.
+    #[arg(long)]
+    tree: Option<String>,
+
     /// Don't publish the ui-<pid>.sock remote-control socket.
     #[arg(long)]
     no_remote: bool,
@@ -115,6 +120,19 @@ pub fn main() -> iced::Result {
     let db_path = args.db_path.clone();
     let rom_dir = args.rom_dir.clone();
     let collection_dir = args.collection_dir.clone();
+    let declared_tree = match args.tree.as_deref() {
+        None => None,
+        Some(dir) => match db::TreeId::for_dir(dir) {
+            Some(tree) => Some(tree),
+            None => {
+                eprintln!(
+                    "unknown tree {dir:?}; one of: {}",
+                    missingno_gamedb::platform_dirs().join(", ")
+                );
+                std::process::exit(2);
+            }
+        },
+    };
     let remote = !args.no_remote;
     // An identifier ("andy"), not a display name; git's name shrinks to one.
     let curator_name = args.curator.clone().unwrap_or_else(|| {
@@ -137,6 +155,7 @@ pub fn main() -> iced::Result {
                 db_path.clone(),
                 rom_dir.clone(),
                 collection_dir.clone(),
+                declared_tree,
                 remote,
                 curator_name.clone(),
             )
@@ -164,6 +183,8 @@ struct Curator {
     status: String,
     rom_dir: Option<PathBuf>,
     collection_dir: Option<PathBuf>,
+    /// The system the inbox is declared to hold; unmatched dumps file here.
+    declared_tree: Option<TreeId>,
     rom_index: Option<std::sync::Arc<RomIndex>>,
     /// entry key → last fetch/verify status line.
     verify_status: std::collections::HashMap<String, String>,
@@ -339,6 +360,7 @@ impl Curator {
         db_path: PathBuf,
         rom_dir: Option<PathBuf>,
         collection_dir: Option<PathBuf>,
+        declared_tree: Option<TreeId>,
         remote: bool,
         curator_name: String,
     ) -> (Self, Task<Message>) {
@@ -360,6 +382,7 @@ impl Curator {
                 status: String::new(),
                 rom_dir,
                 collection_dir,
+                declared_tree,
                 rom_index: None,
                 verify_status: std::collections::HashMap::new(),
                 session_marks: std::collections::HashMap::new(),
@@ -842,17 +865,27 @@ impl Curator {
                 Ok(index) => {
                     let (collection, inbox) = (index.collection, index.inbox);
                     self.rom_index = Some(index.clone());
-                    let added = match &mut self.db {
-                        Ok(db) => db.add_unmatched_roms(&index),
-                        Err(_) => 0,
+                    let outcome = match &mut self.db {
+                        Ok(db) => db.add_unmatched_roms(&index, self.declared_tree),
+                        Err(_) => db::ScanOutcome::default(),
                     };
                     let dupes = index.duplicates_moved;
                     let mut parts = vec![format!("{collection} in collection · {inbox} in inbox")];
                     if dupes > 0 {
                         parts.push(format!("{dupes} inbox duplicate(s) set aside"));
                     }
-                    if added > 0 {
-                        parts.push(format!("{added} matched no manifest → new records"));
+                    if outcome.added > 0 {
+                        parts.push(format!(
+                            "{} matched no manifest → new records",
+                            outcome.added
+                        ));
+                    }
+                    if !outcome.strays.is_empty() {
+                        parts.push(format!(
+                            "{} stray dump(s) from other trees: {}",
+                            outcome.strays.len(),
+                            outcome.strays.join("; ")
+                        ));
                     }
                     self.status = parts.join(" · ");
                 }
