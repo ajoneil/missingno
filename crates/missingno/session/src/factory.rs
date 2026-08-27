@@ -19,11 +19,19 @@ type IsRom = fn(&Path, &[u8]) -> bool;
 /// launch options the core published.
 type Create = fn(&Path, &[u8], &LaunchValues) -> Result<Box<dyn SystemConsole>, LoadError>;
 
+/// The console a caller names outright, bypassing recognition. It selects
+/// between cores rather than configuring one, so the factory owns it: a generic
+/// dump extension identifies nothing, and what no predicate claims must be
+/// stated.
+pub const SYSTEM: &str = "system";
+
 /// Why media did not become a console.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LoadError {
     /// No registered core claims this media.
     UnrecognizedMedia,
+    /// A stated system no core in this build answers to.
+    UnknownSystem(String),
     /// A launch value the core does not accept for that option.
     InvalidValue { option: String, value: String },
     /// A launch value the core accepts, but not for this media.
@@ -36,6 +44,11 @@ impl std::fmt::Display for LoadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LoadError::UnrecognizedMedia => f.write_str("no core recognises this media"),
+            LoadError::UnknownSystem(stated) => write!(
+                f,
+                "{SYSTEM}: no such system \"{stated}\"; this build has: {}",
+                factory_names().join(", ")
+            ),
             LoadError::InvalidValue { option, value } => {
                 write!(f, "{option}: no such value \"{value}\"")
             }
@@ -327,19 +340,38 @@ pub fn factory_for(path: &Path, rom: &[u8]) -> Option<&'static CoreFactory> {
     FACTORIES.iter().find(|factory| (factory.is_rom)(path, rom))
 }
 
+/// The factory a caller named, matched case-insensitively against the
+/// registered names.
+pub fn factory_named(name: &str) -> Option<&'static CoreFactory> {
+    FACTORIES
+        .iter()
+        .find(|factory| factory.name.eq_ignore_ascii_case(name))
+}
+
+/// Every registered core's name, in claim order: what a caller may state.
+pub fn factory_names() -> Vec<&'static str> {
+    FACTORIES.iter().map(|factory| factory.name).collect()
+}
+
 /// Build a console from a ROM's path and contents, leaving every launch option
 /// to the core that claims it.
 pub fn create_console(path: &Path, rom: &[u8]) -> Result<Box<dyn SystemConsole>, LoadError> {
     create_console_with(path, rom, &LaunchValues::default())
 }
 
-/// Build a console from the launch values a loader collected. Recognition is
-/// unaffected by them.
+/// Build a console from the launch values a loader collected. A stated
+/// [`SYSTEM`] settles which core builds it; otherwise recognition is unaffected
+/// by them.
 pub fn create_console_with(
     path: &Path,
     rom: &[u8],
     launch: &LaunchValues,
 ) -> Result<Box<dyn SystemConsole>, LoadError> {
-    let factory = factory_for(path, rom).ok_or(LoadError::UnrecognizedMedia)?;
+    let factory = match launch.choice(SYSTEM) {
+        Some(stated) => {
+            factory_named(stated).ok_or_else(|| LoadError::UnknownSystem(stated.to_string()))?
+        }
+        None => factory_for(path, rom).ok_or(LoadError::UnrecognizedMedia)?,
+    };
     (factory.create)(path, rom, launch)
 }

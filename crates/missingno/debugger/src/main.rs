@@ -1,6 +1,7 @@
 //! `missingno-debugger [<rom>] [--port N] [--mcp] [--allow-attach] [--boot-rom
-//! PATH] [--cart-type CODE] [--tv-standard STD] [--overdump]`: recognise the
-//! ROM through the core registry, put its console under
+//! PATH] [--system NAME] [--cart-type CODE] [--tv-standard STD] [--overdump]`:
+//! recognise the ROM through the core registry — or take the system `--system`
+//! names, for media no extension identifies — put its console under
 //! the debugger, and serve it — over HTTP by default, or as an MCP tool server
 //! over stdio with `--mcp`. With `--mcp` and no ROM, the MCP server starts idle
 //! and loads a ROM or attaches to a running session on request, so one static
@@ -19,7 +20,8 @@ use missingno_session::factory::{self, LoadError};
 const DEFAULT_PORT: u16 = 3333;
 
 const USAGE: &str = "usage: missingno-debugger [<rom>] [--port N] [--mcp] [--allow-attach] \
-     [--boot-rom PATH] [--cart-type CODE] [--tv-standard ntsc|pal|secam] [--overdump]";
+     [--boot-rom PATH] [--system NAME] [--cart-type CODE] [--tv-standard ntsc|pal|secam] \
+     [--overdump]";
 
 struct Args {
     rom: Option<PathBuf>,
@@ -27,6 +29,9 @@ struct Args {
     mcp: bool,
     allow_attach: bool,
     boot_rom: Option<PathBuf>,
+    /// The console to load the ROM as. A generic dump extension names no core,
+    /// so such media loads only when a caller states its system.
+    system: Option<String>,
     /// A VCS board code. Carts carry no header, so a bankswitched image the
     /// core cannot size-detect will not load at all without this.
     cart_type: Option<String>,
@@ -48,6 +53,7 @@ fn parse_args() -> Result<Args, String> {
     let mut mcp = false;
     let mut allow_attach = false;
     let mut boot_rom = None;
+    let mut system = None;
     let mut cart_type = None;
     let mut tv_standard = None;
     let mut overdump = false;
@@ -65,6 +71,16 @@ fn parse_args() -> Result<Args, String> {
                     &mut iter,
                     "--boot-rom needs a path",
                 )?));
+            }
+            "--system" => {
+                let name = value_for(&mut iter, "--system needs a console name")?;
+                if factory::factory_named(&name).is_none() {
+                    return Err(format!(
+                        "unknown system: {name} — this build has: {}",
+                        factory::factory_names().join(", ")
+                    ));
+                }
+                system = Some(name);
             }
             "--cart-type" => {
                 cart_type = Some(value_for(&mut iter, "--cart-type needs a board code")?);
@@ -90,6 +106,7 @@ fn parse_args() -> Result<Args, String> {
         mcp,
         allow_attach,
         boot_rom,
+        system,
         cart_type,
         tv_standard,
         overdump,
@@ -111,6 +128,9 @@ fn run() -> Result<(), String> {
     let rom = std::fs::read(&rom_path)
         .map_err(|e| format!("failed to read {}: {e}", rom_path.display()))?;
     let mut launch = LaunchValues::default();
+    if let Some(name) = &args.system {
+        launch.set_choice(factory::SYSTEM, name);
+    }
     if let Some(path) = &args.boot_rom {
         let bytes = std::fs::read(path)
             .map_err(|e| format!("failed to read boot ROM {}: {e}", path.display()))?;
@@ -125,9 +145,10 @@ fn run() -> Result<(), String> {
     launch.set_toggle("overdump", args.overdump);
     let console =
         factory::create_console_with(&rom_path, &rom, &launch).map_err(|error| match error {
-            LoadError::UnrecognizedMedia => {
-                format!("no core recognises {}", rom_path.display())
-            }
+            LoadError::UnrecognizedMedia => format!(
+                "no core recognises {} — name its console with --system",
+                rom_path.display()
+            ),
             // Size-detection is what fails on a bankswitched VCS image, and
             // the message alone does not say the board can be supplied.
             error if args.cart_type.is_none() => {
@@ -139,7 +160,11 @@ fn run() -> Result<(), String> {
     let session = SharedSession::spawn(debugger);
 
     #[cfg(feature = "mcp")]
-    let core_name = factory::factory_for(&rom_path, &rom)
+    let core_name = args
+        .system
+        .as_deref()
+        .and_then(factory::factory_named)
+        .or_else(|| factory::factory_for(&rom_path, &rom))
         .map(|factory| factory.name)
         .unwrap_or("unknown");
 

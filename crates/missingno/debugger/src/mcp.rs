@@ -152,9 +152,10 @@ fn load_rom_tool() -> Tool {
     Tool {
         name: "load_rom",
         description: "Load a ROM by filesystem path and begin debugging it. The core is \
-                      recognised from the file across all enabled cores. `options` sets the \
-                      launch options the recognised core publishes, each left out to let the \
-                      core resolve it: the Atari VCS takes `tv-standard` (ntsc/pal/secam), \
+                      recognised from the file across all enabled cores, unless `system` names \
+                      it. `options` sets the launch options the recognised core publishes, \
+                      each left out to let the core resolve it: the Atari VCS takes \
+                      `tv-standard` (ntsc/pal/secam), \
                       `board` (a cartridge board code such as F8, F6SC, E0), and `overdump` \
                       (boolean); the Game Boy family takes `runner` (dmg/cgb) and `boot-rom` \
                       (path to a boot ROM image). `tv_standard` is the older spelling of the \
@@ -164,6 +165,12 @@ fn load_rom_tool() -> Tool {
             "type": "object",
             "properties": {
                 "path": { "type": "string", "description": "filesystem path to the ROM" },
+                "system": {
+                    "type": "string",
+                    "enum": factory::factory_names(),
+                    "description": "names the console for headerless or ambiguous media, such as \
+                                    a .bin dump; one of the factory names",
+                },
                 "options": {
                     "type": "object",
                     "description": "launch option id to value: a string for a choice or a file \
@@ -276,8 +283,16 @@ fn load_rom(loaded: &mut Option<Host>, args: &Value) -> ToolOutcome {
         .ok_or("'path' (string) is required")?;
     let bytes = std::fs::read(path).map_err(|error| format!("failed to read {path}: {error}"))?;
     let path_ref = Path::new(path);
-    let factory = factory::factory_for(path_ref, &bytes)
-        .ok_or_else(|| format!("no core recognises {path}"))?;
+    let factory = match args.get("system").and_then(Value::as_str) {
+        Some(stated) => factory::factory_named(stated).ok_or_else(|| {
+            format!(
+                "no such system '{stated}'; this build has: {}",
+                factory::factory_names().join(", ")
+            )
+        })?,
+        None => factory::factory_for(path_ref, &bytes)
+            .ok_or_else(|| format!("no core recognises {path}; name its console with 'system'"))?,
+    };
     let launch = launch_values(factory, &bytes, args)?;
     let console = (factory.create)(path_ref, &bytes, &launch).map_err(|error| error.to_string())?;
     let debugger = console.into_debugger();

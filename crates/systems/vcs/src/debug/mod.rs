@@ -16,20 +16,11 @@ pub use controls::{JOYSTICK, KEYPAD, LEFT_PORT, PADDLES, PANEL_CONTROLS, PORTS, 
 pub use machine::{BOARD, OVERDUMP, TV_STANDARD, create_console, launch_options};
 pub use sections::vcs_sidebar_sections;
 
-/// A `.a26` is always ours; a `.bin` only at the family's bare ROM sizes
-/// (Game Boy ROMs start at 32 KiB, so the ranges cannot collide) or at a
-/// Supercharger container's, whose 8448-byte unit no other family shares.
-pub fn is_vcs_rom(path: &std::path::Path, rom: &[u8]) -> bool {
-    let extension = path
-        .extension()
+/// A `.a26` is ours, and nothing else is: `.bin` is a generic dump extension no
+/// core may claim, so such a file reaches this core by a database match or an
+/// explicit system selection — both outside this predicate.
+pub fn is_vcs_rom(path: &std::path::Path, _rom: &[u8]) -> bool {
+    path.extension()
         .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase());
-    match extension.as_deref() {
-        Some("a26") => true,
-        Some("bin") => {
-            matches!(rom.len(), 0x800 | 0x1000)
-                || crate::cartridge::supercharger::is_container(rom.len())
-        }
-        _ => false,
-    }
+        .is_some_and(|e| e.eq_ignore_ascii_case("a26"))
 }
