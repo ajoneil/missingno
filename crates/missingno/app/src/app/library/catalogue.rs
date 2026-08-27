@@ -135,7 +135,7 @@ fn entry_from<P: DbPlatform>(
 }
 
 fn parse_entry(console: &str, slug: String, text: &str) -> Option<CatalogueEntry> {
-    // Only the VCS records a broadcast standard or per-release controllers.
+    // The Game Boys record neither a broadcast standard nor controllers.
     let board_only = |board: Option<String>| (None, board, Vec::new());
     match console {
         "gb" => Game::<GameBoy>::from_ron(text).ok().map(|g| {
@@ -150,7 +150,11 @@ fn parse_entry(console: &str, slug: String, text: &str) -> Option<CatalogueEntry
         }),
         "sg1000" => Game::<Sg1000>::from_ron(text).ok().map(|g| {
             entry_from(slug, g, |hw| {
-                board_only(hw.cart_type.map(|board| board.code().to_owned()))
+                (
+                    hw.tv_format,
+                    hw.cart_type.map(|board| board.code().to_owned()),
+                    Vec::new(),
+                )
             })
         }),
         "vcs" => Game::<Vcs>::from_ron(text).ok().map(|g| {

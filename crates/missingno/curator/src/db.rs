@@ -197,7 +197,14 @@ impl AnyGame {
                 .map(|r| {
                     line(
                         r,
-                        r.hardware.cart_type.map(Sg1000CartType::code).unwrap_or(""),
+                        &[
+                            r.hardware.tv_format.map(|t| format!("{t:?}")),
+                            r.hardware.cart_type.map(|c| c.code().to_owned()),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>()
+                        .join(" "),
                     )
                 })
                 .collect(),
@@ -963,11 +970,15 @@ impl AnyGame {
         })
     }
 
-    /// The broadcast standard one release shipped on (VCS only). Per-release,
-    /// not per-game: one entry can hold an NTSC, a PAL and a PAL-M release.
+    /// The broadcast standard one release shipped on (VCS and SG-1000).
+    /// Per-release, not per-game: one entry can hold an NTSC, a PAL and a
+    /// PAL-M release.
     pub fn set_release_tv_format(&mut self, index: usize, format: TvStandard) -> bool {
         match self {
             AnyGame::Vcs(g) => g.releases.get_mut(index).map(|r| {
+                r.hardware.tv_format = Some(format);
+            }),
+            AnyGame::Sg1000(g) => g.releases.get_mut(index).map(|r| {
                 r.hardware.tv_format = Some(format);
             }),
             _ => None,
@@ -1002,10 +1013,15 @@ impl AnyGame {
         }
     }
 
-    /// Broadcast-standard hint for the session factory (VCS only).
+    /// Broadcast-standard hint for the session factory (VCS and SG-1000).
     pub fn tv_hint(&self) -> Option<String> {
         match self {
             AnyGame::Vcs(g) => g
+                .releases
+                .iter()
+                .find_map(|r| r.hardware.tv_format)
+                .map(|tv| tv.code().to_owned()),
+            AnyGame::Sg1000(g) => g
                 .releases
                 .iter()
                 .find_map(|r| r.hardware.tv_format)

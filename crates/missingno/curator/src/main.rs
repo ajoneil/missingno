@@ -2187,7 +2187,7 @@ impl Curator {
                         return error_result(error);
                     }
                     if tv_format.is_some() && !tv {
-                        return error_result("tv_format applies to VCS releases only");
+                        return error_result("tv_format applies to VCS and SG-1000 releases only");
                     }
                     if controllers.is_some() && !ctrl {
                         return error_result("controllers apply to VCS releases only");
