@@ -351,7 +351,12 @@ until a second family grows the equivalent:
    follow from the descriptor table.
 8. **Convert audio to 44.1 kHz** on the family's side of the seam.
 9. **Accuracy and round-trip tests** committed with the core.
-10. **A gamedb hardware struct**, when the platform's releases vary by board or
+10. **A CI job for every new crate** — `.github/workflows/ci.yml` tests each
+    workspace crate as its own matrix leg, named for the crate minus the
+    `missingno-` prefix. Add one entry per new crate (the core and any new
+    chip crates), carrying its apt packages, feature flags, or timeout where
+    the defaults don't fit.
+11. **A gamedb hardware struct**, when the platform's releases vary by board or
     peripheral. If the platform has swappable controllers, pick one canonical
     default: the db stages `controllers` only on deviation from it or for
     sibling-release contrast (the VCS default is the joystick), so an empty
