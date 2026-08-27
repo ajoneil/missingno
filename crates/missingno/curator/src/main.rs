@@ -71,6 +71,27 @@ fn mod_link(args: &serde_json::Value) -> Result<Option<missingno_gamedb::Link>, 
     }))
 }
 
+/// The hardware a tool call states, keyed as the platforms declare it; the
+/// payload edited answers for a key its platform doesn't carry.
+fn hardware_facts(
+    tv_format: Option<missingno_gamedb::TvStandard>,
+    controllers: Option<Vec<missingno_gamedb::Controller>>,
+    cart_type: Option<String>,
+) -> Vec<(&'static str, missingno_gamedb::FactValue)> {
+    use missingno_gamedb::FactValue;
+    let mut facts = Vec::new();
+    if let Some(format) = tv_format {
+        facts.push(("tv_format", FactValue::TvStandard(Some(format))));
+    }
+    if let Some(controllers) = controllers {
+        facts.push(("controllers", FactValue::Controllers(controllers)));
+    }
+    if let Some(code) = cart_type {
+        facts.push(("cart_type", db::board_value(&code)));
+    }
+    facts
+}
+
 /// This process's action-event log: `runtime_dir/curator-events-<pid>.log`.
 /// A client tails it to see accepts/flags live without the long-poll.
 fn event_log_path() -> std::path::PathBuf {
@@ -1691,17 +1712,15 @@ impl Curator {
                     entry.game.set_release_publisher(0, publisher.to_owned());
                     applied.push("publisher");
                 }
-                if let Some(mapper) = set.get("mapper").and_then(serde_json::Value::as_str) {
-                    if let Err(error) = entry.game.set_mapper(mapper) {
-                        return error_result(error);
+                for key in ["mapper", "cart_type"] {
+                    if let Some(code) = set.get(key).and_then(serde_json::Value::as_str) {
+                        if let Err(error) =
+                            entry.game.set_release_fact(0, key, db::board_value(code))
+                        {
+                            return error_result(error);
+                        }
+                        applied.push(key);
                     }
-                    applied.push("mapper");
-                }
-                if let Some(cart) = set.get("cart_type").and_then(serde_json::Value::as_str) {
-                    if let Err(error) = entry.game.set_cart_type(cart) {
-                        return error_result(error);
-                    }
-                    applied.push("cart_type");
                 }
                 if let Some(kind) = set.get("kind").and_then(serde_json::Value::as_str) {
                     let Some(kind) = vocabulary::GAME_KINDS.lookup_ignoring_case(kind) else {
@@ -1992,25 +2011,15 @@ impl Curator {
                     None => return error_result(format!("mod {mod_name:?} vanished mid-edit")),
                 };
                 // A conversion often exists precisely to change these.
-                if let Some(format) = tv_format {
-                    if db.entries[i]
-                        .game
-                        .set_mod_tv_format(mod_name, release_index, format)
+                for (key, value) in hardware_facts(tv_format, controllers, None) {
+                    if let Err(error) =
+                        db.entries[i]
+                            .game
+                            .set_mod_fact(mod_name, release_index, key, value)
                     {
-                        applied.push("tv_format");
-                    } else {
-                        return error_result("tv_format applies to VCS mods only");
+                        return error_result(error);
                     }
-                }
-                if let Some(wanted) = controllers {
-                    if db.entries[i]
-                        .game
-                        .set_mod_controllers(mod_name, release_index, wanted)
-                    {
-                        applied.push("controllers");
-                    } else {
-                        return error_result("controllers apply to VCS mods only");
-                    }
+                    applied.push(key);
                 }
                 if applied.is_empty() {
                     error_result("no recognized fields in set")
@@ -2170,27 +2179,15 @@ impl Curator {
                     languages,
                 };
                 if db.entries[i].game.update_release(index as usize, edits) {
-                    let tv = tv_format.is_some_and(|f| {
-                        db.entries[i].game.set_release_tv_format(index as usize, f)
-                    });
-                    let ctrl = controllers.clone().is_some_and(|c| {
-                        db.entries[i]
-                            .game
-                            .set_release_controllers(index as usize, c)
-                    });
                     db.entries[i].dirty = true;
-                    if let Some(code) = cart_type.as_deref()
-                        && let Err(error) = db.entries[i]
-                            .game
-                            .set_release_cart_type(index as usize, code)
-                    {
-                        return error_result(error);
-                    }
-                    if tv_format.is_some() && !tv {
-                        return error_result("tv_format applies to VCS and SG-1000 releases only");
-                    }
-                    if controllers.is_some() && !ctrl {
-                        return error_result("controllers apply to VCS releases only");
+                    for (key, value) in hardware_facts(tv_format, controllers, cart_type) {
+                        if let Err(error) =
+                            db.entries[i]
+                                .game
+                                .set_release_fact(index as usize, key, value)
+                        {
+                            return error_result(error);
+                        }
                     }
                     if let Err(e) = db.write_entry(i) {
                         return error_result(format!("staged, but writing {key} failed: {e}"));

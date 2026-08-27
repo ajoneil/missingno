@@ -8,7 +8,8 @@
 use std::collections::HashMap;
 
 use missingno_gamedb::{
-    Artifact, Controller, Game, GameBoy, GameBoyColor, Link, Platform as DbPlatform, Sg1000, Vcs,
+    Artifact, Controller, FactValue, Game, GameBoy, GameBoyColor, HardwareFacts, Link,
+    Platform as DbPlatform, Sg1000, Vcs,
 };
 
 use crate::app::system::TvStandard;
@@ -100,11 +101,27 @@ impl CatalogueEntry {
 
 // ── Flattening ────────────────────────────────────────────────────────
 
-fn entry_from<P: DbPlatform>(
-    slug: String,
-    game: Game<P>,
-    hardware: impl Fn(&P::ReleaseHardware) -> (Option<TvStandard>, Option<String>, Vec<Controller>),
-) -> CatalogueEntry {
+/// The facts the catalogue view carries, read by kind rather than by platform:
+/// a release states its broadcast standard, its board, and its controllers
+/// under whatever keys its own hardware declares.
+fn flatten<H: HardwareFacts>(
+    hardware: &H,
+) -> (Option<TvStandard>, Option<String>, Vec<Controller>) {
+    let mut tv_format = None;
+    let mut cart_type = None;
+    let mut controllers = Vec::new();
+    for fact in H::descriptors() {
+        match hardware.get(fact.key) {
+            Some(FactValue::TvStandard(tv)) => tv_format = tv_format.or(tv),
+            Some(FactValue::Board(code)) => cart_type = cart_type.or(code),
+            Some(FactValue::Controllers(stated)) => controllers = stated,
+            _ => {}
+        }
+    }
+    (tv_format, cart_type, controllers)
+}
+
+fn entry_from<P: DbPlatform>(slug: String, game: Game<P>) -> CatalogueEntry {
     CatalogueEntry {
         slug,
         title: game.title,
@@ -119,7 +136,7 @@ fn entry_from<P: DbPlatform>(
             .releases
             .into_iter()
             .map(|release| {
-                let (tv_format, cart_type, controllers) = hardware(&release.hardware);
+                let (tv_format, cart_type, controllers) = flatten(&release.hardware);
                 CatalogueRelease {
                     title: release.title,
                     date: release.date.map(|d| d.as_str().to_owned()),
@@ -135,39 +152,15 @@ fn entry_from<P: DbPlatform>(
 }
 
 fn parse_entry(console: &str, slug: String, text: &str) -> Option<CatalogueEntry> {
-    // The Game Boys record neither a broadcast standard nor controllers.
-    let board_only = |board: Option<String>| (None, board, Vec::new());
-    match console {
-        "gb" => Game::<GameBoy>::from_ron(text).ok().map(|g| {
-            entry_from(slug, g, |hw| {
-                board_only(hw.mapper.map(|board| board.code().to_owned()))
-            })
-        }),
-        "gbc" => Game::<GameBoyColor>::from_ron(text).ok().map(|g| {
-            entry_from(slug, g, |hw| {
-                board_only(hw.mapper.map(|board| board.code().to_owned()))
-            })
-        }),
-        "sg1000" => Game::<Sg1000>::from_ron(text).ok().map(|g| {
-            entry_from(slug, g, |hw| {
-                (
-                    hw.tv_format,
-                    hw.cart_type.map(|board| board.code().to_owned()),
-                    Vec::new(),
-                )
-            })
-        }),
-        "vcs" => Game::<Vcs>::from_ron(text).ok().map(|g| {
-            entry_from(slug, g, |hw| {
-                (
-                    hw.tv_format,
-                    hw.cart_type.map(|board| board.code().to_owned()),
-                    hw.controllers.clone(),
-                )
-            })
-        }),
-        _ => None,
+    macro_rules! tree {
+        ($($P:ident),* $(,)?) => {$(
+            if console == <$P as DbPlatform>::DIR {
+                return Game::<$P>::from_ron(text).ok().map(|g| entry_from(slug, g));
+            }
+        )*};
     }
+    missingno_gamedb::with_platforms!(tree);
+    None
 }
 
 // ── Catalogue ─────────────────────────────────────────────────────────

@@ -4,9 +4,9 @@
 use std::{fs, io, path::PathBuf};
 
 use missingno_gamedb::{
-    Controller, Defect, FlagFile, Game, GameBoy, GameBoyColor, GameKind, GbCartType, Language,
-    Link, LinkType, Mod, ModCategory, ModOf, ModRelease, Platform, Region, Release, ReleaseStatus,
-    Sg1000, Sg1000CartType, Sha1, Slug, Tree, TvStandard, Vcs, VcsCartType,
+    Controller, Defect, FactValue, FlagFile, Game, GameBoy, GameBoyColor, GameKind, GbCartType,
+    HardwareFacts, Language, Link, LinkType, Mod, ModCategory, ModOf, ModRelease, Platform, Region,
+    Release, ReleaseStatus, Sg1000, Sha1, Slug, Tree, TvStandard, Vcs, with_platforms,
 };
 
 use crate::vocabulary;
@@ -37,6 +37,42 @@ impl TreeId {
             TreeId::Vcs => "Atari VCS",
         }
     }
+
+    fn for_dir(dir: &str) -> Option<Self> {
+        [TreeId::Gb, TreeId::Gbc, TreeId::Sg1000, TreeId::Vcs]
+            .into_iter()
+            .find(|tree| tree.dir() == dir)
+    }
+}
+
+/// A hardware fact's description for a tool schema: every platform that states
+/// the key, carrying the guidance its own descriptor gives.
+pub fn fact_description(key: &str) -> String {
+    let mut stated: Vec<(&'static str, &'static str)> = Vec::new();
+    macro_rules! stated_by {
+        ($($P:ident),* $(,)?) => {$(
+            if let Some(fact) = <<$P as Platform>::ReleaseHardware as HardwareFacts>::descriptors()
+                .iter()
+                .find(|fact| fact.key == key)
+            {
+                let dir = <$P as Platform>::DIR;
+                stated.push((TreeId::for_dir(dir).map_or(dir, TreeId::label), fact.doc));
+            }
+        )*};
+    }
+    with_platforms!(stated_by);
+    let mut shared: Vec<(Vec<&str>, &str)> = Vec::new();
+    for (platform, doc) in stated {
+        match shared.iter_mut().find(|(_, shared)| *shared == doc) {
+            Some((platforms, _)) => platforms.push(platform),
+            None => shared.push((vec![platform], doc)),
+        }
+    }
+    shared
+        .iter()
+        .map(|(platforms, doc)| format!("{}: {doc}", platforms.join(" and ")))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// One manifest, kept in its platform's schema type.
@@ -74,24 +110,58 @@ pub struct ReleaseLine {
     pub detail: String,
 }
 
-/// The VCS facts that vary from release to release, as one display string.
-fn vcs_hardware(hardware: &missingno_gamedb::VcsHardware) -> String {
-    [
-        hardware.tv_format.map(|t| format!("{t:?}")),
-        hardware.cart_type.map(|c| c.code().to_owned()),
-        (!hardware.controllers.is_empty()).then(|| {
-            hardware
-                .controllers
-                .iter()
-                .map(|c| format!("{c:?}"))
-                .collect::<Vec<_>>()
-                .join("/")
-        }),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join(" ")
+/// Whether an enhancement nobody has established yet still takes a slot on a
+/// hardware line: a release's line asks the curator for it, a mod's line
+/// carries only what the conversion moved.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Unknowns {
+    Shown,
+    Hidden,
+}
+
+/// The hardware facts a payload states, as one display string.
+fn hardware_line<H: HardwareFacts>(hardware: &H, unknowns: Unknowns) -> String {
+    H::descriptors()
+        .iter()
+        .filter_map(|fact| match hardware.get(fact.key)? {
+            FactValue::TvStandard(tv) => tv.map(|tv| format!("{tv:?}")),
+            FactValue::Board(code) => code,
+            FactValue::Controllers(controllers) => (!controllers.is_empty()).then(|| {
+                controllers
+                    .iter()
+                    .map(|c| format!("{c:?}"))
+                    .collect::<Vec<_>>()
+                    .join("/")
+            }),
+            FactValue::Enhancement(enhancement) => (unknowns == Unknowns::Shown
+                || !enhancement.is_unknown())
+            .then(|| format!("{} {enhancement:?}", fact.key)),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn stated_tv<H: HardwareFacts>(hardware: &H) -> Option<TvStandard> {
+    match hardware.get("tv_format")? {
+        FactValue::TvStandard(tv) => tv,
+        _ => None,
+    }
+}
+
+/// The board a payload states under its own key — the cartridge facts a
+/// headerless console's core cannot read off the dump.
+fn stated_board<H: HardwareFacts>(hardware: &H) -> Option<String> {
+    match hardware.get("cart_type")? {
+        FactValue::Board(code) => code,
+        _ => None,
+    }
+}
+
+fn stated_controllers<H: HardwareFacts>(hardware: &H) -> Vec<Controller> {
+    match hardware.get("controllers") {
+        Some(FactValue::Controllers(controllers)) => controllers,
+        _ => Vec::new(),
+    }
 }
 
 impl AnyGame {
@@ -153,7 +223,8 @@ impl AnyGame {
     /// One display line per release, split so the renderer can style the
     /// shipped title and box label differently from the remaining facts.
     pub fn release_lines(&self) -> Vec<ReleaseLine> {
-        fn line<P: Platform>(r: &missingno_gamedb::Release<P>, extra: &str) -> ReleaseLine {
+        fn line<P: Platform>(r: &Release<P>) -> ReleaseLine {
+            let extra = hardware_line(&r.hardware, Unknowns::Shown);
             let mut parts = Vec::new();
             if !r.regions.is_empty() {
                 parts.push(
@@ -171,7 +242,7 @@ impl AnyGame {
                 parts.push(date.as_str().to_owned());
             }
             if !extra.is_empty() {
-                parts.push(extra.to_owned());
+                parts.push(extra);
             }
             ReleaseLine {
                 title: r.title.clone(),
@@ -179,41 +250,7 @@ impl AnyGame {
                 detail: parts.join(" · "),
             }
         }
-        match self {
-            AnyGame::Gb(g) => g
-                .releases
-                .iter()
-                .map(|r| {
-                    line(
-                        r,
-                        &format!("sgb {:?} / cgb {:?}", r.hardware.sgb, r.hardware.cgb),
-                    )
-                })
-                .collect(),
-            AnyGame::Gbc(g) => g.releases.iter().map(|r| line(r, "")).collect(),
-            AnyGame::Sg1000(g) => g
-                .releases
-                .iter()
-                .map(|r| {
-                    line(
-                        r,
-                        &[
-                            r.hardware.tv_format.map(|t| format!("{t:?}")),
-                            r.hardware.cart_type.map(|c| c.code().to_owned()),
-                        ]
-                        .into_iter()
-                        .flatten()
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                    )
-                })
-                .collect(),
-            AnyGame::Vcs(g) => g
-                .releases
-                .iter()
-                .map(|r| line(r, &vcs_hardware(&r.hardware)))
-                .collect(),
-        }
+        common!(self, g => g.releases.iter().map(line).collect())
     }
 
     /// First directly-downloadable URL: a game-level `Download` link.
@@ -470,32 +507,24 @@ impl AnyGame {
                 parts.join(" · ")
             }
         }
-        fn versions<P: Platform>(
-            game: &Game<P>,
-            index: usize,
-            hardware: impl Fn(&P::ReleaseHardware) -> String,
-        ) -> Vec<String> {
+        fn versions<P: Platform>(game: &Game<P>, index: usize) -> Vec<String> {
             game.mods
                 .get(index)
                 .map(|m| {
                     m.releases
                         .iter()
-                        .map(|r| describe(&r.label, &r.date, &hardware(&r.hardware)))
+                        .map(|r| {
+                            describe(
+                                &r.label,
+                                &r.date,
+                                &hardware_line(&r.hardware, Unknowns::Hidden),
+                            )
+                        })
                         .collect()
                 })
                 .unwrap_or_default()
         }
-        match self {
-            AnyGame::Vcs(g) => versions(g, index, vcs_hardware),
-            AnyGame::Sg1000(g) => versions(g, index, |hw| {
-                hw.cart_type
-                    .map(Sg1000CartType::code)
-                    .unwrap_or("")
-                    .to_owned()
-            }),
-            AnyGame::Gb(g) => versions(g, index, |_| String::new()),
-            AnyGame::Gbc(g) => versions(g, index, |_| String::new()),
-        }
+        common!(self, g => versions(g, index))
     }
 
     /// Apply edits to the named attached mod, reporting which fields landed.
@@ -548,39 +577,24 @@ impl AnyGame {
         })
     }
 
-    /// A build that runs on a different standard than the game it patches — an
-    /// NTSC conversion of a PAL cart. VCS only.
-    pub fn set_mod_tv_format(&mut self, name: &str, index: usize, format: TvStandard) -> bool {
-        self.mod_release(name, index, |r| r.hardware.tv_format = Some(format))
-    }
-
-    /// A conversion that swaps the controller it plays on — a joystick build of
-    /// a keypad game. VCS only.
-    pub fn set_mod_controllers(
+    /// What a conversion moved off the game's own hardware — the NTSC build of
+    /// a PAL cart, the joystick build of a keypad game.
+    pub fn set_mod_fact(
         &mut self,
         name: &str,
         index: usize,
-        wanted: Vec<Controller>,
-    ) -> bool {
-        self.mod_release(name, index, |r| r.hardware.controllers = wanted.clone())
-    }
-
-    fn mod_release(
-        &mut self,
-        name: &str,
-        index: usize,
-        edit: impl FnOnce(&mut ModRelease<missingno_gamedb::Vcs>),
-    ) -> bool {
-        match self {
-            AnyGame::Vcs(g) => g
+        key: &str,
+        value: FactValue,
+    ) -> Result<(), String> {
+        common!(self, g => {
+            let release = g
                 .mods
                 .iter_mut()
                 .find(|m| m.name == name)
                 .and_then(|m| m.releases.get_mut(index))
-                .map(edit),
-            _ => None,
-        }
-        .is_some()
+                .ok_or_else(|| format!("mod {name:?} has no release {index}"))?;
+            release.hardware.set(key, value)
+        })
     }
 
     pub fn mod_names(&self) -> Vec<String> {
@@ -645,37 +659,17 @@ impl AnyGame {
     /// Board hint for the session factory (VCS and SG-1000 — their carts have
     /// no header, so the db's word must reach the core).
     pub fn cart_hint(&self) -> Option<String> {
-        fn first_board<P: Platform>(
-            game: &Game<P>,
-            code: impl Fn(&P::ReleaseHardware) -> Option<&'static str>,
-        ) -> Option<String> {
-            game.releases
-                .iter()
-                .find_map(|r| code(&r.hardware))
-                .map(str::to_owned)
-        }
-        match self {
-            AnyGame::Vcs(g) => first_board(g, |hw| hw.cart_type.map(VcsCartType::code)),
-            AnyGame::Sg1000(g) => first_board(g, |hw| hw.cart_type.map(Sg1000CartType::code)),
-            _ => None,
-        }
+        common!(self, g => g.releases.iter().find_map(|r| stated_board(&r.hardware)))
     }
 
     /// TV/board hints for booting one specific dump: the release that owns it
     /// speaks first; a mod's dump answers through its base's release; only
     /// then fall back to the entry's first stated values.
     pub fn hints_for(&self, sha1: &str) -> (Option<String>, Option<String>) {
-        let stated = match self {
-            AnyGame::Vcs(g) => release_holding(g, sha1).map(|r| {
-                (
-                    r.hardware.tv_format.map(|tv| tv.code().to_owned()),
-                    r.hardware.cart_type.map(|c| c.code().to_owned()),
-                )
-            }),
-            AnyGame::Sg1000(g) => release_holding(g, sha1)
-                .map(|r| (None, r.hardware.cart_type.map(|c| c.code().to_owned()))),
-            _ => None,
-        };
+        let stated = common!(self, g => release_holding(g, sha1).map(|r| (
+            stated_tv(&r.hardware).map(|tv| tv.code().to_owned()),
+            stated_board(&r.hardware),
+        )));
         stated.unwrap_or_else(|| (self.tv_hint(), self.cart_hint()))
     }
 
@@ -698,17 +692,14 @@ impl AnyGame {
 
     /// The controllers the release holding this dump states — what the play
     /// pane puts in the jacks before the game boots.
-    pub fn controllers_for(&self, sha1: &str) -> Vec<missingno_gamedb::platform::Controller> {
-        let AnyGame::Vcs(g) = self else {
-            return Vec::new();
-        };
-        let stated = |r: &Release<Vcs>| r.hardware.controllers.clone();
-        for release in &g.releases {
-            if release.artifacts.iter().any(|a| a.sha1.as_str() == sha1) {
-                return stated(release);
-            }
-        }
-        g.releases.first().map(stated).unwrap_or_default()
+    pub fn controllers_for(&self, sha1: &str) -> Vec<Controller> {
+        common!(self, g => g
+            .releases
+            .iter()
+            .find(|r| r.artifacts.iter().any(|a| a.sha1.as_str() == sha1))
+            .or(g.releases.first())
+            .map(|r| stated_controllers(&r.hardware))
+            .unwrap_or_default())
     }
 
     /// Every dump attached to the game's mods, flattened.
@@ -805,42 +796,6 @@ impl AnyGame {
             AnyGame::Sg1000(_) | AnyGame::Vcs(_) => {}
         }
         (staged, conflicts)
-    }
-
-    /// Agent override: set the first release's board (GB/GBC) — for carts
-    /// whose headers lie. An empty code hands the field back to the header.
-    pub fn set_mapper(&mut self, code: &str) -> Result<(), String> {
-        match self {
-            AnyGame::Gb(g) => {
-                let board = gb_board(code)?;
-                first_release(g)?.hardware.mapper = board;
-                Ok(())
-            }
-            AnyGame::Gbc(g) => {
-                let board = gb_board(code)?;
-                first_release(g)?.hardware.mapper = board;
-                Ok(())
-            }
-            _ => Err("mapper applies to Game Boy and Game Boy Color entries only".to_owned()),
-        }
-    }
-
-    /// Agent override: set the first release's board (VCS and SG-1000 — no
-    /// headers). An empty code clears it back to auto-detect.
-    pub fn set_cart_type(&mut self, code: &str) -> Result<(), String> {
-        match self {
-            AnyGame::Vcs(g) => {
-                let board = vcs_board(code)?;
-                first_release(g)?.hardware.cart_type = board;
-                Ok(())
-            }
-            AnyGame::Sg1000(g) => {
-                let board = sg1000_board(code)?;
-                first_release(g)?.hardware.cart_type = board;
-                Ok(())
-            }
-            _ => Err("cart_type applies to Atari VCS and SG-1000 entries only".to_owned()),
-        }
     }
 
     /// Re-file a dump onto a mod that is already attached: another version of
@@ -970,75 +925,30 @@ impl AnyGame {
         })
     }
 
-    /// The broadcast standard one release shipped on (VCS and SG-1000).
-    /// Per-release, not per-game: one entry can hold an NTSC, a PAL and a
-    /// PAL-M release.
-    pub fn set_release_tv_format(&mut self, index: usize, format: TvStandard) -> bool {
-        match self {
-            AnyGame::Vcs(g) => g.releases.get_mut(index).map(|r| {
-                r.hardware.tv_format = Some(format);
-            }),
-            AnyGame::Sg1000(g) => g.releases.get_mut(index).map(|r| {
-                r.hardware.tv_format = Some(format);
-            }),
-            _ => None,
-        }
-        .is_some()
+    /// State one hardware fact on one release. Per-release, not per-game: one
+    /// entry can hold an NTSC, a PAL and a PAL-M release. The platform's own
+    /// declaration answers for a key it doesn't state.
+    pub fn set_release_fact(
+        &mut self,
+        index: usize,
+        key: &str,
+        value: FactValue,
+    ) -> Result<(), String> {
+        common!(self, g => release_at(g, index)?.hardware.set(key, value))
     }
 
-    pub fn set_release_controllers(&mut self, index: usize, controllers: Vec<Controller>) -> bool {
-        match self {
-            AnyGame::Vcs(g) => g.releases.get_mut(index).map(|r| {
-                r.hardware.controllers = controllers;
-            }),
-            _ => None,
-        }
-        .is_some()
-    }
-
-    /// An empty code clears the override back to auto-detect.
-    pub fn set_release_cart_type(&mut self, index: usize, code: &str) -> Result<(), String> {
-        match self {
-            AnyGame::Vcs(g) => {
-                let board = vcs_board(code)?;
-                release_at(g, index)?.hardware.cart_type = board;
-                Ok(())
-            }
-            AnyGame::Sg1000(g) => {
-                let board = sg1000_board(code)?;
-                release_at(g, index)?.hardware.cart_type = board;
-                Ok(())
-            }
-            _ => Err("cart_type applies to Atari VCS and SG-1000 entries only".to_owned()),
-        }
-    }
-
-    /// Broadcast-standard hint for the session factory (VCS and SG-1000).
+    /// Broadcast-standard hint for the session factory.
     pub fn tv_hint(&self) -> Option<String> {
-        match self {
-            AnyGame::Vcs(g) => g
-                .releases
-                .iter()
-                .find_map(|r| r.hardware.tv_format)
-                .map(|tv| tv.code().to_owned()),
-            AnyGame::Sg1000(g) => g
-                .releases
-                .iter()
-                .find_map(|r| r.hardware.tv_format)
-                .map(|tv| tv.code().to_owned()),
-            _ => None,
-        }
+        common!(self, g => g
+            .releases
+            .iter()
+            .find_map(|r| stated_tv(&r.hardware))
+            .map(|tv| tv.code().to_owned()))
     }
 
     pub fn to_ron_string(&self) -> Result<String, String> {
         common!(self, g => g.to_ron_string().map_err(|e| e.to_string()))
     }
-}
-
-fn first_release<P: Platform>(game: &mut Game<P>) -> Result<&mut Release<P>, String> {
-    game.releases
-        .first_mut()
-        .ok_or_else(|| "entry has no releases".to_owned())
 }
 
 fn release_at<P: Platform>(game: &mut Game<P>, index: usize) -> Result<&mut Release<P>, String> {
@@ -1069,40 +979,10 @@ fn stage_mapper(
     }
 }
 
-/// The board a code names; an empty code is the field cleared. An unlisted
-/// code names no board the core builds, so the refusal carries the vocabulary.
-fn board_code<T>(
-    code: &str,
-    named: impl FnOnce(&str) -> Option<T>,
-    vocabulary: impl FnOnce() -> Vec<&'static str>,
-) -> Result<Option<T>, String> {
-    if code.is_empty() {
-        return Ok(None);
-    }
-    named(code).map(Some).ok_or_else(|| {
-        format!(
-            "unknown board code {code:?}; expected one of: {}",
-            vocabulary().join(", ")
-        )
-    })
-}
-
-fn gb_board(code: &str) -> Result<Option<GbCartType>, String> {
-    board_code(code, GbCartType::from_code, || {
-        GbCartType::all().map(GbCartType::code).collect()
-    })
-}
-
-fn vcs_board(code: &str) -> Result<Option<VcsCartType>, String> {
-    board_code(code, VcsCartType::from_code, || {
-        VcsCartType::all().map(VcsCartType::code).collect()
-    })
-}
-
-fn sg1000_board(code: &str) -> Result<Option<Sg1000CartType>, String> {
-    board_code(code, Sg1000CartType::from_code, || {
-        Sg1000CartType::all().map(Sg1000CartType::code).collect()
-    })
+/// A board fact from an agent's code; an empty one is the field cleared. The
+/// platform's own vocabulary judges the code.
+pub fn board_value(code: &str) -> FactValue {
+    FactValue::Board((!code.is_empty()).then(|| code.to_owned()))
 }
 
 /// A JSON string → LinkType, rejecting unknowns with the valid set named.
@@ -2769,7 +2649,7 @@ mod merge_tests {
 #[cfg(test)]
 mod release_surgery_tests {
     use super::*;
-    use missingno_gamedb::ReleaseStatus;
+    use missingno_gamedb::{ReleaseStatus, VcsCartType};
 
     fn pitfall_like() -> AnyGame {
         AnyGame::Vcs(
@@ -2951,23 +2831,26 @@ mod board_tests {
     fn a_board_code_is_taken_typed_and_cleared_by_an_empty_one() {
         let mut game = castle();
         assert_eq!(game.cart_hint().as_deref(), Some("CASTLE"));
-        game.set_cart_type("DAHJEE-A").unwrap();
+        game.set_release_fact(0, "cart_type", board_value("DAHJEE-A"))
+            .unwrap();
         assert_eq!(game.cart_hint().as_deref(), Some("DAHJEE-A"));
-        game.set_release_cart_type(0, "").unwrap();
+        game.set_release_fact(0, "cart_type", board_value(""))
+            .unwrap();
         assert_eq!(game.cart_hint(), None);
     }
 
     #[test]
     fn a_code_from_another_platform_is_refused_with_the_vocabulary() {
         let mut game = castle();
-        let error = game.set_cart_type("F6SC").unwrap_err();
+        let error = game
+            .set_release_fact(0, "cart_type", board_value("F6SC"))
+            .unwrap_err();
         assert!(
             error.contains("\"F6SC\"") && error.contains("DAHJEE-B"),
             "{error}"
         );
-        assert!(game.set_mapper("MBC3").unwrap_err().contains("Game Boy"));
         assert!(
-            game.set_release_cart_type(4, "FLAT")
+            game.set_release_fact(4, "cart_type", board_value("FLAT"))
                 .unwrap_err()
                 .contains("no release 4")
         );
@@ -2976,6 +2859,36 @@ mod board_tests {
             Some("CASTLE"),
             "nothing landed"
         );
+    }
+
+    /// A key the platform doesn't state is refused by its own declaration,
+    /// naming the facts it does carry.
+    #[test]
+    fn a_fact_another_platform_states_names_this_ones_keys() {
+        let error = castle()
+            .set_release_fact(0, "mapper", board_value("MBC3"))
+            .unwrap_err();
+        assert!(
+            error.contains("\"mapper\"") && error.contains("cart_type"),
+            "{error}"
+        );
+    }
+
+    /// Tool schemas describe a hardware field from the descriptors, so the
+    /// platforms that state a key and their guidance travel together.
+    #[test]
+    fn a_fact_description_names_every_platform_that_states_it() {
+        let tv = fact_description("tv_format");
+        assert!(
+            tv.starts_with("SG-1000: ") && tv.contains("Atari VCS: "),
+            "{tv}"
+        );
+        assert!(tv.contains("PAL-M"), "{tv}");
+        assert_eq!(
+            fact_description("mapper").split(':').next(),
+            Some("Game Boy and Game Boy Color"),
+        );
+        assert_eq!(fact_description("no_such_fact"), "");
     }
 }
 

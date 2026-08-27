@@ -17,6 +17,7 @@ use missingno_session::attach::{
 use missingno_session::tools::{outcome_json, text};
 use serde_json::{Value, json};
 
+use crate::db::fact_description;
 use crate::vocabulary::{
     CONTROLLERS, DEFECTS, GAME_KINDS, LANGUAGES, LINK_TYPES, MOD_CATEGORIES, REGIONS,
     RELEASE_STATUSES, TV_FORMATS,
@@ -180,7 +181,7 @@ fn tool_definitions() -> Value {
             "description": "Search the game database by title or slug. Returns tree/slug keys.",
             "inputSchema": object(json!({
                 "query": { "type": "string" },
-                "tree": { "type": "string", "enum": ["gb", "gbc", "sg1000", "vcs"] },
+                "tree": { "type": "string", "enum": missingno_gamedb::platform_dirs() },
                 "backlog_only": { "type": "boolean" },
                 "limit": { "type": "integer" },
             }), &["query"]),
@@ -283,10 +284,10 @@ fn tool_definitions() -> Value {
                     "release_index": { "type": "integer" },
                     "base_sha1": { "type": "string", "description": "a release's dump, or another mod's when this derives from that hack" },
                     "tv_format": { "type": "string", "enum": TV_FORMATS.schema(),
-                                   "description": "VCS only. The standard THIS build runs on when a conversion changed it — an NTSC build of a PAL game. Leave unset when it matches the game." },
+                                   "description": format!("The standard THIS build runs on when a conversion changed it — an NTSC build of a PAL game. {}", fact_description("tv_format")) },
                     "controllers": { "type": "array", "items": { "type": "string",
                                      "enum": CONTROLLERS.schema() },
-                                     "description": "VCS only. What THIS build plays on when a conversion changed it — a joystick build of a keypad game." },
+                                     "description": format!("What THIS build plays on when a conversion changed it — a joystick build of a keypad game. {}", fact_description("controllers")) },
                     "label": { "type": "string" },
                     "date": { "type": "string" },
                 }},
@@ -319,12 +320,12 @@ fn tool_definitions() -> Value {
                     "date": { "type": "string" },
                     "publisher": { "type": "string" },
                     "tv_format": { "type": "string", "enum": TV_FORMATS.schema(),
-                        "description": "VCS and SG-1000. PalM is Brazil's PAL-M: PAL colour on System M's 525-line/59.94 Hz raster, so it runs at NTSC timing, not PAL's — never file a Brazilian release as Pal. SG-1000: the standard of the machine the software was written against, recorded on every release" },
+                        "description": fact_description("tv_format") },
                     "controllers": { "type": "array", "items": { "type": "string",
                         "enum": CONTROLLERS.schema() },
-                        "description": "VCS only. Controllers this release supports; replaces the list. Omit/empty for the default joystick, which most games use; list several when a game supports more than one." },
+                        "description": format!("{} Replaces the list; omit/empty for the platform default.", fact_description("controllers")) },
                     "cart_type": { "type": "string",
-                        "description": "VCS and SG-1000 only. Cartridge board code for this release, e.g. \"F6SC\" (VCS) or \"DAHJEE-A\" (SG-1000) — set it per release when the board differs or an import got it wrong. Empty string clears it back to auto-detect." },
+                        "description": format!("{} Empty string clears it back to unstated.", fact_description("cart_type")) },
                     "regions": { "type": "array", "items": { "type": "string",
                         "enum": REGIONS.schema() } },
                     "languages": { "type": "array", "items": { "type": "string",
