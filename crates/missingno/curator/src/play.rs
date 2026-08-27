@@ -20,8 +20,8 @@ pub struct PlaySession {
     pub handle: SessionHandle,
     /// The display the console states, driving the screen renderer.
     pub technology: DisplayTechnology,
-    /// The console's latching panel switches, captured before the console
-    /// moves into the session, with the level the UI last set for each.
+    /// The console's own panel controls, captured before the console moves
+    /// into the session, with the level the UI last set for each toggle.
     pub switches: Vec<PanelControl>,
     pub switch_levels: Vec<bool>,
     /// A paddle pair is in the play jack, so the pane aims it with the pointer
@@ -96,12 +96,7 @@ pub fn start(
         .map(|(jack, _)| PortId(jack as u8))
         .collect();
     let technology = console.video_out();
-    let switches: Vec<PanelControl> = console
-        .panel_controls()
-        .iter()
-        .filter(|control| control.toggle().is_some())
-        .copied()
-        .collect();
+    let switches: Vec<PanelControl> = console.panel_controls().to_vec();
     let switch_levels = switches
         .iter()
         .map(|switch| {

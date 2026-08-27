@@ -3050,14 +3050,19 @@ impl Curator {
                     .align_y(iced::Alignment::Center),
                 ]
                 .spacing(8);
-                let mut switches = row![
-                    button(text("Reset").size(12))
-                        .on_press(Message::TapSwitch(ControlId::panel(ControlRole::Reset))),
-                    button(text("Select").size(12))
-                        .on_press(Message::TapSwitch(ControlId::panel(ControlRole::Select))),
-                ]
-                .spacing(8)
-                .align_y(iced::Alignment::Center);
+                let mut switches = row![].spacing(8).align_y(iced::Alignment::Center);
+                for (i, switch) in session.switches.iter().enumerate() {
+                    let level = session.switch_levels.get(i).copied().unwrap_or(false);
+                    switches = switches.push(match switch.toggle() {
+                        Some((positions, _)) => {
+                            let position = positions[usize::from(level)];
+                            button(text(format!("{}: {position}", switch.label)).size(12))
+                                .on_press(Message::ToggleSwitch(i))
+                        }
+                        None => button(text(switch.label).size(12))
+                            .on_press(Message::TapSwitch(ControlId::panel(switch.role))),
+                    });
+                }
                 let jack = if session.pad_jack == missingno_vcs::debug::RIGHT_PORT {
                     "right"
                 } else {
@@ -3067,17 +3072,6 @@ impl Curator {
                     button(text(format!("Pad: {jack} jack")).size(12))
                         .on_press(Message::SwapPadJack),
                 );
-                for (i, switch) in session.switches.iter().enumerate() {
-                    let level = session.switch_levels.get(i).copied().unwrap_or(false);
-                    let Some((positions, _)) = switch.toggle() else {
-                        continue;
-                    };
-                    let position = positions[usize::from(level)];
-                    switches = switches.push(
-                        button(text(format!("{}: {position}", switch.label)).size(12))
-                            .on_press(Message::ToggleSwitch(i)),
-                    );
-                }
                 pane = pane.push(switches);
                 if let Some(screen) = &self.play_screen {
                     let paddles = session.paddles;
