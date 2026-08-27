@@ -12,7 +12,7 @@ use missingno_gamedb::{
     Platform as DbPlatform, Sg1000, Vcs,
 };
 
-use crate::app::system::TvStandard;
+use crate::app::system::{Platform, TvStandard};
 
 /// The compressed gamedb archive, embedded at compile time.
 static GAMEDB_ARCHIVE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/gamedb.tar.zst"));
@@ -25,6 +25,9 @@ const GBDEV_ENTRIES: &str = "https://raw.githubusercontent.com/gbdev/database/ma
 #[derive(Debug, Clone)]
 pub struct CatalogueEntry {
     pub slug: String,
+    /// The system this game is for. A dump whose extension names no console is
+    /// identified by its hash, and this is the answer.
+    pub platform: Platform,
     pub title: String,
     pub developer: Option<String>,
     pub description: Option<String>,
@@ -121,9 +124,10 @@ fn flatten<H: HardwareFacts>(
     (tv_format, cart_type, controllers)
 }
 
-fn entry_from<P: DbPlatform>(slug: String, game: Game<P>) -> CatalogueEntry {
+fn entry_from<P: DbPlatform>(platform: Platform, slug: String, game: Game<P>) -> CatalogueEntry {
     CatalogueEntry {
         slug,
+        platform,
         title: game.title,
         developer: game.developer,
         description: game.description,
@@ -151,11 +155,29 @@ fn entry_from<P: DbPlatform>(slug: String, game: Game<P>) -> CatalogueEntry {
     }
 }
 
+/// The system a catalogue tree holds games for.
+fn platform_of_tree(console: &str) -> Option<Platform> {
+    if console == GameBoy::DIR {
+        Some(Platform::GameBoy)
+    } else if console == GameBoyColor::DIR {
+        Some(Platform::GameBoyColor)
+    } else if console == Sg1000::DIR {
+        Some(Platform::Sg1000)
+    } else if console == Vcs::DIR {
+        Some(Platform::AtariVcs)
+    } else {
+        None
+    }
+}
+
 fn parse_entry(console: &str, slug: String, text: &str) -> Option<CatalogueEntry> {
+    let platform = platform_of_tree(console)?;
     macro_rules! tree {
         ($($P:ident),* $(,)?) => {$(
             if console == <$P as DbPlatform>::DIR {
-                return Game::<$P>::from_ron(text).ok().map(|g| entry_from(slug, g));
+                return Game::<$P>::from_ron(text)
+                    .ok()
+                    .map(|g| entry_from(platform, slug, g));
             }
         )*};
     }
@@ -260,6 +282,12 @@ impl Catalogue {
         })
     }
 
+    /// The system this dump is for, as the catalogue records it — the only
+    /// identification a dump whose extension names no console has.
+    pub fn platform(&self, sha1: &str) -> Option<Platform> {
+        self.lookup_hash(sha1).map(|(game, _, _)| game.platform)
+    }
+
     /// Whether a human has reviewed the catalogue's entry for this dump.
     pub fn curated(&self, sha1: &str) -> bool {
         self.lookup_hash(sha1)
@@ -328,6 +356,31 @@ mod tests {
         assert_eq!(usa.tv_format, Some(TvStandard::Ntsc));
         assert_eq!(pal.tv_format, Some(TvStandard::Pal));
         assert_eq!(usa.cart_type.as_deref(), Some("DPC"));
+    }
+
+    #[test]
+    fn every_tree_stamps_its_own_platform() {
+        let catalogue = Catalogue::load();
+        if catalogue.entries.is_empty() {
+            return; // submodule not checked out
+        }
+        for (slug, platform) in [
+            ("super-mario-land", Platform::GameBoy),
+            ("007-the-world-is-not-enough", Platform::GameBoyColor),
+            ("bank-panic", Platform::Sg1000),
+            ("11-invaders", Platform::AtariVcs),
+        ] {
+            let entry = catalogue
+                .lookup_slug(slug)
+                .unwrap_or_else(|| panic!("{slug} is in the catalogue"));
+            assert_eq!(entry.platform, platform, "{slug}");
+        }
+        // What a dump's hash answers is what the loader identifies a generic
+        // dump with.
+        assert_eq!(
+            catalogue.platform("920cfbd517764ad3fa6a7425c031bd72dc7d927c"),
+            Some(Platform::AtariVcs)
+        );
     }
 
     // Catalogue::load() silently drops manifests that fail to deserialize, so

@@ -11,7 +11,7 @@ pub use missingno_vcs::debug::{BOARD, OVERDUMP, TV_STANDARD, launch_options};
 
 pub use missingno_vcs::debug::is_vcs_rom;
 
-pub const ROM_EXTENSIONS: &[&str] = &["a26", "bin"];
+pub const ROM_EXTENSIONS: &[&str] = &["a26"];
 
 /// The console panel and the controllers its two jacks take.
 pub const CONTROLS: ControlMap = ControlMap::new(

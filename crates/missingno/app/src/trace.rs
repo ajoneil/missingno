@@ -36,7 +36,10 @@ pub fn run(
     eprintln!("profile: {}", profile_path.display());
     eprintln!("output: {}", output_path.display());
 
-    let Some(family) = system::family_for(&rom_path, &rom_data) else {
+    // A generic dump identifies through the catalogue, as everywhere else.
+    let catalogued = crate::app::library::catalogue::Catalogue::load()
+        .platform(&crate::app::library::hasheous::rom_sha1(&rom_data));
+    let Some(family) = system::family_for_media(&rom_path, &rom_data, catalogued) else {
         eprintln!("error: unsupported ROM: {}", rom_path.display());
         process::exit(1);
     };

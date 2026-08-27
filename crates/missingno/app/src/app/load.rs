@@ -30,10 +30,12 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
         Message::Pick => {
             app.game = Game::Loading;
             // "All supported" first so it is the default filter, then one
-            // per family for narrowing.
+            // per family for narrowing. A generic dump is pickable under the
+            // first: the catalogue or the user names the system it is for.
             let mut all_extensions: Vec<&str> = system::FAMILIES
                 .iter()
                 .flat_map(|family| family.extensions.iter().copied())
+                .chain(system::GENERIC_EXTENSIONS.iter().copied())
                 .collect();
             all_extensions.sort_unstable();
             all_extensions.dedup();
@@ -92,13 +94,17 @@ struct Request<'a> {
 /// carries what the core refused the media with, for the caller to put in
 /// front of the user.
 fn start(app: &mut App, request: Request<'_>) -> Result<String, String> {
+    let sha1 = library::hasheous::rom_sha1(&request.rom);
     let family = match request.platform {
         Some(platform) => system::family_of(platform),
-        None => system::family_for(request.rom_path, &request.rom),
+        None => system::family_for_media(
+            request.rom_path,
+            &request.rom,
+            app.catalogue.platform(&sha1),
+        ),
     }
     .ok_or("no system recognises this file")?;
 
-    let sha1 = library::hasheous::rom_sha1(&request.rom);
     let facts = launch::facts(
         family,
         &request.rom,
@@ -106,7 +112,13 @@ fn start(app: &mut App, request: Request<'_>) -> Result<String, String> {
         &sha1,
         app.boot_rom.as_ref(),
     );
-    let values = launch::resolve(&(family.options)(&request.rom), &request.overrides, &facts);
+    let mut values = launch::resolve(&(family.options)(&request.rom), &request.overrides, &facts);
+    // The values name the console this launch is for, in the vocabulary a
+    // factory reads: media whose extension names none is still settled here.
+    values.set_choice(
+        missingno_session::factory::SYSTEM,
+        family.platform.factory_name(),
+    );
 
     let mut console = (family.create_console)(system::MediaLoad {
         rom: &request.rom,
@@ -361,15 +373,15 @@ fn install_and_start(
     platform: Option<system::Platform>,
     overrides: LaunchValues,
 ) -> Result<(), String> {
+    let sha1 = library::hasheous::rom_sha1(&rom);
+
     // Classify before touching the library so unsupported files don't get
     // library entries.
     let family = match platform {
         Some(platform) => system::family_of(platform),
-        None => system::family_for(&rom_path, &rom),
+        None => system::family_for_media(&rom_path, &rom, app.catalogue.platform(&sha1)),
     }
     .ok_or("no system recognises this file")?;
-
-    let sha1 = library::hasheous::rom_sha1(&rom);
 
     // Check library for existing game
     let (game_dir, mut entry) = if let Some((dir, existing)) = library::find_by_sha1(&sha1) {

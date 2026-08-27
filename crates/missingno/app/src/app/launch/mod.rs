@@ -182,7 +182,8 @@ pub struct Window {
     /// Whose options the rows render. `None` while media no family claims waits
     /// for the user to name the system it is for.
     pub platform: Option<Platform>,
-    /// Whether a family claimed the media itself; unclaimed media asks first.
+    /// Whether anything identified the media — a family's predicate or the
+    /// catalogue's word on its hash. What nothing does asks the user first.
     claimed: bool,
     /// The user's own word on the options, as this window has it.
     pub overrides: LaunchValues,
@@ -247,7 +248,7 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
 
         Message::Opened(rom_path, rom, target) => {
             let sha1 = library::hasheous::rom_sha1(&rom);
-            let claimed = system::family_for(&rom_path, &rom);
+            let claimed = system::family_for_media(&rom_path, &rom, app.catalogue.platform(&sha1));
             let entry = library::find_by_sha1(&sha1).map(|(_, entry)| entry);
             // Media no family claims still has a system if the user named one
             // for it before; that word is on its library entry.

@@ -49,6 +49,19 @@ impl Platform {
         }
     }
 
+    /// This platform's core in the session factory's vocabulary, for a load
+    /// that states which console builds it rather than leaving it to
+    /// recognition.
+    pub fn factory_name(self) -> &'static str {
+        match self {
+            Platform::GameBoy | Platform::GameBoyColor => "Game Boy",
+            Platform::AtariVcs => "Atari VCS",
+            Platform::MasterSystem => "Master System",
+            Platform::Nes => "NES",
+            Platform::Sg1000 => "SG-1000",
+        }
+    }
+
     /// Best-effort mapping from an external platform description — a
     /// Hasheous platform name, or the string an older library entry stored.
     pub fn from_description(text: &str) -> Option<Platform> {
@@ -194,6 +207,21 @@ pub fn family_for(path: &Path, rom: &[u8]) -> Option<&'static FamilyDescriptor> 
     FAMILIES.iter().find(|family| (family.is_rom)(path, rom))
 }
 
+/// The family for media in hand: whichever claims it, else the family of the
+/// platform the catalogue records for this dump. A generic dump extension
+/// names no console, so the database is the only word a predicate cannot give.
+pub fn family_for_media(
+    path: &Path,
+    rom: &[u8],
+    catalogued: Option<Platform>,
+) -> Option<&'static FamilyDescriptor> {
+    family_for(path, rom).or_else(|| catalogued.and_then(family_of))
+}
+
+/// Extensions that name no console: a raw dump could be any system's, so no
+/// family claims one and identification falls to the database or the user.
+pub const GENERIC_EXTENSIONS: &[&str] = &["bin"];
+
 /// The registered families in the order they are listed to the user: by display
 /// name, so the table's own order stays free to mean what it means.
 pub fn families_by_name() -> Vec<&'static FamilyDescriptor> {
@@ -295,3 +323,55 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         trace: Some(crate::trace::trace_nes),
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_core_the_factory_registers_is_a_platform_we_name() {
+        for name in missingno_session::factory::factory_names() {
+            assert!(
+                FAMILIES
+                    .iter()
+                    .any(|family| family.platform.factory_name() == name),
+                "no platform names the \"{name}\" core"
+            );
+        }
+    }
+
+    #[test]
+    fn a_generic_dump_is_the_catalogues_to_identify() {
+        let dump = Path::new("/roms/dump.bin");
+        let rom = [0u8; 4096];
+        assert!(family_for(dump, &rom).is_none());
+        assert_eq!(
+            family_for_media(dump, &rom, Some(Platform::AtariVcs)).map(|family| family.platform),
+            Some(Platform::AtariVcs)
+        );
+        assert!(family_for_media(dump, &rom, None).is_none());
+    }
+
+    #[test]
+    fn a_predicate_outranks_the_catalogue() {
+        let cart = Path::new("/roms/cart.a26");
+        assert_eq!(
+            family_for_media(cart, &[0u8; 4096], Some(Platform::GameBoy))
+                .map(|family| family.platform),
+            Some(Platform::AtariVcs)
+        );
+    }
+
+    #[test]
+    fn no_family_claims_a_generic_dump_extension() {
+        for family in FAMILIES {
+            for extension in family.extensions {
+                assert!(
+                    !GENERIC_EXTENSIONS.contains(extension),
+                    "{} claims \"{extension}\"",
+                    family.platform
+                );
+            }
+        }
+    }
+}

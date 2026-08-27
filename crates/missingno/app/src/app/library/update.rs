@@ -532,7 +532,7 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
             let _ = std::fs::write(&rom_path, &rom_bytes);
 
             // Create library entry
-            let family = system::family_for(&rom_path, &rom_bytes);
+            let family = system::family_for_media(&rom_path, &rom_bytes, Some(manifest.platform));
             let mut entry = super::GameEntry::new(sha1.clone(), title, rom_path);
             entry.header_title = family.and_then(|f| (f.title_from_rom)(&rom_bytes));
             entry.platform = family.map(|f| f.platform);

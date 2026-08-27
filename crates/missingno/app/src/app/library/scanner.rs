@@ -23,13 +23,14 @@ pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<l
                 Err(_) => continue,
             };
 
-            // Skip media no family claims — an unlaunchable library entry
-            // helps nobody.
-            let Some(family) = system::family_for(&path, &rom) else {
+            let sha1 = hasheous::rom_sha1(&rom);
+
+            // Skip media neither a family nor the catalogue identifies — an
+            // unlaunchable library entry helps nobody.
+            let Some(family) = system::family_for_media(&path, &rom, catalogue.platform(&sha1))
+            else {
                 continue;
             };
-
-            let sha1 = hasheous::rom_sha1(&rom);
 
             // Check if already in library; older entries may predate
             // platform classification, so stamp it while the ROM is at hand.
@@ -221,15 +222,18 @@ pub fn enrich_next(catalogue: &Catalogue, hasheous_allowed: bool) -> EnrichResul
     }
 }
 
+/// Files a scan considers: a family's own extensions, plus the generic dump
+/// ones no family claims — what one of those is comes from the catalogue.
 fn is_rom_file(path: &std::path::Path) -> bool {
     path.is_file()
         && path
             .extension()
             .and_then(|e| e.to_str())
             .is_some_and(|ext| {
-                system::FAMILIES
-                    .iter()
-                    .any(|family| family.extensions.contains(&ext))
+                system::GENERIC_EXTENSIONS.contains(&ext)
+                    || system::FAMILIES
+                        .iter()
+                        .any(|family| family.extensions.contains(&ext))
             })
 }
 
