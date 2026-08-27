@@ -546,7 +546,7 @@ mod tests {
         // supplied standard maps straight onto the CRT descriptor.
         let mut rom = vec![0xEA; 0x1000];
         reset_to_f000(&mut rom);
-        for standard in [TvStandard::Ntsc, TvStandard::Pal, TvStandard::Secam] {
+        for standard in TvStandard::all() {
             let console = create_console(&rom, "test".into(), Some(standard), None, false)
                 .expect("console builds");
             match console.video_out() {

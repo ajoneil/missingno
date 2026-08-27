@@ -8,8 +8,7 @@
 use std::collections::HashMap;
 
 use missingno_gamedb::{
-    Artifact, Controller, Game, GameBoy, GameBoyColor, Link, Platform as DbPlatform, Sg1000,
-    TvFormat, Vcs,
+    Artifact, Controller, Game, GameBoy, GameBoyColor, Link, Platform as DbPlatform, Sg1000, Vcs,
 };
 
 use crate::app::system::TvStandard;
@@ -101,21 +100,6 @@ impl CatalogueEntry {
 
 // ── Flattening ────────────────────────────────────────────────────────
 
-fn tv_standard(format: TvFormat) -> TvStandard {
-    match format {
-        TvFormat::Ntsc => TvStandard::Ntsc,
-        TvFormat::Pal => TvStandard::Pal,
-        // PAL-M is System M — 525 lines at 59.94 Hz — so the machine runs on
-        // NTSC timing; only the colour encoding is PAL's, and on the VCS that
-        // came from a board outside the TIA.
-        TvFormat::PalM => TvStandard::Ntsc,
-        // PAL60 is PAL colour on a 60 Hz raster: like PAL-M it runs at NTSC
-        // timing, which is what a PAL60 build was authored for.
-        TvFormat::Pal60 => TvStandard::Ntsc,
-        TvFormat::Secam => TvStandard::Secam,
-    }
-}
-
 fn entry_from<P: DbPlatform>(
     slug: String,
     game: Game<P>,
@@ -172,7 +156,7 @@ fn parse_entry(console: &str, slug: String, text: &str) -> Option<CatalogueEntry
         "vcs" => Game::<Vcs>::from_ron(text).ok().map(|g| {
             entry_from(slug, g, |hw| {
                 (
-                    hw.tv_format.map(tv_standard),
+                    hw.tv_format,
                     hw.cart_type.map(|board| board.code().to_owned()),
                     hw.controllers.clone(),
                 )

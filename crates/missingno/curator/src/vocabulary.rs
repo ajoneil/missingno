@@ -4,7 +4,8 @@
 //! is a term the parser accepts, by construction.
 
 use missingno_gamedb::{
-    Controller, Defect, GameKind, Language, LinkType, ModCategory, Region, ReleaseStatus, TvFormat,
+    Controller, Defect, GameKind, Language, LinkType, ModCategory, Region, ReleaseStatus,
+    TvStandard,
 };
 use serde_json::{Value, json};
 
@@ -140,14 +141,15 @@ pub static RELEASE_STATUSES: Vocabulary<ReleaseStatus> = vocabulary(
     ],
 );
 
-pub static TV_FORMATS: Vocabulary<TvFormat> = vocabulary(
+pub static TV_FORMATS: Vocabulary<TvStandard> = vocabulary(
     "tv_format",
     &[
-        ("Ntsc", TvFormat::Ntsc),
-        ("Pal", TvFormat::Pal),
-        ("Pal60", TvFormat::Pal60),
-        ("PalM", TvFormat::PalM),
-        ("Secam", TvFormat::Secam),
+        ("Ntsc", TvStandard::Ntsc),
+        ("Pal", TvStandard::Pal),
+        ("Pal60", TvStandard::Pal60),
+        ("Ntsc50", TvStandard::Ntsc50),
+        ("PalM", TvStandard::PalM),
+        ("Secam", TvStandard::Secam),
     ],
 );
 

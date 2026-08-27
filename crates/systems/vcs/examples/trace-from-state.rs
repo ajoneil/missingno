@@ -1,5 +1,5 @@
 //! Capture a one-frame `.morepork` trace starting from a save state:
-//! `cargo run -p missingno-vcs --example trace-from-state --features morepork -- <rom> <state.mpsv> <out.morepork> [ntsc|pal|secam]`
+//! `cargo run -p missingno-vcs --example trace-from-state --features morepork -- <rom> <state.mpsv> <out.morepork> [ntsc|pal|pal60|ntsc50|palm|secam]`
 
 use std::process;
 
@@ -11,17 +11,16 @@ fn main() {
     let (Some(rom_path), Some(state_path), Some(out_path)) =
         (args.next(), args.next(), args.next())
     else {
-        eprintln!("usage: trace-from-state <rom> <state.mpsv> <out.morepork> [ntsc|pal|secam]");
+        eprintln!(
+            "usage: trace-from-state <rom> <state.mpsv> <out.morepork> [ntsc|pal|pal60|ntsc50|palm|secam]"
+        );
         process::exit(2);
     };
-    let standard = args.next().map(|name| match name.as_str() {
-        "ntsc" => TvStandard::Ntsc,
-        "pal" => TvStandard::Pal,
-        "secam" => TvStandard::Secam,
-        other => {
-            eprintln!("error: unknown TV standard {other}");
+    let standard = args.next().map(|name| {
+        TvStandard::from_code(&name).unwrap_or_else(|| {
+            eprintln!("error: unknown TV standard {name}");
             process::exit(2);
-        }
+        })
     });
 
     let rom = std::fs::read(&rom_path).unwrap_or_else(|e| {

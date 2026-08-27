@@ -9,6 +9,7 @@ use rgb::RGB8;
 
 use crate::TvStandard;
 use crate::tia::{Scanline, VISIBLE_CLOCKS, palette_index};
+use crate::tv_standard::{Raster, raster};
 
 /// Frames are emergent from VSYNC; bound the search so a kernel that never
 /// syncs cannot stall the emulation thread.
@@ -33,9 +34,9 @@ pub(super) fn tv_scanline(line: Scanline) -> video::Scanline<VISIBLE_CLOCKS> {
 /// lines (NTSC) or 312 (PAL). Kernels vary line counts; pacing uses the
 /// convention so the frame rate follows the broadcast standard.
 pub(super) fn frame_interval(standard: TvStandard) -> Duration {
-    let lines = match standard {
-        TvStandard::Ntsc => 262.0,
-        TvStandard::Pal | TvStandard::Secam => 312.0,
+    let lines = match raster(standard) {
+        Raster::System525 => 262.0,
+        Raster::System625 => 312.0,
     };
     Duration::from_secs_f32(lines * 228.0 / crate::tv_standard::master_clock_hz(standard) as f32)
 }
@@ -51,13 +52,12 @@ struct DisplayWindow {
 }
 
 fn display_window(standard: TvStandard) -> DisplayWindow {
-    match standard {
-        TvStandard::Ntsc => DisplayWindow {
+    match raster(standard) {
+        Raster::System525 => DisplayWindow {
             skip: 23,
             height: 228,
         },
-        // SECAM shares PAL's 50 Hz, 312-line field geometry.
-        TvStandard::Pal | TvStandard::Secam => DisplayWindow {
+        Raster::System625 => DisplayWindow {
             skip: 32,
             height: 274,
         },
@@ -113,8 +113,8 @@ fn region_palette(standard: TvStandard) -> std::sync::Arc<[RGB8]> {
         ]
     });
     let index = match standard {
-        TvStandard::Ntsc => 0,
-        TvStandard::Pal => 1,
+        TvStandard::Ntsc | TvStandard::Ntsc50 | TvStandard::PalM => 0,
+        TvStandard::Pal | TvStandard::Pal60 => 1,
         TvStandard::Secam => 2,
     };
     cache[index].clone()

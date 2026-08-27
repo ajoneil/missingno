@@ -8,8 +8,10 @@ use crate::TvStandard;
 /// grey ramp (colour loss). Frame pixels index into it via [`palette_index`].
 pub fn palette(standard: TvStandard) -> &'static [(u8, u8, u8); 128] {
     match standard {
-        TvStandard::Ntsc => &NTSC_PALETTE,
-        TvStandard::Pal => &PAL_PALETTE,
+        // No hardware colour measurement exists for PAL-M; the NTSC table is
+        // the stated abstraction, and Stella and Gopher2600 concur.
+        TvStandard::Ntsc | TvStandard::Ntsc50 | TvStandard::PalM => &NTSC_PALETTE,
+        TvStandard::Pal | TvStandard::Pal60 => &PAL_PALETTE,
         TvStandard::Secam => &SECAM_PALETTE,
     }
 }
@@ -306,3 +308,24 @@ const SECAM_PALETTE: [(u8, u8, u8); 128] = {
     }
     table
 };
+
+#[cfg(test)]
+mod tests {
+    use super::{TvStandard, palette};
+
+    #[test]
+    fn hybrid_standards_share_their_colour_decode() {
+        assert!(std::ptr::eq(
+            palette(TvStandard::PalM),
+            palette(TvStandard::Ntsc)
+        ));
+        assert!(std::ptr::eq(
+            palette(TvStandard::Ntsc50),
+            palette(TvStandard::Ntsc)
+        ));
+        assert!(std::ptr::eq(
+            palette(TvStandard::Pal60),
+            palette(TvStandard::Pal)
+        ));
+    }
+}

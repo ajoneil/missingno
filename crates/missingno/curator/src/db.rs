@@ -6,7 +6,7 @@ use std::{fs, io, path::PathBuf};
 use missingno_gamedb::{
     Controller, Defect, FlagFile, Game, GameBoy, GameBoyColor, GameKind, GbCartType, Language,
     Link, LinkType, Mod, ModCategory, ModOf, ModRelease, Platform, Region, Release, ReleaseStatus,
-    Sg1000, Sg1000CartType, Sha1, Slug, Tree, TvFormat, Vcs, VcsCartType,
+    Sg1000, Sg1000CartType, Sha1, Slug, Tree, TvStandard, Vcs, VcsCartType,
 };
 
 use crate::vocabulary;
@@ -543,7 +543,7 @@ impl AnyGame {
 
     /// A build that runs on a different standard than the game it patches — an
     /// NTSC conversion of a PAL cart. VCS only.
-    pub fn set_mod_tv_format(&mut self, name: &str, index: usize, format: TvFormat) -> bool {
+    pub fn set_mod_tv_format(&mut self, name: &str, index: usize, format: TvStandard) -> bool {
         self.mod_release(name, index, |r| r.hardware.tv_format = Some(format))
     }
 
@@ -661,9 +661,7 @@ impl AnyGame {
         let stated = match self {
             AnyGame::Vcs(g) => release_holding(g, sha1).map(|r| {
                 (
-                    r.hardware
-                        .tv_format
-                        .map(|tv| format!("{tv:?}").to_lowercase()),
+                    r.hardware.tv_format.map(|tv| tv.code().to_owned()),
                     r.hardware.cart_type.map(|c| c.code().to_owned()),
                 )
             }),
@@ -967,7 +965,7 @@ impl AnyGame {
 
     /// The broadcast standard one release shipped on (VCS only). Per-release,
     /// not per-game: one entry can hold an NTSC, a PAL and a PAL-M release.
-    pub fn set_release_tv_format(&mut self, index: usize, format: TvFormat) -> bool {
+    pub fn set_release_tv_format(&mut self, index: usize, format: TvStandard) -> bool {
         match self {
             AnyGame::Vcs(g) => g.releases.get_mut(index).map(|r| {
                 r.hardware.tv_format = Some(format);
@@ -1011,7 +1009,7 @@ impl AnyGame {
                 .releases
                 .iter()
                 .find_map(|r| r.hardware.tv_format)
-                .map(|tv| format!("{tv:?}").to_lowercase()),
+                .map(|tv| tv.code().to_owned()),
             _ => None,
         }
     }
@@ -1114,7 +1112,7 @@ pub fn parse_defect(value: &str) -> Result<Option<Defect>, String> {
 }
 
 /// PAL-M is Brazil's: PAL colour on System M's 525-line/59.94 Hz raster.
-pub fn parse_tv_format(value: &str) -> Result<TvFormat, String> {
+pub fn parse_tv_format(value: &str) -> Result<TvStandard, String> {
     vocabulary::TV_FORMATS.parse(value)
 }
 
