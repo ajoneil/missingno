@@ -339,9 +339,9 @@ While the developer plays the current game:
    the game. An article about the arcade original counts when it documents the port.
 9. **Hardware facts**: the curator auto-stages what a booted Game Boy header states, filling
    unknowns only. Override via update_game when the truth differs: `mapper` (GB/GBC —
-   unlicensed carts lie) and `cart_type` (VCS — no headers, so the db drives the emulator's
-   board choice; if a VCS playtest shows garbage the board is the first suspect, though a
-   game that renders no stable frame on *any* valid board is a software problem, not a board
+   unlicensed carts lie) and `cart_type` (VCS and SG-1000 — no headers, so the db drives the
+   emulator's board choice; if a playtest shows garbage the board is the first suspect, though
+   a game that renders no stable frame on *any* valid board is a software problem, not a board
    mismatch). **Controllers stage only on deviation from the platform default** (VCS:
    joystick), because the emulator must plug in the right device; the other staging case is
    sibling contrast, where one release differs from another. **When the required controller
