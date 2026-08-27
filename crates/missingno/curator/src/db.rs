@@ -2180,9 +2180,9 @@ mod tests {
             return;
         }
         let db = Db::load(repo).expect("gamedb loads");
-        assert!(db.entries.len() > 8000, "{}", db.entries.len());
-        // A floor far below the current backlog: curating and merging shrink
-        // it every session, so a tight bound would fail on progress alone.
+        // Floors far below the current counts: curating and merging shrink
+        // them every session, so a tight bound would fail on progress alone.
+        assert!(db.entries.len() > 7000, "{}", db.entries.len());
         assert!(db.backlog_count(TreeId::Vcs) > 1000);
 
         // A flag is future work, so it has to name work someone can reach:
