@@ -2,11 +2,16 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, PoisonError};
+
+// Parallel tests in one binary share a checkout; the git work must not race.
+static FETCH: Mutex<()> = Mutex::new(());
 
 /// Sparse-clone `url` into `root`, check out `paths`, and record the commit
 /// fetched. `env_var` names the override a caller can point at an existing
 /// checkout instead, so the failure message can offer both routes.
 pub fn fetch_oracle(root: &Path, url: &str, paths: &[&str], env_var: &str) {
+    let _serialized = FETCH.lock().unwrap_or_else(PoisonError::into_inner);
     let git = |args: &[&str], cwd: Option<&Path>| {
         let mut command = Command::new("git");
         command.args(args);
