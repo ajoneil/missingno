@@ -1523,13 +1523,19 @@ impl Db {
             if known.contains(sha1) {
                 continue;
             }
-            // The filename is all an unmatched dump says about its console, so
-            // only the two headerless platforms are read from one; the shared
-            // `.bin` goes to the Atari, as current collections do.
-            let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase());
-            let tree = match ext.as_deref() {
-                Some("sg") => TreeId::Sg1000,
-                Some("a26") | Some("bin") => TreeId::Vcs,
+            // The session factory's own media predicates decide the console —
+            // the same recognition every loader uses, so a `.bin` is claimed
+            // only at the Atari's real image sizes. Only the two headerless
+            // platforms synthesize entries from a bare dump.
+            let Ok(rom) = fs::read(path) else {
+                continue;
+            };
+            let Some(factory) = missingno_session::factory::factory_for(path, &rom) else {
+                continue;
+            };
+            let tree = match factory.name {
+                "SG-1000" => TreeId::Sg1000,
+                "Atari VCS" => TreeId::Vcs,
                 _ => continue,
             };
             let Ok(parsed) = sha1.parse::<Sha1>() else {
@@ -1565,7 +1571,7 @@ impl Db {
             let game = match tree {
                 TreeId::Sg1000 => AnyGame::Sg1000(lone_dump_entry(title, artifact)),
                 TreeId::Vcs => AnyGame::Vcs(lone_dump_entry(title, artifact)),
-                // The extension named one of the two headerless platforms.
+                // The factory match above names only the headerless platforms.
                 TreeId::Gb | TreeId::Gbc => continue,
             };
             self.entries.push(EntryHandle {
@@ -2101,6 +2107,59 @@ mod tests {
 mod link_tests {
     use super::*;
     use missingno_gamedb::{Game, GameBoy};
+
+    // The factory's media predicates route an unmatched dump: a `.sg` is the
+    // SG-1000's, a `.bin` is the Atari's only at a real image size.
+    #[test]
+    fn unmatched_dumps_route_through_the_factory() {
+        let repo =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../missingno-gamedb");
+        if !repo.join("data/gb").is_dir() {
+            return;
+        }
+        let mut db = Db::load(repo).expect("gamedb loads");
+        let dir = tempfile::tempdir().unwrap();
+        let mut index = crate::verify::RomIndex::default();
+        for (name, size, sha1) in [
+            (
+                "uncatalogued game.sg",
+                8192,
+                "aa00000000000000000000000000000000000001",
+            ),
+            (
+                "real size.bin",
+                4096,
+                "aa00000000000000000000000000000000000002",
+            ),
+            (
+                "odd size.bin",
+                5000,
+                "aa00000000000000000000000000000000000003",
+            ),
+        ] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, vec![0xA7u8; size]).unwrap();
+            index.by_sha1.insert(
+                sha1.to_owned(),
+                crate::verify::ScannedRom {
+                    path,
+                    home: crate::verify::RomHome::Inbox,
+                },
+            );
+        }
+        let before = db.entries.len();
+        assert_eq!(db.add_unmatched_roms(&index), 2);
+        assert_eq!(db.entries.len(), before + 2);
+        let tree_of = |title: &str| {
+            db.entries
+                .iter()
+                .find(|e| e.game.title() == title)
+                .map(|e| e.tree)
+        };
+        assert_eq!(tree_of("uncatalogued game"), Some(TreeId::Sg1000));
+        assert_eq!(tree_of("real size"), Some(TreeId::Vcs));
+        assert_eq!(tree_of("odd size"), None);
+    }
 
     #[test]
     fn upsert_link_is_idempotent_and_updates() {
