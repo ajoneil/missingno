@@ -82,6 +82,14 @@ game immediately afterwards**.
    range sweeps: a local file whose entry sorts outside the range still belongs to the batch.
 5. `queue_games` with the ordered keys. The first game starts playing immediately.
 
+   **Queue only games there is a dump for — build the queue from `local_matches`,
+   never from the tree listing.** A game the collection and inbox do not hold has
+   nothing to play, so it cannot be curated at all: the developer judges games
+   through this window, and an entry accepted without a playtest is a different
+   claim from every other one in the tree. Leave it in the backlog until a dump
+   turns up. Sorting a range alphabetically is fine; filter it through
+   `local_matches` before queueing.
+
    **Top up with `extend_queue`, which appends and leaves the playtest alone.**
    `queue_games` replaces the whole queue and restarts its first key, so it is for setting a
    queue up, never for extending one.

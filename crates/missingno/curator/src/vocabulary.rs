@@ -184,6 +184,7 @@ pub static DEFECTS: Vocabulary<Option<Defect>> = vocabulary(
     &[
         ("Overdump", Some(Defect::Overdump)),
         ("BadDump", Some(Defect::BadDump)),
+        ("MemoryMap", Some(Defect::MemoryMap)),
         ("None", None),
     ],
 );
