@@ -150,6 +150,16 @@ fn hardware_line<H: HardwareFacts>(hardware: &H, unknowns: Unknowns) -> String {
         .join(" ")
 }
 
+/// A stated ROM size, in KB where the byte count divides evenly — the whole
+/// point of stating it is that it disagrees with the dump's own length.
+fn rom_size_line(bytes: u32) -> String {
+    if bytes.is_multiple_of(1024) {
+        format!("{}KB", bytes / 1024)
+    } else {
+        format!("{bytes} bytes")
+    }
+}
+
 fn stated_tv<H: HardwareFacts>(hardware: &H) -> Option<TvStandard> {
     match hardware.get("tv_format")? {
         FactValue::TvStandard(tv) => tv,
@@ -233,7 +243,14 @@ impl AnyGame {
     /// shipped title and box label differently from the remaining facts.
     pub fn release_lines(&self) -> Vec<ReleaseLine> {
         fn line<P: Platform>(r: &Release<P>) -> ReleaseLine {
-            let extra = hardware_line(&r.hardware, Unknowns::Shown);
+            let mut extra = hardware_line(&r.hardware, Unknowns::Shown);
+            if let Some(bytes) = r.rom_size {
+                // Beside the board, which is what the size qualifies.
+                if !extra.is_empty() {
+                    extra.push(' ');
+                }
+                extra.push_str(&rom_size_line(bytes));
+            }
             let mut parts = Vec::new();
             if !r.regions.is_empty() {
                 parts.push(

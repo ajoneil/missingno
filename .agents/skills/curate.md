@@ -381,6 +381,10 @@ While the developer plays the current game:
      nothing. "No article exists" may only be said with that search on record;
    - **manual** — the Compendium index consulted (and AtariAge-via-Wayback for unlicensed
      carts), linked or absent-with-reason;
+   - **dumps** — every hash checked this pass, and any `rom_size` or `defect` you staged
+     called out in the report. Those two are measurements of the silicon that the dump's own
+     byte count contradicts, so a reader who does not see them stated assumes the dump is the
+     chip;
    - **flags** — unsupported-controller and playtest-oddity checks done.
 
    **A "not found" counts only from a search proven able to find.** Before recording an
