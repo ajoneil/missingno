@@ -244,6 +244,15 @@ impl AnyGame {
                         .join("/"),
                 );
             }
+            if !r.languages.is_empty() {
+                parts.push(
+                    r.languages
+                        .iter()
+                        .map(|language| language.label())
+                        .collect::<Vec<_>>()
+                        .join("/"),
+                );
+            }
             if r.status != Default::default() {
                 parts.push(format!("{:?}", r.status));
             }
@@ -2138,6 +2147,35 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod release_line_tests {
+    use super::*;
+
+    const A: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    #[test]
+    fn a_releases_languages_reach_its_display_line() {
+        let game = Game::<GameBoy>::from_ron(&format!(
+            "(title: \"T\", releases: [(regions: [Japan], languages: [Japanese],\
+               artifacts: [(sha1: \"{A}\")])])"
+        ))
+        .unwrap();
+        let line = &AnyGame::Gb(game).release_lines()[0];
+        assert!(line.detail.contains("Japanese"), "{}", line.detail);
+    }
+
+    #[test]
+    fn a_release_reading_in_no_stated_language_says_nothing() {
+        let game = Game::<GameBoy>::from_ron(&format!(
+            "(title: \"T\", releases: [(regions: [Japan], artifacts: [(sha1: \"{A}\")])])"
+        ))
+        .unwrap();
+        let line = &AnyGame::Gb(game).release_lines()[0];
+        // The region is not a language: "Japan" must not read as "Japanese".
+        assert!(!line.detail.contains("Japanese"), "{}", line.detail);
     }
 }
 

@@ -285,8 +285,17 @@ While the developer plays the current game:
    Europe, World, Taiwan, Germany, France, China, Spain, Italy, Australia, UnitedKingdom,
    Korea, HongKong, Sweden, Netherlands, Canada, Brazil), `languages` and `title`.
 
-   **`languages` is what the player reads on screen**, not what the box says. Most carts say
-   too little to matter; record it where a release genuinely reads in a language.
+   **`languages` is what the player reads on screen**, not what the box says. A title logo in
+   Japanese is artwork, and short status prompts (`WINNER CPU!`, `PLAYER PASS!!`) are not text
+   in this sense either: the test is whether a player needs the language to follow the game.
+   Where one genuinely does, record it — **English included**, even though empty already
+   implies English, because stated positively a later fan translation reads as a change rather
+   than as the first mention of the fact. Omit only where there is too little text to matter,
+   which covers most Atari carts. Tag a manual link's language explicitly as you curate it.
+
+   **A dump's region tag is not its language.** No-Intro's `(Ja)` marks the market the cart
+   sold into, so it lands on every Japanese release whatever is on screen; the answer comes
+   from the playtest, not the filename.
 
    **Each release field takes evidence about itself.** A title in a language is not
    `languages`; a publisher's home country is not `regions`; a TV standard is not a country.
