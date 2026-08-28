@@ -22,7 +22,7 @@ pub fn create_console(media: MediaLoad) -> Result<Box<dyn SystemConsole>, String
     missingno_sg1000::debug::create_console(
         media.rom,
         media.fallback_title,
-        media.launch.choice(BOARD).and_then(CartType::from_code),
+        media.launch.choice(BOARD).and_then(CartType::from_name),
     )
     .map_err(|error| error.to_string())
 }

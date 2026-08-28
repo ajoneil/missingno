@@ -139,7 +139,7 @@ pub fn launch_options(_rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
     vec![board_option(
         BOARD,
         CartType::all().map(|board| LaunchChoice {
-            value: board.code(),
+            value: board.name(),
             label: board.display_name(),
         }),
     )]

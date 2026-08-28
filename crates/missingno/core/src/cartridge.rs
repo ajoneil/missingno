@@ -2,30 +2,32 @@
 //! board vocabulary.
 //!
 //! A board is one row of names: the value the media declares it by where the
-//! media names one at all, the code it goes by in interchange — game-db
-//! entries, the CLI, a launch value — and the name shown to a reader. A core
-//! states its own rows; the lookups over them, and the serialised form the code
-//! *is*, are the same everywhere.
+//! media names one at all, the variant's own name — what serde writes, and what
+//! a game-db entry, the CLI and a launch value all say — and the name shown to a
+//! reader. A core states its own rows; the lookups over them are the same
+//! everywhere.
 
 /// One board's names. `Declared` carries what the media itself says names this
-/// board, and is `()` on a console whose dumps carry no header.
+/// board, and is `()` on a console whose dumps carry no header. `name` is the
+/// variant's own name, so it is the same string serde reads and writes; a test
+/// per vocabulary holds the two together.
 pub struct BoardNames<Board, Declared = ()> {
     pub board: Board,
     pub declared: Declared,
-    pub code: &'static str,
+    pub name: &'static str,
     pub display: &'static str,
 }
 
 /// One row of a headerless console's vocabulary.
 pub const fn row<Board>(
     board: Board,
-    code: &'static str,
+    name: &'static str,
     display: &'static str,
 ) -> BoardNames<Board> {
     BoardNames {
         board,
         declared: (),
-        code,
+        name,
         display,
     }
 }
@@ -37,13 +39,13 @@ pub fn boards<Board: Copy, Declared>(
     rows.iter().map(|row| row.board)
 }
 
-/// The board a code names.
-pub fn board_from_code<Board: Copy, Declared>(
+/// The board a variant name names.
+pub fn board_from_name<Board: Copy, Declared>(
     rows: &'static [BoardNames<Board, Declared>],
-    code: &str,
+    name: &str,
 ) -> Option<Board> {
     rows.iter()
-        .find(|row| row.code == code)
+        .find(|row| row.name == name)
         .map(|row| row.board)
 }
 
@@ -57,51 +59,68 @@ pub fn names<Board: Copy + PartialEq, Declared>(
         .expect("every board has a row in the vocabulary")
 }
 
-/// Bind a core's board enum to its vocabulary: `all`, `from_code`, `code` and
-/// `display_name`, and the interchange code as the whole serialised form. The
-/// third argument opens the message an unlisted code is refused with.
+/// What every board enum answers, so a consumer can be written once over any
+/// core's vocabulary rather than once per system.
+pub trait BoardVocabulary: Copy + Sized {
+    /// This board's variant name — the string serde reads and writes.
+    fn name(self) -> &'static str;
+    /// The board a variant name names.
+    fn from_name(name: &str) -> Option<Self>;
+    /// Every name in the vocabulary, in its order.
+    fn names() -> Vec<&'static str>;
+    /// The message an unlisted name is refused with.
+    fn unknown_name() -> &'static str;
+}
+
+/// Bind a core's board enum to its vocabulary: `all`, `from_name`, `name` and
+/// `display_name`. The enum derives its own serialised form, so the variant is
+/// what a manifest holds; the third argument opens the message an unlisted name
+/// is refused with.
 #[macro_export]
 macro_rules! board_vocabulary {
-    ($board:ty, $rows:expr, $unknown_code:expr) => {
-        /// A board crosses a catalogue as its interchange code, so the
-        /// vocabulary is the whole serialised form: an unlisted code names no
-        /// board this core builds.
-        impl ::serde::Serialize for $board {
-            fn serialize<S: ::serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                serializer.serialize_str(self.code())
-            }
-        }
-
-        impl<'de> ::serde::Deserialize<'de> for $board {
-            fn deserialize<D: ::serde::Deserializer<'de>>(
-                deserializer: D,
-            ) -> Result<Self, D::Error> {
-                let code = <String as ::serde::Deserialize>::deserialize(deserializer)?;
-                <$board>::from_code(&code).ok_or_else(|| {
-                    ::serde::de::Error::custom(format!("{} {code:?}", $unknown_code))
-                })
-            }
-        }
-
+    ($board:ty, $rows:expr, $unknown_name:expr) => {
         impl $board {
             /// Every board the core knows, in the vocabulary's order.
             pub fn all() -> impl Iterator<Item = $board> {
                 $crate::cartridge::boards($rows)
             }
 
-            /// The board a board code names.
-            pub fn from_code(code: &str) -> Option<$board> {
-                $crate::cartridge::board_from_code($rows, code)
+            /// The board a variant name names — the inverse of `name`.
+            pub fn from_name(name: &str) -> Option<$board> {
+                $crate::cartridge::board_from_name($rows, name)
             }
 
-            /// The board code for this board — the inverse of `from_code`.
-            pub fn code(self) -> &'static str {
-                $crate::cartridge::names($rows, self).code
+            /// This board's variant name, the string every channel says it by.
+            pub fn name(self) -> &'static str {
+                $crate::cartridge::names($rows, self).name
             }
 
             /// The board's name for a reader.
             pub fn display_name(self) -> &'static str {
                 $crate::cartridge::names($rows, self).display
+            }
+
+            /// The message an unlisted name is refused with.
+            pub const fn unknown_name_message() -> &'static str {
+                $unknown_name
+            }
+        }
+
+        impl $crate::cartridge::BoardVocabulary for $board {
+            fn name(self) -> &'static str {
+                <$board>::name(self)
+            }
+
+            fn from_name(name: &str) -> Option<Self> {
+                <$board>::from_name(name)
+            }
+
+            fn names() -> Vec<&'static str> {
+                <$board>::all().map(<$board>::name).collect()
+            }
+
+            fn unknown_name() -> &'static str {
+                <$board>::unknown_name_message()
             }
         }
     };

@@ -68,8 +68,8 @@ pub fn launch_options(_rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
                 choices: TvStandard::all()
                     .into_iter()
                     .map(|standard| LaunchChoice {
-                        value: standard.code(),
-                        label: standard.name(),
+                        value: standard.name(),
+                        label: standard.display_name(),
                     })
                     .collect(),
             },
@@ -79,7 +79,7 @@ pub fn launch_options(_rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
             CartType::all()
                 .filter(|board| board.built())
                 .map(|board| LaunchChoice {
-                    value: board.code(),
+                    value: board.name(),
                     label: board.display_name(),
                 }),
         ),
@@ -102,7 +102,7 @@ pub fn create_console(
     // the size heuristic can't always name the board, so fall back only when
     // the game-db is silent — then probe the standard from the ROM's own field
     // length. Pacing, aspect, and palette follow the standard.
-    let cart = cart_type.and_then(CartType::from_code);
+    let cart = cart_type.and_then(CartType::from_name);
     let fit = match overdump {
         true => DumpFit::Overdump,
         false => DumpFit::Exact,

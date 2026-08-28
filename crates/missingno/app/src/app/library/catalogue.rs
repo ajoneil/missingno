@@ -51,7 +51,7 @@ pub struct CatalogueRelease {
     /// authoritative and the core only heuristically probes without it.
     pub tv_format: Option<TvStandard>,
     /// The board the cartridge is built on, as its core's interchange code —
-    /// "F8" on the VCS, "DAHJEE-A" on the SG-1000, "MBC1M" where a Game Boy
+    /// `Atari8K` on the VCS, `DahjeeA` on the SG-1000, `Mbc1Multicart` where a Game Boy
     /// header misdeclares itself. Absent, the core reads the media instead.
     pub cart_type: Option<String>,
     /// Controllers the release needs, when it deviates from the platform's
@@ -355,7 +355,7 @@ mod tests {
         assert_eq!(usa_game.title, pal_game.title);
         assert_eq!(usa.tv_format, Some(TvStandard::Ntsc));
         assert_eq!(pal.tv_format, Some(TvStandard::Pal));
-        assert_eq!(usa.cart_type.as_deref(), Some("DPC"));
+        assert_eq!(usa.cart_type.as_deref(), Some("Dpc"));
     }
 
     #[test]

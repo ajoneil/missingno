@@ -231,7 +231,7 @@ mod tests {
             Cartridge::load(&vec![0; 0x8001], Some(CartType::OthelloRam))
                 .err()
                 .map(|error| error.to_string()),
-            Some("image is 32769 bytes but a OTHELLO board holds at most 32768".to_string())
+            Some("image is 32769 bytes but a OthelloRam board holds at most 32768".to_string())
         );
     }
 

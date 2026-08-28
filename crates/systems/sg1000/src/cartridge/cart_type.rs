@@ -24,7 +24,7 @@ impl std::fmt::Display for CartridgeError {
             CartridgeError::WrongSizeForBoard { cart_type, size } => write!(
                 f,
                 "image is {size} bytes but a {} board holds at most {}",
-                cart_type.code(),
+                cart_type.name(),
                 cart_type.rom_window()
             ),
         }
@@ -36,7 +36,7 @@ impl std::error::Error for CartridgeError {}
 /// The board a ROM is wired for. The two Sega boards answer `/EXM1` with work
 /// RAM beside the ROM; the two Taiwanese expanders carry RAM over the console's
 /// own work-RAM window and hold `/DSRAM` high to deselect it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CartType {
     /// ROM alone, repeating through the window its address lines can't decode.
     Flat,
@@ -55,11 +55,19 @@ pub enum CartType {
 /// interchange (game-db entries, the CLI, a test's board override) and the name
 /// shown to a reader. Every name a board answers to derives from here.
 const BOARD_NAMES: &[BoardNames<CartType>] = &[
-    row(CartType::Flat, "FLAT", "Plain ROM"),
-    row(CartType::OthelloRam, "OTHELLO", "Sega 2 KB RAM (Othello)"),
-    row(CartType::CastleRam, "CASTLE", "Sega 8 KB RAM (The Castle)"),
-    row(CartType::DahjeeA, "DAHJEE-A", "DahJee expander Type A"),
-    row(CartType::DahjeeB, "DAHJEE-B", "DahJee expander Type B"),
+    row(CartType::Flat, "Flat", "Plain ROM"),
+    row(
+        CartType::OthelloRam,
+        "OthelloRam",
+        "Sega 2 KB RAM (Othello)",
+    ),
+    row(
+        CartType::CastleRam,
+        "CastleRam",
+        "Sega 8 KB RAM (The Castle)",
+    ),
+    row(CartType::DahjeeA, "DahjeeA", "DahJee expander Type A"),
+    row(CartType::DahjeeB, "DahjeeB", "DahJee expander Type B"),
 ];
 
 missingno_core::board_vocabulary!(CartType, BOARD_NAMES, "unknown SG-1000 board code");
@@ -80,28 +88,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_board_round_trips_its_code() {
+    fn every_board_round_trips_its_name() {
         for row in BOARD_NAMES {
-            assert_eq!(CartType::from_code(row.code), Some(row.board));
-            assert_eq!(row.board.code(), row.code);
+            assert_eq!(CartType::from_name(row.name), Some(row.board));
+            assert_eq!(row.board.name(), row.name);
             assert!(!row.board.display_name().is_empty());
         }
         assert_eq!(CartType::all().count(), BOARD_NAMES.len());
-        assert_eq!(CartType::from_code("F8"), None);
+        assert_eq!(CartType::from_name("F8"), None);
     }
 
     #[test]
     fn every_board_round_trips_through_ron() {
         for board in CartType::all() {
             let text = ron::to_string(&board).expect("a board serialises");
-            assert_eq!(text, format!("{:?}", board.code()));
+            // The vocabulary's name and the serialised variant are one string:
+            // if a row drifts from its variant, this is what catches it.
+            assert_eq!(text, board.name());
             assert_eq!(ron::from_str::<CartType>(&text), Ok(board));
         }
     }
 
     #[test]
-    fn an_unlisted_code_names_no_board() {
-        let error = ron::from_str::<CartType>("\"F8\"").expect_err("no such board");
-        assert!(error.to_string().contains("\"F8\""), "{error}");
+    fn an_unlisted_name_names_no_board() {
+        assert!(ron::from_str::<CartType>("F8").is_err());
     }
 }

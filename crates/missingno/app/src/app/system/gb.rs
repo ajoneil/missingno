@@ -156,7 +156,7 @@ pub fn stated_by_media(rom: &[u8]) -> Vec<MediaFact> {
     {
         stated.push(MediaFact {
             option: BOARD,
-            value: LaunchValue::Choice(board.code().to_owned()),
+            value: LaunchValue::Choice(board.name().to_owned()),
         });
     }
     stated

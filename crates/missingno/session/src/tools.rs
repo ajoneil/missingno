@@ -598,7 +598,7 @@ fn display_line(video: &missingno_core::video::DisplayTechnology) -> String {
         DisplayTechnology::Lcd { native, panel, .. } => {
             format!("LCD ({}) {}x{}", panel.description(), native.0, native.1)
         }
-        DisplayTechnology::Crt { standard, .. } => format!("CRT {}", standard.name()),
+        DisplayTechnology::Crt { standard, .. } => format!("CRT {}", standard.display_name()),
     }
 }
 

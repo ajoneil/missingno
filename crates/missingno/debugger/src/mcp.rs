@@ -156,7 +156,7 @@ fn load_rom_tool() -> Tool {
                       it. `options` sets the launch options the recognised core publishes, \
                       each left out to let the core resolve it: the Atari VCS takes \
                       `tv-standard` (ntsc/pal/secam), \
-                      `board` (a cartridge board code such as F8, F6SC, E0), and `overdump` \
+                      `board` (a cartridge board such as Atari8K, Atari16KSuperchip, ParkerBros), and `overdump` \
                       (boolean); the Game Boy family takes `runner` (dmg/cgb) and `boot-rom` \
                       (path to a boot ROM image). `tv_standard` is the older spelling of the \
                       VCS standard override."

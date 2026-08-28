@@ -218,7 +218,7 @@ mod tests {
     fn an_unknown_term_names_the_vocabulary_in_order() {
         assert_eq!(
             DEFECTS.unknown("Truncated"),
-            "unknown defect \"Truncated\"; expected Overdump, BadDump, or None"
+            "unknown defect \"Truncated\"; expected Overdump, BadDump, MemoryMap, or None"
         );
         assert_eq!(
             GAME_KINDS.unknown("Toy"),

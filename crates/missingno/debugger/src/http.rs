@@ -235,7 +235,7 @@ fn video_json(video: missingno_core::video::DisplayTechnology) -> Value {
             pixel_aspect,
         } => json!({
             "technology": "crt",
-            "standard": standard.name(),
+            "standard": standard.display_name(),
             "pixel_aspect": pixel_aspect,
         }),
     }

@@ -17,7 +17,7 @@ fn main() {
         process::exit(2);
     };
     let standard = args.next().map(|name| {
-        TvStandard::from_code(&name).unwrap_or_else(|| {
+        TvStandard::from_name(&name).unwrap_or_else(|| {
             eprintln!("error: unknown TV standard {name}");
             process::exit(2);
         })

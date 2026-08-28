@@ -676,7 +676,7 @@ impl AnyGame {
     /// then fall back to the entry's first stated values.
     pub fn hints_for(&self, sha1: &str) -> (Option<String>, Option<String>) {
         let stated = common!(self, g => release_holding(g, sha1).map(|r| (
-            stated_tv(&r.hardware).map(|tv| tv.code().to_owned()),
+            stated_tv(&r.hardware).map(|tv| tv.name().to_owned()),
             stated_board(&r.hardware),
         )));
         stated.unwrap_or_else(|| (self.tv_hint(), self.cart_hint()))
@@ -952,7 +952,7 @@ impl AnyGame {
             .releases
             .iter()
             .find_map(|r| stated_tv(&r.hardware))
-            .map(|tv| tv.code().to_owned()))
+            .map(|tv| tv.name().to_owned()))
     }
 
     pub fn to_ron_string(&self) -> Result<String, String> {
@@ -2774,7 +2774,7 @@ mod release_surgery_tests {
     releases: [
         (
             regions: [Usa],
-            hardware: (tv_format: Some(Ntsc), cart_type: Some("4K")),
+            hardware: (tv_format: Some(Ntsc), cart_type: Some(Plain4K)),
             artifacts: [
                 (sha1: "8d52548063ba852f47ae0d0d8b7f6c847bb5f5b0"),
                 (sha1: "c084539e364cfb0b1c74ba55ff2dee76d5e2f36f"),
@@ -2782,7 +2782,7 @@ mod release_surgery_tests {
         ),
         (
             regions: [Usa],
-            hardware: (tv_format: Some(Ntsc), cart_type: Some("F6")),
+            hardware: (tv_format: Some(Ntsc), cart_type: Some(Atari16K)),
             artifacts: [(sha1: "a10308a3f1051068c908d1e29fd57de5b911d31d")],
         ),
     ],
@@ -2867,14 +2867,14 @@ mod release_surgery_tests {
             regions: [Germany],
             date: Some("1983"),
             publisher: Some("Quelle"),
-            hardware: (tv_format: Some(Pal), cart_type: Some("4K")),
+            hardware: (tv_format: Some(Pal), cart_type: Some(Plain4K)),
             artifacts: [(sha1: "8d52548063ba852f47ae0d0d8b7f6c847bb5f5b0")],
         ),
         (
             date: Some("2006"),
             publisher: Some("Bill Collins"),
             status: WorkInProgress,
-            hardware: (tv_format: Some(Ntsc), cart_type: Some("4K")),
+            hardware: (tv_format: Some(Ntsc), cart_type: Some(Plain4K)),
             artifacts: [(sha1: "a10308a3f1051068c908d1e29fd57de5b911d31d")],
         ),
     ],
@@ -2932,7 +2932,7 @@ mod board_tests {
                 r#"(
     title: "The Castle",
     releases: [(
-        hardware: (cart_type: Some("CASTLE")),
+        hardware: (cart_type: Some(CastleRam)),
         artifacts: [(sha1: "0123456789abcdef0123456789abcdef01234567")],
     )],
 )"#,
@@ -2942,35 +2942,35 @@ mod board_tests {
     }
 
     #[test]
-    fn a_board_code_is_taken_typed_and_cleared_by_an_empty_one() {
+    fn a_board_name_is_taken_typed_and_cleared_by_an_empty_one() {
         let mut game = castle();
-        assert_eq!(game.cart_hint().as_deref(), Some("CASTLE"));
-        game.set_release_fact(0, "cart_type", board_value("DAHJEE-A"))
+        assert_eq!(game.cart_hint().as_deref(), Some("CastleRam"));
+        game.set_release_fact(0, "cart_type", board_value("DahjeeA"))
             .unwrap();
-        assert_eq!(game.cart_hint().as_deref(), Some("DAHJEE-A"));
+        assert_eq!(game.cart_hint().as_deref(), Some("DahjeeA"));
         game.set_release_fact(0, "cart_type", board_value(""))
             .unwrap();
         assert_eq!(game.cart_hint(), None);
     }
 
     #[test]
-    fn a_code_from_another_platform_is_refused_with_the_vocabulary() {
+    fn a_name_from_another_platform_is_refused_with_the_vocabulary() {
         let mut game = castle();
         let error = game
-            .set_release_fact(0, "cart_type", board_value("F6SC"))
+            .set_release_fact(0, "cart_type", board_value("Atari16KSuperchip"))
             .unwrap_err();
         assert!(
-            error.contains("\"F6SC\"") && error.contains("DAHJEE-B"),
+            error.contains("\"Atari16KSuperchip\"") && error.contains("DahjeeB"),
             "{error}"
         );
         assert!(
-            game.set_release_fact(4, "cart_type", board_value("FLAT"))
+            game.set_release_fact(4, "cart_type", board_value("Flat"))
                 .unwrap_err()
                 .contains("no release 4")
         );
         assert_eq!(
             game.cart_hint().as_deref(),
-            Some("CASTLE"),
+            Some("CastleRam"),
             "nothing landed"
         );
     }

@@ -35,9 +35,9 @@ impl std::fmt::Display for CartridgeError {
                 Some(holds) => write!(
                     f,
                     "image is {size} bytes but a {} board holds {holds}",
-                    cart_type.code()
+                    cart_type.name()
                 ),
-                None => write!(f, "image is {size} bytes, no {} image", cart_type.code()),
+                None => write!(f, "image is {size} bytes, no {} image", cart_type.name()),
             },
             CartridgeError::LoadChecksum { unit, page: None } => {
                 write!(f, "Supercharger load {unit}: header checksum error")
@@ -47,7 +47,7 @@ impl std::fmt::Display for CartridgeError {
                 page: Some(page),
             } => write!(f, "Supercharger load {unit}: page {page} checksum error"),
             CartridgeError::BoardNotBuilt(cart_type) => {
-                write!(f, "the {} board is not modelled yet", cart_type.code())
+                write!(f, "the {} board is not modelled yet", cart_type.name())
             }
         }
     }
@@ -69,7 +69,7 @@ pub enum DumpFit {
 /// ranges that page the 4 KB window; the Superchip variants add Superchip
 /// (SARA) cart RAM, which a raw dump can't be told from a plain board by size
 /// alone.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CartType {
     /// 2 KB, mirrored into the window.
     Plain2K,
@@ -164,67 +164,91 @@ pub enum CartType {
 /// interchange (game-db entries, the CLI, a test's board override) and the name
 /// shown to a reader. Every name a board answers to derives from here.
 const BOARD_NAMES: &[BoardNames<CartType>] = &[
-    row(CartType::Plain2K, "2K", "Plain 2K"),
-    row(CartType::Plain4K, "4K", "Plain 4K"),
-    row(CartType::Atari8K, "F8", "Atari 8K (F8)"),
+    row(CartType::Plain2K, "Plain2K", "Plain 2K"),
+    row(CartType::Plain4K, "Plain4K", "Plain 4K"),
+    row(CartType::Atari8K, "Atari8K", "Atari 8K (F8)"),
     row(
         CartType::Atari8KSuperchip,
-        "F8SC",
+        "Atari8KSuperchip",
         "Atari 8K + Superchip (F8SC)",
     ),
-    row(CartType::Atari16K, "F6", "Atari 16K (F6)"),
+    row(CartType::Atari16K, "Atari16K", "Atari 16K (F6)"),
     row(
         CartType::Atari16KSuperchip,
-        "F6SC",
+        "Atari16KSuperchip",
         "Atari 16K + Superchip (F6SC)",
     ),
-    row(CartType::Atari32K, "F4", "Atari 32K (F4)"),
+    row(CartType::Atari32K, "Atari32K", "Atari 32K (F4)"),
     row(
         CartType::Atari32KSuperchip,
-        "F4SC",
+        "Atari32KSuperchip",
         "Atari 32K + Superchip (F4SC)",
     ),
-    row(CartType::CbsRamPlus, "FA", "CBS RAM Plus (FA)"),
-    row(CartType::ParkerBros, "E0", "Parker Bros (E0)"),
-    row(CartType::MNetwork, "E7", "M-Network (E7)"),
-    row(CartType::Commavid, "CV", "CommaVid (CV)"),
-    row(CartType::UaLtd, "UA", "UA Ltd (UA)"),
-    row(CartType::Tigervision, "3F", "Tigervision (3F)"),
-    row(CartType::Activision, "FE", "Activision (FE)"),
-    row(CartType::Dpc, "DPC", "DPC — Pitfall II (DPC)"),
-    row(CartType::Supercharger, "AR", "Starpath Supercharger (AR)"),
-    row(CartType::Megaboy, "F0", "Dynacom Megaboy (F0)"),
-    row(CartType::Jane, "JANE", "Tarzan prototype (JANE)"),
-    row(CartType::ColecoWf8, "WF8", "Coleco (WF8)"),
-    row(CartType::WicksteadDesign, "WD", "Wickstead Design (WD)"),
-    row(CartType::AmigaPowerPlay, "FC", "Amiga Power Play (FC)"),
-    row(CartType::Fotomania, "0FA0", "Fotomania (0FA0)"),
+    row(CartType::CbsRamPlus, "CbsRamPlus", "CBS RAM Plus (FA)"),
+    row(CartType::ParkerBros, "ParkerBros", "Parker Bros (E0)"),
+    row(CartType::MNetwork, "MNetwork", "M-Network (E7)"),
+    row(CartType::Commavid, "Commavid", "CommaVid (CV)"),
+    row(CartType::UaLtd, "UaLtd", "UA Ltd (UA)"),
+    row(CartType::Tigervision, "Tigervision", "Tigervision (3F)"),
+    row(CartType::Activision, "Activision", "Activision (FE)"),
+    row(CartType::Dpc, "Dpc", "DPC — Pitfall II (DPC)"),
+    row(
+        CartType::Supercharger,
+        "Supercharger",
+        "Starpath Supercharger (AR)",
+    ),
+    row(CartType::Megaboy, "Megaboy", "Dynacom Megaboy (F0)"),
+    row(CartType::Jane, "Jane", "Tarzan prototype (JANE)"),
+    row(CartType::ColecoWf8, "ColecoWf8", "Coleco (WF8)"),
+    row(
+        CartType::WicksteadDesign,
+        "WicksteadDesign",
+        "Wickstead Design (WD)",
+    ),
+    row(
+        CartType::AmigaPowerPlay,
+        "AmigaPowerPlay",
+        "Amiga Power Play (FC)",
+    ),
+    row(CartType::Fotomania, "Fotomania", "Fotomania (0FA0)"),
     row(
         CartType::ParkerBrosBrazil,
-        "03E0",
+        "ParkerBrosBrazil",
         "Parker Bros Brazil (03E0)",
     ),
-    row(CartType::TigervisionRam, "3E", "Tigervision + RAM (3E)"),
+    row(
+        CartType::TigervisionRam,
+        "TigervisionRam",
+        "Tigervision + RAM (3E)",
+    ),
     row(
         CartType::TigervisionRamPlus,
-        "3E+",
+        "TigervisionRamPlus",
         "Tigervision + RAM (3E+)",
     ),
-    row(CartType::Atari64K, "EF", "64K Atari-style (EF)"),
-    row(CartType::Atari128K, "DF", "128K Atari-style (DF)"),
-    row(CartType::Atari256K, "BF", "256K Atari-style (BF)"),
-    row(CartType::Superbanking, "SB", "SuperBanking (SB)"),
-    row(CartType::Econobanking, "0840", "EconoBanking (0840)"),
+    row(CartType::Atari64K, "Atari64K", "64K Atari-style (EF)"),
+    row(CartType::Atari128K, "Atari128K", "128K Atari-style (DF)"),
+    row(CartType::Atari256K, "Atari256K", "256K Atari-style (BF)"),
+    row(CartType::Superbanking, "Superbanking", "SuperBanking (SB)"),
+    row(
+        CartType::Econobanking,
+        "Econobanking",
+        "EconoBanking (0840)",
+    ),
     row(CartType::X07, "X07", "X07"),
     row(
         CartType::MenuDrivenMegacart,
-        "MDM",
+        "MenuDrivenMegacart",
         "Menu Driven Megacart (MDM)",
     ),
-    row(CartType::DpcPlus, "DPC+", "DPC+ (Harmony)"),
-    row(CartType::GameLine, "GL", "CVC GameLine Master Module (GL)"),
-    row(CartType::Fa2, "FA2", "FA2 (CBS RAM Plus lineage)"),
-    row(CartType::FourA50, "4A50", "4A50"),
+    row(CartType::DpcPlus, "DpcPlus", "DPC+ (Harmony)"),
+    row(
+        CartType::GameLine,
+        "GameLine",
+        "CVC GameLine Master Module (GL)",
+    ),
+    row(CartType::Fa2, "Fa2", "FA2 (CBS RAM Plus lineage)"),
+    row(CartType::FourA50, "FourA50", "4A50"),
 ];
 
 missingno_core::board_vocabulary!(CartType, BOARD_NAMES, "unknown Atari VCS board code");
@@ -338,10 +362,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_board_round_trips_its_code() {
+    fn every_board_round_trips_its_name() {
         for row in BOARD_NAMES {
-            assert_eq!(CartType::from_code(row.code), Some(row.board));
-            assert_eq!(row.board.code(), row.code);
+            assert_eq!(CartType::from_name(row.name), Some(row.board));
+            assert_eq!(row.board.name(), row.name);
         }
     }
 
@@ -349,14 +373,15 @@ mod tests {
     fn every_board_round_trips_through_ron() {
         for board in CartType::all() {
             let text = ron::to_string(&board).expect("a board serialises");
-            assert_eq!(text, format!("{:?}", board.code()));
+            // The vocabulary's name and the serialised variant are one string:
+            // if a row drifts from its variant, this is what catches it.
+            assert_eq!(text, board.name());
             assert_eq!(ron::from_str::<CartType>(&text), Ok(board));
         }
     }
 
     #[test]
-    fn an_unlisted_code_names_no_board() {
-        let error = ron::from_str::<CartType>("\"MBC1\"").expect_err("no such board");
-        assert!(error.to_string().contains("\"MBC1\""), "{error}");
+    fn an_unlisted_name_names_no_board() {
+        assert!(ron::from_str::<CartType>("DAHJEE_A").is_err());
     }
 }

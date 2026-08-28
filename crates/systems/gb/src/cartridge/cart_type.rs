@@ -27,7 +27,7 @@ impl std::fmt::Display for GbCartridgeError {
 impl std::error::Error for GbCartridgeError {}
 
 /// A board the core can build: a mapper chip and the parts populated beside it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GbCartType {
     Rom,
     RomRam,
@@ -69,13 +69,13 @@ pub enum GbCartType {
 const fn row(
     cart_type: GbCartType,
     header: Option<u8>,
-    code: &'static str,
+    name: &'static str,
     display: &'static str,
 ) -> BoardNames<GbCartType, Option<u8>> {
     BoardNames {
         board: cart_type,
         declared: header,
-        code,
+        name,
         display,
     }
 }
@@ -83,85 +83,90 @@ const fn row(
 /// The whole board vocabulary, one row per board. Every name a board answers to
 /// derives from here.
 const BOARD_NAMES: &[BoardNames<GbCartType, Option<u8>>] = &[
-    row(GbCartType::Rom, Some(0x00), "ROM", "ROM only"),
-    row(GbCartType::RomRam, Some(0x08), "ROM+RAM", "ROM + RAM"),
+    row(GbCartType::Rom, Some(0x00), "Rom", "ROM only"),
+    row(GbCartType::RomRam, Some(0x08), "RomRam", "ROM + RAM"),
     row(
         GbCartType::RomRamBattery,
         Some(0x09),
-        "ROM+RAM+BATTERY",
+        "RomRamBattery",
         "ROM + RAM + battery",
     ),
-    row(GbCartType::Mbc1, Some(0x01), "MBC1", "MBC1"),
-    row(GbCartType::Mbc1Ram, Some(0x02), "MBC1+RAM", "MBC1 + RAM"),
+    row(GbCartType::Mbc1, Some(0x01), "Mbc1", "MBC1"),
+    row(GbCartType::Mbc1Ram, Some(0x02), "Mbc1Ram", "MBC1 + RAM"),
     row(
         GbCartType::Mbc1RamBattery,
         Some(0x03),
-        "MBC1+RAM+BATTERY",
+        "Mbc1RamBattery",
         "MBC1 + RAM + battery",
     ),
-    row(GbCartType::Mbc1Multicart, None, "MBC1M", "MBC1 multicart"),
-    row(GbCartType::Mbc2, Some(0x05), "MBC2", "MBC2"),
+    row(
+        GbCartType::Mbc1Multicart,
+        None,
+        "Mbc1Multicart",
+        "MBC1 multicart",
+    ),
+    row(GbCartType::Mbc2, Some(0x05), "Mbc2", "MBC2"),
     row(
         GbCartType::Mbc2Battery,
         Some(0x06),
-        "MBC2+BATTERY",
+        "Mbc2Battery",
         "MBC2 + battery",
     ),
     row(
         GbCartType::Mbc3TimerBattery,
         Some(0x0f),
-        "MBC3+TIMER+BATTERY",
+        "Mbc3TimerBattery",
         "MBC3 + timer + battery",
     ),
     row(
         GbCartType::Mbc3TimerRamBattery,
         Some(0x10),
-        "MBC3+TIMER+RAM+BATTERY",
+        "Mbc3TimerRamBattery",
         "MBC3 + timer + RAM + battery",
     ),
-    row(GbCartType::Mbc3, Some(0x11), "MBC3", "MBC3"),
-    row(GbCartType::Mbc3Ram, Some(0x12), "MBC3+RAM", "MBC3 + RAM"),
+    row(GbCartType::Mbc3, Some(0x11), "Mbc3", "MBC3"),
+    row(GbCartType::Mbc3Ram, Some(0x12), "Mbc3Ram", "MBC3 + RAM"),
     row(
         GbCartType::Mbc3RamBattery,
         Some(0x13),
-        "MBC3+RAM+BATTERY",
+        "Mbc3RamBattery",
         "MBC3 + RAM + battery",
     ),
-    row(GbCartType::Mbc30, None, "MBC30", "MBC30"),
-    row(GbCartType::Mbc5, Some(0x19), "MBC5", "MBC5"),
-    row(GbCartType::Mbc5Ram, Some(0x1a), "MBC5+RAM", "MBC5 + RAM"),
+    row(GbCartType::Mbc30, None, "Mbc30", "MBC30"),
+    row(GbCartType::Mbc5, Some(0x19), "Mbc5", "MBC5"),
+    row(GbCartType::Mbc5Ram, Some(0x1a), "Mbc5Ram", "MBC5 + RAM"),
     row(
         GbCartType::Mbc5RamBattery,
         Some(0x1b),
-        "MBC5+RAM+BATTERY",
+        "Mbc5RamBattery",
         "MBC5 + RAM + battery",
     ),
     row(
         GbCartType::Mbc5Rumble,
         Some(0x1c),
-        "MBC5+RUMBLE",
+        "Mbc5Rumble",
         "MBC5 + rumble",
     ),
     row(
         GbCartType::Mbc5RumbleRam,
         Some(0x1d),
-        "MBC5+RUMBLE+RAM",
+        "Mbc5RumbleRam",
         "MBC5 + rumble + RAM",
     ),
     row(
         GbCartType::Mbc5RumbleRamBattery,
         Some(0x1e),
-        "MBC5+RUMBLE+RAM+BATTERY",
+        "Mbc5RumbleRamBattery",
         "MBC5 + rumble + RAM + battery",
     ),
-    row(GbCartType::Mbc6, Some(0x20), "MBC6", "MBC6"),
-    row(GbCartType::Mbc7, Some(0x22), "MBC7", "MBC7"),
-    row(GbCartType::Huc3, Some(0xfe), "HUC3", "HuC-3"),
-    row(GbCartType::Huc1, Some(0xff), "HUC1", "HuC-1"),
+    row(GbCartType::Mbc6, Some(0x20), "Mbc6", "MBC6"),
+    row(GbCartType::Mbc7, Some(0x22), "Mbc7", "MBC7"),
+    row(GbCartType::Huc3, Some(0xfe), "Huc3", "HuC-3"),
+    row(GbCartType::Huc1, Some(0xff), "Huc1", "HuC-1"),
     row(
         GbCartType::DbzTrans,
         None,
-        "DBZTRANS",
+        "DbzTrans",
         "DBZ Trans (unlicensed)",
     ),
 ];
@@ -212,10 +217,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_board_round_trips_its_code() {
+    fn every_board_round_trips_its_name() {
         for row in BOARD_NAMES {
-            assert_eq!(GbCartType::from_code(row.code), Some(row.board));
-            assert_eq!(row.board.code(), row.code);
+            assert_eq!(GbCartType::from_name(row.name), Some(row.board));
+            assert_eq!(row.board.name(), row.name);
         }
     }
 
@@ -223,15 +228,16 @@ mod tests {
     fn every_board_round_trips_through_ron() {
         for board in GbCartType::all() {
             let text = ron::to_string(&board).expect("a board serialises");
-            assert_eq!(text, format!("{:?}", board.code()));
+            // The vocabulary's name and the serialised variant are one string:
+            // if a row drifts from its variant, this is what catches it.
+            assert_eq!(text, board.name());
             assert_eq!(ron::from_str::<GbCartType>(&text), Ok(board));
         }
     }
 
     #[test]
-    fn an_unlisted_code_names_no_board() {
-        let error = ron::from_str::<GbCartType>("\"F8\"").expect_err("no such board");
-        assert!(error.to_string().contains("\"F8\""), "{error}");
+    fn an_unlisted_name_names_no_board() {
+        assert!(ron::from_str::<GbCartType>("F8").is_err());
     }
 
     #[test]

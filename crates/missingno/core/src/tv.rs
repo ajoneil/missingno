@@ -24,7 +24,7 @@ pub enum TvStandard {
 }
 
 impl TvStandard {
-    pub fn name(self) -> &'static str {
+    pub fn display_name(self) -> &'static str {
         match self {
             TvStandard::Ntsc => "NTSC",
             TvStandard::Pal => "PAL",
@@ -35,8 +35,9 @@ impl TvStandard {
         }
     }
 
-    /// The name catalogues and launch options carry the standard under.
-    pub fn code(self) -> &'static str {
+    /// The name catalogues and launch options carry the standard under — the
+    /// variant's own, as a board's is.
+    pub fn name(self) -> &'static str {
         match self {
             TvStandard::Ntsc => "ntsc",
             TvStandard::Pal => "pal",
@@ -47,9 +48,9 @@ impl TvStandard {
         }
     }
 
-    /// The standard a code names, however it was cased.
-    pub fn from_code(code: &str) -> Option<TvStandard> {
-        match code.trim().to_ascii_lowercase().as_str() {
+    /// The standard a name names, however it was cased.
+    pub fn from_name(name: &str) -> Option<TvStandard> {
+        match name.trim().to_ascii_lowercase().as_str() {
             "ntsc" => Some(TvStandard::Ntsc),
             "pal" => Some(TvStandard::Pal),
             "pal60" => Some(TvStandard::Pal60),
@@ -80,7 +81,7 @@ mod tests {
     #[test]
     fn every_standards_code_parses_back() {
         for standard in TvStandard::all() {
-            assert_eq!(TvStandard::from_code(standard.code()), Some(standard));
+            assert_eq!(TvStandard::from_name(standard.name()), Some(standard));
         }
     }
 }

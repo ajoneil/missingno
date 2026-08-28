@@ -443,7 +443,7 @@ mod tests {
         }
         assert_eq!(
             CartridgeError::BoardNotBuilt(CartType::DpcPlus).to_string(),
-            "the DPC+ board is not modelled yet"
+            "the DpcPlus board is not modelled yet"
         );
     }
 
@@ -513,7 +513,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             error.to_string(),
-            "image is 4096 bytes but a 2K board holds 2048"
+            "image is 4096 bytes but a Plain2K board holds 2048"
         );
     }
 
@@ -546,7 +546,10 @@ mod tests {
         )
         .err()
         .unwrap();
-        assert_eq!(error.to_string(), "image is 2304 bytes, no 3E image");
+        assert_eq!(
+            error.to_string(),
+            "image is 2304 bytes, no TigervisionRam image"
+        );
     }
 
     #[test]

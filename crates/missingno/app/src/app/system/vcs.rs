@@ -50,7 +50,7 @@ pub fn create_console(media: MediaLoad) -> Result<Box<dyn SystemConsole>, String
         media
             .launch
             .choice(TV_STANDARD)
-            .and_then(TvStandard::from_code),
+            .and_then(TvStandard::from_name),
         media.launch.choice(BOARD),
         media.launch.toggle(OVERDUMP),
     )

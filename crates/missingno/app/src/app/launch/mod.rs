@@ -70,7 +70,7 @@ pub fn facts(
         if let Some(standard) = release.tv_format {
             facts.set(
                 system::vcs::TV_STANDARD,
-                LaunchValue::Choice(standard.code().to_owned()),
+                LaunchValue::Choice(standard.name().to_owned()),
             );
         }
         // Every family publishes its board option under the same id, so one

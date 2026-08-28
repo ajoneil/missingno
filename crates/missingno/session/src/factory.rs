@@ -171,7 +171,7 @@ mod vcs {
         let standard = match launch.choice(TV_STANDARD) {
             Some(name) => {
                 Some(
-                    TvStandard::from_code(name).ok_or_else(|| LoadError::InvalidValue {
+                    TvStandard::from_name(name).ok_or_else(|| LoadError::InvalidValue {
                         option: TV_STANDARD.to_string(),
                         value: name.to_string(),
                     })?,
@@ -180,7 +180,7 @@ mod vcs {
             None => None,
         };
         let board = match launch.choice(BOARD) {
-            Some(code) if CartType::from_code(code).is_none() => {
+            Some(code) if CartType::from_name(code).is_none() => {
                 return Err(LoadError::InvalidValue {
                     option: BOARD.to_string(),
                     value: code.to_string(),
@@ -275,7 +275,7 @@ mod sg1000 {
         let board = match launch.choice(BOARD) {
             Some(code) => {
                 Some(
-                    CartType::from_code(code).ok_or_else(|| LoadError::InvalidValue {
+                    CartType::from_name(code).ok_or_else(|| LoadError::InvalidValue {
                         option: BOARD.to_string(),
                         value: code.to_string(),
                     })?,

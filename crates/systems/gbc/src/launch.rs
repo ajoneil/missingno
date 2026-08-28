@@ -41,7 +41,7 @@ pub fn launch_options(rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
         board_option(
             BOARD,
             GbCartType::all().map(|board| LaunchChoice {
-                value: board.code(),
+                value: board.name(),
                 label: board.display_name(),
             }),
         ),
@@ -61,7 +61,7 @@ pub fn launch_options(rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
 pub fn board_from_launch(values: &LaunchValues) -> Result<Option<GbCartType>, &str> {
     match values.choice(BOARD) {
         None => Ok(None),
-        Some(code) => GbCartType::from_code(code).map(Some).ok_or(code),
+        Some(code) => GbCartType::from_name(code).map(Some).ok_or(code),
     }
 }
 
