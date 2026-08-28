@@ -4,7 +4,7 @@ version.workspace = true
 edition = "2024"
 
 [features]
-morepork = ["dep:morepork", "missingno-core/morepork"]
+morepork = ["dep:morepork", "dep:missingno-trace"]
 
 [dependencies]
 missingno-mos-6502 = { path = "../../chips/mos-6502" }
@@ -14,6 +14,7 @@ serde = { version = "1", features = ["derive"] }
 # The in-tree trace engine (cloned into receipts/), shared with the other cores
 # so the whole workspace speaks one trace format. Requires that clone present.
 morepork = { git = "https://github.com/ajoneil/morepork", branch = "main", optional = true }
+missingno-trace = { path = "../../missingno/trace", optional = true }
 sha2 = { version = "0.11" }
 
 [dev-dependencies]

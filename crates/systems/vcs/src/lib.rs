@@ -15,5 +15,4 @@ pub mod tia;
 pub mod trace;
 pub mod tv_standard;
 pub use cartridge::{CartType, DumpFit};
-pub use missingno_core::cartridge::BoardVocabulary;
 pub use tv_standard::TvStandard;

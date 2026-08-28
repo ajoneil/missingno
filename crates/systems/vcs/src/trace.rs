@@ -18,11 +18,11 @@ use morepork::header::PixFormat;
 use sha2::{Digest, Sha256};
 
 use missingno_core::state::FieldType;
-use missingno_core::trace::{
+use missingno_trace::{
     BootRom, Column, ObservationDef, Source, TraceIdentity, build_columns, create_writer,
     emit_value,
 };
-pub use missingno_core::trace::{TraceScope, Trigger};
+pub use missingno_trace::{TraceScope, Trigger};
 
 use crate::TvStandard;
 use crate::console::{Frame, Vcs};

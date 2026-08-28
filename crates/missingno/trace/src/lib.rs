@@ -16,7 +16,9 @@ use morepork::profile::FieldType as WireType;
 
 pub use morepork::{BootRom, Error, Profile, Trigger};
 
-use crate::state::{FieldType, PixelFormat, Provenance, StateValue, SystemStateSchema, Tier};
+use missingno_core::state::{
+    FieldType, PixelFormat, Provenance, StateValue, SystemStateSchema, Tier,
+};
 
 /// Which tier of the schema a trace captures. The observable surface is the
 /// cross-emulator comparison ground; the full scope adds the boundary-complete

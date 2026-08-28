@@ -2967,7 +2967,7 @@ dependencies = [
  "image",
  "jiff",
  "libc",
- "missingno-core 26.9.0",
+ "missingno-core",
  "missingno-gamedb",
  "missingno-gb",
  "missingno-gbc",
@@ -2976,6 +2976,7 @@ dependencies = [
  "missingno-session",
  "missingno-sg1000",
  "missingno-sms",
+ "missingno-trace",
  "missingno-vcs",
  "open",
  "rfd",
@@ -2995,19 +2996,9 @@ dependencies = [
 name = "missingno-core"
 version = "26.9.0"
 dependencies = [
- "morepork",
  "rgb",
  "serde",
  "sha2 0.11.0",
-]
-
-[[package]]
-name = "missingno-core"
-version = "26.9.0"
-source = "git+https://github.com/ajoneil/missingno?branch=main#a4159f47ce7ef6f9c3d5402a8c58b18940045adc"
-dependencies = [
- "rgb",
- "serde",
 ]
 
 [[package]]
@@ -3018,7 +3009,7 @@ dependencies = [
  "gilrs",
  "iced",
  "jiff",
- "missingno-core 26.9.0",
+ "missingno-core",
  "missingno-gamedb",
  "missingno-iced",
  "missingno-session",
@@ -3034,7 +3025,7 @@ dependencies = [
 name = "missingno-debugger"
 version = "26.9.0"
 dependencies = [
- "missingno-core 26.9.0",
+ "missingno-core",
  "missingno-mcp-stdio",
  "missingno-session",
  "rgb",
@@ -3046,6 +3037,7 @@ dependencies = [
 name = "missingno-gamedb"
 version = "0.1.0"
 dependencies = [
+ "missingno-core",
  "missingno-gb",
  "missingno-sg1000",
  "missingno-vcs",
@@ -3058,9 +3050,10 @@ name = "missingno-gb"
 version = "26.9.0"
 dependencies = [
  "bitflags 2.13.1",
- "missingno-core 26.9.0",
+ "missingno-core",
  "missingno-gb",
  "missingno-test-support",
+ "missingno-trace",
  "morepork",
  "rgb",
  "ron",
@@ -3072,7 +3065,7 @@ dependencies = [
 name = "missingno-gbc"
 version = "26.9.0"
 dependencies = [
- "missingno-core 26.9.0",
+ "missingno-core",
  "missingno-gb",
  "missingno-test-support",
  "rgb",
@@ -3084,7 +3077,7 @@ version = "26.9.0"
 dependencies = [
  "bytemuck",
  "iced",
- "missingno-core 26.9.0",
+ "missingno-core",
  "rgb",
 ]
 
@@ -3099,7 +3092,7 @@ dependencies = [
 name = "missingno-mos-6502"
 version = "26.9.0"
 dependencies = [
- "missingno-core 26.9.0",
+ "missingno-core",
  "missingno-test-support",
  "serde",
  "serde_json",
@@ -3109,7 +3102,7 @@ dependencies = [
 name = "missingno-nes"
 version = "26.9.0"
 dependencies = [
- "missingno-core 26.9.0",
+ "missingno-core",
  "missingno-mos-6502",
  "morepork",
  "rgb",
@@ -3130,7 +3123,7 @@ version = "26.9.0"
 dependencies = [
  "cpal",
  "libc",
- "missingno-core 26.9.0",
+ "missingno-core",
  "missingno-gb",
  "missingno-gbc",
  "missingno-nes",
@@ -3146,7 +3139,7 @@ dependencies = [
 name = "missingno-sg1000"
 version = "26.9.0"
 dependencies = [
- "missingno-core 26.9.0",
+ "missingno-core",
  "missingno-test-support",
  "missingno-ti-psg",
  "missingno-ti-vdp",
@@ -3160,7 +3153,7 @@ dependencies = [
 name = "missingno-sms"
 version = "26.9.0"
 dependencies = [
- "missingno-core 26.9.0",
+ "missingno-core",
  "missingno-test-support",
  "missingno-ti-psg",
  "missingno-zilog-z80",
@@ -3171,7 +3164,7 @@ dependencies = [
 name = "missingno-test-support"
 version = "26.9.0"
 dependencies = [
- "missingno-core 26.9.0",
+ "missingno-core",
  "png 0.18.1",
 ]
 
@@ -3179,7 +3172,7 @@ dependencies = [
 name = "missingno-ti-psg"
 version = "26.9.0"
 dependencies = [
- "missingno-core 26.9.0",
+ "missingno-core",
 ]
 
 [[package]]
@@ -3194,12 +3187,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "missingno-trace"
+version = "26.9.0"
+dependencies = [
+ "missingno-core",
+ "morepork",
+]
+
+[[package]]
 name = "missingno-vcs"
 version = "26.9.0"
 dependencies = [
- "missingno-core 26.9.0",
+ "missingno-core",
  "missingno-mos-6502",
  "missingno-test-support",
+ "missingno-trace",
  "morepork",
  "rgb",
  "ron",
@@ -3211,7 +3213,7 @@ dependencies = [
 name = "missingno-zilog-z80"
 version = "26.9.0"
 dependencies = [
- "missingno-core 26.9.0",
+ "missingno-core",
  "missingno-test-support",
  "serde",
  "serde_json",
@@ -3224,7 +3226,7 @@ source = "git+https://github.com/ajoneil/morepork?branch=main#67cfdc8d3146a21823
 dependencies = [
  "arrow",
  "flate2",
- "missingno-core 26.9.0 (git+https://github.com/ajoneil/missingno?branch=main)",
+ "missingno-core",
  "serde",
  "serde_json",
  "sha2 0.10.9",

@@ -6,7 +6,7 @@ edition = "2024"
 license = "MIT"
 
 [features]
-morepork = ["dep:morepork", "missingno-core/morepork"]
+morepork = ["dep:morepork", "dep:missingno-trace"]
 test-support = ["dep:missingno-test-support"]
 
 [dependencies]
@@ -18,6 +18,7 @@ serde = { version = "1", features = ["derive"] }
 # sourced from the public repo so a fresh clone resolves without credentials;
 # local morepork iteration lands by pushing there and `cargo update -p morepork`.
 morepork = { git = "https://github.com/ajoneil/morepork", branch = "main", optional = true }
+missingno-trace = { path = "../../missingno/trace", optional = true }
 sha2 = { version = "0.11" }
 missingno-test-support = { path = "../../missingno/test-support", optional = true }
 

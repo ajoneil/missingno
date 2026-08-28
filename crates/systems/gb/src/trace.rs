@@ -18,8 +18,8 @@ use morepork::format::write::MoreporkWriter;
 use sha2::{Digest, Sha256};
 
 use missingno_core::state::FieldType;
-pub use missingno_core::trace::{BootRom, Profile, TraceScope, Trigger};
-use missingno_core::trace::{
+pub use missingno_trace::{BootRom, Profile, TraceScope, Trigger};
+use missingno_trace::{
     ObservationDef, Source as PlannedSource, TraceIdentity, build_columns, create_writer,
     emit_value, pix_format,
 };

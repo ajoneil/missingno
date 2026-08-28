@@ -1,0 +1,11 @@
+[package]
+name = "missingno-trace"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+# The trace container, and the state vocabulary its columns are planned from.
+# This crate is the bridge between them, so neither has to know the other:
+# morepork is founded on missingno-core, and core stays free of it.
+missingno-core = { path = "../core" }
+morepork = { git = "https://github.com/ajoneil/morepork", branch = "main" }

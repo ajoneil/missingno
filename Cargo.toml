@@ -9,6 +9,7 @@ members = [
     "crates/missingno/remote",
     "crates/missingno/session",
     "crates/missingno/core",
+    "crates/missingno/trace",
     "crates/missingno/iced",
     "crates/missingno/mcp-stdio",
     "crates/missingno/test-support",
@@ -56,6 +57,7 @@ rgb = "0.8.53"
 # public URL, so its own workspace resolves standalone. Building from here, the
 # cores are the checkout beside us — one instance of each, not a second copy.
 [patch."https://github.com/ajoneil/missingno"]
+missingno-core = { path = "crates/missingno/core" }
 missingno-gb = { path = "crates/systems/gb" }
 missingno-vcs = { path = "crates/systems/vcs" }
 missingno-sg1000 = { path = "crates/systems/sg1000" }
