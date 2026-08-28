@@ -638,6 +638,9 @@ impl AnyGame {
             if let Some(label) = edits.label {
                 release.label = (!label.is_empty()).then_some(label);
             }
+            if let Some(rom_size) = edits.rom_size {
+                release.rom_size = rom_size;
+            }
             if let Some(date) = edits.date {
                 release.date = date;
             }
@@ -910,6 +913,7 @@ impl AnyGame {
                 languages: Vec::new(),
                 date: None,
                 publisher: None,
+                rom_size: None,
                 status: Default::default(),
                 hardware: Default::default(),
                 artifacts: Vec::new(),
@@ -1078,6 +1082,7 @@ fn lone_dump_entry<P: Platform>(title: String, artifact: missingno_gamedb::Artif
             languages: Vec::new(),
             date: None,
             publisher: None,
+            rom_size: None,
             status: ReleaseStatus::Released,
             hardware: Default::default(),
             artifacts: vec![artifact],
@@ -1148,6 +1153,7 @@ fn split_hack_from<P: Platform>(
                 languages: Vec::new(),
                 date: None,
                 publisher: None,
+                rom_size: None,
                 status: release.status,
                 hardware: release.hardware.clone(),
                 artifacts: vec![artifact],
@@ -1225,6 +1231,8 @@ fn split_release_from<P: Platform>(
         };
         let artifact = source.releases[at].artifacts.remove(pos);
         let hardware = source.releases[at].hardware.clone();
+        // The split is the same silicon as its source; only the product facts differ.
+        let rom_size = source.releases[at].rom_size;
         let publisher = source.releases[at].publisher.clone();
         let regions = source.releases[at].regions.clone();
         let languages = source.releases[at].languages.clone();
@@ -1236,6 +1244,7 @@ fn split_release_from<P: Platform>(
             date,
             publisher,
             status,
+            rom_size,
             hardware,
             artifacts: vec![artifact],
         });
@@ -1394,6 +1403,8 @@ pub struct ReleaseEdits {
     pub publisher: Option<String>,
     pub regions: Option<Vec<Region>>,
     pub languages: Option<Vec<Language>>,
+    /// Outer None leaves it; Some(None) clears it (an empty-string edit).
+    pub rom_size: Option<Option<u32>>,
 }
 
 pub struct EntryHandle {
@@ -2873,6 +2884,7 @@ mod release_surgery_tests {
         (
             date: Some("2006"),
             publisher: Some("Bill Collins"),
+            rom_size: None,
             status: WorkInProgress,
             hardware: (tv_format: Some(Ntsc), cart_type: Some(Plain4K)),
             artifacts: [(sha1: "a10308a3f1051068c908d1e29fd57de5b911d31d")],

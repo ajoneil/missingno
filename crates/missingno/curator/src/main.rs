@@ -2186,6 +2186,11 @@ impl Curator {
                     None => None,
                 };
                 let cart_type = set_str("cart_type").map(str::to_owned);
+                // 0 is not a ROM, so it is how the tool surface clears one.
+                let rom_size = set
+                    .get("rom_size")
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|bytes| (bytes > 0).then_some(bytes as u32));
                 if status.is_none()
                     && title.is_none()
                     && label.is_none()
@@ -2196,6 +2201,7 @@ impl Curator {
                     && tv_format.is_none()
                     && controllers.is_none()
                     && cart_type.is_none()
+                    && rom_size.is_none()
                 {
                     return error_result("no recognized fields in set");
                 }
@@ -2210,6 +2216,7 @@ impl Curator {
                     publisher,
                     regions,
                     languages,
+                    rom_size,
                 };
                 if db.entries[i].game.update_release(index as usize, edits) {
                     db.entries[i].dirty = true;

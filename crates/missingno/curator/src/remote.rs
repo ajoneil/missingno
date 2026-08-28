@@ -319,6 +319,8 @@ fn tool_definitions() -> Value {
                     "label": { "type": "string" },
                     "date": { "type": "string" },
                     "publisher": { "type": "string" },
+                    "rom_size": { "type": "integer",
+                        "description": "The cartridge's ROM in bytes. State it only where the board does not imply the size — an SG-1000 board names none, a Tigervision one runs 8 KB to 32 KB — or where the dump is not the chip, as a memory map is. Omit when the artifact's own byte count already says it; 0 clears it." },
                     "tv_format": { "type": "string", "enum": TV_FORMATS.schema(),
                         "description": fact_description("tv_format") },
                     "controllers": { "type": "array", "items": { "type": "string",
