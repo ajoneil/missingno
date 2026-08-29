@@ -9,6 +9,8 @@
 
 use std::collections::BTreeMap;
 
+use crate::cartridge::BoardValue;
+
 /// One option a core accepts at launch.
 #[derive(Clone)]
 pub struct LaunchOptionDescriptor {
@@ -60,6 +62,8 @@ pub enum LaunchValue {
     Choice(String),
     Toggle(bool),
     File(Vec<u8>),
+    /// A whole board and the parts populated on it, as a catalogue states them.
+    Board(BoardValue),
 }
 
 /// The options a caller explicitly set, keyed by descriptor id. Sparse: an
@@ -79,6 +83,14 @@ impl LaunchValues {
     /// Whether the toggle is set; an absent toggle is off.
     pub fn toggle(&self, id: &str) -> bool {
         matches!(self.0.get(id), Some(LaunchValue::Toggle(true)))
+    }
+
+    /// The board stated for `id`, or `None` where the caller stated none.
+    pub fn board(&self, id: &str) -> Option<&BoardValue> {
+        match self.0.get(id) {
+            Some(LaunchValue::Board(board)) => Some(board),
+            _ => None,
+        }
     }
 
     /// The file contents supplied for `id`, or `None` where the caller set none.
@@ -115,6 +127,10 @@ impl LaunchValues {
         self.0.insert(id.into(), LaunchValue::File(contents));
     }
 
+    pub fn set_board(&mut self, id: impl Into<String>, board: BoardValue) {
+        self.0.insert(id.into(), LaunchValue::Board(board));
+    }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -143,10 +159,16 @@ mod tests {
         values.set_choice("board", "F8");
         values.set_toggle("overdump", true);
         values.set_file("boot-rom", vec![0x31, 0xFE]);
+        values.set_board("stated", BoardValue::new("Plain4K"));
         assert_eq!(values.choice("board"), Some("F8"));
         assert!(values.toggle("overdump"));
         assert_eq!(values.file("boot-rom"), Some([0x31, 0xFE].as_slice()));
+        assert_eq!(
+            values.board("stated").map(|b| b.board.as_str()),
+            Some("Plain4K")
+        );
         assert_eq!(values.choice("overdump"), None);
         assert_eq!(values.file("board"), None);
+        assert_eq!(values.board("board"), None);
     }
 }

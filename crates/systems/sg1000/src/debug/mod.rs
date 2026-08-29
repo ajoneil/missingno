@@ -15,9 +15,12 @@ mod vdp;
 use std::time::Duration;
 
 use missingno_core::TvStandard;
+use missingno_core::cartridge::BoardVocabulary;
 use missingno_core::graphics::GraphicsView;
 use missingno_core::inspect::{RegisterGroup, Section};
-use missingno_core::launch::{LaunchChoice, LaunchOptionDescriptor, board_option};
+use missingno_core::launch::{
+    LaunchChoice, LaunchOptionDescriptor, LaunchValue, LaunchValues, board_option,
+};
 use missingno_core::machine::{
     BoundaryState, Machine, MachineConsole, StateIdentity, rom_fingerprint,
 };
@@ -138,11 +141,25 @@ pub const BOARD: &str = "board";
 pub fn launch_options(_rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
     vec![board_option(
         BOARD,
-        CartType::all().map(|board| LaunchChoice {
-            value: board.name(),
-            label: board.display_name(),
+        CartType::catalogue().iter().map(|spec| LaunchChoice {
+            value: spec.name,
+            label: spec.display,
         }),
     )]
+}
+
+/// The board the launch values state, or `None` where nothing states one. A
+/// catalogue states the whole board; a picker names one, and the parts it
+/// carries stay unmeasured.
+pub fn board_from_launch(values: &LaunchValues) -> Result<Option<CartType>, String> {
+    match values.value(BOARD) {
+        None => Ok(None),
+        Some(LaunchValue::Board(board)) => CartType::from_value(board).map(Some),
+        Some(LaunchValue::Choice(name)) => CartType::from_name(name)
+            .map(Some)
+            .ok_or_else(|| format!("unknown SG-1000 board \"{name}\"")),
+        Some(_) => Err(format!("the {BOARD} option states a board")),
+    }
 }
 
 /// A console bound to its media, so a save state can refuse a ROM it was not

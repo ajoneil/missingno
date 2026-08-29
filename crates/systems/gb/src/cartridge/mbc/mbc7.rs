@@ -221,7 +221,7 @@ pub struct Mbc7 {
 }
 
 impl Mbc7 {
-    pub fn new(_rom: &[u8], save_data: Option<Vec<u8>>) -> Self {
+    pub fn new(save_data: Option<Vec<u8>>) -> Self {
         Self {
             eeprom: Eeprom::new(save_data.as_ref()),
             ram_enabled_1: false,

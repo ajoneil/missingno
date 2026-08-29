@@ -13,7 +13,9 @@ mod probe;
 mod sections;
 
 pub use controls::{JOYSTICK, KEYPAD, LEFT_PORT, PADDLES, PANEL_CONTROLS, PORTS, RIGHT_PORT};
-pub use machine::{BOARD, OVERDUMP, TV_STANDARD, create_console, launch_options};
+pub use machine::{
+    BOARD, OVERDUMP, TV_STANDARD, board_from_launch, create_console, launch_options,
+};
 pub use sections::vcs_sidebar_sections;
 
 /// A `.a26` is ours, and nothing else is: `.bin` is a generic dump extension no

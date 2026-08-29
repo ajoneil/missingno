@@ -1,3 +1,5 @@
+use super::GbRamSize;
+
 pub struct Huc1 {
     pub ram: Vec<[u8; 8 * 1024]>,
     pub rom_bank: u8,
@@ -6,10 +8,10 @@ pub struct Huc1 {
 }
 
 impl Huc1 {
-    pub fn new(rom: &[u8], save_data: Option<Vec<u8>>) -> Self {
-        let num_ram_banks = match rom[0x149] {
-            2 => 1,
-            3 => 4,
+    pub fn new(save_data: Option<Vec<u8>>, ram: Option<GbRamSize>) -> Self {
+        let num_ram_banks = match ram {
+            Some(GbRamSize::Kb8) => 1,
+            Some(GbRamSize::Kb32) => 4,
             _ => 0,
         };
 

@@ -1,3 +1,5 @@
+use super::GbRamSize;
+
 #[derive(Clone, Copy)]
 pub enum Mode {
     Rom,
@@ -21,10 +23,10 @@ pub struct Huc3 {
 }
 
 impl Huc3 {
-    pub fn new(rom: &[u8], save_data: Option<Vec<u8>>) -> Self {
-        let num_ram_banks = match rom[0x149] {
-            2 => 1,
-            3 => 4,
+    pub fn new(save_data: Option<Vec<u8>>, ram: Option<GbRamSize>) -> Self {
+        let num_ram_banks = match ram {
+            Some(GbRamSize::Kb8) => 1,
+            Some(GbRamSize::Kb32) => 4,
             _ => 0,
         };
 

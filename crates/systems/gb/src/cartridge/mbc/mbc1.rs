@@ -1,3 +1,5 @@
+use super::GbRamSize;
+
 // RAM lives inline — the mapper is the storage, not an indirection to it.
 #[allow(clippy::large_enum_variant)]
 pub enum Ram {
@@ -79,9 +81,9 @@ pub struct Mbc1 {
 }
 
 impl Mbc1 {
-    pub fn new(rom: &[u8], save_data: Option<Vec<u8>>, multicart: bool) -> Self {
-        let ram = match rom[0x149] {
-            2 => {
+    pub fn new(save_data: Option<Vec<u8>>, ram: Option<GbRamSize>, multicart: bool) -> Self {
+        let ram = match ram {
+            Some(GbRamSize::Kb8) => {
                 let mut data = [0; 8 * 1024];
                 if let Some(save) = &save_data {
                     let len = save.len().min(data.len());
@@ -89,7 +91,7 @@ impl Mbc1 {
                 }
                 Ram::Unbanked { data }
             }
-            3 => {
+            Some(GbRamSize::Kb32) => {
                 let mut data = [[0; 8 * 1024]; 4];
                 if let Some(save) = &save_data {
                     for (bank_idx, bank) in data.iter_mut().enumerate() {
@@ -102,6 +104,8 @@ impl Mbc1 {
                 }
                 Ram::Banked { data }
             }
+            // Two bank bits reach four chips; a larger one names a board
+            // this mapper is not.
             _ => Ram::None,
         };
 

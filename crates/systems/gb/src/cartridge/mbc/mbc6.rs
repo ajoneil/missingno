@@ -12,7 +12,7 @@ pub struct Mbc6 {
 }
 
 impl Mbc6 {
-    pub fn new(_rom: &[u8], save_data: Option<Vec<u8>>) -> Self {
+    pub fn new(save_data: Option<Vec<u8>>) -> Self {
         let mut ram = vec![[0u8; 4 * 1024]; 8];
         if let Some(data) = &save_data {
             super::restore_banked(&mut ram, data);

@@ -48,7 +48,7 @@ impl Cartridge {
     /// an SG-1000 dump carries no header, and no length distinguishes a
     /// RAM-bearing board, so there is nothing to infer a board from.
     pub fn load(rom: &[u8], cart_type: Option<CartType>) -> Result<Cartridge, CartridgeError> {
-        let cart_type = cart_type.unwrap_or(CartType::Flat);
+        let cart_type = cart_type.unwrap_or(CartType::Flat { rom: None });
         if rom.is_empty() || rom.len() > CARTRIDGE_SPAN {
             return Err(CartridgeError::UnsupportedSize(rom.len()));
         }
@@ -60,11 +60,15 @@ impl Cartridge {
         }
         Ok(Cartridge {
             board: match cart_type {
-                CartType::Flat => Board::Flat(Flat::new(rom)),
-                CartType::OthelloRam => Board::SegaRam(SegaRam::new(rom, sega_ram::OTHELLO_RAM)),
-                CartType::CastleRam => Board::SegaRam(SegaRam::new(rom, sega_ram::CASTLE_RAM)),
-                CartType::DahjeeA => Board::DahjeeA(DahjeeA::new(rom)),
-                CartType::DahjeeB => Board::DahjeeB(DahjeeB::new(rom)),
+                CartType::Flat { .. } => Board::Flat(Flat::new(rom)),
+                CartType::OthelloRam { .. } => {
+                    Board::SegaRam(SegaRam::new(rom, sega_ram::OTHELLO_RAM))
+                }
+                CartType::CastleRam { .. } => {
+                    Board::SegaRam(SegaRam::new(rom, sega_ram::CASTLE_RAM))
+                }
+                CartType::DahjeeA { .. } => Board::DahjeeA(DahjeeA::new(rom)),
+                CartType::DahjeeB { .. } => Board::DahjeeB(DahjeeB::new(rom)),
             },
         })
     }
@@ -203,7 +207,10 @@ mod tests {
 
     #[test]
     fn an_image_past_the_stated_boards_rom_window_is_rejected() {
-        for cart_type in [CartType::OthelloRam, CartType::CastleRam] {
+        for cart_type in [
+            CartType::OthelloRam { rom: None },
+            CartType::CastleRam { rom: None },
+        ] {
             let error = Cartridge::load(&vec![0; 0x8001], Some(cart_type))
                 .err()
                 .expect("the image runs past the board's ROM window");
@@ -217,7 +224,10 @@ mod tests {
         }
         // Both expanders pass the whole span through: 48 KB dumps are common
         // for Type A, whose game body runs to $BFFF.
-        for cart_type in [CartType::DahjeeA, CartType::DahjeeB] {
+        for cart_type in [
+            CartType::DahjeeA { rom: None },
+            CartType::DahjeeB { rom: None },
+        ] {
             assert_eq!(
                 Cartridge::load(&vec![0; 0xC000], Some(cart_type)).err(),
                 None
@@ -228,7 +238,7 @@ mod tests {
             );
         }
         assert_eq!(
-            Cartridge::load(&vec![0; 0x8001], Some(CartType::OthelloRam))
+            Cartridge::load(&vec![0; 0x8001], Some(CartType::OthelloRam { rom: None }))
                 .err()
                 .map(|error| error.to_string()),
             Some("image is 32769 bytes but a OthelloRam board holds at most 32768".to_string())
@@ -239,7 +249,7 @@ mod tests {
     /// answers all eight slots of $8000-$BFFF.
     #[test]
     fn othellos_two_kilobytes_repeat_eight_times_through_exm1() {
-        let mut cart = board(CartType::OthelloRam);
+        let mut cart = board(CartType::OthelloRam { rom: None });
         cart.write(0x8000, 0x5A);
         cart.write(0x87FF, 0xA5);
         for slot in 0..8 {
@@ -256,7 +266,7 @@ mod tests {
     /// 8 KB with A0-A12 wired: the window holds it twice.
     #[test]
     fn the_castles_eight_kilobytes_repeat_twice_through_exm1() {
-        let mut cart = board(CartType::CastleRam);
+        let mut cart = board(CartType::CastleRam { rom: None });
         cart.write(0x8000, 0x5A);
         cart.write(0x9FFF, 0xA5);
         assert_eq!(cart.read(0xA000), Some(0x5A));
@@ -270,7 +280,10 @@ mod tests {
     /// whole `/EXM2` window.
     #[test]
     fn the_sega_boards_leave_the_console_ram_selected() {
-        for cart_type in [CartType::OthelloRam, CartType::CastleRam] {
+        for cart_type in [
+            CartType::OthelloRam { rom: None },
+            CartType::CastleRam { rom: None },
+        ] {
             let cart = board(cart_type);
             assert!(!cart.disables_console_ram(0xC000));
             assert_eq!(cart.read(0xC000), None);
@@ -283,7 +296,7 @@ mod tests {
     /// `/EXM2`, and the kilobyte repeats through the whole `/DSRAM` window.
     #[test]
     fn type_a_answers_its_expansion_window_and_the_console_ram_window() {
-        let mut cart = board(CartType::DahjeeA);
+        let mut cart = board(CartType::DahjeeA { rom: None });
         cart.write(0x2000, 0x5A);
         cart.write(0x3FFF, 0xA5);
         assert_eq!(cart.read(0x2000), Some(0x5A));
@@ -306,7 +319,8 @@ mod tests {
     /// Type B: ROM through both cartridge windows, 8 KB twice over the console's.
     #[test]
     fn type_b_answers_the_console_ram_window_twice() {
-        let mut cart = Cartridge::load(&[0x11; 0xC000], Some(CartType::DahjeeB)).unwrap();
+        let mut cart =
+            Cartridge::load(&[0x11; 0xC000], Some(CartType::DahjeeB { rom: None })).unwrap();
         assert_eq!(cart.read(0x0000), Some(0x11));
         assert_eq!(cart.read(0xBFFF), Some(0x11));
 
@@ -322,7 +336,7 @@ mod tests {
     /// cycle clears them — cart SRAM has no battery behind it.
     #[test]
     fn cart_ram_rides_a_blob_and_wakes_cleared() {
-        let mut cart = board(CartType::DahjeeA);
+        let mut cart = board(CartType::DahjeeA { rom: None });
         cart.write(0x2000, 0x5A);
         cart.write(0xC000, 0xA5);
         let saved = cart.ram().expect("the board carries RAM");

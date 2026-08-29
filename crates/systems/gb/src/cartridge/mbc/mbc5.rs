@@ -1,3 +1,5 @@
+use super::GbRamSize;
+
 pub struct Mbc5 {
     pub ram: Vec<[u8; 8 * 1024]>,
     pub ram_enabled: bool,
@@ -7,16 +9,8 @@ pub struct Mbc5 {
 }
 
 impl Mbc5 {
-    pub fn new(rom: &[u8], save_data: Option<Vec<u8>>) -> Self {
-        Self::create(rom, save_data, false)
-    }
-
-    pub fn new_rumble(rom: &[u8], save_data: Option<Vec<u8>>) -> Self {
-        Self::create(rom, save_data, true)
-    }
-
-    fn create(rom: &[u8], save_data: Option<Vec<u8>>, rumble: bool) -> Self {
-        let mut ram = vec![[0u8; 8 * 1024]; super::num_ram_banks(rom)];
+    pub fn new(save_data: Option<Vec<u8>>, ram: Option<GbRamSize>, rumble: bool) -> Self {
+        let mut ram = vec![[0u8; 8 * 1024]; super::ram_banks(ram)];
         if let Some(data) = &save_data {
             super::restore_banked(&mut ram, data);
         }

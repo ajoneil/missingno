@@ -1,3 +1,5 @@
+use super::GbRamSize;
+
 /// Mapper used by the unlicensed "GB DBZ GOKOU 2" cartridge. It behaves as MBC5
 /// but adds a "half bank switch": the two 8 KB halves of the switchable-bank
 /// window (`0x4000`-`0x5FFF` and `0x6000`-`0x7FFF`) can be pointed at different
@@ -13,8 +15,8 @@ pub struct DbzTrans {
 }
 
 impl DbzTrans {
-    pub fn new(rom: &[u8], save_data: Option<Vec<u8>>) -> Self {
-        let mut ram = vec![[0u8; 8 * 1024]; super::num_ram_banks(rom)];
+    pub fn new(save_data: Option<Vec<u8>>, ram: Option<GbRamSize>) -> Self {
+        let mut ram = vec![[0u8; 8 * 1024]; super::ram_banks(ram)];
         if let Some(data) = &save_data {
             super::restore_banked(&mut ram, data);
         }

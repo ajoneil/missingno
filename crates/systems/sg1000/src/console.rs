@@ -479,7 +479,11 @@ mod tests {
     /// select alone — a plain ROM, and both Sega RAM boards.
     #[test]
     fn the_console_ram_keeps_its_window_where_no_cart_drives_dsram() {
-        for cart_type in [None, Some(CartType::OthelloRam), Some(CartType::CastleRam)] {
+        for cart_type in [
+            None,
+            Some(CartType::OthelloRam { rom: None }),
+            Some(CartType::CastleRam { rom: None }),
+        ] {
             let mut console = console(cart_type);
             write(&mut console, 0xC000, 0x5A);
             assert_eq!(console.peek(0xC000), 0x5A);
@@ -493,7 +497,7 @@ mod tests {
     /// separate stores.
     #[test]
     fn a_sega_boards_ram_sits_beside_the_consoles() {
-        let mut console = console(Some(CartType::OthelloRam));
+        let mut console = console(Some(CartType::OthelloRam { rom: None }));
         write(&mut console, 0x8000, 0x5A);
         write(&mut console, 0xC000, 0xA5);
         assert_eq!(console.peek(0x8000), 0x5A);
@@ -506,7 +510,10 @@ mod tests {
     /// the console's kilobyte is deselected for reads and writes alike.
     #[test]
     fn an_expander_takes_the_console_ram_window() {
-        for cart_type in [CartType::DahjeeA, CartType::DahjeeB] {
+        for cart_type in [
+            CartType::DahjeeA { rom: None },
+            CartType::DahjeeB { rom: None },
+        ] {
             let mut console = console(Some(cart_type));
             write(&mut console, 0xC000, 0x5A);
             assert_eq!(console.peek(0xC000), 0x5A);
@@ -517,7 +524,7 @@ mod tests {
     /// Cart RAM carries no battery, so a power cycle wakes it cleared.
     #[test]
     fn a_power_cycle_clears_cart_ram() {
-        let mut console = console(Some(CartType::CastleRam));
+        let mut console = console(Some(CartType::CastleRam { rom: None }));
         write(&mut console, 0x8000, 0x5A);
         console.power_cycle();
         assert_eq!(console.peek(0x8000), 0x00);

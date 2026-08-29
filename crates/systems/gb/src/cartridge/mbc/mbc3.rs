@@ -1,3 +1,5 @@
+use super::GbRamSize;
+
 pub enum Mapped {
     Ram(u8),
     Clock(ClockRegister),
@@ -10,16 +12,6 @@ pub enum Mbc3Chip {
 }
 
 impl Mbc3Chip {
-    /// Which chip a board carries is undeclared: only a ROM past 2 MB or a RAM
-    /// size past four banks needs the MBC30's wider registers.
-    pub fn for_rom(rom: &[u8]) -> Mbc3Chip {
-        if rom.len() > 0x200000 || matches!(rom[0x149], 0x04 | 0x05) {
-            Mbc3Chip::Mbc30
-        } else {
-            Mbc3Chip::Mbc3
-        }
-    }
-
     fn rom_bank_mask(self) -> u8 {
         match self {
             Mbc3Chip::Mbc3 => 0x7f,
@@ -189,8 +181,13 @@ pub struct Mbc3 {
 }
 
 impl Mbc3 {
-    pub fn new(rom: &[u8], save_data: Option<Vec<u8>>, chip: Mbc3Chip, timer: bool) -> Self {
-        let mut ram = vec![[0u8; 8 * 1024]; super::num_ram_banks(rom)];
+    pub fn new(
+        save_data: Option<Vec<u8>>,
+        ram: Option<GbRamSize>,
+        chip: Mbc3Chip,
+        timer: bool,
+    ) -> Self {
+        let mut ram = vec![[0u8; 8 * 1024]; super::ram_banks(ram)];
         if let Some(data) = &save_data {
             super::restore_banked(&mut ram, data);
         }
@@ -318,21 +315,29 @@ mod tests {
     }
 
     #[test]
-    fn ram_banks_follow_the_header_size_byte() {
-        for (size_byte, banks) in [(2u8, 1usize), (3, 4), (4, 16), (5, 8), (0, 0)] {
-            let mut rom = vec![0u8; 0x150];
-            rom[0x149] = size_byte;
-            let mbc = Mbc3::new(&rom, None, Mbc3Chip::Mbc3, false);
-            assert_eq!(mbc.ram.len(), banks, "size byte {size_byte:#04x}");
+    fn ram_banks_follow_the_boards_chip() {
+        use crate::cartridge::GbRamSize;
+        for (chip, banks) in [
+            (Some(GbRamSize::Kb8), 1usize),
+            (Some(GbRamSize::Kb32), 4),
+            (Some(GbRamSize::Kb128), 16),
+            (Some(GbRamSize::Kb64), 8),
+            (None, 0),
+        ] {
+            let mbc = Mbc3::new(None, chip, Mbc3Chip::Mbc3, false);
+            assert_eq!(mbc.ram.len(), banks, "{chip:?}");
         }
     }
 
     #[test]
     fn save_data_restores_across_every_bank() {
-        let mut rom = vec![0u8; 0x150];
-        rom[0x149] = 5;
         let save: Vec<u8> = (0..8 * 8 * 1024).map(|i| (i / (8 * 1024)) as u8).collect();
-        let mbc = Mbc3::new(&rom, Some(save), Mbc3Chip::Mbc30, false);
+        let mbc = Mbc3::new(
+            Some(save),
+            Some(crate::cartridge::GbRamSize::Kb64),
+            Mbc3Chip::Mbc30,
+            false,
+        );
         for (idx, bank) in mbc.ram.iter().enumerate() {
             assert!(bank.iter().all(|&b| b == idx as u8), "bank {idx}");
         }

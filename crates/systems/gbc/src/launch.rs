@@ -1,10 +1,11 @@
 //! Core selection for the Game Boy family: the cartridge header names the
 //! console it is slotted into, and this crate is the one that knows both.
 
+use missingno_core::cartridge::BoardVocabulary;
 use missingno_core::launch::{
-    LaunchChoice, LaunchOptionDescriptor, LaunchOptionKind, LaunchValues, board_option,
+    LaunchChoice, LaunchOptionDescriptor, LaunchOptionKind, LaunchValue, LaunchValues, board_option,
 };
-use missingno_gb::cartridge::GbCartType;
+use missingno_gb::cartridge::{GbCartType, GbRamSize, GbRomSize};
 use missingno_gb::serial_transfer::SerialLink;
 use missingno_gb::{BootRom, GameBoy, cartridge::Cartridge};
 
@@ -16,6 +17,161 @@ pub const RUNNER: &str = "runner";
 pub const BOOT_ROM: &str = "boot-rom";
 /// The board the cartridge is built on, for media whose header misdeclares it.
 pub const BOARD: &str = "board";
+
+/// One board a picker can name, over the combinations a `$0147` byte declares
+/// plus the three boards no byte names. A picker states a board and not the
+/// sizes beside it, so each preset carries the size its silicon commonly comes
+/// in; a catalogue that knows the sizes states the whole board instead.
+struct Preset {
+    name: &'static str,
+    label: &'static str,
+    board: GbCartType,
+}
+
+const fn preset(name: &'static str, label: &'static str, board: GbCartType) -> Preset {
+    Preset { name, label, board }
+}
+
+/// The ROM chip a preset carries where the header names no size.
+const PRESET_ROM: GbRomSize = GbRomSize::Mb1;
+/// The RAM chip a preset carries where the board takes one.
+const PRESET_RAM: Option<GbRamSize> = Some(GbRamSize::Kb32);
+
+const fn rom(ram: Option<GbRamSize>, battery: bool) -> GbCartType {
+    GbCartType::Rom { ram, battery }
+}
+
+const fn mbc1(ram: Option<GbRamSize>, battery: bool) -> GbCartType {
+    GbCartType::Mbc1 {
+        rom: PRESET_ROM,
+        ram,
+        battery,
+    }
+}
+
+const fn mbc3(ram: Option<GbRamSize>, battery: bool, rtc: bool) -> GbCartType {
+    GbCartType::Mbc3 {
+        rom: PRESET_ROM,
+        ram,
+        battery,
+        rtc,
+    }
+}
+
+const fn mbc5(ram: Option<GbRamSize>, battery: bool, rumble: bool) -> GbCartType {
+    GbCartType::Mbc5 {
+        rom: PRESET_ROM,
+        ram,
+        battery,
+        rumble,
+    }
+}
+
+const PRESETS: &[Preset] = &[
+    preset("Rom", "ROM only", rom(None, false)),
+    preset("RomRam", "ROM + RAM", rom(Some(GbRamSize::Kb8), false)),
+    preset(
+        "RomRamBattery",
+        "ROM + RAM + battery",
+        rom(Some(GbRamSize::Kb8), true),
+    ),
+    preset("Mbc1", "MBC1", mbc1(None, false)),
+    preset("Mbc1Ram", "MBC1 + RAM", mbc1(PRESET_RAM, false)),
+    preset(
+        "Mbc1RamBattery",
+        "MBC1 + RAM + battery",
+        mbc1(PRESET_RAM, true),
+    ),
+    preset(
+        "Mbc1Multicart",
+        "MBC1 multicart",
+        GbCartType::Mbc1Multicart { rom: PRESET_ROM },
+    ),
+    preset(
+        "Mbc2",
+        "MBC2",
+        GbCartType::Mbc2 {
+            rom: GbRomSize::Kb256,
+            battery: false,
+        },
+    ),
+    preset(
+        "Mbc2Battery",
+        "MBC2 + battery",
+        GbCartType::Mbc2 {
+            rom: GbRomSize::Kb256,
+            battery: true,
+        },
+    ),
+    preset(
+        "Mbc3TimerBattery",
+        "MBC3 + timer + battery",
+        mbc3(None, true, true),
+    ),
+    preset(
+        "Mbc3TimerRamBattery",
+        "MBC3 + timer + RAM + battery",
+        mbc3(PRESET_RAM, true, true),
+    ),
+    preset("Mbc3", "MBC3", mbc3(None, false, false)),
+    preset("Mbc3Ram", "MBC3 + RAM", mbc3(PRESET_RAM, false, false)),
+    preset(
+        "Mbc3RamBattery",
+        "MBC3 + RAM + battery",
+        mbc3(PRESET_RAM, true, false),
+    ),
+    preset(
+        "Mbc30",
+        "MBC30",
+        GbCartType::Mbc30 {
+            rom: GbRomSize::Mb2,
+            ram: Some(GbRamSize::Kb64),
+            battery: true,
+            rtc: true,
+        },
+    ),
+    preset("Mbc5", "MBC5", mbc5(None, false, false)),
+    preset("Mbc5Ram", "MBC5 + RAM", mbc5(PRESET_RAM, false, false)),
+    preset(
+        "Mbc5RamBattery",
+        "MBC5 + RAM + battery",
+        mbc5(PRESET_RAM, true, false),
+    ),
+    preset("Mbc5Rumble", "MBC5 + rumble", mbc5(None, false, true)),
+    preset(
+        "Mbc5RumbleRam",
+        "MBC5 + rumble + RAM",
+        mbc5(PRESET_RAM, false, true),
+    ),
+    preset(
+        "Mbc5RumbleRamBattery",
+        "MBC5 + rumble + RAM + battery",
+        mbc5(PRESET_RAM, true, true),
+    ),
+    preset("Mbc6", "MBC6", GbCartType::Mbc6),
+    preset("Mbc7", "MBC7", GbCartType::Mbc7 { rom: PRESET_ROM }),
+    preset(
+        "Huc3",
+        "HuC-3",
+        GbCartType::Huc3 {
+            rom: PRESET_ROM,
+            ram: PRESET_RAM,
+        },
+    ),
+    preset(
+        "Huc1",
+        "HuC-1",
+        GbCartType::Huc1 {
+            rom: PRESET_ROM,
+            ram: PRESET_RAM,
+        },
+    ),
+    preset(
+        "DbzTrans",
+        "DBZ Trans (unlicensed)",
+        GbCartType::DbzTrans { ram: PRESET_RAM },
+    ),
+];
 
 /// The options the Game Boy family accepts at launch for this cartridge. The
 /// console is a choice only for media both can run: a Color runs a DMG
@@ -40,9 +196,9 @@ pub fn launch_options(rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
     let fixed = [
         board_option(
             BOARD,
-            GbCartType::all().map(|board| LaunchChoice {
-                value: board.name(),
-                label: board.display_name(),
+            PRESETS.iter().map(|preset| LaunchChoice {
+                value: preset.name,
+                label: preset.label,
             }),
         ),
         LaunchOptionDescriptor {
@@ -56,12 +212,18 @@ pub fn launch_options(rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
     runner.into_iter().chain(fixed).collect()
 }
 
-/// The board the launch values name, or `None` where the header decides; `Err`
-/// carries a value naming no board.
-pub fn board_from_launch(values: &LaunchValues) -> Result<Option<GbCartType>, &str> {
-    match values.choice(BOARD) {
+/// The board the launch values state, or `None` where the header decides. A
+/// catalogue states the whole board, sizes and all; a picker names a preset.
+pub fn board_from_launch(values: &LaunchValues) -> Result<Option<GbCartType>, String> {
+    match values.value(BOARD) {
         None => Ok(None),
-        Some(code) => GbCartType::from_name(code).map(Some).ok_or(code),
+        Some(LaunchValue::Board(board)) => GbCartType::from_value(board).map(Some),
+        Some(LaunchValue::Choice(name)) => PRESETS
+            .iter()
+            .find(|preset| preset.name == name)
+            .map(|preset| Some(preset.board))
+            .ok_or_else(|| format!("unknown Game Boy board \"{name}\"")),
+        Some(_) => Err(format!("the {BOARD} option states a board")),
     }
 }
 
@@ -210,6 +372,33 @@ mod tests {
     #[test]
     fn a_dmg_cartridge_offers_both_consoles() {
         assert_eq!(runner_choices(&rom(0x00)), ["dmg", "cgb"]);
+    }
+
+    #[test]
+    fn a_named_preset_and_a_stated_board_both_reach_the_core() {
+        let mut values = LaunchValues::default();
+        values.set_choice(BOARD, "Mbc5RamBattery");
+        let named = board_from_launch(&values).unwrap().expect("a board");
+        assert_eq!(named.name(), "Mbc5");
+        assert!(named.has_battery());
+
+        values.set_board(BOARD, named.to_value());
+        assert_eq!(board_from_launch(&values), Ok(Some(named)));
+
+        values.set_choice(BOARD, "Mbc9");
+        assert!(board_from_launch(&values).is_err());
+    }
+
+    #[test]
+    fn every_preset_names_a_board_the_vocabulary_reads_back() {
+        for preset in PRESETS {
+            assert_eq!(
+                GbCartType::from_value(&preset.board.to_value()),
+                Ok(preset.board),
+                "{}",
+                preset.name
+            );
+        }
     }
 
     #[test]

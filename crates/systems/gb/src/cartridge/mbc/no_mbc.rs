@@ -1,10 +1,12 @@
+use super::GbRamSize;
+
 pub struct NoMbc {
     pub ram: Option<[u8; 8 * 1024]>,
 }
 
 impl NoMbc {
-    pub fn new(rom: &[u8], save_data: Option<Vec<u8>>) -> Self {
-        let ram = if rom[0x149] == 2 {
+    pub fn new(save_data: Option<Vec<u8>>, ram: Option<GbRamSize>) -> Self {
+        let ram = if ram.is_some() {
             let mut ram = [0; 8 * 1024];
             if let Some(data) = save_data {
                 let len = data.len().min(ram.len());

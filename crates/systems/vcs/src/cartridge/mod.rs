@@ -220,7 +220,7 @@ impl Cartridge {
             CartType::MNetwork => Board::MNetwork(MNetwork::new(rom)),
             CartType::Commavid => Board::Commavid(Commavid::new(rom)),
             CartType::UaLtd => Board::UaLtd(LowBankSelect::new(rom, ua_ltd::DECODE)),
-            CartType::Tigervision => Board::Tigervision(Tigervision::new(rom)),
+            CartType::Tigervision { .. } => Board::Tigervision(Tigervision::new(rom)),
             CartType::Activision => Board::Activision(Activision::new(rom)),
             CartType::Dpc => Board::Dpc(Dpc::new(rom, clock_hz)),
             CartType::Supercharger => Board::Supercharger(Supercharger::new(rom)?),
@@ -231,8 +231,10 @@ impl Cartridge {
             CartType::AmigaPowerPlay => Board::AmigaPowerPlay(AmigaPowerPlay::new(rom)),
             CartType::Fotomania => Board::Fotomania(LowBankSelect::new(rom, fotomania::DECODE)),
             CartType::ParkerBrosBrazil => Board::ParkerBrosBrazil(ParkerBrosBrazil::new(rom)),
-            CartType::TigervisionRam => Board::TigervisionRam(TigervisionRam::new(rom)),
-            CartType::TigervisionRamPlus => Board::TigervisionRamPlus(TigervisionRamPlus::new(rom)),
+            CartType::TigervisionRam { .. } => Board::TigervisionRam(TigervisionRam::new(rom)),
+            CartType::TigervisionRamPlus { .. } => {
+                Board::TigervisionRamPlus(TigervisionRamPlus::new(rom))
+            }
             CartType::Superbanking => Board::Superbanking(Superbanking::new(rom)),
             CartType::Econobanking => {
                 Board::Econobanking(LowBankSelect::new(rom, econobanking::DECODE))
@@ -373,7 +375,9 @@ impl Cartridge {
     /// A read-only view of the board for the debugger's Cartridge section.
     pub fn inspect(&self) -> CartridgeInspect {
         CartridgeInspect {
-            board: self.cart_type.map_or("empty", CartType::display_name),
+            board: self
+                .cart_type
+                .map_or("empty", |cart_type| cart_type.board_display()),
             bank: self.board.selected_bank(),
             dpc: match &self.board {
                 Board::Dpc(board) => Some(board.inspect()),
@@ -523,8 +527,13 @@ mod tests {
         // boards stop at.
         let banks = 240;
         let rom: Vec<u8> = (0..banks).flat_map(|bank| [bank as u8; 0x800]).collect();
-        let mut cart =
-            Cartridge::load(&rom, Some(CartType::TigervisionRam), CLOCK, DumpFit::Exact).unwrap();
+        let mut cart = Cartridge::load(
+            &rom,
+            Some(CartType::TigervisionRam { rom: None }),
+            CLOCK,
+            DumpFit::Exact,
+        )
+        .unwrap();
         // The upper half is the last bank, whatever the lower half shows.
         assert_eq!(cart.read(0xF800, 0), Some(banks as u8 - 1));
         for bank in [0, 17, banks - 1] {
@@ -540,7 +549,7 @@ mod tests {
     fn a_3e_image_short_of_a_whole_bank_is_refused() {
         let error = Cartridge::load(
             &vec![0u8; 0x900],
-            Some(CartType::TigervisionRam),
+            Some(CartType::TigervisionRam { rom: None }),
             CLOCK,
             DumpFit::Exact,
         )

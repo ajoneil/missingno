@@ -5,7 +5,10 @@
 //! The one exception is the Superchip, whose RAM shadows the bottom of every
 //! bank and leaves a readable mark in the image.
 
-use missingno_core::cartridge::{BoardNames, row};
+use missingno_core::cartridge::{
+    AttributeKind, AttributeSpec, AttributeValue, BoardNames, BoardSpec, BoardValue,
+    BoardVocabulary, attributed_row, row,
+};
 
 use super::{atari, dpc, supercharger, tigervision_ram, tigervision_ram_plus};
 
@@ -96,8 +99,12 @@ pub enum CartType {
     /// 8 KB across two banks, selected from loosely decoded hotspots below the
     /// window (UA Ltd).
     UaLtd,
-    /// A 2 KB fixed half over a bus-latched paged half (Tigervision).
-    Tigervision,
+    /// A 2 KB fixed half over a bus-latched paged half (Tigervision). The
+    /// board runs 8 to 32 KB, so its ROM chip is the one size a dump's length
+    /// does not settle.
+    Tigervision {
+        rom: Option<u32>,
+    },
     /// 8 KB across two banks, picked by an address comparator on $01FE and
     /// data line D5 (Activision).
     Activision,
@@ -126,9 +133,13 @@ pub enum CartType {
     /// low memory (Brazilian Parker Bros).
     ParkerBrosBrazil,
     /// 3F with a cart-RAM path on its own hotspot (homebrew).
-    TigervisionRam,
+    TigervisionRam {
+        rom: Option<u32>,
+    },
     /// Four independently banked 1 KB segments, each ROM or RAM (homebrew).
-    TigervisionRamPlus,
+    TigervisionRamPlus {
+        rom: Option<u32>,
+    },
     /// 64 KB across sixteen banks, on the hotspot family's wider run (homebrew).
     Atari64K,
     /// 128 KB across thirty-two banks (homebrew).
@@ -160,6 +171,18 @@ pub enum CartType {
     FourA50,
 }
 
+/// The name refusals say this vocabulary by.
+const VOCABULARY: &str = "Atari VCS";
+
+/// The ROM chip's measured size, for the one board family whose wiring does not
+/// fix it.
+const ROM: &[AttributeSpec] = &[AttributeSpec {
+    key: "rom",
+    label: "ROM",
+    kind: AttributeKind::Bytes,
+    optional: true,
+}];
+
 /// The whole board vocabulary, one row per board — the code a board goes by in
 /// interchange (game-db entries, the CLI, a test's board override) and the name
 /// shown to a reader. Every name a board answers to derives from here.
@@ -189,7 +212,12 @@ const BOARD_NAMES: &[BoardNames<CartType>] = &[
     row(CartType::MNetwork, "MNetwork", "M-Network (E7)"),
     row(CartType::Commavid, "Commavid", "CommaVid (CV)"),
     row(CartType::UaLtd, "UaLtd", "UA Ltd (UA)"),
-    row(CartType::Tigervision, "Tigervision", "Tigervision (3F)"),
+    attributed_row(
+        CartType::Tigervision { rom: None },
+        "Tigervision",
+        "Tigervision (3F)",
+        ROM,
+    ),
     row(CartType::Activision, "Activision", "Activision (FE)"),
     row(CartType::Dpc, "Dpc", "DPC — Pitfall II (DPC)"),
     row(
@@ -216,15 +244,17 @@ const BOARD_NAMES: &[BoardNames<CartType>] = &[
         "ParkerBrosBrazil",
         "Parker Bros Brazil (03E0)",
     ),
-    row(
-        CartType::TigervisionRam,
+    attributed_row(
+        CartType::TigervisionRam { rom: None },
         "TigervisionRam",
         "Tigervision + RAM (3E)",
+        ROM,
     ),
-    row(
-        CartType::TigervisionRamPlus,
+    attributed_row(
+        CartType::TigervisionRamPlus { rom: None },
         "TigervisionRamPlus",
         "Tigervision + RAM (3E+)",
+        ROM,
     ),
     row(CartType::Atari64K, "Atari64K", "64K Atari-style (EF)"),
     row(CartType::Atari128K, "Atari128K", "128K Atari-style (DF)"),
@@ -251,9 +281,47 @@ const BOARD_NAMES: &[BoardNames<CartType>] = &[
     row(CartType::FourA50, "FourA50", "4A50"),
 ];
 
-missingno_core::board_vocabulary!(CartType, BOARD_NAMES, "unknown Atari VCS board code");
+missingno_core::board_vocabulary!(CartType, BOARD_NAMES);
+
+impl BoardVocabulary for CartType {
+    fn catalogue() -> &'static [BoardSpec] {
+        CartType::catalogue()
+    }
+
+    fn to_value(&self) -> BoardValue {
+        BoardValue::new(self.name()).with_optional("rom", self.rom().map(AttributeValue::Bytes))
+    }
+
+    fn from_value(value: &BoardValue) -> Result<CartType, String> {
+        let reader = value.read(VOCABULARY, CartType::catalogue())?;
+        let rom = || reader.optional_bytes("rom");
+        Ok(match reader.board() {
+            "Tigervision" => CartType::Tigervision { rom: rom() },
+            "TigervisionRam" => CartType::TigervisionRam { rom: rom() },
+            "TigervisionRamPlus" => CartType::TigervisionRamPlus { rom: rom() },
+            name => CartType::from_name(name).expect("the catalogue's rows name every board"),
+        })
+    }
+
+    fn display_name(&self) -> String {
+        match self.rom() {
+            Some(rom) => format!("{} ({rom} bytes)", self.board_display()),
+            None => self.board_display().to_owned(),
+        }
+    }
+}
 
 impl CartType {
+    /// The ROM chip's measured size, on the boards that state one.
+    pub fn rom(self) -> Option<u32> {
+        match self {
+            CartType::Tigervision { rom }
+            | CartType::TigervisionRam { rom }
+            | CartType::TigervisionRamPlus { rom } => rom,
+            _ => None,
+        }
+    }
+
     /// The board a bare dump is best-effort read as, from its length alone.
     pub(super) fn infer(rom: &[u8]) -> Result<CartType, CartridgeError> {
         Ok(match rom.len() {
@@ -285,8 +353,8 @@ impl CartType {
             // A Supercharger image is a tape container: one load unit per tape
             // load, and a multi-load title carries several.
             CartType::Supercharger => supercharger::is_container(len),
-            CartType::TigervisionRam => tigervision_ram::holds(len),
-            CartType::TigervisionRamPlus => tigervision_ram_plus::holds(len),
+            CartType::TigervisionRam { .. } => tigervision_ram::holds(len),
+            CartType::TigervisionRamPlus { .. } => tigervision_ram_plus::holds(len),
             // The refusal an unbuilt board earns is about the board, not the
             // image.
             _ if !self.built() => true,
@@ -314,7 +382,7 @@ impl CartType {
             | CartType::Atari8KSuperchip
             | CartType::ParkerBros
             | CartType::UaLtd
-            | CartType::Tigervision
+            | CartType::Tigervision { .. }
             | CartType::Activision => 0x2000,
             CartType::Atari16K | CartType::Atari16KSuperchip | CartType::MNetwork => 0x4000,
             CartType::Atari32K | CartType::Atari32KSuperchip => 0x8000,
@@ -336,7 +404,9 @@ impl CartType {
             CartType::AmigaPowerPlay => 0x8000,
             // A Supercharger container holds as many tape loads as the title
             // needs, and a 3E or 3E+ image as many banks as the cart carries.
-            CartType::Supercharger | CartType::TigervisionRam | CartType::TigervisionRamPlus => {
+            CartType::Supercharger
+            | CartType::TigervisionRam { .. }
+            | CartType::TigervisionRamPlus { .. } => {
                 return None;
             }
             // An unbuilt board states no wiring to size an image against.
@@ -375,13 +445,44 @@ mod tests {
             let text = ron::to_string(&board).expect("a board serialises");
             // The vocabulary's name and the serialised variant are one string:
             // if a row drifts from its variant, this is what catches it.
-            assert_eq!(text, board.name());
+            assert!(text.starts_with(board.name()), "{text}");
             assert_eq!(ron::from_str::<CartType>(&text), Ok(board));
+        }
+    }
+
+    #[test]
+    fn every_board_round_trips_through_its_value() {
+        for board in CartType::all() {
+            assert_eq!(CartType::from_value(&board.to_value()), Ok(board));
+        }
+    }
+
+    #[test]
+    fn only_the_tigervision_family_states_a_rom_size() {
+        for board in CartType::all() {
+            let measured = board.to_value().with("rom", AttributeValue::Bytes(0x4000));
+            match board {
+                CartType::Tigervision { .. }
+                | CartType::TigervisionRam { .. }
+                | CartType::TigervisionRamPlus { .. } => {
+                    assert_eq!(CartType::from_value(&measured).unwrap().rom(), Some(0x4000));
+                }
+                _ => assert!(
+                    CartType::from_value(&measured)
+                        .unwrap_err()
+                        .contains("carries no \"rom\" attribute")
+                ),
+            }
         }
     }
 
     #[test]
     fn an_unlisted_name_names_no_board() {
         assert!(ron::from_str::<CartType>("DAHJEE_A").is_err());
+        assert!(
+            CartType::from_value(&BoardValue::new("DAHJEE_A"))
+                .unwrap_err()
+                .contains("unknown Atari VCS board")
+        );
     }
 }

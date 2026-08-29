@@ -1,7 +1,7 @@
 pub mod cart_type;
 pub mod mbc;
 
-pub use cart_type::{GbCartType, GbCartridgeError};
+pub use cart_type::{GbCartType, GbCartridgeError, GbRamSize, GbRomSize};
 
 use mbc::mbc3::{ClockRegisters, Mapped, Mbc3Chip};
 use mbc::{
@@ -83,7 +83,7 @@ pub fn parse_title(rom: &[u8]) -> String {
 pub fn parse_header(rom: &[u8]) -> (String, bool, bool) {
     let title = parse_title(rom);
     let sgb_flag = rom[0x146] == 0x03;
-    let has_battery = GbCartType::from_header(rom[0x147]).is_ok_and(GbCartType::has_battery);
+    let has_battery = GbCartType::from_header(rom).is_ok_and(|board| board.has_battery());
     (title, sgb_flag, has_battery)
 }
 
@@ -169,52 +169,47 @@ impl Cartridge {
         let sgb_flag = rom[0x146] == 0x03;
         let cart_type = match stated {
             Some(stated) => stated,
-            None if is_dbz_trans(&rom, &title) => GbCartType::DbzTrans,
-            None => GbCartType::from_header(rom[0x147]).map_err(GbCartridgeError::UnknownMapper)?,
+            None if is_dbz_trans(&rom, &title) => GbCartType::DbzTrans {
+                ram: GbRamSize::from_header(rom[0x149]),
+            },
+            None => GbCartType::from_header(&rom).map_err(GbCartridgeError::UnknownMapper)?,
         };
+
+        // A stated board is a whole statement, so its ROM chip has to be inside
+        // the image: a shorter image is missing silicon, a longer one carries
+        // padding past it.
+        if stated.is_some()
+            && let Some(board) = cart_type.rom_size()
+            && board.bytes() > rom.len()
+        {
+            return Err(GbCartridgeError::ImageShorterThanBoard {
+                board: board.bytes(),
+                image: rom.len(),
+            });
+        }
 
         let has_battery = cart_type.has_battery();
         let save = if has_battery { save_data } else { None };
+        let ram = cart_type.ram_size();
 
         let mbc = match cart_type {
-            GbCartType::Rom | GbCartType::RomRam | GbCartType::RomRamBattery => {
-                Mbc::NoMbc(NoMbc::new(&rom, save))
-            }
-            GbCartType::Mbc1 | GbCartType::Mbc1Ram | GbCartType::Mbc1RamBattery => {
+            GbCartType::Rom { .. } => Mbc::NoMbc(NoMbc::new(save, ram)),
+            GbCartType::Mbc1 { .. } => {
                 // Only a header-named MBC1 is probed for the multicart logo: a
                 // stated board has already settled the question.
                 let multicart = stated.is_none() && mbc::mbc1::detect_multicart(&rom);
-                Mbc::Mbc1(Mbc1::new(&rom, save, multicart))
+                Mbc::Mbc1(Mbc1::new(save, ram, multicart))
             }
-            GbCartType::Mbc1Multicart => Mbc::Mbc1(Mbc1::new(&rom, save, true)),
-            GbCartType::Mbc2 | GbCartType::Mbc2Battery => Mbc::Mbc2(Mbc2::new(&rom, save)),
-            GbCartType::Mbc3TimerBattery
-            | GbCartType::Mbc3TimerRamBattery
-            | GbCartType::Mbc3
-            | GbCartType::Mbc3Ram
-            | GbCartType::Mbc3RamBattery => Mbc::Mbc3(Mbc3::new(
-                &rom,
-                save,
-                Mbc3Chip::for_rom(&rom),
-                cart_type.has_timer(),
-            )),
-            // MBC30 names the chip, not the whole board, so the header still
-            // says whether the clock is populated beside it.
-            GbCartType::Mbc30 => {
-                let timer = GbCartType::from_header(rom[0x147]).is_ok_and(GbCartType::has_timer);
-                Mbc::Mbc3(Mbc3::new(&rom, save, Mbc3Chip::Mbc30, timer))
-            }
-            GbCartType::Mbc5 | GbCartType::Mbc5Ram | GbCartType::Mbc5RamBattery => {
-                Mbc::Mbc5(Mbc5::new(&rom, save))
-            }
-            GbCartType::Mbc5Rumble
-            | GbCartType::Mbc5RumbleRam
-            | GbCartType::Mbc5RumbleRamBattery => Mbc::Mbc5(Mbc5::new_rumble(&rom, save)),
-            GbCartType::Mbc6 => Mbc::Mbc6(Mbc6::new(&rom, save)),
-            GbCartType::Mbc7 => Mbc::Mbc7(Mbc7::new(&rom, save)),
-            GbCartType::Huc3 => Mbc::Huc3(Huc3::new(&rom, save)),
-            GbCartType::Huc1 => Mbc::Huc1(Huc1::new(&rom, save)),
-            GbCartType::DbzTrans => Mbc::DbzTrans(DbzTrans::new(&rom, save)),
+            GbCartType::Mbc1Multicart { .. } => Mbc::Mbc1(Mbc1::new(save, ram, true)),
+            GbCartType::Mbc2 { .. } => Mbc::Mbc2(Mbc2::new(save)),
+            GbCartType::Mbc3 { rtc, .. } => Mbc::Mbc3(Mbc3::new(save, ram, Mbc3Chip::Mbc3, rtc)),
+            GbCartType::Mbc30 { rtc, .. } => Mbc::Mbc3(Mbc3::new(save, ram, Mbc3Chip::Mbc30, rtc)),
+            GbCartType::Mbc5 { rumble, .. } => Mbc::Mbc5(Mbc5::new(save, ram, rumble)),
+            GbCartType::Mbc6 => Mbc::Mbc6(Mbc6::new(save)),
+            GbCartType::Mbc7 { .. } => Mbc::Mbc7(Mbc7::new(save)),
+            GbCartType::Huc3 { .. } => Mbc::Huc3(Huc3::new(save, ram)),
+            GbCartType::Huc1 { .. } => Mbc::Huc1(Huc1::new(save, ram)),
+            GbCartType::DbzTrans { .. } => Mbc::DbzTrans(DbzTrans::new(save, ram)),
         };
 
         Ok(Cartridge {
@@ -412,15 +407,67 @@ mod tests {
     #[test]
     fn a_stated_board_outranks_the_declared_one() {
         let rom = rom_declaring(0x00, 3);
-        let cartridge = Cartridge::new(rom, Some(GbCartType::Mbc5RamBattery), None).unwrap();
+        let stated = GbCartType::Mbc5 {
+            rom: GbRomSize::Kb32,
+            ram: Some(GbRamSize::Kb32),
+            battery: true,
+            rumble: false,
+        };
+        let cartridge = Cartridge::new(rom, Some(stated), None).unwrap();
         assert_eq!(cartridge.mbc().name(), "MBC5");
         assert!(cartridge.has_battery());
     }
 
     #[test]
+    fn a_stated_boards_own_ram_chip_is_the_one_populated() {
+        // The header declares four banks; the statement replaces it wholesale.
+        let rom = rom_declaring(0x1b, 3);
+        let stated = GbCartType::Mbc5 {
+            rom: GbRomSize::Kb32,
+            ram: Some(GbRamSize::Kb8),
+            battery: true,
+            rumble: false,
+        };
+        let cartridge = Cartridge::new(rom, Some(stated), None).unwrap();
+        assert_eq!(cartridge.ram_len(), 8 * 1024);
+    }
+
+    #[test]
+    fn a_stated_board_larger_than_the_image_is_refused() {
+        let stated = GbCartType::Mbc5 {
+            rom: GbRomSize::Mb1,
+            ram: None,
+            battery: false,
+            rumble: false,
+        };
+        let Err(error) = Cartridge::new(rom_declaring(0x19, 0), Some(stated), None) else {
+            panic!("a board larger than the image was accepted");
+        };
+        assert_eq!(
+            error,
+            GbCartridgeError::ImageShorterThanBoard {
+                board: 1024 * 1024,
+                image: 0x8000
+            }
+        );
+
+        // An image longer than the board carries padding past the silicon.
+        let mut padded = rom_declaring(0x19, 0);
+        padded.resize(0x10000, 0);
+        let smaller = GbCartType::Mbc5 {
+            rom: GbRomSize::Kb32,
+            ram: None,
+            battery: false,
+            rumble: false,
+        };
+        assert!(Cartridge::new(padded, Some(smaller), None).is_ok());
+    }
+
+    #[test]
     fn a_stated_board_stands_in_for_a_type_that_names_none() {
         let rom = rom_declaring(0x99, 0);
-        let cartridge = Cartridge::new(rom, Some(GbCartType::DbzTrans), None).unwrap();
+        let cartridge =
+            Cartridge::new(rom, Some(GbCartType::DbzTrans { ram: None }), None).unwrap();
         assert_eq!(cartridge.mbc().name(), "DbzTrans");
     }
 
@@ -437,7 +484,12 @@ mod tests {
         };
         assert!(mbc1.multicart);
 
-        let stated = Cartridge::new(multicart_rom, Some(GbCartType::Mbc1), None).unwrap();
+        let plain_mbc1 = GbCartType::Mbc1 {
+            rom: GbRomSize::Mb1,
+            ram: None,
+            battery: false,
+        };
+        let stated = Cartridge::new(multicart_rom, Some(plain_mbc1), None).unwrap();
         let Mbc::Mbc1(mbc1) = stated.mbc() else {
             panic!("MBC1 cart built a different mapper");
         };
@@ -445,7 +497,9 @@ mod tests {
 
         let stated = Cartridge::new(
             rom_declaring(0x01, 0),
-            Some(GbCartType::Mbc1Multicart),
+            Some(GbCartType::Mbc1Multicart {
+                rom: GbRomSize::Kb32,
+            }),
             None,
         )
         .unwrap();
@@ -457,8 +511,13 @@ mod tests {
 
     #[test]
     fn a_stated_mbc30_keeps_the_wide_bank_register_on_a_small_rom() {
-        let cartridge =
-            Cartridge::new(rom_declaring(0x10, 3), Some(GbCartType::Mbc30), None).unwrap();
+        let stated = GbCartType::Mbc30 {
+            rom: GbRomSize::Kb32,
+            ram: Some(GbRamSize::Kb32),
+            battery: true,
+            rtc: true,
+        };
+        let cartridge = Cartridge::new(rom_declaring(0x10, 3), Some(stated), None).unwrap();
         let Mbc::Mbc3(mbc3) = cartridge.mbc() else {
             panic!("MBC30 cart built a different mapper");
         };

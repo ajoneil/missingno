@@ -5,7 +5,7 @@ pub struct Mbc2 {
 }
 
 impl Mbc2 {
-    pub fn new(_rom: &[u8], save_data: Option<Vec<u8>>) -> Self {
+    pub fn new(save_data: Option<Vec<u8>>) -> Self {
         let mut ram = [0; 512];
         if let Some(data) = save_data {
             let len = data.len().min(ram.len());

@@ -225,7 +225,7 @@ fn bank_3f_ntsc() {
     run_self_test_on(
         "cartridge/bank-3f_ntsc.a26",
         TvStandard::Ntsc,
-        CartType::Tigervision,
+        CartType::Tigervision { rom: None },
     );
 }
 
@@ -234,7 +234,7 @@ fn bank_3f_pal() {
     run_self_test_on(
         "cartridge/bank-3f_pal.a26",
         TvStandard::Pal,
-        CartType::Tigervision,
+        CartType::Tigervision { rom: None },
     );
 }
 
@@ -243,7 +243,7 @@ fn bank_3f_secam() {
     run_self_test_on(
         "cartridge/bank-3f_secam.a26",
         TvStandard::Secam,
-        CartType::Tigervision,
+        CartType::Tigervision { rom: None },
     );
 }
 
@@ -1002,7 +1002,7 @@ fn bank_3e_ntsc() {
     run_self_test_on(
         "cartridge/bank-3e_ntsc.a26",
         TvStandard::Ntsc,
-        CartType::TigervisionRam,
+        CartType::TigervisionRam { rom: None },
     );
 }
 
@@ -1011,7 +1011,7 @@ fn bank_3e_pal() {
     run_self_test_on(
         "cartridge/bank-3e_pal.a26",
         TvStandard::Pal,
-        CartType::TigervisionRam,
+        CartType::TigervisionRam { rom: None },
     );
 }
 
@@ -1020,7 +1020,7 @@ fn bank_3e_secam() {
     run_self_test_on(
         "cartridge/bank-3e_secam.a26",
         TvStandard::Secam,
-        CartType::TigervisionRam,
+        CartType::TigervisionRam { rom: None },
     );
 }
 
@@ -1029,7 +1029,7 @@ fn bank_3e_wide_ntsc() {
     run_self_test_on(
         "cartridge/bank-3e-wide_ntsc.a26",
         TvStandard::Ntsc,
-        CartType::TigervisionRam,
+        CartType::TigervisionRam { rom: None },
     );
 }
 
@@ -1038,7 +1038,7 @@ fn bank_3e_wide_pal() {
     run_self_test_on(
         "cartridge/bank-3e-wide_pal.a26",
         TvStandard::Pal,
-        CartType::TigervisionRam,
+        CartType::TigervisionRam { rom: None },
     );
 }
 
@@ -1047,7 +1047,7 @@ fn bank_3e_wide_secam() {
     run_self_test_on(
         "cartridge/bank-3e-wide_secam.a26",
         TvStandard::Secam,
-        CartType::TigervisionRam,
+        CartType::TigervisionRam { rom: None },
     );
 }
 
@@ -1056,7 +1056,7 @@ fn bank_3ep_ntsc() {
     run_self_test_on(
         "cartridge/bank-3ep_ntsc.a26",
         TvStandard::Ntsc,
-        CartType::TigervisionRamPlus,
+        CartType::TigervisionRamPlus { rom: None },
     );
 }
 
@@ -1065,7 +1065,7 @@ fn bank_3ep_pal() {
     run_self_test_on(
         "cartridge/bank-3ep_pal.a26",
         TvStandard::Pal,
-        CartType::TigervisionRamPlus,
+        CartType::TigervisionRamPlus { rom: None },
     );
 }
 
@@ -1074,7 +1074,7 @@ fn bank_3ep_secam() {
     run_self_test_on(
         "cartridge/bank-3ep_secam.a26",
         TvStandard::Secam,
-        CartType::TigervisionRamPlus,
+        CartType::TigervisionRamPlus { rom: None },
     );
 }
 
@@ -1083,7 +1083,7 @@ fn bank_3ep_wide_ntsc() {
     run_self_test_on(
         "cartridge/bank-3ep-wide_ntsc.a26",
         TvStandard::Ntsc,
-        CartType::TigervisionRamPlus,
+        CartType::TigervisionRamPlus { rom: None },
     );
 }
 
@@ -1092,7 +1092,7 @@ fn bank_3ep_wide_pal() {
     run_self_test_on(
         "cartridge/bank-3ep-wide_pal.a26",
         TvStandard::Pal,
-        CartType::TigervisionRamPlus,
+        CartType::TigervisionRamPlus { rom: None },
     );
 }
 
@@ -1101,7 +1101,7 @@ fn bank_3ep_wide_secam() {
     run_self_test_on(
         "cartridge/bank-3ep-wide_secam.a26",
         TvStandard::Secam,
-        CartType::TigervisionRamPlus,
+        CartType::TigervisionRamPlus { rom: None },
     );
 }
 

@@ -209,8 +209,16 @@ fn round_trip_bank_fe_restores_the_bank() {
 fn round_trip_bank_3f_restores_the_lower_window() {
     // The 3F test ROM leaves its own non-default bank in the lower window, so
     // the save is taken exactly as the program left it.
-    assert_selection_round_trip("cartridge/bank-3f_ntsc.a26", CartType::Tigervision, |_| {});
-    assert_round_trip("cartridge/bank-3f_ntsc.a26", CartType::Tigervision, 3);
+    assert_selection_round_trip(
+        "cartridge/bank-3f_ntsc.a26",
+        CartType::Tigervision { rom: None },
+        |_| {},
+    );
+    assert_round_trip(
+        "cartridge/bank-3f_ntsc.a26",
+        CartType::Tigervision { rom: None },
+        3,
+    );
 }
 
 #[test]

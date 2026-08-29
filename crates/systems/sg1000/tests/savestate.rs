@@ -167,7 +167,7 @@ fn cart_ram_rides_the_save() {
     rom[..13].copy_from_slice(&[
         0x3E, 0x5A, 0x32, 0x00, 0x80, 0x3E, 0xA5, 0x32, 0xFF, 0x87, 0xC3, 0x0A, 0x00,
     ]);
-    let board = Some(CartType::OthelloRam);
+    let board = Some(CartType::OthelloRam { rom: None });
 
     let mut original = Sg1000::new(&rom, board).expect("an image the board holds");
     for _ in 0..8 {

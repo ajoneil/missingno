@@ -6,12 +6,13 @@
 
 use std::time::Duration;
 
+use missingno_core::cartridge::BoardVocabulary;
 use missingno_core::inspect::{
     AddressDisplay, MemoryRegion, RegisterGroup, Section, Watch, Watchable,
 };
 use missingno_core::isa::InstructionSet;
 use missingno_core::launch::{
-    LaunchChoice, LaunchOptionDescriptor, LaunchOptionKind, board_option,
+    LaunchChoice, LaunchOptionDescriptor, LaunchOptionKind, LaunchValue, LaunchValues, board_option,
 };
 use missingno_core::machine::{
     BoundaryState, CoreRun, CoreStop, Machine, MachineConsole, StateIdentity, StopSet,
@@ -76,11 +77,12 @@ pub fn launch_options(_rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
         },
         board_option(
             BOARD,
-            CartType::all()
-                .filter(|board| board.built())
-                .map(|board| LaunchChoice {
-                    value: board.name(),
-                    label: board.display_name(),
+            CartType::catalogue()
+                .iter()
+                .filter(|spec| CartType::from_name(spec.name).is_some_and(CartType::built))
+                .map(|spec| LaunchChoice {
+                    value: spec.name,
+                    label: spec.display,
                 }),
         ),
         LaunchOptionDescriptor {
@@ -91,18 +93,32 @@ pub fn launch_options(_rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
     ]
 }
 
+/// The board the launch values state, or `None` where nothing states one. A
+/// catalogue states the whole board; a picker names one, and the parts it
+/// carries stay unmeasured.
+pub fn board_from_launch(values: &LaunchValues) -> Result<Option<CartType>, String> {
+    match values.value(BOARD) {
+        None => Ok(None),
+        Some(LaunchValue::Board(board)) => CartType::from_value(board).map(Some),
+        Some(LaunchValue::Choice(name)) => CartType::from_name(name)
+            .map(Some)
+            .ok_or_else(|| format!("unknown Atari VCS board \"{name}\"")),
+        Some(_) => Err(format!("the {BOARD} option states a board")),
+    }
+}
+
 pub fn create_console(
     rom: &[u8],
     title: String,
     tv_standard: Option<TvStandard>,
-    cart_type: Option<&str>,
+    cart_type: Option<CartType>,
     overdump: bool,
 ) -> Result<Box<dyn SystemConsole>, CartridgeError> {
     // The library's metadata is authoritative; carts carry no region header and
     // the size heuristic can't always name the board, so fall back only when
     // the game-db is silent — then probe the standard from the ROM's own field
     // length. Pacing, aspect, and palette follow the standard.
-    let cart = cart_type.and_then(CartType::from_name);
+    let cart = cart_type;
     let fit = match overdump {
         true => DumpFit::Overdump,
         false => DumpFit::Exact,

@@ -9,6 +9,8 @@ pub mod mbc6;
 pub mod mbc7;
 pub mod no_mbc;
 
+use super::cart_type::GbRamSize;
+
 // Mapper state (including RAM) lives inline; one Mbc exists per console.
 #[allow(clippy::large_enum_variant)]
 pub enum Mbc {
@@ -163,15 +165,9 @@ fn peek_banked<const N: usize>(banks: &[[u8; N]], offset: usize) -> u8 {
     banks.get(offset / N).map_or(0xff, |bank| bank[offset % N])
 }
 
-/// Cartridge-RAM bank count declared by the header's RAM-size byte ($0149).
-fn num_ram_banks(rom: &[u8]) -> usize {
-    match rom[0x149] {
-        2 => 1,
-        3 => 4,
-        4 => 16,
-        5 => 8,
-        _ => 0,
-    }
+/// The 8 KB banks the board's RAM chip fills; none where it carries no chip.
+fn ram_banks(ram: Option<GbRamSize>) -> usize {
+    ram.map_or(0, GbRamSize::banks)
 }
 
 /// A bank-major RAM store linearised for a save file; `None` when the board
@@ -251,7 +247,7 @@ mod tests {
     #[test]
     fn mbc1_bank_tracks_register_and_zero_maps_to_one() {
         let rom = bank_stamped_rom(32);
-        let mut mbc = Mbc::Mbc1(mbc1::Mbc1::new(&rom, None, false));
+        let mut mbc = Mbc::Mbc1(mbc1::Mbc1::new(None, None, false));
         assert_bank_matches_read(&mbc, &rom);
         mbc.write(0x2000, 0x12);
         assert_eq!(mbc.switchable_rom_bank(rom.len()), Some(0x12));
@@ -264,7 +260,7 @@ mod tests {
     #[test]
     fn mbc1_large_rom_upper_bits_apply() {
         let rom = bank_stamped_rom(128);
-        let mut mbc = Mbc::Mbc1(mbc1::Mbc1::new(&rom, None, false));
+        let mut mbc = Mbc::Mbc1(mbc1::Mbc1::new(None, None, false));
         mbc.write(0x2000, 0x03);
         mbc.write(0x4000, 0x01);
         assert_bank_matches_read(&mbc, &rom);
@@ -273,7 +269,7 @@ mod tests {
     #[test]
     fn mbc2_bank_matches_read() {
         let rom = bank_stamped_rom(16);
-        let mut mbc = Mbc::Mbc2(mbc2::Mbc2::new(&rom, None));
+        let mut mbc = Mbc::Mbc2(mbc2::Mbc2::new(None));
         mbc.write(0x2100, 5);
         assert_eq!(mbc.switchable_rom_bank(rom.len()), Some(5));
         assert_bank_matches_read(&mbc, &rom);
@@ -282,7 +278,7 @@ mod tests {
     #[test]
     fn mbc3_bank_matches_read() {
         let rom = bank_stamped_rom(64);
-        let mut mbc = Mbc::Mbc3(mbc3::Mbc3::new(&rom, None, mbc3::Mbc3Chip::Mbc3, false));
+        let mut mbc = Mbc::Mbc3(mbc3::Mbc3::new(None, None, mbc3::Mbc3Chip::Mbc3, false));
         mbc.write(0x2000, 0x21);
         assert_eq!(mbc.switchable_rom_bank(rom.len()), Some(0x21));
         assert_bank_matches_read(&mbc, &rom);
@@ -293,7 +289,7 @@ mod tests {
     #[test]
     fn mbc5_maps_bank_zero_literally() {
         let rom = bank_stamped_rom(64);
-        let mut mbc = Mbc::Mbc5(mbc5::Mbc5::new(&rom, None));
+        let mut mbc = Mbc::Mbc5(mbc5::Mbc5::new(None, None, false));
         mbc.write(0x2000, 0);
         assert_eq!(mbc.switchable_rom_bank(rom.len()), Some(0));
         assert_bank_matches_read(&mbc, &rom);
@@ -304,11 +300,11 @@ mod tests {
     #[test]
     fn huc1_and_mbc7_map_zero_to_one() {
         let rom = bank_stamped_rom(32);
-        let mut huc1 = Mbc::Huc1(huc1::Huc1::new(&rom, None));
+        let mut huc1 = Mbc::Huc1(huc1::Huc1::new(None, None));
         huc1.write(0x2000, 0);
         assert_eq!(huc1.switchable_rom_bank(rom.len()), Some(1));
         assert_bank_matches_read(&huc1, &rom);
-        let mut mbc7 = Mbc::Mbc7(mbc7::Mbc7::new(&rom, None));
+        let mut mbc7 = Mbc::Mbc7(mbc7::Mbc7::new(None));
         mbc7.write(0x2000, 7);
         assert_bank_matches_read(&mbc7, &rom);
     }
@@ -316,9 +312,9 @@ mod tests {
     #[test]
     fn half_window_mappers_report_no_single_bank() {
         let rom = bank_stamped_rom(32);
-        let mbc6 = Mbc::Mbc6(mbc6::Mbc6::new(&rom, None));
+        let mbc6 = Mbc::Mbc6(mbc6::Mbc6::new(None));
         assert_eq!(mbc6.switchable_rom_bank(rom.len()), None);
-        let dbz = Mbc::DbzTrans(dbz_trans::DbzTrans::new(&rom, None));
+        let dbz = Mbc::DbzTrans(dbz_trans::DbzTrans::new(None, None));
         assert_eq!(dbz.switchable_rom_bank(rom.len()), None);
     }
 }
