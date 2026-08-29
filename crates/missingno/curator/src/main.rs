@@ -1174,14 +1174,18 @@ impl Curator {
     }
 
     /// Look a selected entry up on Hasheous unprompted — once per session,
-    /// only when it has a hash to ask about and no cover yet.
+    /// only when it has a hash to ask about and no cover yet. A curated entry
+    /// is settled: a cover it lacks was left out, not overlooked.
     fn auto_enrich_task(&mut self, i: usize) -> Task<Message> {
         let Ok(db) = &self.db else {
             return Task::none();
         };
         let entry = &db.entries[i];
         let key = entry.key();
-        if !entry.game.covers().is_empty() || self.enrich_attempted.contains(&key) || self.enriching
+        if entry.game.curated()
+            || !entry.game.covers().is_empty()
+            || self.enrich_attempted.contains(&key)
+            || self.enriching
         {
             return Task::none();
         }
