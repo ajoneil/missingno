@@ -150,6 +150,8 @@ pub struct MbcSnapshot {
     pub mbc6: Option<Mbc6State>,
     /// MBC7's split enables, accelerometer latch, and EEPROM write-enable.
     pub mbc7: Option<Mbc7State>,
+    /// Sachen MMC1's remap pair and logo lock.
+    pub sachen: Option<SachenState>,
 }
 
 /// MBC3 real-time-clock register file as saved: the live counters ($08-$0C), the
@@ -190,6 +192,16 @@ pub struct Mbc7State {
     pub accel_x: u16,
     pub accel_y: u16,
     pub write_enabled: bool,
+}
+
+/// Sachen MMC1's base/mask remap registers and the A15-counted logo lock —
+/// the fields the shared rom_bank does not carry.
+#[derive(Clone, Copy)]
+pub struct SachenState {
+    pub base: u8,
+    pub mask: u8,
+    pub locked: bool,
+    pub a15_falls: u8,
 }
 
 /// The clock register a $4000-$5FFF select code names, as a save-state index.

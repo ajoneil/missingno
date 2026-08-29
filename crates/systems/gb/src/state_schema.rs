@@ -272,6 +272,19 @@ pub fn dmg_boundary_fields() -> Vec<FieldDef> {
         FieldDef::boundary("mbc7_write_enabled", Bool, "cartridge")
             .help("MBC7 EEPROM write-enable (EWEN) latch")
             .nullable(),
+        // Sachen MMC1's remap registers and logo lock.
+        FieldDef::boundary("sachen_base", U8, "cartridge")
+            .help("Sachen MMC1 base ROM bank")
+            .nullable(),
+        FieldDef::boundary("sachen_mask", U8, "cartridge")
+            .help("Sachen MMC1 ROM bank mask (set bits come from the base)")
+            .nullable(),
+        FieldDef::boundary("sachen_locked", Bool, "cartridge")
+            .help("Sachen MMC1 lock — ROM A7 forced high until unlocked")
+            .nullable(),
+        FieldDef::boundary("sachen_a15_falls", U8, "cartridge")
+            .help("Sachen MMC1 A15 high→low edges counted toward unlock")
+            .nullable(),
     ]
 }
 

@@ -9,6 +9,11 @@ impl<M: Model> Console<M> {
             if crate::observes_audio(address) {
                 self.sync_audio();
             }
+            // The CPU asserts its address on the external bus only while DMA
+            // is not the bus master there.
+            if self.chassis.dma.is_active_on_bus() != Some(crate::memory::Bus::External) {
+                self.chassis.external.observe_bus_address(address);
+            }
             let value = self.bus_value_at_drive_enable(address);
             // OAM read lock at the drive enable: the grant view tobe↑ samples
             // before this fall's PPU advance applies any lock onset.

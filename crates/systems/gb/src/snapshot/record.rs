@@ -147,5 +147,11 @@ pub fn read_shared_record<M: crate::Model>(gb: &Console<M>) -> StateRecord {
             .set("mbc7_accel_y", m7.accel_y)
             .set("mbc7_write_enabled", m7.write_enabled);
     }
+    if let Some(s) = mbc.sachen {
+        r.set("sachen_base", s.base)
+            .set("sachen_mask", s.mask)
+            .set("sachen_locked", s.locked)
+            .set("sachen_a15_falls", s.a15_falls);
+    }
     r
 }

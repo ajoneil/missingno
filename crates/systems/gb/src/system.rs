@@ -880,6 +880,75 @@ mod tests {
         assert!(wrong.last_watch_hit().is_none());
     }
 
+    /// A 256 KB Sachen 4-in-1 image whose menu code performs the remap
+    /// sequence. The mask write flips the low window from bank 0 to the base
+    /// bank mid-program, so the continuation lives at the same offsets in
+    /// bank 4 — the same layout trick the real menus rely on.
+    fn sachen_remap_program() -> Console<Dmg> {
+        use crate::cartridge::mbc::sachen_mmc1::header_window_permuted;
+        let mut rom = vec![0u8; 16 * 0x4000];
+        // The 0x0100-0x01FF window always reads through the swapped address
+        // lines, so code that executes there is stored permuted on the chip.
+        let menu: [u8; 15] = [
+            0x3e, 0xff, // LD A, $FF
+            0xea, 0x00, 0x20, // LD ($2000), A — map enable
+            0x3e, 0x04, // LD A, $04
+            0xea, 0x00, 0x00, // LD ($0000), A — base bank
+            0x3e, 0xfc, // LD A, $FC
+            0xea, 0x00, 0x40, // LD ($4000), A — mask; low window now bank 4
+        ];
+        for (i, &byte) in menu.iter().enumerate() {
+            rom[header_window_permuted(0x100 + i as u16) as usize] = byte;
+        }
+        let cont: [u8; 8] = [
+            0x3e, 0x02, // LD A, $02
+            0xea, 0x00, 0x20, // LD ($2000), A — ROM bank
+            0xc3, 0x00, 0x40, // JP $4000
+        ];
+        for (i, &byte) in cont.iter().enumerate() {
+            let offset = header_window_permuted(0x10f + i as u16) as usize;
+            rom[4 * 0x4000 + offset] = byte;
+        }
+        let game = 6 * 0x4000;
+        rom[game..game + 2].copy_from_slice(&[0x18, 0xfe]); // JR -2
+        rom[4 * 0x4000] = 0x77; // the launched game's own bank 0
+        let stated = crate::cartridge::GbCartType::SachenMmc1 {
+            rom: crate::cartridge::GbRomSize::Kb256,
+        };
+        Console::new(Cartridge::new(rom, Some(stated), None).unwrap(), None)
+    }
+
+    #[test]
+    fn a_sachen_menu_remaps_and_launches_into_its_window() {
+        let mut console = sachen_remap_program();
+        for _ in 0..12 {
+            console.step();
+        }
+        assert_eq!(console.cpu().pc, 0x4000);
+        assert_eq!(console.cartridge().switchable_rom_bank(), Some(0x06));
+        // The launched game's zero page reads from the base bank.
+        assert_eq!(console.cartridge().read(0x0000), 0x77);
+    }
+
+    #[test]
+    fn a_sachen_cart_boots_with_its_own_logo_and_an_unlocked_mapper() {
+        let mut rom = vec![0u8; 4 * 0x4000];
+        rom[0x0104] = 0x11; // what an unlocked read would see
+        rom[0x0184] = 0xa5; // the locked boot copy: A7 forced high
+        let stated = crate::cartridge::GbCartType::SachenMmc1 {
+            rom: crate::cartridge::GbRomSize::Kb64,
+        };
+        let console: Console<Dmg> =
+            Console::new(Cartridge::new(rom, Some(stated), None).unwrap(), None);
+        // First logo byte 0xA5, nibbles bit-doubled into tile 1.
+        assert_eq!(console.peek_range(0x8010, 1)[0], 0xcc);
+        assert_eq!(console.peek_range(0x8014, 1)[0], 0x33);
+        match console.cartridge().mbc() {
+            crate::cartridge::mbc::Mbc::SachenMmc1(m) => assert!(!m.locked),
+            _ => panic!("expected the Sachen mapper"),
+        }
+    }
+
     #[test]
     fn step_over_runs_a_call_out_and_steps_everything_else() {
         let mut over_call = debugger();

@@ -8,6 +8,7 @@ pub mod mbc5;
 pub mod mbc6;
 pub mod mbc7;
 pub mod no_mbc;
+pub mod sachen_mmc1;
 
 use super::cart_type::GbRamSize;
 
@@ -24,6 +25,7 @@ pub enum Mbc {
     Huc1(huc1::Huc1),
     Huc3(huc3::Huc3),
     DbzTrans(dbz_trans::DbzTrans),
+    SachenMmc1(sachen_mmc1::SachenMmc1),
 }
 
 impl Mbc {
@@ -40,6 +42,7 @@ impl Mbc {
             Mbc::Huc1(_) => "HuC1",
             Mbc::Huc3(_) => "HuC3",
             Mbc::DbzTrans(_) => "DbzTrans",
+            Mbc::SachenMmc1(_) => "Sachen MMC1",
         }
     }
 
@@ -55,6 +58,7 @@ impl Mbc {
             Mbc::Huc1(m) => m.ram(),
             Mbc::Huc3(m) => m.ram(),
             Mbc::DbzTrans(m) => m.ram(),
+            Mbc::SachenMmc1(_) => None,
         }
     }
 
@@ -72,6 +76,7 @@ impl Mbc {
             Mbc::Mbc7(m) => Some(m.switchable_rom_bank()),
             Mbc::Huc1(m) => Some(m.switchable_rom_bank()),
             Mbc::Huc3(m) => Some(m.switchable_rom_bank()),
+            Mbc::SachenMmc1(m) => Some(m.switchable_rom_bank()),
         }
     }
 
@@ -87,6 +92,7 @@ impl Mbc {
             Mbc::Huc1(m) => m.read(rom, address),
             Mbc::Huc3(m) => m.read(rom, address),
             Mbc::DbzTrans(m) => m.read(rom, address),
+            Mbc::SachenMmc1(m) => m.read(rom, address),
         }
     }
 
@@ -103,6 +109,7 @@ impl Mbc {
             Mbc::Huc1(m) => m.write(address, value),
             Mbc::Huc3(m) => m.write(address, value),
             Mbc::DbzTrans(m) => m.write(address, value),
+            Mbc::SachenMmc1(m) => m.write(address, value),
         }
     }
 
@@ -111,6 +118,30 @@ impl Mbc {
     pub fn tick_rtc(&mut self, dots: u32) {
         if let Mbc::Mbc3(m) = self {
             m.tick_rtc(dots);
+        }
+    }
+
+    /// An A15 high→low edge on the cartridge bus. Only the Sachen mapper
+    /// watches the line; every other cartridge type ignores it.
+    pub fn a15_fell(&mut self) {
+        if let Mbc::SachenMmc1(m) = self {
+            m.a15_fell();
+        }
+    }
+
+    /// Boot has completed without the mapper seeing the bus: the Sachen
+    /// unlock count has long passed.
+    pub fn boot_completed(&mut self) {
+        if let Mbc::SachenMmc1(m) = self {
+            m.boot_completed();
+        }
+    }
+
+    /// The cartridge-edge /RESET. The Sachen mapper re-locks and clears its
+    /// registers; every other mapper's registers ride through a power-cycle.
+    pub fn reset(&mut self) {
+        if let Mbc::SachenMmc1(m) = self {
+            m.reset();
         }
     }
 
@@ -129,6 +160,7 @@ impl Mbc {
             Mbc::Huc1(m) => m.ram.len() * 8 * 1024,
             Mbc::Huc3(m) => m.ram.len() * 8 * 1024,
             Mbc::DbzTrans(m) => m.ram.len() * 8 * 1024,
+            Mbc::SachenMmc1(_) => 0,
         }
     }
 
@@ -156,6 +188,7 @@ impl Mbc {
             Mbc::Huc1(m) => peek_banked(&m.ram, offset),
             Mbc::Huc3(m) => peek_banked(&m.ram, offset),
             Mbc::DbzTrans(m) => peek_banked(&m.ram, offset),
+            Mbc::SachenMmc1(_) => 0xff,
         }
     }
 }
@@ -221,6 +254,7 @@ impl Mbc {
             Mbc::Huc1(m) => restore_banked(&mut m.ram, bytes),
             Mbc::Huc3(m) => restore_banked(&mut m.ram, bytes),
             Mbc::DbzTrans(m) => restore_banked(&mut m.ram, bytes),
+            Mbc::SachenMmc1(_) => {}
         }
     }
 }
@@ -316,5 +350,78 @@ mod tests {
         assert_eq!(mbc6.switchable_rom_bank(rom.len()), None);
         let dbz = Mbc::DbzTrans(dbz_trans::DbzTrans::new(None, None));
         assert_eq!(dbz.switchable_rom_bank(rom.len()), None);
+    }
+
+    /// A Sachen mapper with the logo lock already run out, so bank reads see
+    /// unforced ROM addresses.
+    fn unlocked_sachen() -> Mbc {
+        let mut mbc = Mbc::SachenMmc1(sachen_mmc1::SachenMmc1::new());
+        for _ in 0..0x31 {
+            mbc.a15_fell();
+        }
+        mbc
+    }
+
+    #[test]
+    fn sachen_remap_writes_are_gated_on_map_enable() {
+        let rom = bank_stamped_rom(16);
+        let mut mbc = unlocked_sachen();
+
+        // Base and mask are refused while bank bits 5:4 are not 0b11.
+        mbc.write(0x0000, 0x04);
+        mbc.write(0x4000, 0xfc);
+        assert_eq!(mbc.switchable_rom_bank(rom.len()), Some(1));
+        assert_bank_matches_read(&mbc, &rom);
+
+        mbc.write(0x2000, 0xff);
+        mbc.write(0x0000, 0x04);
+        mbc.write(0x4000, 0xfc);
+        mbc.write(0x2000, 0x02);
+        assert_eq!(mbc.switchable_rom_bank(rom.len()), Some(0x06));
+        assert_bank_matches_read(&mbc, &rom);
+        // The low window follows the base through the mask.
+        assert_eq!(mbc.read(&rom, 0x0000), 0x04);
+    }
+
+    #[test]
+    fn sachen_bank_zero_adjusts_over_the_whole_byte() {
+        let rom = bank_stamped_rom(16);
+        let mut mbc = unlocked_sachen();
+        mbc.write(0x2000, 0x00);
+        assert_eq!(mbc.switchable_rom_bank(rom.len()), Some(1));
+        assert_bank_matches_read(&mbc, &rom);
+        // 0x80 stores literally and reaches bank 0 through ROM-size aliasing.
+        mbc.write(0x2000, 0x80);
+        assert_eq!(mbc.switchable_rom_bank(rom.len()), Some(0x80));
+        assert_eq!(mbc.read(&rom, 0x4000), 0x00);
+    }
+
+    #[test]
+    fn sachen_header_window_reads_through_swapped_lines() {
+        let mut rom = vec![0u8; 2 * 0x4000];
+        rom[0x0105] = 0x11;
+        rom[0x0144] = 0x22; // 0x0105 with A0→A6
+        rom[0x0244] = 0x33;
+        let mbc = unlocked_sachen();
+        assert_eq!(mbc.read(&rom, 0x0105), 0x22);
+        // Outside 0x0100-0x01FF the lines track straight through.
+        assert_eq!(mbc.read(&rom, 0x0244), 0x33);
+    }
+
+    #[test]
+    fn sachen_lock_forces_rom_a7_until_the_49th_a15_fall() {
+        let mut rom = vec![0u8; 2 * 0x4000];
+        rom[0x0000] = 0x11;
+        rom[0x0080] = 0x22;
+        rom[0x01c4] = 0x33; // 0x0105 permuted, then A7 forced
+        let mut mbc = Mbc::SachenMmc1(sachen_mmc1::SachenMmc1::new());
+        assert_eq!(mbc.read(&rom, 0x0000), 0x22);
+        assert_eq!(mbc.read(&rom, 0x0105), 0x33);
+        for _ in 0..0x30 {
+            mbc.a15_fell();
+        }
+        assert_eq!(mbc.read(&rom, 0x0000), 0x22);
+        mbc.a15_fell();
+        assert_eq!(mbc.read(&rom, 0x0000), 0x11);
     }
 }

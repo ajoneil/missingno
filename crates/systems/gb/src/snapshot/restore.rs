@@ -198,6 +198,15 @@ fn restore_mbc(snap: &MbcSnapshot, mbc: &mut Mbc) {
             m.ram_bank = snap.ram_bank;
         }
         Mbc::DbzTrans(m) => m.restore(snap.rom_bank, snap.ram_bank, snap.ram_enabled),
+        Mbc::SachenMmc1(m) => {
+            m.bank = snap.rom_bank as u8;
+            if let Some(s) = &snap.sachen {
+                m.base = s.base;
+                m.mask = s.mask;
+                m.locked = s.locked;
+                m.a15_falls = s.a15_falls;
+            }
+        }
     }
 }
 
@@ -265,6 +274,35 @@ mod tests {
                 "cart RAM byte {offset:#x} (bank {}) diverged",
                 offset / (8 * 1024)
             );
+        }
+    }
+
+    #[test]
+    fn sachen_latches_round_trip() {
+        let rom = vec![0u8; 4 * 0x4000];
+        let stated = crate::cartridge::GbCartType::SachenMmc1 {
+            rom: crate::cartridge::GbRomSize::Kb64,
+        };
+        let mut cart = Cartridge::new(rom.clone(), Some(stated), None).unwrap();
+        cart.write(0x2000, 0xff);
+        cart.write(0x0000, 0x12);
+        cart.write(0x4000, 0xf0);
+        cart.write(0x2000, 0x05);
+        let source = GameBoy::new(cart, None);
+        let (record, memory) = capture(&source);
+
+        let mut target = GameBoy::new(Cartridge::new(rom, Some(stated), None).unwrap(), None);
+        target
+            .restore_boundary(&record, memory, None)
+            .expect("restore");
+        match target.cartridge().mbc() {
+            Mbc::SachenMmc1(m) => {
+                assert_eq!(m.base, 0x12);
+                assert_eq!(m.mask, 0xf0);
+                assert_eq!(m.bank, 0x05);
+                assert!(!m.locked);
+            }
+            _ => panic!("expected the Sachen mapper"),
         }
     }
 

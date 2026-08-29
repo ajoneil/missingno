@@ -188,6 +188,11 @@ impl<M: Model> Console<M> {
             let read = |a: u16| self.chassis.external.cartridge.read(a);
             let logo: [u8; 0x30] = std::array::from_fn(|i| read(0x0104 + i as u16));
             self.chassis.vram_bus.vram.init_post_boot(&logo);
+            // The logo lands in VRAM as the boot ROM's copy left it — under a
+            // still-locked Sachen mapper, Sachen's own logo. The header reads
+            // below happen after the boot ROM's compare, mapper unlocked.
+            self.chassis.external.cartridge.boot_completed();
+            let read = |a: u16| self.chassis.external.cartridge.read(a);
             let header = ppu::CartridgeBootHeader {
                 is_cgb: self.chassis.external.cartridge.is_cgb(),
                 title: std::array::from_fn(|i| read(0x0134 + i as u16)),

@@ -173,13 +173,38 @@ impl ExternalBus {
         self.latch = 0xFF;
         self.decay = 0;
         self.boot_rom_mapped = self.boot_rom.is_some();
+        self.cartridge.reset_mapper();
     }
 
     pub fn write(&mut self, address: ExternalAddress, value: u8) {
         match address {
-            ExternalAddress::Cartridge(addr) => self.cartridge.write(addr, value),
+            ExternalAddress::Cartridge(addr) => {
+                // A15 falls for a ROM-space write even where the boot ROM
+                // overlays reads.
+                if addr < 0x8000 {
+                    self.cartridge.a15_fell();
+                }
+                self.cartridge.write(addr, value)
+            }
             ExternalAddress::WorkRam(addr) => self.work_ram[addr as usize] = value,
         }
+    }
+
+    /// A bus master asserting `address` on this bus. The cartridge sees A15
+    /// fall on ROM-space accesses; boot-ROM-overlay reads never reach it.
+    pub fn observe_bus_address(&mut self, address: u16) {
+        if address > 0x7fff {
+            return;
+        }
+        if self.boot_rom_mapped
+            && self
+                .boot_rom
+                .as_ref()
+                .is_some_and(|rom| rom.overlay_byte(address).is_some())
+        {
+            return;
+        }
+        self.cartridge.a15_fell();
     }
 
     /// Drive `value` onto the bus latch and reset the decay counter.
@@ -383,7 +408,10 @@ impl<M: Model> Chassis<M> {
             kind: BusAccessKind::DmaWrite,
         });
         match Bus::of(source) {
-            Some(Bus::External) => self.external.drive(byte),
+            Some(Bus::External) => {
+                self.external.observe_bus_address(source);
+                self.external.drive(byte)
+            }
             Some(Bus::Vram) => self.vram_bus.drive(byte),
             None => {}
         }

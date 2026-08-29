@@ -6,7 +6,7 @@ pub use cart_type::{GbCartType, GbCartridgeError, GbRamSize, GbRomSize};
 use mbc::mbc3::{ClockRegisters, Mapped, Mbc3Chip};
 use mbc::{
     Mbc, dbz_trans::DbzTrans, huc1::Huc1, huc3::Huc3, mbc1::Mbc1, mbc2::Mbc2, mbc3::Mbc3,
-    mbc5::Mbc5, mbc6::Mbc6, mbc7::Mbc7, no_mbc::NoMbc,
+    mbc5::Mbc5, mbc6::Mbc6, mbc7::Mbc7, no_mbc::NoMbc, sachen_mmc1::SachenMmc1,
 };
 
 /// A read-only view of the cartridge's mapper and clock state, for the
@@ -118,7 +118,7 @@ impl Cartridge {
             Mbc::Huc1(m) => Some(m.ram_bank),
             Mbc::Huc3(m) => Some(m.ram_bank),
             Mbc::DbzTrans(m) => Some(m.ram_bank),
-            Mbc::NoMbc(_) | Mbc::Mbc2(_) | Mbc::Mbc7(_) => None,
+            Mbc::NoMbc(_) | Mbc::Mbc2(_) | Mbc::Mbc7(_) | Mbc::SachenMmc1(_) => None,
         }
     }
 
@@ -210,9 +210,7 @@ impl Cartridge {
             GbCartType::Huc3 { .. } => Mbc::Huc3(Huc3::new(save, ram)),
             GbCartType::Huc1 { .. } => Mbc::Huc1(Huc1::new(save, ram)),
             GbCartType::DbzTrans { .. } => Mbc::DbzTrans(DbzTrans::new(save, ram)),
-            // The Sachen mapper is named but not modelled, so the image runs as
-            // the MBC1 it borrows: the menu draws, its games do not launch.
-            GbCartType::SachenMmc1 { .. } => Mbc::Mbc1(Mbc1::new(save, ram, false)),
+            GbCartType::SachenMmc1 { .. } => Mbc::SachenMmc1(SachenMmc1::new()),
         };
 
         Ok(Cartridge {
@@ -244,6 +242,7 @@ impl Cartridge {
             Mbc::Huc1(m) => (None, Some(m.ram_bank), None),
             Mbc::Huc3(m) => (None, Some(m.ram_bank), None),
             Mbc::DbzTrans(m) => (Some(m.ram_enabled), Some(m.ram_bank), None),
+            Mbc::SachenMmc1(_) => (None, None, None),
         };
         CartridgeView {
             mapper: self.mbc.name(),
@@ -373,6 +372,21 @@ impl Cartridge {
         self.mbc.tick_rtc(dots);
     }
 
+    /// An A15 high→low edge on the cartridge bus.
+    pub fn a15_fell(&mut self) {
+        self.mbc.a15_fell();
+    }
+
+    /// Boot has completed without the mapper seeing the bus.
+    pub fn boot_completed(&mut self) {
+        self.mbc.boot_completed();
+    }
+
+    /// The cartridge-edge /RESET.
+    pub fn reset_mapper(&mut self) {
+        self.mbc.reset();
+    }
+
     /// Returns true if SRAM has been written to since the last call.
     pub fn take_sram_dirty(&mut self) -> bool {
         std::mem::replace(&mut self.sram_dirty, false)
@@ -472,6 +486,19 @@ mod tests {
         let cartridge =
             Cartridge::new(rom, Some(GbCartType::DbzTrans { ram: None }), None).unwrap();
         assert_eq!(cartridge.mbc().name(), "DbzTrans");
+    }
+
+    #[test]
+    fn a_stated_sachen_board_builds_the_sachen_mapper() {
+        let mut rom = rom_declaring(0x01, 0);
+        rom.resize(64 * 1024, 0);
+        let stated = GbCartType::SachenMmc1 {
+            rom: GbRomSize::Kb64,
+        };
+        let cartridge = Cartridge::new(rom, Some(stated), None).unwrap();
+        assert_eq!(cartridge.mbc().name(), "Sachen MMC1");
+        assert!(!cartridge.has_battery());
+        assert_eq!(cartridge.ram_len(), 0);
     }
 
     #[test]

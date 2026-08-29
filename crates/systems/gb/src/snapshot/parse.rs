@@ -5,7 +5,7 @@ use missingno_core::system::StateError;
 
 use super::{
     ApuSnapshot, CpuSnapshot, DmaSnapshot, Mbc6State, Mbc7State, MbcSnapshot, PpuSnapshot, RtcRegs,
-    SerialSnapshot, Snapshot, TimerSnapshot,
+    SachenState, SerialSnapshot, Snapshot, TimerSnapshot,
 };
 
 fn int(record: &StateRecord, name: &str) -> Result<u32, StateError> {
@@ -77,6 +77,19 @@ fn parse_mbc6(record: &StateRecord) -> Result<Option<Mbc6State>, StateError> {
         rom_a_flash: bool_of(record, "mbc6_rom_a_flash")?,
         rom_b_flash: bool_of(record, "mbc6_rom_b_flash")?,
         flash_enabled: bool_of(record, "mbc6_flash_enabled")?,
+    }))
+}
+
+/// Parse the Sachen MMC1 latches, present only for a Sachen save.
+fn parse_sachen(record: &StateRecord) -> Result<Option<SachenState>, StateError> {
+    if opt_u8(record, "sachen_base")?.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(SachenState {
+        base: u8_of(record, "sachen_base")?,
+        mask: u8_of(record, "sachen_mask")?,
+        locked: bool_of(record, "sachen_locked")?,
+        a15_falls: u8_of(record, "sachen_a15_falls")?,
     }))
 }
 
@@ -205,6 +218,7 @@ pub fn parse_record(
         rtc: parse_rtc(record)?,
         mbc6: parse_mbc6(record)?,
         mbc7: parse_mbc7(record)?,
+        sachen: parse_sachen(record)?,
     };
     Ok(Snapshot {
         cpu,

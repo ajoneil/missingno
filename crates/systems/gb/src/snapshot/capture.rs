@@ -2,7 +2,7 @@
 
 use super::{
     ApuSnapshot, CpuSnapshot, DmaSnapshot, Mbc6State, Mbc7State, MbcSnapshot, PpuSnapshot, RtcRegs,
-    SerialSnapshot, TimerSnapshot, clock_register_code,
+    SachenState, SerialSnapshot, TimerSnapshot, clock_register_code,
 };
 use crate::Console;
 use crate::cartridge::mbc::Mbc;
@@ -169,6 +169,7 @@ pub fn capture_mbc<M: crate::Model>(gb: &Console<M>) -> MbcSnapshot {
             rtc: None,
             mbc6: None,
             mbc7: None,
+            sachen: None,
         };
     match mbc {
         Mbc::NoMbc(_) => base("none", 1, 0, false, 0),
@@ -245,6 +246,15 @@ pub fn capture_mbc<M: crate::Model>(gb: &Console<M>) -> MbcSnapshot {
         ),
         Mbc::Huc3(m) => base("huc3", m.rom_bank as u16, m.ram_bank, true, 0),
         Mbc::DbzTrans(m) => base("dbz_trans", m.rom_bank, m.ram_bank, m.ram_enabled, 0),
+        Mbc::SachenMmc1(m) => MbcSnapshot {
+            sachen: Some(SachenState {
+                base: m.base,
+                mask: m.mask,
+                locked: m.locked,
+                a15_falls: m.a15_falls,
+            }),
+            ..base("sachen_mmc1", m.bank as u16, 0, false, 0)
+        },
     }
 }
 
