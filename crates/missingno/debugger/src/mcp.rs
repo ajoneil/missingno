@@ -12,7 +12,8 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-use missingno_core::launch::{LaunchOptionKind, LaunchValues};
+use missingno_core::cartridge::BoardValue;
+use missingno_core::launch::{LaunchOptionKind, LaunchValue, LaunchValues};
 use missingno_mcp_stdio::no_arguments;
 use missingno_session::factory::{self, CoreFactory};
 use missingno_session::shared::SharedSession;
@@ -356,6 +357,21 @@ fn launch_values(factory: &CoreFactory, rom: &[u8], args: &Value) -> Result<Laun
                     .map_err(|error| format!("launch option '{id}': {file}: {error}"))?;
                 launch.set_file(id, contents);
             }
+            // A board is either named on its own, for a board whose wiring
+            // fixes its parts, or stated whole with the parts populated on it.
+            LaunchOptionKind::Board { .. } => match value {
+                Value::String(name) => launch.set_choice(id, name.as_str()),
+                Value::Object(_) => {
+                    let board: BoardValue = serde_json::from_value(value.clone())
+                        .map_err(|error| format!("launch option '{id}': {error}"))?;
+                    launch.set(id, LaunchValue::Board(board));
+                }
+                _ => {
+                    return Err(format!(
+                        "launch option '{id}' takes a board name string or a board object"
+                    ));
+                }
+            },
         }
     }
     Ok(launch)

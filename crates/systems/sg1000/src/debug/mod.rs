@@ -18,9 +18,7 @@ use missingno_core::TvStandard;
 use missingno_core::cartridge::BoardVocabulary;
 use missingno_core::graphics::GraphicsView;
 use missingno_core::inspect::{RegisterGroup, Section};
-use missingno_core::launch::{
-    LaunchChoice, LaunchOptionDescriptor, LaunchValue, LaunchValues, board_option,
-};
+use missingno_core::launch::{LaunchOptionDescriptor, LaunchValue, LaunchValues, board_option};
 use missingno_core::machine::{
     BoundaryState, Machine, MachineConsole, StateIdentity, rom_fingerprint,
 };
@@ -139,13 +137,7 @@ pub const BOARD: &str = "board";
 /// what a catalogue says about its board is all a loader has — the media itself
 /// settles nothing.
 pub fn launch_options(_rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
-    vec![board_option(
-        BOARD,
-        CartType::catalogue().iter().map(|spec| LaunchChoice {
-            value: spec.name,
-            label: spec.display,
-        }),
-    )]
+    vec![board_option(BOARD, CartType::catalogue().iter().cloned())]
 }
 
 /// The board the launch values state, or `None` where nothing states one. A

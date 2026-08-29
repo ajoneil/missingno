@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use iced::Task;
+use missingno_core::cartridge::BoardValue;
 use missingno_core::launch::{LaunchOptionDescriptor, LaunchValue, LaunchValues};
 use missingno_gamedb::Controller;
 
@@ -156,6 +157,8 @@ pub enum Edit {
     Choice(&'static str, Option<String>),
     Toggle(&'static str, Option<bool>),
     File(&'static str, Option<Vec<u8>>),
+    /// A whole board and the parts stated on it, as one edit.
+    Board(&'static str, Option<BoardValue>),
 }
 
 impl Edit {
@@ -164,9 +167,11 @@ impl Edit {
             Edit::Choice(id, Some(value)) => values.set_choice(*id, value.clone()),
             Edit::Toggle(id, Some(value)) => values.set_toggle(*id, *value),
             Edit::File(id, Some(bytes)) => values.set_file(*id, bytes.clone()),
-            Edit::Choice(id, None) | Edit::Toggle(id, None) | Edit::File(id, None) => {
-                values.clear(id)
-            }
+            Edit::Board(id, Some(board)) => values.set_board(*id, board.clone()),
+            Edit::Choice(id, None)
+            | Edit::Toggle(id, None)
+            | Edit::File(id, None)
+            | Edit::Board(id, None) => values.clear(id),
         }
     }
 }
@@ -507,6 +512,25 @@ mod tests {
             .map(|descriptor| descriptor.id)
             .collect();
         assert_eq!(shown, ["board"]);
+    }
+
+    #[test]
+    fn clearing_a_stated_board_hands_it_back_to_the_catalogue() {
+        let stated = BoardValue::new("F6").with_toggle("superchip", true);
+        let mut overrides = LaunchValues::default();
+        Edit::Board("board", Some(stated.clone())).apply(&mut overrides);
+        assert_eq!(overrides.board("board"), Some(&stated));
+
+        Edit::Board("board", None).apply(&mut overrides);
+        assert!(overrides.is_empty());
+
+        let mut facts = Facts::default();
+        facts.set("board", LaunchValue::Board(BoardValue::new("F8")));
+        let values = resolve(&descriptors(), &overrides, &facts);
+        assert_eq!(
+            values.board("board").map(|board| board.board.as_str()),
+            Some("F8")
+        );
     }
 
     #[test]

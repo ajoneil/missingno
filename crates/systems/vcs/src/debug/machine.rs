@@ -80,10 +80,7 @@ pub fn launch_options(_rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
             CartType::catalogue()
                 .iter()
                 .filter(|spec| CartType::from_name(spec.name).is_some_and(CartType::built))
-                .map(|spec| LaunchChoice {
-                    value: spec.name,
-                    label: spec.display,
-                }),
+                .cloned(),
         ),
         LaunchOptionDescriptor {
             id: OVERDUMP,

@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::cartridge::BoardValue;
+use crate::cartridge::{BoardSpec, BoardValue};
 
 /// One option a core accepts at launch.
 #[derive(Clone)]
@@ -31,6 +31,10 @@ pub enum LaunchOptionKind {
     File {
         label: &'static str,
     },
+    /// A board from `boards`, and the parts its silicon varies in.
+    Board {
+        boards: Vec<BoardSpec>,
+    },
 }
 
 /// One value a [`LaunchOptionKind::Choice`] accepts, and how to show it.
@@ -41,17 +45,17 @@ pub struct LaunchChoice {
 }
 
 /// The cartridge-board option, as every core with a board vocabulary publishes
-/// it. The caller supplies the choices, so it decides which of its boards a
+/// it. The caller supplies the boards, so it decides which of its catalogue a
 /// frontend may state.
 pub fn board_option(
     id: &'static str,
-    choices: impl Iterator<Item = LaunchChoice>,
+    boards: impl Iterator<Item = BoardSpec>,
 ) -> LaunchOptionDescriptor {
     LaunchOptionDescriptor {
         id,
         label: "Cartridge board",
-        kind: LaunchOptionKind::Choice {
-            choices: choices.collect(),
+        kind: LaunchOptionKind::Board {
+            boards: boards.collect(),
         },
     }
 }
