@@ -453,6 +453,14 @@ fn tool_definitions() -> Value {
             }), &["key", "from"]),
         },
         {
+            "name": "reject_game",
+            "description": "Turn an entry away for good: it is not software this database catalogues. Its manifest is deleted, its dumps are recorded as out of scope so a rescan never offers them again, and the inbox copies are removed — the archive beside them is left, so re-extracting undoes it. Use for firmware belonging to a hardware accessory rather than a title someone played; a duplicate entry is merge_game, and a game you simply have no dump for stays in the backlog. Rejecting the game being playtested moves the queue on.",
+            "inputSchema": object(json!({
+                "key": { "type": "string" },
+                "reason": { "type": "string", "description": "why it is out of scope; it is recorded beside the dumps so nobody re-curates them" },
+            }), &["key", "reason"]),
+        },
+        {
             "name": "split_game",
             "description": "The inverse of merge_game: an import lumped two different games into one entry, so a release moves out whole and becomes an entry of its own, keeping its publisher, date, regions and hardware. Mods whose base dump leaves travel with it. Use when a release turns out to be an unrelated game sharing a title — not for a pre-retail build of the same game, which is split_release. Returns the new tree/slug key.",
             "inputSchema": object(json!({

@@ -7,10 +7,10 @@ use missingno_core::cartridge::{
     AttributeKind, AttributeValue, BoardSpec, BoardValue, BoardVocabulary,
 };
 use missingno_gamedb::{
-    Controller, Defect, FactKind, FactValue, FlagFile, Game, GameBoy, GameBoyColor, GameKind,
-    GbCartType, HardwareFacts, Language, Link, LinkType, Mod, ModCategory, ModOf, ModRelease,
-    Platform, Region, Release, ReleaseStatus, Sg1000, Sha1, Slug, Tree, TvStandard, Vcs,
-    with_platforms,
+    Artifact, Controller, Defect, FactKind, FactValue, FlagFile, Game, GameBoy, GameBoyColor,
+    GameKind, GbCartType, HardwareFacts, Language, Link, LinkType, Mod, ModCategory, ModOf,
+    ModRelease, Platform, Region, RejectedFile, Rejection, Release, ReleaseStatus, Sg1000, Sha1,
+    Slug, Tree, TvStandard, Vcs, with_platforms,
 };
 
 use crate::vocabulary;
@@ -67,6 +67,8 @@ pub struct ScanOutcome {
     pub strays: Vec<String>,
     /// Dumps whose own header named a platform other than the declared tree.
     pub refinements: Vec<String>,
+    /// Dumps passed over because a curator already turned them away.
+    pub rejected: usize,
 }
 
 /// A hardware fact's description for a tool schema: every platform that states
@@ -903,25 +905,27 @@ impl AnyGame {
             .unwrap_or_default())
     }
 
-    /// Stage what a Game Boy header states, filling only unknown fields.
-    /// Returns (staged, conflicts-with-db) descriptions.
+    /// Stage what a Game Boy header states about the dump it was read from,
+    /// filling only unknown fields. Returns (staged, conflicts-with-db)
+    /// descriptions.
     pub fn stage_gb_header(
         &mut self,
         header: &crate::verify::GbHeader,
+        sha1: &str,
     ) -> (Vec<String>, Vec<String>) {
         use missingno_gamedb::Feature;
         let mut staged = Vec::new();
         let mut conflicts = Vec::new();
         match self {
             AnyGame::Gb(g) => {
-                if g.releases.is_empty() {
-                    return (staged, conflicts);
-                }
                 if header.cgb_flag == 0xC0 {
                     conflicts
                         .push("header says CGB-only, but this entry is in the gb tree".to_owned());
                 }
-                let release = &mut g.releases[0];
+                let Some(index) = header_release(g, sha1) else {
+                    return (staged, conflicts);
+                };
+                let release = &mut g.releases[index];
                 let mut stated = Vec::new();
                 if header.sgb {
                     stated.push(Feature::SuperGameBoyEnhanced);
@@ -929,16 +933,20 @@ impl AnyGame {
                 if header.cgb_flag & 0x80 != 0 {
                     stated.push(Feature::GameBoyColorEnhanced);
                 }
-                if release.hardware.features.is_empty() {
+                let known: Vec<Feature> = release
+                    .hardware
+                    .features
+                    .iter()
+                    .copied()
+                    .filter(|feature| HEADER_FEATURES.contains(feature))
+                    .collect();
+                if known.is_empty() {
                     if !stated.is_empty() {
                         staged.push(format!("features: {stated:?}"));
-                        release.hardware.features = stated;
+                        release.hardware.features.extend(stated);
                     }
-                } else if release.hardware.features != stated {
-                    conflicts.push(format!(
-                        "features: db {:?} vs header {stated:?}",
-                        release.hardware.features
-                    ));
+                } else if known != stated {
+                    conflicts.push(format!("features: db {known:?} vs header {stated:?}"));
                 }
                 stage_board(
                     &mut release.hardware.cart_type,
@@ -948,18 +956,17 @@ impl AnyGame {
                 );
             }
             AnyGame::Gbc(g) => {
-                if g.releases.is_empty() {
-                    return (staged, conflicts);
-                }
                 if header.cgb_flag & 0xC0 != 0xC0 {
                     conflicts.push(
                         "header does not require the CGB, but this entry is in the gbc tree"
                             .to_owned(),
                     );
                 }
-                let release = &mut g.releases[0];
+                let Some(index) = header_release(g, sha1) else {
+                    return (staged, conflicts);
+                };
                 stage_board(
-                    &mut release.hardware.cart_type,
+                    &mut g.releases[index].hardware.cart_type,
                     header.board,
                     &mut staged,
                     &mut conflicts,
@@ -1358,6 +1365,34 @@ fn lone_dump_entry<P: Platform>(title: String, artifact: missingno_gamedb::Artif
     }
 }
 
+/// The features a cartridge header states; the rest are read off the box.
+const HEADER_FEATURES: [missingno_gamedb::Feature; 2] = [
+    missingno_gamedb::Feature::SuperGameBoyEnhanced,
+    missingno_gamedb::Feature::GameBoyColorEnhanced,
+];
+
+/// The release a booted dump's header speaks for — the cart it was read from,
+/// not the entry's first. A dump no release holds answers for the first, the
+/// one `stage_artifact` would file it on; a mod's dump answers for nothing,
+/// since a hack's header states the hack.
+fn header_release<P: Platform>(game: &Game<P>, sha1: &str) -> Option<usize> {
+    let holds = |artifacts: &[Artifact]| artifacts.iter().any(|a| a.sha1.as_str() == sha1);
+    let patched = game
+        .mods
+        .iter()
+        .flat_map(|m| &m.releases)
+        .any(|r| holds(&r.artifacts));
+    if game.releases.is_empty() || patched {
+        return None;
+    }
+    Some(
+        game.releases
+            .iter()
+            .position(|r| holds(&r.artifacts))
+            .unwrap_or(0),
+    )
+}
+
 /// The release whose hardware describes one dump: the release holding it, or —
 /// for a mod's dump — the release holding the dump that mod patches.
 fn release_holding<'a, P: Platform>(game: &'a Game<P>, sha1: &str) -> Option<&'a Release<P>> {
@@ -1701,6 +1736,8 @@ pub struct Db {
     pub repo_root: PathBuf,
     pub entries: Vec<EntryHandle>,
     pub flags: FlagFile,
+    /// Dumps a curator has turned away, so a rescan never re-offers them.
+    pub rejected: RejectedFile,
     /// Files written since the last commit.
     pub uncommitted: usize,
 }
@@ -1740,10 +1777,12 @@ impl Db {
         load_tree::<Sg1000>(&data_root, TreeId::Sg1000, AnyGame::Sg1000, &mut entries)?;
         load_tree::<Vcs>(&data_root, TreeId::Vcs, AnyGame::Vcs, &mut entries)?;
         let flags = FlagFile::load(&repo_root)?;
+        let rejected = RejectedFile::load(&repo_root)?;
         Ok(Self {
             repo_root,
             entries,
             flags,
+            rejected,
             uncommitted: 0,
         })
     }
@@ -1773,6 +1812,12 @@ impl Db {
 
     pub fn save_flags(&mut self) -> io::Result<()> {
         self.flags.save(&self.repo_root)?;
+        self.uncommitted += 1;
+        Ok(())
+    }
+
+    pub fn save_rejected(&mut self) -> io::Result<()> {
+        self.rejected.save(&self.repo_root)?;
         self.uncommitted += 1;
         Ok(())
     }
@@ -1811,6 +1856,10 @@ impl Db {
         for (sha1, scanned) in roms {
             let path = &scanned.path;
             let inbox = scanned.home == crate::verify::RomHome::Inbox;
+            if self.rejected.holds(sha1) {
+                outcome.rejected += 1;
+                continue;
+            }
             if let Some(&owner) = known.get(sha1) {
                 // A declared-system inbox holding another tree's dump is a
                 // stray to hand back, not work to queue.
@@ -2285,6 +2334,57 @@ impl Db {
         Ok(format!(
             "{source_key} merged into {target_key}: {releases} release(s), {mods} mod(s) carried over"
         ))
+    }
+
+    /// Turn an entry away for good: record its dumps as out of scope so a
+    /// rescan cannot re-offer them, drop the flags that named it, and delete
+    /// its manifest. Returns its dumps, for the caller to clear out of the
+    /// inbox.
+    pub fn reject_entry(&mut self, index: usize, reason: &str) -> Result<Vec<String>, String> {
+        if reason.trim().is_empty() {
+            return Err("a rejection states why, so it is not revisited".to_owned());
+        }
+        let key = self.entries[index].key();
+        let title = self.entries[index].game.title().to_owned();
+        let mut dumps = self.entries[index].game.artifact_sha1s();
+        for m in 0..self.entries[index].game.mod_lines().len() {
+            for (sha1, _, _) in self.entries[index].game.mod_artifacts(m) {
+                dumps.push(sha1);
+            }
+        }
+        let parsed = dumps
+            .iter()
+            .filter_map(|sha1| sha1.parse::<Sha1>().ok())
+            .collect();
+        self.rejected.rejected.push(Rejection {
+            title,
+            reason: reason.to_owned(),
+            dumps: parsed,
+        });
+        self.save_rejected().map_err(|e| e.to_string())?;
+
+        let before = self.flags.flags.len();
+        self.flags
+            .flags
+            .retain(|flag| flag.subject != [key.clone()]);
+        for flag in &mut self.flags.flags {
+            flag.subject.retain(|subject| *subject != key);
+        }
+        if self.flags.flags.len() != before {
+            self.save_flags().map_err(|e| e.to_string())?;
+        }
+
+        let dir = self
+            .repo_root
+            .join("data")
+            .join(self.entries[index].tree.dir())
+            .join(&self.entries[index].slug);
+        self.entries.remove(index);
+        if dir.exists() {
+            fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+            self.uncommitted += 1;
+        }
+        Ok(dumps)
     }
 
     /// An artifact that is really its own release (prototype, beta build).
@@ -3625,6 +3725,9 @@ mod header_tests {
         rom
     }
 
+    /// A hash no release holds, so staging falls back to the first release.
+    const UNHELD: &str = "0000000000000000000000000000000000000000";
+
     fn gb_entry(hardware: &str) -> AnyGame {
         AnyGame::Gb(
             Game::from_ron(&format!(
@@ -3646,7 +3749,7 @@ mod header_tests {
     fn an_unstated_board_takes_the_whole_header_statement() {
         let mut game = gb_entry("");
         let header = crate::verify::gb_header(&rom(0x00)).unwrap();
-        let (staged, conflicts) = game.stage_gb_header(&header);
+        let (staged, conflicts) = game.stage_gb_header(&header, UNHELD);
         assert!(conflicts.is_empty(), "{conflicts:?}");
         assert!(
             staged
@@ -3670,7 +3773,7 @@ mod header_tests {
             "cart_type: Some(Mbc5(rom: Mb1, ram: Some(Kb8), battery: true, rumble: false))",
         );
         let header = crate::verify::gb_header(&rom(0x00)).unwrap();
-        let (staged, conflicts) = game.stage_gb_header(&header);
+        let (staged, conflicts) = game.stage_gb_header(&header, UNHELD);
         assert!(staged.iter().all(|line| !line.starts_with("cart_type")));
         assert!(
             conflicts
@@ -3680,13 +3783,61 @@ mod header_tests {
         );
     }
 
+    /// The header states the cart it was read from, so a dump held by the
+    /// second release answers for that release and leaves the first alone.
+    #[test]
+    fn the_header_stages_onto_the_release_holding_the_dump() {
+        let dump = "1e475cbd5fb7099df91155a103698e4e66da7a86";
+        let mut game = AnyGame::Gb(
+            Game::from_ron(&format!(
+                "(title: \"Header\", releases: [(regions: [Japan]), (regions: [Usa], \
+                 artifacts: [(sha1: \"{dump}\")])])"
+            ))
+            .unwrap(),
+        );
+        let header = crate::verify::gb_header(&rom(0x00)).unwrap();
+        let (staged, conflicts) = game.stage_gb_header(&header, dump);
+        assert!(conflicts.is_empty(), "{conflicts:?}");
+        assert!(
+            staged.iter().any(|line| line.starts_with("cart_type")),
+            "{staged:?}"
+        );
+        let AnyGame::Gb(g) = &game else {
+            panic!("a gb entry")
+        };
+        assert_eq!(g.releases[0].hardware.cart_type, None);
+        assert!(g.releases[1].hardware.cart_type.is_some());
+    }
+
+    /// The header answers for the two enhancements alone, so a link cable read
+    /// off the box neither reads as a disagreement nor blocks what it states.
+    #[test]
+    fn a_link_cable_off_the_box_is_not_a_header_conflict() {
+        use missingno_gamedb::Feature;
+        let mut game = gb_entry("features: [GameLink]");
+        let header = crate::verify::gb_header(&rom(0x80)).unwrap();
+        let (staged, conflicts) = game.stage_gb_header(&header, UNHELD);
+        assert!(conflicts.is_empty(), "{conflicts:?}");
+        assert!(
+            staged.iter().any(|line| line.starts_with("features")),
+            "{staged:?}"
+        );
+        let AnyGame::Gb(g) = &game else {
+            panic!("a gb entry")
+        };
+        assert_eq!(
+            g.releases[0].hardware.features,
+            [Feature::GameLink, Feature::GameBoyColorEnhanced]
+        );
+    }
+
     /// Dual-mode media boots enhanced but is a Game Boy cartridge, so filing
     /// one in the gbc tree is the mistake the check exists to catch.
     #[test]
     fn a_gbc_entry_wants_a_header_that_requires_the_colour_console() {
         let staged = |flag| {
             AnyGame::Gbc(Game::from_ron("(title: \"Header\", releases: [()])").unwrap())
-                .stage_gb_header(&crate::verify::gb_header(&rom(flag)).unwrap())
+                .stage_gb_header(&crate::verify::gb_header(&rom(flag)).unwrap(), UNHELD)
                 .1
         };
         assert!(staged(0xC0).is_empty());
@@ -3696,6 +3847,54 @@ mod header_tests {
                 "${flag:02x}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod rejection_tests {
+    use super::*;
+
+    /// A rejection outlives the entry: the dumps stay recorded, so the next
+    /// scan passes them over instead of offering them as new records.
+    #[test]
+    fn a_rejected_entrys_dumps_never_come_back() {
+        let dump = "1e475cbd5fb7099df91155a103698e4e66da7a86";
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = Db {
+            repo_root: dir.path().to_owned(),
+            entries: vec![EntryHandle {
+                tree: TreeId::Gb,
+                slug: "cheat-cart".to_owned(),
+                game: AnyGame::Gb(
+                    Game::from_ron(&format!(
+                        "(title: \"Cheat Cart\", releases: [(artifacts: [(sha1: \"{dump}\")])])"
+                    ))
+                    .unwrap(),
+                ),
+                dirty: false,
+                synthetic: false,
+            }],
+            flags: Default::default(),
+            rejected: Default::default(),
+            uncommitted: 0,
+        };
+        assert_eq!(db.reject_entry(0, "accessory firmware").unwrap(), [dump]);
+        assert!(db.entries.is_empty());
+        assert!(db.rejected.holds(dump));
+
+        let mut index = crate::verify::RomIndex::default();
+        let path = dir.path().join("cheat.gb");
+        std::fs::write(&path, [0u8; 16]).unwrap();
+        index.by_sha1.insert(
+            dump.to_owned(),
+            crate::verify::ScannedRom {
+                path,
+                home: crate::verify::RomHome::Inbox,
+            },
+        );
+        let outcome = db.add_unmatched_roms(&index, Some(TreeId::Gb));
+        assert_eq!((outcome.added, outcome.rejected), (0, 1));
+        assert!(db.entries.is_empty(), "{:?}", db.entries.len());
     }
 }
 

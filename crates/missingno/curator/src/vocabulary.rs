@@ -187,6 +187,7 @@ pub static FEATURES: Vocabulary<Feature> = vocabulary(
     &[
         ("SuperGameBoyEnhanced", Feature::SuperGameBoyEnhanced),
         ("GameBoyColorEnhanced", Feature::GameBoyColorEnhanced),
+        ("GameLink", Feature::GameLink),
     ],
 );
 

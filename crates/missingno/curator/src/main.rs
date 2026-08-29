@@ -768,7 +768,7 @@ impl Curator {
                     let overdump =
                         entry.game.defect_for(&sha1) == Some(missingno_gamedb::Defect::Overdump);
                     let controllers = entry.game.controllers_for(&sha1);
-                    self.stage_header_facts(i, &bytes);
+                    self.stage_header_facts(i, &bytes, &sha1);
                     match play::start(hint, &bytes, tv, cart, overdump, &controllers) {
                         Ok(session) => {
                             let events = session.events.clone();
@@ -901,7 +901,7 @@ impl Curator {
                     self.fetched_sha1.insert(key.clone(), sha1.clone());
                     let sha1_for_play = sha1.clone();
                     if let Some(i) = self.find_entry(&key) {
-                        self.stage_header_facts(i, &bytes);
+                        self.stage_header_facts(i, &bytes, &sha1);
                     }
                     let mut line = format!("{} bytes from {url}\nsha1 {sha1}", size);
                     if let Ok(db) = &mut self.db
@@ -1358,6 +1358,45 @@ impl Curator {
     /// Advance past the current queued entry without stamping a curation —
     /// the entry is already curated and needs no re-blessing. Mirrors
     /// accept_and_next's queue walk, minus the stamp and the write.
+    /// Start whatever now sits at the front of the queue, dropping keys that
+    /// no longer resolve to an entry.
+    fn play_front_of_queue(&mut self) -> Task<Message> {
+        while let Some(next_key) = self.queue.front().cloned() {
+            match self.find_entry(&next_key) {
+                Some(next) => return self.start_playtest_for(next),
+                None => {
+                    self.status = format!("queued {next_key} not found — skipped");
+                    self.queue.pop_front();
+                }
+            }
+        }
+        Task::none()
+    }
+
+    /// Delete the inbox copies of dumps a rejected entry took with it, and name
+    /// any the collection still holds. The archive beside an inbox dump is left
+    /// alone, so re-extracting it undoes the rejection.
+    fn discard_inbox_dumps(&mut self, dumps: &[String]) -> (usize, Vec<String>) {
+        let Some(index) = self.rom_index.clone() else {
+            return (0, Vec::new());
+        };
+        let (mut discarded, mut kept) = (0, Vec::new());
+        for sha1 in dumps {
+            let Some(rom) = index.by_sha1.get(sha1) else {
+                continue;
+            };
+            match rom.home {
+                verify::RomHome::Inbox => {
+                    if std::fs::remove_file(&rom.path).is_ok() {
+                        discarded += 1;
+                    }
+                }
+                verify::RomHome::Collection => kept.push(rom.path.display().to_string()),
+            }
+        }
+        (discarded, kept)
+    }
+
     fn skip_and_next(&mut self) -> Task<Message> {
         let Some(key) = self
             .selected
@@ -1390,9 +1429,10 @@ impl Curator {
         Task::none()
     }
 
-    /// Read the GB-family header from ROM bytes and stage its facts (fills
-    /// unknown enhancement flags and the mapper; conflicts go to the status).
-    fn stage_header_facts(&mut self, i: usize, rom: &[u8]) {
+    /// Read the GB-family header from ROM bytes and stage its facts onto the
+    /// release holding that dump (fills unknown enhancement flags and the
+    /// mapper; conflicts go to the status).
+    fn stage_header_facts(&mut self, i: usize, rom: &[u8], sha1: &str) {
         let Ok(db) = &mut self.db else { return };
         if matches!(db.entries[i].tree, TreeId::Sg1000 | TreeId::Vcs) {
             return;
@@ -1400,7 +1440,7 @@ impl Curator {
         let Some(header) = verify::gb_header(rom) else {
             return;
         };
-        let (staged, conflicts) = db.entries[i].game.stage_gb_header(&header);
+        let (staged, conflicts) = db.entries[i].game.stage_gb_header(&header, sha1);
         if !staged.is_empty() {
             db.entries[i].dirty = true;
         }
@@ -1567,6 +1607,56 @@ impl Curator {
                 if !missing.is_empty() {
                     note.push_str(&format!("; not found: {missing:?}"));
                 }
+                (text_result(note), task)
+            }
+            "reject_game" => {
+                let (Some(key), Some(reason)) = (str_arg("key"), str_arg("reason")) else {
+                    return (error_result("missing key or reason"), Task::none());
+                };
+                let (key, reason) = (key.to_owned(), reason.to_owned());
+                let Some(i) = self.find_entry(&key) else {
+                    return (error_result(format!("no entry {key}")), Task::none());
+                };
+                let dumps = {
+                    let Ok(db) = &mut self.db else {
+                        return (error_result("db not loaded"), Task::none());
+                    };
+                    match db.reject_entry(i, &reason) {
+                        Ok(dumps) => dumps,
+                        Err(e) => return (error_result(e), Task::none()),
+                    }
+                };
+                let (discarded, kept) = self.discard_inbox_dumps(&dumps);
+                let was_playing = self.playing.as_ref().is_some_and(|(k, _)| *k == key);
+                self.queue.retain(|queued| *queued != key);
+                let mut note = format!(
+                    "{key} rejected: {reason}\n{} dump(s) recorded out of scope; {discarded} \
+                     removed from the inbox",
+                    dumps.len()
+                );
+                if !kept.is_empty() {
+                    note.push_str(&format!("; still in the collection: {}", kept.join(", ")));
+                }
+                self.session_log
+                    .push(format!("reject_game {key}: {reason}"));
+                let task = if was_playing {
+                    self.playing = None;
+                    self.play_screen = None;
+                    self.selected = None;
+                    let task = self.play_front_of_queue();
+                    match self.queue.front().cloned() {
+                        Some(next) => self.emit_action(format!(
+                            "rejected {key}; now playing {next} ({} left in queue)",
+                            self.queue.len()
+                        )),
+                        None => self.emit_action(format!("rejected {key}; queue is empty")),
+                    }
+                    task
+                } else {
+                    // The removal shifted every later index, `selected` included.
+                    self.selected = self.playing.as_ref().and_then(|(k, _)| self.find_entry(k));
+                    Task::none()
+                };
                 (text_result(note), task)
             }
             "play_game" => {
