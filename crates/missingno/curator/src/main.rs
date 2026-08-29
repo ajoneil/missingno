@@ -314,7 +314,7 @@ enum Message {
     StopPlay,
     Pad(ControlId, bool),
     /// A host gamepad edge, landing in whichever jack the pad is patched into.
-    Gamepad(ControlId, bool),
+    Gamepad(&'static [ControlRole], bool),
     /// Move the gamepad to the other controller jack.
     SwapPadJack,
     Paddle(f32),
@@ -403,7 +403,7 @@ impl Curator {
     fn subscription(&self) -> iced::Subscription<Message> {
         let mut subscriptions = vec![
             iced::Subscription::run(play::gamepad_worker).map(|event| match event {
-                play::PadEvent::Button(id, on) => Message::Gamepad(id, on),
+                play::PadEvent::Button(roles, on) => Message::Gamepad(roles, on),
                 play::PadEvent::Paddle(position) => Message::Paddle(position),
             }),
             // Keyboard events only where no widget took them, so typing into a
@@ -834,9 +834,9 @@ impl Curator {
                     session.set_control(control, pressed);
                 }
             }
-            Message::Gamepad(control, pressed) => {
+            Message::Gamepad(roles, pressed) => {
                 if let Some((_, session)) = &self.playing {
-                    session.set_pad_control(control, pressed);
+                    session.set_pad_control(roles, pressed);
                 }
             }
             Message::SwapPadJack => {

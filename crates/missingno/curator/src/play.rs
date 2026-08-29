@@ -8,7 +8,7 @@ use iced::futures::SinkExt;
 use missingno_core::cartridge::BoardValue;
 use missingno_core::launch::LaunchValues;
 use missingno_core::ports::{PanelControl, PeripheralId, PortId};
-use missingno_core::system::{ControlId, ControlInput, ControlRole, ControlSite};
+use missingno_core::system::{ControlId, ControlInput, ControlRole};
 use missingno_core::video::DisplayTechnology;
 use missingno_gamedb::platform::Controller;
 use missingno_session::{
@@ -33,6 +33,11 @@ pub struct PlaySession {
     /// The jack the host gamepad is patched into. A game that reads the right
     /// controller is only playable with the pad moved there.
     pub pad_jack: PortId,
+    /// Roles on the console's own controller — the Game Boy's pad. Empty on a
+    /// console whose controllers all arrive through jacks.
+    integrated_roles: Vec<ControlRole>,
+    /// Roles on the console shell, where the VCS keeps Reset and Select.
+    panel_roles: Vec<ControlRole>,
     /// The `!Send` cpal stream stays on the UI thread, as in the emulator.
     _audio: Option<AudioOutput>,
     pub events: Arc<Mutex<Receiver<SessionEvent>>>,
@@ -97,7 +102,13 @@ pub fn start(
         .map(|(jack, _)| PortId(jack as u8))
         .collect();
     let technology = console.video_out();
+    let integrated_roles = console
+        .integrated_controls()
+        .iter()
+        .map(|control| control.role)
+        .collect();
     let switches: Vec<PanelControl> = console.panel_controls().to_vec();
+    let panel_roles = switches.iter().map(|switch| switch.role).collect();
     let switch_levels = switches
         .iter()
         .map(|switch| {
@@ -123,6 +134,8 @@ pub fn start(
         paddles,
         keypads,
         pad_jack: PLAY_PORT,
+        integrated_roles,
+        panel_roles,
         _audio: audio,
         events: Arc::new(Mutex::new(events)),
     })
@@ -148,21 +161,31 @@ impl PlaySession {
             .set_control(control, ControlInput::Digital(pressed));
     }
 
-    /// A host gamepad control, landing in the jack the pad is patched into.
-    /// The console's own panel switches stay where they are.
-    pub fn set_pad_control(&self, control: ControlId, pressed: bool) {
-        let control = match control.site {
-            ControlSite::Port(_) => ControlId::port(self.pad_jack, control.role),
-            _ => control,
-        };
-        self.set_control(control, pressed);
+    /// Where a host pad button lands on this console: its own controller if it
+    /// has one, else the shell, else the controller in the pad's jack. Asking
+    /// the console rather than assuming jacks is what makes one pad play a
+    /// Game Boy, whose buttons are all integrated, and a VCS, whose are not.
+    fn resolve(&self, roles: &[ControlRole]) -> ControlId {
+        resolve_role(
+            roles,
+            &self.integrated_roles,
+            &self.panel_roles,
+            self.pad_jack,
+        )
+    }
+
+    /// A host gamepad button, landing wherever this console keeps that control.
+    pub fn set_pad_control(&self, roles: &[ControlRole], pressed: bool) {
+        self.set_control(self.resolve(roles), pressed);
     }
 
     /// Patch the gamepad into the other jack, releasing what it held so a
     /// direction pressed across the move doesn't stick in the jack it left.
     pub fn swap_pad_jack(&mut self) {
         for role in PAD_ROLES {
-            self.set_control(ControlId::port(self.pad_jack, role), false);
+            if !self.integrated_roles.contains(&role) {
+                self.set_control(ControlId::port(self.pad_jack, role), false);
+            }
         }
         self.pad_jack = if self.pad_jack == missingno_vcs::debug::LEFT_PORT {
             missingno_vcs::debug::RIGHT_PORT
@@ -194,6 +217,26 @@ impl PlaySession {
     }
 }
 
+/// Where a host pad button lands on a console that states these roles. Taking
+/// the console's word is what lets one pad play a Game Boy, whose buttons are
+/// all on its own controller, and a VCS, which has none of its own.
+fn resolve_role(
+    roles: &[ControlRole],
+    integrated: &[ControlRole],
+    panel: &[ControlRole],
+    pad_jack: PortId,
+) -> ControlId {
+    for role in roles {
+        if integrated.contains(role) {
+            return ControlId::integrated(*role);
+        }
+        if panel.contains(role) {
+            return ControlId::panel(*role);
+        }
+    }
+    ControlId::port(pad_jack, roles[0])
+}
+
 /// Block until the session produces a frame (or dies); coalesces a backlog.
 pub fn await_frame(events: &Arc<Mutex<Receiver<SessionEvent>>>) -> bool {
     let events = events.lock().unwrap();
@@ -213,20 +256,21 @@ pub fn await_frame(events: &Arc<Mutex<Receiver<SessionEvent>>>) -> bool {
     }
 }
 
-/// The playtest pad's reading of a gamepad: the console panel's buttons, and
-/// the joystick in the left jack.
-fn button_control(button: gilrs::Button) -> Option<ControlId> {
+/// What a host pad button asks for, most specific first: a console lacking the
+/// first role answers with the next. Start is the pad's own on a Game Boy and
+/// the console panel's Reset on a VCS, which is the same request either way.
+fn button_roles(button: gilrs::Button) -> Option<&'static [ControlRole]> {
     Some(match button {
-        gilrs::Button::Start => ControlId::panel(ControlRole::Reset),
-        gilrs::Button::Select => ControlId::panel(ControlRole::Select),
+        gilrs::Button::Start => &[ControlRole::Start, ControlRole::Reset],
+        gilrs::Button::Select => &[ControlRole::Select],
         // The emulator's default pad layout: South fires, East is the second
         // button on pads that have one.
-        gilrs::Button::South => ControlId::port(PLAY_PORT, ControlRole::Action(0)),
-        gilrs::Button::East => ControlId::port(PLAY_PORT, ControlRole::Action(1)),
-        gilrs::Button::DPadUp => ControlId::port(PLAY_PORT, ControlRole::Up),
-        gilrs::Button::DPadDown => ControlId::port(PLAY_PORT, ControlRole::Down),
-        gilrs::Button::DPadLeft => ControlId::port(PLAY_PORT, ControlRole::Left),
-        gilrs::Button::DPadRight => ControlId::port(PLAY_PORT, ControlRole::Right),
+        gilrs::Button::South => &[ControlRole::Action(0)],
+        gilrs::Button::East => &[ControlRole::Action(1)],
+        gilrs::Button::DPadUp => &[ControlRole::Up],
+        gilrs::Button::DPadDown => &[ControlRole::Down],
+        gilrs::Button::DPadLeft => &[ControlRole::Left],
+        gilrs::Button::DPadRight => &[ControlRole::Right],
         _ => return None,
     })
 }
@@ -260,7 +304,7 @@ pub fn keypad_key(key: &iced::keyboard::Key) -> Option<u8> {
 /// the trigger-wound paddle arriving at a new position.
 #[derive(Clone, Copy, Debug)]
 pub enum PadEvent {
-    Button(ControlId, bool),
+    Button(&'static [ControlRole], bool),
     Paddle(f32),
 }
 
@@ -280,13 +324,13 @@ pub fn gamepad_worker() -> impl iced::futures::Stream<Item = PadEvent> {
             while let Some(gilrs::Event { event, .. }) = gilrs.next_event() {
                 match event {
                     gilrs::EventType::ButtonPressed(button, ..) => {
-                        if let Some(id) = button_control(button) {
-                            let _ = output.send(PadEvent::Button(id, true)).await;
+                        if let Some(roles) = button_roles(button) {
+                            let _ = output.send(PadEvent::Button(roles, true)).await;
                         }
                     }
                     gilrs::EventType::ButtonReleased(button, ..) => {
-                        if let Some(id) = button_control(button) {
-                            let _ = output.send(PadEvent::Button(id, false)).await;
+                        if let Some(roles) = button_roles(button) {
+                            let _ = output.send(PadEvent::Button(roles, false)).await;
                         }
                     }
                     gilrs::EventType::ButtonChanged(gilrs::Button::LeftTrigger2, value, ..) => {
@@ -316,22 +360,21 @@ pub fn gamepad_worker() -> impl iced::futures::Stream<Item = PadEvent> {
                         }
                     }
                     gilrs::EventType::AxisChanged(axis, value, ..) => {
-                        let stick_control = |role| ControlId::port(PLAY_PORT, role);
-                        let changes: [(usize, ControlId, bool); 2] = match axis {
+                        let changes: [(usize, &'static [ControlRole], bool); 2] = match axis {
                             gilrs::Axis::LeftStickX => [
-                                (3, stick_control(ControlRole::Right), value > DEADZONE),
-                                (2, stick_control(ControlRole::Left), value < -DEADZONE),
+                                (3, &[ControlRole::Right], value > DEADZONE),
+                                (2, &[ControlRole::Left], value < -DEADZONE),
                             ],
                             gilrs::Axis::LeftStickY => [
-                                (0, stick_control(ControlRole::Up), value > DEADZONE),
-                                (1, stick_control(ControlRole::Down), value < -DEADZONE),
+                                (0, &[ControlRole::Up], value > DEADZONE),
+                                (1, &[ControlRole::Down], value < -DEADZONE),
                             ],
                             _ => continue,
                         };
-                        for (slot, control, now) in changes {
+                        for (slot, roles, now) in changes {
                             if stick[slot] != now {
                                 stick[slot] = now;
-                                let _ = output.send(PadEvent::Button(control, now)).await;
+                                let _ = output.send(PadEvent::Button(roles, now)).await;
                             }
                         }
                     }
@@ -346,4 +389,76 @@ pub fn gamepad_worker() -> impl iced::futures::Stream<Item = PadEvent> {
             smol::Timer::after(Duration::from_millis(4)).await;
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use missingno_core::system::ControlSite;
+
+    /// The Game Boy's buttons are all on its own pad, Start and Select
+    /// included — the roles the VCS keeps on its shell and in a jack.
+    const GAME_BOY: [ControlRole; 8] = [
+        ControlRole::Up,
+        ControlRole::Down,
+        ControlRole::Left,
+        ControlRole::Right,
+        ControlRole::Action(0),
+        ControlRole::Action(1),
+        ControlRole::Start,
+        ControlRole::Select,
+    ];
+
+    /// The VCS states no controller of its own; its shell carries these.
+    const VCS_PANEL: [ControlRole; 2] = [ControlRole::Reset, ControlRole::Select];
+
+    fn game_boy(button: gilrs::Button) -> ControlId {
+        resolve_role(button_roles(button).unwrap(), &GAME_BOY, &[], PLAY_PORT)
+    }
+
+    fn vcs(button: gilrs::Button) -> ControlId {
+        resolve_role(button_roles(button).unwrap(), &[], &VCS_PANEL, PLAY_PORT)
+    }
+
+    #[test]
+    fn a_game_boy_takes_every_button_on_its_own_pad() {
+        for button in [
+            gilrs::Button::South,
+            gilrs::Button::East,
+            gilrs::Button::DPadUp,
+            gilrs::Button::Start,
+            gilrs::Button::Select,
+        ] {
+            assert_eq!(
+                game_boy(button).site,
+                ControlSite::Integrated,
+                "{button:?} did not reach the console's own pad"
+            );
+        }
+        assert_eq!(game_boy(gilrs::Button::Start).role, ControlRole::Start);
+        assert_eq!(game_boy(gilrs::Button::South).role, ControlRole::Action(0));
+    }
+
+    /// The same pad on a console with no controller of its own: the shell
+    /// answers what it has, and the rest is the joystick in the jack.
+    #[test]
+    fn a_vcs_takes_the_shells_buttons_and_the_jacks() {
+        assert_eq!(
+            vcs(gilrs::Button::Start),
+            ControlId::panel(ControlRole::Reset),
+            "the pad's Start is the console's Reset where there is no Start"
+        );
+        assert_eq!(
+            vcs(gilrs::Button::Select),
+            ControlId::panel(ControlRole::Select)
+        );
+        assert_eq!(
+            vcs(gilrs::Button::South),
+            ControlId::port(PLAY_PORT, ControlRole::Action(0))
+        );
+        assert_eq!(
+            vcs(gilrs::Button::DPadUp),
+            ControlId::port(PLAY_PORT, ControlRole::Up)
+        );
+    }
 }
