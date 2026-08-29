@@ -124,19 +124,22 @@ pub fn screen_to_pixels(
                         MaskMode::Black => RGB8::new(0, 0, 0),
                         MaskMode::BackdropColor => {
                             if use_sgb_colors {
-                                sgb_data.palettes[0].colors[0].to_rgb8()
+                                sgb_data.backdrop().to_rgb8()
                             } else {
                                 palette.color(palette_index)
                             }
                         }
                         MaskMode::Disabled | MaskMode::Freeze => {
-                            if use_sgb_colors {
+                            if !use_sgb_colors {
+                                palette.color(palette_index)
+                            } else if palette_index.0 == 0 {
+                                // Shade 0 is transparent on the SNES; the shared backdrop shows through
+                                sgb_data.backdrop().to_rgb8()
+                            } else {
                                 let cell_x = x as usize / 8;
                                 let cell_y = y as usize / 8;
                                 let pal_id = sgb_data.attribute_map.cells[cell_y][cell_x] as usize;
                                 sgb_data.palettes[pal_id].colors[palette_index.0 as usize].to_rgb8()
-                            } else {
-                                palette.color(palette_index)
                             }
                         }
                     }
@@ -149,4 +152,52 @@ pub fn screen_to_pixels(
     }
 
     pixels
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sgb::{AttributeMap, Rgb555, SgbPalette};
+
+    #[test]
+    fn shade_zero_shows_the_shared_backdrop() {
+        let mut screen = Screen::default();
+        screen.draw_pixel(0, 0, PaletteIndex(1));
+        screen.present();
+
+        let mut palettes = [SgbPalette::default(); 4];
+        for (i, palette) in palettes.iter_mut().enumerate() {
+            palette.colors[0] = Rgb555(i as u16 + 1);
+        }
+        let mut attribute_map = AttributeMap::new();
+        attribute_map.cells = [[2; 20]; 18];
+        let sgb = SgbRenderData {
+            palettes,
+            attribute_map,
+            mask_mode: MaskMode::Disabled,
+            video_enabled: true,
+        };
+
+        let pixels = screen_to_pixels(
+            &screen,
+            PaletteChoice::default().palette(),
+            Some(&sgb),
+            true,
+        );
+        let rgb = |c: Rgb555| c.to_rgb8();
+        // (0,0) is shade 1: attribute-selected palette 2's colour 1
+        assert_eq!(
+            pixels[..3],
+            [
+                rgb(palettes[2].colors[1]).r,
+                rgb(palettes[2].colors[1]).g,
+                rgb(palettes[2].colors[1]).b
+            ]
+        );
+        // (1,0) is shade 0: the backdrop (palette 0's colour 0), not palette 2's own colour 0
+        assert_eq!(
+            pixels[4..7],
+            [rgb(Rgb555(1)).r, rgb(Rgb555(1)).g, rgb(Rgb555(1)).b]
+        );
+    }
 }

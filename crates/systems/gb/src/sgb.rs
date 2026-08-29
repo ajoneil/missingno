@@ -105,6 +105,24 @@ impl AttributeMap {
             cells: [[0; 20]; 18],
         }
     }
+
+    /// One packed attribute file: 5 bytes per row, 4 cells per byte, leftmost
+    /// cell in the most significant bit pair.
+    fn from_packed(bytes: &[u8]) -> Self {
+        let mut atf = Self::new();
+        for y in 0..18 {
+            for byte_in_row in 0..5 {
+                let Some(&byte_val) = bytes.get(y * 5 + byte_in_row) else {
+                    return atf;
+                };
+                for bit_pair in 0..4 {
+                    let x = byte_in_row * 4 + bit_pair;
+                    atf.cells[y][x] = (byte_val >> (6 - bit_pair * 2)) & 0x03;
+                }
+            }
+        }
+        atf
+    }
 }
 
 /// Screen masking mode.
@@ -123,6 +141,14 @@ pub struct SgbRenderData {
     pub attribute_map: AttributeMap,
     pub mask_mode: MaskMode,
     pub video_enabled: bool,
+}
+
+impl SgbRenderData {
+    /// The single shared backdrop (CGRAM $00): shade 0 is transparent on the
+    /// SNES, so every palette shows palette 0's colour 0.
+    pub fn backdrop(&self) -> Rgb555 {
+        self.palettes[0].colors[0]
+    }
 }
 
 enum CommandState {
@@ -336,10 +362,9 @@ impl Sgb {
 
     fn cmd_pal_set(&mut self, data: &[u8]) {
         for i in 0..4 {
-            let idx = u16::from_le_bytes([data[1 + i * 2], data[2 + i * 2]]) as usize;
-            if idx < self.system_palettes.len() {
-                self.palettes[i] = self.system_palettes[idx];
-            }
+            // Palette IDs are 9 bits wide
+            let idx = (u16::from_le_bytes([data[1 + i * 2], data[2 + i * 2]]) & 0x1FF) as usize;
+            self.palettes[i] = self.system_palettes[idx];
         }
         let flags = data[9];
         if flags & 0x80 != 0 {
@@ -539,25 +564,7 @@ impl Sgb {
         let data = screen_to_transfer_data(&self.last_screen);
         // 45 attribute files, each 90 bytes (20x18 / 4 = 90 bytes packed)
         for file_idx in 0..45 {
-            let base = file_idx * 90;
-            let mut atf = AttributeMap::new();
-            for y in 0..18 {
-                // 5 bytes per row (20 cells * 2 bits = 40 bits = 5 bytes)
-                for byte_in_row in 0..5 {
-                    let offset = base + y * 5 + byte_in_row;
-                    if offset >= data.len() {
-                        break;
-                    }
-                    let byte_val = data[offset];
-                    for bit_pair in 0..4 {
-                        let x = byte_in_row * 4 + bit_pair;
-                        if x < 20 {
-                            atf.cells[y][x] = (byte_val >> (bit_pair * 2)) & 0x03;
-                        }
-                    }
-                }
-            }
-            self.attribute_files[file_idx] = atf;
+            self.attribute_files[file_idx] = AttributeMap::from_packed(&data[file_idx * 90..]);
         }
     }
 
@@ -597,5 +604,167 @@ impl Sgb {
             3 => MaskMode::BackdropColor,
             _ => unreachable!(),
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ppu::types::palette::PaletteIndex;
+
+    /// Clock one 16-byte packet through the joypad pulse protocol.
+    fn send_packet(sgb: &mut Sgb, bytes: [u8; 16]) {
+        sgb.write_joypad(0x00);
+        sgb.write_joypad(0x30);
+        for byte in bytes {
+            for bit in 0..8 {
+                sgb.write_joypad(if byte >> bit & 1 != 0 { 0x10 } else { 0x20 });
+                sgb.write_joypad(0x30);
+            }
+        }
+        sgb.write_joypad(0x20);
+        sgb.write_joypad(0x30);
+    }
+
+    /// The inverse of `screen_to_transfer_data`: a screen displaying `data` as
+    /// tiles $00-$FF in raster order, as a game does during a VRAM transfer.
+    fn screen_showing(data: &[u8]) -> Screen {
+        let mut screen = Screen::default();
+        for tile_index in 0..256 {
+            for row in 0..8 {
+                let low = data.get(tile_index * 16 + row * 2).copied().unwrap_or(0);
+                let high = data
+                    .get(tile_index * 16 + row * 2 + 1)
+                    .copied()
+                    .unwrap_or(0);
+                for col in 0..8 {
+                    let shade = (low >> (7 - col) & 1) | ((high >> (7 - col) & 1) << 1);
+                    let x = (tile_index % 20) * 8 + col;
+                    let y = (tile_index / 20) * 8 + row;
+                    if x < screen::PIXELS_PER_LINE as usize && y < screen::NUM_SCANLINES as usize {
+                        screen.draw_pixel(x as u8, y as u8, PaletteIndex(shade));
+                    }
+                }
+            }
+        }
+        screen.present();
+        screen
+    }
+
+    fn run_transfer(sgb: &mut Sgb, command: u8, data: &[u8]) {
+        let mut packet = [0u8; 16];
+        packet[0] = (command << 3) | 1;
+        send_packet(sgb, packet);
+        let screen = screen_showing(data);
+        for _ in 0..3 {
+            sgb.update_screen(&screen);
+        }
+    }
+
+    #[test]
+    fn pal_trn_and_pal_set_load_system_palettes() {
+        let mut sgb = Sgb::new();
+        let mut data = vec![0u8; 4096];
+        // System palette 1: colours 0x1111, 0x2222, 0x3333, 0x4444
+        for (i, colour) in [0x1111u16, 0x2222, 0x3333, 0x4444].iter().enumerate() {
+            data[8 + i * 2..10 + i * 2].copy_from_slice(&colour.to_le_bytes());
+        }
+        run_transfer(&mut sgb, 0x0B, &data);
+
+        send_packet(
+            &mut sgb,
+            [0xB9, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        assert_eq!(sgb.mask_mode, MaskMode::Black);
+
+        // PAL_SET: palettes 1,0,1,0; flags = cancel mask
+        let mut pal_set = [0u8; 16];
+        pal_set[0] = (0x0A << 3) | 1;
+        pal_set[1] = 0x01;
+        pal_set[5] = 0x01;
+        pal_set[9] = 0x40;
+        send_packet(&mut sgb, pal_set);
+
+        assert_eq!(sgb.mask_mode, MaskMode::Disabled);
+        // The transfer replaced every system palette; palette 0 is now all zeroes
+        for (slot, expected) in [(0, 0x1111), (1, 0x0000), (2, 0x1111), (3, 0x0000)] {
+            assert_eq!(sgb.palettes[slot].colors[0].0, expected);
+        }
+        assert_eq!(sgb.palettes[0].colors[3].0, 0x4444);
+    }
+
+    #[test]
+    fn pal_set_ids_are_nine_bits() {
+        let mut sgb = Sgb::new();
+        let mut data = vec![0u8; 4096];
+        data[8..10].copy_from_slice(&0x5A5Au16.to_le_bytes());
+        run_transfer(&mut sgb, 0x0B, &data);
+
+        // ID 0x201 wraps to system palette 1
+        let mut pal_set = [0u8; 16];
+        pal_set[0] = (0x0A << 3) | 1;
+        pal_set[1] = 0x01;
+        pal_set[2] = 0x02;
+        send_packet(&mut sgb, pal_set);
+        assert_eq!(sgb.palettes[0].colors[0].0, 0x5A5A);
+    }
+
+    #[test]
+    fn attr_trn_unpacks_cells_msb_pair_first() {
+        let mut sgb = Sgb::new();
+        let mut data = vec![0u8; 4096];
+        // ATF 0, row 0: cells 0-3 = 0,1,2,3; ATF 1, row 0: a mid-byte region
+        // edge 1,1,2,2 (the pattern the LSB-first order mirrors)
+        data[0] = 0b00_01_10_11;
+        data[90] = 0b01_01_10_10;
+        run_transfer(&mut sgb, 0x15, &data);
+
+        // ATTR_SET file 0
+        send_packet(
+            &mut sgb,
+            [
+                (0x16 << 3) | 1,
+                0x00,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            ],
+        );
+        assert_eq!(sgb.attribute_map.cells[0][..4], [0, 1, 2, 3]);
+
+        // ATTR_SET file 1
+        send_packet(
+            &mut sgb,
+            [
+                (0x16 << 3) | 1,
+                0x01,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            ],
+        );
+        assert_eq!(sgb.attribute_map.cells[0][..4], [1, 1, 2, 2]);
     }
 }
