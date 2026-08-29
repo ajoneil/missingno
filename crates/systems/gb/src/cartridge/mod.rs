@@ -210,6 +210,9 @@ impl Cartridge {
             GbCartType::Huc3 { .. } => Mbc::Huc3(Huc3::new(save, ram)),
             GbCartType::Huc1 { .. } => Mbc::Huc1(Huc1::new(save, ram)),
             GbCartType::DbzTrans { .. } => Mbc::DbzTrans(DbzTrans::new(save, ram)),
+            // The Sachen mapper is named but not modelled, so the image runs as
+            // the MBC1 it borrows: the menu draws, its games do not launch.
+            GbCartType::SachenMmc1 { .. } => Mbc::Mbc1(Mbc1::new(save, ram, false)),
         };
 
         Ok(Cartridge {

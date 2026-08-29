@@ -222,6 +222,12 @@ pub enum GbCartType {
     /// The unlicensed "GB DBZ GOKOU 2" mapper, which declares MBC5 in its header
     /// and adds an independent half-bank switch.
     DbzTrans { ram: Option<GbRamSize> },
+    /// Sachen's own mapper. The board scrambles the address lines the header
+    /// sits behind, so the logo and the type byte read as noise unless
+    /// descrambled — which is what identifies the board, no header naming it.
+    /// Catalogued but not modelled: stating it names the silicon, and the
+    /// image still runs as an MBC1.
+    SachenMmc1 { rom: GbRomSize },
 }
 
 /// The name refusals say this vocabulary by.
@@ -333,6 +339,11 @@ const CATALOGUE: &[BoardSpec] = &[
         display: "DBZ Trans (unlicensed)",
         attributes: &[ram(RAM_SIZES)],
     },
+    BoardSpec {
+        name: "SachenMmc1",
+        display: "Sachen MMC1 (unlicensed)",
+        attributes: &[ROM],
+    },
 ];
 
 impl GbCartType {
@@ -351,6 +362,7 @@ impl GbCartType {
             GbCartType::Huc1 { .. } => "Huc1",
             GbCartType::Huc3 { .. } => "Huc3",
             GbCartType::DbzTrans { .. } => "DbzTrans",
+            GbCartType::SachenMmc1 { .. } => "SachenMmc1",
         }
     }
 
@@ -458,7 +470,8 @@ impl GbCartType {
             | GbCartType::Mbc5 { rom, .. }
             | GbCartType::Mbc7 { rom }
             | GbCartType::Huc1 { rom, .. }
-            | GbCartType::Huc3 { rom, .. } => Some(*rom),
+            | GbCartType::Huc3 { rom, .. }
+            | GbCartType::SachenMmc1 { rom } => Some(*rom),
             GbCartType::Rom { .. } | GbCartType::Mbc6 | GbCartType::DbzTrans { .. } => None,
         }
     }
@@ -477,7 +490,8 @@ impl GbCartType {
             GbCartType::Mbc1Multicart { .. }
             | GbCartType::Mbc2 { .. }
             | GbCartType::Mbc6
-            | GbCartType::Mbc7 { .. } => None,
+            | GbCartType::Mbc7 { .. }
+            | GbCartType::SachenMmc1 { .. } => None,
         }
     }
 
@@ -494,7 +508,9 @@ impl GbCartType {
             | GbCartType::Huc1 { .. }
             | GbCartType::Huc3 { .. }
             | GbCartType::DbzTrans { .. } => true,
-            GbCartType::Mbc1Multicart { .. } | GbCartType::Mbc6 => false,
+            GbCartType::Mbc1Multicart { .. } | GbCartType::Mbc6 | GbCartType::SachenMmc1 { .. } => {
+                false
+            }
         }
     }
 
@@ -606,6 +622,7 @@ impl BoardVocabulary for GbCartType {
                 ram: ram(),
             },
             "DbzTrans" => GbCartType::DbzTrans { ram: ram() },
+            "SachenMmc1" => GbCartType::SachenMmc1 { rom: rom() },
             board => unreachable!("the catalogue names no {board} board"),
         })
     }
@@ -693,6 +710,9 @@ mod tests {
             },
             GbCartType::DbzTrans {
                 ram: Some(GbRamSize::Kb32),
+            },
+            GbCartType::SachenMmc1 {
+                rom: GbRomSize::Kb256,
             },
         ]
     }
@@ -848,7 +868,9 @@ mod tests {
             };
             assert!(!matches!(
                 board,
-                GbCartType::Mbc1Multicart { .. } | GbCartType::DbzTrans { .. }
+                GbCartType::Mbc1Multicart { .. }
+                    | GbCartType::DbzTrans { .. }
+                    | GbCartType::SachenMmc1 { .. }
             ));
         }
     }
