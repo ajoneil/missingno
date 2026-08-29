@@ -14,6 +14,7 @@ pub use missingno_gbc::launch::{
     BOARD, BOOT_ROM, GbLaunch, RUNNER, RunnerPreference, board_from_launch, launch_options,
 };
 
+use missingno_core::cartridge::BoardVocabulary;
 use missingno_core::ports::PeripheralId;
 use missingno_core::video::{ConsoleFrame, RgbaFrame};
 
@@ -150,13 +151,10 @@ pub fn stated_by_media(rom: &[u8]) -> Vec<MediaFact> {
             .to_owned(),
         ),
     }];
-    if let Some(board) = rom
-        .get(0x147)
-        .and_then(|byte| GbCartType::from_header(*byte).ok())
-    {
+    if let Ok(board) = GbCartType::from_header(rom) {
         stated.push(MediaFact {
             option: BOARD,
-            value: LaunchValue::Choice(board.name().to_owned()),
+            value: LaunchValue::Board(board.to_value()),
         });
     }
     stated
@@ -257,8 +255,8 @@ pub fn create_console(media: MediaLoad) -> Result<Box<dyn SystemConsole>, String
     };
     let runner = RunnerPreference::from_launch(&media.launch)
         .map_err(|value| format!("{RUNNER}: no such console \"{value}\""))?;
-    let board = board_from_launch(&media.launch)
-        .map_err(|value| format!("{BOARD}: no such board \"{value}\""))?;
+    let board =
+        board_from_launch(&media.launch).map_err(|refusal| format!("{BOARD}: {refusal}"))?;
     launch(
         media.rom.to_vec(),
         board,

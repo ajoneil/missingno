@@ -113,10 +113,11 @@ mod gb {
                 Box::new(create_console(console, no_battery))
             }
         }
-        let board = launch::board_from_launch(launch).map_err(|value| LoadError::InvalidValue {
-            option: BOARD.to_string(),
-            value: value.to_string(),
-        })?;
+        let board =
+            launch::board_from_launch(launch).map_err(|refusal| LoadError::InvalidValue {
+                option: BOARD.to_string(),
+                value: refusal,
+            })?;
         let cartridge = Cartridge::new(rom.to_vec(), board, None)
             .map_err(|refusal| LoadError::Core(refusal.to_string()))?;
         let boot_rom = match launch.file(BOOT_ROM) {
@@ -157,8 +158,8 @@ mod vcs {
     use super::*;
     use missingno_core::system::SystemConsole;
 
-    use missingno_vcs::debug::{BOARD, OVERDUMP, TV_STANDARD};
-    use missingno_vcs::{CartType, TvStandard};
+    use missingno_vcs::TvStandard;
+    use missingno_vcs::debug::{BOARD, OVERDUMP, TV_STANDARD, board_from_launch};
 
     /// A stated board or standard is the catalogue's word on media that carries
     /// no header of its own — a value the core cannot read is an error, never a
@@ -179,15 +180,10 @@ mod vcs {
             }
             None => None,
         };
-        let board = match launch.choice(BOARD) {
-            Some(code) if CartType::from_name(code).is_none() => {
-                return Err(LoadError::InvalidValue {
-                    option: BOARD.to_string(),
-                    value: code.to_string(),
-                });
-            }
-            board => board,
-        };
+        let board = board_from_launch(launch).map_err(|refusal| LoadError::InvalidValue {
+            option: BOARD.to_string(),
+            value: refusal,
+        })?;
         missingno_vcs::debug::create_console(
             rom,
             title_for(path),
@@ -261,8 +257,7 @@ mod sms {
 mod sg1000 {
     use super::*;
     use missingno_core::system::SystemConsole;
-    use missingno_sg1000::cartridge::CartType;
-    use missingno_sg1000::debug::BOARD;
+    use missingno_sg1000::debug::{BOARD, board_from_launch};
 
     /// A stated board is the catalogue's word on media that carries no header of
     /// its own — a code the core cannot read is an error, never a quiet fall
@@ -272,17 +267,10 @@ mod sg1000 {
         rom: &[u8],
         launch: &LaunchValues,
     ) -> Result<Box<dyn SystemConsole>, LoadError> {
-        let board = match launch.choice(BOARD) {
-            Some(code) => {
-                Some(
-                    CartType::from_name(code).ok_or_else(|| LoadError::InvalidValue {
-                        option: BOARD.to_string(),
-                        value: code.to_string(),
-                    })?,
-                )
-            }
-            None => None,
-        };
+        let board = board_from_launch(launch).map_err(|refusal| LoadError::InvalidValue {
+            option: BOARD.to_string(),
+            value: refusal,
+        })?;
         missingno_sg1000::debug::create_console(rom, title_for(path), board)
             .map_err(|error| LoadError::Core(error.to_string()))
     }

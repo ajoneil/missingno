@@ -114,6 +114,7 @@ fn choice_control(
 
     let mut entries = vec![automatic(id, data, |value| match value {
         LaunchValue::Choice(code) => label_of(code).or_else(|| Some(code.clone())),
+        LaunchValue::Board(board) => label_of(&board.board).or_else(|| Some(board.board.clone())),
         _ => None,
     })];
     entries.extend(choices.iter().map(|choice| Entry {

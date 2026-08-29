@@ -76,7 +76,7 @@ pub fn facts(
         // Every family publishes its board option under the same id, so one
         // key carries the catalogue's word whichever core is about to read it.
         if let Some(board) = &release.cart_type {
-            facts.set(system::vcs::BOARD, LaunchValue::Choice(board.clone()));
+            facts.set(system::vcs::BOARD, LaunchValue::Board(board.clone()));
         }
         // A dump padded past the cartridge's silicon: the stated board says
         // where the silicon ends.

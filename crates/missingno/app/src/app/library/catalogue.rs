@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 
+use missingno_core::cartridge::BoardValue;
 use missingno_gamedb::{
     Artifact, Controller, FactValue, Game, GameBoy, GameBoyColor, HardwareFacts, Link,
     Platform as DbPlatform, Sg1000, Vcs,
@@ -50,10 +51,11 @@ pub struct CatalogueRelease {
     /// Broadcast standard (VCS): carts have no region header, so the DB is
     /// authoritative and the core only heuristically probes without it.
     pub tv_format: Option<TvStandard>,
-    /// The board the cartridge is built on, as its core's interchange code —
-    /// `Atari8K` on the VCS, `DahjeeA` on the SG-1000, `Mbc1Multicart` where a Game Boy
-    /// header misdeclares itself. Absent, the core reads the media instead.
-    pub cart_type: Option<String>,
+    /// The board the cartridge is built on and the parts populated on it, as its
+    /// core's vocabulary states them — `Atari8K` on the VCS, `DahjeeA` on the
+    /// SG-1000, an MBC and its chips where a Game Boy header misdeclares itself.
+    /// Absent, the core reads the media instead.
+    pub cart_type: Option<BoardValue>,
     /// Controllers the release needs, when it deviates from the platform's
     /// default; the loader configures the console's ports from them.
     pub controllers: Vec<Controller>,
@@ -109,14 +111,14 @@ impl CatalogueEntry {
 /// under whatever keys its own hardware declares.
 fn flatten<H: HardwareFacts>(
     hardware: &H,
-) -> (Option<TvStandard>, Option<String>, Vec<Controller>) {
+) -> (Option<TvStandard>, Option<BoardValue>, Vec<Controller>) {
     let mut tv_format = None;
     let mut cart_type = None;
     let mut controllers = Vec::new();
     for fact in H::descriptors() {
         match hardware.get(fact.key) {
             Some(FactValue::TvStandard(tv)) => tv_format = tv_format.or(tv),
-            Some(FactValue::Board(code)) => cart_type = cart_type.or(code),
+            Some(FactValue::Board(board)) => cart_type = cart_type.or(board),
             Some(FactValue::Controllers(stated)) => controllers = stated,
             _ => {}
         }
@@ -355,7 +357,10 @@ mod tests {
         assert_eq!(usa_game.title, pal_game.title);
         assert_eq!(usa.tv_format, Some(TvStandard::Ntsc));
         assert_eq!(pal.tv_format, Some(TvStandard::Pal));
-        assert_eq!(usa.cart_type.as_deref(), Some("Dpc"));
+        assert_eq!(
+            usa.cart_type.as_ref().map(|board| board.board.as_str()),
+            Some("Dpc")
+        );
     }
 
     #[test]

@@ -44,6 +44,7 @@ pub fn port_config(controllers: &[Controller]) -> Vec<(PortId, PeripheralId)> {
 /// standard to decode for, the board the dump sits on, and whether it runs past
 /// the silicon. Absent, the core probes and infers.
 pub fn create_console(media: MediaLoad) -> Result<Box<dyn SystemConsole>, String> {
+    let board = missingno_vcs::debug::board_from_launch(&media.launch)?;
     missingno_vcs::debug::create_console(
         media.rom,
         media.fallback_title,
@@ -51,7 +52,7 @@ pub fn create_console(media: MediaLoad) -> Result<Box<dyn SystemConsole>, String
             .launch
             .choice(TV_STANDARD)
             .and_then(TvStandard::from_name),
-        media.launch.choice(BOARD),
+        board,
         media.launch.toggle(OVERDUMP),
     )
     .map_err(|error| error.to_string())
