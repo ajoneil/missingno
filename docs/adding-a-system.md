@@ -363,8 +363,12 @@ until a second family grows the equivalent:
     flattening all iterate these), one row in `with_platforms!` (which reaches
     validate/fmt/sweeps/CLI), and a `sources/<tree>.md` catalogue file. In the
     curator: a `TreeId`/`AnyGame` variant pair (one file; the per-fact arms
-    are already generic). A DAT importer follows the `import-sg1000` fold
-    shape when a signature source exists. If the platform has swappable
+    are already generic). A `FactKind::Board` names the core's own board
+    vocabulary, and the boards declare the parts they carry — the sizes,
+    battery, clock or rumble a caller may state beside one — so display,
+    editing and the generated schemas enumerate them without knowing the
+    console. A DAT importer follows the `import-sg1000` fold shape when a
+    signature source exists. If the platform has swappable
     controllers, pick one canonical default: the db stages `controllers` only
     on deviation from it or for sibling-release contrast (the VCS default is
     the joystick), so an empty list always means "the default" and never

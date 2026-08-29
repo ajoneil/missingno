@@ -399,9 +399,10 @@ pub struct GbHeader {
     /// 0x80 = dual-mode (CGB enhanced), 0xC0 = CGB only.
     pub cgb_flag: u8,
     pub sgb: bool,
-    /// The board `$0147` declares; `Err` carries a byte naming no board this
-    /// core builds.
-    pub mapper: Result<GbCartType, u8>,
+    /// The whole board `$0147`/`$0148`/`$0149` declare — the mapper and the
+    /// parts beside it; `Err` carries a `$0147` naming no board this core
+    /// builds.
+    pub board: Result<GbCartType, u8>,
 }
 
 pub fn gb_header(rom: &[u8]) -> Option<GbHeader> {
@@ -411,7 +412,7 @@ pub fn gb_header(rom: &[u8]) -> Option<GbHeader> {
     Some(GbHeader {
         cgb_flag: rom[0x143],
         sgb: rom[0x146] == 0x03 && rom[0x14B] == 0x33,
-        mapper: GbCartType::from_header(rom[0x147]),
+        board: GbCartType::from_header(rom),
     })
 }
 

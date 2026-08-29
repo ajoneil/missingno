@@ -359,8 +359,10 @@ While the developer plays the current game:
    same-named film, not a disambiguation page, and not a company article that merely lists
    the game. An article about the arcade original counts when it documents the port.
 9. **Hardware facts**: the curator auto-stages what a booted Game Boy header states, filling
-   unknowns only. Override via update_game when the truth differs: `mapper` (GB/GBC —
-   unlicensed carts lie) and `cart_type` (VCS and SG-1000 — no headers, so the db drives the
+   unknowns only. Override via update_game when the truth differs: `cart_type` is one key on
+   every platform, an object naming the board plus the parts stated on it
+   (`{"board": "Mbc5", "rom": "1M", "ram": "32K", "battery": true}`; GB/GBC headers lie on
+   unlicensed carts, VCS and SG-1000 have no headers, so the db drives the
    emulator's board choice; if a playtest shows garbage the board is the first suspect, though
    a game that renders no stable frame on *any* valid board is a software problem, not a board
    mismatch). **Controllers stage only on deviation from the platform default** (VCS:
@@ -381,10 +383,10 @@ While the developer plays the current game:
      nothing. "No article exists" may only be said with that search on record;
    - **manual** — the Compendium index consulted (and AtariAge-via-Wayback for unlicensed
      carts), linked or absent-with-reason;
-   - **dumps** — every hash checked this pass, and any `rom_size` or `defect` you staged
-     called out in the report. Those two are measurements of the silicon that the dump's own
-     byte count contradicts, so a reader who does not see them stated assumes the dump is the
-     chip;
+   - **dumps** — every hash checked this pass, and any board `rom` size or `defect` you
+     staged called out in the report. Those two are measurements of the silicon that the
+     dump's own byte count contradicts, so a reader who does not see them stated assumes the
+     dump is the chip;
    - **flags** — unsupported-controller and playtest-oddity checks done.
 
    **A "not found" counts only from a search proven able to find.** Before recording an
@@ -429,7 +431,7 @@ reflexively make a new game:**
 - **An official enhanced re-release** → a distinct *release* of the original, not a fan mod.
 - **A fan re-dump that won't load** (odd size; `failed to construct console from media`) →
   `split_release` it so it isn't mislabelled with the retail board (clear `cart_type` with an
-  empty string to auto-detect), then `raise_flag`. Keep the dump.
+  empty object to auto-detect), then `raise_flag`. Keep the dump.
 
 **Sourcing and licensing homebrew:**
 

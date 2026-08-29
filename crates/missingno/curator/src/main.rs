@@ -40,7 +40,8 @@ struct Args {
     collection_dir: Option<PathBuf>,
 
     /// The system the inbox holds: unmatched inbox dumps file into this tree
-    /// whatever their extension says. One of the database's tree names.
+    /// whatever their extension says, though a Game Boy family header names
+    /// which of its two platforms a dump is. One of the database's tree names.
     #[arg(long)]
     tree: Option<String>,
 
@@ -76,25 +77,96 @@ fn mod_link(args: &serde_json::Value) -> Result<Option<missingno_gamedb::Link>, 
     }))
 }
 
-/// The hardware a tool call states, keyed as the platforms declare it; the
-/// payload edited answers for a key its platform doesn't carry.
+/// The hardware a tool call states, keyed as the platforms declare it: one
+/// property per fact key any platform carries, read in the shape its kind
+/// takes. The payload edited answers for a key its own platform doesn't state.
 fn hardware_facts(
-    tv_format: Option<missingno_gamedb::TvStandard>,
-    controllers: Option<Vec<missingno_gamedb::Controller>>,
-    cart_type: Option<String>,
-) -> Vec<(&'static str, missingno_gamedb::FactValue)> {
-    use missingno_gamedb::FactValue;
+    set: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Vec<(&'static str, missingno_gamedb::FactValue)>, String> {
     let mut facts = Vec::new();
-    if let Some(format) = tv_format {
-        facts.push(("tv_format", FactValue::TvStandard(Some(format))));
+    for (key, kind) in db::fact_kinds() {
+        if let Some(value) = set.get(key) {
+            facts.push((key, parse_fact(key, kind, value)?));
+        }
     }
-    if let Some(controllers) = controllers {
-        facts.push(("controllers", FactValue::Controllers(controllers)));
+    Ok(facts)
+}
+
+fn parse_fact(
+    key: &str,
+    kind: &missingno_gamedb::FactKind,
+    value: &serde_json::Value,
+) -> Result<missingno_gamedb::FactValue, String> {
+    use missingno_gamedb::{FactKind, FactValue};
+    let word = |value: &serde_json::Value| {
+        value
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| format!("{key} takes a string"))
+    };
+    match kind {
+        FactKind::TvStandard => Ok(FactValue::TvStandard(Some(db::parse_tv_format(&word(
+            value,
+        )?)?))),
+        FactKind::Controllers => {
+            let list = value
+                .as_array()
+                .ok_or_else(|| format!("{key} takes a list of strings"))?;
+            let mut parsed = Vec::with_capacity(list.len());
+            for controller in list {
+                parsed.push(db::parse_controller(&word(controller)?)?);
+            }
+            Ok(FactValue::Controllers(parsed))
+        }
+        FactKind::Enhancement => Ok(FactValue::Enhancement(
+            vocabulary::ENHANCEMENTS.parse(&word(value)?)?,
+        )),
+        FactKind::Board { .. } => parse_board_fact(key, value),
     }
-    if let Some(code) = cart_type {
-        facts.push(("cart_type", db::board_value(&code)));
+}
+
+/// A board statement: the board's own name plus one property per part
+/// populated on it. An empty object, or an empty board name, clears the fact.
+fn parse_board_fact(
+    key: &str,
+    value: &serde_json::Value,
+) -> Result<missingno_gamedb::FactValue, String> {
+    use missingno_core::cartridge::{AttributeValue, BoardValue};
+    let stated = value.as_object().ok_or_else(|| {
+        format!("{key} takes an object naming the board and its parts, e.g. {{\"board\": \"Mbc5\", \"rom\": \"1M\", \"battery\": true}}")
+    })?;
+    let board = match stated.get("board") {
+        None if stated.is_empty() => return Ok(missingno_gamedb::FactValue::Board(None)),
+        None => return Err(format!("{key} needs a \"board\" name")),
+        Some(serde_json::Value::String(name)) if name.is_empty() => {
+            return Ok(missingno_gamedb::FactValue::Board(None));
+        }
+        Some(serde_json::Value::String(name)) => name.clone(),
+        Some(_) => return Err(format!("{key}'s \"board\" is the board's name")),
+    };
+    let mut value = BoardValue::new(&board);
+    for (part, stated) in stated {
+        if part == "board" {
+            continue;
+        }
+        let stated = match stated {
+            serde_json::Value::String(name) => AttributeValue::Choice(name.clone()),
+            serde_json::Value::Bool(on) => AttributeValue::Toggle(*on),
+            serde_json::Value::Number(count) => AttributeValue::Bytes(
+                count
+                    .as_u64()
+                    .and_then(|count| u32::try_from(count).ok())
+                    .ok_or_else(|| format!("{key}'s {part:?} is a byte count"))?,
+            ),
+            _ => {
+                return Err(format!(
+                    "{key}'s {part:?} is a size name, a byte count, or true/false"
+                ));
+            }
+        };
+        value = value.with(part, stated);
     }
-    facts
+    Ok(missingno_gamedb::FactValue::Board(Some(value)))
 }
 
 /// This process's action-event log: `runtime_dir/curator-events-<pid>.log`.
@@ -828,7 +900,7 @@ impl Curator {
                     if let Ok(db) = &mut self.db
                         && let Some(i) = db.entries.iter().position(|e| e.key() == key)
                     {
-                        if db.entries[i].game.stage_artifact(&sha1, size) {
+                        if db.entries[i].game.stage_artifact(&sha1) {
                             db.entries[i].dirty = true;
                             line.push_str(" — NEW, staged onto sourced release");
                         } else {
@@ -885,6 +957,13 @@ impl Curator {
                             "{} stray dump(s) from other trees: {}",
                             outcome.strays.len(),
                             outcome.strays.join("; ")
+                        ));
+                    }
+                    if !outcome.refinements.is_empty() {
+                        parts.push(format!(
+                            "{} dump(s) filed by their own header: {}",
+                            outcome.refinements.len(),
+                            outcome.refinements.join("; ")
                         ));
                     }
                     self.status = parts.join(" · ");
@@ -1365,6 +1444,12 @@ impl Curator {
             return String::new();
         }
         let to = root.join(new_key);
+        // A move between trees lands under a tree folder that may be new.
+        if let Some(parent) = to.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            return format!(", but making {} failed: {e}", parent.display());
+        }
         match std::fs::rename(&from, &to) {
             Ok(()) => format!(", collection folder moved to {}", to.display()),
             Err(e) => format!(", but moving {} failed: {e}", from.display()),
@@ -1501,7 +1586,10 @@ impl Curator {
                 // Anything that can change which entry is shown, or what cover
                 // it carries, has to fetch it — the plain path returns no task.
                 let body = self.run_tool(name, args);
-                let task = if matches!(name, "update_game" | "merge_game" | "rename_game") {
+                let task = if matches!(
+                    name,
+                    "update_game" | "merge_game" | "rename_game" | "move_game"
+                ) {
                     self.selected
                         .map(|i| self.load_cover_task(i))
                         .unwrap_or_else(Task::none)
@@ -1745,15 +1833,15 @@ impl Curator {
                     entry.game.set_release_publisher(0, publisher.to_owned());
                     applied.push("publisher");
                 }
-                for key in ["mapper", "cart_type"] {
-                    if let Some(code) = set.get(key).and_then(serde_json::Value::as_str) {
-                        if let Err(error) =
-                            entry.game.set_release_fact(0, key, db::board_value(code))
-                        {
-                            return error_result(error);
-                        }
-                        applied.push(key);
+                if let Some(stated) = set.get("cart_type") {
+                    let board = match parse_board_fact("cart_type", stated) {
+                        Ok(board) => board,
+                        Err(error) => return error_result(error),
+                    };
+                    if let Err(error) = entry.game.set_release_fact(0, "cart_type", board) {
+                        return error_result(error);
                     }
+                    applied.push("cart_type");
                 }
                 if let Some(kind) = set.get("kind").and_then(serde_json::Value::as_str) {
                     let Some(kind) = vocabulary::GAME_KINDS.lookup_ignoring_case(kind) else {
@@ -1842,6 +1930,41 @@ impl Curator {
                     Ok(new_key) => text_result(format!(
                         "release {release_index} of {key} split out → {new_key}"
                     )),
+                    Err(e) => error_result(e),
+                }
+            }
+            "move_game" => {
+                let (Some(key), Some(tree)) = (str_arg("key"), str_arg("tree")) else {
+                    return error_result("missing key or tree");
+                };
+                let Some(target) = TreeId::for_dir(tree) else {
+                    return error_result(format!(
+                        "unknown tree {tree:?}; one of: {}",
+                        missingno_gamedb::platform_dirs().join(", ")
+                    ));
+                };
+                let Some(i) = self.find_entry(key) else {
+                    return error_result(format!("no entry {key}"));
+                };
+                let old_key = key.to_owned();
+                let moved = {
+                    let Ok(db) = &mut self.db else {
+                        return error_result("db not loaded");
+                    };
+                    db.move_game(i, target)
+                };
+                match moved {
+                    Ok(report) => {
+                        let Ok(db) = &self.db else {
+                            return error_result("db not loaded");
+                        };
+                        let new_key = db.entries[i].key();
+                        self.rekey_entry(&old_key, &new_key);
+                        // The collection folder is keyed by tree/slug, so it
+                        // has to follow or the entry's ROMs are orphaned.
+                        let carried = self.move_collection_dir(&old_key, &new_key);
+                        text_result(format!("{report}{carried}; use the new key from now on"))
+                    }
                     Err(e) => error_result(e),
                 }
             }
@@ -2003,29 +2126,9 @@ impl Curator {
                     Ok(link) => link,
                     Err(e) => return error_result(e),
                 };
-                let tv_format = match set_str("tv_format") {
-                    Some(f) => Some(match db::parse_tv_format(f) {
-                        Ok(f) => f,
-                        Err(e) => return error_result(e),
-                    }),
-                    None => None,
-                };
-                let controllers = match set.get("controllers").and_then(serde_json::Value::as_array)
-                {
-                    Some(list) => {
-                        let mut parsed = Vec::with_capacity(list.len());
-                        for value in list {
-                            let Some(name) = value.as_str() else {
-                                return error_result("controllers must be strings");
-                            };
-                            match db::parse_controller(name) {
-                                Ok(controller) => parsed.push(controller),
-                                Err(e) => return error_result(e),
-                            }
-                        }
-                        Some(parsed)
-                    }
-                    None => None,
+                let facts = match hardware_facts(set) {
+                    Ok(facts) => facts,
+                    Err(e) => return error_result(e),
                 };
                 let mut applied = match db.entries[i].game.update_mod(
                     mod_name,
@@ -2044,7 +2147,7 @@ impl Curator {
                     None => return error_result(format!("mod {mod_name:?} vanished mid-edit")),
                 };
                 // A conversion often exists precisely to change these.
-                for (key, value) in hardware_facts(tv_format, controllers, None) {
+                for (key, value) in facts {
                     if let Err(error) =
                         db.entries[i]
                             .game
@@ -2161,36 +2264,10 @@ impl Curator {
                     }
                     None => None,
                 };
-                let tv_format = match set_str("tv_format") {
-                    Some(f) => Some(match db::parse_tv_format(f) {
-                        Ok(f) => f,
-                        Err(e) => return error_result(e),
-                    }),
-                    None => None,
+                let facts = match hardware_facts(set) {
+                    Ok(facts) => facts,
+                    Err(e) => return error_result(e),
                 };
-                let controllers = match set.get("controllers").and_then(serde_json::Value::as_array)
-                {
-                    Some(list) => {
-                        let mut parsed = Vec::with_capacity(list.len());
-                        for value in list {
-                            let Some(name) = value.as_str() else {
-                                return error_result("controllers must be strings");
-                            };
-                            match db::parse_controller(name) {
-                                Ok(controller) => parsed.push(controller),
-                                Err(e) => return error_result(e),
-                            }
-                        }
-                        Some(parsed)
-                    }
-                    None => None,
-                };
-                let cart_type = set_str("cart_type").map(str::to_owned);
-                // 0 is not a ROM, so it is how the tool surface clears one.
-                let rom_size = set
-                    .get("rom_size")
-                    .and_then(serde_json::Value::as_u64)
-                    .map(|bytes| (bytes > 0).then_some(bytes as u32));
                 if status.is_none()
                     && title.is_none()
                     && label.is_none()
@@ -2198,10 +2275,7 @@ impl Curator {
                     && publisher.is_none()
                     && regions.is_none()
                     && languages.is_none()
-                    && tv_format.is_none()
-                    && controllers.is_none()
-                    && cart_type.is_none()
-                    && rom_size.is_none()
+                    && facts.is_empty()
                 {
                     return error_result("no recognized fields in set");
                 }
@@ -2216,11 +2290,10 @@ impl Curator {
                     publisher,
                     regions,
                     languages,
-                    rom_size,
                 };
                 if db.entries[i].game.update_release(index as usize, edits) {
                     db.entries[i].dirty = true;
-                    for (key, value) in hardware_facts(tv_format, controllers, cart_type) {
+                    for (key, value) in facts {
                         if let Err(error) =
                             db.entries[i]
                                 .game

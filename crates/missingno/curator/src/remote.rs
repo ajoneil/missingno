@@ -17,9 +17,11 @@ use missingno_session::attach::{
 use missingno_session::tools::{outcome_json, text};
 use serde_json::{Value, json};
 
-use crate::db::fact_description;
+use missingno_gamedb::FactKind;
+
+use crate::db::{self, fact_description};
 use crate::vocabulary::{
-    CONTROLLERS, DEFECTS, GAME_KINDS, LANGUAGES, LINK_TYPES, MOD_CATEGORIES, REGIONS,
+    CONTROLLERS, DEFECTS, ENHANCEMENTS, GAME_KINDS, LANGUAGES, LINK_TYPES, MOD_CATEGORIES, REGIONS,
     RELEASE_STATUSES, TV_FORMATS,
 };
 
@@ -168,8 +170,84 @@ pub fn error_result(body: impl Into<String>) -> Value {
     outcome_json(Err(body.into()))
 }
 
+/// The `set` property one hardware fact takes, in the shape its kind states —
+/// so a platform declaring a new key gets a property without a change here.
+fn fact_property(key: &'static str, kind: &'static FactKind, lead: &str) -> Value {
+    let doc = format!("{lead}{}", fact_description(key));
+    match kind {
+        FactKind::TvStandard => json!({
+            "type": "string", "enum": TV_FORMATS.schema(), "description": doc,
+        }),
+        FactKind::Controllers => json!({
+            "type": "array",
+            "items": { "type": "string", "enum": CONTROLLERS.schema() },
+            "description": format!("{doc} Replaces the list; omit or empty for the platform default."),
+        }),
+        FactKind::Enhancement => json!({
+            "type": "string", "enum": ENHANCEMENTS.schema(),
+            "description": format!("{doc} Unknown clears it back to unestablished, which is not the same claim as NotEnhanced."),
+        }),
+        FactKind::Board { .. } => board_property(key, &doc),
+    }
+}
+
+/// A board statement: the board's own name plus one property per part any
+/// board under this key carries, each enumerated from the platforms' own
+/// catalogues.
+fn board_property(key: &'static str, doc: &str) -> Value {
+    let mut properties = serde_json::Map::new();
+    properties.insert(
+        "board".to_owned(),
+        json!({
+            "type": "string",
+            "description": "the board's own name, as its platform's vocabulary lists it",
+        }),
+    );
+    for part in db::board_attributes(key) {
+        let mut description = part.label.to_owned();
+        if !part.choices.is_empty() {
+            description.push_str(&format!(" — one of {}", part.choices.join(", ")));
+        }
+        let types = match part.types.as_slice() {
+            [one] => json!(one),
+            many => json!(many),
+        };
+        properties.insert(
+            part.key.to_owned(),
+            json!({ "type": types, "description": description }),
+        );
+    }
+    json!({
+        "type": "object",
+        "properties": properties,
+        "description": format!(
+            "{doc} State the board and the parts populated on it, e.g. \
+             {{\"board\": \"Mbc5\", \"rom\": \"1M\", \"ram\": \"32K\", \"battery\": true}}. \
+             An empty object, or an empty board name, clears it back to unstated. \
+             Boards, with the parts each carries (\"?\" = the board may go without it) — {}",
+            db::board_vocabulary_doc(key)
+        ),
+    })
+}
+
+/// Add every platform-declared hardware fact to a `set` object's properties,
+/// `lead` saying whose hardware the payload's facts describe.
+fn with_fact_properties(mut properties: Value, lead: &str) -> Value {
+    if let Some(map) = properties.as_object_mut() {
+        for (key, kind) in db::fact_kinds() {
+            map.insert(key.to_owned(), fact_property(key, kind, lead));
+        }
+    }
+    properties
+}
+
 fn tool_definitions() -> Value {
     let object = |properties: Value, required: &[&str]| json!({ "type": "object", "properties": properties, "required": required });
+    let board_of_first_release = db::fact_kinds()
+        .into_iter()
+        .find(|(key, _)| *key == "cart_type")
+        .map(|(key, kind)| fact_property(key, kind, "The first release's board. "))
+        .unwrap_or(Value::Null);
     json!([
         {
             "name": "status",
@@ -223,10 +301,7 @@ fn tool_definitions() -> Value {
                                }, "required": ["name", "url", "link_type"] } },
                     "remove_links": { "type": "array", "items": { "type": "string" },
                                       "description": "link names to drop, for clearing duplicates or a link that turned out to be wrong" },
-                    "mapper": { "type": "string",
-                                "description": "GB/GBC cartridge board override (first release) — when the header lies. One of the Game Boy boards, e.g. \"Mbc5RumbleRamBattery\" or \"Mbc3TimerRamBattery\"; an unlisted name is refused with the vocabulary. Empty string clears it back to the header's word." },
-                    "cart_type": { "type": "string",
-                                   "description": "VCS or SG-1000 board override (first release) — those carts carry no header. One of that platform's boards, e.g. \"Atari16KSuperchip\" (VCS) or \"DahjeeA\" (SG-1000); playtests boot with it, so change it if the game boots wrong. Empty string clears it back to auto-detect." },
+                    "cart_type": board_of_first_release,
                 }},
             }), &["key", "set"]),
         },
@@ -272,7 +347,7 @@ fn tool_definitions() -> Value {
             "inputSchema": object(json!({
                 "key": { "type": "string" },
                 "mod": { "type": "string", "description": "the mod's current name" },
-                "set": { "type": "object", "properties": {
+                "set": { "type": "object", "properties": with_fact_properties(json!({
                     "name": { "type": "string" },
                     "category": { "type": "string",
                                   "enum": MOD_CATEGORIES.schema() },
@@ -283,14 +358,9 @@ fn tool_definitions() -> Value {
                                    "description": "defaults to Community" },
                     "release_index": { "type": "integer" },
                     "base_sha1": { "type": "string", "description": "a release's dump, or another mod's when this derives from that hack" },
-                    "tv_format": { "type": "string", "enum": TV_FORMATS.schema(),
-                                   "description": format!("The standard THIS build runs on when a conversion changed it — an NTSC build of a PAL game. {}", fact_description("tv_format")) },
-                    "controllers": { "type": "array", "items": { "type": "string",
-                                     "enum": CONTROLLERS.schema() },
-                                     "description": format!("What THIS build plays on when a conversion changed it — a joystick build of a keypad game. {}", fact_description("controllers")) },
                     "label": { "type": "string" },
                     "date": { "type": "string" },
-                }},
+                }), "What THIS build runs on where a conversion moved it off the game's own hardware — an NTSC build of a PAL game, a joystick build of a keypad game. ")},
             }), &["key", "mod", "set"]),
         },
         {
@@ -312,28 +382,19 @@ fn tool_definitions() -> Value {
             "inputSchema": object(json!({
                 "key": { "type": "string" },
                 "release_index": { "type": "integer" },
-                "set": { "type": "object", "properties": {
+                "set": { "type": "object", "properties": with_fact_properties(json!({
                     "status": { "type": "string",
                                 "enum": RELEASE_STATUSES.schema() },
                     "title": { "type": "string" },
                     "label": { "type": "string" },
                     "date": { "type": "string" },
                     "publisher": { "type": "string" },
-                    "rom_size": { "type": "integer",
-                        "description": "The cartridge's ROM in bytes. State it only where the board does not imply the size — an SG-1000 board names none, a Tigervision one runs 8 KB to 32 KB — or where the dump is not the chip, as a memory map is. Omit when the artifact's own byte count already says it; 0 clears it." },
-                    "tv_format": { "type": "string", "enum": TV_FORMATS.schema(),
-                        "description": fact_description("tv_format") },
-                    "controllers": { "type": "array", "items": { "type": "string",
-                        "enum": CONTROLLERS.schema() },
-                        "description": format!("{} Replaces the list; omit/empty for the platform default.", fact_description("controllers")) },
-                    "cart_type": { "type": "string",
-                        "description": format!("{} Empty string clears it back to unstated.", fact_description("cart_type")) },
                     "regions": { "type": "array", "items": { "type": "string",
                         "enum": REGIONS.schema() } },
                     "languages": { "type": "array", "items": { "type": "string",
                         "enum": LANGUAGES.schema() },
                         "description": "Languages this release presents to the player; replaces the list. Record them wherever a release carries a substantial amount of text — English included, even though it is the default, so a later fan translation reads as a change. Omit only where there is too little text to matter, which covers most Atari carts." },
-                }},
+                }), "")},
             }), &["key", "release_index", "set"]),
         },
         {
@@ -399,6 +460,15 @@ fn tool_definitions() -> Value {
                 "title": { "type": "string", "description": "the new entry's title — the game's real name, not the one the lumped entry wore" },
                 "slug": { "type": "string", "description": "optional slug; derived from the title when omitted" },
             }), &["key", "release_index", "title"]),
+        },
+        {
+            "name": "move_game",
+            "description": "Re-file an entry under another platform: an import that guessed the wrong tree files a Game Boy Color game in gb, or a dump the extension mislabelled in the wrong console's tree entirely. The manifest is rebuilt under the target platform and its directory moves; every hardware fact the target also states carries over, and one it does not — a Game Boy Color entry has no sgb/cgb of its own — is dropped and named in the reply. Refuses when the slug is already taken in the target tree; rename first. Flags follow, and the returned key is the one to use afterwards.",
+            "inputSchema": object(json!({
+                "key": { "type": "string" },
+                "tree": { "type": "string", "enum": missingno_gamedb::platform_dirs(),
+                          "description": "the tree the entry belongs in" },
+            }), &["key", "tree"]),
         },
         {
             "name": "rename_game",
@@ -573,5 +643,51 @@ mod tests {
 
         drop(endpoint);
         assert!(!path.exists(), "drop clears the socket file");
+    }
+
+    fn set_properties(tools: &Value, name: &str) -> Value {
+        tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap_or_else(|| panic!("{name} is published"))["inputSchema"]["properties"]["set"]
+            ["properties"]
+            .clone()
+    }
+
+    /// The editing tools offer exactly the fact keys the platforms declare, so
+    /// a key the schema shows is one the parser reads and a payload can be
+    /// asked for — and a key no platform states any more is gone from both.
+    #[test]
+    fn the_editing_tools_offer_every_declared_fact() {
+        let tools = tool_definitions();
+        for tool in ["update_release", "update_mod"] {
+            let set = set_properties(&tools, tool);
+            for (key, _) in db::fact_kinds() {
+                assert!(!set[key].is_null(), "{tool} offers no {key}");
+            }
+            assert!(set["rom_size"].is_null(), "{tool} still states a ROM size");
+        }
+        assert!(
+            set_properties(&tools, "update_game")["mapper"].is_null(),
+            "the board's key is cart_type everywhere"
+        );
+
+        let board = set_properties(&tools, "update_release")["cart_type"].clone();
+        assert_eq!(board["type"], "object");
+        assert_eq!(board["properties"]["board"]["type"], "string");
+        assert_eq!(board["properties"]["battery"]["type"], "boolean");
+        // A part one platform names and another measures takes either shape.
+        assert_eq!(
+            board["properties"]["rom"]["type"],
+            json!(["string", "integer"])
+        );
+        let described = board["description"].as_str().unwrap();
+        assert!(
+            described.contains("Mbc5(rom, ram?, battery?, rumble?)"),
+            "{described}"
+        );
+        assert!(described.contains("Tigervision(rom?)"), "{described}");
     }
 }

@@ -3,10 +3,14 @@
 
 use std::{fs, io, path::PathBuf};
 
+use missingno_core::cartridge::{
+    AttributeKind, AttributeValue, BoardSpec, BoardValue, BoardVocabulary,
+};
 use missingno_gamedb::{
-    Controller, Defect, FactValue, FlagFile, Game, GameBoy, GameBoyColor, GameKind, GbCartType,
-    HardwareFacts, Language, Link, LinkType, Mod, ModCategory, ModOf, ModRelease, Platform, Region,
-    Release, ReleaseStatus, Sg1000, Sha1, Slug, Tree, TvStandard, Vcs, with_platforms,
+    Controller, Defect, FactKind, FactValue, FlagFile, Game, GameBoy, GameBoyColor, GameKind,
+    GbCartType, HardwareFacts, Language, Link, LinkType, Mod, ModCategory, ModOf, ModRelease,
+    Platform, Region, Release, ReleaseStatus, Sg1000, Sha1, Slug, Tree, TvStandard, Vcs,
+    with_platforms,
 };
 
 use crate::vocabulary;
@@ -45,6 +49,15 @@ impl TreeId {
     }
 }
 
+/// The Game Boy platform a header names: the CGB flag's `$C0` requires a Color,
+/// and everything else — dual-mode `$80` included — plays on a Game Boy.
+fn gb_tree(header: &crate::verify::GbHeader) -> TreeId {
+    match header.cgb_flag & 0xC0 == 0xC0 {
+        true => TreeId::Gbc,
+        false => TreeId::Gb,
+    }
+}
+
 /// What a ROM-folder scan did to the database, for the status line.
 #[derive(Default)]
 pub struct ScanOutcome {
@@ -52,6 +65,8 @@ pub struct ScanOutcome {
     pub added: usize,
     /// Inbox dumps whose hash belongs to a tree other than the declared one.
     pub strays: Vec<String>,
+    /// Dumps whose own header named a platform other than the declared tree.
+    pub refinements: Vec<String>,
 }
 
 /// A hardware fact's description for a tool schema: every platform that states
@@ -82,6 +97,129 @@ pub fn fact_description(key: &str) -> String {
         .map(|(platforms, doc)| format!("{}: {doc}", platforms.join(" and ")))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Every hardware fact key any platform states, in platform order, each with
+/// the kind of value it takes — the union a tool surface offers and parses. A
+/// key two platforms share appears once; the payload being edited answers for
+/// a key its own platform doesn't state.
+pub fn fact_kinds() -> Vec<(&'static str, &'static FactKind)> {
+    let mut kinds: Vec<(&'static str, &'static FactKind)> = Vec::new();
+    macro_rules! declared_by {
+        ($($P:ident),* $(,)?) => {$(
+            for fact in <<$P as Platform>::ReleaseHardware as HardwareFacts>::descriptors() {
+                if !kinds.iter().any(|(key, _)| *key == fact.key) {
+                    kinds.push((fact.key, &fact.kind));
+                }
+            }
+        )*};
+    }
+    with_platforms!(declared_by);
+    kinds
+}
+
+/// Every board catalogue stated under one fact key, with the platform stating
+/// it — a key several platforms share carries one vocabulary each.
+fn board_catalogues(key: &str) -> Vec<(&'static str, &'static [BoardSpec])> {
+    let mut catalogues: Vec<(&'static str, &'static [BoardSpec])> = Vec::new();
+    macro_rules! stated_by {
+        ($($P:ident),* $(,)?) => {$(
+            for fact in <<$P as Platform>::ReleaseHardware as HardwareFacts>::descriptors() {
+                if fact.key == key
+                    && let FactKind::Board { catalogue } = fact.kind
+                {
+                    let dir = <$P as Platform>::DIR;
+                    catalogues.push((TreeId::for_dir(dir).map_or(dir, TreeId::label), catalogue()));
+                }
+            }
+        )*};
+    }
+    with_platforms!(stated_by);
+    catalogues
+}
+
+/// One property of a board statement: a part some board under this fact
+/// carries, what a caller calls it, the JSON types it takes, and the values a
+/// choice accepts.
+pub struct BoardAttributeSchema {
+    pub key: &'static str,
+    pub label: &'static str,
+    pub types: Vec<&'static str>,
+    pub choices: Vec<&'static str>,
+}
+
+/// The parts every board stated under `key` can carry, merged across the
+/// platforms that state it — the properties a board statement takes.
+pub fn board_attributes(key: &str) -> Vec<BoardAttributeSchema> {
+    let mut merged: Vec<BoardAttributeSchema> = Vec::new();
+    for (_, catalogue) in board_catalogues(key) {
+        for attribute in catalogue.iter().flat_map(|spec| spec.attributes) {
+            let json_type = match attribute.kind {
+                AttributeKind::Choice { .. } => "string",
+                AttributeKind::Toggle => "boolean",
+                AttributeKind::Bytes => "integer",
+            };
+            let entry = match merged.iter_mut().find(|m| m.key == attribute.key) {
+                Some(entry) => entry,
+                None => {
+                    merged.push(BoardAttributeSchema {
+                        key: attribute.key,
+                        label: attribute.label,
+                        types: Vec::new(),
+                        choices: Vec::new(),
+                    });
+                    merged.last_mut().expect("just pushed")
+                }
+            };
+            if !entry.types.contains(&json_type) {
+                entry.types.push(json_type);
+            }
+            if let AttributeKind::Choice { names } = attribute.kind {
+                for name in names {
+                    if !entry.choices.contains(name) {
+                        entry.choices.push(name);
+                    }
+                }
+            }
+        }
+    }
+    merged
+}
+
+/// Each platform's boards under `key` and the parts each carries, `?` marking a
+/// part the board may go without — the vocabulary a caller names a board from.
+/// Platforms sharing one vocabulary are listed together.
+pub fn board_vocabulary_doc(key: &str) -> String {
+    let mut shared: Vec<(Vec<&str>, String)> = Vec::new();
+    for (platform, catalogue) in board_catalogues(key) {
+        let boards = catalogue
+            .iter()
+            .map(|spec| {
+                let parts: Vec<String> = spec
+                    .attributes
+                    .iter()
+                    .map(|a| match a.optional {
+                        true => format!("{}?", a.key),
+                        false => a.key.to_owned(),
+                    })
+                    .collect();
+                match parts.is_empty() {
+                    true => spec.name.to_owned(),
+                    false => format!("{}({})", spec.name, parts.join(", ")),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        match shared.iter_mut().find(|(_, listed)| *listed == boards) {
+            Some((platforms, _)) => platforms.push(platform),
+            None => shared.push((vec![platform], boards)),
+        }
+    }
+    shared
+        .iter()
+        .map(|(platforms, boards)| format!("{}: {boards}", platforms.join(" and ")))
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// One manifest, kept in its platform's schema type.
@@ -134,7 +272,12 @@ fn hardware_line<H: HardwareFacts>(hardware: &H, unknowns: Unknowns) -> String {
         .iter()
         .filter_map(|fact| match hardware.get(fact.key)? {
             FactValue::TvStandard(tv) => tv.map(|tv| format!("{tv:?}")),
-            FactValue::Board(code) => code,
+            FactValue::Board(board) => {
+                let FactKind::Board { catalogue } = fact.kind else {
+                    return None;
+                };
+                board.map(|board| board_line(&board, catalogue()))
+            }
             FactValue::Controllers(controllers) => (!controllers.is_empty()).then(|| {
                 controllers
                     .iter()
@@ -150,11 +293,34 @@ fn hardware_line<H: HardwareFacts>(hardware: &H, unknowns: Unknowns) -> String {
         .join(" ")
 }
 
-/// A stated ROM size, in KB where the byte count divides evenly — the whole
-/// point of stating it is that it disagrees with the dump's own length.
-fn rom_size_line(bytes: u32) -> String {
+/// A stated board and the parts populated on it, in the order the board's own
+/// catalogue row lists them.
+fn board_line(board: &BoardValue, catalogue: &'static [BoardSpec]) -> String {
+    let keys = catalogue
+        .iter()
+        .find(|spec| spec.name == board.board)
+        .map(|spec| spec.attributes.iter().map(|a| a.key).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let parts: Vec<String> = keys
+        .iter()
+        .filter_map(|key| Some((key, board.attributes.get(*key)?)))
+        .filter_map(|(key, value)| match value {
+            AttributeValue::Choice(name) => Some(format!("{key} {name}")),
+            AttributeValue::Toggle(true) => Some((*key).to_owned()),
+            AttributeValue::Toggle(false) => None,
+            AttributeValue::Bytes(bytes) => Some(format!("{key} {}", byte_count(*bytes))),
+        })
+        .collect();
+    match parts.is_empty() {
+        true => board.board.clone(),
+        false => format!("{} ({})", board.board, parts.join(", ")),
+    }
+}
+
+/// A measured byte count, in KB where it divides evenly.
+fn byte_count(bytes: u32) -> String {
     if bytes.is_multiple_of(1024) {
-        format!("{}KB", bytes / 1024)
+        format!("{}K", bytes / 1024)
     } else {
         format!("{bytes} bytes")
     }
@@ -167,11 +333,11 @@ fn stated_tv<H: HardwareFacts>(hardware: &H) -> Option<TvStandard> {
     }
 }
 
-/// The board a payload states under its own key — the cartridge facts a
-/// headerless console's core cannot read off the dump.
-fn stated_board<H: HardwareFacts>(hardware: &H) -> Option<String> {
+/// The board a payload states under its own key — the whole statement, so a
+/// core that cannot read the parts off the dump gets them from the database.
+fn stated_board<H: HardwareFacts>(hardware: &H) -> Option<BoardValue> {
     match hardware.get("cart_type")? {
-        FactValue::Board(code) => code,
+        FactValue::Board(board) => board,
         _ => None,
     }
 }
@@ -243,14 +409,7 @@ impl AnyGame {
     /// shipped title and box label differently from the remaining facts.
     pub fn release_lines(&self) -> Vec<ReleaseLine> {
         fn line<P: Platform>(r: &Release<P>) -> ReleaseLine {
-            let mut extra = hardware_line(&r.hardware, Unknowns::Shown);
-            if let Some(bytes) = r.rom_size {
-                // Beside the board, which is what the size qualifies.
-                if !extra.is_empty() {
-                    extra.push(' ');
-                }
-                extra.push_str(&rom_size_line(bytes));
-            }
+            let extra = hardware_line(&r.hardware, Unknowns::Shown);
             let mut parts = Vec::new();
             if !r.regions.is_empty() {
                 parts.push(
@@ -334,7 +493,7 @@ impl AnyGame {
 
     /// Record a newly verified dump on the first sourced (else first) release.
     /// Returns false when the hash was already present.
-    pub fn stage_artifact(&mut self, sha1: &str, size: u64) -> bool {
+    pub fn stage_artifact(&mut self, sha1: &str) -> bool {
         if self.artifact_sha1s().iter().any(|s| s == sha1) {
             return false;
         }
@@ -347,7 +506,6 @@ impl AnyGame {
                     sha1,
                     label: None,
                     defect: None,
-                    size: Some(size),
                 });
                 true
             } else {
@@ -664,9 +822,6 @@ impl AnyGame {
             if let Some(label) = edits.label {
                 release.label = (!label.is_empty()).then_some(label);
             }
-            if let Some(rom_size) = edits.rom_size {
-                release.rom_size = rom_size;
-            }
             if let Some(date) = edits.date {
                 release.date = date;
             }
@@ -694,16 +849,17 @@ impl AnyGame {
             .collect())
     }
 
-    /// Board hint for the session factory (VCS and SG-1000 — their carts have
-    /// no header, so the db's word must reach the core).
-    pub fn cart_hint(&self) -> Option<String> {
+    /// Board hint for the session factory: the whole statement, so a core that
+    /// cannot read the parts off the dump — or whose header lies about them —
+    /// boots on the board the database names.
+    pub fn cart_hint(&self) -> Option<BoardValue> {
         common!(self, g => g.releases.iter().find_map(|r| stated_board(&r.hardware)))
     }
 
     /// TV/board hints for booting one specific dump: the release that owns it
     /// speaks first; a mod's dump answers through its base's release; only
     /// then fall back to the entry's first stated values.
-    pub fn hints_for(&self, sha1: &str) -> (Option<String>, Option<String>) {
+    pub fn hints_for(&self, sha1: &str) -> (Option<String>, Option<BoardValue>) {
         let stated = common!(self, g => release_holding(g, sha1).map(|r| (
             stated_tv(&r.hardware).map(|tv| tv.name().to_owned()),
             stated_board(&r.hardware),
@@ -807,9 +963,9 @@ impl AnyGame {
                     }
                     _ => {}
                 }
-                stage_mapper(
-                    &mut release.hardware.mapper,
-                    header.mapper,
+                stage_board(
+                    &mut release.hardware.cart_type,
+                    header.board,
                     &mut staged,
                     &mut conflicts,
                 );
@@ -818,15 +974,16 @@ impl AnyGame {
                 if g.releases.is_empty() {
                     return (staged, conflicts);
                 }
-                if header.cgb_flag & 0x80 == 0 {
+                if header.cgb_flag & 0xC0 != 0xC0 {
                     conflicts.push(
-                        "header has no CGB flag, but this entry is in the gbc tree".to_owned(),
+                        "header does not require the CGB, but this entry is in the gbc tree"
+                            .to_owned(),
                     );
                 }
                 let release = &mut g.releases[0];
-                stage_mapper(
-                    &mut release.hardware.mapper,
-                    header.mapper,
+                stage_board(
+                    &mut release.hardware.cart_type,
+                    header.board,
                     &mut staged,
                     &mut conflicts,
                 );
@@ -939,7 +1096,6 @@ impl AnyGame {
                 languages: Vec::new(),
                 date: None,
                 publisher: None,
-                rom_size: None,
                 status: Default::default(),
                 hardware: Default::default(),
                 artifacts: Vec::new(),
@@ -988,6 +1144,118 @@ impl AnyGame {
     pub fn to_ron_string(&self) -> Result<String, String> {
         common!(self, g => g.to_ron_string().map_err(|e| e.to_string()))
     }
+
+    /// The same manifest filed under another platform. Everything but hardware
+    /// is platform-agnostic; a hardware fact carries over where the target
+    /// declares its key and its own vocabulary accepts the value, and is
+    /// reported where it does not.
+    fn refiled(self, tree: TreeId) -> (AnyGame, FactMoves) {
+        let mut moves = FactMoves::default();
+        let game = common!(self, g => match tree {
+            TreeId::Gb => AnyGame::Gb(refile(g, &mut moves)),
+            TreeId::Gbc => AnyGame::Gbc(refile(g, &mut moves)),
+            TreeId::Sg1000 => AnyGame::Sg1000(refile(g, &mut moves)),
+            TreeId::Vcs => AnyGame::Vcs(refile(g, &mut moves)),
+        });
+        (game, moves)
+    }
+}
+
+/// What became of the stated hardware facts when an entry changed platforms.
+#[derive(Default)]
+pub struct FactMoves {
+    pub carried: std::collections::BTreeSet<String>,
+    pub dropped: std::collections::BTreeSet<String>,
+}
+
+/// One game under another platform's hardware type.
+fn refile<A: Platform, B: Platform>(game: Game<A>, moves: &mut FactMoves) -> Game<B> {
+    Game {
+        title: game.title,
+        kind: game.kind,
+        developer: game.developer,
+        description: game.description,
+        tags: game.tags,
+        links: game.links,
+        covers: game.covers,
+        screenshots: game.screenshots,
+        mod_of: game.mod_of,
+        mods: game
+            .mods
+            .into_iter()
+            .map(|m| Mod {
+                name: m.name,
+                category: m.category,
+                author: m.author,
+                links: m.links,
+                curated: m.curated,
+                recommended_by: m.recommended_by,
+                releases: m
+                    .releases
+                    .into_iter()
+                    .map(|r| ModRelease {
+                        label: r.label,
+                        date: r.date,
+                        base_sha1: r.base_sha1,
+                        patch: r.patch,
+                        hardware: carried_facts(&r.hardware, moves),
+                        artifacts: r.artifacts,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        curated: game.curated,
+        adult: game.adult,
+        recommended_by: game.recommended_by,
+        releases: game
+            .releases
+            .into_iter()
+            .map(|r| Release {
+                title: r.title,
+                label: r.label,
+                regions: r.regions,
+                languages: r.languages,
+                date: r.date,
+                publisher: r.publisher,
+                status: r.status,
+                hardware: carried_facts(&r.hardware, moves),
+                artifacts: r.artifacts,
+            })
+            .collect(),
+    }
+}
+
+/// The stated facts one platform's hardware carries into another's: a key the
+/// target does not declare, or a value its vocabulary refuses, is reported and
+/// left unstated rather than failing the move.
+fn carried_facts<A: HardwareFacts, B: HardwareFacts + Default>(
+    from: &A,
+    moves: &mut FactMoves,
+) -> B {
+    let mut into = B::default();
+    for fact in A::descriptors() {
+        let Some(value) = from.get(fact.key) else {
+            continue;
+        };
+        if is_unstated(&value) {
+            continue;
+        }
+        match into.set(fact.key, value) {
+            Ok(()) => moves.carried.insert(fact.key.to_owned()),
+            Err(refusal) => moves.dropped.insert(format!("{}: {refusal}", fact.key)),
+        };
+    }
+    into
+}
+
+/// Whether a fact reads as "nothing stated", which is not a value to carry.
+fn is_unstated(value: &FactValue) -> bool {
+    match value {
+        FactValue::TvStandard(tv) => tv.is_none(),
+        FactValue::Board(board) => board.is_none(),
+        FactValue::Controllers(controllers) => controllers.is_empty(),
+        FactValue::Enhancement(enhancement) => enhancement.is_unknown(),
+    }
 }
 
 fn release_at<P: Platform>(game: &mut Game<P>, index: usize) -> Result<&mut Release<P>, String> {
@@ -996,32 +1264,30 @@ fn release_at<P: Platform>(game: &mut Game<P>, index: usize) -> Result<&mut Rele
         .ok_or_else(|| format!("entry has no release {index}"))
 }
 
-/// Fill in the board the header names, or record why the two disagree.
-fn stage_mapper(
+/// Fill in the whole board the header states, or record where it and the
+/// database's statement differ — a stated board replaces the header entire, so
+/// the two are compared as whole statements.
+fn stage_board(
     stated: &mut Option<GbCartType>,
     header: Result<GbCartType, u8>,
     staged: &mut Vec<String>,
     conflicts: &mut Vec<String>,
 ) {
-    match (*stated, header) {
-        (_, Err(byte)) => conflicts.push(format!("mapper: header byte ${byte:02x} names no board")),
-        (None, Ok(board)) => {
-            *stated = Some(board);
-            staged.push(format!("mapper: {}", board.display_name()));
+    match (stated.as_ref(), header) {
+        (_, Err(byte)) => {
+            conflicts.push(format!("cart_type: header byte ${byte:02x} names no board"))
         }
-        (Some(current), Ok(board)) if current != board => conflicts.push(format!(
-            "mapper: db {} vs header {}",
+        (None, Ok(board)) => {
+            staged.push(format!("cart_type: {}", board.display_name()));
+            *stated = Some(board);
+        }
+        (Some(current), Ok(board)) if *current != board => conflicts.push(format!(
+            "cart_type: db {} vs header {}",
             current.display_name(),
             board.display_name()
         )),
         _ => {}
     }
-}
-
-/// A board fact from an agent's code; an empty one is the field cleared. The
-/// platform's own vocabulary judges the code.
-pub fn board_value(code: &str) -> FactValue {
-    FactValue::Board((!code.is_empty()).then(|| code.to_owned()))
 }
 
 /// A JSON string → LinkType, rejecting unknowns with the valid set named.
@@ -1108,7 +1374,6 @@ fn lone_dump_entry<P: Platform>(title: String, artifact: missingno_gamedb::Artif
             languages: Vec::new(),
             date: None,
             publisher: None,
-            rom_size: None,
             status: ReleaseStatus::Released,
             hardware: Default::default(),
             artifacts: vec![artifact],
@@ -1179,7 +1444,6 @@ fn split_hack_from<P: Platform>(
                 languages: Vec::new(),
                 date: None,
                 publisher: None,
-                rom_size: None,
                 status: release.status,
                 hardware: release.hardware.clone(),
                 artifacts: vec![artifact],
@@ -1256,9 +1520,8 @@ fn split_release_from<P: Platform>(
             continue;
         };
         let artifact = source.releases[at].artifacts.remove(pos);
-        let hardware = source.releases[at].hardware.clone();
         // The split is the same silicon as its source; only the product facts differ.
-        let rom_size = source.releases[at].rom_size;
+        let hardware = source.releases[at].hardware.clone();
         let publisher = source.releases[at].publisher.clone();
         let regions = source.releases[at].regions.clone();
         let languages = source.releases[at].languages.clone();
@@ -1270,7 +1533,6 @@ fn split_release_from<P: Platform>(
             date,
             publisher,
             status,
-            rom_size,
             hardware,
             artifacts: vec![artifact],
         });
@@ -1429,8 +1691,6 @@ pub struct ReleaseEdits {
     pub publisher: Option<String>,
     pub regions: Option<Vec<Region>>,
     pub languages: Option<Vec<Language>>,
-    /// Outer None leaves it; Some(None) clears it (an empty-string edit).
-    pub rom_size: Option<Option<u32>>,
 }
 
 pub struct EntryHandle {
@@ -1546,8 +1806,9 @@ impl Db {
     /// already held by any entry (including one added here) is skipped, so a
     /// re-scan adds only genuinely new ROMs. Returns how many were added.
     /// New records for inbox/collection dumps no manifest holds. A declared
-    /// tree files every unmatched inbox dump; recognition only fills in where
-    /// nothing was declared.
+    /// tree files every unmatched inbox dump and recognition fills in where
+    /// nothing was declared, but a dump whose own header names its platform —
+    /// a Game Boy family cartridge — is filed by that header either way.
     pub fn add_unmatched_roms(
         &mut self,
         index: &crate::verify::RomIndex,
@@ -1585,17 +1846,37 @@ impl Db {
             }
             // The operator's declaration files an inbox dump whatever its
             // extension says; without one, only a factory whose media the
-            // dump unambiguously is may claim it — `.bin` names nobody.
+            // dump unambiguously is may claim it — `.bin` names nobody. Either
+            // way the extension is never consulted for the platform.
+            let rom = fs::read(path).ok();
+            let header = rom.as_deref().and_then(crate::verify::gb_header);
             let tree = match declared.filter(|_| inbox) {
-                Some(tree) => tree,
+                Some(declared) => {
+                    // A declaration names the family; a Game Boy header names
+                    // which of its two platforms the dump is.
+                    let tree = match (declared, &header) {
+                        (TreeId::Gb | TreeId::Gbc, Some(header)) => gb_tree(header),
+                        _ => declared,
+                    };
+                    if tree != declared {
+                        outcome
+                            .refinements
+                            .push(format!("{} is {}", path.display(), tree.label()));
+                    }
+                    tree
+                }
                 None => {
-                    let Ok(rom) = fs::read(path) else {
+                    let Some(rom) = rom.as_deref() else {
                         continue;
                     };
-                    let Some(factory) = missingno_session::factory::factory_for(path, &rom) else {
+                    let Some(factory) = missingno_session::factory::factory_for(path, rom) else {
                         continue;
                     };
                     match factory.name {
+                        "Game Boy" => match &header {
+                            Some(header) => gb_tree(header),
+                            None => continue,
+                        },
                         "SG-1000" => TreeId::Sg1000,
                         "Atari VCS" => TreeId::Vcs,
                         _ => continue,
@@ -1609,7 +1890,6 @@ impl Db {
                 .file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| sha1.clone());
-            let size = fs::metadata(path).ok().map(|m| m.len());
             let base = {
                 let s = slugify(&title);
                 if s.is_empty() {
@@ -1630,7 +1910,6 @@ impl Db {
                 sha1: parsed,
                 label: None,
                 defect: None,
-                size,
             };
             let game = match tree {
                 TreeId::Gb => AnyGame::Gb(lone_dump_entry(title, artifact)),
@@ -1904,6 +2183,84 @@ impl Db {
             self.write_entry(index).map_err(|e| e.to_string())?;
         }
         Ok(new_key)
+    }
+
+    /// Re-file an entry under another platform: an import that guessed the
+    /// wrong tree is undone by rebuilding the manifest under the target's
+    /// hardware and moving its directory. A fact the target does not state is
+    /// dropped and reported, so a wrong tree is never a reason to lose an entry.
+    pub fn move_game(&mut self, index: usize, target: TreeId) -> Result<String, String> {
+        let source_tree = self.entries[index].tree;
+        let old_key = self.entries[index].key();
+        if source_tree == target {
+            return Err(format!("{old_key} is already in the {} tree", target.dir()));
+        }
+        let slug = self.entries[index].slug.clone();
+        if self
+            .entries
+            .iter()
+            .any(|e| e.tree == target && e.slug == slug)
+        {
+            return Err(format!("{}/{slug} already exists", target.dir()));
+        }
+        let data = self.repo_root.join("data");
+        let source_dir = data.join(source_tree.dir()).join(&slug);
+        let target_dir = data.join(target.dir()).join(&slug);
+        if target_dir.exists() {
+            return Err(format!("{} already exists on disk", target_dir.display()));
+        }
+        // Removing and re-inserting at the same position leaves every other
+        // index — and anything holding one — where it was.
+        let entry = self.entries.remove(index);
+        let (game, moves) = entry.game.refiled(target);
+        self.entries.insert(
+            index,
+            EntryHandle {
+                tree: target,
+                slug,
+                game,
+                dirty: true,
+                synthetic: entry.synthetic,
+            },
+        );
+        if source_dir.exists() {
+            if let Some(tree_dir) = target_dir.parent() {
+                fs::create_dir_all(tree_dir).map_err(|e| e.to_string())?;
+            }
+            fs::rename(&source_dir, &target_dir).map_err(|e| e.to_string())?;
+            self.uncommitted += 1;
+        }
+        self.write_entry(index).map_err(|e| e.to_string())?;
+
+        let new_key = self.entries[index].key();
+        let mut flags_changed = false;
+        for flag in &mut self.flags.flags {
+            for subject in &mut flag.subject {
+                if *subject == old_key {
+                    *subject = new_key.clone();
+                    flags_changed = true;
+                }
+            }
+        }
+        if flags_changed {
+            self.save_flags().map_err(|e| e.to_string())?;
+        }
+
+        let listed = |facts: &std::collections::BTreeSet<String>| {
+            facts
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join("; ")
+        };
+        let mut report = format!("{old_key} moved → {new_key}");
+        if !moves.carried.is_empty() {
+            report.push_str(&format!("; carried {}", listed(&moves.carried)));
+        }
+        if !moves.dropped.is_empty() {
+            report.push_str(&format!("; dropped {}", listed(&moves.dropped)));
+        }
+        Ok(report)
     }
 
     /// Fold one entry into another: the two catalogued the same game, so
@@ -2280,6 +2637,69 @@ mod link_tests {
             "{:?}",
             outcome.strays
         );
+    }
+
+    /// A Game Boy family dump files by its own header: the declaration names
+    /// the family, the header names which of the two platforms it is, and the
+    /// extension is never consulted.
+    #[test]
+    fn a_game_boy_header_refines_the_declared_tree() {
+        let repo = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(repo.path().join("data/gb")).unwrap();
+        let dumps = tempfile::tempdir().unwrap();
+        let mut index = crate::verify::RomIndex::default();
+        for (name, cgb_flag, sha1) in [
+            (
+                "colour game.gb",
+                0xC0u8,
+                "bb00000000000000000000000000000000000001",
+            ),
+            (
+                "dual mode game.gbc",
+                0x80,
+                "bb00000000000000000000000000000000000002",
+            ),
+        ] {
+            let mut rom = vec![0u8; 0x8000];
+            rom[0x143] = cgb_flag;
+            rom[0x147] = 0x01;
+            let path = dumps.path().join(name);
+            std::fs::write(&path, &rom).unwrap();
+            index.by_sha1.insert(
+                sha1.to_owned(),
+                crate::verify::ScannedRom {
+                    path,
+                    home: crate::verify::RomHome::Inbox,
+                },
+            );
+        }
+        let tree_of = |db: &Db, title: &str| {
+            db.entries
+                .iter()
+                .find(|e| e.game.title() == title)
+                .map(|e| e.tree)
+        };
+
+        let mut declared = Db::load(repo.path().to_path_buf()).unwrap();
+        let outcome = declared.add_unmatched_roms(&index, Some(TreeId::Gb));
+        assert_eq!(outcome.added, 2);
+        assert_eq!(tree_of(&declared, "colour game"), Some(TreeId::Gbc));
+        assert_eq!(tree_of(&declared, "dual mode game"), Some(TreeId::Gb));
+        assert_eq!(outcome.refinements.len(), 1);
+        assert!(
+            outcome.refinements[0].contains("colour game.gb"),
+            "{:?}",
+            outcome.refinements
+        );
+
+        // With nothing declared the family's factory claims the dump, and the
+        // header still says which platform it is.
+        let mut undeclared = Db::load(repo.path().to_path_buf()).unwrap();
+        let outcome = undeclared.add_unmatched_roms(&index, None);
+        assert_eq!(outcome.added, 2);
+        assert!(outcome.refinements.is_empty());
+        assert_eq!(tree_of(&undeclared, "colour game"), Some(TreeId::Gbc));
+        assert_eq!(tree_of(&undeclared, "dual mode game"), Some(TreeId::Gb));
     }
 
     #[test]
@@ -2939,7 +3359,6 @@ mod release_surgery_tests {
         (
             date: Some("2006"),
             publisher: Some("Bill Collins"),
-            rom_size: None,
             status: WorkInProgress,
             hardware: (tv_format: Some(Ntsc), cart_type: Some(Plain4K)),
             artifacts: [(sha1: "a10308a3f1051068c908d1e29fd57de5b911d31d")],
@@ -2999,7 +3418,7 @@ mod board_tests {
                 r#"(
     title: "The Castle",
     releases: [(
-        hardware: (cart_type: Some(CastleRam)),
+        hardware: (cart_type: Some(CastleRam(rom: None))),
         artifacts: [(sha1: "0123456789abcdef0123456789abcdef01234567")],
     )],
 )"#,
@@ -3008,14 +3427,22 @@ mod board_tests {
         )
     }
 
+    fn board(name: &str) -> FactValue {
+        FactValue::Board(Some(BoardValue::new(name)))
+    }
+
+    fn hinted(game: &AnyGame) -> Option<String> {
+        game.cart_hint().map(|board| board.board)
+    }
+
     #[test]
     fn a_board_name_is_taken_typed_and_cleared_by_an_empty_one() {
         let mut game = castle();
-        assert_eq!(game.cart_hint().as_deref(), Some("CastleRam"));
-        game.set_release_fact(0, "cart_type", board_value("DahjeeA"))
+        assert_eq!(hinted(&game).as_deref(), Some("CastleRam"));
+        game.set_release_fact(0, "cart_type", board("DahjeeA"))
             .unwrap();
-        assert_eq!(game.cart_hint().as_deref(), Some("DahjeeA"));
-        game.set_release_fact(0, "cart_type", board_value(""))
+        assert_eq!(hinted(&game).as_deref(), Some("DahjeeA"));
+        game.set_release_fact(0, "cart_type", FactValue::Board(None))
             .unwrap();
         assert_eq!(game.cart_hint(), None);
     }
@@ -3024,19 +3451,19 @@ mod board_tests {
     fn a_name_from_another_platform_is_refused_with_the_vocabulary() {
         let mut game = castle();
         let error = game
-            .set_release_fact(0, "cart_type", board_value("Atari16KSuperchip"))
+            .set_release_fact(0, "cart_type", board("Atari16KSuperchip"))
             .unwrap_err();
         assert!(
-            error.contains("\"Atari16KSuperchip\"") && error.contains("DahjeeB"),
+            error.contains("unknown SG-1000 board") && error.contains("\"Atari16KSuperchip\""),
             "{error}"
         );
         assert!(
-            game.set_release_fact(4, "cart_type", board_value("Flat"))
+            game.set_release_fact(4, "cart_type", board("Flat"))
                 .unwrap_err()
                 .contains("no release 4")
         );
         assert_eq!(
-            game.cart_hint().as_deref(),
+            hinted(&game).as_deref(),
             Some("CastleRam"),
             "nothing landed"
         );
@@ -3047,10 +3474,14 @@ mod board_tests {
     #[test]
     fn a_fact_another_platform_states_names_this_ones_keys() {
         let error = castle()
-            .set_release_fact(0, "mapper", board_value("MBC3"))
+            .set_release_fact(
+                0,
+                "sgb",
+                FactValue::Enhancement(missingno_gamedb::Enhancement::Enhanced),
+            )
             .unwrap_err();
         assert!(
-            error.contains("\"mapper\"") && error.contains("cart_type"),
+            error.contains("\"sgb\"") && error.contains("cart_type"),
             "{error}"
         );
     }
@@ -3066,10 +3497,230 @@ mod board_tests {
         );
         assert!(tv.contains("PAL-M"), "{tv}");
         assert_eq!(
-            fact_description("mapper").split(':').next(),
+            fact_description("cart_type").split(':').next(),
             Some("Game Boy and Game Boy Color"),
         );
         assert_eq!(fact_description("no_such_fact"), "");
+    }
+
+    /// The tool surface offers every key some platform states, once each.
+    #[test]
+    fn the_fact_union_carries_each_key_once_with_its_kind() {
+        let keys: Vec<&str> = fact_kinds().into_iter().map(|(key, _)| key).collect();
+        assert_eq!(
+            keys,
+            ["sgb", "cgb", "cart_type", "tv_format", "controllers"]
+        );
+        let kind = fact_kinds()
+            .into_iter()
+            .find(|(key, _)| *key == "cart_type")
+            .map(|(_, kind)| kind);
+        assert!(matches!(kind, Some(FactKind::Board { .. })));
+    }
+
+    /// The board properties a tool schema offers are the union of the parts
+    /// every platform's boards carry, in the JSON types those parts take.
+    #[test]
+    fn board_attributes_merge_every_platforms_parts() {
+        let parts = board_attributes("cart_type");
+        let rom = parts
+            .iter()
+            .find(|part| part.key == "rom")
+            .expect("boards state a ROM");
+        // A Game Boy names its chip; an SG-1000 board is measured in bytes.
+        assert_eq!(rom.types, ["string", "integer"]);
+        assert!(rom.choices.contains(&"1M"), "{:?}", rom.choices);
+        let battery = parts
+            .iter()
+            .find(|part| part.key == "battery")
+            .expect("boards carry a battery");
+        assert_eq!(battery.types, ["boolean"]);
+
+        let doc = board_vocabulary_doc("cart_type");
+        assert!(doc.contains("Mbc5(rom, ram?, battery?, rumble?)"), "{doc}");
+        assert!(doc.contains("Atari VCS: "), "{doc}");
+    }
+
+    /// A stated board reads as its own name plus the parts on it, in the order
+    /// its catalogue row lists them.
+    #[test]
+    fn a_board_line_names_the_board_and_its_parts() {
+        let mbc5 = BoardValue::new("Mbc5")
+            .with_choice("rom", "1M")
+            .with_choice("ram", "32K")
+            .with_toggle("battery", true)
+            .with_toggle("rumble", true);
+        assert_eq!(
+            board_line(&mbc5, <GbCartType as BoardVocabulary>::catalogue()),
+            "Mbc5 (rom 1M, ram 32K, battery, rumble)"
+        );
+        let measured = BoardValue::new("DahjeeA").with("rom", AttributeValue::Bytes(49152));
+        assert_eq!(
+            board_line(
+                &measured,
+                <missingno_gamedb::Sg1000CartType as BoardVocabulary>::catalogue()
+            ),
+            "DahjeeA (rom 48K)"
+        );
+        assert_eq!(
+            board_line(
+                &BoardValue::new("Plain4K"),
+                <missingno_gamedb::VcsCartType as BoardVocabulary>::catalogue()
+            ),
+            "Plain4K"
+        );
+    }
+}
+
+#[cfg(test)]
+mod move_tests {
+    use super::*;
+
+    const COLOUR_GAME: &str = "(title: \"Colour Game\", releases: [(hardware: (sgb: Enhanced, \
+         cgb: Enhanced, cart_type: Some(Mbc5(rom: Mb1, ram: Some(Kb32), battery: true, \
+         rumble: false))))])\n";
+
+    fn repo_with(entries: &[(&str, &str, &str)]) -> tempfile::TempDir {
+        let repo = tempfile::tempdir().unwrap();
+        for (tree, slug, manifest) in entries {
+            let dir = repo.path().join("data").join(tree).join(slug);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("manifest.ron"), manifest).unwrap();
+        }
+        repo
+    }
+
+    #[test]
+    fn a_moved_game_keeps_what_the_target_states_and_reports_the_rest() {
+        let repo = repo_with(&[("gb", "colour-game", COLOUR_GAME)]);
+        let mut db = Db::load(repo.path().to_path_buf()).unwrap();
+        let report = db.move_game(0, TreeId::Gbc).unwrap();
+
+        assert!(
+            report.starts_with("gb/colour-game moved → gbc/colour-game"),
+            "{report}"
+        );
+        assert!(report.contains("carried cart_type"), "{report}");
+        assert!(report.contains("sgb") && report.contains("cgb"), "{report}");
+        assert_eq!(db.entries[0].tree, TreeId::Gbc);
+        assert!(matches!(db.entries[0].game, AnyGame::Gbc(_)));
+        assert_eq!(
+            db.entries[0].game.cart_hint().map(|board| board.board),
+            Some("Mbc5".to_owned())
+        );
+        assert!(!repo.path().join("data/gb/colour-game").exists());
+        assert!(
+            repo.path()
+                .join("data/gbc/colour-game/manifest.ron")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn a_slug_the_target_tree_already_holds_refuses_the_move() {
+        let repo = repo_with(&[
+            ("gb", "colour-game", COLOUR_GAME),
+            ("gbc", "colour-game", "(title: \"Colour Game\")\n"),
+        ]);
+        let mut db = Db::load(repo.path().to_path_buf()).unwrap();
+        let source = db
+            .entries
+            .iter()
+            .position(|e| e.tree == TreeId::Gb)
+            .unwrap();
+        let error = db.move_game(source, TreeId::Gbc).unwrap_err();
+        assert!(error.contains("gbc/colour-game already exists"), "{error}");
+        assert_eq!(db.entries[source].tree, TreeId::Gb);
+        assert!(db.move_game(source, TreeId::Gb).is_err(), "already there");
+    }
+}
+
+#[cfg(test)]
+mod header_tests {
+    use super::*;
+
+    /// A Game Boy image whose header carries `cgb_flag` at $0143 and declares
+    /// an MBC5 with a 1 MB ROM and a 32 KB RAM chip.
+    fn rom(cgb_flag: u8) -> Vec<u8> {
+        let mut rom = vec![0; 0x100000];
+        rom[0x143] = cgb_flag;
+        rom[0x147] = 0x1b;
+        rom[0x148] = 0x05;
+        rom[0x149] = 0x03;
+        rom
+    }
+
+    fn gb_entry(hardware: &str) -> AnyGame {
+        AnyGame::Gb(
+            Game::from_ron(&format!(
+                "(title: \"Header\", releases: [(hardware: ({hardware}))])"
+            ))
+            .unwrap(),
+        )
+    }
+
+    #[test]
+    fn the_cgb_flag_names_the_platform_dual_mode_included() {
+        let tree = |flag| gb_tree(&crate::verify::gb_header(&rom(flag)).unwrap());
+        assert_eq!(tree(0x00), TreeId::Gb);
+        assert_eq!(tree(0x80), TreeId::Gb);
+        assert_eq!(tree(0xC0), TreeId::Gbc);
+    }
+
+    #[test]
+    fn an_unstated_board_takes_the_whole_header_statement() {
+        let mut game = gb_entry("");
+        let header = crate::verify::gb_header(&rom(0x00)).unwrap();
+        let (staged, conflicts) = game.stage_gb_header(&header);
+        assert!(conflicts.is_empty(), "{conflicts:?}");
+        assert!(
+            staged
+                .iter()
+                .any(|line| line == "cart_type: MBC5 (1M, RAM 32K, battery)"),
+            "{staged:?}"
+        );
+        let board = game.cart_hint().expect("the header stated a board");
+        assert_eq!(board.board, "Mbc5");
+        assert_eq!(
+            board.attributes.get("ram"),
+            Some(&AttributeValue::Choice("32K".to_owned()))
+        );
+    }
+
+    /// A stated board is a whole statement, so a part the header disagrees
+    /// about is a conflict for the curator, not a silent overwrite.
+    #[test]
+    fn a_stated_board_that_differs_in_one_part_conflicts() {
+        let mut game = gb_entry(
+            "cart_type: Some(Mbc5(rom: Mb1, ram: Some(Kb8), battery: true, rumble: false))",
+        );
+        let header = crate::verify::gb_header(&rom(0x00)).unwrap();
+        let (staged, conflicts) = game.stage_gb_header(&header);
+        assert!(staged.iter().all(|line| !line.starts_with("cart_type")));
+        assert!(
+            conflicts
+                .iter()
+                .any(|line| line.starts_with("cart_type: db MBC5 (1M, RAM 8K, battery)")),
+            "{conflicts:?}"
+        );
+    }
+
+    /// Dual-mode media boots enhanced but is a Game Boy cartridge, so filing
+    /// one in the gbc tree is the mistake the check exists to catch.
+    #[test]
+    fn a_gbc_entry_wants_a_header_that_requires_the_colour_console() {
+        let staged = |flag| {
+            AnyGame::Gbc(Game::from_ron("(title: \"Header\", releases: [()])").unwrap())
+                .stage_gb_header(&crate::verify::gb_header(&rom(flag)).unwrap())
+                .1
+        };
+        assert!(staged(0xC0).is_empty());
+        for flag in [0x00, 0x80] {
+            assert!(
+                staged(flag).iter().any(|line| line.contains("gbc tree")),
+                "${flag:02x}"
+            );
+        }
     }
 }
 

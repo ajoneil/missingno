@@ -4,8 +4,8 @@
 //! is a term the parser accepts, by construction.
 
 use missingno_gamedb::{
-    Controller, Defect, GameKind, Language, LinkType, ModCategory, Region, ReleaseStatus,
-    TvStandard,
+    Controller, Defect, Enhancement, GameKind, Language, LinkType, ModCategory, Region,
+    ReleaseStatus, TvStandard,
 };
 use serde_json::{Value, json};
 
@@ -164,6 +164,17 @@ pub static CONTROLLERS: Vocabulary<Controller> = vocabulary(
         ("BoosterGrip", Controller::BoosterGrip),
         ("KidVid", Controller::KidVid),
         ("MindLink", Controller::MindLink),
+    ],
+);
+
+/// `Unknown` is a term of the vocabulary: it is how an enhancement goes back to
+/// unestablished, which is not the same claim as `NotEnhanced`.
+pub static ENHANCEMENTS: Vocabulary<Enhancement> = vocabulary(
+    "enhancement",
+    &[
+        ("Enhanced", Enhancement::Enhanced),
+        ("NotEnhanced", Enhancement::NotEnhanced),
+        ("Unknown", Enhancement::Unknown),
     ],
 );
 

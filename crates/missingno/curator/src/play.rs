@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, mpsc::Receiver};
 use std::time::Duration;
 
 use iced::futures::SinkExt;
+use missingno_core::cartridge::BoardValue;
 use missingno_core::launch::LaunchValues;
 use missingno_core::ports::{PanelControl, PeripheralId, PortId};
 use missingno_core::system::{ControlId, ControlInput, ControlRole, ControlSite};
@@ -63,7 +64,7 @@ pub fn start(
     filename_hint: &str,
     rom: &[u8],
     tv_standard: Option<String>,
-    cart_type: Option<String>,
+    cart_type: Option<BoardValue>,
     overdump: bool,
     controllers: &[Controller],
 ) -> Result<PlaySession, String> {
@@ -72,8 +73,8 @@ pub fn start(
         launch.set_choice(missingno_vcs::debug::TV_STANDARD, standard);
     }
     if let Some(board) = cart_type {
-        // The VCS and SG-1000 cores publish their board choice under one id.
-        launch.set_choice(missingno_vcs::debug::BOARD, board);
+        // Every core with a board vocabulary publishes it under one id.
+        launch.set_board(missingno_vcs::debug::BOARD, board);
     }
     launch.set_toggle(missingno_vcs::debug::OVERDUMP, overdump);
     let mut console =
