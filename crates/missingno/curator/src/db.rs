@@ -257,17 +257,8 @@ pub struct ReleaseLine {
     pub detail: String,
 }
 
-/// Whether an enhancement nobody has established yet still takes a slot on a
-/// hardware line: a release's line asks the curator for it, a mod's line
-/// carries only what the conversion moved.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Unknowns {
-    Shown,
-    Hidden,
-}
-
 /// The hardware facts a payload states, as one display string.
-fn hardware_line<H: HardwareFacts>(hardware: &H, unknowns: Unknowns) -> String {
+fn hardware_line<H: HardwareFacts>(hardware: &H) -> String {
     H::descriptors()
         .iter()
         .filter_map(|fact| match hardware.get(fact.key)? {
@@ -285,9 +276,13 @@ fn hardware_line<H: HardwareFacts>(hardware: &H, unknowns: Unknowns) -> String {
                     .collect::<Vec<_>>()
                     .join("/")
             }),
-            FactValue::Enhancement(enhancement) => (unknowns == Unknowns::Shown
-                || !enhancement.is_unknown())
-            .then(|| format!("{} {enhancement:?}", fact.key)),
+            FactValue::Features(features) => (!features.is_empty()).then(|| {
+                features
+                    .iter()
+                    .map(|f| format!("{f:?}"))
+                    .collect::<Vec<_>>()
+                    .join("/")
+            }),
         })
         .collect::<Vec<_>>()
         .join(" ")
@@ -409,7 +404,7 @@ impl AnyGame {
     /// shipped title and box label differently from the remaining facts.
     pub fn release_lines(&self) -> Vec<ReleaseLine> {
         fn line<P: Platform>(r: &Release<P>) -> ReleaseLine {
-            let extra = hardware_line(&r.hardware, Unknowns::Shown);
+            let extra = hardware_line(&r.hardware);
             let mut parts = Vec::new();
             if !r.regions.is_empty() {
                 parts.push(
@@ -706,13 +701,7 @@ impl AnyGame {
                 .map(|m| {
                     m.releases
                         .iter()
-                        .map(|r| {
-                            describe(
-                                &r.label,
-                                &r.date,
-                                &hardware_line(&r.hardware, Unknowns::Hidden),
-                            )
-                        })
+                        .map(|r| describe(&r.label, &r.date, &hardware_line(&r.hardware)))
                         .collect()
                 })
                 .unwrap_or_default()
@@ -920,7 +909,7 @@ impl AnyGame {
         &mut self,
         header: &crate::verify::GbHeader,
     ) -> (Vec<String>, Vec<String>) {
-        use missingno_gamedb::Enhancement;
+        use missingno_gamedb::Feature;
         let mut staged = Vec::new();
         let mut conflicts = Vec::new();
         match self {
@@ -933,35 +922,23 @@ impl AnyGame {
                         .push("header says CGB-only, but this entry is in the gb tree".to_owned());
                 }
                 let release = &mut g.releases[0];
-                let header_sgb = if header.sgb {
-                    Enhancement::Enhanced
-                } else {
-                    Enhancement::NotEnhanced
-                };
-                let header_cgb = if header.cgb_flag & 0x80 != 0 {
-                    Enhancement::Enhanced
-                } else {
-                    Enhancement::NotEnhanced
-                };
-                match release.hardware.sgb {
-                    Enhancement::Unknown => {
-                        release.hardware.sgb = header_sgb;
-                        staged.push(format!("sgb: {header_sgb:?}"));
-                    }
-                    current if current != header_sgb => {
-                        conflicts.push(format!("sgb: db {current:?} vs header {header_sgb:?}"))
-                    }
-                    _ => {}
+                let mut stated = Vec::new();
+                if header.sgb {
+                    stated.push(Feature::SuperGameBoyEnhanced);
                 }
-                match release.hardware.cgb {
-                    Enhancement::Unknown => {
-                        release.hardware.cgb = header_cgb;
-                        staged.push(format!("cgb: {header_cgb:?}"));
+                if header.cgb_flag & 0x80 != 0 {
+                    stated.push(Feature::GameBoyColorEnhanced);
+                }
+                if release.hardware.features.is_empty() {
+                    if !stated.is_empty() {
+                        staged.push(format!("features: {stated:?}"));
+                        release.hardware.features = stated;
                     }
-                    current if current != header_cgb => {
-                        conflicts.push(format!("cgb: db {current:?} vs header {header_cgb:?}"))
-                    }
-                    _ => {}
+                } else if release.hardware.features != stated {
+                    conflicts.push(format!(
+                        "features: db {:?} vs header {stated:?}",
+                        release.hardware.features
+                    ));
                 }
                 stage_board(
                     &mut release.hardware.cart_type,
@@ -1254,7 +1231,7 @@ fn is_unstated(value: &FactValue) -> bool {
         FactValue::TvStandard(tv) => tv.is_none(),
         FactValue::Board(board) => board.is_none(),
         FactValue::Controllers(controllers) => controllers.is_empty(),
-        FactValue::Enhancement(enhancement) => enhancement.is_unknown(),
+        FactValue::Features(features) => features.is_empty(),
     }
 }
 
@@ -3476,12 +3453,12 @@ mod board_tests {
         let error = castle()
             .set_release_fact(
                 0,
-                "sgb",
-                FactValue::Enhancement(missingno_gamedb::Enhancement::Enhanced),
+                "features",
+                FactValue::Features(vec![missingno_gamedb::Feature::SuperGameBoyEnhanced]),
             )
             .unwrap_err();
         assert!(
-            error.contains("\"sgb\"") && error.contains("cart_type"),
+            error.contains("\"features\"") && error.contains("cart_type"),
             "{error}"
         );
     }
@@ -3507,10 +3484,7 @@ mod board_tests {
     #[test]
     fn the_fact_union_carries_each_key_once_with_its_kind() {
         let keys: Vec<&str> = fact_kinds().into_iter().map(|(key, _)| key).collect();
-        assert_eq!(
-            keys,
-            ["sgb", "cgb", "cart_type", "tv_format", "controllers"]
-        );
+        assert_eq!(keys, ["features", "cart_type", "tv_format", "controllers"]);
         let kind = fact_kinds()
             .into_iter()
             .find(|(key, _)| *key == "cart_type")
@@ -3576,8 +3550,9 @@ mod board_tests {
 mod move_tests {
     use super::*;
 
-    const COLOUR_GAME: &str = "(title: \"Colour Game\", releases: [(hardware: (sgb: Enhanced, \
-         cgb: Enhanced, cart_type: Some(Mbc5(rom: Mb1, ram: Some(Kb32), battery: true, \
+    const COLOUR_GAME: &str = "(title: \"Colour Game\", releases: [(hardware: (features: \
+         [SuperGameBoyEnhanced, GameBoyColorEnhanced], cart_type: Some(Mbc5(rom: Mb1, ram: \
+         Some(Kb32), battery: true, \
          rumble: false))))])\n";
 
     fn repo_with(entries: &[(&str, &str, &str)]) -> tempfile::TempDir {
@@ -3601,7 +3576,7 @@ mod move_tests {
             "{report}"
         );
         assert!(report.contains("carried cart_type"), "{report}");
-        assert!(report.contains("sgb") && report.contains("cgb"), "{report}");
+        assert!(report.contains("features"), "{report}");
         assert_eq!(db.entries[0].tree, TreeId::Gbc);
         assert!(matches!(db.entries[0].game, AnyGame::Gbc(_)));
         assert_eq!(

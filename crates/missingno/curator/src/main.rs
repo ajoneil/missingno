@@ -108,7 +108,7 @@ fn parse_fact(
         FactKind::TvStandard => Ok(FactValue::TvStandard(Some(db::parse_tv_format(&word(
             value,
         )?)?))),
-        FactKind::Controllers => {
+        FactKind::Controllers { .. } => {
             let list = value
                 .as_array()
                 .ok_or_else(|| format!("{key} takes a list of strings"))?;
@@ -118,9 +118,16 @@ fn parse_fact(
             }
             Ok(FactValue::Controllers(parsed))
         }
-        FactKind::Enhancement => Ok(FactValue::Enhancement(
-            vocabulary::ENHANCEMENTS.parse(&word(value)?)?,
-        )),
+        FactKind::Features { .. } => {
+            let list = value
+                .as_array()
+                .ok_or_else(|| format!("{key} takes a list of strings"))?;
+            let mut parsed = Vec::with_capacity(list.len());
+            for feature in list {
+                parsed.push(vocabulary::FEATURES.parse(&word(feature)?)?);
+            }
+            Ok(FactValue::Features(parsed))
+        }
         FactKind::Board { .. } => parse_board_fact(key, value),
     }
 }

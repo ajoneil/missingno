@@ -21,7 +21,7 @@ use missingno_gamedb::FactKind;
 
 use crate::db::{self, fact_description};
 use crate::vocabulary::{
-    CONTROLLERS, DEFECTS, ENHANCEMENTS, GAME_KINDS, LANGUAGES, LINK_TYPES, MOD_CATEGORIES, REGIONS,
+    CONTROLLERS, DEFECTS, FEATURES, GAME_KINDS, LANGUAGES, LINK_TYPES, MOD_CATEGORIES, REGIONS,
     RELEASE_STATUSES, TV_FORMATS,
 };
 
@@ -178,14 +178,15 @@ fn fact_property(key: &'static str, kind: &'static FactKind, lead: &str) -> Valu
         FactKind::TvStandard => json!({
             "type": "string", "enum": TV_FORMATS.schema(), "description": doc,
         }),
-        FactKind::Controllers => json!({
+        FactKind::Controllers { catalogue } => json!({
             "type": "array",
-            "items": { "type": "string", "enum": CONTROLLERS.schema() },
+            "items": { "type": "string", "enum": CONTROLLERS.schema_of(catalogue) },
             "description": format!("{doc} Replaces the list; omit or empty for the platform default."),
         }),
-        FactKind::Enhancement => json!({
-            "type": "string", "enum": ENHANCEMENTS.schema(),
-            "description": format!("{doc} Unknown clears it back to unestablished, which is not the same claim as NotEnhanced."),
+        FactKind::Features { catalogue } => json!({
+            "type": "array",
+            "items": { "type": "string", "enum": FEATURES.schema_of(catalogue) },
+            "description": format!("{doc} Replaces the list; empty = the release has none of them."),
         }),
         FactKind::Board { .. } => board_property(key, &doc),
     }

@@ -4,8 +4,8 @@
 //! is a term the parser accepts, by construction.
 
 use missingno_gamedb::{
-    Controller, Defect, Enhancement, GameKind, Language, LinkType, ModCategory, Region,
-    ReleaseStatus, TvStandard,
+    Controller, Defect, Feature, GameKind, Language, LinkType, ModCategory, Region, ReleaseStatus,
+    TvStandard,
 };
 use serde_json::{Value, json};
 
@@ -31,6 +31,21 @@ impl<T: Copy> Vocabulary<T> {
     /// The JSON-schema `enum` array.
     pub fn schema(&self) -> Value {
         json!(self.names())
+    }
+
+    /// The `enum` array for one platform's own list, in vocabulary order: a
+    /// platform is offered only the terms it can carry.
+    pub fn schema_of(&self, catalogue: &[T]) -> Value
+    where
+        T: PartialEq,
+    {
+        json!(
+            self.terms
+                .iter()
+                .filter(|(_, value)| catalogue.contains(value))
+                .map(|(term, _)| *term)
+                .collect::<Vec<_>>()
+        )
     }
 
     pub fn names(&self) -> Vec<&'static str> {
@@ -167,14 +182,11 @@ pub static CONTROLLERS: Vocabulary<Controller> = vocabulary(
     ],
 );
 
-/// `Unknown` is a term of the vocabulary: it is how an enhancement goes back to
-/// unestablished, which is not the same claim as `NotEnhanced`.
-pub static ENHANCEMENTS: Vocabulary<Enhancement> = vocabulary(
-    "enhancement",
+pub static FEATURES: Vocabulary<Feature> = vocabulary(
+    "feature",
     &[
-        ("Enhanced", Enhancement::Enhanced),
-        ("NotEnhanced", Enhancement::NotEnhanced),
-        ("Unknown", Enhancement::Unknown),
+        ("SuperGameBoyEnhanced", Feature::SuperGameBoyEnhanced),
+        ("GameBoyColorEnhanced", Feature::GameBoyColorEnhanced),
     ],
 );
 
