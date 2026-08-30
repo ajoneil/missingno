@@ -2,6 +2,8 @@ use super::types::palette::PaletteIndex;
 
 pub const NUM_SCANLINES: u8 = 144;
 pub const PIXELS_PER_LINE: u8 = 160;
+/// Full frame period in dots: 154 scanlines of 456 dots each.
+pub const DOTS_PER_FRAME: u32 = 154 * 456;
 
 /// The DMG-reference greyscale byte for each shade, lightest first.
 const GREYSCALE_BYTE: [u8; 4] = [0xFF, 0xAA, 0x55, 0x00];

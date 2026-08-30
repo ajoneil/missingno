@@ -102,21 +102,21 @@ impl<M: Model> Debugger<M> {
     }
 
     pub fn step(&mut self) -> Option<M::Screen> {
-        let screen = self.step_free();
+        let result = self.step_logged();
+        let screen = self.presented_screen(&result);
         self.game_boy.sync_audio();
         self.game_boy.sync_ppu();
         screen
     }
 
-    /// One instruction without the observation syncs — the run loops below own
-    /// their own exit boundary.
-    fn step_free(&mut self) -> Option<M::Screen> {
-        let result = self.step_logged();
-        if result.new_screen {
-            Some(self.game_boy.screen().clone())
-        } else {
-            None
-        }
+    fn presented_screen(&self, result: &crate::execute::StepResult) -> Option<M::Screen> {
+        result.new_screen.then(|| self.game_boy.screen().clone())
+    }
+
+    /// One frame interval of T-cycles — the most a frame-run may spend before
+    /// yielding without a screen, as when an off LCD presents nothing.
+    fn frame_tcycle_budget(&self) -> u32 {
+        crate::ppu::screen::DOTS_PER_FRAME * self.game_boy.cpu_steps_per_dot() as u32
     }
 
     /// Step one instruction while logging its code/data usage into the CDL.
@@ -217,10 +217,16 @@ impl<M: Model> Debugger<M> {
     }
 
     fn step_frame_simple(&mut self, stops: &RunStops) -> Option<M::Screen> {
+        let mut budget = self.frame_tcycle_budget();
         loop {
-            let screen = self.step_free();
+            let result = self.step_logged();
+            let screen = self.presented_screen(&result);
             if screen.is_some() || self.breakpoint_triggered(stops) {
                 return screen;
+            }
+            budget = budget.saturating_sub(result.tcycles);
+            if budget == 0 {
+                return None;
             }
         }
     }
@@ -240,8 +246,10 @@ impl<M: Model> Debugger<M> {
         &mut self,
         stops: &RunStops,
     ) -> (Option<M::Screen>, Option<WatchCondition>) {
+        let mut budget = self.frame_tcycle_budget();
         loop {
-            let screen = self.step_free();
+            let result = self.step_logged();
+            let screen = self.presented_screen(&result);
 
             let hit = self.check_watchpoints(&stops.watches, self.game_boy.bus_trace());
             if hit.is_some() {
@@ -251,6 +259,11 @@ impl<M: Model> Debugger<M> {
             if screen.is_some() || self.breakpoint_triggered(stops) {
                 return (screen, None);
             }
+
+            budget = budget.saturating_sub(result.tcycles);
+            if budget == 0 {
+                return (None, None);
+            }
         }
     }
 
@@ -258,6 +271,7 @@ impl<M: Model> Debugger<M> {
         &mut self,
         stops: &RunStops,
     ) -> (Option<M::Screen>, Option<WatchCondition>) {
+        let mut budget = self.frame_tcycle_budget();
         loop {
             let screen = self.step_tcycle_free();
 
@@ -267,6 +281,11 @@ impl<M: Model> Debugger<M> {
 
             if screen.is_some() || self.breakpoint_triggered(stops) {
                 return (screen, None);
+            }
+
+            budget -= 1;
+            if budget == 0 {
+                return (None, None);
             }
         }
     }
@@ -373,6 +392,31 @@ mod tests {
             crate::cartridge::Cartridge::new(rom, None, None).unwrap(),
             None,
         )
+    }
+
+    /// LD A,0; LDH (LCDC),A; JR self — turns the LCD off and spins.
+    fn lcd_off_console() -> Console<Dmg> {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x100..0x106].copy_from_slice(&[0x3e, 0x00, 0xe0, 0x40, 0x18, 0xfe]);
+        Console::new(
+            crate::cartridge::Cartridge::new(rom, None, None).unwrap(),
+            None,
+        )
+    }
+
+    #[test]
+    fn an_off_lcd_frame_run_yields_after_one_frame_of_tcycles() {
+        let mut debugger = Debugger::new(lcd_off_console());
+        debugger.step_frame(&StopSet::default());
+        let before = debugger.game_boy().chassis.clock.master_edge();
+        let outcome = debugger.step_frame(&StopSet::default());
+        assert!(outcome.screen.is_none());
+        let tcycles = (debugger.game_boy().chassis.clock.master_edge() - before) / 2;
+        let budget = u64::from(debugger.frame_tcycle_budget());
+        assert!(
+            (budget..budget + 64).contains(&tcycles),
+            "one frame-run spent {tcycles} T-cycles"
+        );
     }
 
     #[test]

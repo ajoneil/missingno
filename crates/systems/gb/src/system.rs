@@ -498,10 +498,11 @@ where
     }
 
     /// One frame on the console's own budget: run until the PPU presents,
-    /// bounded at two frames' worth of dots so an off LCD cannot stall it.
+    /// bounded at one frame's worth of dots — the engine paces each call as
+    /// one frame interval, so an off LCD holds cadence instead of racing.
     fn step_frame(core: &mut GbCore<M>) -> Option<Frame> {
         let console = core.console_mut();
-        let max = 70224 * 2 * console.cpu_steps_per_dot() as u32;
+        let max = crate::ppu::screen::DOTS_PER_FRAME * console.cpu_steps_per_dot() as u32;
         let mut tcycles = 0;
         let mut sram_dirty = false;
         loop {
@@ -813,6 +814,34 @@ mod tests {
 
     fn debugger() -> Box<dyn SystemDebugger> {
         Box::new(create_console(call_program(), |_| None)).into_debugger()
+    }
+
+    /// LD A,0; LDH (LCDC),A; JR self — turns the LCD off and spins.
+    fn lcd_off_program() -> Console<Dmg> {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x100..0x106].copy_from_slice(&[0x3e, 0x00, 0xe0, 0x40, 0x18, 0xfe]);
+        Console::new(Cartridge::new(rom, None, None).unwrap(), None)
+    }
+
+    #[test]
+    fn an_off_lcd_console_frame_runs_one_frame_of_tcycles() {
+        let mut core = GbCore::new(lcd_off_program(), |_| None, LINK_DISCONNECTED);
+        <GbSystem<Dmg> as Machine>::step_frame(&mut core);
+        let before = core.console().chassis.clock.master_edge();
+        <GbSystem<Dmg> as Machine>::step_frame(&mut core);
+        let tcycles = (core.console().chassis.clock.master_edge() - before) / 2;
+        let budget = u64::from(crate::ppu::screen::DOTS_PER_FRAME);
+        assert!(
+            (budget..budget + 64).contains(&tcycles),
+            "one paced frame ran {tcycles} T-cycles"
+        );
+    }
+
+    #[test]
+    fn an_off_lcd_run_frame_reports_budget_exhausted() {
+        let mut debugger = Box::new(create_console(lcd_off_program(), |_| None)).into_debugger();
+        debugger.run_frame();
+        assert!(matches!(debugger.run_frame(), StepOutcome::BudgetExhausted));
     }
 
     #[test]
