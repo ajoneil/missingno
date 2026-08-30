@@ -80,6 +80,10 @@ pub trait Model: Default {
     /// active TFT on the CGB.
     const LCD_PANEL: missingno_core::LcdPanel = missingno_core::LcdPanel::PassiveStn;
 
+    /// The tone the panel shows where no cell is driven. The DMG's reflective
+    /// panel is lighter and yellower than its lightest lit shade.
+    const UNLIT_PANEL: rgb::RGB8 = crate::ppu::types::palette::Palette::MONOCHROME_GREEN.disabled();
+
     /// Bank-complete work RAM the debugger exposes linearly above the bus, when
     /// the console banks WRAM (CGB's eight 4 KB banks). `None` for a flat-WRAM
     /// console (DMG): its 8 KB is fully visible through the `$C000` bus window.

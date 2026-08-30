@@ -572,6 +572,7 @@ mod tests {
         settings_view::DisplayOptions {
             technology: Some(missingno_core::video::DisplayTechnology::Lcd {
                 native: (160, 144),
+                unlit: missingno_core::RGB8::new(0x94, 0x8a, 0x04),
                 panel: missingno_core::video::LcdPanel::PassiveStn,
                 pixel_aspect: 1.0,
             }),

@@ -96,6 +96,19 @@ impl RgbaFrame {
 pub trait ConsoleFrame: Send + Sync {
     fn as_any(&self) -> &dyn std::any::Any;
     fn resolve_rgba(&self) -> RgbaFrame;
+    /// Each pixel's position on the panel's transmission axis — 0 where no cell
+    /// is driven, 1 at full drive. A display whose cells respond slowly decays
+    /// in this domain rather than in colour. `None` where the frame drives no
+    /// such axis.
+    fn response_levels(&self) -> Option<Box<[f32]>> {
+        None
+    }
+    /// The tones the transmission axis passes through, unlit first, as the
+    /// console's own panel shows them. A frontend offering a choice of panel
+    /// states its own; `None` where the frame drives no axis.
+    fn response_stops(&self) -> Option<Box<[RGB8]>> {
+        None
+    }
     /// Clone into a fresh box so a renderer can hold the frame and re-resolve it
     /// at draw time when the frontend's colour policy changes.
     fn clone_box(&self) -> Box<dyn ConsoleFrame>;
@@ -165,6 +178,9 @@ pub enum DisplayTechnology {
     Lcd {
         native: (u32, u32),
         panel: LcdPanel,
+        /// The tone an undriven cell shows, which a frontend drawing the
+        /// inter-pixel matrix exposes between the lit cells.
+        unlit: RGB8,
         /// One pixel's display width ÷ height. Game Boy pixels are square
         /// (1.0); the screen aspect is `native.0 * pixel_aspect / native.1`.
         pixel_aspect: f32,
@@ -264,7 +280,7 @@ impl<const WIDTH: usize> Television<WIDTH> {
 
 #[cfg(test)]
 mod display_technology_tests {
-    use super::{DisplayTechnology, LcdPanel};
+    use super::{DisplayTechnology, LcdPanel, RGB8};
     use crate::tv::TvStandard;
 
     #[test]
@@ -272,6 +288,7 @@ mod display_technology_tests {
         let lcd = DisplayTechnology::Lcd {
             native: (160, 144),
             panel: LcdPanel::ActiveTft,
+            unlit: RGB8::new(0x16, 0x16, 0x16),
             pixel_aspect: 1.0,
         };
         let crt = DisplayTechnology::Crt {

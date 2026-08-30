@@ -1582,6 +1582,7 @@ mod tests {
         assert_eq!(
             display_line(&DisplayTechnology::Lcd {
                 native: (160, 144),
+                unlit: missingno_core::RGB8::new(0x94, 0x8a, 0x04),
                 panel: LcdPanel::PassiveStn,
                 pixel_aspect: 1.0,
             }),
@@ -1590,6 +1591,7 @@ mod tests {
         assert_eq!(
             display_line(&DisplayTechnology::Lcd {
                 native: (160, 144),
+                unlit: missingno_core::RGB8::new(0x94, 0x8a, 0x04),
                 panel: LcdPanel::ActiveTft,
                 pixel_aspect: 1.0,
             }),

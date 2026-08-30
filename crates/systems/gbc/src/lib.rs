@@ -202,6 +202,9 @@ impl Model for Cgb {
     const HAS_PCM_REGISTERS: bool = true;
     const VRAM_BANKS: u8 = 2;
     const LCD_PANEL: missingno_core::LcdPanel = missingno_core::LcdPanel::ActiveTft;
+    /// The opaque mask between the colour panel's RGB subpixels, near-black
+    /// rather than any aggregate tone of the panel.
+    const UNLIT_PANEL: rgb::RGB8 = rgb::RGB8::new(0x16, 0x16, 0x16);
 
     type ConsoleState = CgbConsoleState;
     type Apu = CgbApu;

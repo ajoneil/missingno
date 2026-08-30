@@ -43,19 +43,21 @@ fn overlay_for(technology: &DisplayTechnology, pixel_grid: bool, scanlines: bool
     }
 }
 
-/// The panel a screen assumes before a console has stated its technology.
+/// The panel a screen assumes before a console has stated its technology. A
+/// placeholder, replaced the moment one does; the tone stands in for the
+/// reflective panel its shape names.
 fn default_technology() -> DisplayTechnology {
     DisplayTechnology::Lcd {
         native: (160, 144),
         panel: LcdPanel::PassiveStn,
+        unlit: RGB8::new(0x94, 0x8a, 0x04),
         pixel_aspect: 1.0,
     }
 }
 
-/// The colour a colour panel's inter-pixel matrix shows: the opaque mask between
-/// RGB subpixels, near-black rather than any aggregate panel tone. It stands in
-/// wherever a frame states no unlit tone of its own — the CGB, SGB-coloured DMG
-/// frames, and any future RGBA-native LCD.
+/// The colour the matrix shows for frames that are not drawn from the panel's
+/// own palette — SGB colours over a Game Boy panel. The panel's own unlit tone
+/// comes from the [`DisplayTechnology`] the core states.
 const SUBPIXEL_MATRIX: RGB8 = RGB8::new(0x16, 0x16, 0x16);
 
 /// The one colour decision the frontend owns for a family whose frames arrive as
@@ -75,11 +77,31 @@ pub trait PalettePolicy: Send {
     fn response_levels(&self, _frame: &dyn ConsoleFrame) -> Option<Box<[f32]>> {
         None
     }
-    /// The colour a response level shows, through the panel's gradient. Only
-    /// reached for a policy that states [`PalettePolicy::response_levels`].
-    fn level_color(&self, _level: f32) -> RGB8 {
-        SUBPIXEL_MATRIX
+    /// The tones the transmission axis passes through, unlit first, for the
+    /// panel this policy paints. `None` leaves the frame's own stops standing.
+    fn response_stops(&self) -> Option<Box<[RGB8]>> {
+        None
     }
+}
+
+/// A level read through a gradient, interpolating between the two stops it
+/// falls between.
+fn color_at(stops: &[RGB8], level: f32) -> RGB8 {
+    let last = stops.len() - 1;
+    let position = level.clamp(0.0, 1.0) * last as f32;
+    let lower = (position as usize).min(last);
+    let upper = (lower + 1).min(last);
+    let fraction = position - lower as f32;
+    let between = |a: u8, b: u8| {
+        (a as f32 + (b as f32 - a as f32) * fraction)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    RGB8::new(
+        between(stops[lower].r, stops[upper].r),
+        between(stops[lower].g, stops[upper].g),
+        between(stops[lower].b, stops[upper].b),
+    )
 }
 
 /// The retained image the display's persistence decays: response levels where
@@ -188,14 +210,32 @@ impl ScreenView {
         overlay_for(&self.technology, self.pixel_grid, self.scanlines)
     }
 
-    /// The colour the LCD's inter-pixel matrix shows, as linear RGB in 0..1. A
-    /// device-native index frame drawn from the Game Boy's monochrome palette
-    /// takes that palette's unlit panel tone; every other frame — resolved RGBA
-    /// (the CGB) or SGB colours — has none and takes the subpixel matrix.
+    /// The unlit tone of the panel the core states. A CRT has no inter-pixel
+    /// matrix, so its value is never drawn.
+    fn panel_unlit(&self) -> RGB8 {
+        // A frame painted outside the panel's transmission axis is a colour
+        // image on this screen — SGB colours, which reach a TV through a Super
+        // Game Boy rather than the handheld's reflective panel — so its matrix
+        // is the subpixel mask.
+        if let Some(frame) = &self.console_frame
+            && frame.response_levels().is_none()
+        {
+            return SUBPIXEL_MATRIX;
+        }
+        match self.technology {
+            DisplayTechnology::Lcd { unlit, .. } => unlit,
+            DisplayTechnology::Crt { .. } => SUBPIXEL_MATRIX,
+        }
+    }
+
+    /// The colour the LCD's inter-pixel matrix shows, as linear RGB in 0..1. The
+    /// panel the core states carries its own unlit tone; a palette policy
+    /// overrides it with the unit the user chose to see the game on, and states
+    /// none for frames not drawn from that palette at all (SGB colours).
     fn panel_base_color(&self) -> [f32; 3] {
         let rgb = match (&self.palette_policy, self.console_frame.is_some()) {
             (Some(policy), true) => policy.panel_base().unwrap_or(SUBPIXEL_MATRIX),
-            _ => SUBPIXEL_MATRIX,
+            _ => self.panel_unlit(),
         };
         [
             rgb.r as f32 / 255.0,
@@ -317,12 +357,32 @@ impl ScreenView {
     /// The delivered frame in the domain its display accumulates in: response
     /// levels where the colour policy states them, resolved colour otherwise.
     fn delivered_history(&self) -> PersistenceHistory {
-        if let (Some(policy), Some(frame)) = (&self.palette_policy, &self.console_frame)
-            && let Some(levels) = policy.response_levels(frame.as_ref())
-        {
+        if let Some(levels) = self.delivered_levels() {
             return PersistenceHistory::Levels(levels);
         }
         PersistenceHistory::Rgba(self.current_frame().pixels)
+    }
+
+    /// The delivered frame's transmission levels. The frame states them; an
+    /// installed policy may suppress them for frames it paints outside the
+    /// panel's axis.
+    fn delivered_levels(&self) -> Option<Box<[f32]>> {
+        let frame = self.console_frame.as_ref()?;
+        match &self.palette_policy {
+            Some(policy) => policy.response_levels(frame.as_ref()),
+            None => frame.response_levels(),
+        }
+    }
+
+    /// The gradient the retained levels are read through: the policy's panel
+    /// where one is installed, otherwise the panel the frame states.
+    fn response_stops(&self) -> Option<Box<[RGB8]>> {
+        if let Some(policy) = &self.palette_policy
+            && let Some(stops) = policy.response_stops()
+        {
+            return Some(stops);
+        }
+        self.console_frame.as_ref()?.response_stops()
     }
 
     /// The pixels this draw shows: the retained image read back through the
@@ -331,11 +391,11 @@ impl ScreenView {
     fn displayed_frame(&self) -> RgbaFrame {
         let (width, height) = self.dimensions();
         let pixels = (width * height) as usize;
-        match (&self.history, &self.palette_policy) {
-            (Some(PersistenceHistory::Levels(levels)), Some(policy)) if levels.len() == pixels => {
+        match (&self.history, self.response_stops()) {
+            (Some(PersistenceHistory::Levels(levels)), Some(stops)) if levels.len() == pixels => {
                 let mut rgba = Vec::with_capacity(pixels * 4);
                 for &level in levels.iter() {
-                    let color = policy.level_color(level);
+                    let color = color_at(&stops, level);
                     rgba.extend_from_slice(&[color.r, color.g, color.b, 255]);
                 }
                 RgbaFrame {
@@ -402,10 +462,18 @@ pub fn iced_color(color: RGB8) -> iced::Color {
 mod tests {
     use super::*;
 
+    /// A reflective panel's unlit tone, standing in for the DMG's.
+    const PANEL_UNLIT: RGB8 = RGB8::new(0x94, 0x8a, 0x04);
+
     fn lcd(panel: LcdPanel) -> DisplayTechnology {
+        lcd_unlit(panel, PANEL_UNLIT)
+    }
+
+    fn lcd_unlit(panel: LcdPanel, unlit: RGB8) -> DisplayTechnology {
         DisplayTechnology::Lcd {
             native: (160, 144),
             panel,
+            unlit,
             pixel_aspect: 1.0,
         }
     }
@@ -425,12 +493,18 @@ mod tests {
             Some(self.0)
         }
         fn response_levels(&self, frame: &dyn ConsoleFrame) -> Option<Box<[f32]>> {
-            let level = frame.as_any().downcast_ref::<StubFrame>()?.0;
-            Some(vec![level; 160 * 144].into())
+            frame.response_levels()
         }
-        fn level_color(&self, level: f32) -> RGB8 {
-            let tone = (level.clamp(0.0, 1.0) * 255.0).round() as u8;
-            RGB8::new(tone, tone, tone)
+        fn response_stops(&self) -> Option<Box<[RGB8]>> {
+            // Black to white in five even stops: a level reads back as itself.
+            Some(
+                (0..5)
+                    .map(|stop| {
+                        let tone = (stop as f32 / 4.0 * 255.0).round() as u8;
+                        RGB8::new(tone, tone, tone)
+                    })
+                    .collect(),
+            )
         }
     }
 
@@ -446,6 +520,34 @@ mod tests {
         }
         fn clone_box(&self) -> Box<dyn ConsoleFrame> {
             Box::new(StubFrame(self.0))
+        }
+        fn response_levels(&self) -> Option<Box<[f32]>> {
+            Some(vec![self.0; 160 * 144].into())
+        }
+        fn response_stops(&self) -> Option<Box<[RGB8]>> {
+            Some(
+                (0..5)
+                    .map(|stop| {
+                        let tone = (stop as f32 / 4.0 * 255.0).round() as u8;
+                        RGB8::new(tone, tone, tone)
+                    })
+                    .collect(),
+            )
+        }
+    }
+
+    /// A delivered frame already painted in colour, standing in for SGB output:
+    /// no monochrome transmission axis to accumulate or read a matrix from.
+    struct ColourFrame;
+    impl ConsoleFrame for ColourFrame {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn resolve_rgba(&self) -> RgbaFrame {
+            RgbaFrame::blank(160, 144)
+        }
+        fn clone_box(&self) -> Box<dyn ConsoleFrame> {
+            Box::new(ColourFrame)
         }
     }
 
@@ -465,12 +567,66 @@ mod tests {
     }
 
     #[test]
-    fn panel_base_is_the_subpixel_matrix_for_resolved_rgba() {
-        // A core delivering resolved RGBA (the CGB) has no monochrome palette,
-        // so the gaps are the near-black subpixel mask — even if a policy is
-        // installed, since no index frame reaches it.
+    fn a_level_reads_back_the_stop_it_lands_on() {
+        let stops = [
+            RGB8::new(0, 0, 0),
+            RGB8::new(64, 64, 64),
+            RGB8::new(128, 128, 128),
+            RGB8::new(192, 192, 192),
+            RGB8::new(255, 255, 255),
+        ];
+        for (index, stop) in stops.iter().enumerate() {
+            assert_eq!(color_at(&stops, index as f32 / 4.0), *stop);
+        }
+    }
+
+    #[test]
+    fn a_level_between_stops_is_their_mix() {
+        let stops = [RGB8::new(0, 0, 0), RGB8::new(100, 40, 200)];
+        // Halfway along a two-stop gradient is halfway between the tones.
+        assert_eq!(color_at(&stops, 0.5), RGB8::new(50, 20, 100));
+    }
+
+    #[test]
+    fn panel_base_is_the_stated_tone_without_a_policy() {
+        // The curator installs no policy. The gaps must still be the panel's
+        // own unlit tone, not a colour panel's subpixel mask.
         let mut view = ScreenView::new();
-        view.set_technology(lcd(LcdPanel::ActiveTft));
+        view.set_technology(lcd(LcdPanel::PassiveStn));
+        view.apply(&Frame::Console(Box::new(StubFrame(0.25))));
+
+        let base = view.panel_base_color();
+        assert!((base[0] - PANEL_UNLIT.r as f32 / 255.0).abs() < 1e-6);
+        assert!((base[1] - PANEL_UNLIT.g as f32 / 255.0).abs() < 1e-6);
+        assert!((base[2] - PANEL_UNLIT.b as f32 / 255.0).abs() < 1e-6);
+        // A reflective panel's gaps are light, unlike a colour panel's mask.
+        assert!(base.iter().any(|channel| *channel > 0.5));
+    }
+
+    #[test]
+    fn a_colour_frame_takes_the_mask_not_the_panel_tone() {
+        // SGB output is a colour image on a TV, not the handheld's reflective
+        // panel, so it must not pick up the panel's light unlit tone.
+        let mut view = ScreenView::new();
+        view.set_technology(lcd(LcdPanel::PassiveStn));
+        view.apply(&Frame::Console(Box::new(ColourFrame)));
+
+        let base = view.panel_base_color();
+        let expected = [
+            SUBPIXEL_MATRIX.r as f32 / 255.0,
+            SUBPIXEL_MATRIX.g as f32 / 255.0,
+            SUBPIXEL_MATRIX.b as f32 / 255.0,
+        ];
+        assert_eq!(base, expected);
+    }
+
+    #[test]
+    fn panel_base_is_the_subpixel_matrix_for_resolved_rgba() {
+        // A core delivering resolved RGBA (the CGB) states the mask between its
+        // subpixels as the panel's unlit tone; no index frame reaches the
+        // policy, so its own tone never applies.
+        let mut view = ScreenView::new();
+        view.set_technology(lcd_unlit(LcdPanel::ActiveTft, SUBPIXEL_MATRIX));
         view.set_palette_policy(Some(Box::new(StubPolicy(RGB8::new(0, 0, 0)))));
         view.apply(&Frame::Rgba(RgbaFrame::blank(160, 144)));
 

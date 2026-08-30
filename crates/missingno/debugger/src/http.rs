@@ -223,11 +223,13 @@ fn video_json(video: missingno_core::video::DisplayTechnology) -> Value {
         DisplayTechnology::Lcd {
             native,
             panel,
+            unlit,
             pixel_aspect,
         } => json!({
             "technology": "lcd",
             "panel": panel.description(),
             "native": [native.0, native.1],
+            "unlit": rgb_hex(&unlit),
             "pixel_aspect": pixel_aspect,
         }),
         DisplayTechnology::Crt {

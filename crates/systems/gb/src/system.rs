@@ -566,6 +566,7 @@ where
         DisplayTechnology::Lcd {
             native: NATIVE_SIZE,
             panel: M::LCD_PANEL,
+            unlit: M::UNLIT_PANEL,
             pixel_aspect: 1.0,
         }
     }
@@ -976,9 +977,15 @@ mod tests {
     fn video_out_states_the_models_panel() {
         let console = create_console(call_program(), |_| None);
         match console.video_out() {
-            DisplayTechnology::Lcd { native, panel, .. } => {
+            DisplayTechnology::Lcd {
+                native,
+                panel,
+                unlit,
+                ..
+            } => {
                 assert_eq!(native, NATIVE_SIZE);
                 assert_eq!(panel, <Dmg as Model>::LCD_PANEL);
+                assert_eq!(unlit, <Dmg as Model>::UNLIT_PANEL);
             }
             other => panic!("the Game Boy drives an LCD, got {other:?}"),
         }

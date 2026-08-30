@@ -54,10 +54,13 @@ fn dmg_drives_a_passive_stn_lcd() {
         DisplayTechnology::Lcd {
             native,
             panel,
+            unlit,
             pixel_aspect,
         } => {
             assert_eq!(native, (160, 144));
             assert_eq!(panel, LcdPanel::PassiveStn);
+            // The reflective panel reads lighter than its lightest lit shade.
+            assert_eq!(unlit, missingno_core::RGB8::new(0x94, 0x8a, 0x04));
             assert_eq!(pixel_aspect, 1.0);
         }
         other => panic!("DMG should drive an LCD, got {other:?}"),
@@ -72,10 +75,13 @@ fn cgb_drives_an_active_tft_lcd() {
         DisplayTechnology::Lcd {
             native,
             panel,
+            unlit,
             pixel_aspect,
         } => {
             assert_eq!(native, (160, 144));
             assert_eq!(panel, LcdPanel::ActiveTft);
+            // The mask between the colour panel's subpixels, near-black.
+            assert_eq!(unlit, missingno_core::RGB8::new(0x16, 0x16, 0x16));
             assert_eq!(pixel_aspect, 1.0);
         }
         other => panic!("CGB should drive an LCD, got {other:?}"),

@@ -56,7 +56,7 @@ impl Palette {
     }
 
     /// The tone an undriven cell shows — the stop below shade 0.
-    pub fn disabled(&self) -> RGB8 {
+    pub const fn disabled(&self) -> RGB8 {
         self.disabled
     }
 }

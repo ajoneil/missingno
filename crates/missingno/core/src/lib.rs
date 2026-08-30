@@ -53,6 +53,7 @@ pub use ports::{
     ControlDescriptor, ControlKind, PanelBehaviour, PanelControl, PeripheralDescriptor,
     PeripheralId, PlugError, PortDescriptor, PortId, Provider,
 };
+pub use rgb::RGB8;
 pub use state::{
     FieldDef, FieldType, FrameSpec, PixelFormat, Provenance, StateRecord, StateValue,
     SystemStateSchema, Tier,
