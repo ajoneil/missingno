@@ -61,3 +61,14 @@ fn channel_3_wave_ram_locked_write() {
 fn ei_delay_halt() {
     run_samesuite_test("samesuite/interrupt/ei_delay_halt.gb");
 }
+
+// sgb/ — MLT_REQ joypad counter (SGB-flagged carts on the DMG core)
+#[test]
+fn sgb_command_mlt_req() {
+    run_samesuite_test("samesuite/sgb/command_mlt_req.gb");
+}
+
+#[test]
+fn sgb_command_mlt_req_1_incrementing() {
+    run_samesuite_test("samesuite/sgb/command_mlt_req_1_incrementing.gb");
+}

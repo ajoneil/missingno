@@ -35,13 +35,11 @@ impl Model for Dmg {
     }
 
     fn read_joypad(&self, value: u8) -> u8 {
-        if let Some(sgb) = &self.sgb
-            && sgb.player_count > 1
-        {
+        if let Some(sgb) = &self.sgb {
             let p14_selected = value & 0x10 == 0;
             let p15_selected = value & 0x20 == 0;
             if !p14_selected && !p15_selected {
-                return (value & 0xF0) | (0x0F - sgb.current_player);
+                return (value & 0xF0) | (0x0F - sgb.joypad_index);
             }
         }
         value

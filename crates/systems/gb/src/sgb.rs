@@ -174,11 +174,11 @@ pub struct Sgb {
     system_palettes: Vec<SgbPalette>,
     attribute_files: Vec<AttributeMap>,
     pub mask_mode: MaskMode,
-    pub player_count: u8,
-    pub current_player: u8,
+    // MLT_REQ joypad selector: a counter ANDed with a 2-bit mask on each advance
+    pub(crate) joypad_index: u8,
+    joypad_mask: u8,
+    prev_p15_high: bool,
     command_state: CommandState,
-    // Track previous write for player cycling
-    prev_p14_p15_both_low: bool,
     // Snapshot of the last rendered screen, used by TRN commands
     last_screen: Screen,
     // Deferred VRAM transfer: countdown frames + transfer type
@@ -199,10 +199,10 @@ impl Sgb {
             system_palettes: vec![SgbPalette::default(); 512],
             attribute_files: vec![AttributeMap::new(); 45],
             mask_mode: MaskMode::Disabled,
-            player_count: 1,
-            current_player: 0,
+            joypad_index: 0,
+            joypad_mask: 0,
+            prev_p15_high: false,
             command_state: CommandState::Idle,
-            prev_p14_p15_both_low: false,
             last_screen: Screen::default(),
             pending_transfer: None,
         }
@@ -239,11 +239,11 @@ impl Sgb {
         let p15_low = value & 0x20 == 0;
         let both_low = p14_low && p15_low;
 
-        // Player cycling for MLT_REQ: cycle on every reset pulse (both-low falling edge)
-        if both_low && !self.prev_p14_p15_both_low && self.player_count > 1 {
-            self.current_player = (self.current_player + 1) % self.player_count;
+        // The joypad counter advances on every P15 low→high edge, packet traffic included
+        if !p15_low && !self.prev_p15_high {
+            self.joypad_index = (self.joypad_index + 1) & self.joypad_mask;
         }
-        self.prev_p14_p15_both_low = both_low;
+        self.prev_p15_high = !p15_low;
 
         match &mut self.command_state {
             CommandState::Idle => {
@@ -581,19 +581,13 @@ impl Sgb {
     // --- System commands ---
 
     fn cmd_mlt_req(&mut self, data: &[u8]) {
-        self.player_count = match data[1] & 0x03 {
-            0 => 1,
-            1 => 2,
-            3 => 4,
-            _ => 1,
-        };
-        // After MLT_REQ, current_player starts at count-1 so the first read
-        // returns a non-zero player ID, which games use to detect SGB presence.
-        if self.player_count > 1 {
-            self.current_player = self.player_count - 1;
-        } else {
-            self.current_player = 0;
+        let mask = data[1] & 0x03;
+        // The glitched two-player request ($02) advances the counter once before masking
+        if mask == 2 {
+            self.joypad_index = self.joypad_index.wrapping_add(1);
         }
+        self.joypad_mask = mask;
+        self.joypad_index &= mask;
     }
 
     fn cmd_mask_en(&mut self, data: &[u8]) {

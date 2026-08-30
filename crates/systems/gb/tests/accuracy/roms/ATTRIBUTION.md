@@ -46,4 +46,4 @@ They were obtained from the [c-sp/game-boy-test-roms](https://github.com/c-sp/ga
 - **Source:** https://github.com/LIJI32/SameSuite
 - **License:** X11/MIT
 - **Copyright:** (C) 2018-2023 Lior Halphon
-- **Tests included:** DMG-compatible subset (channel_3 wave RAM tests, ei_delay_halt)
+- **Tests included:** DMG-compatible subset (channel_3 wave RAM tests, ei_delay_halt, sgb MLT_REQ tests)
