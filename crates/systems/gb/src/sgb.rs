@@ -159,6 +159,12 @@ enum CommandState {
         bit_index: u8,
         all_packets: Vec<u8>,
     },
+    // A non-final packet completed; the next packet begins at its own start pulse
+    AwaitingPacketStart {
+        packets_expected: u8,
+        packets_received: u8,
+        all_packets: Vec<u8>,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -177,6 +183,8 @@ pub struct Sgb {
     pub(crate) joypad_index: u8,
     joypad_mask: u8,
     prev_p15_high: bool,
+    // Whether the last write left both select lines high — pulses are release-framed
+    prev_lines_high: bool,
     command_state: CommandState,
     // The ICD2's captured picture, used by TRN commands; a static LD stream holds it
     last_screen: Screen,
@@ -203,6 +211,7 @@ impl Sgb {
             joypad_index: 0,
             joypad_mask: 0,
             prev_p15_high: false,
+            prev_lines_high: false,
             command_state: CommandState::Idle,
             last_screen: Screen::default(),
             frozen_screen: None,
@@ -255,6 +264,9 @@ impl Sgb {
         }
         self.prev_p15_high = !p15_low;
 
+        let released = self.prev_lines_high;
+        self.prev_lines_high = !p14_low && !p15_low;
+
         match &mut self.command_state {
             CommandState::Idle => {
                 if both_low {
@@ -280,7 +292,7 @@ impl Sgb {
                         // just a player-cycle probe. Start fresh.
                         *current_packet = [0; 16];
                     } else {
-                        // Between packets in a multi-packet command, or mid-packet restart
+                        // Mid-packet restart — the in-flight packet is discarded
                         *current_packet = [0; 16];
                         *bit_index = 0;
                     }
@@ -289,6 +301,12 @@ impl Sgb {
 
                 if !p14_low && !p15_low {
                     // Both high — release between bits, not a data bit
+                    return;
+                }
+
+                if !released {
+                    // A select change with no release since the last pulse doesn't clock
+                    // the receiver — this is what keeps ordinary polling out of packets
                     return;
                 }
 
@@ -320,10 +338,33 @@ impl Sgb {
                         self.command_state = CommandState::Idle;
                         self.dispatch_command(&data);
                     } else {
-                        // More packets to come — wait for next reset + data bit
-                        *current_packet = [0; 16];
-                        *bit_index = 0;
+                        let packets_expected = *packets_expected;
+                        let packets_received = *packets_received;
+                        let all_packets = std::mem::take(all_packets);
+                        self.command_state = CommandState::AwaitingPacketStart {
+                            packets_expected,
+                            packets_received,
+                            all_packets,
+                        };
                     }
+                }
+            }
+            CommandState::AwaitingPacketStart {
+                packets_expected,
+                packets_received,
+                all_packets,
+            } => {
+                if both_low {
+                    let packets_expected = *packets_expected;
+                    let packets_received = *packets_received;
+                    let all_packets = std::mem::take(all_packets);
+                    self.command_state = CommandState::ReceivingBits {
+                        packets_expected,
+                        packets_received,
+                        current_packet: [0; 16],
+                        bit_index: 0,
+                        all_packets,
+                    };
                 }
             }
         }
@@ -632,6 +673,74 @@ mod tests {
         }
         sgb.write_joypad(0x20);
         sgb.write_joypad(0x30);
+    }
+
+    /// One frame of an ordinary joypad poll: both selects in turn, no release between
+    fn poll_frame(sgb: &mut Sgb) {
+        sgb.write_joypad(0x20);
+        sgb.write_joypad(0x10);
+        sgb.write_joypad(0x30);
+    }
+
+    #[test]
+    fn polling_after_a_stray_reset_never_dispatches() {
+        let mut sgb = Sgb::new();
+        sgb.write_joypad(0x30);
+        sgb.write_joypad(0x00);
+        for _ in 0..200 {
+            poll_frame(&mut sgb);
+        }
+        assert!(matches!(sgb.command_state, CommandState::Idle));
+        assert!(sgb.pending_transfer.is_none());
+
+        send_packet(
+            &mut sgb,
+            [0xB9, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        assert_eq!(sgb.mask_mode, MaskMode::Black);
+    }
+
+    #[test]
+    fn unreleased_select_change_does_not_clock_a_bit() {
+        let mut sgb = Sgb::new();
+        sgb.write_joypad(0x00);
+        sgb.write_joypad(0x30);
+        sgb.write_joypad(0x20);
+        sgb.write_joypad(0x10);
+        match &sgb.command_state {
+            CommandState::ReceivingBits {
+                bit_index,
+                current_packet,
+                ..
+            } => {
+                assert_eq!(*bit_index, 1);
+                assert_eq!(current_packet[0], 0);
+            }
+            _ => panic!("receiver should be mid-packet"),
+        }
+    }
+
+    #[test]
+    fn continuation_packet_waits_for_its_own_start_pulse() {
+        let mut sgb = Sgb::new();
+        let mut first = [0xFFu8; 16];
+        first[0] = (0x07 << 3) | 2;
+        first[1] = 0;
+        first[2] = 0;
+        first[3] = 60;
+        first[4] = 0;
+        first[5] = 0;
+        send_packet(&mut sgb, first);
+
+        for _ in 0..50 {
+            poll_frame(&mut sgb);
+        }
+
+        send_packet(&mut sgb, [0xFF; 16]);
+        for cell in 0..60usize {
+            assert_eq!(sgb.attribute_map.cells[cell / 20][cell % 20], 3);
+        }
+        assert_eq!(sgb.attribute_map.cells[3][0], 0);
     }
 
     /// The inverse of `screen_to_transfer_data`: a screen displaying `data` as
