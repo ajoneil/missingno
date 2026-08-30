@@ -148,6 +148,15 @@ impl SgbRenderData {
     pub fn backdrop(&self) -> Rgb555 {
         self.palettes[0].colors[0]
     }
+
+    /// Resolve one screen pixel through the attribute map and its palette.
+    pub fn color_at(&self, x: usize, y: usize, shade: u8) -> Rgb555 {
+        if shade == 0 {
+            return self.backdrop();
+        }
+        let pal_id = self.attribute_map.cells[y / 8][x / 8] as usize;
+        self.palettes[pal_id].colors[shade as usize]
+    }
 }
 
 enum CommandState {
@@ -718,6 +727,22 @@ mod tests {
             }
             _ => panic!("receiver should be mid-packet"),
         }
+    }
+
+    #[test]
+    fn shade_zero_resolves_to_the_shared_backdrop() {
+        let mut data = SgbRenderData {
+            palettes: [SgbPalette::default(); 4],
+            attribute_map: AttributeMap::new(),
+            mask_mode: MaskMode::Disabled,
+        };
+        data.palettes[0].colors[0] = Rgb555(0x1111);
+        data.palettes[2].colors[0] = Rgb555(0x2222);
+        data.palettes[2].colors[3] = Rgb555(0x3333);
+        data.attribute_map.cells[0][0] = 2;
+
+        assert_eq!(data.color_at(0, 0, 0).0, 0x1111);
+        assert_eq!(data.color_at(0, 0, 3).0, 0x3333);
     }
 
     #[test]

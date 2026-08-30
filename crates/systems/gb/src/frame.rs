@@ -161,14 +161,10 @@ pub fn screen_to_pixels(
                     MaskMode::Disabled | MaskMode::Freeze => {
                         if !use_sgb_colors {
                             palette.color(palette_index)
-                        } else if palette_index.0 == 0 {
-                            // Shade 0 is transparent on the SNES; the shared backdrop shows through
-                            sgb_data.backdrop().to_rgb8()
                         } else {
-                            let cell_x = x as usize / 8;
-                            let cell_y = y as usize / 8;
-                            let pal_id = sgb_data.attribute_map.cells[cell_y][cell_x] as usize;
-                            sgb_data.palettes[pal_id].colors[palette_index.0 as usize].to_rgb8()
+                            sgb_data
+                                .color_at(x as usize, y as usize, palette_index.0)
+                                .to_rgb8()
                         }
                     }
                 }

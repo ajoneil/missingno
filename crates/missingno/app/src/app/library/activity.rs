@@ -190,6 +190,25 @@ impl SgbCapture {
             attribute_map: data.attribute_map.cells,
         }
     }
+
+    /// Rebuild the core render data so re-renders share the live lookup.
+    fn to_render_data(&self) -> missingno_gb::sgb::SgbRenderData {
+        use missingno_gb::sgb::{AttributeMap, MaskMode, Rgb555, SgbPalette, SgbRenderData};
+
+        let mut palettes = [SgbPalette::default(); 4];
+        for (i, pal) in self.palettes.iter().enumerate() {
+            for (j, &raw) in pal.iter().enumerate() {
+                palettes[i].colors[j] = Rgb555(raw);
+            }
+        }
+        SgbRenderData {
+            palettes,
+            attribute_map: AttributeMap {
+                cells: self.attribute_map,
+            },
+            mask_mode: MaskMode::Disabled,
+        }
+    }
 }
 
 impl FrameCapture {
@@ -250,7 +269,7 @@ impl FrameCapture {
                     Some(GbFrame::Sgb(SgbScreen::Display(screen, sgb))) => {
                         (Some(screen), Some(sgb))
                     }
-                    Some(GbFrame::Sgb(SgbScreen::Held(_, sgb))) => (None, Some(sgb)),
+                    Some(GbFrame::Sgb(SgbScreen::Held(screen, sgb))) => (Some(screen), Some(sgb)),
                     None => (None, None),
                 };
                 let fb = screen.unwrap_or(&default_screen).front();
@@ -344,7 +363,6 @@ impl FrameCapture {
     /// Render using SGB palette + attribute map data.
     fn to_rgba_sgb(&self) -> Vec<u8> {
         use missingno_gb::ppu::screen::PIXELS_PER_LINE;
-        use missingno_gb::sgb::Rgb555;
 
         let sgb = match &self.sgb {
             Some(s) => s,
@@ -355,15 +373,12 @@ impl FrameCapture {
             } // fallback
         };
 
+        let data = sgb.to_render_data();
         let mut rgba = Vec::with_capacity(self.pixels.len() * 4);
         for (i, &shade) in self.pixels.iter().enumerate() {
             let x = i % PIXELS_PER_LINE as usize;
             let y = i / PIXELS_PER_LINE as usize;
-            let cell_x = x / 8;
-            let cell_y = y / 8;
-            let pal_id = sgb.attribute_map[cell_y][cell_x] as usize;
-            let color_raw = sgb.palettes[pal_id][shade as usize];
-            let color = Rgb555(color_raw).to_rgb8();
+            let color = data.color_at(x, y, shade).to_rgb8();
             rgba.push(color.r);
             rgba.push(color.g);
             rgba.push(color.b);
@@ -929,8 +944,67 @@ fn libc_strftime(fmt: &str, unix_secs: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::release_year;
+    use super::{DisplayMode, FrameCapture, SgbCapture};
     use super::{parse_palette_choice, variant_name};
     use missingno_gb::ppu::types::palette::PaletteChoice;
+
+    #[test]
+    fn sgb_rerenders_share_the_live_backdrop_rule() {
+        let mut palettes = [[0u16; 4]; 4];
+        palettes[0][0] = 0x001F;
+        palettes[2][0] = 0x7C00;
+        palettes[2][3] = 0x03E0;
+        let capture = FrameCapture {
+            pixels: vec![0, 3],
+            sgb: Some(SgbCapture {
+                palettes,
+                attribute_map: [[2u8; 20]; 18],
+            }),
+            display_mode: DisplayMode::Sgb,
+            cgb_rgba: None,
+            rgba: None,
+            pixel_aspect: None,
+        };
+        let rgba = capture.to_rgba();
+        let live = capture.sgb.as_ref().unwrap().to_render_data();
+        // Shade 0 shows the shared backdrop (palette 0 colour 0), not the cell's palette
+        assert_eq!(rgba[..3], {
+            let c = live.color_at(0, 0, 0).to_rgb8();
+            [c.r, c.g, c.b]
+        });
+        assert_eq!(live.color_at(0, 0, 0).0, 0x001F);
+        assert_eq!(rgba[4..7], {
+            let c = live.color_at(1, 0, 3).to_rgb8();
+            [c.r, c.g, c.b]
+        });
+        assert_eq!(live.color_at(1, 0, 3).0, 0x03E0);
+    }
+
+    #[test]
+    fn held_frames_capture_the_held_picture() {
+        use missingno_core::video::Frame;
+        use missingno_gb::frame::{GbFrame, SgbScreen};
+        use missingno_gb::ppu::screen::Screen;
+        use missingno_gb::ppu::types::palette::PaletteIndex;
+        use missingno_gb::sgb::Sgb;
+
+        let mut screen = Screen::default();
+        screen.draw_pixel(5, 7, PaletteIndex(3));
+        screen.present();
+        let frame = Frame::Console(Box::new(GbFrame::Sgb(SgbScreen::Held(
+            screen,
+            Sgb::new().render_data(),
+        ))));
+        let capture = FrameCapture::from_frame(
+            &frame,
+            &super::CaptureOptions {
+                use_sgb_colors: true,
+                palette_name: String::new(),
+            },
+            1.0,
+        );
+        assert_eq!(capture.pixels[7 * 160 + 5], 3);
+    }
 
     #[test]
     fn capture_palette_names_round_trip() {
