@@ -158,9 +158,10 @@ impl ConsoleUi for Dmg {
     fn screen_display(console: &Console<Self>, new_screen: Option<Self::Screen>) -> Option<Frame> {
         let video_enabled = console.ppu().control().video_enabled();
         if let Some(sgb) = console.sgb() {
-            let render_data = sgb.render_data(video_enabled);
-            if sgb.mask_mode == MaskMode::Freeze {
-                Some(Frame::Console(Box::new(GbFrame::Sgb(SgbScreen::Freeze(
+            let render_data = sgb.render_data();
+            if sgb.mask_mode == MaskMode::Freeze || !video_enabled {
+                Some(Frame::Console(Box::new(GbFrame::Sgb(SgbScreen::Held(
+                    sgb.displayed_screen().clone(),
                     render_data,
                 )))))
             } else {

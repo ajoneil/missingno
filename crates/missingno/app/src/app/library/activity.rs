@@ -250,7 +250,7 @@ impl FrameCapture {
                     Some(GbFrame::Sgb(SgbScreen::Display(screen, sgb))) => {
                         (Some(screen), Some(sgb))
                     }
-                    Some(GbFrame::Sgb(SgbScreen::Freeze(sgb))) => (None, Some(sgb)),
+                    Some(GbFrame::Sgb(SgbScreen::Held(_, sgb))) => (None, Some(sgb)),
                     None => (None, None),
                 };
                 let fb = screen.unwrap_or(&default_screen).front();

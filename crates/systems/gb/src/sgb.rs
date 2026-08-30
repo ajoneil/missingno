@@ -140,7 +140,6 @@ pub struct SgbRenderData {
     pub palettes: [SgbPalette; 4],
     pub attribute_map: AttributeMap,
     pub mask_mode: MaskMode,
-    pub video_enabled: bool,
 }
 
 impl SgbRenderData {
@@ -179,8 +178,10 @@ pub struct Sgb {
     joypad_mask: u8,
     prev_p15_high: bool,
     command_state: CommandState,
-    // Snapshot of the last rendered screen, used by TRN commands
+    // The ICD2's captured picture, used by TRN commands; a static LD stream holds it
     last_screen: Screen,
+    // MASK_EN Freeze halts the displayed picture while the capture continues underneath
+    frozen_screen: Option<Screen>,
     // Deferred VRAM transfer: countdown frames + transfer type
     pending_transfer: Option<(u8, PendingTransfer)>,
 }
@@ -204,6 +205,7 @@ impl Sgb {
             prev_p15_high: false,
             command_state: CommandState::Idle,
             last_screen: Screen::default(),
+            frozen_screen: None,
             pending_transfer: None,
         }
     }
@@ -224,12 +226,20 @@ impl Sgb {
         }
     }
 
-    pub fn render_data(&self, video_enabled: bool) -> SgbRenderData {
+    /// The picture the SNES side shows: the freeze-time snapshot while masked,
+    /// otherwise the live capture.
+    pub fn displayed_screen(&self) -> &Screen {
+        match (self.mask_mode, &self.frozen_screen) {
+            (MaskMode::Freeze, Some(screen)) => screen,
+            _ => &self.last_screen,
+        }
+    }
+
+    pub fn render_data(&self) -> SgbRenderData {
         SgbRenderData {
             palettes: self.palettes,
             attribute_map: self.attribute_map,
             mask_mode: self.mask_mode,
-            video_enabled,
         }
     }
 
@@ -598,6 +608,10 @@ impl Sgb {
             3 => MaskMode::BackdropColor,
             _ => unreachable!(),
         };
+        self.frozen_screen = match self.mask_mode {
+            MaskMode::Freeze => Some(self.last_screen.clone()),
+            _ => None,
+        };
     }
 }
 
@@ -760,5 +774,70 @@ mod tests {
             ],
         );
         assert_eq!(sgb.attribute_map.cells[0][..4], [1, 1, 2, 2]);
+    }
+
+    /// A screen filled with one shade, as the capture holds it.
+    fn screen_of_shade(shade: u8) -> Screen {
+        let mut screen = Screen::default();
+        for y in 0..screen::NUM_SCANLINES {
+            for x in 0..screen::PIXELS_PER_LINE {
+                screen.draw_pixel(x, y, PaletteIndex(shade));
+            }
+        }
+        screen.present();
+        screen
+    }
+
+    fn mask_en(sgb: &mut Sgb, mode: u8) {
+        let mut packet = [0u8; 16];
+        packet[0] = (0x17 << 3) | 1;
+        packet[1] = mode;
+        send_packet(sgb, packet);
+    }
+
+    #[test]
+    fn freeze_holds_the_picture_while_the_capture_runs_on() {
+        let mut sgb = Sgb::new();
+        sgb.update_screen(&screen_of_shade(1));
+        mask_en(&mut sgb, 1);
+        assert_eq!(sgb.mask_mode, MaskMode::Freeze);
+
+        sgb.update_screen(&screen_of_shade(2));
+        assert_eq!(sgb.displayed_screen().pixel(0, 0).0, 1);
+        assert_eq!(sgb.last_screen.pixel(0, 0).0, 2);
+
+        mask_en(&mut sgb, 0);
+        assert_eq!(sgb.displayed_screen().pixel(0, 0).0, 2);
+    }
+
+    /// A cartridge declaring SGB support, running `program` from $0100.
+    fn sgb_cartridge(program: &[u8]) -> crate::cartridge::Cartridge {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x100..0x100 + program.len()].copy_from_slice(program);
+        rom[0x146] = 0x03;
+        crate::cartridge::Cartridge::new(rom, None, None).unwrap()
+    }
+
+    #[test]
+    fn the_capture_survives_the_lcd_turning_off() {
+        // Paint every shade 3 through BGP, let two frames present, then turn the
+        // LCD off in VBlank.
+        let wait_for_line = |line: u8| [0xf0, 0x44, 0xfe, line, 0x20, 0xfa];
+        let mut program = vec![0x3e, 0xff, 0xe0, 0x47]; // LD A,$FF; LDH ($47),A
+        for line in [0x90, 0x00, 0x90, 0x00, 0x90] {
+            program.extend_from_slice(&wait_for_line(line));
+        }
+        program.extend_from_slice(&[0xaf, 0xe0, 0x40, 0x18, 0xfe]); // XOR A; LDH ($40),A; JR -2
+
+        let mut console = crate::chassis::Console::<crate::Dmg>::new(sgb_cartridge(&program), None);
+        for _ in 0..2_000_000 {
+            console.step();
+            if !console.ppu().control().video_enabled() {
+                break;
+            }
+        }
+        assert!(!console.ppu().control().video_enabled());
+        assert_eq!(console.screen().pixel(0, 0).0, 0);
+        assert_eq!(console.sgb().unwrap().displayed_screen().pixel(0, 0).0, 3);
     }
 }

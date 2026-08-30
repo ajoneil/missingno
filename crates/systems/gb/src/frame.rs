@@ -22,8 +22,10 @@ pub enum GameBoyScreen {
 
 #[derive(Clone, Debug)]
 pub enum SgbScreen {
+    /// A frame the DMG presented this tick, displayed live.
     Display(Screen, SgbRenderData),
-    Freeze(SgbRenderData),
+    /// The picture the SNES side holds — LCD off, or MASK_EN Freeze.
+    Held(Screen, SgbRenderData),
 }
 
 /// A Game Boy frame awaiting CPU-side colour resolution.
@@ -93,11 +95,8 @@ impl GbFrame {
                 let pixels = screen::PIXELS_PER_LINE as usize * screen::NUM_SCANLINES as usize;
                 [unlit.r, unlit.g, unlit.b, 255].repeat(pixels)
             }
-            GbFrame::Sgb(SgbScreen::Display(screen, sgb)) => {
+            GbFrame::Sgb(SgbScreen::Display(screen, sgb) | SgbScreen::Held(screen, sgb)) => {
                 screen_to_pixels(screen, palette, Some(sgb), use_sgb_colors)
-            }
-            GbFrame::Sgb(SgbScreen::Freeze(sgb)) => {
-                screen_to_pixels(&Screen::default(), palette, Some(sgb), use_sgb_colors)
             }
         }
     }
@@ -150,34 +149,26 @@ pub fn screen_to_pixels(
         for x in 0..screen::PIXELS_PER_LINE {
             let palette_index = screen.pixel(x, y);
             let color = if let Some(sgb_data) = sgb {
-                if !sgb_data.video_enabled {
-                    if use_sgb_colors {
-                        RGB8::new(255, 255, 255)
-                    } else {
-                        palette.color(PaletteIndex(0))
-                    }
-                } else {
-                    match sgb_data.mask_mode {
-                        MaskMode::Black => RGB8::new(0, 0, 0),
-                        MaskMode::BackdropColor => {
-                            if use_sgb_colors {
-                                sgb_data.backdrop().to_rgb8()
-                            } else {
-                                palette.color(palette_index)
-                            }
+                match sgb_data.mask_mode {
+                    MaskMode::Black => RGB8::new(0, 0, 0),
+                    MaskMode::BackdropColor => {
+                        if use_sgb_colors {
+                            sgb_data.backdrop().to_rgb8()
+                        } else {
+                            palette.color(palette_index)
                         }
-                        MaskMode::Disabled | MaskMode::Freeze => {
-                            if !use_sgb_colors {
-                                palette.color(palette_index)
-                            } else if palette_index.0 == 0 {
-                                // Shade 0 is transparent on the SNES; the shared backdrop shows through
-                                sgb_data.backdrop().to_rgb8()
-                            } else {
-                                let cell_x = x as usize / 8;
-                                let cell_y = y as usize / 8;
-                                let pal_id = sgb_data.attribute_map.cells[cell_y][cell_x] as usize;
-                                sgb_data.palettes[pal_id].colors[palette_index.0 as usize].to_rgb8()
-                            }
+                    }
+                    MaskMode::Disabled | MaskMode::Freeze => {
+                        if !use_sgb_colors {
+                            palette.color(palette_index)
+                        } else if palette_index.0 == 0 {
+                            // Shade 0 is transparent on the SNES; the shared backdrop shows through
+                            sgb_data.backdrop().to_rgb8()
+                        } else {
+                            let cell_x = x as usize / 8;
+                            let cell_y = y as usize / 8;
+                            let pal_id = sgb_data.attribute_map.cells[cell_y][cell_x] as usize;
+                            sgb_data.palettes[pal_id].colors[palette_index.0 as usize].to_rgb8()
                         }
                     }
                 }
@@ -212,7 +203,6 @@ mod tests {
             palettes,
             attribute_map,
             mask_mode: MaskMode::Disabled,
-            video_enabled: true,
         };
 
         let pixels = screen_to_pixels(
@@ -282,10 +272,57 @@ mod tests {
             palettes: [SgbPalette::default(); 4],
             attribute_map: AttributeMap::new(),
             mask_mode: MaskMode::Disabled,
-            video_enabled: true,
         };
-        let frame = GbFrame::Sgb(SgbScreen::Freeze(sgb));
+        let frame = GbFrame::Sgb(SgbScreen::Held(Screen::default(), sgb));
         assert!(frame.response_levels().is_none());
         assert!(frame.response_stops().is_none());
+    }
+
+    /// A screen whose top-left pixel is shade 1 and the rest shade 0.
+    fn one_lit_pixel() -> Screen {
+        let mut screen = Screen::default();
+        screen.draw_pixel(0, 0, PaletteIndex(1));
+        screen.present();
+        screen
+    }
+
+    fn palettes_with_marked_colors() -> [SgbPalette; 4] {
+        let mut palettes = [SgbPalette::default(); 4];
+        for (i, palette) in palettes.iter_mut().enumerate() {
+            palette.colors[0] = Rgb555(i as u16 + 1);
+            palette.colors[1] = Rgb555(i as u16 + 0x100);
+        }
+        palettes
+    }
+
+    #[test]
+    fn a_held_frame_shows_its_carried_picture() {
+        let palettes = palettes_with_marked_colors();
+        let mut attribute_map = AttributeMap::new();
+        attribute_map.cells = [[3; 20]; 18];
+        let sgb = SgbRenderData {
+            palettes,
+            attribute_map,
+            mask_mode: MaskMode::Freeze,
+        };
+        let frame = GbFrame::Sgb(SgbScreen::Held(one_lit_pixel(), sgb));
+        let pixels = frame.to_pixels(PaletteChoice::default().palette(), true);
+
+        let lit = palettes[3].colors[1].to_rgb8();
+        assert_eq!(pixels[..3], [lit.r, lit.g, lit.b]);
+        let backdrop = palettes[0].colors[0].to_rgb8();
+        assert_eq!(pixels[4..7], [backdrop.r, backdrop.g, backdrop.b]);
+    }
+
+    #[test]
+    fn a_mask_fill_overrides_the_held_picture() {
+        let sgb = SgbRenderData {
+            palettes: palettes_with_marked_colors(),
+            attribute_map: AttributeMap::new(),
+            mask_mode: MaskMode::Black,
+        };
+        let frame = GbFrame::Sgb(SgbScreen::Held(one_lit_pixel(), sgb));
+        let pixels = frame.to_pixels(PaletteChoice::default().palette(), true);
+        assert!(pixels.chunks(4).all(|pixel| pixel[..3] == [0, 0, 0]));
     }
 }

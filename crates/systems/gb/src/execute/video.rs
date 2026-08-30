@@ -160,8 +160,8 @@ impl<M: Model> Console<M> {
             return (true, trace_pixel);
         }
         if result.lcd_disabled {
+            // No present: the LCD pins go static with the LCD off, so an SGB's capture holds.
             self.chassis.screen.blank();
-            self.model.on_present(&self.chassis.screen);
         }
         (false, trace_pixel)
     }
