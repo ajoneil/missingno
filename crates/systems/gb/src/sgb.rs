@@ -571,7 +571,7 @@ impl Sgb {
         let mut x = start_x;
         let mut y = start_y;
 
-        // Data starts at byte 6, packed 4 attributes per byte (2 bits each, LSB first)
+        // Data starts at byte 6, packed 4 attributes per byte (2 bits each, MSB pair first)
         let mut written = 0;
         let mut byte_offset = 6;
         let mut bit_offset = 0;
@@ -580,7 +580,7 @@ impl Sgb {
             if byte_offset >= data.len() {
                 break;
             }
-            let pal = (data[byte_offset] >> bit_offset) & 0x03;
+            let pal = (data[byte_offset] >> (6 - bit_offset)) & 0x03;
             bit_offset += 2;
             if bit_offset >= 8 {
                 bit_offset = 0;
@@ -718,6 +718,17 @@ mod tests {
             }
             _ => panic!("receiver should be mid-packet"),
         }
+    }
+
+    #[test]
+    fn attr_chr_unpacks_cells_msb_pair_first() {
+        let mut sgb = Sgb::new();
+        let mut packet = [0u8; 16];
+        packet[0] = (0x07 << 3) | 1;
+        packet[3] = 4;
+        packet[6] = 0b00_01_10_11;
+        send_packet(&mut sgb, packet);
+        assert_eq!(sgb.attribute_map.cells[0][..4], [0, 1, 2, 3]);
     }
 
     #[test]
