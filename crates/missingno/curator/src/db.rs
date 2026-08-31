@@ -567,7 +567,12 @@ impl AnyGame {
 
     /// Convenience alias for the one link every commercial game tends to have.
     pub fn set_wikipedia(&mut self, url: &str) {
-        self.upsert_link("Wikipedia", url, LinkType::Wiki, Vec::new());
+        self.upsert_link(
+            "Wikipedia",
+            &decoded_article_url(url),
+            LinkType::Wiki,
+            Vec::new(),
+        );
     }
 
     /// Each link as (name, url, languages) — languages joined for display, empty
@@ -1272,6 +1277,38 @@ fn stage_board(
         )),
         _ => {}
     }
+}
+
+/// Wikipedia serves its articles under their real characters, so a percent-escaped
+/// title costs the reader legibility and buys nothing. An escape is left alone only
+/// where decoding it would re-punctuate the URL — a title's own `?` or `#` would
+/// start a query or fragment — or produce whitespace no URL should carry.
+fn decoded_article_url(url: &str) -> String {
+    let structural = |byte: u8| b"#?/%".contains(&byte) || byte <= b' ' || byte == 0x7F;
+    let bytes = url.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match hex_escape(&bytes[i..]) {
+            Some(byte) if !structural(byte) => {
+                decoded.push(byte);
+                i += 3;
+            }
+            _ => {
+                decoded.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(decoded).unwrap_or_else(|_| url.to_owned())
+}
+
+fn hex_escape(bytes: &[u8]) -> Option<u8> {
+    let [b'%', high, low, ..] = bytes else {
+        return None;
+    };
+    let nibble = |b: u8| char::from(b).to_digit(16).map(|d| d as u8);
+    Some(nibble(*high)? << 4 | nibble(*low)?)
 }
 
 /// A JSON string → LinkType, rejecting unknowns with the valid set named.
@@ -2816,6 +2853,34 @@ mod link_tests {
         any.set_wikipedia("https://en.wikipedia.org/wiki/T");
         any.set_wikipedia("https://en.wikipedia.org/wiki/T");
         assert_eq!(any.links().len(), 2);
+    }
+
+    #[test]
+    fn wikipedia_links_are_stored_legibly() {
+        assert_eq!(
+            decoded_article_url("https://ja.wikipedia.org/wiki/GB%E5%8E%9F%E4%BA%BA"),
+            "https://ja.wikipedia.org/wiki/GB原人"
+        );
+        assert_eq!(
+            decoded_article_url("https://en.wikipedia.org/wiki/Bump_%27n%27_Jump"),
+            "https://en.wikipedia.org/wiki/Bump_'n'_Jump"
+        );
+        // A title's own `?` arrives as %3F; decoding it would start a query string.
+        assert_eq!(
+            decoded_article_url("https://en.wikipedia.org/wiki/Who%3F_(film)"),
+            "https://en.wikipedia.org/wiki/Who%3F_(film)"
+        );
+        // %20 would put raw whitespace in the URL.
+        assert_eq!(
+            decoded_article_url("https://en.wikipedia.org/wiki/A%20B"),
+            "https://en.wikipedia.org/wiki/A%20B"
+        );
+        assert_eq!(
+            decoded_article_url("https://en.wikipedia.org/wiki/Tetris"),
+            "https://en.wikipedia.org/wiki/Tetris"
+        );
+        // A truncated escape is left alone rather than eating the following bytes.
+        assert_eq!(decoded_article_url("https://x/%E5%8"), "https://x/%E5%8");
     }
 
     #[test]
