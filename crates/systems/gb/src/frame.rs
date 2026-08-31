@@ -20,12 +20,12 @@ pub enum GameBoyScreen {
     Off,
 }
 
+/// The SNES side's picture: the stored ICD2 capture (or the MASK_EN freeze
+/// snapshot) rendered through the current palettes and attribute map.
 #[derive(Clone, Debug)]
-pub enum SgbScreen {
-    /// A frame the DMG presented this tick, displayed live.
-    Display(Screen, SgbRenderData),
-    /// The picture the SNES side holds — LCD off, or MASK_EN Freeze.
-    Held(Screen, SgbRenderData),
+pub struct SgbScreen {
+    pub screen: Screen,
+    pub render_data: SgbRenderData,
 }
 
 /// A Game Boy frame awaiting CPU-side colour resolution.
@@ -108,9 +108,10 @@ impl GbFrame {
                 let pixels = screen::PIXELS_PER_LINE as usize * screen::NUM_SCANLINES as usize;
                 [unlit.r, unlit.g, unlit.b, 255].repeat(pixels)
             }
-            GbFrame::Sgb(SgbScreen::Display(screen, sgb) | SgbScreen::Held(screen, sgb)) => {
-                screen_to_pixels(screen, palette, Some(sgb), use_sgb_colors)
-            }
+            GbFrame::Sgb(SgbScreen {
+                screen,
+                render_data,
+            }) => screen_to_pixels(screen, palette, Some(render_data), use_sgb_colors),
         }
     }
 }
@@ -279,7 +280,10 @@ mod tests {
             attribute_map: AttributeMap::new(),
             mask_mode: MaskMode::Disabled,
         };
-        let frame = GbFrame::Sgb(SgbScreen::Held(Screen::default(), sgb));
+        let frame = GbFrame::Sgb(SgbScreen {
+            screen: Screen::default(),
+            render_data: sgb,
+        });
         assert!(frame.response_levels().is_none());
         assert!(frame.response_stops().is_none());
     }
@@ -311,7 +315,10 @@ mod tests {
             attribute_map,
             mask_mode: MaskMode::Freeze,
         };
-        let frame = GbFrame::Sgb(SgbScreen::Held(one_lit_pixel(), sgb));
+        let frame = GbFrame::Sgb(SgbScreen {
+            screen: one_lit_pixel(),
+            render_data: sgb,
+        });
         let pixels = frame.to_pixels(PaletteChoice::default().palette(), true);
 
         let lit = palettes[3].colors[1].to_rgb8();
@@ -327,7 +334,10 @@ mod tests {
             attribute_map: AttributeMap::new(),
             mask_mode: MaskMode::Black,
         };
-        let frame = GbFrame::Sgb(SgbScreen::Held(one_lit_pixel(), sgb));
+        let frame = GbFrame::Sgb(SgbScreen {
+            screen: one_lit_pixel(),
+            render_data: sgb,
+        });
         let pixels = frame.to_pixels(PaletteChoice::default().palette(), true);
         assert!(pixels.chunks(4).all(|pixel| pixel[..3] == [0, 0, 0]));
     }
