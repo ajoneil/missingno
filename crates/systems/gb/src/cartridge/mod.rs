@@ -82,7 +82,7 @@ pub fn parse_title(rom: &[u8]) -> String {
 
 pub fn parse_header(rom: &[u8]) -> (String, bool, bool) {
     let title = parse_title(rom);
-    let sgb_flag = rom[0x146] == 0x03;
+    let sgb_flag = Cartridge::peek_sgb(rom);
     let has_battery = GbCartType::from_header(rom).is_ok_and(|board| board.has_battery());
     (title, sgb_flag, has_battery)
 }
@@ -166,7 +166,7 @@ impl Cartridge {
         save_data: Option<Vec<u8>>,
     ) -> Result<Cartridge, GbCartridgeError> {
         let title = parse_title(&rom);
-        let sgb_flag = rom[0x146] == 0x03;
+        let sgb_flag = Cartridge::peek_sgb(&rom);
         let cart_type = match stated {
             Some(stated) => stated,
             None if is_dbz_trans(&rom, &title) => GbCartType::DbzTrans {
@@ -292,6 +292,12 @@ impl Cartridge {
     /// Color boots enhanced.
     pub fn peek_cgb(rom: &[u8]) -> bool {
         rom.get(0x143).is_some_and(|flag| flag & 0x80 != 0)
+    }
+
+    /// SGB flag (header $0146): $03 marks a cartridge that drives the Super
+    /// Game Boy's border, palettes and sound.
+    pub fn peek_sgb(rom: &[u8]) -> bool {
+        rom.get(0x146) == Some(&0x03)
     }
 
     pub fn title(&self) -> &str {
