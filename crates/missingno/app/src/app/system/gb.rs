@@ -49,21 +49,16 @@ impl PalettePolicy for GbPalettePolicy {
 
     fn panel_base(&self) -> Option<rgb::RGB8> {
         // The unlit panel is what the reflective LCD shows through the
-        // inter-pixel matrix. SGB colours don't draw from this palette, so no
-        // tone there names the panel.
-        (!self.use_sgb_colors).then(|| self.palette.palette().disabled())
+        // inter-pixel matrix.
+        Some(self.palette.palette().disabled())
     }
 
     fn response_levels(&self, frame: &dyn ConsoleFrame) -> Option<Box<[f32]>> {
-        // SGB colours are not drawn from the panel's monochrome axis.
-        if self.use_sgb_colors {
-            return None;
-        }
         frame.response_levels()
     }
 
     fn response_stops(&self) -> Option<Box<[rgb::RGB8]>> {
-        (!self.use_sgb_colors).then(|| gradient_stops(self.palette.palette()).into())
+        Some(gradient_stops(self.palette.palette()).into())
     }
 }
 
@@ -326,11 +321,15 @@ mod tests {
     }
 
     #[test]
-    fn sgb_coloured_frames_state_no_response_axis() {
-        // SGB colours don't come from the monochrome palette, so there is no
-        // transmission axis to accumulate along.
+    fn the_preference_never_suppresses_the_panel_axis() {
+        // The SGB-colours preference decides colour resolution; whether a frame
+        // has a transmission axis is the frame's own word.
         let frame = GbFrame::GameBoy(GameBoyScreen::Off);
-        assert!(policy(true).response_levels(&frame).is_none());
-        assert!(policy(true).panel_base().is_none());
+        let levels = policy(true).response_levels(&frame).unwrap();
+        assert_eq!(*levels, *frame.response_levels().unwrap());
+        assert_eq!(
+            policy(true).panel_base(),
+            Some(PaletteChoice::Green.palette().disabled())
+        );
     }
 }

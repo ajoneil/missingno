@@ -67,9 +67,8 @@ const SUBPIXEL_MATRIX: RGB8 = RGB8::new(0x16, 0x16, 0x16);
 pub trait PalettePolicy: Send {
     fn resolve(&self, frame: &dyn ConsoleFrame) -> RgbaFrame;
     fn clone_box(&self) -> Box<dyn PalettePolicy>;
-    /// The unlit panel tone the inter-pixel matrix exposes. `None` when the
-    /// policy's frames aren't drawn from a monochrome palette (SGB colours), so
-    /// nothing there names the panel and the subpixel matrix applies.
+    /// The unlit tone of the panel the policy dresses frames in. `None` where
+    /// the policy names no panel.
     fn panel_base(&self) -> Option<RGB8>;
     /// Per-pixel level in 0..1 along the panel's transmission axis, for a
     /// display whose persistence accumulates in response domain rather than in
@@ -213,29 +212,30 @@ impl ScreenView {
     /// The unlit tone of the panel the core states. A CRT has no inter-pixel
     /// matrix, so its value is never drawn.
     fn panel_unlit(&self) -> RGB8 {
-        // A frame painted outside the panel's transmission axis is a colour
-        // image on this screen — SGB colours, which reach a TV through a Super
-        // Game Boy rather than the handheld's reflective panel — so its matrix
-        // is the subpixel mask.
-        if let Some(frame) = &self.console_frame
-            && frame.response_levels().is_none()
-        {
-            return SUBPIXEL_MATRIX;
-        }
         match self.technology {
             DisplayTechnology::Lcd { unlit, .. } => unlit,
             DisplayTechnology::Crt { .. } => SUBPIXEL_MATRIX,
         }
     }
 
-    /// The colour the LCD's inter-pixel matrix shows, as linear RGB in 0..1. The
-    /// panel the core states carries its own unlit tone; a palette policy
-    /// overrides it with the unit the user chose to see the game on, and states
-    /// none for frames not drawn from that palette at all (SGB colours).
+    /// The colour the LCD's inter-pixel matrix shows, as linear RGB in 0..1.
+    /// The frame decides whether a matrix tone applies at all: one painted
+    /// outside the panel's transmission axis is a colour image and takes the
+    /// subpixel mask. Otherwise a palette policy names the unit the user chose
+    /// to see the game on, and the technology's own unlit tone is the fallback.
     fn panel_base_color(&self) -> [f32; 3] {
-        let rgb = match (&self.palette_policy, self.console_frame.is_some()) {
-            (Some(policy), true) => policy.panel_base().unwrap_or(SUBPIXEL_MATRIX),
-            _ => self.panel_unlit(),
+        let rgb = match &self.console_frame {
+            // A frame painted outside the panel's transmission axis is a colour
+            // image on this screen — SGB colours, which reach a TV through a
+            // Super Game Boy rather than the handheld's reflective panel — so
+            // its matrix is the subpixel mask.
+            Some(frame) if frame.response_levels().is_none() => SUBPIXEL_MATRIX,
+            Some(_) => self
+                .palette_policy
+                .as_ref()
+                .and_then(|policy| policy.panel_base())
+                .unwrap_or_else(|| self.panel_unlit()),
+            None => self.panel_unlit(),
         };
         [
             rgb.r as f32 / 255.0,
@@ -609,6 +609,24 @@ mod tests {
         // panel, so it must not pick up the panel's light unlit tone.
         let mut view = ScreenView::new();
         view.set_technology(lcd(LcdPanel::PassiveStn));
+        view.apply(&Frame::Console(Box::new(ColourFrame)));
+
+        let base = view.panel_base_color();
+        let expected = [
+            SUBPIXEL_MATRIX.r as f32 / 255.0,
+            SUBPIXEL_MATRIX.g as f32 / 255.0,
+            SUBPIXEL_MATRIX.b as f32 / 255.0,
+        ];
+        assert_eq!(base, expected);
+    }
+
+    #[test]
+    fn a_colour_frame_takes_the_mask_even_with_a_policy() {
+        // The frame states no transmission axis, so it is a colour image
+        // whatever tone an installed policy names for its panel.
+        let mut view = ScreenView::new();
+        view.set_technology(lcd(LcdPanel::PassiveStn));
+        view.set_palette_policy(Some(Box::new(StubPolicy(RGB8::new(0x7b, 0x82, 0x10)))));
         view.apply(&Frame::Console(Box::new(ColourFrame)));
 
         let base = view.panel_base_color();
