@@ -57,7 +57,7 @@ impl PalettePolicy for GbPalettePolicy {
         match frame.as_any().downcast_ref::<GbFrame>() {
             // SGB colours are a TV image; the monochrome preference views the
             // same indices on the panel.
-            Some(GbFrame::Sgb(SgbScreen::Display(screen, _) | SgbScreen::Held(screen, _))) => {
+            Some(GbFrame::Sgb(SgbScreen { screen, .. })) => {
                 (!self.use_sgb_colors).then(|| shade_levels(screen))
             }
             _ => frame.response_levels(),
@@ -342,7 +342,10 @@ mod tests {
             attribute_map: AttributeMap::new(),
             mask_mode: MaskMode::Disabled,
         };
-        let frame = GbFrame::Sgb(SgbScreen::Display(screen, sgb));
+        let frame = GbFrame::Sgb(SgbScreen {
+            screen,
+            render_data: sgb,
+        });
 
         let levels = policy(false).response_levels(&frame).unwrap();
         assert_eq!(levels.len(), 160 * 144);
