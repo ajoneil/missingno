@@ -182,8 +182,17 @@ pub fn classify_signature(signature: &str) -> Option<SigFlag> {
     let lower = signature.to_lowercase();
     SIG_FLAGS
         .iter()
-        .find(|(flag, _)| lower.contains(flag))
+        .find(|(flag, _)| flags_at(&lower, flag))
         .map(|(_, class)| *class)
+}
+
+/// A flag is a whole bracket group, not a prefix of one, so a bracket naming the
+/// compilation a dump came from does not read as a quality flag. What follows the
+/// letters is a count or a note, never more letters.
+fn flags_at(lower: &str, flag: &str) -> bool {
+    lower
+        .match_indices(flag)
+        .any(|(at, _)| !lower[at + flag.len()..].starts_with(|c: char| c.is_alphabetic()))
 }
 
 /// One dump's signature-database answer.
@@ -445,5 +454,15 @@ mod tests {
         assert_eq!(classify_signature("Adventure (1978)(Atari)(NTSC)"), None);
         assert_eq!(classify_signature("Game (1983)[a2]"), None);
         assert_eq!(classify_signature("Game (1983)[!]"), None);
+        // A bracketed compilation name is not a flag, however it starts.
+        assert_eq!(
+            classify_signature("Game (2023)[Bonus Retro Collection]"),
+            None
+        );
+        assert_eq!(
+            classify_signature("Game (2023)[Trainer Tapes Vol. 2]"),
+            None
+        );
+        assert_eq!(classify_signature("Game (2023)[Hits Collection]"), None);
     }
 }
