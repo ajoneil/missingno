@@ -222,6 +222,7 @@ pub static GAME_KINDS: Vocabulary<GameKind> = Vocabulary {
         ("Demoscene", GameKind::Demoscene),
         ("Test", GameKind::Test),
         ("Tool", GameKind::Tool),
+        ("Software", GameKind::Software),
     ],
 };
 
@@ -246,7 +247,7 @@ mod tests {
         );
         assert_eq!(
             GAME_KINDS.unknown("Toy"),
-            "unknown kind \"Toy\"; expected Game, Demo, Demoscene, Test or Tool"
+            "unknown kind \"Toy\"; expected Game, Demo, Demoscene, Test, Tool or Software"
         );
     }
 }

@@ -280,7 +280,7 @@ fn tool_definitions() -> Value {
                     "developer": { "type": "string" },
                     "description": { "type": "string" },
                     "kind": { "type": "string", "enum": GAME_KINDS.schema(),
-                              "description": "what kind of work the entry is; Test = diagnostic/calibration utility, Tool = authoring/programming software" },
+                              "description": "what kind of work the entry is; Test = diagnostic/calibration utility, Tool = authoring/programming software, Software = anything else nobody played (reference databases, exam drills, organisers) where Test and Tool do not fit" },
                     "adult": { "type": "boolean",
                                "description": "the work is adult material — set it on the pornographic carts (Mystique/PlayAround and friends), judged on content, not on a suggestive title" },
                     "publisher": { "type": "string",
