@@ -985,4 +985,101 @@ mod tests {
         assert_eq!(console.screen().pixel(0, 0).0, 0);
         assert_eq!(console.sgb().unwrap().displayed_screen().pixel(0, 0).0, 3);
     }
+
+    /// Clock one packet into a running console through its joypad writes.
+    fn send_console_packet(console: &mut crate::chassis::Console<crate::Dmg>, bytes: [u8; 16]) {
+        use crate::model::Model;
+        let mut pulse = |value: u8| console.model.on_joypad_write(value);
+        pulse(0x00);
+        pulse(0x30);
+        for byte in bytes {
+            for bit in 0..8 {
+                pulse(if byte >> bit & 1 != 0 { 0x10 } else { 0x20 });
+                pulse(0x30);
+            }
+        }
+        pulse(0x20);
+        pulse(0x30);
+    }
+
+    /// The picture and colouring the console delivers for display right now.
+    fn delivered_picture(
+        console: &crate::chassis::Console<crate::Dmg>,
+    ) -> (crate::ppu::screen::Screen, SgbRenderData) {
+        use crate::system::ConsoleUi;
+        let frame =
+            <crate::Dmg as ConsoleUi>::screen_display(console, Some(console.screen().clone()))
+                .expect("an SGB console always shows a picture");
+        match frame {
+            missingno_core::video::Frame::Console(frame) => {
+                match frame.as_any().downcast_ref::<crate::frame::GbFrame>() {
+                    Some(crate::frame::GbFrame::Sgb(sgb)) => (sgb.screen.clone(), sgb.render_data),
+                    _ => panic!("expected an SGB frame"),
+                }
+            }
+            _ => panic!("expected a console frame"),
+        }
+    }
+
+    #[test]
+    fn the_capture_shows_through_the_lcd_coming_back_on() {
+        // Paint every shade 3 through BGP, let two frames present, then in VBlank
+        // turn the LCD off, repaint through BGP at shade 1, and turn it back on.
+        let wait_for_line = |line: u8| [0xf0, 0x44, 0xfe, line, 0x20, 0xfa];
+        let mut program = vec![0x3e, 0xff, 0xe0, 0x47]; // LD A,$FF; LDH ($47),A
+        for line in [0x90, 0x00, 0x90, 0x00, 0x90] {
+            program.extend_from_slice(&wait_for_line(line));
+        }
+        program.extend_from_slice(&[
+            0xaf, 0xe0, 0x40, // XOR A; LDH ($40),A
+            0x3e, 0x55, 0xe0, 0x47, // LD A,$55; LDH ($47),A
+            0x3e, 0x91, 0xe0, 0x40, // LD A,$91; LDH ($40),A
+            0x18, 0xfe, // JR -2
+        ]);
+
+        let mut console = crate::chassis::Console::<crate::Dmg>::new(sgb_cartridge(&program), None);
+        for _ in 0..2_000_000 {
+            console.step();
+            if !console.ppu().control().video_enabled() {
+                break;
+            }
+        }
+        assert!(!console.ppu().control().video_enabled());
+        assert_eq!(console.sgb().unwrap().displayed_screen().pixel(0, 0).0, 3);
+
+        // PAL01: shade 3 of palette 0 becomes green while the LCD is off.
+        let mut packet = [0u8; 16];
+        packet[0] = 0x01;
+        packet[7] = 0xe0;
+        packet[8] = 0x03;
+        send_console_packet(&mut console, packet);
+
+        for _ in 0..2_000_000 {
+            console.step();
+            if console.ppu().control().video_enabled() {
+                break;
+            }
+        }
+        assert!(console.ppu().control().video_enabled());
+
+        let mut delivered = Vec::new();
+        for _ in 0..2_000_000 {
+            if console.step().new_screen {
+                delivered.push(delivered_picture(&console));
+                if delivered.len() == 2 {
+                    break;
+                }
+            }
+        }
+        assert_eq!(delivered.len(), 2);
+
+        // The first frame after LCD-on never presents, so the SNES side still
+        // shows its capture — recoloured by the packet that landed while off.
+        let (screen, render_data) = &delivered[0];
+        assert_eq!(screen.pixel(0, 0).0, 3);
+        assert_eq!(render_data.color_at(0, 0, 3).0, 0x03E0);
+
+        // The second frame presents: the capture becomes the redrawn picture.
+        assert_eq!(delivered[1].0.pixel(0, 0).0, 1);
+    }
 }

@@ -266,10 +266,10 @@ impl FrameCapture {
                 let (screen, sgb) = match frame.as_any().downcast_ref::<GbFrame>() {
                     Some(GbFrame::GameBoy(GameBoyScreen::Display(screen))) => (Some(screen), None),
                     Some(GbFrame::GameBoy(GameBoyScreen::Off)) => (None, None),
-                    Some(GbFrame::Sgb(SgbScreen::Display(screen, sgb))) => {
-                        (Some(screen), Some(sgb))
-                    }
-                    Some(GbFrame::Sgb(SgbScreen::Held(screen, sgb))) => (Some(screen), Some(sgb)),
+                    Some(GbFrame::Sgb(SgbScreen {
+                        screen,
+                        render_data,
+                    })) => (Some(screen), Some(render_data)),
                     None => (None, None),
                 };
                 let fb = screen.unwrap_or(&default_screen).front();
@@ -991,10 +991,10 @@ mod tests {
         let mut screen = Screen::default();
         screen.draw_pixel(5, 7, PaletteIndex(3));
         screen.present();
-        let frame = Frame::Console(Box::new(GbFrame::Sgb(SgbScreen::Held(
+        let frame = Frame::Console(Box::new(GbFrame::Sgb(SgbScreen {
             screen,
-            Sgb::new().render_data(),
-        ))));
+            render_data: Sgb::new().render_data(),
+        })));
         let capture = FrameCapture::from_frame(
             &frame,
             &super::CaptureOptions {
