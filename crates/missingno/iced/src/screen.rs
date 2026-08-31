@@ -219,17 +219,17 @@ impl ScreenView {
     }
 
     /// The colour the LCD's inter-pixel matrix shows, as linear RGB in 0..1.
-    /// The frame decides whether a matrix tone applies at all: one painted
-    /// outside the panel's transmission axis is a colour image and takes the
-    /// subpixel mask. Otherwise a palette policy names the unit the user chose
+    /// The delivered painting decides whether a matrix tone applies at all: one
+    /// driving no transmission axis is a colour image and takes the subpixel
+    /// mask. Otherwise a palette policy names the unit the user chose
     /// to see the game on, and the technology's own unlit tone is the fallback.
     fn panel_base_color(&self) -> [f32; 3] {
         let rgb = match &self.console_frame {
-            // A frame painted outside the panel's transmission axis is a colour
-            // image on this screen — SGB colours, which reach a TV through a
-            // Super Game Boy rather than the handheld's reflective panel — so
-            // its matrix is the subpixel mask.
-            Some(frame) if frame.response_levels().is_none() => SUBPIXEL_MATRIX,
+            // A painting that drives no transmission axis is a colour image on
+            // this screen — SGB colours, which reach a TV through a Super Game
+            // Boy rather than the handheld's reflective panel — so its matrix
+            // is the subpixel mask.
+            Some(_) if self.delivered_levels().is_none() => SUBPIXEL_MATRIX,
             Some(_) => self
                 .palette_policy
                 .as_ref()
@@ -508,6 +508,24 @@ mod tests {
         }
     }
 
+    /// A policy that paints every frame through the panel's shades, standing in
+    /// for the monochrome view of an SGB frame.
+    struct MonoPaintingPolicy(RGB8);
+    impl PalettePolicy for MonoPaintingPolicy {
+        fn resolve(&self, frame: &dyn ConsoleFrame) -> RgbaFrame {
+            frame.resolve_rgba()
+        }
+        fn clone_box(&self) -> Box<dyn PalettePolicy> {
+            Box::new(MonoPaintingPolicy(self.0))
+        }
+        fn panel_base(&self) -> Option<RGB8> {
+            Some(self.0)
+        }
+        fn response_levels(&self, _frame: &dyn ConsoleFrame) -> Option<Box<[f32]>> {
+            Some(vec![0.25; 160 * 144].into())
+        }
+    }
+
     /// A minimal device-native frame at one uniform response level, standing in
     /// for a delivered DMG frame.
     struct StubFrame(f32);
@@ -636,6 +654,23 @@ mod tests {
             SUBPIXEL_MATRIX.b as f32 / 255.0,
         ];
         assert_eq!(base, expected);
+    }
+
+    #[test]
+    fn a_mono_painted_frame_takes_the_panel_tone_even_when_the_frame_states_no_axis() {
+        // A policy painting a colour-capable frame through the panel's own
+        // shades states the axis the frame itself does not.
+        let mut view = ScreenView::new();
+        view.set_technology(lcd(LcdPanel::PassiveStn));
+        view.set_palette_policy(Some(Box::new(MonoPaintingPolicy(RGB8::new(
+            0x7b, 0x82, 0x10,
+        )))));
+        view.apply(&Frame::Console(Box::new(ColourFrame)));
+
+        let base = view.panel_base_color();
+        assert!((base[0] - 0x7b as f32 / 255.0).abs() < 1e-6);
+        assert!((base[1] - 0x82 as f32 / 255.0).abs() < 1e-6);
+        assert!((base[2] - 0x10 as f32 / 255.0).abs() < 1e-6);
     }
 
     #[test]

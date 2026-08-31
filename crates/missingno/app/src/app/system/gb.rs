@@ -4,7 +4,7 @@
 //! format are app policy wired in here.
 
 use missingno_gb::cartridge::{GbCartType, GbCartridgeError};
-use missingno_gb::frame::{GbFrame, gradient_stops};
+use missingno_gb::frame::{GbFrame, SgbScreen, gradient_stops, shade_levels};
 use missingno_gb::ppu::types::palette::PaletteChoice;
 use missingno_gb::system::{LINK_CABLE, LINK_DISCONNECTED, LINK_PRINTER, create_console_with_link};
 use missingno_gb::{BootRom, GameBoy, cartridge::Cartridge, serial_transfer::SerialLink};
@@ -54,7 +54,14 @@ impl PalettePolicy for GbPalettePolicy {
     }
 
     fn response_levels(&self, frame: &dyn ConsoleFrame) -> Option<Box<[f32]>> {
-        frame.response_levels()
+        match frame.as_any().downcast_ref::<GbFrame>() {
+            // SGB colours are a TV image; the monochrome preference views the
+            // same indices on the panel.
+            Some(GbFrame::Sgb(SgbScreen::Display(screen, _) | SgbScreen::Held(screen, _))) => {
+                (!self.use_sgb_colors).then(|| shade_levels(screen))
+            }
+            _ => frame.response_levels(),
+        }
     }
 
     fn response_stops(&self) -> Option<Box<[rgb::RGB8]>> {
@@ -249,6 +256,7 @@ mod tests {
     use missingno_gb::frame::GameBoyScreen;
     use missingno_gb::ppu::screen::Screen;
     use missingno_gb::ppu::types::palette::PaletteIndex;
+    use missingno_gb::sgb::{AttributeMap, MaskMode, SgbPalette, SgbRenderData};
 
     /// A user-configured cable, which owes the link port nothing else.
     struct Cable;
@@ -318,6 +326,30 @@ mod tests {
         let levels = policy(false).response_levels(&frame).unwrap();
         assert_eq!(*levels, *frame.response_levels().unwrap());
         assert!(levels.iter().all(|&level| level == 0.25));
+    }
+
+    #[test]
+    fn an_sgb_frame_takes_the_panel_axis_under_a_mono_palette() {
+        // Painted through the monochrome palette, an SGB frame is a panel
+        // image: its stored indices are levels on the panel's axis.
+        let mut screen = Screen::default();
+        for shade in 0..4u8 {
+            screen.draw_pixel(shade, 0, PaletteIndex(shade));
+        }
+        screen.present();
+        let sgb = SgbRenderData {
+            palettes: [SgbPalette::default(); 4],
+            attribute_map: AttributeMap::new(),
+            mask_mode: MaskMode::Disabled,
+        };
+        let frame = GbFrame::Sgb(SgbScreen::Display(screen, sgb));
+
+        let levels = policy(false).response_levels(&frame).unwrap();
+        assert_eq!(levels.len(), 160 * 144);
+        for shade in 0..4usize {
+            assert_eq!(levels[shade], (shade as f32 + 1.0) / 4.0);
+        }
+        assert!(policy(true).response_levels(&frame).is_none());
     }
 
     #[test]

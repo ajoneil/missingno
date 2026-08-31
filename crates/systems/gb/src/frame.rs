@@ -54,6 +54,19 @@ pub fn gradient_stops(palette: &Palette) -> [RGB8; 5] {
     ]
 }
 
+/// Each pixel's level on the panel's transmission axis: its shade index, one
+/// step above the unlit panel.
+pub fn shade_levels(screen: &Screen) -> Box<[f32]> {
+    let pixels = screen::PIXELS_PER_LINE as usize * screen::NUM_SCANLINES as usize;
+    let mut levels = Vec::with_capacity(pixels);
+    for y in 0..screen::NUM_SCANLINES {
+        for x in 0..screen::PIXELS_PER_LINE {
+            levels.push((screen.pixel(x, y).0 as f32 + 1.0) / SHADE_LEVELS as f32);
+        }
+    }
+    levels.into()
+}
+
 impl GbFrame {
     /// Resolve to RGBA under a chosen monochrome palette and the SGB-colours
     /// choice — the frontend's colour policy applied to a delivered frame.
@@ -112,18 +125,15 @@ impl ConsoleFrame for GbFrame {
     }
 
     fn response_levels(&self) -> Option<Box<[f32]>> {
-        if matches!(self, GbFrame::GameBoy(GameBoyScreen::Off)) {
+        match self {
+            GbFrame::GameBoy(GameBoyScreen::Display(screen)) => Some(shade_levels(screen)),
             // An off LCD drives no cell: the whole panel sits at the unlit level.
-            let pixels = (NATIVE_SIZE.0 * NATIVE_SIZE.1) as usize;
-            return Some(vec![0.0; pixels].into());
+            GbFrame::GameBoy(GameBoyScreen::Off) => {
+                let pixels = (NATIVE_SIZE.0 * NATIVE_SIZE.1) as usize;
+                Some(vec![0.0; pixels].into())
+            }
+            GbFrame::Sgb(_) => None,
         }
-        let shades = self.shades()?;
-        Some(
-            shades
-                .iter()
-                .map(|&shade| (shade as f32 + 1.0) / SHADE_LEVELS as f32)
-                .collect(),
-        )
     }
 
     fn response_stops(&self) -> Option<Box<[RGB8]>> {
