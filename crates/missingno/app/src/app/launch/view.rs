@@ -2,6 +2,8 @@
 //! rendered from the family's descriptors alone, so nothing here names an
 //! option.
 
+use std::collections::BTreeSet;
+
 use iced::{
     Alignment,
     Alignment::Center,
@@ -29,6 +31,8 @@ const CONTROL_WIDTH: f32 = 400.0;
 /// A board's parts sit under it, narrower than the board itself.
 const PART_LABEL_WIDTH: f32 = 110.0;
 const PART_WIDTH: f32 = 160.0;
+/// The entry that takes a set of flags off whatever states it.
+const CUSTOM: &str = "custom";
 const PANEL_WIDTH: f32 = 660.0;
 const MAX_PANEL_HEIGHT: f32 = 640.0;
 
@@ -64,6 +68,7 @@ fn option_row(
 ) -> Element<'static, app::Message> {
     let control = match &descriptor.kind {
         LaunchOptionKind::Choice { choices } => choice_control(descriptor.id, choices, data),
+        LaunchOptionKind::Flags { flags } => flags_control(descriptor.id, flags, data),
         LaunchOptionKind::Toggle => toggle_control(descriptor.id, data),
         LaunchOptionKind::File { label } => file_control(descriptor.id, label, data),
         LaunchOptionKind::Board { boards } => board_control(descriptor.id, boards, data),
@@ -73,7 +78,7 @@ fn option_row(
     // beside that first line rather than centring on the whole stack.
     let label = container(app_text::label(descriptor.label)).width(ROW_LABEL_WIDTH);
     let (label, alignment) = match &descriptor.kind {
-        LaunchOptionKind::Board { .. } => (
+        LaunchOptionKind::Board { .. } | LaunchOptionKind::Flags { .. } => (
             label.padding(iced::Padding::ZERO.top(s())),
             Alignment::Start,
         ),
@@ -147,6 +152,101 @@ fn choice_control(
         Message::Set(surface, Edit::Choice(id, entry.value)).into()
     })
     .width(CONTROL_WIDTH)
+    .into()
+}
+
+/// A set of flags: a pick list that either leaves the whole set to whatever
+/// states it or hands it to the user, and — once it is theirs — a switch for
+/// each flag the option publishes.
+fn flags_control(
+    id: &'static str,
+    flags: &[missingno_core::launch::LaunchChoice],
+    data: &PanelData,
+) -> Element<'static, app::Message> {
+    let published = flags.to_vec();
+    let left_to_media = automatic(id, data, |value| match value {
+        LaunchValue::Flags(stated) => Some(describe_flags(stated, &published)),
+        _ => None,
+    });
+    let custom = Entry {
+        value: Some(CUSTOM.to_string()),
+        label: "Custom".to_string(),
+    };
+
+    let chosen = data.overrides.flags(id).cloned();
+    let selected = match chosen.is_some() {
+        true => custom.clone(),
+        false => left_to_media.clone(),
+    };
+    let entries = vec![left_to_media, custom];
+
+    // Taking the set over starts from what states it, so switching to Custom
+    // changes nothing until a flag is switched.
+    let stated = match data.facts.get(id) {
+        Some(LaunchValue::Flags(stated)) => stated.clone(),
+        _ => BTreeSet::new(),
+    };
+    let surface = data.surface;
+    let picker = pick_list(entries, Some(selected), move |entry| {
+        Message::Set(
+            surface,
+            Edit::Flags(id, entry.value.map(|_| stated.clone())),
+        )
+        .into()
+    })
+    .width(CONTROL_WIDTH);
+
+    let mut control = column![picker].spacing(s());
+    if let Some(set) = chosen {
+        for flag in flags {
+            control = control.push(flag_row(id, surface, &set, flag));
+        }
+    }
+    control.into()
+}
+
+/// A stated set for a reader: the flags it carries, in the order the option
+/// publishes them.
+fn describe_flags(
+    stated: &BTreeSet<String>,
+    flags: &[missingno_core::launch::LaunchChoice],
+) -> String {
+    let named: Vec<&str> = flags
+        .iter()
+        .filter(|flag| stated.contains(flag.value))
+        .map(|flag| flag.label)
+        .collect();
+    match named.is_empty() {
+        true => "none".to_string(),
+        false => named.join(" + "),
+    }
+}
+
+/// One flag of the set the user took over. Switching it states the whole set
+/// again, so a row is one edit rather than a change to what is already stored.
+fn flag_row(
+    id: &'static str,
+    surface: EditSurface,
+    stated: &BTreeSet<String>,
+    flag: &missingno_core::launch::LaunchChoice,
+) -> Element<'static, app::Message> {
+    let value = flag.value;
+    let stated = stated.clone();
+    row![
+        container(app_text::detail(flag.label).color(MUTED)).width(PART_LABEL_WIDTH),
+        toggler(stated.contains(value))
+            .on_toggle(move |on| {
+                let mut switched = stated.clone();
+                match on {
+                    true => switched.insert(value.to_string()),
+                    false => switched.remove(value),
+                };
+                Message::Set(surface, Edit::Flags(id, Some(switched))).into()
+            })
+            .size(m()),
+    ]
+    .spacing(s())
+    .align_y(Center)
     .into()
 }
 

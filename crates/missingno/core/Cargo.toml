@@ -7,3 +7,6 @@ edition = "2024"
 serde = { version = "1", features = ["derive"] }
 rgb = { workspace = true }
 sha2 = { version = "0.11" }
+
+[dev-dependencies]
+ron = "0.12"

@@ -343,6 +343,20 @@ fn launch_values(factory: &CoreFactory, rom: &[u8], args: &Value) -> Result<Laun
                     .ok_or_else(|| format!("launch option '{id}' takes a string"))?;
                 launch.set_choice(id, chosen);
             }
+            // A set of flags is named as the flags that are on, the rest off.
+            LaunchOptionKind::Flags { .. } => {
+                let named = value
+                    .as_array()
+                    .ok_or_else(|| format!("launch option '{id}' takes an array of flag names"))?;
+                let mut flags = std::collections::BTreeSet::new();
+                for flag in named {
+                    let flag = flag.as_str().ok_or_else(|| {
+                        format!("launch option '{id}' takes an array of flag names")
+                    })?;
+                    flags.insert(flag.to_owned());
+                }
+                launch.set_flags(id, flags);
+            }
             LaunchOptionKind::Toggle => {
                 let flag = value
                     .as_bool()

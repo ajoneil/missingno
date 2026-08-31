@@ -108,25 +108,25 @@ fn parse_fact(
         FactKind::TvStandard => Ok(FactValue::TvStandard(Some(db::parse_tv_format(&word(
             value,
         )?)?))),
-        FactKind::Controllers { .. } => {
+        FactKind::Enhancements { .. } => {
             let list = value
                 .as_array()
                 .ok_or_else(|| format!("{key} takes a list of strings"))?;
             let mut parsed = Vec::with_capacity(list.len());
-            for controller in list {
-                parsed.push(db::parse_controller(&word(controller)?)?);
+            for enhancement in list {
+                parsed.push(db::parse_enhancement(&word(enhancement)?)?);
             }
-            Ok(FactValue::Controllers(parsed))
+            Ok(FactValue::Enhancements(Some(parsed)))
         }
-        FactKind::Features { .. } => {
+        FactKind::Peripherals { .. } => {
             let list = value
                 .as_array()
                 .ok_or_else(|| format!("{key} takes a list of strings"))?;
             let mut parsed = Vec::with_capacity(list.len());
-            for feature in list {
-                parsed.push(vocabulary::FEATURES.parse(&word(feature)?)?);
+            for peripheral in list {
+                parsed.push(db::parse_peripheral(&word(peripheral)?)?);
             }
-            Ok(FactValue::Features(parsed))
+            Ok(FactValue::Peripherals(Some(parsed)))
         }
         FactKind::Board { .. } => parse_board_fact(key, value),
     }
@@ -765,11 +765,12 @@ impl Curator {
                         BootSource::File(_) => verify::sha1_hex(&bytes),
                     };
                     let (tv, cart) = entry.game.hints_for(&sha1);
+                    let runner = entry.game.runner_hint(&sha1);
                     let overdump =
                         entry.game.defect_for(&sha1) == Some(missingno_gamedb::Defect::Overdump);
-                    let controllers = entry.game.controllers_for(&sha1);
+                    let peripherals = entry.game.peripherals_for(&sha1);
                     self.stage_header_facts(i, &bytes, &sha1);
-                    match play::start(hint, &bytes, tv, cart, overdump, &controllers) {
+                    match play::start(hint, &bytes, tv, cart, runner, overdump, &peripherals) {
                         Ok(session) => {
                             let events = session.events.clone();
                             // Full device simulation, as the emulator's Device

@@ -2,7 +2,7 @@
 //! labels, and the console factory over the crate's seam implementation.
 
 use missingno_core::ports::{PeripheralId, PortId};
-use missingno_gamedb::Controller;
+use missingno_gamedb::Peripheral;
 use missingno_vcs::debug::{JOYSTICK, KEYPAD, LEFT_PORT, PADDLES, RIGHT_PORT};
 
 use super::{ControlMap, MediaLoad, SystemConsole, TvStandard};
@@ -25,15 +25,15 @@ pub const CONTROLS: ControlMap = ControlMap::new(
 /// jack unless it also states the joystick, the arrangement keypad-plus-joystick
 /// titles use — stick left, keypad right. Everything else plays on the joysticks
 /// a VCS powers on with.
-pub fn port_config(controllers: &[Controller]) -> Vec<(PortId, PeripheralId)> {
-    let stated = |controller| controllers.contains(&controller);
-    if stated(Controller::Keypad) {
-        if stated(Controller::Joystick) {
+pub fn port_config(peripherals: &[Peripheral]) -> Vec<(PortId, PeripheralId)> {
+    let stated = |peripheral| peripherals.contains(&peripheral);
+    if stated(Peripheral::Keypad) {
+        if stated(Peripheral::Joystick) {
             vec![(LEFT_PORT, JOYSTICK), (RIGHT_PORT, KEYPAD)]
         } else {
             vec![(LEFT_PORT, KEYPAD), (RIGHT_PORT, KEYPAD)]
         }
-    } else if stated(Controller::Paddle) {
+    } else if stated(Peripheral::Paddle) {
         vec![(LEFT_PORT, PADDLES)]
     } else {
         Vec::new()

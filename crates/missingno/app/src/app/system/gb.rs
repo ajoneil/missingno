@@ -11,12 +11,14 @@ use missingno_gb::{BootRom, GameBoy, cartridge::Cartridge, serial_transfer::Seri
 use missingno_gbc::GameBoyColor;
 use missingno_gbc::launch::BootRomFit;
 pub use missingno_gbc::launch::{
-    BOARD, BOOT_ROM, GbLaunch, RUNNER, RunnerPreference, board_from_launch, launch_options,
+    BOARD, BOOT_ROM, ENHANCEMENT_CGB, ENHANCEMENT_SGB, ENHANCEMENTS, GbLaunch, RUNNER,
+    RunnerPreference, board_from_launch, launch_options,
 };
 
 use missingno_core::cartridge::BoardVocabulary;
 use missingno_core::ports::PeripheralId;
 use missingno_core::video::{ConsoleFrame, RgbaFrame};
+use missingno_gamedb::Peripheral;
 
 use super::{ControlMap, LaunchValue, MediaFact, MediaLoad, Platform, SystemConsole};
 use missingno_iced::PalettePolicy;
@@ -95,19 +97,26 @@ pub const SAVE_FILTER_NAME: &str = "Game Boy Save";
 pub const SAVE_EXTENSIONS: &[&str] = &["sav"];
 
 /// What the cartridge header answers for itself: the console it is slotted
-/// into, as the hardware would read it, and the board it declares.
+/// into, as the hardware would read it, the variants its flags claim, and the
+/// board it declares.
 pub fn stated_by_media(rom: &[u8]) -> Vec<MediaFact> {
-    let mut stated = vec![MediaFact {
-        option: RUNNER,
-        value: LaunchValue::Choice(
-            if Cartridge::peek_cgb(rom) {
-                "cgb"
-            } else {
-                "dmg"
-            }
-            .to_owned(),
-        ),
-    }];
+    let cgb = Cartridge::peek_cgb(rom);
+    let enhancements = cgb
+        .then_some(ENHANCEMENT_CGB)
+        .into_iter()
+        .chain(Cartridge::peek_sgb(rom).then_some(ENHANCEMENT_SGB))
+        .map(str::to_owned)
+        .collect();
+    let mut stated = vec![
+        MediaFact {
+            option: RUNNER,
+            value: LaunchValue::Choice(if cgb { "cgb" } else { "dmg" }.to_owned()),
+        },
+        MediaFact {
+            option: ENHANCEMENTS,
+            value: LaunchValue::Flags(enhancements),
+        },
+    ];
     if let Ok(board) = GbCartType::from_header(rom) {
         stated.push(MediaFact {
             option: BOARD,
@@ -176,10 +185,29 @@ pub fn launch<L: GbLaunch>(
     Ok(output)
 }
 
+/// What hangs off the link port: an explicit cable is the user's own word, and
+/// a virtual printer attaches only where the catalogue states the release is
+/// played with one, staying inert unless the game prints.
+fn link_port(
+    cable: Option<Box<dyn SerialLink>>,
+    print_sink: Option<crate::printer::PrintSink>,
+    peripherals: &[Peripheral],
+) -> (Option<Box<dyn SerialLink>>, PeripheralId) {
+    if let Some(cable) = cable {
+        return (Some(cable), LINK_CABLE);
+    }
+    match print_sink.filter(|_| peripherals.contains(&Peripheral::Printer)) {
+        Some(sink) => (
+            Some(Box::new(crate::printer::GbPrinter::new(sink)) as Box<dyn SerialLink>),
+            LINK_PRINTER,
+        ),
+        None => (None, LINK_DISCONNECTED),
+    }
+}
+
 /// The factory both platform descriptors register: the header picks the
-/// core. The serial link is a Game Boy peripheral, so it is taken here; a
-/// virtual printer sits on the link port by default, staying inert unless a
-/// game prints, with prints landing in the game's folder.
+/// core. The serial link is a Game Boy peripheral, so it is taken here, with
+/// prints landing in the game's folder.
 pub fn create_console(media: MediaLoad) -> Result<Box<dyn SystemConsole>, String> {
     struct Boxed {
         link: PeripheralId,
@@ -193,16 +221,11 @@ pub fn create_console(media: MediaLoad) -> Result<Box<dyn SystemConsole>, String
             Box::new(create_console_with_link(console, battery_save, self.link))
         }
     }
-    let (link, kind) = match media.serial_link.take() {
-        Some(cable) => (Some(cable), LINK_CABLE),
-        None => match media.print_sink {
-            Some(sink) => (
-                Some(Box::new(crate::printer::GbPrinter::new(sink)) as Box<dyn SerialLink>),
-                LINK_PRINTER,
-            ),
-            None => (None, LINK_DISCONNECTED),
-        },
-    };
+    let (link, kind) = link_port(
+        media.serial_link.take(),
+        media.print_sink,
+        media.peripherals,
+    );
     let boot_rom = match media.launch.file(BOOT_ROM) {
         Some(bytes) => Some(
             BootRom::from_bytes(bytes.to_vec())
@@ -231,6 +254,44 @@ mod tests {
     use missingno_gb::frame::GameBoyScreen;
     use missingno_gb::ppu::screen::Screen;
     use missingno_gb::ppu::types::palette::PaletteIndex;
+
+    /// A user-configured cable, which owes the link port nothing else.
+    struct Cable;
+    impl SerialLink for Cable {
+        fn exchange_bit(&mut self, _out_bit: bool) -> bool {
+            true
+        }
+        fn clock(&mut self) -> bool {
+            false
+        }
+    }
+
+    fn sink() -> Option<crate::printer::PrintSink> {
+        Some(std::sync::mpsc::channel().0)
+    }
+
+    /// The printer is a box fact, so it attaches only where the catalogue
+    /// states the release is played with one.
+    #[test]
+    fn a_printer_attaches_only_where_the_release_states_one() {
+        let (printer, kind) = link_port(None, sink(), &[Peripheral::Printer]);
+        assert!(printer.is_some());
+        assert_eq!(kind, LINK_PRINTER);
+
+        for stated in [&[][..], &[Peripheral::LinkCable]] {
+            let (link, kind) = link_port(None, sink(), stated);
+            assert!(link.is_none(), "{stated:?} attached something");
+            assert_eq!(kind, LINK_DISCONNECTED);
+        }
+    }
+
+    /// The cable the user configured outranks the catalogue's word.
+    #[test]
+    fn an_explicit_cable_takes_the_link_port() {
+        let (link, kind) = link_port(Some(Box::new(Cable)), sink(), &[Peripheral::Printer]);
+        assert!(link.is_some());
+        assert_eq!(kind, LINK_CABLE);
+    }
 
     fn policy(use_sgb_colors: bool) -> GbPalettePolicy {
         GbPalettePolicy {

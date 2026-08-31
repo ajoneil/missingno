@@ -10,7 +10,7 @@ use missingno_core::launch::LaunchValues;
 use missingno_core::ports::{PanelControl, PeripheralId, PortId};
 use missingno_core::system::{ControlId, ControlInput, ControlRole};
 use missingno_core::video::DisplayTechnology;
-use missingno_gamedb::platform::Controller;
+use missingno_gamedb::platform::Peripheral;
 use missingno_session::{
     SessionEvent, SessionHandle, SharedSession, audio_output::AudioOutput, factory,
 };
@@ -43,19 +43,19 @@ pub struct PlaySession {
     pub events: Arc<Mutex<Receiver<SessionEvent>>>,
 }
 
-/// What each jack gets from the controllers the db states. A keypad game wants
+/// What each jack gets from the peripherals the db states. A keypad game wants
 /// one in each jack unless it also states the joystick, the arrangement
 /// keypad-plus-joystick titles use: stick left, keypad right. A paddle game
 /// takes the pair in the jack the pane drives.
-fn jack_peripherals(stated: &[Controller]) -> [PeripheralId; 2] {
-    let has = |controller| stated.contains(&controller);
-    if has(Controller::Keypad) {
-        if has(Controller::Joystick) {
+fn jack_peripherals(stated: &[Peripheral]) -> [PeripheralId; 2] {
+    let has = |peripheral| stated.contains(&peripheral);
+    if has(Peripheral::Keypad) {
+        if has(Peripheral::Joystick) {
             [missingno_vcs::debug::JOYSTICK, missingno_vcs::debug::KEYPAD]
         } else {
             [missingno_vcs::debug::KEYPAD; 2]
         }
-    } else if has(Controller::Paddle) {
+    } else if has(Peripheral::Paddle) {
         [
             missingno_vcs::debug::PADDLES,
             missingno_vcs::debug::JOYSTICK,
@@ -70,8 +70,9 @@ pub fn start(
     rom: &[u8],
     tv_standard: Option<String>,
     cart_type: Option<BoardValue>,
+    runner: Option<&str>,
     overdump: bool,
-    controllers: &[Controller],
+    peripherals: &[Peripheral],
 ) -> Result<PlaySession, String> {
     let mut launch = LaunchValues::default();
     if let Some(standard) = tv_standard {
@@ -81,6 +82,10 @@ pub fn start(
         // Every core with a board vocabulary publishes it under one id.
         launch.set_board(missingno_vcs::debug::BOARD, board);
     }
+    if let Some(console) = runner {
+        // Left to the header, a Color-enhanced flag boots the Color core.
+        launch.set_choice(missingno_gbc::launch::RUNNER, console);
+    }
     launch.set_toggle(missingno_vcs::debug::OVERDUMP, overdump);
     let mut console =
         factory::create_console_with(std::path::Path::new(filename_hint), rom, &launch)
@@ -88,7 +93,7 @@ pub fn start(
     // Knob and key input reach nothing until the peripheral is in the jack, and
     // a paddle trigger lands on the direction line it shares on real hardware.
     let mut plugged = [missingno_vcs::debug::JOYSTICK; 2];
-    for (jack, peripheral) in jack_peripherals(controllers).into_iter().enumerate() {
+    for (jack, peripheral) in jack_peripherals(peripherals).into_iter().enumerate() {
         let port = PortId(jack as u8);
         if console.plug(port, peripheral).is_ok() {
             plugged[jack] = peripheral;

@@ -7,10 +7,10 @@ use missingno_core::cartridge::{
     AttributeKind, AttributeValue, BoardSpec, BoardValue, BoardVocabulary,
 };
 use missingno_gamedb::{
-    Artifact, Controller, Defect, FactKind, FactValue, FlagFile, Game, GameBoy, GameBoyColor,
+    Artifact, Defect, Enhancement, FactKind, FactValue, FlagFile, Game, GameBoy, GameBoyColor,
     GameKind, GbCartType, HardwareFacts, Language, Link, LinkType, Mod, ModCategory, ModOf,
-    ModRelease, Platform, Region, RejectedFile, Rejection, Release, ReleaseStatus, Sg1000, Sha1,
-    Slug, Tree, TvStandard, Vcs, with_platforms,
+    ModRelease, Peripheral, Platform, Region, RejectedFile, Rejection, Release, ReleaseStatus,
+    Sg1000, Sha1, Slug, Tree, TvStandard, Vcs, with_platforms,
 };
 
 use crate::vocabulary;
@@ -271,23 +271,18 @@ fn hardware_line<H: HardwareFacts>(hardware: &H) -> String {
                 };
                 board.map(|board| board_line(&board, catalogue()))
             }
-            FactValue::Controllers(controllers) => (!controllers.is_empty()).then(|| {
-                controllers
-                    .iter()
-                    .map(|c| format!("{c:?}"))
-                    .collect::<Vec<_>>()
-                    .join("/")
-            }),
-            FactValue::Features(features) => (!features.is_empty()).then(|| {
-                features
-                    .iter()
-                    .map(|f| format!("{f:?}"))
-                    .collect::<Vec<_>>()
-                    .join("/")
-            }),
+            FactValue::Enhancements(stated) => term_list(stated),
+            FactValue::Peripherals(stated) => term_list(stated),
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// A stated list as one display string; a release stating none shows nothing.
+fn term_list<T: std::fmt::Debug>(stated: Option<Vec<T>>) -> Option<String> {
+    let stated = stated.filter(|list| !list.is_empty())?;
+    let terms: Vec<String> = stated.iter().map(|term| format!("{term:?}")).collect();
+    Some(terms.join("/"))
 }
 
 /// A stated board and the parts populated on it, in the order the board's own
@@ -339,9 +334,9 @@ fn stated_board<H: HardwareFacts>(hardware: &H) -> Option<BoardValue> {
     }
 }
 
-fn stated_controllers<H: HardwareFacts>(hardware: &H) -> Vec<Controller> {
-    match hardware.get("controllers") {
-        Some(FactValue::Controllers(controllers)) => controllers,
+fn stated_peripherals<H: HardwareFacts>(hardware: &H) -> Vec<Peripheral> {
+    match hardware.get("peripherals") {
+        Some(FactValue::Peripherals(Some(stated))) => stated,
         _ => Vec::new(),
     }
 }
@@ -863,6 +858,30 @@ impl AnyGame {
         stated.unwrap_or_else(|| (self.tv_hint(), self.cart_hint()))
     }
 
+    /// Console hint for the session factory, as the runner launch choice: a
+    /// Game Boy release states whether it exploits a Color, and one whose
+    /// stated enhancements leave it out plays on a Game Boy however its header
+    /// is flagged. Unstated enhancements — and every other platform — leave the
+    /// header to decide. Same precedence as [`AnyGame::hints_for`].
+    pub fn runner_hint(&self, sha1: &str) -> Option<&'static str> {
+        let AnyGame::Gb(game) = self else {
+            return None;
+        };
+        let stated = match release_holding(game, sha1) {
+            Some(release) => release.hardware.enhancements.as_deref(),
+            None => game
+                .releases
+                .iter()
+                .find_map(|r| r.hardware.enhancements.as_deref()),
+        };
+        stated.map(
+            |enhancements| match enhancements.contains(&Enhancement::GameBoyColor) {
+                true => "cgb",
+                false => "dmg",
+            },
+        )
+    }
+
     /// The quality problem catalogued against one dump, wherever it hangs: a
     /// release's artifact or a mod's.
     pub fn defect_for(&self, sha1: &str) -> Option<Defect> {
@@ -880,15 +899,15 @@ impl AnyGame {
             .and_then(|a| a.defect))
     }
 
-    /// The controllers the release holding this dump states — what the play
+    /// The peripherals the release holding this dump states — what the play
     /// pane puts in the jacks before the game boots.
-    pub fn controllers_for(&self, sha1: &str) -> Vec<Controller> {
+    pub fn peripherals_for(&self, sha1: &str) -> Vec<Peripheral> {
         common!(self, g => g
             .releases
             .iter()
             .find(|r| r.artifacts.iter().any(|a| a.sha1.as_str() == sha1))
             .or(g.releases.first())
-            .map(|r| stated_controllers(&r.hardware))
+            .map(|r| stated_peripherals(&r.hardware))
             .unwrap_or_default())
     }
 
@@ -918,7 +937,6 @@ impl AnyGame {
         header: &crate::verify::GbHeader,
         sha1: &str,
     ) -> (Vec<String>, Vec<String>) {
-        use missingno_gamedb::Feature;
         let mut staged = Vec::new();
         let mut conflicts = Vec::new();
         match self {
@@ -933,25 +951,22 @@ impl AnyGame {
                 let release = &mut g.releases[index];
                 let mut stated = Vec::new();
                 if header.sgb {
-                    stated.push(Feature::SuperGameBoyEnhanced);
+                    stated.push(Enhancement::SuperGameBoy);
                 }
                 if header.cgb_flag & 0x80 != 0 {
-                    stated.push(Feature::GameBoyColorEnhanced);
+                    stated.push(Enhancement::GameBoyColor);
                 }
-                let known: Vec<Feature> = release
-                    .hardware
-                    .features
-                    .iter()
-                    .copied()
-                    .filter(|feature| HEADER_FEATURES.contains(feature))
-                    .collect();
-                if known.is_empty() {
-                    if !stated.is_empty() {
-                        staged.push(format!("features: {stated:?}"));
-                        release.hardware.features.extend(stated);
+                match &release.hardware.enhancements {
+                    None => {
+                        if !stated.is_empty() {
+                            staged.push(format!("enhancements: {stated:?}"));
+                            release.hardware.enhancements = Some(stated);
+                        }
                     }
-                } else if known != stated {
-                    conflicts.push(format!("features: db {known:?} vs header {stated:?}"));
+                    Some(list) if *list != stated => {
+                        conflicts.push(format!("enhancements: db {list:?} vs header {stated:?}"))
+                    }
+                    Some(_) => {}
                 }
                 stage_board(
                     &mut release.hardware.cart_type,
@@ -1242,8 +1257,8 @@ fn is_unstated(value: &FactValue) -> bool {
     match value {
         FactValue::TvStandard(tv) => tv.is_none(),
         FactValue::Board(board) => board.is_none(),
-        FactValue::Controllers(controllers) => controllers.is_empty(),
-        FactValue::Features(features) => features.is_empty(),
+        FactValue::Enhancements(stated) => stated.is_none(),
+        FactValue::Peripherals(stated) => stated.is_none(),
     }
 }
 
@@ -1338,9 +1353,16 @@ pub fn parse_tv_format(value: &str) -> Result<TvStandard, String> {
     vocabulary::TV_FORMATS.parse(value)
 }
 
-/// Non-default VCS controllers; a joystick game leaves the field unset.
-pub fn parse_controller(value: &str) -> Result<Controller, String> {
-    vocabulary::CONTROLLERS.parse(value)
+/// A device stated beside the console; the platform refuses one it is not
+/// played with.
+pub fn parse_peripheral(value: &str) -> Result<Peripheral, String> {
+    vocabulary::PERIPHERALS.parse(value)
+}
+
+/// A console variant the release exploits; the Game Boy tree is the only one
+/// that states any.
+pub fn parse_enhancement(value: &str) -> Result<Enhancement, String> {
+    vocabulary::ENHANCEMENTS.parse(value)
 }
 
 /// The region vocabulary is closed: unknown text is a data error, not a value.
@@ -1401,12 +1423,6 @@ fn lone_dump_entry<P: Platform>(title: String, artifact: missingno_gamedb::Artif
         }],
     }
 }
-
-/// The features a cartridge header states; the rest are read off the box.
-const HEADER_FEATURES: [missingno_gamedb::Feature; 2] = [
-    missingno_gamedb::Feature::SuperGameBoyEnhanced,
-    missingno_gamedb::Feature::GameBoyColorEnhanced,
-];
 
 /// The release a booted dump's header speaks for — the cart it was read from,
 /// not the entry's first. A dump no release holds answers for the first, the
@@ -1611,7 +1627,7 @@ fn move_artifact_in<P: Platform>(
         }
     }
     let Some(from) = from else {
-        return Err(format!("{sha1} is not a release artifact of this entry"));
+        return demote_mod_artifact(source, sha1, to_index);
     };
     if from == to_index {
         return Err("artifact is already in that release".to_owned());
@@ -1628,6 +1644,40 @@ fn move_artifact_in<P: Platform>(
         source.releases.remove(from);
     }
     Ok(emptied)
+}
+
+/// Pull a dump held by one of the entry's mods back into a release — the undo
+/// for a wrong mark_mod. The artifact keeps its own label and defect; the mod
+/// version's base, label and date die with it. Returns whether the mod version
+/// it came from was pruned.
+fn demote_mod_artifact<P: Platform>(
+    source: &mut Game<P>,
+    sha1: &str,
+    to_index: usize,
+) -> Result<bool, String> {
+    for m in 0..source.mods.len() {
+        for r in 0..source.mods[m].releases.len() {
+            let version = &mut source.mods[m].releases[r];
+            let Some(at) = version
+                .artifacts
+                .iter()
+                .position(|a| a.sha1.as_str() == sha1)
+            else {
+                continue;
+            };
+            let taken = version.artifacts.remove(at);
+            let emptied = version.artifacts.is_empty();
+            if emptied {
+                source.mods[m].releases.remove(r);
+                if source.mods[m].releases.is_empty() {
+                    source.mods.remove(m);
+                }
+            }
+            source.releases[to_index].artifacts.push(taken);
+            return Ok(emptied);
+        }
+    }
+    Err(format!("{sha1} is not a release artifact of this entry"))
 }
 
 /// Move `sha1` out of its release into a mod attached to the same game.
@@ -2587,8 +2637,9 @@ impl Db {
         None
     }
 
-    /// Move a dump into another release; returns whether the source release
-    /// was pruned (a release that only existed because of the dump).
+    /// Move a dump into another release, from a release or from an attached
+    /// mod; returns whether the source release was pruned (one that only
+    /// existed because of the dump).
     pub fn move_artifact(
         &mut self,
         entry: usize,
@@ -3112,6 +3163,7 @@ mod phantom_release_tests {
 
     const A: &str = "0123456789abcdef0123456789abcdef01234567";
     const B: &str = "89abcdef0123456789abcdef0123456789abcdef";
+    const C: &str = "fedcba9876543210fedcba9876543210fedcba98";
 
     #[test]
     fn marking_a_lone_hack_prunes_the_release_it_invented() {
@@ -3248,6 +3300,78 @@ mod phantom_release_tests {
         assert!(err.contains("Deluxe"), "{err}");
         // The dump stays put when the mod is not found.
         assert_eq!(game.artifact_sha1s(), vec![B]);
+    }
+
+    #[test]
+    fn a_dump_wrongly_marked_a_mod_moves_back_into_a_release() {
+        let game = Game::<GameBoy>::from_ron(&format!(
+            "(title: \"T\", mods: [(name: \"Deluxe\", category: ContentChange,\
+                releases: [(base_sha1: Some(\"{A}\"), label: Some(\"v2\"),\
+                  artifacts: [(sha1: \"{B}\", label: Some(\"alt\"))])])],\
+              releases: [(artifacts: [(sha1: \"{A}\")])])"
+        ))
+        .unwrap();
+        let mut game = AnyGame::Gb(game);
+        let emptied = match &mut game {
+            AnyGame::Gb(g) => move_artifact_in(g, B, 0).unwrap(),
+            _ => unreachable!(),
+        };
+        assert!(emptied, "the mod's only version held nothing else");
+        match &game {
+            AnyGame::Gb(g) => {
+                assert!(g.mods.is_empty(), "the emptied mod is gone");
+                assert_eq!(g.releases.len(), 1);
+                let moved = &g.releases[0].artifacts[1];
+                assert_eq!(moved.sha1.as_str(), B);
+                assert_eq!(
+                    moved.label.as_deref(),
+                    Some("alt"),
+                    "the artifact's own label is a fact about the dump"
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn pulling_one_version_back_leaves_the_mods_other_build() {
+        let game = Game::<GameBoy>::from_ron(&format!(
+            "(title: \"T\", mods: [(name: \"Deluxe\", category: ContentChange,\
+                releases: [(artifacts: [(sha1: \"{B}\")]),\
+                           (label: Some(\"8K\"), artifacts: [(sha1: \"{C}\")])])],\
+              releases: [(artifacts: [(sha1: \"{A}\")])])"
+        ))
+        .unwrap();
+        let mut game = AnyGame::Gb(game);
+        match &mut game {
+            AnyGame::Gb(g) => assert!(move_artifact_in(g, C, 0).unwrap()),
+            _ => unreachable!(),
+        }
+        match &game {
+            AnyGame::Gb(g) => {
+                assert_eq!(g.mods.len(), 1, "the mod still has a build");
+                assert_eq!(g.mods[0].releases.len(), 1);
+                assert_eq!(g.mods[0].releases[0].artifacts[0].sha1.as_str(), B);
+                assert_eq!(g.releases[0].artifacts.len(), 2);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn moving_a_dump_the_entry_does_not_hold_still_fails() {
+        let game = Game::<GameBoy>::from_ron(&format!(
+            "(title: \"T\", mods: [(name: \"Deluxe\", category: ContentChange,\
+                releases: [(artifacts: [(sha1: \"{B}\")])])],\
+              releases: [(artifacts: [(sha1: \"{A}\")])])"
+        ))
+        .unwrap();
+        let mut game = AnyGame::Gb(game);
+        let err = match &mut game {
+            AnyGame::Gb(g) => move_artifact_in(g, C, 0).unwrap_err(),
+            _ => unreachable!(),
+        };
+        assert!(err.contains("not a release artifact"), "{err}");
     }
 
     #[test]
@@ -3618,14 +3742,68 @@ mod board_tests {
         let error = castle()
             .set_release_fact(
                 0,
-                "features",
-                FactValue::Features(vec![missingno_gamedb::Feature::SuperGameBoyEnhanced]),
+                "enhancements",
+                FactValue::Enhancements(Some(vec![Enhancement::SuperGameBoy])),
             )
             .unwrap_err();
         assert!(
-            error.contains("\"features\"") && error.contains("cart_type"),
+            error.contains("\"enhancements\"") && error.contains("cart_type"),
             "{error}"
         );
+    }
+
+    /// A colour entry is CGB-required, so it takes the link-port hardware it
+    /// is played with and states no enhancement at all.
+    #[test]
+    fn a_gbc_entry_states_the_hardware_it_drives() {
+        let mut game =
+            AnyGame::Gbc(Game::from_ron("(title: \"Printed\", releases: [()])").unwrap());
+        game.set_release_fact(
+            0,
+            "peripherals",
+            FactValue::Peripherals(Some(vec![Peripheral::Printer])),
+        )
+        .unwrap();
+        let AnyGame::Gbc(g) = &game else {
+            panic!("a gbc entry")
+        };
+        assert_eq!(
+            g.releases[0].hardware.peripherals,
+            Some(vec![Peripheral::Printer])
+        );
+        assert!(
+            game.set_release_fact(
+                0,
+                "enhancements",
+                FactValue::Enhancements(Some(vec![Enhancement::GameBoyColor])),
+            )
+            .is_err()
+        );
+    }
+
+    /// The VCS states the same key with its own catalogue: the controllers a
+    /// jack takes, never the Game Boy's link-port hardware.
+    #[test]
+    fn a_vcs_entry_states_the_controllers_its_jacks_take() {
+        let mut game = AnyGame::Vcs(Game::from_ron("(title: \"Knobs\", releases: [()])").unwrap());
+        game.set_release_fact(
+            0,
+            "peripherals",
+            FactValue::Peripherals(Some(vec![Peripheral::Paddle])),
+        )
+        .unwrap();
+        assert_eq!(
+            game.peripherals_for("0000000000000000000000000000000000000000"),
+            vec![Peripheral::Paddle]
+        );
+        let refusal = game
+            .set_release_fact(
+                0,
+                "peripherals",
+                FactValue::Peripherals(Some(vec![Peripheral::Printer])),
+            )
+            .unwrap_err();
+        assert!(refusal.contains("Printer"), "{refusal}");
     }
 
     /// Tool schemas describe a hardware field from the descriptors, so the
@@ -3649,7 +3827,10 @@ mod board_tests {
     #[test]
     fn the_fact_union_carries_each_key_once_with_its_kind() {
         let keys: Vec<&str> = fact_kinds().into_iter().map(|(key, _)| key).collect();
-        assert_eq!(keys, ["features", "cart_type", "tv_format", "controllers"]);
+        assert_eq!(
+            keys,
+            ["enhancements", "peripherals", "cart_type", "tv_format"]
+        );
         let kind = fact_kinds()
             .into_iter()
             .find(|(key, _)| *key == "cart_type")
@@ -3715,8 +3896,8 @@ mod board_tests {
 mod move_tests {
     use super::*;
 
-    const COLOUR_GAME: &str = "(title: \"Colour Game\", releases: [(hardware: (features: \
-         [SuperGameBoyEnhanced, GameBoyColorEnhanced], cart_type: Some(Mbc5(rom: Mb1, ram: \
+    const COLOUR_GAME: &str = "(title: \"Colour Game\", releases: [(hardware: (enhancements: \
+         [SuperGameBoy, GameBoyColor], cart_type: Some(Mbc5(rom: Mb1, ram: \
          Some(Kb32), battery: true, \
          rumble: false))))])\n";
 
@@ -3741,7 +3922,7 @@ mod move_tests {
             "{report}"
         );
         assert!(report.contains("carried cart_type"), "{report}");
-        assert!(report.contains("features"), "{report}");
+        assert!(report.contains("enhancements"), "{report}");
         assert_eq!(db.entries[0].tree, TreeId::Gbc);
         assert!(matches!(db.entries[0].game, AnyGame::Gbc(_)));
         assert_eq!(
@@ -3874,25 +4055,89 @@ mod header_tests {
         assert!(g.releases[1].hardware.cart_type.is_some());
     }
 
-    /// The header answers for the two enhancements alone, so a link cable read
-    /// off the box neither reads as a disagreement nor blocks what it states.
+    /// A stated list is the whole statement, so a header naming another
+    /// console is reported rather than folded in.
     #[test]
-    fn a_link_cable_off_the_box_is_not_a_header_conflict() {
-        use missingno_gamedb::Feature;
-        let mut game = gb_entry("features: [GameLink]");
+    fn a_stated_list_the_header_disagrees_with_is_a_conflict() {
+        let mut game = gb_entry("enhancements: [SuperGameBoy]");
         let header = crate::verify::gb_header(&rom(0x80)).unwrap();
         let (staged, conflicts) = game.stage_gb_header(&header, UNHELD);
-        assert!(conflicts.is_empty(), "{conflicts:?}");
         assert!(
-            staged.iter().any(|line| line.starts_with("features")),
+            staged.iter().all(|line| !line.starts_with("enhancements")),
             "{staged:?}"
+        );
+        assert!(
+            conflicts
+                .iter()
+                .any(|line| line.starts_with("enhancements: db [SuperGameBoy]")),
+            "{conflicts:?}"
         );
         let AnyGame::Gb(g) = &game else {
             panic!("a gb entry")
         };
         assert_eq!(
-            g.releases[0].hardware.features,
-            [Feature::GameLink, Feature::GameBoyColorEnhanced]
+            g.releases[0].hardware.enhancements,
+            Some(vec![Enhancement::SuperGameBoy])
+        );
+    }
+
+    /// A release stated as exploiting nothing keeps that across a boot; only an
+    /// unstated list is the header's to fill.
+    #[test]
+    fn a_cleared_list_survives_the_header_and_an_unstated_one_is_filled() {
+        let header = crate::verify::gb_header(&rom(0x80)).unwrap();
+
+        let mut cleared = gb_entry("enhancements: []");
+        let (staged, conflicts) = cleared.stage_gb_header(&header, UNHELD);
+        assert!(
+            staged.iter().all(|line| !line.starts_with("enhancements")),
+            "{staged:?}"
+        );
+        assert!(
+            conflicts
+                .iter()
+                .any(|line| line.starts_with("enhancements: db []")),
+            "{conflicts:?}"
+        );
+        let AnyGame::Gb(g) = &cleared else {
+            panic!("a gb entry")
+        };
+        assert_eq!(g.releases[0].hardware.enhancements, Some(Vec::new()));
+
+        let mut unstated = gb_entry("cart_type: None");
+        let (staged, _) = unstated.stage_gb_header(&header, UNHELD);
+        assert!(
+            staged.iter().any(|line| line.starts_with("enhancements")),
+            "{staged:?}"
+        );
+        let AnyGame::Gb(g) = &unstated else {
+            panic!("a gb entry")
+        };
+        assert_eq!(
+            g.releases[0].hardware.enhancements,
+            Some(vec![Enhancement::GameBoyColor])
+        );
+    }
+
+    /// The peripherals are box facts, so a boot never touches them.
+    #[test]
+    fn a_boot_leaves_the_peripherals_alone() {
+        let header = crate::verify::gb_header(&rom(0x80)).unwrap();
+        let mut game = gb_entry("peripherals: [Printer]");
+        let (staged, conflicts) = game.stage_gb_header(&header, UNHELD);
+        assert!(
+            staged
+                .iter()
+                .chain(&conflicts)
+                .all(|line| !line.starts_with("peripherals")),
+            "{staged:?} {conflicts:?}"
+        );
+        let AnyGame::Gb(g) = &game else {
+            panic!("a gb entry")
+        };
+        assert_eq!(
+            g.releases[0].hardware.peripherals,
+            Some(vec![Peripheral::Printer])
         );
     }
 
@@ -3912,6 +4157,72 @@ mod header_tests {
                 "${flag:02x}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod runner_hint_tests {
+    use super::*;
+
+    const HELD: &str = "1e475cbd5fb7099df91155a103698e4e66da7a86";
+    const UNHELD: &str = "0000000000000000000000000000000000000000";
+
+    fn gb_entry(hardware: &str) -> AnyGame {
+        AnyGame::Gb(
+            Game::from_ron(&format!(
+                "(title: \"Runner\", releases: [(hardware: ({hardware}), artifacts: [(sha1: \
+                 \"{HELD}\")])])"
+            ))
+            .unwrap(),
+        )
+    }
+
+    #[test]
+    fn a_stated_enhancement_list_names_the_console_the_release_drives() {
+        assert_eq!(
+            gb_entry("enhancements: [GameBoyColor]").runner_hint(HELD),
+            Some("cgb")
+        );
+        assert_eq!(gb_entry("enhancements: []").runner_hint(HELD), Some("dmg"));
+        assert_eq!(
+            gb_entry("enhancements: [SuperGameBoy]").runner_hint(HELD),
+            Some("dmg")
+        );
+    }
+
+    #[test]
+    fn unstated_enhancements_leave_the_console_to_the_header() {
+        assert_eq!(gb_entry("").runner_hint(HELD), None);
+        assert_eq!(
+            gb_entry("cart_type: Some(Mbc1(rom: Kb512, ram: None, battery: false))")
+                .runner_hint(HELD),
+            None
+        );
+        assert_eq!(gb_entry("peripherals: [Printer]").runner_hint(HELD), None);
+    }
+
+    /// The release holding the dump speaks first; a dump no release holds
+    /// falls back to the first stated list, as the other hints do.
+    #[test]
+    fn the_release_holding_the_dump_states_its_own_console() {
+        let game = AnyGame::Gb(
+            Game::from_ron(&format!(
+                "(title: \"Runner\", releases: [(hardware: (enhancements: \
+                 [GameBoyColor])), (hardware: (enhancements: []), artifacts: [(sha1: \
+                 \"{HELD}\")])])"
+            ))
+            .unwrap(),
+        );
+        assert_eq!(game.runner_hint(HELD), Some("dmg"));
+        assert_eq!(game.runner_hint(UNHELD), Some("cgb"));
+    }
+
+    /// A Color entry states no enhancements, and its media requires the Color
+    /// anyway, so it leaves the choice where it was.
+    #[test]
+    fn a_colour_entry_states_no_console() {
+        let game = AnyGame::Gbc(Game::from_ron("(title: \"Runner\", releases: [()])").unwrap());
+        assert_eq!(game.runner_hint(HELD), None);
     }
 }
 

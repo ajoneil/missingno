@@ -115,9 +115,12 @@ pub struct MediaLoad<'a> {
     /// Link-cable connection, borrowed mutably so only the family that owns
     /// the concept takes it.
     pub serial_link: &'a mut Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
-    /// Where a default-attached Game Boy Printer sends finished prints for the
-    /// play log; the Game Boy family wires it into the printer it attaches.
+    /// Where a Game Boy Printer sends finished prints for the play log; the
+    /// Game Boy family wires it into the printer it attaches.
     pub print_sink: Option<crate::printer::PrintSink>,
+    /// The devices the catalogue says this release is played with — what the
+    /// family plugs into its ports and its link port.
+    pub peripherals: &'a [missingno_gamedb::Peripheral],
 }
 
 /// Build a console from loaded media; `Err` carries what the core objected to.
@@ -188,9 +191,9 @@ pub struct FamilyDescriptor {
     /// as the automatic value. Empty where only the core can resolve them.
     pub stated_by_media: fn(&[u8]) -> Vec<MediaFact>,
     /// How this family's ports are configured for a game whose library
-    /// metadata names these controllers. Empty leaves the console's power-on
+    /// metadata names these peripherals. Empty leaves the console's power-on
     /// configuration.
-    pub port_config: fn(&[missingno_gamedb::Controller]) -> Vec<(PortId, PeripheralId)>,
+    pub port_config: fn(&[missingno_gamedb::Peripheral]) -> Vec<(PortId, PeripheralId)>,
     /// morepork capture entry point for the `trace` subcommand; `None` for
     /// families without a trace backend.
     pub trace: Option<fn(TraceRequest)>,

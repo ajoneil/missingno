@@ -11,6 +11,7 @@ jiff = "0.2"
 missingno-core = { path = "../core" }
 missingno-iced = { path = "../iced" }
 missingno-gamedb = { path = "../../../missingno-gamedb/crates/gamedb" }
+missingno-gbc = { path = "../../systems/gbc" }
 missingno-session = { path = "../session", features = ["tools", "audio-output"] }
 missingno-vcs = { path = "../../systems/vcs" }
 serde_json = "1"

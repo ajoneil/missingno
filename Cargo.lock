@@ -2997,6 +2997,7 @@ name = "missingno-core"
 version = "26.9.0"
 dependencies = [
  "rgb",
+ "ron",
  "serde",
  "sha2 0.11.0",
 ]
@@ -3011,6 +3012,7 @@ dependencies = [
  "jiff",
  "missingno-core",
  "missingno-gamedb",
+ "missingno-gbc",
  "missingno-iced",
  "missingno-session",
  "missingno-vcs",

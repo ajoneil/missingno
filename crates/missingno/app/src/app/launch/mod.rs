@@ -6,15 +6,15 @@
 //! leaves the decision to the core — and what the catalogue states about a
 //! dump is read live at launch rather than copied onto the library entry.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use iced::Task;
 use missingno_core::cartridge::BoardValue;
 use missingno_core::launch::{LaunchOptionDescriptor, LaunchValue, LaunchValues};
-use missingno_gamedb::Controller;
+use missingno_gamedb::{Enhancement, Peripheral};
 
-use crate::app::library::catalogue::Catalogue;
+use crate::app::library::catalogue::{Catalogue, CatalogueRelease};
 use crate::app::system::{self, FamilyDescriptor, Platform};
 use crate::app::{self, App, library, load};
 
@@ -68,17 +68,7 @@ pub fn facts(
     }
 
     if let Some((_, release, artifact)) = catalogue.lookup_hash(sha1) {
-        if let Some(standard) = release.tv_format {
-            facts.set(
-                system::vcs::TV_STANDARD,
-                LaunchValue::Choice(standard.name().to_owned()),
-            );
-        }
-        // Every family publishes its board option under the same id, so one
-        // key carries the catalogue's word whichever core is about to read it.
-        if let Some(board) = &release.cart_type {
-            facts.set(system::vcs::BOARD, LaunchValue::Board(board.clone()));
-        }
+        stated_by_release(&mut facts, release);
         // A dump padded past the cartridge's silicon: the stated board says
         // where the silicon ends.
         facts.set(
@@ -97,12 +87,64 @@ pub fn facts(
     facts
 }
 
-/// The controllers the catalogue says this dump's release needs; empty leaves
-/// the console's power-on configuration.
-pub fn catalogued_controllers(catalogue: &Catalogue, sha1: &str) -> Vec<Controller> {
+/// What the catalogue's word on a release fills, over the media's own.
+fn stated_by_release(facts: &mut Facts, release: &CatalogueRelease) {
+    if let Some(standard) = release.tv_format {
+        facts.set(
+            system::vcs::TV_STANDARD,
+            LaunchValue::Choice(standard.name().to_owned()),
+        );
+    }
+    // Every family publishes its board option under the same id, so one key
+    // carries the catalogue's word whichever core is about to read it.
+    if let Some(board) = &release.cart_type {
+        facts.set(system::vcs::BOARD, LaunchValue::Board(board.clone()));
+    }
+    // A stated enhancement list is the whole word on what the release exploits,
+    // header included, so it replaces what the header claimed.
+    if let Some(enhancements) = &release.enhancements {
+        facts.set(
+            system::gb::ENHANCEMENTS,
+            LaunchValue::Flags(stated_enhancements(enhancements)),
+        );
+    }
+    if let Some(runner) = stated_runner(release) {
+        facts.set(system::gb::RUNNER, LaunchValue::Choice(runner.to_owned()));
+    }
+}
+
+/// The Game Boy family's flag ids for the enhancements a release states.
+fn stated_enhancements(enhancements: &[Enhancement]) -> BTreeSet<String> {
+    enhancements
+        .iter()
+        .map(|enhancement| {
+            match enhancement {
+                Enhancement::SuperGameBoy => system::gb::ENHANCEMENT_SGB,
+                Enhancement::GameBoyColor => system::gb::ENHANCEMENT_CGB,
+            }
+            .to_owned()
+        })
+        .collect()
+}
+
+/// The console a Game Boy release's stated enhancements name: one whose list
+/// leaves the Color out plays on a Game Boy however its header is flagged. A
+/// release stating no enhancements leaves the media to answer.
+fn stated_runner(release: &CatalogueRelease) -> Option<&'static str> {
+    release.enhancements.as_ref().map(|enhancements| {
+        match enhancements.contains(&Enhancement::GameBoyColor) {
+            true => "cgb",
+            false => "dmg",
+        }
+    })
+}
+
+/// The peripherals the catalogue says this dump's release is played with; empty
+/// leaves the console's power-on configuration.
+pub fn catalogued_peripherals(catalogue: &Catalogue, sha1: &str) -> Vec<Peripheral> {
     catalogue
         .lookup_hash(sha1)
-        .map(|(_, release, _)| release.controllers.clone())
+        .map(|(_, release, _)| release.peripherals.clone())
         .unwrap_or_default()
 }
 
@@ -128,6 +170,13 @@ pub fn resolve(
         {
             values.set(descriptor.id, value.clone());
         }
+    }
+    // Enhancements name the console themselves, so a user who states them
+    // without naming one leaves the header's word out of the answer.
+    if overrides.flags(system::gb::ENHANCEMENTS).is_some()
+        && overrides.value(system::gb::RUNNER).is_none()
+    {
+        values.clear(system::gb::RUNNER);
     }
     values
 }
@@ -155,6 +204,8 @@ pub enum EditSurface {
 #[derive(Debug, Clone)]
 pub enum Edit {
     Choice(&'static str, Option<String>),
+    /// The whole set of flags that are on, as one edit.
+    Flags(&'static str, Option<BTreeSet<String>>),
     Toggle(&'static str, Option<bool>),
     File(&'static str, Option<Vec<u8>>),
     /// A whole board and the parts stated on it, as one edit.
@@ -165,10 +216,12 @@ impl Edit {
     fn apply(&self, values: &mut LaunchValues) {
         match self {
             Edit::Choice(id, Some(value)) => values.set_choice(*id, value.clone()),
+            Edit::Flags(id, Some(flags)) => values.set_flags(*id, flags.clone()),
             Edit::Toggle(id, Some(value)) => values.set_toggle(*id, *value),
             Edit::File(id, Some(bytes)) => values.set_file(*id, bytes.clone()),
             Edit::Board(id, Some(board)) => values.set_board(*id, board.clone()),
             Edit::Choice(id, None)
+            | Edit::Flags(id, None)
             | Edit::Toggle(id, None)
             | Edit::File(id, None)
             | Edit::Board(id, None) => values.clear(id),
@@ -530,6 +583,156 @@ mod tests {
         assert_eq!(
             values.board("board").map(|board| board.board.as_str()),
             Some("F8")
+        );
+    }
+
+    fn release_stating(enhancements: Option<Vec<Enhancement>>) -> CatalogueRelease {
+        CatalogueRelease {
+            title: None,
+            date: None,
+            publisher: None,
+            tv_format: None,
+            cart_type: None,
+            peripherals: Vec::new(),
+            enhancements,
+            artifacts: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_stated_enhancement_list_names_the_console() {
+        assert_eq!(
+            stated_runner(&release_stating(Some(vec![Enhancement::GameBoyColor]))),
+            Some("cgb")
+        );
+        assert_eq!(
+            stated_runner(&release_stating(Some(vec![Enhancement::SuperGameBoy]))),
+            Some("dmg")
+        );
+        assert_eq!(stated_runner(&release_stating(Some(vec![]))), Some("dmg"));
+    }
+
+    #[test]
+    fn an_unstated_enhancement_list_leaves_the_console_to_the_media() {
+        assert_eq!(stated_runner(&release_stating(None)), None);
+    }
+
+    /// A Game Boy image whose header carries a CGB flag at $0143 and an SGB
+    /// flag at $0146.
+    fn gb_rom(cgb_flag: u8, sgb_flag: u8) -> Vec<u8> {
+        let mut rom = vec![0; 0x8000];
+        rom[0x143] = cgb_flag;
+        rom[0x146] = sgb_flag;
+        rom
+    }
+
+    fn media_facts(rom: &[u8]) -> Facts {
+        let mut facts = Facts::default();
+        for stated in system::gb::stated_by_media(rom) {
+            facts.set(stated.option, stated.value);
+        }
+        facts
+    }
+
+    fn stated_flags(facts: &Facts) -> Option<Vec<&str>> {
+        match facts.get(system::gb::ENHANCEMENTS)? {
+            LaunchValue::Flags(flags) => Some(flags.iter().map(String::as_str).collect()),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_stated_enhancement_list_replaces_the_headers_flags() {
+        let mut facts = media_facts(&gb_rom(0x80, 0x03));
+        assert_eq!(stated_flags(&facts), Some(vec!["cgb", "sgb"]));
+
+        stated_by_release(
+            &mut facts,
+            &release_stating(Some(vec![Enhancement::SuperGameBoy])),
+        );
+        assert_eq!(stated_flags(&facts), Some(vec!["sgb"]));
+    }
+
+    #[test]
+    fn a_release_stating_no_enhancements_states_a_set_with_none_in_it() {
+        let mut facts = media_facts(&gb_rom(0x80, 0x03));
+        stated_by_release(&mut facts, &release_stating(Some(vec![])));
+        assert_eq!(stated_flags(&facts), Some(vec![]));
+
+        let rom = gb_rom(0x80, 0x03);
+        let values = resolve(
+            &system::gb::launch_options(&rom),
+            &LaunchValues::default(),
+            &facts,
+        );
+        assert_eq!(
+            system::gb::RunnerPreference::from_launch(&values),
+            Ok(system::gb::RunnerPreference::Dmg)
+        );
+    }
+
+    #[test]
+    fn stated_enhancements_take_the_console_off_the_header() {
+        let rom = gb_rom(0x80, 0x03);
+        let descriptors = system::gb::launch_options(&rom);
+        let facts = media_facts(&rom);
+        assert_eq!(
+            resolve(&descriptors, &LaunchValues::default(), &facts).choice(system::gb::RUNNER),
+            Some("cgb")
+        );
+
+        // The user's own set answers the console, so the header's word on it
+        // is not left standing beside it.
+        let mut overrides = LaunchValues::default();
+        overrides.set_flags(system::gb::ENHANCEMENTS, BTreeSet::new());
+        let values = resolve(&descriptors, &overrides, &facts);
+        assert_eq!(values.choice(system::gb::RUNNER), None);
+        assert_eq!(
+            system::gb::RunnerPreference::from_launch(&values),
+            Ok(system::gb::RunnerPreference::Dmg)
+        );
+
+        // A console the user named themselves still stands.
+        overrides.set_choice(system::gb::RUNNER, "cgb");
+        let values = resolve(&descriptors, &overrides, &facts);
+        assert_eq!(values.choice(system::gb::RUNNER), Some("cgb"));
+        assert_eq!(
+            system::gb::RunnerPreference::from_launch(&values),
+            Ok(system::gb::RunnerPreference::Cgb)
+        );
+    }
+
+    #[test]
+    fn the_users_console_wins_over_a_stated_enhancement_list() {
+        let descriptors = [LaunchOptionDescriptor {
+            id: system::gb::RUNNER,
+            label: "Console",
+            kind: LaunchOptionKind::Choice {
+                choices: vec![
+                    LaunchChoice {
+                        value: "dmg",
+                        label: "Game Boy (DMG)",
+                    },
+                    LaunchChoice {
+                        value: "cgb",
+                        label: "Game Boy Color (CGB)",
+                    },
+                ],
+            },
+        }];
+        let stated = stated_runner(&release_stating(Some(vec![]))).unwrap();
+        let mut facts = Facts::default();
+        facts.set(system::gb::RUNNER, LaunchValue::Choice(stated.to_owned()));
+        assert_eq!(
+            resolve(&descriptors, &LaunchValues::default(), &facts).choice(system::gb::RUNNER),
+            Some("dmg")
+        );
+
+        let mut overrides = LaunchValues::default();
+        overrides.set_choice(system::gb::RUNNER, "cgb");
+        assert_eq!(
+            resolve(&descriptors, &overrides, &facts).choice(system::gb::RUNNER),
+            Some("cgb")
         );
     }
 

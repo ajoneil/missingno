@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use missingno_core::cartridge::BoardValue;
 use missingno_gamedb::{
-    Artifact, Controller, FactValue, Game, GameBoy, GameBoyColor, HardwareFacts, Link,
+    Artifact, Enhancement, FactValue, Game, GameBoy, GameBoyColor, HardwareFacts, Link, Peripheral,
     Platform as DbPlatform, Sg1000, Vcs,
 };
 
@@ -56,9 +56,12 @@ pub struct CatalogueRelease {
     /// SG-1000, an MBC and its chips where a Game Boy header misdeclares itself.
     /// Absent, the core reads the media instead.
     pub cart_type: Option<BoardValue>,
-    /// Controllers the release needs, when it deviates from the platform's
-    /// default; the loader configures the console's ports from them.
-    pub controllers: Vec<Controller>,
+    /// Devices the release is played with beside the console; the loader
+    /// configures the console's ports and link port from them.
+    pub peripherals: Vec<Peripheral>,
+    /// Console variants the release exploits. A stated list is a whole
+    /// statement, the header included; `None` leaves the media to answer.
+    pub enhancements: Option<Vec<Enhancement>>,
     pub artifacts: Vec<Artifact>,
 }
 
@@ -107,23 +110,31 @@ impl CatalogueEntry {
 // ── Flattening ────────────────────────────────────────────────────────
 
 /// The facts the catalogue view carries, read by kind rather than by platform:
-/// a release states its broadcast standard, its board, and its controllers
-/// under whatever keys its own hardware declares.
+/// a release states its broadcast standard, its board, the devices it is played
+/// with and the consoles it exploits under whatever keys its own hardware
+/// declares.
 fn flatten<H: HardwareFacts>(
     hardware: &H,
-) -> (Option<TvStandard>, Option<BoardValue>, Vec<Controller>) {
+) -> (
+    Option<TvStandard>,
+    Option<BoardValue>,
+    Vec<Peripheral>,
+    Option<Vec<Enhancement>>,
+) {
     let mut tv_format = None;
     let mut cart_type = None;
-    let mut controllers = Vec::new();
+    let mut peripherals = Vec::new();
+    let mut enhancements = None;
     for fact in H::descriptors() {
         match hardware.get(fact.key) {
             Some(FactValue::TvStandard(tv)) => tv_format = tv_format.or(tv),
             Some(FactValue::Board(board)) => cart_type = cart_type.or(board),
-            Some(FactValue::Controllers(stated)) => controllers = stated,
+            Some(FactValue::Peripherals(stated)) => peripherals = stated.unwrap_or_default(),
+            Some(FactValue::Enhancements(stated)) => enhancements = stated,
             _ => {}
         }
     }
-    (tv_format, cart_type, controllers)
+    (tv_format, cart_type, peripherals, enhancements)
 }
 
 fn entry_from<P: DbPlatform>(platform: Platform, slug: String, game: Game<P>) -> CatalogueEntry {
@@ -142,14 +153,15 @@ fn entry_from<P: DbPlatform>(platform: Platform, slug: String, game: Game<P>) ->
             .releases
             .into_iter()
             .map(|release| {
-                let (tv_format, cart_type, controllers) = flatten(&release.hardware);
+                let (tv_format, cart_type, peripherals, enhancements) = flatten(&release.hardware);
                 CatalogueRelease {
                     title: release.title,
                     date: release.date.map(|d| d.as_str().to_owned()),
                     publisher: release.publisher,
                     tv_format,
                     cart_type,
-                    controllers,
+                    peripherals,
+                    enhancements,
                     artifacts: release.artifacts,
                 }
             })

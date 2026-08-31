@@ -120,6 +120,9 @@ fn start(app: &mut App, request: Request<'_>) -> Result<String, String> {
         family.platform.factory_name(),
     );
 
+    // The game's catalogued peripherals decide what its ports and link port
+    // carry: paddle input is inert until a paddle pair is in the jack.
+    let peripherals = launch::catalogued_peripherals(&app.catalogue, &sha1);
     let mut console = (family.create_console)(system::MediaLoad {
         rom: &request.rom,
         fallback_title: file_stem_title(request.rom_path),
@@ -127,11 +130,9 @@ fn start(app: &mut App, request: Request<'_>) -> Result<String, String> {
         launch: values,
         serial_link: &mut app.serial_link,
         print_sink: Some(app.print_tx.clone()),
+        peripherals: &peripherals,
     })?;
-    // The game's catalogued controllers decide what its ports carry: paddle
-    // input is inert until a paddle pair is in the jack.
-    let controllers = launch::catalogued_controllers(&app.catalogue, &sha1);
-    for (port, peripheral) in (family.port_config)(&controllers) {
+    for (port, peripheral) in (family.port_config)(&peripherals) {
         let _ = console.plug(port, peripheral);
     }
     Ok(finish_start(

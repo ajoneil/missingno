@@ -7,7 +7,7 @@
 //! options are named by the core that publishes them, and travel as a sparse
 //! bag of the values a caller set.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::cartridge::{BoardSpec, BoardValue};
 
@@ -26,6 +26,10 @@ pub enum LaunchOptionKind {
     Choice {
         choices: Vec<LaunchChoice>,
     },
+    /// Any number of `flags` at once, each independent of the rest.
+    Flags {
+        flags: Vec<LaunchChoice>,
+    },
     Toggle,
     /// A file's contents, `label` naming what to pick.
     File {
@@ -37,7 +41,8 @@ pub enum LaunchOptionKind {
     },
 }
 
-/// One value a [`LaunchOptionKind::Choice`] accepts, and how to show it.
+/// One value a [`LaunchOptionKind::Choice`] accepts, or one flag of a
+/// [`LaunchOptionKind::Flags`] set, and how to show it.
 #[derive(Clone)]
 pub struct LaunchChoice {
     pub value: &'static str,
@@ -64,6 +69,8 @@ pub fn board_option(
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LaunchValue {
     Choice(String),
+    /// The flags of a set that are on; an empty set is all of them off.
+    Flags(BTreeSet<String>),
     Toggle(bool),
     File(Vec<u8>),
     /// A whole board and the parts populated on it, as a catalogue states them.
@@ -80,6 +87,15 @@ impl LaunchValues {
     pub fn choice(&self, id: &str) -> Option<&str> {
         match self.0.get(id) {
             Some(LaunchValue::Choice(value)) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// The flags set for `id`, or `None` where the caller set none — which is
+    /// not the same as setting none of them.
+    pub fn flags(&self, id: &str) -> Option<&BTreeSet<String>> {
+        match self.0.get(id) {
+            Some(LaunchValue::Flags(flags)) => Some(flags),
             _ => None,
         }
     }
@@ -121,6 +137,10 @@ impl LaunchValues {
 
     pub fn set_choice(&mut self, id: impl Into<String>, value: impl Into<String>) {
         self.0.insert(id.into(), LaunchValue::Choice(value.into()));
+    }
+
+    pub fn set_flags(&mut self, id: impl Into<String>, flags: BTreeSet<String>) {
+        self.0.insert(id.into(), LaunchValue::Flags(flags));
     }
 
     pub fn set_toggle(&mut self, id: impl Into<String>, value: bool) {
@@ -174,5 +194,34 @@ mod tests {
         assert_eq!(values.choice("overdump"), None);
         assert_eq!(values.file("board"), None);
         assert_eq!(values.board("board"), None);
+    }
+
+    #[test]
+    fn a_flag_set_reads_back_as_the_flags_it_was_set_with() {
+        let mut values = LaunchValues::default();
+        values.set_flags("enhancements", BTreeSet::new());
+        assert_eq!(values.flags("enhancements"), Some(&BTreeSet::new()));
+        assert_eq!(values.choice("enhancements"), None);
+        assert!(!values.toggle("enhancements"));
+
+        values.set_flags("enhancements", flags(["sgb", "cgb"]));
+        assert_eq!(values.flags("enhancements"), Some(&flags(["cgb", "sgb"])));
+        assert_eq!(values.flags("board"), None);
+    }
+
+    /// Overrides are kept in a game's `game.ron`, so a set has to survive the
+    /// round trip in the order it will be written back in.
+    #[test]
+    fn a_flag_set_round_trips_through_ron() {
+        let mut values = LaunchValues::default();
+        values.set_flags("enhancements", flags(["sgb", "cgb"]));
+        let written = ron::to_string(&values).expect("the values write");
+        let read: LaunchValues = ron::from_str(&written).expect("the values read back");
+        assert_eq!(read, values);
+        assert!(written.contains("[\"cgb\",\"sgb\"]"), "{written}");
+    }
+
+    fn flags<const N: usize>(names: [&str; N]) -> BTreeSet<String> {
+        names.into_iter().map(str::to_owned).collect()
     }
 }

@@ -4,8 +4,8 @@
 //! is a term the parser accepts, by construction.
 
 use missingno_gamedb::{
-    Controller, Defect, Feature, GameKind, Language, LinkType, ModCategory, Region, ReleaseStatus,
-    TvStandard,
+    Defect, Enhancement, GameKind, Language, LinkType, ModCategory, Peripheral, Region,
+    ReleaseStatus, TvStandard,
 };
 use serde_json::{Value, json};
 
@@ -168,26 +168,31 @@ pub static TV_FORMATS: Vocabulary<TvStandard> = vocabulary(
     ],
 );
 
-pub static CONTROLLERS: Vocabulary<Controller> = vocabulary(
-    "controller",
+pub static ENHANCEMENTS: Vocabulary<Enhancement> = vocabulary(
+    "enhancement",
     &[
-        ("Joystick", Controller::Joystick),
-        ("Paddle", Controller::Paddle),
-        ("Driving", Controller::Driving),
-        ("Keypad", Controller::Keypad),
-        ("Trackball", Controller::Trackball),
-        ("BoosterGrip", Controller::BoosterGrip),
-        ("KidVid", Controller::KidVid),
-        ("MindLink", Controller::MindLink),
+        ("SuperGameBoy", Enhancement::SuperGameBoy),
+        ("GameBoyColor", Enhancement::GameBoyColor),
     ],
 );
 
-pub static FEATURES: Vocabulary<Feature> = vocabulary(
-    "feature",
+/// One list for every console: a platform is offered only the terms its own
+/// catalogue carries.
+pub static PERIPHERALS: Vocabulary<Peripheral> = vocabulary(
+    "peripheral",
     &[
-        ("SuperGameBoyEnhanced", Feature::SuperGameBoyEnhanced),
-        ("GameBoyColorEnhanced", Feature::GameBoyColorEnhanced),
-        ("GameLink", Feature::GameLink),
+        ("Joystick", Peripheral::Joystick),
+        ("Paddle", Peripheral::Paddle),
+        ("Driving", Peripheral::Driving),
+        ("Keypad", Peripheral::Keypad),
+        ("Trackball", Peripheral::Trackball),
+        ("BoosterGrip", Peripheral::BoosterGrip),
+        ("KidVid", Peripheral::KidVid),
+        ("MindLink", Peripheral::MindLink),
+        ("LinkCable", Peripheral::LinkCable),
+        ("Printer", Peripheral::Printer),
+        ("BarcodeBoy", Peripheral::BarcodeBoy),
+        ("FourPlayerAdapter", Peripheral::FourPlayerAdapter),
     ],
 );
 
@@ -232,9 +237,9 @@ mod tests {
 
     #[test]
     fn the_schema_array_and_the_parser_read_the_same_terms() {
-        let names = CONTROLLERS.schema();
+        let names = PERIPHERALS.schema();
         for term in names.as_array().unwrap() {
-            assert!(CONTROLLERS.lookup(term.as_str().unwrap()).is_some());
+            assert!(PERIPHERALS.lookup(term.as_str().unwrap()).is_some());
         }
         assert_eq!(names[0], "Joystick");
     }

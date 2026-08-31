@@ -17,12 +17,19 @@ pub const RUNNER: &str = "runner";
 pub const BOOT_ROM: &str = "boot-rom";
 /// The board the cartridge is built on, for media whose header misdeclares it.
 pub const BOARD: &str = "board";
+/// The console variants the cartridge is played with; where no console is
+/// chosen, these name the one it boots.
+pub const ENHANCEMENTS: &str = "enhancements";
+pub const ENHANCEMENT_SGB: &str = "sgb";
+pub const ENHANCEMENT_CGB: &str = "cgb";
 
 /// The options the Game Boy family accepts at launch for this cartridge. The
 /// console is a choice only for media both can run: a Color runs a DMG
-/// cartridge, but one whose header requires the Color leaves nothing to pick.
+/// cartridge, but one whose header requires the Color leaves nothing to pick —
+/// and with nothing to pick there is no enhancement left to state either.
 pub fn launch_options(rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
-    let runner = (!Cartridge::peek_cgb_only(rom)).then_some(LaunchOptionDescriptor {
+    let both_consoles = !Cartridge::peek_cgb_only(rom);
+    let runner = both_consoles.then_some(LaunchOptionDescriptor {
         id: RUNNER,
         label: "Console",
         kind: LaunchOptionKind::Choice {
@@ -38,6 +45,22 @@ pub fn launch_options(rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
             ],
         },
     });
+    let enhancements = both_consoles.then_some(LaunchOptionDescriptor {
+        id: ENHANCEMENTS,
+        label: "Enhancements",
+        kind: LaunchOptionKind::Flags {
+            flags: vec![
+                LaunchChoice {
+                    value: ENHANCEMENT_CGB,
+                    label: "Game Boy Color",
+                },
+                LaunchChoice {
+                    value: ENHANCEMENT_SGB,
+                    label: "Super Game Boy",
+                },
+            ],
+        },
+    });
     let fixed = [
         board_option(BOARD, GbCartType::catalogue().iter().cloned()),
         LaunchOptionDescriptor {
@@ -48,7 +71,11 @@ pub fn launch_options(rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
             },
         },
     ];
-    runner.into_iter().chain(fixed).collect()
+    runner
+        .into_iter()
+        .chain(enhancements)
+        .chain(fixed)
+        .collect()
 }
 
 /// The board the launch values state, or `None` where the header decides. A
@@ -96,13 +123,21 @@ pub enum RunnerPreference {
 
 impl RunnerPreference {
     /// The console the launch values ask for; `Err` carries a value that names
-    /// none.
+    /// none. A named console is the whole answer; failing that, a stated
+    /// enhancement set names one — a set without the Color plays on a Game Boy
+    /// however the header is flagged.
     pub fn from_launch(values: &LaunchValues) -> Result<RunnerPreference, &str> {
         match values.choice(RUNNER) {
-            None => Ok(RunnerPreference::Auto),
             Some("dmg") => Ok(RunnerPreference::Dmg),
             Some("cgb") => Ok(RunnerPreference::Cgb),
             Some(other) => Err(other),
+            None => Ok(match values.flags(ENHANCEMENTS) {
+                Some(enhancements) if enhancements.contains(ENHANCEMENT_CGB) => {
+                    RunnerPreference::Cgb
+                }
+                Some(_) => RunnerPreference::Dmg,
+                None => RunnerPreference::Auto,
+            }),
         }
     }
 }
@@ -209,6 +244,70 @@ mod tests {
     #[test]
     fn a_dmg_cartridge_offers_both_consoles() {
         assert_eq!(runner_choices(&rom(0x00)), ["dmg", "cgb"]);
+    }
+
+    fn enhancement_flags(rom: &[u8]) -> Option<Vec<&'static str>> {
+        let published = launch_options(rom)
+            .into_iter()
+            .find(|option| option.id == ENHANCEMENTS)?;
+        match published.kind {
+            LaunchOptionKind::Flags { flags } => {
+                Some(flags.into_iter().map(|flag| flag.value).collect())
+            }
+            _ => panic!("the enhancements option is a set of flags"),
+        }
+    }
+
+    #[test]
+    fn media_both_consoles_run_states_the_enhancements_it_exploits() {
+        for cgb_flag in [0x00, 0x80] {
+            assert_eq!(
+                enhancement_flags(&rom(cgb_flag)),
+                Some(vec![ENHANCEMENT_CGB, ENHANCEMENT_SGB]),
+                "cgb flag ${cgb_flag:02X}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cgb_only_cartridge_publishes_no_enhancements() {
+        assert_eq!(enhancement_flags(&rom(0xC0)), None);
+    }
+
+    #[test]
+    fn stated_enhancements_name_the_console_where_none_was_chosen() {
+        let set = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
+
+        let mut values = LaunchValues::default();
+        assert_eq!(
+            RunnerPreference::from_launch(&values),
+            Ok(RunnerPreference::Auto)
+        );
+
+        values.set_flags(ENHANCEMENTS, set(&[ENHANCEMENT_CGB, ENHANCEMENT_SGB]));
+        assert_eq!(
+            RunnerPreference::from_launch(&values),
+            Ok(RunnerPreference::Cgb)
+        );
+
+        values.set_flags(ENHANCEMENTS, set(&[ENHANCEMENT_SGB]));
+        assert_eq!(
+            RunnerPreference::from_launch(&values),
+            Ok(RunnerPreference::Dmg)
+        );
+
+        // Nothing exploited is still a statement: the plain Game Boy.
+        values.set_flags(ENHANCEMENTS, set(&[]));
+        assert_eq!(
+            RunnerPreference::from_launch(&values),
+            Ok(RunnerPreference::Dmg)
+        );
+
+        values.set_choice(RUNNER, "cgb");
+        assert_eq!(
+            RunnerPreference::from_launch(&values),
+            Ok(RunnerPreference::Cgb)
+        );
     }
 
     #[test]

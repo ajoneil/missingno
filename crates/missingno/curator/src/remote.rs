@@ -21,7 +21,7 @@ use missingno_gamedb::FactKind;
 
 use crate::db::{self, fact_description};
 use crate::vocabulary::{
-    CONTROLLERS, DEFECTS, FEATURES, GAME_KINDS, LANGUAGES, LINK_TYPES, MOD_CATEGORIES, REGIONS,
+    DEFECTS, ENHANCEMENTS, GAME_KINDS, LANGUAGES, LINK_TYPES, MOD_CATEGORIES, PERIPHERALS, REGIONS,
     RELEASE_STATUSES, TV_FORMATS,
 };
 
@@ -178,15 +178,21 @@ fn fact_property(key: &'static str, kind: &'static FactKind, lead: &str) -> Valu
         FactKind::TvStandard => json!({
             "type": "string", "enum": TV_FORMATS.schema(), "description": doc,
         }),
-        FactKind::Controllers { catalogue } => json!({
+        FactKind::Enhancements { catalogue } => json!({
             "type": "array",
-            "items": { "type": "string", "enum": CONTROLLERS.schema_of(catalogue) },
-            "description": format!("{doc} Replaces the list; omit or empty for the platform default."),
+            "items": { "type": "string", "enum": ENHANCEMENTS.schema_of(catalogue) },
+            "description": format!(
+                "{doc} Replaces the list; empty states the release exploits none of them, which \
+                 sticks across boots. Omit the key to leave it unstated."
+            ),
         }),
-        FactKind::Features { catalogue } => json!({
+        FactKind::Peripherals { catalogue } => json!({
             "type": "array",
-            "items": { "type": "string", "enum": FEATURES.schema_of(catalogue) },
-            "description": format!("{doc} Replaces the list; empty = the release has none of them."),
+            "items": { "type": "string", "enum": PERIPHERALS.schema_of(catalogue) },
+            "description": format!(
+                "{doc} Replaces the list; empty states the release needs none of them. Omit the \
+                 key to leave it unstated, where the platform default stands."
+            ),
         }),
         FactKind::Board { .. } => board_property(key, &doc),
     }
@@ -379,7 +385,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "update_release",
-            "description": "Set fields on an existing release: status, title, label, date, publisher, regions, controllers (VCS). `title` is the name this release shipped under when it differs from the game's canonical title (a localized or retitled reissue). An empty string clears title, label, publisher, or date (a carried-over date that is wrong for this release beats leaving a false one). `regions` replaces the release's region list; the vocabulary is closed, so a region the list lacks is a schema question, not a free-text value.",
+            "description": "Set fields on an existing release: status, title, label, date, publisher, regions, peripherals. `title` is the name this release shipped under when it differs from the game's canonical title (a localized or retitled reissue). An empty string clears title, label, publisher, or date (a carried-over date that is wrong for this release beats leaving a false one). `regions` replaces the release's region list; the vocabulary is closed, so a region the list lacks is a schema question, not a free-text value.",
             "inputSchema": object(json!({
                 "key": { "type": "string" },
                 "release_index": { "type": "integer" },
@@ -427,7 +433,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "move_artifact",
-            "description": "Move a dump into another release (by index). Use when a defective dump fabricated a release — an 8K overdump of a 4K game fingerprints as the wrong board and invents a product that never shipped; moving the dump out prunes a release left with nothing.",
+            "description": "Move a dump into another release (by index). Use when a defective dump fabricated a release — an 8K overdump of a 4K game fingerprints as the wrong board and invents a product that never shipped; moving the dump out prunes a release left with nothing. It also pulls a mod's dump back into a release — the undo for a wrong mark_mod — pruning the mod version, and the mod itself, left with nothing.",
             "inputSchema": object(json!({
                 "key": { "type": "string" },
                 "sha1": { "type": "string" },
@@ -472,7 +478,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "move_game",
-            "description": "Re-file an entry under another platform: an import that guessed the wrong tree files a Game Boy Color game in gb, or a dump the extension mislabelled in the wrong console's tree entirely. The manifest is rebuilt under the target platform and its directory moves; every hardware fact the target also states carries over, and one it does not — a Game Boy Color entry has no sgb/cgb of its own — is dropped and named in the reply. Refuses when the slug is already taken in the target tree; rename first. Flags follow, and the returned key is the one to use afterwards.",
+            "description": "Re-file an entry under another platform: an import that guessed the wrong tree files a Game Boy Color game in gb, or a dump the extension mislabelled in the wrong console's tree entirely. The manifest is rebuilt under the target platform and its directory moves; every hardware fact the target also states carries over, and one it does not — a Game Boy Color entry is CGB-required, so it offers neither enhancement — is dropped and named in the reply. Refuses when the slug is already taken in the target tree; rename first. Flags follow, and the returned key is the one to use afterwards.",
             "inputSchema": object(json!({
                 "key": { "type": "string" },
                 "tree": { "type": "string", "enum": missingno_gamedb::platform_dirs(),
