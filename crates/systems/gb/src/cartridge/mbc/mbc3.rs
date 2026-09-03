@@ -3,6 +3,8 @@ use super::GbRamSize;
 pub enum Mapped {
     Ram(u8),
     Clock(ClockRegister),
+    /// A selector no RAM bank or clock register answers to.
+    Unmapped,
 }
 
 #[derive(Clone, Copy)]
@@ -261,7 +263,7 @@ impl Mbc3 {
                     0x0a => Mapped::Clock(ClockRegister::Hours),
                     0x0b => Mapped::Clock(ClockRegister::DayLower),
                     0x0c => Mapped::Clock(ClockRegister::DayUpper),
-                    _ => panic!("Invalid bank select {:2x}", value),
+                    _ => Mapped::Unmapped,
                 };
                 false
             }

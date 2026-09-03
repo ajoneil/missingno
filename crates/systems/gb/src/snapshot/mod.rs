@@ -204,6 +204,10 @@ pub struct SachenState {
     pub a15_falls: u8,
 }
 
+/// The `mbc3_clock_sel` index for a selector no RAM bank or clock register
+/// answers to.
+const NO_CLOCK_REGISTER: u8 = 5;
+
 /// The clock register a $4000-$5FFF select code names, as a save-state index.
 fn clock_register_code(register: crate::cartridge::mbc::mbc3::ClockRegister) -> u8 {
     use crate::cartridge::mbc::mbc3::ClockRegister::*;
@@ -216,15 +220,17 @@ fn clock_register_code(register: crate::cartridge::mbc::mbc3::ClockRegister) -> 
     }
 }
 
-/// The clock register a saved index names; out-of-range falls back to Seconds.
-fn clock_register_from_code(code: u8) -> crate::cartridge::mbc::mbc3::ClockRegister {
+/// The clock register a saved index names; `None` for an index naming no
+/// register.
+fn clock_register_from_code(code: u8) -> Option<crate::cartridge::mbc::mbc3::ClockRegister> {
     use crate::cartridge::mbc::mbc3::ClockRegister::*;
     match code {
-        1 => Minutes,
-        2 => Hours,
-        3 => DayLower,
-        4 => DayUpper,
-        _ => Seconds,
+        0 => Some(Seconds),
+        1 => Some(Minutes),
+        2 => Some(Hours),
+        3 => Some(DayLower),
+        4 => Some(DayUpper),
+        _ => None,
     }
 }
 

@@ -1,8 +1,8 @@
 //! Reading the console into the per-subsystem boundary snapshot structs.
 
 use super::{
-    ApuSnapshot, CpuSnapshot, DmaSnapshot, Mbc6State, Mbc7State, MbcSnapshot, PpuSnapshot, RtcRegs,
-    SachenState, SerialSnapshot, TimerSnapshot, clock_register_code,
+    ApuSnapshot, CpuSnapshot, DmaSnapshot, Mbc6State, Mbc7State, MbcSnapshot, NO_CLOCK_REGISTER,
+    PpuSnapshot, RtcRegs, SachenState, SerialSnapshot, TimerSnapshot, clock_register_code,
 };
 use crate::Console;
 use crate::cartridge::mbc::Mbc;
@@ -185,6 +185,7 @@ pub fn capture_mbc<M: crate::Model>(gb: &Console<M>) -> MbcSnapshot {
             let (ram_bank, clock_register) = match m.mapped {
                 Mapped::Ram(bank) => (bank, None),
                 Mapped::Clock(register) => (0, Some(clock_register_code(register))),
+                Mapped::Unmapped => (0, Some(NO_CLOCK_REGISTER)),
             };
             MbcSnapshot {
                 clock_register,

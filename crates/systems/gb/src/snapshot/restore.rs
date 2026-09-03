@@ -132,8 +132,9 @@ fn restore_mbc(snap: &MbcSnapshot, mbc: &mut Mbc) {
             m.ram_and_clock_enabled = snap.ram_enabled;
             // Reseat the $A000 window's RAM-bank-vs-clock selection, then the
             // clock register file itself.
-            m.mapped = match snap.clock_register {
-                Some(code) => Mapped::Clock(clock_register_from_code(code)),
+            m.mapped = match snap.clock_register.map(clock_register_from_code) {
+                Some(Some(register)) => Mapped::Clock(register),
+                Some(None) => Mapped::Unmapped,
                 None => Mapped::Ram(snap.ram_bank),
             };
             if let (Some(clock), Some(rtc)) = (m.clock.as_mut(), snap.rtc.as_ref()) {

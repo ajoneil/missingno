@@ -111,7 +111,7 @@ impl Cartridge {
             Mbc::Mbc1(m) => Some(m.ram_bank),
             Mbc::Mbc3(m) => match m.mapped {
                 Mapped::Ram(bank) => Some(bank),
-                Mapped::Clock(_) => None,
+                Mapped::Clock(_) | Mapped::Unmapped => None,
             },
             Mbc::Mbc5(m) => Some(m.ram_bank),
             Mbc::Mbc6(m) => Some(m.ram_bank_a),
@@ -232,7 +232,7 @@ impl Cartridge {
             Mbc::Mbc3(m) => {
                 let ram_bank = match m.mapped {
                     Mapped::Ram(bank) => Some(bank),
-                    Mapped::Clock(_) => None,
+                    Mapped::Clock(_) | Mapped::Unmapped => None,
                 };
                 (Some(m.ram_and_clock_enabled), ram_bank, None)
             }

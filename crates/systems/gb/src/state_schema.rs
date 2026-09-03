@@ -205,7 +205,9 @@ pub fn dmg_boundary_fields() -> Vec<FieldDef> {
         // MBC3 clock-vs-RAM select and real-time clock (present only on an MBC3
         // save, and the RTC fields only when the cart carries a clock).
         FieldDef::boundary("mbc3_clock_sel", U8, "cartridge")
-            .help("MBC3 $A000 maps this clock register (0=S 1=M 2=H 3=DL 4=DH); absent ⇒ RAM")
+            .help(
+                "MBC3 $A000 maps this clock register (0=S 1=M 2=H 3=DL 4=DH, 5=none); absent ⇒ RAM",
+            )
             .nullable(),
         FieldDef::boundary("rtc_seconds", U8, "rtc")
             .help("RTC seconds ($08)")
