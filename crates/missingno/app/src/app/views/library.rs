@@ -126,7 +126,7 @@ impl App {
     }
 
     /// Kick off a background load of activity detail for a game.
-    pub(super) fn load_activity_async(&self, sha1: &str) -> Task<Message> {
+    pub(in crate::app) fn load_activity_async(&self, sha1: &str) -> Task<Message> {
         let sha1 = sha1.to_string();
         if let Some(game_dir) = self.store.game_dir(&sha1) {
             let game_dir = game_dir.to_path_buf();

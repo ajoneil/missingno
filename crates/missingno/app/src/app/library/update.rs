@@ -148,6 +148,8 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                     {
                         super::activity::write_import(&game_dir, &data);
                         app.store.notify_activity_changed(&sha1);
+                        app.store.mark_activity_loading(&sha1);
+                        return app.load_activity_async(&sha1);
                     }
                 }
                 PlayWithSave(save_id) => {
@@ -272,6 +274,8 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                     {
                         super::activity::write_cartridge_import(&game_dir, &sram);
                         app.store.notify_activity_changed(&sha1);
+                        app.store.mark_activity_loading(&sha1);
+                        return app.load_activity_async(&sha1);
                     }
                 }
                 WriteSave => {
@@ -298,6 +302,8 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                     {
                         super::activity::write_cart_write(&game_dir, &sram);
                         app.store.notify_activity_changed(&sha1);
+                        app.store.mark_activity_loading(&sha1);
+                        return app.load_activity_async(&sha1);
                     }
                 }
                 Flash(sha1) => {
