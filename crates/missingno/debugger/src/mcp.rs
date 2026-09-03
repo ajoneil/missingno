@@ -179,7 +179,7 @@ fn load_rom_tool() -> Tool {
                 },
                 "tv_standard": {
                     "type": "string",
-                    "enum": ["ntsc", "pal", "secam"],
+                    "enum": ["ntsc", "pal", "pal60", "ntsc50", "palm", "secam"],
                     "description": "VCS broadcast-standard override",
                 },
             },

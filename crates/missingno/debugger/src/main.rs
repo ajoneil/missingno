@@ -20,8 +20,8 @@ use missingno_session::factory::{self, LoadError};
 const DEFAULT_PORT: u16 = 3333;
 
 const USAGE: &str = "usage: missingno-debugger [<rom>] [--port N] [--mcp] [--allow-attach] \
-     [--boot-rom PATH] [--system NAME] [--cart-type CODE] [--tv-standard ntsc|pal|secam] \
-     [--overdump]";
+     [--boot-rom PATH] [--system NAME] [--cart-type CODE] \
+     [--tv-standard ntsc|pal|pal60|ntsc50|palm|secam] [--overdump]";
 
 struct Args {
     rom: Option<PathBuf>,
@@ -151,7 +151,7 @@ fn run() -> Result<(), String> {
             ),
             // Size-detection is what fails on a bankswitched VCS image, and
             // the message alone does not say the board can be supplied.
-            error if args.cart_type.is_none() => {
+            error @ LoadError::Core(_) if args.cart_type.is_none() => {
                 format!("{error} — if this is a bankswitched cart, name its board with --cart-type")
             }
             error => error.to_string(),
