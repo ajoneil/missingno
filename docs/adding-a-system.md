@@ -175,7 +175,7 @@ a hardware fact the core states, never a presentation coefficient. `Lcd { native
 panel, pixel_aspect }` names the panel class (`PassiveStn` for the DMG's slow
 passive-matrix STN, `ActiveTft` for the CGB's faster TFT); `Crt { standard,
 pixel_aspect }` names the broadcast standard. The app's single screen
-renderer (`crates/missingno/app/src/app/screen.rs`) keys its persistence blend and
+renderer (`crates/missingno/iced/src/screen.rs`) keys its persistence blend and
 its cosmetic overlay (an LCD pixel grid vs. CRT scanlines) off that technology,
 and aspect-fits by the stated `pixel_aspect`. State the technology and the
 console renders authentically; the coefficients stay app policy.

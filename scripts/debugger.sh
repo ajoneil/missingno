@@ -3,7 +3,8 @@
 # Source this file to get dbg_* functions:  . scripts/debugger.sh
 #
 # These are core-agnostic: they drive the generic missingno-debugger HTTP
-# transport (any Game Boy, Atari VCS, NES or Master System ROM), reading the
+# transport (any Game Boy, Atari VCS or SG-1000 ROM — NES and Master System
+# when the debugger is built with those features), reading the
 # console only through the Session seam routes (/status, /sections, /registers,
 # /memory, /disassembly, /step*, /waveforms, /graphics, /watches).
 #

@@ -14,8 +14,9 @@
 
   <description>
     <p>
-      Missingno is an emulator for the Game Boy, Game Boy Color, and Atari VCS
-      (2600). It is built around faithful models of the original hardware:
+      Missingno is an emulator for the Game Boy, Game Boy Color, Atari VCS
+      (2600), and Sega SG-1000. It is built around faithful models of the
+      original hardware:
       games look, sound, and behave as they do on the real machines, with
       display options that recreate the look of the original LCD and CRT
       screens.
