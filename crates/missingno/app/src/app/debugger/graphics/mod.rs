@@ -150,15 +150,22 @@ pub fn stacked_tiles(tile: u16, flip_y: bool) -> (u16, u16) {
 }
 
 /// Split a rectangle that runs past the map edges into its wrapped-around
-/// pieces, all within `[0, map_size)`. A rectangle inside the map returns one
-/// piece unchanged.
-pub fn wrapping_parts(x: f32, y: f32, w: f32, h: f32, map_size: f32) -> Vec<(f32, f32, f32, f32)> {
+/// pieces, all within the map's width and height. A rectangle inside the map
+/// returns one piece unchanged.
+pub fn wrapping_parts(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    map_width: f32,
+    map_height: f32,
+) -> Vec<(f32, f32, f32, f32)> {
     let mut parts = Vec::new();
-    let wraps_x = x + w > map_size;
-    let wraps_y = y + h > map_size;
+    let wraps_x = x + w > map_width;
+    let wraps_y = y + h > map_height;
 
-    let w1 = if wraps_x { map_size - x } else { w };
-    let h1 = if wraps_y { map_size - y } else { h };
+    let w1 = if wraps_x { map_width - x } else { w };
+    let h1 = if wraps_y { map_height - y } else { h };
 
     parts.push((x, y, w1, h1));
 
@@ -203,7 +210,7 @@ mod tests {
 
     #[test]
     fn viewport_inside_map_is_one_piece() {
-        let parts = wrapping_parts(10.0, 20.0, 160.0, 144.0, 256.0);
+        let parts = wrapping_parts(10.0, 20.0, 160.0, 144.0, 256.0, 256.0);
         assert_eq!(parts, vec![(10.0, 20.0, 160.0, 144.0)]);
     }
 
@@ -211,7 +218,7 @@ mod tests {
     fn viewport_wraps_on_both_axes() {
         // A viewport straddling the right and bottom edges splits into four
         // pieces covering all four corners.
-        let parts = wrapping_parts(200.0, 200.0, 160.0, 144.0, 256.0);
+        let parts = wrapping_parts(200.0, 200.0, 160.0, 144.0, 256.0, 256.0);
         assert_eq!(
             parts,
             vec![

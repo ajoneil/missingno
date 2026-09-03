@@ -67,29 +67,32 @@ impl TileMapPane {
         let map = &graphics.maps[self.displayed_map(graphics)];
 
         let (width, height, pixels) = compose(map, graphics, colors);
-        let map_size = width.max(height) as f32;
+        let (map_width, map_height) = (width as f32, height as f32);
         let pixels: std::sync::Arc<[u8]> = pixels.into();
         let overlay = ViewportOverlay {
             viewports: map.viewports.clone(),
-            map_size,
+            map_width,
+            map_height,
         };
 
         pane(
             self.title_bar(graphics, close),
             responsive(move |size| {
-                let fit = size.width.min(size.height);
+                // Aspect-fit: not every family's map is square.
+                let scale = (size.width / map_width).min(size.height / map_height);
+                let (fit_width, fit_height) = (map_width * scale, map_height * scale);
                 let renderer = TextureRenderer::with_pixels(width, height, pixels.clone());
                 container(
                     Stack::new()
                         .push(
                             shader(renderer)
-                                .width(Length::Fixed(fit))
-                                .height(Length::Fixed(fit)),
+                                .width(Length::Fixed(fit_width))
+                                .height(Length::Fixed(fit_height)),
                         )
                         .push(
                             iced::widget::canvas(overlay.clone())
-                                .width(Length::Fixed(fit))
-                                .height(Length::Fixed(fit)),
+                                .width(Length::Fixed(fit_width))
+                                .height(Length::Fixed(fit_height)),
                         ),
                 )
                 .center(Fill)
@@ -196,7 +199,8 @@ fn compose(
 #[derive(Clone)]
 struct ViewportOverlay {
     viewports: Vec<Viewport>,
-    map_size: f32,
+    map_width: f32,
+    map_height: f32,
 }
 
 impl Program<app::Message> for ViewportOverlay {
@@ -211,7 +215,7 @@ impl Program<app::Message> for ViewportOverlay {
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
-        let scale = bounds.width / self.map_size;
+        let scale = bounds.width / self.map_width;
 
         for viewport in &self.viewports {
             let stroke = Stroke::default()
@@ -221,7 +225,8 @@ impl Program<app::Message> for ViewportOverlay {
             let (w, h) = (viewport.width as f32, viewport.height as f32);
 
             if viewport.wraps {
-                for (px, py, pw, ph) in wrapping_parts(x, y, w, h, self.map_size) {
+                for (px, py, pw, ph) in wrapping_parts(x, y, w, h, self.map_width, self.map_height)
+                {
                     stroke_rect(
                         &mut frame,
                         px * scale,
