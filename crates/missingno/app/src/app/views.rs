@@ -159,11 +159,12 @@ impl App {
                     Some(Message::WindowResized(size))
                 }
                 iced::Event::Window(window::Event::CloseRequested) => Some(Message::CloseRequested),
-                // Escape always exits fullscreen (not rebindable — it's an escape hatch)
+                // Escape puts away the launch window, else exits fullscreen
+                // (not rebindable — it's an escape hatch)
                 iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                     key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
                     ..
-                }) => Some(Message::ExitFullscreen),
+                }) => Some(Message::EscapePressed),
                 _ => None,
             }),
             // A notice offering an action waits to be taken rather than timing
@@ -178,17 +179,13 @@ impl App {
                 Subscription::none()
             },
             // The launch window's happy path is one keystroke: Enter starts what
-            // it is showing, Escape puts it away.
+            // it is showing (Escape, above, puts it away).
             if self.launch_window.is_some() {
                 event::listen_with(|event, _, _| match event {
                     iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                         key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
                         ..
                     }) => Some(launch::Message::Launch.into()),
-                    iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
-                        ..
-                    }) => Some(launch::Message::Close.into()),
                     _ => None,
                 })
             } else {

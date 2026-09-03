@@ -574,7 +574,7 @@ enum DetailMessage {
     ExportSaveSelected(String, Option<rfd::FileHandle>),
     OpenScreenshotGallery(String, usize),
     RemoveGame,
-    GameMetadataRefreshed(library::hasheous::GameInfo),
+    GameMetadataRefreshed(String, library::hasheous::GameInfo),
 }
 
 /// Messages specific to cartridge operations.
@@ -768,7 +768,7 @@ enum Message {
 
     WindowResized(iced::Size),
     ToggleFullscreen,
-    ExitFullscreen,
+    EscapePressed,
     MouseMoved,
     HideCursorTick,
     CloseRequested,
@@ -1121,7 +1121,10 @@ impl App {
                 return window::latest().and_then(move |id| window::set_mode(id, mode));
             }
 
-            Message::ExitFullscreen => {
+            Message::EscapePressed => {
+                if self.launch_window.is_some() {
+                    return self.update(launch::Message::Close.into());
+                }
                 if matches!(self.fullscreen, Fullscreen::Active { .. }) {
                     self.fullscreen = Fullscreen::Windowed;
                     return window::latest()
