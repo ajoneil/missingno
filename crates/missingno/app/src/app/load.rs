@@ -161,6 +161,7 @@ pub fn launch_from_window(app: &mut App) -> Task<app::Message> {
 
     let outcome = match window.target {
         launch::Target::Library => {
+            restate_platform(app, &window.sha1, window.platform);
             if select_game(app, &window.sha1) {
                 start_current_game(app, None, window.overrides.clone())
             } else {
@@ -185,6 +186,19 @@ pub fn launch_from_window(app: &mut App) -> Task<app::Message> {
             app.launch_window = Some(window);
             Task::none()
         }
+    }
+}
+
+/// The system the window names becomes the entry's word: a family's current
+/// claim, or the user's pick for media nothing claims.
+fn restate_platform(app: &mut App, sha1: &str, platform: Option<system::Platform>) {
+    if let Some(platform) = platform
+        && let Some((game_dir, mut entry)) = library::find_by_sha1(sha1)
+        && entry.platform != Some(platform)
+    {
+        entry.platform = Some(platform);
+        library::save_entry(&game_dir, &entry);
+        app.store.notify_metadata_changed(sha1);
     }
 }
 
@@ -220,6 +234,7 @@ fn finish_start(
         let mut debugger = app::debugger::Debugger::new(handle, platform, regions, screen_view);
         debugger.load_sidecars(rom_path);
         debugger.set_palette(palette);
+        debugger.set_use_sgb_colors(app.settings.use_sgb_colors);
         // The game is installed first so the attach socket, if the user allows
         // one, publishes the platform it will serve.
         app.game = Game::Loaded(LoadedGame::Debugger(debugger));
@@ -234,7 +249,6 @@ fn finish_start(
     let mut emu =
         app::emulator::Emulator::new(handle, facts, platform, app.settings.presentation());
     emu.set_palette(palette);
-        debugger.set_use_sgb_colors(app.settings.use_sgb_colors);
     emu.run();
     app.game = Game::Loaded(LoadedGame::Emulator(emu));
     app.install_session(session, audio);
