@@ -105,11 +105,14 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                     if let Some(sha1) = app.viewing_sha1().map(|s| s.to_string())
                         && !app.catalogue.curated(&sha1)
                     {
+                        let looked_up = sha1.clone();
                         return Task::perform(
-                            smol::unblock(move || super::hasheous::lookup(&sha1).ok().flatten()),
+                            smol::unblock(move || {
+                                super::hasheous::lookup(&looked_up).ok().flatten()
+                            }),
                             move |info| {
                                 if let Some(info) = info {
-                                    app::Message::Detail(GameMetadataRefreshed(info))
+                                    app::Message::Detail(GameMetadataRefreshed(sha1.clone(), info))
                                 } else {
                                     app::Message::None
                                 }
@@ -117,10 +120,10 @@ pub(in crate::app) fn handle(app: &mut app::App, message: app::Message) -> Task<
                         );
                     }
                 }
-                GameMetadataRefreshed(mut info) => {
-                    if let Some(sha1) = app.viewing_sha1().map(str::to_owned)
-                        && let Some((game_dir, mut entry)) = super::find_by_sha1(&sha1)
-                    {
+                // The result lands on the game it was looked up for, wherever
+                // the user has navigated to since.
+                GameMetadataRefreshed(sha1, mut info) => {
+                    if let Some((game_dir, mut entry)) = super::find_by_sha1(&sha1) {
                         let cover_art = info.cover_art.take();
                         entry.apply_metadata(info);
                         super::save_entry(&game_dir, &entry);
