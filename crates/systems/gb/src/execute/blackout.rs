@@ -10,10 +10,9 @@ impl<M: Model> Console<M> {
     /// boundary). The model decides: a CGB armed speed switch starts the
     /// blackout (the CPU stays stopped while the divider/PPU run, then
     /// re-engages at the new speed); otherwise the CPU stays stopped.
-    /// `elapsed_tcycles` is the CPU T-cycle count of the step that just ran.
     /// Public for external phase-stepping drivers (tracing), which must call
     /// this at each instruction boundary like `step` does.
-    pub fn resolve_stop(&mut self, _elapsed_tcycles: u32) {
+    pub fn resolve_stop(&mut self) {
         if !self.chassis.cpu.is_stopped() {
             return;
         }

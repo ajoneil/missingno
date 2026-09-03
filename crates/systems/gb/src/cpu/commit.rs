@@ -9,8 +9,8 @@ use super::registers::{Register8, Register16};
 ///
 /// Produced by `decode` for single-M-cycle instructions (Phase::Empty arms)
 /// or by the terminal step of a multi-M-cycle Phase; consumed by
-/// `Cpu::commit`, which reads pre-edge state (via `ime.output()` for
-/// `dispatch_trigger`) before dispatching the variant-specific mutation.
+/// `apply_commit`, which reads pre-edge state (via `ime.output()` for
+/// `step_dispatch_set`) before dispatching the variant-specific mutation.
 ///
 /// Each variant corresponds to a specific DFF-capture pattern. Variants for
 /// multi-M-cycle terminal-step commits reuse single-M-cycle variants where

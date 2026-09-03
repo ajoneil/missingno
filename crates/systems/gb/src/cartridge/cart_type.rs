@@ -3,7 +3,7 @@
 //!
 //! A Game Boy cartridge states its own board across three header bytes — the
 //! mapper and its extras at `$0147`, the ROM's size at `$0148`, the RAM chip's
-//! at `$0149` — so the header is the normal path. A few boards no byte names —
+//! at `$0149` — so the header is the normal path. No byte names a few boards —
 //! a multicart, the MBC30 chip, an unlicensed mapper hiding behind a borrowed
 //! byte — so a caller that knows better can state the board instead, and a
 //! stated board is a whole statement: it replaces the header's word, parts and

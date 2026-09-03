@@ -42,8 +42,8 @@ impl ClockRatio {
         (n * self.denominator - self.remainder).div_ceil(self.numerator)
     }
 
-    /// The carried residue, in master ticks — where the division stands
-    /// between two client ticks. A boundary a save state can name.
+    /// The carried residue, in `1/numerator` of a master tick — where the
+    /// division stands between two client ticks. A boundary a save state can name.
     pub fn phase(&self) -> u64 {
         self.remainder
     }

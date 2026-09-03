@@ -237,7 +237,7 @@ impl SessionHandle {
     /// paused the closure sees the live core immediately, and while running it
     /// runs at the next frame boundary — never mid-frame. On a console-only
     /// session ([`is_debugger`](Self::is_debugger) is false) the job is dropped
-    /// unanswered, so callers must gate on the session kind.
+    /// unanswered and this panics, so callers must gate on the session kind.
     pub fn with_session<R, F>(&self, f: F) -> R
     where
         F: FnOnce(&mut Session) -> R + Send + 'static,

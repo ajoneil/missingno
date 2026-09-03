@@ -66,7 +66,7 @@ impl Cpu {
 
     /// Update `irq_pending` from the priority-encoded `IF & IE`.
     /// Combinational, not IME-gated — the IME gate sits in
-    /// `dispatch_trigger`; the vector resolves separately via
+    /// `step_dispatch_set`; the vector resolves separately via
     /// `pending_vector_resolve` at the ISR's M3→M4 push.
     pub fn update_interrupt_state(
         &mut self,

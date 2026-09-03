@@ -1,5 +1,5 @@
 //! The machine's input surfaces rendered as JSON — the one encoding every
-//! transport publishes, so the HTTP `/ports` body and the MCP `get_ports` body
+//! transport publishes, so the HTTP `/ports` body and the MCP `list_ports` body
 //! are the same document.
 
 use missingno_core::ports::{

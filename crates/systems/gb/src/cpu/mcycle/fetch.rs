@@ -118,7 +118,7 @@ impl Cpu {
 
     /// Pure decode — returns the decoded `Instruction` with its `Phase`
     /// and retire-edge `Commit`. Does not mutate IME / dispatch state;
-    /// `retire_edge` owns those.
+    /// `apply_commit` owns those.
     pub(super) fn decode_retire(
         &mut self,
         bytes: [u8; 3],

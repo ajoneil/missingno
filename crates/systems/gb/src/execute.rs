@@ -79,7 +79,7 @@ impl<M: Model> Console<M> {
         new_screen |= r.new_screen;
         tcycles += r.tcycles;
 
-        self.resolve_stop(tcycles);
+        self.resolve_stop();
         self.manage_dma_hold();
 
         let sram_dirty = self.chassis.external.cartridge.take_sram_dirty();

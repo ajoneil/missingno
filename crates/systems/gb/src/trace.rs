@@ -409,7 +409,7 @@ pub fn step_instruction_tcycle<M: ConsoleUi>(
     // Mirror `step`: resolve a settled STOP (CGB speed-switch blackout) and
     // engage/release a VRAM-DMA CPU hold, so traced runs progress past STOP and
     // run their DMAs like untraced ones.
-    gb.resolve_stop(tcycles);
+    gb.resolve_stop();
     gb.manage_dma_hold();
 
     crate::execute::StepResult {
