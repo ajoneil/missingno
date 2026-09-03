@@ -2,6 +2,7 @@
 name = "missingno-nes"
 version.workspace = true
 edition = "2024"
+license = "MIT"
 
 [features]
 morepork = ["dep:morepork", "dep:sha2"]

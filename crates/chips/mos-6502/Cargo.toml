@@ -2,6 +2,7 @@
 name = "missingno-mos-6502"
 version.workspace = true
 edition = "2024"
+license = "MIT"
 
 [dependencies]
 missingno-core = { path = "../../missingno/core" }

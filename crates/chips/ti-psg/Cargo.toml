@@ -2,6 +2,7 @@
 name = "missingno-ti-psg"
 version.workspace = true
 edition = "2024"
+license = "MIT"
 
 [features]
 # The debugger's register view of the part, in missingno-core's inspection

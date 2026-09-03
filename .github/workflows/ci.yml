@@ -45,6 +45,7 @@ jobs:
           - { name: sg1000 }
           - { name: sms }
           - { name: test-support }
+          - { name: trace }
           - { name: ti-psg }
           - { name: ti-vdp }
           - { name: vcs }

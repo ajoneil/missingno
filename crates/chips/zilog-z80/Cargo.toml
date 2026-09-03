@@ -2,6 +2,7 @@
 name = "missingno-zilog-z80"
 version.workspace = true
 edition = "2024"
+license = "MIT"
 
 [dependencies]
 missingno-core = { path = "../../missingno/core" }

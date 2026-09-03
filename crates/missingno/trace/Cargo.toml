@@ -2,6 +2,7 @@
 name = "missingno-trace"
 version.workspace = true
 edition = "2024"
+license = "MIT"
 
 [dependencies]
 # The trace container, and the state vocabulary its columns are planned from.

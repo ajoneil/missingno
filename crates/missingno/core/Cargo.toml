@@ -2,6 +2,7 @@
 name = "missingno-core"
 version.workspace = true
 edition = "2024"
+license = "MIT"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
