@@ -313,6 +313,7 @@ impl App {
                     debugger.load_sidecars(rom_path);
                 }
                 debugger.set_palette(palette);
+                debugger.set_use_sgb_colors(self.settings.use_sgb_colors);
                 self.game = Game::Loaded(LoadedGame::Debugger(debugger));
                 self.install_session(new_session, audio);
             }

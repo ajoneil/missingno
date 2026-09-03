@@ -725,6 +725,10 @@ impl Debugger {
         }
     }
 
+    pub fn set_use_sgb_colors(&mut self, enabled: bool) {
+        self.panes.set_use_sgb_colors(enabled);
+    }
+
     pub fn set_palette(&mut self, palette: PaletteChoice) {
         self.panes.set_palette(palette);
         // The DMG render palettes flow through the readout's colours; rebuild so

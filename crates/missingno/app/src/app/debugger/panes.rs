@@ -367,6 +367,7 @@ pub struct DebuggerPanes {
     family: &'static Family,
     panes: Option<pane_grid::State<Box<dyn Pane>>>,
     palette: PaletteChoice,
+    use_sgb_colors: bool,
     /// The technology the core states, applied to any screen pane the grid
     /// builds — including one reopened from the rail after being closed.
     screen_technology: DisplayTechnology,
@@ -419,6 +420,7 @@ impl DebuggerPanes {
             family,
             panes,
             palette: PaletteChoice::default(),
+            use_sgb_colors: true,
             screen_technology: screen_view.technology(),
         };
         this.with_screen_pane(|pane| pane.adopt_screen_view(screen_view));
@@ -620,6 +622,12 @@ impl DebuggerPanes {
         self.with_screen_pane(|pane| pane.set_palette_policy(policy));
     }
 
+    pub fn set_use_sgb_colors(&mut self, enabled: bool) {
+        self.use_sgb_colors = enabled;
+        let policy = self.screen_palette_policy();
+        self.with_screen_pane(|pane| pane.set_palette_policy(policy));
+    }
+
     /// The colour policy the screen pane needs for this family and palette;
     /// `None` where the core resolves its own colour.
     fn screen_palette_policy(&self) -> Option<Box<dyn PalettePolicy>> {
@@ -627,7 +635,7 @@ impl DebuggerPanes {
             .platforms
             .iter()
             .any(|platform| matches!(platform, Platform::GameBoy | Platform::GameBoyColor))
-            .then(|| gb::dmg_palette_policy(self.palette, true))
+            .then(|| gb::dmg_palette_policy(self.palette, self.use_sgb_colors))
     }
 
     /// The pane grid, rendered from the live console while paused or the
@@ -912,6 +920,7 @@ mod tests {
             family: &GB_FAMILY,
             panes: None,
             palette: PaletteChoice::default(),
+            use_sgb_colors: true,
             screen_technology: ScreenView::new().technology(),
         }
     }

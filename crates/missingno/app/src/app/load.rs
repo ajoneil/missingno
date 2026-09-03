@@ -234,6 +234,7 @@ fn finish_start(
     let mut emu =
         app::emulator::Emulator::new(handle, facts, platform, app.settings.presentation());
     emu.set_palette(palette);
+        debugger.set_use_sgb_colors(app.settings.use_sgb_colors);
     emu.run();
     app.game = Game::Loaded(LoadedGame::Emulator(emu));
     app.install_session(session, audio);

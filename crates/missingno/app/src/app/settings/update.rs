@@ -96,6 +96,9 @@ pub(in crate::app) fn handle(
         super::view::Message::SetUseSgbColors(enabled) => {
             app.settings.use_sgb_colors = enabled;
             app.settings.save();
+            if let Game::Loaded(LoadedGame::Debugger(debugger)) = &mut app.game {
+                debugger.set_use_sgb_colors(enabled);
+            }
             push_presentation(app);
         }
         super::view::Message::SetPersistence(enabled) => {
