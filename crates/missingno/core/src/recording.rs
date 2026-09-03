@@ -34,8 +34,9 @@ use crate::video::Frame;
 pub const RECORDING_MAGIC: &[u8; 4] = b"MPRC";
 
 /// Recording-container version. A reader rejects any other value outright — the
-/// effort-wide breaking posture, regenerate rather than migrate.
-pub const RECORDING_VERSION: u8 = 2;
+/// effort-wide breaking posture, regenerate rather than migrate. Checkpoints
+/// hash resolved pixels, so a change to how a frame resolves is a new version.
+pub const RECORDING_VERSION: u8 = 3;
 
 const EVENT_CONTROL: u8 = 0;
 const EVENT_PLUG: u8 = 1;
