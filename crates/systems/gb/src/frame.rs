@@ -67,6 +67,19 @@ pub fn shade_levels(screen: &Screen) -> Box<[f32]> {
     levels.into()
 }
 
+/// The transmission levels of an SGB frame viewed on the panel: the stored
+/// indices, unless MASK_EN black has blanked the picture — the rule the
+/// resolved image follows.
+pub fn sgb_shade_levels(screen: &Screen, render_data: &SgbRenderData) -> Box<[f32]> {
+    match render_data.mask_mode {
+        MaskMode::Black => {
+            let pixels = screen::PIXELS_PER_LINE as usize * screen::NUM_SCANLINES as usize;
+            vec![1.0; pixels].into()
+        }
+        _ => shade_levels(screen),
+    }
+}
+
 impl GbFrame {
     /// Resolve to RGBA under a chosen monochrome palette and the SGB-colours
     /// choice — the frontend's colour policy applied to a delivered frame.

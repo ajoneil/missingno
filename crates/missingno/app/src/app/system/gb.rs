@@ -4,7 +4,7 @@
 //! format are app policy wired in here.
 
 use missingno_gb::cartridge::{GbCartType, GbCartridgeError};
-use missingno_gb::frame::{GbFrame, SgbScreen, gradient_stops, shade_levels};
+use missingno_gb::frame::{GbFrame, SgbScreen, gradient_stops, sgb_shade_levels};
 use missingno_gb::ppu::types::palette::PaletteChoice;
 use missingno_gb::system::{LINK_CABLE, LINK_DISCONNECTED, LINK_PRINTER, create_console_with_link};
 use missingno_gb::{BootRom, GameBoy, cartridge::Cartridge, serial_transfer::SerialLink};
@@ -57,9 +57,10 @@ impl PalettePolicy for GbPalettePolicy {
         match frame.as_any().downcast_ref::<GbFrame>() {
             // SGB colours are a TV image; the monochrome preference views the
             // same indices on the panel.
-            Some(GbFrame::Sgb(SgbScreen { screen, .. })) => {
-                (!self.use_sgb_colors).then(|| shade_levels(screen))
-            }
+            Some(GbFrame::Sgb(SgbScreen {
+                screen,
+                render_data,
+            })) => (!self.use_sgb_colors).then(|| sgb_shade_levels(screen, render_data)),
             _ => frame.response_levels(),
         }
     }
