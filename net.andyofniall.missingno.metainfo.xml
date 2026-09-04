@@ -42,27 +42,27 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.8/screenshots/library.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.9/screenshots/library.png</image>
       <caption>Game library with cover art and play history</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.8/screenshots/game-details.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.9/screenshots/game-details.png</image>
       <caption>Game details with activity log and save and screenshot management</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.8/screenshots/gameplay.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.9/screenshots/gameplay.png</image>
       <caption>Playing a Game Boy game with Super Game Boy colours</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.8/screenshots/homebrew.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.9/screenshots/homebrew.png</image>
       <caption>Browse and download homebrew games from Homebrew Hub</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.8/screenshots/cartridge.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.9/screenshots/cartridge.png</image>
       <caption>Read and write physical Game Boy cartridges with a GBxCart RW</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.8/screenshots/debugger.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.9/screenshots/debugger.png</image>
       <caption>The debugger stepping an Atari VCS game: CPU and TIA state, disassembly, and audio channels</caption>
     </screenshot>
   </screenshots>
@@ -79,6 +79,17 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="26.9" date="2026-09-05">
+      <description>
+        <ul>
+          <li>Sega SG-1000 support</li>
+          <li>Game Boy and Game Boy Color performance improvements</li>
+          <li>Super Game Boy compatibility fixes</li>
+          <li>Higher-quality LCD effects</li>
+          <li>The launch window and game settings can override a game's cartridge board, console, and TV standard</li>
+        </ul>
+      </description>
+    </release>
     <release version="26.8" date="2026-08-01">
       <description>
         <ul>
