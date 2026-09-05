@@ -31,7 +31,7 @@ morepork = [
 
 [dependencies]
 cpal = { version = "0.18", optional = true }
-rtrb = { version = "0.3", optional = true }
+rtrb = { version = "0.4", optional = true }
 missingno-core = { path = "../core" }
 missingno-gb = { path = "../../systems/gb", optional = true }
 missingno-gbc = { path = "../../systems/gbc", optional = true }
