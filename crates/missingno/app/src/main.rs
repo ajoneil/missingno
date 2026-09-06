@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use missingno_gb::BootRom;
+use missingno_core::firmware::FirmwareValue;
+use missingno_core::launch::LaunchValues;
 
 mod app;
 mod cartridge_rw;
@@ -21,7 +22,8 @@ struct Args {
     #[arg(short, long)]
     debugger: bool,
 
-    /// Path to a boot ROM (DMG: 256 bytes, CGB: 2304 bytes).
+    /// Path to a firmware image to map for this run, such as a Game Boy boot
+    /// ROM. The socket it fills is the one its length fits.
     #[arg(long)]
     boot_rom: Option<PathBuf>,
 
@@ -58,23 +60,46 @@ enum Command {
         #[arg(short, long, default_value = "70224")]
         cycles: u64,
 
-        /// Path to a boot ROM (DMG: 256 bytes, CGB: 2304 bytes).
+        /// Path to a firmware image to map for this run, such as a Game Boy
+        /// boot ROM.
         #[arg(long)]
         boot_rom: Option<PathBuf>,
     },
 }
 
-fn load_boot_rom(path: Option<PathBuf>) -> Option<BootRom> {
-    path.map(|path| {
-        let data = std::fs::read(&path).unwrap_or_else(|e| {
-            eprintln!("error: failed to read boot ROM {}: {e}", path.display());
+/// The socket a named firmware image fills, classified once against every
+/// socket the registered families state: a recognised image names its own, and
+/// anything else fits the socket that takes its length.
+fn firmware_image(path: Option<PathBuf>) -> Option<(&'static str, FirmwareValue)> {
+    let path = path?;
+    let bytes = std::fs::read(&path).unwrap_or_else(|e| {
+        eprintln!(
+            "error: failed to read firmware image {}: {e}",
+            path.display()
+        );
+        std::process::exit(1);
+    });
+    let slots = app::system::firmware_slots();
+    let fitted = slots
+        .iter()
+        .find(|slot| slot.identify(&bytes).is_some())
+        .or_else(|| slots.iter().find(|slot| slot.size == bytes.len()));
+    match fitted {
+        Some(slot) => Some((slot.id, FirmwareValue::Bytes(bytes))),
+        None => {
+            let mut sizes: Vec<usize> = slots.iter().map(|slot| slot.size).collect();
+            sizes.sort_unstable();
+            sizes.dedup();
+            let named: Vec<String> = sizes.iter().map(|size| format!("{size} bytes")).collect();
+            eprintln!(
+                "error: {} is {} bytes; a firmware image is {}",
+                path.display(),
+                bytes.len(),
+                named.join(" or ")
+            );
             std::process::exit(1);
-        });
-        BootRom::from_bytes(data).unwrap_or_else(|len| {
-            eprintln!("error: boot ROM must be 256 bytes (DMG) or 2304 bytes (CGB), got {len}");
-            std::process::exit(1);
-        })
-    })
+        }
+    }
 }
 
 fn main() -> iced::Result {
@@ -96,13 +121,17 @@ fn main() -> iced::Result {
                 cycles,
                 boot_rom,
             } => {
-                trace::run(rom, profile, output, cycles, load_boot_rom(boot_rom));
+                let mut launch = LaunchValues::default();
+                if let Some((slot, image)) = firmware_image(boot_rom) {
+                    launch.set_firmware(slot, image);
+                }
+                trace::run(rom, profile, output, cycles, launch);
             }
         }
         return Ok(());
     }
 
-    let boot_rom = load_boot_rom(args.boot_rom);
+    let cli_firmware = firmware_image(args.boot_rom);
 
     let link = create_link(args.link_listen, args.link_connect);
 
@@ -110,7 +139,7 @@ fn main() -> iced::Result {
         args.rom_file,
         args.debugger,
         link,
-        boot_rom,
+        cli_firmware,
         args.allow_ui_automation,
     )
 }

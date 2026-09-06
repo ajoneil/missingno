@@ -70,5 +70,5 @@ impl RecentGames {
 }
 
 fn recent_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|dir| dir.join("missingno").join("recent.ron"))
+    missingno_session::config_dir().map(|dir| dir.join("recent.ron"))
 }

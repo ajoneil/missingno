@@ -107,16 +107,12 @@ fn start(app: &mut App, request: Request<'_>) -> Result<String, String> {
 
     // The rows this launch answers follow the user's own values: a Game Boy
     // cartridge set to run on the Color offers the Color's firmware socket.
-    let descriptors = (family.options)(&request.rom, &request.overrides);
-    let facts = launch::facts(
+    let (descriptors, facts) = launch::plan(
         family,
         &request.rom,
-        &descriptors,
-        &app.catalogue,
+        &request.overrides,
         &sha1,
-        app.boot_rom.as_ref(),
-        &app.firmware,
-        &app.settings.firmware,
+        &app.launch_sources(),
     );
     let mut values = launch::resolve(&descriptors, &request.overrides, &facts);
     // Every firmware choice becomes the bytes the core reads, or a refusal

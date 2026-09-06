@@ -140,6 +140,12 @@ pub fn systems_slot(slot: &str) -> String {
     format!("{SYSTEMS_SLOT_PREFIX}{slot}")
 }
 
+/// Whether `id` names a firmware socket's pick list, which a client opens by
+/// other means than an activation.
+pub fn is_systems_slot(id: &str) -> bool {
+    id.starts_with(SYSTEMS_SLOT_PREFIX)
+}
+
 /// Whether `id` names a pick list of the play screen's Controllers section,
 /// whose elements that section enumerates from the running machine.
 pub fn is_controllers(id: &str) -> bool {

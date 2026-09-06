@@ -29,6 +29,11 @@ fn value_term(key: &str, value: u32) -> WatchTerm {
 /// A 4 KiB ROM whose reset vector points at its origin ($F000). The bytes
 /// there decode to whatever; the beam advances per colour clock regardless of
 /// what the CPU executes.
+/// No firmware folder: every test here supplies its own image or none at all.
+fn no_firmware() -> missingno_session::FirmwareLibrary {
+    missingno_session::FirmwareLibrary::scan(std::path::PathBuf::new(), &[])
+}
+
 fn minimal_rom() -> Vec<u8> {
     let mut rom = vec![0xEA; 0x1000]; // NOPs
     rom[0xFFC] = 0x00;
@@ -59,8 +64,12 @@ fn console() -> Box<dyn SystemConsole> {
 fn a_board_no_cartridge_answers_to_is_refused() {
     let mut launch = LaunchValues::default();
     launch.set_choice("board", "F9");
-    let Err(error) = factory::create_console_with(Path::new("test.a26"), &minimal_rom(), &launch)
-    else {
+    let Err(error) = factory::create_console_with(
+        Path::new("test.a26"),
+        &minimal_rom(),
+        &launch,
+        &no_firmware(),
+    ) else {
         panic!("no board is catalogued as F9");
     };
     assert!(matches!(error, LoadError::InvalidValue { .. }));
@@ -70,8 +79,13 @@ fn a_board_no_cartridge_answers_to_is_refused() {
 fn a_stated_standard_is_the_one_the_console_decodes_for() {
     let mut launch = LaunchValues::default();
     launch.set_choice("tv-standard", "pal");
-    let console = factory::create_console_with(Path::new("test.a26"), &minimal_rom(), &launch)
-        .expect("vcs factory should claim an .a26 ROM");
+    let console = factory::create_console_with(
+        Path::new("test.a26"),
+        &minimal_rom(),
+        &launch,
+        &no_firmware(),
+    )
+    .expect("vcs factory should claim an .a26 ROM");
     assert!(matches!(
         console.video_out(),
         DisplayTechnology::Crt {

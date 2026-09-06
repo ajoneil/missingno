@@ -157,6 +157,7 @@ pub(in crate::app) fn handle(
             app.settings.save();
         }
         super::view::Message::OpenFirmwareFolder => {
+            let _ = app.firmware.ensure_dir();
             let _ = open::that(app.firmware.dir());
         }
         super::view::Message::RescanFirmware => app.rescan_firmware(),

@@ -524,7 +524,7 @@ fn empty_symbols() -> Arc<SymbolTable> {
 }
 
 /// The hex spelling of a media digest, as the state file carries it.
-fn hex_digest(digest: &[u8; 32]) -> String {
+pub(crate) fn hex_digest(digest: &[u8; 32]) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 

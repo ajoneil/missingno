@@ -4,13 +4,11 @@
 //! format are app policy wired in here.
 
 use missingno_gb::cartridge::{GbCartType, GbCartridgeError};
-pub use missingno_gb::firmware::DMG_BOOT_ROM;
 use missingno_gb::frame::{GbFrame, SgbScreen, gradient_stops, sgb_shade_levels};
 use missingno_gb::ppu::types::palette::PaletteChoice;
 use missingno_gb::system::{LINK_CABLE, LINK_DISCONNECTED, LINK_PRINTER, create_console_with_link};
 use missingno_gb::{GameBoy, cartridge::Cartridge, serial_transfer::SerialLink};
 use missingno_gbc::GameBoyColor;
-pub use missingno_gbc::firmware::CGB_BOOT_ROM;
 pub use missingno_gbc::launch::{
     BOARD, BootRoms, ENHANCEMENT_CGB, ENHANCEMENT_SGB, ENHANCEMENTS, GbLaunch, RUNNER,
     RunnerPreference, board_from_launch, boot_roms_from_launch, launch_options,

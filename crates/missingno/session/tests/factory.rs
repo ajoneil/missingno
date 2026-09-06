@@ -8,6 +8,11 @@ use std::path::Path;
 use missingno_core::launch::LaunchValues;
 use missingno_session::factory::{self, LoadError, SYSTEM};
 
+/// No firmware folder: every test here supplies its own image or none at all.
+fn no_firmware() -> missingno_session::FirmwareLibrary {
+    missingno_session::FirmwareLibrary::scan(std::path::PathBuf::new(), &[])
+}
+
 /// 4 KiB of NOPs: both a bare VCS ROM size and a flat SG-1000 image.
 fn dump() -> Vec<u8> {
     vec![0x00; 0x1000]
@@ -17,8 +22,9 @@ fn dump() -> Vec<u8> {
 fn a_stated_system_builds_its_core_without_consulting_a_predicate() {
     let mut launch = LaunchValues::default();
     launch.set_choice(SYSTEM, "SG-1000");
-    let console = factory::create_console_with(Path::new("dump.bin"), &dump(), &launch)
-        .expect("a stated system settles which core builds the media");
+    let console =
+        factory::create_console_with(Path::new("dump.bin"), &dump(), &launch, &no_firmware())
+            .expect("a stated system settles which core builds the media");
     assert_eq!(console.game_title(), "dump");
 }
 
@@ -34,7 +40,9 @@ fn a_stated_system_matches_a_registered_name_whatever_its_case() {
 fn a_system_no_core_answers_to_names_the_candidates() {
     let mut launch = LaunchValues::default();
     launch.set_choice(SYSTEM, "Jaguar");
-    let Err(error) = factory::create_console_with(Path::new("dump.bin"), &dump(), &launch) else {
+    let Err(error) =
+        factory::create_console_with(Path::new("dump.bin"), &dump(), &launch, &no_firmware())
+    else {
         panic!("no core is registered as a Jaguar");
     };
     assert_eq!(error, LoadError::UnknownSystem("Jaguar".to_string()));

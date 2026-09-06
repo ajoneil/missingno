@@ -14,6 +14,8 @@ use missingno_core::firmware::FirmwareSlot;
 use missingno_core::launch::{LaunchOptionDescriptor, LaunchValues};
 use missingno_core::system::SystemConsole;
 
+use crate::firmware::{FirmwareLibrary, FirmwareRefusal};
+
 /// Whether a path and its contents are this core's media.
 type IsRom = fn(&Path, &[u8]) -> bool;
 /// Build this core's console from a ROM's path and contents, honouring the
@@ -39,6 +41,8 @@ pub enum LoadError {
     IncompatibleOption { option: String, reason: String },
     /// The core's own objection to the media.
     Core(String),
+    /// A firmware socket the folder could not fill.
+    Firmware(FirmwareRefusal),
 }
 
 impl std::fmt::Display for LoadError {
@@ -55,6 +59,7 @@ impl std::fmt::Display for LoadError {
             }
             LoadError::IncompatibleOption { option, reason } => write!(f, "{option}: {reason}"),
             LoadError::Core(message) => f.write_str(message),
+            LoadError::Firmware(refusal) => refusal.fmt(f),
         }
     }
 }
@@ -363,18 +368,25 @@ pub fn firmware_slots() -> Vec<FirmwareSlot> {
 }
 
 /// Build a console from a ROM's path and contents, leaving every launch option
-/// to the core that claims it.
+/// to the core that claims it, over the firmware folder as the user keeps it.
 pub fn create_console(path: &Path, rom: &[u8]) -> Result<Box<dyn SystemConsole>, LoadError> {
-    create_console_with(path, rom, &LaunchValues::default())
+    create_console_with(
+        path,
+        rom,
+        &LaunchValues::default(),
+        &FirmwareLibrary::scan_default(),
+    )
 }
 
-/// Build a console from the launch values a loader collected. A stated
+/// Build a console from the launch values a loader collected, with every
+/// firmware image the values name resolved out of `firmware` first. A stated
 /// [`SYSTEM`] settles which core builds it; otherwise recognition is unaffected
 /// by them.
 pub fn create_console_with(
     path: &Path,
     rom: &[u8],
     launch: &LaunchValues,
+    firmware: &FirmwareLibrary,
 ) -> Result<Box<dyn SystemConsole>, LoadError> {
     let factory = match launch.choice(SYSTEM) {
         Some(stated) => {
@@ -382,5 +394,25 @@ pub fn create_console_with(
         }
         None => factory_for(path, rom).ok_or(LoadError::UnrecognizedMedia)?,
     };
-    (factory.create)(path, rom, launch)
+    let mut values = launch.clone();
+    firmware
+        .supply(&(factory.options)(rom, launch), &mut values)
+        .map_err(LoadError::Firmware)?;
+    (factory.create)(path, rom, &values)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A file in the folder fills whichever socket recognises it, so two cores
+    /// naming one socket the same way would take each other's images.
+    #[test]
+    fn no_two_cores_publish_the_same_socket_id() {
+        let mut ids: Vec<&str> = firmware_slots().iter().map(|slot| slot.id).collect();
+        let published = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), published, "{ids:?}");
+    }
 }

@@ -5,10 +5,16 @@
 
 use std::path::Path;
 
+use missingno_core::firmware::FirmwareValue;
 use missingno_core::inspect::WatchTerm;
 use missingno_core::launch::LaunchValues;
 use missingno_session::factory::LoadError;
 use missingno_session::{Session, factory};
+
+/// No firmware folder: every test here supplies its own image or none at all.
+fn no_firmware() -> missingno_session::FirmwareLibrary {
+    missingno_session::FirmwareLibrary::scan(std::path::PathBuf::new(), &[])
+}
 
 fn value_term(key: &str, value: u32) -> WatchTerm {
     WatchTerm {
@@ -93,8 +99,13 @@ fn the_cgb_runner_takes_a_dmg_cartridge_on_the_colour_core() {
     use missingno_core::video::{DisplayTechnology, LcdPanel};
     let mut launch = LaunchValues::default();
     launch.set_choice("runner", "cgb");
-    let console = factory::create_console_with(Path::new("test.gb"), &minimal_rom(), &launch)
-        .expect("a DMG cartridge runs on a Game Boy Color");
+    let console = factory::create_console_with(
+        Path::new("test.gb"),
+        &minimal_rom(),
+        &launch,
+        &no_firmware(),
+    )
+    .expect("a DMG cartridge runs on a Game Boy Color");
     assert!(matches!(
         console.video_out(),
         DisplayTechnology::Lcd {
@@ -108,7 +119,8 @@ fn the_cgb_runner_takes_a_dmg_cartridge_on_the_colour_core() {
 fn the_dmg_runner_refuses_a_cgb_only_cartridge() {
     let mut launch = LaunchValues::default();
     launch.set_choice("runner", "dmg");
-    let Err(error) = factory::create_console_with(Path::new("test.gbc"), &cgb_rom(), &launch)
+    let Err(error) =
+        factory::create_console_with(Path::new("test.gbc"), &cgb_rom(), &launch, &no_firmware())
     else {
         panic!("a CGB-only cartridge runs on no DMG");
     };
@@ -118,9 +130,13 @@ fn the_dmg_runner_refuses_a_cgb_only_cartridge() {
 #[test]
 fn a_boot_rom_image_of_no_known_length_is_refused() {
     let mut launch = LaunchValues::default();
-    launch.set_file("dmg-boot-rom", vec![0x00; 0x80]);
-    let Err(error) = factory::create_console_with(Path::new("test.gb"), &minimal_rom(), &launch)
-    else {
+    launch.set_firmware("dmg-boot-rom", FirmwareValue::Bytes(vec![0x00; 0x80]));
+    let Err(error) = factory::create_console_with(
+        Path::new("test.gb"),
+        &minimal_rom(),
+        &launch,
+        &no_firmware(),
+    ) else {
         panic!("no boot ROM is 128 bytes long");
     };
     assert!(matches!(error, LoadError::InvalidValue { .. }));

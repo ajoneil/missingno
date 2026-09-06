@@ -1,9 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::process;
 
+use missingno_core::launch::LaunchValues;
 use missingno_gb::system::ConsoleUi;
 use missingno_gb::trace::{Profile, TraceScope, Tracer, Trigger};
-use missingno_gb::{BootRom, Console, GameBoy};
+use missingno_gb::{Console, GameBoy};
 use missingno_gbc::GameBoyColor;
 
 use crate::app::system::{self, TraceRequest, gb::GbLaunch};
@@ -13,7 +14,7 @@ pub fn run(
     profile_path: PathBuf,
     output: Option<PathBuf>,
     cycles: u64,
-    boot_rom: Option<BootRom>,
+    launch: LaunchValues,
 ) {
     let rom_data = std::fs::read(&rom_path).unwrap_or_else(|e| {
         eprintln!("error: failed to read ROM {}: {e}", rom_path.display());
@@ -53,7 +54,7 @@ pub fn run(
         profile: &profile,
         output: &output_path,
         cycles,
-        boot_rom,
+        launch,
     });
 }
 
@@ -61,13 +62,18 @@ pub(crate) fn trace_gb(request: TraceRequest) {
     eprintln!("limit: {} T-cycles", request.cycles);
     let save_data = std::fs::read(request.rom_path.with_extension("sav")).ok();
 
+    let boot_roms =
+        system::gb::boot_roms_from_launch(&request.launch).unwrap_or_else(|(slot, image)| {
+            eprintln!("error: {slot}: {image} is no boot ROM for this console");
+            process::exit(1);
+        });
     // Record whether a boot ROM actually ran: with one mapped the capture starts
     // at the boot sequence, without one the console starts post-boot. The boot
     // image's bytes aren't exposed at this seam, so the header records that a
     // boot ROM ran rather than its hash.
-    let boot = match &request.boot_rom {
-        Some(_) => missingno_gb::trace::BootRom::Builtin,
-        None => missingno_gb::trace::BootRom::Skip,
+    let boot = match boot_roms.dmg.is_some() || boot_roms.cgb.is_some() {
+        true => missingno_gb::trace::BootRom::Builtin,
+        false => missingno_gb::trace::BootRom::Skip,
     };
 
     struct Trace<'a> {
@@ -89,7 +95,7 @@ pub(crate) fn trace_gb(request: TraceRequest) {
         request.rom.to_vec(),
         None,
         save_data,
-        boot_roms(request.boot_rom),
+        boot_roms,
         None,
         system::gb::RunnerPreference::Auto,
         Trace {
@@ -101,21 +107,6 @@ pub(crate) fn trace_gb(request: TraceRequest) {
     );
     if let Err(refusal) = launched {
         eprintln!("error: {refusal}");
-    }
-}
-
-/// The CLI boot ROM in the socket of the console it was dumped from.
-fn boot_roms(boot_rom: Option<BootRom>) -> system::gb::BootRoms {
-    match boot_rom {
-        Some(image @ BootRom::Dmg(_)) => system::gb::BootRoms {
-            dmg: Some(image),
-            cgb: None,
-        },
-        Some(image @ BootRom::Cgb(_)) => system::gb::BootRoms {
-            dmg: None,
-            cgb: Some(image),
-        },
-        None => system::gb::BootRoms::default(),
     }
 }
 

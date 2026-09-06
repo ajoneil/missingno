@@ -2,12 +2,11 @@
 //! console it is slotted into, and this crate is the one that knows both.
 
 use missingno_core::cartridge::{BoardValue, BoardVocabulary};
-use missingno_core::firmware::FirmwareSlot;
+use missingno_core::firmware::{FirmwareSlot, FirmwareValue};
 use missingno_core::launch::{
     LaunchChoice, LaunchOptionDescriptor, LaunchOptionKind, LaunchValue, LaunchValues, board_option,
 };
 use missingno_gb::cartridge::GbCartType;
-use missingno_gb::firmware::DMG_BOOT_ROM;
 use missingno_gb::serial_transfer::SerialLink;
 use missingno_gb::{BootRom, GameBoy, cartridge::Cartridge};
 
@@ -73,17 +72,26 @@ pub fn launch_options(rom: &[u8], chosen: &LaunchValues) -> Vec<LaunchOptionDesc
         .collect()
 }
 
-/// The socket of the console these values boot, selected as [`console`] selects
-/// it: a named console is the answer, the header answers where they leave it
-/// open, and a cartridge no Game Boy runs is on the Color whichever console was
-/// named. A value naming no console leaves the launch itself to object.
-fn selected_boot_rom_slot(rom: &[u8], chosen: &LaunchValues) -> FirmwareSlot {
-    let cgb = match RunnerPreference::from_launch(chosen).unwrap_or_default() {
-        RunnerPreference::Auto => Cartridge::peek_cgb(rom),
+/// Whether media carrying these header flags runs on the Color: a named console
+/// is the answer, the header answers where the caller left it open, and a
+/// cartridge no Game Boy but a Color runs is on the Color whichever was named.
+fn runs_on_cgb(cgb: bool, cgb_only: bool, runner: RunnerPreference) -> bool {
+    match runner {
+        RunnerPreference::Auto => cgb,
         RunnerPreference::Cgb => true,
-        RunnerPreference::Dmg => Cartridge::peek_cgb_only(rom),
-    };
-    match cgb {
+        RunnerPreference::Dmg => cgb_only,
+    }
+}
+
+/// The socket of the console these values boot. A value naming no console
+/// leaves the launch itself to object.
+fn selected_boot_rom_slot(rom: &[u8], chosen: &LaunchValues) -> FirmwareSlot {
+    let runner = RunnerPreference::from_launch(chosen).unwrap_or_default();
+    match runs_on_cgb(
+        Cartridge::peek_cgb(rom),
+        Cartridge::peek_cgb_only(rom),
+        runner,
+    ) {
         true => crate::firmware::boot_rom_slot(),
         false => missingno_gb::firmware::boot_rom_slot(),
     }
@@ -131,27 +139,28 @@ pub struct BootRoms {
 /// image found in it, which is no image that socket takes.
 pub fn boot_roms_from_launch(values: &LaunchValues) -> Result<BootRoms, (&'static str, String)> {
     Ok(BootRoms {
-        dmg: slot_image(values, DMG_BOOT_ROM, |rom| matches!(rom, BootRom::Dmg(_)))?,
-        cgb: slot_image(values, crate::firmware::CGB_BOOT_ROM, |rom| {
-            matches!(rom, BootRom::Cgb(_))
-        })?,
+        dmg: slot_image(values, &missingno_gb::firmware::boot_rom_slot())?,
+        cgb: slot_image(values, &crate::firmware::boot_rom_slot())?,
     })
 }
 
 fn slot_image(
     values: &LaunchValues,
-    slot: &'static str,
-    fits: fn(&BootRom) -> bool,
+    slot: &FirmwareSlot,
 ) -> Result<Option<BootRom>, (&'static str, String)> {
-    let Some(bytes) = values.file(slot) else {
-        return Ok(None);
-    };
-    let length = bytes.len();
-    let image = BootRom::from_bytes(bytes.to_vec())
-        .map_err(|length| (slot, format!("{length}-byte image")))?;
-    match fits(&image) {
-        true => Ok(Some(image)),
-        false => Err((slot, format!("{length}-byte image"))),
+    let refuse = |what: String| Err((slot.id, what));
+    match values.firmware(slot.id) {
+        None | Some(FirmwareValue::None) => Ok(None),
+        // Only bytes boot: a frontend that named an image and never resolved it
+        // would otherwise start silently with no firmware at all.
+        Some(FirmwareValue::Image(_)) => refuse("image not supplied".to_owned()),
+        Some(FirmwareValue::Bytes(bytes)) if bytes.len() != slot.size => {
+            refuse(format!("{}-byte image", bytes.len()))
+        }
+        Some(FirmwareValue::Bytes(bytes)) => match BootRom::from_bytes(bytes.clone()) {
+            Ok(image) => Ok(Some(image)),
+            Err(length) => refuse(format!("{length}-byte image")),
+        },
     }
 }
 
@@ -218,14 +227,10 @@ pub fn console<L: GbLaunch>(
     runner: RunnerPreference,
     launcher: L,
 ) -> Result<L::Output, RunnerRefused> {
-    let cgb_core = match runner {
-        RunnerPreference::Auto => cartridge.is_cgb(),
-        RunnerPreference::Cgb => true,
-        RunnerPreference::Dmg if cartridge.requires_cgb() => {
-            return Err(RunnerRefused::CgbOnlyCartridge);
-        }
-        RunnerPreference::Dmg => false,
-    };
+    if runner == RunnerPreference::Dmg && cartridge.requires_cgb() {
+        return Err(RunnerRefused::CgbOnlyCartridge);
+    }
+    let cgb_core = runs_on_cgb(cartridge.is_cgb(), cartridge.requires_cgb(), runner);
     Ok(if cgb_core {
         let mut console = GameBoyColor::new(cartridge, boot_roms.cgb);
         if let Some(link) = link {
@@ -245,6 +250,7 @@ pub fn console<L: GbLaunch>(
 mod tests {
     use super::*;
     use missingno_gb::cartridge::{GbRamSize, GbRomSize};
+    use missingno_gb::firmware::DMG_BOOT_ROM;
 
     /// A cartridge image whose header carries `cgb_flag` at $0143 and names a
     /// mapperless board at $0147.
@@ -404,8 +410,11 @@ mod tests {
     #[test]
     fn each_console_reads_the_boot_rom_from_its_own_slot() {
         let mut values = LaunchValues::default();
-        values.set_file(DMG_BOOT_ROM, vec![0x00; 0x100]);
-        values.set_file(crate::firmware::CGB_BOOT_ROM, vec![0x00; 0x900]);
+        values.set_firmware(DMG_BOOT_ROM, FirmwareValue::Bytes(vec![0x00; 0x100]));
+        values.set_firmware(
+            crate::firmware::CGB_BOOT_ROM,
+            FirmwareValue::Bytes(vec![0x00; 0x900]),
+        );
         let boot_roms = boot_roms_from_launch(&values).expect("both images fit their slots");
         assert!(matches!(boot_roms.dmg, Some(BootRom::Dmg(_))));
         assert!(matches!(boot_roms.cgb, Some(BootRom::Cgb(_))));
@@ -417,24 +426,45 @@ mod tests {
     #[test]
     fn an_image_of_the_other_class_is_refused_by_the_slot_that_names_it() {
         let mut values = LaunchValues::default();
-        values.set_file(DMG_BOOT_ROM, vec![0x00; 0x900]);
+        values.set_firmware(DMG_BOOT_ROM, FirmwareValue::Bytes(vec![0x00; 0x900]));
         assert_eq!(
             boot_roms_from_launch(&values).err(),
             Some((DMG_BOOT_ROM, "2304-byte image".to_owned()))
         );
 
         let mut values = LaunchValues::default();
-        values.set_file(crate::firmware::CGB_BOOT_ROM, vec![0x00; 0x100]);
+        values.set_firmware(
+            crate::firmware::CGB_BOOT_ROM,
+            FirmwareValue::Bytes(vec![0x00; 0x100]),
+        );
         assert_eq!(
             boot_roms_from_launch(&values).err(),
             Some((crate::firmware::CGB_BOOT_ROM, "256-byte image".to_owned()))
         );
 
         let mut values = LaunchValues::default();
-        values.set_file(DMG_BOOT_ROM, vec![0x00; 0x80]);
+        values.set_firmware(DMG_BOOT_ROM, FirmwareValue::Bytes(vec![0x00; 0x80]));
         assert_eq!(
             boot_roms_from_launch(&values).err(),
             Some((DMG_BOOT_ROM, "128-byte image".to_owned()))
+        );
+    }
+
+    #[test]
+    fn a_named_image_nobody_resolved_is_refused_rather_than_ignored() {
+        let mut values = LaunchValues::default();
+        values.set_firmware(DMG_BOOT_ROM, FirmwareValue::Image("dmg".to_owned()));
+        assert_eq!(
+            boot_roms_from_launch(&values).err(),
+            Some((DMG_BOOT_ROM, "image not supplied".to_owned()))
+        );
+
+        values.set_firmware(DMG_BOOT_ROM, FirmwareValue::None);
+        assert!(
+            boot_roms_from_launch(&values)
+                .expect("an empty socket is no error")
+                .dmg
+                .is_none()
         );
     }
 

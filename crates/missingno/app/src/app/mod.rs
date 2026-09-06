@@ -14,6 +14,7 @@ mod controls;
 mod debugger;
 mod emulation;
 mod emulator;
+mod firmware;
 mod launch;
 pub mod library;
 mod load;
@@ -49,7 +50,7 @@ pub fn run(
     rom_path: Option<PathBuf>,
     debugger: bool,
     link: Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
-    boot_rom: Option<missingno_gb::BootRom>,
+    cli_firmware: Option<(&'static str, missingno_core::firmware::FirmwareValue)>,
     ui_automation: bool,
 ) -> iced::Result {
     // Load settings early to get saved window size
@@ -65,7 +66,7 @@ pub fn run(
                 rom_path.clone(),
                 debugger,
                 link_cell.take(),
-                boot_rom.clone(),
+                cli_firmware.clone(),
                 ui_automation,
             )
         },
@@ -151,8 +152,9 @@ struct App {
     /// thread) and drained on the UI thread to log against the play session.
     print_tx: std::sync::mpsc::Sender<crate::printer::CompletedPrint>,
     print_rx: std::sync::mpsc::Receiver<crate::printer::CompletedPrint>,
-    /// Boot ROM supplied on the CLI, applied to every Game Boy family load.
-    boot_rom: Option<missingno_gb::BootRom>,
+    /// A firmware image named on the CLI, and the socket it fits: it fills that
+    /// socket on every load this run.
+    cli_firmware: Option<(&'static str, missingno_core::firmware::FirmwareValue)>,
     /// What the firmware folder holds, read against every family's sockets.
     /// Re-read on demand rather than watched.
     firmware: missingno_session::FirmwareLibrary,
@@ -228,6 +230,16 @@ impl App {
     /// Re-read the firmware folder, for a file dropped in it while the app runs.
     pub(in crate::app) fn rescan_firmware(&mut self) {
         self.firmware = scan_firmware();
+    }
+
+    /// Everything that fills a launch option besides the user.
+    fn launch_sources(&self) -> launch::LaunchSources<'_> {
+        launch::LaunchSources {
+            catalogue: &self.catalogue,
+            firmware: &self.firmware,
+            defaults: &self.settings.firmware,
+            cli_firmware: self.cli_firmware.as_ref(),
+        }
     }
 
     /// Get the keybinding capture state, if on the settings screen.
@@ -558,7 +570,7 @@ enum DetailSubScreen {
         /// The launch options this game's media leaves open and what fills the
         /// ones the user has not set, read off the media once on arrival rather
         /// than on every frame.
-        media_options: launch::MediaOptions,
+        media: Option<launch::Media>,
     },
     CartridgeActions {
         /// Whether to write saves alongside a flash operation.
@@ -823,7 +835,7 @@ impl App {
         rom_path: Option<PathBuf>,
         debugger: bool,
         serial_link: Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
-        boot_rom: Option<missingno_gb::BootRom>,
+        cli_firmware: Option<(&'static str, missingno_core::firmware::FirmwareValue)>,
         ui_automation: bool,
     ) -> (Self, Task<Message>) {
         let settings = settings::Settings::load();
@@ -867,7 +879,7 @@ impl App {
             serial_link,
             print_tx,
             print_rx,
-            boot_rom,
+            cli_firmware,
             firmware: scan_firmware(),
             homebrew_client: std::sync::Arc::new(library::homebrew_hub::HomebrewHubClient::new()),
             catalogue: std::sync::Arc::new(library::catalogue::Catalogue::load()),

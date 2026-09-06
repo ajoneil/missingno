@@ -136,7 +136,8 @@ pub struct TraceRequest<'a> {
     pub profile: &'a missingno_trace::Profile,
     pub output: &'a Path,
     pub cycles: u64,
-    pub boot_rom: Option<missingno_gb::BootRom>,
+    /// The launch values the run was started with, firmware included.
+    pub launch: LaunchValues,
 }
 
 /// A family's control surfaces: the integrated pad, the peripherals its ports

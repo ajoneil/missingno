@@ -13,12 +13,13 @@ use iced::{
 use missingno_core::cartridge::{
     AttributeKind, AttributeSpec, AttributeValue, BoardSpec, BoardValue,
 };
-use missingno_core::firmware::{FIRMWARE_NONE, FirmwareNeed, FirmwareSlot};
+use missingno_core::firmware::{FirmwareNeed, FirmwareSlot, FirmwareValue};
 use missingno_core::launch::{LaunchOptionDescriptor, LaunchOptionKind, LaunchValue, LaunchValues};
 use missingno_session::FirmwareLibrary;
 
 use super::{Edit, EditSurface, Facts, Message, Window};
 use crate::app;
+use crate::app::firmware;
 use crate::app::system::{Platform, platforms_by_name};
 use crate::app::ui::{
     buttons, containers, horizontal_rule,
@@ -35,8 +36,6 @@ const PART_LABEL_WIDTH: f32 = 110.0;
 const PART_WIDTH: f32 = 160.0;
 /// The entry that takes a set of flags off whatever states it.
 const CUSTOM: &str = "custom";
-/// The entry that leaves an optional firmware socket empty.
-const NO_IMAGE: &str = "None";
 const PANEL_WIDTH: f32 = 660.0;
 const MAX_PANEL_HEIGHT: f32 = 640.0;
 
@@ -76,7 +75,6 @@ fn option_row(
         LaunchOptionKind::Choice { choices } => choice_control(descriptor.id, choices, data),
         LaunchOptionKind::Flags { flags } => flags_control(descriptor.id, flags, data),
         LaunchOptionKind::Toggle => toggle_control(descriptor.id, data),
-        LaunchOptionKind::File { label } => file_control(descriptor.id, label, data),
         LaunchOptionKind::Board { boards } => board_control(descriptor.id, boards, data),
         LaunchOptionKind::Firmware { slot } => firmware_control(descriptor.id, slot, data),
     };
@@ -116,13 +114,23 @@ fn automatic(
     data: &PanelData<'_>,
     describe: impl Fn(&LaunchValue) -> Option<String>,
 ) -> Entry {
-    let label = data
-        .facts
+    Entry {
+        value: None,
+        label: automatic_label(id, data, describe),
+    }
+}
+
+/// What the Automatic entry reads: the option's own word on what fills it.
+fn automatic_label(
+    id: &str,
+    data: &PanelData<'_>,
+    describe: impl Fn(&LaunchValue) -> Option<String>,
+) -> String {
+    data.facts
         .get(id)
         .and_then(describe)
         .map(|described| format!("Automatic ({described})"))
-        .unwrap_or_else(|| "Automatic".to_string());
-    Entry { value: None, label }
+        .unwrap_or_else(|| "Automatic".to_string())
 }
 
 fn choice_control(
@@ -497,99 +505,53 @@ fn firmware_control(
     slot: &FirmwareSlot,
     data: &PanelData<'_>,
 ) -> Element<'static, app::Message> {
-    let named = |image: &str| slot.image(image).map(|image| image.label.to_string());
-
-    let mut entries = vec![automatic(id, data, |value| match value {
-        LaunchValue::Choice(image) if image == FIRMWARE_NONE => Some(NO_IMAGE.to_string()),
-        LaunchValue::Choice(image) => named(image).or_else(|| Some(image.clone())),
-        // A file supplied outright — the command line's — named if the socket
-        // knows its contents.
-        LaunchValue::File(bytes) => Some(
-            slot.identify(bytes)
+    let leading = firmware::Entry {
+        choice: firmware::Choice::Automatic,
+        label: automatic_label(id, data, |value| match value {
+            LaunchValue::Firmware(FirmwareValue::None) => Some(firmware::NO_IMAGE.to_string()),
+            LaunchValue::Firmware(FirmwareValue::Image(image)) => slot
+                .image(image)
                 .map(|image| image.label.to_string())
-                .unwrap_or_else(|| "this run's file".to_string()),
-        ),
-        _ => None,
-    })];
-    if slot.need == FirmwareNeed::Optional {
-        entries.push(Entry {
-            value: Some(FIRMWARE_NONE.to_string()),
-            label: NO_IMAGE.to_string(),
-        });
-    }
-    entries.extend(
-        data.firmware
-            .present(slot)
-            .into_iter()
-            .map(|present| Entry {
-                value: Some(present.image.id.to_string()),
-                label: present.image.label.to_string(),
-            }),
-    );
-
-    let chosen = data.overrides.choice(id);
-    // A choice whose file has since left the folder still shows, so the refusal
-    // at launch has a visible cause.
-    if let Some(chosen) = chosen
-        && !entries
-            .iter()
-            .any(|entry| entry.value.as_deref() == Some(chosen))
-    {
-        entries.push(Entry {
-            value: Some(chosen.to_string()),
-            label: format!(
-                "{} (not in firmware folder)",
-                named(chosen).unwrap_or_else(|| chosen.to_string())
+                .or_else(|| Some(image.clone())),
+            // Bytes supplied outright — the command line's — named if the
+            // socket knows their contents.
+            LaunchValue::Firmware(FirmwareValue::Bytes(bytes)) => Some(
+                slot.identify(bytes)
+                    .map(|image| image.label.to_string())
+                    .unwrap_or_else(|| "this run's file".to_string()),
             ),
-        });
-    }
+            _ => None,
+        }),
+    };
 
-    let selected = chosen
-        .and_then(|chosen| {
-            entries
-                .iter()
-                .find(|entry| entry.value.as_deref() == Some(chosen))
-                .cloned()
-        })
-        .unwrap_or_else(|| entries[0].clone());
+    let chosen = data.overrides.firmware(id);
+    let chosen_image = match chosen {
+        Some(FirmwareValue::Image(image)) => Some(image.as_str()),
+        _ => None,
+    };
+    let (mut entries, mut selected) = firmware::entries(slot, data.firmware, chosen_image, leading);
+    if slot.need == FirmwareNeed::Optional {
+        let empty = firmware::Entry {
+            choice: firmware::Choice::Empty,
+            label: firmware::NO_IMAGE.to_string(),
+        };
+        if matches!(chosen, Some(FirmwareValue::None)) {
+            selected = empty.clone();
+        }
+        entries.insert(1, empty);
+    }
 
     let surface = data.surface;
     pick_list(entries, Some(selected), move |entry| {
-        Message::Set(surface, Edit::Choice(id, entry.value)).into()
+        let chosen = match entry.choice {
+            firmware::Choice::Automatic => None,
+            firmware::Choice::Empty => Some(FirmwareValue::None),
+            firmware::Choice::Image(image) => Some(FirmwareValue::Image(image)),
+        };
+        Message::Set(surface, Edit::Firmware(id, chosen)).into()
     })
     .width(CONTROL_WIDTH)
     .into()
-}
-
-fn file_control(
-    id: &'static str,
-    label: &'static str,
-    data: &PanelData<'_>,
-) -> Element<'static, app::Message> {
-    let surface = data.surface;
-    let chosen = data.overrides.file(id).map(<[u8]>::len);
-
-    let status = match chosen {
-        Some(bytes) => format!("Chosen · {bytes} bytes"),
-        None => "Automatic".to_string(),
-    };
-
-    let mut controls = row![
-        buttons::standard(iced::widget::text(format!("Choose {label}…")))
-            .on_press(Message::PickFile(surface, id).into()),
-        app_text::detail(status).color(MUTED),
-    ]
-    .spacing(s())
-    .align_y(Center);
-
-    if chosen.is_some() {
-        controls = controls.push(
-            buttons::subtle("Automatic")
-                .on_press(Message::Set(surface, Edit::File(id, None)).into()),
-        );
-    }
-
-    controls.into()
 }
 
 /// The launch window: what is about to boot, the options it will boot with, and
@@ -622,10 +584,10 @@ pub fn window(state: &Window, firmware: &FirmwareLibrary) -> Element<'static, ap
         );
     }
 
-    if let Some(family) = state.family() {
+    if state.family().is_some() {
         body = body.push(horizontal_rule());
         body = body.push(panel(&PanelData {
-            descriptors: super::rendered_options(family, &state.rom, &state.overrides),
+            descriptors: state.rows.clone(),
             overrides: state.overrides.clone(),
             facts: state.facts.clone(),
             firmware,

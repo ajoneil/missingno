@@ -214,8 +214,8 @@ recognises, each by size and SHA-256. The core publishes the slot as
 `LaunchOptionKind::Firmware`, so every launch surface renders it without naming
 the console, and registers it on its session-factory entry so a headless caller
 resolves the same names. The `options` hook is given the caller's word so far,
-so a family whose media runs on more than one console publishes the socket of
-the console those values select. A caller states an image by id;
+so a family whose media runs on more than one console publishes the socket
+those values select. A caller states an image by id;
 `missingno-session`'s `FirmwareLibrary` scans the firmware folder in the config
 directory and turns that id into bytes. The core itself reads only
 `LaunchValue::File` — it never opens a file, and a required socket nothing can
@@ -259,10 +259,10 @@ jacks carry for a game whose library metadata names controllers),
 an `is_rom` predicate (mutually exclusive across the table), an optional
 `title_from_rom` header hook, a `create_console` factory taking a `MediaLoad`,
 a `firmware` hook stating the platform's firmware sockets (empty for a console
-that maps none), and an optional `trace` entry point for the `trace` subcommand. The file dialog,
-ROM loading, title detection, the library scanner (which stamps the platform),
-the bindings UI, and the trace CLI all iterate that table; `family_for` is the
-single classification point.
+that maps none), and an optional `trace` entry point for the `trace` subcommand.
+The file dialog, ROM loading, title detection, the library scanner (which stamps
+the platform), the bindings UI, and the trace CLI all iterate that table;
+`family_for` is the single classification point.
 
 The Game Boy registers **two** platforms — "Game Boy" and "Game Boy Color" —
 sharing one factory; the header picks the execution core inside the factory (a

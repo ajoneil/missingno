@@ -247,7 +247,7 @@ fn controls_elements(ctx: &UiContext) -> Vec<settings_view::PressableElement> {
 }
 
 /// The Systems section's elements for the page it is showing.
-fn systems_elements(ctx: &UiContext) -> Vec<settings_view::SystemsElement> {
+fn systems_elements(ctx: &UiContext) -> Vec<settings_view::PressableElement> {
     settings_view::systems_elements(ctx.settings_systems_page)
 }
 
@@ -286,7 +286,8 @@ fn element_activation(elements: Vec<settings_view::PressableElement>, id: &str) 
     elements
         .into_iter()
         .find(|element| element.id == id)
-        .map(|element| element.message.into())
+        .and_then(|element| element.message)
+        .map(Message::from)
 }
 
 /// The Controllers section's pick lists, empty unless it is on screen.
@@ -339,10 +340,7 @@ pub fn describe(ctx: &UiContext, id: &str) -> Option<(UiKind, String)> {
             .map(|element| (UiKind::Button, element.label));
     }
     if ids::is_systems(id) {
-        return systems_elements(ctx)
-            .into_iter()
-            .find(|element| element.id == id)
-            .map(|element| (UiKind::Button, element.label));
+        return element_described(systems_elements(ctx), id);
     }
     if ids::is_settings_display(id) {
         return element_described(settings_display_elements(ctx), id);
@@ -453,12 +451,10 @@ pub(in crate::app) fn activation(ctx: &UiContext, id: &str) -> Option<Message> {
     if ids::is_controls(id) {
         return element_activation(controls_elements(ctx), id);
     }
-    if ids::is_systems(id) {
-        return systems_elements(ctx)
-            .into_iter()
-            .find(|element| element.id == id)
-            .and_then(|element| element.message)
-            .map(Message::from);
+    // A socket's pick list is registered for its bounds; a client opens it by
+    // other means than an activation.
+    if ids::is_systems(id) && !ids::is_systems_slot(id) {
+        return element_activation(systems_elements(ctx), id);
     }
     if ids::is_settings_display(id) {
         return element_activation(settings_display_elements(ctx), id);
@@ -781,7 +777,7 @@ mod tests {
             for id in enumerate(&ctx) {
                 if pickers.contains(&id.as_str())
                     || ids::is_controllers(&id)
-                    || id.starts_with(&ids::systems_slot(""))
+                    || ids::is_systems_slot(&id)
                 {
                     continue;
                 }

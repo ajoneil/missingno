@@ -31,9 +31,16 @@ pub mod tools;
 
 #[cfg(all(unix, feature = "tools"))]
 pub use attach::{AttachClient, AttachEndpoint, Publication, SessionInfo};
+
 pub use firmware::{FirmwareLibrary, FirmwareRefusal, PresentImage};
 pub use session::{DisasmLine, Session, StopReason};
 pub use shared::{
     AudioSink, ControlSurfaces, ExtractedMachine, MemoryInterest, PluggedPort, RunningReadout,
     SessionEvent, SessionHandle, SharedSession,
 };
+
+/// The `missingno` folder under the platform's configuration directory: the one
+/// root every persisted file of this project hangs off.
+pub fn config_dir() -> Option<std::path::PathBuf> {
+    dirs::config_dir().map(|dir| dir.join("missingno"))
+}

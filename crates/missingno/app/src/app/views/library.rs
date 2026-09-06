@@ -33,26 +33,25 @@ impl App {
     }
 
     pub(super) fn detail_view(&self) -> Element<'_, Message> {
-        let (viewing_sha1, section, hovered_log_entry, header_hovered, media_options) =
-            match &self.screen {
-                Screen::ViewingGame {
-                    sha1,
-                    sub_screen:
-                        DetailSubScreen::Detail {
-                            section,
-                            hovered_log_entry,
-                            header_hovered,
-                            media_options,
-                        },
-                } => (
-                    Some(sha1.as_str()),
-                    *section,
-                    *hovered_log_entry,
-                    *header_hovered,
-                    Some(media_options),
-                ),
-                _ => (None, Default::default(), None, false, None),
-            };
+        let (viewing_sha1, section, hovered_log_entry, header_hovered, media) = match &self.screen {
+            Screen::ViewingGame {
+                sha1,
+                sub_screen:
+                    DetailSubScreen::Detail {
+                        section,
+                        hovered_log_entry,
+                        header_hovered,
+                        media,
+                    },
+            } => (
+                Some(sha1.as_str()),
+                *section,
+                *hovered_log_entry,
+                *header_hovered,
+                media.as_ref(),
+            ),
+            _ => (None, Default::default(), None, false, None),
+        };
 
         let sha1 = match viewing_sha1 {
             Some(s) => s,
@@ -104,8 +103,11 @@ impl App {
             header_hovered,
             is_loaded,
             inserted_cartridge: self.inserted_cartridge(),
-            launch_options: media_options
-                .and_then(|media| launch::game_settings(self, sha1, media)),
+            // Only the game's own settings section shows them, and publishing
+            // the rows re-reads the media.
+            launch_options: (section == library::detail_view::Section::GameSettings)
+                .then(|| media.and_then(|media| launch::game_settings(self, sha1, media)))
+                .flatten(),
         })
     }
 
@@ -119,7 +121,7 @@ impl App {
                 section: Default::default(),
                 hovered_log_entry: None,
                 header_hovered: false,
-                media_options: launch::media_options(self, sha1),
+                media: launch::media(self, sha1),
             },
         };
         self.load_activity_async(sha1)

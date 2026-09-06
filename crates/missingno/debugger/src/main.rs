@@ -12,10 +12,10 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use missingno_core::firmware::FirmwareSlot;
-use missingno_core::launch::{LaunchOptionDescriptor, LaunchOptionKind, LaunchValues};
+use missingno_core::firmware::{FirmwareValue, firmware_slots};
+use missingno_core::launch::{LaunchOptionDescriptor, LaunchValues};
 use missingno_debugger::http;
-use missingno_session::factory::{self, LoadError};
+use missingno_session::factory::{self, CoreFactory, LoadError};
 use missingno_session::{FirmwareLibrary, SharedSession};
 
 /// Matches the GUI crate's headless server default.
@@ -134,13 +134,7 @@ fn set_firmware(
     named: &str,
     launch: &mut LaunchValues,
 ) -> Result<(), String> {
-    let slots: Vec<&FirmwareSlot> = published
-        .iter()
-        .filter_map(|option| match &option.kind {
-            LaunchOptionKind::Firmware { slot } => Some(slot),
-            _ => None,
-        })
-        .collect();
+    let slots: Vec<_> = firmware_slots(published).collect();
     if slots.is_empty() {
         return Err("this core maps no firmware".to_string());
     }
@@ -151,15 +145,20 @@ fn set_firmware(
             std::fs::read(path).map_err(|e| format!("failed to read boot ROM {named}: {e}"))?;
         let slot = slots
             .iter()
-            .find(|slot| slot.images.iter().any(|image| image.size == bytes.len()))
+            .find(|slot| slot.size == bytes.len())
             .ok_or_else(|| {
+                let mut sizes: Vec<usize> = slots.iter().map(|slot| slot.size).collect();
+                sizes.sort_unstable();
+                sizes.dedup();
+                let named_sizes: Vec<String> =
+                    sizes.iter().map(|size| format!("{size} bytes")).collect();
                 format!(
                     "{named} is {} bytes; this core maps {}",
                     bytes.len(),
-                    image_sizes(&slots)
+                    named_sizes.join(" or ")
                 )
             })?;
-        launch.set_file(slot.id, bytes);
+        launch.set_firmware(slot.id, FirmwareValue::Bytes(bytes));
         return Ok(());
     }
 
@@ -176,21 +175,8 @@ fn set_firmware(
                 known.join(", ")
             )
         })?;
-    launch.set_choice(slot.id, named);
+    launch.set_firmware(slot.id, FirmwareValue::Image(named.to_owned()));
     Ok(())
-}
-
-/// The image sizes a core's sockets take, largest statement of what a file
-/// must be to fit one.
-fn image_sizes(slots: &[&FirmwareSlot]) -> String {
-    let mut sizes: Vec<usize> = slots
-        .iter()
-        .flat_map(|slot| slot.images.iter().map(|image| image.size))
-        .collect();
-    sizes.sort_unstable();
-    sizes.dedup();
-    let named: Vec<String> = sizes.iter().map(|size| format!("{size} bytes")).collect();
-    named.join(" or ")
 }
 
 fn run() -> Result<(), String> {
@@ -219,50 +205,47 @@ fn run() -> Result<(), String> {
     }
     launch.set_toggle("overdump", args.overdump);
 
-    let published = args
+    let factory: Option<&CoreFactory> = args
         .system
         .as_deref()
         .and_then(factory::factory_named)
-        .or_else(|| factory::factory_for(&rom_path, &rom))
-        .map(|factory| (factory.options)(&rom, &launch))
-        .unwrap_or_default();
+        .or_else(|| factory::factory_for(&rom_path, &rom));
     if let Some(named) = &args.boot_rom {
+        let published = factory
+            .map(|factory| (factory.options)(&rom, &launch))
+            .unwrap_or_default();
         set_firmware(&published, named, &mut launch)?;
     }
-    if let Some(dir) = args
-        .firmware_dir
-        .clone()
-        .or_else(FirmwareLibrary::default_dir)
-    {
-        FirmwareLibrary::scan(dir, &factory::firmware_slots())
-            .supply(&published, &mut launch)
-            .map_err(|refusal| refusal.to_string())?;
-    }
+    let firmware = FirmwareLibrary::scan(
+        args.firmware_dir
+            .clone()
+            .or_else(FirmwareLibrary::default_dir)
+            .unwrap_or_default(),
+        &factory::firmware_slots(),
+    );
 
     let console =
-        factory::create_console_with(&rom_path, &rom, &launch).map_err(|error| match error {
-            LoadError::UnrecognizedMedia => format!(
-                "no core recognises {} — name its console with --system",
-                rom_path.display()
-            ),
-            // Size-detection is what fails on a bankswitched VCS image, and
-            // the message alone does not say the board can be supplied.
-            error @ LoadError::Core(_) if args.cart_type.is_none() => {
-                format!("{error} — if this is a bankswitched cart, name its board with --cart-type")
+        factory::create_console_with(&rom_path, &rom, &launch, &firmware).map_err(|error| {
+            match error {
+                LoadError::UnrecognizedMedia => format!(
+                    "no core recognises {} — name its console with --system",
+                    rom_path.display()
+                ),
+                // Size-detection is what fails on a bankswitched VCS image, and
+                // the message alone does not say the board can be supplied.
+                error @ LoadError::Core(_) if args.cart_type.is_none() => {
+                    format!(
+                        "{error} — if this is a bankswitched cart, name its board with --cart-type"
+                    )
+                }
+                error => error.to_string(),
             }
-            error => error.to_string(),
         })?;
     let debugger = console.into_debugger();
     let session = SharedSession::spawn(debugger);
 
     #[cfg(feature = "mcp")]
-    let core_name = args
-        .system
-        .as_deref()
-        .and_then(factory::factory_named)
-        .or_else(|| factory::factory_for(&rom_path, &rom))
-        .map(|factory| factory.name)
-        .unwrap_or("unknown");
+    let core_name = factory.map(|factory| factory.name).unwrap_or("unknown");
 
     // Held for the lifetime of the server: dropping it removes the socket.
     #[cfg(all(unix, feature = "mcp"))]

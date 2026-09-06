@@ -93,7 +93,7 @@ fn layout_path(key: &str) -> Option<PathBuf> {
     } else {
         format!("debugger_layout_{key}.ron")
     };
-    dirs::config_dir().map(|dir| dir.join("missingno").join(file))
+    missingno_session::config_dir().map(|dir| dir.join(file))
 }
 
 /// Parse a saved layout, trying the current instance-aware schema first and

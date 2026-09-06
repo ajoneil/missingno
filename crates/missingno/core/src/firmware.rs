@@ -6,15 +6,43 @@
 //! *states* what it accepts and a frontend supplies the bytes, so identity is
 //! the SHA-256 of an image rather than the name someone saved it under.
 
+use crate::launch::{LaunchOptionDescriptor, LaunchOptionKind};
+
 /// One firmware image a core knows by content.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FirmwareImage {
     pub id: &'static str,
     pub label: &'static str,
-    pub size: usize,
     /// 64 lower-hex characters.
     pub sha256: &'static str,
     pub origin: FirmwareOrigin,
+}
+
+impl FirmwareImage {
+    /// A dump from the console model `label` names.
+    pub const fn official(id: &'static str, label: &'static str, sha256: &'static str) -> Self {
+        FirmwareImage {
+            id,
+            label,
+            sha256,
+            origin: FirmwareOrigin::Official,
+        }
+    }
+
+    /// A reimplementation `project` publishes.
+    pub const fn open(
+        id: &'static str,
+        label: &'static str,
+        project: &'static str,
+        sha256: &'static str,
+    ) -> Self {
+        FirmwareImage {
+            id,
+            label,
+            sha256,
+            origin: FirmwareOrigin::Open { project },
+        }
+    }
 }
 
 /// Where an image came from.
@@ -36,44 +64,79 @@ pub enum FirmwareNeed {
 }
 
 /// One firmware a core maps at launch, and the images it recognises for it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FirmwareSlot {
     pub id: &'static str,
     pub label: &'static str,
     pub need: FirmwareNeed,
+    /// Every image this socket takes is this many bytes.
+    pub size: usize,
     /// In the core's preferred order, official dumps first.
-    pub images: Vec<FirmwareImage>,
+    pub images: &'static [FirmwareImage],
 }
 
-/// The value that states "no image" for an [`FirmwareNeed::Optional`] slot.
-pub const FIRMWARE_NONE: &str = "none";
+/// What a caller fills a firmware socket with.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum FirmwareValue {
+    /// Nothing, which only a [`FirmwareNeed::Optional`] socket starts without.
+    None,
+    /// An image the slot lists, by id; a frontend turns it into the bytes.
+    Image(String),
+    /// The image itself, which is all a core reads.
+    Bytes(Vec<u8>),
+}
 
 impl FirmwareSlot {
     /// The image this slot lists under `id`.
-    pub fn image(&self, id: &str) -> Option<&FirmwareImage> {
+    pub fn image(&self, id: &str) -> Option<&'static FirmwareImage> {
         self.images.iter().find(|image| image.id == id)
     }
 
     /// The image `bytes` are, if this slot lists one with that content.
-    pub fn identify(&self, bytes: &[u8]) -> Option<&FirmwareImage> {
-        let candidates: Vec<&FirmwareImage> = self
-            .images
-            .iter()
-            .filter(|image| image.size == bytes.len())
-            .collect();
-        if candidates.is_empty() {
+    pub fn identify(&self, bytes: &[u8]) -> Option<&'static FirmwareImage> {
+        if bytes.len() != self.size {
             return None;
         }
         let hash = sha256_hex(bytes);
-        candidates.into_iter().find(|image| image.sha256 == hash)
+        self.images.iter().find(|image| image.sha256 == hash)
     }
+
+    /// Panics unless every image is named once and states a lower-hex SHA-256.
+    /// A core's own socket test is a call to this.
+    #[track_caller]
+    pub fn check_well_formed(&self) {
+        let mut ids: Vec<&str> = self.images.iter().map(|image| image.id).collect();
+        let published = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), published, "{}: an id names two images", self.id);
+        for image in self.images {
+            assert_eq!(image.sha256.len(), 64, "{}", image.id);
+            assert!(
+                image
+                    .sha256
+                    .chars()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+                "{}",
+                image.id
+            );
+        }
+    }
+}
+
+/// Every firmware socket among `descriptors`, in the order they publish them.
+pub fn firmware_slots(
+    descriptors: &[LaunchOptionDescriptor],
+) -> impl Iterator<Item = &FirmwareSlot> {
+    descriptors.iter().filter_map(|option| match &option.kind {
+        LaunchOptionKind::Firmware { slot } => Some(slot),
+        _ => None,
+    })
 }
 
 /// An image's identity: the lower-hex SHA-256 of its bytes.
 pub fn sha256_hex(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(bytes);
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    crate::machine::hex_digest(&crate::machine::rom_fingerprint(bytes))
 }
 
 #[cfg(test)]
@@ -81,54 +144,55 @@ mod tests {
     use super::*;
 
     /// Synthetic images: the hashes are of the four bytes each test hands in.
-    fn slot() -> FirmwareSlot {
-        FirmwareSlot {
-            id: "boot-rom",
-            label: "Boot ROM",
-            need: FirmwareNeed::Optional,
-            images: vec![
-                FirmwareImage {
-                    id: "ones",
-                    label: "All ones",
-                    size: 4,
-                    sha256: "27ecd0a598e76f8a2fd264d427df0a119903e8eae384e478902541756f089dd1",
-                    origin: FirmwareOrigin::Official,
-                },
-                FirmwareImage {
-                    id: "zeroes",
-                    label: "All zeroes",
-                    size: 4,
-                    sha256: "df3f619804a92fdb4057192dc43dd748ea778adc52bc498ce80524c014b81119",
-                    origin: FirmwareOrigin::Open { project: "test" },
-                },
-            ],
-        }
-    }
+    const IMAGES: &[FirmwareImage] = &[
+        FirmwareImage::official(
+            "ones",
+            "All ones",
+            "27ecd0a598e76f8a2fd264d427df0a119903e8eae384e478902541756f089dd1",
+        ),
+        FirmwareImage::open(
+            "zeroes",
+            "All zeroes",
+            "test",
+            "df3f619804a92fdb4057192dc43dd748ea778adc52bc498ce80524c014b81119",
+        ),
+    ];
+
+    const SLOT: FirmwareSlot = FirmwareSlot {
+        id: "boot-rom",
+        label: "Boot ROM",
+        need: FirmwareNeed::Optional,
+        size: 4,
+        images: IMAGES,
+    };
 
     #[test]
     fn a_known_hash_names_the_image() {
-        let slot = slot();
-        assert_eq!(slot.identify(&[1u8; 4]).map(|image| image.id), Some("ones"));
+        assert_eq!(SLOT.identify(&[1u8; 4]).map(|image| image.id), Some("ones"));
         assert_eq!(
-            slot.identify(&[0u8; 4]).map(|image| image.id),
+            SLOT.identify(&[0u8; 4]).map(|image| image.id),
             Some("zeroes")
         );
-        assert_eq!(slot.identify(&[2u8; 4]), None);
+        assert_eq!(SLOT.identify(&[2u8; 4]), None);
     }
 
     #[test]
     fn an_image_of_another_length_is_not_this_slots() {
-        assert_eq!(slot().identify(&[1u8; 8]), None);
+        assert_eq!(SLOT.identify(&[1u8; 8]), None);
     }
 
     #[test]
     fn an_image_is_looked_up_by_id() {
-        let slot = slot();
         assert_eq!(
-            slot.image("zeroes").map(|image| image.label),
+            SLOT.image("zeroes").map(|image| image.label),
             Some("All zeroes")
         );
-        assert_eq!(slot.image("agb"), None);
+        assert_eq!(SLOT.image("agb"), None);
+    }
+
+    #[test]
+    fn a_well_formed_slot_passes_its_own_check() {
+        SLOT.check_well_formed();
     }
 
     #[test]
@@ -137,5 +201,23 @@ mod tests {
             sha256_hex(b""),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
+    }
+
+    #[test]
+    fn only_the_firmware_options_are_sockets() {
+        let descriptors = [
+            LaunchOptionDescriptor {
+                id: "overdump",
+                label: "Overdump",
+                kind: LaunchOptionKind::Toggle,
+            },
+            LaunchOptionDescriptor {
+                id: SLOT.id,
+                label: SLOT.label,
+                kind: LaunchOptionKind::Firmware { slot: SLOT },
+            },
+        ];
+        let found: Vec<&str> = firmware_slots(&descriptors).map(|slot| slot.id).collect();
+        assert_eq!(found, ["boot-rom"]);
     }
 }

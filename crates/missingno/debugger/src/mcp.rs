@@ -13,6 +13,7 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use missingno_core::cartridge::BoardValue;
+use missingno_core::firmware::FirmwareValue;
 use missingno_core::launch::{LaunchOptionDescriptor, LaunchOptionKind, LaunchValue, LaunchValues};
 use missingno_mcp_stdio::no_arguments;
 use missingno_session::factory::{self, CoreFactory};
@@ -299,11 +300,11 @@ fn load_rom(loaded: &mut Option<Host>, args: &Value) -> ToolOutcome {
             .ok_or_else(|| format!("no core recognises {path}; name its console with 'system'"))?,
     };
     let mut launch = launch_values(factory, &bytes, args)?;
-    if let Some(dir) = FirmwareLibrary::default_dir() {
-        FirmwareLibrary::scan(dir, &factory::firmware_slots())
-            .supply(&(factory.options)(&bytes, &launch), &mut launch)
-            .map_err(|refusal| refusal.to_string())?;
-    }
+    // The stated system already settled the core, so the firmware folder is
+    // read here rather than through the factory's own recognition.
+    FirmwareLibrary::scan_default()
+        .supply(&(factory.options)(&bytes, &launch), &mut launch)
+        .map_err(|refusal| refusal.to_string())?;
     let console = (factory.create)(path_ref, &bytes, &launch).map_err(|error| error.to_string())?;
     let debugger = console.into_debugger();
     let core_name = factory.name;
@@ -330,20 +331,20 @@ fn launch_values(factory: &CoreFactory, rom: &[u8], args: &Value) -> Result<Laun
         .as_object()
         .ok_or("'options' must be an object of option id to value")?;
     // A firmware socket is published for the console the other values name, so
-    // those are read first and the sockets against what they settled.
-    let mut sockets: Vec<(&String, &Value)> = Vec::new();
-    let published = (factory.options)(rom, &launch);
+    // everything else is read first.
+    let settled = (factory.options)(rom, &launch);
     for (id, value) in options {
-        match published.iter().find(|option| option.id == id) {
-            Some(descriptor) if !matches!(descriptor.kind, LaunchOptionKind::Firmware { .. }) => {
-                set_option(descriptor, id, value, &mut launch)?
-            }
-            _ => sockets.push((id, value)),
+        if let Some(descriptor) = settled.iter().find(|option| option.id == id)
+            && !matches!(descriptor.kind, LaunchOptionKind::Firmware { .. })
+        {
+            set_option(descriptor, id, value, &mut launch)?;
         }
     }
 
+    // Then the sockets, against the rows those values publish — and an id no
+    // row answers to, which only this pass can tell apart from a deferred one.
     let published = (factory.options)(rom, &launch);
-    for (id, value) in sockets {
+    for (id, value) in options {
         let descriptor = published
             .iter()
             .find(|option| option.id == id)
@@ -358,7 +359,9 @@ fn launch_values(factory: &CoreFactory, rom: &[u8], args: &Value) -> Result<Laun
                     ),
                 }
             })?;
-        set_option(descriptor, id, value, &mut launch)?;
+        if matches!(descriptor.kind, LaunchOptionKind::Firmware { .. }) {
+            set_option(descriptor, id, value, &mut launch)?;
+        }
     }
     Ok(launch)
 }
@@ -397,28 +400,20 @@ fn set_option(
                 .ok_or_else(|| format!("launch option '{id}' takes true or false"))?;
             launch.set_toggle(id, flag);
         }
-        LaunchOptionKind::File { .. } => {
-            let file = value
-                .as_str()
-                .ok_or_else(|| format!("launch option '{id}' takes a filesystem path"))?;
-            let contents = std::fs::read(file)
-                .map_err(|error| format!("launch option '{id}': {file}: {error}"))?;
-            launch.set_file(id, contents);
-        }
         // A firmware image is named by id where the folder holds it, and
         // by path where a caller brings its own file.
         LaunchOptionKind::Firmware { slot } => {
             let named = value.as_str().ok_or_else(|| {
                 format!("launch option '{id}' takes an image id or a filesystem path")
             })?;
-            match slot.image(named).is_some() {
-                true => launch.set_choice(id, named),
-                false => {
-                    let contents = std::fs::read(named)
-                        .map_err(|error| format!("launch option '{id}': {named}: {error}"))?;
-                    launch.set_file(id, contents);
-                }
-            }
+            let chosen = match slot.image(named).is_some() {
+                true => FirmwareValue::Image(named.to_owned()),
+                false => FirmwareValue::Bytes(
+                    std::fs::read(named)
+                        .map_err(|error| format!("launch option '{id}': {named}: {error}"))?,
+                ),
+            };
+            launch.set_firmware(id, chosen);
         }
         // A board is either named on its own, for a board whose wiring
         // fixes its parts, or stated whole with the parts populated on it.

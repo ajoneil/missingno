@@ -880,7 +880,7 @@ impl Settings {
 }
 
 fn settings_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|dir| dir.join("missingno").join("settings.ron"))
+    missingno_session::config_dir().map(|dir| dir.join("settings.ron"))
 }
 
 #[cfg(test)]

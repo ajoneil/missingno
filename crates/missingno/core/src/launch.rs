@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::cartridge::{BoardSpec, BoardValue};
-use crate::firmware::FirmwareSlot;
+use crate::firmware::{FirmwareSlot, FirmwareValue};
 
 /// One option a core accepts at launch.
 #[derive(Clone)]
@@ -32,17 +32,13 @@ pub enum LaunchOptionKind {
         flags: Vec<LaunchChoice>,
     },
     Toggle,
-    /// A file's contents, `label` naming what to pick.
-    File {
-        label: &'static str,
-    },
     /// A board from `boards`, and the parts its silicon varies in.
     Board {
         boards: Vec<BoardSpec>,
     },
-    /// An image for one of the board's firmware sockets. A caller states which
-    /// by id (`LaunchValue::Choice`) and a frontend supplies the bytes; the
-    /// core reads only `LaunchValue::File`.
+    /// An image for one of the board's firmware sockets. A caller names one by
+    /// id and a frontend turns it into the bytes; the core reads only
+    /// [`FirmwareValue::Bytes`].
     Firmware {
         slot: FirmwareSlot,
     },
@@ -79,7 +75,8 @@ pub enum LaunchValue {
     /// The flags of a set that are on; an empty set is all of them off.
     Flags(BTreeSet<String>),
     Toggle(bool),
-    File(Vec<u8>),
+    /// What fills a firmware socket, as far as the caller has taken it.
+    Firmware(FirmwareValue),
     /// A whole board and the parts populated on it, as a catalogue states them.
     Board(BoardValue),
 }
@@ -120,10 +117,11 @@ impl LaunchValues {
         }
     }
 
-    /// The file contents supplied for `id`, or `None` where the caller set none.
-    pub fn file(&self, id: &str) -> Option<&[u8]> {
+    /// What fills the firmware socket `id`, or `None` where the caller set
+    /// nothing for it.
+    pub fn firmware(&self, id: &str) -> Option<&FirmwareValue> {
         match self.0.get(id) {
-            Some(LaunchValue::File(bytes)) => Some(bytes),
+            Some(LaunchValue::Firmware(value)) => Some(value),
             _ => None,
         }
     }
@@ -154,8 +152,8 @@ impl LaunchValues {
         self.0.insert(id.into(), LaunchValue::Toggle(value));
     }
 
-    pub fn set_file(&mut self, id: impl Into<String>, contents: Vec<u8>) {
-        self.0.insert(id.into(), LaunchValue::File(contents));
+    pub fn set_firmware(&mut self, id: impl Into<String>, value: FirmwareValue) {
+        self.0.insert(id.into(), LaunchValue::Firmware(value));
     }
 
     pub fn set_board(&mut self, id: impl Into<String>, board: BoardValue) {
@@ -180,7 +178,7 @@ mod tests {
     fn an_unset_option_reads_as_absent() {
         let values = LaunchValues::default();
         assert_eq!(values.choice("tv-standard"), None);
-        assert_eq!(values.file("boot-rom"), None);
+        assert_eq!(values.firmware("boot-rom"), None);
         assert!(!values.toggle("overdump"));
     }
 
@@ -189,17 +187,20 @@ mod tests {
         let mut values = LaunchValues::default();
         values.set_choice("board", "F8");
         values.set_toggle("overdump", true);
-        values.set_file("boot-rom", vec![0x31, 0xFE]);
+        values.set_firmware("boot-rom", FirmwareValue::Image("dmg".to_owned()));
         values.set_board("stated", BoardValue::new("Plain4K"));
         assert_eq!(values.choice("board"), Some("F8"));
         assert!(values.toggle("overdump"));
-        assert_eq!(values.file("boot-rom"), Some([0x31, 0xFE].as_slice()));
+        assert_eq!(
+            values.firmware("boot-rom"),
+            Some(&FirmwareValue::Image("dmg".to_owned()))
+        );
         assert_eq!(
             values.board("stated").map(|b| b.board.as_str()),
             Some("Plain4K")
         );
         assert_eq!(values.choice("overdump"), None);
-        assert_eq!(values.file("board"), None);
+        assert_eq!(values.firmware("board"), None);
         assert_eq!(values.board("board"), None);
     }
 

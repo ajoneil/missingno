@@ -9,12 +9,9 @@
 use std::path::{Path, PathBuf};
 
 use missingno_core::firmware::{
-    FIRMWARE_NONE, FirmwareImage, FirmwareNeed, FirmwareSlot, sha256_hex,
+    FirmwareImage, FirmwareNeed, FirmwareSlot, FirmwareValue, firmware_slots,
 };
-use missingno_core::launch::{LaunchOptionDescriptor, LaunchOptionKind, LaunchValue, LaunchValues};
-
-/// Files larger than this are not firmware, and are not read to find out.
-const LARGEST_IMAGE: u64 = 1 << 20;
+use missingno_core::launch::{LaunchOptionDescriptor, LaunchValues};
 
 /// One recognised image, and the file it was found in.
 pub struct PresentImage {
@@ -33,8 +30,8 @@ pub struct FirmwareLibrary {
 /// Why a launch cannot be given the firmware it asks for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FirmwareRefusal {
-    /// A required socket with nothing to fill it.
-    Missing {
+    /// A socket that must be filled, with nothing filling it.
+    Required {
         slot: &'static str,
         label: &'static str,
         dir: PathBuf,
@@ -45,8 +42,6 @@ pub enum FirmwareRefusal {
         image: String,
         dir: PathBuf,
     },
-    /// A required socket cannot be left empty.
-    NoneNotAllowed { slot: &'static str },
     /// An image id the slot does not list.
     UnknownImage { slot: &'static str, image: String },
 }
@@ -54,7 +49,7 @@ pub enum FirmwareRefusal {
 impl std::fmt::Display for FirmwareRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FirmwareRefusal::Missing { label, dir, .. } => {
+            FirmwareRefusal::Required { label, dir, .. } => {
                 write!(f, "this console needs a {label} in {}", dir.display())
             }
             FirmwareRefusal::NotInFolder { slot, image, dir } => write!(
@@ -62,9 +57,6 @@ impl std::fmt::Display for FirmwareRefusal {
                 "{slot}: no file in {} holds the {image} image",
                 dir.display()
             ),
-            FirmwareRefusal::NoneNotAllowed { slot } => {
-                write!(f, "{slot}: this console does not start without one")
-            }
             FirmwareRefusal::UnknownImage { slot, image } => {
                 write!(f, "{slot}: no such image \"{image}\"")
             }
@@ -75,12 +67,21 @@ impl std::fmt::Display for FirmwareRefusal {
 impl FirmwareLibrary {
     /// Where firmware lives when a caller names no folder of its own.
     pub fn default_dir() -> Option<PathBuf> {
-        dirs::config_dir().map(|dir| dir.join("missingno").join("firmware"))
+        crate::config_dir().map(|dir| dir.join("firmware"))
+    }
+
+    /// The default folder, read against every socket this build's cores state.
+    pub fn scan_default() -> Self {
+        Self::scan(
+            Self::default_dir().unwrap_or_default(),
+            &crate::factory::firmware_slots(),
+        )
     }
 
     /// Read `dir`, naming every file that holds an image one of `slots` lists.
+    /// A folder that does not exist yet simply holds nothing.
     pub fn scan(dir: PathBuf, slots: &[FirmwareSlot]) -> Self {
-        let _ = std::fs::create_dir_all(&dir);
+        let sizes: Vec<usize> = slots.iter().map(|slot| slot.size).collect();
         let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
             .into_iter()
             .flatten()
@@ -93,21 +94,14 @@ impl FirmwareLibrary {
         let mut present: Vec<PresentImage> = Vec::new();
         let mut unrecognised = Vec::new();
         for path in paths {
-            let Some(bytes) = read_candidate(&path) else {
-                unrecognised.push(path);
-                continue;
-            };
-            match identify(slots, &bytes) {
+            let found = read_candidate(&path, &sizes).and_then(|bytes| identify(slots, &bytes));
+            match found {
                 Some((slot, image)) => {
                     let already = present
                         .iter()
                         .any(|found| found.slot == slot && found.image.id == image.id);
                     if !already {
-                        present.push(PresentImage {
-                            slot,
-                            image: image.clone(),
-                            path,
-                        });
+                        present.push(PresentImage { slot, image, path });
                     }
                 }
                 None => unrecognised.push(path),
@@ -122,6 +116,11 @@ impl FirmwareLibrary {
 
     pub fn dir(&self) -> &Path {
         &self.dir
+    }
+
+    /// Make the folder, for a frontend about to show it to the user.
+    pub fn ensure_dir(&self) -> std::io::Result<()> {
+        std::fs::create_dir_all(&self.dir)
     }
 
     /// Files in the folder that hold no image any slot lists.
@@ -157,43 +156,30 @@ impl FirmwareLibrary {
     }
 
     /// Turn every firmware choice in `values` into the bytes a core reads. A
-    /// caller that supplied a file outright keeps it.
+    /// caller that supplied the bytes outright keeps them, and a socket the
+    /// machine starts without may be left empty.
     pub fn supply(
         &self,
         descriptors: &[LaunchOptionDescriptor],
         values: &mut LaunchValues,
     ) -> Result<(), FirmwareRefusal> {
-        for descriptor in descriptors {
-            let LaunchOptionKind::Firmware { slot } = &descriptor.kind else {
-                continue;
+        for slot in firmware_slots(descriptors) {
+            let required = slot.need == FirmwareNeed::Required;
+            let empty = || match required {
+                true => Err(FirmwareRefusal::Required {
+                    slot: slot.id,
+                    label: slot.label,
+                    dir: self.dir.clone(),
+                }),
+                false => Ok(()),
             };
-            match values.value(slot.id) {
-                None => {
-                    if slot.need == FirmwareNeed::Required {
-                        return Err(FirmwareRefusal::Missing {
-                            slot: slot.id,
-                            label: slot.label,
-                            dir: self.dir.clone(),
-                        });
-                    }
-                }
-                Some(LaunchValue::File(_)) => {}
-                Some(LaunchValue::Choice(chosen)) if chosen == FIRMWARE_NONE => {
-                    if slot.need == FirmwareNeed::Required {
-                        return Err(FirmwareRefusal::NoneNotAllowed { slot: slot.id });
-                    }
-                    values.clear(slot.id);
-                }
-                Some(LaunchValue::Choice(chosen)) => {
+            match values.firmware(slot.id) {
+                None | Some(FirmwareValue::None) => empty()?,
+                Some(FirmwareValue::Bytes(_)) => {}
+                Some(FirmwareValue::Image(chosen)) => {
                     let chosen = chosen.clone();
                     let bytes = self.image_bytes(slot, &chosen)?;
-                    values.set_file(slot.id, bytes);
-                }
-                Some(other) => {
-                    return Err(FirmwareRefusal::UnknownImage {
-                        slot: slot.id,
-                        image: not_an_image(other).to_owned(),
-                    });
+                    values.set_firmware(slot.id, FirmwareValue::Bytes(bytes));
                 }
             }
         }
@@ -217,49 +203,27 @@ impl FirmwareLibrary {
     }
 }
 
-/// What a value that names no firmware image is instead.
-fn not_an_image(value: &LaunchValue) -> &'static str {
-    match value {
-        LaunchValue::Flags(_) => "a set of flags",
-        LaunchValue::Toggle(_) => "a toggle",
-        LaunchValue::Board(_) => "a board",
-        LaunchValue::Choice(_) | LaunchValue::File(_) => "an image",
-    }
-}
-
-/// A file's contents, unless it is too big to be firmware.
-fn read_candidate(path: &Path) -> Option<Vec<u8>> {
-    let size = std::fs::metadata(path).ok()?.len();
-    (size <= LARGEST_IMAGE)
+/// A file's contents, unless its length is one no socket takes.
+fn read_candidate(path: &Path, sizes: &[usize]) -> Option<Vec<u8>> {
+    let length = std::fs::metadata(path).ok()?.len();
+    sizes
+        .iter()
+        .any(|size| *size as u64 == length)
         .then(|| std::fs::read(path).ok())
         .flatten()
 }
 
-/// The slot and image `bytes` are, hashing only where some slot lists an image
-/// of that length.
-fn identify<'a>(
-    slots: &'a [FirmwareSlot],
-    bytes: &[u8],
-) -> Option<(&'static str, &'a FirmwareImage)> {
-    if !slots
+/// The slot and image `bytes` are, if any slot lists one with that content.
+fn identify(slots: &[FirmwareSlot], bytes: &[u8]) -> Option<(&'static str, FirmwareImage)> {
+    slots
         .iter()
-        .any(|slot| slot.images.iter().any(|image| image.size == bytes.len()))
-    {
-        return None;
-    }
-    let hash = sha256_hex(bytes);
-    slots.iter().find_map(|slot| {
-        slot.images
-            .iter()
-            .find(|image| image.size == bytes.len() && image.sha256 == hash)
-            .map(|image| (slot.id, image))
-    })
+        .find_map(|slot| slot.identify(bytes).map(|image| (slot.id, *image)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use missingno_core::firmware::FirmwareOrigin;
+    use missingno_core::launch::LaunchOptionKind;
 
     /// A slot over synthetic images, hashed from the bytes the tests write.
     fn slot(need: FirmwareNeed) -> FirmwareSlot {
@@ -267,23 +231,17 @@ mod tests {
             id: "boot-rom",
             label: "Boot ROM",
             need,
-            images: vec![
-                FirmwareImage {
-                    id: "first",
-                    label: "First",
-                    size: 4,
-                    sha256: leaked(&first()),
-                    origin: FirmwareOrigin::Official,
-                },
-                FirmwareImage {
-                    id: "second",
-                    label: "Second",
-                    size: 4,
-                    sha256: leaked(&second()),
-                    origin: FirmwareOrigin::Open { project: "test" },
-                },
-            ],
+            size: 4,
+            images: images(),
         }
+    }
+
+    /// The synthetic hashes are computed, not pasted, so no dump is needed.
+    fn images() -> &'static [FirmwareImage] {
+        Box::leak(Box::new([
+            FirmwareImage::official("first", "First", leaked(&first())),
+            FirmwareImage::open("second", "Second", "test", leaked(&second())),
+        ]))
     }
 
     fn first() -> Vec<u8> {
@@ -294,9 +252,8 @@ mod tests {
         vec![0x00, 0x01, 0x02, 0x03]
     }
 
-    /// The synthetic hashes are computed, not pasted, so no dump is needed.
     fn leaked(bytes: &[u8]) -> &'static str {
-        sha256_hex(bytes).leak()
+        missingno_core::firmware::sha256_hex(bytes).leak()
     }
 
     fn descriptors(slot: FirmwareSlot) -> Vec<LaunchOptionDescriptor> {
@@ -344,13 +301,16 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_folder_is_scanned_into_existence() {
-        let dir = temp_dir("created");
+    fn a_folder_that_is_not_there_holds_nothing_and_is_not_made() {
+        let dir = temp_dir("absent");
         std::fs::remove_dir_all(&dir).unwrap();
         let slot = slot(FirmwareNeed::Optional);
         let library = FirmwareLibrary::scan(dir.clone(), std::slice::from_ref(&slot));
-        assert!(dir.is_dir());
+        assert!(!dir.exists());
         assert!(library.present(&slot).is_empty());
+
+        library.ensure_dir().expect("the folder is made on request");
+        assert!(dir.is_dir());
     }
 
     #[test]
@@ -385,11 +345,14 @@ mod tests {
         let published = descriptors(slot);
 
         let mut values = LaunchValues::default();
-        values.set_choice("boot-rom", "first");
+        values.set_firmware("boot-rom", FirmwareValue::Image("first".to_owned()));
         library
             .supply(&published, &mut values)
             .expect("it is there");
-        assert_eq!(values.file("boot-rom"), Some(first().as_slice()));
+        assert_eq!(
+            values.firmware("boot-rom"),
+            Some(&FirmwareValue::Bytes(first()))
+        );
     }
 
     #[test]
@@ -403,9 +366,9 @@ mod tests {
         library.supply(&published, &mut values).expect("automatic");
         assert!(values.is_empty());
 
-        values.set_choice("boot-rom", FIRMWARE_NONE);
+        values.set_firmware("boot-rom", FirmwareValue::None);
         library.supply(&published, &mut values).expect("none");
-        assert!(values.is_empty());
+        assert_eq!(values.firmware("boot-rom"), Some(&FirmwareValue::None));
     }
 
     #[test]
@@ -414,22 +377,20 @@ mod tests {
         let slot = slot(FirmwareNeed::Required);
         let library = FirmwareLibrary::scan(dir.clone(), std::slice::from_ref(&slot));
         let published = descriptors(slot);
+        let refusal = FirmwareRefusal::Required {
+            slot: "boot-rom",
+            label: "Boot ROM",
+            dir,
+        };
 
         let mut values = LaunchValues::default();
         assert_eq!(
             library.supply(&published, &mut values),
-            Err(FirmwareRefusal::Missing {
-                slot: "boot-rom",
-                label: "Boot ROM",
-                dir: dir.clone(),
-            })
+            Err(refusal.clone())
         );
 
-        values.set_choice("boot-rom", FIRMWARE_NONE);
-        assert_eq!(
-            library.supply(&published, &mut values),
-            Err(FirmwareRefusal::NoneNotAllowed { slot: "boot-rom" })
-        );
+        values.set_firmware("boot-rom", FirmwareValue::None);
+        assert_eq!(library.supply(&published, &mut values), Err(refusal));
     }
 
     #[test]
@@ -440,7 +401,7 @@ mod tests {
         let published = descriptors(slot);
 
         let mut values = LaunchValues::default();
-        values.set_choice("boot-rom", "first");
+        values.set_firmware("boot-rom", FirmwareValue::Image("first".to_owned()));
         assert_eq!(
             library.supply(&published, &mut values),
             Err(FirmwareRefusal::NotInFolder {
@@ -450,7 +411,7 @@ mod tests {
             })
         );
 
-        values.set_choice("boot-rom", "agb");
+        values.set_firmware("boot-rom", FirmwareValue::Image("agb".to_owned()));
         assert_eq!(
             library.supply(&published, &mut values),
             Err(FirmwareRefusal::UnknownImage {
@@ -461,17 +422,20 @@ mod tests {
     }
 
     #[test]
-    fn a_file_supplied_outright_is_left_alone() {
+    fn bytes_supplied_outright_are_left_alone() {
         let dir = temp_dir("outright");
         let slot = slot(FirmwareNeed::Required);
         let library = FirmwareLibrary::scan(dir, std::slice::from_ref(&slot));
         let published = descriptors(slot);
 
         let mut values = LaunchValues::default();
-        values.set_file("boot-rom", vec![0xAA; 4]);
+        values.set_firmware("boot-rom", FirmwareValue::Bytes(vec![0xAA; 4]));
         library
             .supply(&published, &mut values)
             .expect("the caller's own image");
-        assert_eq!(values.file("boot-rom"), Some([0xAA; 4].as_slice()));
+        assert_eq!(
+            values.firmware("boot-rom"),
+            Some(&FirmwareValue::Bytes(vec![0xAA; 4]))
+        );
     }
 }

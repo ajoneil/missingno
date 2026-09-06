@@ -15,7 +15,7 @@ use missingno_gb::ppu::types::palette::{PaletteChoice, PaletteIndex};
 use missingno_session::FirmwareLibrary;
 
 use crate::app::{
-    self, automation, controls,
+    self, automation, controls, firmware as firmware_ui,
     settings::{ControlSlot, EMULATOR_ACTIONS, EmulatorAction, Surface, WindDirection},
     system::{Platform, family_of},
     ui::{
@@ -221,9 +221,13 @@ fn page_label(page: ControlsPage) -> &'static str {
     }
 }
 
-/// The page's name in an automation id: its label lowercased, spaces underscored.
+/// A page's name in an automation id: its label lowercased, spaces underscored.
+fn id_name(label: &str) -> String {
+    label.to_lowercase().replace(' ', "_")
+}
+
 fn page_id_name(page: ControlsPage) -> String {
-    page_label(page).to_lowercase().replace(' ', "_")
+    id_name(page_label(page))
 }
 
 /// One page's contents, read off the seam descriptors: what the view lays out and
@@ -473,7 +477,7 @@ fn controls_section<'a>(
         .max_width(620);
 
     row![
-        page_rail(page),
+        rail(controls_rail(page)),
         vertical_rule(),
         iced::widget::scrollable(container(body).padding(l()).width(Fill)).height(Fill),
     ]
@@ -489,32 +493,63 @@ pub(in crate::app) fn page_pointer_knob(page: ControlsPage, settings: &super::Se
     }
 }
 
-/// The page selector: a rail of entries beside the page they select, so a family
-/// joining `FAMILIES` needs no room made for it.
-fn page_rail(current: ControlsPage) -> Element<'static, app::Message> {
+/// One entry of a section's page rail.
+struct RailEntry {
+    id: String,
+    label: String,
+    message: Message,
+    showing: bool,
+}
+
+/// The page selector: a rail of entries beside the page they select, so a page
+/// joining a section needs no room made for it.
+fn rail(entries: Vec<RailEntry>) -> Element<'static, app::Message> {
     let mut col = column![].spacing(s());
 
-    for page in controls_pages() {
+    for entry in entries {
         // Raw buttons: a long platform name wraps rather than being clipped to a
         // single line's height.
-        let label = text(page_label(page));
-        let entry = if page == current {
+        let label = text(entry.label);
+        let button = if entry.showing {
             buttons::selected_raw(label).width(Fill)
         } else {
             buttons::subtle_raw(label)
-                .on_press(Message::SelectControlsPage(page).into())
+                .on_press(entry.message.into())
                 .width(Fill)
         };
-        col = col.push(automation::tag(
-            &automation::ids::controls_page(&page_id_name(page)),
-            entry,
-        ));
+        col = col.push(automation::tag(&entry.id, button));
     }
 
     container(col.padding(m()))
         .width(PAGE_RAIL_WIDTH)
         .height(Fill)
         .into()
+}
+
+/// The Controls section's rail entries, in page order.
+fn controls_rail(current: ControlsPage) -> Vec<RailEntry> {
+    controls_pages()
+        .into_iter()
+        .map(|page| RailEntry {
+            id: automation::ids::controls_page(&page_id_name(page)),
+            label: page_label(page).to_string(),
+            message: Message::SelectControlsPage(page),
+            showing: page == current,
+        })
+        .collect()
+}
+
+/// The Systems section's rail entries, in page order.
+fn systems_rail(current: Option<Platform>) -> Vec<RailEntry> {
+    systems_pages()
+        .into_iter()
+        .map(|platform| RailEntry {
+            id: automation::ids::systems_page(&id_name(platform.name())),
+            label: platform.name().to_string(),
+            message: Message::SelectSystemsPage(platform),
+            showing: Some(platform) == current,
+        })
+        .collect()
 }
 
 /// The Controllers block's tabs: which controller type's controls it shows.
@@ -705,7 +740,9 @@ pub(in crate::app) struct PressableElement {
     pub id: String,
     pub label: String,
     pub toggle: bool,
-    pub message: Message,
+    /// `None` where the element is a pick list, which a client opens by other
+    /// means.
+    pub message: Option<Message>,
 }
 
 /// Every pressable element the Controls section shows, in reading order: the page
@@ -728,7 +765,7 @@ pub(in crate::app) fn controls_elements(
                 current(entry == page)
             ),
             toggle: false,
-            message: Message::SelectControlsPage(entry),
+            message: Some(Message::SelectControlsPage(entry)),
         })
         .collect();
 
@@ -738,7 +775,7 @@ pub(in crate::app) fn controls_elements(
                 id: automation::ids::controls_tab(&tab_id_name(page, tab.peripheral)),
                 label: format!("Show {} controls{}", tab.label, current(tab.selected)),
                 toggle: false,
-                message: Message::SelectControllerTab(tab.platform, tab.peripheral),
+                message: Some(Message::SelectControllerTab(tab.platform, tab.peripheral)),
             });
         }
         for entry in group.rows {
@@ -754,7 +791,10 @@ pub(in crate::app) fn controls_elements(
                             )),
                             label: format!("Bind {} on the {name}", entry.qualified),
                             toggle: false,
-                            message: Message::StartListening(ListeningFor { surface, target }),
+                            message: Some(Message::StartListening(ListeningFor {
+                                surface,
+                                target,
+                            })),
                         });
                     }
                 }
@@ -762,7 +802,7 @@ pub(in crate::app) fn controls_elements(
                     id: automation::ids::controls_option(&pointer_id_name(page)),
                     label: "Turn the knob with the pointer".to_string(),
                     toggle: true,
-                    message: Message::SetPointerKnob(platform, !on),
+                    message: Some(Message::SetPointerKnob(platform, !on)),
                 }),
             }
         }
@@ -772,7 +812,7 @@ pub(in crate::app) fn controls_elements(
         id: automation::ids::controls_reset(&page_id_name(page)),
         label: format!("Reset {} controls to defaults", page_label(page)),
         toggle: false,
-        message: Message::ResetBindings(page),
+        message: Some(Message::ResetBindings(page)),
     });
     elements
 }
@@ -781,8 +821,6 @@ pub(in crate::app) fn controls_elements(
 
 /// The firmware pick lists are as wide as the longest image label needs.
 const FIRMWARE_WIDTH: f32 = 400.0;
-/// The entry that leaves an optional socket empty.
-const NO_IMAGE: &str = "None";
 
 /// The platforms the Systems section has a page for: those whose family maps
 /// firmware, in display order.
@@ -803,28 +841,9 @@ fn showing_page(selected: Option<Platform>) -> Option<Platform> {
         .or_else(|| pages.into_iter().next())
 }
 
-/// A platform's name in an automation id.
-fn platform_id_name(platform: Platform) -> String {
-    platform.name().to_lowercase().replace(' ', "_")
-}
-
 /// A socket's name in an automation id, qualified by the page showing it.
 fn slot_id_name(platform: Platform, slot: &str) -> String {
-    format!("{}.{}", platform_id_name(platform), slot.replace('-', "_"))
-}
-
-/// One entry of a socket's default pick list.
-#[derive(Clone, PartialEq, Eq)]
-struct FirmwareEntry {
-    /// `None` leaves the socket to whatever the core answers with.
-    image: Option<String>,
-    label: String,
-}
-
-impl std::fmt::Display for FirmwareEntry {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.label)
-    }
+    format!("{}.{}", id_name(platform.name()), slot.replace('-', "_"))
 }
 
 /// What the firmware folder holds, in one line.
@@ -885,7 +904,7 @@ fn systems_section<'a>(
         container(folder).padding(l()),
         horizontal_rule(),
         row![
-            systems_rail(page),
+            rail(systems_rail(page)),
             vertical_rule(),
             iced::widget::scrollable(container(body).padding(l()).width(Fill)).height(Fill),
         ]
@@ -893,31 +912,6 @@ fn systems_section<'a>(
     ]
     .height(Fill)
     .into()
-}
-
-/// The page selector, beside the page it selects.
-fn systems_rail(current: Option<Platform>) -> Element<'static, app::Message> {
-    let mut col = column![].spacing(s());
-
-    for platform in systems_pages() {
-        let label = text(platform.name());
-        let entry = if Some(platform) == current {
-            buttons::selected_raw(label).width(Fill)
-        } else {
-            buttons::subtle_raw(label)
-                .on_press(Message::SelectSystemsPage(platform).into())
-                .width(Fill)
-        };
-        col = col.push(automation::tag(
-            &automation::ids::systems_page(&platform_id_name(platform)),
-            entry,
-        ));
-    }
-
-    container(col.padding(m()))
-        .width(PAGE_RAIL_WIDTH)
-        .height(Fill)
-        .into()
 }
 
 /// One platform's sockets: what each takes by default, over the images its core
@@ -946,60 +940,33 @@ fn slot_group(
     firmware: &FirmwareLibrary,
 ) -> Element<'static, app::Message> {
     let saved = settings.firmware.get(slot.id).map(String::as_str);
-    let present = firmware.present(slot);
-
-    let mut entries = vec![FirmwareEntry {
-        image: None,
-        label: match (slot.need, present.first()) {
-            (FirmwareNeed::Optional, _) => NO_IMAGE.to_string(),
-            (FirmwareNeed::Required, Some(first)) => {
-                format!("Automatic ({})", first.image.label)
+    let leading = firmware_ui::Entry {
+        choice: firmware_ui::Choice::Automatic,
+        label: match (slot.need, firmware.automatic(slot, None)) {
+            (FirmwareNeed::Optional, _) => firmware_ui::NO_IMAGE.to_string(),
+            (FirmwareNeed::Required, Some(present)) => {
+                format!("Automatic ({})", present.image.label)
             }
             (FirmwareNeed::Required, None) => "Automatic".to_string(),
         },
-    }];
-    entries.extend(present.iter().map(|found| FirmwareEntry {
-        image: Some(found.image.id.to_string()),
-        label: found.image.label.to_string(),
-    }));
-    // A default whose file has left the folder still shows, so the user can see
-    // why nothing is being mapped.
-    if let Some(saved) = saved
-        && !entries
-            .iter()
-            .any(|entry| entry.image.as_deref() == Some(saved))
-    {
-        let named = slot
-            .image(saved)
-            .map(|image| image.label.to_string())
-            .unwrap_or_else(|| saved.to_string());
-        entries.push(FirmwareEntry {
-            image: Some(saved.to_string()),
-            label: format!("{named} (not in firmware folder)"),
-        });
-    }
-
-    let selected = saved
-        .and_then(|saved| {
-            entries
-                .iter()
-                .find(|entry| entry.image.as_deref() == Some(saved))
-                .cloned()
-        })
-        .unwrap_or_else(|| entries[0].clone());
+    };
+    let (entries, selected) = firmware_ui::entries(slot, firmware, saved, leading);
 
     let id = slot.id.to_string();
     let control = pick_list(entries, Some(selected), move |entry| {
         Message::SetFirmwareDefault {
             slot: id.clone(),
-            image: entry.image,
+            image: match entry.choice {
+                firmware_ui::Choice::Image(image) => Some(image),
+                _ => None,
+            },
         }
         .into()
     })
     .width(FIRMWARE_WIDTH);
 
     let mut known = column![].spacing(s());
-    for image in &slot.images {
+    for image in slot.images {
         let held = firmware.find(slot.id, image.id).is_some();
         let origin = match image.origin {
             FirmwareOrigin::Official => "Official".to_string(),
@@ -1033,49 +1000,42 @@ fn slot_group(
     .into()
 }
 
-/// One element of the Systems section automation can reach: a pick list has no
-/// press action, so its message is `None`.
-pub(in crate::app) struct SystemsElement {
-    pub id: String,
-    pub label: String,
-    pub message: Option<Message>,
-}
-
 /// Everything the Systems section offers, in reading order: the folder's two
-/// buttons, the page selector, then the showing page's sockets.
-pub(in crate::app) fn systems_elements(selected: Option<Platform>) -> Vec<SystemsElement> {
+/// buttons, the page selector, then the showing page's sockets. A socket's pick
+/// list has no press action, so it answers no message.
+pub(in crate::app) fn systems_elements(selected: Option<Platform>) -> Vec<PressableElement> {
     let page = showing_page(selected);
     let mut elements = vec![
-        SystemsElement {
+        PressableElement {
             id: automation::ids::SETTINGS_FIRMWARE_FOLDER.to_string(),
             label: "Open the firmware folder".to_string(),
+            toggle: false,
             message: Some(Message::OpenFirmwareFolder),
         },
-        SystemsElement {
+        PressableElement {
             id: automation::ids::SETTINGS_FIRMWARE_RESCAN.to_string(),
             label: "Rescan the firmware folder".to_string(),
+            toggle: false,
             message: Some(Message::RescanFirmware),
         },
     ];
 
-    for platform in systems_pages() {
-        let current = if Some(platform) == page {
-            " (current)"
-        } else {
-            ""
-        };
-        elements.push(SystemsElement {
-            id: automation::ids::systems_page(&platform_id_name(platform)),
-            label: format!("Show {} firmware{current}", platform.name()),
-            message: Some(Message::SelectSystemsPage(platform)),
+    for entry in systems_rail(page) {
+        let current = if entry.showing { " (current)" } else { "" };
+        elements.push(PressableElement {
+            id: entry.id,
+            label: format!("Show {} firmware{current}", entry.label),
+            toggle: false,
+            message: Some(entry.message),
         });
     }
 
     if let Some(family) = page.and_then(family_of) {
         for slot in (family.firmware)() {
-            elements.push(SystemsElement {
+            elements.push(PressableElement {
                 id: automation::ids::systems_slot(&slot_id_name(family.platform, slot.id)),
                 label: format!("Choose the {} image", slot.label),
+                toggle: false,
                 message: None,
             });
         }
@@ -1307,7 +1267,7 @@ pub(in crate::app) fn display_elements(
             id: id(&entry.id_name()),
             label: entry.label(),
             toggle: entry.switched_on().is_some(),
-            message: entry.activate(),
+            message: Some(entry.activate()),
         })
         .collect()
 }
