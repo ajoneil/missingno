@@ -41,6 +41,7 @@ impl App {
             (
                 Screen::Settings {
                     section,
+                    systems_page,
                     controls,
                     listening_for,
                     ..
@@ -52,6 +53,8 @@ impl App {
                 controls,
                 *listening_for,
                 &self.cartridge_rw.detected_devices,
+                &self.firmware,
+                *systems_page,
             ),
             (
                 Screen::ViewingGame {

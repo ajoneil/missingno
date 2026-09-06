@@ -111,8 +111,16 @@ fn start(app: &mut App, request: Request<'_>) -> Result<String, String> {
         &app.catalogue,
         &sha1,
         app.boot_rom.as_ref(),
+        &app.firmware,
+        &app.settings.firmware,
     );
-    let mut values = launch::resolve(&(family.options)(&request.rom), &request.overrides, &facts);
+    let descriptors = (family.options)(&request.rom);
+    let mut values = launch::resolve(&descriptors, &request.overrides, &facts);
+    // Every firmware choice becomes the bytes the core reads, or a refusal
+    // naming what the folder is missing.
+    app.firmware
+        .supply(&descriptors, &mut values)
+        .map_err(|refusal| refusal.to_string())?;
     // The values name the console this launch is for, in the vocabulary a
     // factory reads: media whose extension names none is still settled here.
     values.set_choice(

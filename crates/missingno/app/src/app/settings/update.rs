@@ -14,6 +14,11 @@ pub(in crate::app) fn handle(
             {
                 *s = section;
             }
+            // The folder is read again on arrival, so a file dropped in it
+            // since the app started is offered.
+            if section == super::view::Section::Systems {
+                app.rescan_firmware();
+            }
         }
         super::view::Message::Back => {
             if let app::Screen::Settings {
@@ -135,6 +140,26 @@ pub(in crate::app) fn handle(
                 *listening_for = None;
             }
         }
+        super::view::Message::SelectSystemsPage(platform) => {
+            if let app::Screen::Settings {
+                ref mut systems_page,
+                ..
+            } = app.screen
+            {
+                *systems_page = Some(platform);
+            }
+        }
+        super::view::Message::SetFirmwareDefault { slot, image } => {
+            match image {
+                Some(image) => app.settings.firmware.insert(slot, image),
+                None => app.settings.firmware.remove(&slot),
+            };
+            app.settings.save();
+        }
+        super::view::Message::OpenFirmwareFolder => {
+            let _ = open::that(app.firmware.dir());
+        }
+        super::view::Message::RescanFirmware => app.rescan_firmware(),
         super::view::Message::SelectControllerTab(platform, peripheral) => {
             if let app::Screen::Settings {
                 ref mut controls,

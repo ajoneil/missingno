@@ -46,6 +46,8 @@ pub const HOMEBREW_SEARCH: &str = "homebrew.search";
 
 pub const SETTINGS_BACK: &str = "settings.back";
 pub const SETTINGS_EXTERNAL_CLIENTS: &str = "settings.external_clients";
+pub const SETTINGS_FIRMWARE_FOLDER: &str = "settings.systems.folder";
+pub const SETTINGS_FIRMWARE_RESCAN: &str = "settings.systems.rescan";
 pub const SETTINGS_UI_AUTOMATION: &str = "settings.ui_automation";
 
 pub const EMULATOR_PLAY_PAUSE: &str = "emulator.play_pause";
@@ -63,6 +65,9 @@ const CONTROLS_PAGE_PREFIX: &str = "settings.controls.page.";
 const CONTROLS_TAB_PREFIX: &str = "settings.controls.tab.";
 const CONTROLS_BINDING_PREFIX: &str = "settings.controls.binding.";
 const CONTROLS_OPTION_PREFIX: &str = "settings.controls.option.";
+const SYSTEMS_PREFIX: &str = "settings.systems.";
+const SYSTEMS_PAGE_PREFIX: &str = "settings.systems.page.";
+const SYSTEMS_SLOT_PREFIX: &str = "settings.systems.slot.";
 
 /// The id for a library game entry, keyed by its sha1.
 pub fn game(sha1: &str) -> String {
@@ -117,6 +122,22 @@ pub fn controls_option(option: &str) -> String {
 /// The id for the showing Controls page's reset-to-defaults button.
 pub fn controls_reset(page: &str) -> String {
     format!("{CONTROLS_PREFIX}reset.{page}")
+}
+
+/// Whether `id` names something inside the Systems section, whose elements the
+/// section itself enumerates from the showing page.
+pub fn is_systems(id: &str) -> bool {
+    id.starts_with(SYSTEMS_PREFIX)
+}
+
+/// The id for a Systems page selector entry, keyed by its platform name.
+pub fn systems_page(page: &str) -> String {
+    format!("{SYSTEMS_PAGE_PREFIX}{page}")
+}
+
+/// The id for a firmware socket's pick list, keyed `game_boy.dmg_boot_rom`.
+pub fn systems_slot(slot: &str) -> String {
+    format!("{SYSTEMS_SLOT_PREFIX}{slot}")
 }
 
 /// Whether `id` names a pick list of the play screen's Controllers section,

@@ -39,6 +39,12 @@ pub(crate) fn running_under_gamescope() -> bool {
     std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|desktop| desktop == "gamescope")
 }
 
+/// Read the firmware folder against every registered family's sockets.
+fn scan_firmware() -> missingno_session::FirmwareLibrary {
+    let dir = missingno_session::FirmwareLibrary::default_dir().unwrap_or_default();
+    missingno_session::FirmwareLibrary::scan(dir, &system::firmware_slots())
+}
+
 pub fn run(
     rom_path: Option<PathBuf>,
     debugger: bool,
@@ -147,6 +153,9 @@ struct App {
     print_rx: std::sync::mpsc::Receiver<crate::printer::CompletedPrint>,
     /// Boot ROM supplied on the CLI, applied to every Game Boy family load.
     boot_rom: Option<missingno_gb::BootRom>,
+    /// What the firmware folder holds, read against every family's sockets.
+    /// Re-read on demand rather than watched.
+    firmware: missingno_session::FirmwareLibrary,
     /// Homebrew Hub API client (shared, thread-safe).
     homebrew_client: std::sync::Arc<library::homebrew_hub::HomebrewHubClient>,
     /// Bundled game catalogue (commercial + homebrew).
@@ -214,6 +223,11 @@ impl App {
             return load::play_current_game(self);
         }
         Task::none()
+    }
+
+    /// Re-read the firmware folder, for a file dropped in it while the app runs.
+    pub(in crate::app) fn rescan_firmware(&mut self) {
+        self.firmware = scan_firmware();
     }
 
     /// Get the keybinding capture state, if on the settings screen.
@@ -523,6 +537,9 @@ enum Screen {
     },
     Settings {
         section: settings::view::Section,
+        /// Which platform's page the Systems section shows; `None` shows the
+        /// first platform that declares a firmware socket.
+        systems_page: Option<system::Platform>,
         /// Which page the Controls section shows, and the controller each of its
         /// port blocks has tabbed to.
         controls: settings::view::ControlsState,
@@ -851,6 +868,7 @@ impl App {
             print_tx,
             print_rx,
             boot_rom,
+            firmware: scan_firmware(),
             homebrew_client: std::sync::Arc::new(library::homebrew_hub::HomebrewHubClient::new()),
             catalogue: std::sync::Arc::new(library::catalogue::Catalogue::load()),
             cartridge_rw: CartridgeRwState::default(),
@@ -1078,6 +1096,7 @@ impl App {
                     std::mem::replace(&mut self.screen, Screen::Library { hovered_game: None });
                 self.screen = Screen::Settings {
                     section: settings::view::Section::default(),
+                    systems_page: None,
                     controls: settings::view::ControlsState::default(),
                     listening_for: None,
                     previous_screen: Box::new(previous),

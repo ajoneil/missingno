@@ -256,7 +256,8 @@ descriptors, which the bindings UI iterates), a `port_config` hook (what the
 jacks carry for a game whose library metadata names controllers),
 an `is_rom` predicate (mutually exclusive across the table), an optional
 `title_from_rom` header hook, a `create_console` factory taking a `MediaLoad`,
-and an optional `trace` entry point for the `trace` subcommand. The file dialog,
+a `firmware` hook stating the platform's firmware sockets (empty for a console
+that maps none), and an optional `trace` entry point for the `trace` subcommand. The file dialog,
 ROM loading, title detection, the library scanner (which stamps the platform),
 the bindings UI, and the trace CLI all iterate that table; `family_for` is the
 single classification point.

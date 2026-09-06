@@ -52,6 +52,8 @@ pub struct UiContext {
     pub settings_controls: settings_view::ControlsState,
     /// Where the pointer switch stands on the system the Controls section shows.
     pub settings_pointer_knob: bool,
+    /// Which platform's page the Systems section shows; `None` shows the first.
+    pub settings_systems_page: Option<crate::app::system::Platform>,
     /// The Display section's rows, as the settings screen offers them.
     pub settings_display: settings_view::DisplayOptions,
     pub allow_external_clients: bool,
@@ -227,6 +229,9 @@ pub fn enumerate(ctx: &UiContext) -> Vec<String> {
                         .map(|element| element.id),
                 );
             }
+            if ctx.settings_section == settings_view::Section::Systems {
+                ids.extend(systems_elements(ctx).into_iter().map(|element| element.id));
+            }
             if ctx.settings_section == settings_view::Section::Developer {
                 ids.push(ids::SETTINGS_EXTERNAL_CLIENTS.to_string());
                 ids.push(ids::SETTINGS_UI_AUTOMATION.to_string());
@@ -239,6 +244,11 @@ pub fn enumerate(ctx: &UiContext) -> Vec<String> {
 /// The Controls section's pressable elements for the page it is showing.
 fn controls_elements(ctx: &UiContext) -> Vec<settings_view::PressableElement> {
     settings_view::controls_elements(&ctx.settings_controls, ctx.settings_pointer_knob)
+}
+
+/// The Systems section's elements for the page it is showing.
+fn systems_elements(ctx: &UiContext) -> Vec<settings_view::SystemsElement> {
+    settings_view::systems_elements(ctx.settings_systems_page)
 }
 
 /// The Display section's rows, as the settings screen names them.
@@ -324,6 +334,12 @@ pub fn describe(ctx: &UiContext, id: &str) -> Option<(UiKind, String)> {
     }
     if ids::is_controllers(id) {
         return controllers_elements(ctx)
+            .into_iter()
+            .find(|element| element.id == id)
+            .map(|element| (UiKind::Button, element.label));
+    }
+    if ids::is_systems(id) {
+        return systems_elements(ctx)
             .into_iter()
             .find(|element| element.id == id)
             .map(|element| (UiKind::Button, element.label));
@@ -437,6 +453,13 @@ pub(in crate::app) fn activation(ctx: &UiContext, id: &str) -> Option<Message> {
     if ids::is_controls(id) {
         return element_activation(controls_elements(ctx), id);
     }
+    if ids::is_systems(id) {
+        return systems_elements(ctx)
+            .into_iter()
+            .find(|element| element.id == id)
+            .and_then(|element| element.message)
+            .map(Message::from);
+    }
     if ids::is_settings_display(id) {
         return element_activation(settings_display_elements(ctx), id);
     }
@@ -541,6 +564,7 @@ mod tests {
             settings_section: settings_view::Section::General,
             settings_controls: settings_view::ControlsState::default(),
             settings_pointer_knob: true,
+            settings_systems_page: None,
             settings_display: settings_view::DisplayOptions {
                 effects: settings_view::Effects {
                     persistence: true,
@@ -751,11 +775,14 @@ mod tests {
     fn every_enumerated_id_is_actionable() {
         // Pick-lists are registered for their bounds; a client opens them by
         // other means, so they legitimately answer neither verb. The Controllers
-        // section is pick lists throughout.
+        // section is pick lists throughout, as is every firmware socket.
         let pickers = [ids::LIBRARY_FILTER, ids::LIBRARY_SORT];
         for ctx in every_screen() {
             for id in enumerate(&ctx) {
-                if pickers.contains(&id.as_str()) || ids::is_controllers(&id) {
+                if pickers.contains(&id.as_str())
+                    || ids::is_controllers(&id)
+                    || id.starts_with(&ids::systems_slot(""))
+                {
                     continue;
                 }
                 let is_text = matches!(describe(&ctx, &id), Some((UiKind::TextInput, _)));

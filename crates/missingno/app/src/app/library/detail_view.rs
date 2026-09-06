@@ -66,7 +66,7 @@ pub struct DetailData<'a> {
     /// The inserted cartridge, if any, for flash writing.
     pub inserted_cartridge: Option<&'a cartridge_rw::CartridgeHeader>,
     /// The game's launch options, absent where no family claims its platform.
-    pub launch_options: Option<launch::PanelData>,
+    pub launch_options: Option<launch::PanelData<'a>>,
 }
 
 #[allow(private_interfaces)]

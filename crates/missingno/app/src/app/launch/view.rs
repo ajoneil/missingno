@@ -13,7 +13,9 @@ use iced::{
 use missingno_core::cartridge::{
     AttributeKind, AttributeSpec, AttributeValue, BoardSpec, BoardValue,
 };
+use missingno_core::firmware::{FIRMWARE_NONE, FirmwareNeed, FirmwareSlot};
 use missingno_core::launch::{LaunchOptionDescriptor, LaunchOptionKind, LaunchValue, LaunchValues};
+use missingno_session::FirmwareLibrary;
 
 use super::{Edit, EditSurface, Facts, Message, Window};
 use crate::app;
@@ -33,22 +35,26 @@ const PART_LABEL_WIDTH: f32 = 110.0;
 const PART_WIDTH: f32 = 160.0;
 /// The entry that takes a set of flags off whatever states it.
 const CUSTOM: &str = "custom";
+/// The entry that leaves an optional firmware socket empty.
+const NO_IMAGE: &str = "None";
 const PANEL_WIDTH: f32 = 660.0;
 const MAX_PANEL_HEIGHT: f32 = 640.0;
 
 /// Everything one launch panel's rows read: the options a family publishes,
-/// the user's own word on them, what fills the rest, and where an edit lands.
-pub struct PanelData {
+/// the user's own word on them, what fills the rest, the firmware folder a
+/// socket's images are offered from, and where an edit lands.
+pub struct PanelData<'a> {
     pub descriptors: Vec<LaunchOptionDescriptor>,
     pub overrides: LaunchValues,
     pub facts: Facts,
+    pub firmware: &'a FirmwareLibrary,
     pub surface: EditSurface,
 }
 
 /// One row per option: its label and a control that reads "Automatic" until the
 /// user sets it. Nothing marks an override — a control not reading "Automatic"
 /// is the mark.
-pub fn panel(data: &PanelData) -> Element<'static, app::Message> {
+pub fn panel(data: &PanelData<'_>) -> Element<'static, app::Message> {
     if data.descriptors.is_empty() {
         return app_text::detail("This system takes no launch options.")
             .color(MUTED)
@@ -64,7 +70,7 @@ pub fn panel(data: &PanelData) -> Element<'static, app::Message> {
 
 fn option_row(
     descriptor: &LaunchOptionDescriptor,
-    data: &PanelData,
+    data: &PanelData<'_>,
 ) -> Element<'static, app::Message> {
     let control = match &descriptor.kind {
         LaunchOptionKind::Choice { choices } => choice_control(descriptor.id, choices, data),
@@ -72,7 +78,7 @@ fn option_row(
         LaunchOptionKind::Toggle => toggle_control(descriptor.id, data),
         LaunchOptionKind::File { label } => file_control(descriptor.id, label, data),
         LaunchOptionKind::Board { boards } => board_control(descriptor.id, boards, data),
-        LaunchOptionKind::Firmware { slot } => file_control(descriptor.id, &slot.label, data),
+        LaunchOptionKind::Firmware { slot } => firmware_control(descriptor.id, slot, data),
     };
 
     // A board's parts stack under its pick list, so the label holds to the top
@@ -107,7 +113,7 @@ impl std::fmt::Display for Entry {
 /// The Automatic entry, naming what fills the option.
 fn automatic(
     id: &str,
-    data: &PanelData,
+    data: &PanelData<'_>,
     describe: impl Fn(&LaunchValue) -> Option<String>,
 ) -> Entry {
     let label = data
@@ -122,7 +128,7 @@ fn automatic(
 fn choice_control(
     id: &'static str,
     choices: &[missingno_core::launch::LaunchChoice],
-    data: &PanelData,
+    data: &PanelData<'_>,
 ) -> Element<'static, app::Message> {
     let label_of = |code: &str| {
         choices
@@ -162,7 +168,7 @@ fn choice_control(
 fn flags_control(
     id: &'static str,
     flags: &[missingno_core::launch::LaunchChoice],
-    data: &PanelData,
+    data: &PanelData<'_>,
 ) -> Element<'static, app::Message> {
     let published = flags.to_vec();
     let left_to_media = automatic(id, data, |value| match value {
@@ -256,7 +262,7 @@ fn flag_row(
 fn board_control(
     id: &'static str,
     boards: &[BoardSpec],
-    data: &PanelData,
+    data: &PanelData<'_>,
 ) -> Element<'static, app::Message> {
     let mut entries = vec![automatic(id, data, |value| match value {
         LaunchValue::Board(board) => Some(describe_board(board, boards)),
@@ -444,7 +450,7 @@ fn part_row(
 
 /// A toggle is picked the same way a choice is, so that leaving it automatic
 /// stays one entry of the same list rather than a third state of a checkbox.
-fn toggle_control(id: &'static str, data: &PanelData) -> Element<'static, app::Message> {
+fn toggle_control(id: &'static str, data: &PanelData<'_>) -> Element<'static, app::Message> {
     let word = |on: bool| if on { "On" } else { "Off" };
 
     let mut entries = vec![automatic(id, data, |value| match value {
@@ -483,10 +489,82 @@ fn toggle_control(id: &'static str, data: &PanelData) -> Element<'static, app::M
     .into()
 }
 
+/// A socket's images: what the folder holds, offered by the label the core knows
+/// each image by. Known images the folder does not hold are not offered — a
+/// choice here is one the launch can honour.
+fn firmware_control(
+    id: &'static str,
+    slot: &FirmwareSlot,
+    data: &PanelData<'_>,
+) -> Element<'static, app::Message> {
+    let named = |image: &str| slot.image(image).map(|image| image.label.to_string());
+
+    let mut entries = vec![automatic(id, data, |value| match value {
+        LaunchValue::Choice(image) if image == FIRMWARE_NONE => Some(NO_IMAGE.to_string()),
+        LaunchValue::Choice(image) => named(image).or_else(|| Some(image.clone())),
+        // A file supplied outright — the command line's — named if the socket
+        // knows its contents.
+        LaunchValue::File(bytes) => Some(
+            slot.identify(bytes)
+                .map(|image| image.label.to_string())
+                .unwrap_or_else(|| "this run's file".to_string()),
+        ),
+        _ => None,
+    })];
+    if slot.need == FirmwareNeed::Optional {
+        entries.push(Entry {
+            value: Some(FIRMWARE_NONE.to_string()),
+            label: NO_IMAGE.to_string(),
+        });
+    }
+    entries.extend(
+        data.firmware
+            .present(slot)
+            .into_iter()
+            .map(|present| Entry {
+                value: Some(present.image.id.to_string()),
+                label: present.image.label.to_string(),
+            }),
+    );
+
+    let chosen = data.overrides.choice(id);
+    // A choice whose file has since left the folder still shows, so the refusal
+    // at launch has a visible cause.
+    if let Some(chosen) = chosen
+        && !entries
+            .iter()
+            .any(|entry| entry.value.as_deref() == Some(chosen))
+    {
+        entries.push(Entry {
+            value: Some(chosen.to_string()),
+            label: format!(
+                "{} (not in firmware folder)",
+                named(chosen).unwrap_or_else(|| chosen.to_string())
+            ),
+        });
+    }
+
+    let selected = chosen
+        .and_then(|chosen| {
+            entries
+                .iter()
+                .find(|entry| entry.value.as_deref() == Some(chosen))
+                .cloned()
+        })
+        .unwrap_or_else(|| entries[0].clone());
+
+    let surface = data.surface;
+    pick_list(entries, Some(selected), move |entry| {
+        Message::Set(surface, Edit::Choice(id, entry.value)).into()
+    })
+    .width(CONTROL_WIDTH)
+    .into()
+}
+
 fn file_control(
     id: &'static str,
     label: &'static str,
-    data: &PanelData,
+    data: &PanelData<'_>,
 ) -> Element<'static, app::Message> {
     let surface = data.surface;
     let chosen = data.overrides.file(id).map(<[u8]>::len);
@@ -516,7 +594,7 @@ fn file_control(
 
 /// The launch window: what is about to boot, the options it will boot with, and
 /// the one keystroke that starts it.
-pub fn window(state: &Window) -> Element<'static, app::Message> {
+pub fn window(state: &Window, firmware: &FirmwareLibrary) -> Element<'static, app::Message> {
     let mut heading = column![app_text::heading(state.title.clone())].spacing(4);
     if let Some(platform) = state.platform {
         heading = heading.push(app_text::detail(platform.name()).color(MUTED));
@@ -550,6 +628,7 @@ pub fn window(state: &Window) -> Element<'static, app::Message> {
             descriptors: super::rendered_options(family, &state.rom),
             overrides: state.overrides.clone(),
             facts: state.facts.clone(),
+            firmware,
             surface: EditSurface::Window,
         }));
     }

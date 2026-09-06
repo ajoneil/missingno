@@ -7,6 +7,7 @@
 
 use std::path::Path;
 
+pub use missingno_core::firmware::FirmwareSlot;
 pub use missingno_core::launch::{LaunchOptionDescriptor, LaunchValue, LaunchValues};
 pub use missingno_core::ports::{
     ControlDescriptor, PanelControl, PeripheralId, PortDescriptor, PortId,
@@ -190,6 +191,9 @@ pub struct FamilyDescriptor {
     /// The options the media answers for itself, for a launch surface to show
     /// as the automatic value. Empty where only the core can resolve them.
     pub stated_by_media: fn(&[u8]) -> Vec<MediaFact>,
+    /// The firmware sockets this platform's console maps before the cartridge.
+    /// Empty for a console that maps none.
+    pub firmware: fn() -> Vec<FirmwareSlot>,
     /// How this family's ports are configured for a game whose library
     /// metadata names these peripherals. Empty leaves the console's power-on
     /// configuration.
@@ -233,6 +237,20 @@ pub fn families_by_name() -> Vec<&'static FamilyDescriptor> {
     families
 }
 
+/// Every firmware socket any registered family declares, deduped by id: what a
+/// scan of the firmware folder matches its files against.
+pub fn firmware_slots() -> Vec<FirmwareSlot> {
+    let mut slots: Vec<FirmwareSlot> = Vec::new();
+    for family in FAMILIES {
+        for slot in (family.firmware)() {
+            if !slots.iter().any(|known| known.id == slot.id) {
+                slots.push(slot);
+            }
+        }
+    }
+    slots
+}
+
 /// The registered platforms in display order.
 pub fn platforms_by_name() -> Vec<Platform> {
     families_by_name()
@@ -253,6 +271,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         create_console: gb::create_console,
         options: gb::launch_options,
         stated_by_media: gb::stated_by_media,
+        firmware: || vec![missingno_gb::firmware::boot_rom_slot()],
         port_config: |_| Vec::new(),
         trace: Some(crate::trace::trace_gb),
     },
@@ -266,6 +285,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         create_console: gb::create_console,
         options: gb::launch_options,
         stated_by_media: gb::stated_by_media,
+        firmware: || vec![missingno_gbc::firmware::boot_rom_slot()],
         port_config: |_| Vec::new(),
         trace: Some(crate::trace::trace_gb),
     },
@@ -278,6 +298,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         create_console: vcs::create_console,
         options: vcs::launch_options,
         stated_by_media: |_| Vec::new(),
+        firmware: Vec::new,
         port_config: vcs::port_config,
         trace: Some(crate::trace::trace_vcs),
     },
@@ -294,6 +315,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         },
         options: |_| Vec::new(),
         stated_by_media: |_| Vec::new(),
+        firmware: Vec::new,
         port_config: |_| Vec::new(),
         trace: None,
     },
@@ -306,6 +328,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         create_console: sg1000::create_console,
         options: sg1000::launch_options,
         stated_by_media: |_| Vec::new(),
+        firmware: Vec::new,
         port_config: |_| Vec::new(),
         trace: None,
     },
@@ -322,6 +345,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         },
         options: |_| Vec::new(),
         stated_by_media: |_| Vec::new(),
+        firmware: Vec::new,
         port_config: |_| Vec::new(),
         trace: Some(crate::trace::trace_nes),
     },

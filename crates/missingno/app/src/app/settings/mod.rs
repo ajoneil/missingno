@@ -2,7 +2,7 @@ pub(crate) mod update;
 pub(crate) mod view;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt, fs,
     hash::Hash,
     path::PathBuf,
@@ -658,6 +658,10 @@ struct SettingsFile<C = ControlsSettings> {
     // nothing outside this process can enumerate or drive the window.
     #[serde(default)]
     allow_ui_automation: bool,
+    /// The image a firmware socket takes when nobody chooses, keyed by socket
+    /// id. An absent socket is left to the core's own answer.
+    #[serde(default)]
+    firmware: BTreeMap<String, String>,
     #[serde(default)]
     library_sort: crate::app::library::store::SortKey,
     #[serde(default)]
@@ -686,6 +690,7 @@ impl<C: Default> Default for SettingsFile<C> {
             cartridge_rw_enabled: true,
             allow_external_clients: false,
             allow_ui_automation: false,
+            firmware: BTreeMap::new(),
             library_sort: SortKey::default(),
             library_layout: LibraryLayout::default(),
             window_width: None,
@@ -714,6 +719,7 @@ impl<C> SettingsFile<C> {
             cartridge_rw_enabled: self.cartridge_rw_enabled,
             allow_external_clients: self.allow_external_clients,
             allow_ui_automation: self.allow_ui_automation,
+            firmware: self.firmware,
             library_sort: self.library_sort,
             library_layout: self.library_layout,
             window_width: self.window_width,
@@ -745,6 +751,8 @@ pub struct Settings {
     /// Whether the app publishes a UI-automation socket for clients in other
     /// processes (an agent enumerating and driving the app).
     pub allow_ui_automation: bool,
+    /// The default image for each firmware socket, keyed by socket id.
+    pub firmware: BTreeMap<String, String>,
     pub library_sort: SortKey,
     pub library_layout: LibraryLayout,
     pub window_width: Option<f32>,
@@ -768,6 +776,7 @@ impl Default for Settings {
             cartridge_rw_enabled: true,
             allow_external_clients: false,
             allow_ui_automation: false,
+            firmware: BTreeMap::new(),
             library_sort: SortKey::default(),
             library_layout: LibraryLayout::default(),
             window_width: None,
@@ -857,6 +866,7 @@ impl Settings {
             cartridge_rw_enabled: self.cartridge_rw_enabled,
             allow_external_clients: self.allow_external_clients,
             allow_ui_automation: self.allow_ui_automation,
+            firmware: self.firmware.clone(),
             library_sort: self.library_sort,
             library_layout: self.library_layout,
             window_width: self.window_width,
@@ -1439,5 +1449,29 @@ mod tests {
         let written = ron::ser::to_string(&file).unwrap();
         let reread: SettingsFile = ron::from_str(&written).unwrap();
         assert!(reread.allow_external_clients);
+    }
+
+    #[test]
+    fn firmware_defaults_round_trip() {
+        let chosen = r#"( firmware: {"dmg-boot-rom": "mgb"} )"#;
+        let file: SettingsFile = ron::from_str(chosen).unwrap();
+        assert_eq!(
+            file.firmware.get("dmg-boot-rom").map(String::as_str),
+            Some("mgb")
+        );
+
+        let written = ron::ser::to_string(&file).unwrap();
+        let reread: SettingsFile = ron::from_str(&written).unwrap();
+        assert_eq!(
+            reread.firmware.get("dmg-boot-rom").map(String::as_str),
+            Some("mgb")
+        );
+    }
+
+    /// A file written before the firmware folder existed names no socket.
+    #[test]
+    fn a_file_with_no_firmware_block_chooses_no_images() {
+        let file: SettingsFile = ron::from_str(r#"( setup_complete: true )"#).unwrap();
+        assert!(file.firmware.is_empty());
     }
 }
