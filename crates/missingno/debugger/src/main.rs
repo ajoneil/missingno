@@ -1,5 +1,6 @@
 //! `missingno-debugger [<rom>] [--port N] [--mcp] [--allow-attach] [--boot-rom
-//! PATH] [--system NAME] [--cart-type CODE] [--tv-standard STD] [--overdump]`:
+//! PATH|IMAGE] [--firmware-dir DIR] [--system NAME] [--cart-type CODE]
+//! [--tv-standard STD] [--overdump]`:
 //! recognise the ROM through the core registry — or take the system `--system`
 //! names, for media no extension identifies — put its console under
 //! the debugger, and serve it — over HTTP by default, or as an MCP tool server
@@ -11,16 +12,17 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use missingno_core::launch::LaunchValues;
+use missingno_core::firmware::FirmwareSlot;
+use missingno_core::launch::{LaunchOptionDescriptor, LaunchOptionKind, LaunchValues};
 use missingno_debugger::http;
-use missingno_session::SharedSession;
 use missingno_session::factory::{self, LoadError};
+use missingno_session::{FirmwareLibrary, SharedSession};
 
 /// Matches the GUI crate's headless server default.
 const DEFAULT_PORT: u16 = 3333;
 
 const USAGE: &str = "usage: missingno-debugger [<rom>] [--port N] [--mcp] [--allow-attach] \
-     [--boot-rom PATH] [--system NAME] [--cart-type CODE] \
+     [--boot-rom PATH|IMAGE-ID] [--firmware-dir DIR] [--system NAME] [--cart-type CODE] \
      [--tv-standard ntsc|pal|pal60|ntsc50|palm|secam] [--overdump]";
 
 struct Args {
@@ -28,7 +30,11 @@ struct Args {
     port: u16,
     mcp: bool,
     allow_attach: bool,
-    boot_rom: Option<PathBuf>,
+    /// A firmware image: either a file to map, or the id of one the core
+    /// recognises and the firmware folder holds.
+    boot_rom: Option<String>,
+    /// Where recognised firmware images live.
+    firmware_dir: Option<PathBuf>,
     /// The console to load the ROM as. A generic dump extension names no core,
     /// so such media loads only when a caller states its system.
     system: Option<String>,
@@ -53,6 +59,7 @@ fn parse_args() -> Result<Args, String> {
     let mut mcp = false;
     let mut allow_attach = false;
     let mut boot_rom = None;
+    let mut firmware_dir = None;
     let mut system = None;
     let mut cart_type = None;
     let mut tv_standard = None;
@@ -67,9 +74,15 @@ fn parse_args() -> Result<Args, String> {
                     .map_err(|_| format!("invalid port: {value}"))?;
             }
             "--boot-rom" => {
-                boot_rom = Some(PathBuf::from(value_for(
+                boot_rom = Some(value_for(
                     &mut iter,
-                    "--boot-rom needs a path",
+                    "--boot-rom needs a path or an image id",
+                )?);
+            }
+            "--firmware-dir" => {
+                firmware_dir = Some(PathBuf::from(value_for(
+                    &mut iter,
+                    "--firmware-dir needs a path",
                 )?));
             }
             "--system" => {
@@ -106,11 +119,78 @@ fn parse_args() -> Result<Args, String> {
         mcp,
         allow_attach,
         boot_rom,
+        firmware_dir,
         system,
         cart_type,
         tv_standard,
         overdump,
     })
+}
+
+/// What `--boot-rom` names: a file to map as it stands, or the id of an image
+/// one of the core's firmware sockets lists, resolved from the folder.
+fn set_firmware(
+    published: &[LaunchOptionDescriptor],
+    named: &str,
+    launch: &mut LaunchValues,
+) -> Result<(), String> {
+    let slots: Vec<&FirmwareSlot> = published
+        .iter()
+        .filter_map(|option| match &option.kind {
+            LaunchOptionKind::Firmware { slot } => Some(slot),
+            _ => None,
+        })
+        .collect();
+    if slots.is_empty() {
+        return Err("this core maps no firmware".to_string());
+    }
+
+    let path = std::path::Path::new(named);
+    if path.is_file() {
+        let bytes =
+            std::fs::read(path).map_err(|e| format!("failed to read boot ROM {named}: {e}"))?;
+        let slot = slots
+            .iter()
+            .find(|slot| slot.images.iter().any(|image| image.size == bytes.len()))
+            .ok_or_else(|| {
+                format!(
+                    "{named} is {} bytes; this core maps {}",
+                    bytes.len(),
+                    image_sizes(&slots)
+                )
+            })?;
+        launch.set_file(slot.id, bytes);
+        return Ok(());
+    }
+
+    let slot = slots
+        .iter()
+        .find(|slot| slot.image(named).is_some())
+        .ok_or_else(|| {
+            let known: Vec<&str> = slots
+                .iter()
+                .flat_map(|slot| slot.images.iter().map(|image| image.id))
+                .collect();
+            format!(
+                "no firmware image \"{named}\"; this core knows: {}",
+                known.join(", ")
+            )
+        })?;
+    launch.set_choice(slot.id, named);
+    Ok(())
+}
+
+/// The image sizes a core's sockets take, largest statement of what a file
+/// must be to fit one.
+fn image_sizes(slots: &[&FirmwareSlot]) -> String {
+    let mut sizes: Vec<usize> = slots
+        .iter()
+        .flat_map(|slot| slot.images.iter().map(|image| image.size))
+        .collect();
+    sizes.sort_unstable();
+    sizes.dedup();
+    let named: Vec<String> = sizes.iter().map(|size| format!("{size} bytes")).collect();
+    named.join(" or ")
 }
 
 fn run() -> Result<(), String> {
@@ -131,11 +211,6 @@ fn run() -> Result<(), String> {
     if let Some(name) = &args.system {
         launch.set_choice(factory::SYSTEM, name);
     }
-    if let Some(path) = &args.boot_rom {
-        let bytes = std::fs::read(path)
-            .map_err(|e| format!("failed to read boot ROM {}: {e}", path.display()))?;
-        launch.set_file("boot-rom", bytes);
-    }
     if let Some(code) = &args.cart_type {
         launch.set_choice("board", code);
     }
@@ -143,6 +218,27 @@ fn run() -> Result<(), String> {
         launch.set_choice("tv-standard", standard);
     }
     launch.set_toggle("overdump", args.overdump);
+
+    let published = args
+        .system
+        .as_deref()
+        .and_then(factory::factory_named)
+        .or_else(|| factory::factory_for(&rom_path, &rom))
+        .map(|factory| (factory.options)(&rom))
+        .unwrap_or_default();
+    if let Some(named) = &args.boot_rom {
+        set_firmware(&published, named, &mut launch)?;
+    }
+    if let Some(dir) = args
+        .firmware_dir
+        .clone()
+        .or_else(FirmwareLibrary::default_dir)
+    {
+        FirmwareLibrary::scan(dir, &factory::firmware_slots())
+            .supply(&published, &mut launch)
+            .map_err(|refusal| refusal.to_string())?;
+    }
+
     let console =
         factory::create_console_with(&rom_path, &rom, &launch).map_err(|error| match error {
             LoadError::UnrecognizedMedia => format!(

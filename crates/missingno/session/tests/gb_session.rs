@@ -118,12 +118,22 @@ fn the_dmg_runner_refuses_a_cgb_only_cartridge() {
 #[test]
 fn a_boot_rom_image_of_no_known_length_is_refused() {
     let mut launch = LaunchValues::default();
-    launch.set_file("boot-rom", vec![0x00; 0x80]);
+    launch.set_file("dmg-boot-rom", vec![0x00; 0x80]);
     let Err(error) = factory::create_console_with(Path::new("test.gb"), &minimal_rom(), &launch)
     else {
         panic!("no boot ROM is 128 bytes long");
     };
     assert!(matches!(error, LoadError::InvalidValue { .. }));
+}
+
+#[test]
+fn the_game_boy_family_states_a_boot_rom_socket_per_console() {
+    let slots: Vec<&str> = factory::firmware_slots()
+        .iter()
+        .map(|slot| slot.id)
+        .collect();
+    assert!(slots.contains(&"dmg-boot-rom"));
+    assert!(slots.contains(&"cgb-boot-rom"));
 }
 
 #[test]

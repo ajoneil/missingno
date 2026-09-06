@@ -37,10 +37,14 @@ impl Facts {
     }
 }
 
-/// Options no launch surface renders yet: a boot ROM belongs with the system
-/// files, and an overdump is the catalogue's word about a dump rather than a
-/// choice. Both still resolve into the values a launch runs with.
-const UNRENDERED_OPTIONS: [&str; 2] = [system::gb::BOOT_ROM, system::vcs::OVERDUMP];
+/// Options no launch surface renders yet: a boot ROM waits on the firmware
+/// folder, and an overdump is the catalogue's word about a dump rather than a
+/// choice. All still resolve into the values a launch runs with.
+const UNRENDERED_OPTIONS: [&str; 3] = [
+    system::gb::DMG_BOOT_ROM,
+    system::gb::CGB_BOOT_ROM,
+    system::vcs::OVERDUMP,
+];
 
 fn rendered(descriptor: &LaunchOptionDescriptor) -> bool {
     !UNRENDERED_OPTIONS.contains(&descriptor.id)
@@ -78,10 +82,11 @@ pub fn facts(
     }
 
     if let Some(boot_rom) = boot_rom {
-        facts.set(
-            system::gb::BOOT_ROM,
-            LaunchValue::File(boot_rom.bytes().to_vec()),
-        );
+        let socket = match boot_rom {
+            missingno_gb::BootRom::Dmg(_) => system::gb::DMG_BOOT_ROM,
+            missingno_gb::BootRom::Cgb(_) => system::gb::CGB_BOOT_ROM,
+        };
+        facts.set(socket, LaunchValue::File(boot_rom.bytes().to_vec()));
     }
 
     facts

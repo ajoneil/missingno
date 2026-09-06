@@ -204,6 +204,21 @@ the same field vocabulary:
   (`save_state` / `load_state` / `set_control` / `step_frame`) — a core that
   wires save states gets replay for free, with no new trait methods.
 
+### `FirmwareSlot` → the firmware folder and the launch row
+
+A console that maps a program of its own before the media — a Game Boy boot
+ROM, a ColecoVision BIOS — states each socket as a `FirmwareSlot`
+(`missingno-core`'s `firmware.rs`): an id, a label, whether the machine starts
+without one (`FirmwareNeed::Required` or `Optional`), and the images it
+recognises, each by size and SHA-256. The core publishes the slot as
+`LaunchOptionKind::Firmware`, so every launch surface renders it without naming
+the console, and registers it on its session-factory entry so a headless caller
+resolves the same names. A caller states an image by id;
+`missingno-session`'s `FirmwareLibrary` scans the firmware folder in the config
+directory and turns that id into bytes. The core itself reads only
+`LaunchValue::File` — it never opens a file, and a required socket nothing can
+fill is a refusal the frontend shows rather than a silent start.
+
 ### `sidebar_sections` → the GUI sidebar, `describe_machine`, and `/sections`
 
 A family surfaces its chip state by composing `Section`s from `missingno-core`'s
@@ -281,8 +296,8 @@ And a few surfaces are still Game Boy-shaped, quarantined by no-op defaults
 until a second family grows the equivalent:
 
 - **Game Boy peripherals on `MediaLoad`** — the app's `MediaLoad` carries
-  `boot_rom`, `serial_link` and `print_sink`; its own doc comment states the
-  quarantine. Generalize each when a second family grows the backend.
+  `serial_link` and `print_sink`; its own doc comment states the quarantine.
+  Generalize each when a second family grows the backend.
 - **Two Game Boy questions on `SystemConsole`** — `uses_monochrome_palette`
   (whether the play-mode Display panel offers a palette picker) and
   `supports_sgb` (the SGB palette override); every other family takes the

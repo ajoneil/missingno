@@ -16,6 +16,7 @@ use missingno_core::cartridge::BoardValue;
 use missingno_core::launch::{LaunchOptionKind, LaunchValue, LaunchValues};
 use missingno_mcp_stdio::no_arguments;
 use missingno_session::factory::{self, CoreFactory};
+use missingno_session::firmware::FirmwareLibrary;
 use missingno_session::shared::SharedSession;
 use missingno_session::tools::{
     Tool, ToolOutcome, call_session_tool, outcome_json, session_tools, text,
@@ -158,9 +159,11 @@ fn load_rom_tool() -> Tool {
                       each left out to let the core resolve it: the Atari VCS takes \
                       `tv-standard` (ntsc/pal/secam), \
                       `board` (a cartridge board such as Atari8K, Atari16KSuperchip, ParkerBros), and `overdump` \
-                      (boolean); the Game Boy family takes `runner` (dmg/cgb) and `boot-rom` \
-                      (path to a boot ROM image). `tv_standard` is the older spelling of the \
-                      VCS standard override."
+                      (boolean); the Game Boy family takes `runner` (dmg/cgb) and the boot \
+                      ROM sockets `dmg-boot-rom` and `cgb-boot-rom`, each an image id the core \
+                      recognises (`dmg`, `mgb`, `cgb`, `agb`…) held in the firmware folder, or \
+                      a path to an image of your own. `tv_standard` is the older spelling of \
+                      the VCS standard override."
             .into(),
         input_schema: json!({
             "type": "object",
@@ -174,8 +177,8 @@ fn load_rom_tool() -> Tool {
                 },
                 "options": {
                     "type": "object",
-                    "description": "launch option id to value: a string for a choice or a file \
-                                    path, true/false for a toggle",
+                    "description": "launch option id to value: a string for a choice, a \
+                                    firmware image id or a file path, true/false for a toggle",
                 },
                 "tv_standard": {
                     "type": "string",
@@ -294,7 +297,12 @@ fn load_rom(loaded: &mut Option<Host>, args: &Value) -> ToolOutcome {
         None => factory::factory_for(path_ref, &bytes)
             .ok_or_else(|| format!("no core recognises {path}; name its console with 'system'"))?,
     };
-    let launch = launch_values(factory, &bytes, args)?;
+    let mut launch = launch_values(factory, &bytes, args)?;
+    if let Some(dir) = FirmwareLibrary::default_dir() {
+        FirmwareLibrary::scan(dir, &factory::firmware_slots())
+            .supply(&(factory.options)(&bytes), &mut launch)
+            .map_err(|refusal| refusal.to_string())?;
+    }
     let console = (factory.create)(path_ref, &bytes, &launch).map_err(|error| error.to_string())?;
     let debugger = console.into_debugger();
     let core_name = factory.name;
@@ -336,7 +344,7 @@ fn launch_values(factory: &CoreFactory, rom: &[u8], args: &Value) -> Result<Laun
                     ),
                 }
             })?;
-        match descriptor.kind {
+        match &descriptor.kind {
             LaunchOptionKind::Choice { .. } => {
                 let chosen = value
                     .as_str()
@@ -370,6 +378,21 @@ fn launch_values(factory: &CoreFactory, rom: &[u8], args: &Value) -> Result<Laun
                 let contents = std::fs::read(file)
                     .map_err(|error| format!("launch option '{id}': {file}: {error}"))?;
                 launch.set_file(id, contents);
+            }
+            // A firmware image is named by id where the folder holds it, and
+            // by path where a caller brings its own file.
+            LaunchOptionKind::Firmware { slot } => {
+                let named = value.as_str().ok_or_else(|| {
+                    format!("launch option '{id}' takes an image id or a filesystem path")
+                })?;
+                match slot.image(named).is_some() {
+                    true => launch.set_choice(id, named),
+                    false => {
+                        let contents = std::fs::read(named)
+                            .map_err(|error| format!("launch option '{id}': {named}: {error}"))?;
+                        launch.set_file(id, contents);
+                    }
+                }
             }
             // A board is either named on its own, for a board whose wiring
             // fixes its parts, or stated whole with the parts populated on it.

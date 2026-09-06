@@ -10,6 +10,7 @@
 
 use std::path::Path;
 
+use missingno_core::firmware::FirmwareSlot;
 use missingno_core::launch::{LaunchOptionDescriptor, LaunchValues};
 use missingno_core::system::SystemConsole;
 
@@ -67,6 +68,8 @@ pub struct CoreFactory {
     /// The launch options this core publishes for the media in hand: a choice
     /// the ROM's own header rules out is not among them.
     pub options: fn(&[u8]) -> Vec<LaunchOptionDescriptor>,
+    /// Every firmware socket on this core's boards, whichever media is loaded.
+    pub firmware: fn() -> Vec<FirmwareSlot>,
 }
 
 /// The file stem as a display title, falling back to a generic name. The
@@ -86,9 +89,9 @@ mod gb {
     use missingno_core::system::SystemConsole;
     use missingno_gb::cartridge::Cartridge;
     use missingno_gb::system::create_console;
-    use missingno_gb::{BootRom, GameBoy, media};
+    use missingno_gb::{GameBoy, media};
     use missingno_gbc::GameBoyColor;
-    use missingno_gbc::launch::{self, BOARD, BOOT_ROM, GbLaunch, RUNNER, RunnerPreference};
+    use missingno_gbc::launch::{self, BOARD, GbLaunch, RUNNER, RunnerPreference};
 
     /// The headless build persists no battery save; the format is frontend
     /// policy the GUI owns.
@@ -96,8 +99,7 @@ mod gb {
         None
     }
 
-    /// No battery save, no link peripheral, and a mismatched boot ROM dropped
-    /// without a word — this load path has no user to tell.
+    /// No battery save and no link peripheral: both are frontend policy.
     pub fn create(
         _path: &Path,
         rom: &[u8],
@@ -120,32 +122,36 @@ mod gb {
             })?;
         let cartridge = Cartridge::new(rom.to_vec(), board, None)
             .map_err(|refusal| LoadError::Core(refusal.to_string()))?;
-        let boot_rom = match launch.file(BOOT_ROM) {
-            Some(bytes) => Some(BootRom::from_bytes(bytes.to_vec()).map_err(|length| {
-                LoadError::InvalidValue {
-                    option: BOOT_ROM.to_string(),
-                    value: format!("{length}-byte image"),
-                }
-            })?),
-            None => None,
-        };
+        let boot_roms = launch::boot_roms_from_launch(launch).map_err(|(slot, image)| {
+            LoadError::InvalidValue {
+                option: slot.to_string(),
+                value: image,
+            }
+        })?;
         let runner =
             RunnerPreference::from_launch(launch).map_err(|value| LoadError::InvalidValue {
                 option: RUNNER.to_string(),
                 value: value.to_string(),
             })?;
-        let (console, _) =
-            launch::console(cartridge, boot_rom, None, runner, Boxed).map_err(|refusal| {
-                LoadError::IncompatibleOption {
-                    option: RUNNER.to_string(),
-                    reason: refusal.to_string(),
-                }
-            })?;
-        Ok(console)
+        launch::console(cartridge, boot_roms, None, runner, Boxed).map_err(|refusal| {
+            LoadError::IncompatibleOption {
+                option: RUNNER.to_string(),
+                reason: refusal.to_string(),
+            }
+        })
     }
 
     pub fn options(rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
         launch::launch_options(rom)
+    }
+
+    /// One socket per console of the family; the console that boots reads its
+    /// own.
+    pub fn firmware() -> Vec<FirmwareSlot> {
+        vec![
+            missingno_gb::firmware::boot_rom_slot(),
+            missingno_gbc::firmware::boot_rom_slot(),
+        ]
     }
 
     pub fn is_rom(path: &Path, rom: &[u8]) -> bool {
@@ -292,6 +298,7 @@ static FACTORIES: &[CoreFactory] = &[
         is_rom: gb::is_rom,
         create: gb::create,
         options: gb::options,
+        firmware: gb::firmware,
     },
     #[cfg(feature = "vcs")]
     CoreFactory {
@@ -299,6 +306,7 @@ static FACTORIES: &[CoreFactory] = &[
         is_rom: vcs::is_rom,
         create: vcs::create,
         options: vcs::options,
+        firmware: Vec::new,
     },
     #[cfg(feature = "nes")]
     CoreFactory {
@@ -306,6 +314,7 @@ static FACTORIES: &[CoreFactory] = &[
         is_rom: nes::is_rom,
         create: nes::create,
         options: |_| Vec::new(),
+        firmware: Vec::new,
     },
     #[cfg(feature = "sms")]
     CoreFactory {
@@ -313,6 +322,7 @@ static FACTORIES: &[CoreFactory] = &[
         is_rom: sms::is_rom,
         create: sms::create,
         options: |_| Vec::new(),
+        firmware: Vec::new,
     },
     #[cfg(feature = "sg1000")]
     CoreFactory {
@@ -320,6 +330,7 @@ static FACTORIES: &[CoreFactory] = &[
         is_rom: sg1000::is_rom,
         create: sg1000::create,
         options: sg1000::options,
+        firmware: Vec::new,
     },
 ];
 
@@ -339,6 +350,15 @@ pub fn factory_named(name: &str) -> Option<&'static CoreFactory> {
 /// Every registered core's name, in claim order: what a caller may state.
 pub fn factory_names() -> Vec<&'static str> {
     FACTORIES.iter().map(|factory| factory.name).collect()
+}
+
+/// Every firmware socket in this build, in claim order: what a firmware folder
+/// is read against before any media is known.
+pub fn firmware_slots() -> Vec<FirmwareSlot> {
+    FACTORIES
+        .iter()
+        .flat_map(|factory| (factory.firmware)())
+        .collect()
 }
 
 /// Build a console from a ROM's path and contents, leaving every launch option

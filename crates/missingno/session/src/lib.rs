@@ -21,6 +21,7 @@ pub mod attach;
 #[cfg(feature = "audio-output")]
 pub mod audio_output;
 pub mod factory;
+pub mod firmware;
 pub mod request;
 pub mod session;
 pub mod shared;
@@ -30,6 +31,7 @@ pub mod tools;
 
 #[cfg(all(unix, feature = "tools"))]
 pub use attach::{AttachClient, AttachEndpoint, Publication, SessionInfo};
+pub use firmware::{FirmwareLibrary, FirmwareRefusal, PresentImage};
 pub use session::{DisasmLine, Session, StopReason};
 pub use shared::{
     AudioSink, ControlSurfaces, ExtractedMachine, MemoryInterest, PluggedPort, RunningReadout,

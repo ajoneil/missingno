@@ -2,10 +2,12 @@
 //! console it is slotted into, and this crate is the one that knows both.
 
 use missingno_core::cartridge::{BoardValue, BoardVocabulary};
+use missingno_core::firmware::FirmwareSlot;
 use missingno_core::launch::{
     LaunchChoice, LaunchOptionDescriptor, LaunchOptionKind, LaunchValue, LaunchValues, board_option,
 };
 use missingno_gb::cartridge::GbCartType;
+use missingno_gb::firmware::DMG_BOOT_ROM;
 use missingno_gb::serial_transfer::SerialLink;
 use missingno_gb::{BootRom, GameBoy, cartridge::Cartridge};
 
@@ -13,8 +15,6 @@ use crate::GameBoyColor;
 
 /// The console to run the cartridge on.
 pub const RUNNER: &str = "runner";
-/// The boot ROM to map over the cartridge.
-pub const BOOT_ROM: &str = "boot-rom";
 /// The board the cartridge is built on, for media whose header misdeclares it.
 pub const BOARD: &str = "board";
 /// The console variants the cartridge is played with; where no console is
@@ -61,21 +61,29 @@ pub fn launch_options(rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
             ],
         },
     });
+    // Each console reads its own socket, so the monochrome row appears only
+    // where the monochrome console is on offer.
+    let dmg_boot_rom =
+        both_consoles.then(|| firmware_option(missingno_gb::firmware::boot_rom_slot()));
     let fixed = [
         board_option(BOARD, GbCartType::catalogue().iter().cloned()),
-        LaunchOptionDescriptor {
-            id: BOOT_ROM,
-            label: "Boot ROM",
-            kind: LaunchOptionKind::File {
-                label: "Boot ROM image",
-            },
-        },
+        firmware_option(crate::firmware::boot_rom_slot()),
     ];
     runner
         .into_iter()
         .chain(enhancements)
+        .chain(dmg_boot_rom)
         .chain(fixed)
         .collect()
+}
+
+/// A firmware socket as a launch option, named by the slot itself.
+fn firmware_option(slot: FirmwareSlot) -> LaunchOptionDescriptor {
+    LaunchOptionDescriptor {
+        id: slot.id,
+        label: slot.label,
+        kind: LaunchOptionKind::Firmware { slot },
+    }
 }
 
 /// The board the launch values state, or `None` where the header decides. A
@@ -98,15 +106,41 @@ pub trait GbLaunch {
     fn cgb(self, console: GameBoyColor) -> Self::Output;
 }
 
-/// What became of a candidate boot ROM. A boot ROM only boots the model it was
-/// dumped from, so one that does not match the selected core is dropped rather
-/// than forced on it; whether to say so is the caller's policy.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BootRomFit {
-    /// The candidate matches the selected core, or none was offered.
-    Kept,
-    /// The candidate was dumped from the other model, and was dropped.
-    Dropped,
+/// The boot ROM offered for each console of the family. A boot ROM only boots
+/// the model it was dumped from, so the family fills one socket per console and
+/// whichever console boots reads its own.
+#[derive(Clone, Default)]
+pub struct BootRoms {
+    pub dmg: Option<BootRom>,
+    pub cgb: Option<BootRom>,
+}
+
+/// The boot ROM each firmware slot was given. `Err` names the slot and the
+/// image found in it, which is no image that socket takes.
+pub fn boot_roms_from_launch(values: &LaunchValues) -> Result<BootRoms, (&'static str, String)> {
+    Ok(BootRoms {
+        dmg: slot_image(values, DMG_BOOT_ROM, |rom| matches!(rom, BootRom::Dmg(_)))?,
+        cgb: slot_image(values, crate::firmware::CGB_BOOT_ROM, |rom| {
+            matches!(rom, BootRom::Cgb(_))
+        })?,
+    })
+}
+
+fn slot_image(
+    values: &LaunchValues,
+    slot: &'static str,
+    fits: fn(&BootRom) -> bool,
+) -> Result<Option<BootRom>, (&'static str, String)> {
+    let Some(bytes) = values.file(slot) else {
+        return Ok(None);
+    };
+    let length = bytes.len();
+    let image = BootRom::from_bytes(bytes.to_vec())
+        .map_err(|length| (slot, format!("{length}-byte image")))?;
+    match fits(&image) {
+        true => Ok(Some(image)),
+        false => Err((slot, format!("{length}-byte image"))),
+    }
 }
 
 /// Which console of the family a cartridge is slotted into.
@@ -163,14 +197,15 @@ impl std::fmt::Display for RunnerRefused {
 /// enhanced or required — boots the CGB core, like a cartridge slotted into a
 /// real GBC, and DMG-only media boots the DMG core. A caller may name the
 /// console instead; only a CGB-only cartridge on the DMG is refused. Any serial
-/// peripheral goes on the selected console's link port.
+/// peripheral goes on the selected console's link port, and the console that
+/// boots maps the boot ROM from its own socket.
 pub fn console<L: GbLaunch>(
     cartridge: Cartridge,
-    boot_rom: Option<BootRom>,
+    boot_roms: BootRoms,
     link: Option<Box<dyn SerialLink>>,
     runner: RunnerPreference,
     launcher: L,
-) -> Result<(L::Output, BootRomFit), RunnerRefused> {
+) -> Result<L::Output, RunnerRefused> {
     let cgb_core = match runner {
         RunnerPreference::Auto => cartridge.is_cgb(),
         RunnerPreference::Cgb => true,
@@ -179,26 +214,19 @@ pub fn console<L: GbLaunch>(
         }
         RunnerPreference::Dmg => false,
     };
-    let (boot_rom, fit) = match (&boot_rom, cgb_core) {
-        (Some(BootRom::Dmg(_)), true) | (Some(BootRom::Cgb(_)), false) => {
-            (None, BootRomFit::Dropped)
-        }
-        _ => (boot_rom, BootRomFit::Kept),
-    };
-    let output = if cgb_core {
-        let mut console = GameBoyColor::new(cartridge, boot_rom);
+    Ok(if cgb_core {
+        let mut console = GameBoyColor::new(cartridge, boot_roms.cgb);
         if let Some(link) = link {
             console.set_link(link);
         }
         launcher.cgb(console)
     } else {
-        let mut console = GameBoy::new(cartridge, boot_rom);
+        let mut console = GameBoy::new(cartridge, boot_roms.dmg);
         if let Some(link) = link {
             console.set_link(link);
         }
         launcher.dmg(console)
-    };
-    Ok((output, fit))
+    })
 }
 
 #[cfg(test)]
@@ -362,6 +390,61 @@ mod tests {
     }
 
     #[test]
+    fn each_console_reads_the_boot_rom_from_its_own_slot() {
+        let mut values = LaunchValues::default();
+        values.set_file(DMG_BOOT_ROM, vec![0x00; 0x100]);
+        values.set_file(crate::firmware::CGB_BOOT_ROM, vec![0x00; 0x900]);
+        let boot_roms = boot_roms_from_launch(&values).expect("both images fit their slots");
+        assert!(matches!(boot_roms.dmg, Some(BootRom::Dmg(_))));
+        assert!(matches!(boot_roms.cgb, Some(BootRom::Cgb(_))));
+
+        let empty = boot_roms_from_launch(&LaunchValues::default()).expect("no image is no error");
+        assert!(empty.dmg.is_none() && empty.cgb.is_none());
+    }
+
+    #[test]
+    fn an_image_of_the_other_class_is_refused_by_the_slot_that_names_it() {
+        let mut values = LaunchValues::default();
+        values.set_file(DMG_BOOT_ROM, vec![0x00; 0x900]);
+        assert_eq!(
+            boot_roms_from_launch(&values).err(),
+            Some((DMG_BOOT_ROM, "2304-byte image".to_owned()))
+        );
+
+        let mut values = LaunchValues::default();
+        values.set_file(crate::firmware::CGB_BOOT_ROM, vec![0x00; 0x100]);
+        assert_eq!(
+            boot_roms_from_launch(&values).err(),
+            Some((crate::firmware::CGB_BOOT_ROM, "256-byte image".to_owned()))
+        );
+
+        let mut values = LaunchValues::default();
+        values.set_file(DMG_BOOT_ROM, vec![0x00; 0x80]);
+        assert_eq!(
+            boot_roms_from_launch(&values).err(),
+            Some((DMG_BOOT_ROM, "128-byte image".to_owned()))
+        );
+    }
+
+    #[test]
+    fn both_boot_rom_rows_are_published_for_media_both_consoles_run() {
+        let published: Vec<&str> = launch_options(&rom(0x00))
+            .iter()
+            .map(|option| option.id)
+            .collect();
+        assert!(published.contains(&DMG_BOOT_ROM));
+        assert!(published.contains(&crate::firmware::CGB_BOOT_ROM));
+
+        // A cartridge no Game Boy runs has no monochrome socket to fill.
+        let cgb_only: Vec<&str> = launch_options(&rom(0xC0))
+            .iter()
+            .map(|option| option.id)
+            .collect();
+        assert!(!cgb_only.contains(&DMG_BOOT_ROM));
+        assert!(cgb_only.contains(&crate::firmware::CGB_BOOT_ROM));
+    }
+
+    #[test]
     fn a_dmg_choice_kept_from_elsewhere_is_still_refused() {
         struct Named;
         impl GbLaunch for Named {
@@ -374,7 +457,13 @@ mod tests {
             }
         }
         let cartridge = Cartridge::new(rom(0xC0), None, None).expect("the header names a board");
-        let launched = console(cartridge, None, None, RunnerPreference::Dmg, Named);
+        let launched = console(
+            cartridge,
+            BootRoms::default(),
+            None,
+            RunnerPreference::Dmg,
+            Named,
+        );
         assert_eq!(launched.err(), Some(RunnerRefused::CgbOnlyCartridge));
     }
 }

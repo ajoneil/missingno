@@ -23,6 +23,7 @@
 //! CGB-B-only ROMs are excluded from the CGB-C-passing set.
 
 pub mod debug;
+pub mod firmware;
 pub mod launch;
 pub mod screen;
 pub mod state_schema;

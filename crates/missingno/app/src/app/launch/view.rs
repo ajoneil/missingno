@@ -72,6 +72,7 @@ fn option_row(
         LaunchOptionKind::Toggle => toggle_control(descriptor.id, data),
         LaunchOptionKind::File { label } => file_control(descriptor.id, label, data),
         LaunchOptionKind::Board { boards } => board_control(descriptor.id, boards, data),
+        LaunchOptionKind::Firmware { slot } => file_control(descriptor.id, &slot.label, data),
     };
 
     // A board's parts stack under its pick list, so the label holds to the top

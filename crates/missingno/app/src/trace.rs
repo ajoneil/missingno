@@ -89,7 +89,7 @@ pub(crate) fn trace_gb(request: TraceRequest) {
         request.rom.to_vec(),
         None,
         save_data,
-        request.boot_rom,
+        boot_roms(request.boot_rom),
         None,
         system::gb::RunnerPreference::Auto,
         Trace {
@@ -101,6 +101,21 @@ pub(crate) fn trace_gb(request: TraceRequest) {
     );
     if let Err(refusal) = launched {
         eprintln!("error: {refusal}");
+    }
+}
+
+/// The CLI boot ROM in the socket of the console it was dumped from.
+fn boot_roms(boot_rom: Option<BootRom>) -> system::gb::BootRoms {
+    match boot_rom {
+        Some(image @ BootRom::Dmg(_)) => system::gb::BootRoms {
+            dmg: Some(image),
+            cgb: None,
+        },
+        Some(image @ BootRom::Cgb(_)) => system::gb::BootRoms {
+            dmg: None,
+            cgb: Some(image),
+        },
+        None => system::gb::BootRoms::default(),
     }
 }
 

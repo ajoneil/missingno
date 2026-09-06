@@ -17,6 +17,7 @@ pub mod dma;
 mod dmg;
 pub mod dmg_sram;
 pub mod execute;
+pub mod firmware;
 pub mod frame;
 pub mod interrupts;
 pub mod isa;

@@ -33,6 +33,8 @@ morepork = [
 cpal = { version = "0.18", optional = true }
 rtrb = { version = "0.4", optional = true }
 missingno-core = { path = "../core" }
+dirs = "7"
+sha2 = { version = "0.11" }
 missingno-gb = { path = "../../systems/gb", optional = true }
 missingno-gbc = { path = "../../systems/gbc", optional = true }
 missingno-vcs = { path = "../../systems/vcs", optional = true }

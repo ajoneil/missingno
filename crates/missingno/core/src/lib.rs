@@ -20,6 +20,7 @@ pub mod cartridge;
 pub mod cdl;
 pub mod chip;
 pub mod disasm;
+pub mod firmware;
 pub mod graphics;
 pub mod inspect;
 pub mod isa;
@@ -38,6 +39,9 @@ pub mod waveform;
 pub use analog::{HighPass, OnePoleHighPass, RcHighPass};
 pub use chip::ClockRatio;
 pub use disasm::{ReadMemory, Row};
+pub use firmware::{
+    FIRMWARE_NONE, FirmwareImage, FirmwareNeed, FirmwareOrigin, FirmwareSlot, sha256_hex,
+};
 pub use inspect::{
     FlagName, MemoryRegion, Register, RegisterGroup, ValueStyle, Watch, WatchParam, WatchTerm,
     Watchable,

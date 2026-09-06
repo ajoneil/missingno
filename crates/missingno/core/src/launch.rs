@@ -1,7 +1,7 @@
 //! What a core lets a frontend decide about a ROM before it boots.
 //!
 //! A core *states* the options it accepts — the broadcast standard to decode
-//! for, the cartridge board a headerless dump sits on, the boot ROM to map —
+//! for, the cartridge board a headerless dump sits on, the firmware to map —
 //! and a frontend collects values for them however it likes: a command-line
 //! flag, a catalogue entry, a dialog. Nothing here knows any console: the
 //! options are named by the core that publishes them, and travel as a sparse
@@ -10,6 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::cartridge::{BoardSpec, BoardValue};
+use crate::firmware::FirmwareSlot;
 
 /// One option a core accepts at launch.
 #[derive(Clone)]
@@ -38,6 +39,12 @@ pub enum LaunchOptionKind {
     /// A board from `boards`, and the parts its silicon varies in.
     Board {
         boards: Vec<BoardSpec>,
+    },
+    /// An image for one of the board's firmware sockets. A caller states which
+    /// by id (`LaunchValue::Choice`) and a frontend supplies the bytes; the
+    /// core reads only `LaunchValue::File`.
+    Firmware {
+        slot: FirmwareSlot,
     },
 }
 

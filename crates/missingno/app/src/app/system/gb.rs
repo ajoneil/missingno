@@ -4,15 +4,16 @@
 //! format are app policy wired in here.
 
 use missingno_gb::cartridge::{GbCartType, GbCartridgeError};
+pub use missingno_gb::firmware::DMG_BOOT_ROM;
 use missingno_gb::frame::{GbFrame, SgbScreen, gradient_stops, sgb_shade_levels};
 use missingno_gb::ppu::types::palette::PaletteChoice;
 use missingno_gb::system::{LINK_CABLE, LINK_DISCONNECTED, LINK_PRINTER, create_console_with_link};
-use missingno_gb::{BootRom, GameBoy, cartridge::Cartridge, serial_transfer::SerialLink};
+use missingno_gb::{GameBoy, cartridge::Cartridge, serial_transfer::SerialLink};
 use missingno_gbc::GameBoyColor;
-use missingno_gbc::launch::BootRomFit;
+pub use missingno_gbc::firmware::CGB_BOOT_ROM;
 pub use missingno_gbc::launch::{
-    BOARD, BOOT_ROM, ENHANCEMENT_CGB, ENHANCEMENT_SGB, ENHANCEMENTS, GbLaunch, RUNNER,
-    RunnerPreference, board_from_launch, launch_options,
+    BOARD, BootRoms, ENHANCEMENT_CGB, ENHANCEMENT_SGB, ENHANCEMENTS, GbLaunch, RUNNER,
+    RunnerPreference, board_from_launch, boot_roms_from_launch, launch_options,
 };
 
 use missingno_core::cartridge::BoardVocabulary;
@@ -166,26 +167,20 @@ fn build_cartridge(
 }
 
 /// The app's executable paths (GUI load, trace) reach the core selection
-/// through here, adding the save-backed cartridge and a word to the user when
-/// the boot ROM they named is dropped.
+/// through here, adding the save-backed cartridge.
 pub fn launch<L: GbLaunch>(
     rom: Vec<u8>,
     board: Option<GbCartType>,
     save_data: Option<Vec<u8>>,
-    boot_rom: Option<BootRom>,
+    boot_roms: BootRoms,
     link: Option<Box<dyn SerialLink>>,
     runner: RunnerPreference,
     launcher: L,
 ) -> Result<L::Output, String> {
     let cartridge =
         build_cartridge(rom, board, save_data).map_err(|refusal| refusal.to_string())?;
-    let (output, boot_rom) =
-        missingno_gbc::launch::console(cartridge, boot_rom, link, runner, launcher)
-            .map_err(|refused| format!("{RUNNER}: {refused}"))?;
-    if boot_rom == BootRomFit::Dropped {
-        eprintln!("warning: boot ROM model does not match the selected core; ignoring it");
-    }
-    Ok(output)
+    missingno_gbc::launch::console(cartridge, boot_roms, link, runner, launcher)
+        .map_err(|refused| format!("{RUNNER}: {refused}"))
 }
 
 /// What hangs off the link port: an explicit cable is the user's own word, and
@@ -229,13 +224,8 @@ pub fn create_console(media: MediaLoad) -> Result<Box<dyn SystemConsole>, String
         media.print_sink,
         media.peripherals,
     );
-    let boot_rom = match media.launch.file(BOOT_ROM) {
-        Some(bytes) => Some(
-            BootRom::from_bytes(bytes.to_vec())
-                .map_err(|length| format!("{BOOT_ROM}: {length} bytes is no boot ROM image"))?,
-        ),
-        None => None,
-    };
+    let boot_roms = boot_roms_from_launch(&media.launch)
+        .map_err(|(slot, image)| format!("{slot}: {image} is no boot ROM for this console"))?;
     let runner = RunnerPreference::from_launch(&media.launch)
         .map_err(|value| format!("{RUNNER}: no such console \"{value}\""))?;
     let board =
@@ -244,7 +234,7 @@ pub fn create_console(media: MediaLoad) -> Result<Box<dyn SystemConsole>, String
         media.rom.to_vec(),
         board,
         media.save_data,
-        boot_rom,
+        boot_roms,
         link,
         runner,
         Boxed { link: kind },

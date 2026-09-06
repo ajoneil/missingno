@@ -3099,6 +3099,7 @@ name = "missingno-session"
 version = "26.10.0"
 dependencies = [
  "cpal",
+ "dirs",
  "libc",
  "missingno-core",
  "missingno-gb",
@@ -3110,6 +3111,7 @@ dependencies = [
  "png 0.18.1",
  "rtrb",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
