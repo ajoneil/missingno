@@ -15,7 +15,7 @@ const DMG_BOOT_ROM_SIZE: usize = 0x100;
 pub const fn boot_rom_slot() -> FirmwareSlot {
     FirmwareSlot {
         id: DMG_BOOT_ROM,
-        label: "Game Boy boot ROM",
+        label: "Boot ROM",
         need: FirmwareNeed::Optional,
         size: DMG_BOOT_ROM_SIZE,
         images: IMAGES,

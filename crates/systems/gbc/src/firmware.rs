@@ -14,7 +14,7 @@ const CGB_BOOT_ROM_SIZE: usize = 0x900;
 pub const fn boot_rom_slot() -> FirmwareSlot {
     FirmwareSlot {
         id: CGB_BOOT_ROM,
-        label: "Game Boy Color boot ROM",
+        label: "Boot ROM",
         need: FirmwareNeed::Optional,
         size: CGB_BOOT_ROM_SIZE,
         images: IMAGES,
