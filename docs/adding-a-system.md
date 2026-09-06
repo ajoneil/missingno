@@ -213,7 +213,9 @@ without one (`FirmwareNeed::Required` or `Optional`), and the images it
 recognises, each by size and SHA-256. The core publishes the slot as
 `LaunchOptionKind::Firmware`, so every launch surface renders it without naming
 the console, and registers it on its session-factory entry so a headless caller
-resolves the same names. A caller states an image by id;
+resolves the same names. The `options` hook is given the caller's word so far,
+so a family whose media runs on more than one console publishes the socket of
+the console those values select. A caller states an image by id;
 `missingno-session`'s `FirmwareLibrary` scans the firmware folder in the config
 directory and turns that id into bytes. The core itself reads only
 `LaunchValue::File` — it never opens a file, and a required socket nothing can

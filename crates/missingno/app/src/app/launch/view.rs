@@ -625,7 +625,7 @@ pub fn window(state: &Window, firmware: &FirmwareLibrary) -> Element<'static, ap
     if let Some(family) = state.family() {
         body = body.push(horizontal_rule());
         body = body.push(panel(&PanelData {
-            descriptors: super::rendered_options(family, &state.rom),
+            descriptors: super::rendered_options(family, &state.rom, &state.overrides),
             overrides: state.overrides.clone(),
             facts: state.facts.clone(),
             firmware,

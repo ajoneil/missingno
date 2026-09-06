@@ -105,16 +105,19 @@ fn start(app: &mut App, request: Request<'_>) -> Result<String, String> {
     }
     .ok_or("no system recognises this file")?;
 
+    // The rows this launch answers follow the user's own values: a Game Boy
+    // cartridge set to run on the Color offers the Color's firmware socket.
+    let descriptors = (family.options)(&request.rom, &request.overrides);
     let facts = launch::facts(
         family,
         &request.rom,
+        &descriptors,
         &app.catalogue,
         &sha1,
         app.boot_rom.as_ref(),
         &app.firmware,
         &app.settings.firmware,
     );
-    let descriptors = (family.options)(&request.rom);
     let mut values = launch::resolve(&descriptors, &request.overrides, &facts);
     // Every firmware choice becomes the bytes the core reads, or a refusal
     // naming what the folder is missing.

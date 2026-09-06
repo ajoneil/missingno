@@ -47,18 +47,29 @@ fn rendered(descriptor: &LaunchOptionDescriptor) -> bool {
     !UNRENDERED_OPTIONS.contains(&descriptor.id)
 }
 
-/// The options a family publishes for this media that a launch surface shows.
-fn rendered_options(family: &FamilyDescriptor, rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
-    (family.options)(rom).into_iter().filter(rendered).collect()
+/// The options a family publishes for this media, given the user's word so far,
+/// that a launch surface shows. Editing a value republishes them: the console a
+/// Game Boy cartridge is set to run on names the firmware socket it offers.
+fn rendered_options(
+    family: &FamilyDescriptor,
+    rom: &[u8],
+    overrides: &LaunchValues,
+) -> Vec<LaunchOptionDescriptor> {
+    (family.options)(rom, overrides)
+        .into_iter()
+        .filter(rendered)
+        .collect()
 }
 
 /// What the catalogue and the media itself state about a dump, ahead of any
 /// word from the user: the game database's facts about this hash, the header's
 /// own, the firmware folder's answer to each socket, and the boot ROM this run
 /// was started with.
+#[allow(clippy::too_many_arguments)]
 pub fn facts(
     family: &FamilyDescriptor,
     rom: &[u8],
+    descriptors: &[LaunchOptionDescriptor],
     catalogue: &Catalogue,
     sha1: &str,
     boot_rom: Option<&missingno_gb::BootRom>,
@@ -81,7 +92,7 @@ pub fn facts(
         );
     }
 
-    for descriptor in (family.options)(rom) {
+    for descriptor in descriptors {
         let LaunchOptionKind::Firmware { slot } = &descriptor.kind else {
             continue;
         };
@@ -168,18 +179,13 @@ pub fn catalogued_peripherals(catalogue: &Catalogue, sha1: &str) -> Vec<Peripher
 
 /// The values a launch runs with: the user's own word on an option wins, else
 /// whatever fact fills it, else nothing — which leaves the option to the core.
-/// An override naming an option this family does not publish is dropped.
+/// An override for an option these descriptors do not name is left aside rather
+/// than lost: the choices that publish it may come back.
 pub fn resolve(
     descriptors: &[LaunchOptionDescriptor],
     overrides: &LaunchValues,
     facts: &Facts,
 ) -> LaunchValues {
-    for (id, _) in overrides.iter() {
-        if !descriptors.iter().any(|descriptor| descriptor.id == id) {
-            eprintln!("launch option \"{id}\" is not one this system accepts; ignoring it");
-        }
-    }
-
     let mut values = LaunchValues::default();
     for descriptor in descriptors {
         if let Some(value) = overrides
@@ -400,6 +406,7 @@ fn refresh_facts(window: &mut Window, app: &App) {
         Some(family) => facts(
             family,
             &window.rom,
+            &(family.options)(&window.rom, &window.overrides),
             &app.catalogue,
             &window.sha1,
             app.boot_rom.as_ref(),
@@ -415,13 +422,17 @@ fn refresh_facts(window: &mut Window, app: &App) {
 fn apply_edit(app: &mut App, surface: EditSurface, edit: &Edit) {
     match surface {
         EditSurface::Window => {
-            let Some(window) = &mut app.launch_window else {
+            let Some(mut window) = app.launch_window.take() else {
                 return;
             };
             edit.apply(&mut window.overrides);
             window.error = None;
+            // The rows the values publish move with them, so what fills them is
+            // read again against the rows now showing.
+            refresh_facts(&mut window, app);
             let persist = (window.target == Target::Library)
                 .then(|| (window.sha1.clone(), window.overrides.clone()));
+            app.launch_window = Some(window);
             if let Some((sha1, overrides)) = persist {
                 store_overrides(app, &sha1, overrides);
             }
@@ -456,17 +467,17 @@ fn store_overrides(app: &mut App, sha1: &str, overrides: LaunchValues) {
     }
 }
 
-/// What a library game's media settles about its launch: the options its family
-/// publishes for this ROM, and what fills the ones the user has not set.
+/// A library game's media, held for the rows its family publishes for it. The
+/// rows follow the user's own values, so they are published again from the
+/// media on every edit rather than settled once.
 #[derive(Clone, Default)]
 pub struct MediaOptions {
     /// `None` where no family is registered for the game.
-    published: Option<Vec<LaunchOptionDescriptor>>,
-    facts: Facts,
+    family: Option<&'static FamilyDescriptor>,
+    rom: Vec<u8>,
 }
 
-/// What a library game's own media says about its launch options. Reads the
-/// media, so it is taken once when the game's details page opens.
+/// A library game's own media, read once when the game's details page opens.
 pub(in crate::app) fn media_options(app: &App, sha1: &str) -> MediaOptions {
     let Some(entry) = app.store.entry(sha1) else {
         return MediaOptions::default();
@@ -474,37 +485,40 @@ pub(in crate::app) fn media_options(app: &App, sha1: &str) -> MediaOptions {
     let Some(family) = entry.platform.and_then(system::family_of) else {
         return MediaOptions::default();
     };
-    let rom = entry
-        .rom_paths
-        .iter()
-        .find(|path| path.exists())
-        .and_then(|path| std::fs::read(path).ok())
-        .unwrap_or_default();
     MediaOptions {
-        published: Some(rendered_options(family, &rom)),
-        facts: facts(
-            family,
-            &rom,
-            &app.catalogue,
-            sha1,
-            app.boot_rom.as_ref(),
-            &app.firmware,
-            &app.settings.firmware,
-        ),
+        family: Some(family),
+        rom: entry
+            .rom_paths
+            .iter()
+            .find(|path| path.exists())
+            .and_then(|path| std::fs::read(path).ok())
+            .unwrap_or_default(),
     }
 }
 
-/// The rows a library game's own settings section shows.
+/// The rows a library game's own settings section shows, for the values it is
+/// set to launch with.
 pub(in crate::app) fn game_settings<'a>(
     app: &'a App,
     sha1: &str,
     media: &MediaOptions,
 ) -> Option<view::PanelData<'a>> {
     let entry = app.store.entry(sha1)?;
+    let family = media.family?;
+    let overrides = entry.overrides.clone();
     Some(view::PanelData {
-        descriptors: media.published.clone()?,
-        overrides: entry.overrides.clone(),
-        facts: media.facts.clone(),
+        descriptors: rendered_options(family, &media.rom, &overrides),
+        facts: facts(
+            family,
+            &media.rom,
+            &(family.options)(&media.rom, &overrides),
+            &app.catalogue,
+            sha1,
+            app.boot_rom.as_ref(),
+            &app.firmware,
+            &app.settings.firmware,
+        ),
+        overrides,
         firmware: &app.firmware,
         surface: EditSurface::GameSettings,
     })
@@ -550,7 +564,7 @@ mod tests {
             is_rom: |_, _| false,
             title_from_rom: |_| None,
             create_console: |_| Err("no console in a test".to_string()),
-            options: |_| {
+            options: |_, _| {
                 vec![LaunchOptionDescriptor {
                     id: TEST_SOCKET,
                     label: "Test boot ROM",
@@ -579,9 +593,11 @@ mod tests {
     }
 
     fn socket_facts(library: &FirmwareLibrary, defaults: &BTreeMap<String, String>) -> Facts {
+        let family = socket_family();
         facts(
-            &socket_family(),
+            &family,
             &[],
+            &(family.options)(&[], &LaunchValues::default()),
             &Catalogue::load(),
             "",
             None,
@@ -617,7 +633,7 @@ mod tests {
 
         let mut overrides = LaunchValues::default();
         overrides.set_choice(TEST_SOCKET, FIRMWARE_NONE);
-        let descriptors = (socket_family().options)(&[]);
+        let descriptors = (socket_family().options)(&[], &LaunchValues::default());
         assert_eq!(
             resolve(&descriptors, &overrides, &facts).choice(TEST_SOCKET),
             Some(FIRMWARE_NONE)
@@ -799,7 +815,7 @@ mod tests {
 
         let rom = gb_rom(0x80, 0x03);
         let values = resolve(
-            &system::gb::launch_options(&rom),
+            &system::gb::launch_options(&rom, &LaunchValues::default()),
             &LaunchValues::default(),
             &facts,
         );
@@ -812,7 +828,7 @@ mod tests {
     #[test]
     fn stated_enhancements_take_the_console_off_the_header() {
         let rom = gb_rom(0x80, 0x03);
-        let descriptors = system::gb::launch_options(&rom);
+        let descriptors = system::gb::launch_options(&rom, &LaunchValues::default());
         let facts = media_facts(&rom);
         assert_eq!(
             resolve(&descriptors, &LaunchValues::default(), &facts).choice(system::gb::RUNNER),
@@ -838,6 +854,52 @@ mod tests {
             system::gb::RunnerPreference::from_launch(&values),
             Ok(system::gb::RunnerPreference::Cgb)
         );
+    }
+
+    /// The Game Boy family as the app registers it.
+    fn gb_family() -> &'static FamilyDescriptor {
+        system::family_of(Platform::GameBoy).expect("the Game Boy family is registered")
+    }
+
+    /// The firmware sockets the family offers for this media under these values.
+    fn firmware_rows(rom: &[u8], overrides: &LaunchValues) -> Vec<&'static str> {
+        rendered_options(gb_family(), rom, overrides)
+            .into_iter()
+            .filter(|descriptor| matches!(descriptor.kind, LaunchOptionKind::Firmware { .. }))
+            .map(|descriptor| descriptor.id)
+            .collect()
+    }
+
+    #[test]
+    fn a_dual_compatible_cartridge_offers_the_socket_the_header_leads_to() {
+        assert_eq!(
+            firmware_rows(&gb_rom(0x80, 0x00), &LaunchValues::default()),
+            [system::gb::CGB_BOOT_ROM]
+        );
+    }
+
+    #[test]
+    fn choosing_the_other_console_swaps_the_firmware_row() {
+        let mut overrides = LaunchValues::default();
+        overrides.set_choice(system::gb::RUNNER, "dmg");
+        assert_eq!(
+            firmware_rows(&gb_rom(0x80, 0x00), &overrides),
+            [system::gb::DMG_BOOT_ROM]
+        );
+    }
+
+    #[test]
+    fn a_socket_the_chosen_console_does_not_read_is_left_aside() {
+        let rom = gb_rom(0x80, 0x00);
+        let mut overrides = LaunchValues::default();
+        overrides.set_choice(system::gb::DMG_BOOT_ROM, "dmg");
+
+        assert_eq!(firmware_rows(&rom, &overrides), [system::gb::CGB_BOOT_ROM]);
+        let descriptors = rendered_options(gb_family(), &rom, &overrides);
+        let values = resolve(&descriptors, &overrides, &Facts::default());
+        assert_eq!(values.choice(system::gb::DMG_BOOT_ROM), None);
+        // The word stays on the entry for the console that reads it.
+        assert_eq!(overrides.choice(system::gb::DMG_BOOT_ROM), Some("dmg"));
     }
 
     #[test]

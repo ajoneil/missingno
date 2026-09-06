@@ -13,7 +13,7 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use missingno_core::cartridge::BoardValue;
-use missingno_core::launch::{LaunchOptionKind, LaunchValue, LaunchValues};
+use missingno_core::launch::{LaunchOptionDescriptor, LaunchOptionKind, LaunchValue, LaunchValues};
 use missingno_mcp_stdio::no_arguments;
 use missingno_session::factory::{self, CoreFactory};
 use missingno_session::firmware::FirmwareLibrary;
@@ -160,7 +160,8 @@ fn load_rom_tool() -> Tool {
                       `tv-standard` (ntsc/pal/secam), \
                       `board` (a cartridge board such as Atari8K, Atari16KSuperchip, ParkerBros), and `overdump` \
                       (boolean); the Game Boy family takes `runner` (dmg/cgb) and the boot \
-                      ROM sockets `dmg-boot-rom` and `cgb-boot-rom`, each an image id the core \
+                      ROM socket of the console that runs — `dmg-boot-rom` or `cgb-boot-rom`, \
+                      whichever `runner` and the header lead to — as an image id the core \
                       recognises (`dmg`, `mgb`, `cgb`, `agb`…) held in the firmware folder, or \
                       a path to an image of your own. `tv_standard` is the older spelling of \
                       the VCS standard override."
@@ -300,7 +301,7 @@ fn load_rom(loaded: &mut Option<Host>, args: &Value) -> ToolOutcome {
     let mut launch = launch_values(factory, &bytes, args)?;
     if let Some(dir) = FirmwareLibrary::default_dir() {
         FirmwareLibrary::scan(dir, &factory::firmware_slots())
-            .supply(&(factory.options)(&bytes), &mut launch)
+            .supply(&(factory.options)(&bytes, &launch), &mut launch)
             .map_err(|refusal| refusal.to_string())?;
     }
     let console = (factory.create)(path_ref, &bytes, &launch).map_err(|error| error.to_string())?;
@@ -328,8 +329,21 @@ fn launch_values(factory: &CoreFactory, rom: &[u8], args: &Value) -> Result<Laun
     let options = options
         .as_object()
         .ok_or("'options' must be an object of option id to value")?;
-    let published = (factory.options)(rom);
+    // A firmware socket is published for the console the other values name, so
+    // those are read first and the sockets against what they settled.
+    let mut sockets: Vec<(&String, &Value)> = Vec::new();
+    let published = (factory.options)(rom, &launch);
     for (id, value) in options {
+        match published.iter().find(|option| option.id == id) {
+            Some(descriptor) if !matches!(descriptor.kind, LaunchOptionKind::Firmware { .. }) => {
+                set_option(descriptor, id, value, &mut launch)?
+            }
+            _ => sockets.push((id, value)),
+        }
+    }
+
+    let published = (factory.options)(rom, &launch);
+    for (id, value) in sockets {
         let descriptor = published
             .iter()
             .find(|option| option.id == id)
@@ -344,74 +358,85 @@ fn launch_values(factory: &CoreFactory, rom: &[u8], args: &Value) -> Result<Laun
                     ),
                 }
             })?;
-        match &descriptor.kind {
-            LaunchOptionKind::Choice { .. } => {
-                let chosen = value
-                    .as_str()
-                    .ok_or_else(|| format!("launch option '{id}' takes a string"))?;
-                launch.set_choice(id, chosen);
-            }
-            // A set of flags is named as the flags that are on, the rest off.
-            LaunchOptionKind::Flags { .. } => {
-                let named = value
-                    .as_array()
-                    .ok_or_else(|| format!("launch option '{id}' takes an array of flag names"))?;
-                let mut flags = std::collections::BTreeSet::new();
-                for flag in named {
-                    let flag = flag.as_str().ok_or_else(|| {
-                        format!("launch option '{id}' takes an array of flag names")
-                    })?;
-                    flags.insert(flag.to_owned());
-                }
-                launch.set_flags(id, flags);
-            }
-            LaunchOptionKind::Toggle => {
-                let flag = value
-                    .as_bool()
-                    .ok_or_else(|| format!("launch option '{id}' takes true or false"))?;
-                launch.set_toggle(id, flag);
-            }
-            LaunchOptionKind::File { .. } => {
-                let file = value
-                    .as_str()
-                    .ok_or_else(|| format!("launch option '{id}' takes a filesystem path"))?;
-                let contents = std::fs::read(file)
-                    .map_err(|error| format!("launch option '{id}': {file}: {error}"))?;
-                launch.set_file(id, contents);
-            }
-            // A firmware image is named by id where the folder holds it, and
-            // by path where a caller brings its own file.
-            LaunchOptionKind::Firmware { slot } => {
-                let named = value.as_str().ok_or_else(|| {
-                    format!("launch option '{id}' takes an image id or a filesystem path")
-                })?;
-                match slot.image(named).is_some() {
-                    true => launch.set_choice(id, named),
-                    false => {
-                        let contents = std::fs::read(named)
-                            .map_err(|error| format!("launch option '{id}': {named}: {error}"))?;
-                        launch.set_file(id, contents);
-                    }
-                }
-            }
-            // A board is either named on its own, for a board whose wiring
-            // fixes its parts, or stated whole with the parts populated on it.
-            LaunchOptionKind::Board { .. } => match value {
-                Value::String(name) => launch.set_choice(id, name.as_str()),
-                Value::Object(_) => {
-                    let board: BoardValue = serde_json::from_value(value.clone())
-                        .map_err(|error| format!("launch option '{id}': {error}"))?;
-                    launch.set(id, LaunchValue::Board(board));
-                }
-                _ => {
-                    return Err(format!(
-                        "launch option '{id}' takes a board name string or a board object"
-                    ));
-                }
-            },
-        }
+        set_option(descriptor, id, value, &mut launch)?;
     }
     Ok(launch)
+}
+
+/// One option's value, in the shape its descriptor states.
+fn set_option(
+    descriptor: &LaunchOptionDescriptor,
+    id: &str,
+    value: &Value,
+    launch: &mut LaunchValues,
+) -> Result<(), String> {
+    match &descriptor.kind {
+        LaunchOptionKind::Choice { .. } => {
+            let chosen = value
+                .as_str()
+                .ok_or_else(|| format!("launch option '{id}' takes a string"))?;
+            launch.set_choice(id, chosen);
+        }
+        // A set of flags is named as the flags that are on, the rest off.
+        LaunchOptionKind::Flags { .. } => {
+            let named = value
+                .as_array()
+                .ok_or_else(|| format!("launch option '{id}' takes an array of flag names"))?;
+            let mut flags = std::collections::BTreeSet::new();
+            for flag in named {
+                let flag = flag
+                    .as_str()
+                    .ok_or_else(|| format!("launch option '{id}' takes an array of flag names"))?;
+                flags.insert(flag.to_owned());
+            }
+            launch.set_flags(id, flags);
+        }
+        LaunchOptionKind::Toggle => {
+            let flag = value
+                .as_bool()
+                .ok_or_else(|| format!("launch option '{id}' takes true or false"))?;
+            launch.set_toggle(id, flag);
+        }
+        LaunchOptionKind::File { .. } => {
+            let file = value
+                .as_str()
+                .ok_or_else(|| format!("launch option '{id}' takes a filesystem path"))?;
+            let contents = std::fs::read(file)
+                .map_err(|error| format!("launch option '{id}': {file}: {error}"))?;
+            launch.set_file(id, contents);
+        }
+        // A firmware image is named by id where the folder holds it, and
+        // by path where a caller brings its own file.
+        LaunchOptionKind::Firmware { slot } => {
+            let named = value.as_str().ok_or_else(|| {
+                format!("launch option '{id}' takes an image id or a filesystem path")
+            })?;
+            match slot.image(named).is_some() {
+                true => launch.set_choice(id, named),
+                false => {
+                    let contents = std::fs::read(named)
+                        .map_err(|error| format!("launch option '{id}': {named}: {error}"))?;
+                    launch.set_file(id, contents);
+                }
+            }
+        }
+        // A board is either named on its own, for a board whose wiring
+        // fixes its parts, or stated whole with the parts populated on it.
+        LaunchOptionKind::Board { .. } => match value {
+            Value::String(name) => launch.set_choice(id, name.as_str()),
+            Value::Object(_) => {
+                let board: BoardValue = serde_json::from_value(value.clone())
+                    .map_err(|error| format!("launch option '{id}': {error}"))?;
+                launch.set(id, LaunchValue::Board(board));
+            }
+            _ => {
+                return Err(format!(
+                    "launch option '{id}' takes a board name string or a board object"
+                ));
+            }
+        },
+    }
+    Ok(())
 }
 
 /// Attach to a session another process published, and drive it from here.

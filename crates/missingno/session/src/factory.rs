@@ -65,9 +65,10 @@ pub struct CoreFactory {
     pub name: &'static str,
     pub is_rom: IsRom,
     pub create: Create,
-    /// The launch options this core publishes for the media in hand: a choice
-    /// the ROM's own header rules out is not among them.
-    pub options: fn(&[u8]) -> Vec<LaunchOptionDescriptor>,
+    /// The launch options this core publishes for the media in hand, given the
+    /// caller's word so far: a choice the ROM's own header rules out is not
+    /// among them, and an option another value settles follows that value.
+    pub options: fn(&[u8], &LaunchValues) -> Vec<LaunchOptionDescriptor>,
     /// Every firmware socket on this core's boards, whichever media is loaded.
     pub firmware: fn() -> Vec<FirmwareSlot>,
 }
@@ -141,8 +142,8 @@ mod gb {
         })
     }
 
-    pub fn options(rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
-        launch::launch_options(rom)
+    pub fn options(rom: &[u8], chosen: &LaunchValues) -> Vec<LaunchOptionDescriptor> {
+        launch::launch_options(rom, chosen)
     }
 
     /// One socket per console of the family; the console that boots reads its
@@ -204,7 +205,7 @@ mod vcs {
         missingno_vcs::debug::is_vcs_rom(path, rom)
     }
 
-    pub fn options(rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
+    pub fn options(rom: &[u8], _chosen: &LaunchValues) -> Vec<LaunchOptionDescriptor> {
         missingno_vcs::debug::launch_options(rom)
     }
 }
@@ -285,7 +286,7 @@ mod sg1000 {
         missingno_sg1000::debug::is_sg1000_rom(path)
     }
 
-    pub fn options(rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
+    pub fn options(rom: &[u8], _chosen: &LaunchValues) -> Vec<LaunchOptionDescriptor> {
         missingno_sg1000::debug::launch_options(rom)
     }
 }
@@ -313,7 +314,7 @@ static FACTORIES: &[CoreFactory] = &[
         name: "NES",
         is_rom: nes::is_rom,
         create: nes::create,
-        options: |_| Vec::new(),
+        options: |_, _| Vec::new(),
         firmware: Vec::new,
     },
     #[cfg(feature = "sms")]
@@ -321,7 +322,7 @@ static FACTORIES: &[CoreFactory] = &[
         name: "Master System",
         is_rom: sms::is_rom,
         create: sms::create,
-        options: |_| Vec::new(),
+        options: |_, _| Vec::new(),
         firmware: Vec::new,
     },
     #[cfg(feature = "sg1000")]

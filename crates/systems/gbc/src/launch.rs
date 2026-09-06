@@ -23,11 +23,12 @@ pub const ENHANCEMENTS: &str = "enhancements";
 pub const ENHANCEMENT_SGB: &str = "sgb";
 pub const ENHANCEMENT_CGB: &str = "cgb";
 
-/// The options the Game Boy family accepts at launch for this cartridge. The
-/// console is a choice only for media both can run: a Color runs a DMG
-/// cartridge, but one whose header requires the Color leaves nothing to pick —
-/// and with nothing to pick there is no enhancement left to state either.
-pub fn launch_options(rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
+/// The options the Game Boy family accepts at launch for this cartridge, given
+/// the caller's word so far. The console is a choice only for media both can
+/// run: a Color runs a DMG cartridge, but one whose header requires the Color
+/// leaves nothing to pick — and with nothing to pick there is no enhancement
+/// left to state either.
+pub fn launch_options(rom: &[u8], chosen: &LaunchValues) -> Vec<LaunchOptionDescriptor> {
     let both_consoles = !Cartridge::peek_cgb_only(rom);
     let runner = both_consoles.then_some(LaunchOptionDescriptor {
         id: RUNNER,
@@ -61,20 +62,31 @@ pub fn launch_options(rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
             ],
         },
     });
-    // Each console reads its own socket, so the monochrome row appears only
-    // where the monochrome console is on offer.
-    let dmg_boot_rom =
-        both_consoles.then(|| firmware_option(missingno_gb::firmware::boot_rom_slot()));
     let fixed = [
         board_option(BOARD, GbCartType::catalogue().iter().cloned()),
-        firmware_option(crate::firmware::boot_rom_slot()),
+        firmware_option(selected_boot_rom_slot(rom, chosen)),
     ];
     runner
         .into_iter()
         .chain(enhancements)
-        .chain(dmg_boot_rom)
         .chain(fixed)
         .collect()
+}
+
+/// The socket of the console these values boot, selected as [`console`] selects
+/// it: a named console is the answer, the header answers where they leave it
+/// open, and a cartridge no Game Boy runs is on the Color whichever console was
+/// named. A value naming no console leaves the launch itself to object.
+fn selected_boot_rom_slot(rom: &[u8], chosen: &LaunchValues) -> FirmwareSlot {
+    let cgb = match RunnerPreference::from_launch(chosen).unwrap_or_default() {
+        RunnerPreference::Auto => Cartridge::peek_cgb(rom),
+        RunnerPreference::Cgb => true,
+        RunnerPreference::Dmg => Cartridge::peek_cgb_only(rom),
+    };
+    match cgb {
+        true => crate::firmware::boot_rom_slot(),
+        false => missingno_gb::firmware::boot_rom_slot(),
+    }
 }
 
 /// A firmware socket as a launch option, named by the slot itself.
@@ -243,7 +255,7 @@ mod tests {
     }
 
     fn runner_choices(rom: &[u8]) -> Vec<&'static str> {
-        let runner = launch_options(rom)
+        let runner = launch_options(rom, &LaunchValues::default())
             .into_iter()
             .find(|option| option.id == RUNNER)
             .expect("the console option is published");
@@ -258,7 +270,7 @@ mod tests {
     #[test]
     fn a_cgb_only_cartridge_publishes_no_console_choice() {
         assert!(
-            !launch_options(&rom(0xC0))
+            !launch_options(&rom(0xC0), &LaunchValues::default())
                 .iter()
                 .any(|option| option.id == RUNNER)
         );
@@ -275,7 +287,7 @@ mod tests {
     }
 
     fn enhancement_flags(rom: &[u8]) -> Option<Vec<&'static str>> {
-        let published = launch_options(rom)
+        let published = launch_options(rom, &LaunchValues::default())
             .into_iter()
             .find(|option| option.id == ENHANCEMENTS)?;
         match published.kind {
@@ -374,7 +386,7 @@ mod tests {
 
     #[test]
     fn the_board_option_offers_the_whole_vocabulary() {
-        let board = launch_options(&rom(0x00))
+        let board = launch_options(&rom(0x00), &LaunchValues::default())
             .into_iter()
             .find(|option| option.id == BOARD)
             .expect("the board option is published");
@@ -426,22 +438,72 @@ mod tests {
         );
     }
 
-    #[test]
-    fn both_boot_rom_rows_are_published_for_media_both_consoles_run() {
-        let published: Vec<&str> = launch_options(&rom(0x00))
+    /// The one firmware socket published for a cartridge under these values.
+    fn boot_rom_row(rom: &[u8], chosen: &LaunchValues) -> &'static str {
+        let published: Vec<&str> = launch_options(rom, chosen)
             .iter()
+            .filter(|option| matches!(option.kind, LaunchOptionKind::Firmware { .. }))
             .map(|option| option.id)
             .collect();
-        assert!(published.contains(&DMG_BOOT_ROM));
-        assert!(published.contains(&crate::firmware::CGB_BOOT_ROM));
+        assert_eq!(published.len(), 1, "one boot ROM row: {published:?}");
+        published[0]
+    }
 
-        // A cartridge no Game Boy runs has no monochrome socket to fill.
-        let cgb_only: Vec<&str> = launch_options(&rom(0xC0))
-            .iter()
-            .map(|option| option.id)
-            .collect();
-        assert!(!cgb_only.contains(&DMG_BOOT_ROM));
-        assert!(cgb_only.contains(&crate::firmware::CGB_BOOT_ROM));
+    #[test]
+    fn the_boot_rom_row_is_the_one_the_header_leads_to() {
+        let automatic = LaunchValues::default();
+        assert_eq!(boot_rom_row(&rom(0x00), &automatic), DMG_BOOT_ROM);
+        assert_eq!(
+            boot_rom_row(&rom(0x80), &automatic),
+            crate::firmware::CGB_BOOT_ROM
+        );
+    }
+
+    #[test]
+    fn a_chosen_console_takes_the_boot_rom_row_with_it() {
+        let mut values = LaunchValues::default();
+        values.set_choice(RUNNER, "dmg");
+        assert_eq!(boot_rom_row(&rom(0x80), &values), DMG_BOOT_ROM);
+
+        values.set_choice(RUNNER, "cgb");
+        assert_eq!(
+            boot_rom_row(&rom(0x00), &values),
+            crate::firmware::CGB_BOOT_ROM
+        );
+
+        // A name no console answers to is the factory's objection to make.
+        values.set_choice(RUNNER, "sgb");
+        assert_eq!(boot_rom_row(&rom(0x00), &values), DMG_BOOT_ROM);
+    }
+
+    #[test]
+    fn stated_enhancements_take_the_boot_rom_row_with_them() {
+        let set = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
+
+        let mut values = LaunchValues::default();
+        values.set_flags(ENHANCEMENTS, set(&[ENHANCEMENT_CGB]));
+        assert_eq!(
+            boot_rom_row(&rom(0x00), &values),
+            crate::firmware::CGB_BOOT_ROM
+        );
+
+        values.set_flags(ENHANCEMENTS, set(&[ENHANCEMENT_SGB]));
+        assert_eq!(boot_rom_row(&rom(0x80), &values), DMG_BOOT_ROM);
+    }
+
+    #[test]
+    fn a_cgb_only_cartridge_publishes_the_colour_row_whatever_was_chosen() {
+        let mut values = LaunchValues::default();
+        assert_eq!(
+            boot_rom_row(&rom(0xC0), &values),
+            crate::firmware::CGB_BOOT_ROM
+        );
+
+        values.set_choice(RUNNER, "dmg");
+        assert_eq!(
+            boot_rom_row(&rom(0xC0), &values),
+            crate::firmware::CGB_BOOT_ROM
+        );
     }
 
     #[test]

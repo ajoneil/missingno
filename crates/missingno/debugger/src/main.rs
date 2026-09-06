@@ -224,7 +224,7 @@ fn run() -> Result<(), String> {
         .as_deref()
         .and_then(factory::factory_named)
         .or_else(|| factory::factory_for(&rom_path, &rom))
-        .map(|factory| (factory.options)(&rom))
+        .map(|factory| (factory.options)(&rom, &launch))
         .unwrap_or_default();
     if let Some(named) = &args.boot_rom {
         set_firmware(&published, named, &mut launch)?;

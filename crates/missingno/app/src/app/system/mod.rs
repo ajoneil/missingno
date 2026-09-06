@@ -185,9 +185,10 @@ pub struct FamilyDescriptor {
     /// one; `None` falls back to the file stem.
     pub title_from_rom: fn(&[u8]) -> Option<String>,
     pub create_console: CreateConsole,
-    /// The launch options this family's core publishes for the media in hand: a
-    /// choice the ROM's own header rules out is not among them.
-    pub options: fn(&[u8]) -> Vec<LaunchOptionDescriptor>,
+    /// The launch options this family's core publishes for the media in hand,
+    /// given the user's word so far: a choice the ROM's own header rules out is
+    /// not among them, and an option another value settles follows that value.
+    pub options: fn(&[u8], &LaunchValues) -> Vec<LaunchOptionDescriptor>,
     /// The options the media answers for itself, for a launch surface to show
     /// as the automatic value. Empty where only the core can resolve them.
     pub stated_by_media: fn(&[u8]) -> Vec<MediaFact>,
@@ -296,7 +297,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         is_rom: vcs::is_vcs_rom,
         title_from_rom: |_| None,
         create_console: vcs::create_console,
-        options: vcs::launch_options,
+        options: |rom, _| vcs::launch_options(rom),
         stated_by_media: |_| Vec::new(),
         firmware: Vec::new,
         port_config: vcs::port_config,
@@ -313,7 +314,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
             sms::create_console(media.rom, media.fallback_title)
                 .map_err(|error| format!("{error:?}"))
         },
-        options: |_| Vec::new(),
+        options: |_, _| Vec::new(),
         stated_by_media: |_| Vec::new(),
         firmware: Vec::new,
         port_config: |_| Vec::new(),
@@ -326,7 +327,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         is_rom: |path, _| sg1000::is_sg1000_rom(path),
         title_from_rom: |_| None,
         create_console: sg1000::create_console,
-        options: sg1000::launch_options,
+        options: |rom, _| sg1000::launch_options(rom),
         stated_by_media: |_| Vec::new(),
         firmware: Vec::new,
         port_config: |_| Vec::new(),
@@ -343,7 +344,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
             nes::create_console(media.rom, media.fallback_title)
                 .map_err(|error| format!("{error:?}"))
         },
-        options: |_| Vec::new(),
+        options: |_, _| Vec::new(),
         stated_by_media: |_| Vec::new(),
         firmware: Vec::new,
         port_config: |_| Vec::new(),
