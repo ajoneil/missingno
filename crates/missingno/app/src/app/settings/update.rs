@@ -16,7 +16,7 @@ pub(in crate::app) fn handle(
             }
             // The folder is read again on arrival, so a file dropped in it
             // since the app started is offered.
-            if section == super::view::Section::Systems {
+            if section == super::view::Section::Firmware {
                 app.rescan_firmware();
             }
         }

@@ -35,7 +35,7 @@ pub enum Section {
     General,
     Display,
     Controls,
-    Systems,
+    Firmware,
     Hardware,
     Developer,
 }
@@ -129,7 +129,7 @@ pub(in crate::app) fn view<'a>(
         Section::Display => display_section(settings),
         Section::General => general_section(settings),
         Section::Controls => controls_section(settings, controls, listening_for),
-        Section::Systems => systems_section(settings, firmware),
+        Section::Firmware => firmware_section(settings, firmware),
         Section::Hardware => hardware_section(settings, detected_cartridge_devices),
         Section::Developer => developer_section(settings),
     };
@@ -159,7 +159,7 @@ pub(in crate::app) const SECTIONS: [(Section, &str, Icon, &str); 6] = [
     (Section::General, "general", Icon::Sliders, "General"),
     (Section::Display, "display", Icon::Monitor, "Display"),
     (Section::Controls, "controls", Icon::Gamepad, "Controls"),
-    (Section::Systems, "systems", Icon::MemoryStick, "Systems"),
+    (Section::Firmware, "firmware", Icon::MemoryStick, "Firmware"),
     (
         Section::Hardware,
         "hardware",
@@ -802,12 +802,12 @@ pub(in crate::app) fn controls_elements(
     elements
 }
 
-// ── Systems ───────────────────────────────────────────────────────────
+// ── Firmware ───────────────────────────────────────────────────────────
 
 /// The firmware pick lists are as wide as the longest image label needs.
 const FIRMWARE_WIDTH: f32 = 400.0;
 
-/// The platforms the Systems section lists: those whose family maps firmware,
+/// The platforms the Firmware section lists: those whose family maps firmware,
 /// in display order.
 fn firmware_platforms() -> Vec<Platform> {
     app::system::platforms_by_name()
@@ -838,9 +838,9 @@ fn folder_summary(firmware: &FirmwareLibrary) -> String {
     )
 }
 
-/// The Systems section: the folder every core's firmware is read from, then the
+/// The Firmware section: the folder every core's firmware is read from, then the
 /// sockets each platform maps and the image each takes when nobody chooses.
-fn systems_section<'a>(
+fn firmware_section<'a>(
     settings: &'a super::Settings,
     firmware: &FirmwareLibrary,
 ) -> Element<'a, app::Message> {
@@ -927,7 +927,7 @@ fn slot_row(
     row![
         container(app_text::label(slot.label)).width(ROW_LABEL_WIDTH),
         automation::tag(
-            &automation::ids::systems_slot(&slot_id_name(slot.id)),
+            &automation::ids::firmware_slot(&slot_id_name(slot.id)),
             control
         ),
     ]
@@ -936,10 +936,10 @@ fn slot_row(
     .into()
 }
 
-/// Everything the Systems section offers, in reading order: the folder's two
+/// Everything the Firmware section offers, in reading order: the folder's two
 /// buttons, then every socket. A socket's pick list has no press action, so it
 /// answers no message.
-pub(in crate::app) fn systems_elements() -> Vec<PressableElement> {
+pub(in crate::app) fn firmware_elements() -> Vec<PressableElement> {
     let mut elements = vec![
         PressableElement {
             id: automation::ids::SETTINGS_FIRMWARE_FOLDER.to_string(),
@@ -958,7 +958,7 @@ pub(in crate::app) fn systems_elements() -> Vec<PressableElement> {
     for family in firmware_platforms().into_iter().filter_map(family_of) {
         for slot in (family.firmware)() {
             elements.push(PressableElement {
-                id: automation::ids::systems_slot(&slot_id_name(slot.id)),
+                id: automation::ids::firmware_slot(&slot_id_name(slot.id)),
                 label: format!("Choose the {} image", slot.label),
                 toggle: false,
                 message: None,

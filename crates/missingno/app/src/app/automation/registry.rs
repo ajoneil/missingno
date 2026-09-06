@@ -227,9 +227,9 @@ pub fn enumerate(ctx: &UiContext) -> Vec<String> {
                         .map(|element| element.id),
                 );
             }
-            if ctx.settings_section == settings_view::Section::Systems {
+            if ctx.settings_section == settings_view::Section::Firmware {
                 ids.extend(
-                    settings_view::systems_elements()
+                    settings_view::firmware_elements()
                         .into_iter()
                         .map(|element| element.id),
                 );
@@ -336,8 +336,8 @@ pub fn describe(ctx: &UiContext, id: &str) -> Option<(UiKind, String)> {
             .find(|element| element.id == id)
             .map(|element| (UiKind::Button, element.label));
     }
-    if ids::is_systems(id) {
-        return element_described(settings_view::systems_elements(), id);
+    if ids::is_firmware(id) {
+        return element_described(settings_view::firmware_elements(), id);
     }
     if ids::is_settings_display(id) {
         return element_described(settings_display_elements(ctx), id);
@@ -448,8 +448,8 @@ pub(in crate::app) fn activation(ctx: &UiContext, id: &str) -> Option<Message> {
     if ids::is_controls(id) {
         return element_activation(controls_elements(ctx), id);
     }
-    if ids::is_systems(id) {
-        return element_activation(settings_view::systems_elements(), id);
+    if ids::is_firmware(id) {
+        return element_activation(settings_view::firmware_elements(), id);
     }
     if ids::is_settings_display(id) {
         return element_activation(settings_display_elements(ctx), id);
@@ -765,15 +765,15 @@ mod tests {
     fn every_enumerated_id_is_actionable() {
         // Pick-lists are registered for their bounds; a client opens them by
         // other means, so they legitimately answer neither verb. The Controllers
-        // section is pick lists throughout, and the Systems section is beyond
+        // section is pick lists throughout, and the Firmware section is beyond
         // its two folder buttons.
         let pickers = [ids::LIBRARY_FILTER, ids::LIBRARY_SORT];
-        let systems_buttons = [ids::SETTINGS_FIRMWARE_FOLDER, ids::SETTINGS_FIRMWARE_RESCAN];
+        let firmware_buttons = [ids::SETTINGS_FIRMWARE_FOLDER, ids::SETTINGS_FIRMWARE_RESCAN];
         for ctx in every_screen() {
             for id in enumerate(&ctx) {
                 if pickers.contains(&id.as_str())
                     || ids::is_controllers(&id)
-                    || (ids::is_systems(&id) && !systems_buttons.contains(&id.as_str()))
+                    || (ids::is_firmware(&id) && !firmware_buttons.contains(&id.as_str()))
                 {
                     continue;
                 }

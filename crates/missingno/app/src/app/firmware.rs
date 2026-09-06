@@ -1,5 +1,5 @@
 //! A firmware socket as a pick list, shared by the launch row that fills one
-//! for a single game and the Systems page that sets its default. Both offer the
+//! for a single game and the Firmware page that sets its default. Both offer the
 //! images the folder holds, under the labels the core knows them by.
 
 use missingno_core::firmware::FirmwareSlot;
