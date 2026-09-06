@@ -66,7 +66,6 @@ const CONTROLS_TAB_PREFIX: &str = "settings.controls.tab.";
 const CONTROLS_BINDING_PREFIX: &str = "settings.controls.binding.";
 const CONTROLS_OPTION_PREFIX: &str = "settings.controls.option.";
 const SYSTEMS_PREFIX: &str = "settings.systems.";
-const SYSTEMS_PAGE_PREFIX: &str = "settings.systems.page.";
 const SYSTEMS_SLOT_PREFIX: &str = "settings.systems.slot.";
 
 /// The id for a library game entry, keyed by its sha1.
@@ -125,25 +124,14 @@ pub fn controls_reset(page: &str) -> String {
 }
 
 /// Whether `id` names something inside the Systems section, whose elements the
-/// section itself enumerates from the showing page.
+/// section itself enumerates.
 pub fn is_systems(id: &str) -> bool {
     id.starts_with(SYSTEMS_PREFIX)
 }
 
-/// The id for a Systems page selector entry, keyed by its platform name.
-pub fn systems_page(page: &str) -> String {
-    format!("{SYSTEMS_PAGE_PREFIX}{page}")
-}
-
-/// The id for a firmware socket's pick list, keyed `game_boy.dmg_boot_rom`.
+/// The id for a firmware socket's pick list, keyed `dmg_boot_rom`.
 pub fn systems_slot(slot: &str) -> String {
     format!("{SYSTEMS_SLOT_PREFIX}{slot}")
-}
-
-/// Whether `id` names a firmware socket's pick list, which a client opens by
-/// other means than an activation.
-pub fn is_systems_slot(id: &str) -> bool {
-    id.starts_with(SYSTEMS_SLOT_PREFIX)
 }
 
 /// Whether `id` names a pick list of the play screen's Controllers section,

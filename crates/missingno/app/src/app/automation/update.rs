@@ -757,10 +757,6 @@ impl App {
         };
         let settings_pointer_knob =
             crate::app::settings::view::page_pointer_knob(settings_controls.page, &self.settings);
-        let settings_systems_page = match &self.screen {
-            AppScreen::Settings { systems_page, .. } => *systems_page,
-            _ => None,
-        };
         let viewing_sha1 = self.viewing_sha1().map(str::to_string);
         let (detail_has_rom, detail_game_loaded, detail_cartridge_actions) =
             match viewing_sha1.as_deref() {
@@ -813,7 +809,6 @@ impl App {
             settings_section,
             settings_controls,
             settings_pointer_knob,
-            settings_systems_page,
             settings_display: self.settings.display_options(),
             allow_external_clients: self.settings.allow_external_clients,
             allow_ui_automation: self.settings.allow_ui_automation,

@@ -52,8 +52,6 @@ pub struct UiContext {
     pub settings_controls: settings_view::ControlsState,
     /// Where the pointer switch stands on the system the Controls section shows.
     pub settings_pointer_knob: bool,
-    /// Which platform's page the Systems section shows; `None` shows the first.
-    pub settings_systems_page: Option<crate::app::system::Platform>,
     /// The Display section's rows, as the settings screen offers them.
     pub settings_display: settings_view::DisplayOptions,
     pub allow_external_clients: bool,
@@ -230,7 +228,11 @@ pub fn enumerate(ctx: &UiContext) -> Vec<String> {
                 );
             }
             if ctx.settings_section == settings_view::Section::Systems {
-                ids.extend(systems_elements(ctx).into_iter().map(|element| element.id));
+                ids.extend(
+                    settings_view::systems_elements()
+                        .into_iter()
+                        .map(|element| element.id),
+                );
             }
             if ctx.settings_section == settings_view::Section::Developer {
                 ids.push(ids::SETTINGS_EXTERNAL_CLIENTS.to_string());
@@ -244,11 +246,6 @@ pub fn enumerate(ctx: &UiContext) -> Vec<String> {
 /// The Controls section's pressable elements for the page it is showing.
 fn controls_elements(ctx: &UiContext) -> Vec<settings_view::PressableElement> {
     settings_view::controls_elements(&ctx.settings_controls, ctx.settings_pointer_knob)
-}
-
-/// The Systems section's elements for the page it is showing.
-fn systems_elements(ctx: &UiContext) -> Vec<settings_view::PressableElement> {
-    settings_view::systems_elements(ctx.settings_systems_page)
 }
 
 /// The Display section's rows, as the settings screen names them.
@@ -340,7 +337,7 @@ pub fn describe(ctx: &UiContext, id: &str) -> Option<(UiKind, String)> {
             .map(|element| (UiKind::Button, element.label));
     }
     if ids::is_systems(id) {
-        return element_described(systems_elements(ctx), id);
+        return element_described(settings_view::systems_elements(), id);
     }
     if ids::is_settings_display(id) {
         return element_described(settings_display_elements(ctx), id);
@@ -451,10 +448,8 @@ pub(in crate::app) fn activation(ctx: &UiContext, id: &str) -> Option<Message> {
     if ids::is_controls(id) {
         return element_activation(controls_elements(ctx), id);
     }
-    // A socket's pick list is registered for its bounds; a client opens it by
-    // other means than an activation.
-    if ids::is_systems(id) && !ids::is_systems_slot(id) {
-        return element_activation(systems_elements(ctx), id);
+    if ids::is_systems(id) {
+        return element_activation(settings_view::systems_elements(), id);
     }
     if ids::is_settings_display(id) {
         return element_activation(settings_display_elements(ctx), id);
@@ -560,7 +555,6 @@ mod tests {
             settings_section: settings_view::Section::General,
             settings_controls: settings_view::ControlsState::default(),
             settings_pointer_knob: true,
-            settings_systems_page: None,
             settings_display: settings_view::DisplayOptions {
                 effects: settings_view::Effects {
                     persistence: true,
@@ -771,13 +765,15 @@ mod tests {
     fn every_enumerated_id_is_actionable() {
         // Pick-lists are registered for their bounds; a client opens them by
         // other means, so they legitimately answer neither verb. The Controllers
-        // section is pick lists throughout, as is every firmware socket.
+        // section is pick lists throughout, and the Systems section is beyond
+        // its two folder buttons.
         let pickers = [ids::LIBRARY_FILTER, ids::LIBRARY_SORT];
+        let systems_buttons = [ids::SETTINGS_FIRMWARE_FOLDER, ids::SETTINGS_FIRMWARE_RESCAN];
         for ctx in every_screen() {
             for id in enumerate(&ctx) {
                 if pickers.contains(&id.as_str())
                     || ids::is_controllers(&id)
-                    || ids::is_systems_slot(&id)
+                    || (ids::is_systems(&id) && !systems_buttons.contains(&id.as_str()))
                 {
                     continue;
                 }

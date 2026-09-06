@@ -549,9 +549,6 @@ enum Screen {
     },
     Settings {
         section: settings::view::Section,
-        /// Which platform's page the Systems section shows; `None` shows the
-        /// first platform that declares a firmware socket.
-        systems_page: Option<system::Platform>,
         /// Which page the Controls section shows, and the controller each of its
         /// port blocks has tabbed to.
         controls: settings::view::ControlsState,
@@ -1108,7 +1105,6 @@ impl App {
                     std::mem::replace(&mut self.screen, Screen::Library { hovered_game: None });
                 self.screen = Screen::Settings {
                     section: settings::view::Section::default(),
-                    systems_page: None,
                     controls: settings::view::ControlsState::default(),
                     listening_for: None,
                     previous_screen: Box::new(previous),

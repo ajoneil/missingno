@@ -140,15 +140,6 @@ pub(in crate::app) fn handle(
                 *listening_for = None;
             }
         }
-        super::view::Message::SelectSystemsPage(platform) => {
-            if let app::Screen::Settings {
-                ref mut systems_page,
-                ..
-            } = app.screen
-            {
-                *systems_page = Some(platform);
-            }
-        }
         super::view::Message::SetFirmwareDefault { slot, image } => {
             match image {
                 Some(image) => app.settings.firmware.insert(slot, image),

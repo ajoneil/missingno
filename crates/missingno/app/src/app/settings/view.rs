@@ -7,7 +7,7 @@ use iced::{
     Length::Fill,
     widget::{column, container, pick_list, row, svg, text, toggler},
 };
-use missingno_core::firmware::{FirmwareNeed, FirmwareOrigin, FirmwareSlot};
+use missingno_core::firmware::{FirmwareNeed, FirmwareSlot};
 use missingno_core::ports::{ControlKind, PeripheralDescriptor, PeripheralId, Provider};
 use missingno_core::system::ControlRole;
 use missingno_core::video::DisplayTechnology;
@@ -92,7 +92,6 @@ pub enum Message {
     SetAllowExternalClients(bool),
     SetAllowUiAutomation(bool),
     SelectControlsPage(ControlsPage),
-    SelectSystemsPage(Platform),
     /// The image a firmware socket takes when nobody chooses; `None` leaves it
     /// to the core.
     SetFirmwareDefault {
@@ -124,14 +123,13 @@ pub(in crate::app) fn view<'a>(
     listening_for: Option<ListeningFor>,
     detected_cartridge_devices: &'a [crate::cartridge_rw::DetectedDevice],
     firmware: &FirmwareLibrary,
-    systems_page: Option<Platform>,
 ) -> Element<'a, app::Message> {
     let sidebar = sidebar_view(section);
     let content = match section {
         Section::Display => display_section(settings),
         Section::General => general_section(settings),
         Section::Controls => controls_section(settings, controls, listening_for),
-        Section::Systems => systems_section(settings, firmware, systems_page),
+        Section::Systems => systems_section(settings, firmware),
         Section::Hardware => hardware_section(settings, detected_cartridge_devices),
         Section::Developer => developer_section(settings),
     };
@@ -161,7 +159,7 @@ pub(in crate::app) const SECTIONS: [(Section, &str, Icon, &str); 6] = [
     (Section::General, "general", Icon::Sliders, "General"),
     (Section::Display, "display", Icon::Monitor, "Display"),
     (Section::Controls, "controls", Icon::Gamepad, "Controls"),
-    (Section::Systems, "systems", Icon::GameBoy, "Systems"),
+    (Section::Systems, "systems", Icon::MemoryStick, "Systems"),
     (
         Section::Hardware,
         "hardware",
@@ -539,19 +537,6 @@ fn controls_rail(current: ControlsPage) -> Vec<RailEntry> {
         .collect()
 }
 
-/// The Systems section's rail entries, in page order.
-fn systems_rail(current: Option<Platform>) -> Vec<RailEntry> {
-    systems_pages()
-        .into_iter()
-        .map(|platform| RailEntry {
-            id: automation::ids::systems_page(&id_name(platform.name())),
-            label: platform.name().to_string(),
-            message: Message::SelectSystemsPage(platform),
-            showing: Some(platform) == current,
-        })
-        .collect()
-}
-
 /// The Controllers block's tabs: which controller type's controls it shows.
 fn tab_row(page: ControlsPage, tabs: Vec<Tab>) -> Element<'static, app::Message> {
     let mut tabs_row = row![].spacing(s());
@@ -822,9 +807,9 @@ pub(in crate::app) fn controls_elements(
 /// The firmware pick lists are as wide as the longest image label needs.
 const FIRMWARE_WIDTH: f32 = 400.0;
 
-/// The platforms the Systems section has a page for: those whose family maps
-/// firmware, in display order.
-pub(in crate::app) fn systems_pages() -> Vec<Platform> {
+/// The platforms the Systems section lists: those whose family maps firmware,
+/// in display order.
+fn firmware_platforms() -> Vec<Platform> {
     app::system::platforms_by_name()
         .into_iter()
         .filter(|platform| {
@@ -833,17 +818,9 @@ pub(in crate::app) fn systems_pages() -> Vec<Platform> {
         .collect()
 }
 
-/// The page the section shows: the one selected, else the first.
-fn showing_page(selected: Option<Platform>) -> Option<Platform> {
-    let pages = systems_pages();
-    selected
-        .filter(|platform| pages.contains(platform))
-        .or_else(|| pages.into_iter().next())
-}
-
-/// A socket's name in an automation id, qualified by the page showing it.
-fn slot_id_name(platform: Platform, slot: &str) -> String {
-    format!("{}.{}", id_name(platform.name()), slot.replace('-', "_"))
+/// A socket's name in an automation id.
+fn slot_id_name(slot: &str) -> String {
+    slot.replace('-', "_")
 }
 
 /// What the firmware folder holds, in one line.
@@ -861,12 +838,11 @@ fn folder_summary(firmware: &FirmwareLibrary) -> String {
     )
 }
 
-/// The Systems section: the folder every core's firmware is read from, then a
-/// page per platform that maps any.
+/// The Systems section: the folder every core's firmware is read from, then the
+/// sockets each platform maps and the image each takes when nobody chooses.
 fn systems_section<'a>(
     settings: &'a super::Settings,
     firmware: &FirmwareLibrary,
-    selected: Option<Platform>,
 ) -> Element<'a, app::Message> {
     let folder = column![
         app_text::label("Firmware folder"),
@@ -889,52 +865,35 @@ fn systems_section<'a>(
         )
         .color(MUTED),
     ]
-    .spacing(m())
-    .max_width(620);
+    .spacing(m());
 
-    let page = showing_page(selected);
-    let body: Element<'static, app::Message> = match page {
-        Some(platform) => firmware_page(platform, settings, firmware),
-        None => app_text::detail("No registered system maps firmware.")
-            .color(MUTED)
-            .into(),
-    };
+    let mut content = column![folder].spacing(m());
 
-    column![
-        container(folder).padding(l()),
-        horizontal_rule(),
-        row![
-            rail(systems_rail(page)),
-            vertical_rule(),
-            iced::widget::scrollable(container(body).padding(l()).width(Fill)).height(Fill),
-        ]
-        .height(Fill),
-    ]
-    .height(Fill)
-    .into()
-}
-
-/// One platform's sockets: what each takes by default, over the images its core
-/// recognises for it.
-fn firmware_page(
-    platform: Platform,
-    settings: &super::Settings,
-    firmware: &FirmwareLibrary,
-) -> Element<'static, app::Message> {
-    let Some(family) = family_of(platform) else {
-        return column![].into();
-    };
-    let mut body = column![].spacing(l());
-    for slot in (family.firmware)() {
-        body = body.push(slot_group(platform, &slot, settings, firmware));
+    let platforms = firmware_platforms();
+    if platforms.is_empty() {
+        content =
+            content.push(app_text::detail("No registered system maps firmware.").color(MUTED));
     }
-    body.max_width(620).into()
+    for platform in platforms {
+        let Some(family) = family_of(platform) else {
+            continue;
+        };
+        let mut group = column![app_text::label(platform.name())].spacing(m());
+        for slot in (family.firmware)() {
+            group = group.push(slot_row(&slot, settings, firmware));
+        }
+        content = content.push(horizontal_rule()).push(group);
+    }
+
+    let content = content.max_width(600);
+
+    iced::widget::scrollable(container(content).padding(l()).width(Fill))
+        .height(Fill)
+        .into()
 }
 
-/// One socket: its default, then every image its core knows for it, marked
-/// where the folder holds one.
-fn slot_group(
-    platform: Platform,
+/// One socket: its label beside the image it takes when nobody chooses.
+fn slot_row(
     slot: &FirmwareSlot,
     settings: &super::Settings,
     firmware: &FirmwareLibrary,
@@ -965,46 +924,22 @@ fn slot_group(
     })
     .width(FIRMWARE_WIDTH);
 
-    let mut known = column![].spacing(s());
-    for image in slot.images {
-        let held = firmware.find(slot.id, image.id).is_some();
-        let origin = match image.origin {
-            FirmwareOrigin::Official => "Official".to_string(),
-            FirmwareOrigin::Open { project } => project.to_string(),
-        };
-        let marker: Element<'static, app::Message> = match held {
-            true => icons::m(Icon::Circle).into(),
-            false => iced::widget::Space::new().width(icons::ICON_SIZE).into(),
-        };
-        let line = app_text::detail(format!("{} · {origin}", image.label));
-        let line = match held {
-            true => line,
-            false => line.color(MUTED),
-        };
-        known = known.push(row![marker, line].spacing(s()).align_y(Center));
-    }
-
-    column![
-        row![
-            container(app_text::label(slot.label)).width(ROW_LABEL_WIDTH),
-            automation::tag(
-                &automation::ids::systems_slot(&slot_id_name(platform, slot.id)),
-                control
-            ),
-        ]
-        .spacing(m())
-        .align_y(Center),
-        known,
+    row![
+        container(app_text::label(slot.label)).width(ROW_LABEL_WIDTH),
+        automation::tag(
+            &automation::ids::systems_slot(&slot_id_name(slot.id)),
+            control
+        ),
     ]
     .spacing(m())
+    .align_y(Center)
     .into()
 }
 
 /// Everything the Systems section offers, in reading order: the folder's two
-/// buttons, the page selector, then the showing page's sockets. A socket's pick
-/// list has no press action, so it answers no message.
-pub(in crate::app) fn systems_elements(selected: Option<Platform>) -> Vec<PressableElement> {
-    let page = showing_page(selected);
+/// buttons, then every socket. A socket's pick list has no press action, so it
+/// answers no message.
+pub(in crate::app) fn systems_elements() -> Vec<PressableElement> {
     let mut elements = vec![
         PressableElement {
             id: automation::ids::SETTINGS_FIRMWARE_FOLDER.to_string(),
@@ -1020,20 +955,10 @@ pub(in crate::app) fn systems_elements(selected: Option<Platform>) -> Vec<Pressa
         },
     ];
 
-    for entry in systems_rail(page) {
-        let current = if entry.showing { " (current)" } else { "" };
-        elements.push(PressableElement {
-            id: entry.id,
-            label: format!("Show {} firmware{current}", entry.label),
-            toggle: false,
-            message: Some(entry.message),
-        });
-    }
-
-    if let Some(family) = page.and_then(family_of) {
+    for family in firmware_platforms().into_iter().filter_map(family_of) {
         for slot in (family.firmware)() {
             elements.push(PressableElement {
-                id: automation::ids::systems_slot(&slot_id_name(family.platform, slot.id)),
+                id: automation::ids::systems_slot(&slot_id_name(slot.id)),
                 label: format!("Choose the {} image", slot.label),
                 toggle: false,
                 message: None,
