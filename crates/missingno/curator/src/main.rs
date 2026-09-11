@@ -683,7 +683,7 @@ impl Curator {
                                 }
                                 break;
                             }
-                            for url in verify::libretro_title_urls(system, &title) {
+                            for url in verify::libretro_boxart_urls(system, &title) {
                                 if !out.iter().any(|c| c.url == url) {
                                     out.push(verify::measure_cover("libretro", url));
                                 }

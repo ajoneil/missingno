@@ -5,6 +5,7 @@ use std::{
     collections::HashMap,
     io,
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
 };
 
 use missingno_gamedb::GbCartType;
@@ -105,13 +106,66 @@ pub fn libretro_boxart_url(system: &str, signature_name: &str) -> Option<String>
     ))
 }
 
-/// libretro keys its files by No-Intro name, while a signature name is often
-/// TOSEC-shaped (`Moon Patrol (1983)(Atari)(NTSC)`), which libretro never has.
-/// The entry's own title plus a region suffix is the No-Intro shape.
-pub fn libretro_title_urls(system: &str, title: &str) -> Vec<String> {
-    ["", " (USA)", " (Europe)", " (World)"]
+/// Everything a No-Intro filename adds to a title — region, languages, dump
+/// flags, board qualifiers — is parenthesised and trails the name.
+fn boxart_base_name(file_stem: &str) -> &str {
+    match file_stem.split_once(" (") {
+        Some((base, _)) => base.trim_end(),
+        None => file_stem,
+    }
+}
+
+/// A title and a No-Intro name differ in punctuation more than in words: ours
+/// separates a subtitle with a colon where the filename uses a dash.
+fn comparable(name: &str) -> String {
+    name.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Every `Named_Boxarts` file the system's repo holds, listed once per process.
+/// The trees API returns the whole tree in one response, so there is no paging.
+fn boxart_index(system: &str) -> Vec<String> {
+    static CACHE: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Mutex::default);
+    if let Some(names) = cache.lock().unwrap().get(system) {
+        return names.clone();
+    }
+    let names = fetch_boxart_index(system).unwrap_or_default();
+    cache
+        .lock()
+        .unwrap()
+        .insert(system.to_owned(), names.clone());
+    names
+}
+
+fn fetch_boxart_index(system: &str) -> Result<Vec<String>, String> {
+    let repo = system.replace(' ', "_");
+    let url = format!(
+        "https://api.github.com/repos/libretro-thumbnails/{repo}/git/trees/master?recursive=1"
+    );
+    let body: serde_json::Value =
+        serde_json::from_slice(&fetch(&url)?).map_err(|e| format!("parse failed: {e}"))?;
+    let tree = body["tree"].as_array().ok_or("no tree in response")?;
+    Ok(tree
         .iter()
-        .filter_map(|suffix| libretro_boxart_url(system, &format!("{title}{suffix}.png")))
+        .filter_map(|entry| entry["path"].as_str())
+        .filter_map(|path| path.strip_prefix("Named_Boxarts/"))
+        .filter_map(|file| file.strip_suffix(".png"))
+        .map(str::to_owned)
+        .collect())
+}
+
+/// libretro keys its files by No-Intro name, so a title cannot be turned into a
+/// URL without knowing what the repo holds: a guess misses every name carrying
+/// a region or enhancement qualifier. Matching the listing by name finds them.
+pub fn libretro_boxart_urls(system: &str, title: &str) -> Vec<String> {
+    let wanted = comparable(title);
+    boxart_index(system)
+        .iter()
+        .filter(|stem| comparable(boxart_base_name(stem)) == wanted)
+        .filter_map(|stem| libretro_boxart_url(system, &format!("{stem}.png")))
         .collect()
 }
 
@@ -427,7 +481,26 @@ pub fn gb_header(rom: &[u8]) -> Option<GbHeader> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SigFlag, classify_signature};
+    use super::{SigFlag, boxart_base_name, classify_signature, comparable};
+
+    #[test]
+    fn a_boxart_name_matches_its_title_through_region_and_enhancement_qualifiers() {
+        let matches =
+            |title: &str, stem: &str| comparable(boxart_base_name(stem)) == comparable(title);
+        assert!(matches(
+            "Chibi Maruko-chan 3: Mezase! Game Taishou no Maki",
+            "Chibi Maruko-chan 3 - Mezase! Game Taishou no Maki (Japan)"
+        ));
+        assert!(matches(
+            "Captain Tsubasa J: Zenkoku Seiha e no Chousen",
+            "Captain Tsubasa J - Zenkoku Seiha e no Chousen (Japan) (SGB Enhanced)"
+        ));
+        assert!(matches(
+            "Capcom Quiz: Hatena? no Daibouken",
+            "Capcom Quiz - Hatena no Daibouken (Japan)"
+        ));
+        assert!(!matches("Centipede", "Centipede II (USA)"));
+    }
 
     #[test]
     fn flags_classify_and_translation_is_not_trained() {
