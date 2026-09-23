@@ -25,9 +25,12 @@ console, that console's ground-truth hierarchy adjudicates.
    measured silicon truth — including several findings no document or
    emulator agrees on. The suite in `tests/accuracy/` runs these under the
    crate's own testbench; staged invocations carry their blocker in the
-   test's reason string. The testbench runs the NTSC body only; TMS9929A
-   behaviour is exercised on the ColecoVision core's PAL corpus and stays
-   documentary-provisional here.
+   test's reason string. The corpus runs a second time on a 313-line body
+   except its cycle-counted ROMs, which the corpus itself skips on a PAL
+   SC-3000 (its Z80 is not locked to the VDP clock) and the harness
+   instantiates on NTSC only. A green on the 313-line body is engine
+   consistency with the corpus's derived PAL tables, not PAL evidence;
+   TMS9929A evidence is the ColecoVision core's `.col` tier.
 2. **Named documentation** — the TI *TMS9918A/9928A/9929A Data Manual* and
    *Video Display Processors Programmer's Guide* for documented behaviour;
    the community corpus (Sean Young's TMS9918A documentation, Nouspikel,
@@ -46,8 +49,13 @@ VDP interrupt on `/INT`. It is a dev-dependency fixture, not a console: the
 `systems/sg1000` crate owns real board behaviour when it exists. Each ROM
 latches its verdict to the RESULT block at `$C000` (`$A5` PASS / `$5A`
 FAIL, then CODE/OBSERVED/EXPECTED) before rendering anything, so the
-harness asserts on the block only. The corpus is instantiated once, on a
-TMS9918A, and a ROM's skip sentinel is never counted as a pass.
+harness asserts on the block only. The corpus is instantiated once per
+body — `ntsc::` on a TMS9918A, `pal::` on a TMS9929A — and a ROM's skip
+sentinel (PASS magic with `$FF`/`$FF`) is never counted as a pass: a ROM
+the corpus skips on PAL has no `pal::` entry at all. Screenshot subjects
+compare the 256×192 display area against one `_ntsc.png` reference on both
+bodies; a hand-latched scene whose placement is anchored to the F edge
+lands elsewhere on 313 lines and is staged on the PAL body alone.
 
 ## Stated abstractions
 
