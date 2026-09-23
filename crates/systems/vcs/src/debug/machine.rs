@@ -11,8 +11,10 @@ use missingno_core::inspect::{
     AddressDisplay, MemoryRegion, RegisterGroup, Section, Watch, Watchable,
 };
 use missingno_core::isa::InstructionSet;
+pub use missingno_core::launch::TV_STANDARD;
 use missingno_core::launch::{
-    LaunchChoice, LaunchOptionDescriptor, LaunchOptionKind, LaunchValue, LaunchValues, board_option,
+    LaunchOptionDescriptor, LaunchOptionKind, LaunchValue, LaunchValues, board_option,
+    tv_standard_option,
 };
 use missingno_core::machine::{
     BoundaryState, CoreRun, CoreStop, Machine, MachineConsole, StateIdentity, StopSet,
@@ -50,8 +52,6 @@ use super::sections::vcs_sidebar_sections;
 #[cfg(feature = "morepork")]
 const CAPTURE_BUDGET_CYCLES: usize = FRAME_BUDGET_LINES * 76;
 
-/// The broadcast standard the console's video is decoded for.
-pub const TV_STANDARD: &str = "tv-standard";
 /// The board the cartridge's silicon sits on.
 pub const BOARD: &str = "board";
 /// The dump runs past the cartridge's silicon.
@@ -62,19 +62,7 @@ pub const OVERDUMP: &str = "overdump";
 /// the media itself settles nothing.
 pub fn launch_options(_rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
     vec![
-        LaunchOptionDescriptor {
-            id: TV_STANDARD,
-            label: "TV standard",
-            kind: LaunchOptionKind::Choice {
-                choices: TvStandard::all()
-                    .into_iter()
-                    .map(|standard| LaunchChoice {
-                        value: standard.name(),
-                        label: standard.display_name(),
-                    })
-                    .collect(),
-            },
-        },
+        tv_standard_option(TvStandard::all()),
         board_option(
             BOARD,
             CartType::catalogue()

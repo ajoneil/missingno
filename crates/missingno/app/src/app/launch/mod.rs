@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use iced::Task;
 use missingno_core::cartridge::BoardValue;
 use missingno_core::firmware::{FirmwareValue, firmware_slots};
-use missingno_core::launch::{LaunchOptionDescriptor, LaunchValue, LaunchValues};
+use missingno_core::launch::{LaunchOptionDescriptor, LaunchValue, LaunchValues, TV_STANDARD};
 use missingno_gamedb::{Enhancement, Peripheral};
 use missingno_session::FirmwareLibrary;
 
@@ -122,14 +122,12 @@ fn facts(
 
 /// What the catalogue's word on a release fills, over the media's own.
 fn stated_by_release(facts: &mut Facts, release: &CatalogueRelease) {
+    // Every family publishes its standard and board options under the same
+    // ids, so one key carries the catalogue's word whichever core is about to
+    // read it.
     if let Some(standard) = release.tv_format {
-        facts.set(
-            system::vcs::TV_STANDARD,
-            LaunchValue::Choice(standard.name().to_owned()),
-        );
+        facts.set(TV_STANDARD, LaunchValue::Choice(standard.name().to_owned()));
     }
-    // Every family publishes its board option under the same id, so one key
-    // carries the catalogue's word whichever core is about to read it.
     if let Some(board) = &release.cart_type {
         facts.set(system::vcs::BOARD, LaunchValue::Board(board.clone()));
     }

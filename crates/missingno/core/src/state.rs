@@ -183,7 +183,8 @@ pub enum PixelFormat {
 pub struct FrameSpec {
     pub width: u32,
     /// Fixed frame height, or `None` for an emergent-sync display whose line
-    /// count varies per field.
+    /// count varies per field, or a schema whose height depends on the
+    /// standard the part is cut for.
     pub height: Option<u32>,
     pub format: PixelFormat,
 }

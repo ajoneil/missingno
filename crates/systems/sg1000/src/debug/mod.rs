@@ -18,7 +18,9 @@ use missingno_core::TvStandard;
 use missingno_core::cartridge::BoardVocabulary;
 use missingno_core::graphics::GraphicsView;
 use missingno_core::inspect::{RegisterGroup, Section};
-use missingno_core::launch::{LaunchOptionDescriptor, LaunchValue, LaunchValues, board_option};
+use missingno_core::launch::{
+    LaunchOptionDescriptor, LaunchValue, LaunchValues, board_option, tv_standard_option,
+};
 use missingno_core::machine::{
     BoundaryState, Machine, MachineConsole, StateIdentity, rom_fingerprint,
 };
@@ -34,8 +36,8 @@ use missingno_ti_psg::{NoiseMode, NoiseRate, Variant};
 use missingno_ti_vdp::{Frame as VdpFrame, Standard, VISIBLE_WIDTH};
 use missingno_zilog_z80::inspect::RegisterFile;
 
-use crate::cartridge::{CartType, CartridgeError};
-use crate::console::{JOY1, JOY2, STANDARD, Sg1000, TSTATES_PER_FRAME};
+use crate::cartridge::CartType;
+use crate::console::{CLOCK_HZ, JOY1, JOY2, Sg1000, part_for, tstates_per_frame};
 use crate::state_schema::sg1000_state_schema;
 use palette::ti_palette;
 use ports::CONTROL_PAD;
@@ -43,13 +45,15 @@ use ports::CONTROL_PAD;
 pub use ports::{PANEL, PORTS};
 pub use vdp::VdpLayout;
 
-/// T-state budget per frame step; a frame is 59,736 of them, and only a wait
-/// chain can stretch one.
-const FRAME_BUDGET: u32 = 4 * TSTATES_PER_FRAME;
-
-/// NTSC pixel aspect at the VDP's 5.37 MHz dot clock — a display-side
-/// calibratable stage.
-const PIXEL_ASPECT: f32 = 8.0 / 7.0;
+/// Pixel aspect at the VDP's 5.37 MHz dot clock — a display-side calibratable
+/// stage. PAL paints the same line time's 313 lines into the 625-line height
+/// that 262 fill on 525, so its pixels are 25/21 wider.
+fn pixel_aspect(standard: TvStandard) -> f32 {
+    match standard {
+        TvStandard::Pal => 8.0 / 7.0 * 25.0 / 21.0,
+        _ => 8.0 / 7.0,
+    }
+}
 
 const CODE_WINDOW_ROWS: usize = 10;
 
@@ -137,7 +141,10 @@ pub const BOARD: &str = "board";
 /// what a catalogue says about its board is all a loader has — the media itself
 /// settles nothing.
 pub fn launch_options(_rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
-    vec![board_option(BOARD, CartType::catalogue().iter().cloned())]
+    vec![
+        tv_standard_option([TvStandard::Ntsc, TvStandard::Pal]),
+        board_option(BOARD, CartType::catalogue().iter().cloned()),
+    ]
 }
 
 /// The board the launch values state, or `None` where nothing states one. A
@@ -155,13 +162,21 @@ pub fn board_from_launch(values: &LaunchValues) -> Result<Option<CartType>, Stri
 }
 
 /// A console bound to its media, so a save state can refuse a ROM it was not
-/// written for.
+/// written for. No header states a region, so an unstated standard is NTSC,
+/// the board's home-market cut.
 pub fn create_console(
     rom: &[u8],
     title: String,
     cart_type: Option<CartType>,
-) -> Result<Box<dyn SystemConsole>, CartridgeError> {
-    let console = MachineConsole::<Sg1000System>::new(Sg1000::new(rom, cart_type)?, title);
+    tv_standard: Option<TvStandard>,
+) -> Result<Box<dyn SystemConsole>, String> {
+    let standard = match tv_standard {
+        None => Standard::Ntsc,
+        Some(stated) => part_for(stated)
+            .ok_or_else(|| format!("the SG-1000 was not cut for {}", stated.display_name()))?,
+    };
+    let sg = Sg1000::new(rom, cart_type, standard).map_err(|error| error.to_string())?;
+    let console = MachineConsole::<Sg1000System>::new(sg, title);
     Ok(Box::new(console.with_identity(StateIdentity {
         rom_fingerprint: rom_fingerprint(rom),
     })))
@@ -176,6 +191,11 @@ impl Machine for Sg1000System {
 
     /// One NTSC frame: 262 lines × 228 T-states at 3.579545 MHz.
     const FRAME_INTERVAL: Duration = Duration::from_micros(16_688);
+
+    fn frame_interval(sg: &Sg1000) -> Duration {
+        Duration::from_secs_f64(tstates_per_frame(sg.standard()) as f64 / CLOCK_HZ as f64)
+    }
+
     const RUN_BUDGET: u32 = 400_000;
 
     fn pc(sg: &Sg1000) -> u16 {
@@ -199,7 +219,9 @@ impl Machine for Sg1000System {
     }
 
     fn step_frame(sg: &mut Sg1000) -> Option<IndexedFrame> {
-        sg.step_frame(FRAME_BUDGET).map(indexed)
+        // Only a wait chain can stretch a frame past its T-states.
+        sg.step_frame(4 * tstates_per_frame(sg.standard()))
+            .map(indexed)
     }
 
     fn power_cycle(sg: &mut Sg1000) {
@@ -234,10 +256,10 @@ impl Machine for Sg1000System {
         sg.drain_audio_samples()
     }
 
-    fn video_out(_sg: &Sg1000) -> DisplayTechnology {
+    fn video_out(sg: &Sg1000) -> DisplayTechnology {
         DisplayTechnology::Crt {
-            standard: TvStandard::Ntsc,
-            pixel_aspect: PIXEL_ASPECT,
+            standard: sg.tv_standard(),
+            pixel_aspect: pixel_aspect(sg.tv_standard()),
         }
     }
 
@@ -248,7 +270,7 @@ impl Machine for Sg1000System {
     fn blank_display() -> Frame {
         Frame::Indexed(IndexedFrame::blank(
             VISIBLE_WIDTH as u32,
-            STANDARD.visible_lines() as u32,
+            Standard::Ntsc.visible_lines() as u32,
             ti_palette(),
         ))
     }
@@ -364,7 +386,8 @@ mod fixtures {
 
     /// What a powered-on board reads, for a test to vary one chip of.
     pub(crate) fn power_on_state() -> Sg1000InspectState {
-        let console = Sg1000::new(&[0; 0x2000], None).expect("flat cartridge image");
+        let console = Sg1000::new(&[0; 0x2000], None, missingno_ti_vdp::Standard::Ntsc)
+            .expect("flat cartridge image");
         Sg1000System::inspect(&console, 0)
     }
 
@@ -398,6 +421,26 @@ mod tests {
         let sections = sidebar_sections(&power_on_state());
         let names: Vec<&str> = sections.iter().map(|section| section.name).collect();
         assert_eq!(names, ["CPU", "VDP", "PSG"]);
+    }
+
+    /// 59,736 T for NTSC's 262 lines and 71,364 for PAL's 313, at 3.579545 MHz.
+    #[test]
+    fn each_cut_paces_and_presents_its_own_standard() {
+        for (standard, micros, aspect) in [
+            (TvStandard::Ntsc, 16_688, 8.0 / 7.0),
+            (TvStandard::Pal, 19_936, 8.0 / 7.0 * 25.0 / 21.0),
+        ] {
+            let console = create_console(&[0; 0x2000], "test".into(), None, Some(standard))
+                .expect("a part cut for the standard");
+            assert_eq!(console.frame_interval().as_micros(), micros, "{standard:?}");
+            assert_eq!(
+                console.video_out(),
+                DisplayTechnology::Crt {
+                    standard,
+                    pixel_aspect: aspect,
+                }
+            );
+        }
     }
 
     #[test]

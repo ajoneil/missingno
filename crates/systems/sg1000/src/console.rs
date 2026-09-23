@@ -1,10 +1,11 @@
-//! The board: a Z80, a TMS9918A, an SN76489AN and a kilobyte of SRAM on one
-//! 10.738635 MHz crystal. The crystal is the model's grid — the VDP takes
+//! The board: a Z80, a TMS9918A or TMS9929A, an SN76489AN and a kilobyte of
+//! SRAM. The VDP's 10.738635 MHz crystal is the model's grid — the VDP takes
 //! three periods and the PSG one CLOCK per Z80 T-state — and the board itself
 //! contributes only decode (two halves of one '139), the joystick
 //! multiplexers, and the pause switch on /NMI.
 
 use missingno_core::ClockRatio;
+use missingno_core::TvStandard;
 use missingno_core::ports::PortId;
 use missingno_core::system::{ControlId, ControlInput, ControlRole, ControlSite};
 use missingno_core::waveform::{ChannelWave, WaveRing};
@@ -14,12 +15,25 @@ use missingno_zilog_z80::{Bus, Cpu};
 
 use crate::cartridge::{CartType, Cartridge, CartridgeError, UNDRIVEN};
 
-/// The board is cut for NTSC: a TMS9918A, and a 262-line frame.
-pub(crate) const STANDARD: Standard = Standard::Ntsc;
 /// The 10.738635 MHz crystal over the 3.579545 MHz the Z80 runs at.
 const XTALS_PER_TSTATE: u32 = 3;
-/// One frame on that grid: 262 lines of 228 T-states.
-pub const TSTATES_PER_FRAME: u32 = 228 * 262;
+/// One line on that grid.
+const TSTATES_PER_LINE: u32 = 228;
+
+/// One frame of the part's raster: 262 lines on NTSC, 313 on PAL.
+pub fn tstates_per_frame(standard: Standard) -> u32 {
+    TSTATES_PER_LINE * standard.lines_per_frame() as u32
+}
+
+/// The VDP the board fits for a broadcast standard: a TMS9918A for NTSC, a
+/// TMS9929A for PAL, and nothing for a standard the board was never cut for.
+pub fn part_for(standard: TvStandard) -> Option<Standard> {
+    match standard {
+        TvStandard::Ntsc => Some(Standard::Ntsc),
+        TvStandard::Pal => Some(Standard::Pal),
+        _ => None,
+    }
+}
 
 /// The TMM2009 work RAM: 1 KB with only A0-A9 brought out, selected across the
 /// whole top 16 KB, so it repeats every kilobyte to $FFFF.
@@ -28,8 +42,9 @@ const RAM_MASK: usize = RAM_SIZE - 1;
 /// Where `/CS WRAM` takes over from the cartridge selects.
 const RAM_BASE: u16 = 0xC000;
 
-/// The clock the Z80 and the PSG's CLOCK pin share, the crystal divided by
-/// three.
+/// The clock the Z80 and the PSG's CLOCK pin share: the NTSC board takes the
+/// VDP's CPUCLK (crystal ÷ 3), the PAL board its own 3.58 MHz oscillator,
+/// modelled at the same rate.
 pub(crate) const CLOCK_HZ: u32 = 3_579_545;
 /// 44.1 kHz output from that clock.
 const SAMPLE_RATE: u32 = 44_100;
@@ -42,8 +57,8 @@ const PSG_CHANNELS: usize = 4;
 /// Width of the amplitude code each channel hands its DAC.
 const PSG_CODE_BITS: u8 = 4;
 /// Waveform-capture ring depth: one frame-window of output samples with
-/// headroom — an NTSC frame is ~736 samples at 44.1 kHz.
-const WAVE_CAPTURE_SAMPLES: usize = 800;
+/// headroom — a PAL frame is ~879 samples at 44.1 kHz.
+const WAVE_CAPTURE_SAMPLES: usize = 1000;
 /// The channels' display names, in capture order.
 const WAVE_LABELS: [&str; PSG_CHANNELS] = ["Tone 1", "Tone 2", "Tone 3", "Noise"];
 
@@ -209,15 +224,19 @@ impl Bus for Board {
 }
 
 impl Sg1000 {
-    /// A console with the stated board in its slot; without one the image
-    /// loads as a plain ROM.
-    pub fn new(rom: &[u8], cart_type: Option<CartType>) -> Result<Sg1000, CartridgeError> {
+    /// A console fitted with the part cut for `standard`, and the stated board
+    /// in its slot; without one the image loads as a plain ROM.
+    pub fn new(
+        rom: &[u8],
+        cart_type: Option<CartType>,
+        standard: Standard,
+    ) -> Result<Sg1000, CartridgeError> {
         Ok(Sg1000 {
             cpu: Cpu::new(),
             board: Board {
                 cart: Cartridge::load(rom, cart_type)?,
                 ram: [0; RAM_SIZE],
-                vdp: Vdp::new(STANDARD),
+                vdp: Vdp::new(standard),
                 psg: Psg::new(Variant::DiscreteTi),
                 joy_dc: RELEASED,
                 joy_dd: RELEASED,
@@ -228,6 +247,18 @@ impl Sg1000 {
             graphics_capture: false,
             frames_seen: 0,
         })
+    }
+
+    /// The standard the fitted VDP is cut for.
+    pub fn standard(&self) -> Standard {
+        self.board.vdp.standard()
+    }
+
+    pub fn tv_standard(&self) -> TvStandard {
+        match self.standard() {
+            Standard::Ntsc => TvStandard::Ntsc,
+            Standard::Pal => TvStandard::Pal,
+        }
     }
 
     pub fn vdp(&self) -> &Vdp {
@@ -468,7 +499,7 @@ mod tests {
     use super::*;
 
     fn console(cart_type: Option<CartType>) -> Sg1000 {
-        Sg1000::new(&[0x11; 0x8000], cart_type).expect("an image the board holds")
+        Sg1000::new(&[0x11; 0x8000], cart_type, Standard::Ntsc).expect("an image the board holds")
     }
 
     fn write(console: &mut Sg1000, address: u16, data: u8) {

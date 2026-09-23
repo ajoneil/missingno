@@ -27,8 +27,6 @@ use missingno_core::state::{
 };
 use missingno_ti_vdp::{VISIBLE_WIDTH, VRAM_SIZE};
 
-use crate::console::STANDARD;
-
 use FieldType::{Bool, U8, U16, U32};
 
 /// The work RAM's own kilobyte, at the base of the window `/CS WRAM` selects.
@@ -254,16 +252,12 @@ fn memory_spans() -> Vec<MemorySpan> {
     ]
 }
 
-fn visible_lines() -> u32 {
-    STANDARD.visible_lines() as u32
-}
-
 /// The picture the console hands out: the VDP's visible raster — the display
 /// area inside its backdrop border — as TI colour indices.
 fn frame() -> FrameSpec {
     FrameSpec {
         width: VISIBLE_WIDTH as u32,
-        height: Some(visible_lines()),
+        height: None,
         format: PixelFormat::Indexed8,
     }
 }

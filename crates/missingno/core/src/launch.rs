@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::cartridge::{BoardSpec, BoardValue};
 use crate::firmware::{FirmwareSlot, FirmwareValue};
+use crate::tv::TvStandard;
 
 /// One option a core accepts at launch.
 #[derive(Clone)]
@@ -64,6 +65,30 @@ pub fn board_option(
         label: "Cartridge board",
         kind: LaunchOptionKind::Board {
             boards: boards.collect(),
+        },
+    }
+}
+
+/// The broadcast standard a console's video is decoded for, under one id every
+/// core shares.
+pub const TV_STANDARD: &str = "tv-standard";
+
+/// The broadcast-standard option, offering the standards the caller's board was
+/// cut for.
+pub fn tv_standard_option(
+    standards: impl IntoIterator<Item = TvStandard>,
+) -> LaunchOptionDescriptor {
+    LaunchOptionDescriptor {
+        id: TV_STANDARD,
+        label: "TV standard",
+        kind: LaunchOptionKind::Choice {
+            choices: standards
+                .into_iter()
+                .map(|standard| LaunchChoice {
+                    value: standard.name(),
+                    label: standard.display_name(),
+                })
+                .collect(),
         },
     }
 }

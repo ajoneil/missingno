@@ -6,8 +6,9 @@ workflow discipline live in the repository-root `AGENTS.md`. This crate is a
 `missingno-zilog-z80`, the TMS9918A in `missingno-ti-vdp`, the SN76489AN in
 `missingno-ti-psg` — and what lives here is the wiring between them. Decode
 (two halves of one 74LS139), a kilobyte of mirrored work RAM, the two
-joystick multiplexers, the pause switch on /NMI, and the crystal that ties
-the three chips to one grid.
+joystick multiplexers, the pause switch on /NMI, and the clocks that tie
+the three chips to one grid — one crystal on the NTSC board, a crystal and
+a separate oscillator on the PAL one.
 
 **This doc outranks the chip docs in-system.** When a question is about the
 board, adjudicate here; when it is about a chip's internals, that chip's
@@ -44,6 +45,8 @@ Where each source above lives.
 |--------|------|----------------|
 | Enri, *Enri's Home PAGE (SG-1000)* — the traced schematic sheets (CPU, VDP, PSG, I/O decode, joystick wiring, connectors, cartridge boards) | 1 | `http://www43.tok2.com/home/cmpslv/Sg1000/EnrSG.htm` — host dead, retrieved through the Internet Archive (Shift-JIS original). Enri's companion SC-3000 and Mark III pages sit under the same host path. |
 | `barbeque/sg1000` ("Soggy-1000") KiCad recreation — `Schematic-V0.4.pdf`, `sg1000.kicad_sch` | 2 | https://github.com/barbeque/sg1000 |
+| Sega, *MAIN P.C.B. CIRCUIT (PAL)* — the SC-3000 PAL service schematic: the TMS9929ANL on its 10.738635 MHz crystal, the separate 74HC04 "3.58M" system-clock oscillator, the LM1889 encoder sub-board on 4.43 MHz | 1 (PAL clocking only) | https://www.sc3000-multicart.com/images/SegaSC3000Schematic_A3.jpg |
+| SMS Power, *SC-3000 834-5227* — photographs of a European PAL board (silkscreen "SYSTEM CLOCK (PAL-3.58M)") | 2 (PAL clocking only) | https://www.smspower.org/Development/EuropeanSC-3000834-5227 |
 | TI, *TMS9918A/TMS9928A/TMS9929A Video Display Processors Data Manual* (Nov 1982) | 3 | http://www.bitsavers.org/components/ti/TMS9900/TMS9918A_TMS9928A_TMS9929A_Video_Display_Processors_Data_Manual_Nov82.pdf |
 | TI, *SN76489AN Digital Complex Sound Generator* data manual (undated) | 3 | No publisher URL located; the copy in hand ships in the `docs/` directory of https://github.com/rejunity/tt05-psg-sn76489 |
 | MAME — SG-1000 driver, Sega-8 slot and per-cart handlers, software list | 4 | https://github.com/mamedev/mame (`src/mame/sega/sg1000.cpp`, `src/devices/bus/sega8/`, `hash/sg1000.xml`) |
@@ -80,6 +83,14 @@ lands against a VDP that has already reached the instant it fires on. /INT
 is sampled from the VDP after each T-state. Nothing here batches per
 instruction — the interleave is per-T from day one, and the earlier
 first-pass cores' instruction-granular loops are explicitly not precedent.
+
+The board comes in two cuts, chosen at launch by the `tv-standard` option
+(the catalogue's `tv_format`; unstated means NTSC, the home market). The
+NTSC board fits a TMS9918A whose CPUCLK output (the crystal ÷ 3) clocks the
+Z80 and the PSG. The PAL board fits a TMS9929A, which has no CPUCLK pin, so
+Sega clocks the Z80 and the PSG from a separate 74HC04 oscillator on a part
+marked "3.58M"; the frame is 313 lines of 228 T. The model keeps the one
+grid on both boards — see the stated abstractions.
 
 The PSG's READY sits on the /WAIT net and is answered through the Z80's
 `Bus::wait_requested`, so an `OUT` to the PSG stretches the very cycle that
@@ -135,9 +146,22 @@ strobed it — and moves the /INT sample point along with it.
   edge and the keyboard connector whose **function no source explains**; it
   reads 1, along with the three unconnected multiplexer inputs above it.
   MAME takes those four bits from its expansion slot instead — tertiary.
+- **The PAL board's oscillator is locked to the crystal.** Its nominal
+  rate is the crystal's third, and the model runs it at exactly three XTAL
+  per T on the same grid as the NTSC board — the two oscillators' phase
+  wander and frequency error are unmodelled. No measurement of the part
+  exists ("3.58M" is all any source states), and no PAL Sega hardware is
+  available to make one.
+- **The PAL SG-1000 board is the SC-3000's.** Every PAL source consulted
+  documents the SC-3000 (Sega's own schematic, the photographed 834-5227
+  board, Enri's prose); no PAL SG-1000 console board has been located. The
+  SC-3000's clocking is applied to this board as an assumption.
 - **The picture is the VDP's visible raster.** The console hands out what
   the chip emits — the 256×192 display area inside its live backdrop
-  border, 284×243 on NTSC — so the presented picture is 4:3.
+  border, 284×243 on NTSC and 284×294 on PAL (the 9929A's 51/51 split is
+  derived, TI stating only the 294 visible lines) — so the presented
+  picture is 4:3. The PAL pixel aspect is derived as the VCS derives its
+  own: the same line time, 313 lines painted into the height 262 fill.
 - **Colour indices resolved through the datasheet palette.** The VDP stops
   at TI colour indices; the 16-entry RGB table this crate presents them
   through is the canonical datasheet palette, the same one the chip crate's

@@ -528,11 +528,13 @@ fn opt_u8(r: &StateRecord, name: &str) -> Result<Option<u8>, StateError> {
 mod tests {
     use super::*;
     use crate::state_schema::sg1000_state_schema;
+    use missingno_ti_vdp::Standard;
 
     /// A powered-on board's record carries every field the schema names.
     #[test]
     fn a_captured_record_validates_against_the_schema() {
-        let mut console = Sg1000::new(&[0; 0x2000], None).expect("flat cartridge image");
+        let mut console =
+            Sg1000::new(&[0; 0x2000], None, Standard::Ntsc).expect("flat cartridge image");
         for _ in 0..64 {
             console.step_instruction();
         }
@@ -542,7 +544,8 @@ mod tests {
 
     #[test]
     fn a_capture_is_refused_mid_instruction() {
-        let mut console = Sg1000::new(&[0; 0x2000], None).expect("flat cartridge image");
+        let mut console =
+            Sg1000::new(&[0; 0x2000], None, Standard::Ntsc).expect("flat cartridge image");
         console.step_tstate();
         assert!(!console.at_instruction_boundary());
         assert!(matches!(capture(&console), Err(StateError::NotAtBoundary)));

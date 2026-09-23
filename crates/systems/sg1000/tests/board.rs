@@ -5,9 +5,10 @@
 
 use missingno_core::ports::PortId;
 use missingno_core::system::{ControlId, ControlInput, ControlRole, ControlSite};
-use missingno_sg1000::console::{Sg1000, TSTATES_PER_FRAME};
+use missingno_sg1000::console::{Sg1000, tstates_per_frame};
 use missingno_test_support::asm::Z80Asm;
-use missingno_test_support::verdict::{Outcome, Poll, poll_verdict};
+use missingno_test_support::verdict::{Outcome, Poll, Verdict, poll_verdict};
+use missingno_ti_vdp::Standard;
 
 /// The chip crate's corpus: the same self-checking `.sg` ROMs, driven here by
 /// a real board map instead of the testbench's common-subset envelope.
@@ -21,21 +22,22 @@ const RESULT_BLOCK: u16 = 0xC000;
 
 /// The chip crate's default: the timing sweeps run ~550 frames to a verdict.
 const BUDGET_FRAMES: u64 = 1200;
-/// No Z80 instruction is shorter than four T-states.
-const INSTRUCTION_BUDGET: u64 = BUDGET_FRAMES * TSTATES_PER_FRAME as u64 / 4;
 
-/// Run a corpus ROM to its verdict on the console, panicking on FAIL.
-fn run_to_verdict(rom: &str) -> Sg1000 {
+/// Run a corpus ROM to its verdict on a console cut for `standard`, panicking
+/// on FAIL.
+fn run_to_verdict(rom: &str, standard: Standard) -> (Sg1000, Verdict) {
     let path = format!("{CORPUS}{rom}");
     let image = std::fs::read(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"));
-    let mut console = Sg1000::new(&image, None).expect("flat cartridge image");
-    let outcome = poll_verdict(INSTRUCTION_BUDGET, || {
+    let mut console = Sg1000::new(&image, None, standard).expect("flat cartridge image");
+    // No Z80 instruction is shorter than four T-states.
+    let instruction_budget = BUDGET_FRAMES * tstates_per_frame(standard) as u64 / 4;
+    let outcome = poll_verdict(instruction_budget, || {
         console.step_instruction();
         Poll::Read([0, 1, 2, 3].map(|offset| console.peek(RESULT_BLOCK + offset)))
     });
 
     match outcome {
-        Outcome::Reached(verdict) if verdict.passed => console,
+        Outcome::Reached(verdict) if verdict.passed => (console, verdict),
         Outcome::Reached(verdict) => panic!(
             "{rom}: FAIL code={:02X} observed={:02X} expected={:02X}",
             verdict.code, verdict.observed, verdict.expected
@@ -48,28 +50,35 @@ fn run_to_verdict(rom: &str) -> Sg1000 {
 /// substrate of the documented machine-detection routine.
 #[test]
 fn work_ram_mirrors_through_the_top_window() {
-    run_to_verdict("harness/ram-mirror.sg");
+    run_to_verdict("harness/ram-mirror.sg", Standard::Ntsc);
 }
 
 /// The VDP answering across the whole $80-$BF block, A0 selecting the port.
 #[test]
 fn vdp_ports_alias_across_their_block() {
-    run_to_verdict("harness/port-mirror.sg");
+    run_to_verdict("harness/port-mirror.sg", Standard::Ntsc);
 }
 
 /// The frame flag against the interrupt line, with the CPU walking the
 /// crystal grid one T-state at a time.
 #[test]
 fn frame_flag_races_resolve_on_the_board() {
-    run_to_verdict("timing/f-race.sg");
+    run_to_verdict("timing/f-race.sg", Standard::Ntsc);
+}
+
+/// The TMS9929A's 313-line frame reaches the interrupt cadence the CPU counts.
+#[test]
+fn a_pal_board_counts_a_313_line_frame() {
+    let (_, verdict) = run_to_verdict("interrupt/cadence.sg", Standard::Pal);
+    assert_eq!(verdict.observed, 0x02);
 }
 
 /// A rendered scene reaches the frame the console hands out.
 #[test]
 fn a_graphics_scene_reaches_a_non_blank_frame() {
-    let mut console = run_to_verdict("modes/graphic1.sg");
+    let (mut console, _) = run_to_verdict("modes/graphic1.sg", Standard::Ntsc);
     let frame = console
-        .step_frame(2 * TSTATES_PER_FRAME)
+        .step_frame(2 * tstates_per_frame(Standard::Ntsc))
         .expect("a frame completes once the scene is up");
     let lit = frame.pixels.iter().filter(|&&index| index != 0).count();
     assert!(lit > 0, "the scene renders something");
@@ -106,7 +115,7 @@ fn run_joystick_probe(console: &mut Sg1000) -> [u8; 4] {
 
 #[test]
 fn released_joysticks_read_all_ones() {
-    let mut console = Sg1000::new(&joystick_probe(), None).unwrap();
+    let mut console = Sg1000::new(&joystick_probe(), None, Standard::Ntsc).unwrap();
     assert_eq!(run_joystick_probe(&mut console), [0xFF; 4]);
 }
 
@@ -129,7 +138,7 @@ fn each_pad_line_clears_its_own_bit() {
         (PortId(1), ControlRole::Action(1), 0xFF, 0xF7),
     ];
     for (port, role, dc, dd) in cases {
-        let mut console = Sg1000::new(&joystick_probe(), None).unwrap();
+        let mut console = Sg1000::new(&joystick_probe(), None, Standard::Ntsc).unwrap();
         press(&mut console, port, role);
         let read = run_joystick_probe(&mut console);
         assert_eq!(
@@ -145,7 +154,7 @@ fn each_pad_line_clears_its_own_bit() {
 /// through the whole $C0-$FF block.
 #[test]
 fn the_multiplexer_pair_aliases_every_two_addresses() {
-    let mut console = Sg1000::new(&joystick_probe(), None).unwrap();
+    let mut console = Sg1000::new(&joystick_probe(), None, Standard::Ntsc).unwrap();
     press(&mut console, PortId(0), ControlRole::Left);
     press(&mut console, PortId(1), ControlRole::Right);
     let read = run_joystick_probe(&mut console);
@@ -157,7 +166,7 @@ fn the_multiplexer_pair_aliases_every_two_addresses() {
 /// control can pull $DD's top nibble down.
 #[test]
 fn the_top_nibble_of_the_second_byte_stays_high() {
-    let mut console = Sg1000::new(&joystick_probe(), None).unwrap();
+    let mut console = Sg1000::new(&joystick_probe(), None, Standard::Ntsc).unwrap();
     for port in [PortId(0), PortId(1)] {
         for role in [
             ControlRole::Up,
@@ -188,7 +197,7 @@ fn a_psg_write_stretches_its_own_out() {
     let spin = asm.here();
     asm.jp(spin);
 
-    let mut console = Sg1000::new(&asm.into_rom(0x8000), None).unwrap();
+    let mut console = Sg1000::new(&asm.into_rom(0x8000), None, Standard::Ntsc).unwrap();
     console.step_instruction();
     console.step_instruction();
     let unstalled = console.cpu.bus_trace().len();

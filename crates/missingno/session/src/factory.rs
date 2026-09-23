@@ -268,23 +268,38 @@ mod sms {
 #[cfg(feature = "sg1000")]
 mod sg1000 {
     use super::*;
+    use missingno_core::TvStandard;
+    use missingno_core::launch::TV_STANDARD;
     use missingno_core::system::SystemConsole;
+    use missingno_sg1000::console::part_for;
     use missingno_sg1000::debug::{BOARD, board_from_launch};
 
-    /// A stated board is the catalogue's word on media that carries no header of
-    /// its own — a code the core cannot read is an error, never a quiet fall
-    /// back to a plain ROM.
+    /// A stated board or standard is the catalogue's word on media that carries
+    /// no header of its own — a code the core cannot read, or a standard the
+    /// board was never cut for, is an error, never a quiet fall back.
     pub fn create(
         path: &Path,
         rom: &[u8],
         launch: &LaunchValues,
     ) -> Result<Box<dyn SystemConsole>, LoadError> {
+        let standard = match launch.choice(TV_STANDARD) {
+            Some(name) => {
+                let refused = || LoadError::InvalidValue {
+                    option: TV_STANDARD.to_string(),
+                    value: name.to_string(),
+                };
+                let stated = TvStandard::from_name(name).ok_or_else(refused)?;
+                part_for(stated).ok_or_else(refused)?;
+                Some(stated)
+            }
+            None => None,
+        };
         let board = board_from_launch(launch).map_err(|refusal| LoadError::InvalidValue {
             option: BOARD.to_string(),
             value: refusal,
         })?;
-        missingno_sg1000::debug::create_console(rom, title_for(path), board)
-            .map_err(|error| LoadError::Core(error.to_string()))
+        missingno_sg1000::debug::create_console(rom, title_for(path), board, standard)
+            .map_err(LoadError::Core)
     }
 
     pub fn is_rom(path: &Path, _rom: &[u8]) -> bool {

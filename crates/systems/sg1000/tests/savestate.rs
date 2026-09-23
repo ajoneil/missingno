@@ -10,10 +10,11 @@ use missingno_core::machine::BoundaryState;
 use missingno_core::state_file::{StateMeta, write_state_file};
 use missingno_core::system::{StateError, SystemDebugger};
 use missingno_sg1000::cartridge::CartType;
-use missingno_sg1000::console::{Sg1000, TSTATES_PER_FRAME};
+use missingno_sg1000::console::{Sg1000, tstates_per_frame};
 use missingno_sg1000::debug::create_console;
 use missingno_sg1000::snapshot::{capture, restore};
 use missingno_sg1000::state_schema::sg1000_state_schema;
+use missingno_ti_vdp::Standard;
 
 /// The ti-vdp conformance corpus, borrowed here for scenes that put a picture
 /// up: the board is what these tests exercise, not the chip's verdicts.
@@ -22,27 +23,33 @@ const CORPUS: &str = concat!(
     "/../../chips/ti-vdp/tests/accuracy/roms/"
 );
 
-const FRAME_BUDGET: u32 = 4 * TSTATES_PER_FRAME;
-
 fn image(relative: &str) -> Vec<u8> {
     let path = format!("{CORPUS}{relative}");
     std::fs::read(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"))
 }
 
 fn load(relative: &str) -> Sg1000 {
-    Sg1000::new(&image(relative), None).expect("flat cartridge image")
+    load_cut_for(relative, Standard::Ntsc)
+}
+
+fn load_cut_for(relative: &str, standard: Standard) -> Sg1000 {
+    Sg1000::new(&image(relative), None, standard).expect("flat cartridge image")
+}
+
+fn frame_budget(console: &Sg1000) -> u32 {
+    4 * tstates_per_frame(console.standard())
 }
 
 /// Run `frames` frames, each landing at an instruction boundary.
 fn run_frames(console: &mut Sg1000, frames: usize) {
     for _ in 0..frames {
-        console.step_frame(FRAME_BUDGET);
+        console.step_frame(frame_budget(console));
     }
 }
 
 fn next_raster(console: &mut Sg1000) -> Vec<u8> {
     console
-        .step_frame(FRAME_BUDGET)
+        .step_frame(frame_budget(console))
         .expect("a frame completes")
         .pixels
         .clone()
@@ -59,7 +66,7 @@ fn owned(state: &BoundaryState) -> Vec<(String, Vec<u8>)> {
 /// Step to the first instruction boundary on a given raster line. No Z80
 /// instruction spans a line, so every line is reachable.
 fn run_to_line(console: &mut Sg1000, line: u16) {
-    for _ in 0..TSTATES_PER_FRAME as usize {
+    for _ in 0..tstates_per_frame(console.standard()) as usize {
         console.step_instruction();
         if console.vdp().line() == line {
             return;
@@ -72,7 +79,7 @@ fn run_to_line(console: &mut Sg1000, line: u16) {
 /// the next `frames` rasters to match the un-saved run byte for byte.
 fn assert_continues_identically(original: &mut Sg1000, relative: &str, frames: usize) {
     let state = capture(original).expect("a boundary save");
-    let mut restored = load(relative);
+    let mut restored = load_cut_for(relative, original.standard());
     restore(
         &mut restored,
         &state.record,
@@ -117,6 +124,18 @@ fn a_scene_restored_at_a_frame_handoff_continues_identically() {
 #[test]
 fn a_scene_restored_mid_picture_continues_identically() {
     assert_mid_picture_continues("sprites/priority.sg", 100, 3);
+}
+
+/// The TMS9929A's taller picture rides the save as the TMS9918A's does.
+#[test]
+fn a_pal_scene_restored_mid_picture_continues_identically() {
+    let relative = "sprites/priority.sg";
+    let mut original = load_cut_for(relative, Standard::Pal);
+    run_frames(&mut original, 90);
+    run_to_line(&mut original, 100);
+    let state = capture(&original).expect("a boundary save");
+    assert_eq!(state.frame.and_then(|frame| frame.height), Some(294));
+    assert_continues_identically(&mut original, relative, 3);
 }
 
 /// A sweep that leans on the CPU-access schedule, so the port engine's
@@ -169,7 +188,7 @@ fn cart_ram_rides_the_save() {
     ]);
     let board = Some(CartType::OthelloRam { rom: None });
 
-    let mut original = Sg1000::new(&rom, board).expect("an image the board holds");
+    let mut original = Sg1000::new(&rom, board, Standard::Ntsc).expect("an image the board holds");
     for _ in 0..8 {
         original.step_instruction();
     }
@@ -177,7 +196,7 @@ fn cart_ram_rides_the_save() {
     assert_eq!(original.peek(0x87FF), 0xA5);
 
     let state = capture(&original).expect("a boundary save");
-    let mut restored = Sg1000::new(&rom, board).expect("an image the board holds");
+    let mut restored = Sg1000::new(&rom, board, Standard::Ntsc).expect("an image the board holds");
     assert_eq!(restored.peek(0x8000), 0x00, "cart RAM wakes cleared");
     restore(
         &mut restored,
@@ -225,7 +244,7 @@ fn a_save_is_refused_mid_instruction() {
 
 fn seam_console(relative: &str) -> Box<dyn SystemDebugger> {
     let console =
-        create_console(&image(relative), "test".into(), None).expect("flat cartridge image");
+        create_console(&image(relative), "test".into(), None, None).expect("flat cartridge image");
     let mut debugger = console.into_debugger();
     for _ in 0..20 {
         debugger.step_frame();
