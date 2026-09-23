@@ -70,7 +70,19 @@ fn run(
         Poll::Read([0, 1, 2, 3].map(|offset| console.peek(RESULT_BLOCK + offset)))
     });
     #[cfg(feature = "morepork")]
-    if let Some(tracer) = tracer {
+    if let Some(mut tracer) = tracer {
+        // A corpus trace ends on a frame, even for a ROM that latches before its first.
+        let budget = 2 * tstates_per_frame(standard);
+        let mut elapsed = 0;
+        while elapsed < budget {
+            console.step_instruction();
+            elapsed += console.cpu.bus_trace().len() as u32;
+            tracer.capture(&mut console).unwrap();
+            if let Some(frame) = console.take_frame() {
+                tracer.mark_frame(Some(frame)).unwrap();
+                break;
+            }
+        }
         tracer.finish().unwrap();
     }
 
