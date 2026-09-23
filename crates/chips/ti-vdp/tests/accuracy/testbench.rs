@@ -23,6 +23,8 @@ const XTALS_PER_TSTATE: u32 = 3;
 const TSTATES_PER_LINE: u64 = 228;
 /// Generous default: the timing sweeps run ~550 frames to their verdict.
 const DEFAULT_BUDGET_FRAMES: u64 = 1200;
+/// The testbench is a TMS9918A body.
+const STANDARD: Standard = Standard::Ntsc;
 
 pub struct Board {
     cart: Vec<u8>,
@@ -79,7 +81,7 @@ impl Bus for Board {
     }
 }
 
-fn run(rom: &str, budget_frames: u64, standard: Standard) -> (Board, Verdict) {
+fn run(rom: &str, budget_frames: u64) -> (Board, Verdict) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/accuracy/roms")
         .join(rom);
@@ -88,15 +90,15 @@ fn run(rom: &str, budget_frames: u64, standard: Standard) -> (Board, Verdict) {
     let mut board = Board {
         cart,
         ram: [0; RAM_MASK + 1],
-        vdp: Vdp::new(standard),
+        vdp: Vdp::new(STANDARD),
         #[cfg(feature = "morepork")]
         ram_write: None,
     };
     let mut cpu = Cpu::new();
     #[cfg(feature = "morepork")]
-    let mut tracer = trace::Tracer::create(rom, standard, &cpu, &board);
+    let mut tracer = trace::Tracer::create(rom, STANDARD, &cpu, &board);
 
-    let tstates_per_frame = TSTATES_PER_LINE * u64::from(standard.lines_per_frame());
+    let tstates_per_frame = TSTATES_PER_LINE * u64::from(STANDARD.lines_per_frame());
     let outcome = poll_verdict(budget_frames * tstates_per_frame, || {
         board.vdp.tick(XTALS_PER_TSTATE);
         cpu.tick(&mut board);
@@ -123,8 +125,8 @@ fn run(rom: &str, budget_frames: u64, standard: Standard) -> (Board, Verdict) {
     }
 }
 
-pub fn assert_pass(rom: &str, standard: Standard) {
-    assert_pass_within(rom, standard, DEFAULT_BUDGET_FRAMES);
+pub fn assert_pass(rom: &str) {
+    assert_pass_within(rom, DEFAULT_BUDGET_FRAMES);
 }
 
 /// The corpus's skip sentinel: PASS magic with CODE $00 and $FF/$FF, which a
@@ -134,39 +136,20 @@ fn is_ntsc_only_skip(verdict: &Verdict) -> bool {
 }
 
 /// A skip is never a pass: a ROM that declines this body must say so loudly.
-fn refuse_skip(rom: &str, standard: Standard, verdict: &Verdict) {
+fn refuse_skip(rom: &str, verdict: &Verdict) {
     assert!(
         !is_ntsc_only_skip(verdict),
-        "{rom}: skipped on {standard:?} (NTSC ONLY sentinel)"
+        "{rom}: skipped on {STANDARD:?} (NTSC ONLY sentinel)"
     );
-}
-
-/// A phase-anchored subject: it must pass on NTSC and latch the skip
-/// sentinel on PAL.
-pub fn assert_ntsc_only(rom: &str, standard: Standard) {
-    match standard {
-        Standard::Ntsc => assert_pass(rom, standard),
-        Standard::Pal => {
-            let (_, verdict) = run(rom, DEFAULT_BUDGET_FRAMES, standard);
-            assert!(
-                is_ntsc_only_skip(&verdict),
-                "{rom}: expected the NTSC ONLY sentinel on {standard:?}, got {} code={:02X} observed={:02X} expected={:02X}",
-                if verdict.passed { "PASS" } else { "FAIL" },
-                verdict.code,
-                verdict.observed,
-                verdict.expected
-            );
-        }
-    }
 }
 
 const MAX_REPORTED_MISMATCHES: usize = 16;
 
 /// The display area of a visible raster, row-major — the crop the blessed
 /// references and the dumps for capture adjudication are both stated in.
-fn active_area(frame: &Frame, standard: Standard) -> Vec<u8> {
+fn active_area(frame: &Frame) -> Vec<u8> {
     let width = frame.width as usize;
-    let top = standard.top_border() as usize;
+    let top = STANDARD.top_border() as usize;
     (0..ACTIVE_LINES as usize)
         .flat_map(|y| {
             let start = (top + y) * width + LEFT_BORDER as usize;
@@ -177,11 +160,10 @@ fn active_area(frame: &Frame, standard: Standard) -> Vec<u8> {
 
 /// Run a screenshot subject to its PASS verdict (the scene is up and stays
 /// up once the verdict latches), capture the next complete frame, and diff
-/// its display area against the blessed 256x192 reference pixel-exactly. The
-/// display area is standard-independent, so both bodies share one reference.
-pub fn assert_screenshot(rom: &str, standard: Standard) {
-    let (mut board, verdict) = run(rom, DEFAULT_BUDGET_FRAMES, standard);
-    refuse_skip(rom, standard, &verdict);
+/// its display area against the blessed 256x192 reference pixel-exactly.
+pub fn assert_screenshot(rom: &str) {
+    let (mut board, verdict) = run(rom, DEFAULT_BUDGET_FRAMES);
+    refuse_skip(rom, &verdict);
     assert!(
         verdict.passed,
         "{rom}: FAIL code={:02X} observed={:02X} expected={:02X} before its scene settled",
@@ -194,10 +176,10 @@ pub fn assert_screenshot(rom: &str, standard: Standard) {
     while board.vdp.frames_completed() < captured_at {
         board.vdp.tick(XTALS_PER_TSTATE);
     }
-    let active = active_area(board.vdp.frame(), standard);
+    let active = active_area(board.vdp.frame());
 
     if let Ok(dir) = std::env::var("TIVDP_DUMP_FRAMES") {
-        dump_frame(&dir, rom, standard, &active);
+        dump_frame(&dir, rom, &active);
     }
 
     let Some(reference) = load_reference(rom) else {
@@ -222,13 +204,9 @@ pub fn assert_screenshot(rom: &str, standard: Standard) {
 
 /// `TIVDP_DUMP_FRAMES=<dir>` writes each captured display area through the
 /// chip's canonical palette — the working tool for diffing a divergent scene.
-fn dump_frame(dir: &str, rom: &str, standard: Standard, active: &[u8]) {
+fn dump_frame(dir: &str, rom: &str, active: &[u8]) {
     let stem = Path::new(rom).file_stem().unwrap().to_string_lossy();
-    let body = match standard {
-        Standard::Ntsc => "",
-        Standard::Pal => "_pal",
-    };
-    let path = Path::new(dir).join(format!("{stem}_missingno{body}.png"));
+    let path = Path::new(dir).join(format!("{stem}_missingno.png"));
     std::fs::create_dir_all(dir).unwrap();
     let file = std::fs::File::create(&path).unwrap();
     let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), 256, 192);
@@ -260,9 +238,9 @@ fn load_reference(rom: &str) -> Option<Vec<[u8; 3]>> {
     Some(reference.rgb())
 }
 
-pub fn assert_pass_within(rom: &str, standard: Standard, budget_frames: u64) {
-    let (_, verdict) = run(rom, budget_frames, standard);
-    refuse_skip(rom, standard, &verdict);
+pub fn assert_pass_within(rom: &str, budget_frames: u64) {
+    let (_, verdict) = run(rom, budget_frames);
+    refuse_skip(rom, &verdict);
     assert!(
         verdict.passed,
         "{rom}: FAIL code={:02X} observed={:02X} expected={:02X}",
