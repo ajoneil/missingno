@@ -39,6 +39,7 @@ pub use vram::VRAM_SIZE;
 use port::Port;
 use render::Segment;
 use scan::Scanner;
+use sprites::SpritePixel;
 use standard::XTALS_PER_LINE;
 use status::Status;
 
@@ -56,10 +57,13 @@ pub struct Vdp {
     frame: Frame,
     frames_completed: u64,
     /// The in-flight row: pixels composited as the raster passes, the
-    /// line-latched sprite plane of the row being emitted (0 = no sprite
-    /// pixel), and the current fetch segment.
+    /// line-latched sprite plane of the row being emitted, and the current
+    /// fetch segment.
     line_pixels: [u8; VISIBLE_WIDTH as usize],
-    sprite_line: [u8; 256],
+    sprite_line: [SpritePixel; 256],
+    /// The coincidence signal at the previous emitted column, so a set is
+    /// queued only where it rises.
+    coincidence_signal: bool,
     segment: Segment,
 
     xtal_in_line: u32,
@@ -80,7 +84,8 @@ impl Vdp {
             frame: Frame::blank(standard),
             frames_completed: 0,
             line_pixels: [0; VISIBLE_WIDTH as usize],
-            sprite_line: [0; 256],
+            sprite_line: [SpritePixel::EMPTY; 256],
+            coincidence_signal: false,
             segment: Segment::BLANK,
             xtal_in_line: 0,
             line: 0,
@@ -99,7 +104,8 @@ impl Vdp {
         self.frame.pixels.fill(0);
         self.frames_completed = 0;
         self.line_pixels.fill(0);
-        self.sprite_line.fill(0);
+        self.sprite_line.fill(SpritePixel::EMPTY);
+        self.coincidence_signal = false;
         self.segment = Segment::BLANK;
         self.xtal_in_line = 0;
         self.line = 0;
@@ -122,6 +128,7 @@ impl Vdp {
             self.scan_lattice();
             self.service_port();
             self.raster_dot();
+            self.land_coincidence();
         }
     }
 
@@ -137,7 +144,7 @@ impl Vdp {
         // their own corroborated boundary above.
         let row = self.emitting_row();
         if row < ACTIVE_LINES {
-            self.sprite_line = [0; 256];
+            self.sprite_line = [SpritePixel::EMPTY; 256];
             self.paint_sprites(row);
         }
         if self.line == ACTIVE_LINES {

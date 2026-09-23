@@ -84,11 +84,6 @@ pub fn state_fields() -> Vec<FieldDef> {
             .help("the counter value the latest step replaced"),
         FieldDef::boundary("vdp_scan_stepped_ago", U32, "vdp")
             .help("XTAL periods since that step, which the presented field window rides"),
-        FieldDef::boundary("vdp_scan_field_hold", U8, "vdp")
-            .help("the fifth match's hold on the presented field")
-            .nullable(),
-        FieldDef::boundary("vdp_scan_fifth_match", Bool, "vdp")
-            .help("this scan hit a fifth match, so the hold survives the reset"),
         FieldDef::boundary("vdp_segment_bits", U8, "vdp").help("the latched fetch's pattern byte"),
         FieldDef::boundary("vdp_segment_foreground", U8, "vdp"),
         FieldDef::boundary("vdp_segment_background", U8, "vdp"),
@@ -151,14 +146,6 @@ pub fn write_state(r: &mut StateRecord, vdp: &VdpState) {
         .set("vdp_scan_stop_index", stop_index)
         .set("vdp_scan_step_from", vdp.scanner.step_from)
         .set("vdp_scan_stepped_ago", vdp.scanner.stepped_ago)
-        .set(
-            "vdp_scan_field_hold",
-            match vdp.scanner.field_hold {
-                Some(held) => StateValue::from(held),
-                None => StateValue::Null,
-            },
-        )
-        .set("vdp_scan_fifth_match", vdp.scanner.fifth_match_this_scan)
         .set("vdp_segment_bits", vdp.segment.bits)
         .set("vdp_segment_foreground", vdp.segment.foreground)
         .set("vdp_segment_background", vdp.segment.background)
@@ -212,8 +199,6 @@ pub fn parse_state(r: &StateRecord) -> Result<VdpState, StateError> {
             )?,
             stepped_ago: u32_of(r, "vdp_scan_stepped_ago")?,
             step_from: u8_of(r, "vdp_scan_step_from")?,
-            field_hold: opt_u8(r, "vdp_scan_field_hold")?,
-            fifth_match_this_scan: bool_of(r, "vdp_scan_fifth_match")?,
         },
         segment: SegmentState {
             bits: u8_of(r, "vdp_segment_bits")?,
@@ -284,15 +269,6 @@ fn u32_of(r: &StateRecord, name: &str) -> Result<u32, StateError> {
 fn bool_of(r: &StateRecord, name: &str) -> Result<bool, StateError> {
     match r.get(name) {
         Some(StateValue::Bool(value)) => Ok(*value),
-        _ => Err(StateError::Corrupt),
-    }
-}
-
-/// A nullable u8 field: `None` when the record carries it as null.
-fn opt_u8(r: &StateRecord, name: &str) -> Result<Option<u8>, StateError> {
-    match r.get(name) {
-        Some(StateValue::Int(value)) if *value <= u8::MAX as u32 => Ok(Some(*value as u8)),
-        Some(StateValue::Null) => Ok(None),
         _ => Err(StateError::Corrupt),
     }
 }

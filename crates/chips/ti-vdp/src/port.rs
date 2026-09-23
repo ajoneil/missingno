@@ -10,14 +10,16 @@ use crate::vram::VramAddress;
 /// One DRAM memory cycle is two dots = four XTAL periods; 171 per line.
 pub(crate) const CYCLES_PER_LINE: usize = 171;
 /// The eleven runs of consecutive CPU-access memory cycles on an active
-/// non-text line, as run-start positions — starts spaced
+/// non-text line, as run starts relative to the schedule origin — spaced
 /// 16,16,16,16,15,16,15,13,16,16,16 cycles (sum 171), the lattice both
-/// silicon maps trace out. The rotation against hsync is unmeasured, so
-/// the origin is a free convention.
-const RUN_START_CYCLES: [usize; 11] = [0, 16, 32, 48, 64, 79, 95, 110, 123, 139, 155];
+/// silicon maps trace out.
+const RUN_START_OFFSETS: [usize; 11] = [0, 16, 32, 48, 64, 79, 95, 110, 123, 139, 155];
 /// Run lengths, shortest of the map-equivalent family (19 CPU cycles per
 /// line, the documented CPU-cycle budget).
 const RUN_LENGTH_CYCLES: [usize; 11] = [1, 1, 1, 1, 1, 2, 5, 4, 1, 1, 1];
+/// Memory cycle of run 0 within the counter line. The map is absolute:
+/// map-anchor pins its rotation to ±2 T.
+const SCHEDULE_ORIGIN_CYCLE: usize = 60;
 /// The servicing cycle samples the transfer register this long after its
 /// own start...
 pub(crate) const TRANSFER_LOCK_XTALS: u64 = 17;
@@ -27,19 +29,24 @@ pub(crate) const FLAG_RELEASE_XTALS: u64 = 15;
 /// A port write needs this long to settle; a lock sampling sooner sees
 /// the register mid-transition and each bit resolves as old AND new.
 const TRANSFER_SETTLE_XTALS: u64 = 2;
-/// The fetch schedule wakes this many lines before display line 0; the
-/// measured turn-on seam sits ~2.6 lines before, the line boundary being
-/// the model's quantum.
-const SCHEDULE_WARM_UP_LINES: u16 = 3;
+/// The fetch schedule turns on at one seam before display line 0 and stays
+/// on through the display: this many lines before it, at this memory cycle.
+const SCHEDULE_TURN_ON_LINES_BEFORE_DISPLAY: u16 = 2;
+const SCHEDULE_TURN_ON_CYCLE: usize = 3;
+
+/// The memory cycle `offset` cycles into run `run`.
+pub(crate) const fn run_cycle(run: usize, offset: usize) -> usize {
+    (SCHEDULE_ORIGIN_CYCLE + RUN_START_OFFSETS[run] + offset) % CYCLES_PER_LINE
+}
 
 /// Whether each memory cycle of a rendering line is a CPU-access cycle.
 const ACCESS_CYCLES: [bool; CYCLES_PER_LINE] = {
     let mut map = [false; CYCLES_PER_LINE];
     let mut run = 0;
-    while run < RUN_START_CYCLES.len() {
+    while run < RUN_START_OFFSETS.len() {
         let mut offset = 0;
         while offset < RUN_LENGTH_CYCLES[run] {
-            map[RUN_START_CYCLES[run] + offset] = true;
+            map[run_cycle(run, offset)] = true;
             offset += 1;
         }
         run += 1;
@@ -217,12 +224,15 @@ impl Vdp {
         }
     }
 
-    /// Rendering lines and the pre-display warm-up tail confine CPU access
-    /// to the run schedule; everywhere else every memory cycle is claimable.
+    /// Rendering lines and the pre-display tail from the turn-on seam
+    /// confine CPU access to the run schedule; everywhere else every memory
+    /// cycle is claimable.
     fn cycle_accessible(&self, cycle: usize) -> bool {
-        let scheduled_line = self.line < ACTIVE_LINES
-            || self.line >= self.standard.lines_per_frame() - SCHEDULE_WARM_UP_LINES;
-        let rendering = self.display_enabled() && self.registers[1] & r1::M1 == 0 && scheduled_line;
+        let seam_line = self.standard.lines_per_frame() - SCHEDULE_TURN_ON_LINES_BEFORE_DISPLAY;
+        let scheduled = self.line < ACTIVE_LINES
+            || self.line > seam_line
+            || (self.line == seam_line && cycle >= SCHEDULE_TURN_ON_CYCLE);
+        let rendering = self.display_enabled() && self.registers[1] & r1::M1 == 0 && scheduled;
         !rendering || ACCESS_CYCLES[cycle]
     }
 

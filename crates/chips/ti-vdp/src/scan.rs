@@ -1,22 +1,26 @@
 //! The sprite pre-processing scanner's lattice: when the counter steps
 //! within a line, and what the status field presents around each step.
 
+use std::ops::RangeInclusive;
+
 use crate::Vdp;
-use crate::port::CYCLES_PER_LINE;
+use crate::port::{CYCLES_PER_LINE, run_cycle};
 use crate::standard::ACTIVE_LINES;
 
-/// The lattice is locked to the run schedule: entry 0 lands with the
-/// counter reset at the length-4 run's start, entries 1-7 burst one per
-/// memory cycle behind it, and entries 8-31 step three per 16-cycle run
-/// period across the eight regular length-1 runs — 9 entries per 48
-/// cycles exactly.
-const SCAN_RESET_CYCLE: usize = 110;
-const SCAN_BURST_CYCLES: std::ops::RangeInclusive<usize> = 112..=118;
+/// The counter steps on the run schedule, this many memory cycles behind
+/// each run start (steal-cadence pins it).
+const SCAN_ALIGNMENT_CYCLES: usize = 6;
+/// Entry 0 lands with the reset at the length-4 run; entries 1-7 burst one
+/// per cycle behind it; entries 8-31 step three per run across the eight
+/// regular runs that follow.
+const SCAN_RESET_RUN: usize = 7;
+const SCAN_BURST_OFFSETS: RangeInclusive<usize> = 2..=8;
+const SCAN_STEP_RUNS: [usize; 8] = [8, 9, 10, 0, 1, 2, 3, 4];
+const SCAN_STEP_OFFSET_CYCLES: [usize; 3] = [0, 4, 8];
+const SCAN_RESET_CYCLE: usize = run_cycle(SCAN_RESET_RUN, SCAN_ALIGNMENT_CYCLES);
 /// Burst steps land one XTAL later in their cycle than steady steps and
 /// present the counter immediately; boundary texture starts at 7-to-8.
 const SCAN_BURST_XTAL: u32 = 3;
-const SCAN_STEP_RUNS: [usize; 8] = [123, 139, 155, 0, 16, 32, 48, 64];
-const SCAN_STEP_OFFSET_CYCLES: [usize; 3] = [0, 4, 8];
 /// Which memory cycles advance the scanner in the steady regime.
 const SCAN_STEP_CYCLES: [bool; CYCLES_PER_LINE] = {
     let mut map = [false; CYCLES_PER_LINE];
@@ -24,7 +28,10 @@ const SCAN_STEP_CYCLES: [bool; CYCLES_PER_LINE] = {
     while run < SCAN_STEP_RUNS.len() {
         let mut offset = 0;
         while offset < SCAN_STEP_OFFSET_CYCLES.len() {
-            map[SCAN_STEP_RUNS[run] + SCAN_STEP_OFFSET_CYCLES[offset]] = true;
+            map[run_cycle(
+                SCAN_STEP_RUNS[run],
+                SCAN_ALIGNMENT_CYCLES + SCAN_STEP_OFFSET_CYCLES[offset],
+            )] = true;
             offset += 1;
         }
         run += 1;
@@ -34,9 +41,6 @@ const SCAN_STEP_CYCLES: [bool; CYCLES_PER_LINE] = {
 /// The lattice instant within its memory cycle; silicon pins it only to a
 /// 5-XTAL window.
 const SCAN_STEP_XTAL: u32 = 2;
-/// The fifth-match hold releases here — between the counter's 13th and
-/// 14th steps; the sub-cycle instant is free.
-const SCAN_HOLD_RELEASE_CYCLE: usize = 153;
 /// After an increment the field spends this long not presenting the
 /// counter: bits 4/3 read 0 throughout; bits 2..0 hold the old value's low
 /// bits at the first instant, all-ones through the middle, and the new
@@ -44,8 +48,7 @@ const SCAN_HOLD_RELEASE_CYCLE: usize = 153;
 const SCAN_WINDOW_XTALS: u64 = 5;
 
 /// Where a line's pre-processing ramp ends and why: the full 32-entry
-/// walk, a terminator's own index, or the fifth match's — only the
-/// fifth-match halt arms the field hold.
+/// walk, a terminator's own index, or the fifth match's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScanStop {
     FullWalk,
@@ -70,11 +73,6 @@ pub(crate) struct Scanner {
     pub(crate) stop: ScanStop,
     pub(crate) stepped_at: u64,
     pub(crate) step_from: u8,
-    /// The fifth-match event arms a hold on the presented field; it
-    /// survives the next reset and drops at the release cycle of the
-    /// first scan with no event.
-    pub(crate) field_hold: Option<u8>,
-    pub(crate) fifth_match_this_scan: bool,
 }
 
 impl Scanner {
@@ -83,8 +81,6 @@ impl Scanner {
         stop: ScanStop::FullWalk,
         stepped_at: 0,
         step_from: 31,
-        field_hold: None,
-        fifth_match_this_scan: false,
     };
 }
 
@@ -100,61 +96,40 @@ impl Vdp {
             return;
         }
         let cycle = (self.xtal_in_line / 4) as usize;
-        // From the reset on, a line's lattice tail belongs to the NEXT
-        // line's scan; the scanner serves display lines plus the phantom
-        // pass, so the counter holds its stop through the border.
-        let scanned_line = if cycle >= SCAN_RESET_CYCLE {
-            self.line < ACTIVE_LINES || self.line == self.standard.lines_per_frame() - 1
-        } else {
-            self.line <= ACTIVE_LINES
-        };
+        // A counter line's lattice is the scan whose effects latch at the
+        // boundary into the next line; the scanner serves display lines plus
+        // the phantom pass, so the counter holds its stop through the border.
+        let scanned_line =
+            self.line < ACTIVE_LINES || self.line == self.standard.lines_per_frame() - 1;
         if !scanned_line {
             return;
         }
         if sub == SCAN_BURST_XTAL {
-            if SCAN_BURST_CYCLES.contains(&cycle)
+            if cycle >= SCAN_RESET_CYCLE
+                && SCAN_BURST_OFFSETS.contains(&(cycle - SCAN_RESET_CYCLE))
                 && self.scanner.counter < self.scanner.stop.index()
             {
                 self.scanner.step_from = self.scanner.counter;
                 self.scanner.counter += 1;
-                self.arm_hold_at_stop();
             }
         } else if cycle == SCAN_RESET_CYCLE {
             self.scanner.step_from = self.scanner.counter;
             self.scanner.counter = 0;
             self.scanner.stepped_at = self.xtal_total;
-            self.scanner.fifth_match_this_scan = false;
-        } else if cycle == SCAN_HOLD_RELEASE_CYCLE {
-            if !self.scanner.fifth_match_this_scan {
-                self.scanner.field_hold = None;
-            }
         } else if SCAN_STEP_CYCLES[cycle] && self.scanner.counter < self.scanner.stop.index() {
             self.scanner.step_from = self.scanner.counter;
             self.scanner.counter += 1;
             self.scanner.stepped_at = self.xtal_total;
-            self.arm_hold_at_stop();
-        }
-    }
-
-    fn arm_hold_at_stop(&mut self) {
-        if let ScanStop::FifthMatch(index) = self.scanner.stop
-            && self.scanner.counter == index
-        {
-            self.scanner.field_hold = Some(index);
-            self.scanner.fifth_match_this_scan = true;
         }
     }
 
     /// Status low five bits: the latched fifth-sprite index while 5S is
-    /// set, the armed fifth-match hold next, otherwise the scanner's
-    /// counter — live, except inside the boundary window around each step.
-    /// The 7-to-8 step reads inverted mid-window; cause open.
+    /// set, otherwise the scanner's counter — live, except inside the
+    /// boundary window around each step. The 7-to-8 step reads inverted
+    /// mid-window; cause open.
     pub(crate) fn scanned_field(&self) -> u8 {
         if self.status.fifth_sprite {
             return self.status.sprite_field & 0x1F;
-        }
-        if let Some(held) = self.scanner.field_hold {
-            return held;
         }
         let elapsed = self.xtal_total - self.scanner.stepped_at;
         if elapsed >= SCAN_WINDOW_XTALS {

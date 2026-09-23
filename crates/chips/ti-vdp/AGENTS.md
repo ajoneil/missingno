@@ -64,30 +64,32 @@ is staged on the PAL body alone.
   true T offset within the instruction.
 - **CPU-access schedule.** The rendering-line access schedule and its
   service rule are pinned by the SC-3000's two canonical burst maps; the
-  code's lattice constants state them, in the model's natural gauge. The
-  schedule's rotation against hsync and its sub-cycle instants are free
-  conventions adopted within the maps' measured freedom; only Graphics I
-  with display on is map-constrained. Non-rendering time is modelled as
-  every cycle claimable, except the last frame lines: the model wakes the
-  schedule three lines before display line 0, where silicon's seam sits
-  2.03–2.40 lines before it (`timing/turn-on-66`, staged).
+  code's lattice constants state them. The schedule's rotation against
+  hsync is silicon-pinned (`probes/map-anchor`, ±2 T); its sub-cycle
+  instants are conventions adopted within the maps' measured freedom; only
+  Graphics I with display on is map-constrained. Non-rendering time is
+  modelled as every cycle claimable, except from the turn-on seam at line
+  N−2, memory cycle 3 — 1.98 lines before display line 0
+  (`timing/turn-on-66`). Open: a ~4 T residual between the F-to-wake
+  latency `probes/anchor-scan` implies and map-anchor's rotation.
 - **Sprite pre-processing: live counter, boundary-latched effects.** Status
   bits 0-4 present the scanner's progress live, and the fifth-sprite
-  effects — the halt at the match's own entry, the hold on the presented
-  field and its release, 5S's boundary-latched set instant — are
-  corpus-pinned; the code's scan lattice states them, its base offset and
-  sub-cycle instants adopted within the maps' measured freedom. Two stated
-  divergences, each with its asserting test staged: the corpus measured C
-  live at the generating pixel while the model latches it at the line
-  boundary (`timing/c-instant-x`), and the live-ruler cells that follow
-  the fifth-match band land seventeen cells early without the
-  run-boundary zeroes (`timing/5s-instant-mid`).
+  effects — the halt at the match's own entry and 5S's boundary-latched
+  set instant — are corpus-pinned. The counter walks on the run schedule
+  at the alignment `timing/steal-cadence` pins, wholly inside the counter
+  line before the boundary its effects latch on; its sub-cycle instants
+  are adopted within the maps' measured freedom. A clearing read in the
+  T-state before 5S's set wins the race as well as one in its own (band =
+  window − 2). One stated divergence, its test staged: silicon reads $00
+  on `timing/5s-instant-mid`'s three run-boundary cells, an
+  instrument-dependent value the model does not produce.
 - **Sub-line rendering: the incremental raster pipeline.** Each character
   cell latches its tables from the live registers and VRAM at the cell's
   instant, and each dot resolves transparency against the live backdrop —
   mid-line writes land at their silicon-measured granularities (R7 per
-  pixel; table bases and mode bits per cell; sprites and M1's schedule
-  coupling line-latched). The raster placement is a calibrated convention
+  pixel; table bases and mode bits per cell; the sprite plane and M1's
+  schedule coupling line-latched). C rises 44 XTAL (±1 T) after the raster
+  emits the overlap's first pixel — measured, mechanism unattributed. The raster placement is a calibrated convention
   pinned to a silicon-measured band, like the schedule rotation. Open: the
   midframe-m2 mode seam lands two cells late, and midframe-m1's disturbed
   transition row is unattributed on silicon. The text-mode side borders

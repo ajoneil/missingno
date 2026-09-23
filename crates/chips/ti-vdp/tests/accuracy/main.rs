@@ -263,25 +263,19 @@ macro_rules! corpus {
             vdp_test!($body, _4k_sweep, "timing/4k-sweep.sg");
             // Sidecar budget 1400: ~550 frames of sweep + the per-cell map compare.
             vdp_test!($body, _5s_instant_low, "timing/5s-instant-low.sg", frames = 1600);
-            // Sidecar budget 1400; the fifth-match halt and the $4F band are right,
-            // the live-ruler cells after the band are not.
+            // Sidecar budget 1400; everything but the three run-boundary cells matches.
             vdp_test!(
                 $body,
                 _5s_instant_mid,
                 "timing/5s-instant-mid.sg",
-                staged = "live-ruler cells land 17 cells early without the run-boundary zeroes (code 06); scan-ruler model open"
+                staged = "three run-boundary cells read $00 on silicon at T68/T73/T74 under clear-then-probe, our texture 7/old/new (code 06); mechanism unattributed"
             );
             vdp_test!($body, _5s_instant_high, "timing/5s-instant-high.sg");
             vdp_test!($body, _5s_race, "timing/5s-race.sg");
             vdp_test!($body, blank_burst, "timing/blank-burst.sg");
             vdp_test!($body, border_burst, "timing/border-burst.sg");
             vdp_test!($body, c_instant, "timing/c-instant.sg");
-            vdp_test!(
-                $body,
-                c_instant_x,
-                "timing/c-instant-x.sg",
-                staged = "C latches at the line boundary; silicon sets it at the generating pixel (code 0E: counter $10 at the rise, silicon $17)"
-            );
+            vdp_test!($body, c_instant_x, "timing/c-instant-x.sg");
             vdp_test!($body, c_race, "timing/c-race.sg");
             // Sidecar budget 1400: ~550 frames of sweep + the per-cell map compare.
             vdp_test!($body, cadence_4match, "timing/cadence-4match.sg", frames = 1600);
@@ -311,12 +305,7 @@ macro_rules! corpus {
             vdp_test!($body, steal15_sweep, "timing/steal15-sweep.sg");
             vdp_test!($body, term_cadence, "timing/term-cadence.sg");
             vdp_test!($body, text_burst, "timing/text-burst.sg");
-            vdp_test!(
-                $body,
-                turn_on_66,
-                "timing/turn-on-66.sg",
-                staged = "schedule wakes three lines before display line 0; silicon's seam is 2.03-2.40 lines before it (code 07, c = -71)"
-            );
+            vdp_test!($body, turn_on_66, "timing/turn-on-66.sg");
             vdp_test!($body, undoc_all_sweep, "timing/undoc-all-sweep.sg");
             vdp_test!($body, undoc_bmc_sweep, "timing/undoc-bmc-sweep.sg");
             vdp_test!($body, undoc_bt_sweep, "timing/undoc-bt-sweep.sg");

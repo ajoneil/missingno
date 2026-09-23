@@ -4,17 +4,33 @@
 use crate::Vdp;
 use crate::registers::{pattern_row, r1};
 use crate::scan::ScanStop;
-use crate::standard::ACTIVE_LINES;
+use crate::standard::XTALS_PER_TSTATE;
 
 /// Sprite attribute Y value that terminates the scan.
 pub const SPRITE_TERMINATOR: u8 = 0xD0;
 
 /// Which walk of the attribute table is running: the effects scan, which
-/// latches C and paints nothing, or the paint into the emission plane.
+/// latches 5S and the stop and paints nothing, or the paint into the
+/// emission plane.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SpritePass {
     Effects,
     Paint,
+}
+
+/// What the sprite plane holds for one display column: the frontmost
+/// painter's colour, and whether a second sprite pixel landed there.
+#[derive(Clone, Copy)]
+pub(crate) struct SpritePixel {
+    pub(crate) colour: u8,
+    pub(crate) coincident: bool,
+}
+
+impl SpritePixel {
+    pub(crate) const EMPTY: Self = SpritePixel {
+        colour: 0,
+        coincident: false,
+    };
 }
 
 /// The size and magnification R1 gives every sprite of a line.
@@ -47,33 +63,29 @@ impl SpriteGeometry {
 }
 
 impl Vdp {
-    /// The effects walk: the fifth-sprite latch, the coincidence flag and
-    /// the scanner's stop all come from here.
+    /// The effects walk: the fifth-sprite latch and the scanner's stop come
+    /// from here.
     pub(crate) fn scan_sprites(&mut self) {
         if !self.display_enabled() {
             return;
         }
-        let phantom = self.line == ACTIVE_LINES;
-        // M1 gates sprite rendering (never the scanner) in every mode
-        // combination that includes it.
-        let rendered = !phantom && self.registers[1] & r1::M1 == 0;
-
-        self.scanner.stop = self.walk_sprites(self.line as u8, SpritePass::Effects, rendered);
+        self.scanner.stop = self.walk_sprites(self.line as u8, SpritePass::Effects);
     }
 
-    /// Paint `row`'s displayed sprites into the emission plane — the same
-    /// walk as the effects scan, latching nothing: 5S, C and the stop
-    /// latch keep their own corroborated line boundary.
+    /// Paint `row`'s displayed sprites into the emission plane, marking the
+    /// columns a second sprite pixel lands on — the same walk as the
+    /// effects scan, latching nothing.
     pub(crate) fn paint_sprites(&mut self, row: u16) {
         if !self.display_enabled() || self.registers[1] & r1::M1 != 0 {
             return;
         }
-        self.walk_sprites(row as u8, SpritePass::Paint, true);
+        self.walk_sprites(row as u8, SpritePass::Paint);
     }
 
     /// One walk of the attribute table for `line`: the first four sprites on
-    /// it reach `pass`'s plane, and the walk ends where the scanner does.
-    fn walk_sprites(&mut self, line: u8, pass: SpritePass, rendered: bool) -> ScanStop {
+    /// it reach the plane on a paint pass, and the walk ends where the
+    /// scanner does.
+    fn walk_sprites(&mut self, line: u8, pass: SpritePass) -> ScanStop {
         let geometry = SpriteGeometry::of(self);
         let attributes = self.sprite_attribute_base();
         let mut occupied = [false; 256];
@@ -94,8 +106,13 @@ impl Vdp {
             if matched == 5 {
                 // The data manual's gate is real: 5S only latches while F
                 // is clear, and the first capture holds until a read. The
-                // scan itself halts here whatever the flags say.
-                if pass == SpritePass::Effects && !self.status.frame && !self.status.fifth_sprite {
+                // scan itself halts here whatever the flags say. A clearing
+                // read in the T-state before the set also wins the race.
+                if pass == SpritePass::Effects
+                    && !self.status.frame
+                    && !self.status.fifth_sprite
+                    && self.xtal_total - self.status.last_clear_at > XTALS_PER_TSTATE as u64
+                {
                     self.status.fifth_sprite = true;
                     self.status.fifth_sprite_set_at = self.xtal_total;
                     self.status.sprite_field = index;
@@ -103,8 +120,8 @@ impl Vdp {
                 stop = ScanStop::FifthMatch(index);
                 break;
             }
-            if rendered {
-                self.render_sprite_row(entry, row, &mut occupied, geometry, pass);
+            if pass == SpritePass::Paint {
+                self.render_sprite_row(entry, row, &mut occupied, geometry);
             }
         }
 
@@ -117,7 +134,6 @@ impl Vdp {
         row: u8,
         occupied: &mut [bool; 256],
         geometry: SpriteGeometry,
-        pass: SpritePass,
     ) {
         let x = self.vram_cell(entry + 1);
         let name = self.vram_cell(entry + 2);
@@ -147,20 +163,15 @@ impl Vdp {
                 if !(0..256).contains(&px) {
                     continue;
                 }
-                match pass {
-                    SpritePass::Effects => {
-                        // Coincidence counts every sprite pixel, transparent
-                        // colour included, and is not gated by F.
-                        self.status.coincidence |= occupied[px as usize];
-                        occupied[px as usize] = true;
-                    }
-                    // A transparent sprite pixel collides but masks nothing;
-                    // among painters the frontmost wins.
-                    SpritePass::Paint => {
-                        if colour != 0 && self.sprite_line[px as usize] == 0 {
-                            self.sprite_line[px as usize] = colour;
-                        }
-                    }
+                let pixel = &mut self.sprite_line[px as usize];
+                // Coincidence counts every sprite pixel, transparent colour
+                // included, and is not gated by F.
+                pixel.coincident |= occupied[px as usize];
+                occupied[px as usize] = true;
+                // A transparent sprite pixel collides but masks nothing;
+                // among painters the frontmost wins.
+                if colour != 0 && pixel.colour == 0 {
+                    pixel.colour = colour;
                 }
             }
         }

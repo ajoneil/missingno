@@ -5,6 +5,9 @@ use crate::Vdp;
 use crate::registers::{Mode, pattern_row};
 use crate::standard::{ACTIVE_LINES, ACTIVE_WIDTH, LEFT_BORDER, Standard, VISIBLE_WIDTH};
 
+/// C rises this long after the raster emits an overlapping sprite pixel.
+const COINCIDENCE_LAG_XTALS: u64 = 44;
+
 /// Raster placement — the counter-to-picture alignment, the same freedom
 /// as the schedule rotation: picture row N emits during counter line N-1,
 /// pixel 0 at this XTAL offset. Calibrated against midline-name's seam,
@@ -151,10 +154,21 @@ impl Vdp {
                 if x == 0 || x >= self.segment.end_x {
                     self.segment = self.latch_segment(picture_row, x);
                 }
+                let sprite = self.sprite_line[x];
+                if x == 0 {
+                    self.coincidence_signal = false;
+                }
+                let coincident = sprite.coincident && self.display_enabled();
+                if coincident && !self.coincidence_signal {
+                    self.status
+                        .coincidence_lands_at
+                        .push_back(self.xtal_total + COINCIDENCE_LAG_XTALS);
+                }
+                self.coincidence_signal = coincident;
                 if !self.display_enabled() {
                     self.backdrop()
-                } else if self.sprite_line[x] != 0 {
-                    self.sprite_line[x]
+                } else if sprite.colour != 0 {
+                    sprite.colour
                 } else {
                     let bit = x - self.segment.start_x;
                     let lit = bit < 8 && self.segment.bits & (0x80 >> bit) != 0;

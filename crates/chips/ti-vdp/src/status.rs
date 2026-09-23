@@ -1,6 +1,8 @@
 //! The status register: the three flags, their read-strobe races, and the
 //! byte a read composes.
 
+use std::collections::VecDeque;
+
 use crate::Vdp;
 use crate::registers::r1;
 use crate::standard::XTALS_PER_TSTATE;
@@ -24,6 +26,10 @@ pub(crate) struct Status {
     pub(crate) fifth_sprite_set_at: u64,
     /// Latched fifth-sprite index, presented while 5S is set.
     pub(crate) sprite_field: u8,
+    /// Pending C sets, in emission order.
+    pub(crate) coincidence_lands_at: VecDeque<u64>,
+    /// Instant of the most recent clearing status read.
+    pub(crate) last_clear_at: u64,
 }
 
 impl Status {
@@ -34,6 +40,8 @@ impl Status {
         frame_set_at: 0,
         fifth_sprite_set_at: 0,
         sprite_field: 0,
+        coincidence_lands_at: VecDeque::new(),
+        last_clear_at: 0,
     };
 }
 
@@ -59,7 +67,22 @@ impl Vdp {
         self.status.frame = false;
         self.status.fifth_sprite = false;
         self.status.coincidence = false;
+        self.status.last_clear_at = self.xtal_total;
         value
+    }
+
+    /// Land every pending C set whose instant has arrived; a read never
+    /// discards a set still in flight.
+    pub(crate) fn land_coincidence(&mut self) {
+        while self
+            .status
+            .coincidence_lands_at
+            .front()
+            .is_some_and(|&at| at <= self.xtal_total)
+        {
+            self.status.coincidence_lands_at.pop_front();
+            self.status.coincidence = true;
+        }
     }
 
     /// The byte the two presented flags and the live scanner field compose.

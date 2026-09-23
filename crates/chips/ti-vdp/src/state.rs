@@ -15,8 +15,12 @@ use crate::Vdp;
 use crate::port::{FLAG_RELEASE_XTALS, InFlightAccess, PortTransfer, TRANSFER_LOCK_XTALS};
 use crate::render::Segment;
 use crate::scan::ScanStop;
+use crate::sprites::SpritePixel;
 use crate::standard::XTALS_PER_LINE;
 use crate::vram::VramAddress;
+
+/// The sprite-plane byte's mark for a column two sprite pixels land on.
+const COINCIDENT_BIT: u8 = 0x80;
 
 /// The whole chip at one instant, less its DRAM and its pixel buffers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,9 +88,6 @@ pub struct ScannerState {
     pub stop: ScanStop,
     pub stepped_ago: u32,
     pub step_from: u8,
-    /// The fifth match's hold on the presented field, while one is armed.
-    pub field_hold: Option<u8>,
-    pub fifth_match_this_scan: bool,
 }
 
 /// The latched fetch the raster is drawing from.
@@ -134,8 +135,6 @@ impl Vdp {
                 stop: self.scanner.stop,
                 stepped_ago: self.ago(self.scanner.stepped_at),
                 step_from: self.scanner.step_from,
-                field_hold: self.scanner.field_hold,
-                fifth_match_this_scan: self.scanner.fifth_match_this_scan,
             },
             segment: SegmentState {
                 bits: self.segment.bits,
@@ -191,13 +190,13 @@ impl Vdp {
         self.status.frame_set_at = now - state.status.frame_set_ago as u64;
         self.status.fifth_sprite_set_at = now - state.status.fifth_sprite_set_ago as u64;
         self.status.sprite_field = state.status.sprite_field;
+        self.status.coincidence_lands_at.clear();
+        self.status.last_clear_at = 0;
 
         self.scanner.counter = state.scanner.counter;
         self.scanner.stop = state.scanner.stop;
         self.scanner.stepped_at = now - state.scanner.stepped_ago as u64;
         self.scanner.step_from = state.scanner.step_from;
-        self.scanner.field_hold = state.scanner.field_hold;
-        self.scanner.fifth_match_this_scan = state.scanner.fifth_match_this_scan;
 
         self.segment = Segment {
             bits: state.segment.bits,
@@ -213,10 +212,14 @@ impl Vdp {
         &self.line_pixels
     }
 
-    /// The line-latched sprite plane of the row being emitted; 0 is no sprite
-    /// pixel.
-    pub fn sprite_plane(&self) -> &[u8] {
-        &self.sprite_line
+    /// The line-latched sprite plane of the row being emitted: the colour in
+    /// the low nibble (0 is no sprite pixel), bit 7 set where two sprite
+    /// pixels coincide.
+    pub fn sprite_plane(&self) -> Vec<u8> {
+        self.sprite_line
+            .iter()
+            .map(|pixel| pixel.colour | if pixel.coincident { COINCIDENT_BIT } else { 0 })
+            .collect()
     }
 
     pub fn restore_vram(&mut self, bytes: &[u8]) {
@@ -228,7 +231,12 @@ impl Vdp {
     }
 
     pub fn restore_sprite_plane(&mut self, bytes: &[u8]) {
-        copy_into(&mut self.sprite_line, bytes);
+        for (pixel, &byte) in self.sprite_line.iter_mut().zip(bytes) {
+            *pixel = SpritePixel {
+                colour: byte & 0x0F,
+                coincident: byte & COINCIDENT_BIT != 0,
+            };
+        }
     }
 
     /// The visible raster as it stands — the rows this field has already
