@@ -222,6 +222,7 @@ static PANE_FAMILIES: &[&Family] = &[
     #[cfg(feature = "sms")]
     &SMS_FAMILY,
     &SG1000_FAMILY,
+    &COLECOVISION_FAMILY,
     #[cfg(feature = "nes")]
     &NES_FAMILY,
 ];
@@ -265,6 +266,14 @@ pub static SG1000_FAMILY: Family = Family {
     platforms: &[Platform::Sg1000],
     registry: SG1000_PANE_REGISTRY,
     layout_key: "sg1000",
+    default_layout: disassembly_screen_memory_layout,
+};
+
+/// The same Z80, VDP and PSG as the SG-1000, so the same panes.
+pub static COLECOVISION_FAMILY: Family = Family {
+    platforms: &[Platform::ColecoVision],
+    registry: SG1000_PANE_REGISTRY,
+    layout_key: "colecovision",
     default_layout: disassembly_screen_memory_layout,
 };
 

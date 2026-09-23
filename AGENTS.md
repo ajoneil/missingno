@@ -123,6 +123,7 @@ The shared skill-system rules above apply to every core. Each core's **ground-tr
 | Game Boy Color | `missingno-gbc` | `crates/systems/gbc/AGENTS.md` — no gate-level sim; hardware test-ROM values lead |
 | Atari VCS | `missingno-vcs` | `crates/systems/vcs/AGENTS.md` — Sim2600 (CPU+TIA) + datasheet/schematics (RIOT); behavioural VCS emulators last |
 | Sega SG-1000 | `missingno-sg1000` | `crates/systems/sg1000/AGENTS.md` — a board over zilog-z80 + ti-vdp + ti-psg; Enri's traced schematics lead, Soggy corroborates, MAME last |
+| ColecoVision | `missingno-colecovision` | `crates/systems/colecovision/AGENTS.md` — a board over zilog-z80 + ti-vdp + ti-psg with the BIOS ahead of the cartridge and one wait state per M1; the .col corpus flown on a PAL CBS unit leads |
 | Sega Master System | `missingno-sms` | `crates/systems/sms/AGENTS.md` — a first-pass core; its oracle ceiling is its committed console tests |
 | Nintendo NES | `missingno-nes` | `crates/systems/nes/AGENTS.md` — a first-pass core; its oracle ceiling is its committed console tests |
 

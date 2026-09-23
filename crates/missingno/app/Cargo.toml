@@ -24,6 +24,7 @@ missingno-gb = { path = "../../systems/gb", features = ["morepork"] }
 missingno-gbc = { path = "../../systems/gbc", features = ["morepork"] }
 missingno-nes = { path = "../../systems/nes", optional = true }
 missingno-sg1000 = { path = "../../systems/sg1000" }
+missingno-colecovision = { path = "../../systems/colecovision" }
 missingno-sms = { path = "../../systems/sms", optional = true }
 missingno-vcs = { path = "../../systems/vcs", features = ["morepork"] }
 missingno-session = { path = "../session", default-features = false, features = ["tools", "audio-output"] }

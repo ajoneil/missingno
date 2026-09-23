@@ -14,6 +14,7 @@ pub use missingno_core::ports::{
 };
 pub use missingno_core::system::{ControlId, ControlInput, SystemConsole, SystemDebugger};
 
+pub mod colecovision;
 pub mod gb;
 #[cfg(feature = "nes")]
 pub mod nes;
@@ -35,6 +36,7 @@ pub enum Platform {
     MasterSystem,
     Nes,
     Sg1000,
+    ColecoVision,
 }
 
 impl Platform {
@@ -47,6 +49,7 @@ impl Platform {
             Platform::MasterSystem => "Sega Master System",
             Platform::Nes => "Nintendo Entertainment System",
             Platform::Sg1000 => "SG-1000",
+            Platform::ColecoVision => "ColecoVision",
         }
     }
 
@@ -60,6 +63,7 @@ impl Platform {
             Platform::MasterSystem => "Master System",
             Platform::Nes => "NES",
             Platform::Sg1000 => "SG-1000",
+            Platform::ColecoVision => "ColecoVision",
         }
     }
 
@@ -77,6 +81,8 @@ impl Platform {
             Some(Platform::MasterSystem)
         } else if text.contains("sg-1000") || text.contains("sg1000") {
             Some(Platform::Sg1000)
+        } else if text.contains("coleco") {
+            Some(Platform::ColecoVision)
         } else if text.contains("nintendo entertainment system") || text.contains("famicom") {
             Some(Platform::Nes)
         } else {
@@ -331,6 +337,19 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         options: |rom, _| sg1000::launch_options(rom),
         stated_by_media: |_| Vec::new(),
         firmware: Vec::new,
+        port_config: |_| Vec::new(),
+        trace: None,
+    },
+    FamilyDescriptor {
+        platform: Platform::ColecoVision,
+        extensions: colecovision::ROM_EXTENSIONS,
+        controls: colecovision::CONTROLS,
+        is_rom: |path, _| colecovision::is_colecovision_rom(path),
+        title_from_rom: colecovision::title_from_rom,
+        create_console: colecovision::create_console,
+        options: |rom, _| colecovision::launch_options(rom),
+        stated_by_media: |_| Vec::new(),
+        firmware: || vec![missingno_colecovision::firmware::bios_slot()],
         port_config: |_| Vec::new(),
         trace: None,
     },

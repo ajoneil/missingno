@@ -1,0 +1,15 @@
+[package]
+name = "missingno-colecovision"
+version.workspace = true
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+missingno-core = { path = "../../missingno/core" }
+missingno-ti-psg = { path = "../../chips/ti-psg", features = ["inspect"] }
+missingno-ti-vdp = { path = "../../chips/ti-vdp", features = ["inspect"] }
+missingno-zilog-z80 = { path = "../../chips/zilog-z80" }
+
+[dev-dependencies]
+missingno-test-support = { path = "../../missingno/test-support" }
+png = "0.18"

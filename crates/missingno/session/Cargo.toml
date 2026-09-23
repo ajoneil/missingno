@@ -11,12 +11,13 @@ audio-output = ["dep:cpal", "dep:rtrb"]
 # header picks the core at construction — so `gb` pulls the shared base (gb)
 # and the colour superset (gbc) together; there is no meaningful gb-without-gbc
 # split for a build that must still run dual-mode media.
-default = ["gb", "vcs", "sg1000"]
+default = ["gb", "vcs", "sg1000", "colecovision"]
 gb = ["dep:missingno-gb", "dep:missingno-gbc"]
 vcs = ["dep:missingno-vcs"]
 nes = ["dep:missingno-nes"]
 sms = ["dep:missingno-sms"]
 sg1000 = ["dep:missingno-sg1000"]
+colecovision = ["dep:missingno-colecovision"]
 # The agent tool surface and the attach endpoint that publishes it. Pulls a
 # PNG encoder for the frame tool.
 tools = ["dep:png"]
@@ -41,6 +42,7 @@ missingno-vcs = { path = "../../systems/vcs", optional = true }
 missingno-nes = { path = "../../systems/nes", optional = true }
 missingno-sms = { path = "../../systems/sms", optional = true }
 missingno-sg1000 = { path = "../../systems/sg1000", optional = true }
+missingno-colecovision = { path = "../../systems/colecovision", optional = true }
 serde_json = "1"
 png = { version = "0.18", optional = true }
 

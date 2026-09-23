@@ -255,6 +255,14 @@ impl Cpu {
         self.nmi_pending = true;
     }
 
+    /// The /RESET pin: the CPU restarts as at power-on, its NMI request
+    /// cleared, while the /NMI line keeps the level the board drives.
+    pub fn reset(&mut self) {
+        let nmi_line = self.nmi_line;
+        *self = Cpu::new();
+        self.nmi_line = nmi_line;
+    }
+
     /// Drive the /NMI pin. Its edge detector latches a request when the line
     /// goes from released to asserted; a held level delivers once.
     pub fn set_nmi(&mut self, asserted: bool) {

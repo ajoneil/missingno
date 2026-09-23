@@ -59,3 +59,18 @@ fn a_triggered_pulse_still_delivers_once() {
     assert!(step_took_nmi(&mut cpu));
     assert!(!step_took_nmi(&mut cpu));
 }
+
+/// A reset clears the request but not the line, so a level held across the
+/// reset delivers nothing until a fresh edge.
+#[test]
+fn a_reset_under_a_held_line_waits_for_a_new_edge() {
+    let mut cpu = powered();
+    cpu.set_nmi(true);
+    cpu.reset();
+    cpu.sp = 0xDFF0;
+    cpu.set_nmi(true);
+    assert!(!step_took_nmi(&mut cpu));
+    cpu.set_nmi(false);
+    cpu.set_nmi(true);
+    assert!(step_took_nmi(&mut cpu));
+}

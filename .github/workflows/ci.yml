@@ -43,6 +43,7 @@ jobs:
           - { name: remote }
           - { name: session, flags: --all-features, packages: libasound2-dev }
           - { name: sg1000 }
+          - { name: colecovision }
           - { name: sms }
           - { name: test-support }
           - { name: trace }

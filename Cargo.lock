@@ -2942,6 +2942,7 @@ dependencies = [
  "image",
  "jiff",
  "libc",
+ "missingno-colecovision",
  "missingno-core",
  "missingno-gamedb",
  "missingno-gb",
@@ -2965,6 +2966,18 @@ dependencies = [
  "tar",
  "ureq",
  "zstd",
+]
+
+[[package]]
+name = "missingno-colecovision"
+version = "26.10.0"
+dependencies = [
+ "missingno-core",
+ "missingno-test-support",
+ "missingno-ti-psg",
+ "missingno-ti-vdp",
+ "missingno-zilog-z80",
+ "png 0.18.1",
 ]
 
 [[package]]
@@ -3101,6 +3114,7 @@ dependencies = [
  "cpal",
  "dirs",
  "libc",
+ "missingno-colecovision",
  "missingno-core",
  "missingno-gb",
  "missingno-gbc",

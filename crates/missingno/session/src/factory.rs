@@ -81,7 +81,13 @@ pub struct CoreFactory {
 /// The file stem as a display title, falling back to a generic name. The
 /// Game Boy family reads its title from the cartridge header, so only the
 /// stem-titled cores use this.
-#[cfg(any(feature = "vcs", feature = "nes", feature = "sms", feature = "sg1000"))]
+#[cfg(any(
+    feature = "vcs",
+    feature = "nes",
+    feature = "sms",
+    feature = "sg1000",
+    feature = "colecovision"
+))]
 fn title_for(path: &Path) -> String {
     path.file_stem()
         .and_then(|s| s.to_str())
@@ -311,6 +317,57 @@ mod sg1000 {
     }
 }
 
+#[cfg(feature = "colecovision")]
+mod colecovision {
+    use super::*;
+    use missingno_colecovision::console::part_for;
+    use missingno_colecovision::debug::title_from_rom;
+    use missingno_colecovision::firmware::{bios_from_launch, bios_slot};
+    use missingno_core::TvStandard;
+    use missingno_core::launch::TV_STANDARD;
+    use missingno_core::system::SystemConsole;
+
+    /// A stated standard the board was never cut for is an error, and the BIOS
+    /// socket must hold an image: OS 7 carries the reset vector.
+    pub fn create(
+        path: &Path,
+        rom: &[u8],
+        launch: &LaunchValues,
+    ) -> Result<Box<dyn SystemConsole>, LoadError> {
+        let standard = match launch.choice(TV_STANDARD) {
+            Some(name) => {
+                let refused = || LoadError::InvalidValue {
+                    option: TV_STANDARD.to_string(),
+                    value: name.to_string(),
+                };
+                let stated = TvStandard::from_name(name).ok_or_else(refused)?;
+                part_for(stated).ok_or_else(refused)?;
+                Some(stated)
+            }
+            None => None,
+        };
+        let bios = bios_from_launch(launch).map_err(|(slot, image)| LoadError::InvalidValue {
+            option: slot.to_string(),
+            value: image,
+        })?;
+        let title = title_from_rom(rom).unwrap_or_else(|| title_for(path));
+        missingno_colecovision::debug::create_console(rom, title, standard, bios)
+            .map_err(LoadError::Core)
+    }
+
+    pub fn is_rom(path: &Path, _rom: &[u8]) -> bool {
+        missingno_colecovision::debug::is_colecovision_rom(path)
+    }
+
+    pub fn options(rom: &[u8], _chosen: &LaunchValues) -> Vec<LaunchOptionDescriptor> {
+        missingno_colecovision::debug::launch_options(rom)
+    }
+
+    pub fn firmware() -> Vec<FirmwareSlot> {
+        vec![bios_slot()]
+    }
+}
+
 /// Every registered core, in claim order.
 static FACTORIES: &[CoreFactory] = &[
     #[cfg(feature = "gb")]
@@ -352,6 +409,14 @@ static FACTORIES: &[CoreFactory] = &[
         create: sg1000::create,
         options: sg1000::options,
         firmware: Vec::new,
+    },
+    #[cfg(feature = "colecovision")]
+    CoreFactory {
+        name: "ColecoVision",
+        is_rom: colecovision::is_rom,
+        create: colecovision::create,
+        options: colecovision::options,
+        firmware: colecovision::firmware,
     },
 ];
 

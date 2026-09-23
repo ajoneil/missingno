@@ -14,12 +14,13 @@ path = "src/main.rs"
 # header picks the core at construction — so `gb` pulls the shared base (gb)
 # and the colour superset (gbc) together; there is no meaningful gb-without-gbc
 # split for a build that must still run dual-mode media.
-default = ["gb", "vcs", "sg1000"]
+default = ["gb", "vcs", "sg1000", "colecovision"]
 gb = ["missingno-session/gb"]
 vcs = ["missingno-session/vcs"]
 nes = ["missingno-session/nes"]
 sms = ["missingno-session/sms"]
 sg1000 = ["missingno-session/sg1000"]
+colecovision = ["missingno-session/colecovision"]
 # The MCP-over-stdio transport, over the session's agent tool surface, with
 # the cores' trace-capture backends behind the capture_trace tool.
 mcp = [
