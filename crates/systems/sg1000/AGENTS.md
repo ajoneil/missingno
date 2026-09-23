@@ -150,8 +150,12 @@ strobed it — and moves the /INT sample point along with it.
   rate is the crystal's third, and the model runs it at exactly three XTAL
   per T on the same grid as the NTSC board — the two oscillators' phase
   wander and frequency error are unmodelled. No measurement of the part
-  exists ("3.58M" is all any source states), and no PAL Sega hardware is
-  available to make one.
+  has been located ("3.58M" is all the consulted sources state), and no
+  PAL Sega hardware is at hand to make one. Charles MacDonald's 2004
+  SC-3000H notes describe the inverter as dividing the VDP clock by three
+  instead — which a hex inverter alone cannot do, and which the schematic's
+  own oscillator contradicts — so Sega's drawing leads; the note is recorded
+  in the research receipts.
 - **The PAL SG-1000 board is the SC-3000's.** Every PAL source consulted
   documents the SC-3000 (Sega's own schematic, the photographed 834-5227
   board, Enri's prose); no PAL SG-1000 console board has been located. The
