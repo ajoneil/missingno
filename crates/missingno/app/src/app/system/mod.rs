@@ -338,7 +338,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         stated_by_media: |_| Vec::new(),
         firmware: Vec::new,
         port_config: |_| Vec::new(),
-        trace: None,
+        trace: Some(crate::trace::trace_sg1000),
     },
     FamilyDescriptor {
         platform: Platform::ColecoVision,
@@ -351,7 +351,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         stated_by_media: |_| Vec::new(),
         firmware: || vec![missingno_colecovision::firmware::bios_slot()],
         port_config: |_| Vec::new(),
-        trace: None,
+        trace: Some(crate::trace::trace_colecovision),
     },
     #[cfg(feature = "nes")]
     FamilyDescriptor {

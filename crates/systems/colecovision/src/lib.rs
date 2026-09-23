@@ -7,3 +7,5 @@ pub mod debug;
 pub mod firmware;
 pub mod snapshot;
 pub mod state_schema;
+#[cfg(feature = "morepork")]
+pub mod trace;

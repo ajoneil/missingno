@@ -74,6 +74,11 @@ suite in `tests/board.rs` plus the crate's unit tests. The VDP screenshot
 corpus and its references belong to `missingno-ti-vdp` and run there. There is
 no test-report script for this core; run the suite directly.
 
+The `morepork` feature adds a `.morepork` trace bridge: one entry per
+instruction boundary carrying the state schema's fields, the T-states, the
+raster's line and dot, the RESULT block and the last work-RAM write, with each
+completed frame's 256×192 display area as an indexed snapshot.
+
 ## The timing model
 
 The 10.738635 MHz crystal is the grid, exactly as in the chip crate's

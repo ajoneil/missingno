@@ -318,9 +318,9 @@ until a second family grows the equivalent:
   carries a packed DMG BGP/OBP byte for the frontend to resolve through the
   user's palette. Only `missingno-gb` emits it; cores that own their colours use
   the sibling `Colors` variant.
-- **`TraceRequest.profile` is a `missingno_gb` type** — the trace CLI's profile
-  is `missingno_gb::trace::Profile` (itself a morepork re-export), so the VCS and
-  NES trace entry points take it from the GB crate.
+- **`TraceRequest.profile`** — the trace CLI's profile is
+  `missingno_trace::Profile` (a morepork re-export), which every trace entry
+  point takes.
 - **Symbol and code/data-log addressing** — `SymbolTable`, `Symbol` and
   `CdlWindow` are `missingno-core` vocabularies and generic on the seam, but they
   are keyed on `u16` CPU addresses and shaped by the no$gmb/RGBDS `.sym` format;

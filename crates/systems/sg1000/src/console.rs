@@ -141,6 +141,8 @@ pub struct Sg1000 {
     /// VDP frames already handed out; `take_frame` compares against the
     /// VDP's counter so nothing frame-sized moves on the tick path.
     frames_seen: u64,
+    #[cfg(feature = "morepork")]
+    pub(crate) rom_sha256: [u8; 32],
 }
 
 /// The board's own state beside the chips': the multiplexer bytes the pads
@@ -161,6 +163,9 @@ struct Board {
     psg: Psg,
     joy_dc: u8,
     joy_dd: u8,
+    /// The last work-RAM write, as the CPU addressed it, for a trace entry.
+    #[cfg(feature = "morepork")]
+    last_ram_write: Option<(u16, u8)>,
 }
 
 impl Board {
@@ -193,6 +198,10 @@ impl Bus for Board {
         self.cart.write(address, data);
         if self.console_ram_selected(address) {
             self.ram[address as usize & RAM_MASK] = data;
+            #[cfg(feature = "morepork")]
+            {
+                self.last_ram_write = Some((address, data));
+            }
         }
     }
 
@@ -240,12 +249,16 @@ impl Sg1000 {
                 psg: Psg::new(Variant::DiscreteTi),
                 joy_dc: RELEASED,
                 joy_dd: RELEASED,
+                #[cfg(feature = "morepork")]
+                last_ram_write: None,
             },
             sample_clock: sample_clock(),
             audio: Vec::new(),
             wave_capture: None,
             graphics_capture: false,
             frames_seen: 0,
+            #[cfg(feature = "morepork")]
+            rom_sha256: missingno_core::machine::rom_fingerprint(rom),
         })
     }
 
@@ -280,6 +293,12 @@ impl Sg1000 {
     /// The TMM2009's kilobyte, before the decode mirrors it.
     pub fn work_ram(&self) -> &[u8] {
         &self.board.ram
+    }
+
+    /// The work-RAM write held since the last take, cleared by taking it.
+    #[cfg(feature = "morepork")]
+    pub(crate) fn take_ram_write(&mut self) -> Option<(u16, u8)> {
+        self.board.last_ram_write.take()
     }
 
     pub fn restore_work_ram(&mut self, bytes: &[u8]) {

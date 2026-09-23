@@ -292,3 +292,125 @@ pub(crate) fn trace_vcs(request: TraceRequest) {
         eprintln!("done: {instructions} instructions, {total_cycles} cycles, {frames} frames");
     }
 }
+
+pub(crate) fn trace_sg1000(request: TraceRequest) {
+    use missingno_core::TvStandard;
+    use missingno_core::launch::TV_STANDARD;
+    use missingno_sg1000::console::{Sg1000, part_for};
+    use missingno_sg1000::trace::{TraceScope, Tracer};
+
+    let (rom, output_path, cycle_limit) = (request.rom, request.output, request.cycles);
+    eprintln!("limit: {cycle_limit} T-states");
+
+    let board = missingno_sg1000::debug::board_from_launch(&request.launch).unwrap_or_else(|e| {
+        eprintln!("error: {e}");
+        process::exit(1);
+    });
+    let standard = request
+        .launch
+        .choice(TV_STANDARD)
+        .and_then(TvStandard::from_name)
+        .map_or(Some(TvStandard::Ntsc), Some)
+        .and_then(part_for)
+        .unwrap_or_else(|| {
+            eprintln!("error: the SG-1000 was not cut for that standard");
+            process::exit(1);
+        });
+    let mut sg = Sg1000::new(rom, board, standard).unwrap_or_else(|e| {
+        eprintln!("error: failed to load SG-1000 ROM: {e}");
+        process::exit(1);
+    });
+    let mut tracer = Tracer::create(
+        output_path,
+        rom,
+        standard,
+        Trigger::Instruction,
+        TraceScope::Full,
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("error: failed to create trace file: {e}");
+        process::exit(1);
+    });
+
+    let mut total_tstates: u64 = 0;
+    let mut instructions = 0u64;
+    let mut frames = 0u64;
+    while total_tstates < cycle_limit {
+        tracer.capture(&mut sg).unwrap();
+        sg.step_instruction();
+        total_tstates += sg.cpu.bus_trace().len() as u64;
+        instructions += 1;
+        if let Some(frame) = sg.take_frame() {
+            frames += 1;
+            tracer.mark_frame(Some(frame)).unwrap();
+        }
+    }
+
+    tracer.finish().unwrap_or_else(|e| {
+        eprintln!("error: failed to finalize trace: {e}");
+        process::exit(1);
+    });
+    eprintln!("done: {instructions} instructions, {total_tstates} T-states, {frames} frames");
+}
+
+pub(crate) fn trace_colecovision(request: TraceRequest) {
+    use missingno_colecovision::console::{ColecoVision, part_for};
+    use missingno_colecovision::trace::{TraceScope, Tracer};
+    use missingno_core::TvStandard;
+    use missingno_core::launch::TV_STANDARD;
+
+    let (rom, output_path, cycle_limit) = (request.rom, request.output, request.cycles);
+    eprintln!("limit: {cycle_limit} T-states");
+
+    let bios = missingno_colecovision::firmware::bios_from_launch(&request.launch).unwrap_or_else(
+        |(slot, refusal)| {
+            eprintln!("error: {slot}: {refusal}");
+            process::exit(1);
+        },
+    );
+    let standard = request
+        .launch
+        .choice(TV_STANDARD)
+        .and_then(TvStandard::from_name)
+        .map_or(Some(TvStandard::Ntsc), Some)
+        .and_then(part_for)
+        .unwrap_or_else(|| {
+            eprintln!("error: the ColecoVision was not cut for that standard");
+            process::exit(1);
+        });
+    let mut cv = ColecoVision::new(rom, standard, bios).unwrap_or_else(|e| {
+        eprintln!("error: failed to load ColecoVision ROM: {e}");
+        process::exit(1);
+    });
+    let mut tracer = Tracer::create(
+        output_path,
+        rom,
+        standard,
+        Trigger::Instruction,
+        TraceScope::Full,
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("error: failed to create trace file: {e}");
+        process::exit(1);
+    });
+
+    let mut total_tstates: u64 = 0;
+    let mut instructions = 0u64;
+    let mut frames = 0u64;
+    while total_tstates < cycle_limit {
+        tracer.capture(&mut cv).unwrap();
+        cv.step_instruction();
+        total_tstates += cv.cpu.bus_trace().len() as u64;
+        instructions += 1;
+        if let Some(frame) = cv.take_frame() {
+            frames += 1;
+            tracer.mark_frame(Some(frame)).unwrap();
+        }
+    }
+
+    tracer.finish().unwrap_or_else(|e| {
+        eprintln!("error: failed to finalize trace: {e}");
+        process::exit(1);
+    });
+    eprintln!("done: {instructions} instructions, {total_tstates} T-states, {frames} frames");
+}

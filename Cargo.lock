@@ -2976,7 +2976,9 @@ dependencies = [
  "missingno-test-support",
  "missingno-ti-psg",
  "missingno-ti-vdp",
+ "missingno-trace",
  "missingno-zilog-z80",
+ "morepork",
  "png 0.18.1",
 ]
 
@@ -3136,7 +3138,9 @@ dependencies = [
  "missingno-test-support",
  "missingno-ti-psg",
  "missingno-ti-vdp",
+ "missingno-trace",
  "missingno-zilog-z80",
+ "morepork",
  "ron",
  "serde",
 ]

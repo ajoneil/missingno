@@ -38,7 +38,7 @@ pub use ports::{PANEL, PORTS};
 /// Pixel aspect at the VDP's 5.37 MHz dot clock — a display-side calibratable
 /// stage. PAL paints the same line time's 313 lines into the 625-line height
 /// that 262 fill on 525, so its pixels are 25/21 wider.
-fn pixel_aspect(standard: TvStandard) -> f32 {
+pub(crate) fn pixel_aspect(standard: TvStandard) -> f32 {
     match standard {
         TvStandard::Pal => 8.0 / 7.0 * 25.0 / 21.0,
         _ => 8.0 / 7.0,
@@ -251,6 +251,42 @@ impl Machine for ColecoVisionSystem {
 
     fn step_over_target(cv: &ColecoVision) -> Option<u16> {
         missingno_zilog_z80::step_over_target(cv.peek(cv.cpu.pc), cv.cpu.pc)
+    }
+
+    fn capture_trace(cv: &mut ColecoVision, path: &std::path::Path) -> Option<Frame> {
+        #[cfg(feature = "morepork")]
+        {
+            use crate::trace::{TraceScope, Tracer, Trigger, hex_digest};
+
+            let mut tracer = Tracer::create_hashed(
+                path,
+                hex_digest(&cv.rom_sha256),
+                cv.standard(),
+                Trigger::Instruction,
+                TraceScope::Full,
+            )
+            .ok()?;
+            // A program that never completes a frame must not stall the capture.
+            let budget = 2 * tstates_per_frame(cv.standard());
+            let mut elapsed = 0;
+            while elapsed < budget {
+                tracer.capture(cv).ok()?;
+                cv.step_instruction();
+                elapsed += cv.cpu.bus_trace().len() as u32;
+                if let Some(frame) = cv.take_frame() {
+                    tracer.mark_frame(Some(frame)).ok()?;
+                    let display = Frame::Indexed(indexed(frame));
+                    tracer.finish().ok()?;
+                    return Some(display);
+                }
+            }
+            None
+        }
+        #[cfg(not(feature = "morepork"))]
+        {
+            let _ = (cv, path);
+            None
+        }
     }
 
     fn inspect(cv: &ColecoVision, frame_count: u64) -> ColecoVisionInspectState {

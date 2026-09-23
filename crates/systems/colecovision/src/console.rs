@@ -160,6 +160,8 @@ pub struct ColecoVision {
     graphics_capture: bool,
     /// VDP frames already handed out.
     frames_seen: u64,
+    #[cfg(feature = "morepork")]
+    pub(crate) rom_sha256: [u8; 32],
 }
 
 /// The board's own state beside the chips': the mode latch, the wait latch,
@@ -183,6 +185,9 @@ struct Board {
     mode: ControllerMode,
     controllers: [HandController; 2],
     wait_latch: M1WaitLatch,
+    /// The last RAM write, as the CPU addressed it, for a trace entry.
+    #[cfg(feature = "morepork")]
+    last_ram_write: Option<(u16, u8)>,
 }
 
 impl Board {
@@ -213,6 +218,10 @@ impl Bus for Board {
     fn write(&mut self, address: u16, data: u8) {
         if let MemorySelect::Ram = MemorySelect::of(address) {
             self.ram[address as usize & RAM_MASK] = data;
+            #[cfg(feature = "morepork")]
+            {
+                self.last_ram_write = Some((address, data));
+            }
         }
     }
 
@@ -263,6 +272,8 @@ impl ColecoVision {
                 mode: ControllerMode::Joystick,
                 controllers: [HandController::default(); 2],
                 wait_latch: M1WaitLatch::default(),
+                #[cfg(feature = "morepork")]
+                last_ram_write: None,
             },
             m1_level: false,
             sample_clock: sample_clock(),
@@ -270,6 +281,8 @@ impl ColecoVision {
             wave_capture: None,
             graphics_capture: false,
             frames_seen: 0,
+            #[cfg(feature = "morepork")]
+            rom_sha256: missingno_core::machine::rom_fingerprint(rom),
         })
     }
 
@@ -304,6 +317,12 @@ impl ColecoVision {
     /// The 2114 pair's kilobyte, before the decode mirrors it.
     pub fn ram(&self) -> &[u8] {
         &self.board.ram
+    }
+
+    /// The RAM write held since the last take, cleared by taking it.
+    #[cfg(feature = "morepork")]
+    pub(crate) fn take_ram_write(&mut self) -> Option<(u16, u8)> {
+        self.board.last_ram_write.take()
     }
 
     pub fn restore_ram(&mut self, bytes: &[u8]) {

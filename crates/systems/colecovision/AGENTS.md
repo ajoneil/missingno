@@ -78,6 +78,10 @@ ColecoVision capture places it. `tests/board.rs` pins what the
 corpus never exercises: the controller mode latch and both segments, the
 PSG's READY on /WAIT, and the reset button leaving the VDP alone.
 
+The `morepork` feature adds the same trace bridge the SG-1000 carries, under
+morepork's `coleco` id; with `MOREPORK_PROFILE` set the corpus tier writes one
+trace per ROM.
+
 ## The timing model
 
 One 7.15909 MHz crystal. Divided by two it is the 3.579545 MHz system clock

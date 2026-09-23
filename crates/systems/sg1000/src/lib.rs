@@ -5,3 +5,5 @@ pub mod console;
 pub mod debug;
 pub mod snapshot;
 pub mod state_schema;
+#[cfg(feature = "morepork")]
+pub mod trace;

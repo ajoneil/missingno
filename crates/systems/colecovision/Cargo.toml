@@ -4,11 +4,16 @@ version.workspace = true
 edition = "2024"
 license = "MIT"
 
+[features]
+morepork = ["dep:morepork", "dep:missingno-trace"]
+
 [dependencies]
 missingno-core = { path = "../../missingno/core" }
 missingno-ti-psg = { path = "../../chips/ti-psg", features = ["inspect"] }
 missingno-ti-vdp = { path = "../../chips/ti-vdp", features = ["inspect"] }
 missingno-zilog-z80 = { path = "../../chips/zilog-z80" }
+morepork = { git = "https://github.com/ajoneil/morepork", branch = "main", optional = true }
+missingno-trace = { path = "../../missingno/trace", optional = true }
 
 [dev-dependencies]
 missingno-test-support = { path = "../../missingno/test-support" }

@@ -51,6 +51,8 @@ fn run(
         .join(rom);
     let image = std::fs::read(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
     let mut console = ColecoVision::new(&image, standard, bios).expect("a flat cartridge image");
+    #[cfg(feature = "morepork")]
+    let mut tracer = tracer(rom, standard, &image);
 
     let budget = budget_frames * u64::from(tstates_per_frame(standard));
     let outcome = poll_verdict(budget, || {
@@ -58,13 +60,55 @@ fn run(
         if !console.at_instruction_boundary() {
             return Poll::Pending;
         }
+        #[cfg(feature = "morepork")]
+        if let Some(tracer) = &mut tracer {
+            tracer.capture(&mut console).unwrap();
+            if let Some(frame) = console.take_frame() {
+                tracer.mark_frame(Some(frame)).unwrap();
+            }
+        }
         Poll::Read([0, 1, 2, 3].map(|offset| console.peek(RESULT_BLOCK + offset)))
     });
+    #[cfg(feature = "morepork")]
+    if let Some(tracer) = tracer {
+        tracer.finish().unwrap();
+    }
 
     match outcome {
         Outcome::Reached(verdict) => (console, verdict),
         _ => panic!("{rom}: no verdict within {budget_frames} frames"),
     }
+}
+
+/// Capture is off unless `MOREPORK_PROFILE` is set (any value).
+#[cfg(feature = "morepork")]
+fn tracer(
+    rom: &str,
+    standard: Standard,
+    image: &[u8],
+) -> Option<missingno_colecovision::trace::Tracer> {
+    use missingno_colecovision::trace::{TraceScope, Tracer, Trigger};
+
+    std::env::var("MOREPORK_PROFILE").ok()?;
+    let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../receipts/traces");
+    std::fs::create_dir_all(&output_dir).unwrap();
+    let stem = Path::new(rom).file_stem().unwrap().to_string_lossy();
+    let body = match standard {
+        Standard::Ntsc => "",
+        Standard::Pal => "_pal",
+    };
+    let path = output_dir.join(format!("{stem}{body}.morepork"));
+    eprintln!("morepork: writing {}", path.display());
+    Some(
+        Tracer::create(
+            &path,
+            image,
+            standard,
+            Trigger::Instruction,
+            TraceScope::Full,
+        )
+        .unwrap_or_else(|e| panic!("creating {}: {e}", path.display())),
+    )
 }
 
 /// The corpus's skip: PASS magic with CODE $00 and EXPECTED $FF, the skip's
