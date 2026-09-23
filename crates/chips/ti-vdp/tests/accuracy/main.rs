@@ -22,6 +22,13 @@ macro_rules! vdp_test {
             crate::testbench::assert_pass($path);
         }
     };
+    ($name:ident, $path:literal, frames = $frames:literal, staged = $reason:literal) => {
+        #[test]
+        #[ignore = $reason]
+        fn $name() {
+            crate::testbench::assert_pass_within($path, $frames);
+        }
+    };
 }
 
 /// A screenshot subject: PASS latches once the scene is up, then the next
@@ -211,6 +218,7 @@ mod timing {
     vdp_test!(
         _5s_instant_mid,
         "timing/5s-instant-mid.sg",
+        frames = 1400,
         staged = "three run-boundary cells read $00 on silicon at T68/T73/T74 under clear-then-probe, our texture 7/old/new (code 06); mechanism unattributed"
     );
     vdp_test!(_5s_instant_high, "timing/5s-instant-high.sg");
@@ -225,10 +233,10 @@ mod timing {
     vdp_test!(cadence_8match, "timing/cadence-8match.sg");
     vdp_test!(f_edge_locator, "timing/f-edge-locator.sg");
     vdp_test!(f_race, "timing/f-race.sg");
-    vdp_test!(gi_burst, "timing/gi-burst.sg");
+    vdp_test!(gi_burst, "timing/gi-burst.sg", frames = 3000);
     vdp_test!(gii_sweep, "timing/gii-sweep.sg");
     vdp_test!(line0_sweep, "timing/line0-sweep.sg");
-    vdp_test!(line187_sweep, "timing/line187-sweep.sg");
+    vdp_test!(line187_sweep, "timing/line187-sweep.sg", frames = 1400);
     vdp_test!(line96_sweep, "timing/line96-sweep.sg");
     vdp_test!(m1_split_sweep, "timing/m1-split-sweep.sg");
     vdp_test!(match_sweep, "timing/match-sweep.sg");

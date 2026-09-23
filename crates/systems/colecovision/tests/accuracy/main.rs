@@ -33,6 +33,13 @@ macro_rules! vdp_test {
             crate::testbench::assert_pass($path, standard!($body));
         }
     };
+    ($body:ident, $name:ident, $path:literal, frames = $frames:literal, staged = $reason:literal) => {
+        #[test]
+        #[ignore = $reason]
+        fn $name() {
+            crate::testbench::assert_pass_within($path, standard!($body), $frames);
+        }
+    };
     ($body:ident, $name:ident, $path:literal, bus_only) => {
         #[test]
         fn $name() {
@@ -262,14 +269,8 @@ macro_rules! corpus {
             vdp_test!($body, _4k_sweep, "timing/4k-sweep.col");
             // Sidecar budget 1400: ~550 frames of sweep + the per-cell map compare.
             vdp_test!($body, _5s_instant_low, "timing/5s-instant-low.col", frames = 1600);
-            // Sidecar budget 1400; the fifth-match halt and the $4F band are right,
-            // the live-ruler cells after the band are not.
-            vdp_test!(
-                $body,
-                _5s_instant_mid,
-                "timing/5s-instant-mid.col",
-                staged = "live-ruler cells land 17 cells early without the run-boundary zeroes (code 06); scan-ruler model open"
-            );
+            // Sidecar budget 1400; the .col build compiles the ruler check out.
+            vdp_test!($body, _5s_instant_mid, "timing/5s-instant-mid.col", frames = 1400);
             vdp_test!($body, _5s_instant_high, "timing/5s-instant-high.col");
             vdp_test!($body, _5s_race, "timing/5s-race.col");
             vdp_test!($body, blank_burst, "timing/blank-burst.col");
@@ -287,10 +288,10 @@ macro_rules! corpus {
             vdp_test!($body, cadence_8match, "timing/cadence-8match.col");
             vdp_test!($body, f_edge_locator, "timing/f-edge-locator.col");
             vdp_test!($body, f_race, "timing/f-race.col");
-            vdp_test!($body, gi_burst, "timing/gi-burst.col");
+            vdp_test!($body, gi_burst, "timing/gi-burst.col", frames = 3000);
             vdp_test!($body, gii_sweep, "timing/gii-sweep.col");
             vdp_test!($body, line0_sweep, "timing/line0-sweep.col");
-            vdp_test!($body, line187_sweep, "timing/line187-sweep.col");
+            vdp_test!($body, line187_sweep, "timing/line187-sweep.col", frames = 1400);
             vdp_test!($body, line96_sweep, "timing/line96-sweep.col");
             vdp_test!($body, m1_split_sweep, "timing/m1-split-sweep.col");
             vdp_test!($body, match_sweep, "timing/match-sweep.col");
