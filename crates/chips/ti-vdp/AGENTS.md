@@ -24,9 +24,11 @@ console, that console's ground-truth hierarchy adjudicates.
    measured silicon truth — including several findings no document or
    emulator agrees on. The suite in `tests/accuracy/` runs these under the
    crate's own testbench; staged invocations carry their blocker in the
-   test's reason string. TMS9929A PAL behaviour stays
-   documentary-provisional until PAL hardware or trustworthy measurements
-   appear.
+   test's reason string. The same corpus runs a second time on a 313-line
+   body (the ROMs detect the line count at run time); a green there is
+   engine consistency with the corpus's derived PAL tables, not PAL
+   evidence. TMS9929A behaviour stays documentary-provisional until PAL
+   hardware or trustworthy measurements appear.
 2. **Named documentation** — the TI *TMS9918A/9928A/9929A Data Manual* and
    *Video Display Processors Programmer's Guide* for documented behaviour;
    the community corpus (Sean Young's TMS9918A documentation, Nouspikel,
@@ -45,7 +47,14 @@ VDP interrupt on `/INT`. It is a dev-dependency fixture, not a console: the
 `systems/sg1000` crate owns real board behaviour when it exists. Each ROM
 latches its verdict to the RESULT block at `$C000` (`$A5` PASS / `$5A`
 FAIL, then CODE/OBSERVED/EXPECTED) before rendering anything, so the
-harness asserts on the block only.
+harness asserts on the block only. The corpus is instantiated once per
+body — `ntsc::` on a TMS9918A, `pal::` on a TMS9929A — and a ROM's skip
+sentinel (PASS magic with `$FF`/`$FF`, the phase-anchor family on 313
+lines) is never counted as a pass: a subject that skips one body says so
+in its harness entry. Screenshot subjects compare the 256×192 display area
+against one `_ntsc.png` reference on both bodies; a hand-latched scene
+whose placement is anchored to the F edge lands elsewhere on 313 lines and
+is staged on the PAL body alone.
 
 ## Stated abstractions
 
@@ -58,16 +67,20 @@ harness asserts on the block only.
   schedule's rotation against hsync and its sub-cycle instants are free
   conventions adopted within the maps' measured freedom; only Graphics I
   with display on is map-constrained. Non-rendering time is modelled as
-  every cycle claimable, except the last frame lines, where the measured
-  turn-on seam sits earlier than the modelled line-boundary wake.
+  every cycle claimable, except the last frame lines: the model wakes the
+  schedule three lines before display line 0, where silicon's seam sits
+  2.03–2.40 lines before it (`timing/turn-on-66`, staged).
 - **Sprite pre-processing: live counter, boundary-latched effects.** Status
   bits 0-4 present the scanner's progress live, and the fifth-sprite
   effects — the halt at the match's own entry, the hold on the presented
   field and its release, 5S's boundary-latched set instant — are
   corpus-pinned; the code's scan lattice states them, its base offset and
-  sub-cycle instants adopted within the maps' measured freedom. One stated
-  divergence: the corpus measured C live at the generating pixel, while
-  the model latches it at the line boundary — awaiting an asserting test.
+  sub-cycle instants adopted within the maps' measured freedom. Two stated
+  divergences, each with its asserting test staged: the corpus measured C
+  live at the generating pixel while the model latches it at the line
+  boundary (`timing/c-instant-x`), and the live-ruler cells that follow
+  the fifth-match band land seventeen cells early without the
+  run-boundary zeroes (`timing/5s-instant-mid`).
 - **Sub-line rendering: the incremental raster pipeline.** Each character
   cell latches its tables from the live registers and VRAM at the cell's
   instant, and each dot resolves transparency against the live backdrop —

@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use missingno_ti_vdp::Standard;
 use missingno_zilog_z80::{Cpu, InterruptMode};
 use morepork::format::TAG_MEMORY;
 use morepork::format::write::MoreporkWriter;
@@ -130,13 +131,17 @@ pub struct Tracer {
 
 impl Tracer {
     /// Capture is off unless `MOREPORK_PROFILE` is set (any value).
-    pub fn create(rom: &str, cpu: &Cpu, board: &Board) -> Option<Self> {
+    pub fn create(rom: &str, standard: Standard, cpu: &Cpu, board: &Board) -> Option<Self> {
         std::env::var("MOREPORK_PROFILE").ok()?;
 
         let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../receipts/traces");
         std::fs::create_dir_all(&output_dir).unwrap();
         let stem = Path::new(rom).file_stem().unwrap().to_string_lossy();
-        let path = output_dir.join(format!("{stem}.morepork"));
+        let body = match standard {
+            Standard::Ntsc => "",
+            Standard::Pal => "_pal",
+        };
+        let path = output_dir.join(format!("{stem}{body}.morepork"));
         eprintln!("morepork: writing {}", path.display());
 
         let mut hasher = Sha256::new();
@@ -154,7 +159,11 @@ impl Tracer {
             emulator_version: env!("CARGO_PKG_VERSION").into(),
             rom_sha256,
             system: "sg1000".into(),
-            model: "TMS9918A".into(),
+            model: match standard {
+                Standard::Ntsc => "TMS9918A",
+                Standard::Pal => "TMS9929A",
+            }
+            .into(),
             boot_rom: BootRom::Skip,
             profile: "tier1".into(),
             fields: columns(cpu, board)
