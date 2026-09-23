@@ -231,6 +231,19 @@ fn a_captured_record_validates_against_the_schema() {
     );
 }
 
+/// The pause switch pulses /NMI rather than driving it as a level, so the
+/// line the Z80's edge detector compares against rests released.
+#[test]
+fn a_captured_record_carries_the_nmi_line() {
+    let mut console = load("modes/graphic1.sg");
+    run_frames(&mut console, 4);
+    let state = capture(&console).expect("a boundary save");
+    assert_eq!(
+        state.record.get("nmi_line"),
+        Some(&missingno_core::state::StateValue::Bool(false))
+    );
+}
+
 #[test]
 fn a_save_is_refused_mid_instruction() {
     let mut console = load("modes/graphic1.sg");

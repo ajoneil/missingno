@@ -11,3 +11,7 @@ inspect = ["dep:missingno-core"]
 
 [dependencies]
 missingno-core = { path = "../../missingno/core", optional = true }
+
+[dev-dependencies]
+# The crate's own tests exercise the inspect surface too.
+missingno-ti-psg = { path = ".", features = ["inspect"] }

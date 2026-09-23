@@ -6,8 +6,14 @@ license = "MIT"
 
 [features]
 morepork = ["dep:morepork", "dep:sha2"]
+# The debugger's views of the part and its state-record bridge, in
+# missingno-core's vocabularies. Off by default so an embedder links no debug
+# surface.
+inspect = ["dep:missingno-core", "dep:rgb"]
 
 [dependencies]
+missingno-core = { path = "../../missingno/core", optional = true }
+rgb = { workspace = true, optional = true }
 # The trace format lives in its own repo (cloned into receipts/); the capture
 # sourced from the public repo so a fresh clone resolves without credentials;
 # local morepork iteration lands by pushing there and `cargo update -p morepork`.
@@ -15,6 +21,8 @@ morepork = { git = "https://github.com/ajoneil/morepork", branch = "main", optio
 sha2 = { version = "0.11", optional = true }
 
 [dev-dependencies]
+# The crate's own tests exercise the inspect surface too.
+missingno-ti-vdp = { path = ".", features = ["inspect"] }
 missingno-test-support = { path = "../../missingno/test-support" }
 missingno-zilog-z80 = { path = "../zilog-z80" }
 png = "0.18"

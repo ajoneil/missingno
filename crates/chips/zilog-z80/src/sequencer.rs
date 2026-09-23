@@ -10,11 +10,28 @@ use crate::{Bus, Cpu, InterruptMode, Pins};
 #[derive(Clone, Copy)]
 pub(crate) enum Cycle {
     OpcodeFetch,
-    MemRead { address: u16 },
-    MemWrite { address: u16, data: u8 },
-    IoRead { port: u16 },
-    IoWrite { port: u16, data: u8 },
-    Internal { length: u8 },
+    MemRead {
+        address: u16,
+    },
+    MemWrite {
+        address: u16,
+        data: u8,
+    },
+    IoRead {
+        port: u16,
+    },
+    IoWrite {
+        port: u16,
+        data: u8,
+    },
+    Internal {
+        length: u8,
+    },
+    /// Interrupt acceptance: an M1 cycle that samples /WAIT after its T2 but
+    /// reaches no device, so its T-states hold the bus like internal ones.
+    Acknowledge {
+        length: u8,
+    },
 }
 
 impl Cycle {
@@ -22,7 +39,7 @@ impl Cycle {
         match self {
             Cycle::OpcodeFetch | Cycle::IoRead { .. } | Cycle::IoWrite { .. } => 4,
             Cycle::MemRead { .. } | Cycle::MemWrite { .. } => 3,
-            Cycle::Internal { length } => length,
+            Cycle::Internal { length } | Cycle::Acknowledge { length } => length,
         }
     }
 
@@ -31,10 +48,17 @@ impl Cycle {
     /// cycles and the automatically inserted TW for I/O cycles.
     fn samples_wait_after(self, t: u8) -> bool {
         match self {
-            Cycle::OpcodeFetch | Cycle::MemRead { .. } | Cycle::MemWrite { .. } => t == 1,
+            Cycle::OpcodeFetch
+            | Cycle::Acknowledge { .. }
+            | Cycle::MemRead { .. }
+            | Cycle::MemWrite { .. } => t == 1,
             Cycle::IoRead { .. } | Cycle::IoWrite { .. } => t == 2,
             Cycle::Internal { .. } => false,
         }
+    }
+
+    fn is_m1(self) -> bool {
+        matches!(self, Cycle::OpcodeFetch | Cycle::Acknowledge { .. })
     }
 }
 
@@ -283,6 +307,12 @@ impl Sequencer {
         }
     }
 
+    /// /M1 through the next T-state: low from an M1 cycle's T1 through its T2
+    /// and any wait states after it.
+    pub(crate) fn m1(&self) -> bool {
+        self.cycle.is_m1() && (self.t <= 1 || self.waiting)
+    }
+
     fn take_low(&mut self) {
         self.operand = self.latched as u16;
     }
@@ -343,7 +373,7 @@ impl Cpu {
                 }
                 _ => self.record(port, None, Pins::IDLE),
             },
-            Cycle::Internal { .. } => self.internal_tick(),
+            Cycle::Internal { .. } | Cycle::Acknowledge { .. } => self.internal_tick(),
         }
     }
 
@@ -1056,7 +1086,7 @@ impl Cpu {
         // Acknowledge holds PC on the address bus. Documented totals: the
         // acknowledge cycle then two pushes — 11 T-states.
         self.last_address = self.pc;
-        Sequencer::entering(Cycle::Internal { length: 4 }, Body::AcceptNmi)
+        Sequencer::entering(Cycle::Acknowledge { length: 4 }, Body::AcceptNmi)
     }
 
     pub(super) fn accept_irq(&mut self) -> Sequencer {
@@ -1067,7 +1097,7 @@ impl Cpu {
         let mode = self.im;
         // Documented totals: 13 T-states to the IM 1 vector, 19 for the
         // IM 2 table read, from the wait-stretched acknowledge cycle.
-        Sequencer::entering(Cycle::Internal { length: 7 }, Body::AcceptIrq { mode })
+        Sequencer::entering(Cycle::Acknowledge { length: 7 }, Body::AcceptIrq { mode })
     }
 
     /// A halted CPU re-fetches its successor byte each period without

@@ -63,10 +63,8 @@ hardware fact.
     subsequent automatic wait states, and its fetch figure draws no sample
     pulse in T3/T4 — a silence, not a stated absence. A wait chain entered at
     T2 delays refresh wholesale.
-  - **The interrupt-acknowledge cycle is not gated.** Acceptance is modelled as
-    an internal cycle (see the interrupt bullet below), and gating an
-    abstracted cycle would invent structure the model does not have. The
-    manual's two automatic wait states there are unmodelled as such.
+  - **The interrupt-acknowledge cycle samples /WAIT after its T2, like any M1
+    cycle; it still reaches no device** (see the acknowledge bullet below).
   - **A waited read returns its data at the access T-state**, before the wait
     chain, where hardware samples the data bus after release. Fine for a stall
     that only delays; a consumer whose waited *reads* carry time-sensitive data

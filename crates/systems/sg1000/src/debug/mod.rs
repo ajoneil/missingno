@@ -7,7 +7,6 @@
 pub mod graphics;
 
 mod cpu;
-mod palette;
 mod ports;
 mod psg;
 mod vdp;
@@ -33,17 +32,17 @@ use missingno_core::system::{
 use missingno_core::video::{DisplayTechnology, Frame, IndexedFrame};
 use missingno_core::waveform::ChannelWave;
 use missingno_ti_psg::{NoiseMode, NoiseRate, Variant};
+use missingno_ti_vdp::inspect::ti_palette;
 use missingno_ti_vdp::{Frame as VdpFrame, Standard, VISIBLE_WIDTH};
 use missingno_zilog_z80::inspect::RegisterFile;
 
 use crate::cartridge::CartType;
 use crate::console::{CLOCK_HZ, JOY1, JOY2, Sg1000, part_for, tstates_per_frame};
 use crate::state_schema::sg1000_state_schema;
-use palette::ti_palette;
 use ports::CONTROL_PAD;
 
+pub use missingno_ti_vdp::inspect::VdpLayout;
 pub use ports::{PANEL, PORTS};
-pub use vdp::VdpLayout;
 
 /// Pixel aspect at the VDP's 5.37 MHz dot clock — a display-side calibratable
 /// stage. PAL paints the same line time's 313 lines into the 625-line height

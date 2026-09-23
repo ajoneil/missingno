@@ -7,9 +7,8 @@ license = "MIT"
 [dependencies]
 missingno-core = { path = "../../missingno/core" }
 missingno-ti-psg = { path = "../../chips/ti-psg", features = ["inspect"] }
-missingno-ti-vdp = { path = "../../chips/ti-vdp" }
+missingno-ti-vdp = { path = "../../chips/ti-vdp", features = ["inspect"] }
 missingno-zilog-z80 = { path = "../../chips/zilog-z80" }
-rgb = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]

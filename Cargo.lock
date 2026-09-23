@@ -3123,7 +3123,6 @@ dependencies = [
  "missingno-ti-psg",
  "missingno-ti-vdp",
  "missingno-zilog-z80",
- "rgb",
  "ron",
  "serde",
 ]
@@ -3152,16 +3151,20 @@ name = "missingno-ti-psg"
 version = "26.10.0"
 dependencies = [
  "missingno-core",
+ "missingno-ti-psg",
 ]
 
 [[package]]
 name = "missingno-ti-vdp"
 version = "26.10.0"
 dependencies = [
+ "missingno-core",
  "missingno-test-support",
+ "missingno-ti-vdp",
  "missingno-zilog-z80",
  "morepork",
  "png 0.18.1",
+ "rgb",
  "sha2",
 ]
 

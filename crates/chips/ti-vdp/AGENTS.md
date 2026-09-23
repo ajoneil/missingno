@@ -9,7 +9,8 @@ the four documented modes and the undocumented combinations, the interrupt
 line — and leaves board wiring (I/O decode, the CPU, RAM) to its consumers
 (SG-1000 first; reusable for ColecoVision and MSX1). Sega's later 315-5124
 (the Master System VDP, with TMS legacy modes) is a different chip and stays
-SMS-owned.
+SMS-owned. The `inspect` feature carries the debugger's views of the part
+and its state-record bridge, so every board presents and saves it alike.
 
 **A system doc outranks this one in-system.** When the chip is inside a
 console, that console's ground-truth hierarchy adjudicates.

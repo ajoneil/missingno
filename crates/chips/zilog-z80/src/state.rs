@@ -84,6 +84,8 @@ carried_across_boundary! {
     /// Set by LD A,I / LD A,R, whose PF took IFF2.
     p: bool = p,
     nmi_pending: bool = nmi_pending,
+    /// /NMI as the board last drove it.
+    nmi_line: bool = nmi_line,
     /// /INT as the board drives it, and as acceptance sampled it at the last
     /// instruction's final T-state.
     irq_line: bool = irq_line,

@@ -23,6 +23,7 @@ mod decode;
 mod disasm;
 pub mod inspect;
 mod isa;
+pub mod record;
 mod sequencer;
 mod state;
 
@@ -188,6 +189,7 @@ pub struct Cpu {
     pub p: bool,
     flags_touched: bool,
     nmi_pending: bool,
+    nmi_line: bool,
     irq_line: bool,
     /// /INT as sampled at the rising edge of an instruction's final
     /// T-state (the documented sample point) — what acceptance consults,
@@ -240,6 +242,7 @@ impl Cpu {
             p: false,
             flags_touched: false,
             nmi_pending: false,
+            nmi_line: false,
             irq_line: false,
             irq_sampled: false,
             last_address: 0,
@@ -250,6 +253,22 @@ impl Cpu {
 
     pub fn trigger_nmi(&mut self) {
         self.nmi_pending = true;
+    }
+
+    /// Drive the /NMI pin. Its edge detector latches a request when the line
+    /// goes from released to asserted; a held level delivers once.
+    pub fn set_nmi(&mut self, asserted: bool) {
+        if asserted && !self.nmi_line {
+            self.nmi_pending = true;
+        }
+        self.nmi_line = asserted;
+    }
+
+    /// /M1 as it stands through the next T-state: asserted from an M1 cycle's
+    /// T1 through its T2 and any wait states after it — an opcode fetch, a
+    /// prefix's second fetch, the halt refetch, an interrupt acknowledge.
+    pub fn m1(&self) -> bool {
+        self.sequencer.as_ref().is_none_or(Sequencer::m1)
     }
 
     pub fn set_irq(&mut self, asserted: bool) {

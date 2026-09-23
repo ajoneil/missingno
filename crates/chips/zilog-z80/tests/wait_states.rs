@@ -5,7 +5,7 @@
 //! assertions against the tick the access lands on and counts the T-states
 //! that follow.
 
-use missingno_zilog_z80::{BusCycle, Pins};
+use missingno_zilog_z80::{BusCycle, Cpu, InterruptMode, Pins};
 
 #[path = "support/probe.rs"]
 mod support;
@@ -136,4 +136,49 @@ fn internal_cycles_are_not_sampled() {
     );
     assert_eq!(across_padding.ticks, resting.ticks);
     assert_eq!(across_padding.trace, resting.trace);
+}
+
+/// Ticks for one instruction released, then with one wait state bought at
+/// every M1 cycle's T2.
+fn m1_waited(program: &[u8], prepare: fn(&mut Cpu)) -> (usize, usize) {
+    let resting = run(program, Schedule::Released, prepare);
+    let waited = run(program, Schedule::EveryM1, prepare);
+    (resting.ticks, waited.ticks)
+}
+
+#[test]
+fn an_m1_wait_stretches_the_opcode_fetch() {
+    assert_eq!(m1_waited(&[0x00], |_| {}), (4, 5));
+}
+
+/// The operand reads are memory cycles, not M1: only the fetch pays.
+#[test]
+fn an_m1_wait_leaves_the_operand_reads_alone() {
+    assert_eq!(m1_waited(&[0x3A, 0x34, 0x12], |_| {}), (13, 14));
+}
+
+/// A prefix spends a second M1 on the opcode it names, and that one pays too.
+#[test]
+fn a_prefixed_opcode_pays_for_both_fetches() {
+    assert_eq!(m1_waited(&[0xCB, 0x00], |_| {}), (8, 10));
+}
+
+/// The acknowledge is an M1 cycle, so accepting an interrupt pays once.
+#[test]
+fn an_m1_wait_stretches_the_nmi_acknowledge() {
+    assert_eq!(m1_waited(&[0x00], |cpu| cpu.trigger_nmi()), (11, 12));
+}
+
+#[test]
+fn an_m1_wait_stretches_the_irq_acknowledge() {
+    let interrupting = |cpu: &mut Cpu| {
+        let mut state = cpu.boundary_state().expect("at a boundary");
+        state.iff1 = true;
+        state.iff2 = true;
+        state.interrupt_mode = InterruptMode::Mode1;
+        state.irq_line = true;
+        state.irq_sampled = true;
+        cpu.restore_boundary(&state);
+    };
+    assert_eq!(m1_waited(&[0x00], interrupting), (13, 14));
 }

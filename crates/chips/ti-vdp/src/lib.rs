@@ -11,7 +11,13 @@
 //! `tests/accuracy/` — see `AGENTS.md` for the hierarchy and the stated
 //! abstractions.
 
+#[cfg(feature = "inspect")]
+pub mod graphics;
+#[cfg(feature = "inspect")]
+pub mod inspect;
 mod port;
+#[cfg(feature = "inspect")]
+pub mod record;
 mod registers;
 mod render;
 mod scan;

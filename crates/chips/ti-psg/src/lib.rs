@@ -10,6 +10,8 @@
 
 #[cfg(feature = "inspect")]
 pub mod inspect;
+#[cfg(feature = "inspect")]
+pub mod record;
 
 /// Which member of the family the model is being asked to be.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

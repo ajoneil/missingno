@@ -11,6 +11,9 @@ the four attenuators, and the summing stage — and leaves board wiring (I/O
 decode, the READY→/WAIT tie, the output RC network, the sample rate) to its
 consumers (the SG-1000; the Sega-integrated variant serves the Master System).
 
+The `inspect` feature carries the debugger's view of the part and its
+state-record bridge, so every board presents and saves it alike.
+
 **A system doc outranks this one in-system.** When the chip is inside a
 console, that console's ground-truth hierarchy adjudicates.
 

@@ -23,13 +23,17 @@ pub enum Schedule {
     Released,
     /// Asserted for `length` consecutive ticks from `from`.
     Held { from: usize, length: usize },
+    /// Asserted at every M1 cycle's T2 sample and released through the wait
+    /// state it buys: one wait state per M1 cycle.
+    EveryM1,
 }
 
 impl Schedule {
-    fn asserted_at(self, tick: usize) -> bool {
+    fn asserted_at(self, tick: usize, m1_wait: bool) -> bool {
         match self {
             Schedule::Released => false,
             Schedule::Held { from, length } => (from..from + length).contains(&tick),
+            Schedule::EveryM1 => m1_wait,
         }
     }
 }
@@ -40,6 +44,8 @@ pub struct ProbeBus {
     pub tick: usize,
     pub calls: Vec<Call>,
     pub schedule: Schedule,
+    /// What an `EveryM1` board drives through the coming tick.
+    pub m1_wait: bool,
 }
 
 impl ProbeBus {
@@ -56,6 +62,7 @@ impl ProbeBus {
             tick: 0,
             calls: Vec::new(),
             schedule,
+            m1_wait: false,
         }
     }
 }
@@ -81,7 +88,7 @@ impl Bus for ProbeBus {
     }
 
     fn wait_requested(&self) -> bool {
-        self.schedule.asserted_at(self.tick)
+        self.schedule.asserted_at(self.tick, self.m1_wait)
     }
 }
 
@@ -131,8 +138,14 @@ pub fn run(program: &[u8], schedule: Schedule, prepare: impl FnOnce(&mut Cpu)) -
     let mut bus = ProbeBus::with_schedule(program, schedule);
 
     let mut ticks = 0;
+    let mut m1_before = false;
     loop {
         bus.tick = ticks;
+        // Asserted once /M1 has stood a full T-state, dropped by the wait
+        // state it bought.
+        let m1 = cpu.m1();
+        bus.m1_wait = m1 && m1_before && !bus.m1_wait;
+        m1_before = m1;
         cpu.tick(&mut bus);
         ticks += 1;
         assert!(ticks < 200, "instruction never retired");
