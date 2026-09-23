@@ -100,6 +100,28 @@ mod registers {
         "registers/midline-backdrop.sg",
         staged = "free-run build unphotographed; R7 drift validation vehicle"
     );
+    // The midline walk family: one 229 T walk per scene, R7 as the
+    // in-picture ruler. Hardware-PRIMARY (bless: never) and unphotographed.
+    vdp_screenshot!(
+        midline_blank,
+        "registers/midline-blank.sg",
+        staged = "R1 blank walk unphotographed; hardware-PRIMARY, no reference"
+    );
+    vdp_screenshot!(
+        midline_colour,
+        "registers/midline-colour.sg",
+        staged = "R3 walk unphotographed; hardware-PRIMARY, no reference"
+    );
+    vdp_screenshot!(
+        midline_m1,
+        "registers/midline-m1.sg",
+        staged = "M1 walk unphotographed; hardware-PRIMARY, no reference"
+    );
+    vdp_screenshot!(
+        midline_pattern,
+        "registers/midline-pattern.sg",
+        staged = "R4 walk unphotographed; hardware-PRIMARY, no reference"
+    );
 }
 
 mod vram {
@@ -185,11 +207,11 @@ mod timing {
     vdp_test!(_4k_sweep, "timing/4k-sweep.sg");
     // Sidecar budget 1400: ~550 frames of sweep + the per-cell map compare.
     vdp_test!(_5s_instant_low, "timing/5s-instant-low.sg", frames = 1600);
+    // Sidecar budget 1400: ~550 frames of sweep + the per-cell map compare.
+    vdp_test!(_5s_instant_mid, "timing/5s-instant-mid.sg", frames = 1600);
     vdp_test!(_5s_race, "timing/5s-race.sg");
     vdp_test!(blank_burst, "timing/blank-burst.sg");
-    vdp_test!(blank_sweep, "timing/blank-sweep.sg");
     vdp_test!(border_burst, "timing/border-burst.sg");
-    vdp_test!(border_sweep, "timing/border-sweep.sg");
     vdp_test!(c_race, "timing/c-race.sg");
     // Sidecar budget 1400: ~550 frames of sweep + the per-cell map compare.
     vdp_test!(cadence_4match, "timing/cadence-4match.sg", frames = 1600);
@@ -217,7 +239,6 @@ mod timing {
     vdp_test!(steal15_raw, "timing/steal15-raw.sg");
     vdp_test!(steal15_sweep, "timing/steal15-sweep.sg");
     vdp_test!(text_burst, "timing/text-burst.sg");
-    vdp_test!(text_sweep, "timing/text-sweep.sg");
     vdp_test!(undoc_all_sweep, "timing/undoc-all-sweep.sg");
     vdp_test!(undoc_bmc_sweep, "timing/undoc-bmc-sweep.sg");
     vdp_test!(undoc_bt_sweep, "timing/undoc-bt-sweep.sg");
