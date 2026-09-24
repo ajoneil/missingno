@@ -106,7 +106,7 @@ pub fn is_colecovision_rom(path: &std::path::Path) -> bool {
 /// cut for, and the BIOS in its socket.
 pub fn launch_options(_rom: &[u8]) -> Vec<LaunchOptionDescriptor> {
     vec![
-        tv_standard_option([TvStandard::Ntsc, TvStandard::Pal]),
+        tv_standard_option([TvStandard::Ntsc, TvStandard::Pal, TvStandard::PalM]),
         bios_option(),
     ]
 }
@@ -384,6 +384,25 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn a_pal_m_launch_runs_the_ntsc_part() {
+        let console = create_console(
+            &[0; 0x2000],
+            "test".into(),
+            Some(TvStandard::PalM),
+            [0; BIOS_SIZE],
+        )
+        .expect("PAL-M is the NTSC part");
+        assert_eq!(console.frame_interval().as_micros(), 16_688);
+        assert_eq!(
+            console.video_out(),
+            DisplayTechnology::Crt {
+                standard: TvStandard::Ntsc,
+                pixel_aspect: 8.0 / 7.0,
+            }
+        );
     }
 
     #[test]

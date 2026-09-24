@@ -30,10 +30,11 @@ pub fn tstates_per_frame(standard: Standard) -> u32 {
 }
 
 /// The VDP the board fits for a broadcast standard: a TMS9928A for NTSC, a
-/// TMS9929A for PAL.
+/// TMS9929A for PAL. PAL-M is System M's 525-line raster, so the NTSC part;
+/// its PAL colour encoding is off-chip.
 pub fn part_for(standard: TvStandard) -> Option<Standard> {
     match standard {
-        TvStandard::Ntsc => Some(Standard::Ntsc),
+        TvStandard::Ntsc | TvStandard::PalM => Some(Standard::Ntsc),
         TvStandard::Pal => Some(Standard::Pal),
         _ => None,
     }
