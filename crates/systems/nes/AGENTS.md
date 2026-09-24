@@ -13,5 +13,6 @@ hardware, never as an exemplar.
   are iNES NROM only — other mappers are rejected at load.
 - **Ground truth**: no hierarchy has been chosen — that happens when the
   core is taken seriously. Until then the oracle ceiling is the committed
-  tests (`tests/console.rs`, `tests/trace.rs`), and the gate is
-  `cargo test -p missingno-nes` (outside the workspace default members).
+  tests (`tests/console.rs`), and the gate is `cargo test -p missingno-nes`
+  (outside the workspace default members).
+- **Traces**: the core has no state schema yet and therefore no trace bridge.

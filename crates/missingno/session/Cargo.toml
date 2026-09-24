@@ -27,7 +27,6 @@ morepork = [
     "missingno-gb?/morepork",
     "missingno-gbc?/morepork",
     "missingno-vcs?/morepork",
-    "missingno-nes?/morepork",
     "missingno-sg1000?/morepork",
     "missingno-colecovision?/morepork",
 ]

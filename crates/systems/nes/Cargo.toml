@@ -4,14 +4,7 @@ version.workspace = true
 edition = "2024"
 license = "MIT"
 
-[features]
-morepork = ["dep:morepork", "dep:sha2"]
-
 [dependencies]
 missingno-mos-6502 = { path = "../../chips/mos-6502" }
 missingno-core = { path = "../../missingno/core" }
 rgb = { workspace = true }
-# The in-tree trace engine (cloned into receipts/), shared with the other cores
-# so the whole workspace speaks one trace format. Requires that clone present.
-morepork = { git = "https://github.com/ajoneil/morepork", branch = "main", optional = true }
-sha2 = { version = "0.11", optional = true }

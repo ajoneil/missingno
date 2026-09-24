@@ -368,7 +368,7 @@ pub static FAMILIES: &[FamilyDescriptor] = &[
         stated_by_media: |_| Vec::new(),
         firmware: Vec::new,
         port_config: |_| Vec::new(),
-        trace: Some(crate::trace::trace_nes),
+        trace: None,
     },
 ];
 

@@ -3096,9 +3096,7 @@ version = "26.10.0"
 dependencies = [
  "missingno-core",
  "missingno-mos-6502",
- "morepork",
  "rgb",
- "sha2",
 ]
 
 [[package]]

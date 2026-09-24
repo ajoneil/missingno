@@ -175,58 +175,6 @@ fn trace_console<M: ConsoleUi>(
     eprintln!("done: {instructions} instructions, {tcycles} T-cycles, {frames} frames");
 }
 
-#[cfg(feature = "nes")]
-pub(crate) fn trace_nes(request: TraceRequest) {
-    use missingno_nes::console::Nes;
-    use missingno_nes::trace::{Tracer, step_instruction_counted};
-
-    let (rom, profile, output_path, cycle_limit) =
-        (request.rom, request.profile, request.output, request.cycles);
-    eprintln!("limit: {cycle_limit} CPU cycles");
-
-    let mut nes = Nes::new(rom).unwrap_or_else(|e| {
-        eprintln!("error: failed to load NES ROM: {e:?}");
-        process::exit(1);
-    });
-    let mut tracer = Tracer::create(output_path, profile, rom).unwrap_or_else(|e| {
-        eprintln!("error: failed to create trace file: {e}");
-        process::exit(1);
-    });
-
-    let per_cycle = profile.trigger == Trigger::Cycle;
-    let mut total_cycles: u64 = 0;
-    let mut instructions = 0u64;
-    let mut frames = 0u64;
-    let mut last_cycles = 0u16;
-
-    while total_cycles < cycle_limit {
-        // Pre-execution state, with the previous step's cycle cost.
-        tracer.capture(&nes, last_cycles).unwrap();
-        if per_cycle {
-            nes.step_cycle();
-            last_cycles = 1;
-        } else {
-            last_cycles = step_instruction_counted(&mut nes);
-            instructions += 1;
-        }
-        total_cycles += last_cycles as u64;
-        if let Some(frame) = nes.take_frame() {
-            frames += 1;
-            tracer.mark_frame(Some(&frame)).unwrap();
-        }
-    }
-
-    tracer.finish().unwrap_or_else(|e| {
-        eprintln!("error: failed to finalize trace: {e}");
-        process::exit(1);
-    });
-    if per_cycle {
-        eprintln!("done: {total_cycles} cycles, {frames} frames");
-    } else {
-        eprintln!("done: {instructions} instructions, {total_cycles} cycles, {frames} frames");
-    }
-}
-
 pub(crate) fn trace_vcs(request: TraceRequest) {
     use missingno_vcs::console::Vcs;
     use missingno_vcs::trace::{TraceScope, Tracer, step_instruction_counted};
