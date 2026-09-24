@@ -7,10 +7,10 @@ use missingno_core::cartridge::{
     AttributeKind, AttributeValue, BoardSpec, BoardValue, BoardVocabulary,
 };
 use missingno_gamedb::{
-    Artifact, Defect, Enhancement, FactKind, FactValue, FlagFile, Game, GameBoy, GameBoyColor,
-    GameKind, GbCartType, HardwareFacts, Language, Link, LinkType, Mod, ModCategory, ModOf,
-    ModRelease, Peripheral, Platform, Region, RejectedFile, Rejection, Release, ReleaseStatus,
-    Sg1000, Sha1, Slug, Tree, TvStandard, Vcs, with_platforms,
+    Artifact, ColecoVision, Defect, Enhancement, FactKind, FactValue, FlagFile, Game, GameBoy,
+    GameBoyColor, GameKind, GbCartType, HardwareFacts, Language, Link, LinkType, Mod, ModCategory,
+    ModOf, ModRelease, Peripheral, Platform, Region, RejectedFile, Rejection, Release,
+    ReleaseStatus, Sg1000, Sha1, Slug, Tree, TvStandard, Vcs, with_platforms,
 };
 
 use crate::vocabulary;
@@ -19,6 +19,7 @@ use crate::vocabulary;
 pub enum TreeId {
     Gb,
     Gbc,
+    ColecoVision,
     Sg1000,
     Vcs,
 }
@@ -28,6 +29,7 @@ impl TreeId {
         match self {
             TreeId::Gb => "gb",
             TreeId::Gbc => "gbc",
+            TreeId::ColecoVision => "colecovision",
             TreeId::Sg1000 => "sg1000",
             TreeId::Vcs => "vcs",
         }
@@ -37,15 +39,22 @@ impl TreeId {
         match self {
             TreeId::Gb => "Game Boy",
             TreeId::Gbc => "Game Boy Color",
+            TreeId::ColecoVision => "ColecoVision",
             TreeId::Sg1000 => "SG-1000",
             TreeId::Vcs => "Atari VCS",
         }
     }
 
     pub fn for_dir(dir: &str) -> Option<Self> {
-        [TreeId::Gb, TreeId::Gbc, TreeId::Sg1000, TreeId::Vcs]
-            .into_iter()
-            .find(|tree| tree.dir() == dir)
+        [
+            TreeId::Gb,
+            TreeId::Gbc,
+            TreeId::ColecoVision,
+            TreeId::Sg1000,
+            TreeId::Vcs,
+        ]
+        .into_iter()
+        .find(|tree| tree.dir() == dir)
     }
 }
 
@@ -228,6 +237,7 @@ pub fn board_vocabulary_doc(key: &str) -> String {
 pub enum AnyGame {
     Gb(Game<GameBoy>),
     Gbc(Game<GameBoyColor>),
+    ColecoVision(Game<ColecoVision>),
     Sg1000(Game<Sg1000>),
     Vcs(Game<Vcs>),
 }
@@ -237,6 +247,7 @@ macro_rules! common {
         match $self {
             AnyGame::Gb($game) => $body,
             AnyGame::Gbc($game) => $body,
+            AnyGame::ColecoVision($game) => $body,
             AnyGame::Sg1000($game) => $body,
             AnyGame::Vcs($game) => $body,
         }
@@ -477,6 +488,9 @@ impl AnyGame {
         match (self, other) {
             (AnyGame::Gb(into), AnyGame::Gb(from)) => Ok(absorb_into(into, from, &held)),
             (AnyGame::Gbc(into), AnyGame::Gbc(from)) => Ok(absorb_into(into, from, &held)),
+            (AnyGame::ColecoVision(into), AnyGame::ColecoVision(from)) => {
+                Ok(absorb_into(into, from, &held))
+            }
             (AnyGame::Sg1000(into), AnyGame::Sg1000(from)) => Ok(absorb_into(into, from, &held)),
             (AnyGame::Vcs(into), AnyGame::Vcs(from)) => Ok(absorb_into(into, from, &held)),
             _ => Err("the two entries are on different platforms".to_owned()),
@@ -992,7 +1006,7 @@ impl AnyGame {
                     &mut conflicts,
                 );
             }
-            AnyGame::Sg1000(_) | AnyGame::Vcs(_) => {}
+            AnyGame::ColecoVision(_) | AnyGame::Sg1000(_) | AnyGame::Vcs(_) => {}
         }
         (staged, conflicts)
     }
@@ -1158,6 +1172,7 @@ impl AnyGame {
         let game = common!(self, g => match tree {
             TreeId::Gb => AnyGame::Gb(refile(g, &mut moves)),
             TreeId::Gbc => AnyGame::Gbc(refile(g, &mut moves)),
+            TreeId::ColecoVision => AnyGame::ColecoVision(refile(g, &mut moves)),
             TreeId::Sg1000 => AnyGame::Sg1000(refile(g, &mut moves)),
             TreeId::Vcs => AnyGame::Vcs(refile(g, &mut moves)),
         });
@@ -1861,6 +1876,12 @@ impl Db {
         }
         load_tree::<GameBoy>(&data_root, TreeId::Gb, AnyGame::Gb, &mut entries)?;
         load_tree::<GameBoyColor>(&data_root, TreeId::Gbc, AnyGame::Gbc, &mut entries)?;
+        load_tree::<ColecoVision>(
+            &data_root,
+            TreeId::ColecoVision,
+            AnyGame::ColecoVision,
+            &mut entries,
+        )?;
         load_tree::<Sg1000>(&data_root, TreeId::Sg1000, AnyGame::Sg1000, &mut entries)?;
         load_tree::<Vcs>(&data_root, TreeId::Vcs, AnyGame::Vcs, &mut entries)?;
         let flags = FlagFile::load(&repo_root)?;
@@ -1990,6 +2011,7 @@ impl Db {
                             Some(header) => gb_tree(header),
                             None => continue,
                         },
+                        "ColecoVision" => TreeId::ColecoVision,
                         "SG-1000" => TreeId::Sg1000,
                         "Atari VCS" => TreeId::Vcs,
                         _ => continue,
@@ -2027,6 +2049,7 @@ impl Db {
             let game = match tree {
                 TreeId::Gb => AnyGame::Gb(lone_dump_entry(title, artifact)),
                 TreeId::Gbc => AnyGame::Gbc(lone_dump_entry(title, artifact)),
+                TreeId::ColecoVision => AnyGame::ColecoVision(lone_dump_entry(title, artifact)),
                 TreeId::Sg1000 => AnyGame::Sg1000(lone_dump_entry(title, artifact)),
                 TreeId::Vcs => AnyGame::Vcs(lone_dump_entry(title, artifact)),
             };
@@ -2159,6 +2182,9 @@ impl Db {
             AnyGame::Gbc(g) => {
                 split_hack_from(g, sha1, title, category, base, homepage).map(AnyGame::Gbc)
             }
+            AnyGame::ColecoVision(g) => {
+                split_hack_from(g, sha1, title, category, base, homepage).map(AnyGame::ColecoVision)
+            }
             AnyGame::Sg1000(g) => {
                 split_hack_from(g, sha1, title, category, base, homepage).map(AnyGame::Sg1000)
             }
@@ -2209,6 +2235,9 @@ impl Db {
             AnyGame::Gb(g) => split_game_from(g, release_index, title.to_owned()).map(AnyGame::Gb),
             AnyGame::Gbc(g) => {
                 split_game_from(g, release_index, title.to_owned()).map(AnyGame::Gbc)
+            }
+            AnyGame::ColecoVision(g) => {
+                split_game_from(g, release_index, title.to_owned()).map(AnyGame::ColecoVision)
             }
             AnyGame::Sg1000(g) => {
                 split_game_from(g, release_index, title.to_owned()).map(AnyGame::Sg1000)
@@ -2802,6 +2831,34 @@ mod link_tests {
             "{:?}",
             outcome.strays
         );
+    }
+
+    #[test]
+    fn an_undeclared_colecovision_dump_files_into_its_tree() {
+        let repo = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(repo.path().join("data/colecovision")).unwrap();
+        let dumps = tempfile::tempdir().unwrap();
+        let path = dumps.path().join("uncatalogued cart.col");
+        std::fs::write(&path, vec![0xA7u8; 8192]).unwrap();
+        let mut index = crate::verify::RomIndex::default();
+        index.by_sha1.insert(
+            "cc00000000000000000000000000000000000001".to_owned(),
+            crate::verify::ScannedRom {
+                path,
+                home: crate::verify::RomHome::Inbox,
+            },
+        );
+
+        let mut undeclared = Db::load(repo.path().to_path_buf()).unwrap();
+        let outcome = undeclared.add_unmatched_roms(&index, None);
+        assert_eq!(outcome.added, 1);
+        let entry = undeclared
+            .entries
+            .iter()
+            .find(|e| e.game.title() == "uncatalogued cart")
+            .expect("the factory claims the dump");
+        assert_eq!(entry.tree, TreeId::ColecoVision);
+        assert_eq!(TreeId::for_dir("colecovision"), Some(TreeId::ColecoVision));
     }
 
     /// A Game Boy family dump files by its own header: the declaration names
@@ -3812,7 +3869,7 @@ mod board_tests {
     fn a_fact_description_names_every_platform_that_states_it() {
         let tv = fact_description("tv_format");
         assert!(
-            tv.starts_with("SG-1000: ") && tv.contains("Atari VCS: "),
+            tv.starts_with("ColecoVision and SG-1000: ") && tv.contains("Atari VCS: "),
             "{tv}"
         );
         assert!(tv.contains("PAL-M"), "{tv}");

@@ -374,10 +374,11 @@ impl std::fmt::Display for TreeChoice {
     }
 }
 
-const TREE_CHOICES: [TreeChoice; 5] = [
+const TREE_CHOICES: [TreeChoice; 6] = [
     TreeChoice(None),
     TreeChoice(Some(TreeId::Gb)),
     TreeChoice(Some(TreeId::Gbc)),
+    TreeChoice(Some(TreeId::ColecoVision)),
     TreeChoice(Some(TreeId::Sg1000)),
     TreeChoice(Some(TreeId::Vcs)),
 ];
@@ -647,6 +648,7 @@ impl Curator {
                     let system = match db.entries[i].tree {
                         db::TreeId::Vcs => "Atari - 2600",
                         db::TreeId::Sg1000 => "Sega - SG-1000",
+                        db::TreeId::ColecoVision => "Coleco - ColecoVision",
                         db::TreeId::Gb => "Nintendo - Game Boy",
                         db::TreeId::Gbc => "Nintendo - Game Boy Color",
                     };
@@ -749,6 +751,7 @@ impl Curator {
                     let hint = match entry.tree {
                         TreeId::Gb => "verify.gb",
                         TreeId::Gbc => "verify.gbc",
+                        TreeId::ColecoVision => "verify.col",
                         TreeId::Sg1000 => "verify.sg",
                         TreeId::Vcs => "verify.a26",
                     };
@@ -1439,7 +1442,10 @@ impl Curator {
     /// mapper; conflicts go to the status).
     fn stage_header_facts(&mut self, i: usize, rom: &[u8], sha1: &str) {
         let Ok(db) = &mut self.db else { return };
-        if matches!(db.entries[i].tree, TreeId::Sg1000 | TreeId::Vcs) {
+        if matches!(
+            db.entries[i].tree,
+            TreeId::ColecoVision | TreeId::Sg1000 | TreeId::Vcs
+        ) {
             return;
         }
         let Some(header) = verify::gb_header(rom) else {
@@ -1757,9 +1763,10 @@ impl Curator {
                     return error_result("db not loaded");
                 };
                 text_result(format!(
-                    "backlog: gb {}, gbc {}, sg1000 {}, vcs {} · open flags: {} · uncommitted files: {}",
+                    "backlog: gb {}, gbc {}, colecovision {}, sg1000 {}, vcs {} · open flags: {} · uncommitted files: {}",
                     db.backlog_count(TreeId::Gb),
                     db.backlog_count(TreeId::Gbc),
+                    db.backlog_count(TreeId::ColecoVision),
                     db.backlog_count(TreeId::Sg1000),
                     db.backlog_count(TreeId::Vcs),
                     db.flags.open().count(),

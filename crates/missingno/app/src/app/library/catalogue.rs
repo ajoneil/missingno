@@ -9,8 +9,8 @@ use std::collections::HashMap;
 
 use missingno_core::cartridge::BoardValue;
 use missingno_gamedb::{
-    Artifact, Enhancement, FactValue, Game, GameBoy, GameBoyColor, HardwareFacts, Link, Peripheral,
-    Platform as DbPlatform, Sg1000, Vcs,
+    Artifact, ColecoVision, Enhancement, FactValue, Game, GameBoy, GameBoyColor, HardwareFacts,
+    Link, Peripheral, Platform as DbPlatform, Sg1000, Vcs,
 };
 
 use crate::app::system::{Platform, TvStandard};
@@ -175,6 +175,8 @@ fn platform_of_tree(console: &str) -> Option<Platform> {
         Some(Platform::GameBoy)
     } else if console == GameBoyColor::DIR {
         Some(Platform::GameBoyColor)
+    } else if console == ColecoVision::DIR {
+        Some(Platform::ColecoVision)
     } else if console == Sg1000::DIR {
         Some(Platform::Sg1000)
     } else if console == Vcs::DIR {
@@ -384,6 +386,7 @@ mod tests {
         for (slug, platform) in [
             ("super-mario-land", Platform::GameBoy),
             ("007-the-world-is-not-enough", Platform::GameBoyColor),
+            ("zenji", Platform::ColecoVision),
             ("bank-panic", Platform::Sg1000),
             ("11-invaders", Platform::AtariVcs),
         ] {
@@ -398,6 +401,16 @@ mod tests {
             catalogue.platform("920cfbd517764ad3fa6a7425c031bd72dc7d927c"),
             Some(Platform::AtariVcs)
         );
+        let (zenji, release, _) = catalogue
+            .lookup_hash("9119f3a485eb4215e7d41c7cf0e412d903458647")
+            .expect("Zenji (USA) resolves");
+        assert_eq!(zenji.slug, "zenji");
+        assert_eq!(zenji.platform, Platform::ColecoVision);
+        assert_eq!(
+            platform_of_tree("colecovision"),
+            Some(Platform::ColecoVision)
+        );
+        assert_eq!(release.tv_format, Some(TvStandard::Ntsc));
     }
 
     // Catalogue::load() silently drops manifests that fail to deserialize, so
@@ -418,6 +431,7 @@ mod tests {
         );
         assert!(!db.gb.games.is_empty());
         assert!(!db.gbc.games.is_empty());
+        assert!(!db.colecovision.games.is_empty());
         assert!(!db.sg1000.games.is_empty());
         assert!(!db.vcs.games.is_empty());
     }

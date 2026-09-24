@@ -388,10 +388,23 @@ until a second family grows the equivalent:
     vocabulary, and the boards declare the parts they carry — the sizes,
     battery, clock or rumble a caller may state beside one — so display,
     editing and the generated schemas enumerate them without knowing the
-    console. A DAT importer follows the `import-sg1000` fold shape when a
-    signature source exists. If the platform has swappable
+    console. A DAT importer is a `DatProfile` over the shared `import_dat`
+    fold when a signature source exists. If the platform has swappable
     controllers, pick one canonical default: the db stages `controllers` only
     on deviation from it or for sibling-release contrast (the VCS default is
     the joystick), so an empty list always means "the default" and never
     "unknown". A broadcast standard, where the platform records one, is
     stated explicitly per release — absent means unstated, never a default.
+    Hand-written lists the macro does not reach:
+    - gamedb: the `Database` field and its `load` call; a `SlugTokens` impl;
+      the platform type in the `use` lists of `validate.rs`, `fix_titles.rs`,
+      `verify_hashes.rs`, `fix_slugs.rs` and `facts.rs`'s tests; the
+      hardware struct in `declared_keys_read_back`.
+    - curator `db.rs`: `TreeId::{dir, label, for_dir}`, `AnyGame` and
+      `common!`, `absorb`, `stage_gb_header`, `refiled`, the `load_tree`
+      call, the factory-name routing and `lone_dump_entry` arm in
+      `add_unmatched_roms`, `split_hack`, `split_game`.
+    - curator `main.rs`: `TREE_CHOICES`, the cover system name, the play
+      filename hint, the `stage_header_facts` skip, the `status` backlog line.
+    - app: `CONSOLES` in `build.rs`, `platform_of_tree` in
+      `library/catalogue.rs`.
