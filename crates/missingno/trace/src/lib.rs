@@ -147,18 +147,91 @@ pub fn build_columns<T: Copy>(
     (columns, defs)
 }
 
-/// The header a bridge writes: the plan's field defs plus the identity of what
-/// produced them.
+/// A trace observation every corpus-driven producer carries, beside the
+/// schema's machine state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TraceObservation {
+    /// T-states consumed since the previous entry.
+    Cycles,
+    /// The corpus RESULT block.
+    Result,
+    Code,
+    Observed,
+    Expected,
+    /// The last work-RAM write since the previous entry, or null.
+    RamWriteAddr,
+    RamWriteData,
+}
+
+/// The shared trace observations, in capture order, named as the corpus reads them.
+pub static TRACE_OBSERVATIONS: &[ObservationDef<TraceObservation>] = &[
+    ObservationDef {
+        name: "cycles",
+        ty: FieldType::U16,
+        subsystem: "cpu",
+        layer: "timing",
+        nullable: false,
+        observation: TraceObservation::Cycles,
+    },
+    ObservationDef {
+        name: "result",
+        ty: FieldType::U8,
+        subsystem: "board",
+        layer: "registers",
+        nullable: false,
+        observation: TraceObservation::Result,
+    },
+    ObservationDef {
+        name: "code",
+        ty: FieldType::U8,
+        subsystem: "board",
+        layer: "registers",
+        nullable: false,
+        observation: TraceObservation::Code,
+    },
+    ObservationDef {
+        name: "observed",
+        ty: FieldType::U8,
+        subsystem: "board",
+        layer: "registers",
+        nullable: false,
+        observation: TraceObservation::Observed,
+    },
+    ObservationDef {
+        name: "expected",
+        ty: FieldType::U8,
+        subsystem: "board",
+        layer: "registers",
+        nullable: false,
+        observation: TraceObservation::Expected,
+    },
+    ObservationDef {
+        name: "ram_write_addr",
+        ty: FieldType::U16,
+        subsystem: "board",
+        layer: "registers",
+        nullable: true,
+        observation: TraceObservation::RamWriteAddr,
+    },
+    ObservationDef {
+        name: "ram_write_data",
+        ty: FieldType::U8,
+        subsystem: "board",
+        layer: "registers",
+        nullable: true,
+        observation: TraceObservation::RamWriteData,
+    },
+];
+
+/// The header a bridge writes: the plan's field defs, the schema's system
+/// identity, plus the identity of the capture that produced them.
 pub struct TraceIdentity<'a> {
     pub rom_sha256: String,
-    pub system: &'a str,
-    pub isa: &'a str,
     pub model: &'a str,
     pub scope: TraceScope,
     pub trigger: Trigger,
     pub pix_format: PixFormat,
     pub boot_rom: BootRom,
-    pub instruction_addr_field: &'a str,
     pub snapshot_kinds: Vec<String>,
 }
 
@@ -166,6 +239,7 @@ pub struct TraceIdentity<'a> {
 /// the header shape around them is the container's.
 pub fn create_writer(
     path: impl AsRef<Path>,
+    schema: &SystemStateSchema,
     identity: TraceIdentity,
     field_defs: Vec<HeaderFieldDef>,
 ) -> Result<MoreporkWriter, Error> {
@@ -175,8 +249,8 @@ pub fn create_writer(
         emulator: "missingno".into(),
         emulator_version: env!("CARGO_PKG_VERSION").into(),
         rom_sha256: identity.rom_sha256,
-        system: identity.system.into(),
-        isa: identity.isa.into(),
+        system: schema.system.into(),
+        isa: schema.isa.into(),
         model: identity.model.into(),
         boot_rom: identity.boot_rom,
         profile: match identity.scope {
@@ -187,7 +261,7 @@ pub fn create_writer(
         trigger: identity.trigger,
         pix_format: identity.pix_format,
         field_defs,
-        instruction_addr_field: Some(identity.instruction_addr_field.into()),
+        instruction_addr_field: Some(schema.instruction_addr_field.into()),
         snapshot_kinds: identity.snapshot_kinds,
         notes: String::new(),
         ..Default::default()

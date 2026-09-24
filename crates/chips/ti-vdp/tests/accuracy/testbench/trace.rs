@@ -1,137 +1,33 @@
 //! Morepork trace capture for the testbench: one entry per Z80 instruction
-//! boundary, columns named by morepork's sg1000 catalogue so a testbench
+//! boundary, columns planned from the SG-1000 state schema so a testbench
 //! trace diffs against any other producer's.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
+use missingno_core::state::StateRecord;
+use missingno_sg1000::state_schema::sg1000_state_schema;
 use missingno_ti_vdp::Standard;
-use missingno_zilog_z80::{Cpu, InterruptMode};
+use missingno_trace::{
+    BootRom, Column, Source, TRACE_OBSERVATIONS, TraceIdentity, TraceObservation, TraceScope,
+    Trigger, build_columns, create_writer, emit_value, pix_format,
+};
+use missingno_zilog_z80::Cpu;
 use morepork::format::TAG_MEMORY;
 use morepork::format::write::MoreporkWriter;
-use morepork::header::{ExtensionField, TraceHeader};
 use morepork::snapshot::{MemoryRegion, build_memory_payload};
-use morepork::{BootRom, FieldType, Trigger};
 use sha2::{Digest, Sha256};
 
 use super::{Board, RAM_BASE};
 
-/// A column's value, typed as the catalogue types that column.
-enum Value {
-    U8(u8),
-    U16(u16),
-    Bool(bool),
-    OptU8(Option<u8>),
-    OptU16(Option<u16>),
-}
-
-const COLUMNS: usize = 49;
-
-/// Every column of one entry, paired with its catalogue name — the single
-/// source of truth the header's field list is built from too.
-fn columns(cpu: &Cpu, board: &Board) -> [(&'static str, Value); COLUMNS] {
-    // At a boundary the recorded cycles are the retired instruction's: the
-    // first drove its opcode fetch, and their count is its T-states.
-    let op_addr = cpu
-        .bus_trace()
-        .first()
-        .map_or(cpu.pc, |cycle| cycle.address);
-    let cycles = cpu.bus_trace().len() as u8;
-    let im = match cpu.im {
-        InterruptMode::Mode0 => 0,
-        InterruptMode::Mode1 => 1,
-        InterruptMode::Mode2 => 2,
-    };
-    let vdp = &board.vdp;
-    let registers = vdp.registers();
-    let ram_write = board.ram_write;
-
-    [
-        ("pc", Value::U16(cpu.pc)),
-        ("op_addr", Value::U16(op_addr)),
-        ("sp", Value::U16(cpu.sp)),
-        ("a", Value::U8(cpu.a)),
-        ("f", Value::U8(cpu.f)),
-        ("b", Value::U8(cpu.b)),
-        ("c", Value::U8(cpu.c)),
-        ("d", Value::U8(cpu.d)),
-        ("e", Value::U8(cpu.e)),
-        ("h", Value::U8(cpu.h)),
-        ("l", Value::U8(cpu.l)),
-        ("ix", Value::U16(cpu.ix)),
-        ("iy", Value::U16(cpu.iy)),
-        ("wz", Value::U16(cpu.wz)),
-        ("a_", Value::U8(cpu.a_)),
-        ("f_", Value::U8(cpu.f_)),
-        ("b_", Value::U8(cpu.b_)),
-        ("c_", Value::U8(cpu.c_)),
-        ("d_", Value::U8(cpu.d_)),
-        ("e_", Value::U8(cpu.e_)),
-        ("h_", Value::U8(cpu.h_)),
-        ("l_", Value::U8(cpu.l_)),
-        ("i", Value::U8(cpu.i)),
-        ("r", Value::U8(cpu.r)),
-        ("im", Value::U8(im)),
-        ("iff1", Value::Bool(cpu.iff1)),
-        ("iff2", Value::Bool(cpu.iff2)),
-        ("halted", Value::Bool(cpu.halted)),
-        ("cycles", Value::U8(cycles)),
-        ("reg0", Value::U8(registers[0])),
-        ("reg1", Value::U8(registers[1])),
-        ("reg2", Value::U8(registers[2])),
-        ("reg3", Value::U8(registers[3])),
-        ("reg4", Value::U8(registers[4])),
-        ("reg5", Value::U8(registers[5])),
-        ("reg6", Value::U8(registers[6])),
-        ("reg7", Value::U8(registers[7])),
-        ("status", Value::U8(vdp.peek_status())),
-        ("line", Value::U16(vdp.line())),
-        ("dot", Value::U16(vdp.dot())),
-        ("addr", Value::U16(vdp.address())),
-        ("latch", Value::Bool(vdp.awaiting_second_byte())),
-        ("buffer", Value::U8(vdp.read_buffer())),
-        ("result", Value::U8(board.ram[0])),
-        ("code", Value::U8(board.ram[1])),
-        ("observed", Value::U8(board.ram[2])),
-        ("expected", Value::U8(board.ram[3])),
-        (
-            "ram_write_addr",
-            Value::OptU16(ram_write.map(|(address, _)| address)),
-        ),
-        (
-            "ram_write_data",
-            Value::OptU8(ram_write.map(|(_, data)| data)),
-        ),
-    ]
-}
-
-/// The RAM write tap, which the catalogue has no field for.
-fn extension_fields() -> BTreeMap<String, ExtensionField> {
-    ["ram_write_addr", "ram_write_data"]
-        .into_iter()
-        .zip([FieldType::UInt16, FieldType::UInt8])
-        .map(|(name, field_type)| {
-            (
-                name.to_string(),
-                ExtensionField {
-                    field_type,
-                    nullable: true,
-                    description: Some("RAM write since the previous entry".into()),
-                    source: Some("missingno".into()),
-                },
-            )
-        })
-        .collect()
-}
-
 pub struct Tracer {
     writer: MoreporkWriter,
+    columns: Vec<Column<TraceObservation>>,
     line: u16,
 }
 
 impl Tracer {
     /// Capture is off unless `MOREPORK_PROFILE` is set (any value).
-    pub fn create(rom: &str, standard: Standard, cpu: &Cpu, board: &Board) -> Option<Self> {
+    pub fn create(rom: &str, standard: Standard, board: &Board) -> Option<Self> {
         std::env::var("MOREPORK_PROFILE").ok()?;
 
         let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../receipts/traces");
@@ -152,34 +48,30 @@ impl Tracer {
             .map(|byte| format!("{byte:02x}"))
             .collect();
 
-        let header = TraceHeader {
-            _header: true,
-            format_version: "0.1.0".into(),
-            emulator: "missingno".into(),
-            emulator_version: env!("CARGO_PKG_VERSION").into(),
-            rom_sha256,
-            system: "sg1000".into(),
-            model: match standard {
-                Standard::Ntsc => "TMS9918A",
-                Standard::Pal => "TMS9929A",
-            }
-            .into(),
-            boot_rom: BootRom::Skip,
-            profile: "tier1".into(),
-            fields: columns(cpu, board)
-                .iter()
-                .map(|(name, _)| name.to_string())
-                .collect(),
-            trigger: Trigger::Instruction,
-            extension_fields: extension_fields(),
-            ..Default::default()
-        };
-
-        let writer = MoreporkWriter::create(&path, &header, &[])
-            .unwrap_or_else(|e| panic!("creating {}: {e}", path.display()));
+        let schema = sg1000_state_schema();
+        let (columns, field_defs) = build_columns(schema, TraceScope::Full, TRACE_OBSERVATIONS);
+        let writer = create_writer(
+            &path,
+            schema,
+            TraceIdentity {
+                rom_sha256,
+                model: match standard {
+                    Standard::Ntsc => "TMS9918A",
+                    Standard::Pal => "TMS9929A",
+                },
+                scope: TraceScope::Full,
+                trigger: Trigger::Instruction,
+                pix_format: pix_format(schema.frame.format),
+                boot_rom: BootRom::Skip,
+                snapshot_kinds: vec!["frame".into(), "memory".into()],
+            },
+            field_defs,
+        )
+        .unwrap_or_else(|e| panic!("creating {}: {e}", path.display()));
 
         Some(Tracer {
             writer,
+            columns,
             line: board.vdp.line(),
         })
     }
@@ -191,17 +83,36 @@ impl Tracer {
         }
         self.line = line;
 
-        for (column, (_, value)) in columns(cpu, board).iter().enumerate() {
-            match value {
-                Value::U8(value) => self.writer.set_u8(column, *value),
-                Value::U16(value) => self.writer.set_u16(column, *value),
-                Value::Bool(value) => self.writer.set_bool(column, *value),
-                Value::OptU8(Some(value)) => self.writer.set_u8(column, *value),
-                Value::OptU16(Some(value)) => self.writer.set_u16(column, *value),
-                Value::OptU8(None) | Value::OptU16(None) => self.writer.set_null(column),
+        // The testbench has no PSG or board latches: their columns stay null.
+        let mut record = StateRecord::new();
+        if let Some(cpu) = cpu.boundary_state() {
+            missingno_zilog_z80::record::write_state(&mut record, &cpu);
+        }
+        missingno_ti_vdp::record::write_state(&mut record, &board.vdp.boundary_state());
+        let cycles = cpu.bus_trace().len() as u16;
+        let ram_write = board.ram_write.take();
+
+        let w = &mut self.writer;
+        for (col, column) in self.columns.iter().enumerate() {
+            match &column.source {
+                Source::Field(name) => {
+                    emit_value(w, col, column.ty, column.nullable, record.get(name))
+                }
+                Source::Observation(TraceObservation::Cycles) => w.set_u16(col, cycles),
+                Source::Observation(TraceObservation::Result) => w.set_u8(col, board.ram[0]),
+                Source::Observation(TraceObservation::Code) => w.set_u8(col, board.ram[1]),
+                Source::Observation(TraceObservation::Observed) => w.set_u8(col, board.ram[2]),
+                Source::Observation(TraceObservation::Expected) => w.set_u8(col, board.ram[3]),
+                Source::Observation(TraceObservation::RamWriteAddr) => match ram_write {
+                    Some((address, _)) => w.set_u16(col, address),
+                    None => w.set_null(col),
+                },
+                Source::Observation(TraceObservation::RamWriteData) => match ram_write {
+                    Some((_, data)) => w.set_u8(col, data),
+                    None => w.set_null(col),
+                },
             }
         }
-        board.ram_write = None;
         self.writer.finish_entry().unwrap();
     }
 

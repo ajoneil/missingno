@@ -79,8 +79,8 @@ corpus never exercises: the controller mode latch and both segments, the
 PSG's READY on /WAIT, and the reset button leaving the VDP alone.
 
 The `morepork` feature adds the same trace bridge the SG-1000 carries, under
-morepork's `coleco` id; with `MOREPORK_PROFILE` set the corpus tier writes one
-trace per ROM.
+the schema's `colecovision` id; with `MOREPORK_PROFILE` set the corpus tier
+writes one trace per ROM.
 
 ## The timing model
 

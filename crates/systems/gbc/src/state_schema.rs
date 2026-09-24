@@ -87,6 +87,9 @@ static CGB_SCHEMA: LazyLock<SystemStateSchema> = LazyLock::new(|| {
 
     SystemStateSchema {
         system: "cgb",
+        isa: "sm83",
+        instruction_addr_field: "op_addr",
+        entry: Some((0x0100, 0x0101)),
         fields,
         memory,
         frame: FrameSpec {

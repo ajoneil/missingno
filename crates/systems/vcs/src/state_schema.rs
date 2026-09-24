@@ -446,6 +446,9 @@ static VCS_SCHEMA: LazyLock<SystemStateSchema> = LazyLock::new(|| {
     fields.extend(boundary_fields());
     SystemStateSchema {
         system: "vcs",
+        isa: "6502",
+        instruction_addr_field: "pc",
+        entry: None,
         fields,
         memory: memory_spans(),
         frame: frame(),

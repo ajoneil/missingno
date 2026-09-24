@@ -195,9 +195,12 @@ the same field vocabulary:
   the target console and rejects a state for the wrong ROM, wrong system, or
   wrong version.
 - **Traces** — the `MPRK` trace container: columns are the schema's fields
-  (Tier-1, or Tier-2a with the deep scope) plus a small bridge-owned observation
-  set. `crates/systems/gb/src/trace.rs` is the worked bridge; there is no
-  per-suite field catalogue.
+  (Tier-1, or Tier-2a with the deep scope) plus a small observation set —
+  `missingno-trace`'s shared `TRACE_OBSERVATIONS` (cycles, the corpus RESULT
+  block, the RAM-write tap) or a bridge's own. The header's identity comes from
+  the schema's `system`, `isa` and `instruction_addr_field`; its `entry` is the
+  diff-alignment hint. `crates/systems/gb/src/trace.rs` is the worked bridge;
+  there is no per-suite field catalogue.
 - **Recordings** — the `MPRC` recording (`recording.rs`): an initial save state
   plus a frame-indexed input trace with periodic frame-hash checkpoints.
   **Recording and deterministic replay are built entirely on the existing seam**

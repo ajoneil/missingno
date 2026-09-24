@@ -92,6 +92,9 @@ fn frame() -> FrameSpec {
 
 static COLECOVISION_SCHEMA: LazyLock<SystemStateSchema> = LazyLock::new(|| SystemStateSchema {
     system: "colecovision",
+    isa: "z80",
+    instruction_addr_field: "pc",
+    entry: None,
     fields: fields(),
     memory: memory_spans(),
     frame: frame(),

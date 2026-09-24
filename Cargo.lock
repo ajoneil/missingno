@@ -3177,8 +3177,10 @@ name = "missingno-ti-vdp"
 version = "26.10.0"
 dependencies = [
  "missingno-core",
+ "missingno-sg1000",
  "missingno-test-support",
  "missingno-ti-vdp",
+ "missingno-trace",
  "missingno-zilog-z80",
  "morepork",
  "png 0.18.1",

@@ -362,6 +362,9 @@ mod tests {
     fn schema() -> SystemStateSchema {
         SystemStateSchema {
             system: "dmg",
+            isa: "sm83",
+            instruction_addr_field: "pc",
+            entry: Some((0x0100, 0x0101)),
             fields: vec![
                 FieldDef::observable("a", FieldType::U8, "cpu"),
                 FieldDef::observable("pc", FieldType::U16, "cpu"),

@@ -319,6 +319,9 @@ static DMG_SCHEMA: LazyLock<SystemStateSchema> = LazyLock::new(|| {
     fields.extend(dmg_boundary_fields());
     SystemStateSchema {
         system: "dmg",
+        isa: "sm83",
+        instruction_addr_field: "op_addr",
+        entry: Some((0x0100, 0x0101)),
         fields,
         memory: dmg_memory_spans(),
         frame: dmg_frame(),

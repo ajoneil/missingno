@@ -196,6 +196,12 @@ pub struct SystemStateSchema {
     /// The system this schema describes (`"dmg"`, `"cgb"`). Keys a trace
     /// header and a save state's compatibility check.
     pub system: &'static str,
+    /// The instruction set the system's CPU executes (`"sm83"`, `"6502"`, `"z80"`).
+    pub isa: &'static str,
+    /// The field holding the current instruction's address.
+    pub instruction_addr_field: &'static str,
+    /// Cartridge entry address and its successor, where a trace diff aligns boot paths.
+    pub entry: Option<(u16, u16)>,
     pub fields: Vec<FieldDef>,
     pub memory: Vec<MemorySpan>,
     pub frame: FrameSpec,
@@ -449,6 +455,9 @@ mod tests {
     fn tiny_schema() -> SystemStateSchema {
         SystemStateSchema {
             system: "test",
+            isa: "sm83",
+            instruction_addr_field: "pc",
+            entry: None,
             fields: vec![
                 FieldDef::observable("a", FieldType::U8, "cpu"),
                 FieldDef::observable("pc", FieldType::U16, "cpu"),

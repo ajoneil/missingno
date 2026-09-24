@@ -98,6 +98,9 @@ fn frame() -> FrameSpec {
 
 static SG1000_SCHEMA: LazyLock<SystemStateSchema> = LazyLock::new(|| SystemStateSchema {
     system: "sg1000",
+    isa: "z80",
+    instruction_addr_field: "pc",
+    entry: None,
     fields: fields(),
     memory: memory_spans(),
     frame: frame(),

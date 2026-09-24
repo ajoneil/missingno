@@ -76,8 +76,8 @@ no test-report script for this core; run the suite directly.
 
 The `morepork` feature adds a `.morepork` trace bridge: one entry per
 instruction boundary carrying the state schema's fields, the T-states, the
-raster's line and dot, the RESULT block and the last work-RAM write, with each
-completed frame's 256×192 display area as an indexed snapshot.
+RESULT block and the last work-RAM write, with each completed frame's 256×192
+display area as an indexed snapshot.
 
 ## The timing model
 

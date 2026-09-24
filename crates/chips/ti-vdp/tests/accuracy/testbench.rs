@@ -94,7 +94,7 @@ fn run(rom: &str, budget_frames: u64, standard: Standard) -> (Board, Verdict) {
     };
     let mut cpu = Cpu::new();
     #[cfg(feature = "morepork")]
-    let mut tracer = trace::Tracer::create(rom, standard, &cpu, &board);
+    let mut tracer = trace::Tracer::create(rom, standard, &board);
 
     let tstates_per_frame = TSTATES_PER_LINE * u64::from(standard.lines_per_frame());
     let outcome = poll_verdict(budget_frames * tstates_per_frame, || {

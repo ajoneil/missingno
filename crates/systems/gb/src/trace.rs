@@ -199,16 +199,14 @@ impl Tracer {
 
         let writer = create_writer(
             path,
+            schema,
             TraceIdentity {
                 rom_sha256,
-                system: schema.system,
-                isa: "sm83",
                 model: model_label,
                 scope,
                 trigger: trigger.clone(),
                 pix_format: pix_format(schema.frame.format),
                 boot_rom,
-                instruction_addr_field: "op_addr",
                 snapshot_kinds: vec!["frame".into(), "memory".into()],
             },
             field_defs,

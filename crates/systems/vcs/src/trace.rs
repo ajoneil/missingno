@@ -127,16 +127,14 @@ impl Tracer {
 
         let writer = create_writer(
             path,
+            schema,
             TraceIdentity {
                 rom_sha256,
-                system: schema.system,
-                isa: "6502",
                 model: region.name(),
                 scope,
                 trigger,
                 pix_format: PixFormat::Indexed8,
                 boot_rom: BootRom::default(),
-                instruction_addr_field: "pc",
                 snapshot_kinds: vec!["frame".into()],
             },
             field_defs,

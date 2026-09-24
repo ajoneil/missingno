@@ -24,5 +24,8 @@ sha2 = { version = "0.11", optional = true }
 # The crate's own tests exercise the inspect surface too.
 missingno-ti-vdp = { path = ".", features = ["inspect"] }
 missingno-test-support = { path = "../../missingno/test-support" }
+# The testbench traces in the SG-1000's schema vocabulary; a dev-only cycle.
+missingno-sg1000 = { path = "../../systems/sg1000" }
+missingno-trace = { path = "../../missingno/trace" }
 missingno-zilog-z80 = { path = "../zilog-z80" }
 png = "0.18"
