@@ -228,6 +228,11 @@ impl Vcs {
         for jack in [Jack::Left, Jack::Right] {
             vcs.plug(jack, ControllerKind::Joystick);
         }
+        vcs.set_console_reset(false);
+        vcs.set_console_select(false);
+        vcs.set_color_mode(true);
+        vcs.set_difficulty(0, false);
+        vcs.set_difficulty(1, false);
         vcs
     }
 
@@ -563,5 +568,36 @@ impl Vcs {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SWCHB: u16 = 0x0282;
+
+    fn powered_on() -> Vcs {
+        let mut rom = vec![0xEA; 0x1000];
+        rom[0xFFC] = 0x00;
+        rom[0xFFD] = 0xF0;
+        Vcs::new(&rom, TvStandard::Ntsc, None, DumpFit::Exact).unwrap()
+    }
+
+    #[test]
+    fn swchb_unconnected_bits_read_high_through_the_pull_up() {
+        let mut vcs = powered_on();
+        assert_eq!(vcs.peek(SWCHB), 0x3F);
+
+        vcs.set_console_reset(true);
+        vcs.set_console_select(true);
+        vcs.set_color_mode(false);
+        vcs.set_difficulty(0, true);
+        vcs.set_difficulty(1, true);
+        assert_eq!(vcs.peek(SWCHB) & 0x34, 0x34);
+
+        vcs.set_difficulty(0, false);
+        vcs.set_difficulty(1, false);
+        assert_eq!(vcs.peek(SWCHB) & 0x34, 0x34);
     }
 }

@@ -159,11 +159,25 @@ mod tests {
     pub(super) const INPT4: u16 = 0x0C;
     pub(super) const INPT5: u16 = 0x0D;
 
-    pub(super) fn test_vcs() -> Vcs {
+    /// Runs `program` from $F000 then parks in `JMP *`; reset and IRQ both vector to $F000.
+    pub(super) fn running_vcs(program: &[u8]) -> Vcs {
+        let spin = 0xF000 + program.len() as u16;
         let mut rom = vec![0xEA; 0x1000];
-        rom[0xFFC] = 0x00;
-        rom[0xFFD] = 0xF0;
+        rom[..program.len()].copy_from_slice(program);
+        rom[program.len()..program.len() + 3].copy_from_slice(&[
+            0x4C,
+            spin as u8,
+            (spin >> 8) as u8,
+        ]);
+        for vector in [0xFFC, 0xFFE] {
+            rom[vector] = 0x00;
+            rom[vector + 1] = 0xF0;
+        }
         Vcs::new(&rom, TvStandard::Ntsc, None, DumpFit::Exact).unwrap()
+    }
+
+    pub(super) fn test_vcs() -> Vcs {
+        running_vcs(&[])
     }
 
     pub(super) fn press(vcs: &mut Vcs, jack: Jack, role: ControlRole) {

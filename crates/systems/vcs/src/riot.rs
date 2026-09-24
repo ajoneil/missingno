@@ -88,8 +88,8 @@ impl Riot {
             },
             port_b: Port {
                 output: 0,
-                // Reset/Select released, Color mode, both difficulties Beginner.
-                pins: 0x0B,
+                // The chip's pull-up holds every undriven input high.
+                pins: 0xFF,
                 ddr: 0,
             },
             pa7_flag: false,

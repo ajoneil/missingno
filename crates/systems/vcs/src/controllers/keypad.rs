@@ -72,28 +72,22 @@ mod tests {
     use crate::console::Vcs;
     use crate::controllers::ControllerKind;
     use crate::controllers::tests::{
-        INPT0, INPT1, INPT2, INPT3, INPT4, INPT5, SWACNT, SWCHA, press, release,
+        INPT0, INPT1, INPT2, INPT3, INPT4, INPT5, SWACNT, SWCHA, press, release, running_vcs,
     };
     use crate::tia::registers::VBLANK;
-    use crate::{DumpFit, TvStandard};
 
     /// A cart that points port A at the keypad rows and holds one scan pattern
     /// on them, then spins — the scan a keypad game runs before reading the TIA.
     fn scanning_vcs(ddr: u8, rows: u8) -> Vcs {
-        // LDA #ddr / STA SWACNT / LDA #rows / STA SWCHA / JMP *
+        // LDA #ddr / STA SWACNT / LDA #rows / STA SWCHA
         #[rustfmt::skip]
         let program = [
             0xA9, ddr,
             0x8D, (SWACNT & 0xFF) as u8, (SWACNT >> 8) as u8,
             0xA9, rows,
             0x8D, (SWCHA & 0xFF) as u8, (SWCHA >> 8) as u8,
-            0x4C, 0x0A, 0xF0,
         ];
-        let mut rom = vec![0xEA; 0x1000];
-        rom[..program.len()].copy_from_slice(&program);
-        rom[0xFFC] = 0x00;
-        rom[0xFFD] = 0xF0;
-        Vcs::new(&rom, TvStandard::Ntsc, None, DumpFit::Exact).unwrap()
+        running_vcs(&program)
     }
 
     /// Run the cart's scan setup to its spin, confirming port A holds it.
