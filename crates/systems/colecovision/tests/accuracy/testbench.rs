@@ -45,14 +45,13 @@ fn run(
     budget_frames: u64,
     standard: Standard,
     bios: [u8; BIOS_SIZE],
-) -> (ColecoVision, Verdict) {
+) -> (ColecoVision, Verdict, Trace) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/accuracy/roms")
         .join(rom);
     let image = std::fs::read(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
     let mut console = ColecoVision::new(&image, standard, bios).expect("a flat cartridge image");
-    #[cfg(feature = "morepork")]
-    let mut tracer = tracer(rom, standard, &image);
+    let mut trace = Trace::open(rom, standard, &image);
 
     let budget = budget_frames * u64::from(tstates_per_frame(standard));
     let outcome = poll_verdict(budget, || {
@@ -60,67 +59,103 @@ fn run(
         if !console.at_instruction_boundary() {
             return Poll::Pending;
         }
-        #[cfg(feature = "morepork")]
-        if let Some(tracer) = &mut tracer {
-            tracer.capture(&mut console).unwrap();
-            if let Some(frame) = console.take_frame() {
-                tracer.mark_frame(Some(frame)).unwrap();
-            }
-        }
+        trace.capture(&mut console);
         Poll::Read([0, 1, 2, 3].map(|offset| console.peek(RESULT_BLOCK + offset)))
     });
-    #[cfg(feature = "morepork")]
-    if let Some(mut tracer) = tracer {
-        // A corpus trace ends on a frame, even for a ROM that latches before its first.
-        let budget = 2 * tstates_per_frame(standard);
-        let mut elapsed = 0;
-        while elapsed < budget {
-            console.step_instruction();
-            elapsed += console.cpu.bus_trace().len() as u32;
-            tracer.capture(&mut console).unwrap();
-            if let Some(frame) = console.take_frame() {
-                tracer.mark_frame(Some(frame)).unwrap();
-                break;
-            }
-        }
-        tracer.finish().unwrap();
-    }
 
     match outcome {
-        Outcome::Reached(verdict) => (console, verdict),
+        Outcome::Reached(verdict) => (console, verdict, trace),
         _ => panic!("{rom}: no verdict within {budget_frames} frames"),
     }
 }
 
-/// Capture is off unless `MOREPORK_PROFILE` is set (any value).
-#[cfg(feature = "morepork")]
-fn tracer(
-    rom: &str,
-    standard: Standard,
-    image: &[u8],
-) -> Option<missingno_colecovision::trace::Tracer> {
-    use missingno_colecovision::trace::{TraceScope, Tracer, Trigger};
+/// The env-gated morepork capture: off unless the `morepork` feature is built
+/// and `MOREPORK_PROFILE` is set (any value). A corpus trace ends on a frame.
+struct Trace {
+    #[cfg(feature = "morepork")]
+    tracer: Option<missingno_colecovision::trace::Tracer>,
+}
 
-    std::env::var("MOREPORK_PROFILE").ok()?;
-    let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../receipts/traces");
-    std::fs::create_dir_all(&output_dir).unwrap();
-    let stem = Path::new(rom).file_stem().unwrap().to_string_lossy();
-    let body = match standard {
-        Standard::Ntsc => "",
-        Standard::Pal => "_pal",
-    };
-    let path = output_dir.join(format!("{stem}{body}.morepork"));
-    eprintln!("morepork: writing {}", path.display());
-    Some(
-        Tracer::create(
+impl Trace {
+    #[cfg(not(feature = "morepork"))]
+    fn open(_rom: &str, _standard: Standard, _image: &[u8]) -> Trace {
+        Trace {}
+    }
+
+    #[cfg(feature = "morepork")]
+    fn open(rom: &str, standard: Standard, image: &[u8]) -> Trace {
+        use missingno_colecovision::trace::{TraceScope, Tracer, Trigger};
+
+        if std::env::var("MOREPORK_PROFILE").is_err() {
+            return Trace { tracer: None };
+        }
+        let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../receipts/traces");
+        std::fs::create_dir_all(&output_dir).unwrap();
+        let stem = Path::new(rom).file_stem().unwrap().to_string_lossy();
+        let body = match standard {
+            Standard::Ntsc => "",
+            Standard::Pal => "_pal",
+        };
+        let path = output_dir.join(format!("{stem}{body}.morepork"));
+        eprintln!("morepork: writing {}", path.display());
+        let tracer = Tracer::create(
             &path,
             image,
             standard,
             Trigger::Instruction,
             TraceScope::Full,
         )
-        .unwrap_or_else(|e| panic!("creating {}: {e}", path.display())),
-    )
+        .unwrap_or_else(|e| panic!("creating {}: {e}", path.display()));
+        Trace {
+            tracer: Some(tracer),
+        }
+    }
+
+    /// One entry at an instruction boundary, and the frame it completed.
+    fn capture(&mut self, _console: &mut ColecoVision) {
+        #[cfg(feature = "morepork")]
+        if let Some(tracer) = &mut self.tracer {
+            tracer.capture(_console).unwrap();
+            if let Some(frame) = _console.take_frame() {
+                tracer.mark_frame(Some(frame)).unwrap();
+            }
+        }
+    }
+
+    /// Run on past the verdict to the next completed frame, bounded at two
+    /// frames — for a subject with no picture of its own to compare.
+    fn finish_on_next_frame(self, _console: &mut ColecoVision) {
+        #[cfg(feature = "morepork")]
+        if let Some(mut tracer) = self.tracer {
+            let budget = 2 * tstates_per_frame(_console.standard());
+            let mut elapsed = 0;
+            while elapsed < budget {
+                _console.step_instruction();
+                elapsed += _console.cpu.bus_trace().len() as u32;
+                tracer.capture(_console).unwrap();
+                if let Some(frame) = _console.take_frame() {
+                    tracer.mark_frame(Some(frame)).unwrap();
+                    break;
+                }
+            }
+            tracer.finish().unwrap();
+        }
+    }
+
+    /// Mark the frame a screenshot subject compares.
+    fn mark(&mut self, _frame: &Frame) {
+        #[cfg(feature = "morepork")]
+        if let Some(tracer) = &mut self.tracer {
+            tracer.mark_frame(Some(_frame)).unwrap();
+        }
+    }
+
+    fn finish(self) {
+        #[cfg(feature = "morepork")]
+        if let Some(tracer) = self.tracer {
+            tracer.finish().unwrap();
+        }
+    }
 }
 
 /// The corpus's skip: PASS magic with CODE $00 and EXPECTED $FF, the skip's
@@ -154,7 +189,8 @@ pub fn assert_pass_within(rom: &str, standard: Standard, budget_frames: u64) {
     let Some(bios) = bios(rom) else {
         return;
     };
-    let (_, verdict) = run(rom, budget_frames, standard, bios);
+    let (mut console, verdict, trace) = run(rom, budget_frames, standard, bios);
+    trace.finish_on_next_frame(&mut console);
     refuse_skip(rom, standard, &verdict);
     assert!(
         verdict.passed,
@@ -169,7 +205,8 @@ pub fn assert_bus_only(rom: &str, standard: Standard) {
     let Some(bios) = bios(rom) else {
         return;
     };
-    let (_, verdict) = run(rom, DEFAULT_BUDGET_FRAMES, standard, bios);
+    let (mut console, verdict, trace) = run(rom, DEFAULT_BUDGET_FRAMES, standard, bios);
+    trace.finish_on_next_frame(&mut console);
     assert!(
         is_skip(&verdict, BUS_ONLY),
         "{rom}: expected the SG-1000 BUS ONLY sentinel on {standard:?}, got {} code={:02X} observed={:02X} expected={:02X}",
@@ -201,7 +238,7 @@ pub fn assert_screenshot(rom: &str, standard: Standard) {
     let Some(bios) = bios(rom) else {
         return;
     };
-    let (mut console, verdict) = run(rom, DEFAULT_BUDGET_FRAMES, standard, bios);
+    let (mut console, verdict, mut trace) = run(rom, DEFAULT_BUDGET_FRAMES, standard, bios);
     refuse_skip(rom, standard, &verdict);
     assert!(
         verdict.passed,
@@ -215,6 +252,7 @@ pub fn assert_screenshot(rom: &str, standard: Standard) {
     while console.vdp().frames_completed() < captured_at {
         console.vdp_mut().tick(XTALS_PER_TSTATE);
     }
+    trace.mark(console.vdp().frame());
     let active = active_area(console.vdp().frame(), standard);
 
     if let Ok(dir) = std::env::var("COLECOVISION_DUMP_FRAMES") {
@@ -236,6 +274,7 @@ pub fn assert_screenshot(rom: &str, standard: Standard) {
         MAX_REPORTED_MISMATCHES,
         compare::debug_value,
     );
+    trace.finish();
 }
 
 /// `COLECOVISION_DUMP_FRAMES=<dir>` writes each captured display area through
