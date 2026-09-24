@@ -262,6 +262,7 @@ pub fn create_writer(
         pix_format: identity.pix_format,
         field_defs,
         instruction_addr_field: Some(schema.instruction_addr_field.into()),
+        entry_addrs: schema.entry,
         snapshot_kinds: identity.snapshot_kinds,
         notes: String::new(),
         ..Default::default()

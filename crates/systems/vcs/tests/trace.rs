@@ -89,7 +89,7 @@ fn captures_a_readable_trace_with_emergent_frames() {
     let header = store.header();
     assert_eq!(header.system, "vcs");
     assert_eq!(header.isa, "6502");
-    assert_eq!(header.system_def().id, "vcs");
+    assert_eq!(header.system_def().unwrap().id, "vcs");
     assert_eq!(header.instruction_addr_field.as_deref(), Some("pc"));
     // The columns are the schema's Tier-1 observable fields plus the two
     // bridge-owned observations, authored from the schema — not a catalogue.
