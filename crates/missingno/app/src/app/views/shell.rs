@@ -33,7 +33,11 @@ impl App {
         match &self.launch_window {
             Some(window) => Stack::new()
                 .push(content)
-                .push(launch::window(window, &self.firmware))
+                .push(launch::window(
+                    window,
+                    &self.firmware,
+                    &self.settings.firmware,
+                ))
                 .into(),
             None => content,
         }

@@ -16,7 +16,7 @@ use missingno_core::firmware::{FirmwareValue, firmware_slots};
 use missingno_core::launch::{LaunchOptionDescriptor, LaunchValues};
 use missingno_debugger::http;
 use missingno_session::factory::{self, CoreFactory, LoadError};
-use missingno_session::{FirmwareLibrary, SharedSession};
+use missingno_session::{FirmwareDefaults, FirmwareLibrary, SharedSession};
 
 /// Matches the GUI crate's headless server default.
 const DEFAULT_PORT: u16 = 3333;
@@ -224,23 +224,27 @@ fn run() -> Result<(), String> {
         &factory::firmware_slots(),
     );
 
-    let console =
-        factory::create_console_with(&rom_path, &rom, &launch, &firmware).map_err(|error| {
-            match error {
-                LoadError::UnrecognizedMedia => format!(
-                    "no core recognises {} — name its console with --system",
-                    rom_path.display()
-                ),
-                // Size-detection is what fails on a bankswitched VCS image, and
-                // the message alone does not say the board can be supplied.
-                error @ LoadError::Core(_) if args.cart_type.is_none() => {
-                    format!(
-                        "{error} — if this is a bankswitched cart, name its board with --cart-type"
-                    )
-                }
-                error => error.to_string(),
+    let console = factory::create_console_with(
+        &rom_path,
+        &rom,
+        &launch,
+        &firmware,
+        &FirmwareDefaults::default(),
+    )
+    .map_err(|error| {
+        match error {
+            LoadError::UnrecognizedMedia => format!(
+                "no core recognises {} — name its console with --system",
+                rom_path.display()
+            ),
+            // Size-detection is what fails on a bankswitched VCS image, and
+            // the message alone does not say the board can be supplied.
+            error @ LoadError::Core(_) if args.cart_type.is_none() => {
+                format!("{error} — if this is a bankswitched cart, name its board with --cart-type")
             }
-        })?;
+            error => error.to_string(),
+        }
+    })?;
     let debugger = console.into_debugger();
     let session = SharedSession::spawn(debugger);
 

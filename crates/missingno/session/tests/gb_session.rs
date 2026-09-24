@@ -104,6 +104,7 @@ fn the_cgb_runner_takes_a_dmg_cartridge_on_the_colour_core() {
         &minimal_rom(),
         &launch,
         &no_firmware(),
+        &missingno_session::FirmwareDefaults::default(),
     )
     .expect("a DMG cartridge runs on a Game Boy Color");
     assert!(matches!(
@@ -119,9 +120,13 @@ fn the_cgb_runner_takes_a_dmg_cartridge_on_the_colour_core() {
 fn the_dmg_runner_refuses_a_cgb_only_cartridge() {
     let mut launch = LaunchValues::default();
     launch.set_choice("runner", "dmg");
-    let Err(error) =
-        factory::create_console_with(Path::new("test.gbc"), &cgb_rom(), &launch, &no_firmware())
-    else {
+    let Err(error) = factory::create_console_with(
+        Path::new("test.gbc"),
+        &cgb_rom(),
+        &launch,
+        &no_firmware(),
+        &missingno_session::FirmwareDefaults::default(),
+    ) else {
         panic!("a CGB-only cartridge runs on no DMG");
     };
     assert!(matches!(error, LoadError::IncompatibleOption { .. }));
@@ -136,6 +141,7 @@ fn a_boot_rom_image_of_no_known_length_is_refused() {
         &minimal_rom(),
         &launch,
         &no_firmware(),
+        &missingno_session::FirmwareDefaults::default(),
     ) else {
         panic!("no boot ROM is 128 bytes long");
     };

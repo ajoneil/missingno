@@ -140,11 +140,12 @@ pub(in crate::app) fn handle(
                 *listening_for = None;
             }
         }
-        super::view::Message::SetFirmwareDefault { slot, image } => {
-            match image {
-                Some(image) => app.settings.firmware.insert(slot, image),
-                None => app.settings.firmware.remove(&slot),
-            };
+        super::view::Message::SetFirmwareDefault {
+            slot,
+            standard,
+            image,
+        } => {
+            app.settings.firmware.set(&slot, standard, image);
             app.settings.save();
         }
         super::view::Message::OpenFirmwareFolder => {

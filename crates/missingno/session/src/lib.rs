@@ -32,7 +32,9 @@ pub mod tools;
 #[cfg(all(unix, feature = "tools"))]
 pub use attach::{AttachClient, AttachEndpoint, Publication, SessionInfo};
 
-pub use firmware::{FirmwareLibrary, FirmwareRefusal, PresentImage};
+pub use firmware::{
+    FirmwareDefault, FirmwareDefaults, FirmwareLibrary, FirmwareRefusal, PresentImage,
+};
 pub use session::{DisasmLine, Session, StopReason};
 pub use shared::{
     AudioSink, ControlSurfaces, ExtractedMachine, MemoryInterest, PluggedPort, RunningReadout,

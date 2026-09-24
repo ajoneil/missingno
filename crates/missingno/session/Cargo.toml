@@ -44,8 +44,12 @@ missingno-nes = { path = "../../systems/nes", optional = true }
 missingno-sms = { path = "../../systems/sms", optional = true }
 missingno-sg1000 = { path = "../../systems/sg1000", optional = true }
 missingno-colecovision = { path = "../../systems/colecovision", optional = true }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 png = { version = "0.18", optional = true }
+
+[dev-dependencies]
+ron = "0.12"
 
 [target.'cfg(unix)'.dependencies]
 # uid-scoping the attach runtime directory when XDG does not name one.

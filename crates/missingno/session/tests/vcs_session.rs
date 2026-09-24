@@ -69,6 +69,7 @@ fn a_board_no_cartridge_answers_to_is_refused() {
         &minimal_rom(),
         &launch,
         &no_firmware(),
+        &missingno_session::FirmwareDefaults::default(),
     ) else {
         panic!("no board is catalogued as F9");
     };
@@ -84,6 +85,7 @@ fn a_stated_standard_is_the_one_the_console_decodes_for() {
         &minimal_rom(),
         &launch,
         &no_firmware(),
+        &missingno_session::FirmwareDefaults::default(),
     )
     .expect("vcs factory should claim an .a26 ROM");
     assert!(matches!(

@@ -232,12 +232,11 @@ impl App {
         self.firmware = scan_firmware();
     }
 
-    /// Everything that fills a launch option besides the user.
+    /// Everything that fills a launch option besides the user and the firmware
+    /// folder.
     fn launch_sources(&self) -> launch::LaunchSources<'_> {
         launch::LaunchSources {
             catalogue: &self.catalogue,
-            firmware: &self.firmware,
-            defaults: &self.settings.firmware,
             cli_firmware: self.cli_firmware.as_ref(),
         }
     }

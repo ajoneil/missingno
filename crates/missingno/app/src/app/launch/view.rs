@@ -14,8 +14,11 @@ use missingno_core::cartridge::{
     AttributeKind, AttributeSpec, AttributeValue, BoardSpec, BoardValue,
 };
 use missingno_core::firmware::{FirmwareNeed, FirmwareSlot, FirmwareValue};
-use missingno_core::launch::{LaunchOptionDescriptor, LaunchOptionKind, LaunchValue, LaunchValues};
-use missingno_session::FirmwareLibrary;
+use missingno_core::launch::{
+    LaunchOptionDescriptor, LaunchOptionKind, LaunchValue, LaunchValues, TV_STANDARD,
+};
+use missingno_core::tv::TvStandard;
+use missingno_session::{FirmwareDefaults, FirmwareLibrary};
 
 use super::{Edit, EditSurface, Facts, Message, Window};
 use crate::app;
@@ -41,12 +44,14 @@ const MAX_PANEL_HEIGHT: f32 = 640.0;
 
 /// Everything one launch panel's rows read: the options a family publishes,
 /// the user's own word on them, what fills the rest, the firmware folder a
-/// socket's images are offered from, and where an edit lands.
+/// socket's images are offered from and the defaults it is picked by, and where
+/// an edit lands.
 pub struct PanelData<'a> {
     pub descriptors: Vec<LaunchOptionDescriptor>,
     pub overrides: LaunchValues,
     pub facts: Facts,
     pub firmware: &'a FirmwareLibrary,
+    pub defaults: &'a FirmwareDefaults,
     pub surface: EditSurface,
 }
 
@@ -507,21 +512,17 @@ fn firmware_control(
 ) -> Element<'static, app::Message> {
     let leading = firmware::Entry {
         choice: firmware::Choice::Automatic,
-        label: automatic_label(id, data, |value| match value {
-            LaunchValue::Firmware(FirmwareValue::None) => Some(firmware::NO_IMAGE.to_string()),
-            LaunchValue::Firmware(FirmwareValue::Image(image)) => slot
-                .image(image)
-                .map(|image| image.label.to_string())
-                .or_else(|| Some(image.clone())),
+        label: match data.facts.get(id) {
             // Bytes supplied outright — the command line's — named if the
             // socket knows their contents.
-            LaunchValue::Firmware(FirmwareValue::Bytes(bytes)) => Some(
+            Some(LaunchValue::Firmware(FirmwareValue::Bytes(bytes))) => format!(
+                "Automatic ({})",
                 slot.identify(bytes)
-                    .map(|image| image.label.to_string())
-                    .unwrap_or_else(|| "this run's file".to_string()),
+                    .map(|image| image.label)
+                    .unwrap_or("this run's file")
             ),
-            _ => None,
-        }),
+            _ => automatic_firmware_label(id, slot, data),
+        },
     };
 
     let chosen = data.overrides.firmware(id);
@@ -542,7 +543,7 @@ fn firmware_control(
     }
 
     let surface = data.surface;
-    pick_list(entries, Some(selected), move |entry| {
+    let control = pick_list(entries, Some(selected), move |entry| {
         let chosen = match entry.choice {
             firmware::Choice::Automatic => None,
             firmware::Choice::Empty => Some(FirmwareValue::None),
@@ -550,13 +551,48 @@ fn firmware_control(
         };
         Message::Set(surface, Edit::Firmware(id, chosen)).into()
     })
-    .width(CONTROL_WIDTH)
-    .into()
+    .width(CONTROL_WIDTH);
+
+    if slot.need == FirmwareNeed::Required && data.firmware.present(slot).is_empty() {
+        column![
+            control,
+            app_text::detail(format!(
+                "No {} found in {}",
+                slot.label,
+                data.firmware.dir().display()
+            ))
+            .color(MUTED),
+            buttons::standard("Open folder")
+                .on_press(app::settings::view::Message::OpenFirmwareFolder.into()),
+        ]
+        .spacing(s())
+        .into()
+    } else {
+        control.into()
+    }
+}
+
+/// What fills a socket nobody chose for: the folder's pick for the standard
+/// this launch runs, by the defaults the settings keep.
+fn automatic_firmware_label(id: &str, slot: &FirmwareSlot, data: &PanelData<'_>) -> String {
+    let standard = super::resolve(&data.descriptors, &data.overrides, &data.facts)
+        .choice(TV_STANDARD)
+        .and_then(TvStandard::from_name);
+    let default = data.defaults.image_for(id, standard);
+    match (data.firmware.automatic(slot, default, standard), slot.need) {
+        (Some(present), _) => format!("Automatic ({})", present.image.label),
+        (None, FirmwareNeed::Optional) => format!("Automatic ({})", firmware::NO_IMAGE),
+        (None, FirmwareNeed::Required) => "Automatic".to_string(),
+    }
 }
 
 /// The launch window: what is about to boot, the options it will boot with, and
 /// the one keystroke that starts it.
-pub fn window(state: &Window, firmware: &FirmwareLibrary) -> Element<'static, app::Message> {
+pub fn window(
+    state: &Window,
+    firmware: &FirmwareLibrary,
+    defaults: &FirmwareDefaults,
+) -> Element<'static, app::Message> {
     let mut heading = column![app_text::heading(state.title.clone())].spacing(4);
     if let Some(platform) = state.platform {
         heading = heading.push(app_text::detail(platform.name()).color(MUTED));
@@ -591,6 +627,7 @@ pub fn window(state: &Window, firmware: &FirmwareLibrary) -> Element<'static, ap
             overrides: state.overrides.clone(),
             facts: state.facts.clone(),
             firmware,
+            defaults,
             surface: EditSurface::Window,
         }));
     }

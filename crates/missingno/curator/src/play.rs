@@ -88,9 +88,14 @@ pub fn start(
     }
     launch.set_toggle(missingno_vcs::debug::OVERDUMP, overdump);
     let firmware = missingno_session::FirmwareLibrary::scan_default();
-    let mut console =
-        factory::create_console_with(std::path::Path::new(filename_hint), rom, &launch, &firmware)
-            .map_err(|error| format!("core rejected ROM: {error}"))?;
+    let mut console = factory::create_console_with(
+        std::path::Path::new(filename_hint),
+        rom,
+        &launch,
+        &firmware,
+        &missingno_session::FirmwareDefaults::default(),
+    )
+    .map_err(|error| format!("core rejected ROM: {error}"))?;
     // Knob and key input reach nothing until the peripheral is in the jack, and
     // a paddle trigger lands on the direction line it shares on real hardware.
     let mut plugged = [missingno_vcs::debug::JOYSTICK; 2];

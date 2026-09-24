@@ -4,6 +4,7 @@
 
 use missingno_core::firmware::{FirmwareImage, FirmwareNeed, FirmwareSlot, FirmwareValue};
 use missingno_core::launch::{LaunchOptionDescriptor, LaunchOptionKind, LaunchValues};
+use missingno_core::tv::TvStandard;
 
 pub const BIOS: &str = "colecovision-bios";
 
@@ -19,11 +20,20 @@ pub const fn bios_slot() -> FirmwareSlot {
     }
 }
 
-const IMAGES: &[FirmwareImage] = &[FirmwareImage::official(
-    "ntsc",
-    "ColecoVision (1982)",
-    "990bf1956f10207d8781b619eb74f89b00d921c8d45c95c334c16c8cceca09ad",
-)];
+const IMAGES: &[FirmwareImage] = &[
+    FirmwareImage::official(
+        "ntsc",
+        "ColecoVision NTSC (1982)",
+        "990bf1956f10207d8781b619eb74f89b00d921c8d45c95c334c16c8cceca09ad",
+    )
+    .cut_for(TvStandard::Ntsc),
+    FirmwareImage::official(
+        "pal",
+        "ColecoVision PAL (1983)",
+        "fb4a898eb93b19b36773d87a6c70eb28f981b2686bebdd2d431b05dcdf9cffd4",
+    )
+    .cut_for(TvStandard::Pal),
+];
 
 /// The BIOS socket as a launch option, named by the slot itself.
 pub fn bios_option() -> LaunchOptionDescriptor {
@@ -59,6 +69,11 @@ mod tests {
     #[test]
     fn every_image_is_named_once_and_states_its_hash() {
         bios_slot().check_well_formed();
+    }
+
+    #[test]
+    fn the_bios_is_cut_for_ntsc_then_pal() {
+        assert_eq!(bios_slot().standards(), [TvStandard::Ntsc, TvStandard::Pal]);
     }
 
     #[test]

@@ -118,7 +118,7 @@ fn start(app: &mut App, request: Request<'_>) -> Result<String, String> {
     // Every firmware choice becomes the bytes the core reads, or a refusal
     // naming what the folder is missing.
     app.firmware
-        .supply(&descriptors, &mut values)
+        .supply(&descriptors, &mut values, &app.settings.firmware)
         .map_err(|refusal| refusal.to_string())?;
     // The values name the console this launch is for, in the vocabulary a
     // factory reads: media whose extension names none is still settled here.

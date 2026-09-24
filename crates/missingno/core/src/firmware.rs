@@ -7,6 +7,7 @@
 //! the SHA-256 of an image rather than the name someone saved it under.
 
 use crate::launch::{LaunchOptionDescriptor, LaunchOptionKind};
+use crate::tv::TvStandard;
 
 /// One firmware image a core knows by content.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,6 +17,9 @@ pub struct FirmwareImage {
     /// 64 lower-hex characters.
     pub sha256: &'static str,
     pub origin: FirmwareOrigin,
+    /// The standard the console this was dumped from was cut for, where the
+    /// firmware differs by it.
+    pub standard: Option<TvStandard>,
 }
 
 impl FirmwareImage {
@@ -26,6 +30,7 @@ impl FirmwareImage {
             label,
             sha256,
             origin: FirmwareOrigin::Official,
+            standard: None,
         }
     }
 
@@ -41,6 +46,15 @@ impl FirmwareImage {
             label,
             sha256,
             origin: FirmwareOrigin::Open { project },
+            standard: None,
+        }
+    }
+
+    /// This image, as the one cut for `standard`.
+    pub const fn cut_for(self, standard: TvStandard) -> Self {
+        FirmwareImage {
+            standard: Some(standard),
+            ..self
         }
     }
 }
@@ -90,6 +104,18 @@ impl FirmwareSlot {
     /// The image this slot lists under `id`.
     pub fn image(&self, id: &str) -> Option<&'static FirmwareImage> {
         self.images.iter().find(|image| image.id == id)
+    }
+
+    /// The standards this slot's images are cut for, each once, in declared
+    /// order. Empty for a slot whose firmware does not vary by standard.
+    pub fn standards(&self) -> Vec<TvStandard> {
+        let mut standards = Vec::new();
+        for standard in self.images.iter().filter_map(|image| image.standard) {
+            if !standards.contains(&standard) {
+                standards.push(standard);
+            }
+        }
+        standards
     }
 
     /// The image `bytes` are, if this slot lists one with that content.
@@ -193,6 +219,30 @@ mod tests {
     #[test]
     fn a_well_formed_slot_passes_its_own_check() {
         SLOT.check_well_formed();
+    }
+
+    #[test]
+    fn an_image_cut_for_a_standard_records_it() {
+        let image = IMAGES[0].cut_for(TvStandard::Pal);
+        assert_eq!(image.standard, Some(TvStandard::Pal));
+        assert_eq!(image.id, "ones");
+        assert_eq!(IMAGES[0].standard, None);
+    }
+
+    #[test]
+    fn a_slot_lists_each_standard_once_in_declared_order() {
+        const CUT: &[FirmwareImage] = &[
+            FirmwareImage::official("a", "A", "").cut_for(TvStandard::Pal),
+            FirmwareImage::official("b", "B", "").cut_for(TvStandard::Ntsc),
+            FirmwareImage::official("c", "C", "").cut_for(TvStandard::Pal),
+            FirmwareImage::official("d", "D", ""),
+        ];
+        let cut = FirmwareSlot {
+            images: CUT,
+            ..SLOT
+        };
+        assert_eq!(cut.standards(), [TvStandard::Pal, TvStandard::Ntsc]);
+        assert!(SLOT.standards().is_empty());
     }
 
     #[test]

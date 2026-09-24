@@ -10,6 +10,7 @@ use iced::{
 use missingno_core::firmware::{FirmwareNeed, FirmwareSlot};
 use missingno_core::ports::{ControlKind, PeripheralDescriptor, PeripheralId, Provider};
 use missingno_core::system::ControlRole;
+use missingno_core::tv::TvStandard;
 use missingno_core::video::DisplayTechnology;
 use missingno_gb::ppu::types::palette::{PaletteChoice, PaletteIndex};
 use missingno_session::FirmwareLibrary;
@@ -92,10 +93,12 @@ pub enum Message {
     SetAllowExternalClients(bool),
     SetAllowUiAutomation(bool),
     SelectControlsPage(ControlsPage),
-    /// The image a firmware socket takes when nobody chooses; `None` leaves it
-    /// to the core.
+    /// The image a firmware socket takes when nobody chooses, for launches of
+    /// `standard` where its images are cut by one; `None` leaves it to the
+    /// automatic pick.
     SetFirmwareDefault {
         slot: String,
+        standard: Option<TvStandard>,
         image: Option<String>,
     },
     OpenFirmwareFolder,
@@ -880,7 +883,9 @@ fn firmware_section<'a>(
         };
         let mut group = column![app_text::label(platform.name())].spacing(m());
         for slot in (family.firmware)() {
-            group = group.push(slot_row(&slot, settings, firmware));
+            for standard in slot_standards(&slot) {
+                group = group.push(slot_row(&slot, standard, settings, firmware));
+            }
         }
         content = content.push(horizontal_rule()).push(group);
     }
@@ -892,16 +897,46 @@ fn firmware_section<'a>(
         .into()
 }
 
-/// One socket: its label beside the image it takes when nobody chooses.
+/// The rows a socket takes: one per standard its images are cut for, else one.
+fn slot_standards(slot: &FirmwareSlot) -> Vec<Option<TvStandard>> {
+    match slot.standards() {
+        standards if standards.is_empty() => vec![None],
+        standards => standards.into_iter().map(Some).collect(),
+    }
+}
+
+/// A socket row's label: the socket's own, or the standard its launches run.
+fn slot_row_label(slot: &FirmwareSlot, standard: Option<TvStandard>) -> String {
+    match standard {
+        Some(standard) => format!("{} for {} games", slot.label, standard.display_name()),
+        None => slot.label.to_string(),
+    }
+}
+
+/// A socket row's automation id.
+fn slot_row_id(slot: &FirmwareSlot, standard: Option<TvStandard>) -> String {
+    match standard {
+        Some(standard) => automation::ids::firmware_slot(&format!(
+            "{}_{}",
+            slot_id_name(slot.id),
+            standard.name()
+        )),
+        None => automation::ids::firmware_slot(&slot_id_name(slot.id)),
+    }
+}
+
+/// One socket, for launches of one standard where its images are cut by one:
+/// its label beside the image it takes when nobody chooses.
 fn slot_row(
     slot: &FirmwareSlot,
+    standard: Option<TvStandard>,
     settings: &super::Settings,
     firmware: &FirmwareLibrary,
 ) -> Element<'static, app::Message> {
-    let saved = settings.firmware.get(slot.id).map(String::as_str);
+    let saved = settings.firmware.image_for(slot.id, standard);
     let leading = firmware_ui::Entry {
         choice: firmware_ui::Choice::Automatic,
-        label: match (slot.need, firmware.automatic(slot, None)) {
+        label: match (slot.need, firmware.automatic(slot, None, standard)) {
             (FirmwareNeed::Optional, _) => firmware_ui::NO_IMAGE.to_string(),
             (FirmwareNeed::Required, Some(present)) => {
                 format!("Automatic ({})", present.image.label)
@@ -915,6 +950,7 @@ fn slot_row(
     let control = pick_list(entries, Some(selected), move |entry| {
         Message::SetFirmwareDefault {
             slot: id.clone(),
+            standard,
             image: match entry.choice {
                 firmware_ui::Choice::Image(image) => Some(image),
                 _ => None,
@@ -925,11 +961,8 @@ fn slot_row(
     .width(FIRMWARE_WIDTH);
 
     row![
-        container(app_text::label(slot.label)).width(ROW_LABEL_WIDTH),
-        automation::tag(
-            &automation::ids::firmware_slot(&slot_id_name(slot.id)),
-            control
-        ),
+        container(app_text::label(slot_row_label(slot, standard))).width(ROW_LABEL_WIDTH),
+        automation::tag(&slot_row_id(slot, standard), control),
     ]
     .spacing(m())
     .align_y(Center)
@@ -957,12 +990,14 @@ pub(in crate::app) fn firmware_elements() -> Vec<PressableElement> {
 
     for family in firmware_platforms().into_iter().filter_map(family_of) {
         for slot in (family.firmware)() {
-            elements.push(PressableElement {
-                id: automation::ids::firmware_slot(&slot_id_name(slot.id)),
-                label: format!("Choose the {} image", slot.label),
-                toggle: false,
-                message: None,
-            });
+            for standard in slot_standards(&slot) {
+                elements.push(PressableElement {
+                    id: slot_row_id(&slot, standard),
+                    label: format!("Choose the {} image", slot_row_label(&slot, standard)),
+                    toggle: false,
+                    message: None,
+                });
+            }
         }
     }
 

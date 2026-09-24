@@ -11,10 +11,9 @@ use std::path::PathBuf;
 
 use iced::Task;
 use missingno_core::cartridge::BoardValue;
-use missingno_core::firmware::{FirmwareValue, firmware_slots};
+use missingno_core::firmware::FirmwareValue;
 use missingno_core::launch::{LaunchOptionDescriptor, LaunchValue, LaunchValues, TV_STANDARD};
 use missingno_gamedb::{Enhancement, Peripheral};
-use missingno_session::FirmwareLibrary;
 
 use crate::app::library::catalogue::{Catalogue, CatalogueRelease};
 use crate::app::system::{self, FamilyDescriptor, Platform};
@@ -48,14 +47,10 @@ fn rendered(descriptor: &LaunchOptionDescriptor) -> bool {
     !UNRENDERED_OPTIONS.contains(&descriptor.id)
 }
 
-/// Everything that fills a launch option besides the user: the game database,
-/// the firmware folder, the defaults the settings keep for its sockets, and the
-/// image this run was started with.
+/// Everything that fills a launch option besides the user and the firmware
+/// folder: the game database and the image this run was started with.
 pub struct LaunchSources<'a> {
     pub catalogue: &'a Catalogue,
-    pub firmware: &'a FirmwareLibrary,
-    /// The image each socket takes when nobody chooses, keyed by socket id.
-    pub defaults: &'a BTreeMap<String, String>,
     /// The socket the command line's own image fills, and the image.
     pub cli_firmware: Option<&'a (&'static str, FirmwareValue)>,
 }
@@ -71,21 +66,14 @@ pub fn plan(
     sources: &LaunchSources<'_>,
 ) -> (Vec<LaunchOptionDescriptor>, Facts) {
     let descriptors = (family.options)(rom, overrides);
-    let facts = facts(family, rom, &descriptors, sha1, sources);
+    let facts = facts(family, rom, sha1, sources);
     (descriptors, facts)
 }
 
 /// What the catalogue and the media itself state about a dump, ahead of any
 /// word from the user: the game database's facts about this hash, the header's
-/// own, the firmware folder's answer to each socket, and the image this run was
-/// started with.
-fn facts(
-    family: &FamilyDescriptor,
-    rom: &[u8],
-    descriptors: &[LaunchOptionDescriptor],
-    sha1: &str,
-    sources: &LaunchSources<'_>,
-) -> Facts {
+/// own, and the image this run was started with.
+fn facts(family: &FamilyDescriptor, rom: &[u8], sha1: &str, sources: &LaunchSources<'_>) -> Facts {
     let mut facts = Facts::default();
 
     for stated in (family.stated_by_media)(rom) {
@@ -102,17 +90,6 @@ fn facts(
         );
     }
 
-    for slot in firmware_slots(descriptors) {
-        let chosen = sources.defaults.get(slot.id).map(String::as_str);
-        if let Some(present) = sources.firmware.automatic(slot, chosen) {
-            facts.set(
-                slot.id,
-                LaunchValue::Firmware(FirmwareValue::Image(present.image.id.to_owned())),
-            );
-        }
-    }
-
-    // The image the run was started with outranks the folder's own answer.
     if let Some((slot, image)) = sources.cli_firmware {
         facts.set(slot, LaunchValue::Firmware(image.clone()));
     }
@@ -501,6 +478,7 @@ pub(in crate::app) fn game_settings<'a>(
         facts,
         overrides,
         firmware: &app.firmware,
+        defaults: &app.settings.firmware,
         surface: EditSurface::GameSettings,
     })
 }
@@ -508,123 +486,9 @@ pub(in crate::app) fn game_settings<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use missingno_core::firmware::{FirmwareImage, FirmwareNeed, FirmwareSlot, sha256_hex};
     use missingno_core::launch::{LaunchChoice, LaunchOptionKind};
     use missingno_gb::firmware::DMG_BOOT_ROM;
     use missingno_gbc::firmware::CGB_BOOT_ROM;
-
-    /// A socket over one synthetic image, hashed from the bytes the tests write
-    /// — no dump is needed to exercise the folder.
-    const TEST_SOCKET: &str = "test-boot-rom";
-
-    fn socket_image() -> Vec<u8> {
-        vec![0x31, 0xFE, 0xFF, 0xAF]
-    }
-
-    fn test_socket() -> FirmwareSlot {
-        FirmwareSlot {
-            id: TEST_SOCKET,
-            label: "Test boot ROM",
-            need: FirmwareNeed::Optional,
-            size: 4,
-            images: Box::leak(Box::new([FirmwareImage::official(
-                "first",
-                "First",
-                sha256_hex(&socket_image()).leak(),
-            )])),
-        }
-    }
-
-    /// A family publishing that socket and nothing else.
-    fn socket_family() -> FamilyDescriptor {
-        FamilyDescriptor {
-            platform: Platform::GameBoy,
-            extensions: &[],
-            controls: system::ControlMap::new(&[], &[], &[]),
-            is_rom: |_, _| false,
-            title_from_rom: |_| None,
-            create_console: |_| Err("no console in a test".to_string()),
-            options: |_, _| {
-                vec![LaunchOptionDescriptor {
-                    id: TEST_SOCKET,
-                    label: "Test boot ROM",
-                    kind: LaunchOptionKind::Firmware {
-                        slot: test_socket(),
-                    },
-                }]
-            },
-            stated_by_media: |_| Vec::new(),
-            firmware: || vec![test_socket()],
-            port_config: |_| Vec::new(),
-            trace: None,
-        }
-    }
-
-    /// A firmware folder holding the synthetic image under an arbitrary name.
-    fn stocked_library(name: &str) -> FirmwareLibrary {
-        let dir = std::env::temp_dir().join(format!(
-            "missingno-launch-firmware-{name}-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("a temporary firmware folder");
-        std::fs::write(dir.join("anything.bin"), socket_image()).expect("the image written");
-        FirmwareLibrary::scan(dir, &[test_socket()])
-    }
-
-    fn socket_facts(library: &FirmwareLibrary, defaults: &BTreeMap<String, String>) -> Facts {
-        let catalogue = Catalogue::load();
-        let sources = LaunchSources {
-            catalogue: &catalogue,
-            firmware: library,
-            defaults,
-            cli_firmware: None,
-        };
-        plan(
-            &socket_family(),
-            &[],
-            &LaunchValues::default(),
-            "",
-            &sources,
-        )
-        .1
-    }
-
-    #[test]
-    fn a_settings_default_fills_a_firmware_socket() {
-        let library = stocked_library("default");
-        let defaults = BTreeMap::from([(TEST_SOCKET.to_string(), "first".to_string())]);
-        assert_eq!(
-            socket_facts(&library, &defaults).get(TEST_SOCKET),
-            Some(&LaunchValue::Firmware(FirmwareValue::Image(
-                "first".to_string()
-            )))
-        );
-    }
-
-    #[test]
-    fn an_optional_socket_with_no_default_is_left_empty() {
-        let library = stocked_library("no-default");
-        assert_eq!(
-            socket_facts(&library, &BTreeMap::new()).get(TEST_SOCKET),
-            None
-        );
-    }
-
-    #[test]
-    fn the_users_own_word_on_a_socket_wins_over_the_default() {
-        let library = stocked_library("override");
-        let defaults = BTreeMap::from([(TEST_SOCKET.to_string(), "first".to_string())]);
-        let facts = socket_facts(&library, &defaults);
-
-        let mut overrides = LaunchValues::default();
-        overrides.set_firmware(TEST_SOCKET, FirmwareValue::None);
-        let descriptors = (socket_family().options)(&[], &LaunchValues::default());
-        assert_eq!(
-            resolve(&descriptors, &overrides, &facts).firmware(TEST_SOCKET),
-            Some(&FirmwareValue::None)
-        );
-    }
 
     fn descriptors() -> Vec<LaunchOptionDescriptor> {
         vec![

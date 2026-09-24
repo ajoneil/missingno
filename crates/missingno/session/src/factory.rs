@@ -14,7 +14,7 @@ use missingno_core::firmware::FirmwareSlot;
 use missingno_core::launch::{LaunchOptionDescriptor, LaunchValues};
 use missingno_core::system::SystemConsole;
 
-use crate::firmware::{FirmwareLibrary, FirmwareRefusal};
+use crate::firmware::{FirmwareDefaults, FirmwareLibrary, FirmwareRefusal};
 
 /// Whether a path and its contents are this core's media.
 type IsRom = fn(&Path, &[u8]) -> bool;
@@ -455,11 +455,13 @@ pub fn create_console(path: &Path, rom: &[u8]) -> Result<Box<dyn SystemConsole>,
         rom,
         &LaunchValues::default(),
         &FirmwareLibrary::scan_default(),
+        &FirmwareDefaults::default(),
     )
 }
 
 /// Build a console from the launch values a loader collected, with every
-/// firmware image the values name resolved out of `firmware` first. A stated
+/// firmware image the values name resolved out of `firmware` first, and every
+/// socket they leave unnamed filled from `defaults` and the folder. A stated
 /// [`SYSTEM`] settles which core builds it; otherwise recognition is unaffected
 /// by them.
 pub fn create_console_with(
@@ -467,6 +469,7 @@ pub fn create_console_with(
     rom: &[u8],
     launch: &LaunchValues,
     firmware: &FirmwareLibrary,
+    defaults: &FirmwareDefaults,
 ) -> Result<Box<dyn SystemConsole>, LoadError> {
     let factory = match launch.choice(SYSTEM) {
         Some(stated) => {
@@ -476,7 +479,7 @@ pub fn create_console_with(
     };
     let mut values = launch.clone();
     firmware
-        .supply(&(factory.options)(rom, launch), &mut values)
+        .supply(&(factory.options)(rom, launch), &mut values, defaults)
         .map_err(LoadError::Firmware)?;
     (factory.create)(path, rom, &values)
 }

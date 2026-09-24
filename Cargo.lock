@@ -3123,7 +3123,9 @@ dependencies = [
  "missingno-sms",
  "missingno-vcs",
  "png 0.18.1",
+ "ron",
  "rtrb",
+ "serde",
  "serde_json",
  "sha2",
 ]

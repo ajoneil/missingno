@@ -2,7 +2,7 @@ pub(crate) mod update;
 pub(crate) mod view;
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     fmt, fs,
     hash::Hash,
     path::PathBuf,
@@ -14,6 +14,7 @@ use missingno_core::ports::{
 };
 use missingno_core::system::ControlRole;
 use missingno_gb::ppu::types::palette::PaletteChoice;
+use missingno_session::FirmwareDefaults;
 use serde::{Deserialize, Serialize};
 
 use crate::app::library::activity::{parse_palette_choice, variant_name};
@@ -659,9 +660,9 @@ struct SettingsFile<C = ControlsSettings> {
     #[serde(default)]
     allow_ui_automation: bool,
     /// The image a firmware socket takes when nobody chooses, keyed by socket
-    /// id. An absent socket is left to the core's own answer.
+    /// id. An absent socket is left to the automatic pick.
     #[serde(default)]
-    firmware: BTreeMap<String, String>,
+    firmware: FirmwareDefaults,
     #[serde(default)]
     library_sort: crate::app::library::store::SortKey,
     #[serde(default)]
@@ -690,7 +691,7 @@ impl<C: Default> Default for SettingsFile<C> {
             cartridge_rw_enabled: true,
             allow_external_clients: false,
             allow_ui_automation: false,
-            firmware: BTreeMap::new(),
+            firmware: FirmwareDefaults::default(),
             library_sort: SortKey::default(),
             library_layout: LibraryLayout::default(),
             window_width: None,
@@ -752,7 +753,7 @@ pub struct Settings {
     /// processes (an agent enumerating and driving the app).
     pub allow_ui_automation: bool,
     /// The default image for each firmware socket, keyed by socket id.
-    pub firmware: BTreeMap<String, String>,
+    pub firmware: FirmwareDefaults,
     pub library_sort: SortKey,
     pub library_layout: LibraryLayout,
     pub window_width: Option<f32>,
@@ -776,7 +777,7 @@ impl Default for Settings {
             cartridge_rw_enabled: true,
             allow_external_clients: false,
             allow_ui_automation: false,
-            firmware: BTreeMap::new(),
+            firmware: FirmwareDefaults::default(),
             library_sort: SortKey::default(),
             library_layout: LibraryLayout::default(),
             window_width: None,
@@ -886,6 +887,7 @@ fn settings_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use missingno_core::tv::TvStandard;
     use missingno_vcs::debug::{JOYSTICK, KEYPAD, LEFT_PORT, PADDLES, RIGHT_PORT};
 
     fn controller_slot(peripheral: PeripheralId, role: ControlRole) -> ControlSlot {
@@ -1455,16 +1457,32 @@ mod tests {
     fn firmware_defaults_round_trip() {
         let chosen = r#"( firmware: {"dmg-boot-rom": "mgb"} )"#;
         let file: SettingsFile = ron::from_str(chosen).unwrap();
-        assert_eq!(
-            file.firmware.get("dmg-boot-rom").map(String::as_str),
-            Some("mgb")
-        );
+        assert_eq!(file.firmware.image_for("dmg-boot-rom", None), Some("mgb"));
 
         let written = ron::ser::to_string(&file).unwrap();
         let reread: SettingsFile = ron::from_str(&written).unwrap();
+        assert_eq!(reread.firmware.image_for("dmg-boot-rom", None), Some("mgb"));
+    }
+
+    #[test]
+    fn per_standard_firmware_defaults_round_trip() {
+        let mut file = SettingsFile::<ControlsSettings>::default();
+        file.firmware.set(
+            "colecovision-bios",
+            Some(TvStandard::Pal),
+            Some("ntsc".to_owned()),
+        );
+        file.firmware
+            .set("dmg-boot-rom", None, Some("dmg0".to_owned()));
+
+        let written = ron::ser::to_string(&file).unwrap();
+        let reread: SettingsFile = ron::from_str(&written).unwrap();
+        assert_eq!(reread.firmware, file.firmware);
         assert_eq!(
-            reread.firmware.get("dmg-boot-rom").map(String::as_str),
-            Some("mgb")
+            reread
+                .firmware
+                .image_for("colecovision-bios", Some(TvStandard::Pal)),
+            Some("ntsc")
         );
     }
 

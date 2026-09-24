@@ -17,7 +17,7 @@ use missingno_core::firmware::FirmwareValue;
 use missingno_core::launch::{LaunchOptionDescriptor, LaunchOptionKind, LaunchValue, LaunchValues};
 use missingno_mcp_stdio::no_arguments;
 use missingno_session::factory::{self, CoreFactory};
-use missingno_session::firmware::FirmwareLibrary;
+use missingno_session::firmware::{FirmwareDefaults, FirmwareLibrary};
 use missingno_session::shared::SharedSession;
 use missingno_session::tools::{
     Tool, ToolOutcome, call_session_tool, outcome_json, session_tools, text,
@@ -303,7 +303,11 @@ fn load_rom(loaded: &mut Option<Host>, args: &Value) -> ToolOutcome {
     // The stated system already settled the core, so the firmware folder is
     // read here rather than through the factory's own recognition.
     FirmwareLibrary::scan_default()
-        .supply(&(factory.options)(&bytes, &launch), &mut launch)
+        .supply(
+            &(factory.options)(&bytes, &launch),
+            &mut launch,
+            &FirmwareDefaults::default(),
+        )
         .map_err(|refusal| refusal.to_string())?;
     let console = (factory.create)(path_ref, &bytes, &launch).map_err(|error| error.to_string())?;
     let debugger = console.into_debugger();
