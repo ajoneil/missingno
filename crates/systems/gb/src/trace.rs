@@ -81,7 +81,7 @@ impl PipelineCell {
 /// it is re-derivable at a boundary rather than being machine state. Authored on
 /// the producer and marked `missingno`-sourced in the header.
 #[derive(Clone, Copy)]
-enum Observation {
+pub enum Observation {
     /// The executing instruction's address — the stable per-instruction key diff
     /// collapses and aligns on (`pc` moves within a multi-cycle instruction).
     OpAddr,
@@ -93,7 +93,7 @@ enum Observation {
 
 /// The trace observations, in capture order. `op_addr` leads so it is the
 /// instruction-address column; the pixel columns follow.
-static OBSERVATIONS: &[ObservationDef<Observation>] = &[
+pub static OBSERVATIONS: &[ObservationDef<Observation>] = &[
     ObservationDef {
         name: "op_addr",
         ty: FieldType::U16,

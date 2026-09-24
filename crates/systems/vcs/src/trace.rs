@@ -36,7 +36,7 @@ use morepork::snapshot::IndexedFrame;
 /// A trace-only observation: a per-step surface the state schema excludes
 /// because it is not machine state. Bridge-owned, marked `missingno`-sourced.
 #[derive(Clone, Copy)]
-enum Observation {
+pub enum Observation {
     /// CPU cycles consumed since the previous entry — a WSYNC stall parks the
     /// CPU, so one store can span most of a scanline.
     Cycles,
@@ -45,7 +45,7 @@ enum Observation {
 }
 
 /// The trace observations, in capture order.
-static OBSERVATIONS: &[ObservationDef<Observation>] = &[
+pub static OBSERVATIONS: &[ObservationDef<Observation>] = &[
     ObservationDef {
         name: "cycles",
         ty: FieldType::U16,
