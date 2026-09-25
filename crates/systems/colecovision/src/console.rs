@@ -553,9 +553,9 @@ mod tests {
             ControlId::port(PORT1, ControlRole::Up),
             ControlInput::Digital(true),
         );
-        assert_eq!(console.board.input(0xFC), 0xFE);
-        assert_eq!(console.board.input(0xE0), 0xFE);
-        assert_eq!(console.board.input(0xE2), 0xFF);
+        assert_eq!(console.board.input(0xFC), 0x7E);
+        assert_eq!(console.board.input(0xE0), 0x7E);
+        assert_eq!(console.board.input(0xE2), 0x7F);
         for port in [0x00, 0x80, 0xC0] {
             assert_eq!(console.board.input(port), UNDRIVEN);
         }
@@ -576,7 +576,7 @@ mod tests {
         assert_eq!(console.board.input(0xFC) & 0x0F, 0x3);
         assert_eq!(console.board.input(0xFF) & 0x0F, 0xA);
         console.board.output(0xDF, 0xFF);
-        assert_eq!(console.board.input(0xFC), 0xFF);
+        assert_eq!(console.board.input(0xFC), 0x7F);
     }
 
     /// Clear while /M1 is high, then a toggle per edge: set on the edge after

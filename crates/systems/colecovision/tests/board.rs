@@ -100,12 +100,14 @@ fn read_controllers(test: &str, held: &[(PortId, ControlRole)]) -> Option<[u8; 4
 }
 
 #[test]
-fn released_controllers_read_all_ones_on_both_segments() {
-    let Some(read) = read_controllers("released_controllers_read_all_ones_on_both_segments", &[])
-    else {
+fn released_controllers_read_the_idle_byte_on_both_segments() {
+    let Some(read) = read_controllers(
+        "released_controllers_read_the_idle_byte_on_both_segments",
+        &[],
+    ) else {
         return;
     };
-    assert_eq!(read, [0xFF; 4]);
+    assert_eq!(read, [0x7F; 4]);
 }
 
 /// Each switch reaches only its own connector and only the segment the mode
@@ -113,14 +115,14 @@ fn released_controllers_read_all_ones_on_both_segments() {
 #[test]
 fn each_switch_reads_on_its_own_segment() {
     let cases: &[(Held, [u8; 4])] = &[
-        (&[(PORT1, ControlRole::Up)], [0xFE, 0xFF, 0xFF, 0xFF]),
-        (&[(PORT2, ControlRole::Up)], [0xFF, 0xFE, 0xFF, 0xFF]),
-        (&[(PORT1, ControlRole::Action(0))], [0xBF, 0xFF, 0xFF, 0xFF]),
-        (&[(PORT1, ControlRole::Action(1))], [0xFF, 0xFF, 0xBF, 0xFF]),
-        (&[(PORT1, ControlRole::Key(4))], [0xFF, 0xFF, 0xF3, 0xFF]),
+        (&[(PORT1, ControlRole::Up)], [0x7E, 0x7F, 0x7F, 0x7F]),
+        (&[(PORT2, ControlRole::Up)], [0x7F, 0x7E, 0x7F, 0x7F]),
+        (&[(PORT1, ControlRole::Action(0))], [0x3F, 0x7F, 0x7F, 0x7F]),
+        (&[(PORT1, ControlRole::Action(1))], [0x7F, 0x7F, 0x3F, 0x7F]),
+        (&[(PORT1, ControlRole::Key(4))], [0x7F, 0x7F, 0x73, 0x7F]),
         (
             &[(PORT1, ControlRole::Key(0)), (PORT1, ControlRole::Key(1))],
-            [0xFF, 0xFF, 0xF5, 0xFF],
+            [0x7F, 0x7F, 0x75, 0x7F],
         ),
     ];
     for (held, expected) in cases {

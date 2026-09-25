@@ -13,8 +13,10 @@ pub enum ControllerMode {
     Keypad,
 }
 
-/// Every buffer input is pulled up and a closed switch reads 0.
-const RELEASED: u8 = 0xFF;
+/// Bit 7: the spinner one-shot's output (U24), low until a pin-9 pulse fires it.
+const SPINNER_PULSE: u8 = 0x80;
+/// Nothing pulls a line low with a hand controller plugged in, and the one-shot rests.
+const RELEASED: u8 = !SPINNER_PULSE;
 /// The stick's four lines, and the keypad's four encoded lines, share D0-D3.
 const LOW_NIBBLE: u8 = 0x0F;
 /// The fire button on each segment: left on the joystick's, right on the
@@ -56,7 +58,7 @@ impl Default for HandController {
 
 impl HandController {
     /// The byte the buffer presents for the segment the latch selects. Bits
-    /// 4, 5 and 7 have no line on a hand controller and read their pull-ups.
+    /// 4 and 5 read their pull-ups; bit 7 is the spinner one-shot, low at rest.
     pub fn read(&self, mode: ControllerMode) -> u8 {
         let (nibble, fire) = match mode {
             ControllerMode::Joystick => (self.lines & LOW_NIBBLE, self.left_fire),
@@ -117,23 +119,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_released_controller_reads_all_ones_on_both_segments() {
+    fn a_released_controller_reads_the_idle_byte_7f_on_both_segments() {
         let pad = HandController::default();
-        assert_eq!(pad.read(ControllerMode::Joystick), 0xFF);
-        assert_eq!(pad.read(ControllerMode::Keypad), 0xFF);
+        assert_eq!(pad.read(ControllerMode::Joystick), 0x7F);
+        assert_eq!(pad.read(ControllerMode::Keypad), 0x7F);
     }
 
     #[test]
     fn each_button_reads_on_its_own_segment_only() {
         let mut pad = HandController::default();
         pad.apply(ControlRole::Action(0), true);
-        assert_eq!(pad.read(ControllerMode::Joystick), 0xBF);
-        assert_eq!(pad.read(ControllerMode::Keypad), 0xFF);
+        assert_eq!(pad.read(ControllerMode::Joystick), 0x3F);
+        assert_eq!(pad.read(ControllerMode::Keypad), 0x7F);
 
         let mut pad = HandController::default();
         pad.apply(ControlRole::Action(1), true);
-        assert_eq!(pad.read(ControllerMode::Joystick), 0xFF);
-        assert_eq!(pad.read(ControllerMode::Keypad), 0xBF);
+        assert_eq!(pad.read(ControllerMode::Joystick), 0x7F);
+        assert_eq!(pad.read(ControllerMode::Keypad), 0x3F);
     }
 
     #[test]
@@ -142,7 +144,7 @@ mod tests {
         for (key, code) in codes.into_iter().enumerate() {
             let mut pad = HandController::default();
             pad.apply(ControlRole::Key(key as u8), true);
-            assert_eq!(pad.read(ControllerMode::Keypad), 0xF0 | code, "key {key}");
+            assert_eq!(pad.read(ControllerMode::Keypad), 0x70 | code, "key {key}");
         }
         let mut pad = HandController::default();
         pad.apply(ControlRole::Key(0), true);
@@ -155,8 +157,8 @@ mod tests {
         let mut pad = HandController::default();
         pad.apply(ControlRole::Up, true);
         pad.apply(ControlRole::Left, true);
-        assert_eq!(pad.read(ControllerMode::Joystick), 0xF6);
+        assert_eq!(pad.read(ControllerMode::Joystick), 0x76);
         pad.apply(ControlRole::Up, false);
-        assert_eq!(pad.read(ControllerMode::Joystick), 0xF7);
+        assert_eq!(pad.read(ControllerMode::Joystick), 0x77);
     }
 }

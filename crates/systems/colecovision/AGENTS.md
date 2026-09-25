@@ -111,9 +111,10 @@ uncleared re-delivers nothing. Nothing on the console drives /INT.
   cartridge window the image does not hold, and the I/O ranges with no read
   select (`$00-$7F`, `$80-$9F`, `$C0-$DF`). No source states the value; the
   choice is the SG-1000's.
-- **The controller buffers' idle bits read 1.** Bits 4, 5 and 7 have no line
-  on a standard hand controller and the '541 inputs are pulled up; no
-  primary source states their level. **MAME** reads bit 7 low.
+- **A released controller reads `$7F`.** Bit 7 is the spinner one-shot's
+  output (Boris's traced schematic), low at rest with a hand controller; its
+  pulse is unmodelled. Bits 4 and 5 read their '541 pull-ups, a level no
+  primary source states with nothing attached. **MAME** also reads bit 7 low.
 - **The keypad is the diode matrix.** Two keys held together read the AND of
   their codes, which is what 28 diodes onto four lines do; the codes are
   OS 7's decode table read backwards.
