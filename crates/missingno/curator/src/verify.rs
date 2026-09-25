@@ -188,7 +188,7 @@ pub fn measure_cover(source: &str, url: String) -> CoverCandidate {
     }
 }
 
-const ROM_EXTENSIONS: [&str; 6] = ["gb", "gbc", "sg", "a26", "bin", "rom"];
+const ROM_EXTENSIONS: [&str; 7] = ["gb", "gbc", "sg", "col", "a26", "bin", "rom"];
 
 const HASHEOUS: &str = "https://hasheous.org/api/v1";
 

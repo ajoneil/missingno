@@ -442,7 +442,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "label_artifact",
-            "description": "Annotate a dump: give it a benign distinguishing label ('alt', 'PAL conversion') so multiple hashes in one release are tellable apart, and/or record a quality `defect`. `Overdump` ([o]) is padded but still plays; `BadDump` ([b]) is corrupt or truncated and does not. Pass defect \"None\" to clear it. Provide a label, a defect, or both.",
+            "description": "Annotate a dump: give it a benign distinguishing label ('alt', 'PAL conversion') so multiple hashes in one release are tellable apart, and/or record a quality `defect`. `Overdump` ([o]) is padded but still plays; `BadDump` ([b]) is a misread of the chip — corrupt or truncated bytes, whether or not it still plays. Pass defect \"None\" to clear it. Provide a label, a defect, or both.",
             "inputSchema": object(json!({
                 "key": { "type": "string" },
                 "sha1": { "type": "string" },
