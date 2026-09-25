@@ -8,7 +8,7 @@ use iced::futures::SinkExt;
 use missingno_core::cartridge::BoardValue;
 use missingno_core::launch::LaunchValues;
 use missingno_core::ports::{PanelControl, PeripheralId, PortId};
-use missingno_core::system::{ControlId, ControlInput, ControlRole};
+use missingno_core::system::{ControlId, ControlInput, ControlRole, SystemConsole};
 use missingno_core::video::DisplayTechnology;
 use missingno_gamedb::platform::Peripheral;
 use missingno_session::{
@@ -106,12 +106,7 @@ pub fn start(
         }
     }
     let paddles = plugged[PLAY_PORT.0 as usize] == missingno_vcs::debug::PADDLES;
-    let keypads = plugged
-        .iter()
-        .enumerate()
-        .filter(|&(_, &peripheral)| peripheral == missingno_vcs::debug::KEYPAD)
-        .map(|(jack, _)| PortId(jack as u8))
-        .collect();
+    let keypads = keypad_ports(console.as_ref());
     let technology = console.video_out();
     let integrated_roles = console
         .integrated_controls()
@@ -150,6 +145,28 @@ pub fn start(
         _audio: audio,
         events: Arc::new(Mutex::new(events)),
     })
+}
+
+/// The jacks whose plugged controller carries keypad keys, by the console's
+/// own word: the VCS keypad once it is in the jack, the ColecoVision hand
+/// controller always.
+fn keypad_ports(console: &dyn SystemConsole) -> Vec<PortId> {
+    console
+        .ports()
+        .iter()
+        .filter(|port| {
+            console.plugged(port.port).is_some_and(|plugged| {
+                port.accepts.iter().any(|peripheral| {
+                    peripheral.id == plugged
+                        && peripheral
+                            .controls
+                            .iter()
+                            .any(|control| matches!(control.role, ControlRole::Key(_)))
+                })
+            })
+        })
+        .map(|port| port.port)
+        .collect()
 }
 
 /// The jack the playtest starts in — the curator plays VCS media, whose left
