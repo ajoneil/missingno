@@ -9,7 +9,7 @@ use missingno_core::system::ControlRole;
 
 use crate::console::{PORT1, PORT2};
 
-pub(crate) const HAND_CONTROLLER: PeripheralId = PeripheralId(0);
+pub const HAND_CONTROLLER: PeripheralId = PeripheralId(0);
 
 /// Reset pulls `CPU_RESET` low; it is not a controller line.
 pub const PANEL: &[PanelControl] = &[PanelControl {

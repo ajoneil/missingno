@@ -160,6 +160,7 @@ impl App {
                     Some(Message::WindowResized(size))
                 }
                 iced::Event::Window(window::Event::CloseRequested) => Some(Message::CloseRequested),
+                iced::Event::Window(window::Event::Focused) => Some(Message::WindowFocused),
                 // Escape puts away the launch window, else exits fullscreen
                 // (not rebindable — it's an escape hatch)
                 iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {

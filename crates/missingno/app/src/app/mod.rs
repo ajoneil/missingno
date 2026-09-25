@@ -232,6 +232,18 @@ impl App {
         self.firmware = scan_firmware();
     }
 
+    /// Whether something on screen offers the firmware folder's contents.
+    fn shows_firmware_folder(&self) -> bool {
+        self.launch_window.is_some()
+            || matches!(
+                self.screen,
+                Screen::Settings {
+                    section: settings::view::Section::Firmware,
+                    ..
+                }
+            )
+    }
+
     /// Everything that fills a launch option besides the user and the firmware
     /// folder.
     fn launch_sources(&self) -> launch::LaunchSources<'_> {
@@ -792,6 +804,7 @@ enum Message {
     OpenUrl(String),
 
     WindowResized(iced::Size),
+    WindowFocused,
     ToggleFullscreen,
     EscapePressed,
     MouseMoved,
@@ -1122,6 +1135,13 @@ impl App {
             }
 
             // Window management
+            Message::WindowFocused => {
+                // The user is back from copying a file into the folder: any
+                // surface showing what it holds reads it again.
+                if self.shows_firmware_folder() {
+                    self.rescan_firmware();
+                }
+            }
             Message::WindowResized(size) => {
                 if !matches!(self.fullscreen, Fullscreen::Active { .. }) {
                     self.settings.window_width = Some(size.width);

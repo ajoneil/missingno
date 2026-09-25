@@ -497,6 +497,11 @@ const GAMEPAD_CLUSTER: &[(ControlRole, &str)] = &[
 /// keeps the pad's geometry. An app convention, following Stella's.
 const KEYPAD_KEYS: [&str; 12] = ["1", "2", "3", "q", "w", "e", "a", "s", "d", "z", "x", "c"];
 
+/// The hand controller's keypad, row-major, on the number row: the digits read
+/// as themselves, with `*` and `#` on the two keys past `0`. The stick and the
+/// fire buttons keep the cluster, so the keypad stays off the letters.
+const NUMBER_ROW_KEYPAD: [&str; 12] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "-", "0", "="];
+
 /// The pad's triggers wind a knob, squeeze depth setting the speed.
 const WIND_TRIGGERS: [(WindDirection, &str); 2] = [
     (WindDirection::Clockwise, "RightTrigger2"),
@@ -540,6 +545,18 @@ pub fn default_system(platform: Platform, surface: Surface) -> HashMap<ControlSl
             Surface::Gamepad => "South",
         };
         map.insert(slot(PADDLES, ControlRole::Action(0)), button.to_string());
+    }
+    if platform == Platform::ColecoVision && surface == Surface::Keyboard {
+        use missingno_colecovision::debug::HAND_CONTROLLER;
+        for (index, key) in NUMBER_ROW_KEYPAD.iter().enumerate() {
+            map.insert(
+                ControlSlot::Peripheral {
+                    peripheral: HAND_CONTROLLER,
+                    role: ControlRole::Key(index as u8),
+                },
+                key.to_string(),
+            );
+        }
     }
 
     let winds = match surface {
@@ -1234,6 +1251,35 @@ mod tests {
             gamepad.get(&ControlSlot::Integrated(ControlRole::Action(0))),
             Some(&"South".to_string())
         );
+    }
+
+    #[test]
+    fn colecovision_defaults_put_the_keypad_on_the_number_row() {
+        use missingno_colecovision::debug::HAND_CONTROLLER;
+        let keyboard = default_system(Platform::ColecoVision, Surface::Keyboard);
+        let key = |index| keyboard.get(&controller_slot(HAND_CONTROLLER, ControlRole::Key(index)));
+        assert_eq!(key(0), Some(&"1".to_string()));
+        assert_eq!(key(8), Some(&"9".to_string()));
+        assert_eq!(key(9), Some(&"-".to_string()));
+        assert_eq!(key(10), Some(&"0".to_string()));
+        assert_eq!(key(11), Some(&"=".to_string()));
+        // The stick and both fire buttons keep the cluster on the same controller.
+        assert_eq!(
+            keyboard.get(&controller_slot(HAND_CONTROLLER, ControlRole::Action(0))),
+            Some(&"x".to_string())
+        );
+        assert_eq!(
+            keyboard.get(&controller_slot(HAND_CONTROLLER, ControlRole::Up)),
+            Some(&"ArrowUp".to_string())
+        );
+        assert_eq!(
+            keyboard.get(&ControlSlot::Panel(ControlRole::Reset)),
+            Some(&"Enter".to_string())
+        );
+
+        // A pad has no twelve keys to give the keypad.
+        let gamepad = default_system(Platform::ColecoVision, Surface::Gamepad);
+        assert!(!gamepad.contains_key(&controller_slot(HAND_CONTROLLER, ControlRole::Key(0))));
     }
 
     #[test]

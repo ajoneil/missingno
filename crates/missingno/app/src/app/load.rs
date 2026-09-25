@@ -116,7 +116,9 @@ fn start(app: &mut App, request: Request<'_>) -> Result<String, String> {
     );
     let mut values = launch::resolve(&descriptors, &request.overrides, &facts);
     // Every firmware choice becomes the bytes the core reads, or a refusal
-    // naming what the folder is missing.
+    // naming what the folder is missing — the folder as it is now, so a file
+    // copied in since the last look is found.
+    app.rescan_firmware();
     app.firmware
         .supply(&descriptors, &mut values, &app.settings.firmware)
         .map_err(|refusal| refusal.to_string())?;

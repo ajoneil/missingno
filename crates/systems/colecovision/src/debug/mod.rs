@@ -27,13 +27,11 @@ use missingno_ti_vdp::inspect::{VdpView, ti_palette};
 use missingno_ti_vdp::{Frame as VdpFrame, Standard, VISIBLE_WIDTH};
 use missingno_zilog_z80::inspect::RegisterFile;
 
+pub use crate::cartridge::title_from_rom;
 use crate::console::{CLOCK_HZ, ColecoVision, PORT1, PORT2, part_for, tstates_per_frame};
 use crate::firmware::{BIOS_SIZE, bios_option};
 use crate::state_schema::colecovision_state_schema;
-use ports::HAND_CONTROLLER;
-
-pub use crate::cartridge::title_from_rom;
-pub use ports::{PANEL, PORTS};
+pub use ports::{HAND_CONTROLLER, PANEL, PORTS};
 
 /// Pixel aspect at the VDP's 5.37 MHz dot clock — a display-side calibratable
 /// stage. PAL paints the same line time's 313 lines into the 625-line height

@@ -326,6 +326,8 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
                 Target::Library => entry.map(|entry| entry.overrides).unwrap_or_default(),
                 Target::Transient => LaunchValues::default(),
             };
+            // The firmware rows offer what the folder holds as the window opens.
+            app.rescan_firmware();
             let mut window = Window {
                 rom_path,
                 rom,
