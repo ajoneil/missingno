@@ -577,6 +577,19 @@ impl<P: PpuModel> Ppu<P> {
         })
     }
 
+    /// Put the dividers at a phase [`Ppu::dot_in_mcycle_phase`] reported.
+    /// A boundary snapshot doesn't carry it; without it a restored console
+    /// runs a dot or two out of step with the one that was saved.
+    pub fn restore_dot_in_mcycle_phase(&mut self, phase: u8) {
+        let d = &mut self.video.dividers;
+        (d.mcycle, d.half_mcycle) = match phase & 3 {
+            0 => (true, false),
+            1 => (true, true),
+            2 => (false, false),
+            _ => (false, true),
+        };
+    }
+
     /// M-cycle-boundary rise: the CGB clock-domain samples. The VRAM CPU
     /// arbiter reads the live M-boundary XYMU sample; the CRAM lock reads
     /// XYMU through the dot-fall stage, so a transition landing on this

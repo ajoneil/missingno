@@ -63,4 +63,8 @@ impl Console<Dmg> {
     pub fn sgb(&self) -> Option<&sgb::Sgb> {
         self.model.sgb.as_ref()
     }
+
+    pub fn sgb_mut(&mut self) -> Option<&mut sgb::Sgb> {
+        self.model.sgb.as_mut()
+    }
 }

@@ -244,6 +244,10 @@ impl<M: Model> Console<M> {
         &self.chassis.ppu
     }
 
+    pub fn ppu_mut(&mut self) -> &mut Ppu<M::Ppu> {
+        &mut self.chassis.ppu
+    }
+
     /// The console-specific model — the DMG/CGB divergence state, for read-only
     /// inspection (the debugger reads CGB registers through it).
     pub fn model(&self) -> &M {
