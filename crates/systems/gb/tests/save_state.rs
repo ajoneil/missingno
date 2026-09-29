@@ -117,3 +117,97 @@ fn load_rejects_a_state_for_a_different_rom() {
         Err(StateError::IncompatibleRom)
     );
 }
+
+/// A cartridge that waits for each VBlank the way most games do: flag a byte
+/// in HRAM, HALT, and loop until the VBlank handler has cleared it.
+fn frame_waiting_rom() -> Vec<u8> {
+    let mut rom = vec![0u8; 0x8000];
+    // VBlank vector: count frames at $C000, clear the wait flag, return.
+    rom[0x40..0x48].copy_from_slice(&[0x21, 0x00, 0xC0, 0x34, 0xAF, 0xE0, 0x80, 0xD9]);
+    // Entry: jump over the header.
+    rom[0x100..0x104].copy_from_slice(&[0x00, 0xC3, 0x50, 0x01]);
+    rom[0x150..0x163].copy_from_slice(&[
+        0x3E, 0x01, 0xE0, 0xFF, // ld a,1; ldh [IE],a
+        0xFB, // ei
+        0x3E, 0x01, 0xE0, 0x80, // wait: ld a,1; ldh [$80],a
+        0x76, // halt
+        0xF0, 0x80, 0xA7, 0x20, 0xFA, // ldh a,[$80]; and a; jr nz,halt
+        0x04, 0x05, // inc b; dec b
+        0x18, 0xF2, // jr wait
+    ]);
+    let checksum = rom[0x134..0x14D]
+        .iter()
+        .fold(0u8, |c, b| c.wrapping_sub(*b).wrapping_sub(1));
+    rom[0x14D] = checksum;
+    rom
+}
+
+/// Save at the end of each frame — the CPU halted and waking into the VBlank
+/// interrupt — restore into a fresh console, and require it to follow the
+/// original exactly: the same T-cycles per step and the same record after
+/// every step, across the next frame.
+#[test]
+fn dmg_restore_at_a_frame_end_runs_in_lockstep() {
+    use missingno_core::state::StateRecord;
+    use missingno_gb::GameBoy;
+    use missingno_gb::cartridge::Cartridge;
+    use missingno_gb::snapshot::{capture_memory, read_shared_record};
+
+    const FRAMES: usize = 30;
+    const FOLLOW: usize = 4000;
+
+    fn console() -> GameBoy {
+        GameBoy::new(
+            Cartridge::new(frame_waiting_rom(), None, None).unwrap(),
+            None,
+        )
+    }
+    fn synced_record(gb: &mut GameBoy) -> StateRecord {
+        gb.sync_audio();
+        gb.sync_ppu();
+        read_shared_record(gb)
+    }
+
+    let mut original = console();
+    let mut saves = Vec::new();
+    let mut trail = Vec::new();
+    let mut last_save = 0;
+    while saves.len() < FRAMES || trail.len() < last_save + 1 + FOLLOW {
+        let result = original.step();
+        let record = synced_record(&mut original);
+        if result.new_screen && saves.len() < FRAMES {
+            assert!(
+                original.cpu().is_halted(),
+                "the frame ends with the CPU halted"
+            );
+            let phase = original.ppu().dot_in_mcycle_phase();
+            last_save = trail.len();
+            saves.push((last_save, record.clone(), capture_memory(&original), phase));
+        }
+        trail.push((result.tcycles, record));
+    }
+
+    for (at, record, memory, phase) in saves {
+        let mut restored = console();
+        let memory = memory
+            .into_iter()
+            .map(|(n, b)| (n.to_string(), b))
+            .collect();
+        restored.restore_boundary(&record, memory, None).unwrap();
+        if let Some(phase) = phase {
+            restored.ppu_mut().restore_dot_in_mcycle_phase(phase);
+        }
+        for (step, (tcycles, expected)) in trail[at + 1..at + 1 + FOLLOW].iter().enumerate() {
+            assert_eq!(
+                restored.step().tcycles,
+                *tcycles,
+                "save at step {at}: T-cycles differ {step} steps after the restore"
+            );
+            assert_eq!(
+                &synced_record(&mut restored),
+                expected,
+                "save at step {at}: records differ {step} steps after the restore"
+            );
+        }
+    }
+}

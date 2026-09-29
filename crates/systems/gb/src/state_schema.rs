@@ -109,6 +109,17 @@ pub fn dmg_boundary_fields() -> Vec<FieldDef> {
             .help("EI's deferred enable in flight — IME sets after the next instruction"),
         FieldDef::boundary("halt_bug", Bool, "cpu")
             .help("HALT-bug latch — the byte after HALT re-reads because PC did not advance"),
+        FieldDef::boundary("halt_latch", Bool, "cpu")
+            .help(
+                "YNKW — HALT's latch, set once HALT's own M-cycle passes with no interrupt pending",
+            )
+            .nullable(),
+        FieldDef::boundary("irq_capture", Bool, "cpu")
+            .help("YOII — the M-cycle-boundary capture of a pending interrupt that releases HALT")
+            .nullable(),
+        FieldDef::boundary("dispatch_active", Bool, "cpu")
+            .help("ZACW — interrupt dispatch under way")
+            .nullable(),
         // PPU line/dot counters and edge-detect latch.
         FieldDef::boundary("lx", U8, "ppu").help("LX — dot position on the current line (0..113)"),
         FieldDef::boundary("stat_line", Bool, "ppu")
@@ -377,6 +388,9 @@ mod tests {
             ("halt_state", "cpu_mode"),
             ("ei_delay", "ime_enable_pending"),
             ("halt_bug", "halt_bug"),
+            ("halt_latched", "halt_latch"),
+            ("irq_latched", "irq_capture"),
+            ("dispatching", "dispatch_active"),
             // PpuSnapshot
             ("lcdc", "lcdc"),
             ("stat", "stat"),

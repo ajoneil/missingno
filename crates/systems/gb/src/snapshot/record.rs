@@ -35,7 +35,10 @@ pub fn read_shared_record<M: crate::Model>(gb: &Console<M>) -> StateRecord {
         .set("ie", cpu.ie)
         .set("cpu_mode", cpu.halt_state)
         .set("ime_enable_pending", cpu.ei_delay != 0)
-        .set("halt_bug", cpu.halt_bug);
+        .set("halt_bug", cpu.halt_bug)
+        .set("halt_latch", cpu.halt_latched)
+        .set("irq_capture", cpu.irq_latched)
+        .set("dispatch_active", cpu.dispatching);
     // PPU registers + deep boundary state.
     r.set("lcdc", ppu.lcdc)
         .set("stat", ppu.stat)

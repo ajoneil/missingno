@@ -37,6 +37,16 @@ fn text_of(record: &StateRecord, name: &str) -> Result<String, StateError> {
     }
 }
 
+/// A nullable bool field, false when the record omits it (saves from before
+/// the field existed).
+fn opt_bool(record: &StateRecord, name: &str) -> Result<bool, StateError> {
+    match record.get(name) {
+        Some(StateValue::Bool(b)) => Ok(*b),
+        Some(StateValue::Null) | None => Ok(false),
+        _ => Err(StateError::Corrupt),
+    }
+}
+
 /// A nullable u8 field: `None` when the record omits it or carries it as null.
 fn opt_u8(record: &StateRecord, name: &str) -> Result<Option<u8>, StateError> {
     match record.get(name) {
@@ -131,6 +141,9 @@ pub fn parse_record(
         halt_state: u8_of(record, "cpu_mode")?,
         ei_delay: bool_of(record, "ime_enable_pending")? as u8,
         halt_bug: bool_of(record, "halt_bug")?,
+        halt_latched: opt_bool(record, "halt_latch")?,
+        irq_latched: opt_bool(record, "irq_capture")?,
+        dispatching: opt_bool(record, "dispatch_active")?,
     };
     let ppu = PpuSnapshot {
         lcdc: u8_of(record, "lcdc")?,

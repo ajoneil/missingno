@@ -51,6 +51,12 @@ pub struct CpuSnapshot {
     /// EI's deferred enable in flight (1) or not (0).
     pub ei_delay: u8,
     pub halt_bug: bool,
+    /// HALT's latch is set: the CPU is past HALT's own M-cycle, spinning.
+    pub halt_latched: bool,
+    /// The M-cycle-boundary capture of a pending interrupt, which releases HALT.
+    pub irq_latched: bool,
+    /// An interrupt dispatch is under way.
+    pub dispatching: bool,
 }
 
 pub struct PpuSnapshot {

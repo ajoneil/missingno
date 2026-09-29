@@ -4,7 +4,7 @@ use flags::{Flag, Flags};
 use mcycle::{BusAction, CpuPhase, HaltPhase, MCycleAction, Phase, TCycle};
 use registers::{Register8, Register16};
 
-use crate::interrupts::Interrupt;
+use crate::interrupts::{Interrupt, InterruptFlags};
 
 pub mod commit;
 pub mod dff;
@@ -461,10 +461,41 @@ impl Cpu {
         }
     }
 
-    /// Construct a CPU from a save-state snapshot at an instruction
-    /// boundary. The state machine fields are reset to their boundary
-    /// defaults (Fetch phase, step 0, no pending actions).
+    /// Construct a CPU from a save-state snapshot at an instruction boundary:
+    /// one T-cycle into the M-cycle that opens the next instruction, rebuilt
+    /// in flight as [`Cpu::post_boot_with`] does.
     pub fn from_snapshot(snap: &crate::snapshot::CpuSnapshot) -> Cpu {
+        let halted = snap.halt_state == 2;
+        let pending = InterruptFlags::from_bits_truncate(snap.ie & snap.if_);
+        let (phase, exec_step, action) = if snap.dispatching {
+            let phase = CpuPhase::InterruptDispatch {
+                sp: snap.sp,
+                pc_hi: (snap.pc >> 8) as u8,
+                pc_lo: (snap.pc & 0xff) as u8,
+                step: 1,
+            };
+            (phase, 0, MCycleAction::Internal { address: snap.pc })
+        } else if halted && snap.halt_latched {
+            let wake = snap.irq_latched && snap.ime && !pending.is_empty();
+            let phase = if wake {
+                HaltPhase::WakeIntake
+            } else {
+                HaltPhase::Spin
+            };
+            (
+                CpuPhase::Halted(phase),
+                0,
+                MCycleAction::Internal { address: snap.pc },
+            )
+        } else {
+            let phase = CpuPhase::Execute {
+                phase: Phase::FetchOverlap {
+                    commit: Commit::NoOperation,
+                },
+                step: 1,
+            };
+            (phase, 1, MCycleAction::Read { address: snap.pc })
+        };
         Cpu {
             a: snap.a,
             b: snap.b,
@@ -484,6 +515,8 @@ impl Cpu {
                     InterruptMasterEnable::Disabled
                 }),
                 ime_delay: snap.ime,
+                irq_pending: !pending.is_empty(),
+                irq_latched: Dff::new(snap.irq_latched),
                 ..IrqContext::new()
             },
             halt: HaltContext {
@@ -493,8 +526,24 @@ impl Cpu {
                     _ => HaltState::Running,
                 },
                 bug: snap.halt_bug,
+                // Without the latch the CPU is still in HALT's own M-cycle.
+                bug_check_pending: halted && !snap.halt_latched && !snap.dispatching,
+                rs_latched: halted && snap.halt_latched,
                 ..HaltContext::new()
             },
+            seq: Sequencer {
+                phase,
+                tcycle: TCycle::ONE,
+                mcycle_active: true,
+                boundary_pending: false,
+                exec_step,
+                ..Sequencer::new()
+            },
+            bus: BusInterface {
+                current_action: Some(action),
+                ..BusInterface::new()
+            },
+            dispatch: dispatch_chain::DispatchChain::restored(pending, snap.dispatching),
             ..Self::boundary_state()
         }
     }

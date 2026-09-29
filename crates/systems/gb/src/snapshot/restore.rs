@@ -108,6 +108,7 @@ impl<M: Model> Console<M> {
         self.chassis.bus_trace = crate::cpu_bus::BusTrace::new();
         self.chassis.clock = crate::MasterClock::new(crate::CpuDivider::One);
         self.chassis.cpu_bus = crate::cpu_bus::CpuBus::new();
+        self.stage_in_flight_bus_access();
         self.chassis.dma_conflict = crate::DmaConflictLatch::default();
         self.chassis.joypad = crate::joypad::Joypad::new();
     }

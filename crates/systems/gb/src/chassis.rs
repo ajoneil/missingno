@@ -221,11 +221,25 @@ impl<M: Model> Console<M> {
             .console_state_mut()
             .set_dma_conflict_oam_zero(None);
         self.model.console_state_mut().set_dma_cpu_hold(false);
+        self.stage_in_flight_bus_access();
+    }
+
+    /// Stage the bus access of a CPU installed mid-M-cycle, past the rise that
+    /// would have staged it.
+    pub(crate) fn stage_in_flight_bus_access(&mut self) {
         if let Some((address, _value)) = self.chassis.cpu.pending_bus_write() {
             self.chassis.cpu_bus.stage_write(address);
         } else if let Some(address) = self.chassis.cpu.pending_bus_read() {
             self.chassis.cpu_bus.stage_read(address);
         }
+    }
+
+    /// Install a CPU built at an instruction boundary, e.g. by
+    /// [`Cpu::from_snapshot`], with its in-flight M-cycle's bus access staged.
+    pub fn install_cpu(&mut self, cpu: Cpu) {
+        self.chassis.cpu = cpu;
+        self.chassis.cpu_bus = CpuBus::new();
+        self.stage_in_flight_bus_access();
     }
 
     pub fn cartridge(&self) -> &Cartridge {

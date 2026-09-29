@@ -36,6 +36,9 @@ pub fn capture_cpu<M: crate::Model>(gb: &Console<M>) -> CpuSnapshot {
             0
         },
         halt_bug: cpu.halt.bug,
+        halt_latched: cpu.halt_rs_latched(),
+        irq_latched: cpu.irq_latched(),
+        dispatching: cpu.dispatch_active(),
     }
 }
 

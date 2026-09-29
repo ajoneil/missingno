@@ -58,6 +58,17 @@ impl DispatchChain {
         }
     }
 
+    /// The chain at a restored instruction boundary: the latch transparent
+    /// and holding `latched`, and ZKOG/ZACW set while a dispatch is under way.
+    pub fn restored(latched: InterruptFlags, dispatching: bool) -> Self {
+        Self {
+            irq_latch: latched,
+            dispatch_set: dispatching,
+            dispatch_capture: Dff::new(dispatching),
+            ..Self::new()
+        }
+    }
+
     /// Drive data_phase_n from the CPU phase ring. Called every dot.
     /// When transparent (true), irq_latch tracks live IE & IF; when held
     /// (false), irq_latch stays frozen.
