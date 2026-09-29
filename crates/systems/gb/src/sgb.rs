@@ -73,9 +73,21 @@ pub struct SgbPalette {
     pub colors: [Rgb555; 4],
 }
 
+impl SgbPalette {
+    /// The system program's default built-in preset, labelled 1-A on its menu.
+    pub const PRESET_1A: Self = Self {
+        colors: [
+            Rgb555(0x67BF),
+            Rgb555(0x265B),
+            Rgb555(0x10B5),
+            Rgb555(0x2866),
+        ],
+    };
+}
+
 impl Default for SgbPalette {
     fn default() -> Self {
-        // Grayscale so games are visible before they set palettes
+        // Placeholder for system palettes no PAL_TRN has filled
         Self {
             colors: [
                 Rgb555(0x7FFF), // White
@@ -183,7 +195,10 @@ enum PendingTransfer {
 }
 
 pub struct Sgb {
+    // The game's palette buffer, uploaded once the game takes over from the preset
     palettes: [SgbPalette; 4],
+    // The system program's preset, painted into all four palettes until then
+    preset: Option<SgbPalette>,
     attribute_map: AttributeMap,
     system_palettes: Vec<SgbPalette>,
     attribute_files: Vec<AttributeMap>,
@@ -212,7 +227,10 @@ impl Default for Sgb {
 impl Sgb {
     pub fn new() -> Self {
         Self {
-            palettes: [SgbPalette::default(); 4],
+            palettes: [SgbPalette {
+                colors: [Rgb555(0); 4],
+            }; 4],
+            preset: Some(SgbPalette::PRESET_1A),
             attribute_map: AttributeMap::new(),
             system_palettes: vec![SgbPalette::default(); 512],
             attribute_files: vec![AttributeMap::new(); 45],
@@ -255,7 +273,7 @@ impl Sgb {
 
     pub fn render_data(&self) -> SgbRenderData {
         SgbRenderData {
-            palettes: self.palettes,
+            palettes: self.preset.map_or(self.palettes, |preset| [preset; 4]),
             attribute_map: self.attribute_map,
             mask_mode: self.mask_mode,
         }
@@ -334,6 +352,13 @@ impl Sgb {
         match self.pending_transfer {
             Some((n, t)) => out.extend([1, n, matches!(t, PendingTransfer::Attributes) as u8]),
             None => out.extend([0, 0, 0]),
+        }
+        match &self.preset {
+            Some(p) => {
+                out.push(1);
+                palette(&mut out, p);
+            }
+            None => out.push(0),
         }
         out
     }
@@ -432,6 +457,10 @@ impl Sgb {
             };
             sgb.pending_transfer = Some((n, t));
         }
+        sgb.preset = match r.u8()? {
+            0 => None,
+            _ => Some(r.palette()?),
+        };
         if !r.0.is_empty() {
             return None;
         }
@@ -584,6 +613,7 @@ impl Sgb {
     // --- Palette commands ---
 
     fn cmd_pal_pair(&mut self, data: &[u8], pal_a: usize, pal_b: usize) {
+        self.preset = None;
         let color0 = Rgb555::from_bytes(data[1], data[2]);
         for p in &mut self.palettes {
             p.colors[0] = color0;
@@ -599,6 +629,7 @@ impl Sgb {
     }
 
     fn cmd_pal_set(&mut self, data: &[u8]) {
+        self.preset = None;
         for i in 0..4 {
             // Palette IDs are 9 bits wide
             let idx = (u16::from_le_bytes([data[1 + i * 2], data[2 + i * 2]]) & 0x1FF) as usize;
@@ -1259,6 +1290,37 @@ mod tests {
 
         // The second frame presents: the capture becomes the redrawn picture.
         assert_eq!(delivered[1].0.pixel(0, 0).0, 1);
+    }
+
+    #[test]
+    fn the_picture_shows_preset_1a_before_any_palette_packet() {
+        let render = Sgb::new().render_data();
+        for (shade, colour) in [0x67BF, 0x265B, 0x10B5, 0x2866].into_iter().enumerate() {
+            assert_eq!(render.color_at(80, 72, shade as u8).0, colour);
+        }
+    }
+
+    #[test]
+    fn the_first_palette_packet_replaces_the_preset_with_the_games_palettes() {
+        let mut sgb = Sgb::new();
+        sgb.attribute_map.cells[0][0] = 2;
+        send_packet(
+            &mut sgb,
+            [1, 0x34, 0x12, 0x78, 0x56, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        let render = sgb.render_data();
+        assert_eq!(render.color_at(0, 0, 0).0, 0x1234);
+        for shade in 1..4 {
+            assert_eq!(render.color_at(0, 0, shade).0, 0);
+        }
+        assert_eq!(render.color_at(80, 72, 1).0, 0x5678);
+    }
+
+    #[test]
+    fn save_state_keeps_the_preset_in_force() {
+        let mut restored = Sgb::new();
+        restored.load_state(&Sgb::new().save_state()).unwrap();
+        assert_eq!(restored.render_data().color_at(80, 72, 3).0, 0x2866);
     }
 
     #[test]
