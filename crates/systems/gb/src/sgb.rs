@@ -1,6 +1,8 @@
 use super::ppu::screen::{self, Screen};
 use rgb::RGB8;
 
+mod state;
+
 /// Convert the rendered screen into a 4KB transfer data buffer.
 /// The SGB/SNES reads data from the rendered video signal, not raw VRAM.
 /// The game arranges tiles $00-$FF sequentially in the tilemap with identity palette,
@@ -277,195 +279,6 @@ impl Sgb {
             attribute_map: self.attribute_map,
             mask_mode: self.mask_mode,
         }
-    }
-
-    /// The co-processor's state as bytes. The DMG save-state record doesn't
-    /// carry it, so a host restoring an SGB-aware session saves it alongside.
-    pub fn save_state(&self) -> Vec<u8> {
-        fn palette(out: &mut Vec<u8>, p: &SgbPalette) {
-            for c in p.colors {
-                out.extend_from_slice(&c.0.to_le_bytes());
-            }
-        }
-        fn attrs(out: &mut Vec<u8>, a: &AttributeMap) {
-            out.extend(a.cells.iter().flatten());
-        }
-        fn screen(out: &mut Vec<u8>, s: &Screen) {
-            out.extend(s.pixels().map(|p| p.0));
-        }
-        let mut out = Vec::new();
-        self.palettes.iter().for_each(|p| palette(&mut out, p));
-        attrs(&mut out, &self.attribute_map);
-        self.system_palettes
-            .iter()
-            .for_each(|p| palette(&mut out, p));
-        self.attribute_files.iter().for_each(|a| attrs(&mut out, a));
-        out.push(self.mask_mode as u8);
-        out.extend([
-            self.joypad_index,
-            self.joypad_mask,
-            self.prev_p15_high as u8,
-            self.prev_lines_high as u8,
-        ]);
-        let (tag, expected, received, packet, bit, packets): (u8, u8, u8, [u8; 16], u8, &[u8]) =
-            match &self.command_state {
-                CommandState::Idle => (0, 0, 0, [0; 16], 0, &[]),
-                CommandState::ReceivingBits {
-                    packets_expected,
-                    packets_received,
-                    current_packet,
-                    bit_index,
-                    all_packets,
-                } => (
-                    1,
-                    *packets_expected,
-                    *packets_received,
-                    *current_packet,
-                    *bit_index,
-                    all_packets,
-                ),
-                CommandState::AwaitingPacketStart {
-                    packets_expected,
-                    packets_received,
-                    all_packets,
-                } => (
-                    2,
-                    *packets_expected,
-                    *packets_received,
-                    [0; 16],
-                    0,
-                    all_packets,
-                ),
-            };
-        out.extend([tag, expected, received, bit]);
-        out.extend(packet);
-        out.extend_from_slice(&(packets.len() as u16).to_le_bytes());
-        out.extend_from_slice(packets);
-        screen(&mut out, &self.last_screen);
-        match &self.frozen_screen {
-            Some(s) => {
-                out.push(1);
-                screen(&mut out, s);
-            }
-            None => out.push(0),
-        }
-        match self.pending_transfer {
-            Some((n, t)) => out.extend([1, n, matches!(t, PendingTransfer::Attributes) as u8]),
-            None => out.extend([0, 0, 0]),
-        }
-        match &self.preset {
-            Some(p) => {
-                out.push(1);
-                palette(&mut out, p);
-            }
-            None => out.push(0),
-        }
-        out
-    }
-
-    /// Restore what [`Sgb::save_state`] wrote. `None` (leaving this SGB
-    /// unchanged) if the bytes are not such a state.
-    pub fn load_state(&mut self, bytes: &[u8]) -> Option<()> {
-        struct R<'a>(&'a [u8]);
-        impl R<'_> {
-            fn take(&mut self, n: usize) -> Option<&[u8]> {
-                let (head, rest) = self.0.split_at_checked(n)?;
-                self.0 = rest;
-                Some(head)
-            }
-            fn u8(&mut self) -> Option<u8> {
-                Some(self.take(1)?[0])
-            }
-            fn palette(&mut self) -> Option<SgbPalette> {
-                let b = self.take(8)?;
-                let mut p = SgbPalette::default();
-                for (i, c) in p.colors.iter_mut().enumerate() {
-                    *c = Rgb555::from_bytes(b[i * 2], b[i * 2 + 1]);
-                }
-                Some(p)
-            }
-            fn attrs(&mut self) -> Option<AttributeMap> {
-                let b = self.take(20 * 18)?;
-                let mut a = AttributeMap::new();
-                for (y, row) in a.cells.iter_mut().enumerate() {
-                    row.copy_from_slice(&b[y * 20..y * 20 + 20]);
-                }
-                Some(a)
-            }
-            fn screen(&mut self) -> Option<Screen> {
-                let mut s = Screen::default();
-                s.restore_front(
-                    self.take(screen::PIXELS_PER_LINE as usize * screen::NUM_SCANLINES as usize)?,
-                );
-                Some(s)
-            }
-        }
-        let mut r = R(bytes);
-        let mut sgb = Sgb::new();
-        for p in sgb.palettes.iter_mut() {
-            *p = r.palette()?;
-        }
-        sgb.attribute_map = r.attrs()?;
-        for p in sgb.system_palettes.iter_mut() {
-            *p = r.palette()?;
-        }
-        for a in sgb.attribute_files.iter_mut() {
-            *a = r.attrs()?;
-        }
-        sgb.mask_mode = match r.u8()? {
-            0 => MaskMode::Disabled,
-            1 => MaskMode::Freeze,
-            2 => MaskMode::Black,
-            3 => MaskMode::BackdropColor,
-            _ => return None,
-        };
-        sgb.joypad_index = r.u8()?;
-        sgb.joypad_mask = r.u8()?;
-        sgb.prev_p15_high = r.u8()? != 0;
-        sgb.prev_lines_high = r.u8()? != 0;
-        let (tag, packets_expected, packets_received, bit_index) =
-            (r.u8()?, r.u8()?, r.u8()?, r.u8()?);
-        let current_packet: [u8; 16] = r.take(16)?.try_into().ok()?;
-        let len = u16::from_le_bytes(r.take(2)?.try_into().ok()?) as usize;
-        let all_packets = r.take(len)?.to_vec();
-        sgb.command_state = match tag {
-            0 => CommandState::Idle,
-            1 => CommandState::ReceivingBits {
-                packets_expected,
-                packets_received,
-                current_packet,
-                bit_index,
-                all_packets,
-            },
-            2 => CommandState::AwaitingPacketStart {
-                packets_expected,
-                packets_received,
-                all_packets,
-            },
-            _ => return None,
-        };
-        sgb.last_screen = r.screen()?;
-        if r.u8()? != 0 {
-            sgb.frozen_screen = Some(r.screen()?);
-        }
-        let (pending, n, kind) = (r.u8()?, r.u8()?, r.u8()?);
-        if pending != 0 {
-            let t = if kind != 0 {
-                PendingTransfer::Attributes
-            } else {
-                PendingTransfer::Palettes
-            };
-            sgb.pending_transfer = Some((n, t));
-        }
-        sgb.preset = match r.u8()? {
-            0 => None,
-            _ => Some(r.palette()?),
-        };
-        if !r.0.is_empty() {
-            return None;
-        }
-        *self = sgb;
-        Some(())
     }
 
     /// Called on every write to FF00.
@@ -1316,10 +1129,27 @@ mod tests {
         assert_eq!(render.color_at(80, 72, 1).0, 0x5678);
     }
 
+    type Captured = (missingno_core::state::StateRecord, Vec<(String, Vec<u8>)>);
+
+    fn capture(sgb: &Sgb) -> Captured {
+        let mut record = missingno_core::state::StateRecord::new();
+        sgb.write_state(&mut record);
+        let mut memory = Vec::new();
+        sgb.capture_memory(&mut memory);
+        let memory = memory
+            .into_iter()
+            .map(|(name, data)| (name.to_owned(), data))
+            .collect();
+        (record, memory)
+    }
+
+    fn restore((record, memory): &Captured) -> Sgb {
+        Sgb::from_state(record, memory).unwrap().unwrap()
+    }
+
     #[test]
     fn save_state_keeps_the_preset_in_force() {
-        let mut restored = Sgb::new();
-        restored.load_state(&Sgb::new().save_state()).unwrap();
+        let restored = restore(&capture(&Sgb::new()));
         assert_eq!(restored.render_data().color_at(80, 72, 3).0, 0x2866);
     }
 
@@ -1349,10 +1179,9 @@ mod tests {
         ));
         assert!(sgb.frozen_screen.is_some() && sgb.pending_transfer.is_some());
 
-        let saved = sgb.save_state();
-        let mut restored = Sgb::new();
-        restored.load_state(&saved).unwrap();
-        assert_eq!(restored.save_state(), saved);
+        let saved = capture(&sgb);
+        let mut restored = restore(&saved);
+        assert_eq!(capture(&restored), saved);
 
         let screen = screen_showing(&[0xA5; 4096]);
         for sgb in [&mut sgb, &mut restored] {
@@ -1362,7 +1191,16 @@ mod tests {
             }
             sgb.update_screen(&screen);
         }
-        assert_eq!(restored.save_state(), sgb.save_state());
-        assert!(Sgb::new().load_state(&saved[..saved.len() - 1]).is_none());
+        assert_eq!(capture(&restored), capture(&sgb));
+
+        let (record, mut memory) = saved;
+        memory.retain(|(name, _)| name != "sgb_capture");
+        assert!(Sgb::from_state(&record, &memory).is_err());
+    }
+
+    #[test]
+    fn a_record_without_an_sgb_block_carries_no_sgb() {
+        let record = missingno_core::state::StateRecord::new();
+        assert!(Sgb::from_state(&record, &[]).unwrap().is_none());
     }
 }

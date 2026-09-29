@@ -138,11 +138,19 @@ impl ConsoleUi for Dmg {
     }
 
     fn read_state(console: &Console<Self>) -> Option<StateRecord> {
-        Some(crate::snapshot::read_shared_record(console))
+        let mut record = crate::snapshot::read_shared_record(console);
+        if let Some(sgb) = console.sgb() {
+            sgb.write_state(&mut record);
+        }
+        Some(record)
     }
 
     fn capture_memory(console: &Console<Self>) -> Vec<(&'static str, Vec<u8>)> {
-        crate::snapshot::capture_memory(console)
+        let mut memory = crate::snapshot::capture_memory(console);
+        if let Some(sgb) = console.sgb() {
+            sgb.capture_memory(&mut memory);
+        }
+        memory
     }
 
     fn restore_state(

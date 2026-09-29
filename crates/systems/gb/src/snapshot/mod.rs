@@ -75,6 +75,9 @@ pub struct PpuSnapshot {
     pub dot_position: u8,
     pub stat_line_was_high: bool,
     pub window_line_counter: u8,
+    /// WUVU.q and VENA.q — the dot's phase within the M-cycle.
+    pub half_mcycle_divider: bool,
+    pub mcycle_divider: bool,
 }
 
 pub struct ApuSnapshot {

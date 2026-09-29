@@ -180,23 +180,19 @@ fn dmg_restore_at_a_frame_end_runs_in_lockstep() {
                 original.cpu().is_halted(),
                 "the frame ends with the CPU halted"
             );
-            let phase = original.ppu().dot_in_mcycle_phase();
             last_save = trail.len();
-            saves.push((last_save, record.clone(), capture_memory(&original), phase));
+            saves.push((last_save, record.clone(), capture_memory(&original)));
         }
         trail.push((result.tcycles, record));
     }
 
-    for (at, record, memory, phase) in saves {
+    for (at, record, memory) in saves {
         let mut restored = console();
         let memory = memory
             .into_iter()
             .map(|(n, b)| (n.to_string(), b))
             .collect();
         restored.restore_boundary(&record, memory, None).unwrap();
-        if let Some(phase) = phase {
-            restored.ppu_mut().restore_dot_in_mcycle_phase(phase);
-        }
         for (step, (tcycles, expected)) in trail[at + 1..at + 1 + FOLLOW].iter().enumerate() {
             assert_eq!(
                 restored.step().tcycles,

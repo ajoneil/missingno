@@ -447,13 +447,21 @@ mod tests {
             assert_eq!(field.subsystem, "ppu", "`{name}` must be a `ppu` field");
         }
 
-        // Reverse: every nullable Tier-2a `ppu` field is a known cell, so adding
-        // one to the schema without wiring a cell breaks here.
-        for field in schema
-            .fields
-            .iter()
-            .filter(|f| f.subsystem == "ppu" && matches!(f.tier, Tier::Boundary) && f.nullable)
-        {
+        // Reverse: every nullable Tier-2a `ppu` field the boundary record omits
+        // is a known cell, so adding one without wiring a cell breaks here.
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x101..0x104].copy_from_slice(&[0xc3, 0x50, 0x01]);
+        let console = crate::GameBoy::new(
+            crate::cartridge::Cartridge::new(rom, None, None).unwrap(),
+            None,
+        );
+        let record = <crate::Dmg as ConsoleUi>::read_state(&console).unwrap();
+        for field in schema.fields.iter().filter(|f| {
+            f.subsystem == "ppu"
+                && matches!(f.tier, Tier::Boundary)
+                && f.nullable
+                && record.get(f.name).is_none()
+        }) {
             assert!(
                 PipelineCell::from_name(field.name).is_some(),
                 "nullable `ppu` boundary field `{}` has no PipelineCell",

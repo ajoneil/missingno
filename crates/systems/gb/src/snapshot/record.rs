@@ -54,7 +54,9 @@ pub fn read_shared_record<M: crate::Model>(gb: &Console<M>) -> StateRecord {
         .set("dma", ppu.dma)
         .set("lx", ppu.dot_position)
         .set("stat_line", ppu.stat_line_was_high)
-        .set("window_line_counter", ppu.window_line_counter);
+        .set("window_line_counter", ppu.window_line_counter)
+        .set("half_mcycle_divider", ppu.half_mcycle_divider)
+        .set("mcycle_divider", ppu.mcycle_divider);
     // Timer.
     r.set("div", timer.div)
         .set("tima", timer.tima)

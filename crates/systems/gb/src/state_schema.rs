@@ -15,11 +15,11 @@
 //!
 //! Excluded from this schema, by design:
 //! - The CPU micro-sequencer (op state, M-cycle phase, bus/data latches) and
-//!   dispatch DFFs are Tier 2b — legitimate hardware state, not yet named at the
-//!   seam; arbitrary-tick restore awaits it.
+//!   the dispatch chain past ZACW are Tier 2b — legitimate hardware state, not
+//!   yet named at the seam; arbitrary-tick restore awaits it.
 //! - Per-step trace observations (pixel output, VRAM/APU write tracking, the
-//!   mode-2 OAM sprite store, the sub-dot PPU divider signals) are trace-framing
-//!   surfaces, re-derivable at a boundary — not machine state.
+//!   mode-2 OAM sprite store) are trace-framing surfaces, re-derivable at a
+//!   boundary — not machine state.
 
 use std::sync::LazyLock;
 
@@ -125,6 +125,14 @@ pub fn dmg_boundary_fields() -> Vec<FieldDef> {
         FieldDef::boundary("stat_line", Bool, "ppu")
             .help("LALU.q — the STAT interrupt line's prior level, for the rising-edge detector"),
         FieldDef::boundary("window_line_counter", U8, "ppu").help("internal window line counter"),
+        // The dot dividers set the dot's phase within the M-cycle. Nullable only
+        // so records written before they were named still load.
+        FieldDef::boundary("half_mcycle_divider", Bool, "ppu")
+            .help("WUVU.q — toggles every dot (2-dot period)")
+            .nullable(),
+        FieldDef::boundary("mcycle_divider", Bool, "ppu")
+            .help("VENA.q — toggles as WUVU falls (4-dot period)")
+            .nullable(),
         // PPU pixel pipeline: the two FIFOs, the palette pipe, the fetcher state
         // and its tile-row temporaries, and the per-line counters/flags. These
         // are nullable — a boundary save omits them: at a frame/instruction
@@ -316,6 +324,99 @@ pub fn dmg_memory_spans() -> Vec<MemorySpan> {
     ]
 }
 
+/// The Super Game Boy's registers, present only when the cartridge runs on one.
+pub fn sgb_boundary_fields() -> Vec<FieldDef> {
+    let field = |name, ty, help| FieldDef::boundary(name, ty, "sgb").help(help).nullable();
+    vec![
+        field(
+            "sgb_mask",
+            U8,
+            "MASK_EN mode — 0 off, 1 freeze, 2 black, 3 backdrop colour",
+        ),
+        field("sgb_joypad_index", U8, "MLT_REQ controller counter"),
+        field("sgb_joypad_mask", U8, "MLT_REQ controller-count mask"),
+        field(
+            "sgb_p15_high",
+            Bool,
+            "P15 select line's level at the last joypad write",
+        ),
+        field(
+            "sgb_lines_high",
+            Bool,
+            "whether the last joypad write left both select lines high",
+        ),
+        field(
+            "sgb_receiver",
+            U8,
+            "packet receiver — 0 idle, 1 receiving bits, 2 awaiting the next packet's start",
+        ),
+        field(
+            "sgb_packets_expected",
+            U8,
+            "packets in the command being received",
+        ),
+        field(
+            "sgb_packets_received",
+            U8,
+            "packets of that command received so far",
+        ),
+        field(
+            "sgb_bit_index",
+            U8,
+            "bit position within the packet being received",
+        ),
+        field(
+            "sgb_transfer_countdown",
+            U8,
+            "frames until a pending VRAM transfer reads the picture",
+        ),
+        field(
+            "sgb_transfer_kind",
+            U8,
+            "pending VRAM transfer — 0 PAL_TRN, 1 ATTR_TRN",
+        ),
+        field(
+            "sgb_preset_in_force",
+            Bool,
+            "the system program's preset still shows in place of the game's palettes",
+        ),
+    ]
+}
+
+/// The Super Game Boy's RAM and the ICD2's picture captures.
+pub fn sgb_memory_spans() -> Vec<MemorySpan> {
+    let capture = NATIVE_SIZE.0 * NATIVE_SIZE.1;
+    vec![
+        MemorySpan::off_bus("sgb_palettes", 32)
+            .optional()
+            .help("the game's four palettes (4 × 4 × RGB555)"),
+        MemorySpan::off_bus("sgb_attribute_map", 360)
+            .optional()
+            .help("palette per 8×8 cell, 20 × 18"),
+        MemorySpan::off_bus("sgb_system_palettes", 512 * 8)
+            .optional()
+            .help("system palettes PAL_TRN fills"),
+        MemorySpan::off_bus("sgb_attribute_files", 45 * 360)
+            .optional()
+            .help("attribute files ATTR_TRN fills"),
+        MemorySpan::off_bus("sgb_packet", 16)
+            .optional()
+            .help("the packet being received"),
+        MemorySpan::off_bus("sgb_packets", 0)
+            .optional()
+            .help("the command's earlier packets, 16 bytes each"),
+        MemorySpan::off_bus("sgb_capture", capture)
+            .optional()
+            .help("the ICD2's latest picture capture, shade per pixel"),
+        MemorySpan::off_bus("sgb_frozen_capture", capture)
+            .optional()
+            .help("the picture MASK_EN froze"),
+        MemorySpan::off_bus("sgb_preset", 8)
+            .optional()
+            .help("the preset in force (4 × RGB555)"),
+    ]
+}
+
 /// The DMG framebuffer: 160×144, 2-bit shade indices.
 pub fn dmg_frame() -> FrameSpec {
     FrameSpec {
@@ -328,13 +429,16 @@ pub fn dmg_frame() -> FrameSpec {
 static DMG_SCHEMA: LazyLock<SystemStateSchema> = LazyLock::new(|| {
     let mut fields = dmg_observable_fields();
     fields.extend(dmg_boundary_fields());
+    fields.extend(sgb_boundary_fields());
+    let mut memory = dmg_memory_spans();
+    memory.extend(sgb_memory_spans());
     SystemStateSchema {
         system: "dmg",
         isa: "sm83",
         instruction_addr_field: "op_addr",
         entry: Some((0x0100, 0x0101)),
         fields,
-        memory: dmg_memory_spans(),
+        memory,
         frame: dmg_frame(),
     }
 });
@@ -407,6 +511,8 @@ mod tests {
             ("dot_position", "lx"),
             ("stat_line_was_high", "stat_line"),
             ("window_line_counter", "window_line_counter"),
+            ("half_mcycle_divider", "half_mcycle_divider"),
+            ("mcycle_divider", "mcycle_divider"),
             // ApuSnapshot
             ("master_vol", "master_vol"),
             ("sound_pan", "sound_pan"),

@@ -44,6 +44,7 @@ pub fn capture_cpu<M: crate::Model>(gb: &Console<M>) -> CpuSnapshot {
 
 pub fn capture_ppu<M: crate::Model>(gb: &Console<M>) -> PpuSnapshot {
     let ppu = gb.ppu();
+    let (half_mcycle_divider, mcycle_divider) = ppu.divider_levels();
     PpuSnapshot {
         lcdc: ppu.read_register(crate::ppu::Register::Control),
         stat: ppu.read_register(crate::ppu::Register::Status),
@@ -60,6 +61,8 @@ pub fn capture_ppu<M: crate::Model>(gb: &Console<M>) -> PpuSnapshot {
         dot_position: ppu.lx(),
         stat_line_was_high: ppu.stat_line_was_high(),
         window_line_counter: ppu.window_line_counter().unwrap_or(0),
+        half_mcycle_divider,
+        mcycle_divider,
     }
 }
 
