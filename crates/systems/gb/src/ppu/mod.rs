@@ -577,10 +577,19 @@ impl<P: PpuModel> Ppu<P> {
         })
     }
 
-    /// The dot dividers' levels: (half-M-cycle, M-cycle).
-    pub(crate) fn divider_levels(&self) -> (bool, bool) {
-        let d = &self.video.dividers;
-        (d.half_mcycle, d.mcycle)
+    /// LX and the dot dividers' levels (half-M-cycle, M-cycle) as
+    /// [`Ppu::sync_span`] would leave them, read without it.
+    pub(crate) fn synced_dot(&self) -> (u8, bool, bool) {
+        let mut dividers = dividers::Dividers {
+            half_mcycle: self.video.dividers.half_mcycle,
+            mcycle: self.video.dividers.mcycle,
+        };
+        let rises = dividers.advance_dots(self.span.deferred());
+        (
+            self.video.dot_position() + rises as u8,
+            dividers.half_mcycle,
+            dividers.mcycle,
+        )
     }
 
     /// M-cycle-boundary rise: the CGB clock-domain samples. The VRAM CPU

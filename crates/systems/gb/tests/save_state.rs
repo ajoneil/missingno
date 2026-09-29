@@ -207,3 +207,111 @@ fn dmg_restore_at_a_frame_end_runs_in_lockstep() {
         }
     }
 }
+
+/// Where the machine is after a frame: the T-cycles the frame took, the
+/// picture, work and high RAM, and the timer's internal counter.
+fn frame_fingerprint(gb: &mut missingno_gb::GameBoy) -> (u64, Vec<u8>, Vec<u8>, u16) {
+    let mut tcycles = 0u64;
+    loop {
+        let step = gb.step();
+        tcycles += step.tcycles as u64;
+        if step.new_screen {
+            break;
+        }
+    }
+    let picture = gb
+        .screen()
+        .front()
+        .pixels
+        .iter()
+        .flatten()
+        .map(|p| p.0)
+        .collect();
+    let mut ram = gb.peek_range(0xC000, 0x2000);
+    ram.extend(gb.peek_range(0xFF80, 0x7F));
+    (tcycles, picture, ram, gb.timers().internal_counter())
+}
+
+/// A save taken through the DMG's own state, between frames or `into_frame`
+/// instructions into one, written and read back as a state file, lands on a
+/// fresh console that then runs in step with the original, frame for frame. Needs a ROM whose behaviour hangs on
+/// hardware timing (Pokémon Red seeds its random numbers from DIV); give its
+/// path in `DMG_TIMING_ROM`.
+#[test]
+#[ignore = "needs a commercial ROM in DMG_TIMING_ROM"]
+fn a_restore_runs_in_step_with_the_original() {
+    use missingno_core::state_file::{StateMeta, read_state_file, write_state_file};
+    use missingno_gb::cartridge::Cartridge;
+    use missingno_gb::system::ConsoleUi;
+    use missingno_gb::{Dmg, GameBoy};
+
+    let path = std::env::var("DMG_TIMING_ROM").expect("DMG_TIMING_ROM names a ROM");
+    let rom = std::fs::read(&path).unwrap();
+    let boot = || GameBoy::new(Cartridge::new(rom.clone(), None, None).unwrap(), None);
+
+    let mut original = boot();
+    let mut frame = 0;
+    let saves = [
+        (150, 0),
+        (600, 0),
+        (1400, 0),
+        (1800, 100),
+        (2200, 400),
+        (2600, 900),
+        (3000, 1500),
+        (3400, 2500),
+        (3800, 3300),
+        (4200, 4100),
+    ];
+    for (save_at, into_frame) in saves {
+        while frame < save_at {
+            frame_fingerprint(&mut original);
+            frame += 1;
+        }
+        for _ in 0..into_frame {
+            original.step();
+        }
+        let record = <Dmg as ConsoleUi>::read_state(&original).unwrap();
+        let memory = <Dmg as ConsoleUi>::capture_memory(&original);
+        let meta = StateMeta {
+            system: "dmg",
+            rom_sha256: None,
+            emulator: "missingno",
+            emulator_version: "",
+        };
+        let file =
+            read_state_file(&write_state_file(&meta, &record, &memory, None).unwrap()).unwrap();
+        let record = missingno_gb::state_schema::dmg_state_schema()
+            .record_from(file.fields)
+            .unwrap();
+
+        let mut restored = boot();
+        for _ in 0..30 {
+            frame_fingerprint(&mut restored);
+        }
+        restored
+            .restore_boundary(&record, file.memory, None)
+            .unwrap();
+        for after in 0..400 {
+            let (a, b) = (
+                frame_fingerprint(&mut original),
+                frame_fingerprint(&mut restored),
+            );
+            let parted = [
+                ("T-cycles", a.0 != b.0),
+                // A save doesn't carry the lines of the frame being drawn.
+                ("picture", a.1 != b.1 && (after > 0 || into_frame == 0)),
+                ("RAM", a.2 != b.2),
+                ("timer", a.3 != b.3),
+            ];
+            let parted: Vec<_> = parted.iter().filter(|p| p.1).map(|p| p.0).collect();
+            assert!(
+                parted.is_empty(),
+                "restored from frame {save_at}+{into_frame}, parted {after} frames later: {parted:?} ({} vs {} T-cycles)",
+                a.0,
+                b.0
+            );
+            frame += 1;
+        }
+    }
+}

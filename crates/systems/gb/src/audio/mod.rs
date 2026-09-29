@@ -18,7 +18,7 @@ use span::{Consumed, SpanPredictor};
 /// Static, per-console APU properties. Each is a compile-time fact the DMG and
 /// CGB silicon fix differently, so the console-specific runtime setters and
 /// flag fields collapse into consts the monomorphization folds away.
-pub trait ApuSpec {
+pub trait ApuSpec: Clone {
     /// Console has the KEY1 ÷2 cell — the console-wide fact, read through
     /// [`Model::Apu`](crate::Model::Apu) outside the APU too. When false the
     /// double-speed branches of the shared step loop dead-code, along with the
@@ -249,6 +249,16 @@ impl<A: ApuSpec> Audio<A> {
         if self.span.skipped() > 0 {
             self.materialize_span();
         }
+    }
+
+    /// This APU as [`Audio::materialize`] would leave it, read without it.
+    pub(crate) fn materialized(&self) -> std::borrow::Cow<'_, Self> {
+        if self.span.skipped() == 0 {
+            return std::borrow::Cow::Borrowed(self);
+        }
+        let mut audio = self.clone();
+        audio.materialize_span();
+        std::borrow::Cow::Owned(audio)
     }
 
     /// Drop the span prediction — an unpredictable mutation landed, or the

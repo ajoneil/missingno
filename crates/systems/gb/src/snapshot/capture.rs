@@ -44,7 +44,7 @@ pub fn capture_cpu<M: crate::Model>(gb: &Console<M>) -> CpuSnapshot {
 
 pub fn capture_ppu<M: crate::Model>(gb: &Console<M>) -> PpuSnapshot {
     let ppu = gb.ppu();
-    let (half_mcycle_divider, mcycle_divider) = ppu.divider_levels();
+    let (dot_position, half_mcycle_divider, mcycle_divider) = ppu.synced_dot();
     PpuSnapshot {
         lcdc: ppu.read_register(crate::ppu::Register::Control),
         stat: ppu.read_register(crate::ppu::Register::Status),
@@ -58,7 +58,7 @@ pub fn capture_ppu<M: crate::Model>(gb: &Console<M>) -> PpuSnapshot {
         obp0: ppu.read_register(crate::ppu::Register::Sprite0Palette),
         obp1: ppu.read_register(crate::ppu::Register::Sprite1Palette),
         dma: gb.dma().source_register(),
-        dot_position: ppu.lx(),
+        dot_position,
         stat_line_was_high: ppu.stat_line_was_high(),
         window_line_counter: ppu.window_line_counter().unwrap_or(0),
         half_mcycle_divider,
@@ -67,12 +67,13 @@ pub fn capture_ppu<M: crate::Model>(gb: &Console<M>) -> PpuSnapshot {
 }
 
 pub fn capture_apu<M: crate::Model>(gb: &Console<M>) -> ApuSnapshot {
-    let audio = gb.audio();
+    let audio = gb.audio().materialized();
+    let register = |address| audio.read_register(crate::audio::Register::map(address));
     let ch = audio.channels();
     ApuSnapshot {
         master_vol: audio.nr50,
-        sound_pan: gb.peek(0xFF25),
-        sound_on: gb.peek(0xFF26),
+        sound_pan: register(0xFF25),
+        sound_on: register(0xFF26),
 
         ch1_sweep: ch.ch1.sweep.register.0,
         ch1_duty_len: ch.ch1.waveform_and_initial_length.0,
@@ -86,12 +87,12 @@ pub fn capture_apu<M: crate::Model>(gb: &Console<M>) -> ApuSnapshot {
         ch2_freq_hi: (ch.ch2.period.0 >> 8) as u8 | if ch.ch2.length.enabled { 0x40 } else { 0 },
 
         ch3_dac: if ch.ch3.dac_enabled { 0x80 } else { 0 },
-        ch3_len: gb.peek(0xFF1B),
+        ch3_len: register(0xFF1B),
         ch3_vol: ch.ch3.volume.0,
         ch3_freq_lo: ch.ch3.period.0 as u8,
         ch3_freq_hi: (ch.ch3.period.0 >> 8) as u8 | if ch.ch3.length.enabled { 0x40 } else { 0 },
 
-        ch4_len: gb.peek(0xFF20),
+        ch4_len: register(0xFF20),
         ch4_vol_env: ch.ch4.volume_and_envelope.0,
         ch4_freq: ch.ch4.frequency_and_randomness.0,
         ch4_control: if ch.ch4.length.enabled { 0x40 } else { 0 },

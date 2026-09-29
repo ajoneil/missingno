@@ -133,6 +133,21 @@ mod tests {
     }
 
     #[test]
+    fn a_capture_reads_as_a_synced_console_would() {
+        let mut console = console(false);
+        let mut deferred = false;
+        for _ in 0..20_000 {
+            console.step();
+            let unsynced = capture(&console);
+            deferred |= unsynced.0.get("lx") != Some(&console.ppu().lx().into());
+            console.sync_ppu();
+            console.sync_audio();
+            assert_eq!(capture(&console), unsynced);
+        }
+        assert!(deferred, "needs a capture the PPU's span had deferred");
+    }
+
+    #[test]
     fn a_record_from_before_the_dividers_still_loads() {
         let (mut record, memory) = capture(&console(false));
         let mut old = StateRecord::new();
