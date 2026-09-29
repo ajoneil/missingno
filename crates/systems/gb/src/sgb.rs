@@ -1260,4 +1260,47 @@ mod tests {
         // The second frame presents: the capture becomes the redrawn picture.
         assert_eq!(delivered[1].0.pixel(0, 0).0, 1);
     }
+
+    #[test]
+    fn save_state_round_trips_mid_packet() {
+        let mut sgb = Sgb::new();
+        sgb.update_screen(&screen_showing(&[0x5A; 4096]));
+        let mut mask_en = [0u8; 16];
+        (mask_en[0], mask_en[1]) = ((0x17 << 3) | 1, 1);
+        send_packet(&mut sgb, mask_en);
+        send_packet(
+            &mut sgb,
+            [1, 0x34, 0x12, 0x78, 0x56, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        let mut pal_trn = [0u8; 16];
+        pal_trn[0] = (0x0B << 3) | 1;
+        send_packet(&mut sgb, pal_trn);
+        sgb.write_joypad(0x00);
+        sgb.write_joypad(0x30);
+        for _ in 0..5 {
+            sgb.write_joypad(0x10);
+            sgb.write_joypad(0x30);
+        }
+        assert!(matches!(
+            sgb.command_state,
+            CommandState::ReceivingBits { .. }
+        ));
+        assert!(sgb.frozen_screen.is_some() && sgb.pending_transfer.is_some());
+
+        let saved = sgb.save_state();
+        let mut restored = Sgb::new();
+        restored.load_state(&saved).unwrap();
+        assert_eq!(restored.save_state(), saved);
+
+        let screen = screen_showing(&[0xA5; 4096]);
+        for sgb in [&mut sgb, &mut restored] {
+            for _ in 0..123 {
+                sgb.write_joypad(0x20);
+                sgb.write_joypad(0x30);
+            }
+            sgb.update_screen(&screen);
+        }
+        assert_eq!(restored.save_state(), sgb.save_state());
+        assert!(Sgb::new().load_state(&saved[..saved.len() - 1]).is_none());
+    }
 }
