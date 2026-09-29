@@ -22,6 +22,9 @@ missingno-trace = { path = "../../missingno/trace", optional = true }
 sha2 = { version = "0.11" }
 missingno-test-support = { path = "../../missingno/test-support", optional = true }
 
+[build-dependencies]
+sha2 = { version = "0.11" }
+
 [dev-dependencies]
 ron = "0.12"
 missingno-gb = { path = ".", features = ["test-support"] }

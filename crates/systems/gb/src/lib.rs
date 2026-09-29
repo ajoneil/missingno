@@ -51,6 +51,11 @@ pub use screen::{ConsoleShadow, ScreenBuffer, VramDmaClaim};
 
 pub(crate) use model::observes_audio;
 
+/// A digest of the sources the emulated system is built from, this crate's and
+/// `missingno-core`'s (not the registry crates they use), for hosts to key
+/// anything that depends on the emulator's behaviour, such as recordings.
+pub const SOURCE_DIGEST: &str = env!("MISSINGNO_GB_SOURCE_DIGEST");
+
 /// B2 acceptance harness: each shared struct's summed CGB-only residual storage
 /// on a DMG build is the load-bearing invariant (B2 drives it to zero behind the
 /// `Model`/`PpuModel` seam); absolute `size_of` is left unpinned to exclude
