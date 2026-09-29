@@ -7,6 +7,7 @@
 
 pub mod audio;
 pub mod board;
+pub mod call;
 pub mod cartridge;
 mod chassis;
 pub mod clock;
