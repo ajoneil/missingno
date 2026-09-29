@@ -4,7 +4,10 @@
 use missingno_core::state::{StateRecord, StateValue};
 use missingno_core::system::StateError;
 
-use super::{AttributeMap, CommandState, MaskMode, PendingTransfer, Rgb555, Sgb, SgbPalette};
+use super::{
+    AttributeMap, BorderMapEntry, CommandState, MaskMode, PendingTransfer, Rgb555, Sgb, SgbBorder,
+    SgbPalette,
+};
 use crate::ppu::screen::{self, Screen};
 
 const PALETTE_BYTES: usize = 8;
@@ -28,6 +31,79 @@ fn attribute_bytes(maps: &[AttributeMap]) -> Vec<u8> {
 
 fn capture_bytes(capture: &Screen) -> Vec<u8> {
     capture.pixels().map(|p| p.0).collect()
+}
+
+fn transfer_code(transfer: PendingTransfer) -> u8 {
+    match transfer {
+        PendingTransfer::Palettes => 0,
+        PendingTransfer::Attributes => 1,
+        PendingTransfer::BorderTiles { upper_half: false } => 2,
+        PendingTransfer::BorderTiles { upper_half: true } => 3,
+        PendingTransfer::BorderMap => 4,
+    }
+}
+
+fn transfer_from(code: u8) -> Result<PendingTransfer, StateError> {
+    Ok(match code {
+        0 => PendingTransfer::Palettes,
+        1 => PendingTransfer::Attributes,
+        2 => PendingTransfer::BorderTiles { upper_half: false },
+        3 => PendingTransfer::BorderTiles { upper_half: true },
+        4 => PendingTransfer::BorderMap,
+        _ => return Err(StateError::Corrupt),
+    })
+}
+
+fn words(bytes: &[u8]) -> impl Iterator<Item = u16> + '_ {
+    bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|w| u16::from_le_bytes(*w))
+}
+
+impl SgbBorder {
+    fn capture(&self, out: &mut Vec<(&'static str, Vec<u8>)>) {
+        out.push(("sgb_border_tiles", self.tiles.to_vec()));
+        out.push((
+            "sgb_border_map",
+            self.map.iter().flat_map(|e| e.0.to_le_bytes()).collect(),
+        ));
+        out.push((
+            "sgb_border_palettes",
+            self.palettes
+                .iter()
+                .flatten()
+                .flat_map(|c| c.0.to_le_bytes())
+                .collect(),
+        ));
+    }
+
+    /// A record from before the border restores an empty one.
+    fn from_spans(
+        tiles: Option<&[u8]>,
+        map: Option<&[u8]>,
+        palettes: Option<&[u8]>,
+    ) -> Result<SgbBorder, StateError> {
+        let mut border = SgbBorder::default();
+        let (Some(tiles), Some(map), Some(palettes)) = (tiles, map, palettes) else {
+            return Ok(border);
+        };
+        if tiles.len() != border.tiles.len()
+            || map.len() != border.map.len() * 2
+            || palettes.len() != border.palettes.len() * 16 * 2
+        {
+            return Err(StateError::Corrupt);
+        }
+        border.tiles.copy_from_slice(tiles);
+        for (entry, word) in border.map.iter_mut().zip(words(map)) {
+            *entry = BorderMapEntry(word);
+        }
+        for (color, word) in border.palettes.iter_mut().flatten().zip(words(palettes)) {
+            *color = Rgb555(word);
+        }
+        Ok(border)
+    }
 }
 
 fn palettes_from(bytes: &[u8], count: usize) -> Result<Vec<SgbPalette>, StateError> {
@@ -98,10 +174,8 @@ impl Sgb {
             .set("sgb_bit_index", bit_index)
             .set("sgb_preset_in_force", self.preset.is_some());
         if let Some((countdown, transfer)) = self.pending_transfer {
-            r.set("sgb_transfer_countdown", countdown).set(
-                "sgb_transfer_kind",
-                matches!(transfer, PendingTransfer::Attributes) as u8,
-            );
+            r.set("sgb_transfer_countdown", countdown)
+                .set("sgb_transfer_kind", transfer_code(transfer));
         }
     }
 
@@ -136,6 +210,7 @@ impl Sgb {
         if let Some(preset) = &self.preset {
             out.push(("sgb_preset", palette_bytes(std::slice::from_ref(preset))));
         }
+        self.border.capture(out);
     }
 
     /// The SGB a record describes, or `None` if the record carries no SGB.
@@ -202,11 +277,7 @@ impl Sgb {
             None => None,
             Some(_) => Some((
                 byte("sgb_transfer_countdown")?,
-                match byte("sgb_transfer_kind")? {
-                    0 => PendingTransfer::Palettes,
-                    1 => PendingTransfer::Attributes,
-                    _ => return Err(StateError::Corrupt),
-                },
+                transfer_from(byte("sgb_transfer_kind")?)?,
             )),
         };
 
@@ -225,6 +296,11 @@ impl Sgb {
         } else {
             None
         };
+        sgb.border = SgbBorder::from_spans(
+            span("sgb_border_tiles"),
+            span("sgb_border_map"),
+            span("sgb_border_palettes"),
+        )?;
         Ok(Some(sgb))
     }
 }

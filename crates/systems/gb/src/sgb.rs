@@ -44,7 +44,7 @@ fn screen_to_transfer_data(screen: &Screen) -> Vec<u8> {
 }
 
 /// 15-bit RGB555 color as used by the SNES/SGB.
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Rgb555(pub u16);
 
 /// Gamma ramp for SNES RGB555 output, derived from SameBoy's SGB-specific
@@ -139,6 +139,110 @@ impl AttributeMap {
     }
 }
 
+/// The SNES picture the SGB outputs, with the Game Boy's inset at its centre.
+pub const SNES_WIDTH: usize = 256;
+pub const SNES_HEIGHT: usize = 224;
+pub const GAME_BOY_ORIGIN: (usize, usize) = (48, 40);
+
+const BORDER_TILES: usize = 256;
+const BORDER_TILE_BYTES: usize = 32;
+const BORDER_MAP_COLUMNS: usize = SNES_WIDTH / 8;
+const BORDER_MAP_ROWS: usize = SNES_HEIGHT / 8;
+/// CHR_TRN delivers half the border's tiles at a time.
+const BORDER_TILES_PER_TRANSFER: usize = 128;
+/// The SNES BG palettes PCT_TRN loads, 4 to 6.
+const BORDER_PALETTES: std::ops::RangeInclusive<u16> = 4..=6;
+const BORDER_PALETTE_OFFSET: usize = 0x800;
+
+/// One entry of the border's SNES BG map: `VH-P PPCC CCCC CCCC`.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct BorderMapEntry(pub u16);
+
+impl BorderMapEntry {
+    pub fn tile(self) -> u16 {
+        self.0 & 0x3ff
+    }
+
+    pub fn palette(self) -> u16 {
+        (self.0 >> 10) & 0x07
+    }
+
+    pub fn flip_x(self) -> bool {
+        self.0 & 0x4000 != 0
+    }
+
+    pub fn flip_y(self) -> bool {
+        self.0 & 0x8000 != 0
+    }
+}
+
+/// The border layer the SNES draws around, and over, the Game Boy's picture,
+/// as CHR_TRN and PCT_TRN fill it. Empty until the game sends one: the system
+/// program's own border lives in its ROM, which isn't modelled.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SgbBorder {
+    /// 4bpp SNES tiles: planes 0 and 1 interleaved by row, then planes 2 and 3.
+    tiles: Box<[u8]>,
+    map: Box<[BorderMapEntry]>,
+    palettes: [[Rgb555; 16]; 3],
+}
+
+impl Default for SgbBorder {
+    fn default() -> Self {
+        Self {
+            tiles: vec![0; BORDER_TILES * BORDER_TILE_BYTES].into(),
+            map: vec![BorderMapEntry::default(); BORDER_MAP_COLUMNS * BORDER_MAP_ROWS].into(),
+            palettes: [[Rgb555(0); 16]; 3],
+        }
+    }
+}
+
+impl SgbBorder {
+    pub fn map_entry(&self, column: usize, row: usize) -> BorderMapEntry {
+        self.map[row * BORDER_MAP_COLUMNS + column]
+    }
+
+    /// The border's colour at a pixel of the SNES picture, or `None` where it
+    /// is transparent. Entries naming a tile or palette outside what the
+    /// transfers load draw nothing: that SNES memory isn't modelled.
+    pub fn color_at(&self, x: usize, y: usize) -> Option<Rgb555> {
+        let entry = self.map_entry(x / 8, y / 8);
+        let tile = entry.tile() as usize;
+        if tile >= BORDER_TILES || !BORDER_PALETTES.contains(&entry.palette()) {
+            return None;
+        }
+        let column = if entry.flip_x() { 7 - x % 8 } else { x % 8 };
+        let row = if entry.flip_y() { 7 - y % 8 } else { y % 8 };
+        let row_bytes = tile * BORDER_TILE_BYTES + row * 2;
+        let color_index = [0, 1, 16, 17]
+            .iter()
+            .enumerate()
+            .map(|(plane, offset)| ((self.tiles[row_bytes + offset] >> (7 - column)) & 1) << plane)
+            .sum::<u8>();
+        // Colour 0 of a SNES BG palette is transparent
+        let palette = (entry.palette() - BORDER_PALETTES.start()) as usize;
+        (color_index != 0).then(|| self.palettes[palette][color_index as usize])
+    }
+
+    fn load_tiles(&mut self, upper_half: bool, data: &[u8]) {
+        let bytes = BORDER_TILES_PER_TRANSFER * BORDER_TILE_BYTES;
+        let at = if upper_half { bytes } else { 0 };
+        self.tiles[at..at + bytes].copy_from_slice(&data[..bytes]);
+    }
+
+    fn load_map_and_palettes(&mut self, data: &[u8]) {
+        let word = |offset: usize| u16::from_le_bytes([data[offset], data[offset + 1]]);
+        for (i, entry) in self.map.iter_mut().enumerate() {
+            *entry = BorderMapEntry(word(i * 2));
+        }
+        for (p, palette) in self.palettes.iter_mut().enumerate() {
+            for (c, color) in palette.iter_mut().enumerate() {
+                *color = Rgb555(word(BORDER_PALETTE_OFFSET + (p * 16 + c) * 2));
+            }
+        }
+    }
+}
+
 /// Screen masking mode.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum MaskMode {
@@ -190,10 +294,12 @@ enum CommandState {
     },
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PendingTransfer {
     Palettes,
     Attributes,
+    BorderTiles { upper_half: bool },
+    BorderMap,
 }
 
 pub struct Sgb {
@@ -218,6 +324,7 @@ pub struct Sgb {
     frozen_screen: Option<Screen>,
     // Deferred VRAM transfer: countdown frames + transfer type
     pending_transfer: Option<(u8, PendingTransfer)>,
+    border: SgbBorder,
 }
 
 impl Default for Sgb {
@@ -245,6 +352,7 @@ impl Sgb {
             last_screen: Screen::default(),
             frozen_screen: None,
             pending_transfer: None,
+            border: SgbBorder::default(),
         }
     }
 
@@ -254,9 +362,14 @@ impl Sgb {
         if let Some((countdown, transfer)) = self.pending_transfer {
             if countdown <= 1 {
                 self.pending_transfer = None;
+                let data = screen_to_transfer_data(&self.last_screen);
                 match transfer {
-                    PendingTransfer::Palettes => self.cmd_pal_trn(),
-                    PendingTransfer::Attributes => self.cmd_attr_trn(),
+                    PendingTransfer::Palettes => self.cmd_pal_trn(&data),
+                    PendingTransfer::Attributes => self.cmd_attr_trn(&data),
+                    PendingTransfer::BorderTiles { upper_half } => {
+                        self.border.load_tiles(upper_half, &data)
+                    }
+                    PendingTransfer::BorderMap => self.border.load_map_and_palettes(&data),
                 }
             } else {
                 self.pending_transfer = Some((countdown - 1, transfer));
@@ -271,6 +384,38 @@ impl Sgb {
             (MaskMode::Freeze, Some(screen)) => screen,
             _ => &self.last_screen,
         }
+    }
+
+    pub fn border(&self) -> &SgbBorder {
+        &self.border
+    }
+
+    /// The SNES picture, row-major: the backdrop, the Game Boy's picture at
+    /// [`GAME_BOY_ORIGIN`] in the SGB's colours, and the border over both. In
+    /// the layers' own coordinates: the S-PPU's one-line vertical offset
+    /// (it shows each BG from its line 1) isn't modelled.
+    pub fn snes_picture(&self) -> Vec<Rgb555> {
+        let render = self.render_data();
+        let screen = self.displayed_screen();
+        let mut picture = vec![render.backdrop(); SNES_WIDTH * SNES_HEIGHT];
+        let (left, top) = GAME_BOY_ORIGIN;
+        for y in 0..screen::NUM_SCANLINES as usize {
+            for x in 0..screen::PIXELS_PER_LINE as usize {
+                picture[(top + y) * SNES_WIDTH + left + x] = match render.mask_mode {
+                    MaskMode::Black => Rgb555(0),
+                    MaskMode::BackdropColor => render.backdrop(),
+                    MaskMode::Disabled | MaskMode::Freeze => {
+                        render.color_at(x, y, screen.pixel(x as u8, y as u8).0)
+                    }
+                };
+            }
+        }
+        for (i, pixel) in picture.iter_mut().enumerate() {
+            if let Some(color) = self.border.color_at(i % SNES_WIDTH, i / SNES_WIDTH) {
+                *pixel = color;
+            }
+        }
+        picture
     }
 
     pub fn render_data(&self) -> SgbRenderData {
@@ -413,12 +558,17 @@ impl Sgb {
             0x0A => self.cmd_pal_set(data),
             0x0B => self.pending_transfer = Some((3, PendingTransfer::Palettes)),
             0x11 => self.cmd_mlt_req(data),
+            // CHR_TRN's OBJ-tile flag (bit 1) reportedly lands in the same tiles
+            0x13 => {
+                let upper_half = data[1] & 0x01 != 0;
+                self.pending_transfer = Some((3, PendingTransfer::BorderTiles { upper_half }));
+            }
+            0x14 => self.pending_transfer = Some((3, PendingTransfer::BorderMap)),
             0x15 => self.pending_transfer = Some((3, PendingTransfer::Attributes)),
             0x16 => self.cmd_attr_set(data),
             0x17 => self.cmd_mask_en(data),
             0x19 => self.cmd_pal_pri(data),
-            // Border/transfer commands — accept but don't render borders
-            0x08 | 0x09 | 0x0C | 0x0D | 0x0E | 0x0F | 0x10 | 0x12 | 0x13 | 0x14 | 0x18 => {}
+            0x08 | 0x09 | 0x0C | 0x0D | 0x0E | 0x0F | 0x10 | 0x12 | 0x18 => {}
             _ => {}
         }
     }
@@ -462,8 +612,7 @@ impl Sgb {
         }
     }
 
-    fn cmd_pal_trn(&mut self) {
-        let data = screen_to_transfer_data(&self.last_screen);
+    fn cmd_pal_trn(&mut self, data: &[u8]) {
         for pal_idx in 0..512 {
             let base = pal_idx * 8;
             for c in 0..4 {
@@ -642,8 +791,7 @@ impl Sgb {
         }
     }
 
-    fn cmd_attr_trn(&mut self) {
-        let data = screen_to_transfer_data(&self.last_screen);
+    fn cmd_attr_trn(&mut self, data: &[u8]) {
         // 45 attribute files, each 90 bytes (20x18 / 4 = 90 bytes packed)
         for file_idx in 0..45 {
             self.attribute_files[file_idx] = AttributeMap::from_packed(&data[file_idx * 90..]);
@@ -1127,6 +1275,142 @@ mod tests {
             assert_eq!(render.color_at(0, 0, shade).0, 0);
         }
         assert_eq!(render.color_at(80, 72, 1).0, 0x5678);
+    }
+
+    /// Tile data for CHR_TRN with tile `tile`'s top-left pixel at `color`.
+    fn border_tiles_with(tile: usize, color: u8) -> Vec<u8> {
+        let mut data = vec![0u8; 4096];
+        for (plane, offset) in [0, 1, 16, 17].into_iter().enumerate() {
+            data[tile * 32 + offset] = (color >> plane & 1) << 7;
+        }
+        data
+    }
+
+    fn chr_trn(sgb: &mut Sgb, upper_half: bool, data: &[u8]) {
+        let mut packet = [0u8; 16];
+        (packet[0], packet[1]) = ((0x13 << 3) | 1, upper_half as u8);
+        send_packet(sgb, packet);
+        let screen = screen_showing(data);
+        for _ in 0..3 {
+            sgb.update_screen(&screen);
+        }
+    }
+
+    /// PCT_TRN data: `entries` placed in the map, and palette 4 colour 5 and
+    /// palette 5 colour 3 marked.
+    fn border_map_with(entries: &[(usize, usize, u16)]) -> Vec<u8> {
+        let mut data = vec![0u8; 4096];
+        for &(column, row, entry) in entries {
+            let at = (row * 32 + column) * 2;
+            data[at..at + 2].copy_from_slice(&entry.to_le_bytes());
+        }
+        data[0x800 + 5 * 2..0x800 + 5 * 2 + 2].copy_from_slice(&0x1234u16.to_le_bytes());
+        data[0x820 + 3 * 2..0x820 + 3 * 2 + 2].copy_from_slice(&0x0567u16.to_le_bytes());
+        data
+    }
+
+    #[test]
+    fn the_border_starts_empty() {
+        let sgb = Sgb::new();
+        assert!(
+            (0..SNES_HEIGHT)
+                .all(|y| (0..SNES_WIDTH).all(|x| sgb.border().color_at(x, y).is_none()))
+        );
+    }
+
+    #[test]
+    fn chr_trn_and_pct_trn_build_the_border() {
+        let mut sgb = Sgb::new();
+        chr_trn(&mut sgb, false, &border_tiles_with(1, 5));
+        chr_trn(&mut sgb, true, &border_tiles_with(2, 3));
+
+        // Tile 1 in palette 4; tile $82 in palette 5, mirrored both ways
+        let map = border_map_with(&[(0, 0, 4 << 10 | 1), (31, 27, 0xc000 | 5 << 10 | 0x82)]);
+        let mut packet = [0u8; 16];
+        packet[0] = (0x14 << 3) | 1;
+        send_packet(&mut sgb, packet);
+        let screen = screen_showing(&map);
+        sgb.update_screen(&screen);
+        sgb.update_screen(&screen);
+        assert_eq!(
+            sgb.border().color_at(0, 0),
+            None,
+            "the transfer reads the third frame"
+        );
+        sgb.update_screen(&screen);
+
+        let border = sgb.border();
+        assert_eq!(border.color_at(0, 0), Some(Rgb555(0x1234)));
+        assert_eq!(border.color_at(1, 0), None, "colour 0 is transparent");
+        assert_eq!(border.color_at(255, 223), Some(Rgb555(0x0567)));
+        assert_eq!(border.color_at(248, 216), None);
+    }
+
+    #[test]
+    fn map_entries_outside_the_loaded_tiles_and_palettes_draw_nothing() {
+        let mut sgb = Sgb::new();
+        chr_trn(&mut sgb, false, &border_tiles_with(1, 5));
+        let map = border_map_with(&[(0, 0, 0x100 | 4 << 10), (1, 0, 7 << 10 | 1)]);
+        run_transfer(&mut sgb, 0x14, &map);
+        assert_eq!(sgb.border().color_at(0, 0), None);
+        assert_eq!(sgb.border().color_at(8, 0), None);
+    }
+
+    #[test]
+    fn the_snes_picture_insets_the_game_boy_under_the_border() {
+        let mut sgb = Sgb::new();
+        let mut shades = Screen::default();
+        shades.draw_pixel(0, 0, PaletteIndex(3));
+        shades.draw_pixel(1, 0, PaletteIndex(3));
+        shades.present();
+        sgb.update_screen(&shades);
+        send_packet(
+            &mut sgb,
+            [1, 0x11, 0x11, 0, 0, 0, 0, 0x33, 0x33, 0, 0, 0, 0, 0, 0, 0],
+        );
+        chr_trn(&mut sgb, false, &border_tiles_with(1, 5));
+        run_transfer(&mut sgb, 0x14, &border_map_with(&[(6, 5, 4 << 10 | 1)]));
+        sgb.update_screen(&shades);
+
+        let picture = sgb.snes_picture();
+        let at = |x: usize, y: usize| picture[y * SNES_WIDTH + x];
+        assert_eq!(at(0, 0), Rgb555(0x1111), "the backdrop");
+        assert_eq!(at(48, 40), Rgb555(0x1234), "the border over the picture");
+        assert_eq!(at(49, 40), Rgb555(0x3333), "the picture through the border");
+        assert_eq!(at(50, 40), Rgb555(0x1111));
+
+        mask_en(&mut sgb, 2);
+        assert_eq!(sgb.snes_picture()[40 * SNES_WIDTH + 49], Rgb555(0));
+    }
+
+    #[test]
+    fn save_state_keeps_the_border() {
+        let mut sgb = Sgb::new();
+        chr_trn(&mut sgb, true, &border_tiles_with(0x7f, 9));
+        run_transfer(
+            &mut sgb,
+            0x14,
+            &border_map_with(&[(3, 4, 0x4000 | 4 << 10 | 0xff)]),
+        );
+        let mut packet = [0u8; 16];
+        (packet[0], packet[1]) = ((0x13 << 3) | 1, 1);
+        send_packet(&mut sgb, packet);
+        assert_eq!(
+            sgb.pending_transfer,
+            Some((3, PendingTransfer::BorderTiles { upper_half: true }))
+        );
+
+        let saved = capture(&sgb);
+        let restored = restore(&saved);
+        assert_eq!(restored.border(), sgb.border());
+        assert_eq!(restored.pending_transfer, sgb.pending_transfer);
+
+        let (record, mut memory) = saved;
+        memory.retain(|(name, _)| !name.starts_with("sgb_border"));
+        assert_eq!(
+            Sgb::from_state(&record, &memory).unwrap().unwrap().border(),
+            &SgbBorder::default()
+        );
     }
 
     type Captured = (missingno_core::state::StateRecord, Vec<(String, Vec<u8>)>);

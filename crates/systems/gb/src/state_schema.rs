@@ -373,7 +373,7 @@ pub fn sgb_boundary_fields() -> Vec<FieldDef> {
         field(
             "sgb_transfer_kind",
             U8,
-            "pending VRAM transfer — 0 PAL_TRN, 1 ATTR_TRN",
+            "pending VRAM transfer — 0 PAL_TRN, 1 ATTR_TRN, 2 CHR_TRN tiles $00-$7F, 3 CHR_TRN tiles $80-$FF, 4 PCT_TRN",
         ),
         field(
             "sgb_preset_in_force",
@@ -414,6 +414,15 @@ pub fn sgb_memory_spans() -> Vec<MemorySpan> {
         MemorySpan::off_bus("sgb_preset", 8)
             .optional()
             .help("the preset in force (4 × RGB555)"),
+        MemorySpan::off_bus("sgb_border_tiles", 256 * 32)
+            .optional()
+            .help("the border's tiles CHR_TRN fills, SNES 4bpp"),
+        MemorySpan::off_bus("sgb_border_map", 32 * 28 * 2)
+            .optional()
+            .help("the border's BG map PCT_TRN fills, 32 × 28 entries"),
+        MemorySpan::off_bus("sgb_border_palettes", 3 * 16 * 2)
+            .optional()
+            .help("the border's SNES BG palettes 4-6 PCT_TRN fills (16 × RGB555 each)"),
     ]
 }
 
