@@ -220,6 +220,8 @@ impl<P: PpuModel> Ppu<P> {
         ppu.registers.control = control;
         ppu.registers.control_latch = DffLatch::new(control.bits());
         ppu.registers.tile_map_select = DffLatch::new(control.bits());
+        ppu.registers.tile_data_select = DffLatch::new(control.bits());
+        ppu.registers.obj_size_select = DffLatch::new(control.bits());
         ppu.video = VideoControl {
             dividers: Dividers {
                 half_mcycle: true,

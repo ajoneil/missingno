@@ -275,6 +275,59 @@ fn dmg_restore_on_line_153_runs_in_lockstep() {
     }
 }
 
+/// Without a boot ROM the console starts as the DMG boot ROM leaves it: LCDC
+/// $91 and BGP $FC showing the ® it put in tile $19 at $9910 (on a cartridge
+/// with no logo, alone). A restore between frames shows the same picture.
+#[test]
+fn dmg_post_boot_picture_survives_a_restore() {
+    use missingno_gb::GameBoy;
+    use missingno_gb::cartridge::Cartridge;
+    use missingno_gb::snapshot::{capture_memory, read_shared_record};
+
+    fn console() -> GameBoy {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x100..0x104].copy_from_slice(&[0x00, 0xC3, 0x50, 0x01]);
+        rom[0x150..0x152].copy_from_slice(&[0x18, 0xFE]); // jr @
+        GameBoy::new(Cartridge::new(rom, None, None).unwrap(), None)
+    }
+    fn picture(gb: &mut GameBoy) -> Vec<u8> {
+        while !gb.step().new_screen {}
+        gb.screen()
+            .front()
+            .pixels
+            .iter()
+            .flatten()
+            .map(|p| p.0)
+            .collect()
+    }
+    let registered = |p: &[u8]| -> Vec<u8> { (64..72).map(|y| p[y * 160 + 128]).collect() };
+
+    let mut original = console();
+    let first = picture(&mut original);
+    assert_eq!(
+        registered(&first),
+        [0, 0, 3, 3, 3, 3, 0, 0],
+        "the ®'s left column"
+    );
+
+    original.sync_audio();
+    original.sync_ppu();
+    let record = read_shared_record(&original);
+    let memory = capture_memory(&original)
+        .into_iter()
+        .map(|(n, b)| (n.to_string(), b))
+        .collect();
+    let mut restored = console();
+    restored.restore_boundary(&record, memory, None).unwrap();
+    for frame in 1..5 {
+        assert_eq!(
+            picture(&mut restored),
+            picture(&mut original),
+            "frame {frame} after the restore"
+        );
+    }
+}
+
 /// Where the machine is after a frame: the T-cycles the frame took, the
 /// picture, work and high RAM, and the timer's internal counter.
 fn frame_fingerprint(gb: &mut missingno_gb::GameBoy) -> (u64, Vec<u8>, Vec<u8>, u16) {
