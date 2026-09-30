@@ -122,6 +122,9 @@ pub fn dmg_boundary_fields() -> Vec<FieldDef> {
             .nullable(),
         // PPU line/dot counters and edge-detect latch.
         FieldDef::boundary("lx", U8, "ppu").help("LX — dot position on the current line (0..113)"),
+        FieldDef::boundary("frame_end", Bool, "ppu")
+            .help("MYTA.q — line 153's frame end: LY reads 0 while the line counter is still 153")
+            .nullable(),
         FieldDef::boundary("stat_line", Bool, "ppu")
             .help("LALU.q — the STAT interrupt line's prior level, for the rising-edge detector"),
         FieldDef::boundary("window_line_counter", U8, "ppu").help("internal window line counter"),
@@ -518,6 +521,7 @@ mod tests {
             ("obp1", "obp1"),
             ("dma", "dma"),
             ("dot_position", "lx"),
+            ("frame_end", "frame_end"),
             ("stat_line_was_high", "stat_line"),
             ("window_line_counter", "window_line_counter"),
             ("half_mcycle_divider", "half_mcycle_divider"),

@@ -208,6 +208,73 @@ fn dmg_restore_at_a_frame_end_runs_in_lockstep() {
     }
 }
 
+/// Line 153 reads as LY 0 for most of the line, and power-on (past the boot
+/// ROM) is on it: a save there, at power-on or a frame later, restores into a
+/// console that follows the original step for step.
+#[test]
+fn dmg_restore_on_line_153_runs_in_lockstep() {
+    use missingno_core::state::{StateRecord, StateValue};
+    use missingno_gb::GameBoy;
+    use missingno_gb::cartridge::Cartridge;
+    use missingno_gb::snapshot::{capture_memory, read_shared_record};
+
+    const FOLLOW: usize = 40_000;
+
+    fn console() -> GameBoy {
+        GameBoy::new(
+            Cartridge::new(frame_waiting_rom(), None, None).unwrap(),
+            None,
+        )
+    }
+    fn synced_record(gb: &mut GameBoy) -> StateRecord {
+        gb.sync_audio();
+        gb.sync_ppu();
+        read_shared_record(gb)
+    }
+    fn on_line_153(record: &StateRecord) -> bool {
+        record.get("ly") == Some(&StateValue::Int(0))
+            && matches!(record.get("stat"), Some(StateValue::Int(stat)) if stat & 3 == 1)
+    }
+
+    let mut original = console();
+    let mut record = synced_record(&mut original);
+    assert!(on_line_153(&record), "power-on is on line 153");
+    let mut saves = vec![(0, record.clone(), capture_memory(&original))];
+    let mut trail = vec![(0, record.clone())];
+    let mut left_line_153 = false;
+    while trail.len() < 2 * FOLLOW {
+        let tcycles = original.step().tcycles;
+        record = synced_record(&mut original);
+        left_line_153 |= !on_line_153(&record);
+        if left_line_153 && saves.len() == 1 && on_line_153(&record) {
+            saves.push((trail.len(), record.clone(), capture_memory(&original)));
+        }
+        trail.push((tcycles, record.clone()));
+    }
+    assert_eq!(saves.len(), 2, "the run reaches line 153 again");
+
+    for (at, record, memory) in saves {
+        let mut restored = console();
+        let memory = memory
+            .into_iter()
+            .map(|(n, b)| (n.to_string(), b))
+            .collect();
+        restored.restore_boundary(&record, memory, None).unwrap();
+        for (step, (tcycles, expected)) in trail[at + 1..at + 1 + FOLLOW].iter().enumerate() {
+            assert_eq!(
+                restored.step().tcycles,
+                *tcycles,
+                "save at step {at}: T-cycles differ {step} steps after the restore"
+            );
+            assert_eq!(
+                &synced_record(&mut restored),
+                expected,
+                "save at step {at}: records differ {step} steps after the restore"
+            );
+        }
+    }
+}
+
 /// Where the machine is after a frame: the T-cycles the frame took, the
 /// picture, work and high RAM, and the timer's internal counter.
 fn frame_fingerprint(gb: &mut missingno_gb::GameBoy) -> (u64, Vec<u8>, Vec<u8>, u16) {

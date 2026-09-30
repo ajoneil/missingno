@@ -59,6 +59,7 @@ pub fn capture_ppu<M: crate::Model>(gb: &Console<M>) -> PpuSnapshot {
         obp1: ppu.read_register(crate::ppu::Register::Sprite1Palette),
         dma: gb.dma().source_register(),
         dot_position,
+        frame_end: ppu.frame_end(),
         stat_line_was_high: ppu.stat_line_was_high(),
         window_line_counter: ppu.window_line_counter().unwrap_or(0),
         half_mcycle_divider,

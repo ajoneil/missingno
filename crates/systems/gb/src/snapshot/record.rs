@@ -53,6 +53,7 @@ pub fn read_shared_record<M: crate::Model>(gb: &Console<M>) -> StateRecord {
         .set("obp1", ppu.obp1)
         .set("dma", ppu.dma)
         .set("lx", ppu.dot_position)
+        .set("frame_end", ppu.frame_end)
         .set("stat_line", ppu.stat_line_was_high)
         .set("window_line_counter", ppu.window_line_counter)
         .set("half_mcycle_divider", ppu.half_mcycle_divider)

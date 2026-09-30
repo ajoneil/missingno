@@ -277,9 +277,9 @@ impl<P: PpuModel> Ppu<P> {
                     line_end: DffBit::new(false, false),
                 },
                 y: LineCounterY {
-                    value: snap.ly,
-                    vblank: snap.ly >= 144,
-                    frame_end_reset: false,
+                    value: if snap.frame_end { 153 } else { snap.ly },
+                    vblank: snap.frame_end || snap.ly >= 144,
+                    frame_end_reset: snap.frame_end,
                 },
             },
             stat: StatInterrupt {
@@ -579,6 +579,11 @@ impl<P: PpuModel> Ppu<P> {
 
     /// LX and the dot dividers' levels (half-M-cycle, M-cycle) as
     /// [`Ppu::sync_span`] would leave them, read without it.
+    /// MYTA.q: LY reads 0 on line 153 once the frame has ended.
+    pub(crate) fn frame_end(&self) -> bool {
+        self.video.lines.y.frame_end_reset
+    }
+
     pub(crate) fn synced_dot(&self) -> (u8, bool, bool) {
         let mut dividers = dividers::Dividers {
             half_mcycle: self.video.dividers.half_mcycle,

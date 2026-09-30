@@ -73,6 +73,8 @@ pub struct PpuSnapshot {
     pub obp1: u8,
     pub dma: u8,
     pub dot_position: u8,
+    /// MYTA.q — on line 153, LY reads 0 while the line counter is still 153.
+    pub frame_end: bool,
     pub stat_line_was_high: bool,
     pub window_line_counter: u8,
     /// WUVU.q and VENA.q — the dot's phase within the M-cycle.

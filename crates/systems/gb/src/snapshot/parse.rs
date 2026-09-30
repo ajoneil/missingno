@@ -159,6 +159,7 @@ pub fn parse_record(
         obp1: u8_of(record, "obp1")?,
         dma: u8_of(record, "dma")?,
         dot_position: u8_of(record, "lx")?,
+        frame_end: opt_bool(record, "frame_end")?,
         stat_line_was_high: bool_of(record, "stat_line")?,
         window_line_counter: u8_of(record, "window_line_counter")?,
         half_mcycle_divider: opt_bool(record, "half_mcycle_divider")?,
