@@ -109,6 +109,7 @@ impl<M: Model> Console<M> {
                 address: dst_addr,
                 value,
                 kind: BusAccessKind::Write,
+                master_edge: self.chassis.clock.master_edge(),
             });
         }
 
@@ -122,6 +123,7 @@ impl<M: Model> Console<M> {
                     address: dst_addr,
                     value: 0,
                     kind: BusAccessKind::Write,
+                    master_edge: self.chassis.clock.master_edge(),
                 });
             }
         }

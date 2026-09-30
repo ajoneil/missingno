@@ -401,11 +401,13 @@ impl<M: Model> Chassis<M> {
             address: source,
             value: byte,
             kind: BusAccessKind::DmaRead,
+            master_edge: self.clock.master_edge(),
         });
         self.bus_trace.record(BusAccess {
             address: dest,
             value: byte,
             kind: BusAccessKind::DmaWrite,
+            master_edge: self.clock.master_edge(),
         });
         match Bus::of(source) {
             Some(Bus::External) => {
@@ -428,6 +430,7 @@ impl<M: Model> Console<M> {
             address,
             value,
             kind: BusAccessKind::Read,
+            master_edge: self.chassis.clock.master_edge(),
         });
         self.drive_bus(address, value);
     }
@@ -705,6 +708,7 @@ impl<M: Model> Console<M> {
             address,
             value,
             kind: BusAccessKind::Write,
+            master_edge: self.chassis.clock.master_edge(),
         });
         if self.chassis.dma.is_active_on_bus().is_some() {
             // The OAM block (extra rows included) is being written by DMA;

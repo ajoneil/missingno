@@ -175,6 +175,9 @@ pub struct BusAccess {
     pub address: u16,
     pub value: u8,
     pub kind: BusAccessKind,
+    /// The [`Console::master_edge`](crate::Console::master_edge) the access
+    /// was committed on.
+    pub master_edge: u64,
 }
 
 /// Optional recording of every CPU/DMA bus access during a step. The buffer

@@ -681,7 +681,7 @@ impl Cpu {
 
     /// The CPU is inside its interrupt-dispatch sequence — one indivisible
     /// bus tenure that a DMA grant waits behind.
-    pub(crate) fn in_dispatch(&self) -> bool {
+    pub fn in_dispatch(&self) -> bool {
         matches!(self.seq.phase, mcycle::CpuPhase::InterruptDispatch { .. })
     }
 

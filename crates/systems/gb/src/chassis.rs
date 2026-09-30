@@ -250,6 +250,11 @@ impl<M: Model> Console<M> {
         &self.chassis.cpu
     }
 
+    /// The master-clock edges since power-on: two per CPU T-cycle.
+    pub fn master_edge(&self) -> u64 {
+        self.chassis.clock.master_edge()
+    }
+
     pub fn cpu_mut(&mut self) -> &mut Cpu {
         &mut self.chassis.cpu
     }
