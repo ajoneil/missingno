@@ -84,9 +84,8 @@
         <ul>
           <li>ColecoVision support</li>
           <li>PAL Sega SG-1000 consoles</li>
-          <li>Choose each console's BIOS or boot ROM from a firmware folder, in the new Firmware settings and the launch window</li>
-          <li>Super Game Boy games start with the console's default colours instead of greyscale</li>
-          <li>Game Boy save states now include the Super Game Boy and restore exactly in step</li>
+          <li>Console firmware (BIOS and boot ROM) selection</li>
+          <li>Minor Super Game Boy fixes</li>
         </ul>
       </description>
     </release>
