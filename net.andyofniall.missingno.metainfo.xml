@@ -15,7 +15,7 @@
   <description>
     <p>
       Missingno is an emulator for the Game Boy, Game Boy Color, Atari VCS
-      (2600), and Sega SG-1000. It is built around faithful models of the
+      (2600), Sega SG-1000, and ColecoVision. It is built around faithful models of the
       original hardware:
       games look, sound, and behave as they do on the real machines, with
       display options that recreate the look of the original LCD and CRT
@@ -42,27 +42,27 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.9/screenshots/library.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.10/screenshots/library.png</image>
       <caption>Game library with cover art and play history</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.9/screenshots/game-details.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.10/screenshots/game-details.png</image>
       <caption>Game details with activity log and save and screenshot management</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.9/screenshots/gameplay.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.10/screenshots/gameplay.png</image>
       <caption>Playing a Game Boy game with Super Game Boy colours</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.9/screenshots/homebrew.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.10/screenshots/homebrew.png</image>
       <caption>Browse and download homebrew games from Homebrew Hub</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.9/screenshots/cartridge.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.10/screenshots/cartridge.png</image>
       <caption>Read and write physical Game Boy cartridges with a GBxCart RW</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.9/screenshots/debugger.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.10/screenshots/debugger.png</image>
       <caption>The debugger stepping an Atari VCS game: CPU and TIA state, disassembly, and audio channels</caption>
     </screenshot>
   </screenshots>
@@ -79,6 +79,17 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="26.10" date="2026-10-03">
+      <description>
+        <ul>
+          <li>ColecoVision support</li>
+          <li>PAL Sega SG-1000 consoles</li>
+          <li>Choose each console's BIOS or boot ROM from a firmware folder, in the new Firmware settings and the launch window</li>
+          <li>Super Game Boy games start with the console's default colours instead of greyscale</li>
+          <li>Game Boy save states now include the Super Game Boy and restore exactly in step</li>
+        </ul>
+      </description>
+    </release>
     <release version="26.9" date="2026-09-05">
       <description>
         <ul>
