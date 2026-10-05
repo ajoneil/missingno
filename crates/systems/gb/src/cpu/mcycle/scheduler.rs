@@ -226,13 +226,17 @@ impl Cpu {
         self.mcycle_isr(claim)
     }
 
-    /// Enter `CpuPhase::Halted(phase)`. No bus activity — the halted
-    /// state holds the address bus passively (dmg-sim shows no
-    /// `bus_read` fires in any of the three halt sub-phases).
+    /// Enter `CpuPhase::Halted(phase)`. Spin and SetupMiss have no bus
+    /// activity. WakeIntake is the wake's opcode fetch: the CPU reads PC
+    /// (dmg-sim: m1, mreq and rd assert and the ROM drives the byte) and
+    /// the dispatch that follows discards it.
     pub(super) fn mcycle_halted_entry(&mut self, phase: HaltPhase) -> MCycleAction {
         self.seq.phase = CpuPhase::Halted(phase);
         self.seq.exec_step = 0;
         self.seq.boundary_flag = true;
-        MCycleAction::Internal { address: self.pc }
+        match phase {
+            HaltPhase::WakeIntake => MCycleAction::Read { address: self.pc },
+            HaltPhase::Spin | HaltPhase::SetupMiss => MCycleAction::Internal { address: self.pc },
+        }
     }
 }

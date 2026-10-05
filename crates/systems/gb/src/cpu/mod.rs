@@ -477,16 +477,15 @@ impl Cpu {
             (phase, 0, MCycleAction::Internal { address: snap.pc })
         } else if halted && snap.halt_latched {
             let wake = snap.irq_latched && snap.ime && !pending.is_empty();
-            let phase = if wake {
-                HaltPhase::WakeIntake
+            let (phase, action) = if wake {
+                (
+                    HaltPhase::WakeIntake,
+                    MCycleAction::Read { address: snap.pc },
+                )
             } else {
-                HaltPhase::Spin
+                (HaltPhase::Spin, MCycleAction::Internal { address: snap.pc })
             };
-            (
-                CpuPhase::Halted(phase),
-                0,
-                MCycleAction::Internal { address: snap.pc },
-            )
+            (CpuPhase::Halted(phase), 0, action)
         } else {
             let phase = CpuPhase::Execute {
                 phase: Phase::FetchOverlap {
