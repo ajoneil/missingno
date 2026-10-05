@@ -14,8 +14,8 @@ pub struct Timers {
     /// Set when TIMA is in the reload cycle (TMA being loaded into TIMA).
     /// Writes to TIMA during this cycle are ignored, and so is a DIV or TAC write's count.
     pub reloading: bool,
-    /// Set in the M-cycle after the reload. MEXU releases just past the boundary,
-    /// so NYDU captured while MUGY still held it reset, and MERY can't see a wrap.
+    /// Set in the M-cycle after the reload. MEXU releases just past the boundary: after NYDU
+    /// captured, so MUGY held it reset and MERY can't see a wrap, but before SOGU falls, so it counts.
     pub reload_releasing: bool,
     /// Models g151: CLK9-clocked DFF that delays timer overflow
     /// before it reaches the IF register (g154). When mcycle()
@@ -94,7 +94,10 @@ impl Timers {
     fn increment_tima(&mut self) {
         if self.counter == 0xFF {
             self.counter = 0;
-            self.overflow_pending = true;
+            // NYDU holds 0 after a reload, so this wrap raises no MOBA: no reload, no interrupt.
+            if !self.reload_releasing {
+                self.overflow_pending = true;
+            }
         } else {
             self.counter += 1;
         }
@@ -102,14 +105,8 @@ impl Timers {
 
     /// A DIV or TAC write that drops the selected bit increments TIMA mid-M-cycle.
     fn increment_tima_on_write(&mut self) {
-        if self.reloading {
-            // MEXU holds the TIMA cells loading TMA all M-cycle, so the toggle is lost.
-            return;
-        }
-        if self.reload_releasing && self.counter == 0xFF {
-            // NYDU holds 0, so this wrap raises no MOBA: no reload, no interrupt.
-            self.counter = 0;
-        } else {
+        // MEXU holds the TIMA cells loading TMA all M-cycle, so the toggle is lost.
+        if !self.reloading {
             self.increment_tima();
         }
     }
@@ -287,5 +284,37 @@ mod tests {
         assert!(!timers.reloading);
         assert!(timers.take_pending_interrupt().is_none());
         assert_eq!(timers.counter, 0xFF);
+    }
+
+    /// In the reload M-cycle, with the tapped bit 1 about to fall at the boundary that closes it.
+    fn reloading_before_a_fall(tma: u8) -> Timers {
+        Timers {
+            internal_counter: 0x0003,
+            counter: tma,
+            modulo: tma,
+            control: Control(0x05),
+            reloading: true,
+            ..Timers::new()
+        }
+    }
+
+    #[test]
+    fn count_at_boundary_closing_reload_cycle_is_kept() {
+        let mut timers = reloading_before_a_fall(0x30);
+        timers.mcycle();
+        assert!(timers.reload_releasing);
+        assert_eq!(timers.counter, 0x31);
+    }
+
+    #[test]
+    fn wrap_at_boundary_closing_reload_cycle_does_not_reload() {
+        let mut timers = reloading_before_a_fall(0xFF);
+        timers.mcycle();
+        assert_eq!(timers.counter, 0x00);
+        assert!(!timers.overflow_pending);
+        timers.mcycle();
+        assert!(!timers.reloading);
+        assert!(timers.take_pending_interrupt().is_none());
+        assert_eq!(timers.counter, 0x00);
     }
 }
