@@ -12,7 +12,7 @@ pub struct Timers {
     pub control: Control,
     pub overflow_pending: bool,
     /// Set when TIMA is in the reload cycle (TMA being loaded into TIMA).
-    /// Writes to TIMA during this cycle are ignored.
+    /// Writes to TIMA during this cycle are ignored, and so is a DIV or TAC write's count.
     pub reloading: bool,
     /// Set in the M-cycle after the reload. MEXU releases just past the boundary,
     /// so NYDU captured while MUGY still held it reset, and MERY can't see a wrap.
@@ -102,6 +102,10 @@ impl Timers {
 
     /// A DIV or TAC write that drops the selected bit increments TIMA mid-M-cycle.
     fn increment_tima_on_write(&mut self) {
+        if self.reloading {
+            // MEXU holds the TIMA cells loading TMA all M-cycle, so the toggle is lost.
+            return;
+        }
         if self.reload_releasing && self.counter == 0xFF {
             // NYDU holds 0, so this wrap raises no MOBA: no reload, no interrupt.
             self.counter = 0;
@@ -230,5 +234,58 @@ impl Timers {
             g151_pending: false,
             tima_fell_this_mcycle: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// TIMA $FF wraps on a TAC write that drops the tapped bit, then enters the reload M-cycle.
+    fn wrapping_on_tac_write(tma: u8) -> Timers {
+        let mut timers = Timers {
+            internal_counter: 0x0020,
+            counter: 0xFF,
+            modulo: tma,
+            control: Control(0x07),
+            ..Timers::new()
+        };
+        timers.mcycle();
+        timers.write_register(Register::Control, 0x05);
+        assert_eq!(timers.counter, 0x00);
+        timers.mcycle();
+        assert!(timers.reloading);
+        assert_eq!(timers.counter, tma);
+        timers
+    }
+
+    #[test]
+    fn div_write_in_reload_cycle_loses_its_count() {
+        let mut timers = wrapping_on_tac_write(0x30);
+        assert!(timers.selected_bit_set());
+        timers.write_register(Register::Divider, 0);
+        assert_eq!(timers.counter, 0x30);
+        assert!(!timers.overflow_pending);
+    }
+
+    #[test]
+    fn tac_write_in_reload_cycle_loses_its_count() {
+        let mut timers = wrapping_on_tac_write(0x30);
+        assert!(timers.selected_bit_set());
+        timers.write_register(Register::Control, 0x01);
+        assert_eq!(timers.counter, 0x30);
+        assert!(!timers.overflow_pending);
+    }
+
+    #[test]
+    fn write_in_reload_cycle_with_tma_ff_does_not_wrap_again() {
+        let mut timers = wrapping_on_tac_write(0xFF);
+        timers.take_pending_interrupt();
+        timers.write_register(Register::Divider, 0);
+        assert_eq!(timers.counter, 0xFF);
+        timers.mcycle();
+        assert!(!timers.reloading);
+        assert!(timers.take_pending_interrupt().is_none());
+        assert_eq!(timers.counter, 0xFF);
     }
 }
