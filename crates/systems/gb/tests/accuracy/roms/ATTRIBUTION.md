@@ -47,3 +47,10 @@ They were obtained from the [c-sp/game-boy-test-roms](https://github.com/c-sp/ga
 - **License:** X11/MIT
 - **Copyright:** (C) 2018-2023 Lior Halphon
 - **Tests included:** DMG-compatible subset (channel_3 wave RAM tests, ei_delay_halt, sgb MLT_REQ tests)
+
+## missingno probes
+
+- **Author:** this project
+- **Source:** `missingno-probes/`, beside the ROMs; `build.sh` assembles them with RGBDS
+- **License:** MIT, as missingno
+- **Tests included:** timer probes for a write-caused TIMA wrap in the M-cycle after a reload, with controls one M-cycle later. Their expected values come from a gate-level simulation of the DMG-CPU B netlist (dmg-sim). A DMG (a 1995 DMG-01, board DMG-CPU-08) confirms both probes, and both controls read $FF.

@@ -1,8 +1,13 @@
 use crate::common;
 
 fn run_gbmicrotest(rom_name: &str) {
-    let rom_path = format!("gbmicrotest/{rom_name}.gb");
-    let mut run = common::load_rom(&rom_path);
+    run_result_rom(&format!("gbmicrotest/{rom_name}.gb"));
+}
+
+/// Runs a ROM that reports through gbmicrotest's protocol: $FF80 the value
+/// read, $FF81 the value expected, $FF82 $01 for a pass.
+pub(crate) fn run_result_rom(rom_path: &str) {
+    let mut run = common::load_rom(rom_path);
 
     // Step instruction-by-instruction, checking for result after each step.
     // Most gbmicrotests complete in a few hundred cycles. Tests that disable
@@ -28,11 +33,11 @@ fn run_gbmicrotest(rom_name: &str) {
         Some((actual, expected, pass_flag)) => {
             assert_eq!(
                 pass_flag, 0x01,
-                "gbmicrotest {rom_name} FAILED: got 0x{actual:02X}, expected 0x{expected:02X}"
+                "{rom_path} FAILED: got 0x{actual:02X}, expected 0x{expected:02X}"
             );
         }
         None => {
-            panic!("gbmicrotest {rom_name} timed out (0xFF82 still 0x00 after 500K steps)");
+            panic!("{rom_path} timed out (0xFF82 still 0x00 after 500K steps)");
         }
     }
 }
