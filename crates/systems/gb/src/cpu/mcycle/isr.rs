@@ -7,7 +7,7 @@ use crate::VramDmaClaim;
 
 impl Cpu {
     /// ISR dispatch: 5 M-cycles (steps 0..=4), gb-ctr RST n p129.
-    ///   step 0 → M1 internal (PC on bus)
+    ///   step 0 → M1 internal (PC, before the IDU's −1, on the bus)
     ///   step 1 → M2 InternalOamBug(SP)
     ///   step 2 → M3 push pc_hi (Write {sp-1})
     ///   step 3 → M4 push pc_lo (Write {sp-2}); vector resolved here
@@ -28,16 +28,21 @@ impl Cpu {
         *step += 1;
 
         match current_step {
-            // M1: IDU PC-. Hardware undoes the wakeup NOP's PC increment;
-            // emulator skips both increment and decrement for the same net
-            // effect. Clear both stages so the boundary copy doesn't
-            // restore IME on the next M-cycle.
+            // M1: IDU PC-. Hardware undoes the discarded fetch's PC
+            // increment; emulator skips both increment and decrement for the
+            // same net effect. The bus carries PC as the IDU takes it, before
+            // the decrement: the return address plus one (dmg-sim: cpu_port_a
+            // holds the incremented PC through M1, with no read). Clear both
+            // IME stages so the boundary copy doesn't restore IME on the next
+            // M-cycle.
             0 => {
                 self.irq
                     .ime
                     .write_immediate(InterruptMasterEnable::Disabled);
                 self.irq.ime_delay = false;
-                Some(MCycleAction::Internal { address: self.pc })
+                Some(MCycleAction::Internal {
+                    address: self.pc.wrapping_add(1),
+                })
             }
             1 => Some(MCycleAction::InternalOamBug { address: sp }),
             2 => {

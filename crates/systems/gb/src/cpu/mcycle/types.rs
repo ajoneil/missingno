@@ -263,7 +263,8 @@ pub(crate) enum HaltPhase {
     Spin,
     /// One extra M-cycle so `irq_latched` captures on the next CLK9↑.
     SetupMiss,
-    /// IME=1 stand-in for the discarded m7 fetch plus the
-    /// `dispatch_active.q` (ZACW) capture cycle.
+    /// IME=1: the m7 fetch, which reads PC as any fetch does, while
+    /// `dispatch_active.q` (ZACW) captures; the dispatch discards the
+    /// opcode.
     WakeIntake,
 }
