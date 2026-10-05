@@ -227,16 +227,24 @@ impl Cpu {
     }
 
     /// Enter `CpuPhase::Halted(phase)`. Spin and SetupMiss have no bus
-    /// activity. WakeIntake is the wake's opcode fetch: the CPU reads PC
-    /// (dmg-sim: m1, mreq and rd assert and the ROM drives the byte) and
-    /// the dispatch that follows discards it.
+    /// activity: the CPU's clock is stopped with its address bus at $0000
+    /// (dmg-sim: cpu_port_a); STOP's bus is unmeasured and holds PC.
+    /// WakeIntake is the wake's opcode fetch: the CPU reads PC (dmg-sim:
+    /// m1, mreq and rd assert and the ROM drives the byte) and the
+    /// dispatch that follows discards it.
     pub(super) fn mcycle_halted_entry(&mut self, phase: HaltPhase) -> MCycleAction {
         self.seq.phase = CpuPhase::Halted(phase);
         self.seq.exec_step = 0;
         self.seq.boundary_flag = true;
         match phase {
             HaltPhase::WakeIntake => MCycleAction::Read { address: self.pc },
-            HaltPhase::Spin | HaltPhase::SetupMiss => MCycleAction::Internal { address: self.pc },
+            HaltPhase::Spin | HaltPhase::SetupMiss => MCycleAction::Internal {
+                address: if self.halt.state == HaltState::Stopped {
+                    self.pc
+                } else {
+                    0
+                },
+            },
         }
     }
 }

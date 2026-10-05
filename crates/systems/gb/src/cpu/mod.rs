@@ -483,7 +483,7 @@ impl Cpu {
                     MCycleAction::Read { address: snap.pc },
                 )
             } else {
-                (HaltPhase::Spin, MCycleAction::Internal { address: snap.pc })
+                (HaltPhase::Spin, MCycleAction::Internal { address: 0 })
             };
             (CpuPhase::Halted(phase), 0, action)
         } else {
