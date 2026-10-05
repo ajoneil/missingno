@@ -14,6 +14,9 @@ pub struct Timers {
     /// Set when TIMA is in the reload cycle (TMA being loaded into TIMA).
     /// Writes to TIMA during this cycle are ignored.
     pub reloading: bool,
+    /// Set in the M-cycle after the reload. MEXU releases just past the boundary,
+    /// so NYDU captured while MUGY still held it reset, and MERY can't see a wrap.
+    pub reload_releasing: bool,
     /// Models g151: CLK9-clocked DFF that delays timer overflow
     /// before it reaches the IF register (g154). When mcycle()
     /// detects overflow, it sets this to true instead of returning
@@ -47,6 +50,7 @@ impl Timers {
             control: Control(0xf8),
             overflow_pending: false,
             reloading: false,
+            reload_releasing: false,
             g151_pending: false,
             tima_fell_this_mcycle: false,
         }
@@ -77,6 +81,7 @@ impl Timers {
             control: Control(0xf8),
             overflow_pending: false,
             reloading: false,
+            reload_releasing: false,
             g151_pending: false,
             tima_fell_this_mcycle: false,
         }
@@ -95,6 +100,16 @@ impl Timers {
         }
     }
 
+    /// A DIV or TAC write that drops the selected bit increments TIMA mid-M-cycle.
+    fn increment_tima_on_write(&mut self) {
+        if self.reload_releasing && self.counter == 0xFF {
+            // NYDU holds 0, so this wrap raises no MOBA: no reload, no interrupt.
+            self.counter = 0;
+        } else {
+            self.increment_tima();
+        }
+    }
+
     /// Advance by one M-cycle. On hardware, DIV00 is clocked by BOGA
     /// (one pulse per M-cycle). The entire 16-bit ripple counter
     /// advances once per M-cycle.
@@ -103,6 +118,7 @@ impl Timers {
     /// immediately. The caller must drain via `take_pending_interrupt()`
     /// on the next CLK9 rising edge.
     pub fn mcycle(&mut self) {
+        self.reload_releasing = self.reloading;
         self.reloading = false;
         if self.overflow_pending {
             self.overflow_pending = false;
@@ -173,7 +189,7 @@ impl Timers {
                 let was_set = self.selected_bit_set();
                 self.internal_counter = 0;
                 if was_set {
-                    self.increment_tima();
+                    self.increment_tima_on_write();
                 }
             }
             Register::Counter => {
@@ -196,7 +212,7 @@ impl Timers {
                 self.control = Control(value);
                 let is_set = self.selected_bit_set();
                 if was_set && !is_set {
-                    self.increment_tima();
+                    self.increment_tima_on_write();
                 }
             }
         }
@@ -210,6 +226,7 @@ impl Timers {
             control: Control(snap.tac),
             overflow_pending: snap.overflow_pending,
             reloading: snap.reloading,
+            reload_releasing: false,
             g151_pending: false,
             tima_fell_this_mcycle: false,
         }

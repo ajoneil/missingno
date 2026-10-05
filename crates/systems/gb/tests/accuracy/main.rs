@@ -12,6 +12,7 @@ mod gbmicrotest;
 mod little_things;
 mod mbc3_tester;
 mod mealybug_tearoom;
+mod missingno_probes;
 mod mooneye;
 mod mooneye_wilbertpol;
 mod samesuite;
