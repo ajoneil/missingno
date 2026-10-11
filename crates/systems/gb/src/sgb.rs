@@ -1,6 +1,7 @@
 use super::ppu::screen::{self, Screen};
 use rgb::RGB8;
 
+pub mod post_boot;
 mod state;
 
 /// The packets a command spans, from its first byte. The boot ROM's header
@@ -364,6 +365,16 @@ impl Sgb {
             frozen_screen: None,
             pending_transfer: None,
             border: SgbBorder::default(),
+        }
+    }
+
+    /// The co-processor after the boot ROM: its last JOYP write left both
+    /// select lines high, and the SNES has taken the header packets.
+    pub fn post_boot() -> Self {
+        Self {
+            prev_p15_high: true,
+            prev_lines_high: true,
+            ..Self::new()
         }
     }
 

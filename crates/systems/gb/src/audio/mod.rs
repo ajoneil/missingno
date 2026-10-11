@@ -67,7 +67,7 @@ const WAVE_CAPTURE_SAMPLES: usize = 800;
 
 /// The four channels' display labels, in capture order.
 const WAVE_LABELS: [&str; 4] = ["CH1", "CH2", "CH3", "CH4"];
-const DIV_APU_BIT: u16 = 1 << 10; // Bit 10 of M-cycle counter drives frame sequencer
+pub(crate) const DIV_APU_BIT: u16 = 1 << 10; // Bit 10 of M-cycle counter drives frame sequencer
 // In double speed the M-cycle counter runs at 2× the dot clock, so the tap
 // shifts up one bit to hold the frame sequencer at 512 Hz (DIV bit 6 vs bit 5).
 const DIV_APU_BIT_DOUBLE: u16 = 1 << 11;
