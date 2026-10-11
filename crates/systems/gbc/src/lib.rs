@@ -251,7 +251,7 @@ impl Model for Cgb {
         bus::dma_source_open_bus(address)
     }
 
-    fn cpu_post_boot(_cartridge: &Cartridge) -> Cpu {
+    fn cpu_post_boot(&self, _cartridge: &Cartridge) -> Cpu {
         post_boot::cpu()
     }
 
@@ -266,19 +266,19 @@ impl Model for Cgb {
     // Silicon property of the ack reset-hold, independent of DMG-compat.
     const IRQ_ACK_HOLDS_THROUGH_BOUNDARY_SET: bool = true;
 
-    fn timers_post_boot(cartridge: &Cartridge) -> Timers {
+    fn timers_post_boot(&self, cartridge: &Cartridge) -> Timers {
         post_boot::timers(cartridge.is_cgb())
     }
 
-    fn audio_post_boot(internal_counter: u16, cartridge: &Cartridge) -> Audio<CgbApu> {
+    fn audio_post_boot(&self, internal_counter: u16, cartridge: &Cartridge) -> Audio<CgbApu> {
         post_boot::audio(internal_counter, cartridge.is_cgb())
     }
 
-    fn ppu_post_boot(cartridge: &Cartridge) -> Ppu<CgbPpu> {
+    fn ppu_post_boot(&self, cartridge: &Cartridge) -> Ppu<CgbPpu> {
         post_boot::ppu(cartridge.is_cgb())
     }
 
-    fn joypad_post_boot(_cartridge: &Cartridge) -> Joypad {
+    fn joypad_post_boot(&self, _cartridge: &Cartridge) -> Joypad {
         post_boot::joypad()
     }
 

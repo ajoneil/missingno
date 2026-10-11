@@ -11,11 +11,22 @@ use crate::{ppu, sgb};
 use missingno_core::state::StateRecord;
 use missingno_core::system::StateError;
 
+/// Where a cartridge with the SGB flag starts without a boot ROM.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SgbHandoff {
+    /// The SGB2 boot ROM's handoff, as the cartridge runs on one.
+    #[default]
+    Sgb2,
+    /// The DMG boot ROM's, as if the SGB had the DMG's boot ROM.
+    Dmg,
+}
+
 /// The original Game Boy (DMG): SGB co-processor support, the OAM
 /// corruption bug, and a 2-bit shade framebuffer.
 #[derive(Default)]
 pub struct Dmg {
     sgb: Option<sgb::Sgb>,
+    sgb_handoff: SgbHandoff,
     /// CGB console arbitration is statically unreachable on DMG — a ZST.
     console_state: (),
 }
@@ -60,7 +71,7 @@ impl Model for Dmg {
 
     fn on_reset(&mut self, cartridge: &Cartridge, has_boot_rom: bool) {
         self.sgb = cartridge.supports_sgb().then(|| {
-            if has_boot_rom {
+            if has_boot_rom || self.sgb_handoff == SgbHandoff::Dmg {
                 sgb::Sgb::new()
             } else {
                 sgb::Sgb::post_boot()
@@ -68,59 +79,56 @@ impl Model for Dmg {
         });
     }
 
-    // A cartridge with the SGB flag runs on a Super Game Boy 2, so without a
-    // boot ROM it starts from the SGB2 boot ROM's handoff.
-
-    fn cpu_post_boot(cartridge: &Cartridge) -> Cpu {
-        if cartridge.supports_sgb() {
+    fn cpu_post_boot(&self, cartridge: &Cartridge) -> Cpu {
+        if self.sgb2_handoff(cartridge) {
             sgb::post_boot::cpu()
         } else {
             Cpu::post_boot(cartridge.header_checksum())
         }
     }
 
-    fn timers_post_boot(cartridge: &Cartridge) -> Timers {
-        if cartridge.supports_sgb() {
+    fn timers_post_boot(&self, cartridge: &Cartridge) -> Timers {
+        if self.sgb2_handoff(cartridge) {
             sgb::post_boot::timers(cartridge)
         } else {
             Timers::post_boot()
         }
     }
 
-    fn ppu_post_boot(cartridge: &Cartridge) -> Ppu<Self::Ppu> {
-        if cartridge.supports_sgb() {
+    fn ppu_post_boot(&self, cartridge: &Cartridge) -> Ppu<Self::Ppu> {
+        if self.sgb2_handoff(cartridge) {
             sgb::post_boot::ppu(cartridge)
         } else {
             Ppu::post_boot()
         }
     }
 
-    fn audio_post_boot(internal_counter: u16, cartridge: &Cartridge) -> Audio<DmgApu> {
-        if cartridge.supports_sgb() {
+    fn audio_post_boot(&self, internal_counter: u16, cartridge: &Cartridge) -> Audio<DmgApu> {
+        if self.sgb2_handoff(cartridge) {
             sgb::post_boot::audio(internal_counter)
         } else {
             Audio::post_boot(internal_counter)
         }
     }
 
-    fn joypad_post_boot(cartridge: &Cartridge) -> Joypad {
-        if cartridge.supports_sgb() {
+    fn joypad_post_boot(&self, cartridge: &Cartridge) -> Joypad {
+        if self.sgb2_handoff(cartridge) {
             sgb::post_boot::joypad()
         } else {
             Joypad::new()
         }
     }
 
-    fn serial_post_boot(internal_counter: u16, cartridge: &Cartridge) -> Serial {
-        if cartridge.supports_sgb() {
+    fn serial_post_boot(&self, internal_counter: u16, cartridge: &Cartridge) -> Serial {
+        if self.sgb2_handoff(cartridge) {
             sgb::post_boot::serial(internal_counter)
         } else {
             Serial::new()
         }
     }
 
-    fn post_boot_memory(chassis: &mut Chassis<Self>) {
-        if chassis.external.cartridge.supports_sgb() {
+    fn post_boot_memory(&self, chassis: &mut Chassis<Self>) {
+        if self.sgb2_handoff(&chassis.external.cartridge) {
             sgb::post_boot::memory(&mut chassis.external, &mut chassis.high_ram);
         }
     }
@@ -138,6 +146,20 @@ impl Model for Dmg {
             (None, _) => {}
         }
         Ok(())
+    }
+}
+
+impl Dmg {
+    pub fn with_sgb_handoff(sgb_handoff: SgbHandoff) -> Self {
+        Self {
+            sgb_handoff,
+            ..Self::default()
+        }
+    }
+
+    // A cartridge with the SGB flag runs on a Super Game Boy 2.
+    fn sgb2_handoff(&self, cartridge: &Cartridge) -> bool {
+        cartridge.supports_sgb() && self.sgb_handoff == SgbHandoff::Sgb2
     }
 }
 
@@ -226,6 +248,20 @@ mod tests {
         }
         record = old;
         restore(&mut console(false), &(record, memory)).unwrap();
+    }
+
+    #[test]
+    fn an_sgb_cartridge_starts_from_the_handoff_asked_for() {
+        let mut rom = vec![0u8; 0x8000];
+        (rom[0x146], rom[0x14B]) = (0x03, 0x33);
+        let div = |handoff| {
+            let cartridge = Cartridge::new(rom.clone(), None, None).unwrap();
+            let console =
+                GameBoy::with_model(cartridge, None, super::Dmg::with_sgb_handoff(handoff));
+            (console.cpu().a, console.peek_range(0xFF04, 1)[0])
+        };
+        assert_eq!(div(super::SgbHandoff::Sgb2), (0xFF, 0xD8));
+        assert_eq!(div(super::SgbHandoff::Dmg), (0x01, 0xAB));
     }
 
     #[test]
