@@ -1,7 +1,19 @@
 use super::ppu::screen::{self, Screen};
 use rgb::RGB8;
 
+pub mod post_boot;
 mod state;
+
+/// The packets a command spans, from its first byte. The boot ROM's header
+/// packets ($F1 to $FB) are single packets whose low bits number them.
+fn packet_count(first_byte: u8) -> u8 {
+    const HEADER_PACKET_COMMAND: u8 = 0x1E;
+    if first_byte >> 3 >= HEADER_PACKET_COMMAND {
+        1
+    } else {
+        first_byte & 0x07
+    }
+}
 
 /// Convert the rendered screen into a 4KB transfer data buffer.
 /// The SGB/SNES reads data from the rendered video signal, not raw VRAM.
@@ -356,6 +368,16 @@ impl Sgb {
         }
     }
 
+    /// The co-processor after the boot ROM: its last JOYP write left both
+    /// select lines high, and the SNES has taken the header packets.
+    pub fn post_boot() -> Self {
+        Self {
+            prev_p15_high: true,
+            prev_lines_high: true,
+            ..Self::new()
+        }
+    }
+
     /// Update the stored screen snapshot (called each frame from execute loop).
     pub fn update_screen(&mut self, screen: &Screen) {
         self.last_screen = screen.clone();
@@ -497,7 +519,7 @@ impl Sgb {
                     let is_first_packet = *packets_received == 0;
 
                     if is_first_packet {
-                        *packets_expected = current_packet[0] & 0x07;
+                        *packets_expected = packet_count(current_packet[0]);
                         if *packets_expected == 0 {
                             self.command_state = CommandState::Idle;
                             return;
@@ -859,6 +881,21 @@ mod tests {
         sgb.write_joypad(0x20);
         sgb.write_joypad(0x10);
         sgb.write_joypad(0x30);
+    }
+
+    #[test]
+    fn header_packets_are_single_packets() {
+        let mut sgb = Sgb::new();
+        for command in [0xF1, 0xF3, 0xF5, 0xF7, 0xF9, 0xFB] {
+            let mut packet = [0u8; 16];
+            packet[0] = command;
+            send_packet(&mut sgb, packet);
+        }
+        let mut mask_en = [0u8; 16];
+        mask_en[0] = 0x17 << 3 | 1;
+        mask_en[1] = 2;
+        send_packet(&mut sgb, mask_en);
+        assert_eq!(sgb.mask_mode, MaskMode::Black);
     }
 
     #[test]

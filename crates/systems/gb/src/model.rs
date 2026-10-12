@@ -8,6 +8,7 @@ use crate::memory::{Bus, ExternalBus};
 use crate::ppu::model::PpuModel;
 use crate::ppu::{self, Ppu};
 use crate::screen::{ConsoleShadow, ScreenBuffer};
+use crate::serial_transfer::Serial;
 use crate::timers;
 
 /// OAM byte a write-conflict lands under the shared external-bus model: a WRAM
@@ -154,35 +155,44 @@ pub trait Model: Default {
 
     /// Post-boot CPU state when no boot ROM is present. DMG seeds the flags
     /// from the header checksum; CGB uses a fixed register file (A=$11).
-    fn cpu_post_boot(checksum: u8) -> Cpu {
-        Cpu::post_boot(checksum)
+    fn cpu_post_boot(&self, cartridge: &Cartridge) -> Cpu {
+        Cpu::post_boot(cartridge.header_checksum())
     }
 
     /// Post-boot timer state when no boot ROM is present — each console's
     /// boot ROM leaves a different divider phase at handoff, and the CGB
     /// boot duration depends on the cartridge's CGB header flag.
-    fn timers_post_boot(_cgb_cart: bool) -> timers::Timers {
+    fn timers_post_boot(&self, _cartridge: &Cartridge) -> timers::Timers {
         timers::Timers::post_boot()
     }
 
     /// Post-boot PPU state when no boot ROM is present — each console's
     /// boot ROM hands off at a different point in the frame, and the CGB
     /// boot duration depends on the cartridge's CGB header flag.
-    fn ppu_post_boot(_cgb_cart: bool) -> Ppu<Self::Ppu> {
+    fn ppu_post_boot(&self, _cartridge: &Cartridge) -> Ppu<Self::Ppu> {
         Ppu::post_boot()
     }
 
     /// Post-boot APU state when no boot ROM is present — the CGB boot ROM
     /// hands off at a different frame-sequencer step and CH1 duty phase.
-    fn audio_post_boot(internal_counter: u16, _cgb_cart: bool) -> Audio<Self::Apu> {
+    fn audio_post_boot(&self, internal_counter: u16, _cartridge: &Cartridge) -> Audio<Self::Apu> {
         Audio::post_boot(internal_counter)
     }
 
     /// Post-boot joypad state — the CGB boot ROM deselects both key matrix
     /// lines; the DMG boot ROM leaves both selected.
-    fn joypad_post_boot() -> Joypad {
+    fn joypad_post_boot(&self, _cartridge: &Cartridge) -> Joypad {
         Joypad::new()
     }
+
+    /// Post-boot serial state when no boot ROM is present.
+    fn serial_post_boot(&self, _internal_counter: u16, _cartridge: &Cartridge) -> Serial {
+        Serial::new()
+    }
+
+    /// What the boot ROM leaves in work RAM and high RAM, when no boot ROM is
+    /// present.
+    fn post_boot_memory(&self, _chassis: &mut Chassis<Self>) {}
 
     /// Post-boot OAM-DMA state — the CGB boot ROM leaves FF46 reading 0.
     fn dma_post_boot() -> Dma {

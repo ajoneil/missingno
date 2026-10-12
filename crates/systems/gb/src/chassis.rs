@@ -95,6 +95,11 @@ pub struct Console<M: Model> {
 
 impl<M: Model> Console<M> {
     pub fn new(cartridge: Cartridge, boot_rom: Option<BootRom>) -> Self {
+        Self::with_model(cartridge, boot_rom, M::default())
+    }
+
+    /// A console whose model carries settings of its own.
+    pub fn with_model(cartridge: Cartridge, boot_rom: Option<BootRom>, model: M) -> Self {
         let mut console = Console {
             chassis: Chassis {
                 cpu: Cpu::new(),
@@ -114,7 +119,7 @@ impl<M: Model> Console<M> {
                 bus_trace: cpu_bus::BusTrace::new(),
                 dma_conflict: DmaConflictLatch::default(),
             },
-            model: M::default(),
+            model,
             graphics_capture: false,
         };
         console.rebuild_state();
@@ -143,37 +148,41 @@ impl<M: Model> Console<M> {
     /// M-cycle.
     fn rebuild_state(&mut self) {
         let has_boot_rom = self.chassis.external.has_boot_rom();
-        let header_checksum = self.chassis.external.cartridge.header_checksum();
+        let cartridge = &self.chassis.external.cartridge;
 
         self.chassis.cpu = if has_boot_rom {
             Cpu::new()
         } else {
-            M::cpu_post_boot(header_checksum)
+            self.model.cpu_post_boot(cartridge)
         };
         self.chassis.screen = M::Screen::default();
         self.chassis.high_ram = HighRam::new();
-        let cgb_cart = self.chassis.external.cartridge.is_cgb();
         self.chassis.ppu = if has_boot_rom {
             Ppu::new()
         } else {
-            M::ppu_post_boot(cgb_cart)
+            self.model.ppu_post_boot(cartridge)
         };
         self.chassis.joypad = if has_boot_rom {
             Joypad::new()
         } else {
-            M::joypad_post_boot()
+            self.model.joypad_post_boot(cartridge)
         };
         self.chassis.interrupts = interrupts::Registers::new();
-        self.chassis.serial = serial_transfer::Serial::new();
         self.chassis.timers = if has_boot_rom {
             timers::Timers::new()
         } else {
-            M::timers_post_boot(cgb_cart)
+            self.model.timers_post_boot(cartridge)
+        };
+        let internal_counter = self.chassis.timers.internal_counter;
+        self.chassis.serial = if has_boot_rom {
+            serial_transfer::Serial::new()
+        } else {
+            self.model.serial_post_boot(internal_counter, cartridge)
         };
         self.chassis.audio = if has_boot_rom {
             Audio::new()
         } else {
-            M::audio_post_boot(self.chassis.timers.internal_counter, cgb_cart)
+            self.model.audio_post_boot(internal_counter, cartridge)
         };
         self.chassis.dma = if has_boot_rom {
             Dma::new()
@@ -200,6 +209,7 @@ impl<M: Model> Console<M> {
                 new_licensee: [read(0x0144), read(0x0145)],
             };
             self.chassis.ppu.init_model_post_boot(&header);
+            self.model.post_boot_memory(&mut self.chassis);
         }
 
         self.chassis.bus_trace = cpu_bus::BusTrace::new();

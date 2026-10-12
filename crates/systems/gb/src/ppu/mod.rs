@@ -246,6 +246,13 @@ impl<P: PpuModel> Ppu<P> {
         ppu
     }
 
+    /// The DMG-family handoff on line 153, at horizontal counter `lx`.
+    pub fn post_boot_at_x(lx: u8) -> Self {
+        let mut ppu = Self::post_boot();
+        ppu.video.lines.x.value = lx;
+        ppu
+    }
+
     /// Boot-ROM residue in the object palette latches (the CGB boot ROM
     /// zeroes OBP0/OBP1; the DMG boot ROM leaves them at $FF).
     pub fn set_post_boot_object_palettes(&mut self, value: u8) {

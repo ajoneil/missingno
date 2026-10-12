@@ -43,7 +43,7 @@ pub use audio::channels::wave::WaveRamCoupling;
 pub use audio::{ApuSpec, DmgApu};
 pub use chassis::{Chassis, Console, DmaBankWrite, DmaConflictLatch, DmaConflictWrite};
 pub use clock::{CpuDivider, CpuGate, Edge, MasterClock, Tick};
-pub use dmg::{Dmg, GameBoy};
+pub use dmg::{Dmg, GameBoy, SgbHandoff};
 pub use isa::Sm83;
 pub use memory::BootRom;
 pub use model::{Model, shared_oam_dma_write_conflict_byte};

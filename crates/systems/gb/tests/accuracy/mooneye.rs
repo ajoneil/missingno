@@ -256,3 +256,44 @@ mooneye_test!(mbc5_rom_8mb, "mooneye/emulator-only/mbc5/rom_8Mb.gb");
 mooneye_test!(mbc5_rom_16mb, "mooneye/emulator-only/mbc5/rom_16Mb.gb");
 mooneye_test!(mbc5_rom_32mb, "mooneye/emulator-only/mbc5/rom_32Mb.gb");
 mooneye_test!(mbc5_rom_64mb, "mooneye/emulator-only/mbc5/rom_64Mb.gb");
+
+/// The SGB boot tests, which pass on SGB2 hardware, run from the SGB2
+/// handoff. Their headers lack the SGB flag, so the test sets it, and picks a
+/// title byte that leaves the boot ROM's duration as the hardware ran it.
+fn run_mooneye_sgb2_test(rom_path: &str) {
+    use missingno_gb::GameBoy;
+    use missingno_gb::cartridge::Cartridge;
+    use missingno_gb::sgb::post_boot::handoff_delay;
+
+    const SGB_FLAG: usize = 0x0146;
+    const TITLE_END: usize = 0x0143;
+    let original = std::fs::read(common::rom_path(rom_path)).unwrap();
+    let delay = handoff_delay(&Cartridge::new(original.clone(), None, None).unwrap());
+    let rom = (0..=u8::MAX)
+        .map(|title_byte| {
+            let mut rom = original.clone();
+            rom[SGB_FLAG] = 0x03;
+            rom[TITLE_END] = title_byte;
+            rom
+        })
+        .find(|rom| handoff_delay(&Cartridge::new(rom.clone(), None, None).unwrap()) == delay)
+        .unwrap();
+    let cartridge = Cartridge::new(rom, None, None).unwrap();
+    assert!(cartridge.supports_sgb());
+    let mut run = common::TestRun::new(GameBoy::new(cartridge, None), rom_path, "SGB2");
+    common::assert_mooneye_verdict(&mut run, rom_path, TIMEOUT_FRAMES);
+}
+
+macro_rules! mooneye_sgb2_test {
+    ($name:ident, $path:literal) => {
+        #[test]
+        fn $name() {
+            run_mooneye_sgb2_test($path);
+        }
+    };
+}
+
+mooneye_sgb2_test!(boot_div_s, "mooneye/acceptance/boot_div-S.gb");
+mooneye_sgb2_test!(boot_div2_s, "mooneye/acceptance/boot_div2-S.gb");
+mooneye_sgb2_test!(boot_hwio_s, "mooneye/acceptance/boot_hwio-S.gb");
+mooneye_sgb2_test!(boot_regs_sgb2, "mooneye/acceptance/boot_regs-sgb2.gb");

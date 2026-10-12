@@ -11,7 +11,7 @@ use missingno_gb::timers::Timers;
 
 use crate::{Cgb, CgbApu, CgbPpu};
 
-pub(crate) fn cpu(_checksum: u8) -> Cpu {
+pub(crate) fn cpu() -> Cpu {
     // CPU-CGB-C post-boot register file. A=$11 signals CGB hardware to the
     // cartridge; unlike DMG, the flags don't depend on the header checksum.
     Cpu::post_boot_with(0x11, 0x00, 0x00, 0x00, 0x08, 0x00, 0x7c, Flags::ZERO)
