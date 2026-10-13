@@ -37,8 +37,8 @@ pub use firmware::{
 };
 pub use session::{DisasmLine, Session, StopReason};
 pub use shared::{
-    AudioSink, ControlSurfaces, ExtractedMachine, MemoryInterest, PluggedPort, RunningReadout,
-    SessionEvent, SessionHandle, SharedSession,
+    AudioSink, ControlSurfaces, ExtractedMachine, FrameObserver, MemoryInterest, PluggedPort,
+    RunningReadout, SessionEvent, SessionHandle, SharedSession,
 };
 
 /// The `missingno` folder under the platform's configuration directory: the one

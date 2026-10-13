@@ -424,3 +424,54 @@ fn session_engine() -> missingno_session::Session {
         .expect("gb factory should claim a .gb ROM");
     missingno_session::Session::new(console.into_debugger())
 }
+
+/// What a frame observer saw, shared with the test.
+#[derive(Default)]
+struct Seen {
+    before: u32,
+    after: u32,
+    jumped: u32,
+    detached: bool,
+    core_reached: bool,
+}
+
+struct Counting(std::sync::Arc<std::sync::Mutex<Seen>>);
+
+impl missingno_session::FrameObserver for Counting {
+    fn before_frame(&mut self, console: &mut dyn missingno_core::system::SystemConsole) {
+        let mut seen = self.0.lock().unwrap();
+        seen.before += 1;
+        seen.core_reached |= console
+            .family_core_mut()
+            .is::<missingno_gb::system::GbCore<missingno_gb::Dmg>>();
+    }
+    fn after_frame(&mut self, _: &mut dyn missingno_core::system::SystemConsole) {
+        self.0.lock().unwrap().after += 1;
+    }
+    fn jumped(&mut self, _: &mut dyn missingno_core::system::SystemConsole) {
+        self.0.lock().unwrap().jumped += 1;
+    }
+    fn detach(&mut self, _: &mut dyn missingno_core::system::SystemConsole) {
+        self.0.lock().unwrap().detached = true;
+    }
+}
+
+#[test]
+fn a_frame_observer_sees_each_frame_and_each_jump() {
+    let rom = vec![0x00u8; 0x8000];
+    let console = factory::create_console(Path::new("test.gb"), &rom).unwrap();
+    let session = SharedSession::spawn_console(console);
+    let client = session.handle();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Seen::default()));
+    client.set_frame_observer(Some(Box::new(Counting(seen.clone()))));
+    client.run();
+    assert!(wait_until(|| seen.lock().unwrap().after >= 3));
+    client.reset();
+    assert!(wait_until(|| seen.lock().unwrap().jumped == 1));
+    client.pause();
+    client.set_frame_observer(None);
+    assert!(wait_until(|| seen.lock().unwrap().detached));
+    let seen = seen.lock().unwrap();
+    assert!(seen.before >= seen.after && seen.before - seen.after <= 1);
+    assert!(seen.core_reached, "the observer reaches the family's core");
+}

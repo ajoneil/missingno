@@ -58,6 +58,21 @@ const SRAM_DEBOUNCE_FRAMES: u32 = 30;
 /// samples; `None` (the headless default) drains and drops them.
 pub type AudioSink = Box<dyn FnMut(Vec<(f32, f32)>, Option<HighPass>) + Send>;
 
+/// A client that watches each frame the session steps, on the session thread,
+/// with the console in hand: a frontend's own reading of the machine, in step
+/// with it, at no cost when none is set.
+pub trait FrameObserver: Send {
+    /// Just before the session steps a frame.
+    fn before_frame(&mut self, console: &mut dyn SystemConsole);
+    /// Just after it.
+    fn after_frame(&mut self, console: &mut dyn SystemConsole);
+    /// The machine jumped (a reset, a loaded state, a replay's start): what
+    /// the observer knew of it may no longer hold.
+    fn jumped(&mut self, _console: &mut dyn SystemConsole) {}
+    /// The observer is being removed: undo what it set on the console.
+    fn detach(&mut self, _console: &mut dyn SystemConsole) {}
+}
+
 /// An event pushed from the session thread to a client that subscribed. Carries
 /// what a client cannot learn by polling the slots: run-loop stops, debounced
 /// SRAM, recording/replay lifecycle, notices, and the per-frame redraw tick.
@@ -196,6 +211,7 @@ enum Request {
     Plug(PortId, PeripheralId, Sender<Result<(), String>>),
     Surfaces(Sender<ControlSurfaces>),
     SetMemoryInterest(Vec<MemoryInterest>),
+    SetFrameObserver(Option<Box<dyn FrameObserver>>),
     SaveState(PathBuf, Sender<Result<(), String>>),
     LoadState(PathBuf, Sender<Result<(), String>>),
     StartRecording(PathBuf, Sender<Result<(), String>>),
@@ -331,6 +347,12 @@ impl SessionHandle {
     /// Set the spans the run loop peeks into the memory-window slot each vblank.
     pub fn set_memory_interest(&self, interest: Vec<MemoryInterest>) {
         let _ = self.requests.send(Request::SetMemoryInterest(interest));
+    }
+
+    /// Watch every frame from now on with `observer`, replacing the one set
+    /// before; `None` removes it.
+    pub fn set_frame_observer(&self, observer: Option<Box<dyn FrameObserver>>) {
+        let _ = self.requests.send(Request::SetFrameObserver(observer));
     }
 
     /// Save the machine state to `path`. A request that misses an instruction
@@ -713,6 +735,7 @@ struct SessionEngine {
     /// answered by `finish_extract` once the loop releases the machine.
     extract: Option<Sender<ExtractedMachine>>,
     audio: Option<AudioSink>,
+    observer: Option<Box<dyn FrameObserver>>,
     next_deadline: Instant,
 }
 
@@ -730,6 +753,7 @@ impl SessionEngine {
             sram_countdown: None,
             extract: None,
             audio,
+            observer: None,
             next_deadline: Instant::now(),
         }
     }
@@ -803,6 +827,7 @@ impl SessionEngine {
                 self.cancel_pending_save("a reset replaced the state it would have captured");
                 self.pending_record = None;
                 self.machine.reset();
+                self.jumped();
             }
             Request::SetControl(control, input) => {
                 self.machine.console_mut().set_control(control, input);
@@ -825,6 +850,12 @@ impl SessionEngine {
             Request::SetMemoryInterest(interest) => {
                 self.memory_interest = interest;
                 self.publish_memory_windows();
+            }
+            Request::SetFrameObserver(observer) => {
+                if let Some(mut old) = self.observer.take() {
+                    old.detach(self.machine.console_mut());
+                }
+                self.observer = observer;
             }
             Request::SaveState(path, ack) => self.save_state(path, ack),
             Request::LoadState(path, ack) => self.load_state(path, ack),
@@ -869,6 +900,12 @@ impl SessionEngine {
         }
     }
 
+    fn jumped(&mut self) {
+        if let Some(observer) = &mut self.observer {
+            observer.jumped(self.machine.console_mut());
+        }
+    }
+
     fn start_running(&mut self) {
         self.running = true;
         self.slots.running.store(true, Ordering::SeqCst);
@@ -887,7 +924,13 @@ impl SessionEngine {
             replay.apply_inputs(&mut self.machine);
         }
 
+        if let Some(observer) = &mut self.observer {
+            observer.before_frame(self.machine.console_mut());
+        }
         let step = self.machine.step();
+        if let Some(observer) = &mut self.observer {
+            observer.after_frame(self.machine.console_mut());
+        }
         let display = step.display;
 
         if let Some(capture) = &mut self.capture {
@@ -1066,7 +1109,10 @@ impl SessionEngine {
                     .load_state(&bytes)
                     .map_err(|error| error.to_string())
             }) {
-            Ok(()) => self.settle(ack, Ok("State loaded")),
+            Ok(()) => {
+                self.jumped();
+                self.settle(ack, Ok("State loaded"))
+            }
             Err(error) => self.settle(ack, Err(error)),
         }
     }
@@ -1150,6 +1196,7 @@ impl SessionEngine {
             .console_mut()
             .load_state(&recording.initial_state)
             .map_err(|error| format!("replay could not restore: {error}"))?;
+        self.jumped();
         let refused = apply_port_config(&recording, self.machine.console_mut());
         self.replay = Some(ReplayPlayback::new(recording));
         if !refused.is_empty() {
