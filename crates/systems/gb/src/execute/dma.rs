@@ -105,12 +105,16 @@ impl<M: Model> Console<M> {
                 self.chassis.dma.source(),
             );
             self.chassis.ppu.write_oam(oam_addr, value);
+            let edge = self.chassis.clock.master_edge();
             self.chassis.bus_trace.record(BusAccess {
                 address: dst_addr,
                 value,
                 kind: BusAccessKind::Write,
-                master_edge: self.chassis.clock.master_edge(),
+                master_edge: edge,
             });
+            if let Some(o) = &mut self.chassis.observer {
+                o.access(crate::observe::AccessKind::Write, dst_addr, value, edge);
+            }
         }
 
         if let Some(dst_offset) = self.model.console_state_mut().take_dma_conflict_oam_zero() {
@@ -119,12 +123,16 @@ impl<M: Model> Console<M> {
                 ppu::memory::MappedAddress::map(dst_addr)
             {
                 self.chassis.ppu.write_oam(oam_addr, 0);
+                let edge = self.chassis.clock.master_edge();
                 self.chassis.bus_trace.record(BusAccess {
                     address: dst_addr,
                     value: 0,
                     kind: BusAccessKind::Write,
-                    master_edge: self.chassis.clock.master_edge(),
+                    master_edge: edge,
                 });
+                if let Some(o) = &mut self.chassis.observer {
+                    o.access(crate::observe::AccessKind::Write, dst_addr, 0, edge);
+                }
             }
         }
 

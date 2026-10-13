@@ -56,8 +56,11 @@ pub struct RunOutcome<S> {
 }
 
 impl<M: Model> Debugger<M> {
-    pub fn new(game_boy: Console<M>) -> Self {
+    pub fn new(mut game_boy: Console<M>) -> Self {
         let cdl = CodeDataLog::new(game_boy.cartridge().rom_len());
+        if game_boy.observer().is_none() {
+            game_boy.set_observer(Some(crate::observe::Observer::call_stack_only()));
+        }
         Self {
             game_boy,
             symbols: Arc::new(SymbolTable::default()),
@@ -91,6 +94,12 @@ impl<M: Model> Debugger<M> {
 
     pub fn save_symbols(&self, path: &Path) {
         self.symbols.save(path);
+    }
+
+    /// The calls open, outermost first, as the shadow call stack has kept
+    /// them since the machine was loaded.
+    pub fn call_stack(&self) -> &[crate::observe::OpenCall] {
+        self.game_boy.call_stack()
     }
 
     pub fn game_boy(&self) -> &Console<M> {

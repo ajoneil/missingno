@@ -27,6 +27,9 @@ pub enum SgbHandoff {
 pub struct Dmg {
     sgb: Option<sgb::Sgb>,
     sgb_handoff: SgbHandoff,
+    /// The SGB commands completed since a client last took them, while it
+    /// asks for them.
+    sgb_commands: Option<Vec<Vec<u8>>>,
     /// CGB console arbitration is statically unreachable on DMG — a ZST.
     console_state: (),
 }
@@ -64,8 +67,11 @@ impl Model for Dmg {
     }
 
     fn on_joypad_write(&mut self, value: u8) {
-        if let Some(sgb) = &mut self.sgb {
-            sgb.write_joypad(value);
+        if let Some(sgb) = &mut self.sgb
+            && let Some(command) = sgb.write_joypad(value)
+            && let Some(log) = &mut self.sgb_commands
+        {
+            log.push(command);
         }
     }
 
@@ -169,6 +175,22 @@ pub type GameBoy = Console<Dmg>;
 impl Console<Dmg> {
     pub fn sgb(&self) -> Option<&sgb::Sgb> {
         self.model.sgb.as_ref()
+    }
+
+    /// Keep each command the SGB completes from now on, for
+    /// [`take_sgb_commands`](Self::take_sgb_commands), or stop.
+    pub fn observe_sgb_commands(&mut self, on: bool) {
+        self.model.sgb_commands = on.then(Vec::new);
+    }
+
+    /// The SGB commands completed since the last take, each its packets'
+    /// bytes, in order.
+    pub fn take_sgb_commands(&mut self) -> Vec<Vec<u8>> {
+        self.model
+            .sgb_commands
+            .as_mut()
+            .map(std::mem::take)
+            .unwrap_or_default()
     }
 }
 

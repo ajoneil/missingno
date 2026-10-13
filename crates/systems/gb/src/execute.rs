@@ -66,6 +66,7 @@ impl<M: Model> Console<M> {
     }
 
     fn step_inner(&mut self) -> StepResult {
+        let observed = self.observe_before();
         // If step_tcycle() left us mid-instruction, drain to the next
         // boundary first, then run one full instruction.
         let mut new_screen = false;
@@ -81,6 +82,9 @@ impl<M: Model> Console<M> {
 
         self.resolve_stop();
         self.manage_dma_hold();
+        if let Some(before) = observed {
+            self.observe_after(before);
+        }
 
         let sram_dirty = self.chassis.external.cartridge.take_sram_dirty();
         StepResult {

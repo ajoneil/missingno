@@ -76,6 +76,8 @@ pub struct Chassis<M: Model> {
     /// staged read/write activity for the in-flight M-cycle.
     pub cpu_bus: CpuBus,
     pub bus_trace: cpu_bus::BusTrace,
+    /// What a client watches of the run, if anything.
+    pub(crate) observer: Option<Box<crate::observe::Observer>>,
     /// OAM-DMA source-bus write conflicts deferred to the M-cycle boundary.
     /// Set in `write_byte_with_write_strobe_lock`/`commit_write`, drained in
     /// `tick_mcycle_boundary_fall`.
@@ -117,6 +119,7 @@ impl<M: Model> Console<M> {
                 clock: MasterClock::new(CpuDivider::One),
                 cpu_bus: CpuBus::new(),
                 bus_trace: cpu_bus::BusTrace::new(),
+                observer: None,
                 dma_conflict: DmaConflictLatch::default(),
             },
             model,
@@ -213,6 +216,9 @@ impl<M: Model> Console<M> {
         }
 
         self.chassis.bus_trace = cpu_bus::BusTrace::new();
+        if let Some(o) = &mut self.chassis.observer {
+            o.forget();
+        }
         // Re-anchor the CPU clock to a rise; the free-running dot phase is left
         // as-is (the old reset touched only `clock_phase`).
         self.chassis.clock.engage_on_rise();

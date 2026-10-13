@@ -26,6 +26,7 @@ pub mod joypad;
 pub mod media;
 pub mod memory;
 mod model;
+pub mod observe;
 pub mod ppu;
 mod screen;
 pub mod serial_transfer;

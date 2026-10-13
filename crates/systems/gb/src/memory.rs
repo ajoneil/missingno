@@ -1,3 +1,4 @@
+use crate::observe::AccessKind;
 use crate::{
     Chassis, Console, ConsoleShadow, Model, audio,
     cpu_bus::{BusAccess, BusAccessKind},
@@ -426,12 +427,16 @@ impl<M: Model> Console<M> {
     /// the appropriate physical bus latch and record the read in the
     /// trace. Called at the CPU's data-latch edge.
     pub fn commit_bus_read(&mut self, address: u16, value: u8) {
+        let edge = self.chassis.clock.master_edge();
         self.chassis.bus_trace.record(BusAccess {
             address,
             value,
             kind: BusAccessKind::Read,
-            master_edge: self.chassis.clock.master_edge(),
+            master_edge: edge,
         });
+        if let Some(o) = &mut self.chassis.observer {
+            o.access(AccessKind::Read, address, value, edge);
+        }
         self.drive_bus(address, value);
     }
 
@@ -704,12 +709,16 @@ impl<M: Model> Console<M> {
         locked_at_snapshot: Option<bool>,
         locked_at_mid: Option<bool>,
     ) {
+        let edge = self.chassis.clock.master_edge();
         self.chassis.bus_trace.record(BusAccess {
             address,
             value,
             kind: BusAccessKind::Write,
-            master_edge: self.chassis.clock.master_edge(),
+            master_edge: edge,
         });
+        if let Some(o) = &mut self.chassis.observer {
+            o.access(AccessKind::Write, address, value, edge);
+        }
         if self.chassis.dma.is_active_on_bus().is_some() {
             // The OAM block (extra rows included) is being written by DMA;
             // CPU writes are ignored.

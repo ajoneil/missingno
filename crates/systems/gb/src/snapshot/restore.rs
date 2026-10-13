@@ -106,6 +106,9 @@ impl<M: Model> Console<M> {
 
         self.chassis.screen = M::Screen::default();
         self.chassis.bus_trace = crate::cpu_bus::BusTrace::new();
+        if let Some(o) = &mut self.chassis.observer {
+            o.forget();
+        }
         self.chassis.clock = crate::MasterClock::new(crate::CpuDivider::One);
         self.chassis.cpu_bus = crate::cpu_bus::CpuBus::new();
         self.stage_in_flight_bus_access();

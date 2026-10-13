@@ -449,7 +449,9 @@ impl Sgb {
     }
 
     /// Called on every write to FF00.
-    pub fn write_joypad(&mut self, value: u8) {
+    /// A write to JOYP, which clocks the packet receiver. Returns the command
+    /// it completes, if it completes one: its packets' bytes, in order.
+    pub fn write_joypad(&mut self, value: u8) -> Option<Vec<u8>> {
         let p14_low = value & 0x10 == 0;
         let p15_low = value & 0x20 == 0;
         let both_low = p14_low && p15_low;
@@ -492,18 +494,18 @@ impl Sgb {
                         *current_packet = [0; 16];
                         *bit_index = 0;
                     }
-                    return;
+                    return None;
                 }
 
                 if !p14_low && !p15_low {
                     // Both high — release between bits, not a data bit
-                    return;
+                    return None;
                 }
 
                 if !released {
                     // A select change with no release since the last pulse doesn't clock
                     // the receiver — this is what keeps ordinary polling out of packets
-                    return;
+                    return None;
                 }
 
                 if *bit_index < 128 {
@@ -522,7 +524,7 @@ impl Sgb {
                         *packets_expected = packet_count(current_packet[0]);
                         if *packets_expected == 0 {
                             self.command_state = CommandState::Idle;
-                            return;
+                            return None;
                         }
                     }
 
@@ -533,6 +535,7 @@ impl Sgb {
                         let data = all_packets.clone();
                         self.command_state = CommandState::Idle;
                         self.dispatch_command(&data);
+                        return Some(data);
                     } else {
                         let packets_expected = *packets_expected;
                         let packets_received = *packets_received;
@@ -564,6 +567,7 @@ impl Sgb {
                 }
             }
         }
+        None
     }
 
     fn dispatch_command(&mut self, data: &[u8]) {

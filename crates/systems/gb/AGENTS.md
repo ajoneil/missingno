@@ -75,6 +75,7 @@ The Game Boy's master clock produces alternating edges. On hardware, each edge t
     - `morepork render <file> -o <dir>` — render LCD frames to PNG (`--frames 1,3,5`).
     - `morepork convert <file>` — convert JSONL to native `.morepork` format.
   - **Reference traces**: generate locally in the morepork clone: `make adapters`, then `make traces-<suite> EMUS=sameboy` (output in `build/traces/<suite>/`, named `<test>_<emu>_<model>_<status>.morepork`). Generate only what the investigation needs. Use the `/compare-traces` skill for structured comparison and individual trace inspection.
+- **Observation (`observe.rs`)**: a client watches a run through an `Observer` set on the console (`set_observer`): a shadow call stack (CALL/RST/interrupt dispatch open a call, SP rising above its slot closes it; the debugger keeps one by default, `Debugger::call_stack`), plus, as `Event`s it drains, the instructions, register states and CPU accesses at the addresses its `Filters` bitmaps name. With no observer the step path pays one branch per instruction and one per bus access. `GameBoy::observe_sgb_commands` keeps each SGB command's bytes. Nothing here names a client.
 - **Boot ROM support**: Optional boot ROM via `--boot-rom <path>` (CLI) or `DMG_BOOT_ROM=<path>` / `CGB_BOOT_ROM=<path>` (tests). Boot ROMs are proprietary — never commit them. Without one, post-boot initialization is used. Only use on targeted tests (adds significant startup time).
 
 ## Resources
