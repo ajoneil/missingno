@@ -390,6 +390,10 @@ impl<M: Machine> MachineConsole<M> {
 }
 
 impl<M: Machine> SystemConsole for MachineConsole<M> {
+    fn family_core_mut(&mut self) -> &mut dyn Any {
+        &mut self.core
+    }
+
     fn step_frame(&mut self) -> FrameOutcome {
         let display = M::step_frame(&mut self.core).map(|frame| {
             self.last_frame = M::display_frame(&frame);
@@ -579,6 +583,10 @@ impl<M: Machine> MachineDebugger<M> {
 }
 
 impl<M: Machine> SystemConsole for MachineDebugger<M> {
+    fn family_core_mut(&mut self) -> &mut dyn Any {
+        &mut self.console.core
+    }
+
     /// One frame under the debugger: the breakpoints still stop it, and the
     /// host learns why only through [`SystemDebugger::run_frame`].
     fn step_frame(&mut self) -> FrameOutcome {

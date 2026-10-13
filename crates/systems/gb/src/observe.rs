@@ -194,6 +194,8 @@ pub struct Observer {
     state: Option<CpuState>,
     /// The edge the last instruction began on, where its state was reported.
     stated: Option<u64>,
+    /// The pictures the LCD presented while watched.
+    pub(crate) presented: u64,
 }
 
 /// The CPU between instructions, before a step.
@@ -226,6 +228,7 @@ impl Observer {
             dispatch_from: None,
             state: None,
             stated: None,
+            presented: 0,
         }
     }
 
@@ -246,6 +249,11 @@ impl Observer {
 
     pub fn filters(&self) -> &Filters {
         &self.filters
+    }
+
+    /// How many pictures the LCD has presented while watched.
+    pub fn presented(&self) -> u64 {
+        self.presented
     }
 
     /// The calls open, outermost first.

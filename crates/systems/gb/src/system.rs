@@ -379,11 +379,11 @@ impl<M: ConsoleUi> GbCore<M> {
         }
     }
 
-    fn console(&self) -> &Console<M> {
+    pub fn console(&self) -> &Console<M> {
         self.debugger.game_boy()
     }
 
-    fn console_mut(&mut self) -> &mut Console<M> {
+    pub fn console_mut(&mut self) -> &mut Console<M> {
         self.debugger.game_boy_mut()
     }
 

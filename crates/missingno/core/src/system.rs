@@ -368,6 +368,9 @@ pub trait SystemConsole: Send {
     fn read_state(&self) -> Option<StateRecord>;
     /// Convert to the debugger-backed form.
     fn into_debugger(self: Box<Self>) -> Box<dyn SystemDebugger>;
+    /// The family's core, for a client that knows the family to downcast and
+    /// watch (an observer installed on the core).
+    fn family_core_mut(&mut self) -> &mut dyn Any;
 }
 
 /// Why a stepping call returned, and the displayable frame it produced.

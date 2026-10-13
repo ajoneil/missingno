@@ -167,3 +167,15 @@ fn the_sgb_commands_are_kept_while_asked_for() {
     assert_eq!(gb.take_sgb_commands(), [packet.to_vec()]);
     assert_eq!(gb.take_sgb_commands(), Vec::<Vec<u8>>::new());
 }
+
+#[test]
+fn the_observer_counts_the_pictures_presented() {
+    let mut gb = console();
+    gb.set_observer(Some(Observer::new(Filters::default())));
+    let mut presented = 0;
+    for _ in 0..60_000 {
+        presented += gb.step().new_screen as u64;
+    }
+    assert!(presented > 0);
+    assert_eq!(gb.observer_mut().unwrap().presented(), presented);
+}

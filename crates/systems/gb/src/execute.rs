@@ -84,6 +84,9 @@ impl<M: Model> Console<M> {
         self.manage_dma_hold();
         if let Some(before) = observed {
             self.observe_after(before);
+            if new_screen && let Some(o) = self.chassis.observer.as_deref_mut() {
+                o.presented += 1;
+            }
         }
 
         let sram_dirty = self.chassis.external.cartridge.take_sram_dirty();
