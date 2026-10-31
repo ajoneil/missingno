@@ -42,27 +42,27 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.10/screenshots/library.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.11/screenshots/library.png</image>
       <caption>Game library with cover art and play history</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.10/screenshots/game-details.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.11/screenshots/game-details.png</image>
       <caption>Game details with activity log and save and screenshot management</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.10/screenshots/gameplay.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.11/screenshots/gameplay.png</image>
       <caption>Playing a Game Boy game with Super Game Boy colours</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.10/screenshots/homebrew.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.11/screenshots/homebrew.png</image>
       <caption>Browse and download homebrew games from Homebrew Hub</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.10/screenshots/cartridge.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.11/screenshots/cartridge.png</image>
       <caption>Read and write physical Game Boy cartridges with a GBxCart RW</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.10/screenshots/debugger.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.11/screenshots/debugger.png</image>
       <caption>The debugger stepping an Atari VCS game: CPU and TIA state, disassembly, and audio channels</caption>
     </screenshot>
   </screenshots>
@@ -79,6 +79,13 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="26.11" date="2026-11-01">
+      <description>
+        <ul>
+          <li>Game Boy accuracy improvements</li>
+        </ul>
+      </description>
+    </release>
     <release version="26.10" date="2026-10-03">
       <description>
         <ul>
