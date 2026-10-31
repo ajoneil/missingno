@@ -49,7 +49,7 @@ default-members = [
 # One version for every crate, app included: the calendar release number of the
 # release currently in development.
 [workspace.package]
-version = "26.11.0"
+version = "26.12.0"
 
 [workspace.dependencies]
 bitflags = "2.13.1"
