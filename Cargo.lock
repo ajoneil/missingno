@@ -2934,7 +2934,7 @@ dependencies = [
 
 [[package]]
 name = "missingno"
-version = "26.10.0"
+version = "26.11.0"
 dependencies = [
  "clap",
  "dirs",
@@ -2971,7 +2971,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-colecovision"
-version = "26.10.0"
+version = "26.11.0"
 dependencies = [
  "missingno-core",
  "missingno-test-support",
@@ -2985,7 +2985,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-core"
-version = "26.10.0"
+version = "26.11.0"
 dependencies = [
  "rgb",
  "ron",
@@ -2995,7 +2995,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-curator"
-version = "26.10.0"
+version = "26.11.0"
 dependencies = [
  "clap",
  "gilrs",
@@ -3016,7 +3016,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-debugger"
-version = "26.10.0"
+version = "26.11.0"
 dependencies = [
  "missingno-core",
  "missingno-mcp-stdio",
@@ -3040,7 +3040,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-gb"
-version = "26.10.0"
+version = "26.11.0"
 dependencies = [
  "bitflags 2.13.2",
  "missingno-core",
@@ -3056,7 +3056,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-gbc"
-version = "26.10.0"
+version = "26.11.0"
 dependencies = [
  "missingno-core",
  "missingno-gb",
@@ -3066,7 +3066,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-iced"
-version = "26.10.0"
+version = "26.11.0"
 dependencies = [
  "bytemuck",
  "iced",
@@ -3076,14 +3076,14 @@ dependencies = [
 
 [[package]]
 name = "missingno-mcp-stdio"
-version = "26.10.0"
+version = "26.11.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "missingno-mos-6502"
-version = "26.10.0"
+version = "26.11.0"
 dependencies = [
  "missingno-core",
  "missingno-test-support",
@@ -3093,7 +3093,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-nes"
-version = "26.10.0"
+version = "26.11.0"
 dependencies = [
  "missingno-core",
  "missingno-mos-6502",
@@ -3102,7 +3102,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-remote"
-version = "26.10.0"
+version = "26.11.0"
 dependencies = [
  "missingno-mcp-stdio",
  "serde_json",
@@ -3110,7 +3110,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-session"
-version = "26.10.0"
+version = "26.11.0"
 dependencies = [
  "cpal",
  "dirs",
@@ -3133,7 +3133,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-sg1000"
-version = "26.10.0"
+version = "26.11.0"
 dependencies = [
  "missingno-core",
  "missingno-test-support",
@@ -3148,7 +3148,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-sms"
-version = "26.10.0"
+version = "26.11.0"
 dependencies = [
  "missingno-core",
  "missingno-test-support",
@@ -3159,7 +3159,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-test-support"
-version = "26.10.0"
+version = "26.11.0"
 dependencies = [
  "missingno-core",
  "png 0.18.1",
@@ -3167,7 +3167,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-ti-psg"
-version = "26.10.0"
+version = "26.11.0"
 dependencies = [
  "missingno-core",
  "missingno-ti-psg",
@@ -3175,7 +3175,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-ti-vdp"
-version = "26.10.0"
+version = "26.11.0"
 dependencies = [
  "missingno-core",
  "missingno-sg1000",
@@ -3191,7 +3191,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-trace"
-version = "26.10.0"
+version = "26.11.0"
 dependencies = [
  "missingno-core",
  "morepork",
@@ -3199,7 +3199,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-vcs"
-version = "26.10.0"
+version = "26.11.0"
 dependencies = [
  "missingno-core",
  "missingno-mos-6502",
@@ -3214,7 +3214,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-zilog-z80"
-version = "26.10.0"
+version = "26.11.0"
 dependencies = [
  "missingno-core",
  "missingno-test-support",
